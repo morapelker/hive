@@ -9,10 +9,6 @@ import { telemetryService } from '../services/telemetry-service'
 import { getDatabase } from '../db'
 import { detectEditors, detectTerminals, type DetectedApp } from '../services/settings-detection'
 import { APP_SETTINGS_DB_KEY } from '@shared/types/settings'
-import {
-  getCustomCommandsFilePath,
-  loadCustomCommandsFromFile
-} from '../services/custom-commands-file-service'
 import { defineHandler } from './_shared/define-handler'
 
 const log = createLogger({ component: 'SettingsHandlers' })
@@ -321,71 +317,6 @@ export function registerSettingsHandlers(): void {
           error instanceof Error ? error : new Error(String(error))
         )
         return {}
-      }
-    })
-  )
-
-  // Get custom commands file path
-  defineHandler('get-custom-commands-file-path', z.tuple([]), () =>
-    Effect.try({
-      try: (): string => {
-        return getCustomCommandsFilePath()
-      },
-      catch: (error) => {
-        return settingsFailed('get-custom-commands-file-path', error)
-      }
-    })
-  )
-
-  // Load custom commands from file
-  defineHandler('load-custom-commands-file', z.tuple([]), () =>
-    Effect.try({
-      try: () => {
-        return loadCustomCommandsFromFile()
-      },
-      catch: (error) => {
-        log.error(
-          'Failed to load custom commands from file',
-          error instanceof Error ? error : new Error(String(error))
-        )
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Unknown error'
-        }
-      }
-    })
-  )
-
-  // Reload custom commands (manual trigger)
-  defineHandler('reload-custom-commands', z.tuple([]), () =>
-    Effect.try({
-      try: () => {
-        const fileResult = loadCustomCommandsFromFile()
-
-        if (!fileResult.success) {
-          return fileResult
-        }
-
-        // Always sync to database when file load succeeded, even if empty
-        if (fileResult.commands !== undefined) {
-          const db = getDatabase()
-          const existingSettings = db.getSetting(APP_SETTINGS_DB_KEY)
-          const settings = existingSettings ? JSON.parse(existingSettings) : {}
-
-          settings.customProjectCommands = fileResult.commands
-          db.setSetting(APP_SETTINGS_DB_KEY, JSON.stringify(settings))
-
-          return {
-            success: true,
-            count: fileResult.commands.length,
-            mtime: fileResult.mtime
-          }
-        }
-
-        return { success: true, count: 0, mtime: fileResult.mtime }
-      },
-      catch: (error) => {
-        return settingsFailed('reload-custom-commands', error)
       }
     })
   )

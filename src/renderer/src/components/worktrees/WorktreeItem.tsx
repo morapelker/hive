@@ -1,4 +1,4 @@
-import { memo, useCallback, useState, useRef, useEffect } from 'react'
+import { memo, useCallback, useState, useRef, useEffect, useMemo } from 'react'
 import { revealLabel } from '@/lib/platform'
 import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
 import {
@@ -70,7 +70,7 @@ import { ModelIcon } from './ModelIcon'
 import { ArchiveConfirmDialog } from './ArchiveConfirmDialog'
 import { AddAttachmentDialog } from './AddAttachmentDialog'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
-import { replaceTemplateVariables } from '@/lib/custom-commands'
+import { mergeCustomCommands, replaceTemplateVariables } from '@/lib/custom-commands'
 import type { CustomProjectCommand } from '@/lib/custom-commands'
 
 const db = unwrapEnvelopeApi(() => window.db)
@@ -118,7 +118,7 @@ export const WorktreeItem = memo(function WorktreeItem({
   const unbranchWorktree = useWorktreeStore((s) => s.unbranchWorktree)
   const isSelected = useWorktreeStore((s) => s.selectedWorktreeId === worktree.id)
   const selectProject = useProjectStore((s) => s.selectProject)
-  const project = useProjectStore((s) => s.projects.find(p => p.id === worktree.project_id))
+  const project = useProjectStore((s) => s.projects.find((p) => p.id === worktree.project_id))
 
   const isArchiving = useWorktreeStore((s) => s.archivingWorktreeIds.has(worktree.id))
   const worktreeStatus = useWorktreeStatusStore((state) => state.getWorktreeStatus(worktree.id))
@@ -148,7 +148,11 @@ export const WorktreeItem = memo(function WorktreeItem({
   const inputFocused = useHintStore((s) => s.inputFocused)
   const vimMode = useVimModeStore((s) => s.mode)
   const vimModeEnabled = useSettingsStore((s) => s.vimModeEnabled)
-  const customProjectCommands = useSettingsStore((s) => s.customProjectCommands)
+  const globalCommands = useSettingsStore((s) => s.customProjectCommands)
+  const customCommands = useMemo(
+    () => mergeCustomCommands(globalCommands, project?.custom_commands ?? []),
+    [globalCommands, project?.custom_commands]
+  )
 
   const handleTogglePin = useCallback(async (): Promise<void> => {
     if (isPinned) {
@@ -187,12 +191,12 @@ export const WorktreeItem = memo(function WorktreeItem({
 
         // Show info toast
         toast.info(`Executing: ${command.name}`)
-      } catch (error) {
+      } catch {
         // Show error toast if anything goes wrong
         toast.error('Failed to execute command')
       }
     },
-    [project]
+    [project, worktree.id]
   )
 
   const isInConnectionMode = connectionModeActive
@@ -894,14 +898,11 @@ export const WorktreeItem = memo(function WorktreeItem({
           Connect to...
         </ContextMenuItem>
         {/* Custom Commands */}
-        {customProjectCommands && customProjectCommands.length > 0 && (
+        {customCommands.length > 0 && (
           <>
             <ContextMenuSeparator />
-            {customProjectCommands.map((cmd) => (
-              <ContextMenuItem
-                key={cmd.id}
-                onClick={() => handleCustomCommand(cmd)}
-              >
+            {customCommands.map((cmd) => (
+              <ContextMenuItem key={cmd.id} onClick={() => handleCustomCommand(cmd)}>
                 <Zap className="h-4 w-4 mr-2" />
                 {cmd.name}
               </ContextMenuItem>

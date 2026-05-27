@@ -15,6 +15,7 @@ describe('replaceTemplateVariables', () => {
     setup_script: null,
     run_script: null,
     archive_script: null,
+    custom_commands: null,
     auto_assign_port: false,
     sort_order: 0,
     created_at: '2024-01-01',
@@ -73,7 +74,8 @@ describe('replaceTemplateVariables', () => {
   })
 
   it('should replace multiple occurrences of the same variable', () => {
-    const template = '{{project.name}} is located at {{project.path}}. The name is {{project.name}}.'
+    const template =
+      '{{project.name}} is located at {{project.path}}. The name is {{project.name}}.'
     const result = replaceTemplateVariables(template, mockProject)
     expect(result).toBe('Test Project is located at /Users/test/project. The name is Test Project.')
   })

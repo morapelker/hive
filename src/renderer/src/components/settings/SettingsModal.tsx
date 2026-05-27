@@ -13,7 +13,8 @@ import {
   Sparkles,
   Plug,
   Bug,
-  Send
+  Send,
+  Zap
 } from 'lucide-react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { useSettingsStore } from '@/stores/useSettingsStore'
@@ -30,11 +31,13 @@ import { SettingsIntegrations } from './SettingsIntegrations'
 import { SettingsTelegram } from './SettingsTelegram'
 import { SettingsAdvanced } from './SettingsAdvanced'
 import { SettingsPet } from './SettingsPet'
+import { SettingsCustomCommands } from './SettingsCustomCommands'
 import { cn } from '@/lib/utils'
 
 const SECTIONS = [
   { id: 'appearance', label: 'Appearance', icon: Palette },
   { id: 'general', label: 'General', icon: Monitor },
+  { id: 'custom-commands', label: 'Custom Commands', icon: Zap },
   { id: 'models', label: 'Models', icon: Sparkles },
   { id: 'pet', label: 'Pet', icon: Bug },
   { id: 'editor', label: 'Editor', icon: Code },
@@ -104,6 +107,7 @@ export function SettingsModal(): React.JSX.Element {
           <div className="flex-1 overflow-y-auto p-6">
             {activeSection === 'appearance' && <SettingsAppearance />}
             {activeSection === 'general' && <SettingsGeneral />}
+            {activeSection === 'custom-commands' && <SettingsCustomCommands />}
             {activeSection === 'models' && <SettingsModels />}
             {activeSection === 'pet' && <SettingsPet />}
             {activeSection === 'editor' && <SettingsEditor />}

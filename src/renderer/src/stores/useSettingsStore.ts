@@ -7,7 +7,6 @@ import type { PetSettings } from '@shared/types/pet'
 import type { ReviewPromptType } from '@/constants/reviewPrompts'
 import type { CustomProjectCommand } from '@/lib/custom-commands'
 import { validateCustomCommand } from '@/lib/custom-commands'
-import { toast } from '@/lib/toast'
 import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
 
 const db = unwrapEnvelopeApi(() => window.db)
@@ -162,6 +161,7 @@ export interface AppSettings {
 
   // Migration flags
   _boardModeMigratedToStickyTab?: boolean
+  customCommandsResetV28?: boolean
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -236,14 +236,14 @@ const DEFAULT_SETTINGS: AppSettings = {
   codexJsonlLoggingEnabled: false,
   codexJsonlResetPerSession: true,
   reviewPromptType: 'standard',
-  _boardModeMigratedToStickyTab: false
+  _boardModeMigratedToStickyTab: false,
+  customCommandsResetV28: true
 }
 
 interface SettingsState extends AppSettings {
   isOpen: boolean
   activeSection: string
   isLoading: boolean
-  customCommandsFileMtime: number | null
 
   // Cached SDK availability (non-persisted, re-detected each launch)
   availableAgentSdks: { opencode: boolean; claude: boolean; codex: boolean } | null
@@ -277,7 +277,6 @@ interface SettingsState extends AppSettings {
   resetToDefaults: () => void
   loadFromDatabase: () => Promise<void>
   detectAvailableAgentSdks: () => Promise<void>
-  reloadCustomCommands: () => Promise<void>
 }
 
 async function saveToDatabase(settings: AppSettings): Promise<void> {
@@ -292,21 +291,7 @@ async function saveToDatabase(settings: AppSettings): Promise<void> {
 
 async function loadSettingsFromDatabase(): Promise<AppSettings | null> {
   try {
-    if (typeof window !== 'undefined' && db?.setting && window.settingsOps) {
-      // Step 1: Load from file if it exists
-      const fileResultEnvelope = await window.settingsOps.loadCustomCommandsFile()
-      const fileResult = unwrapEnvelope(fileResultEnvelope)
-
-      // Always sync to database when file load succeeded, even if empty (file is source of truth)
-      if (fileResult.success && fileResult.commands !== undefined) {
-        const dbValue = await db.setting.get(APP_SETTINGS_DB_KEY)
-        const settings = dbValue ? JSON.parse(dbValue) : {}
-        settings.customProjectCommands = fileResult.commands
-
-        await db.setting.set(APP_SETTINGS_DB_KEY, JSON.stringify(settings))
-      }
-
-      // Step 2: Load all settings from database (now has latest file data)
+    if (typeof window !== 'undefined' && db?.setting) {
       const value = await db.setting.get(APP_SETTINGS_DB_KEY)
       if (value) {
         const parsed = JSON.parse(value)
@@ -353,7 +338,10 @@ async function loadSettingsFromDatabase(): Promise<AppSettings | null> {
             if (validation.valid) {
               validCommands.push(cmd as CustomProjectCommand)
             } else {
-              console.warn('Invalid custom command filtered during settings load:', validation.errors)
+              console.warn(
+                'Invalid custom command filtered during settings load:',
+                validation.errors
+              )
             }
           })
           result.customProjectCommands = validCommands
@@ -422,7 +410,8 @@ function extractSettings(state: SettingsState): AppSettings {
     codexJsonlLoggingEnabled: state.codexJsonlLoggingEnabled,
     codexJsonlResetPerSession: state.codexJsonlResetPerSession,
     reviewPromptType: state.reviewPromptType,
-    _boardModeMigratedToStickyTab: state._boardModeMigratedToStickyTab
+    _boardModeMigratedToStickyTab: state._boardModeMigratedToStickyTab,
+    customCommandsResetV28: state.customCommandsResetV28
   }
 }
 
@@ -455,7 +444,6 @@ export const useSettingsStore = create<SettingsState>()(
       activeSection: 'appearance',
       isLoading: true,
       availableAgentSdks: null,
-      customCommandsFileMtime: null,
 
       openSettings: (section?: string) => {
         set({ isOpen: true, activeSection: section || get().activeSection })
@@ -686,33 +674,6 @@ export const useSettingsStore = create<SettingsState>()(
           // Fail gracefully — context menu just won't show
           set({ availableAgentSdks: null })
         }
-      },
-
-      reloadCustomCommands: async () => {
-        try {
-          if (!window.settingsOps?.reloadCustomCommands) {
-            toast.error('Settings operations not available')
-            return
-          }
-
-          const resultEnvelope = await window.settingsOps.reloadCustomCommands()
-          const result = unwrapEnvelope(resultEnvelope)
-
-          if (result.success) {
-            // Reload all settings from database
-            await get().loadFromDatabase()
-
-            // Update mtime
-            set({ customCommandsFileMtime: result.mtime ?? null })
-
-            toast.success(`Loaded ${result.count ?? 0} custom commands`)
-          } else {
-            toast.error(`Failed to reload: ${result.error || 'Unknown error'}`)
-          }
-        } catch (error) {
-          console.error('Failed to reload custom commands:', error)
-          toast.error('Failed to reload custom commands')
-        }
       }
     }),
     {
@@ -768,7 +729,8 @@ export const useSettingsStore = create<SettingsState>()(
         codexJsonlLoggingEnabled: state.codexJsonlLoggingEnabled,
         codexJsonlResetPerSession: state.codexJsonlResetPerSession,
         reviewPromptType: state.reviewPromptType,
-        _boardModeMigratedToStickyTab: state._boardModeMigratedToStickyTab
+        _boardModeMigratedToStickyTab: state._boardModeMigratedToStickyTab,
+        customCommandsResetV28: state.customCommandsResetV28
       })
     }
   )
@@ -791,10 +753,5 @@ if (typeof window !== 'undefined') {
     if (typedData.commandFilter) {
       useSettingsStore.setState({ commandFilter: typedData.commandFilter })
     }
-  })
-
-  // Listen for custom commands file changes from main process
-  window.settingsOps?.onCustomCommandsFileChanged(() => {
-    useSettingsStore.getState().loadFromDatabase()
   })
 }

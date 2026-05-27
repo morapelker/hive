@@ -7,7 +7,7 @@ import type { CustomProjectCommand } from '@/lib/custom-commands'
 describe('Settings Store - Custom Project Commands', () => {
   beforeEach(() => {
     // Reset store to defaults before each test
-    useSettingsStore.setState(useSettingsStore.getState())
+    useSettingsStore.setState({ customProjectCommands: [] })
     // Clear any previous console.warn spies
     vi.restoreAllMocks()
   })
@@ -48,8 +48,9 @@ describe('Settings Store - Custom Project Commands', () => {
     // Mock the database to return settings with mixed valid/invalid commands
     const mockDb = {
       setting: {
-        get: vi.fn().mockResolvedValue(
-          JSON.stringify({
+        get: vi.fn().mockResolvedValue({
+          success: true,
+          value: JSON.stringify({
             customProjectCommands: [
               { id: 'valid-1', name: 'Valid Command', prompt: 'Test prompt' },
               { id: 'invalid-1', name: '', prompt: 'Test prompt' }, // Invalid: empty name
@@ -59,14 +60,15 @@ describe('Settings Store - Custom Project Commands', () => {
               { id: 'invalid-2', name: 'No Prompt' } // Invalid: missing prompt
             ]
           })
-        ),
-        set: vi.fn()
+        }),
+        set: vi.fn().mockResolvedValue({ success: true, value: true })
       }
     }
 
     // Temporarily override window.db
-    const originalDb = (window as any).db
-    ;(window as any).db = mockDb
+    const dbWindow = window as unknown as { db: unknown }
+    const originalDb = dbWindow.db
+    dbWindow.db = mockDb
 
     try {
       // Load settings from database
@@ -85,7 +87,7 @@ describe('Settings Store - Custom Project Commands', () => {
       )
     } finally {
       // Restore original window.db
-      ;(window as any).db = originalDb
+      dbWindow.db = originalDb
       consoleWarnSpy.mockRestore()
     }
   })
@@ -96,18 +98,20 @@ describe('Settings Store - Custom Project Commands', () => {
     // Mock the database to return settings with non-array customProjectCommands
     const mockDb = {
       setting: {
-        get: vi.fn().mockResolvedValue(
-          JSON.stringify({
+        get: vi.fn().mockResolvedValue({
+          success: true,
+          value: JSON.stringify({
             customProjectCommands: 'not-an-array'
           })
-        ),
-        set: vi.fn()
+        }),
+        set: vi.fn().mockResolvedValue({ success: true, value: true })
       }
     }
 
     // Temporarily override window.db
-    const originalDb = (window as any).db
-    ;(window as any).db = mockDb
+    const dbWindow = window as unknown as { db: unknown }
+    const originalDb = dbWindow.db
+    dbWindow.db = mockDb
 
     try {
       // Load settings from database
@@ -123,7 +127,7 @@ describe('Settings Store - Custom Project Commands', () => {
       )
     } finally {
       // Restore original window.db
-      ;(window as any).db = originalDb
+      dbWindow.db = originalDb
       consoleWarnSpy.mockRestore()
     }
   })

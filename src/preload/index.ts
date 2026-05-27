@@ -7,6 +7,7 @@ import type {
   TelegramMode
 } from '../shared/types/telegram'
 import type { Envelope } from '@shared/types/ipc-envelope'
+import type { CustomProjectCommand } from '@shared/lib/custom-commands'
 import type { SuggestionItem } from '../shared/types/setup-suggestions'
 import type { ConnectionWithMembers } from '../main/db/types'
 import type { BashRunSnapshot, BashStreamEvent } from '../main/effect/bash/types'
@@ -53,6 +54,7 @@ const db = {
         setup_script?: string | null
         run_script?: string | null
         archive_script?: string | null
+        custom_commands?: CustomProjectCommand[] | null
         auto_assign_port?: boolean
         last_accessed_at?: string
       }
@@ -1942,18 +1944,6 @@ const settingsOps = {
   ): Promise<Envelope<{ success: boolean; error?: string }>> =>
     ipcRenderer.invoke('settings:openWithTerminal', worktreePath, terminalId, customCommand),
 
-  // Get custom commands file path
-  getCustomCommandsFilePath: (): Promise<Envelope<string>> =>
-    ipcRenderer.invoke('get-custom-commands-file-path'),
-
-  // Load custom commands from file
-  loadCustomCommandsFile: (): Promise<Envelope<{ success: boolean; commands?: unknown[]; mtime?: number; error?: string }>> =>
-    ipcRenderer.invoke('load-custom-commands-file'),
-
-  // Reload custom commands from file
-  reloadCustomCommands: (): Promise<Envelope<{ success: boolean; count?: number; mtime?: number; error?: string }>> =>
-    ipcRenderer.invoke('reload-custom-commands'),
-
   getAll: (): Promise<Envelope<Record<string, string>>> => ipcRenderer.invoke('settings:getAll'),
 
   // Listen for settings updates from main process
@@ -1962,15 +1952,6 @@ const settingsOps = {
     ipcRenderer.on('settings:updated', handler)
     return () => {
       ipcRenderer.removeListener('settings:updated', handler)
-    }
-  },
-
-  // Listen for custom commands file changes
-  onCustomCommandsFileChanged: (callback: () => void): (() => void) => {
-    const handler = (): void => callback()
-    ipcRenderer.on('custom-commands-file-changed', handler)
-    return () => {
-      ipcRenderer.removeListener('custom-commands-file-changed', handler)
     }
   }
 }

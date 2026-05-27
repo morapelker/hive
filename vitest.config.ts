@@ -9,7 +9,11 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: ['./test/setup.ts'],
-    include: ['test/**/*.test.{ts,tsx}', 'src/renderer/src/**/*.test.{ts,tsx}'],
+    include: [
+      'test/**/*.test.{ts,tsx}',
+      'src/renderer/src/**/*.test.{ts,tsx}',
+      'src/shared/**/*.test.{ts,tsx}'
+    ],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html', 'lcov'],
