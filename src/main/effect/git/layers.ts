@@ -34,15 +34,38 @@ const invalidBranch = (branch: string): boolean => !branch || branch.startsWith(
 
 export type WorktreeCreateMode = 'new' | 'existing' | 'duplicate'
 
+/**
+ * Default execution deadline for a worktree create script. Bounded so a stalled
+ * script (waiting on a lock, network call, etc.) cannot hang worktree creation
+ * indefinitely. Five minutes is generous for legitimate work on large repos
+ * (fetching, decrypting, checking out tens of thousands of files) while still
+ * surfacing genuine hangs in a reasonable time.
+ */
+const WORKTREE_CREATE_SCRIPT_TIMEOUT_MS = 5 * 60 * 1000
+
 export interface RunWorktreeCreateScriptOptions {
   readonly script: string
   readonly projectPath: string
   readonly worktreePath: string
   readonly branchName: string
+  /**
+   * Human-readable name of the branch the new worktree is based on. Always a
+   * branch name when set (e.g. `main`, `feature-foo`); never an arbitrary git
+   * ref. Use for naming decisions, conditional logic, etc.
+   */
   readonly baseBranch: string
+  /**
+   * Git ref the new worktree should be created from. For most flows this
+   * equals `baseBranch`; for pull-request checkouts it is `FETCH_HEAD` (the
+   * PR head has already been fetched into the main repo before the script
+   * runs). Use this with `git worktree add`.
+   */
+  readonly baseRef: string
   readonly mode: WorktreeCreateMode
   readonly sourceWorktreePath?: string
   readonly sourceBranch?: string
+  /** Override the default timeout for testing. */
+  readonly timeoutMs?: number
 }
 
 export interface RunWorktreeCreateScriptResult {
@@ -61,6 +84,7 @@ export const runWorktreeCreateScript = (
       HIVE_WORKTREE_PATH: opts.worktreePath,
       HIVE_BRANCH_NAME: opts.branchName,
       HIVE_BASE_BRANCH: opts.baseBranch,
+      HIVE_BASE_REF: opts.baseRef,
       HIVE_WORKTREE_MODE: opts.mode
     }
     if (opts.sourceWorktreePath !== undefined) {
@@ -86,9 +110,32 @@ export const runWorktreeCreateScript = (
     })
 
     let settled = false
+    const timeoutMs = opts.timeoutMs ?? WORKTREE_CREATE_SCRIPT_TIMEOUT_MS
+    const timeoutTimer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      try {
+        proc.kill('SIGTERM')
+      } catch {
+        // already exited
+      }
+      setTimeout(() => {
+        try {
+          proc.kill('SIGKILL')
+        } catch {
+          // already exited
+        }
+      }, 500)
+      resolve({
+        success: false,
+        output,
+        error: `Worktree create script timed out after ${timeoutMs}ms`
+      })
+    }, timeoutMs)
     const onClose = (code: number | null): void => {
       if (settled) return
       settled = true
+      clearTimeout(timeoutTimer)
       if (code === 0) {
         resolve({ success: true, output })
       } else {
@@ -102,10 +149,50 @@ export const runWorktreeCreateScript = (
     proc.on('error', (err) => {
       if (settled) return
       settled = true
+      clearTimeout(timeoutTimer)
       resolve({ success: false, output, error: err.message })
     })
     proc.on('close', onClose)
   })
+
+/**
+ * Best-effort cleanup of a partial worktree left behind by a failed create
+ * script. The script may have already run `git worktree add` and created a
+ * branch before failing in a later step (key copy, checkout, post-create
+ * setup, etc.); without cleanup, those artefacts remain on disk and in the
+ * repo's worktree list with no Hive DB row to track them, forcing the user
+ * to prune them by hand. Errors are swallowed: if there is nothing to clean
+ * up, or the cleanup itself fails, the original script failure is still the
+ * one reported to the user.
+ */
+const cleanupFailedWorktreeCreate = async (
+  git: SimpleGit,
+  worktreePath: string,
+  branchName: string
+): Promise<void> => {
+  try {
+    await git.raw(['worktree', 'remove', worktreePath, '--force'])
+  } catch {
+    // Worktree may not exist, or removal may fail; fall through to manual cleanup.
+  }
+  try {
+    if (existsSync(worktreePath)) {
+      rmSync(worktreePath, { recursive: true, force: true })
+    }
+  } catch {
+    // Best-effort.
+  }
+  try {
+    await git.raw(['worktree', 'prune'])
+  } catch {
+    // Best-effort.
+  }
+  try {
+    await git.raw(['branch', '-D', branchName])
+  } catch {
+    // Branch may not have been created, or may already be gone.
+  }
+}
 
 const parseShortStat = (shortstat: string) => {
   const filesMatch = shortstat.match(/(\d+) files? changed/)
@@ -410,16 +497,19 @@ const make = Effect.gen(function* () {
               worktreePath,
               branchName: newBranchName,
               baseBranch: sourceBranch,
+              baseRef: sourceBranch,
               mode: 'duplicate',
               sourceWorktreePath,
               sourceBranch
             })
             if (!scriptResult.success) {
+              await cleanupFailedWorktreeCreate(git, worktreePath, newBranchName)
               throw new Error(
                 `${scriptResult.error ?? 'Script failed'}\n${scriptResult.output}`
               )
             }
             if (!existsSync(worktreePath)) {
+              await cleanupFailedWorktreeCreate(git, worktreePath, newBranchName)
               throw new Error(
                 `Worktree create script exited successfully but no worktree exists at ${worktreePath}`
               )
@@ -541,14 +631,17 @@ const make = Effect.gen(function* () {
                   worktreePath,
                   branchName: breedName,
                   baseBranch: defaultBranch,
+                  baseRef: defaultBranch,
                   mode: 'new'
                 })
                 if (!scriptResult.success) {
+                  await cleanupFailedWorktreeCreate(git, worktreePath, breedName)
                   throw new Error(
                     `${scriptResult.error ?? 'Script failed'}\n${scriptResult.output}`
                   )
                 }
                 if (!existsSync(worktreePath)) {
+                  await cleanupFailedWorktreeCreate(git, worktreePath, breedName)
                   throw new Error(
                     `Worktree create script exited successfully but no worktree exists at ${worktreePath}`
                   )
@@ -679,15 +772,18 @@ const make = Effect.gen(function* () {
                     projectPath: repoPath,
                     worktreePath,
                     branchName: worktreeName,
-                    baseBranch: baseRef,
+                    baseBranch: branchName,
+                    baseRef,
                     mode: 'existing'
                   })
                   if (!scriptResult.success) {
+                    await cleanupFailedWorktreeCreate(git, worktreePath, worktreeName)
                     throw new Error(
                       `${scriptResult.error ?? 'Script failed'}\n${scriptResult.output}`
                     )
                   }
                   if (!existsSync(worktreePath)) {
+                    await cleanupFailedWorktreeCreate(git, worktreePath, worktreeName)
                     throw new Error(
                       `Worktree create script exited successfully but no worktree exists at ${worktreePath}`
                     )

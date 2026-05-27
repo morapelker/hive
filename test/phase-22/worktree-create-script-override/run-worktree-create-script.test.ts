@@ -20,6 +20,7 @@ describe('runWorktreeCreateScript', () => {
         worktreePath: '/tmp/synthetic-worktree-path',
         branchName: 'synthetic-feature',
         baseBranch: 'synthetic-main',
+        baseRef: 'synthetic-main',
         mode: 'new'
       })
 
@@ -45,6 +46,7 @@ describe('runWorktreeCreateScript', () => {
         worktreePath: '/tmp/dup-target',
         branchName: 'feature-v2',
         baseBranch: 'feature',
+        baseRef: 'feature',
         mode: 'duplicate',
         sourceWorktreePath: '/tmp/dup-source',
         sourceBranch: 'feature'
@@ -70,6 +72,7 @@ describe('runWorktreeCreateScript', () => {
         worktreePath: '/tmp/foo',
         branchName: 'feature',
         baseBranch: 'main',
+        baseRef: 'main',
         mode: 'new'
       })
 
@@ -88,6 +91,7 @@ describe('runWorktreeCreateScript', () => {
       worktreePath: '/tmp/foo',
       branchName: 'feature',
       baseBranch: 'main',
+      baseRef: 'main',
       mode: 'new'
     })
 
@@ -102,12 +106,52 @@ describe('runWorktreeCreateScript', () => {
       worktreePath: '/tmp/foo',
       branchName: 'feature',
       baseBranch: 'main',
+      baseRef: 'main',
       mode: 'new'
     })
 
     expect(result.success).toBe(false)
     expect(result.error).toContain('exited with code 7')
     expect(result.output).toContain('boom')
+  })
+
+  test('kills the script and returns failure when it exceeds the timeout', async () => {
+    const result = await runWorktreeCreateScript({
+      script: 'sleep 30',
+      projectPath: tmpdir(),
+      worktreePath: '/tmp/foo',
+      branchName: 'feature',
+      baseBranch: 'main',
+      baseRef: 'main',
+      mode: 'new',
+      timeoutMs: 200
+    })
+
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('timed out after 200ms')
+  })
+
+  test('passes through HIVE_BASE_REF distinct from HIVE_BASE_BRANCH', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'hive-test-'))
+    const envFile = join(tmp, 'env.out')
+    try {
+      const result = await runWorktreeCreateScript({
+        script: `printenv | grep -E '^HIVE_BASE' | sort > "${envFile}"`,
+        projectPath: tmp,
+        worktreePath: '/tmp/foo',
+        branchName: 'feature',
+        baseBranch: 'pull-request-42',
+        baseRef: 'FETCH_HEAD',
+        mode: 'existing'
+      })
+
+      expect(result.success).toBe(true)
+      const env = readFileSync(envFile, 'utf-8')
+      expect(env).toContain('HIVE_BASE_BRANCH=pull-request-42')
+      expect(env).toContain('HIVE_BASE_REF=FETCH_HEAD')
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
   })
 
   test('runs the script in the project path as cwd', async () => {
@@ -120,6 +164,7 @@ describe('runWorktreeCreateScript', () => {
         worktreePath: '/tmp/foo',
         branchName: 'feature',
         baseBranch: 'main',
+        baseRef: 'main',
         mode: 'new'
       })
 
