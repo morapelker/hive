@@ -74,6 +74,59 @@ export interface RunWorktreeCreateScriptResult {
   readonly error?: string
 }
 
+/**
+ * Picks the shell used to run a user-supplied worktree create script.
+ *
+ * If the script begins with `#!/usr/bin/env bash` or `#!/bin/bash` (with
+ * optional whitespace tolerance), bash is used directly. Otherwise sh is the
+ * default. This matters in practice because the documented git-crypt example
+ * uses `set -euo pipefail` and other bash-isms; on Linux distros where
+ * `/bin/sh` is dash, those would fail before the worktree is created.
+ * Other shebangs (zsh, fish, python, etc.) are deliberately not supported --
+ * those are out of scope for a worktree creation hook.
+ */
+const detectShell = (script: string): 'bash' | 'sh' => {
+  const match = script.match(/^#![ \t]*(\S+)(?:[ \t]+(\S+))?/)
+  if (!match) return 'sh'
+  const interpreter = match[1]
+  const arg = match[2]
+  if (interpreter.endsWith('/env') && arg === 'bash') return 'bash'
+  if (interpreter.endsWith('/bash')) return 'bash'
+  return 'sh'
+}
+
+/**
+ * Signals the entire process group launched by `spawn` with `detached: true`.
+ * Falls back to a direct signal to the immediate child on Windows or when
+ * the group send fails (process already dead). Using `-pid` covers grand-
+ * children inherited from the spawned shell -- a `sh -c '… git worktree add
+ * …'` script would otherwise leave `git worktree add` running after the
+ * shell exits, racing with our cleanup.
+ */
+const signalProcessGroup = (
+  proc: ReturnType<typeof spawn>,
+  signal: NodeJS.Signals
+): void => {
+  if (proc.pid === undefined) return
+  if (process.platform === 'win32') {
+    try {
+      proc.kill(signal)
+    } catch {
+      // already exited
+    }
+    return
+  }
+  try {
+    process.kill(-proc.pid, signal)
+  } catch {
+    try {
+      proc.kill(signal)
+    } catch {
+      // already exited
+    }
+  }
+}
+
 export const runWorktreeCreateScript = (
   opts: RunWorktreeCreateScriptOptions
 ): Promise<RunWorktreeCreateScriptResult> =>
@@ -94,10 +147,16 @@ export const runWorktreeCreateScript = (
       env.HIVE_SOURCE_BRANCH = opts.sourceBranch
     }
 
-    const proc = spawn('sh', ['-c', opts.script], {
+    const shell = detectShell(opts.script)
+    const proc = spawn(shell, ['-c', opts.script], {
       cwd: opts.projectPath,
       env,
-      stdio: ['pipe', 'pipe', 'pipe']
+      stdio: ['pipe', 'pipe', 'pipe'],
+      // Own process group on Unix so `-pid` kills the shell AND any
+      // foreground children it spawned (git, cp, etc.). Without this,
+      // killing the shell leaves descendants running and they can race
+      // with cleanup.
+      detached: process.platform !== 'win32'
     })
     if (proc.stdin) proc.stdin.end()
 
@@ -113,24 +172,17 @@ export const runWorktreeCreateScript = (
     let timedOut = false
     let killTimer: NodeJS.Timeout | null = null
     const timeoutMs = opts.timeoutMs ?? WORKTREE_CREATE_SCRIPT_TIMEOUT_MS
-    // On timeout: signal the process but DO NOT resolve yet. The `close`
-    // handler resolves once the child has actually exited, so callers don't
-    // start cleanup while the script is still running git commands (which
-    // would race and could recreate the worktree we just removed).
+    // On timeout: signal the whole process group but DO NOT resolve yet.
+    // The `exit` handler resolves once the script process has actually died,
+    // so callers don't start cleanup while git commands spawned by the
+    // script are still running (which could race and recreate the worktree
+    // we just removed).
     const timeoutTimer = setTimeout(() => {
       if (settled) return
       timedOut = true
-      try {
-        proc.kill('SIGTERM')
-      } catch {
-        // already exited
-      }
+      signalProcessGroup(proc, 'SIGTERM')
       killTimer = setTimeout(() => {
-        try {
-          proc.kill('SIGKILL')
-        } catch {
-          // already exited
-        }
+        signalProcessGroup(proc, 'SIGKILL')
       }, 500)
     }, timeoutMs)
     // Listen on `exit` (process died) rather than `close` (all stdio closed).

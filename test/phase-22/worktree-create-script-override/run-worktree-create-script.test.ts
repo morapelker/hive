@@ -1,5 +1,5 @@
 import { describe, test, expect, vi } from 'vitest'
-import { mkdtempSync, readFileSync, rmSync } from 'fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
@@ -129,6 +129,63 @@ describe('runWorktreeCreateScript', () => {
 
     expect(result.success).toBe(false)
     expect(result.error).toContain('timed out after 200ms')
+  })
+
+  test('kills foreground children, not just the wrapper shell', async () => {
+    // Spawn a child process that outlives an `exec`-style replacement of the
+    // shell. If the timeout only signals the shell, the `sleep` child keeps
+    // running. With `detached: true` + `-pid` kill, the whole process group
+    // dies. We assert by checking that the marker file (which would be
+    // written by `sleep && touch`) never appears.
+    const tmp = mkdtempSync(join(tmpdir(), 'hive-test-'))
+    const marker = join(tmp, 'finished.marker')
+    try {
+      const result = await runWorktreeCreateScript({
+        script: `sleep 5 && touch "${marker}"`,
+        projectPath: tmp,
+        worktreePath: '/tmp/foo',
+        branchName: 'feature',
+        baseBranch: 'main',
+        baseRef: 'main',
+        mode: 'new',
+        timeoutMs: 200
+      })
+
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('timed out')
+      // Give the would-be-orphan a generous window to misbehave
+      await new Promise((r) => setTimeout(r, 1000))
+      expect(existsSync(marker)).toBe(false)
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  test('respects a #!/usr/bin/env bash shebang for bash-specific syntax', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'hive-test-'))
+    const marker = join(tmp, 'arrays-worked.marker')
+    try {
+      // Bash arrays + `[[` are not POSIX; dash would reject this.
+      const result = await runWorktreeCreateScript({
+        script: `#!/usr/bin/env bash
+set -euo pipefail
+arr=(one two three)
+if [[ "\${arr[1]}" == "two" ]]; then
+  touch "${marker}"
+fi`,
+        projectPath: tmp,
+        worktreePath: '/tmp/foo',
+        branchName: 'feature',
+        baseBranch: 'main',
+        baseRef: 'main',
+        mode: 'new'
+      })
+
+      expect(result.success).toBe(true)
+      expect(existsSync(marker)).toBe(true)
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
   })
 
   test('waits for SIGKILL to actually exit the script before resolving', async () => {
