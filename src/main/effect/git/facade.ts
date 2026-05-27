@@ -133,7 +133,7 @@ class GitFacade {
     repoPath: string,
     projectName: string,
     breedType?: BreedType,
-    options?: { autoPull?: boolean }
+    options?: { autoPull?: boolean; worktreeCreateScript?: string | null }
   ): Promise<CreateWorktreeResult> {
     return runResult(Effect.flatMap(Git, (git) => git.worktree.create(repoPath, projectName, breedType, options)))
   }
@@ -267,9 +267,10 @@ class GitFacade {
     sourceBranch: string,
     sourceWorktreePath: string,
     projectName: string,
-    nameHint?: string
+    nameHint?: string,
+    options?: { worktreeCreateScript?: string | null }
   ): Promise<CreateWorktreeResult> {
-    return runResult(Effect.flatMap(Git, (git) => git.worktree.duplicate(repoPath, sourceBranch, sourceWorktreePath, projectName, nameHint)))
+    return runResult(Effect.flatMap(Git, (git) => git.worktree.duplicate(repoPath, sourceBranch, sourceWorktreePath, projectName, nameHint, options)))
   }
 
   getUntrackedFileDiff(repoPath: string, filePath: string): Promise<GitDiffResult> {
@@ -290,7 +291,7 @@ class GitFacade {
     branchName: string,
     breedType?: BreedType,
     prNumber?: number,
-    options?: { autoPull?: boolean; nameHint?: string }
+    options?: { autoPull?: boolean; nameHint?: string; worktreeCreateScript?: string | null }
   ): Promise<CreateWorktreeResult> {
     return runResult(Effect.flatMap(Git, (git) => git.worktree.createFromBranch(repoPath, projectName, branchName, breedType, prNumber, options)))
   }

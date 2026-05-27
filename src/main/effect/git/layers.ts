@@ -1,4 +1,4 @@
-import { execFile } from 'child_process'
+import { execFile, spawn } from 'child_process'
 import { existsSync, mkdirSync, rmSync, cpSync, writeFileSync, unlinkSync, readdirSync, readFileSync, appendFileSync, mkdtempSync } from 'fs'
 import { readFile as readFileAsync } from 'fs/promises'
 import { tmpdir } from 'os'
@@ -31,6 +31,256 @@ const ensureWorktreesDir = (projectName: string): string => {
 }
 
 const invalidBranch = (branch: string): boolean => !branch || branch.startsWith('-')
+
+export type WorktreeCreateMode = 'new' | 'existing' | 'duplicate'
+
+/**
+ * Default execution deadline for a worktree create script. Bounded so a stalled
+ * script (waiting on a lock, network call, etc.) cannot hang worktree creation
+ * indefinitely. Five minutes is generous for legitimate work on large repos
+ * (fetching, decrypting, checking out tens of thousands of files) while still
+ * surfacing genuine hangs in a reasonable time.
+ */
+const WORKTREE_CREATE_SCRIPT_TIMEOUT_MS = 5 * 60 * 1000
+
+export interface RunWorktreeCreateScriptOptions {
+  readonly script: string
+  readonly projectPath: string
+  readonly worktreePath: string
+  readonly branchName: string
+  /**
+   * Human-readable name of the branch the new worktree is based on. Always a
+   * branch name when set (e.g. `main`, `feature-foo`); never an arbitrary git
+   * ref. Use for naming decisions, conditional logic, etc.
+   */
+  readonly baseBranch: string
+  /**
+   * Git ref the new worktree should be created from. For most flows this
+   * equals `baseBranch`; for pull-request checkouts it is `FETCH_HEAD` (the
+   * PR head has already been fetched into the main repo before the script
+   * runs). Use this with `git worktree add`.
+   */
+  readonly baseRef: string
+  readonly mode: WorktreeCreateMode
+  readonly sourceWorktreePath?: string
+  readonly sourceBranch?: string
+  /** Override the default timeout for testing. */
+  readonly timeoutMs?: number
+}
+
+export interface RunWorktreeCreateScriptResult {
+  readonly success: boolean
+  readonly output: string
+  readonly error?: string
+}
+
+/**
+ * Picks the shell used to run a user-supplied worktree create script.
+ *
+ * If the script begins with `#!/usr/bin/env bash` or `#!/bin/bash` (with
+ * optional whitespace tolerance), bash is used directly. Otherwise sh is the
+ * default. This matters in practice because the documented git-crypt example
+ * uses `set -euo pipefail` and other bash-isms; on Linux distros where
+ * `/bin/sh` is dash, those would fail before the worktree is created.
+ * Other shebangs (zsh, fish, python, etc.) are deliberately not supported --
+ * those are out of scope for a worktree creation hook.
+ */
+const detectShell = (script: string): 'bash' | 'sh' => {
+  const match = script.match(/^#![ \t]*(\S+)(?:[ \t]+(\S+))?/)
+  if (!match) return 'sh'
+  const interpreter = match[1]
+  const arg = match[2]
+  if (interpreter.endsWith('/env') && arg === 'bash') return 'bash'
+  if (interpreter.endsWith('/bash')) return 'bash'
+  return 'sh'
+}
+
+/**
+ * Signals the entire process group launched by `spawn` with `detached: true`.
+ * Falls back to a direct signal to the immediate child on Windows or when
+ * the group send fails (process already dead). Using `-pid` covers grand-
+ * children inherited from the spawned shell -- a `sh -c '… git worktree add
+ * …'` script would otherwise leave `git worktree add` running after the
+ * shell exits, racing with our cleanup.
+ */
+const signalProcessGroup = (
+  proc: ReturnType<typeof spawn>,
+  signal: NodeJS.Signals
+): void => {
+  if (proc.pid === undefined) return
+  if (process.platform === 'win32') {
+    try {
+      proc.kill(signal)
+    } catch {
+      // already exited
+    }
+    return
+  }
+  try {
+    process.kill(-proc.pid, signal)
+  } catch {
+    try {
+      proc.kill(signal)
+    } catch {
+      // already exited
+    }
+  }
+}
+
+export const runWorktreeCreateScript = (
+  opts: RunWorktreeCreateScriptOptions
+): Promise<RunWorktreeCreateScriptResult> =>
+  new Promise((resolve) => {
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      HIVE_PROJECT_PATH: opts.projectPath,
+      HIVE_WORKTREE_PATH: opts.worktreePath,
+      HIVE_BRANCH_NAME: opts.branchName,
+      HIVE_BASE_BRANCH: opts.baseBranch,
+      HIVE_BASE_REF: opts.baseRef,
+      HIVE_WORKTREE_MODE: opts.mode
+    }
+    if (opts.sourceWorktreePath !== undefined) {
+      env.HIVE_SOURCE_WORKTREE_PATH = opts.sourceWorktreePath
+    }
+    if (opts.sourceBranch !== undefined) {
+      env.HIVE_SOURCE_BRANCH = opts.sourceBranch
+    }
+
+    const shell = detectShell(opts.script)
+    const proc = spawn(shell, ['-c', opts.script], {
+      cwd: opts.projectPath,
+      env,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      // Own process group on Unix so `-pid` kills the shell AND any
+      // foreground children it spawned (git, cp, etc.). Without this,
+      // killing the shell leaves descendants running and they can race
+      // with cleanup.
+      detached: process.platform !== 'win32'
+    })
+    if (proc.stdin) proc.stdin.end()
+
+    let output = ''
+    proc.stdout?.on('data', (chunk: Buffer) => {
+      output += chunk.toString()
+    })
+    proc.stderr?.on('data', (chunk: Buffer) => {
+      output += chunk.toString()
+    })
+
+    let settled = false
+    let timedOut = false
+    let killTimer: NodeJS.Timeout | null = null
+    const timeoutMs = opts.timeoutMs ?? WORKTREE_CREATE_SCRIPT_TIMEOUT_MS
+    // On timeout: signal the whole process group but DO NOT resolve yet.
+    // The `exit` handler resolves once the script process has actually died,
+    // so callers don't start cleanup while git commands spawned by the
+    // script are still running (which could race and recreate the worktree
+    // we just removed).
+    const timeoutTimer = setTimeout(() => {
+      if (settled) return
+      timedOut = true
+      signalProcessGroup(proc, 'SIGTERM')
+      killTimer = setTimeout(() => {
+        signalProcessGroup(proc, 'SIGKILL')
+      }, 500)
+    }, timeoutMs)
+    // Listen on `exit` (process died) rather than `close` (all stdio closed).
+    // If the script spawned a grandchild that inherited stdout/stderr, `close`
+    // would not fire until that grandchild also closes the pipes -- which
+    // would defeat the timeout (the shell can be SIGKILLed but an orphaned
+    // grandchild like `sleep` can keep the pipes open). `exit` accurately
+    // signals "the script process is gone, cleanup can run safely".
+    const onExit = (code: number | null): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeoutTimer)
+      if (killTimer !== null) clearTimeout(killTimer)
+      if (timedOut) {
+        resolve({
+          success: false,
+          output,
+          error: `Worktree create script timed out after ${timeoutMs}ms`
+        })
+      } else if (code === 0) {
+        resolve({ success: true, output })
+      } else {
+        resolve({
+          success: false,
+          output,
+          error: `Worktree create script exited with code ${code ?? 'null'}`
+        })
+      }
+    }
+    proc.on('error', (err) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeoutTimer)
+      if (killTimer !== null) clearTimeout(killTimer)
+      resolve({ success: false, output, error: err.message })
+    })
+    proc.on('exit', onExit)
+  })
+
+/**
+ * Best-effort cleanup of a partial worktree left behind by a failed create
+ * script. The script may have already run `git worktree add` and created a
+ * branch before failing in a later step (key copy, checkout, post-create
+ * setup, etc.); without cleanup, those artefacts remain on disk and in the
+ * repo's worktree list with no Hive DB row to track them, forcing the user
+ * to prune them by hand. Errors are swallowed: if there is nothing to clean
+ * up, or the cleanup itself fails, the original script failure is still the
+ * one reported to the user.
+ *
+ * Deliberately conservative about deleting the path on disk: only removes
+ * directories git itself owns (registered as a linked worktree). A pre-
+ * existing dir at the same path that was *not* created by our script attempt
+ * is left alone, so a misconfigured collision can never wipe user data.
+ * The other create flows include existing dirs in their collision detection
+ * to prevent that case from arising in the first place.
+ */
+const cleanupFailedWorktreeCreate = async (
+  git: SimpleGit,
+  worktreePath: string,
+  branchName: string
+): Promise<void> => {
+  let worktreeWasRegistered = false
+  try {
+    const list = await git.raw(['worktree', 'list', '--porcelain'])
+    worktreeWasRegistered = list
+      .split('\n')
+      .some((line) => line === `worktree ${worktreePath}`)
+  } catch {
+    // If we can't list, fall through; we'll attempt remove anyway and just
+    // not do the rmSync fallback.
+  }
+  try {
+    await git.raw(['worktree', 'remove', worktreePath, '--force'])
+  } catch {
+    // Worktree may not exist, or removal may fail; fall through.
+  }
+  if (worktreeWasRegistered) {
+    // Only rmSync paths git itself was tracking. A directory we never
+    // registered may have been pre-existing user data.
+    try {
+      if (existsSync(worktreePath)) {
+        rmSync(worktreePath, { recursive: true, force: true })
+      }
+    } catch {
+      // Best-effort.
+    }
+  }
+  try {
+    await git.raw(['worktree', 'prune'])
+  } catch {
+    // Best-effort.
+  }
+  try {
+    await git.raw(['branch', '-D', branchName])
+  } catch {
+    // Branch may not have been created, or may already be gone.
+  }
+}
 
 const parseShortStat = (shortstat: string) => {
   const filesMatch = shortstat.match(/(\d+) files? changed/)
@@ -293,11 +543,13 @@ const make = Effect.gen(function* () {
     sourceBranch: string,
     sourceWorktreePath: string,
     projectName: string,
-    nameHint?: string
+    nameHint?: string,
+    options?: { worktreeCreateScript?: string | null }
   ) =>
     writeOp(repoPath, 'git worktree add duplicate', async (git) => {
       const projectWorktreesDir = ensureWorktreesDir(projectName)
       const MAX_ATTEMPTS = 3
+      const createScript = options?.worktreeCreateScript ?? null
       let newBranchName = ''
       let worktreePath = ''
       let created = false
@@ -306,8 +558,20 @@ const make = Effect.gen(function* () {
         const allBranches = (await git.branch(['-a'])).all.map((b) =>
           b.startsWith('remotes/origin/') ? b.replace('remotes/origin/', '') : b
         )
+        // Include existing dirs in collision detection, matching the create
+        // and createFromBranch flows. Prevents a stale/user-created dir at
+        // ~/.hive-worktrees/<project>/<project>--<name> from colliding with
+        // a fresh attempt and getting wiped by the failure-cleanup path.
+        let existingDirs: string[] = []
+        try {
+          existingDirs = readdirSync(projectWorktreesDir).map((d) =>
+            d.startsWith(`${projectName}--`) ? d.slice(projectName.length + 2) : d
+          )
+        } catch {
+          // Missing or unreadable worktrees dir; just reduces collision hints.
+        }
+        const existingNames = new Set([...allBranches, ...existingDirs])
         if (nameHint) {
-          const existingNames = new Set(allBranches)
           newBranchName = nameHint
           if (existingNames.has(newBranchName)) {
             let suffix = 2
@@ -318,15 +582,41 @@ const make = Effect.gen(function* () {
           const baseName = sourceBranch.replace(/-v\d+$/, '')
           const versionPattern = new RegExp(`^${baseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-v(\\d+)$`)
           let maxVersion = 1
-          for (const branch of allBranches) {
-            const match = branch.match(versionPattern)
+          for (const name of existingNames) {
+            const match = name.match(versionPattern)
             if (match) maxVersion = Math.max(maxVersion, parseInt(match[1], 10))
           }
           newBranchName = `${baseName}-v${maxVersion + 1}`
         }
         worktreePath = join(projectWorktreesDir, `${projectName}--${newBranchName}`)
         try {
-          await git.raw(['worktree', 'add', '-b', newBranchName, worktreePath, sourceBranch])
+          if (createScript) {
+            const scriptResult = await runWorktreeCreateScript({
+              script: createScript,
+              projectPath: repoPath,
+              worktreePath,
+              branchName: newBranchName,
+              baseBranch: sourceBranch,
+              baseRef: sourceBranch,
+              mode: 'duplicate',
+              sourceWorktreePath,
+              sourceBranch
+            })
+            if (!scriptResult.success) {
+              await cleanupFailedWorktreeCreate(git, worktreePath, newBranchName)
+              throw new Error(
+                `${scriptResult.error ?? 'Script failed'}\n${scriptResult.output}`
+              )
+            }
+            if (!existsSync(worktreePath)) {
+              await cleanupFailedWorktreeCreate(git, worktreePath, newBranchName)
+              throw new Error(
+                `Worktree create script exited successfully but no worktree exists at ${worktreePath}`
+              )
+            }
+          } else {
+            await git.raw(['worktree', 'add', '-b', newBranchName, worktreePath, sourceBranch])
+          }
           created = true
           break
         } catch (error) {
@@ -394,6 +684,7 @@ const make = Effect.gen(function* () {
           const projectWorktreesDir = ensureWorktreesDir(projectName)
           const defaultBranch = (await git.branch()).current
           const autoPull = options?.autoPull !== false
+          const createScript = options?.worktreeCreateScript ?? null
           let pullResult: { success: boolean; updated: boolean } = { success: true, updated: false }
           if (autoPull) {
             try {
@@ -433,7 +724,31 @@ const make = Effect.gen(function* () {
             )
             const worktreePath = join(projectWorktreesDir, `${projectName}--${breedName}`)
             try {
-              await git.raw(['worktree', 'add', '-b', breedName, worktreePath, defaultBranch])
+              if (createScript) {
+                const scriptResult = await runWorktreeCreateScript({
+                  script: createScript,
+                  projectPath: repoPath,
+                  worktreePath,
+                  branchName: breedName,
+                  baseBranch: defaultBranch,
+                  baseRef: defaultBranch,
+                  mode: 'new'
+                })
+                if (!scriptResult.success) {
+                  await cleanupFailedWorktreeCreate(git, worktreePath, breedName)
+                  throw new Error(
+                    `${scriptResult.error ?? 'Script failed'}\n${scriptResult.output}`
+                  )
+                }
+                if (!existsSync(worktreePath)) {
+                  await cleanupFailedWorktreeCreate(git, worktreePath, breedName)
+                  throw new Error(
+                    `Worktree create script exited successfully but no worktree exists at ${worktreePath}`
+                  )
+                }
+              } else {
+                await git.raw(['worktree', 'add', '-b', breedName, worktreePath, defaultBranch])
+              }
               return {
                 success: true as const,
                 name: breedName,
@@ -495,7 +810,8 @@ const make = Effect.gen(function* () {
                 branchName,
                 checkedOutWorktree.path,
                 projectName,
-                options?.nameHint
+                options?.nameHint,
+                { worktreeCreateScript: options?.worktreeCreateScript ?? null }
               )
               return { ...dup, baseBranch: branchName }
             }
@@ -505,6 +821,7 @@ const make = Effect.gen(function* () {
             const projectWorktreesDir = ensureWorktreesDir(projectName)
             const MAX_ATTEMPTS = 3
             const autoPull = options?.autoPull !== false
+            const createScript = options?.worktreeCreateScript ?? null
             let pullResult = { success: true, updated: false }
             if (prNumber != null) await git.raw(['fetch', 'origin', `pull/${prNumber}/head`])
             else if (autoPull) {
@@ -547,8 +864,33 @@ const make = Effect.gen(function* () {
                 worktreeName = `${options.nameHint}-${suffix}`
               }
               const worktreePath = join(projectWorktreesDir, `${projectName}--${worktreeName}`)
+              const baseRef = prNumber != null ? 'FETCH_HEAD' : branchName
               try {
-                await git.raw(['worktree', 'add', '-b', worktreeName, worktreePath, prNumber != null ? 'FETCH_HEAD' : branchName])
+                if (createScript) {
+                  const scriptResult = await runWorktreeCreateScript({
+                    script: createScript,
+                    projectPath: repoPath,
+                    worktreePath,
+                    branchName: worktreeName,
+                    baseBranch: branchName,
+                    baseRef,
+                    mode: 'existing'
+                  })
+                  if (!scriptResult.success) {
+                    await cleanupFailedWorktreeCreate(git, worktreePath, worktreeName)
+                    throw new Error(
+                      `${scriptResult.error ?? 'Script failed'}\n${scriptResult.output}`
+                    )
+                  }
+                  if (!existsSync(worktreePath)) {
+                    await cleanupFailedWorktreeCreate(git, worktreePath, worktreeName)
+                    throw new Error(
+                      `Worktree create script exited successfully but no worktree exists at ${worktreePath}`
+                    )
+                  }
+                } else {
+                  await git.raw(['worktree', 'add', '-b', worktreeName, worktreePath, baseRef])
+                }
                 return {
                   success: true as const,
                   path: worktreePath,

@@ -31,6 +31,7 @@ interface Project {
   setup_script: string | null
   run_script: string | null
   archive_script: string | null
+  worktree_create_script: string | null
   custom_commands: CustomProjectCommand[] | null
   auto_assign_port: boolean
   is_remote?: boolean
@@ -52,6 +53,7 @@ export function ProjectSettingsDialog({
   const [setupScript, setSetupScript] = useState('')
   const [runScript, setRunScript] = useState('')
   const [archiveScript, setArchiveScript] = useState('')
+  const [worktreeCreateScript, setWorktreeCreateScript] = useState('')
   const [customIcon, setCustomIcon] = useState<string | null>(null)
   const [customCommands, setCustomCommands] = useState<CustomProjectCommand[]>([])
   const [autoAssignPort, setAutoAssignPort] = useState(false)
@@ -66,6 +68,7 @@ export function ProjectSettingsDialog({
       setSetupScript(project.setup_script ?? '')
       setRunScript(project.run_script ?? '')
       setArchiveScript(project.archive_script ?? '')
+      setWorktreeCreateScript(project.worktree_create_script ?? '')
       setCustomIcon(project.custom_icon ?? null)
       setCustomCommands(project.custom_commands ?? [])
       setAutoAssignPort(project.auto_assign_port ?? false)
@@ -104,6 +107,7 @@ export function ProjectSettingsDialog({
     project.setup_script,
     project.run_script,
     project.archive_script,
+    project.worktree_create_script,
     project.custom_icon,
     project.custom_commands,
     project.auto_assign_port
@@ -140,6 +144,7 @@ export function ProjectSettingsDialog({
         setup_script: setupScript.trim() || null,
         run_script: runScript.trim() || null,
         archive_script: archiveScript.trim() || null,
+        worktree_create_script: worktreeCreateScript.trim() || null,
         custom_commands: customCommands.filter(
           (command) => command.name.trim() !== '' && command.prompt.trim() !== ''
         ),
@@ -293,6 +298,51 @@ export function ProjectSettingsDialog({
                   onChange={(e) => setArchiveScript(e.target.value)}
                   placeholder={'pnpm run clean'}
                   rows={4}
+                  className="font-mono text-sm resize-y"
+                />
+              </div>
+
+              {/* Worktree Create Script */}
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium">Worktree Create Script</label>
+                <p className="text-xs text-muted-foreground">
+                  Advanced. When set, this script replaces Hive&apos;s built-in{' '}
+                  <code className="font-mono text-[0.7rem]">git worktree add</code> call. Use for
+                  repos that need special handling (e.g. git-crypt, sparse-checkout). The script
+                  must create a worktree at{' '}
+                  <code className="font-mono text-[0.7rem]">$HIVE_WORKTREE_PATH</code> on branch{' '}
+                  <code className="font-mono text-[0.7rem]">$HIVE_BRANCH_NAME</code>. Available env
+                  vars: <code className="font-mono text-[0.7rem]">HIVE_WORKTREE_PATH</code>,{' '}
+                  <code className="font-mono text-[0.7rem]">HIVE_BRANCH_NAME</code>,{' '}
+                  <code className="font-mono text-[0.7rem]">HIVE_BASE_BRANCH</code> (human-readable
+                  base branch name),{' '}
+                  <code className="font-mono text-[0.7rem]">HIVE_BASE_REF</code> (git ref to use
+                  with <code className="font-mono text-[0.7rem]">git worktree add</code>; equals{' '}
+                  <code className="font-mono text-[0.7rem]">HIVE_BASE_BRANCH</code> in most flows,
+                  but is <code className="font-mono text-[0.7rem]">FETCH_HEAD</code> when checking
+                  out a pull-request ref),{' '}
+                  <code className="font-mono text-[0.7rem]">HIVE_PROJECT_PATH</code>,{' '}
+                  <code className="font-mono text-[0.7rem]">HIVE_WORKTREE_MODE</code> (
+                  <code className="font-mono text-[0.7rem]">new</code> |{' '}
+                  <code className="font-mono text-[0.7rem]">existing</code> |{' '}
+                  <code className="font-mono text-[0.7rem]">duplicate</code>). In{' '}
+                  <code className="font-mono text-[0.7rem]">duplicate</code> mode, also receives{' '}
+                  <code className="font-mono text-[0.7rem]">HIVE_SOURCE_WORKTREE_PATH</code> and{' '}
+                  <code className="font-mono text-[0.7rem]">HIVE_SOURCE_BRANCH</code>. Scripts run
+                  via <code className="font-mono text-[0.7rem]">/bin/sh -c</code> by default; a{' '}
+                  <code className="font-mono text-[0.7rem]">#!/usr/bin/env bash</code> or{' '}
+                  <code className="font-mono text-[0.7rem]">#!/bin/bash</code> shebang on the first
+                  line switches to <code className="font-mono text-[0.7rem]">bash -c</code>. Hive
+                  aborts the script (and its whole process group) after 5 minutes if it does not
+                  exit, and best-effort cleans up any partial worktree/branch on failure.
+                </p>
+                <Textarea
+                  value={worktreeCreateScript}
+                  onChange={(e) => setWorktreeCreateScript(e.target.value)}
+                  placeholder={
+                    'git worktree add --no-checkout "$HIVE_WORKTREE_PATH" -b "$HIVE_BRANCH_NAME" "$HIVE_BASE_REF"\n# ... any tool-specific post-create work, e.g. copying encryption keys ...\ngit -C "$HIVE_WORKTREE_PATH" reset --hard HEAD'
+                  }
+                  rows={5}
                   className="font-mono text-sm resize-y"
                 />
               </div>

@@ -20,6 +20,7 @@ interface Project {
   setup_script: string | null
   run_script: string | null
   archive_script: string | null
+  worktree_create_script: string | null
   custom_commands: CustomProjectCommand[] | null
   auto_assign_port: boolean
   sort_order: number
@@ -60,6 +61,7 @@ interface ProjectState {
       setup_script?: string | null
       run_script?: string | null
       archive_script?: string | null
+      worktree_create_script?: string | null
       custom_commands?: CustomProjectCommand[] | null
       auto_assign_port?: boolean
     }
@@ -263,6 +265,7 @@ export const useProjectStore = create<ProjectState>()(
           setup_script?: string | null
           run_script?: string | null
           archive_script?: string | null
+          worktree_create_script?: string | null
           custom_commands?: CustomProjectCommand[] | null
           auto_assign_port?: boolean
         }

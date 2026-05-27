@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 28
+export const CURRENT_SCHEMA_VERSION = 29
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS projects (
   setup_script TEXT DEFAULT NULL,
   run_script TEXT DEFAULT NULL,
   archive_script TEXT DEFAULT NULL,
+  worktree_create_script TEXT DEFAULT NULL,
   custom_commands TEXT DEFAULT NULL,
   custom_icon TEXT DEFAULT NULL,
   detected_icon TEXT DEFAULT NULL,
@@ -527,6 +528,12 @@ DROP TABLE IF EXISTS diff_comments;`
     version: 28,
     name: 'add_project_custom_commands',
     up: `ALTER TABLE projects ADD COLUMN custom_commands TEXT DEFAULT NULL`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
+  },
+  {
+    version: 29,
+    name: 'add_project_worktree_create_script',
+    up: `ALTER TABLE projects ADD COLUMN worktree_create_script TEXT DEFAULT NULL`,
     down: `-- SQLite cannot drop columns; this is a no-op for safety`
   }
 ]
