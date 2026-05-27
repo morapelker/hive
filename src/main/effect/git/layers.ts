@@ -179,23 +179,44 @@ export const runWorktreeCreateScript = (
  * to prune them by hand. Errors are swallowed: if there is nothing to clean
  * up, or the cleanup itself fails, the original script failure is still the
  * one reported to the user.
+ *
+ * Deliberately conservative about deleting the path on disk: only removes
+ * directories git itself owns (registered as a linked worktree). A pre-
+ * existing dir at the same path that was *not* created by our script attempt
+ * is left alone, so a misconfigured collision can never wipe user data.
+ * The other create flows include existing dirs in their collision detection
+ * to prevent that case from arising in the first place.
  */
 const cleanupFailedWorktreeCreate = async (
   git: SimpleGit,
   worktreePath: string,
   branchName: string
 ): Promise<void> => {
+  let worktreeWasRegistered = false
+  try {
+    const list = await git.raw(['worktree', 'list', '--porcelain'])
+    worktreeWasRegistered = list
+      .split('\n')
+      .some((line) => line === `worktree ${worktreePath}`)
+  } catch {
+    // If we can't list, fall through; we'll attempt remove anyway and just
+    // not do the rmSync fallback.
+  }
   try {
     await git.raw(['worktree', 'remove', worktreePath, '--force'])
   } catch {
-    // Worktree may not exist, or removal may fail; fall through to manual cleanup.
+    // Worktree may not exist, or removal may fail; fall through.
   }
-  try {
-    if (existsSync(worktreePath)) {
-      rmSync(worktreePath, { recursive: true, force: true })
+  if (worktreeWasRegistered) {
+    // Only rmSync paths git itself was tracking. A directory we never
+    // registered may have been pre-existing user data.
+    try {
+      if (existsSync(worktreePath)) {
+        rmSync(worktreePath, { recursive: true, force: true })
+      }
+    } catch {
+      // Best-effort.
     }
-  } catch {
-    // Best-effort.
   }
   try {
     await git.raw(['worktree', 'prune'])
@@ -485,8 +506,20 @@ const make = Effect.gen(function* () {
         const allBranches = (await git.branch(['-a'])).all.map((b) =>
           b.startsWith('remotes/origin/') ? b.replace('remotes/origin/', '') : b
         )
+        // Include existing dirs in collision detection, matching the create
+        // and createFromBranch flows. Prevents a stale/user-created dir at
+        // ~/.hive-worktrees/<project>/<project>--<name> from colliding with
+        // a fresh attempt and getting wiped by the failure-cleanup path.
+        let existingDirs: string[] = []
+        try {
+          existingDirs = readdirSync(projectWorktreesDir).map((d) =>
+            d.startsWith(`${projectName}--`) ? d.slice(projectName.length + 2) : d
+          )
+        } catch {
+          // Missing or unreadable worktrees dir; just reduces collision hints.
+        }
+        const existingNames = new Set([...allBranches, ...existingDirs])
         if (nameHint) {
-          const existingNames = new Set(allBranches)
           newBranchName = nameHint
           if (existingNames.has(newBranchName)) {
             let suffix = 2
@@ -497,8 +530,8 @@ const make = Effect.gen(function* () {
           const baseName = sourceBranch.replace(/-v\d+$/, '')
           const versionPattern = new RegExp(`^${baseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-v(\\d+)$`)
           let maxVersion = 1
-          for (const branch of allBranches) {
-            const match = branch.match(versionPattern)
+          for (const name of existingNames) {
+            const match = name.match(versionPattern)
             if (match) maxVersion = Math.max(maxVersion, parseInt(match[1], 10))
           }
           newBranchName = `${baseName}-v${maxVersion + 1}`
