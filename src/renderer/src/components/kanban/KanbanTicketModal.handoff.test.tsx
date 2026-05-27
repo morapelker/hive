@@ -1,0 +1,371 @@
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { useEffect, useRef } from 'react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { KanbanTicketModal } from './KanbanTicketModal'
+import { ClaudeCliSessionView } from '../sessions/ClaudeCliSessionView'
+import {
+  ClaudeCliSessionPortalProvider,
+  useClaudeCliSessionPortal
+} from '@/contexts/ClaudeCliSessionPortalContext'
+import { useKanbanStore } from '@/stores/useKanbanStore'
+import { useProjectStore } from '@/stores/useProjectStore'
+import { useSettingsStore } from '@/stores/useSettingsStore'
+import { useSessionStore } from '@/stores/useSessionStore'
+import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
+import { useWorktreeStore } from '@/stores/useWorktreeStore'
+import type { KanbanTicket, Session, Worktree } from '../../../../main/db/types'
+
+vi.mock('../sessions/HandoffSplitButton', () => ({
+  HandoffSplitButton: ({
+    onHandoff,
+    testIdPrefix = 'plan-ready',
+    disabled = false
+  }: {
+    onHandoff: (override: { agentSdk: 'claude-code-cli'; model?: undefined }) => void
+    testIdPrefix?: string
+    disabled?: boolean
+  }) => (
+    <button
+      type="button"
+      data-testid={`${testIdPrefix}-handoff-btn`}
+      disabled={disabled}
+      onClick={() => onHandoff({ agentSdk: 'claude-code-cli' })}
+    >
+      Handoff
+    </button>
+  )
+}))
+
+vi.mock('@/components/terminal/TerminalView', () => ({
+  TerminalView: ({
+    createTerminal
+  }: {
+    createTerminal?: () => Promise<unknown>
+  }) => {
+    useEffect(() => {
+      void createTerminal?.()
+    }, [createTerminal])
+    return <div data-testid="mock-terminal-view" />
+  }
+}))
+
+vi.mock('../sessions/MarkdownRenderer', () => ({
+  MarkdownRenderer: ({ content }: { content: string }) => <div>{content}</div>
+}))
+
+vi.mock('./FollowupInput', () => ({
+  FollowupInput: () => <div data-testid="followup-input" />
+}))
+
+vi.mock('./TicketRunButton', () => ({
+  TicketRunButton: () => null
+}))
+
+vi.mock('@/hooks/useTicketRunScript', () => ({
+  useTicketRunScript: () => ({ hasRunScript: false }),
+  useTicketRunScriptHotkey: vi.fn()
+}))
+
+vi.mock('@/hooks/useDropZone', () => ({
+  useDropZone: () => ({ isDragging: false })
+}))
+
+vi.mock('@/hooks/useConflictFixFlow', () => ({
+  useConflictFixFlow: () => ({ startFixFlow: vi.fn(), openAttachedSession: vi.fn() })
+}))
+
+vi.mock('@/lib/toast', () => ({
+  toast: {
+    success: vi.fn(),
+    error: vi.fn(),
+    warning: vi.fn()
+  }
+}))
+
+const initialSettingsState = useSettingsStore.getState()
+const initialSessionState = useSessionStore.getState()
+const initialWorktreeState = useWorktreeStore.getState()
+const initialKanbanState = useKanbanStore.getState()
+const initialProjectState = useProjectStore.getState()
+const initialWorktreeStatusState = useWorktreeStatusStore.getState()
+
+const now = '2026-01-01T00:00:00.000Z'
+
+const sourceSession: Session = {
+  id: 'source-session',
+  worktree_id: 'worktree-1',
+  project_id: 'project-1',
+  connection_id: null,
+  name: 'Source Claude CLI',
+  status: 'active',
+  opencode_session_id: null,
+  claude_session_id: null,
+  agent_sdk: 'claude-code-cli',
+  mode: 'plan',
+  session_type: 'default',
+  model_provider_id: 'anthropic',
+  model_id: 'opus',
+  model_variant: 'high',
+  created_at: now,
+  updated_at: now,
+  completed_at: null,
+  pinned_to_board: false
+}
+
+const handoffSession: Session = {
+  ...sourceSession,
+  id: 'handoff-session',
+  name: 'Handoff Claude CLI',
+  mode: 'build'
+}
+
+const ticket: KanbanTicket = {
+  id: 'ticket-1',
+  project_id: 'project-1',
+  title: 'Plan ticket',
+  description: 'Ticket description',
+  attachments: [],
+  column: 'review',
+  sort_order: 0,
+  current_session_id: sourceSession.id,
+  worktree_id: 'worktree-1',
+  mode: 'plan',
+  plan_ready: true,
+  created_at: now,
+  updated_at: now,
+  archived_at: null,
+  external_provider: null,
+  external_id: null,
+  external_url: null,
+  github_pr_number: null,
+  github_pr_url: null,
+  mark: null,
+  total_tokens: 0,
+  pending_launch_config: null,
+  goal_mode: false,
+  goal_success_criteria: null,
+  note: null
+}
+
+const worktree: Worktree = {
+  id: 'worktree-1',
+  project_id: 'project-1',
+  name: 'Feature',
+  branch_name: 'feature',
+  path: '/repo/feature',
+  status: 'active',
+  is_default: false,
+  branch_renamed: 0,
+  last_message_at: null,
+  session_titles: '[]',
+  last_model_provider_id: null,
+  last_model_id: null,
+  last_model_variant: null,
+  attachments: '[]',
+  pinned: 0,
+  context: null,
+  github_pr_number: null,
+  github_pr_url: null,
+  base_branch: null,
+  created_at: now,
+  last_accessed_at: now
+}
+
+function setupWindowApis(): void {
+  Object.defineProperty(window, 'terminalOps', {
+    configurable: true,
+    writable: true,
+    value: {
+      createClaudeCli: vi.fn().mockResolvedValue({ success: true, value: { success: true } }),
+      onClaudeSessionId: vi.fn().mockReturnValue(() => {})
+    }
+  })
+
+  Object.defineProperty(window, 'opencodeOps', {
+    configurable: true,
+    writable: true,
+    value: {
+      abort: vi.fn().mockResolvedValue({ success: true, value: { success: true } }),
+      commands: vi.fn().mockResolvedValue({ success: true, value: { success: true, commands: [] } }),
+      listModels: vi.fn().mockResolvedValue({ success: true, value: { success: true, providers: [] } })
+    }
+  })
+
+  Object.defineProperty(window, 'db', {
+    configurable: true,
+    writable: true,
+    value: {
+      session: {
+        get: vi.fn().mockResolvedValue(null),
+        update: vi.fn().mockResolvedValue({ success: true, value: undefined })
+      },
+      worktree: {
+        get: vi.fn().mockResolvedValue(worktree)
+      }
+    }
+  })
+}
+
+function setupStores(): {
+  createSession: ReturnType<typeof vi.fn>
+  setActiveSession: ReturnType<typeof vi.fn>
+} {
+  const createSession = vi.fn(async () => ({ success: true, session: handoffSession }))
+  const setActiveSession = vi.fn()
+
+  useSettingsStore.setState({
+    availableAgentSdks: { opencode: true, claude: true, codex: true },
+    defaultAgentSdk: 'opencode',
+    selectedModel: null,
+    selectedModelByProvider: {},
+    defaultModels: null,
+    boardMode: 'toggle'
+  })
+  useProjectStore.setState({
+    selectedProjectId: 'project-1',
+    projects: [
+      {
+        id: 'project-1',
+        name: 'Hive',
+        path: '/repo',
+        description: null,
+        tags: null,
+        language: null,
+        custom_icon: null,
+        detected_icon: null,
+        setup_script: null,
+        run_script: null,
+        archive_script: null,
+        auto_assign_port: false,
+        sort_order: 0,
+        created_at: now,
+        last_accessed_at: now
+      }
+    ]
+  })
+  useWorktreeStore.setState({
+    selectedWorktreeId: 'worktree-1',
+    worktreesByProject: new Map([['project-1', [worktree]]]),
+    selectWorktree: vi.fn(),
+  })
+  useKanbanStore.setState({
+    selectedTicketId: ticket.id,
+    isBoardViewActive: true,
+    tickets: new Map([['project-1', [ticket]]]),
+    updateTicket: vi.fn(async () => undefined),
+    moveTicket: vi.fn(async () => undefined),
+    relinkTicketsForHandoff: vi.fn(async () => undefined)
+  })
+  useSessionStore.setState({
+    activeSessionId: sourceSession.id,
+    activeWorktreeId: 'worktree-1',
+    sessionsByWorktree: new Map([['worktree-1', [sourceSession]]]),
+    sessionsByConnection: new Map(),
+    pendingPlans: new Map([
+      [
+        sourceSession.id,
+        { requestId: 'request-1', toolUseID: 'tool-1', planContent: 'Implement the plan.' }
+      ]
+    ]),
+    createSession,
+    setSessionMode: vi.fn(async () => undefined),
+    setPendingMessage: vi.fn(),
+    dequeuePendingMessage: vi.fn(),
+    clearPendingPlan: vi.fn(),
+    requestSessionMount: vi.fn(),
+    releaseSessionMount: vi.fn(),
+    setActiveSession,
+    setActiveWorktree: vi.fn()
+  })
+  useWorktreeStatusStore.setState({
+    sessionStatuses: { [sourceSession.id]: { status: 'plan_ready', timestamp: 0 } },
+    clearSessionStatus: vi.fn()
+  })
+
+  return { createSession, setActiveSession }
+}
+
+function RegisterClaudeCliPortalTarget({ sessionId }: { sessionId: string }): React.JSX.Element {
+  const { registerTarget } = useClaudeCliSessionPortal()
+  const ref = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    registerTarget(sessionId, ref.current)
+    return () => registerTarget(sessionId, null)
+  }, [registerTarget, sessionId])
+
+  return <div ref={ref} data-testid="registered-claude-cli-target" />
+}
+
+describe('KanbanTicketModal handoff from Claude CLI plan review', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    setupWindowApis()
+  })
+
+  afterEach(() => {
+    cleanup()
+    useSettingsStore.setState(initialSettingsState, true)
+    useSessionStore.setState(initialSessionState, true)
+    useWorktreeStore.setState(initialWorktreeState, true)
+    useKanbanStore.setState(initialKanbanState, true)
+    useProjectStore.setState(initialProjectState, true)
+    useWorktreeStatusStore.setState(initialWorktreeStatusState, true)
+    delete (window as { terminalOps?: unknown }).terminalOps
+    delete (window as { opencodeOps?: unknown }).opencodeOps
+    delete (window as { db?: unknown }).db
+  })
+
+  it('starts the Claude CLI handoff without focusing the new session', async () => {
+    const { createSession, setActiveSession } = setupStores()
+    const user = userEvent.setup()
+
+    render(
+      <ClaudeCliSessionPortalProvider>
+        <KanbanTicketModal />
+      </ClaudeCliSessionPortalProvider>
+    )
+
+    await user.click(screen.getByTestId('plan-review-handoff-btn'))
+
+    await waitFor(() => expect(createSession).toHaveBeenCalledTimes(1))
+    expect(createSession).toHaveBeenCalledWith('worktree-1', 'project-1', 'claude-code-cli', undefined, {
+      autoFocus: false,
+      modelOverride: undefined
+    })
+    await waitFor(() => expect(window.terminalOps.createClaudeCli).toHaveBeenCalledTimes(1))
+    expect(window.terminalOps.createClaudeCli).toHaveBeenCalledWith('handoff-session', {
+      pendingPrompt: expect.stringContaining('Implement the plan.')
+    })
+    expect(setActiveSession).not.toHaveBeenCalledWith('handoff-session')
+    expect(useKanbanStore.getState().isBoardViewActive).toBe(true)
+  })
+
+  it('keeps board focus when the portaled Claude CLI plan card handoff is clicked', async () => {
+    const { createSession, setActiveSession } = setupStores()
+    const user = userEvent.setup()
+
+    render(
+      <ClaudeCliSessionPortalProvider>
+        <RegisterClaudeCliPortalTarget sessionId={sourceSession.id} />
+        <ClaudeCliSessionView sessionId={sourceSession.id} />
+      </ClaudeCliSessionPortalProvider>
+    )
+
+    await user.click(screen.getByTestId('claude-cli-plan-ready-handoff-btn'))
+
+    await waitFor(() => expect(createSession).toHaveBeenCalledTimes(1))
+    expect(createSession).toHaveBeenCalledWith('worktree-1', 'project-1', 'claude-code-cli', undefined, {
+      autoFocus: false,
+      modelOverride: undefined
+    })
+    await waitFor(() => expect(window.terminalOps.createClaudeCli).toHaveBeenCalledWith(
+      'handoff-session',
+      { pendingPrompt: expect.stringContaining('Implement the plan.') }
+    ))
+    expect(setActiveSession).not.toHaveBeenCalledWith('handoff-session')
+    expect(useKanbanStore.getState().isBoardViewActive).toBe(true)
+    expect(useKanbanStore.getState().selectedTicketId).toBeNull()
+  })
+})

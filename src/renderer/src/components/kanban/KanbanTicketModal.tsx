@@ -48,7 +48,7 @@ import { HandoffSplitButton } from '../sessions/HandoffSplitButton'
 import { IndeterminateProgressBar } from '@/components/sessions/IndeterminateProgressBar'
 import { cn } from '@/lib/utils'
 import { useKanbanStore } from '@/stores/useKanbanStore'
-import { useSessionStore } from '@/stores/useSessionStore'
+import { BOARD_TAB_ID, useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useClaudeCliSessionPortal } from '@/contexts/ClaudeCliSessionPortalContext'
@@ -2002,22 +2002,30 @@ function PlanReviewModeContent({
             sessionStore.setPendingMessage(newSessionId, handoffPrompt)
           }
 
-          // In sticky-tab mode, stay on the board; otherwise navigate to the new session.
-          // setActiveConnectionSession requires activeConnectionId to be set — which
-          // it isn't when the modal is opened from the kanban board — so we switch
-          // the active connection first, then nail down the session within it.
-          const { BOARD_TAB_ID } = await import('@/stores/useSessionStore')
+          // Handoff from the ticket modal starts work in the background and keeps
+          // the board in focus. Sticky-tab mode represents the board as a tab, so
+          // explicitly preserve that tab; toggle mode is already on the board.
           if (useSettingsStore.getState().boardMode === 'sticky-tab') {
             sessionStore.setActiveSession(BOARD_TAB_ID)
-          } else {
-            sessionStore.setActiveConnection(sessionRecord.connection_id)
-            sessionStore.setActiveConnectionSession(newSessionId)
           }
 
           onClose()
           void (async () => {
             await setModePromise
-            if (newSession.agent_sdk !== 'claude-code-cli') {
+            if (newSession.agent_sdk === 'claude-code-cli') {
+              bumpWorktreeLastMessage({ connectionId: sessionRecord.connection_id })
+              const cliResult = unwrapEnvelope(
+                await window.terminalOps.createClaudeCli(newSessionId, {
+                  pendingPrompt: handoffPrompt
+                })
+              )
+              if (!cliResult.success) {
+                throw new Error(cliResult.error ?? 'Failed to start Claude CLI handoff')
+              }
+              if (handoffPrompt) {
+                sessionStore.dequeuePendingMessage(newSessionId)
+              }
+            } else {
               await eagerHandoffStart(connectionPath, newSessionId, handoffPrompt, {
                 connectionId: sessionRecord.connection_id
               })
@@ -2081,20 +2089,30 @@ function PlanReviewModeContent({
           sessionStore.setPendingMessage(newSessionId, handoffPrompt)
         }
 
-        // In sticky-tab mode, stay on the board; otherwise navigate to the new session
-        const { BOARD_TAB_ID } = await import('@/stores/useSessionStore')
+        // Handoff from the ticket modal starts work in the background and keeps
+        // the board in focus. Sticky-tab mode represents the board as a tab, so
+        // explicitly preserve that tab; toggle mode is already on the board.
         if (useSettingsStore.getState().boardMode === 'sticky-tab') {
           sessionStore.setActiveSession(BOARD_TAB_ID)
-        } else {
-          useWorktreeStore.getState().selectWorktree(worktreeId)
-          sessionStore.setActiveWorktree(worktreeId)
-          sessionStore.setActiveSession(newSessionId)
         }
 
         onClose()
         void (async () => {
           await setModePromise
-          if (newSession.agent_sdk !== 'claude-code-cli') {
+          if (newSession.agent_sdk === 'claude-code-cli') {
+            bumpWorktreeLastMessage({ worktreeId })
+            const cliResult = unwrapEnvelope(
+              await window.terminalOps.createClaudeCli(newSessionId, {
+                pendingPrompt: handoffPrompt
+              })
+            )
+            if (!cliResult.success) {
+              throw new Error(cliResult.error ?? 'Failed to start Claude CLI handoff')
+            }
+            if (handoffPrompt) {
+              sessionStore.dequeuePendingMessage(newSessionId)
+            }
+          } else {
             await eagerHandoffStart(localWorktreePath, newSessionId, handoffPrompt, { worktreeId })
           }
           toast.success('Handoff session started')
