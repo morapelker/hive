@@ -342,6 +342,22 @@ describe('KanbanTicketModal handoff from Claude CLI plan review', () => {
     expect(useKanbanStore.getState().isBoardViewActive).toBe(true)
   })
 
+  it('hides left-side followup and implement controls for Claude CLI plan review', async () => {
+    setupStores()
+
+    render(
+      <ClaudeCliSessionPortalProvider>
+        <KanbanTicketModal />
+      </ClaudeCliSessionPortalProvider>
+    )
+
+    expect(screen.queryByTestId('followup-input')).toBeNull()
+    expect(screen.queryByTestId('plan-review-implement-btn')).toBeNull()
+    expect(screen.queryByTestId('plan-review-supercharge-btn')).toBeNull()
+    expect(screen.queryByTestId('plan-review-supercharge-local-btn')).toBeNull()
+    expect(screen.queryByTestId('plan-review-handoff-btn')).not.toBeNull()
+  })
+
   it('keeps board focus when the portaled Claude CLI plan card handoff is clicked', async () => {
     const { createSession, setActiveSession } = setupStores()
     const user = userEvent.setup()

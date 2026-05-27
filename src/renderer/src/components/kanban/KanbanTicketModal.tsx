@@ -1660,6 +1660,7 @@ function PlanReviewModeContent({
   const dropZoneRef = useRef<HTMLDivElement>(null)
 
   const isConnectionSession = !!sessionRecord?.connection_id
+  const isClaudeCliPlanSession = sessionRecord?.agent_sdk === 'claude-code-cli'
   const hasWorkingContext = !!(sessionRecord?.worktree_id || sessionRecord?.connection_id)
 
   const [slashCommands, setSlashCommands] = useState<{ name: string }[]>([])
@@ -1669,7 +1670,7 @@ function PlanReviewModeContent({
   )
 
   useEffect(() => {
-    if (!worktreePath || !opcSessionId) return
+    if (isClaudeCliPlanSession || !worktreePath || !opcSessionId) return
     let cancelled = false
     window.opencodeOps
       .commands(worktreePath, opcSessionId)
@@ -1685,7 +1686,7 @@ function PlanReviewModeContent({
     return () => {
       cancelled = true
     }
-  }, [worktreePath, opcSessionId])
+  }, [isClaudeCliPlanSession, worktreePath, opcSessionId])
 
   const planContent = pendingPlan?.planContent ?? ticket.description ?? ''
 
@@ -1705,6 +1706,7 @@ function PlanReviewModeContent({
 
   const handleDropFiles = useCallback(
     (files: FileList) => {
+      if (isClaudeCliPlanSession) return
       for (const file of Array.from(files)) {
         if (attachments.length >= MAX_ATTACHMENTS) {
           toast.warning(`Maximum ${MAX_ATTACHMENTS} attachments reached`)
@@ -1731,7 +1733,7 @@ function PlanReviewModeContent({
         }
       }
     },
-    [handleAttach, attachments.length]
+    [handleAttach, attachments.length, isClaudeCliPlanSession]
   )
 
   const { isDragging } = useDropZone({ onDrop: handleDropFiles, containerRef: dropZoneRef })
@@ -1746,6 +1748,7 @@ function PlanReviewModeContent({
 
   // Tab key toggles mode, Shift+Tab toggles super-plan
   useEffect(() => {
+    if (isClaudeCliPlanSession) return
     const handler = (e: KeyboardEvent): void => {
       if (e.key === 'Tab' && !e.ctrlKey && !e.metaKey && !e.altKey) {
         const modal = document.querySelector('[data-testid="kanban-ticket-modal"]')
@@ -1762,7 +1765,7 @@ function PlanReviewModeContent({
     }
     window.addEventListener('keydown', handler, true)
     return () => window.removeEventListener('keydown', handler, true)
-  }, [toggleMode, toggleSuperMode])
+  }, [isClaudeCliPlanSession, toggleMode, toggleSuperMode])
 
   // ── Send followup (reject pending plan + iterate) ────────────────
   const handleSendFollowup = useCallback(async () => {
@@ -2544,24 +2547,26 @@ function PlanReviewModeContent({
       <TicketGoalSection ticket={ticket} />
 
       {/* Followup input — iterate on the plan */}
-      <FollowupInput
-        text={followUpText}
-        onTextChange={setFollowUpText}
-        attachments={attachments}
-        onAttach={handleAttach}
-        onRemoveAttachment={handleRemoveAttachment}
-        followUpMode={followUpMode}
-        onToggleMode={toggleMode}
-        onSend={handleSendFollowup}
-        isSending={isSending}
-        placeholder="Iterate on the plan... (Enter to send)"
-        testIdPrefix="plan-review"
-        showInlineSendButton
-        textareaRef={textareaRef}
-      />
+      {!isClaudeCliPlanSession && (
+        <FollowupInput
+          text={followUpText}
+          onTextChange={setFollowUpText}
+          attachments={attachments}
+          onAttach={handleAttach}
+          onRemoveAttachment={handleRemoveAttachment}
+          followUpMode={followUpMode}
+          onToggleMode={toggleMode}
+          onSend={handleSendFollowup}
+          isSending={isSending}
+          placeholder="Iterate on the plan... (Enter to send)"
+          testIdPrefix="plan-review"
+          showInlineSendButton
+          textareaRef={textareaRef}
+        />
+      )}
 
       {/* Drag-and-drop overlay */}
-      {isDragging && (
+      {!isClaudeCliPlanSession && isDragging && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm rounded-lg border-2 border-dashed border-primary/50">
           <div className="flex flex-col items-center gap-2 text-primary">
             <Upload className="h-8 w-8" />
@@ -2588,7 +2593,7 @@ function PlanReviewModeContent({
             testIdPrefix="plan-review"
             disabled={isActioning || !hasWorkingContext}
           />
-          {!isConnectionSession && hasSuperpowers && (
+          {!isClaudeCliPlanSession && !isConnectionSession && hasSuperpowers && (
             <Button
               type="button"
               data-testid="plan-review-supercharge-local-btn"
@@ -2601,7 +2606,7 @@ function PlanReviewModeContent({
               Supercharge locally
             </Button>
           )}
-          {hasSuperpowers && (
+          {!isClaudeCliPlanSession && hasSuperpowers && (
             <Button
               type="button"
               data-testid="plan-review-supercharge-btn"
@@ -2613,16 +2618,18 @@ function PlanReviewModeContent({
               Supercharge
             </Button>
           )}
-          <Button
-            type="button"
-            data-testid="plan-review-implement-btn"
-            disabled={isActioning}
-            onClick={handleImplement}
-            className="gap-1.5 bg-blue-600 hover:bg-blue-700 text-white"
-          >
-            <Hammer className="h-3.5 w-3.5" />
-            Implement
-          </Button>
+          {!isClaudeCliPlanSession && (
+            <Button
+              type="button"
+              data-testid="plan-review-implement-btn"
+              disabled={isActioning}
+              onClick={handleImplement}
+              className="gap-1.5 bg-blue-600 hover:bg-blue-700 text-white"
+            >
+              <Hammer className="h-3.5 w-3.5" />
+              Implement
+            </Button>
+          )}
         </DialogFooter>
       )}
     </div>
