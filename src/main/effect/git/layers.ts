@@ -1,4 +1,4 @@
-import { execFile } from 'child_process'
+import { execFile, spawn } from 'child_process'
 import { existsSync, mkdirSync, rmSync, cpSync, writeFileSync, unlinkSync, readdirSync, readFileSync, appendFileSync, mkdtempSync } from 'fs'
 import { readFile as readFileAsync } from 'fs/promises'
 import { tmpdir } from 'os'
@@ -31,6 +31,81 @@ const ensureWorktreesDir = (projectName: string): string => {
 }
 
 const invalidBranch = (branch: string): boolean => !branch || branch.startsWith('-')
+
+export type WorktreeCreateMode = 'new' | 'existing' | 'duplicate'
+
+export interface RunWorktreeCreateScriptOptions {
+  readonly script: string
+  readonly projectPath: string
+  readonly worktreePath: string
+  readonly branchName: string
+  readonly baseBranch: string
+  readonly mode: WorktreeCreateMode
+  readonly sourceWorktreePath?: string
+  readonly sourceBranch?: string
+}
+
+export interface RunWorktreeCreateScriptResult {
+  readonly success: boolean
+  readonly output: string
+  readonly error?: string
+}
+
+export const runWorktreeCreateScript = (
+  opts: RunWorktreeCreateScriptOptions
+): Promise<RunWorktreeCreateScriptResult> =>
+  new Promise((resolve) => {
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      HIVE_PROJECT_PATH: opts.projectPath,
+      HIVE_WORKTREE_PATH: opts.worktreePath,
+      HIVE_BRANCH_NAME: opts.branchName,
+      HIVE_BASE_BRANCH: opts.baseBranch,
+      HIVE_WORKTREE_MODE: opts.mode
+    }
+    if (opts.sourceWorktreePath !== undefined) {
+      env.HIVE_SOURCE_WORKTREE_PATH = opts.sourceWorktreePath
+    }
+    if (opts.sourceBranch !== undefined) {
+      env.HIVE_SOURCE_BRANCH = opts.sourceBranch
+    }
+
+    const proc = spawn('sh', ['-c', opts.script], {
+      cwd: opts.projectPath,
+      env,
+      stdio: ['pipe', 'pipe', 'pipe']
+    })
+    if (proc.stdin) proc.stdin.end()
+
+    let output = ''
+    proc.stdout?.on('data', (chunk: Buffer) => {
+      output += chunk.toString()
+    })
+    proc.stderr?.on('data', (chunk: Buffer) => {
+      output += chunk.toString()
+    })
+
+    let settled = false
+    const onClose = (code: number | null): void => {
+      if (settled) return
+      settled = true
+      if (code === 0) {
+        resolve({ success: true, output })
+      } else {
+        resolve({
+          success: false,
+          output,
+          error: `Worktree create script exited with code ${code ?? 'null'}`
+        })
+      }
+    }
+    proc.on('error', (err) => {
+      if (settled) return
+      settled = true
+      resolve({ success: false, output, error: err.message })
+    })
+    proc.on('close', onClose)
+  })
 
 const parseShortStat = (shortstat: string) => {
   const filesMatch = shortstat.match(/(\d+) files? changed/)
@@ -293,11 +368,13 @@ const make = Effect.gen(function* () {
     sourceBranch: string,
     sourceWorktreePath: string,
     projectName: string,
-    nameHint?: string
+    nameHint?: string,
+    options?: { worktreeCreateScript?: string | null }
   ) =>
     writeOp(repoPath, 'git worktree add duplicate', async (git) => {
       const projectWorktreesDir = ensureWorktreesDir(projectName)
       const MAX_ATTEMPTS = 3
+      const createScript = options?.worktreeCreateScript ?? null
       let newBranchName = ''
       let worktreePath = ''
       let created = false
@@ -326,7 +403,30 @@ const make = Effect.gen(function* () {
         }
         worktreePath = join(projectWorktreesDir, `${projectName}--${newBranchName}`)
         try {
-          await git.raw(['worktree', 'add', '-b', newBranchName, worktreePath, sourceBranch])
+          if (createScript) {
+            const scriptResult = await runWorktreeCreateScript({
+              script: createScript,
+              projectPath: repoPath,
+              worktreePath,
+              branchName: newBranchName,
+              baseBranch: sourceBranch,
+              mode: 'duplicate',
+              sourceWorktreePath,
+              sourceBranch
+            })
+            if (!scriptResult.success) {
+              throw new Error(
+                `${scriptResult.error ?? 'Script failed'}\n${scriptResult.output}`
+              )
+            }
+            if (!existsSync(worktreePath)) {
+              throw new Error(
+                `Worktree create script exited successfully but no worktree exists at ${worktreePath}`
+              )
+            }
+          } else {
+            await git.raw(['worktree', 'add', '-b', newBranchName, worktreePath, sourceBranch])
+          }
           created = true
           break
         } catch (error) {
@@ -394,6 +494,7 @@ const make = Effect.gen(function* () {
           const projectWorktreesDir = ensureWorktreesDir(projectName)
           const defaultBranch = (await git.branch()).current
           const autoPull = options?.autoPull !== false
+          const createScript = options?.worktreeCreateScript ?? null
           let pullResult: { success: boolean; updated: boolean } = { success: true, updated: false }
           if (autoPull) {
             try {
@@ -433,7 +534,28 @@ const make = Effect.gen(function* () {
             )
             const worktreePath = join(projectWorktreesDir, `${projectName}--${breedName}`)
             try {
-              await git.raw(['worktree', 'add', '-b', breedName, worktreePath, defaultBranch])
+              if (createScript) {
+                const scriptResult = await runWorktreeCreateScript({
+                  script: createScript,
+                  projectPath: repoPath,
+                  worktreePath,
+                  branchName: breedName,
+                  baseBranch: defaultBranch,
+                  mode: 'new'
+                })
+                if (!scriptResult.success) {
+                  throw new Error(
+                    `${scriptResult.error ?? 'Script failed'}\n${scriptResult.output}`
+                  )
+                }
+                if (!existsSync(worktreePath)) {
+                  throw new Error(
+                    `Worktree create script exited successfully but no worktree exists at ${worktreePath}`
+                  )
+                }
+              } else {
+                await git.raw(['worktree', 'add', '-b', breedName, worktreePath, defaultBranch])
+              }
               return {
                 success: true as const,
                 name: breedName,
@@ -495,7 +617,8 @@ const make = Effect.gen(function* () {
                 branchName,
                 checkedOutWorktree.path,
                 projectName,
-                options?.nameHint
+                options?.nameHint,
+                { worktreeCreateScript: options?.worktreeCreateScript ?? null }
               )
               return { ...dup, baseBranch: branchName }
             }
@@ -505,6 +628,7 @@ const make = Effect.gen(function* () {
             const projectWorktreesDir = ensureWorktreesDir(projectName)
             const MAX_ATTEMPTS = 3
             const autoPull = options?.autoPull !== false
+            const createScript = options?.worktreeCreateScript ?? null
             let pullResult = { success: true, updated: false }
             if (prNumber != null) await git.raw(['fetch', 'origin', `pull/${prNumber}/head`])
             else if (autoPull) {
@@ -547,8 +671,30 @@ const make = Effect.gen(function* () {
                 worktreeName = `${options.nameHint}-${suffix}`
               }
               const worktreePath = join(projectWorktreesDir, `${projectName}--${worktreeName}`)
+              const baseRef = prNumber != null ? 'FETCH_HEAD' : branchName
               try {
-                await git.raw(['worktree', 'add', '-b', worktreeName, worktreePath, prNumber != null ? 'FETCH_HEAD' : branchName])
+                if (createScript) {
+                  const scriptResult = await runWorktreeCreateScript({
+                    script: createScript,
+                    projectPath: repoPath,
+                    worktreePath,
+                    branchName: worktreeName,
+                    baseBranch: baseRef,
+                    mode: 'existing'
+                  })
+                  if (!scriptResult.success) {
+                    throw new Error(
+                      `${scriptResult.error ?? 'Script failed'}\n${scriptResult.output}`
+                    )
+                  }
+                  if (!existsSync(worktreePath)) {
+                    throw new Error(
+                      `Worktree create script exited successfully but no worktree exists at ${worktreePath}`
+                    )
+                  }
+                } else {
+                  await git.raw(['worktree', 'add', '-b', worktreeName, worktreePath, baseRef])
+                }
                 return {
                   success: true as const,
                   path: worktreePath,

@@ -173,10 +173,15 @@ export const createWorktreeOpEffect = (
       const breedType = yield* getBreedTypeEffect
       const autoPullEnabled = yield* getAutoPullEffect
 
+      const db = yield* Db
+      const svc = yield* db.raw
+      const project = svc.getProject(params.projectId)
+
       const gitService = createGitService(params.projectPath)
       const result = yield* Effect.tryPromise(() =>
         gitService.createWorktree(params.projectName, breedType, {
-          autoPull: autoPullEnabled
+          autoPull: autoPullEnabled,
+          worktreeCreateScript: project?.worktree_create_script ?? null
         })
       )
 
@@ -201,9 +206,6 @@ export const createWorktreeOpEffect = (
 
       yield* copyContextFromProject(params.projectId, worktree.id)
 
-      const db = yield* Db
-      const svc = yield* db.raw
-      const project = svc.getProject(params.projectId)
       if (project?.auto_assign_port) {
         const port = assignPort(worktree.path)
         log.info('Auto-assigned port to new worktree', {
@@ -391,13 +393,18 @@ export const duplicateWorktreeOpEffect = (
         }
       }
 
+      const db = yield* Db
+      const svc = yield* db.raw
+      const project = svc.getProject(params.projectId)
+
       const gitService = createGitService(params.projectPath)
       const result = yield* Effect.tryPromise(() =>
         gitService.duplicateWorktree(
           params.sourceBranch,
           params.sourceWorktreePath,
           params.projectName,
-          params.nameHint
+          params.nameHint,
+          { worktreeCreateScript: project?.worktree_create_script ?? null }
         )
       )
 
@@ -422,9 +429,6 @@ export const duplicateWorktreeOpEffect = (
         yield* worktreeRepo.updateContext(worktree.id, sourceWorktree.context)
       }
 
-      const db = yield* Db
-      const svc = yield* db.raw
-      const project = svc.getProject(params.projectId)
       if (project?.auto_assign_port) {
         const port = assignPort(worktree.path)
         log.info('Auto-assigned port to duplicated worktree', {
@@ -491,6 +495,10 @@ export const createWorktreeFromBranchOpEffect = (
       const breedType = yield* getBreedTypeEffect
       const autoPullEnabled = yield* getAutoPullEffect
 
+      const db = yield* Db
+      const svc = yield* db.raw
+      const project = svc.getProject(params.projectId)
+
       const gitService = createGitService(params.projectPath)
       const result = yield* Effect.tryPromise(() =>
         gitService.createWorktreeFromBranch(
@@ -498,7 +506,11 @@ export const createWorktreeFromBranchOpEffect = (
           params.branchName,
           breedType,
           params.prNumber,
-          { autoPull: autoPullEnabled, nameHint: params.nameHint }
+          {
+            autoPull: autoPullEnabled,
+            nameHint: params.nameHint,
+            worktreeCreateScript: project?.worktree_create_script ?? null
+          }
         )
       )
       if (!result.success || !result.path) {
@@ -522,9 +534,6 @@ export const createWorktreeFromBranchOpEffect = (
 
       yield* copyContextFromProject(params.projectId, worktree.id)
 
-      const db = yield* Db
-      const svc = yield* db.raw
-      const project = svc.getProject(params.projectId)
       if (project?.auto_assign_port) {
         const port = assignPort(worktree.path)
         log.info('Auto-assigned port to worktree from branch', {

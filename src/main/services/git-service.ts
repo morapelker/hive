@@ -179,7 +179,7 @@ export class GitService {
   async createWorktree(
     projectName: string,
     breedType: BreedType = 'dogs',
-    options?: { autoPull?: boolean }
+    options?: { autoPull?: boolean; worktreeCreateScript?: string | null }
   ): Promise<CreateWorktreeResult> {
     void this.ensureWorktreesDir
     return gitEffectService.createWorktree(this.repoPath, projectName, breedType, options)
@@ -332,14 +332,16 @@ export class GitService {
     sourceBranch: string,
     sourceWorktreePath: string,
     projectName: string,
-    nameHint?: string
+    nameHint?: string,
+    options?: { worktreeCreateScript?: string | null }
   ): Promise<CreateWorktreeResult> {
     return gitEffectService.duplicateWorktree(
       this.repoPath,
       sourceBranch,
       sourceWorktreePath,
       projectName,
-      nameHint
+      nameHint,
+      options
     )
   }
 
@@ -371,7 +373,7 @@ export class GitService {
     branchName: string,
     breedType: BreedType = 'dogs',
     prNumber?: number,
-    options?: { autoPull?: boolean; nameHint?: string }
+    options?: { autoPull?: boolean; nameHint?: string; worktreeCreateScript?: string | null }
   ): Promise<CreateWorktreeResult> {
     return gitEffectService.createWorktreeFromBranch(
       this.repoPath,
