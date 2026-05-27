@@ -11,7 +11,13 @@ interface GhosttyAddon {
   ghosttyCreateSurface(
     windowHandle: Buffer,
     rect: { x: number; y: number; w: number; h: number },
-    opts: { cwd?: string; shell?: string; scaleFactor: number; fontSize?: number }
+    opts: {
+      cwd?: string
+      shell?: string
+      scaleFactor: number
+      fontSize?: number
+      shiftEnterAsNewline?: boolean
+    }
   ): number
   ghosttySetFrame(surfaceId: number, rect: { x: number; y: number; w: number; h: number }): void
   ghosttySetSize(surfaceId: number, width: number, height: number): void
@@ -67,6 +73,7 @@ export interface GhosttyCreateSurfaceOpts {
   shell?: string
   scaleFactor?: number
   fontSize?: number
+  shiftEnterAsNewline?: boolean
 }
 
 // Surface tracking for worktree association
@@ -232,7 +239,8 @@ class GhosttyService {
         cwd: opts.cwd,
         shell: opts.shell,
         scaleFactor,
-        fontSize: opts.fontSize
+        fontSize: opts.fontSize,
+        shiftEnterAsNewline: opts.shiftEnterAsNewline
       })
 
       if (surfaceId === 0) {

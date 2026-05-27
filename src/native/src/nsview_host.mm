@@ -4,6 +4,7 @@
 // BrowserWindow using the native window handle.
 
 #import <Cocoa/Cocoa.h>
+#import <Carbon/Carbon.h>
 #include <IOKit/hidsystem/ev_keymap.h>
 #include <string>
 #include "nsview_host.h"
@@ -64,6 +65,16 @@ ghostty_input_mods_e ghosttyConsumedModsFromFlags(NSEventModifierFlags flags) {
   return ghosttyModsFromFlags(filtered);
 }
 
+bool isBareShiftEnterEvent(NSEvent* event) {
+  const NSEventModifierFlags flags = event.modifierFlags;
+  const NSEventModifierFlags disallowed =
+    NSEventModifierFlagControl | NSEventModifierFlagOption | NSEventModifierFlagCommand;
+  const bool onlyShift = (flags & NSEventModifierFlagShift) && !(flags & disallowed);
+  const unsigned short keyCode = event.keyCode;
+
+  return onlyShift && (keyCode == kVK_Return || keyCode == kVK_ANSI_KeypadEnter);
+}
+
 uint32_t unshiftedCodepointForEvent(NSEvent* event) {
   NSString* chars = [event charactersByApplyingModifiers:0];
   if (!chars || chars.length == 0) return 0;
@@ -110,6 +121,7 @@ uint8_t momentumFromEventPhase(NSEventPhase phase) {
 
 @interface GhosttyHostView : NSView
 @property(nonatomic, assign) uint32_t surfaceId;
+@property(nonatomic, assign) BOOL shiftEnterAsNewline;
 @end
 
 @implementation GhosttyHostView
@@ -276,6 +288,11 @@ uint8_t momentumFromEventPhase(NSEventPhase phase) {
     return;
   }
 
+  if (self.shiftEnterAsNewline && isBareShiftEnterEvent(event)) {
+    ghostty::GhosttyBridge::instance().pasteText(self.surfaceId, "\x1b\r");
+    return;
+  }
+
   const auto action = event.isARepeat ? GHOSTTY_ACTION_REPEAT : GHOSTTY_ACTION_PRESS;
   const auto mods = ghosttyModsFromFlags(event.modifierFlags);
   const auto consumedMods = ghosttyConsumedModsFromFlags(event.modifierFlags);
@@ -296,6 +313,10 @@ uint8_t momentumFromEventPhase(NSEventPhase phase) {
 - (void)keyUp:(NSEvent*)event {
   if (self.surfaceId == 0) {
     [super keyUp:event];
+    return;
+  }
+
+  if (self.shiftEnterAsNewline && isBareShiftEnterEvent(event)) {
     return;
   }
 
@@ -354,6 +375,7 @@ NSView* createHostView(NSWindow* window, ViewRect rect) {
 
   GhosttyHostView* hostView = [[GhosttyHostView alloc] initWithFrame:frame];
   hostView.surfaceId = 0;
+  hostView.shiftEnterAsNewline = NO;
   hostView.autoresizingMask = 0; // JS layer controls frame exclusively via setHostViewFrame()
   hostView.wantsLayer = YES;
 
@@ -389,6 +411,15 @@ void setHostViewSurfaceId(NSView* view, uint32_t surfaceId) {
 
   GhosttyHostView* hostView = (GhosttyHostView*)view;
   hostView.surfaceId = surfaceId;
+}
+
+void setHostViewShiftEnterAsNewline(NSView* view, bool enabled) {
+  if (!view || ![view isKindOfClass:[GhosttyHostView class]]) {
+    return;
+  }
+
+  GhosttyHostView* hostView = (GhosttyHostView*)view;
+  hostView.shiftEnterAsNewline = enabled ? YES : NO;
 }
 
 void focusHostView(NSView* view) {

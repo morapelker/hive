@@ -1192,7 +1192,13 @@ declare global {
       ghosttyCreateSurface: (
         terminalId: string,
         rect: { x: number; y: number; w: number; h: number },
-        opts?: { cwd?: string; shell?: string; scaleFactor?: number; fontSize?: number }
+        opts?: {
+          cwd?: string
+          shell?: string
+          scaleFactor?: number
+          fontSize?: number
+          shiftEnterAsNewline?: boolean
+        }
       ) => Promise<Envelope<{ success: boolean; surfaceId?: number; error?: string }>>
       ghosttySetFrame: (
         terminalId: string,
