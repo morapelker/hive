@@ -472,6 +472,7 @@ export class DatabaseService {
     this.safeAddColumn('connections', 'pinned', 'INTEGER NOT NULL DEFAULT 0')
     this.safeAddColumn('projects', 'kanban_simple_mode', 'INTEGER NOT NULL DEFAULT 0')
     this.safeAddColumn('projects', 'custom_commands', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('projects', 'worktree_create_script', 'TEXT DEFAULT NULL')
     this.safeAddColumn('kanban_tickets', 'archived_at', 'TEXT DEFAULT NULL')
     this.safeAddColumn('sessions', 'pinned_to_board', 'INTEGER NOT NULL DEFAULT 0')
     this.safeAddColumn('kanban_tickets', 'github_pr_number', 'INTEGER DEFAULT NULL')
