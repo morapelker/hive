@@ -284,6 +284,7 @@ export const ProjectItem = memo(function ProjectItem({
     return () => window.removeEventListener('hive:hint-plus', handler)
   }, [project.id, doCreateWorktree])
 
+
   const handleBranchSelect = useCallback(
     async (branchName: string, prNumber?: number): Promise<void> => {
       setBranchPickerOpen(false)
@@ -341,6 +342,7 @@ export const ProjectItem = memo(function ProjectItem({
     },
     [project, autoPullBeforeWorktree]
   )
+
 
   return (
     <div>

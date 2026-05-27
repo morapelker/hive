@@ -650,6 +650,94 @@ export function useCommands() {
     toggleBoardView
   ])
 
+  // Handle custom command execution events
+  useEffect(() => {
+    const handler = async (e: Event): Promise<void> => {
+      const event = e as CustomEvent<{
+        projectId: string
+        worktreeId: string
+        commandId: string
+        commandName: string
+        renderedPrompt: string
+      }>
+
+      const { projectId, worktreeId, renderedPrompt } = event.detail
+
+      // Find the project
+      const project = projects.find((p) => p.id === projectId)
+      if (!project) {
+        toast.error('Project not found')
+        return
+      }
+
+      // Get worktrees for the project
+      const worktrees = getWorktreesForProject(projectId)
+
+      if (worktrees.length === 0) {
+        toast.error('No worktrees found for this project')
+        return
+      }
+
+      // Find the specific worktree that was clicked
+      const worktree = worktrees.find((w) => w.id === worktreeId)
+      if (!worktree) {
+        toast.error('Worktree not found')
+        return
+      }
+
+      // Select the worktree
+      selectWorktree(worktree.id)
+
+      // Get or create a session for this worktree
+      const existingSessions = getSessionsForWorktree(worktree.id)
+      let targetSessionId: string
+
+      if (existingSessions.length > 0) {
+        // Use the active session or the first one
+        targetSessionId = activeSessionId && existingSessions.find(s => s.id === activeSessionId)
+          ? activeSessionId
+          : existingSessions[0].id
+      } else {
+        // Create a new session
+        const result = await createSession(worktree.id, projectId)
+        if (!result.success || !result.session) {
+          toast.error('Failed to create session')
+          return
+        }
+        targetSessionId = result.session.id
+      }
+
+      // Set the active session
+      setActiveSession(targetSessionId)
+
+      // Wait for SessionView to mount and register its event listener.
+      // Use requestAnimationFrame twice to ensure React has completed all renders
+      // and effects have been registered. This is more reliable than setTimeout.
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          const sendEvent = new CustomEvent('hive:send-prompt-to-session', {
+            detail: {
+              sessionId: targetSessionId,
+              prompt: renderedPrompt
+            }
+          })
+          window.dispatchEvent(sendEvent)
+        })
+      })
+    }
+
+    window.addEventListener('hive:execute-custom-command', handler)
+    return () => window.removeEventListener('hive:execute-custom-command', handler)
+  }, [
+    projects,
+    getWorktreesForProject,
+    selectWorktree,
+    getSessionsForWorktree,
+    activeSessionId,
+    createSession,
+    setActiveSession
+  ])
+
   // Get filtered commands based on search query
   const filteredCommands = useMemo(() => {
     const allCommands = commandRegistry.getVisible()

@@ -1,4 +1,4 @@
-import { memo, useCallback, useState, useRef, useEffect } from 'react'
+import { memo, useCallback, useState, useRef, useEffect, useMemo } from 'react'
 import { revealLabel } from '@/lib/platform'
 import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
 import {
@@ -22,7 +22,8 @@ import {
   Pin,
   PinOff,
   Unlink,
-  FileText
+  FileText,
+  Zap
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -69,6 +70,8 @@ import { ModelIcon } from './ModelIcon'
 import { ArchiveConfirmDialog } from './ArchiveConfirmDialog'
 import { AddAttachmentDialog } from './AddAttachmentDialog'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
+import { mergeCustomCommands, replaceTemplateVariables } from '@/lib/custom-commands'
+import type { CustomProjectCommand } from '@/lib/custom-commands'
 
 const db = unwrapEnvelopeApi(() => window.db)
 
@@ -115,6 +118,7 @@ export const WorktreeItem = memo(function WorktreeItem({
   const unbranchWorktree = useWorktreeStore((s) => s.unbranchWorktree)
   const isSelected = useWorktreeStore((s) => s.selectedWorktreeId === worktree.id)
   const selectProject = useProjectStore((s) => s.selectProject)
+  const project = useProjectStore((s) => s.projects.find((p) => p.id === worktree.project_id))
 
   const isArchiving = useWorktreeStore((s) => s.archivingWorktreeIds.has(worktree.id))
   const worktreeStatus = useWorktreeStatusStore((state) => state.getWorktreeStatus(worktree.id))
@@ -144,6 +148,11 @@ export const WorktreeItem = memo(function WorktreeItem({
   const inputFocused = useHintStore((s) => s.inputFocused)
   const vimMode = useVimModeStore((s) => s.mode)
   const vimModeEnabled = useSettingsStore((s) => s.vimModeEnabled)
+  const globalCommands = useSettingsStore((s) => s.customProjectCommands)
+  const customCommands = useMemo(
+    () => mergeCustomCommands(globalCommands, project?.custom_commands ?? []),
+    [globalCommands, project?.custom_commands]
+  )
 
   const handleTogglePin = useCallback(async (): Promise<void> => {
     if (isPinned) {
@@ -156,6 +165,39 @@ export const WorktreeItem = memo(function WorktreeItem({
   const handleEditContext = useCallback(() => {
     useFileViewerStore.getState().openContextEditor(worktree.id)
   }, [worktree.id])
+
+  const handleCustomCommand = useCallback(
+    async (command: CustomProjectCommand): Promise<void> => {
+      if (!project) {
+        toast.error('Project not found')
+        return
+      }
+
+      try {
+        // Replace template variables using the utility function
+        const renderedPrompt = replaceTemplateVariables(command.prompt, project)
+
+        // Dispatch custom event with command execution details
+        const event = new CustomEvent('hive:execute-custom-command', {
+          detail: {
+            projectId: project.id,
+            worktreeId: worktree.id,
+            commandId: command.id,
+            commandName: command.name,
+            renderedPrompt
+          }
+        })
+        window.dispatchEvent(event)
+
+        // Show info toast
+        toast.info(`Executing: ${command.name}`)
+      } catch {
+        // Show error toast if anything goes wrong
+        toast.error('Failed to execute command')
+      }
+    },
+    [project, worktree.id]
+  )
 
   const isInConnectionMode = connectionModeActive
   const isSource = connectionModeSourceId === worktree.id
@@ -855,10 +897,23 @@ export const WorktreeItem = memo(function WorktreeItem({
           <Link className="h-4 w-4 mr-2" />
           Connect to...
         </ContextMenuItem>
+        {/* Custom Commands */}
+        {customCommands.length > 0 && (
+          <>
+            <ContextMenuSeparator />
+            {customCommands.map((cmd) => (
+              <ContextMenuItem key={cmd.id} onClick={() => handleCustomCommand(cmd)}>
+                <Zap className="h-4 w-4 mr-2" />
+                {cmd.name}
+              </ContextMenuItem>
+            ))}
+          </>
+        )}
         {!worktree.is_default && (
           <>
             {hasNamedBranch ? (
               <>
+                <ContextMenuSeparator />
                 <ContextMenuItem onClick={startBranchRename}>
                   <Pencil className="h-4 w-4 mr-2" />
                   Rename Branch

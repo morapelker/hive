@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 27
+export const CURRENT_SCHEMA_VERSION = 28
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS projects (
   setup_script TEXT DEFAULT NULL,
   run_script TEXT DEFAULT NULL,
   archive_script TEXT DEFAULT NULL,
+  custom_commands TEXT DEFAULT NULL,
   custom_icon TEXT DEFAULT NULL,
   detected_icon TEXT DEFAULT NULL,
   sort_order INTEGER NOT NULL DEFAULT 0,
@@ -514,5 +515,11 @@ DROP TABLE IF EXISTS diff_comments;`
       DROP INDEX IF EXISTS idx_saved_usage_accounts_provider_email;
       DROP TABLE IF EXISTS saved_usage_accounts;
     `
+  },
+  {
+    version: 28,
+    name: 'add_project_custom_commands',
+    up: `ALTER TABLE projects ADD COLUMN custom_commands TEXT DEFAULT NULL`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
   }
 ]
