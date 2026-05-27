@@ -352,7 +352,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   )
 
   // ── Detect pending questions for this ticket's session ─────────
-  const isAsking = useQuestionStore(
+  const isAskingFromQuestionStore = useQuestionStore(
     useCallback(
       (state) => {
         if (!ticket.current_session_id) return false
@@ -362,6 +362,17 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
       [ticket.current_session_id]
     )
   )
+  const isAskingFromStatus = useWorktreeStatusStore(
+    useCallback(
+      (state) => {
+        if (!ticket.current_session_id) return false
+        return state.sessionStatuses[ticket.current_session_id]?.status === 'answering'
+      },
+      [ticket.current_session_id]
+    )
+  )
+  const isAsking = isAskingFromQuestionStore || isAskingFromStatus
+
   const rightAlignedSlot: 'conflicts' | 'busy' | 'reviewing' | 'completed-review' | null =
     useMemo(() => {
       if (!isArchived && hasConflicts && ticket.worktree_id) return 'conflicts'

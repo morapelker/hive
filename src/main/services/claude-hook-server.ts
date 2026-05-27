@@ -113,6 +113,7 @@ export function mapHookEventToStatus(hook: ParsedClaudeHook): ClaudeCliSessionSt
       return 'working'
     case 'PermissionRequest':
       if (hook.tool_name === 'ExitPlanMode') return 'plan_ready'
+      if (hook.tool_name === 'AskUserQuestion') return 'answering'
       return 'permission'
     default:
       return null
