@@ -110,33 +110,47 @@ export const runWorktreeCreateScript = (
     })
 
     let settled = false
+    let timedOut = false
+    let killTimer: NodeJS.Timeout | null = null
     const timeoutMs = opts.timeoutMs ?? WORKTREE_CREATE_SCRIPT_TIMEOUT_MS
+    // On timeout: signal the process but DO NOT resolve yet. The `close`
+    // handler resolves once the child has actually exited, so callers don't
+    // start cleanup while the script is still running git commands (which
+    // would race and could recreate the worktree we just removed).
     const timeoutTimer = setTimeout(() => {
       if (settled) return
-      settled = true
+      timedOut = true
       try {
         proc.kill('SIGTERM')
       } catch {
         // already exited
       }
-      setTimeout(() => {
+      killTimer = setTimeout(() => {
         try {
           proc.kill('SIGKILL')
         } catch {
           // already exited
         }
       }, 500)
-      resolve({
-        success: false,
-        output,
-        error: `Worktree create script timed out after ${timeoutMs}ms`
-      })
     }, timeoutMs)
-    const onClose = (code: number | null): void => {
+    // Listen on `exit` (process died) rather than `close` (all stdio closed).
+    // If the script spawned a grandchild that inherited stdout/stderr, `close`
+    // would not fire until that grandchild also closes the pipes -- which
+    // would defeat the timeout (the shell can be SIGKILLed but an orphaned
+    // grandchild like `sleep` can keep the pipes open). `exit` accurately
+    // signals "the script process is gone, cleanup can run safely".
+    const onExit = (code: number | null): void => {
       if (settled) return
       settled = true
       clearTimeout(timeoutTimer)
-      if (code === 0) {
+      if (killTimer !== null) clearTimeout(killTimer)
+      if (timedOut) {
+        resolve({
+          success: false,
+          output,
+          error: `Worktree create script timed out after ${timeoutMs}ms`
+        })
+      } else if (code === 0) {
         resolve({ success: true, output })
       } else {
         resolve({
@@ -150,9 +164,10 @@ export const runWorktreeCreateScript = (
       if (settled) return
       settled = true
       clearTimeout(timeoutTimer)
+      if (killTimer !== null) clearTimeout(killTimer)
       resolve({ success: false, output, error: err.message })
     })
-    proc.on('close', onClose)
+    proc.on('exit', onExit)
   })
 
 /**
