@@ -46,7 +46,7 @@ export class Git extends Context.Tag('GitIsland/Git')<
         repoPath: string,
         projectName: string,
         breedType?: BreedType,
-        options?: { autoPull?: boolean }
+        options?: { autoPull?: boolean; worktreeCreateScript?: string | null }
       ) => Eff<CreateWorktreeResult>
       readonly remove: (repoPath: string, worktreePath: string) => Eff<GitOperationResult>
       readonly archive: (
@@ -61,7 +61,8 @@ export class Git extends Context.Tag('GitIsland/Git')<
         sourceBranch: string,
         sourceWorktreePath: string,
         projectName: string,
-        nameHint?: string
+        nameHint?: string,
+        options?: { worktreeCreateScript?: string | null }
       ) => Eff<CreateWorktreeResult>
       readonly createFromBranch: (
         repoPath: string,
@@ -69,7 +70,7 @@ export class Git extends Context.Tag('GitIsland/Git')<
         branchName: string,
         breedType?: BreedType,
         prNumber?: number,
-        options?: { autoPull?: boolean; nameHint?: string }
+        options?: { autoPull?: boolean; nameHint?: string; worktreeCreateScript?: string | null }
       ) => Eff<CreateWorktreeResult>
     }
     readonly branch: {
