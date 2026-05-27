@@ -780,6 +780,15 @@ function KanbanTicketModalContent({
 
   const effectiveSession = sessionRecord ?? dbSessionInfo?.session ?? null
   const isClaudeCli = effectiveSession?.agent_sdk === 'claude-code-cli'
+  const currentWorktreeSessionStatus = useWorktreeStatusStore(
+    useCallback(
+      (state) =>
+        ticket.current_session_id
+          ? (state.sessionStatuses[ticket.current_session_id]?.status ?? null)
+          : null,
+      [ticket.current_session_id]
+    )
+  )
 
   const baseModalMode = resolveModalMode(ticket, sessionStatus)
   // Question mode takes highest priority — an unanswered question blocks
@@ -795,6 +804,28 @@ function KanbanTicketModalContent({
     setShowDiscardConfirm(false)
     onForceClose()
   }, [onForceClose])
+
+  const previousWorktreeSessionStatus = useRef<{ sessionId: string | null; status: string | null }>(
+    { sessionId: null, status: null }
+  )
+  useEffect(() => {
+    const sessionId = ticket.current_session_id
+    const previous = previousWorktreeSessionStatus.current
+
+    if (!sessionId || previous.sessionId !== sessionId || !isClaudeCli) {
+      previousWorktreeSessionStatus.current = { sessionId, status: currentWorktreeSessionStatus }
+      return
+    }
+
+    if (
+      previous.status === 'answering' &&
+      currentWorktreeSessionStatus === 'working'
+    ) {
+      forceClose()
+    }
+
+    previousWorktreeSessionStatus.current = { sessionId, status: currentWorktreeSessionStatus }
+  }, [currentWorktreeSessionStatus, forceClose, isClaudeCli, ticket.current_session_id])
 
   const requestClose = useCallback(() => {
     if (modalMode === 'edit' && editDraftDirty) {
