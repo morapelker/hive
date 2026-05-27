@@ -80,7 +80,7 @@ function readCodexFromLoginShell(): string | null {
   if (process.platform === 'win32') return null
 
   const shell = process.env.SHELL || (process.platform === 'darwin' ? '/bin/zsh' : '/bin/bash')
-  const result = execFileSync(shell, ['-ilc', 'command -v codex'], {
+  const result = execFileSync(shell, ['-lc', 'command -v codex'], {
     encoding: 'utf-8',
     timeout: 5000,
     env: process.env
@@ -163,6 +163,9 @@ export function supportsCodexAppServer(binaryPath: string): boolean {
     if (supported) {
       codexAppServerSupportCache.set(binaryPath, true)
       return true
+    }
+    if (!isBareCommand(binaryPath)) {
+      codexAppServerSupportCache.set(binaryPath, false)
     }
     return false
   }

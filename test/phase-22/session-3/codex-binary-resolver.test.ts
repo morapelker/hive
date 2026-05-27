@@ -66,9 +66,6 @@ describe('resolveCodexBinaryPath', () => {
   })
 
   it('uses the login shell when the app process PATH lookup fails', async () => {
-    mockExecFileSync.mockImplementation(() => {
-      throw new Error('not found')
-    })
     mockExecFileSync
       .mockImplementationOnce(() => {
         throw new Error('not found')
@@ -188,6 +185,18 @@ describe('resolveCodexBinaryPath', () => {
     const { supportsCodexAppServer } = await import('../../../src/main/services/codex-binary-resolver')
 
     expect(supportsCodexAppServer('/usr/local/bin/codex')).toBe(false)
+  })
+
+  it('caches non-zero negative app-server probes for resolved paths', async () => {
+    mockExecFileSync.mockImplementation(() => {
+      throw new Error('unsupported')
+    })
+
+    const { supportsCodexAppServer } = await import('../../../src/main/services/codex-binary-resolver')
+
+    expect(supportsCodexAppServer('/usr/local/bin/codex')).toBe(false)
+    expect(supportsCodexAppServer('/usr/local/bin/codex')).toBe(false)
+    expect(mockExecFileSync).toHaveBeenCalledTimes(1)
   })
 
   it('does not cache transient probe failures for the bare codex command', async () => {
