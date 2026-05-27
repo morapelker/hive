@@ -1,3 +1,4 @@
+import path from 'node:path'
 import { ipcMain, BrowserWindow } from 'electron'
 import { Data, Effect } from 'effect'
 import { z } from 'zod'
@@ -18,6 +19,12 @@ import {
   getClaudeHookServer,
   publishClaudeCliStatus
 } from '../services/claude-hook-server'
+import {
+  applyClaudeCliTitle,
+  processClaudeCliPtyData,
+  resetAllClaudeCliTitleState,
+  resetClaudeCliTitleState
+} from '../services/claude-cli-title-handler'
 
 const log = createLogger({ component: 'TerminalHandlers' })
 
@@ -69,6 +76,7 @@ const dataBuffers = new Map<string, string>()
 const flushScheduled = new Set<string>()
 const claudeWatchers = new Map<string, ClaudeSessionWatchHandle>()
 const claudeCliSessions = new Set<string>()
+const claudeCliWorktreeBasenames = new Map<string, string>()
 
 function attachNodePtyListeners(mainWindow: BrowserWindow, terminalId: string): void {
   // Clean up any stale listeners for this terminalId (shouldn't happen, but defensive)
@@ -84,6 +92,22 @@ function attachNodePtyListeners(mainWindow: BrowserWindow, terminalId: string): 
 
     const existing = dataBuffers.get(terminalId)
     dataBuffers.set(terminalId, existing ? existing + data : data)
+
+    if (claudeCliSessions.has(terminalId)) {
+      const title = processClaudeCliPtyData(terminalId, data, {
+        worktreeBasename: claudeCliWorktreeBasenames.get(terminalId)
+      })
+      if (title) {
+        applyClaudeCliTitle({
+          sessionId: terminalId,
+          title,
+          db: getDatabase(),
+          mainWindow
+        }).catch(() => {
+          // applyClaudeCliTitle already logs and swallows internally
+        })
+      }
+    }
 
     if (!flushScheduled.has(terminalId)) {
       flushScheduled.add(terminalId)
@@ -115,6 +139,8 @@ function attachNodePtyListeners(mainWindow: BrowserWindow, terminalId: string): 
       })
       claudeCliSessions.delete(terminalId)
     }
+    claudeCliWorktreeBasenames.delete(terminalId)
+    resetClaudeCliTitleState(terminalId)
   })
 
   listenerCleanups.set(terminalId, { removeData, removeExit })
@@ -249,6 +275,7 @@ export function registerTerminalHandlers(mainWindow: BrowserWindow): void {
             env: spawn.env
           })
           claudeCliSessions.add(sessionId)
+          claudeCliWorktreeBasenames.set(sessionId, path.basename(worktreePath))
           if (!pendingPrompt) {
             publishClaudeCliStatus(mainWindow, {
               sessionId,
@@ -305,6 +332,8 @@ export function registerTerminalHandlers(mainWindow: BrowserWindow): void {
       claudeWatchers.get(terminalId)?.close()
       claudeWatchers.delete(terminalId)
       claudeCliSessions.delete(terminalId)
+      claudeCliWorktreeBasenames.delete(terminalId)
+      resetClaudeCliTitleState(terminalId)
       ptyService.destroy(terminalId)
     })
   )
@@ -456,6 +485,8 @@ export function cleanupTerminals(): void {
   dataBuffers.clear()
   flushScheduled.clear()
   claudeCliSessions.clear()
+  claudeCliWorktreeBasenames.clear()
+  resetAllClaudeCliTitleState()
   ptyService.destroyAll()
   ghosttyService.shutdown()
 }
