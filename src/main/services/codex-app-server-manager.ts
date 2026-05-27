@@ -7,7 +7,7 @@ import { Effect } from 'effect'
 
 import { createLogger } from './logger'
 import { logCodexMessage, logCodexLifecycleEvent, resetSession } from './codex-debug-logger'
-import { supportsCodexAppServer } from './codex-binary-resolver'
+import { resolveCodexBinaryPath, supportsCodexAppServer } from './codex-binary-resolver'
 import { getCodexCliEnv } from './codex-cli-env'
 import { asObject, asString } from './codex-utils'
 import { CODEX_DEFAULT_MODEL } from './codex-models'
@@ -445,7 +445,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         updatedAt: now
       }
 
-      const codexBinaryPath = options.codexBinaryPath ?? 'codex'
+      const codexBinaryPath = options.codexBinaryPath ?? resolveCodexBinaryPath() ?? 'codex'
       if (!supportsCodexAppServer(codexBinaryPath)) {
         throw new Error(
           `Installed Codex CLI does not support app-server: ${codexBinaryPath}. Upgrade @openai/codex to 0.118.0 or newer.`

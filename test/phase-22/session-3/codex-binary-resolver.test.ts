@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { mockExecFileSync, mockExistsSync } = vi.hoisted(() => ({
+const { mockExecFileSync, mockExistsSync, mockHomedir } = vi.hoisted(() => ({
   mockExecFileSync: vi.fn(),
-  mockExistsSync: vi.fn()
+  mockExistsSync: vi.fn(),
+  mockHomedir: vi.fn()
 }))
 
 vi.mock('../../../src/main/services/logger', () => ({
@@ -24,12 +25,18 @@ vi.mock('fs', () => ({
   existsSync: (...args: unknown[]) => mockExistsSync(...args)
 }))
 
+vi.mock('os', () => ({
+  default: { homedir: () => mockHomedir() },
+  homedir: () => mockHomedir()
+}))
+
 describe('resolveCodexBinaryPath', () => {
   const originalPlatform = process.platform
 
   beforeEach(() => {
     vi.resetModules()
     vi.clearAllMocks()
+    mockHomedir.mockReturnValue('/Users/test')
     mockExistsSync.mockReturnValue(true)
   })
 
@@ -58,10 +65,40 @@ describe('resolveCodexBinaryPath', () => {
     expect(resolveCodexBinaryPath()).toBeNull()
   })
 
-  it('returns null when the lookup command fails', async () => {
+  it('uses the login shell when the app process PATH lookup fails', async () => {
     mockExecFileSync.mockImplementation(() => {
       throw new Error('not found')
     })
+    mockExecFileSync
+      .mockImplementationOnce(() => {
+        throw new Error('not found')
+      })
+      .mockReturnValueOnce('/Users/test/Applications/Codex.app/Contents/Resources/codex\n')
+
+    const { resolveCodexBinaryPath } = await import('../../../src/main/services/codex-binary-resolver')
+
+    expect(resolveCodexBinaryPath()).toBe('/Users/test/Applications/Codex.app/Contents/Resources/codex')
+  })
+
+  it('checks known Codex locations when PATH and login shell lookups fail', async () => {
+    mockExecFileSync.mockImplementation(() => {
+      throw new Error('not found')
+    })
+    mockExistsSync.mockImplementation(
+      (candidate: unknown) =>
+        candidate === '/Users/test/Applications/Codex.app/Contents/Resources/codex'
+    )
+
+    const { resolveCodexBinaryPath } = await import('../../../src/main/services/codex-binary-resolver')
+
+    expect(resolveCodexBinaryPath()).toBe('/Users/test/Applications/Codex.app/Contents/Resources/codex')
+  })
+
+  it('returns null when all lookup strategies fail', async () => {
+    mockExecFileSync.mockImplementation(() => {
+      throw new Error('not found')
+    })
+    mockExistsSync.mockReturnValue(false)
 
     const { resolveCodexBinaryPath } = await import('../../../src/main/services/codex-binary-resolver')
 
@@ -122,11 +159,48 @@ describe('resolveCodexBinaryPath', () => {
     )
   })
 
+  it('recognizes app-server support when warnings surround the usage output', async () => {
+    mockExecFileSync.mockReturnValue(
+      'Warning: falling back to default config\nUsage: codex app-server [OPTIONS] [COMMAND]\n'
+    )
+
+    const { supportsCodexAppServer } = await import('../../../src/main/services/codex-binary-resolver')
+
+    expect(supportsCodexAppServer('/usr/local/bin/codex')).toBe(true)
+  })
+
+  it('recognizes app-server support from captured stderr when the help probe exits non-zero', async () => {
+    const error = new Error('help failed') as Error & { stdout: string; stderr: string }
+    error.stdout = ''
+    error.stderr = 'Warning: config issue\nUsage: codex app-server [OPTIONS] [COMMAND]\n'
+    mockExecFileSync.mockImplementation(() => {
+      throw error
+    })
+
+    const { supportsCodexAppServer } = await import('../../../src/main/services/codex-binary-resolver')
+
+    expect(supportsCodexAppServer('/usr/local/bin/codex')).toBe(true)
+  })
+
   it('reports no app-server support when help falls back to the top-level CLI usage', async () => {
     mockExecFileSync.mockReturnValue('Usage: codex [OPTIONS] [PROMPT]\n')
 
     const { supportsCodexAppServer } = await import('../../../src/main/services/codex-binary-resolver')
 
     expect(supportsCodexAppServer('/usr/local/bin/codex')).toBe(false)
+  })
+
+  it('does not cache transient probe failures for the bare codex command', async () => {
+    mockExecFileSync
+      .mockImplementationOnce(() => {
+        throw new Error('temporary PATH failure')
+      })
+      .mockReturnValueOnce('Usage: codex app-server [OPTIONS] [COMMAND]\n')
+
+    const { supportsCodexAppServer } = await import('../../../src/main/services/codex-binary-resolver')
+
+    expect(supportsCodexAppServer('codex')).toBe(false)
+    expect(supportsCodexAppServer('codex')).toBe(true)
+    expect(mockExecFileSync).toHaveBeenCalledTimes(2)
   })
 })
