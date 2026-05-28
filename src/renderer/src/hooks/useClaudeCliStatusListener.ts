@@ -1,15 +1,52 @@
 import { useEffect } from 'react'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useSessionStore } from '@/stores/useSessionStore'
+import { useKanbanStore } from '@/stores/useKanbanStore'
 import { lastSendMode } from '@/lib/message-send-times'
 import { notifyKanbanSessionSync } from '@/stores/store-coordination'
+
+type ClaudeCliStatusMetadata = {
+  reason?: string
+  hookEventName?: string
+  hookPath?: string
+  toolName?: string
+  plan?: string
+}
 
 function isPlanLike(mode: string | undefined): boolean {
   return mode === 'plan' || mode === 'super-plan'
 }
 
+function closeLinkedTicketModal(sessionId: string): void {
+  const kanbanState = useKanbanStore.getState()
+  const selectedTicketId = kanbanState.selectedTicketId
+  if (!selectedTicketId) return
+
+  for (const projectTickets of kanbanState.tickets.values()) {
+    const selectedTicket = projectTickets.find((ticket) => ticket.id === selectedTicketId)
+    if (!selectedTicket) continue
+    if (selectedTicket.current_session_id === sessionId) {
+      kanbanState.setSelectedTicketId(null)
+    }
+    return
+  }
+}
+
 export function useClaudeCliStatusListener(): void {
   useEffect(() => {
+    const handlePlanFollowup = (
+      sessionId: string,
+      metadata: ClaudeCliStatusMetadata = {
+        reason: 'claude_cli_plan_followup'
+      }
+    ): void => {
+      useSessionStore.getState().clearPendingPlan(sessionId)
+      notifyKanbanSessionSync(sessionId, { type: 'plan_followup' })
+      closeLinkedTicketModal(sessionId)
+      lastSendMode.set(sessionId, 'plan')
+      useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'planning', metadata)
+    }
+
     const unsubscribe = window.terminalOps?.onClaudeCliStatus
       ? window.terminalOps.onClaudeCliStatus(({ sessionId, status, metadata }) => {
           const worktreeStatus = useWorktreeStatusStore.getState()
@@ -40,6 +77,16 @@ export function useClaudeCliStatusListener(): void {
               planContent: metadata.plan,
               toolUseID: syntheticId
             })
+          }
+
+          if (
+            status === 'planning' &&
+            ((metadata?.hookEventName === 'UserPromptSubmit' && currentStatus === 'plan_ready') ||
+              (metadata?.hookEventName === 'PostToolUseFailure' &&
+                metadata.toolName === 'ExitPlanMode'))
+          ) {
+            handlePlanFollowup(sessionId, metadata)
+            return
           }
 
           if (
@@ -75,6 +122,15 @@ export function useClaudeCliStatusListener(): void {
         })
       : () => {}
 
-    return unsubscribe
+    const unsubscribePlanFollowup = window.terminalOps?.onClaudeCliPlanFollowup
+      ? window.terminalOps.onClaudeCliPlanFollowup(({ sessionId }) => {
+          handlePlanFollowup(sessionId)
+        })
+      : () => {}
+
+    return () => {
+      unsubscribe()
+      unsubscribePlanFollowup()
+    }
   }, [])
 }
