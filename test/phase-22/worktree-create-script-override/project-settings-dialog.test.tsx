@@ -1,9 +1,18 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { ProjectSettingsDialog } from '../../../src/renderer/src/components/projects/ProjectSettingsDialog'
-import { useProjectStore } from '../../../src/renderer/src/stores/useProjectStore'
+
+const mocks = vi.hoisted(() => ({
+  updateProject: vi.fn()
+}))
+
+vi.mock('@/stores/useProjectStore', () => ({
+  useProjectStore: () => ({
+    updateProject: mocks.updateProject
+  })
+}))
 
 vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() }
@@ -59,18 +68,10 @@ function makeProject(overrides: Partial<ProjectMock> = {}): ProjectMock {
 describe('ProjectSettingsDialog — worktree_create_script field', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    useProjectStore.setState({
-      projects: [],
-      isLoading: false,
-      error: null,
-      selectedProjectId: null,
-      expandedProjectIds: new Set(),
-      editingProjectId: null,
-      settingsProjectId: null
-    })
+    mocks.updateProject.mockResolvedValue(true)
   })
 
-  test('renders the Worktree Create Script textarea', () => {
+  test('renders the collapsed Worktree Create Script trigger', async () => {
     render(
       <ProjectSettingsDialog
         project={makeProject()}
@@ -79,11 +80,14 @@ describe('ProjectSettingsDialog — worktree_create_script field', () => {
       />
     )
 
-    const label = screen.getByText('Worktree Create Script')
-    expect(label).toBeTruthy()
+    await waitFor(() => expect(mockProjectOps.detectSetupSuggestions).toHaveBeenCalled())
+
+    const trigger = screen.getByRole('button', { name: /worktree create script/i })
+    expect(trigger).toBeTruthy()
+    expect(trigger).toHaveProperty('ariaExpanded', 'false')
   })
 
-  test('loads existing worktree_create_script value into the textarea', () => {
+  test('loads existing worktree_create_script value into the textarea', async () => {
     const existingScript = 'git worktree add --no-checkout "$HIVE_WORKTREE_PATH"'
     render(
       <ProjectSettingsDialog
@@ -93,14 +97,13 @@ describe('ProjectSettingsDialog — worktree_create_script field', () => {
       />
     )
 
+    await waitFor(() => expect(mockProjectOps.detectSetupSuggestions).toHaveBeenCalled())
+
     const textarea = screen.getByDisplayValue(existingScript)
     expect(textarea).toBeTruthy()
   })
 
   test('saves the entered script via updateProject', async () => {
-    const updateProject = vi.fn().mockResolvedValue(true)
-    useProjectStore.setState({ updateProject } as Partial<ReturnType<typeof useProjectStore.getState>> as ReturnType<typeof useProjectStore.getState>)
-
     render(
       <ProjectSettingsDialog
         project={makeProject()}
@@ -109,19 +112,22 @@ describe('ProjectSettingsDialog — worktree_create_script field', () => {
       />
     )
 
-    const label = screen.getByText('Worktree Create Script')
-    const wrapper = label.closest('div.space-y-1\\.5') as HTMLElement
-    const textarea = wrapper.querySelector('textarea') as HTMLTextAreaElement
+    const user = userEvent.setup()
+    await waitFor(() => expect(mockProjectOps.detectSetupSuggestions).toHaveBeenCalled())
+    await user.click(screen.getByRole('button', { name: /worktree create script/i }))
+
+    const textarea = screen.getByPlaceholderText(
+      /git worktree add --no-checkout/
+    ) as HTMLTextAreaElement
     expect(textarea).toBeTruthy()
 
-    const user = userEvent.setup()
     await user.click(textarea)
     await user.type(textarea, 'custom-create-script')
 
     const saveButton = screen.getByRole('button', { name: /save/i })
     await user.click(saveButton)
 
-    expect(updateProject).toHaveBeenCalledWith(
+    expect(mocks.updateProject).toHaveBeenCalledWith(
       'test-project-id',
       expect.objectContaining({
         worktree_create_script: 'custom-create-script'
@@ -130,9 +136,6 @@ describe('ProjectSettingsDialog — worktree_create_script field', () => {
   })
 
   test('saves null when the textarea is cleared', async () => {
-    const updateProject = vi.fn().mockResolvedValue(true)
-    useProjectStore.setState({ updateProject } as Partial<ReturnType<typeof useProjectStore.getState>> as ReturnType<typeof useProjectStore.getState>)
-
     render(
       <ProjectSettingsDialog
         project={makeProject({ worktree_create_script: 'old-script' })}
@@ -141,6 +144,8 @@ describe('ProjectSettingsDialog — worktree_create_script field', () => {
       />
     )
 
+    await waitFor(() => expect(mockProjectOps.detectSetupSuggestions).toHaveBeenCalled())
+
     const textarea = screen.getByDisplayValue('old-script') as HTMLTextAreaElement
     const user = userEvent.setup()
     await user.clear(textarea)
@@ -148,7 +153,7 @@ describe('ProjectSettingsDialog — worktree_create_script field', () => {
     const saveButton = screen.getByRole('button', { name: /save/i })
     await user.click(saveButton)
 
-    expect(updateProject).toHaveBeenCalledWith(
+    expect(mocks.updateProject).toHaveBeenCalledWith(
       'test-project-id',
       expect.objectContaining({
         worktree_create_script: null
