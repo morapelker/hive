@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useId } from 'react'
 import { toast } from '@/lib/toast'
-import { Brain, ImageIcon, X } from 'lucide-react'
+import { Brain, ChevronDown, ImageIcon, X } from 'lucide-react'
 import type { SuggestionItem } from '@shared/types/setup-suggestions'
 import {
   Dialog,
@@ -15,7 +15,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { CustomCommandsEditor } from '@/components/custom-commands/CustomCommandsEditor'
-import { useProjectStore } from '@/stores'
+import { useProjectStore } from '@/stores/useProjectStore'
 import { LanguageIcon } from './LanguageIcon'
 import { SetupScriptSuggestionsDialog } from './SetupScriptSuggestionsDialog'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
@@ -49,11 +49,13 @@ export function ProjectSettingsDialog({
   onOpenChange
 }: ProjectSettingsDialogProps): React.JSX.Element {
   const { updateProject } = useProjectStore()
+  const worktreeCreateScriptContentId = useId()
 
   const [setupScript, setSetupScript] = useState('')
   const [runScript, setRunScript] = useState('')
   const [archiveScript, setArchiveScript] = useState('')
   const [worktreeCreateScript, setWorktreeCreateScript] = useState('')
+  const [worktreeCreateScriptExpanded, setWorktreeCreateScriptExpanded] = useState(false)
   const [customIcon, setCustomIcon] = useState<string | null>(null)
   const [customCommands, setCustomCommands] = useState<CustomProjectCommand[]>([])
   const [autoAssignPort, setAutoAssignPort] = useState(false)
@@ -69,6 +71,7 @@ export function ProjectSettingsDialog({
       setRunScript(project.run_script ?? '')
       setArchiveScript(project.archive_script ?? '')
       setWorktreeCreateScript(project.worktree_create_script ?? '')
+      setWorktreeCreateScriptExpanded((project.worktree_create_script ?? '').trim().length > 0)
       setCustomIcon(project.custom_icon ?? null)
       setCustomCommands(project.custom_commands ?? [])
       setAutoAssignPort(project.auto_assign_port ?? false)
@@ -303,48 +306,81 @@ export function ProjectSettingsDialog({
               </div>
 
               {/* Worktree Create Script */}
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium">Worktree Create Script</label>
-                <p className="text-xs text-muted-foreground">
-                  Advanced. When set, this script replaces Hive&apos;s built-in{' '}
-                  <code className="font-mono text-[0.7rem]">git worktree add</code> call. Use for
-                  repos that need special handling (e.g. git-crypt, sparse-checkout). The script
-                  must create a worktree at{' '}
-                  <code className="font-mono text-[0.7rem]">$HIVE_WORKTREE_PATH</code> on branch{' '}
-                  <code className="font-mono text-[0.7rem]">$HIVE_BRANCH_NAME</code>. Available env
-                  vars: <code className="font-mono text-[0.7rem]">HIVE_WORKTREE_PATH</code>,{' '}
-                  <code className="font-mono text-[0.7rem]">HIVE_BRANCH_NAME</code>,{' '}
-                  <code className="font-mono text-[0.7rem]">HIVE_BASE_BRANCH</code> (human-readable
-                  base branch name),{' '}
-                  <code className="font-mono text-[0.7rem]">HIVE_BASE_REF</code> (git ref to use
-                  with <code className="font-mono text-[0.7rem]">git worktree add</code>; equals{' '}
-                  <code className="font-mono text-[0.7rem]">HIVE_BASE_BRANCH</code> in most flows,
-                  but is <code className="font-mono text-[0.7rem]">FETCH_HEAD</code> when checking
-                  out a pull-request ref),{' '}
-                  <code className="font-mono text-[0.7rem]">HIVE_PROJECT_PATH</code>,{' '}
-                  <code className="font-mono text-[0.7rem]">HIVE_WORKTREE_MODE</code> (
-                  <code className="font-mono text-[0.7rem]">new</code> |{' '}
-                  <code className="font-mono text-[0.7rem]">existing</code> |{' '}
-                  <code className="font-mono text-[0.7rem]">duplicate</code>). In{' '}
-                  <code className="font-mono text-[0.7rem]">duplicate</code> mode, also receives{' '}
-                  <code className="font-mono text-[0.7rem]">HIVE_SOURCE_WORKTREE_PATH</code> and{' '}
-                  <code className="font-mono text-[0.7rem]">HIVE_SOURCE_BRANCH</code>. Scripts run
-                  via <code className="font-mono text-[0.7rem]">/bin/sh -c</code> by default; a{' '}
-                  <code className="font-mono text-[0.7rem]">#!/usr/bin/env bash</code> or{' '}
-                  <code className="font-mono text-[0.7rem]">#!/bin/bash</code> shebang on the first
-                  line switches to <code className="font-mono text-[0.7rem]">bash -c</code>. Hive
-                  aborts the script (and its whole process group) after 5 minutes if it does not
-                  exit, and best-effort cleans up any partial worktree/branch on failure.
-                </p>
-                <Textarea
-                  value={worktreeCreateScript}
-                  onChange={(e) => setWorktreeCreateScript(e.target.value)}
-                  placeholder={
-                    'git worktree add --no-checkout "$HIVE_WORKTREE_PATH" -b "$HIVE_BRANCH_NAME" "$HIVE_BASE_REF"\n# ... any tool-specific post-create work, e.g. copying encryption keys ...\ngit -C "$HIVE_WORKTREE_PATH" reset --hard HEAD'
-                  }
-                  rows={5}
-                  className="font-mono text-sm resize-y"
-                />
+              <div className="rounded-md border border-border bg-muted/20">
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/24"
+                  onClick={() => setWorktreeCreateScriptExpanded((expanded) => !expanded)}
+                  aria-expanded={worktreeCreateScriptExpanded}
+                  aria-controls={worktreeCreateScriptContentId}
+                >
+                  <span className="flex min-w-0 items-center gap-2">
+                    <ChevronDown
+                      className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${
+                        worktreeCreateScriptExpanded ? '' : '-rotate-90'
+                      }`}
+                    />
+                    <span className="text-sm font-medium">Worktree Create Script</span>
+                    <span className="rounded border border-border px-1.5 py-0.5 text-[0.65rem] font-medium uppercase leading-none text-muted-foreground">
+                      Advanced
+                    </span>
+                  </span>
+                  {worktreeCreateScript.trim().length > 0 && (
+                    <span className="shrink-0 text-xs text-muted-foreground">Configured</span>
+                  )}
+                </button>
+                {worktreeCreateScriptExpanded && (
+                  <div
+                    id={worktreeCreateScriptContentId}
+                    className="space-y-1.5 border-t border-border px-3 py-3"
+                  >
+                    <p className="text-xs text-muted-foreground">
+                      When set, this script replaces Hive&apos;s built-in{' '}
+                      <code className="font-mono text-[0.7rem]">git worktree add</code> call. Use
+                      for repos that need special handling (e.g. git-crypt, sparse-checkout). The
+                      script must create a worktree at{' '}
+                      <code className="font-mono text-[0.7rem]">$HIVE_WORKTREE_PATH</code> on
+                      branch <code className="font-mono text-[0.7rem]">$HIVE_BRANCH_NAME</code>.
+                      Available env vars:{' '}
+                      <code className="font-mono text-[0.7rem]">HIVE_WORKTREE_PATH</code>,{' '}
+                      <code className="font-mono text-[0.7rem]">HIVE_BRANCH_NAME</code>,{' '}
+                      <code className="font-mono text-[0.7rem]">HIVE_BASE_BRANCH</code>{' '}
+                      (human-readable base branch name),{' '}
+                      <code className="font-mono text-[0.7rem]">HIVE_BASE_REF</code> (git ref to
+                      use with <code className="font-mono text-[0.7rem]">git worktree add</code>;
+                      equals <code className="font-mono text-[0.7rem]">HIVE_BASE_BRANCH</code> in
+                      most flows, but is{' '}
+                      <code className="font-mono text-[0.7rem]">FETCH_HEAD</code> when checking out
+                      a pull-request ref),{' '}
+                      <code className="font-mono text-[0.7rem]">HIVE_PROJECT_PATH</code>,{' '}
+                      <code className="font-mono text-[0.7rem]">HIVE_WORKTREE_MODE</code> (
+                      <code className="font-mono text-[0.7rem]">new</code> |{' '}
+                      <code className="font-mono text-[0.7rem]">existing</code> |{' '}
+                      <code className="font-mono text-[0.7rem]">duplicate</code>). In{' '}
+                      <code className="font-mono text-[0.7rem]">duplicate</code> mode, also
+                      receives{' '}
+                      <code className="font-mono text-[0.7rem]">HIVE_SOURCE_WORKTREE_PATH</code>{' '}
+                      and <code className="font-mono text-[0.7rem]">HIVE_SOURCE_BRANCH</code>.
+                      Scripts run via <code className="font-mono text-[0.7rem]">/bin/sh -c</code>{' '}
+                      by default; a{' '}
+                      <code className="font-mono text-[0.7rem]">#!/usr/bin/env bash</code> or{' '}
+                      <code className="font-mono text-[0.7rem]">#!/bin/bash</code> shebang on the
+                      first line switches to{' '}
+                      <code className="font-mono text-[0.7rem]">bash -c</code>. Hive aborts the
+                      script (and its whole process group) after 5 minutes if it does not exit, and
+                      best-effort cleans up any partial worktree/branch on failure.
+                    </p>
+                    <Textarea
+                      value={worktreeCreateScript}
+                      onChange={(e) => setWorktreeCreateScript(e.target.value)}
+                      placeholder={
+                        'git worktree add --no-checkout "$HIVE_WORKTREE_PATH" -b "$HIVE_BRANCH_NAME" "$HIVE_BASE_REF"\n# ... any tool-specific post-create work, e.g. copying encryption keys ...\ngit -C "$HIVE_WORKTREE_PATH" reset --hard HEAD'
+                      }
+                      rows={5}
+                      className="font-mono text-sm resize-y"
+                    />
+                  </div>
+                )}
               </div>
             </TabsContent>
 

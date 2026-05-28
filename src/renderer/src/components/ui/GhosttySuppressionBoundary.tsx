@@ -1,5 +1,5 @@
 import { useId, type ReactNode } from 'react'
-import { useGhosttySuppression } from '@/hooks'
+import { useGhosttySuppression } from '@/hooks/useGhosttySuppression'
 
 interface GhosttySuppressionBoundaryProps {
   scope: string
