@@ -78,6 +78,30 @@ describe('Session 7: Slash Commands', () => {
       expect(screen.queryByTestId('slash-item-compact')).toBeNull()
     })
 
+    test('Skill commands render a skill badge and filter by name', () => {
+      render(
+        <SlashCommandPopover
+          commands={[
+            ...mockCommands,
+            {
+              name: 'imagegen',
+              description: 'Generate or edit raster images',
+              template: '/imagegen ',
+              source: 'skill'
+            }
+          ]}
+          filter="/image"
+          onSelect={onSelect}
+          onClose={onClose}
+          visible={true}
+        />
+      )
+
+      expect(screen.getByTestId('slash-item-imagegen')).toBeTruthy()
+      expect(screen.getByText('skill')).toBeTruthy()
+      expect(screen.queryByTestId('slash-item-compact')).toBeNull()
+    })
+
     test('Fuzzy filter: "/comp" matches "compact"', () => {
       render(
         <SlashCommandPopover
@@ -135,7 +159,9 @@ describe('Session 7: Slash Commands', () => {
       )
 
       fireEvent.click(screen.getByTestId('slash-item-compact'))
-      expect(onSelect).toHaveBeenCalledWith({ name: 'compact', template: '/compact' })
+      expect(onSelect).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'compact', template: '/compact' })
+      )
     })
 
     test('Enter selects highlighted command', () => {
@@ -151,7 +177,9 @@ describe('Session 7: Slash Commands', () => {
 
       // First item is selected by default, press Enter
       fireEvent.keyDown(window, { key: 'Enter' })
-      expect(onSelect).toHaveBeenCalledWith({ name: 'compact', template: '/compact' })
+      expect(onSelect).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'compact', template: '/compact' })
+      )
     })
 
     test('Arrow down selects next item', () => {
@@ -168,7 +196,9 @@ describe('Session 7: Slash Commands', () => {
       // Press ArrowDown to move to second item, then Enter
       fireEvent.keyDown(window, { key: 'ArrowDown' })
       fireEvent.keyDown(window, { key: 'Enter' })
-      expect(onSelect).toHaveBeenCalledWith({ name: 'using-superpowers', template: '/using-superpowers' })
+      expect(onSelect).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'using-superpowers', template: '/using-superpowers' })
+      )
     })
 
     test('Arrow up selects previous item', () => {
@@ -187,7 +217,9 @@ describe('Session 7: Slash Commands', () => {
       fireEvent.keyDown(window, { key: 'ArrowDown' })
       fireEvent.keyDown(window, { key: 'ArrowUp' })
       fireEvent.keyDown(window, { key: 'Enter' })
-      expect(onSelect).toHaveBeenCalledWith({ name: 'using-superpowers', template: '/using-superpowers' })
+      expect(onSelect).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'using-superpowers', template: '/using-superpowers' })
+      )
     })
 
     test('Escape closes popover', () => {
@@ -266,7 +298,9 @@ describe('Session 7: Slash Commands', () => {
 
       // Press Enter — should select first filtered item
       fireEvent.keyDown(window, { key: 'Enter' })
-      expect(onSelect).toHaveBeenCalledWith({ name: 'compact', template: '/compact' })
+      expect(onSelect).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'compact', template: '/compact' })
+      )
     })
   })
 
@@ -305,14 +339,14 @@ describe('Session 7: Slash Commands', () => {
   })
 
   describe('Command selection', () => {
-    test('handleCommandSelect sets input to "/commandName "', () => {
+    test('handleCommandSelect inserts command template', () => {
       let inputValue = '/'
       const handleCommandSelect = (cmd: { name: string; template: string }): void => {
-        inputValue = `/${cmd.name} `
+        inputValue = /\s$/.test(cmd.template) ? cmd.template : `${cmd.template} `
       }
 
-      handleCommandSelect({ name: 'compact', template: '/compact' })
-      expect(inputValue).toBe('/compact ')
+      handleCommandSelect({ name: 'imagegen', template: '/imagegen default prompt' })
+      expect(inputValue).toBe('/imagegen default prompt ')
     })
 
     test('handleCommandSelect hides popover', () => {

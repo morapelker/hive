@@ -88,12 +88,14 @@ export interface AgentSdkImplementer {
   redo(worktreePath: string, agentSessionId: string, hiveSessionId: string): Promise<unknown>
 
   // Commands
-  listCommands(worktreePath: string): Promise<unknown[]>
+  listCommands(worktreePath: string, agentSessionId?: string): Promise<unknown[]>
   sendCommand(
     worktreePath: string,
     agentSessionId: string,
     command: string,
-    args?: string
+    args?: string,
+    modelOverride?: { providerID: string; modelID: string; variant?: string },
+    options?: PromptOptions
   ): Promise<void>
 
   // Session management

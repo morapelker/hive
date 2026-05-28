@@ -1685,14 +1685,16 @@ const opencodeOps = {
     opencodeSessionId: string,
     command: string,
     args: string,
-    model?: { providerID: string; modelID: string; variant?: string }
+    model?: { providerID: string; modelID: string; variant?: string },
+    options?: { codexFastMode?: boolean }
   ): Promise<Envelope<{ success: boolean; error?: string }>> =>
     ipcRenderer.invoke('opencode:command', {
       worktreePath,
       sessionId: opencodeSessionId,
       command,
       args,
-      model
+      model,
+      options
     }),
 
   // List available slash commands from the SDK
@@ -1709,6 +1711,9 @@ const opencodeOps = {
         agent?: string
         model?: string
         source?: string
+        path?: string
+        scope?: string
+        enabled?: boolean
         subtask?: boolean
         hints?: string[]
       }>
