@@ -178,7 +178,7 @@ describe('Session 7: Integration & Polish', () => {
         })
       )
 
-      // PulseAnimation renders an SVG with animateTransform
+      // PulseAnimation renders an SVG wave animated with CSS.
       const svg = container.querySelector('svg')
       expect(svg).toBeTruthy()
 
@@ -212,7 +212,7 @@ describe('Session 7: Integration & Polish', () => {
       )
 
       // Initially has pulse
-      expect(container.querySelector('animateTransform')).toBeTruthy()
+      expect(container.querySelector('.pulse-wave')).toBeTruthy()
 
       // Stop the run
       await act(async () => {
@@ -238,7 +238,7 @@ describe('Session 7: Integration & Polish', () => {
       )
 
       // Pulse should be gone
-      expect(container.querySelector('animateTransform')).toBeNull()
+      expect(container.querySelector('.pulse-wave')).toBeNull()
     })
   })
 
@@ -358,10 +358,8 @@ describe('Session 7: Integration & Polish', () => {
       expect(path).toBeTruthy()
       expect(path?.getAttribute('stroke')).toBe('currentColor')
 
-      const animate = container.querySelector('animateTransform')
-      expect(animate).toBeTruthy()
-      expect(animate?.getAttribute('dur')).toBe('2s')
-      expect(animate?.getAttribute('repeatCount')).toBe('indefinite')
+      const wave = container.querySelector('.pulse-wave')
+      expect(wave).toBeTruthy()
     })
   })
 

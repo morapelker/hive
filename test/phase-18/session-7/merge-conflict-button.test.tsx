@@ -70,7 +70,7 @@ describe('Session 7: Merge Conflict Header Button', () => {
         .fn()
         .mockResolvedValue({ success: true, value: { success: true, files: mockFiles } })
 
-      await useGitStore.getState().loadFileStatuses('/wt')
+      await useGitStore.getState().loadFileStatuses('/wt', { force: true })
       const state = useGitStore.getState()
       expect(state.conflictsByWorktree['/wt']).toBe(true)
     })
@@ -86,7 +86,7 @@ describe('Session 7: Merge Conflict Header Button', () => {
         .fn()
         .mockResolvedValue({ success: true, value: { success: true, files: mockFiles } })
 
-      await useGitStore.getState().loadFileStatuses('/wt')
+      await useGitStore.getState().loadFileStatuses('/wt', { force: true })
       const state = useGitStore.getState()
       expect(state.conflictsByWorktree['/wt']).toBe(false)
     })
@@ -97,7 +97,7 @@ describe('Session 7: Merge Conflict Header Button', () => {
         .fn()
         .mockResolvedValue({ success: true, value: { success: true, files: [] } })
 
-      await useGitStore.getState().loadFileStatuses('/wt')
+      await useGitStore.getState().loadFileStatuses('/wt', { force: true })
       const state = useGitStore.getState()
       expect(state.conflictsByWorktree['/wt']).toBe(false)
     })

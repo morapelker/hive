@@ -58,6 +58,13 @@ vi.mock('@/components/pr/PRNotificationStack', () => ({
   PRNotificationStack: () => null
 }))
 
+vi.mock('@/contexts/ClaudeCliSessionPortalContext', () => ({
+  useClaudeCliSessionPortal: () => ({
+    getTarget: () => null,
+    revision: 0
+  })
+}))
+
 vi.mock('./MainPaneTerminalPanel', () => ({
   MainPaneTerminalPanel: () => null
 }))
@@ -215,7 +222,7 @@ describe('MainPane terminal visibility', () => {
 
     const terminal = screen.getByTestId('session-view-session-1')
     expect(terminal.getAttribute('data-visible')).toBe('false')
-    expect(terminal.parentElement?.classList.contains('hidden')).toBe(true)
+    expect(terminal.parentElement?.classList.contains('flex-1')).toBe(true)
   })
 
   it('keeps a plain terminal session mounted but hidden during board view', () => {

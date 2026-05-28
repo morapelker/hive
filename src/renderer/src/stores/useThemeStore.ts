@@ -14,6 +14,8 @@ const STORAGE_KEY = 'hive-theme'
 // ---------------------------------------------------------------------------
 
 function applyThemePreset(preset: ThemePreset): void {
+  if (typeof document === 'undefined') return
+
   const root = document.documentElement
 
   // Always clear previous inline overrides first
@@ -218,7 +220,9 @@ if (typeof window !== 'undefined') {
     applyThemePreset(preset)
   } else {
     // Fallback: just set dark class
-    document.documentElement.classList.add('dark')
+    if (typeof document !== 'undefined') {
+      document.documentElement.classList.add('dark')
+    }
   }
 
   // Load from database (source of truth) once IPC is ready

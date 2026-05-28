@@ -3,7 +3,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { ProjectItem } from '../../src/renderer/src/components/projects/ProjectItem'
+import { WorktreeItem } from '../../src/renderer/src/components/worktrees/WorktreeItem'
 import { useProjectStore } from '../../src/renderer/src/stores/useProjectStore'
 import { useWorktreeStore } from '../../src/renderer/src/stores/useWorktreeStore'
 import { useSpaceStore } from '../../src/renderer/src/stores/useSpaceStore'
@@ -55,10 +55,25 @@ describe('Custom Command Execution', () => {
     last_accessed_at: '2024-01-01T00:00:00Z'
   }
 
+  const mockWorktree = {
+    id: 'wt-1',
+    project_id: 'proj-1',
+    name: 'main',
+    branch_name: 'main',
+    path: '/path/to/project',
+    status: 'active' as const,
+    is_default: true,
+    last_message_at: null,
+    created_at: '2024-01-01T00:00:00Z',
+    last_accessed_at: '2024-01-01T00:00:00Z',
+    attachments: '[]'
+  }
+
   beforeEach(() => {
     // Reset all stores
     useProjectStore.setState({
       selectedProjectId: null,
+      projects: [mockProject],
       expandedProjectIds: new Set(),
       editingProjectId: null,
       selectProject: vi.fn(),
@@ -124,11 +139,11 @@ describe('Custom Command Execution', () => {
     const eventSpy = vi.fn()
     window.addEventListener('hive:execute-custom-command', eventSpy)
 
-    render(<ProjectItem project={mockProject} />)
+    render(<WorktreeItem worktree={mockWorktree} projectPath={mockProject.path} />)
 
     // Find and right-click the project item
-    const projectItem = screen.getByTestId('project-item-proj-1')
-    await user.pointer({ keys: '[MouseRight]', target: projectItem })
+    const worktreeItem = screen.getByTestId('worktree-item-wt-1')
+    await user.pointer({ keys: '[MouseRight]', target: worktreeItem })
 
     // Find and click the custom command in context menu
     const customCommand = await screen.findByText('Test Command')
@@ -140,6 +155,7 @@ describe('Custom Command Execution', () => {
     expect(event.type).toBe('hive:execute-custom-command')
     expect(event.detail).toEqual({
       projectId: 'proj-1',
+      worktreeId: 'wt-1',
       commandId: 'cmd-1',
       commandName: 'Test Command',
       renderedPrompt: 'Test Test Project in /path/to/project'
@@ -153,10 +169,10 @@ describe('Custom Command Execution', () => {
     const eventSpy = vi.fn()
     window.addEventListener('hive:execute-custom-command', eventSpy)
 
-    render(<ProjectItem project={mockProject} />)
+    render(<WorktreeItem worktree={mockWorktree} projectPath={mockProject.path} />)
 
-    const projectItem = screen.getByTestId('project-item-proj-1')
-    await user.pointer({ keys: '[MouseRight]', target: projectItem })
+    const worktreeItem = screen.getByTestId('worktree-item-wt-1')
+    await user.pointer({ keys: '[MouseRight]', target: worktreeItem })
 
     const customCommand = await screen.findByText('Test Command')
     await user.click(customCommand)

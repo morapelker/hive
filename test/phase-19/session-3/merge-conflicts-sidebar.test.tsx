@@ -15,6 +15,7 @@ import { render, screen } from '@testing-library/react'
 import { useGitStore } from '../../../src/renderer/src/stores/useGitStore'
 import { GitCommitForm } from '../../../src/renderer/src/components/git/GitCommitForm'
 
+const ok = <T,>(value: T) => ({ success: true as const, value })
 
 describe('Session 3: Merge Conflicts in Changes Sidebar', () => {
   beforeEach(() => {
@@ -40,9 +41,9 @@ describe('Session 3: Merge Conflicts in Changes Sidebar', () => {
       ]
 
       const mockGitOps = window.gitOps as Record<string, ReturnType<typeof vi.fn>>
-      mockGitOps.getFileStatuses = vi.fn().mockResolvedValue({ success: true, files: mockFiles })
+      mockGitOps.getFileStatuses = vi.fn().mockResolvedValue(ok({ success: true, files: mockFiles }))
 
-      await useGitStore.getState().loadFileStatuses('/wt')
+      await useGitStore.getState().loadFileStatuses('/wt', { force: true })
       const state = useGitStore.getState()
       const files = state.fileStatusesByWorktree.get('/wt') || []
 
@@ -71,9 +72,9 @@ describe('Session 3: Merge Conflicts in Changes Sidebar', () => {
       ]
 
       const mockGitOps = window.gitOps as Record<string, ReturnType<typeof vi.fn>>
-      mockGitOps.getFileStatuses = vi.fn().mockResolvedValue({ success: true, files: mockFiles })
+      mockGitOps.getFileStatuses = vi.fn().mockResolvedValue(ok({ success: true, files: mockFiles }))
 
-      await useGitStore.getState().loadFileStatuses('/wt')
+      await useGitStore.getState().loadFileStatuses('/wt', { force: true })
       const state = useGitStore.getState()
       const files = state.fileStatusesByWorktree.get('/wt') || []
 
@@ -90,9 +91,9 @@ describe('Session 3: Merge Conflicts in Changes Sidebar', () => {
       ]
 
       const mockGitOps = window.gitOps as Record<string, ReturnType<typeof vi.fn>>
-      mockGitOps.getFileStatuses = vi.fn().mockResolvedValue({ success: true, files: mockFiles })
+      mockGitOps.getFileStatuses = vi.fn().mockResolvedValue(ok({ success: true, files: mockFiles }))
 
-      await useGitStore.getState().loadFileStatuses('/wt')
+      await useGitStore.getState().loadFileStatuses('/wt', { force: true })
       const state = useGitStore.getState()
       const files = state.fileStatusesByWorktree.get('/wt') || []
 

@@ -1,15 +1,17 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest'
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
 
+const ok = <T,>(value: T) => ({ success: true as const, value })
+
 // ── Mock window APIs BEFORE importing stores ────────────────────────
 const mockKanban = {
   ticket: {
     create: vi.fn(),
     get: vi.fn(),
-    getByProject: vi.fn().mockResolvedValue([]),
-    update: vi.fn().mockResolvedValue(undefined),
-    delete: vi.fn().mockResolvedValue(undefined),
-    move: vi.fn().mockResolvedValue(undefined),
+    getByProject: vi.fn().mockResolvedValue(ok([])),
+    update: vi.fn().mockResolvedValue(ok(undefined)),
+    delete: vi.fn().mockResolvedValue(ok(undefined)),
+    move: vi.fn().mockResolvedValue(ok(undefined)),
     reorder: vi.fn(),
     getBySession: vi.fn()
   },
@@ -17,65 +19,69 @@ const mockKanban = {
 }
 
 const mockDbSession = {
-  create: vi.fn().mockResolvedValue({
-    id: 'new-session-1',
-    worktree_id: 'wt-1',
-    project_id: 'proj-1',
-    connection_id: null,
-    name: 'Session 1',
-    status: 'active',
-    opencode_session_id: null,
-    agent_sdk: 'claude-code',
-    mode: 'plan',
-    model_provider_id: null,
-    model_id: null,
-    model_variant: null,
-    created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
-    completed_at: null
-  }),
-  getActiveByWorktree: vi.fn().mockResolvedValue([]),
-  update: vi.fn().mockResolvedValue(undefined),
-  get: vi.fn().mockResolvedValue(null)
+  create: vi.fn().mockResolvedValue(
+    ok({
+      id: 'new-session-1',
+      worktree_id: 'wt-1',
+      project_id: 'proj-1',
+      connection_id: null,
+      name: 'Session 1',
+      status: 'active',
+      opencode_session_id: null,
+      agent_sdk: 'claude-code',
+      mode: 'plan',
+      model_provider_id: null,
+      model_id: null,
+      model_variant: null,
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-01T00:00:00Z',
+      completed_at: null
+    })
+  ),
+  getActiveByWorktree: vi.fn().mockResolvedValue(ok([])),
+  update: vi.fn().mockResolvedValue(ok(undefined)),
+  get: vi.fn().mockResolvedValue(ok(null))
 }
 
 const mockDbWorktree = {
-  getActiveByProject: vi.fn().mockResolvedValue([]),
-  update: vi.fn().mockResolvedValue(undefined),
-  get: vi.fn().mockResolvedValue(null)
+  getActiveByProject: vi.fn().mockResolvedValue(ok([])),
+  update: vi.fn().mockResolvedValue(ok(undefined)),
+  get: vi.fn().mockResolvedValue(ok(null))
 }
 
 const mockOpencodeOps = {
-  connect: vi.fn().mockResolvedValue({ success: true, sessionId: 'opc-session-1' }),
-  prompt: vi.fn().mockResolvedValue({ success: true }),
-  reconnect: vi.fn().mockResolvedValue({ success: true }),
-  getMessages: vi.fn().mockResolvedValue({ success: true, messages: [] }),
-  planApprove: vi.fn().mockResolvedValue({ success: true }),
-  abort: vi.fn().mockResolvedValue({ success: true }),
-  commands: vi.fn().mockResolvedValue({
-    success: true,
-    commands: [{ name: 'using-superpowers' }]
-  })
+  connect: vi.fn().mockResolvedValue(ok({ success: true, sessionId: 'opc-session-1' })),
+  prompt: vi.fn().mockResolvedValue(ok({ success: true })),
+  reconnect: vi.fn().mockResolvedValue(ok({ success: true })),
+  getMessages: vi.fn().mockResolvedValue(ok({ success: true, messages: [] })),
+  planApprove: vi.fn().mockResolvedValue(ok({ success: true })),
+  abort: vi.fn().mockResolvedValue(ok({ success: true })),
+  commands: vi.fn().mockResolvedValue(ok({ success: true, commands: [{ name: 'using-superpowers' }] })),
+  listCommands: vi
+    .fn()
+    .mockResolvedValue(ok({ success: true, commands: [{ name: 'using-superpowers' }] }))
 }
 
 const mockWorktreeOps = {
-  create: vi.fn().mockResolvedValue({ success: true }),
-  duplicate: vi.fn().mockResolvedValue({ success: true })
+  create: vi.fn().mockResolvedValue(ok({ success: true })),
+  duplicate: vi.fn().mockResolvedValue(ok({ success: true }))
 }
 
 const mockGitOps = {
-  listBranchesWithStatus: vi.fn().mockResolvedValue({ success: true, branches: [] })
+  listBranchesWithStatus: vi.fn().mockResolvedValue(ok({ success: true, branches: [] }))
 }
 
 const mockConnectionOps = {
-  get: vi.fn().mockResolvedValue({
-    success: true,
-    connection: {
-      id: 'conn-1',
-      path: '/test/conn-1',
-      members: [{ project_id: 'proj-1', worktree_id: 'wt-1' }]
-    }
-  })
+  get: vi.fn().mockResolvedValue(
+    ok({
+      success: true,
+      connection: {
+        id: 'conn-1',
+        path: '/test/conn-1',
+        members: [{ project_id: 'proj-1', worktree_id: 'wt-1' }]
+      }
+    })
+  )
 }
 
 Object.defineProperty(window, 'connectionOps', {
@@ -306,6 +312,49 @@ describe('Plan review followup dispatch', () => {
       })
     })
     vi.clearAllMocks()
+    mockKanban.ticket.getByProject.mockResolvedValue(ok([]))
+    mockKanban.ticket.update.mockResolvedValue(ok(undefined))
+    mockKanban.ticket.delete.mockResolvedValue(ok(undefined))
+    mockKanban.ticket.move.mockResolvedValue(ok(undefined))
+    mockDbSession.create.mockResolvedValue(
+      ok(
+        makeSession({
+          id: 'new-session-1',
+          opencode_session_id: null
+        })
+      )
+    )
+    mockDbSession.getActiveByWorktree.mockResolvedValue(ok([]))
+    mockDbSession.update.mockResolvedValue(ok(undefined))
+    mockDbSession.get.mockResolvedValue(ok(null))
+    mockDbWorktree.getActiveByProject.mockResolvedValue(ok([]))
+    mockDbWorktree.update.mockResolvedValue(ok(undefined))
+    mockDbWorktree.get.mockResolvedValue(ok(null))
+    mockOpencodeOps.connect.mockResolvedValue(ok({ success: true, sessionId: 'opc-session-1' }))
+    mockOpencodeOps.prompt.mockResolvedValue(ok({ success: true }))
+    mockOpencodeOps.reconnect.mockResolvedValue(ok({ success: true }))
+    mockOpencodeOps.getMessages.mockResolvedValue(ok({ success: true, messages: [] }))
+    mockOpencodeOps.planApprove.mockResolvedValue(ok({ success: true }))
+    mockOpencodeOps.abort.mockResolvedValue(ok({ success: true }))
+    mockOpencodeOps.commands.mockResolvedValue(
+      ok({ success: true, commands: [{ name: 'using-superpowers' }] })
+    )
+    mockOpencodeOps.listCommands.mockResolvedValue(
+      ok({ success: true, commands: [{ name: 'using-superpowers' }] })
+    )
+    mockWorktreeOps.create.mockResolvedValue(ok({ success: true }))
+    mockWorktreeOps.duplicate.mockResolvedValue(ok({ success: true }))
+    mockGitOps.listBranchesWithStatus.mockResolvedValue(ok({ success: true, branches: [] }))
+    mockConnectionOps.get.mockResolvedValue(
+      ok({
+        success: true,
+        connection: {
+          id: 'conn-1',
+          path: '/test/conn-1',
+          members: [{ project_id: 'proj-1', worktree_id: 'wt-1' }]
+        }
+      })
+    )
     mockKanban.ticket.getBySession.mockImplementation(async (sessionId: string) => {
       const tickets = [...useKanbanStore.getState().tickets.values()].flat()
       return tickets.filter((ticket) => ticket.current_session_id === sessionId)
@@ -395,8 +444,8 @@ describe('Plan review followup dispatch', () => {
     // Make prompt() return a promise that never resolves (simulating a long session)
     let resolvePrompt!: () => void
     mockOpencodeOps.prompt.mockReturnValue(
-      new Promise<{ success: boolean }>((resolve) => {
-        resolvePrompt = () => resolve({ success: true })
+      new Promise<ReturnType<typeof ok<{ success: boolean }>>>((resolve) => {
+        resolvePrompt = () => resolve(ok({ success: true }))
       })
     )
 
@@ -457,7 +506,7 @@ describe('Plan review followup dispatch', () => {
   // ════════════════════════════════════════════════════════════════════
 
   test('shows error when reconnect fails', async () => {
-    mockOpencodeOps.reconnect.mockResolvedValue({ success: false })
+    mockOpencodeOps.reconnect.mockResolvedValue(ok({ success: false }))
 
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 
@@ -499,12 +548,14 @@ describe('Plan review followup dispatch', () => {
     })
 
     mockDbSession.create.mockResolvedValueOnce(
-      makeSession({
-        id: 'session-codex-new',
-        agent_sdk: 'codex',
-        mode: 'build',
-        opencode_session_id: null
-      })
+      ok(
+        makeSession({
+          id: 'session-codex-new',
+          agent_sdk: 'codex',
+          mode: 'build',
+          opencode_session_id: null
+        })
+      )
     )
 
     act(() => {
@@ -594,24 +645,28 @@ describe('Plan review followup dispatch', () => {
       description: '# Add `mul_998` function\n\nImplement the new helper'
     })
 
-    mockWorktreeOps.duplicate.mockResolvedValueOnce({
-      success: true,
-      worktree: makeWorktree({
-        id: 'wt-2',
-        name: 'add-mul-998-function',
-        branch_name: 'add-mul-998-function',
-        path: '/test/add-mul-998-function'
+    mockWorktreeOps.duplicate.mockResolvedValueOnce(
+      ok({
+        success: true,
+        worktree: makeWorktree({
+          id: 'wt-2',
+          name: 'add-mul-998-function',
+          branch_name: 'add-mul-998-function',
+          path: '/test/add-mul-998-function'
+        })
       })
-    })
+    )
 
     mockDbSession.create.mockResolvedValueOnce(
-      makeSession({
-        id: 'session-codex-new',
-        agent_sdk: 'codex',
-        mode: 'build',
-        opencode_session_id: null,
-        worktree_id: 'wt-2'
-      })
+      ok(
+        makeSession({
+          id: 'session-codex-new',
+          agent_sdk: 'codex',
+          mode: 'build',
+          opencode_session_id: null,
+          worktree_id: 'wt-2'
+        })
+      )
     )
 
     act(() => {
@@ -682,16 +737,18 @@ describe('Plan review followup dispatch', () => {
     })
 
     mockDbSession.create.mockResolvedValueOnce(
-      makeSession({
-        id: 'session-codex-new',
-        agent_sdk: 'codex',
-        mode: 'build',
-        opencode_session_id: null
-      })
+      ok(
+        makeSession({
+          id: 'session-codex-new',
+          agent_sdk: 'codex',
+          mode: 'build',
+          opencode_session_id: null
+        })
+      )
     )
 
     // Background connect fails — modal has already closed.
-    mockOpencodeOps.connect.mockResolvedValueOnce({ success: false })
+    mockOpencodeOps.connect.mockResolvedValueOnce(ok({ success: false }))
 
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 
@@ -773,19 +830,21 @@ describe('Plan review followup dispatch', () => {
     })
 
     mockDbSession.create.mockResolvedValueOnce(
-      makeSession({
-        id: 'session-codex-new',
-        agent_sdk: 'codex',
-        mode: 'build',
-        opencode_session_id: null
-      })
+      ok(
+        makeSession({
+          id: 'session-codex-new',
+          agent_sdk: 'codex',
+          mode: 'build',
+          opencode_session_id: null
+        })
+      )
     )
 
     // Hold prompt pending so success can't be claimed until we release it.
     let resolvePrompt!: () => void
     mockOpencodeOps.prompt.mockReturnValue(
-      new Promise<{ success: boolean }>((resolve) => {
-        resolvePrompt = () => resolve({ success: true })
+      new Promise<ReturnType<typeof ok<{ success: boolean }>>>((resolve) => {
+        resolvePrompt = () => resolve(ok({ success: true }))
       })
     )
 
@@ -858,7 +917,7 @@ describe('Plan review followup dispatch', () => {
   // the handler must also set the active connection.
   // ════════════════════════════════════════════════════════════════════
 
-  test('handoff on connection ticket (non-sticky-tab) switches to the new connection session', async () => {
+  test('handoff on connection ticket (non-sticky-tab) keeps the board focused while starting the new session', async () => {
     const connTicket = makeTicket({
       id: 'ticket-conn',
       column: 'in_progress',
@@ -870,14 +929,16 @@ describe('Plan review followup dispatch', () => {
     })
 
     mockDbSession.create.mockResolvedValueOnce(
-      makeSession({
-        id: 'session-conn-new',
-        worktree_id: null,
-        connection_id: 'conn-1',
-        agent_sdk: 'claude-code',
-        mode: 'build',
-        opencode_session_id: null
-      })
+      ok(
+        makeSession({
+          id: 'session-conn-new',
+          worktree_id: null,
+          connection_id: 'conn-1',
+          agent_sdk: 'claude-code',
+          mode: 'build',
+          opencode_session_id: null
+        })
+      )
     )
 
     act(() => {
@@ -964,14 +1025,9 @@ describe('Plan review followup dispatch', () => {
       expect(mockDbSession.create).toHaveBeenCalled()
     })
 
-    // In non-sticky-tab mode, the user should be navigated to the new
-    // connection session — which requires activeConnectionId to be set so
-    // the shell can render the connection context (setActiveConnectionSession
-    // alone is a no-op when activeConnectionId is null).
-    await waitFor(() => {
-      expect(useSessionStore.getState().activeConnectionId).toBe('conn-1')
-    })
-    expect(useSessionStore.getState().activeSessionId).toBe('session-conn-new')
+    expect(useSessionStore.getState().activeConnectionId).toBeNull()
+    expect(useSessionStore.getState().activeSessionId).toBeNull()
+    expect(useKanbanStore.getState().isBoardViewActive).toBe(true)
     expect(mockOpencodeOps.connect).toHaveBeenCalledWith('/test/conn-1', 'session-conn-new')
     expect(mockOpencodeOps.prompt).toHaveBeenCalledWith(
       '/test/conn-1',
@@ -992,16 +1048,18 @@ describe('Plan review followup dispatch', () => {
     expect(useWorktreeStatusStore.getState().sessionStatuses['session-conn-new']?.status).toBe('working')
   })
 
-  test('handoff on worktree ticket relinks the ticket to the new session', async () => {
+  test('handoff on worktree ticket keeps the board focused and relinks the ticket to the new session', async () => {
     mockDbSession.create.mockResolvedValueOnce(
-      makeSession({
-        id: 'session-worktree-new',
-        worktree_id: 'wt-1',
-        connection_id: null,
-        agent_sdk: 'claude-code',
-        mode: 'build',
-        opencode_session_id: null
-      })
+      ok(
+        makeSession({
+          id: 'session-worktree-new',
+          worktree_id: 'wt-1',
+          connection_id: null,
+          agent_sdk: 'claude-code',
+          mode: 'build',
+          opencode_session_id: null
+        })
+      )
     )
 
     act(() => {
@@ -1049,9 +1107,8 @@ describe('Plan review followup dispatch', () => {
       expect(mockDbSession.create).toHaveBeenCalled()
     })
 
-    await waitFor(() => {
-      expect(useSessionStore.getState().activeSessionId).toBe('session-worktree-new')
-    })
+    expect(useSessionStore.getState().activeSessionId).toBeNull()
+    expect(useKanbanStore.getState().isBoardViewActive).toBe(true)
     expect(mockOpencodeOps.connect).toHaveBeenCalledWith('/test/feature-auth', 'session-worktree-new')
     expect(mockOpencodeOps.prompt).toHaveBeenCalledWith(
       '/test/feature-auth',

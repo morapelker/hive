@@ -642,10 +642,14 @@ export const useSettingsStore = create<SettingsState>()(
 
       loadFromDatabase: async () => {
         const dbSettings = await loadSettingsFromDatabase()
+        if (typeof window === 'undefined') return
+
         const telegramConfig = await window.telegramOps
           ?.getConfig?.()
           .then(unwrapEnvelope)
           .catch(() => null)
+        if (typeof window === 'undefined') return
+
         if (dbSettings) {
           set({
             ...dbSettings,
@@ -746,7 +750,11 @@ if (typeof window !== 'undefined') {
       .getState()
       .loadFromDatabase()
       .then(() => {
+        if (typeof window === 'undefined') return
         useSettingsStore.getState().detectAvailableAgentSdks()
+      })
+      .catch((err) => {
+        console.error('[useSettingsStore] startup load failed', err)
       })
   }, 200)
 

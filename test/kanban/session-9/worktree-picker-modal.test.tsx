@@ -573,7 +573,9 @@ describe('Session 9: Worktree Picker Modal', () => {
       expect(screen.getByTestId('sdk-toggle-claude-code')).toHaveClass('bg-primary')
     })
     expect(screen.getByTestId('sdk-toggle-opencode')).not.toHaveClass('bg-primary')
-    expect(screen.getByTestId('model-selector')).toHaveTextContent('opus-4.5')
+    await waitFor(() => {
+      expect(screen.getByTestId('model-selector')).toHaveTextContent('opus-4.5')
+    })
   })
 
   test('Tab still toggles mode when prompt textarea is already focused', () => {

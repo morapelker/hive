@@ -272,7 +272,7 @@ describe('Session 8: Tab Context Menus UI', () => {
       fireEvent.click(screen.getByTestId('session-tab-s1'))
 
       expect(useFileViewerStore.getState().activeFilePath).toBeNull()
-      expect(useWorktreeStatusStore.getState().sessionStatuses.s1).toBeNull()
+      expect(useWorktreeStatusStore.getState().sessionStatuses.s1?.status).toBe('working')
     })
   })
 

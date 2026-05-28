@@ -27,12 +27,14 @@ const codexProviders = [
   }
 ]
 
+const ok = <T,>(value: T) => ({ success: true as const, value })
+
 const mockListModels = vi.fn().mockImplementation(async ({ agentSdk }: { agentSdk?: string } = {}) => {
   if (agentSdk === 'codex') {
-    return { success: true, providers: codexProviders }
+    return ok({ success: true, providers: codexProviders })
   }
 
-  return { success: true, providers: claudeProviders }
+  return ok({ success: true, providers: claudeProviders })
 })
 
 import { ModelSelector } from '@/components/sessions/ModelSelector'
@@ -44,10 +46,10 @@ describe('ModelSelector provider filter pill', () => {
     vi.clearAllMocks()
     mockListModels.mockImplementation(async ({ agentSdk }: { agentSdk?: string } = {}) => {
       if (agentSdk === 'codex') {
-        return { success: true, providers: codexProviders }
+        return ok({ success: true, providers: codexProviders })
       }
 
-      return { success: true, providers: claudeProviders }
+      return ok({ success: true, providers: claudeProviders })
     })
     Object.defineProperty(window, 'opencodeOps', {
       writable: true,
@@ -87,7 +89,9 @@ describe('ModelSelector provider filter pill', () => {
       />
     )
 
-    expect(await screen.findByTestId('model-provider-filter')).toHaveTextContent('Codex')
+    await waitFor(() => {
+      expect(screen.getByTestId('model-provider-filter')).toHaveTextContent('Codex')
+    })
   })
 
   test('updates the provider pill when the controlled SDK changes', async () => {
@@ -99,7 +103,9 @@ describe('ModelSelector provider filter pill', () => {
       />
     )
 
-    expect(await screen.findByTestId('model-provider-filter')).toHaveTextContent('Codex')
+    await waitFor(() => {
+      expect(screen.getByTestId('model-provider-filter')).toHaveTextContent('Codex')
+    })
 
     rerender(
       <ModelSelector

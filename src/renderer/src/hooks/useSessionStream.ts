@@ -600,6 +600,8 @@ export function useSessionStream({
         currentGeneration
       )
       try {
+        if (!isCurrentGeneration()) return
+
         let result = unwrapEnvelope(
           await window.opencodeOps.getMessages(worktreePath, opencodeSessionId)
         )
@@ -639,6 +641,8 @@ export function useSessionStream({
           )
           if (!isCurrentGeneration()) return
         }
+
+        if (!isCurrentGeneration()) return
 
         if (result.success && result.messages) {
           const mapped = mapOpencodeMessagesToSessionViewMessages(result.messages as unknown[])
