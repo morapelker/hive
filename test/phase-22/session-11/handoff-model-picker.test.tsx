@@ -390,7 +390,7 @@ describe('handoff model picker', () => {
     render(<HandoffSplitButton onHandoff={vi.fn()} testIdPrefix="plan-ready" />)
 
     const handoffButton = await screen.findByTestId('plan-ready-handoff-fab')
-    expect(handoffButton).toHaveTextContent('Claude Code (legacy SDK) /')
+    expect(handoffButton).toHaveTextContent('Claude Code /')
     expect(handoffButton).toHaveTextContent('Sonnet 4.6')
 
     act(() => {

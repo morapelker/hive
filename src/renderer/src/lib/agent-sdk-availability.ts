@@ -11,7 +11,7 @@ function getAgentSdkLabel(sdk: Exclude<SelectableAgentSdk, 'terminal'>): string 
     case 'opencode':
       return 'OpenCode'
     case 'claude-code':
-      return 'Claude Code (legacy SDK)'
+      return 'Claude Code'
     case 'claude-code-cli':
       return 'Claude Code (CLI)'
     case 'codex':

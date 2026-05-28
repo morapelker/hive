@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   buildHandoffPrompt,
+  getAvailableHandoffAgentSdks,
+  getHandoffSdkDisplayName,
   resolveSessionCreationSelection,
   type HandoffSelectionOverride
 } from '../handoffSelection'
@@ -103,5 +105,21 @@ describe('resolveSessionCreationSelection', () => {
       modelID: 'sonnet',
       variant: 'high'
     })
+  })
+})
+
+describe('handoff provider visuals', () => {
+  it('orders Claude Code second and Claude CLI last', () => {
+    expect(getAvailableHandoffAgentSdks({ opencode: true, claude: true, codex: true })).toEqual([
+      'opencode',
+      'claude-code',
+      'codex',
+      'claude-code-cli'
+    ])
+  })
+
+  it('displays Claude Code without legacy wording', () => {
+    expect(getHandoffSdkDisplayName('claude-code')).toBe('Claude Code')
+    expect(getHandoffSdkDisplayName('claude-code-cli')).toBe('Claude Code (CLI)')
   })
 })

@@ -257,9 +257,9 @@ async function renderAndSelectClaudeCli(ticket: KanbanTicket = baseTicket): Prom
   const toggle = screen.getByTestId('sdk-toggle')
   expect(within(toggle).getAllByRole('button').map((button) => button.textContent)).toEqual([
     'OpenCode',
-    'Claude CLI',
+    'Claude Code',
     'Codex',
-    'Claude Code (SDK)'
+    'Claude CLI'
   ])
   await userEvent.click(screen.getByTestId('sdk-toggle-claude-code-cli'))
 }

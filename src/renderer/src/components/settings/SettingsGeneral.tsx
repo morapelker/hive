@@ -591,20 +591,6 @@ export function SettingsGeneral(): React.JSX.Element {
             OpenCode
           </button>
           <button
-            onClick={() => updateSetting('defaultAgentSdk', 'claude-code-cli')}
-            disabled={!claudeCliAvailable}
-            className={cn(
-              'px-3 py-1.5 rounded-md text-sm border transition-colors disabled:opacity-50 disabled:cursor-not-allowed',
-              defaultAgentSdk === 'claude-code-cli'
-                ? 'bg-primary text-primary-foreground border-primary'
-                : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
-            )}
-            data-testid="agent-sdk-claude-code-cli"
-            title={!claudeCliAvailable ? 'Claude Code CLI is not currently available' : undefined}
-          >
-            Claude Code (CLI)
-          </button>
-          <button
             onClick={() => updateSetting('defaultAgentSdk', 'claude-code')}
             disabled={!claudeAvailable}
             className={cn(
@@ -616,7 +602,7 @@ export function SettingsGeneral(): React.JSX.Element {
             data-testid="agent-sdk-claude-code"
             title={!claudeAvailable ? 'Claude Code is not currently available' : undefined}
           >
-            Claude Code (legacy SDK)
+            Claude Code
           </button>
           <button
             onClick={() => updateSetting('defaultAgentSdk', 'codex')}
@@ -643,6 +629,20 @@ export function SettingsGeneral(): React.JSX.Element {
             data-testid="agent-sdk-terminal"
           >
             Terminal
+          </button>
+          <button
+            onClick={() => updateSetting('defaultAgentSdk', 'claude-code-cli')}
+            disabled={!claudeCliAvailable}
+            className={cn(
+              'px-3 py-1.5 rounded-md text-sm border transition-colors disabled:opacity-50 disabled:cursor-not-allowed',
+              defaultAgentSdk === 'claude-code-cli'
+                ? 'bg-primary text-primary-foreground border-primary'
+                : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
+            )}
+            data-testid="agent-sdk-claude-code-cli"
+            title={!claudeCliAvailable ? 'Claude Code CLI is not currently available' : undefined}
+          >
+            Claude Code (CLI)
           </button>
         </div>
         {availableAgentSdks &&
