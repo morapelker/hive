@@ -40,6 +40,7 @@ let boundPort: number | null = null
 let startingPromise: Promise<{ port: number }> | null = null
 let rendererWindow: BrowserWindow | null = null
 const lastStatusBySession = new Map<string, ClaudeCliSessionStatusType>()
+const statusSubscribers = new Set<(payload: ClaudeCliStatusPayload) => void>()
 
 function hookUrl(port: number, hiveSessionId: string, path: string): string {
   return `http://${host}:${port}/hook/${encodeURIComponent(hiveSessionId)}/${path}`
@@ -108,8 +109,10 @@ export function mapHookEventToStatus(hook: ParsedClaudeHook): ClaudeCliSessionSt
       if (hook.tool_name === 'ExitPlanMode') return 'plan_ready'
       if (hook.tool_name === 'AskUserQuestion') return 'answering'
       return null
-    case 'PostToolUse':
     case 'PostToolUseFailure':
+      if (hook.tool_name === 'ExitPlanMode') return 'planning'
+      return 'working'
+    case 'PostToolUse':
       return 'working'
     case 'PermissionRequest':
       if (hook.tool_name === 'ExitPlanMode') return 'plan_ready'
@@ -154,8 +157,20 @@ export function publishClaudeCliStatus(
   }
 
   lastStatusBySession.set(payload.sessionId, payload.status)
+  for (const subscriber of statusSubscribers) {
+    subscriber(payload)
+  }
   if (!mainWindow.isDestroyed()) {
     mainWindow.webContents.send('claude-cli:status', payload)
+  }
+}
+
+export function subscribeClaudeCliStatus(
+  subscriber: (payload: ClaudeCliStatusPayload) => void
+): () => void {
+  statusSubscribers.add(subscriber)
+  return () => {
+    statusSubscribers.delete(subscriber)
   }
 }
 
@@ -289,6 +304,7 @@ export async function closeClaudeHookServer(): Promise<void> {
     boundPort = null
     startingPromise = null
     lastStatusBySession.clear()
+    statusSubscribers.clear()
     return
   }
 
@@ -307,4 +323,5 @@ export async function closeClaudeHookServer(): Promise<void> {
   boundPort = null
   startingPromise = null
   lastStatusBySession.clear()
+  statusSubscribers.clear()
 }

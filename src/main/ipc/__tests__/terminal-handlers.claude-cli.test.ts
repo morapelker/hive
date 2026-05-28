@@ -5,6 +5,13 @@ const mocks = vi.hoisted(() => {
   const handlers = new Map<string, (...args: any[]) => any>()
   const exitCallbacks = new Map<string, (code: number | null) => void>()
   const dataCallbacks = new Map<string, (data: string) => void>()
+  const statusCallbacks: Array<
+    (payload: {
+      sessionId: string
+      status: string
+      metadata?: { hookEventName?: string; toolName?: string }
+    }) => void
+  > = []
 
   return {
     handlers,
@@ -15,7 +22,19 @@ const mocks = vi.hoisted(() => {
     getDatabase: vi.fn(),
     getClaudeHookServer: vi.fn(),
     buildClaudeCliHookSettings: vi.fn(),
+    subscribeClaudeCliStatus: vi.fn(
+      (callback: (payload: {
+        sessionId: string
+        status: string
+        metadata?: { hookEventName?: string; toolName?: string }
+      }) => void) => {
+        statusCallbacks.push(callback)
+        return vi.fn()
+      }
+    ),
+    statusCallbacks,
     publishClaudeCliStatus: vi.fn(),
+    watchForClaudePlanFollowup: vi.fn(() => ({ close: vi.fn() })),
     ptyService: {
       has: vi.fn(() => false),
       create: vi.fn(() => ({ cols: 120, rows: 40 })),
@@ -94,9 +113,14 @@ vi.mock('../../services/claude-session-watcher', () => ({
   watchForClaudeSessionId: vi.fn(() => ({ close: vi.fn() }))
 }))
 
+vi.mock('../../services/claude-plan-followup-watcher', () => ({
+  watchForClaudePlanFollowup: mocks.watchForClaudePlanFollowup
+}))
+
 vi.mock('../../services/claude-hook-server', () => ({
   getClaudeHookServer: mocks.getClaudeHookServer,
   buildClaudeCliHookSettings: mocks.buildClaudeCliHookSettings,
+  subscribeClaudeCliStatus: mocks.subscribeClaudeCliStatus,
   publishClaudeCliStatus: mocks.publishClaudeCliStatus
 }))
 
@@ -156,6 +180,7 @@ describe('terminal:createClaudeCli hook status wiring', () => {
     mocks.handlers.clear()
     mocks.exitCallbacks.clear()
     mocks.dataCallbacks.clear()
+    mocks.statusCallbacks.length = 0
     vi.clearAllMocks()
     __resetRuntimeRegistryForTests()
 
@@ -185,7 +210,10 @@ describe('terminal:createClaudeCli hook status wiring', () => {
     expect(mocks.getClaudeHookServer).toHaveBeenCalledWith(mainWindow)
     expect(mocks.buildClaudeCliHookSettings).toHaveBeenCalledWith(45678, 'hive-session-1')
 
-    const [, options] = mocks.ptyService.create.mock.calls.at(-1)!
+    const [, options] = mocks.ptyService.create.mock.calls.at(-1)! as unknown as [
+      string,
+      { cwd: string; command: string; args: string[] }
+    ]
     expect(options).toMatchObject({
       cwd: '/repo/worktree',
       command: '/usr/local/bin/claude'
@@ -225,6 +253,45 @@ describe('terminal:createClaudeCli hook status wiring', () => {
       sessionId: 'hive-session-1',
       status: 'completed',
       metadata: { reason: 'pty_start' }
+    })
+  })
+
+  it('arms transcript polling on plan_ready and publishes a dedicated plan followup IPC event', async () => {
+    await mocks.handlers.get('terminal:createClaudeCli')!(mockEvent, 'hive-session-1', {})
+
+    expect(mocks.subscribeClaudeCliStatus).toHaveBeenCalledTimes(1)
+    mocks.statusCallbacks[0]?.({ sessionId: 'hive-session-1', status: 'plan_ready' })
+
+    expect(mocks.watchForClaudePlanFollowup).toHaveBeenCalledWith(
+      '/repo/worktree',
+      'claude-session-1',
+      expect.any(Function)
+    )
+
+    const onPlanFollowup = (
+      mocks.watchForClaudePlanFollowup.mock.calls[0] as unknown as [string, string, () => void]
+    )[2]
+    onPlanFollowup()
+
+    expect(mocks.webContentsSend).toHaveBeenCalledWith('claude-cli:plan-followup', {
+      sessionId: 'hive-session-1'
+    })
+  })
+
+  it('publishes a dedicated plan followup IPC event from the ExitPlanMode failure hook', async () => {
+    await mocks.handlers.get('terminal:createClaudeCli')!(mockEvent, 'hive-session-1', {})
+
+    mocks.statusCallbacks[0]?.({
+      sessionId: 'hive-session-1',
+      status: 'planning',
+      metadata: {
+        hookEventName: 'PostToolUseFailure',
+        toolName: 'ExitPlanMode'
+      }
+    })
+
+    expect(mocks.webContentsSend).toHaveBeenCalledWith('claude-cli:plan-followup', {
+      sessionId: 'hive-session-1'
     })
   })
 

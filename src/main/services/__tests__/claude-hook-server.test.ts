@@ -95,6 +95,11 @@ describe('mapHookEventToStatus', () => {
       { hook_event_name: 'PostToolUse', tool_name: 'Read' },
       'working'
     ],
+    [
+      'PostToolUseFailure ExitPlanMode maps to planning',
+      { hook_event_name: 'PostToolUseFailure', tool_name: 'ExitPlanMode' },
+      'planning'
+    ],
     ['PostToolUseFailure maps to working', { hook_event_name: 'PostToolUseFailure' }, 'working'],
     [
       'PermissionRequest maps to permission',
@@ -254,6 +259,29 @@ describe('ClaudeHookServer HTTP round-trip', () => {
         hookPath: 'tool',
         toolName: 'ExitPlanMode',
         plan: '# Plan\n\n1. Add CLI card.'
+      }
+    })
+  })
+
+  it('forwards ExitPlanMode rejection as planning so plan followups can resume review', async () => {
+    const mockWindow = makeWindow()
+    const { port } = await getClaudeHookServer(mockWindow as never)
+
+    await postHook(port, 'hive-session-1', 'tool', {
+      hook_event_name: 'PostToolUseFailure',
+      tool_name: 'ExitPlanMode',
+      tool_response: {
+        content: 'Please revise the plan before implementing.'
+      }
+    })
+
+    expect(mockWindow.webContents.send).toHaveBeenCalledWith('claude-cli:status', {
+      sessionId: 'hive-session-1',
+      status: 'planning',
+      metadata: {
+        hookEventName: 'PostToolUseFailure',
+        hookPath: 'tool',
+        toolName: 'ExitPlanMode'
       }
     })
   })

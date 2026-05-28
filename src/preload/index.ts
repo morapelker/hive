@@ -2067,6 +2067,19 @@ const terminalOps = {
     }
   },
 
+  onClaudeCliPlanFollowup: (callback: (payload: { sessionId: string }) => void): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      payload: { sessionId: string }
+    ): void => {
+      callback(payload)
+    }
+    ipcRenderer.on('claude-cli:plan-followup', handler)
+    return () => {
+      ipcRenderer.off('claude-cli:plan-followup', handler)
+    }
+  },
+
   getConfig: (): Promise<
     Envelope<{
       fontFamily?: string

@@ -1180,6 +1180,7 @@ declare global {
         callback: (claudeSessionId: string) => void
       ) => () => void
       onClaudeCliStatus: (callback: (payload: ClaudeCliStatusPayload) => void) => () => void
+      onClaudeCliPlanFollowup: (callback: (payload: { sessionId: string }) => void) => () => void
       getConfig: () => Promise<Envelope<GhosttyTerminalConfig>>
 
       // Native Ghostty backend methods
