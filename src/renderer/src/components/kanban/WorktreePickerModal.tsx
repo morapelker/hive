@@ -40,6 +40,7 @@ const EMPTY_ARRAY: readonly never[] = []
 
 // ── Types ───────────────────────────────────────────────────────────
 type PickerMode = 'build' | 'plan' | 'super-plan'
+type PickerAgentSdk = 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex'
 
 interface BranchInfo {
   name: string
@@ -120,6 +121,35 @@ function wrapGoalPrompt(prompt: string, criteria: string): string {
   return `/goal ${stripped}. Goal success criteria: ${criteria}`
 }
 
+function composePromptForSdk(
+  mode: PickerMode,
+  sessionAgentSdk: string | null | undefined,
+  prompt: string,
+  goalMode: boolean,
+  goalCriteria: string,
+  options: { claudeCli: boolean }
+): string | null {
+  const trimmedPrompt = prompt.trim()
+  if (!trimmedPrompt) return null
+
+  const skipPrefix =
+    options.claudeCli ||
+    sessionAgentSdk === 'claude-code' ||
+    sessionAgentSdk === 'codex' ||
+    sessionAgentSdk === 'claude-code-cli'
+  const modePrefix =
+    mode === 'super-plan'
+      ? getSuperPlanModePrefix(sessionAgentSdk)
+      : mode === 'plan' && !skipPrefix
+        ? PLAN_MODE_PREFIX
+        : ''
+  const fullPrompt = modePrefix + trimmedPrompt
+
+  return goalMode && goalCriteria.trim()
+    ? wrapGoalPrompt(fullPrompt, goalCriteria.trim())
+    : fullPrompt
+}
+
 // ── Component ───────────────────────────────────────────────────────
 export function WorktreePickerModal({
   ticket,
@@ -147,12 +177,12 @@ export function WorktreePickerModal({
   const [branchFilter, setBranchFilter] = useState('')
   const [branchesLoading, setBranchesLoading] = useState(false)
   const [selectedModel, setSelectedModel] = useState<{
-    agentSdk?: 'opencode' | 'claude-code' | 'codex'
+    agentSdk?: PickerAgentSdk
     providerID: string
     modelID: string
     variant?: string
   } | null>(null)
-  const [selectedSdk, setSelectedSdk] = useState<'opencode' | 'claude-code' | 'codex' | null>(null)
+  const [selectedSdk, setSelectedSdk] = useState<PickerAgentSdk | null>(null)
 
   // ── Store access ────────────────────────────────────────────────
   const worktrees = useWorktreeStore(
@@ -201,6 +231,14 @@ export function WorktreePickerModal({
 
   const agentSdk = selectedSdk ?? autoResolvedModel?.agentSdk ?? baseAgentSdk
   const goalAvailable = agentSdk === 'codex' && mode === 'build' && !preAssignOnly
+  const availableSdkButtonCount = availableAgentSdks
+    ? [
+        availableAgentSdks.opencode,
+        availableAgentSdks.claude,
+        availableAgentSdks.codex,
+        availableAgentSdks.claude
+      ].filter(Boolean).length
+    : 0
 
   // ── Count in-progress tickets per worktree ──────────────────────
   const ticketCountByWorktree = useMemo(() => {
@@ -275,7 +313,7 @@ export function WorktreePickerModal({
   }, [branches, branchFilter])
 
   // ── Handle SDK change ───────────────────────────────────────────
-  const handleSdkChange = useCallback((sdk: 'opencode' | 'claude-code' | 'codex') => {
+  const handleSdkChange = useCallback((sdk: PickerAgentSdk) => {
     setSelectedSdk(sdk)
     setSelectedModel(null) // reset model — new SDK has different models
     if (sdk !== 'codex') {
@@ -398,7 +436,21 @@ export function WorktreePickerModal({
       try {
         // Create connection session
         const createConnectionSession = useSessionStore.getState().createConnectionSession
-        const sessionResult = await createConnectionSession(connectionId, agentSdk, mode)
+        const effectiveModel = selectedModel ?? autoResolvedModel ?? undefined
+        const modelOverride = effectiveModel ? { ...effectiveModel, agentSdk } : undefined
+        const cliPendingPrompt =
+          agentSdk === 'claude-code-cli'
+            ? composePromptForSdk(mode, agentSdk, promptText, goalMode, goalCriteria, {
+                claudeCli: true
+              })
+            : null
+        const createOptions = {
+          ...(modelOverride ? { modelOverride } : {}),
+          ...(cliPendingPrompt ? { pendingMessage: cliPendingPrompt } : {})
+        }
+        const sessionResult = await createConnectionSession(connectionId, agentSdk, mode, {
+          ...createOptions
+        })
 
         if (!sessionResult.success || !sessionResult.session) {
           toast.error(sessionResult.error || 'Failed to create session')
@@ -419,7 +471,6 @@ export function WorktreePickerModal({
           .setSessionStatus(sessionId, isPlanLike(mode) ? 'planning' : 'working')
 
         // Apply model override
-        const effectiveModel = selectedModel ?? autoResolvedModel ?? undefined
         if (selectedModel) {
           await useSessionStore.getState().setSessionModel(sessionId, selectedModel)
         }
@@ -457,6 +508,31 @@ export function WorktreePickerModal({
         onOpenChange(false)
         toast.success('Session started')
 
+        if (sessionAgentSdk === 'claude-code-cli') {
+          const outboundPrompt =
+            cliPendingPrompt ??
+            composePromptForSdk(mode, sessionAgentSdk, promptText, goalMode, goalCriteria, {
+              claudeCli: true
+            })
+
+          if (mode === 'super-plan') {
+            // Await so the persisted mode is committed before the main process
+            // reads it in buildClaudeCliPtySpawn (createClaudeCli).
+            await useSessionStore.getState().setSessionMode(sessionId, 'plan')
+          }
+
+          bumpWorktreeLastMessage({ connectionId })
+          const result = unwrapEnvelope(
+            await window.terminalOps.createClaudeCli(sessionId, {
+              pendingPrompt: outboundPrompt
+            })
+          )
+          if (result.success && outboundPrompt) {
+            useSessionStore.getState().dequeuePendingMessage(sessionId)
+          }
+          return
+        }
+
         // Connect to opencode using connection path
         const connectionPath = useConnectionStore
           .getState()
@@ -473,18 +549,14 @@ export function WorktreePickerModal({
 
         // Send prompt
         if (promptText.trim()) {
-          const skipPrefix = sessionAgentSdk === 'claude-code' || sessionAgentSdk === 'codex'
-          const modePrefix =
-            mode === 'super-plan'
-              ? getSuperPlanModePrefix(sessionAgentSdk)
-              : mode === 'plan' && !skipPrefix
-                ? PLAN_MODE_PREFIX
-                : ''
-          const fullPrompt = modePrefix + promptText.trim()
-          const outboundPrompt =
-            goalMode && goalCriteria.trim()
-              ? wrapGoalPrompt(fullPrompt, goalCriteria.trim())
-              : fullPrompt
+          const outboundPrompt = composePromptForSdk(
+            mode,
+            sessionAgentSdk,
+            promptText,
+            goalMode,
+            goalCriteria,
+            { claudeCli: false }
+          )
           const promptOptions = sessionAgentSdk === 'codex' ? { codexFastMode } : undefined
 
           if (mode === 'super-plan') {
@@ -626,7 +698,19 @@ export function WorktreePickerModal({
       }
 
       // Create session in the selected worktree
-      const sessionResult = await createSession(worktreeId, projectId, agentSdk, mode)
+      const effectiveModel = selectedModel ?? autoResolvedModel ?? undefined
+      const modelOverride = effectiveModel ? { ...effectiveModel, agentSdk } : undefined
+      const cliPendingPrompt =
+        agentSdk === 'claude-code-cli'
+          ? composePromptForSdk(mode, agentSdk, promptText, goalMode, goalCriteria, {
+              claudeCli: true
+            })
+          : null
+      const createOptions = {
+        ...(modelOverride ? { modelOverride } : {}),
+        ...(cliPendingPrompt ? { pendingMessage: cliPendingPrompt } : {})
+      }
+      const sessionResult = await createSession(worktreeId, projectId, agentSdk, mode, createOptions)
 
       if (!sessionResult.success || !sessionResult.session) {
         toast.error(sessionResult.error || 'Failed to create session')
@@ -650,7 +734,6 @@ export function WorktreePickerModal({
         .setSessionStatus(sessionId, isPlanLike(mode) ? 'planning' : 'working')
 
       // Apply user's model override to the session if they explicitly picked one
-      const effectiveModel = selectedModel ?? autoResolvedModel ?? undefined
       if (selectedModel) {
         await useSessionStore.getState().setSessionModel(sessionId, selectedModel)
       }
@@ -685,6 +768,31 @@ export function WorktreePickerModal({
       onOpenChange(false)
       toast.success('Session started')
 
+      if (sessionAgentSdk === 'claude-code-cli') {
+        const outboundPrompt =
+          cliPendingPrompt ??
+          composePromptForSdk(mode, sessionAgentSdk, promptText, goalMode, goalCriteria, {
+            claudeCli: true
+          })
+
+        if (mode === 'super-plan') {
+          // Await so the persisted mode is committed before the main process
+          // reads it in buildClaudeCliPtySpawn (createClaudeCli).
+          await useSessionStore.getState().setSessionMode(sessionId, 'plan')
+        }
+
+        bumpWorktreeLastMessage({ worktreeId })
+        const result = unwrapEnvelope(
+          await window.terminalOps.createClaudeCli(sessionId, {
+            pendingPrompt: outboundPrompt
+          })
+        )
+        if (result.success && outboundPrompt) {
+          useSessionStore.getState().dequeuePendingMessage(sessionId)
+        }
+        return
+      }
+
       // ── Start the OpenCode session in the background ──────────
       // Resolve worktree path from the store
       const allWorktrees = Array.from(
@@ -707,18 +815,14 @@ export function WorktreePickerModal({
 
       // Send the prompt — apply plan mode prefix for opencode SDK
       if (promptText.trim()) {
-        const skipPrefix = sessionAgentSdk === 'claude-code' || sessionAgentSdk === 'codex'
-        const modePrefix =
-          mode === 'super-plan'
-            ? getSuperPlanModePrefix(sessionAgentSdk)
-            : mode === 'plan' && !skipPrefix
-              ? PLAN_MODE_PREFIX
-              : ''
-        const fullPrompt = modePrefix + promptText.trim()
-        const outboundPrompt =
-          goalMode && goalCriteria.trim()
-            ? wrapGoalPrompt(fullPrompt, goalCriteria.trim())
-            : fullPrompt
+        const outboundPrompt = composePromptForSdk(
+          mode,
+          sessionAgentSdk,
+          promptText,
+          goalMode,
+          goalCriteria,
+          { claudeCli: false }
+        )
         const promptOptions = sessionAgentSdk === 'codex' ? { codexFastMode } : undefined
 
         // Auto-revert super-plan → plan immediately (one-shot mode).
@@ -1005,12 +1109,7 @@ export function WorktreePickerModal({
                 Provider & Model
               </label>
               {/* SDK toggle — only when 2+ SDKs are available */}
-              {availableAgentSdks &&
-                [
-                  availableAgentSdks.opencode,
-                  availableAgentSdks.claude,
-                  availableAgentSdks.codex
-                ].filter(Boolean).length >= 2 && (
+              {availableAgentSdks && availableSdkButtonCount >= 2 && (
                   <div className="flex gap-1.5" data-testid="sdk-toggle">
                     {availableAgentSdks.opencode && (
                       <button
@@ -1055,6 +1154,21 @@ export function WorktreePickerModal({
                         )}
                       >
                         Codex
+                      </button>
+                    )}
+                    {availableAgentSdks.claude && (
+                      <button
+                        type="button"
+                        data-testid="sdk-toggle-claude-code-cli"
+                        onClick={() => handleSdkChange('claude-code-cli')}
+                        className={cn(
+                          'px-2.5 py-1 rounded-md text-xs border transition-colors',
+                          agentSdk === 'claude-code-cli'
+                            ? 'bg-primary text-primary-foreground border-primary'
+                            : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
+                        )}
+                      >
+                        Claude CLI
                       </button>
                     )}
                   </div>

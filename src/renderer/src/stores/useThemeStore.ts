@@ -223,6 +223,7 @@ if (typeof window !== 'undefined') {
 
   // Load from database (source of truth) once IPC is ready
   setTimeout(() => {
+    if (typeof window === 'undefined') return
     useThemeStore.getState().loadFromDatabase()
   }, 100)
 }

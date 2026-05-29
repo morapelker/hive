@@ -2,6 +2,7 @@ export { useKeyboardShortcut, useCommandK, useCommandP } from './useKeyboardShor
 export { useKeyboardShortcuts } from './useKeyboardShortcuts'
 export { useCommands } from './useCommands'
 export { useOpenCodeGlobalListener } from './useOpenCodeGlobalListener'
+export { useClaudeCliStatusListener } from './useClaudeCliStatusListener'
 export { useNotificationNavigation } from './useNotificationNavigation'
 export { useLifecycleActions } from './useLifecycleActions'
 export { useFileMentions } from './useFileMentions'

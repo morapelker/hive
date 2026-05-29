@@ -44,7 +44,7 @@ export function SettingsIntegrations() {
         setSchemas(schemaMap)
 
         // Load saved values from dedicated provider-settings key (fast initial read)
-        let saved: Record<string, string> = {}
+        const saved: Record<string, string> = {}
         try {
           const raw = localStorage.getItem('hive-provider-settings')
           if (raw) {

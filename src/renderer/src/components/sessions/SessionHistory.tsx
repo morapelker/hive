@@ -408,7 +408,7 @@ export function SessionHistory(): React.JSX.Element | null {
           return
         } else {
           // Connection was deleted - open in read-only mode
-          openOrphanedSession(session as any)
+          openOrphanedSession(session)
           closePanel()
           toast.info('Opened in read-only mode: connection no longer exists.')
           return
@@ -433,7 +433,7 @@ export function SessionHistory(): React.JSX.Element | null {
           }
         } else {
           // Worktree was deleted/archived - open in read-only mode
-          openOrphanedSession(session as any)
+          openOrphanedSession(session)
           closePanel()
           toast.info(
             `Opened in read-only mode: worktree "${session.worktree_name}" no longer exists.`
@@ -441,7 +441,7 @@ export function SessionHistory(): React.JSX.Element | null {
         }
       } else {
         // Session is orphaned (no worktree_id or connection_id) - open in read-only mode
-        openOrphanedSession(session as any)
+        openOrphanedSession(session)
         closePanel()
         toast.info('Opened in read-only mode: session is from an archived worktree.')
       }

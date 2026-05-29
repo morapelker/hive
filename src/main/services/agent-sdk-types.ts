@@ -1,6 +1,8 @@
 import type { BrowserWindow } from 'electron'
+import type { AgentSdk } from '@shared/types/agent-sdk'
 
-export type AgentSdkId = 'opencode' | 'claude-code' | 'codex' | 'terminal'
+/** Alias of the shared {@link AgentSdk} union, kept for the main-process implementer registry's naming. */
+export type AgentSdkId = AgentSdk
 
 export interface AgentSdkCapabilities {
   supportsUndo: boolean

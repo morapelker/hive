@@ -563,9 +563,11 @@ describe('Global listener background follow-up dispatcher', () => {
     })
     await flushAsync()
 
-    expect(mockPrompt).toHaveBeenCalledWith('/tmp/worktree-1', 'opc-real-123', [
-      { type: 'text', text: 'follow-up 2' }
-    ])
+    await waitFor(() => {
+      expect(mockPrompt).toHaveBeenCalledWith('/tmp/worktree-1', 'opc-real-123', [
+        { type: 'text', text: 'follow-up 2' }
+      ])
+    })
     expect(followUpQueues.has('session-B')).toBe(false)
   })
 

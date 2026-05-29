@@ -635,7 +635,7 @@ const make = Effect.gen(function* () {
         try {
           await simpleGit(worktreePath).raw(['stash', 'apply', stashRef])
         } catch {
-          // Best-effort copy; leave the duplicated worktree even if stash application fails.
+          // Best-effort carryover; leave the duplicated worktree even if stash application fails.
         }
       }
       const untrackedRaw = await sourceGit.raw(['ls-files', '--others', '--exclude-standard'])

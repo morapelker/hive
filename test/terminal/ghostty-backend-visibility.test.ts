@@ -330,6 +330,81 @@ describe('GhosttyBackend visibility', () => {
     backend.dispose()
   })
 
+  test('passes Shift+Enter newline mode to native surface creation', async () => {
+    const backend = new GhosttyBackend()
+    const container = document.createElement('div')
+    container.getBoundingClientRect = vi.fn(() => ({
+      left: 100,
+      top: 80,
+      width: 640,
+      height: 360,
+      right: 740,
+      bottom: 440,
+      x: 100,
+      y: 80,
+      toJSON: () => ({})
+    }))
+
+    backend.mount(
+      container,
+      {
+        terminalId: 'wt-1',
+        cwd: '/tmp/wt-1',
+        shiftEnterAsNewline: true
+      },
+      {
+        onStatusChange: vi.fn()
+      }
+    )
+
+    await flushPromises()
+    await flushPromises()
+
+    expect(mockTerminalOps.ghosttyCreateSurface).toHaveBeenCalledTimes(1)
+    expect(mockTerminalOps.ghosttyCreateSurface.mock.calls[0][2]).toMatchObject({
+      shiftEnterAsNewline: true
+    })
+
+    backend.dispose()
+  })
+
+  test('keeps Shift+Enter newline mode disabled by default for native Ghostty surfaces', async () => {
+    const backend = new GhosttyBackend()
+    const container = document.createElement('div')
+    container.getBoundingClientRect = vi.fn(() => ({
+      left: 100,
+      top: 80,
+      width: 640,
+      height: 360,
+      right: 740,
+      bottom: 440,
+      x: 100,
+      y: 80,
+      toJSON: () => ({})
+    }))
+
+    backend.mount(
+      container,
+      {
+        terminalId: 'wt-1',
+        cwd: '/tmp/wt-1'
+      },
+      {
+        onStatusChange: vi.fn()
+      }
+    )
+
+    await flushPromises()
+    await flushPromises()
+
+    expect(mockTerminalOps.ghosttyCreateSurface).toHaveBeenCalledTimes(1)
+    expect(mockTerminalOps.ghosttyCreateSurface.mock.calls[0][2]).toMatchObject({
+      shiftEnterAsNewline: false
+    })
+
+    backend.dispose()
+  })
+
   test('respects initialVisible=false from mount and never shows surface on-screen', async () => {
     // Regression test for: when TerminalView recreates a GhosttyBackend (e.g.,
     // after cwd change, fontSize change, or React StrictMode double-mount)

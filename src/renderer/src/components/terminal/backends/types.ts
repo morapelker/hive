@@ -1,3 +1,5 @@
+import type { Envelope } from '@shared/types/ipc-envelope'
+
 /**
  * Terminal backend abstraction layer.
  * Allows switching between xterm.js (cross-platform) and native Ghostty (macOS).
@@ -8,12 +10,23 @@ export type TerminalBackendType = 'xterm' | 'ghostty'
 export interface TerminalOpts {
   terminalId: string
   cwd: string
+  createTerminal?: (
+    terminalId: string,
+    cwd: string,
+    shell?: string
+  ) => Promise<Envelope<{ success: boolean; cols?: number; rows?: number; error?: string }>>
   fontFamily?: string
   fontSize?: number
   cursorStyle?: 'block' | 'bar' | 'underline'
   scrollback?: number
   theme?: Record<string, string>
   shell?: string
+  /**
+   * When true, Shift+Enter is intercepted and ESC+CR (`\x1b\r`) is sent
+   * instead of the default `\r`. Claude-style chat TUIs parse this sequence
+   * as "newline" while plain Enter still submits.
+   */
+  shiftEnterAsNewline?: boolean
   /**
    * Whether the terminal is visible at the moment of mount.
    *

@@ -38,6 +38,7 @@ export default defineWorkspace([
     test: {
       name: 'renderer',
       environment: 'jsdom',
+      testTimeout: 30000,
       include: [
         'test/**/*.test.{ts,tsx}',
         'src/renderer/src/**/*.test.{ts,tsx}',

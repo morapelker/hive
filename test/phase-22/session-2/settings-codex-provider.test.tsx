@@ -80,16 +80,20 @@ describe('SettingsGeneral: Codex provider button', () => {
     expect(codexButton).toHaveTextContent('Codex')
   })
 
-  it('renders all four provider buttons (OpenCode, Claude Code, Codex, Terminal)', async () => {
+  it('renders provider buttons in visual order with Claude Code before CLI', async () => {
     const { SettingsGeneral } = await import(
       '@/components/settings/SettingsGeneral'
     )
-    render(<SettingsGeneral />)
+    const { container } = render(<SettingsGeneral />)
 
-    expect(screen.getByTestId('agent-sdk-opencode')).toBeInTheDocument()
-    expect(screen.getByTestId('agent-sdk-claude-code')).toBeInTheDocument()
-    expect(screen.getByTestId('agent-sdk-codex')).toBeInTheDocument()
-    expect(screen.getByTestId('agent-sdk-terminal')).toBeInTheDocument()
+    const buttons = Array.from(container.querySelectorAll('[data-testid^="agent-sdk-"]'))
+    expect(buttons.map((button) => button.textContent)).toEqual([
+      'OpenCode',
+      'Claude Code',
+      'Codex',
+      'Terminal',
+      'Claude Code (CLI)'
+    ])
   })
 
   it('clicking Codex button calls updateSetting with codex', async () => {

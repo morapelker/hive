@@ -14,6 +14,7 @@ import { FileSearchDialog } from '@/components/file-search'
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts'
 import { useVimNavigation } from '@/hooks/useVimNavigation'
 import { useOpenCodeGlobalListener } from '@/hooks/useOpenCodeGlobalListener'
+import { useClaudeCliStatusListener } from '@/hooks/useClaudeCliStatusListener'
 import { useNotificationNavigation } from '@/hooks/useNotificationNavigation'
 import { useWindowFocusRefresh } from '@/hooks/useWindowFocusRefresh'
 import { useWorktreeWatcher } from '@/hooks/useWorktreeWatcher'
@@ -24,6 +25,7 @@ import { ErrorBoundary, ErrorFallback } from '@/components/error'
 import { CreatePRModal } from '@/components/pr/CreatePRModal'
 import { ProjectSettingsDialog } from '@/components/projects/ProjectSettingsDialog'
 import { TerminalPortalProvider, useTerminalPortal } from '@/contexts/TerminalPortalContext'
+import { ClaudeCliSessionPortalProvider } from '@/contexts/ClaudeCliSessionPortalContext'
 import { TerminalManager } from '@/components/terminal/TerminalManager'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
@@ -60,6 +62,7 @@ function GlobalProjectSettings(): React.JSX.Element | null {
 
 function TerminalManagerPortal(): React.JSX.Element {
   const { getTarget, revision } = useTerminalPortal()
+  void revision
   const terminalPosition = useSettingsStore((s) => s.terminalPosition)
 
   // Read layout state for visibility computation
@@ -126,6 +129,7 @@ export function AppLayout({ children }: AppLayoutProps): React.JSX.Element {
   useVimNavigation()
   // Global listener for background session events (AI finishes while viewing another project)
   useOpenCodeGlobalListener()
+  useClaudeCliStatusListener()
   // Navigate to session when native notification is clicked
   useNotificationNavigation()
   // Refresh git statuses when window regains focus
@@ -248,59 +252,61 @@ export function AppLayout({ children }: AppLayoutProps): React.JSX.Element {
 
   return (
     <TerminalPortalProvider>
-      <div className="h-screen flex flex-col bg-background text-foreground" data-testid="app-layout">
-        <ErrorBoundary componentName="Header" fallback={<div className="h-12 bg-muted" />}>
-          <Header />
-        </ErrorBoundary>
-        <div className="flex-1 flex min-h-0" data-testid="layout-content">
-          <ErrorBoundary
-            componentName="LeftSidebar"
-            fallback={
-              <div className="w-60 border-r bg-muted/50 flex items-center justify-center">
-                <ErrorFallback compact title="Sidebar Error" />
-              </div>
-            }
-          >
-            <LeftSidebar />
+      <ClaudeCliSessionPortalProvider>
+        <div
+          className="h-screen flex flex-col bg-background text-foreground"
+          data-testid="app-layout"
+        >
+          <ErrorBoundary componentName="Header" fallback={<div className="h-12 bg-muted" />}>
+            <Header />
           </ErrorBoundary>
-          <ErrorBoundary componentName="MainPane">
-            <MainPane>{children}</MainPane>
+          <div className="flex-1 flex min-h-0" data-testid="layout-content">
+            <ErrorBoundary
+              componentName="LeftSidebar"
+              fallback={
+                <div className="w-60 border-r bg-muted/50 flex items-center justify-center">
+                  <ErrorFallback compact title="Sidebar Error" />
+                </div>
+              }
+            >
+              <LeftSidebar />
+            </ErrorBoundary>
+            <ErrorBoundary componentName="MainPane">
+              <MainPane>{children}</MainPane>
+            </ErrorBoundary>
+            <ErrorBoundary
+              componentName="RightSidebar"
+              fallback={<div className="border-l bg-muted/50" />}
+            >
+              <RightSidebar />
+            </ErrorBoundary>
+          </div>
+          <Toaster />
+          {isDragging && <DropOverlay variant={activeSessionId ? 'normal' : 'warning'} />}
+          <ErrorBoundary componentName="SessionHistory" fallback={null}>
+            <SessionHistory />
           </ErrorBoundary>
-          <ErrorBoundary
-            componentName="RightSidebar"
-            fallback={<div className="border-l bg-muted/50" />}
-          >
-            <RightSidebar />
+          <ErrorBoundary componentName="CommandPalette" fallback={null}>
+            <CommandPalette />
           </ErrorBoundary>
+          <ErrorBoundary componentName="SettingsModal" fallback={null}>
+            <SettingsModal />
+          </ErrorBoundary>
+          <ErrorBoundary componentName="FileSearchDialog" fallback={null}>
+            <FileSearchDialog />
+          </ErrorBoundary>
+          <GlobalProjectSettings />
+          {createPRWorktreeId && createPRWorktreePath && (
+            <ErrorBoundary componentName="CreatePRModal" fallback={null}>
+              <CreatePRModal worktreeId={createPRWorktreeId} worktreePath={createPRWorktreePath} />
+            </ErrorBoundary>
+          )}
+          <AgentSetupGuard />
+          <HelpOverlay />
+          <QuitConfirmationOverlay />
         </div>
-        <Toaster />
-        {isDragging && <DropOverlay variant={activeSessionId ? 'normal' : 'warning'} />}
-        <ErrorBoundary componentName="SessionHistory" fallback={null}>
-          <SessionHistory />
-        </ErrorBoundary>
-        <ErrorBoundary componentName="CommandPalette" fallback={null}>
-          <CommandPalette />
-        </ErrorBoundary>
-        <ErrorBoundary componentName="SettingsModal" fallback={null}>
-          <SettingsModal />
-        </ErrorBoundary>
-        <ErrorBoundary componentName="FileSearchDialog" fallback={null}>
-          <FileSearchDialog />
-        </ErrorBoundary>
-        <GlobalProjectSettings />
-        {createPRWorktreeId && createPRWorktreePath && (
-          <ErrorBoundary componentName="CreatePRModal" fallback={null}>
-            <CreatePRModal
-              worktreeId={createPRWorktreeId}
-              worktreePath={createPRWorktreePath}
-            />
-          </ErrorBoundary>
-        )}
-        <AgentSetupGuard />
-        <HelpOverlay />
-        <QuitConfirmationOverlay />
-      </div>
-      <TerminalManagerPortal />
+        <TerminalManagerPortal />
+      </ClaudeCliSessionPortalProvider>
     </TerminalPortalProvider>
   )
 }
