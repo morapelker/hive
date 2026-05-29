@@ -1,10 +1,13 @@
+import type { AgentSdk } from '@shared/types/agent-sdk'
+
 export interface AvailableAgentSdks {
   opencode: boolean
   claude: boolean
   codex: boolean
 }
 
-export type SelectableAgentSdk = 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
+/** Alias of the shared {@link AgentSdk} union, kept for this module's selection-focused naming. */
+export type SelectableAgentSdk = AgentSdk
 
 function getAgentSdkLabel(sdk: Exclude<SelectableAgentSdk, 'terminal'>): string {
   switch (sdk) {

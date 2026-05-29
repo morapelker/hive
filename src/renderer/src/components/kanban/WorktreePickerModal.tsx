@@ -516,7 +516,9 @@ export function WorktreePickerModal({
             })
 
           if (mode === 'super-plan') {
-            useSessionStore.getState().setSessionMode(sessionId, 'plan')
+            // Await so the persisted mode is committed before the main process
+            // reads it in buildClaudeCliPtySpawn (createClaudeCli).
+            await useSessionStore.getState().setSessionMode(sessionId, 'plan')
           }
 
           bumpWorktreeLastMessage({ connectionId })
@@ -774,7 +776,9 @@ export function WorktreePickerModal({
           })
 
         if (mode === 'super-plan') {
-          useSessionStore.getState().setSessionMode(sessionId, 'plan')
+          // Await so the persisted mode is committed before the main process
+          // reads it in buildClaudeCliPtySpawn (createClaudeCli).
+          await useSessionStore.getState().setSessionMode(sessionId, 'plan')
         }
 
         bumpWorktreeLastMessage({ worktreeId })

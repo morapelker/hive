@@ -805,26 +805,47 @@ function KanbanTicketModalContent({
     onForceClose()
   }, [onForceClose])
 
-  const previousWorktreeSessionStatus = useRef<{ sessionId: string | null; status: string | null }>(
-    { sessionId: null, status: null }
-  )
+  // Auto-close the modal when an answered CLI question resumes work
+  // (answering → working). `isClaudeCli` derives from the DB-loaded session and
+  // can resolve a render or two after the modal opens, so we must NOT gate the
+  // status tracking on it — otherwise a flip that lands before it resolves slides
+  // the baseline forward under the early-return branch and the transition is lost
+  // forever. Instead we latch `sawAnswering` unconditionally and gate only the
+  // close *action* on `isClaudeCli`; the effect re-runs when `isClaudeCli`
+  // resolves (it's a dep), so a flip seen while it was still false is honored as
+  // soon as it becomes true.
+  const autoCloseLatchRef = useRef<{ sessionId: string | null; sawAnswering: boolean }>({
+    sessionId: null,
+    sawAnswering: false
+  })
   useEffect(() => {
     const sessionId = ticket.current_session_id
-    const previous = previousWorktreeSessionStatus.current
+    const latch = autoCloseLatchRef.current
 
-    if (!sessionId || previous.sessionId !== sessionId || !isClaudeCli) {
-      previousWorktreeSessionStatus.current = { sessionId, status: currentWorktreeSessionStatus }
+    if (!sessionId) {
+      autoCloseLatchRef.current = { sessionId: null, sawAnswering: false }
       return
     }
 
-    if (
-      previous.status === 'answering' &&
-      currentWorktreeSessionStatus === 'working'
-    ) {
-      forceClose()
+    // First observation of this session — seed the latch from the current status
+    // so a modal opened on a session already in `answering` still arms.
+    if (latch.sessionId !== sessionId) {
+      autoCloseLatchRef.current = {
+        sessionId,
+        sawAnswering: currentWorktreeSessionStatus === 'answering'
+      }
+      return
     }
 
-    previousWorktreeSessionStatus.current = { sessionId, status: currentWorktreeSessionStatus }
+    if (currentWorktreeSessionStatus === 'answering') {
+      latch.sawAnswering = true
+      return
+    }
+
+    if (isClaudeCli && latch.sawAnswering && currentWorktreeSessionStatus === 'working') {
+      latch.sawAnswering = false
+      forceClose()
+    }
   }, [currentWorktreeSessionStatus, forceClose, isClaudeCli, ticket.current_session_id])
 
   const requestClose = useCallback(() => {

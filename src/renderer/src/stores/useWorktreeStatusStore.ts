@@ -4,18 +4,12 @@ import { useConnectionStore } from './useConnectionStore'
 import { lastSendMode } from '@/lib/message-send-times'
 import { notifyKanbanSessionSync } from './store-coordination'
 import { unwrapEnvelopeApi } from '@/lib/ipc-envelope'
+import type { SessionStatusType } from '@shared/types/session-status'
+
+// Re-exported from the shared definition so existing importers keep working.
+export type { SessionStatusType }
 
 const db = unwrapEnvelopeApi(() => window.db)
-
-export type SessionStatusType =
-  | 'working'
-  | 'planning'
-  | 'answering'
-  | 'permission'
-  | 'command_approval'
-  | 'unread'
-  | 'completed'
-  | 'plan_ready'
 
 export interface SessionStatusEntry {
   status: SessionStatusType

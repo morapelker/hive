@@ -1,4 +1,12 @@
-import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from 'react'
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode
+} from 'react'
 
 interface ClaudeCliSessionPortalContextValue {
   registerTarget: (sessionId: string, el: HTMLDivElement | null) => void
@@ -32,8 +40,16 @@ export function ClaudeCliSessionPortalProvider({
     return targetsRef.current.get(sessionId) ?? null
   }, [])
 
+  // registerTarget/getTarget are stable, so the value identity changes only when
+  // `revision` does — preventing a parent re-render from re-rendering every
+  // portal consumer when nothing they depend on actually changed.
+  const value = useMemo(
+    () => ({ registerTarget, getTarget, revision }),
+    [registerTarget, getTarget, revision]
+  )
+
   return (
-    <ClaudeCliSessionPortalContext.Provider value={{ registerTarget, getTarget, revision }}>
+    <ClaudeCliSessionPortalContext.Provider value={value}>
       {children}
     </ClaudeCliSessionPortalContext.Provider>
   )

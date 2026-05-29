@@ -7,10 +7,9 @@ import { useSettingsStore } from './useSettingsStore'
 import { getUnavailableAgentSdkMessage } from '@/lib/agent-sdk-availability'
 import { resolveSessionCreationSelection } from '@/lib/handoffSelection'
 import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
+import { type AgentSdk, isTerminalBacked } from '@shared/types/agent-sdk'
 
 const db = unwrapEnvelopeApi(() => window.db)
-
-type AgentSdk = 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
 
 /**
  * Push the follow-up-message queue state for a session into the main process
@@ -277,7 +276,15 @@ function findSessionInState(state: SessionState, sessionId: string): Session | n
   return state.orphanedSessions.get(sessionId) ?? null
 }
 
-function syncClaudeCliPermissionModeIfNeeded(
+// Shift+Tab — Claude Code's "cycle permission mode" key.
+const CLAUDE_CLI_SHIFT_TAB = '\u001b[Z'
+
+// Claude Code cycles permission modes with Shift+Tab in the order
+// normal → accept-edits → plan → normal. Reaching plan from a non-plan mode
+// therefore takes two presses, while returning from plan takes one. The
+// previous code sent a single press in both directions, which landed on
+// accept-edits (not plan) when entering plan mode.
+export function syncClaudeCliPermissionModeIfNeeded(
   state: SessionState,
   sessionId: string,
   previousMode: SessionMode,
@@ -288,7 +295,11 @@ function syncClaudeCliPermissionModeIfNeeded(
   const wasPlanLike = previousMode === 'plan' || previousMode === 'super-plan'
   const isPlanLike = nextMode === 'plan' || nextMode === 'super-plan'
   if (wasPlanLike === isPlanLike) return
-  window.terminalOps.write(sessionId, '\x1b[Z')
+
+  const presses = isPlanLike ? 2 : 1
+  for (let i = 0; i < presses; i++) {
+    window.terminalOps.write(sessionId, CLAUDE_CLI_SHIFT_TAB)
+  }
 }
 
 export const useSessionStore = create<SessionState>()(
@@ -603,8 +614,7 @@ export const useSessionStore = create<SessionState>()(
           for (const [worktreeId, sessions] of get().sessionsByWorktree.entries()) {
             const found = sessions.find((s) => s.id === sessionId)
             if (found) {
-              isTerminalSession =
-                found.agent_sdk === 'terminal' || found.agent_sdk === 'claude-code-cli'
+              isTerminalSession = isTerminalBacked(found.agent_sdk)
               opencodeSessionId = found.opencode_session_id
               sessionWorktreeId = worktreeId
               break
@@ -614,8 +624,7 @@ export const useSessionStore = create<SessionState>()(
             for (const sessions of get().sessionsByConnection.values()) {
               const found = sessions.find((s) => s.id === sessionId)
               if (found) {
-                isTerminalSession =
-                  found.agent_sdk === 'terminal' || found.agent_sdk === 'claude-code-cli'
+                isTerminalSession = isTerminalBacked(found.agent_sdk)
                 opencodeSessionId = found.opencode_session_id
                 break
               }
@@ -1141,20 +1150,13 @@ export const useSessionStore = create<SessionState>()(
       },
 
       // Get session by ID from either worktree or connection sessions
-      getSessionById: (sessionId: string): Session | null => {
-        for (const sessions of get().sessionsByWorktree.values()) {
-          const found = sessions.find((s) => s.id === sessionId)
-          if (found) return found
-        }
-        for (const sessions of get().sessionsByConnection.values()) {
-          const found = sessions.find((s) => s.id === sessionId)
-          if (found) return found
-        }
-        for (const session of get().boardAssistantByProject.values()) {
-          if (session.id === sessionId) return session
-        }
-        return null
-      },
+      getSessionById: (sessionId: string): Session | null =>
+        // Delegate to the shared lookup so orphaned sessions (worktree archived,
+        // reopened via openOrphanedSession) are found too. Otherwise an orphaned
+        // claude-code-cli session resolves to null here and the SessionView
+        // wrapper routes it to the OpenCode LegacySessionView instead of
+        // ClaudeCliSessionView.
+        findSessionInState(get(), sessionId),
 
       // Hydrate a session from the DB into the in-memory store.
       // Called when findSessionById discovers a session via DB fallback so
@@ -1413,7 +1415,7 @@ export const useSessionStore = create<SessionState>()(
 
         // Push to agent backend (SDK-aware) — skip for terminal sessions
         try {
-          if (agentSdk !== 'terminal' && agentSdk !== 'claude-code-cli') {
+          if (!isTerminalBacked(agentSdk)) {
             unwrapEnvelope(await window.opencodeOps.setModel({ ...model, agentSdk }))
           }
         } catch (error) {

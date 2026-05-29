@@ -7,6 +7,7 @@ import type {
   TelegramMode
 } from '../shared/types/telegram'
 import type { Envelope } from '@shared/types/ipc-envelope'
+import type { AgentSdk } from '@shared/types/agent-sdk'
 import type { CustomProjectCommand } from '@shared/lib/custom-commands'
 import type { SuggestionItem } from '../shared/types/setup-suggestions'
 import type { ConnectionWithMembers } from '../main/db/types'
@@ -114,7 +115,7 @@ const db = {
       name?: string | null
       opencode_session_id?: string | null
       claude_session_id?: string | null
-      agent_sdk?: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
+      agent_sdk?: AgentSdk
       mode?: 'build' | 'plan' | 'super-plan'
       session_type?: 'default' | 'board-assistant'
       model_provider_id?: string | null
@@ -134,7 +135,7 @@ const db = {
         status?: 'active' | 'completed' | 'error'
         opencode_session_id?: string | null
         claude_session_id?: string | null
-        agent_sdk?: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
+        agent_sdk?: AgentSdk
         mode?: 'build' | 'plan' | 'super-plan'
         session_type?: 'default' | 'board-assistant'
         model_provider_id?: string | null
@@ -1544,7 +1545,7 @@ const opencodeOps = {
 
   // List available models from all configured providers
   listModels: (opts?: {
-    agentSdk?: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
+    agentSdk?: AgentSdk
   }): Promise<
     Envelope<{
       success: boolean
@@ -1559,7 +1560,7 @@ const opencodeOps = {
       providerID: string
       modelID: string
       variant?: string
-      agentSdk?: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
+      agentSdk?: AgentSdk
     } | null
   ): Promise<Envelope<{ success: boolean; error?: string }>> =>
     ipcRenderer.invoke('opencode:setModel', model),
@@ -1568,7 +1569,7 @@ const opencodeOps = {
   modelInfo: (
     worktreePath: string,
     modelId: string,
-    agentSdk?: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
+    agentSdk?: AgentSdk
   ): Promise<
     Envelope<{
       success: boolean
@@ -1973,6 +1974,12 @@ const terminalOps = {
     opts?: { pendingPrompt?: string | null }
   ): Promise<Envelope<{ success: boolean; cols?: number; rows?: number; error?: string }>> =>
     ipcRenderer.invoke('terminal:createClaudeCli', sessionId, opts),
+
+  sendClaudeCliPrompt: (
+    sessionId: string,
+    prompt: string
+  ): Promise<Envelope<{ delivered: boolean }>> =>
+    ipcRenderer.invoke('terminal:sendClaudeCliPrompt', sessionId, prompt),
 
   write: (terminalId: string, data: string): void =>
     ipcRenderer.send('terminal:write', terminalId, data),

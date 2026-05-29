@@ -4,6 +4,7 @@ import { APP_SETTINGS_DB_KEY } from '@shared/types/settings'
 import type { TelegramConfig } from '@shared/types/telegram'
 import type { UsageProvider } from '@shared/types/usage'
 import type { PetSettings } from '@shared/types/pet'
+import type { AgentSdk, HandoffAgentSdk } from '@shared/types/agent-sdk'
 import type { ReviewPromptType } from '@/constants/reviewPrompts'
 import type { CustomProjectCommand } from '@/lib/custom-commands'
 import { validateCustomCommand } from '@/lib/custom-commands'
@@ -31,8 +32,9 @@ export type TerminalPosition = 'sidebar' | 'bottom'
 export type MergeConflictMode = 'build' | 'plan' | 'always-ask'
 export type FollowUpTriggerColumn = 'review' | 'done'
 
-export type AgentSdk = 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
-export type HandoffAgentSdk = Exclude<AgentSdk, 'terminal'>
+// Re-exported from the shared single source of truth (see @shared/types/agent-sdk)
+// so existing `import { AgentSdk } from '@/stores/useSettingsStore'` sites keep working.
+export type { AgentSdk, HandoffAgentSdk }
 
 export interface SelectedModel {
   agentSdk?: HandoffAgentSdk

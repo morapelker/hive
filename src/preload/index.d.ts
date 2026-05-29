@@ -6,6 +6,8 @@ import type {
   TelegramMode
 } from '../shared/types/telegram'
 import type { Envelope } from '@shared/types/ipc-envelope'
+import type { SessionStatusType } from '@shared/types/session-status'
+import type { AgentSdk } from '@shared/types/agent-sdk'
 import type { CustomProjectCommand } from '@shared/lib/custom-commands'
 import type { SuggestionItem } from '../shared/types/setup-suggestions'
 
@@ -101,7 +103,7 @@ interface Session {
   status: 'active' | 'completed' | 'error'
   opencode_session_id: string | null
   claude_session_id: string | null
-  agent_sdk: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
+  agent_sdk: AgentSdk
   mode: 'build' | 'plan' | 'super-plan'
   session_type: 'default' | 'board-assistant'
   model_provider_id: string | null
@@ -339,16 +341,6 @@ declare global {
         exitCode?: number
       }
 
-  type SessionStatusType =
-    | 'working'
-    | 'planning'
-    | 'answering'
-    | 'permission'
-    | 'command_approval'
-    | 'unread'
-    | 'completed'
-    | 'plan_ready'
-
   interface ClaudeCliStatusPayload {
     sessionId: string
     status: SessionStatusType
@@ -478,7 +470,7 @@ declare global {
           name?: string | null
           opencode_session_id?: string | null
           claude_session_id?: string | null
-          agent_sdk?: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
+          agent_sdk?: AgentSdk
           mode?: 'build' | 'plan' | 'super-plan'
           session_type?: 'default' | 'board-assistant'
           model_provider_id?: string | null
@@ -497,7 +489,7 @@ declare global {
             status?: 'active' | 'completed' | 'error'
             opencode_session_id?: string | null
             claude_session_id?: string | null
-            agent_sdk?: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
+            agent_sdk?: AgentSdk
             mode?: 'build' | 'plan' | 'super-plan'
             session_type?: 'default' | 'board-assistant'
             model_provider_id?: string | null
@@ -847,7 +839,7 @@ declare global {
       ) => Promise<Envelope<{ success: boolean; count?: number; error?: string }>>
       // List available models from all configured providers
       listModels: (opts?: {
-        agentSdk?: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
+        agentSdk?: AgentSdk
       }) => Promise<
         Envelope<{
           success: boolean
@@ -861,14 +853,14 @@ declare global {
           providerID: string
           modelID: string
           variant?: string
-          agentSdk?: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
+          agentSdk?: AgentSdk
         } | null
       ) => Promise<Envelope<{ success: boolean; error?: string }>>
       // Get model info (name, context limit)
       modelInfo: (
         worktreePath: string,
         modelId: string,
-        agentSdk?: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
+        agentSdk?: AgentSdk
       ) => Promise<
         Envelope<{
           success: boolean
@@ -1170,6 +1162,10 @@ declare global {
         sessionId: string,
         opts?: { pendingPrompt?: string | null }
       ) => Promise<Envelope<{ success: boolean; cols?: number; rows?: number; error?: string }>>
+      sendClaudeCliPrompt: (
+        sessionId: string,
+        prompt: string
+      ) => Promise<Envelope<{ delivered: boolean }>>
       write: (terminalId: string, data: string) => void
       resize: (terminalId: string, cols: number, rows: number) => Promise<Envelope<void>>
       destroy: (terminalId: string) => Promise<Envelope<void>>

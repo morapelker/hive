@@ -34,6 +34,7 @@ const mocks = vi.hoisted(() => {
     ),
     statusCallbacks,
     publishClaudeCliStatus: vi.fn(),
+    clearClaudeCliStatus: vi.fn(),
     watchForClaudePlanFollowup: vi.fn(() => ({ close: vi.fn() })),
     ptyService: {
       has: vi.fn(() => false),
@@ -121,7 +122,8 @@ vi.mock('../../services/claude-hook-server', () => ({
   getClaudeHookServer: mocks.getClaudeHookServer,
   buildClaudeCliHookSettings: mocks.buildClaudeCliHookSettings,
   subscribeClaudeCliStatus: mocks.subscribeClaudeCliStatus,
-  publishClaudeCliStatus: mocks.publishClaudeCliStatus
+  publishClaudeCliStatus: mocks.publishClaudeCliStatus,
+  clearClaudeCliStatus: mocks.clearClaudeCliStatus
 }))
 
 import type { Session } from '../../db/types'
@@ -244,6 +246,9 @@ describe('terminal:createClaudeCli hook status wiring', () => {
       status: 'completed',
       metadata: { reason: 'pty_exit' }
     })
+    // Evicts the hook-server dedup entry so the map doesn't leak and a
+    // re-created session with the same id starts with fresh dedup state.
+    expect(mocks.clearClaudeCliStatus).toHaveBeenCalledWith('hive-session-1')
   })
 
   it('publishes an initial completed status after starting an idle Claude CLI PTY', async () => {
@@ -303,9 +308,39 @@ describe('terminal:createClaudeCli hook status wiring', () => {
     const destroyResult = await mocks.handlers.get('terminal:destroy')!(mockEvent, 'hive-session-1')
     expect(destroyResult).toEqual({ success: true, value: undefined })
     expect(mocks.ptyService.destroy).toHaveBeenCalledWith('hive-session-1')
+    expect(mocks.clearClaudeCliStatus).toHaveBeenCalledWith('hive-session-1')
 
     exitCallback?.(0)
 
     expect(mocks.publishClaudeCliStatus).not.toHaveBeenCalled()
+  })
+
+  it('delivers a follow-up prompt to a live Claude CLI PTY via bracketed paste', async () => {
+    await mocks.handlers.get('terminal:createClaudeCli')!(mockEvent, 'hive-session-1', {})
+    mocks.ptyService.write.mockClear()
+    mocks.ptyService.has.mockReturnValueOnce(true)
+
+    const result = await mocks.handlers.get('terminal:sendClaudeCliPrompt')!(
+      mockEvent,
+      'hive-session-1',
+      'follow-up question'
+    )
+
+    expect(result).toEqual({ success: true, value: { delivered: true } })
+    expect(mocks.ptyService.write).toHaveBeenCalledWith(
+      'hive-session-1',
+      '\u001b[200~follow-up question\u001b[201~\r'
+    )
+  })
+
+  it('reports not delivered (so the caller queues it) when no live Claude CLI PTY exists', async () => {
+    const result = await mocks.handlers.get('terminal:sendClaudeCliPrompt')!(
+      mockEvent,
+      'hive-session-not-running',
+      'hello'
+    )
+
+    expect(result).toEqual({ success: true, value: { delivered: false } })
+    expect(mocks.ptyService.write).not.toHaveBeenCalled()
   })
 })

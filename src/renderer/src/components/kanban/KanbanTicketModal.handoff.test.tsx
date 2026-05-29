@@ -476,4 +476,67 @@ describe('KanbanTicketModal handoff from Claude CLI plan review', () => {
       expect(useKanbanStore.getState().selectedTicketId).toBeNull()
     })
   })
+
+  it('auto-closes a DB-loaded CLI question ticket even when working arrives before isClaudeCli resolves', async () => {
+    setupStores()
+    // Race setup: the session is NOT in the in-memory store, so `isClaudeCli`
+    // only becomes known after the async DB fallback (findSessionById) resolves.
+    // We hold that lookup open, flip answering→working while it's pending
+    // (isClaudeCli still false), then resolve it — the modal must still close.
+    useSessionStore.setState({
+      sessionsByWorktree: new Map(),
+      sessionsByConnection: new Map(),
+      hydrateSession: vi.fn(),
+      loadSessions: vi.fn(async () => undefined)
+    })
+    useKanbanStore.setState({
+      tickets: new Map([['project-1', [{ ...ticket, column: 'in_progress', plan_ready: false }]]])
+    })
+    useWorktreeStatusStore.getState().setSessionStatus(sourceSession.id, 'answering')
+
+    let resolveDbSession: (value: Session | null) => void = () => {}
+    const dbSessionPromise = new Promise<Session | null>((resolve) => {
+      resolveDbSession = resolve
+    })
+    const dbSessionGet = vi.fn().mockReturnValue(dbSessionPromise)
+    Object.defineProperty(window, 'db', {
+      configurable: true,
+      writable: true,
+      value: {
+        session: {
+          get: dbSessionGet,
+          update: vi.fn().mockResolvedValue({ success: true, value: undefined })
+        },
+        worktree: { get: vi.fn().mockResolvedValue(worktree) }
+      }
+    })
+
+    render(
+      <ClaudeCliSessionPortalProvider>
+        <KanbanTicketModal />
+      </ClaudeCliSessionPortalProvider>
+    )
+
+    expect(screen.getByTestId('kanban-ticket-modal')).toBeInTheDocument()
+
+    // Flip to working while the DB lookup (and thus isClaudeCli) is still pending.
+    act(() => {
+      useWorktreeStatusStore.getState().setSessionStatus(sourceSession.id, 'working')
+    })
+
+    // Still open: isClaudeCli hasn't resolved, so the close action is gated off —
+    // but the latch must have remembered the earlier `answering`.
+    expect(useKanbanStore.getState().selectedTicketId).toBe(ticket.id)
+
+    // Resolve the DB lookup → isClaudeCli flips true → the latched answering→working
+    // transition is honored on the re-run and the modal closes.
+    await act(async () => {
+      resolveDbSession(sourceSession)
+      await dbSessionPromise
+    })
+
+    await waitFor(() => {
+      expect(useKanbanStore.getState().selectedTicketId).toBeNull()
+    })
+  })
 })

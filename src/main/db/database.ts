@@ -1,4 +1,5 @@
 import { deleteAttachment } from '../services/attachment-storage'
+import type { AgentSdk } from '@shared/types/agent-sdk'
 import Database from 'better-sqlite3'
 import { app } from 'electron'
 import { join } from 'path'
@@ -1280,12 +1281,12 @@ export class DatabaseService {
 
   getAgentSdkForSession(
     agentSessionId: string
-  ): 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal' | null {
+  ): AgentSdk | null {
     const db = this.getDb()
     const row = db
       .prepare('SELECT agent_sdk FROM sessions WHERE opencode_session_id = ? LIMIT 1')
       .get(agentSessionId) as
-      | { agent_sdk: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal' }
+      | { agent_sdk: AgentSdk }
       | undefined
     return row?.agent_sdk ?? null
   }

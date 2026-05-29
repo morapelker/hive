@@ -16,6 +16,7 @@ import {
 } from '../services/claude-session-watcher'
 import {
   buildClaudeCliHookSettings,
+  clearClaudeCliStatus,
   getClaudeHookServer,
   publishClaudeCliStatus,
   subscribeClaudeCliStatus,
@@ -81,50 +82,102 @@ const listenerCleanups = new Map<string, { removeData: () => void; removeExit: (
 // Batching with setImmediate collects all data from the current I/O phase into one IPC message.
 const dataBuffers = new Map<string, string>()
 const flushScheduled = new Set<string>()
-const claudeWatchers = new Map<string, ClaudeSessionWatchHandle>()
-const claudePlanFollowupWatchers = new Map<string, ClaudePlanFollowupWatchHandle>()
-const claudeCliSessions = new Set<string>()
-const claudeCliWorktreeBasenames = new Map<string, string>()
-const claudeCliTranscriptSources = new Map<
-  string,
-  { worktreePath: string; claudeSessionId: string | null }
->()
-const claudeCliLastStatus = new Map<string, ClaudeCliStatusPayload>()
+
+/**
+ * All per-session Claude CLI state, consolidated into one record per session so
+ * teardown is atomic (see {@link disposeClaudeCliSession}). This previously lived
+ * across six parallel maps/sets — session-id watcher, plan-followup watcher, a
+ * membership Set, worktree basename, transcript source, last status — cleaned up
+ * in three separate places (onExit, terminal:destroy, cleanupTerminals) that had
+ * already begun to drift. Owning the state in one object means a new field is
+ * disposed in exactly one place and `has`-style checks can't miss a session.
+ */
+interface ClaudeCliSessionState {
+  /** True once the PTY is created — the live-session flag the rest of the file gates on. */
+  active: boolean
+  /** Basename of the worktree, used to clean up the CLI-reported terminal title. */
+  worktreeBasename?: string
+  /** fs watcher detecting the freshly-created `claude_session_id`; nulled once found. */
+  sessionIdWatcher: ClaudeSessionWatchHandle | null
+  /** Watcher armed after a plan is ready to detect the follow-up that resumes work. */
+  planFollowupWatcher: ClaudePlanFollowupWatchHandle | null
+  /** Where the transcript lives, used to arm the plan-followup watcher. */
+  transcriptSource: { worktreePath: string; claudeSessionId: string | null } | null
+  /** Last status published for this session (drives plan-followup arming on session-id detection). */
+  lastStatus: ClaudeCliStatusPayload | null
+}
+
+const claudeCliSessionsState = new Map<string, ClaudeCliSessionState>()
 let unsubscribeClaudeCliStatus: (() => void) | null = null
 
+function getClaudeCliSession(sessionId: string): ClaudeCliSessionState | undefined {
+  return claudeCliSessionsState.get(sessionId)
+}
+
+function getOrCreateClaudeCliSession(sessionId: string): ClaudeCliSessionState {
+  let state = claudeCliSessionsState.get(sessionId)
+  if (!state) {
+    state = {
+      active: false,
+      worktreeBasename: undefined,
+      sessionIdWatcher: null,
+      planFollowupWatcher: null,
+      transcriptSource: null,
+      lastStatus: null
+    }
+    claudeCliSessionsState.set(sessionId, state)
+  }
+  return state
+}
+
+/** Membership check mirroring the old `claudeCliSessions.has()` — true only for a live CLI PTY. */
+function isActiveClaudeCliSession(sessionId: string): boolean {
+  return claudeCliSessionsState.get(sessionId)?.active === true
+}
+
+/** Atomic teardown: close both watchers and drop the session record. Idempotent. */
+function disposeClaudeCliSession(sessionId: string): void {
+  const state = claudeCliSessionsState.get(sessionId)
+  if (!state) return
+  state.sessionIdWatcher?.close()
+  state.planFollowupWatcher?.close()
+  claudeCliSessionsState.delete(sessionId)
+}
+
 function closeClaudePlanFollowupWatcher(sessionId: string): void {
-  claudePlanFollowupWatchers.get(sessionId)?.close()
-  claudePlanFollowupWatchers.delete(sessionId)
+  const state = claudeCliSessionsState.get(sessionId)
+  if (!state?.planFollowupWatcher) return
+  state.planFollowupWatcher.close()
+  state.planFollowupWatcher = null
 }
 
 function armClaudePlanFollowupWatcher(mainWindow: BrowserWindow, sessionId: string): void {
-  const source = claudeCliTranscriptSources.get(sessionId)
-  if (!source?.claudeSessionId) return
+  const state = claudeCliSessionsState.get(sessionId)
+  if (!state?.transcriptSource?.claudeSessionId) return
+  const { worktreePath, claudeSessionId } = state.transcriptSource
 
   closeClaudePlanFollowupWatcher(sessionId)
-  claudePlanFollowupWatchers.set(
-    sessionId,
-    watchForClaudePlanFollowup(source.worktreePath, source.claudeSessionId, () => {
-      closeClaudePlanFollowupWatcher(sessionId)
-      publishClaudeCliStatus(mainWindow, {
-        sessionId,
-        status: 'planning',
-        metadata: { reason: 'claude_cli_plan_followup' }
-      })
-      if (!mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('claude-cli:plan-followup', { sessionId })
-      }
+  state.planFollowupWatcher = watchForClaudePlanFollowup(worktreePath, claudeSessionId, () => {
+    closeClaudePlanFollowupWatcher(sessionId)
+    publishClaudeCliStatus(mainWindow, {
+      sessionId,
+      status: 'planning',
+      metadata: { reason: 'claude_cli_plan_followup' }
     })
-  )
+    if (!mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('claude-cli:plan-followup', { sessionId })
+    }
+  })
 }
 
 function ensureClaudeCliStatusSubscription(mainWindow: BrowserWindow): void {
   if (unsubscribeClaudeCliStatus) return
 
   unsubscribeClaudeCliStatus = subscribeClaudeCliStatus((payload) => {
-    if (!claudeCliSessions.has(payload.sessionId)) return
+    const state = claudeCliSessionsState.get(payload.sessionId)
+    if (!state?.active) return
 
-    claudeCliLastStatus.set(payload.sessionId, payload)
+    state.lastStatus = payload
     if (payload.status === 'plan_ready') {
       armClaudePlanFollowupWatcher(mainWindow, payload.sessionId)
       return
@@ -167,9 +220,10 @@ function attachNodePtyListeners(mainWindow: BrowserWindow, terminalId: string): 
     const existing = dataBuffers.get(terminalId)
     dataBuffers.set(terminalId, existing ? existing + data : data)
 
-    if (claudeCliSessions.has(terminalId)) {
+    const cliState = getClaudeCliSession(terminalId)
+    if (cliState?.active) {
       const title = processClaudeCliPtyData(terminalId, data, {
-        worktreeBasename: claudeCliWorktreeBasenames.get(terminalId)
+        worktreeBasename: cliState.worktreeBasename
       })
       if (title) {
         applyClaudeCliTitle({
@@ -203,20 +257,17 @@ function attachNodePtyListeners(mainWindow: BrowserWindow, terminalId: string): 
     listenerCleanups.delete(terminalId)
     dataBuffers.delete(terminalId)
     flushScheduled.delete(terminalId)
-    claudeWatchers.get(terminalId)?.close()
-    claudeWatchers.delete(terminalId)
-    closeClaudePlanFollowupWatcher(terminalId)
-    if (claudeCliSessions.has(terminalId)) {
+    // Publish the terminal `completed` status while the record is still present
+    // (so `active` is readable), then dispose every per-session resource at once.
+    if (isActiveClaudeCliSession(terminalId)) {
       publishClaudeCliStatus(mainWindow, {
         sessionId: terminalId,
         status: 'completed',
         metadata: { reason: 'pty_exit' }
       })
-      claudeCliSessions.delete(terminalId)
     }
-    claudeCliWorktreeBasenames.delete(terminalId)
-    claudeCliTranscriptSources.delete(terminalId)
-    claudeCliLastStatus.delete(terminalId)
+    disposeClaudeCliSession(terminalId)
+    clearClaudeCliStatus(terminalId)
     resetClaudeCliTitleState(terminalId)
   })
 
@@ -322,37 +373,40 @@ export function registerTerminalHandlers(mainWindow: BrowserWindow): void {
             )
           })
 
+          const cliState = getOrCreateClaudeCliSession(sessionId)
           if (!session.claude_session_id) {
-            claudeWatchers.get(sessionId)?.close()
-            claudeWatchers.set(
-              sessionId,
-              watchForClaudeSessionId(worktreePath, (claudeSessionId) => {
-                try {
-                  db.updateSession(sessionId, { claude_session_id: claudeSessionId })
-                } catch (error) {
-                  log.warn('Failed to persist Claude CLI session id', {
-                    sessionId,
-                    error: error instanceof Error ? error.message : String(error)
-                  })
-                }
-                if (!mainWindow.isDestroyed()) {
-                  mainWindow.webContents.send(
-                    `terminal:claude-session-id:${sessionId}`,
-                    claudeSessionId
-                  )
-                }
-                claudeCliTranscriptSources.set(sessionId, { worktreePath, claudeSessionId })
-                if (claudeCliLastStatus.get(sessionId)?.status === 'plan_ready') {
+            cliState.sessionIdWatcher?.close()
+            cliState.sessionIdWatcher = watchForClaudeSessionId(worktreePath, (claudeSessionId) => {
+              try {
+                db.updateSession(sessionId, { claude_session_id: claudeSessionId })
+              } catch (error) {
+                log.warn('Failed to persist Claude CLI session id', {
+                  sessionId,
+                  error: error instanceof Error ? error.message : String(error)
+                })
+              }
+              if (!mainWindow.isDestroyed()) {
+                mainWindow.webContents.send(
+                  `terminal:claude-session-id:${sessionId}`,
+                  claudeSessionId
+                )
+              }
+              // The watcher closes itself once it finds the id; if the session
+              // was torn down first its record is gone, so skip resurrecting it.
+              const found = getClaudeCliSession(sessionId)
+              if (found) {
+                found.transcriptSource = { worktreePath, claudeSessionId }
+                if (found.lastStatus?.status === 'plan_ready') {
                   armClaudePlanFollowupWatcher(mainWindow, sessionId)
                 }
-                claudeWatchers.delete(sessionId)
-              })
-            )
+                found.sessionIdWatcher = null
+              }
+            })
           }
-          claudeCliTranscriptSources.set(sessionId, {
+          cliState.transcriptSource = {
             worktreePath,
             claudeSessionId: session.claude_session_id
-          })
+          }
 
           const { cols, rows } = ptyService.create(sessionId, {
             cwd: spawn.cwd,
@@ -360,8 +414,8 @@ export function registerTerminalHandlers(mainWindow: BrowserWindow): void {
             args: spawn.args,
             env: spawn.env
           })
-          claudeCliSessions.add(sessionId)
-          claudeCliWorktreeBasenames.set(sessionId, path.basename(worktreePath))
+          cliState.active = true
+          cliState.worktreeBasename = path.basename(worktreePath)
           if (!pendingPrompt) {
             publishClaudeCliStatus(mainWindow, {
               sessionId,
@@ -376,6 +430,12 @@ export function registerTerminalHandlers(mainWindow: BrowserWindow): void {
 
           return { success: true, cols, rows }
         } catch (error) {
+          // Tear down any per-session state armed before the failure. The
+          // session-id fs watcher (and its interval) is set up before
+          // ptyService.create, so if the spawn throws it would otherwise leak
+          // until app quit — no terminal:destroy is issued for a session that
+          // never started. Disposing the whole record is atomic and idempotent.
+          disposeClaudeCliSession(sessionId)
           log.error(
             'IPC: terminal:createClaudeCli failed',
             error instanceof Error ? error : new Error(String(error)),
@@ -386,6 +446,24 @@ export function registerTerminalHandlers(mainWindow: BrowserWindow): void {
             error: error instanceof Error ? error.message : 'Unknown error'
           }
         }
+      })
+  )
+
+  // Inject a prompt into a running Claude CLI session as if the user typed it.
+  // Returns delivered:false when the session has no live PTY so the caller can
+  // queue the prompt for delivery as the next spawn argument instead.
+  defineHandler(
+    'terminal:sendClaudeCliPrompt',
+    z.tuple([z.string().min(1), z.string()]),
+    ([sessionId, prompt]) =>
+      syncEffect(() => {
+        if (!ptyService.has(sessionId) || !isActiveClaudeCliSession(sessionId)) {
+          return { delivered: false }
+        }
+        // Bracketed paste keeps a multi-line prompt from being submitted
+        // line-by-line; the trailing CR submits the turn (as pressing Enter).
+        ptyService.write(sessionId, `\u001b[200~${prompt}\u001b[201~\r`)
+        return { delivered: true }
       })
   )
 
@@ -415,13 +493,8 @@ export function registerTerminalHandlers(mainWindow: BrowserWindow): void {
       // Discard any pending buffered data
       dataBuffers.delete(terminalId)
       flushScheduled.delete(terminalId)
-      claudeWatchers.get(terminalId)?.close()
-      claudeWatchers.delete(terminalId)
-      closeClaudePlanFollowupWatcher(terminalId)
-      claudeCliSessions.delete(terminalId)
-      claudeCliWorktreeBasenames.delete(terminalId)
-      claudeCliTranscriptSources.delete(terminalId)
-      claudeCliLastStatus.delete(terminalId)
+      disposeClaudeCliSession(terminalId)
+      clearClaudeCliStatus(terminalId)
       resetClaudeCliTitleState(terminalId)
       ptyService.destroy(terminalId)
     })
@@ -573,18 +646,11 @@ export function cleanupTerminals(): void {
   // Discard all pending buffered data
   dataBuffers.clear()
   flushScheduled.clear()
-  for (const [, watcher] of claudeWatchers) {
-    watcher.close()
+  for (const state of claudeCliSessionsState.values()) {
+    state.sessionIdWatcher?.close()
+    state.planFollowupWatcher?.close()
   }
-  claudeWatchers.clear()
-  for (const [, watcher] of claudePlanFollowupWatchers) {
-    watcher.close()
-  }
-  claudePlanFollowupWatchers.clear()
-  claudeCliSessions.clear()
-  claudeCliWorktreeBasenames.clear()
-  claudeCliTranscriptSources.clear()
-  claudeCliLastStatus.clear()
+  claudeCliSessionsState.clear()
   unsubscribeClaudeCliStatus?.()
   unsubscribeClaudeCliStatus = null
   resetAllClaudeCliTitleState()

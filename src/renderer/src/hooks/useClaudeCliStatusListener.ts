@@ -4,6 +4,7 @@ import { useSessionStore } from '@/stores/useSessionStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { lastSendMode } from '@/lib/message-send-times'
 import { notifyKanbanSessionSync } from '@/stores/store-coordination'
+import { isPlanLike } from '@/lib/constants'
 
 type ClaudeCliStatusMetadata = {
   reason?: string
@@ -11,10 +12,6 @@ type ClaudeCliStatusMetadata = {
   hookPath?: string
   toolName?: string
   plan?: string
-}
-
-function isPlanLike(mode: string | undefined): boolean {
-  return mode === 'plan' || mode === 'super-plan'
 }
 
 function closeLinkedTicketModal(sessionId: string): void {

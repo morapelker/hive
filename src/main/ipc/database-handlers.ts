@@ -1,5 +1,6 @@
 import { Data, Effect } from 'effect'
 import { z } from 'zod'
+import { AGENT_SDK_VALUES } from '@shared/types/agent-sdk'
 
 import { getDatabase } from '../db'
 import { createLogger } from '../services/logger'
@@ -45,7 +46,7 @@ const stringBooleanPairSchema = z.tuple([z.string(), z.boolean()])
 const stringArraySchema = z.array(z.string())
 const sessionModeSchema = z.enum(['build', 'plan', 'super-plan'])
 const sessionTypeSchema = z.enum(['default', 'board-assistant'])
-const agentSdkSchema = z.enum(['opencode', 'claude-code', 'claude-code-cli', 'codex', 'terminal'])
+const agentSdkSchema = z.enum(AGENT_SDK_VALUES)
 const customProjectCommandSchema = z.object({
   id: z.string(),
   name: z.string(),

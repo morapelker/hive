@@ -1,3 +1,5 @@
+import type { AgentSdk } from './agent-sdk'
+
 export type SessionType = 'default' | 'board-assistant'
 
 export interface Session {
@@ -9,7 +11,7 @@ export interface Session {
   status: 'active' | 'completed' | 'error'
   opencode_session_id: string | null
   claude_session_id: string | null
-  agent_sdk: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
+  agent_sdk: AgentSdk
   mode: 'build' | 'plan'
   session_type: SessionType
   model_provider_id: string | null

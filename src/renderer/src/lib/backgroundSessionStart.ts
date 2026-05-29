@@ -1,4 +1,5 @@
 import type { SelectedModel } from '@/stores/useSettingsStore'
+import { type AgentSdk, isClaudeCli } from '@shared/types/agent-sdk'
 import { resolveModelForSdk } from '@/stores/useSettingsStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
@@ -11,7 +12,7 @@ const db = unwrapEnvelopeApi(() => window.db)
 
 type SessionModelSource = {
   id: string
-  agent_sdk: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
+  agent_sdk: AgentSdk
   model_provider_id: string | null
   model_id: string | null
   model_variant: string | null
@@ -54,8 +55,17 @@ export async function startBackgroundSessionPrompt(opts: {
   bumpTarget: { worktreeId?: string | null; connectionId?: string | null }
 }): Promise<void> {
   const session = findSessionModelSource(opts.sessionId)
-  if (session?.agent_sdk === 'claude-code-cli') {
-    useSessionStore.getState().setPendingMessage(opts.sessionId, opts.prompt)
+  if (isClaudeCli(session?.agent_sdk)) {
+    // Deliver straight to the live PTY if the session is already running;
+    // otherwise queue it so the next spawn picks it up as the prompt argument
+    // (createClaudeTerminal -> dequeuePendingMessage). Without the live-PTY path
+    // a follow-up to a running CLI session would be silently dropped.
+    const { delivered } = unwrapEnvelope(
+      await window.terminalOps.sendClaudeCliPrompt(opts.sessionId, opts.prompt)
+    )
+    if (!delivered) {
+      useSessionStore.getState().setPendingMessage(opts.sessionId, opts.prompt)
+    }
     return
   }
 
