@@ -179,7 +179,8 @@ describe('buildClaudeCliHookSettings', () => {
             hooks: [
               {
                 type: 'http',
-                url: 'http://127.0.0.1:34819/hook/hive-session-1/tool'
+                url: 'http://127.0.0.1:34819/hook/hive-session-1/tool',
+                timeout: 600
               }
             ]
           }

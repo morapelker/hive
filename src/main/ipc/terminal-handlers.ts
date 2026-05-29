@@ -32,6 +32,8 @@ import {
   resetAllClaudeCliTitleState,
   resetClaudeCliTitleState
 } from '../services/claude-cli-title-handler'
+import { claudeCliTelegramBridge } from '../services/claude-cli-telegram-bridge'
+import { writeClaudeCliPrompt } from '../services/claude-cli-pty-prompt'
 
 const log = createLogger({ component: 'TerminalHandlers' })
 
@@ -266,6 +268,8 @@ function attachNodePtyListeners(mainWindow: BrowserWindow, terminalId: string): 
         metadata: { reason: 'pty_exit' }
       })
     }
+    // Unblock any Telegram-held hook for this now-dead session.
+    claudeCliTelegramBridge.cancelSession(terminalId)
     disposeClaudeCliSession(terminalId)
     clearClaudeCliStatus(terminalId)
     resetClaudeCliTitleState(terminalId)
@@ -457,13 +461,12 @@ export function registerTerminalHandlers(mainWindow: BrowserWindow): void {
     z.tuple([z.string().min(1), z.string()]),
     ([sessionId, prompt]) =>
       syncEffect(() => {
-        if (!ptyService.has(sessionId) || !isActiveClaudeCliSession(sessionId)) {
+        // The bracketed-paste write lives in writeClaudeCliPrompt (shared with
+        // the Telegram forwarding service). Guard on the live CLI PTY here.
+        if (!isActiveClaudeCliSession(sessionId)) {
           return { delivered: false }
         }
-        // Bracketed paste keeps a multi-line prompt from being submitted
-        // line-by-line; the trailing CR submits the turn (as pressing Enter).
-        ptyService.write(sessionId, `\u001b[200~${prompt}\u001b[201~\r`)
-        return { delivered: true }
+        return writeClaudeCliPrompt(sessionId, prompt)
       })
   )
 
@@ -493,6 +496,7 @@ export function registerTerminalHandlers(mainWindow: BrowserWindow): void {
       // Discard any pending buffered data
       dataBuffers.delete(terminalId)
       flushScheduled.delete(terminalId)
+      claudeCliTelegramBridge.cancelSession(terminalId)
       disposeClaudeCliSession(terminalId)
       clearClaudeCliStatus(terminalId)
       resetClaudeCliTitleState(terminalId)
@@ -651,6 +655,7 @@ export function cleanupTerminals(): void {
     state.planFollowupWatcher?.close()
   }
   claudeCliSessionsState.clear()
+  claudeCliTelegramBridge.cancelAll()
   unsubscribeClaudeCliStatus?.()
   unsubscribeClaudeCliStatus = null
   resetAllClaudeCliTitleState()

@@ -7,10 +7,13 @@ import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
+import { useQuestionStore } from '@/stores/useQuestionStore'
+import { useTelegramStore } from '@/stores/useTelegramStore'
 import { useClaudeCliSessionPortal } from '@/contexts/ClaudeCliSessionPortalContext'
 import { ModeToggle } from './ModeToggle'
 import { SuperToggle } from './SuperToggle'
 import { ModelSelector } from './ModelSelector'
+import { QuestionPrompt } from './QuestionPrompt'
 import { ClaudeCliEndedOverlay } from './ClaudeCliEndedOverlay'
 import { HandoffSplitButton } from './HandoffSplitButton'
 import { buildHandoffPrompt, type HandoffSelectionOverride } from '@/lib/handoffSelection'
@@ -286,6 +289,13 @@ export function ClaudeCliSessionView({
   const isMountedInTicketModal = !!getTarget(sessionId)
   const sessionRecord = useSessionStore((state) => state.getSessionById(sessionId))
 
+  // While Telegram forwarding is active, AskUserQuestion is intercepted by the
+  // hook bridge (so it never renders in the terminal) and surfaced through the
+  // shared question store. Render the same in-app QuestionPrompt the SDK
+  // providers use; when forwarding is off the question shows natively in the CLI.
+  const activeQuestion = useQuestionStore((state) => state.getActiveQuestion(sessionId))
+  const isForwarding = useTelegramStore((state) => state.activeForwardingSessionId === sessionId)
+
   useEffect(() => {
     setPlanSavedAsTicket(false)
   }, [pendingPlan?.planContent])
@@ -483,6 +493,40 @@ export function ClaudeCliSessionView({
     }
   }, [pendingPlan?.planContent, sessionRecord?.project_id])
 
+  const resolveQuestionPath = useCallback((): string | undefined => {
+    if (sessionRecord?.worktree_id) {
+      return findWorktreePathById(sessionRecord.worktree_id) ?? undefined
+    }
+    if (sessionRecord?.connection_id) {
+      return findConnectionPathById(sessionRecord.connection_id) ?? undefined
+    }
+    return undefined
+  }, [sessionRecord?.worktree_id, sessionRecord?.connection_id])
+
+  const handleQuestionReply = useCallback(
+    async (requestId: string, answers: string[][]) => {
+      try {
+        unwrapEnvelope(await window.opencodeOps.questionReply(requestId, answers, resolveQuestionPath()))
+      } catch (err) {
+        console.error('Failed to reply to question:', err)
+        toast.error('Failed to send answer')
+      }
+    },
+    [resolveQuestionPath]
+  )
+
+  const handleQuestionReject = useCallback(
+    async (requestId: string) => {
+      try {
+        unwrapEnvelope(await window.opencodeOps.questionReject(requestId, resolveQuestionPath()))
+      } catch (err) {
+        console.error('Failed to dismiss question:', err)
+        toast.error('Failed to dismiss question')
+      }
+    },
+    [resolveQuestionPath]
+  )
+
   return (
     <div
       className="flex-1 flex flex-col min-h-0 bg-background"
@@ -521,6 +565,20 @@ export function ClaudeCliSessionView({
             onSaveAsTicket={handlePlanReadySaveAsTicket}
             savedAsTicket={planSavedAsTicket}
           />
+        )}
+        {/* In the ticket modal the modal renders its own question sidebar, so only
+            show the session-embedded prompt for the standalone session view. */}
+        {activeQuestion && isForwarding && !isMountedInTicketModal && (
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 p-4">
+            <div className="pointer-events-auto mx-auto max-w-2xl">
+              <QuestionPrompt
+                key={activeQuestion.id}
+                request={activeQuestion}
+                onReply={handleQuestionReply}
+                onReject={handleQuestionReject}
+              />
+            </div>
+          </div>
         )}
         {ended && <ClaudeCliEndedOverlay onRestart={handleRestart} />}
       </div>

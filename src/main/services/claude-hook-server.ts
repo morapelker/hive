@@ -2,6 +2,7 @@ import type { BrowserWindow } from 'electron'
 import http from 'http'
 import type { SessionStatusType } from '@shared/types/session-status'
 import { createLogger } from './logger'
+import { claudeCliTelegramBridge } from './claude-cli-telegram-bridge'
 
 export interface ParsedClaudeHook {
   hook_event_name?: string
@@ -9,7 +10,11 @@ export interface ParsedClaudeHook {
   permission_mode?: string
   tool_input?: {
     plan?: unknown
+    questions?: unknown
   }
+  /** Final assistant message of the turn (Stop hook). Read both spellings: */
+  assistant_message?: string
+  last_assistant_message?: string
 }
 
 export interface ClaudeCliStatusPayload {
@@ -63,7 +68,10 @@ export function buildClaudeCliHookSettings(port: number, hiveSessionId: string):
       PreToolUse: [
         {
           matcher: 'ExitPlanMode|AskUserQuestion',
-          hooks: [{ type: 'http', url: hookUrl(port, hiveSessionId, 'tool') }]
+          // A generous timeout (default is 600s) so a question/plan held open
+          // while a human answers via Telegram isn't cancelled early. Harmless
+          // when not held — it's a ceiling, not a delay.
+          hooks: [{ type: 'http', url: hookUrl(port, hiveSessionId, 'tool'), timeout: 600 }]
         }
       ],
       PostToolUse: [
@@ -219,31 +227,36 @@ async function handleHook(req: http.IncomingMessage, res: http.ServerResponse): 
     return
   }
 
-  res.writeHead(200, { 'content-type': 'application/json' })
-  res.end('{}')
-
+  // Read+parse the body before responding so the Telegram bridge can decide
+  // whether to hold the response open (to answer a question/plan remotely). The
+  // status publish below is unchanged and still drives the in-app badge.
   const route = parseHookPath(req.url)
-  if (!route) {
-    return
-  }
-
+  let owned = false
   try {
     const rawBody = await readRequestBody(req)
     const body = JSON.parse(rawBody || '{}') as ParsedClaudeHook
-    const status = mapHookEventToStatus(body)
-    if (!status || !rendererWindow) {
-      return
+    if (route) {
+      const status = mapHookEventToStatus(body)
+      if (status && rendererWindow) {
+        publishClaudeCliStatus(rendererWindow, {
+          sessionId: route.sessionId,
+          status,
+          metadata: buildStatusMetadata(body, route.hookPath)
+        })
+      }
+      // For Telegram-forwarded CLI sessions the bridge may take ownership of the
+      // response (held open until answered). Otherwise behavior is unchanged.
+      owned = claudeCliTelegramBridge.onHook(route.sessionId, body, res)
     }
-
-    publishClaudeCliStatus(rendererWindow, {
-      sessionId: route.sessionId,
-      status,
-      metadata: buildStatusMetadata(body, route.hookPath)
-    })
   } catch (error) {
     log.warn('Failed to parse Claude hook payload', {
       error: error instanceof Error ? error.message : String(error)
     })
+  }
+
+  if (!owned && !res.writableEnded) {
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end('{}')
   }
 }
 
@@ -261,6 +274,14 @@ export async function getClaudeHookServer(mainWindow: BrowserWindow): Promise<{ 
   server = http.createServer((req, res) => {
     void handleHook(req, res)
   })
+
+  // Held hook responses (a question/plan awaiting a Telegram answer) can stay
+  // open for minutes; disable Node's own request/socket timeouts so they aren't
+  // dropped mid-wait. The per-hook `timeout` in the injected settings is the
+  // real upper bound, with the bridge's safety timer just under it.
+  server.requestTimeout = 0
+  server.headersTimeout = 0
+  server.timeout = 0
 
   startingPromise = (async () => {
     await new Promise<void>((resolve, reject) => {
@@ -300,6 +321,10 @@ export async function getClaudeHookServer(mainWindow: BrowserWindow): Promise<{ 
 }
 
 export async function closeClaudeHookServer(): Promise<void> {
+  // Unblock any held hook responses first, otherwise their open sockets keep the
+  // server alive and `close()` hangs at shutdown.
+  claudeCliTelegramBridge.cancelAll()
+
   if (!server) {
     rendererWindow = null
     boundPort = null

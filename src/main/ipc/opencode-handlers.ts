@@ -15,6 +15,7 @@ import {
 } from '@shared/types/agent-sdk'
 import { ClaudeCodeImplementer } from '../services/claude-code-implementer'
 import { CodexImplementer } from '../services/codex-implementer'
+import { claudeCliTelegramBridge } from '../services/claude-cli-telegram-bridge'
 import { toError } from '../services/error-utils'
 import { defineHandler } from './_shared/define-handler'
 
@@ -690,6 +691,11 @@ export function registerOpenCodeHandlers(
       opencodeEffect(async () => {
         log.info('IPC: opencode:question:reply', { requestId })
         try {
+          // Claude CLI (terminal-backed) question held open by the Telegram bridge.
+          if (claudeCliTelegramBridge.hasPendingQuestion(requestId)) {
+            claudeCliTelegramBridge.resolveQuestion(requestId, answers)
+            return { success: true }
+          }
           // Route to Claude Code implementer if this is a Claude Code question
           if (sdkManager) {
             const claudeImpl = sdkManager.getImplementer('claude-code') as ClaudeCodeImplementer
@@ -730,6 +736,11 @@ export function registerOpenCodeHandlers(
       opencodeEffect(async () => {
         log.info('IPC: opencode:question:reject', { requestId })
         try {
+          // Claude CLI (terminal-backed) question held open by the Telegram bridge.
+          if (claudeCliTelegramBridge.hasPendingQuestion(requestId)) {
+            claudeCliTelegramBridge.rejectQuestion(requestId)
+            return { success: true }
+          }
           // Route to Claude Code implementer if this is a Claude Code question
           if (sdkManager) {
             const claudeImpl = sdkManager.getImplementer('claude-code') as ClaudeCodeImplementer
