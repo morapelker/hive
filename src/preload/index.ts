@@ -661,6 +661,9 @@ const systemOps = {
   setKeepAwake: (active: boolean): Promise<void> =>
     ipcRenderer.invoke('system:setKeepAwake', active),
 
+  // Ask the main process to put the machine to sleep now.
+  sleepNow: (): Promise<boolean> => ipcRenderer.invoke('system:sleepNow'),
+
   // Push the renderer's follow-up-message queue state into the main process so
   // `notificationService.showSessionComplete` can suppress notifications while
   // more queued messages are about to be auto-sent.

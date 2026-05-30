@@ -748,6 +748,7 @@ declare global {
       isPackaged: () => Promise<boolean>
       getPlatform: () => Promise<string>
       setKeepAwake: (active: boolean) => Promise<void>
+      sleepNow: () => Promise<boolean>
       setSessionQueuedState: (sessionId: string, hasQueued: boolean) => Promise<void>
     }
     petOps: {

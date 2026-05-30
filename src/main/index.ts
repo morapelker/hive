@@ -77,6 +77,7 @@ import { openCodeService } from './services/opencode-service'
 import { agentEventBus } from './services/agent-event-bus'
 import { telegramForwardingService } from './services/telegram-forwarding-service'
 import { setKeepAwake, cleanupPowerSaveBlocker } from './services/power-save-blocker'
+import { sleepNow } from './services/sleep-now'
 import {
   configurePetWindow,
   destroyPetWindow,
@@ -495,6 +496,8 @@ function registerSystemHandlers(openCodeLaunchSpec: OpenCodeLaunchSpec | null): 
   ipcMain.handle('system:setKeepAwake', (_event, active: boolean) => {
     setKeepAwake(Boolean(active))
   })
+
+  ipcMain.handle('system:sleepNow', () => sleepNow())
 
   // Mirror renderer-side follow-up message queue state into the main process so
   // notification-service can suppress session-complete notifications while more
