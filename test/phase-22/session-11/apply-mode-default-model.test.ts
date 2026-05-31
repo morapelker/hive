@@ -117,6 +117,18 @@ describe('applyModeDefaultModel', () => {
     })
   })
 
+  test('does not apply unset-SDK mode default to a non-default live session SDK', async () => {
+    seedSession('codex')
+    seedSettings(claudeUnsetSdkDefault)
+    const setSessionModel = vi
+      .spyOn(useSessionStore.getState(), 'setSessionModel')
+      .mockResolvedValue(undefined)
+
+    await useSessionStore.getState().applyModeDefaultModel('session-1', 'plan')
+
+    expect(setSessionModel).not.toHaveBeenCalled()
+  })
+
   test('does not change the model when modeDefault.agentSdk differs from the session SDK', async () => {
     seedSettings(codexPlanDefault)
     const setSessionModel = vi
