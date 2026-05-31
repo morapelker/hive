@@ -153,10 +153,12 @@ export const ModelSelector = memo(function ModelSelector({
     }
   }, [catalogAgentSdks])
 
-  const isModelAvailableForCurrentSdk = useCallback(
-    (providerID: string, modelID: string): boolean => {
+  const isModelPortableToCurrentSdk = useCallback(
+    (providerID: string, modelID: string, variant?: string): boolean => {
       const currentSdkProviders = providers.filter((provider) => provider.agentSdk === agentSdk)
-      return findModelInfo(currentSdkProviders, providerID, modelID) !== null
+      const currentSdkModel = findModelInfo(currentSdkProviders, providerID, modelID)
+      if (!currentSdkModel) return false
+      return !variant || getModelVariantKeys(currentSdkModel).includes(variant)
     },
     [providers, agentSdk]
   )
@@ -170,7 +172,8 @@ export const ModelSelector = memo(function ModelSelector({
       const includeAgentSdk =
         options?.includeAgentSdk ??
         (allowAgentSdkSelection &&
-          (agentSdkFilter !== null || !isModelAvailableForCurrentSdk(model.providerID, model.id)))
+          (agentSdkFilter !== null ||
+            !isModelPortableToCurrentSdk(model.providerID, model.id, variant)))
       return {
         ...(includeAgentSdk ? { agentSdk: model.agentSdk } : {}),
         providerID: model.providerID,
@@ -178,7 +181,7 @@ export const ModelSelector = memo(function ModelSelector({
         variant
       }
     },
-    [allowAgentSdkSelection, agentSdkFilter, isModelAvailableForCurrentSdk]
+    [allowAgentSdkSelection, agentSdkFilter, isModelPortableToCurrentSdk]
   )
 
   const rememberSelectedModel = useCallback((model: SelectedModel, sdk: HandoffAgentSdk): void => {
@@ -266,7 +269,13 @@ export const ModelSelector = memo(function ModelSelector({
     setAgentSdkFilter(sdk)
     if (!sdk) {
       if (onChange && selectedModel?.agentSdk) {
-        if (isModelAvailableForCurrentSdk(selectedModel.providerID, selectedModel.modelID)) {
+        if (
+          isModelPortableToCurrentSdk(
+            selectedModel.providerID,
+            selectedModel.modelID,
+            selectedModel.variant
+          )
+        ) {
           onChange({
             providerID: selectedModel.providerID,
             modelID: selectedModel.modelID,
@@ -290,7 +299,11 @@ export const ModelSelector = memo(function ModelSelector({
       const matchesModel =
         selectedModel.providerID === model.providerID && selectedModel.modelID === model.id
       if (!matchesModel) return false
-      return isModelAvailableForCurrentSdk(selectedModel.providerID, selectedModel.modelID)
+      return isModelPortableToCurrentSdk(
+        selectedModel.providerID,
+        selectedModel.modelID,
+        selectedModel.variant
+      )
         ? model.agentSdk === agentSdk
         : true
     }

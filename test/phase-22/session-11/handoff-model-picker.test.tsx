@@ -360,6 +360,38 @@ describe('handoff model picker', () => {
     })
   })
 
+  test('controlled model selector keeps SDK scope for non-portable variants', async () => {
+    const onChange = vi.fn()
+    const user = userEvent.setup()
+
+    render(
+      <ModelSelector
+        value={{
+          providerID: 'anthropic',
+          modelID: 'sonnet-4.6',
+          variant: 'high'
+        }}
+        onChange={onChange}
+        allowAgentSdkSelection
+      />
+    )
+
+    await waitFor(() => {
+      expect(window.opencodeOps.listModels).toHaveBeenCalledWith({ agentSdk: 'opencode' })
+      expect(window.opencodeOps.listModels).toHaveBeenCalledWith({ agentSdk: 'claude-code' })
+    })
+
+    await user.click(screen.getByTestId('model-selector'))
+    await user.click(await screen.findByTestId('variant-chip-low'))
+
+    expect(onChange).toHaveBeenLastCalledWith({
+      agentSdk: 'opencode',
+      providerID: 'anthropic',
+      modelID: 'sonnet-4.6',
+      variant: 'low'
+    })
+  })
+
   test('controlled model selector resolves SDK-agnostic defaults against the current SDK first', async () => {
     useSettingsStore.setState({
       showModelProvider: true,
