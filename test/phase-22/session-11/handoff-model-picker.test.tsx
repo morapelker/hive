@@ -268,6 +268,68 @@ describe('handoff model picker', () => {
     await user.click(await screen.findByTestId('model-item-gpt-5.5'))
 
     expect(onChange).toHaveBeenCalledWith({
+      providerID: 'codex',
+      modelID: 'gpt-5.5',
+      variant: 'high'
+    })
+  })
+
+  test('controlled model selector clears SDK scope when All providers is selected', async () => {
+    const onChange = vi.fn()
+    const user = userEvent.setup()
+
+    render(
+      <ModelSelector
+        value={{
+          agentSdk: 'claude-code',
+          providerID: 'anthropic',
+          modelID: 'sonnet-4.6',
+          variant: 'high'
+        }}
+        onChange={onChange}
+        allowAgentSdkSelection
+      />
+    )
+
+    await user.click(await screen.findByTestId('model-provider-filter'))
+    await user.click(await screen.findByTestId('model-provider-filter-option-all'))
+
+    expect(onChange).toHaveBeenCalledWith({
+      providerID: 'anthropic',
+      modelID: 'sonnet-4.6',
+      variant: 'high'
+    })
+
+    await user.click(screen.getByTestId('model-selector'))
+
+    await waitFor(() => {
+      expect(screen.getAllByTestId('model-item-sonnet-4.6').length).toBeGreaterThan(0)
+    })
+    expect(await screen.findByTestId('model-item-gpt-5.5')).toBeInTheDocument()
+  })
+
+  test('controlled model selector keeps agentSdk when selecting under a specific provider', async () => {
+    const onChange = vi.fn()
+    const user = userEvent.setup()
+
+    render(
+      <ModelSelector
+        value={{
+          providerID: 'anthropic',
+          modelID: 'sonnet-4.6',
+          variant: 'high'
+        }}
+        onChange={onChange}
+        allowAgentSdkSelection
+      />
+    )
+
+    await user.click(await screen.findByTestId('model-provider-filter'))
+    await user.click(await screen.findByTestId('model-provider-filter-option-codex'))
+    await user.click(screen.getByTestId('model-selector'))
+    await user.click(await screen.findByTestId('model-item-gpt-5.5'))
+
+    expect(onChange).toHaveBeenLastCalledWith({
       agentSdk: 'codex',
       providerID: 'codex',
       modelID: 'gpt-5.5',

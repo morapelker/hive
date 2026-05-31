@@ -154,15 +154,21 @@ export const ModelSelector = memo(function ModelSelector({
   }, [catalogAgentSdks])
 
   const buildSelectedModel = useCallback(
-    (model: SelectableModelInfo, variant?: string): SelectedModel => {
+    (
+      model: SelectableModelInfo,
+      variant?: string,
+      options?: { includeAgentSdk?: boolean }
+    ): SelectedModel => {
+      const includeAgentSdk =
+        options?.includeAgentSdk ?? (allowAgentSdkSelection && agentSdkFilter !== null)
       return {
-        ...(allowAgentSdkSelection ? { agentSdk: model.agentSdk } : {}),
+        ...(includeAgentSdk ? { agentSdk: model.agentSdk } : {}),
         providerID: model.providerID,
         modelID: model.id,
         variant
       }
     },
-    [allowAgentSdkSelection]
+    [allowAgentSdkSelection, agentSdkFilter]
   )
 
   const rememberSelectedModel = useCallback((model: SelectedModel, sdk: HandoffAgentSdk): void => {
@@ -210,7 +216,9 @@ export const ModelSelector = memo(function ModelSelector({
 
     const fallbackModel = getFallbackModelForSdk(sdk)
     if (!fallbackModel) return null
-    return buildSelectedModel(fallbackModel, getModelVariantKeys(fallbackModel)[0])
+    return buildSelectedModel(fallbackModel, getModelVariantKeys(fallbackModel)[0], {
+      includeAgentSdk: true
+    })
   }
 
   function handleSelectModel(model: SelectableModelInfo): void {
@@ -246,7 +254,16 @@ export const ModelSelector = memo(function ModelSelector({
 
   function handleSelectAgentSdkFilter(sdk: HandoffAgentSdk | null): void {
     setAgentSdkFilter(sdk)
-    if (!sdk) return
+    if (!sdk) {
+      if (onChange && selectedModel?.agentSdk) {
+        onChange({
+          providerID: selectedModel.providerID,
+          modelID: selectedModel.modelID,
+          variant: selectedModel.variant
+        })
+      }
+      return
+    }
     const nextModel = resolveSelectableModelForSdk(sdk)
     if (nextModel) applySelectedModel(nextModel, sdk)
   }
@@ -254,6 +271,9 @@ export const ModelSelector = memo(function ModelSelector({
   function isActiveModel(model: SelectableModelInfo): boolean {
     if (!selectedModel) {
       return model.providerID === 'anthropic' && model.id === 'claude-opus-4-5-20251101'
+    }
+    if (allowAgentSdkSelection && !selectedModel.agentSdk && agentSdkFilter === null) {
+      return selectedModel.providerID === model.providerID && selectedModel.modelID === model.id
     }
     const selectedAgentSdk = selectedModel.agentSdk ?? agentSdk
     return (
@@ -268,9 +288,12 @@ export const ModelSelector = memo(function ModelSelector({
     const modelID = selectedModel?.modelID || 'claude-opus-4-5-20251101'
     const providerID = selectedModel?.providerID || 'anthropic'
     const selectedAgentSdk = selectedModel?.agentSdk ?? agentSdk
-    const sdkProviders = providers.filter((provider) => provider.agentSdk === selectedAgentSdk)
+    const sdkProviders =
+      allowAgentSdkSelection && selectedModel && !selectedModel.agentSdk && agentSdkFilter === null
+        ? providers
+        : providers.filter((provider) => provider.agentSdk === selectedAgentSdk)
     return findModelInfo(sdkProviders, providerID, modelID) as SelectableModelInfo | null
-  }, [selectedModel, providers, agentSdk])
+  }, [selectedModel, providers, agentSdk, allowAgentSdkSelection, agentSdkFilter])
 
   const providerPrefix = useMemo(() => {
     if (hideProviderPrefix || !showModelProvider) return null
@@ -360,17 +383,15 @@ export const ModelSelector = memo(function ModelSelector({
     }
   }, [agentSdkFilter, sdkFilterOptions])
 
-  const effectiveAgentSdkFilter =
-    agentSdkFilter ?? (allowAgentSdkSelection ? (value?.agentSdk ?? null) : null)
   const selectedProviderFilterLabel =
-    sdkFilterOptions.find((option) => option.agentSdk === effectiveAgentSdkFilter)?.label ??
+    sdkFilterOptions.find((option) => option.agentSdk === agentSdkFilter)?.label ??
     'All providers'
   const showProviderFilter = sdkFilterOptions.length > 1
 
   const providerScopedProviders = useMemo(() => {
-    if (!effectiveAgentSdkFilter) return providers
-    return providers.filter((provider) => provider.agentSdk === effectiveAgentSdkFilter)
-  }, [providers, effectiveAgentSdkFilter])
+    if (!agentSdkFilter) return providers
+    return providers.filter((provider) => provider.agentSdk === agentSdkFilter)
+  }, [providers, agentSdkFilter])
 
   const filteredProviders = useMemo(() => {
     if (!filter.trim()) return providerScopedProviders
