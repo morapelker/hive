@@ -31,6 +31,11 @@ const modelSchema = z
     agentSdk: agentSdkSchema.optional()
   })
   .passthrough()
+const promptOptionsSchema = z
+  .object({
+    codexFastMode: z.boolean().optional()
+  })
+  .passthrough()
 const promptArgsSchema = z.union([
   z.object({}).passthrough(),
   z.tuple([z.unknown(), z.unknown(), z.unknown()]).rest(z.unknown())
@@ -476,7 +481,8 @@ export function registerOpenCodeHandlers(
             const sdkId = resolveSdkId(dbService, sessionId)
             if (sdkId && sdkId !== 'opencode' && sdkId !== 'terminal' && sdkId !== 'claude-code-cli') {
               const impl = sdkManager.getImplementer(sdkId)
-              const commands = await impl.listCommands(worktreePath)
+              const resolvedAgentSessionId = resolveAgentSessionId(dbService, sessionId)
+              const commands = await impl.listCommands(worktreePath, resolvedAgentSessionId)
               return { success: true, commands }
             }
           }
@@ -513,11 +519,12 @@ export function registerOpenCodeHandlers(
       sessionId: z.string().min(1),
       command: z.string().min(1),
       args: z.string(),
-      model: modelSchema.optional()
+      model: modelSchema.optional(),
+      options: promptOptionsSchema.optional()
     }),
-    ({ worktreePath, sessionId, command, args, model }) =>
+    ({ worktreePath, sessionId, command, args, model, options }) =>
       opencodeEffect(async () => {
-        log.info('IPC: opencode:command', { worktreePath, sessionId, command, args, model })
+        log.info('IPC: opencode:command', { worktreePath, sessionId, command, args, model, options })
         try {
           // SDK-aware dispatch: route non-OpenCode sessions to their implementer
           if (sdkManager && dbService) {
@@ -536,7 +543,7 @@ export function registerOpenCodeHandlers(
             })
             if (sdkId && sdkId !== 'opencode' && sdkId !== 'terminal' && sdkId !== 'claude-code-cli') {
               const impl = sdkManager.getImplementer(sdkId)
-              await impl.sendCommand(worktreePath, resolvedAgentSessionId, command, args)
+              await impl.sendCommand(worktreePath, resolvedAgentSessionId, command, args, model, options)
               return { success: true }
             }
           }

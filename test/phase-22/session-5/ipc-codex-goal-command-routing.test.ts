@@ -67,7 +67,7 @@ describe('IPC Codex goal command routing', () => {
     expect(dbService.getAgentSdkForSession).toHaveBeenCalledWith('hive-1')
     expect(dbService.getSession).toHaveBeenCalledWith('hive-1')
     expect(sdkManager.getImplementer).toHaveBeenCalledWith('codex')
-    expect(codexImpl.listCommands).toHaveBeenCalledWith('/project')
+    expect(codexImpl.listCommands).toHaveBeenCalledWith('/project', 'hive-1')
     expect(openCodeService.listCommands).not.toHaveBeenCalled()
     expect(result).toEqual({
       success: true,
@@ -96,10 +96,19 @@ describe('IPC Codex goal command routing', () => {
       worktreePath: '/project',
       sessionId: 'hive-1',
       command: 'goal',
-      args: 'ship the feature'
+      args: 'ship the feature',
+      model: { providerID: 'codex', modelID: 'gpt-5', variant: 'high' },
+      options: { codexFastMode: true }
     })
 
-    expect(codexImpl.sendCommand).toHaveBeenCalledWith('/project', 'thread-1', 'goal', 'ship the feature')
+    expect(codexImpl.sendCommand).toHaveBeenCalledWith(
+      '/project',
+      'thread-1',
+      'goal',
+      'ship the feature',
+      { providerID: 'codex', modelID: 'gpt-5', variant: 'high' },
+      { codexFastMode: true }
+    )
     expect(openCodeService.sendCommand).not.toHaveBeenCalled()
     expect(result).toEqual({ success: true })
   })

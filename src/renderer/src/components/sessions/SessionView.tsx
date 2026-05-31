@@ -139,6 +139,10 @@ interface SlashCommandInfo {
   template: string
   agent?: string
   builtIn?: boolean
+  source?: 'command' | 'mcp' | 'skill' | 'codex'
+  path?: string
+  scope?: 'user' | 'repo' | 'system' | 'admin'
+  enabled?: boolean
 }
 
 export const BUILT_IN_SLASH_COMMANDS: SlashCommandInfo[] = [
@@ -4684,7 +4688,8 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
                   opencodeSessionId,
                   commandName,
                   commandArgs,
-                  requestModel
+                  requestModel,
+                  codexPromptOptions
                 )
               )
               if (!result.success) {
@@ -5548,9 +5553,10 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
     [sessionId, slashDismissed, fileMentionsOpen, fileMentionCount, updateFileMentions]
   )
 
-  const handleCommandSelect = useCallback((cmd: { name: string; template: string }) => {
-    setInputValue(`/${cmd.name} `)
-    inputValueRef.current = `/${cmd.name} `
+  const handleCommandSelect = useCallback((cmd: SlashCommandInfo) => {
+    const template = /\s$/.test(cmd.template) ? cmd.template : `${cmd.template} `
+    setInputValue(template)
+    inputValueRef.current = template
     setSlashDismissed(false)
     textareaRef.current?.focus()
   }, [])

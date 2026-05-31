@@ -949,7 +949,8 @@ declare global {
         opencodeSessionId: string,
         command: string,
         args: string,
-        model?: { providerID: string; modelID: string; variant?: string }
+        model?: { providerID: string; modelID: string; variant?: string },
+        options?: { codexFastMode?: boolean }
       ) => Promise<Envelope<{ success: boolean; error?: string }>>
       // List available slash commands from the SDK
       commands: (
@@ -2051,7 +2052,10 @@ declare global {
     template: string
     agent?: string
     model?: string
-    source?: 'command' | 'mcp' | 'skill'
+    source?: 'command' | 'mcp' | 'skill' | 'codex'
+    path?: string
+    scope?: 'user' | 'repo' | 'system' | 'admin'
+    enabled?: boolean
     subtask?: boolean
     hints?: string[]
   }

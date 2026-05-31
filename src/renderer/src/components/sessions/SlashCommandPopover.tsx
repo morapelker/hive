@@ -7,12 +7,16 @@ interface SlashCommand {
   template: string
   agent?: string
   builtIn?: boolean
+  source?: 'command' | 'mcp' | 'skill' | 'codex'
+  path?: string
+  scope?: 'user' | 'repo' | 'system' | 'admin'
+  enabled?: boolean
 }
 
 interface SlashCommandPopoverProps {
   commands: SlashCommand[]
   filter: string
-  onSelect: (command: { name: string; template: string }) => void
+  onSelect: (command: SlashCommand) => void
   onClose: () => void
   visible: boolean
 }
@@ -68,7 +72,7 @@ export function SlashCommandPopover({
         e.stopPropagation()
         const cmd = filtered[selectedIndex]
         if (cmd) {
-          onSelect({ name: cmd.name, template: cmd.template })
+          onSelect(cmd)
         }
       } else if (e.key === 'Escape') {
         e.preventDefault()
@@ -109,9 +113,19 @@ export function SlashCommandPopover({
                 index === selectedIndex && 'bg-accent text-accent-foreground'
               )}
               onMouseEnter={() => setSelectedIndex(index)}
-              onClick={() => onSelect({ name: cmd.name, template: cmd.template })}
+              onClick={() => onSelect(cmd)}
             >
               <span className="font-mono text-xs text-muted-foreground">/{cmd.name}</span>
+              {cmd.source === 'skill' && (
+                <span className="text-[10px] px-1 rounded bg-amber-500/20 text-amber-500">
+                  skill
+                </span>
+              )}
+              {cmd.source === 'codex' && (
+                <span className="text-[10px] px-1 rounded bg-cyan-500/20 text-cyan-500">
+                  codex
+                </span>
+              )}
               {cmd.agent && (
                 <span
                   className={cn(

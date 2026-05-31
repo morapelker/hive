@@ -23,6 +23,25 @@ describe('CodexImplementer skeleton', () => {
     impl = new CodexImplementer()
   })
 
+  function seedCodexSession(): void {
+    ;(impl as any).sessions.set('/path::thread-1', {
+      threadId: 'thread-1',
+      hiveSessionId: 'hive-1',
+      worktreePath: '/path',
+      status: 'ready',
+      messages: [],
+      pendingHitlRequestIds: new Set<string>(),
+      liveAssistantDraft: null,
+      currentTurnId: null,
+      currentAssistantMessageId: null,
+      revertMessageID: null,
+      revertDiff: null,
+      titleGenerated: true,
+      titleGenerationStarted: true,
+      persistDebounceTimer: null
+    })
+  }
+
   // ── Identity & capabilities ────────────────────────────────────
 
   describe('identity', () => {
@@ -196,6 +215,348 @@ describe('CodexImplementer skeleton', () => {
           expect.objectContaining({
             name: 'goal',
             template: '/goal '
+          })
+        ])
+      )
+    })
+
+    it('lists enabled Codex skills after the goal command', async () => {
+      const manager = {
+        listSkills: vi.fn().mockResolvedValue({
+          data: [
+            {
+              cwd: '/path',
+              skills: [
+                {
+                  name: 'brainstorming',
+                  description: 'Full description',
+                  shortDescription: 'Legacy short',
+                  interface: {
+                    shortDescription: 'Explore requirements',
+                    defaultPrompt: '  design this  '
+                  },
+                  path: '/skills/brainstorming/SKILL.md',
+                  scope: 'user',
+                  enabled: true
+                },
+                {
+                  name: 'disabled-skill',
+                  description: 'Disabled',
+                  path: '/skills/disabled/SKILL.md',
+                  scope: 'user',
+                  enabled: false
+                },
+                {
+                  name: 'missing-path',
+                  description: 'Invalid',
+                  path: '',
+                  scope: 'user',
+                  enabled: true
+                }
+              ],
+              errors: [{ message: 'bad repo skill' }]
+            }
+          ]
+        })
+      }
+      ;(impl as any).manager = manager
+
+      const commands = (await impl.listCommands('/path', 'thread-1')) as any[]
+
+      expect(commands[0]).toMatchObject({ name: 'goal', source: 'codex' })
+      expect(commands).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            name: 'brainstorming',
+            description: 'Explore requirements',
+            template: '/brainstorming design this ',
+            source: 'skill',
+            path: '/skills/brainstorming/SKILL.md',
+            scope: 'user',
+            enabled: true
+          })
+        ])
+      )
+      expect(commands.find((command) => command.name === 'disabled-skill')).toBeUndefined()
+      expect(commands.find((command) => command.name === 'missing-path')).toBeUndefined()
+    })
+
+    it('prefers exact skills/list cwd matches over fallback flattening', async () => {
+      const manager = {
+        listSkills: vi.fn().mockResolvedValue({
+          data: [
+            {
+              cwd: '/other',
+              skills: [
+                {
+                  name: 'other-skill',
+                  description: 'Other',
+                  path: '/skills/other/SKILL.md',
+                  scope: 'user',
+                  enabled: true
+                }
+              ],
+              errors: []
+            },
+            {
+              cwd: '/path',
+              skills: [
+                {
+                  name: 'exact-skill',
+                  description: 'Exact',
+                  path: '/skills/exact/SKILL.md',
+                  scope: 'repo',
+                  enabled: true
+                }
+              ],
+              errors: []
+            }
+          ]
+        })
+      }
+      ;(impl as any).manager = manager
+
+      const commands = (await impl.listCommands('/path', 'thread-1')) as any[]
+
+      expect(commands.find((command) => command.name === 'exact-skill')).toBeDefined()
+      expect(commands.find((command) => command.name === 'other-skill')).toBeUndefined()
+    })
+
+    it('flattens skills/list entries when no exact cwd match is returned', async () => {
+      const manager = {
+        listSkills: vi.fn().mockResolvedValue({
+          data: [
+            {
+              cwd: '/other-a',
+              skills: [
+                {
+                  name: 'skill-a',
+                  description: 'A',
+                  path: '/skills/a/SKILL.md',
+                  scope: 'user',
+                  enabled: true
+                }
+              ],
+              errors: []
+            },
+            {
+              cwd: '/other-b',
+              skills: [
+                {
+                  name: 'skill-b',
+                  description: 'B',
+                  path: '/skills/b/SKILL.md',
+                  scope: 'system',
+                  enabled: true
+                }
+              ],
+              errors: []
+            }
+          ]
+        })
+      }
+      ;(impl as any).manager = manager
+
+      const commands = (await impl.listCommands('/path', 'thread-1')) as any[]
+
+      expect(commands.find((command) => command.name === 'skill-a')).toBeDefined()
+      expect(commands.find((command) => command.name === 'skill-b')).toBeDefined()
+    })
+
+    it('falls back to goal only when skills/list fails', async () => {
+      const manager = {
+        listSkills: vi.fn().mockRejectedValue(new Error('protocol unavailable'))
+      }
+      ;(impl as any).manager = manager
+
+      await expect(impl.listCommands('/path', 'thread-1')).resolves.toEqual([
+        expect.objectContaining({ name: 'goal' })
+      ])
+    })
+
+    it('clears cached skills when skills/list fails after a previous successful fetch', async () => {
+      const manager = {
+        listSkills: vi
+          .fn()
+          .mockResolvedValueOnce({
+            data: [
+              {
+                cwd: '/path',
+                skills: [
+                  {
+                    name: 'imagegen',
+                    description: 'Generate an image',
+                    path: '/skills/imagegen/SKILL.md',
+                    scope: 'system',
+                    enabled: true
+                  }
+                ],
+                errors: []
+              }
+            ]
+          })
+          .mockRejectedValueOnce(new Error('protocol unavailable'))
+      }
+      ;(impl as any).manager = manager
+
+      await impl.listCommands('/path', 'thread-1')
+      await expect(impl.listCommands('/path', 'thread-1')).resolves.toEqual([
+        expect.objectContaining({ name: 'goal' })
+      ])
+
+      await expect(impl.sendCommand('/path', 'thread-1', 'imagegen', 'a poster')).rejects.toThrow(
+        'Unsupported Codex command: /imagegen'
+      )
+    })
+
+    it('emits commands_available when Codex reports skills/changed', () => {
+      seedCodexSession()
+      const mockWindow = {
+        isDestroyed: () => false,
+        webContents: { send: vi.fn() }
+      } as any
+      impl.setMainWindow(mockWindow)
+
+      ;(impl as any).handleManagerEvent({
+        id: 'skills-changed-1',
+        kind: 'notification',
+        provider: 'codex',
+        threadId: 'thread-1',
+        createdAt: new Date().toISOString(),
+        method: 'skills/changed',
+        payload: {}
+      })
+
+      expect(mockWindow.webContents.send).toHaveBeenCalledWith('opencode:stream', {
+        type: 'session.commands_available',
+        sessionId: 'hive-1',
+        data: {}
+      })
+    })
+
+    it('clears cached skills for the changed session before notifying commands_available', async () => {
+      seedCodexSession()
+      const manager = {
+        listSkills: vi.fn().mockResolvedValue({
+          data: [
+            {
+              cwd: '/path',
+              skills: [
+                {
+                  name: 'imagegen',
+                  description: 'Generate an image',
+                  path: '/skills/imagegen/SKILL.md',
+                  scope: 'system',
+                  enabled: true
+                }
+              ],
+              errors: []
+            }
+          ]
+        })
+      }
+      ;(impl as any).manager = manager
+      const mockWindow = {
+        isDestroyed: () => false,
+        webContents: { send: vi.fn() }
+      } as any
+      impl.setMainWindow(mockWindow)
+
+      await impl.listCommands('/path', 'thread-1')
+      ;(impl as any).handleManagerEvent({
+        id: 'skills-changed-1',
+        kind: 'notification',
+        provider: 'codex',
+        threadId: 'thread-1',
+        createdAt: new Date().toISOString(),
+        method: 'skills/changed',
+        payload: {}
+      })
+
+      await expect(impl.sendCommand('/path', 'thread-1', 'imagegen', 'a poster')).rejects.toThrow(
+        'Unsupported Codex command: /imagegen'
+      )
+      expect(mockWindow.webContents.send).toHaveBeenCalledWith('opencode:stream', {
+        type: 'session.commands_available',
+        sessionId: 'hive-1',
+        data: {}
+      })
+    })
+
+    it('sends known skill commands as structured Codex input through the turn lifecycle', async () => {
+      seedCodexSession()
+      const manager = new EventEmitter() as any
+      manager.listSkills = vi.fn().mockResolvedValue({
+        data: [
+          {
+            cwd: '/path',
+            skills: [
+              {
+                name: 'imagegen',
+                description: 'Generate an image',
+                path: '/skills/imagegen/SKILL.md',
+                scope: 'system',
+                enabled: true
+              }
+            ],
+            errors: []
+          }
+        ]
+      })
+      manager.sendTurn = vi.fn(async (threadId: string) => {
+        setTimeout(() => {
+          manager.emit('event', {
+            id: 'event-1',
+            kind: 'notification',
+            provider: 'codex',
+            threadId,
+            createdAt: new Date().toISOString(),
+            method: 'turn/completed',
+            turnId: 'turn-1',
+            payload: { turn: { id: 'turn-1', status: 'completed' } }
+          })
+        }, 0)
+        return { threadId, turnId: 'turn-1' }
+      })
+      ;(impl as any).manager = manager
+      const mockWindow = {
+        isDestroyed: () => false,
+        webContents: { send: vi.fn() }
+      } as any
+      impl.setMainWindow(mockWindow)
+
+      await impl.listCommands('/path', 'thread-1')
+      await impl.sendCommand(
+        '/path',
+        'thread-1',
+        'imagegen',
+        'a clean product mockup',
+        { providerID: 'codex', modelID: 'gpt-5.5', variant: 'high' },
+        { codexFastMode: true }
+      )
+
+      expect(manager.sendTurn).toHaveBeenCalledWith(
+        'thread-1',
+        expect.objectContaining({
+          input: [
+            { type: 'skill', name: 'imagegen', path: '/skills/imagegen/SKILL.md' },
+            { type: 'text', text: 'a clean product mockup', text_elements: [] }
+          ],
+          model: 'gpt-5.5',
+          reasoningEffort: 'high',
+          serviceTier: 'fast'
+        })
+      )
+      expect((impl as any).sessions.get('/path::thread-1').messages).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            role: 'user',
+            parts: expect.arrayContaining([
+              expect.objectContaining({
+                type: 'text',
+                text: '/imagegen a clean product mockup'
+              })
+            ])
           })
         ])
       )
