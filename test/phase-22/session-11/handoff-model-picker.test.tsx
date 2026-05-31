@@ -268,6 +268,7 @@ describe('handoff model picker', () => {
     await user.click(await screen.findByTestId('model-item-gpt-5.5'))
 
     expect(onChange).toHaveBeenCalledWith({
+      agentSdk: 'codex',
       providerID: 'codex',
       modelID: 'gpt-5.5',
       variant: 'high'
@@ -306,6 +307,36 @@ describe('handoff model picker', () => {
       expect(screen.getAllByTestId('model-item-sonnet-4.6').length).toBeGreaterThan(0)
     })
     expect(await screen.findByTestId('model-item-gpt-5.5')).toBeInTheDocument()
+  })
+
+  test('controlled model selector keeps SDK scope for cross-catalog All providers picks', async () => {
+    const onChange = vi.fn()
+    const user = userEvent.setup()
+
+    render(
+      <ModelSelector
+        value={{
+          agentSdk: 'claude-code',
+          providerID: 'anthropic',
+          modelID: 'sonnet-4.6',
+          variant: 'high'
+        }}
+        onChange={onChange}
+        allowAgentSdkSelection
+      />
+    )
+
+    await user.click(await screen.findByTestId('model-provider-filter'))
+    await user.click(await screen.findByTestId('model-provider-filter-option-all'))
+    await user.click(screen.getByTestId('model-selector'))
+    await user.click(await screen.findByTestId('model-item-gpt-5.5'))
+
+    expect(onChange).toHaveBeenLastCalledWith({
+      agentSdk: 'codex',
+      providerID: 'codex',
+      modelID: 'gpt-5.5',
+      variant: 'high'
+    })
   })
 
   test('controlled model selector keeps agentSdk when selecting under a specific provider', async () => {

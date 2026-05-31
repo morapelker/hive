@@ -153,6 +153,14 @@ export const ModelSelector = memo(function ModelSelector({
     }
   }, [catalogAgentSdks])
 
+  const isModelAvailableForCurrentSdk = useCallback(
+    (providerID: string, modelID: string): boolean => {
+      const currentSdkProviders = providers.filter((provider) => provider.agentSdk === agentSdk)
+      return findModelInfo(currentSdkProviders, providerID, modelID) !== null
+    },
+    [providers, agentSdk]
+  )
+
   const buildSelectedModel = useCallback(
     (
       model: SelectableModelInfo,
@@ -160,7 +168,9 @@ export const ModelSelector = memo(function ModelSelector({
       options?: { includeAgentSdk?: boolean }
     ): SelectedModel => {
       const includeAgentSdk =
-        options?.includeAgentSdk ?? (allowAgentSdkSelection && agentSdkFilter !== null)
+        options?.includeAgentSdk ??
+        (allowAgentSdkSelection &&
+          (agentSdkFilter !== null || !isModelAvailableForCurrentSdk(model.providerID, model.id)))
       return {
         ...(includeAgentSdk ? { agentSdk: model.agentSdk } : {}),
         providerID: model.providerID,
@@ -168,7 +178,7 @@ export const ModelSelector = memo(function ModelSelector({
         variant
       }
     },
-    [allowAgentSdkSelection, agentSdkFilter]
+    [allowAgentSdkSelection, agentSdkFilter, isModelAvailableForCurrentSdk]
   )
 
   const rememberSelectedModel = useCallback((model: SelectedModel, sdk: HandoffAgentSdk): void => {
@@ -256,11 +266,15 @@ export const ModelSelector = memo(function ModelSelector({
     setAgentSdkFilter(sdk)
     if (!sdk) {
       if (onChange && selectedModel?.agentSdk) {
-        onChange({
-          providerID: selectedModel.providerID,
-          modelID: selectedModel.modelID,
-          variant: selectedModel.variant
-        })
+        if (isModelAvailableForCurrentSdk(selectedModel.providerID, selectedModel.modelID)) {
+          onChange({
+            providerID: selectedModel.providerID,
+            modelID: selectedModel.modelID,
+            variant: selectedModel.variant
+          })
+        } else {
+          onChange(selectedModel)
+        }
       }
       return
     }
