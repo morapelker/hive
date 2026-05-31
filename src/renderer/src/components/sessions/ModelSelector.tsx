@@ -163,6 +163,20 @@ export const ModelSelector = memo(function ModelSelector({
     [providers, agentSdk]
   )
 
+  const isModelPortableToAllCatalogSdks = useCallback(
+    (providerID: string, modelID: string, variant?: string): boolean => {
+      if (catalogAgentSdks.length === 0) return false
+      return catalogAgentSdks.every((sdk) => {
+        const sdkProviders = providers.filter((provider) => provider.agentSdk === sdk)
+        if (sdkProviders.length === 0) return false
+        const sdkModel = findModelInfo(sdkProviders, providerID, modelID)
+        if (!sdkModel) return false
+        return !variant || getModelVariantKeys(sdkModel).includes(variant)
+      })
+    },
+    [providers, catalogAgentSdks]
+  )
+
   const buildSelectedModel = useCallback(
     (
       model: SelectableModelInfo,
@@ -173,7 +187,7 @@ export const ModelSelector = memo(function ModelSelector({
         options?.includeAgentSdk ??
         (allowAgentSdkSelection &&
           (agentSdkFilter !== null ||
-            !isModelPortableToCurrentSdk(model.providerID, model.id, variant)))
+            !isModelPortableToAllCatalogSdks(model.providerID, model.id, variant)))
       return {
         ...(includeAgentSdk ? { agentSdk: model.agentSdk } : {}),
         providerID: model.providerID,
@@ -181,7 +195,7 @@ export const ModelSelector = memo(function ModelSelector({
         variant
       }
     },
-    [allowAgentSdkSelection, agentSdkFilter, isModelPortableToCurrentSdk]
+    [allowAgentSdkSelection, agentSdkFilter, isModelPortableToAllCatalogSdks]
   )
 
   const rememberSelectedModel = useCallback((model: SelectedModel, sdk: HandoffAgentSdk): void => {
@@ -270,7 +284,7 @@ export const ModelSelector = memo(function ModelSelector({
     if (!sdk) {
       if (onChange && selectedModel?.agentSdk) {
         if (
-          isModelPortableToCurrentSdk(
+          isModelPortableToAllCatalogSdks(
             selectedModel.providerID,
             selectedModel.modelID,
             selectedModel.variant

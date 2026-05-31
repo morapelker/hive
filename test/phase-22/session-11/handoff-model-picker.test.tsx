@@ -20,6 +20,19 @@ const opencodeProviders = [
         }
       }
     }
+  },
+  {
+    id: 'shared',
+    name: 'Shared',
+    models: {
+      portable: {
+        id: 'portable',
+        name: 'Portable Model',
+        variants: {
+          high: {}
+        }
+      }
+    }
   }
 ]
 
@@ -34,6 +47,19 @@ const claudeProviders = [
         variants: {
           high: {},
           xhigh: {}
+        }
+      }
+    }
+  },
+  {
+    id: 'shared',
+    name: 'Shared',
+    models: {
+      portable: {
+        id: 'portable',
+        name: 'Portable Model',
+        variants: {
+          high: {}
         }
       }
     }
@@ -64,6 +90,19 @@ const codexProviders = [
       'gpt-5.4-mini': {
         id: 'gpt-5.4-mini',
         name: 'GPT-5.4 Mini'
+      }
+    }
+  },
+  {
+    id: 'shared',
+    name: 'Shared',
+    models: {
+      portable: {
+        id: 'portable',
+        name: 'Portable Model',
+        variants: {
+          high: {}
+        }
       }
     }
   }
@@ -296,7 +335,7 @@ describe('handoff model picker', () => {
     })
   })
 
-  test('controlled model selector clears SDK scope when All providers is selected', async () => {
+  test('controlled model selector keeps SDK scope when a model is only portable to the current SDK', async () => {
     const onChange = vi.fn()
     const user = userEvent.setup()
 
@@ -317,6 +356,7 @@ describe('handoff model picker', () => {
     await user.click(await screen.findByTestId('model-provider-filter-option-all'))
 
     expect(onChange).toHaveBeenCalledWith({
+      agentSdk: 'claude-code',
       providerID: 'anthropic',
       modelID: 'sonnet-4.6',
       variant: 'high'
@@ -328,6 +368,61 @@ describe('handoff model picker', () => {
       expect(screen.getAllByTestId('model-item-sonnet-4.6').length).toBeGreaterThan(0)
     })
     expect(await screen.findByTestId('model-item-gpt-5.5')).toBeInTheDocument()
+  })
+
+  test('controlled model selector clears SDK scope when a model is portable to every SDK catalog', async () => {
+    const onChange = vi.fn()
+    const user = userEvent.setup()
+
+    render(
+      <ModelSelector
+        value={{
+          agentSdk: 'claude-code',
+          providerID: 'shared',
+          modelID: 'portable',
+          variant: 'high'
+        }}
+        onChange={onChange}
+        allowAgentSdkSelection
+      />
+    )
+
+    await waitFor(() => {
+      expect(window.opencodeOps.listModels).toHaveBeenCalledWith({ agentSdk: 'opencode' })
+      expect(window.opencodeOps.listModels).toHaveBeenCalledWith({ agentSdk: 'claude-code' })
+      expect(window.opencodeOps.listModels).toHaveBeenCalledWith({ agentSdk: 'codex' })
+    })
+
+    await user.click(await screen.findByTestId('model-provider-filter'))
+    await user.click(await screen.findByTestId('model-provider-filter-option-all'))
+
+    expect(onChange).toHaveBeenCalledWith({
+      providerID: 'shared',
+      modelID: 'portable',
+      variant: 'high'
+    })
+  })
+
+  test('controlled model selector saves All providers picks without SDK only when portable to every SDK catalog', async () => {
+    const onChange = vi.fn()
+    const user = userEvent.setup()
+
+    render(<ModelSelector value={null} onChange={onChange} allowAgentSdkSelection />)
+
+    await waitFor(() => {
+      expect(window.opencodeOps.listModels).toHaveBeenCalledWith({ agentSdk: 'opencode' })
+      expect(window.opencodeOps.listModels).toHaveBeenCalledWith({ agentSdk: 'claude-code' })
+      expect(window.opencodeOps.listModels).toHaveBeenCalledWith({ agentSdk: 'codex' })
+    })
+
+    await user.click(screen.getByTestId('model-selector'))
+    await user.click((await screen.findAllByTestId('model-item-portable'))[0])
+
+    expect(onChange).toHaveBeenLastCalledWith({
+      providerID: 'shared',
+      modelID: 'portable',
+      variant: 'high'
+    })
   })
 
   test('controlled model selector keeps SDK scope for cross-catalog All providers picks', async () => {
