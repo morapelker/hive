@@ -43,7 +43,7 @@ describe('Worktree breed-name collision retry', () => {
     // First git worktree add call fails with "already exists",
     // second call succeeds
     mockRaw
-      .mockImplementationOnce(async (args: string[]) => {
+      .mockImplementationOnce(async (_args: string[]) => {
         // getCurrentBranch raw call — not used directly (branch() is)
         return ''
       })
@@ -52,18 +52,15 @@ describe('Worktree breed-name collision retry', () => {
 
     const service = new GitService('/tmp/mock-repo')
 
-    // Spy on getAllBranches and listWorktrees to track call counts
-    const getAllBranchesSpy = vi.spyOn(service, 'getAllBranches').mockResolvedValue([])
-    const listWorktreesSpy = vi.spyOn(service, 'listWorktrees').mockResolvedValue([])
-    const getCurrentBranchSpy = vi.spyOn(service, 'getCurrentBranch').mockResolvedValue('main')
-
-    // Capture args to the underlying git.raw for worktree add calls
+    // Capture args to the underlying git.raw for worktree add calls.
     const rawCalls: string[][] = []
+    let worktreeAddCalls = 0
     const gitInstance = (service as unknown as { git: { raw: typeof mockRaw } }).git
     gitInstance.raw = vi.fn().mockImplementation(async (args: string[]) => {
       rawCalls.push(args)
       if (args[0] === 'worktree' && args[1] === 'add') {
-        if (rawCalls.filter((c) => c[0] === 'worktree').length === 1) {
+        worktreeAddCalls += 1
+        if (worktreeAddCalls === 1) {
           throw new Error("fatal: 'somename' already exists")
         }
       }
@@ -76,12 +73,9 @@ describe('Worktree breed-name collision retry', () => {
     expect(result.branchName).toBeTruthy()
     expect(result.path).toBeTruthy()
 
-    // getAllBranches should have been called at least twice (once per attempt)
-    expect(getAllBranchesSpy.mock.calls.length).toBeGreaterThanOrEqual(2)
-    expect(listWorktreesSpy.mock.calls.length).toBeGreaterThanOrEqual(2)
-
-    // getCurrentBranch should only be called once (outside the loop)
-    expect(getCurrentBranchSpy.mock.calls.length).toBe(1)
+    expect(mockBranch.mock.calls.length).toBeGreaterThanOrEqual(3)
+    expect(rawCalls.filter((call) => call.join(' ') === 'worktree list --porcelain')).toHaveLength(2)
+    expect(worktreeAddCalls).toBe(2)
   })
 
   test('createWorktree returns failure after 3 collisions', async () => {
@@ -107,18 +101,21 @@ describe('Worktree breed-name collision retry', () => {
 
     const service = new GitService('/tmp/mock-repo')
 
-    const getAllBranchesSpy = vi.spyOn(service, 'getAllBranches').mockResolvedValue([])
-    vi.spyOn(service, 'listWorktrees').mockResolvedValue([])
-    vi.spyOn(service, 'getCurrentBranch').mockResolvedValue('main')
-
     const gitInstance = (service as unknown as { git: { raw: typeof mockRaw } }).git
+    let worktreeAddCalls = 0
     gitInstance.raw = vi.fn().mockRejectedValue(new Error('fatal: not a git repository'))
+    gitInstance.raw = vi.fn().mockImplementation(async (args: string[]) => {
+      if (args[0] === 'worktree' && args[1] === 'add') {
+        worktreeAddCalls += 1
+        throw new Error('fatal: not a git repository')
+      }
+      return ''
+    })
 
     const result = await service.createWorktree('my-project', 'dogs')
 
     expect(result.success).toBe(false)
-    // getAllBranches should only be called once — no retry on non-collision errors
-    expect(getAllBranchesSpy.mock.calls.length).toBe(1)
+    expect(worktreeAddCalls).toBe(1)
   })
 
   test('createWorktree succeeds on first attempt with no collision', async () => {
@@ -126,17 +123,19 @@ describe('Worktree breed-name collision retry', () => {
 
     const service = new GitService('/tmp/mock-repo')
 
-    const getAllBranchesSpy = vi.spyOn(service, 'getAllBranches').mockResolvedValue(['main'])
-    vi.spyOn(service, 'listWorktrees').mockResolvedValue([])
-    vi.spyOn(service, 'getCurrentBranch').mockResolvedValue('main')
-
     const gitInstance = (service as unknown as { git: { raw: typeof mockRaw } }).git
-    gitInstance.raw = vi.fn().mockResolvedValue('')
+    let worktreeAddCalls = 0
+    gitInstance.raw = vi.fn().mockImplementation(async (args: string[]) => {
+      if (args[0] === 'worktree' && args[1] === 'add') {
+        worktreeAddCalls += 1
+      }
+      return ''
+    })
 
     const result = await service.createWorktree('my-project', 'dogs')
 
     expect(result.success).toBe(true)
-    expect(getAllBranchesSpy.mock.calls.length).toBe(1)
+    expect(worktreeAddCalls).toBe(1)
   })
 
   test('git-service.ts createWorktree contains retry loop logic', async () => {

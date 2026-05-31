@@ -135,6 +135,7 @@ async function saveToDatabase(bindings: Record<string, KeyBinding>): Promise<voi
 // Load from database on startup
 if (typeof window !== 'undefined') {
   setTimeout(() => {
+    if (typeof window === 'undefined') return
     useShortcutStore.getState().loadFromDatabase()
   }, 150)
 }

@@ -19,7 +19,7 @@ export function encodePath(worktreePath: string): string {
   return `${encoded.slice(0, ENCODED_PATH_MAX_LEN)}-${hashSuffix}`
 }
 
-function resolveProjectsDir(): string {
+export function resolveProjectsDir(): string {
   const configuredDir = process.env.CLAUDE_CONFIG_DIR
   const configRoot =
     typeof configuredDir === 'string' && configuredDir.trim().length > 0

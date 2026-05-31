@@ -7,6 +7,7 @@ import { useSettingsStore } from './useSettingsStore'
 import { getUnavailableAgentSdkMessage } from '@/lib/agent-sdk-availability'
 import { resolveSessionCreationSelection } from '@/lib/handoffSelection'
 import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
+import { type AgentSdk, isTerminalBacked } from '@shared/types/agent-sdk'
 
 const db = unwrapEnvelopeApi(() => window.db)
 
@@ -39,9 +40,7 @@ function isVisibleSession(session: { name: string | null; session_type?: string 
   return !isBoardAssistantSessionName(session.name)
 }
 
-function getUnavailableProviderError(
-  sdk: 'opencode' | 'claude-code' | 'codex' | 'terminal'
-): string | null {
+function getUnavailableProviderError(sdk: AgentSdk): string | null {
   const { availableAgentSdks } = useSettingsStore.getState()
   return getUnavailableAgentSdkMessage(sdk, availableAgentSdks)
 }
@@ -77,7 +76,8 @@ interface Session {
   name: string | null
   status: 'active' | 'completed' | 'error'
   opencode_session_id: string | null
-  agent_sdk: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+  claude_session_id: string | null
+  agent_sdk: AgentSdk
   mode: SessionMode
   session_type: 'default' | 'board-assistant'
   model_provider_id: string | null
@@ -129,6 +129,9 @@ interface SessionState {
   // MainPane subscribes to this to prune mountedTerminalSessionIds.
   closedTerminalSessionIds: Set<string>
 
+  // Renderer-only refcount for sessions that need their always-mounted view kept alive.
+  sessionMountRequests: Map<string, number>
+
   // Orphaned sessions (from archived worktrees) - read-only, not attached to any worktree
   orphanedSessions: Map<string, Session>
 
@@ -142,15 +145,17 @@ interface SessionState {
 
   // Actions
   acknowledgeClosedTerminals: (ids: Set<string>) => void
+  requestSessionMount: (sessionId: string) => void
+  releaseSessionMount: (sessionId: string) => void
   openOrphanedSession: (session: Session) => void
   closeOrphanedSessions: () => void
   loadSessions: (worktreeId: string, projectId: string) => Promise<void>
   createSession: (
     worktreeId: string,
     projectId: string,
-    agentSdkOverride?: 'opencode' | 'claude-code' | 'codex' | 'terminal',
+    agentSdkOverride?: AgentSdk,
     initialMode?: SessionMode,
-    options?: { autoFocus?: boolean; modelOverride?: SelectedModel }
+    options?: { autoFocus?: boolean; modelOverride?: SelectedModel; pendingMessage?: string | null }
   ) => Promise<{ success: boolean; session?: Session; error?: string }>
   closeSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>
   reopenSession: (
@@ -167,6 +172,8 @@ interface SessionState {
   reorderTabs: (worktreeId: string, fromIndex: number, toIndex: number) => void
   getSessionsForWorktree: (worktreeId: string) => Session[]
   getTabOrderForWorktree: (worktreeId: string) => string[]
+  getSessionById: (sessionId: string) => Session | null
+  hydrateSession: (session: Session) => void
   getSessionMode: (sessionId: string) => SessionMode
   getSuperArmed: (sessionId: string) => boolean
   toggleSessionMode: (sessionId: string) => Promise<void>
@@ -179,6 +186,7 @@ interface SessionState {
     options?: { skipGlobalUpdate?: boolean }
   ) => Promise<void>
   setOpenCodeSessionId: (sessionId: string, opencodeSessionId: string | null) => void
+  setClaudeSessionId: (sessionId: string, claudeSessionId: string | null) => void
   setPendingMessage: (sessionId: string, message: string) => void
   dequeuePendingMessage: (sessionId: string) => string | null
   requeuePendingMessage: (sessionId: string, message: string) => void
@@ -196,6 +204,7 @@ interface SessionState {
   getPendingPlan: (sessionId: string) => PendingPlan | null
   setCodexGoal: (sessionId: string, goal: CodexThreadGoal) => void
   clearCodexGoal: (sessionId: string) => void
+  applyModeDefaultModel: (sessionId: string, newMode: SessionMode) => Promise<void>
 
   // Pinned session actions
   pinSessionToBoard: (sessionId: string) => Promise<void>
@@ -221,9 +230,9 @@ interface SessionState {
   loadConnectionSessions: (connectionId: string) => Promise<void>
   createConnectionSession: (
     connectionId: string,
-    agentSdkOverride?: 'opencode' | 'claude-code' | 'codex' | 'terminal',
+    agentSdkOverride?: AgentSdk,
     initialMode?: SessionMode,
-    opts?: { autoFocus?: boolean; modelOverride?: SelectedModel }
+    opts?: { autoFocus?: boolean; modelOverride?: SelectedModel; pendingMessage?: string | null }
   ) => Promise<{ success: boolean; session?: Session; error?: string }>
   setActiveConnectionSession: (sessionId: string | null) => void
   setActiveConnection: (connectionId: string | null) => void
@@ -252,6 +261,47 @@ function findSessionScope(
   return null
 }
 
+function findSessionInState(state: SessionState, sessionId: string): Session | null {
+  for (const sessions of state.sessionsByWorktree.values()) {
+    const found = sessions.find((session) => session.id === sessionId)
+    if (found) return found
+  }
+  for (const sessions of state.sessionsByConnection.values()) {
+    const found = sessions.find((session) => session.id === sessionId)
+    if (found) return found
+  }
+  for (const session of state.boardAssistantByProject.values()) {
+    if (session.id === sessionId) return session
+  }
+  return state.orphanedSessions.get(sessionId) ?? null
+}
+
+// Shift+Tab — Claude Code's "cycle permission mode" key.
+const CLAUDE_CLI_SHIFT_TAB = '\u001b[Z'
+
+// Claude Code cycles permission modes with Shift+Tab in the order
+// normal → accept-edits → plan → normal. Reaching plan from a non-plan mode
+// therefore takes two presses, while returning from plan takes one. The
+// previous code sent a single press in both directions, which landed on
+// accept-edits (not plan) when entering plan mode.
+export function syncClaudeCliPermissionModeIfNeeded(
+  state: SessionState,
+  sessionId: string,
+  previousMode: SessionMode,
+  nextMode: SessionMode
+): void {
+  const session = findSessionInState(state, sessionId)
+  if (session?.agent_sdk !== 'claude-code-cli') return
+  const wasPlanLike = previousMode === 'plan' || previousMode === 'super-plan'
+  const isPlanLike = nextMode === 'plan' || nextMode === 'super-plan'
+  if (wasPlanLike === isPlanLike) return
+
+  const presses = isPlanLike ? 2 : 1
+  for (let i = 0; i < presses; i++) {
+    window.terminalOps.write(sessionId, CLAUDE_CLI_SHIFT_TAB)
+  }
+}
+
 export const useSessionStore = create<SessionState>()(
   persist(
     (set, get) => ({
@@ -277,6 +327,7 @@ export const useSessionStore = create<SessionState>()(
       activeConnectionId: null,
       inlineConnectionSessionId: null,
       closedTerminalSessionIds: new Set<string>(),
+      sessionMountRequests: new Map(),
 
       // Orphaned sessions
       orphanedSessions: new Map(),
@@ -294,6 +345,27 @@ export const useSessionStore = create<SessionState>()(
           const remaining = new Set(state.closedTerminalSessionIds)
           for (const id of ids) remaining.delete(id)
           return { closedTerminalSessionIds: remaining }
+        })
+      },
+
+      requestSessionMount: (sessionId: string) => {
+        set((state) => {
+          const requests = new Map(state.sessionMountRequests)
+          requests.set(sessionId, (requests.get(sessionId) ?? 0) + 1)
+          return { sessionMountRequests: requests }
+        })
+      },
+
+      releaseSessionMount: (sessionId: string) => {
+        set((state) => {
+          const requests = new Map(state.sessionMountRequests)
+          const nextCount = (requests.get(sessionId) ?? 0) - 1
+          if (nextCount > 0) {
+            requests.set(sessionId, nextCount)
+          } else {
+            requests.delete(sessionId)
+          }
+          return { sessionMountRequests: requests }
         })
       },
 
@@ -415,7 +487,7 @@ export const useSessionStore = create<SessionState>()(
       createSession: async (
         worktreeId: string,
         projectId: string,
-        agentSdkOverride?: 'opencode' | 'claude-code' | 'codex' | 'terminal',
+        agentSdkOverride?: AgentSdk,
         initialMode?: SessionMode,
         options?: { autoFocus?: boolean; modelOverride?: SelectedModel }
       ) => {
@@ -478,7 +550,15 @@ export const useSessionStore = create<SessionState>()(
             const base = {
               sessionsByWorktree: newSessionsMap,
               tabOrderByWorktree: newTabOrderMap,
-              modeBySession: newModeMap
+              modeBySession: newModeMap,
+              ...(options?.pendingMessage
+                ? {
+                    pendingMessages: new Map(state.pendingMessages).set(
+                      session.id,
+                      options.pendingMessage
+                    )
+                  }
+                : {})
             }
 
             // Focus state — only when autoFocus is true
@@ -534,7 +614,7 @@ export const useSessionStore = create<SessionState>()(
           for (const [worktreeId, sessions] of get().sessionsByWorktree.entries()) {
             const found = sessions.find((s) => s.id === sessionId)
             if (found) {
-              isTerminalSession = found.agent_sdk === 'terminal'
+              isTerminalSession = isTerminalBacked(found.agent_sdk)
               opencodeSessionId = found.opencode_session_id
               sessionWorktreeId = worktreeId
               break
@@ -544,7 +624,7 @@ export const useSessionStore = create<SessionState>()(
             for (const sessions of get().sessionsByConnection.values()) {
               const found = sessions.find((s) => s.id === sessionId)
               if (found) {
-                isTerminalSession = found.agent_sdk === 'terminal'
+                isTerminalSession = isTerminalBacked(found.agent_sdk)
                 opencodeSessionId = found.opencode_session_id
                 break
               }
@@ -1070,20 +1150,13 @@ export const useSessionStore = create<SessionState>()(
       },
 
       // Get session by ID from either worktree or connection sessions
-      getSessionById: (sessionId: string): Session | null => {
-        for (const sessions of get().sessionsByWorktree.values()) {
-          const found = sessions.find((s) => s.id === sessionId)
-          if (found) return found
-        }
-        for (const sessions of get().sessionsByConnection.values()) {
-          const found = sessions.find((s) => s.id === sessionId)
-          if (found) return found
-        }
-        for (const session of get().boardAssistantByProject.values()) {
-          if (session.id === sessionId) return session
-        }
-        return null
-      },
+      getSessionById: (sessionId: string): Session | null =>
+        // Delegate to the shared lookup so orphaned sessions (worktree archived,
+        // reopened via openOrphanedSession) are found too. Otherwise an orphaned
+        // claude-code-cli session resolves to null here and the SessionView
+        // wrapper routes it to the OpenCode LegacySessionView instead of
+        // ClaudeCliSessionView.
+        findSessionInState(get(), sessionId),
 
       // Hydrate a session from the DB into the in-memory store.
       // Called when findSessionById discovers a session via DB fallback so
@@ -1142,6 +1215,8 @@ export const useSessionStore = create<SessionState>()(
           // 'plan' or 'super-plan' → back to 'build'
           newMode = 'build'
         }
+
+        syncClaudeCliPermissionModeIfNeeded(get(), sessionId, currentMode, newMode)
 
         // Update local state immediately
         set((state) => {
@@ -1230,6 +1305,9 @@ export const useSessionStore = create<SessionState>()(
 
       // Set session mode explicitly (also applies mode-specific model default)
       setSessionMode: async (sessionId: string, mode: SessionMode) => {
+        const previousMode = get().modeBySession.get(sessionId) || 'build'
+        syncClaudeCliPermissionModeIfNeeded(get(), sessionId, previousMode, mode)
+
         set((state) => {
           const newModeMap = new Map(state.modeBySession)
           newModeMap.set(sessionId, mode)
@@ -1309,7 +1387,7 @@ export const useSessionStore = create<SessionState>()(
         }
 
         // Find the session's SDK to route correctly (search both scopes)
-        let agentSdk: 'opencode' | 'claude-code' | 'codex' | 'terminal' = 'opencode'
+        let agentSdk: AgentSdk = 'opencode'
         for (const sessions of get().sessionsByWorktree.values()) {
           const found = sessions.find((s) => s.id === sessionId)
           if (found?.agent_sdk) {
@@ -1337,7 +1415,7 @@ export const useSessionStore = create<SessionState>()(
 
         // Push to agent backend (SDK-aware) — skip for terminal sessions
         try {
-          if (agentSdk !== 'terminal') {
+          if (!isTerminalBacked(agentSdk)) {
             unwrapEnvelope(await window.opencodeOps.setModel({ ...model, agentSdk }))
           }
         } catch (error) {
@@ -1436,6 +1514,34 @@ export const useSessionStore = create<SessionState>()(
               opencode_session_id: opencodeSessionId
             })
             return { boardAssistantByProject: newBoardAssistantMap }
+          }
+
+          return {}
+        })
+      },
+
+      setClaudeSessionId: (sessionId: string, claudeSessionId: string | null) => {
+        set((state) => {
+          const newWorktreeSessionsMap = new Map(state.sessionsByWorktree)
+          for (const [worktreeId, sessions] of newWorktreeSessionsMap.entries()) {
+            const updatedSessions = sessions.map((s) =>
+              s.id === sessionId ? { ...s, claude_session_id: claudeSessionId } : s
+            )
+            if (updatedSessions.some((s, index) => s !== sessions[index])) {
+              newWorktreeSessionsMap.set(worktreeId, updatedSessions)
+              return { sessionsByWorktree: newWorktreeSessionsMap }
+            }
+          }
+
+          const newConnectionSessionsMap = new Map(state.sessionsByConnection)
+          for (const [connectionId, sessions] of newConnectionSessionsMap.entries()) {
+            const updatedSessions = sessions.map((s) =>
+              s.id === sessionId ? { ...s, claude_session_id: claudeSessionId } : s
+            )
+            if (updatedSessions.some((s, index) => s !== sessions[index])) {
+              newConnectionSessionsMap.set(connectionId, updatedSessions)
+              return { sessionsByConnection: newConnectionSessionsMap }
+            }
           }
 
           return {}
@@ -1922,7 +2028,7 @@ export const useSessionStore = create<SessionState>()(
       // Create a session scoped to a connection
       createConnectionSession: async (
         connectionId: string,
-        agentSdkOverride?: 'opencode' | 'claude-code' | 'codex' | 'terminal',
+        agentSdkOverride?: AgentSdk,
         initialMode?: SessionMode,
         opts?: { autoFocus?: boolean; modelOverride?: SelectedModel }
       ) => {
@@ -1982,7 +2088,15 @@ export const useSessionStore = create<SessionState>()(
             const base = {
               sessionsByConnection: newSessionsMap,
               tabOrderByConnection: newTabOrderMap,
-              modeBySession: newModeMap
+              modeBySession: newModeMap,
+              ...(opts?.pendingMessage
+                ? {
+                    pendingMessages: new Map(state.pendingMessages).set(
+                      session.id,
+                      opts.pendingMessage
+                    )
+                  }
+                : {})
             }
 
             // Focus state — only when autoFocus is true
@@ -2244,3 +2358,13 @@ export const useSessionStore = create<SessionState>()(
     }
   )
 )
+
+declare global {
+  interface Window {
+    __hive_useSessionStore__?: typeof useSessionStore
+  }
+}
+
+if (import.meta.env.DEV && typeof window !== 'undefined') {
+  window.__hive_useSessionStore__ = useSessionStore
+}

@@ -220,7 +220,8 @@ export function useLifecycleActions(worktreeId: string | null): LifecycleActions
         undefined,
         {
           autoFocus: false,
-          modelOverride: reviewDefaultModel
+          modelOverride: reviewDefaultModel,
+          ...(reviewDefaultModel?.agentSdk === 'claude-code-cli' ? { pendingMessage: prompt } : {})
         }
       )
       if (!result.success || !result.session) {
@@ -240,6 +241,9 @@ export function useLifecycleActions(worktreeId: string | null): LifecycleActions
       const sessionId = result.session.id
       const worktreePath = worktree.path
       const agentSdk = result.session.agent_sdk
+      if (agentSdk === 'claude-code-cli') {
+        sessionStore.setPendingMessage(sessionId, prompt)
+      }
       const sessionModel =
         result.session.model_provider_id && result.session.model_id
           ? {
@@ -251,6 +255,27 @@ export function useLifecycleActions(worktreeId: string | null): LifecycleActions
 
       void (async () => {
         try {
+          if (agentSdk === 'claude-code-cli') {
+            messageSendTimes.set(sessionId, Date.now())
+            userExplicitSendTimes.set(sessionId, Date.now())
+            snapshotTokenBaseline(sessionId)
+            lastSendMode.set(sessionId, 'build')
+            useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'working')
+            bumpWorktreeLastMessage({ worktreeId })
+
+            const cliResult = unwrapEnvelope(
+              await window.terminalOps.createClaudeCli(sessionId, {
+                pendingPrompt: prompt
+              })
+            )
+            if (!cliResult.success) {
+              sessionStore.setPendingMessage(sessionId, prompt)
+            } else {
+              sessionStore.dequeuePendingMessage(sessionId)
+            }
+            return
+          }
+
           const connectResult = unwrapEnvelope(
             await window.opencodeOps.connect(worktreePath, sessionId)
           )

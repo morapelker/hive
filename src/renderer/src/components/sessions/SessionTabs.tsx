@@ -8,6 +8,7 @@ import {
   useMemo,
   type KeyboardEvent
 } from 'react'
+import type { AgentSdk } from '@shared/types/agent-sdk'
 import {
   Plus,
   X,
@@ -99,7 +100,7 @@ interface SessionTabProps {
   sessionId: string
   name: string
   isActive: boolean
-  agentSdk: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+  agentSdk: AgentSdk
   onClick: () => void
   onClose: (e: React.MouseEvent) => void
   onMiddleClick: (e: React.MouseEvent) => void
@@ -874,7 +875,7 @@ export function SessionTabs(): React.JSX.Element | null {
 
   // Handle creating a new session with a specific agent SDK (from context menu)
   const handleCreateSessionWithSdk = async (
-    sdk: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+    sdk: AgentSdk
   ) => {
     if (isConnectionMode && selectedConnectionId) {
       const result = await createConnectionSession(selectedConnectionId, sdk)
@@ -992,7 +993,7 @@ export function SessionTabs(): React.JSX.Element | null {
     }
   }
 
-  // Handle clicking a session tab - deactivate file tab and clear unread status
+  // Handle clicking a session tab - deactivate file tab and clear only unread status
   const handleSessionTabClick = (sessionId: string) => {
     const isAlreadyPresentedSession =
       activeSessionId === sessionId && activeFilePath === null && !inlineConnectionSessionId
@@ -1008,7 +1009,10 @@ export function SessionTabs(): React.JSX.Element | null {
     } else {
       setActiveSession(sessionId)
     }
-    useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
+    const statusStore = useWorktreeStatusStore.getState()
+    if (statusStore.sessionStatuses[sessionId]?.status === 'unread') {
+      statusStore.clearSessionStatus(sessionId)
+    }
   }
 
   // Handle clicking a sticky connection session tab (inline viewing in worktree mode)
@@ -1022,7 +1026,10 @@ export function SessionTabs(): React.JSX.Element | null {
 
     setActiveFile(null)
     setInlineConnectionSession(sessionId)
-    useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
+    const statusStore = useWorktreeStatusStore.getState()
+    if (statusStore.sessionStatuses[sessionId]?.status === 'unread') {
+      statusStore.clearSessionStatus(sessionId)
+    }
   }
 
   // Handle clicking a file tab - keep session but activate file view
@@ -1325,6 +1332,11 @@ export function SessionTabs(): React.JSX.Element | null {
                 {availableAgentSdks?.claude && (
                   <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('claude-code')}>
                     New Claude Code Session
+                  </ContextMenuItem>
+                )}
+                {availableAgentSdks?.claude && (
+                  <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('claude-code-cli')}>
+                    New Claude Code CLI Session
                   </ContextMenuItem>
                 )}
                 {availableAgentSdks?.codex && (

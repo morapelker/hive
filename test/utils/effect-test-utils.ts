@@ -79,6 +79,11 @@ export const expectExitFailure = <A, E>(
  *   yield* program.pipe(Effect.provide(Layer.provide(BashLive, layer)))
  */
 export const withTestLayers = (
-  ...overrides: ReadonlyArray<Layer.Layer<any, any, any>>
-): Layer.Layer<any, any, any> =>
-  Layer.mergeAll(...(overrides as [Layer.Layer<any, any, any>]))
+  ...overrides: ReadonlyArray<Layer.Layer<unknown, unknown, unknown>>
+): Layer.Layer<unknown, unknown, unknown> =>
+  Layer.mergeAll(
+    ...(overrides as [
+      Layer.Layer<unknown, unknown, unknown>,
+      ...Array<Layer.Layer<unknown, unknown, unknown>>
+    ])
+  )

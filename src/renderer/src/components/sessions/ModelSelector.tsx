@@ -21,6 +21,7 @@ import {
   type HandoffAgentSdk
 } from '@/stores/useSettingsStore'
 import { useSessionStore } from '@/stores/useSessionStore'
+import { toModelCatalogSdk } from '@shared/types/agent-sdk'
 import { toast } from '@/lib/toast'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import {
@@ -38,7 +39,7 @@ interface ModelSelectorProps {
   value?: SelectedModel | null
   onChange?: (model: SelectedModel) => void
   // Override the SDK used for model listing (e.g. force 'opencode' in settings when defaultAgentSdk is 'terminal')
-  agentSdkOverride?: 'opencode' | 'claude-code' | 'codex'
+  agentSdkOverride?: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex'
   disableTitleTooltip?: boolean
   hideProviderPrefix?: boolean
   allowAgentSdkSelection?: boolean
@@ -122,7 +123,10 @@ export const ModelSelector = memo(function ModelSelector({
         setIsLoading(true)
         const catalogs = await Promise.all(
           catalogAgentSdks.map(async (sdk) => {
-            const result = unwrapEnvelope(await window.opencodeOps.listModels({ agentSdk: sdk }))
+            const listModelsSdk = toModelCatalogSdk(sdk)
+            const result = unwrapEnvelope(
+              await window.opencodeOps.listModels({ agentSdk: listModelsSdk })
+            )
             if (!result.success || !result.providers) return []
             const parsed = parseProviders(result.providers)
             cacheHandoffModelCatalog(sdk, result.providers)
@@ -334,13 +338,14 @@ export const ModelSelector = memo(function ModelSelector({
 
   const sdkFilterOptions = useMemo((): SdkFilterOption[] => {
     const availableSdks = new Set(providers.map((provider) => provider.agentSdk))
+    const controlledSdk = allowAgentSdkSelection ? value?.agentSdk : null
     return catalogAgentSdks
-      .filter((sdk) => availableSdks.has(sdk))
+      .filter((sdk) => availableSdks.has(sdk) || sdk === controlledSdk)
       .map((sdk) => ({
         agentSdk: sdk,
         label: getHandoffSdkDisplayName(sdk)
       }))
-  }, [providers, catalogAgentSdks])
+  }, [providers, catalogAgentSdks, allowAgentSdkSelection, value?.agentSdk])
 
   useEffect(() => {
     if (!allowAgentSdkSelection) return
@@ -355,14 +360,17 @@ export const ModelSelector = memo(function ModelSelector({
     }
   }, [agentSdkFilter, sdkFilterOptions])
 
+  const effectiveAgentSdkFilter =
+    agentSdkFilter ?? (allowAgentSdkSelection ? (value?.agentSdk ?? null) : null)
   const selectedProviderFilterLabel =
-    sdkFilterOptions.find((option) => option.agentSdk === agentSdkFilter)?.label ?? 'All providers'
+    sdkFilterOptions.find((option) => option.agentSdk === effectiveAgentSdkFilter)?.label ??
+    'All providers'
   const showProviderFilter = sdkFilterOptions.length > 1
 
   const providerScopedProviders = useMemo(() => {
-    if (!agentSdkFilter) return providers
-    return providers.filter((provider) => provider.agentSdk === agentSdkFilter)
-  }, [providers, agentSdkFilter])
+    if (!effectiveAgentSdkFilter) return providers
+    return providers.filter((provider) => provider.agentSdk === effectiveAgentSdkFilter)
+  }, [providers, effectiveAgentSdkFilter])
 
   const filteredProviders = useMemo(() => {
     if (!filter.trim()) return providerScopedProviders

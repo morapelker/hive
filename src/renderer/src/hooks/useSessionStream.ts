@@ -197,6 +197,9 @@ export function useSessionStream({
     }
 
     const currentGeneration = ++generationRef.current
+    let active = true
+    const isCurrentGeneration = (): boolean =>
+      active && generationRef.current === currentGeneration && typeof window !== 'undefined'
     hasFinalizedRef.current = false
     setIsLoading(true)
 
@@ -220,7 +223,7 @@ export function useSessionStream({
         const result = unwrapEnvelope(
           await window.opencodeOps.getMessages(worktreePath, opencodeSessionId)
         )
-        if (generationRef.current !== currentGeneration) return
+        if (!isCurrentGeneration()) return
 
         if (result.success && result.messages) {
           const refreshed = mapOpencodeMessagesToSessionViewMessages(result.messages as unknown[])
@@ -240,7 +243,9 @@ export function useSessionStream({
       } catch (error) {
         console.error('[useSessionStream] Failed to refresh messages:', error)
       } finally {
-        resetStreamingState()
+        if (isCurrentGeneration()) {
+          resetStreamingState()
+        }
       }
     }
 
@@ -253,7 +258,7 @@ export function useSessionStream({
           if (event.sessionId !== sessionId) return
 
           // Guard: generation check — prevents stale closures
-          if (generationRef.current !== currentGeneration) return
+          if (!isCurrentGeneration()) return
 
           // -----------------------------------------------------------
           // message.part.updated
@@ -605,7 +610,7 @@ export function useSessionStream({
           currentGeneration,
           generationRef.current
         )
-        if (generationRef.current !== currentGeneration) {
+        if (!isCurrentGeneration()) {
           console.info('[useSessionStream] stale generation after first getMessages, aborting')
           return
         }
@@ -616,11 +621,11 @@ export function useSessionStream({
         // OpenCode server hasn't finished loading session data).
         if (
           (!result.success || !result.messages || (result.messages as unknown[]).length === 0) &&
-          generationRef.current === currentGeneration
+          isCurrentGeneration()
         ) {
           console.info('[useSessionStream] empty result, retrying in 800ms...')
           await new Promise((r) => setTimeout(r, 800))
-          if (generationRef.current !== currentGeneration) {
+          if (!isCurrentGeneration()) {
             console.info('[useSessionStream] stale generation after retry delay, aborting')
             return
           }
@@ -632,7 +637,7 @@ export function useSessionStream({
             result.success,
             Array.isArray(result.messages) ? result.messages.length : 0
           )
-          if (generationRef.current !== currentGeneration) return
+          if (!isCurrentGeneration()) return
         }
 
         if (result.success && result.messages) {
@@ -708,7 +713,7 @@ export function useSessionStream({
       } catch (error) {
         console.error('[useSessionStream] Failed to load initial messages:', error)
       } finally {
-        if (generationRef.current === currentGeneration) {
+        if (isCurrentGeneration()) {
           setIsLoading(false)
         }
       }
@@ -718,6 +723,10 @@ export function useSessionStream({
 
     // ---- Cleanup ----
     return () => {
+      active = false
+      if (generationRef.current === currentGeneration) {
+        generationRef.current += 1
+      }
       unsubscribe()
       if (rafRef.current !== null) {
         cancelAnimationFrame(rafRef.current)

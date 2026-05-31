@@ -17,7 +17,7 @@ vi.mock('../src/main/services/logger', () => ({
 
 // Only mock spawnCLI — let extractTitleFromJSON and sanitizeTitle run for real
 vi.mock('../src/main/services/title-generation-shared', async (importOriginal) => {
-  const actual = (await importOriginal()) as any
+  const actual = await importOriginal<typeof import('../src/main/services/title-generation-shared')>()
   return {
     ...actual,
     spawnCLI: mockSpawnCLI

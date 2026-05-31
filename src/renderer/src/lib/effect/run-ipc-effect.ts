@@ -13,7 +13,20 @@ const messageFromUnknown = (error: unknown): string => {
   }
 }
 
-export const runIpcEffect = <A>(invoke: () => Promise<Envelope<A>>): Effect.Effect<A, IpcError> =>
+const isSuccessEnvelope = <A>(value: Envelope<A> | A): value is Extract<Envelope<A>, { success: true }> =>
+  Boolean(value && typeof value === 'object' && 'success' in value && value.success === true && 'value' in value)
+
+const isFailureEnvelope = <A>(value: Envelope<A> | A): value is Extract<Envelope<A>, { success: false }> =>
+  Boolean(
+    value &&
+      typeof value === 'object' &&
+      'success' in value &&
+      value.success === false &&
+      'errorCode' in value &&
+      'error' in value
+  )
+
+export const runIpcEffect = <A>(invoke: () => Promise<Envelope<A> | A>): Effect.Effect<A, IpcError> =>
   Effect.tryPromise({
     try: invoke,
     catch: (error) =>
@@ -23,15 +36,17 @@ export const runIpcEffect = <A>(invoke: () => Promise<Envelope<A>>): Effect.Effe
         details: error
       })
   }).pipe(
-    Effect.flatMap((envelope) =>
-      envelope.success
-        ? Effect.succeed(envelope.value)
-        : Effect.fail(
-            new IpcError({
-              errorCode: envelope.errorCode,
-              error: envelope.error,
-              details: envelope.details
-            })
-          )
-    )
+    Effect.flatMap((envelope) => {
+      if (isSuccessEnvelope(envelope)) return Effect.succeed(envelope.value)
+      if (isFailureEnvelope(envelope)) {
+        return Effect.fail(
+          new IpcError({
+            errorCode: envelope.errorCode,
+            error: envelope.error,
+            details: envelope.details
+          })
+        )
+      }
+      return Effect.succeed(envelope as A)
+    })
   )

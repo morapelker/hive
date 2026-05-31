@@ -27,18 +27,12 @@ const codexProviders = [
   }
 ]
 
-Object.defineProperty(window, 'opencodeOps', {
-  writable: true,
-  configurable: true,
-  value: {
-    listModels: vi.fn().mockImplementation(async ({ agentSdk }: { agentSdk?: string } = {}) => {
-      if (agentSdk === 'codex') {
-        return { success: true, providers: codexProviders }
-      }
-
-      return { success: true, providers: claudeProviders }
-    })
+const mockListModels = vi.fn().mockImplementation(async ({ agentSdk }: { agentSdk?: string } = {}) => {
+  if (agentSdk === 'codex') {
+    return { success: true, providers: codexProviders }
   }
+
+  return { success: true, providers: claudeProviders }
 })
 
 import { ModelSelector } from '@/components/sessions/ModelSelector'
@@ -48,6 +42,20 @@ describe('ModelSelector provider filter pill', () => {
   beforeEach(() => {
     cleanup()
     vi.clearAllMocks()
+    mockListModels.mockImplementation(async ({ agentSdk }: { agentSdk?: string } = {}) => {
+      if (agentSdk === 'codex') {
+        return { success: true, providers: codexProviders }
+      }
+
+      return { success: true, providers: claudeProviders }
+    })
+    Object.defineProperty(window, 'opencodeOps', {
+      writable: true,
+      configurable: true,
+      value: {
+        listModels: mockListModels
+      }
+    })
 
     useSettingsStore.setState({
       defaultAgentSdk: 'claude-code',

@@ -130,6 +130,14 @@ function seedStores(boardMode: 'sticky-tab' | 'toggle') {
     }
   })
 
+  Object.defineProperty(window, 'opencodeOps', {
+    writable: true,
+    configurable: true,
+    value: {
+      listModels: vi.fn().mockResolvedValue({ success: true, providers: [] })
+    }
+  })
+
   const store = useBoardChatStore.getState()
   const scope = {
     kind: 'project' as const,
@@ -138,36 +146,56 @@ function seedStores(boardMode: 'sticky-tab' | 'toggle') {
     projectPath: '/tmp/proj-1'
   }
   store.activateScope(scope, { scope })
+  const messages = [
+    {
+      id: assistantMessageId,
+      role: 'assistant' as const,
+      content: [
+        'Ready.',
+        '```board-ticket-drafts',
+        JSON.stringify({
+          drafts: [
+            {
+              draftKey: 'draft-1',
+              title: boardDraft.title,
+              description: boardDraft.description,
+              projectId,
+              dependsOn: [],
+              warnings: []
+            }
+          ]
+        }),
+        '```'
+      ].join('\n'),
+      timestamp: '2026-04-15T00:00:00.000Z',
+      kind: 'transcript' as const
+    }
+  ]
+  const seededSnapshot = {
+    scope,
+    messages,
+    drafts: [boardDraft],
+    createdDraftIds: [],
+    draftSourceMessageId: assistantMessageId,
+    status: 'awaiting_confirmation' as const,
+    selectedTargetProjectId: projectId,
+    error: null,
+    sessionId: null,
+    opencodeSessionId: null,
+    runtimePath: null,
+    selectedAgentSdkOverride: null,
+    selectedModelOverride: null,
+    composerValue: ''
+  }
   useBoardChatStore.setState({
     scope,
-    messages: [
-      {
-        id: assistantMessageId,
-        role: 'assistant',
-        content: [
-          'Ready.',
-          '```board-ticket-drafts',
-          JSON.stringify({
-            drafts: [
-              {
-                draftKey: 'draft-1',
-                title: boardDraft.title,
-                description: boardDraft.description,
-                projectId,
-                dependsOn: [],
-                warnings: []
-              }
-            ]
-          }),
-          '```'
-        ].join('\n'),
-        timestamp: '2026-04-15T00:00:00.000Z',
-        kind: 'transcript'
-      }
-    ],
+    messages,
     drafts: [boardDraft],
     draftSourceMessageId: assistantMessageId,
-    status: 'awaiting_confirmation'
+    status: 'awaiting_confirmation',
+    snapshots: {
+      [`project:${projectId}`]: seededSnapshot
+    }
   })
 }
 
@@ -180,7 +208,7 @@ describe('board assistant create navigation', () => {
     seedStores('sticky-tab')
 
     render(<BoardAssistantView projectId={projectId} />)
-    fireEvent.click(screen.getByRole('button', { name: 'Create all' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Create all' }))
 
     await waitFor(() => {
       expect(useSessionStore.getState().activeSessionId).toBe(BOARD_TAB_ID)
@@ -192,7 +220,7 @@ describe('board assistant create navigation', () => {
     seedStores('toggle')
 
     render(<BoardAssistantView projectId={projectId} />)
-    fireEvent.click(screen.getByRole('button', { name: 'Create all' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Create all' }))
 
     await waitFor(() => {
       expect(useKanbanStore.getState().isBoardViewActive).toBe(true)

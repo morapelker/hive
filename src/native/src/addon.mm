@@ -108,6 +108,11 @@ Napi::Value GhosttyCreateSurface(const Napi::CallbackInfo& info) {
     fontSize = static_cast<float>(opts.Get("fontSize").As<Napi::Number>().DoubleValue());
   }
 
+  bool shiftEnterAsNewline = false;
+  if (opts.Has("shiftEnterAsNewline") && opts.Get("shiftEnterAsNewline").IsBoolean()) {
+    shiftEnterAsNewline = opts.Get("shiftEnterAsNewline").As<Napi::Boolean>().Value();
+  }
+
   // Create the host NSView
   NSView* hostView = createHostView(window, rect);
   if (!hostView) {
@@ -129,6 +134,7 @@ Napi::Value GhosttyCreateSurface(const Napi::CallbackInfo& info) {
   }
 
   setHostViewSurfaceId(hostView, surfaceId);
+  setHostViewShiftEnterAsNewline(hostView, shiftEnterAsNewline);
 
   return Napi::Number::New(env, surfaceId);
 }

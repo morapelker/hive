@@ -1,10 +1,13 @@
+import type { AgentSdk } from '@shared/types/agent-sdk'
+
 export interface AvailableAgentSdks {
   opencode: boolean
   claude: boolean
   codex: boolean
 }
 
-export type SelectableAgentSdk = 'opencode' | 'claude-code' | 'codex' | 'terminal'
+/** Alias of the shared {@link AgentSdk} union, kept for this module's selection-focused naming. */
+export type SelectableAgentSdk = AgentSdk
 
 function getAgentSdkLabel(sdk: Exclude<SelectableAgentSdk, 'terminal'>): string {
   switch (sdk) {
@@ -12,6 +15,8 @@ function getAgentSdkLabel(sdk: Exclude<SelectableAgentSdk, 'terminal'>): string 
       return 'OpenCode'
     case 'claude-code':
       return 'Claude Code'
+    case 'claude-code-cli':
+      return 'Claude Code (CLI)'
     case 'codex':
       return 'Codex'
   }
@@ -27,6 +32,7 @@ export function isAgentSdkAvailable(
     case 'opencode':
       return availableAgentSdks.opencode
     case 'claude-code':
+    case 'claude-code-cli':
       return availableAgentSdks.claude
     case 'codex':
       return availableAgentSdks.codex

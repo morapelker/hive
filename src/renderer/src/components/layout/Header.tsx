@@ -18,7 +18,8 @@ import {
   Copy,
   Hammer,
   Map,
-  Check
+  Check,
+  MoonStar
 } from 'lucide-react'
 import { KanbanIcon } from '@/components/kanban/KanbanIcon'
 import { Button } from '@/components/ui/button'
@@ -35,6 +36,7 @@ import {
   ContextMenuTrigger,
   ContextMenuContent,
   ContextMenuItem,
+  ContextMenuCheckboxItem,
   ContextMenuSeparator
 } from '@/components/ui/context-menu'
 import { cn } from '@/lib/utils'
@@ -47,6 +49,7 @@ import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useGitStore } from '@/stores/useGitStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
+import { useSleepWhenIdleStore } from '@/stores/useSleepWhenIdleStore'
 import { useVimModeStore } from '@/stores/useVimModeStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useTipStore } from '@/stores/useTipStore'
@@ -90,6 +93,9 @@ export function Header(): React.JSX.Element {
       (entry) => entry && (entry.status === 'working' || entry.status === 'planning')
     ).length
   )
+  const sleepWhenIdleArmed = useSleepWhenIdleStore((s) => s.armed)
+  const toggleSleepWhenIdle = useSleepWhenIdleStore((s) => s.toggle)
+  const mugIsOn = keepAwakeEnabled && streamingCount > 0
   const showVimHints = vimModeEnabled && vimMode === 'normal'
   const isBoardViewActive = useKanbanStore((s) => s.isBoardViewActive)
   const toggleBoardView = useKanbanStore((s) => s.toggleBoardView)
@@ -218,19 +224,45 @@ export function Header(): React.JSX.Element {
           <span className="text-sm font-medium">Hive</span>
         )}
         {keepAwakeEnabled && (
-          <Tooltip>
-            <TooltipTrigger asChild>
+          <ContextMenu>
+            <ContextMenuTrigger asChild disabled={!mugIsOn}>
               <span
-                className={cn('shrink-0', streamingCount > 0 ? 'text-amber-500' : 'text-muted-foreground')}
-                data-testid="keep-awake-indicator"
+                className="inline-flex shrink-0"
+                style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
               >
-                <Coffee className="h-4 w-4" />
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span
+                      className={cn(
+                        'shrink-0',
+                        streamingCount > 0 ? 'text-amber-500' : 'text-muted-foreground',
+                        sleepWhenIdleArmed && 'text-indigo-400'
+                      )}
+                      data-testid="keep-awake-indicator"
+                    >
+                      <Coffee className="h-4 w-4" />
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" sideOffset={8}>
+                    {sleepWhenIdleArmed
+                      ? 'Will sleep when all sessions have been idle for 1 minute.'
+                      : 'Prevents your computer from sleeping while a session is running'}
+                  </TooltipContent>
+                </Tooltip>
               </span>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" sideOffset={8}>
-              Prevents your computer from sleeping while a session is running
-            </TooltipContent>
-          </Tooltip>
+            </ContextMenuTrigger>
+            {mugIsOn && (
+              <ContextMenuContent>
+                <ContextMenuCheckboxItem
+                  checked={sleepWhenIdleArmed}
+                  onCheckedChange={toggleSleepWhenIdle}
+                >
+                  <MoonStar className="h-4 w-4 mr-2" />
+                  Sleep when idle
+                </ContextMenuCheckboxItem>
+              </ContextMenuContent>
+            )}
+          </ContextMenu>
         )}
         {vimModeEnabled && (
           <span

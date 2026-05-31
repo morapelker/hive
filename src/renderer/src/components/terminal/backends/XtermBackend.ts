@@ -136,6 +136,7 @@ export class XtermBackend implements TerminalBackend {
   private removeExitListener: (() => void) | null = null
   private inputDisposable: { dispose: () => void } | null = null
   private terminalId: string = ''
+  private shiftEnterAsNewline = false
   private ghosttyConfig: GhosttyTerminalConfig = {}
 
   /** Callback for the host to wire Cmd+F search toggling */
@@ -145,6 +146,7 @@ export class XtermBackend implements TerminalBackend {
 
   mount(container: HTMLDivElement, opts: TerminalOpts, callbacks: TerminalBackendCallbacks): void {
     this.terminalId = opts.terminalId
+    this.shiftEnterAsNewline = opts.shiftEnterAsNewline ?? false
     container.innerHTML = ''
 
     // Store config for theme rebuilding
@@ -169,6 +171,20 @@ export class XtermBackend implements TerminalBackend {
 
     // Custom key event handler
     terminal.attachCustomKeyEventHandler((e) => {
+      if (
+        this.shiftEnterAsNewline &&
+        e.type === 'keydown' &&
+        (e.key === 'Enter' || e.code === 'Enter' || e.code === 'NumpadEnter') &&
+        e.shiftKey &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey
+      ) {
+        e.preventDefault()
+        terminal.input('\x1b\r', true)
+        return false
+      }
+
       if (isAppShortcut(e)) return false
 
       if (e.metaKey && e.key === 'f' && e.type === 'keydown') {
@@ -268,8 +284,8 @@ export class XtermBackend implements TerminalBackend {
 
     // Create the PTY
     callbacks.onStatusChange('creating')
-    window.terminalOps
-      .create(this.terminalId, opts.cwd, opts.shell)
+    const createTerminal = opts.createTerminal ?? window.terminalOps.create
+    createTerminal(this.terminalId, opts.cwd, opts.shell)
       .then(unwrapEnvelope)
       .then((result) => {
         if (result.success) {
@@ -316,6 +332,10 @@ export class XtermBackend implements TerminalBackend {
       }
     })
     this.resizeObserver.observe(container)
+  }
+
+  setShiftEnterAsNewline(enabled: boolean): void {
+    this.shiftEnterAsNewline = enabled
   }
 
   write(data: string): void {

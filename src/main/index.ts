@@ -60,6 +60,7 @@ import { telemetryService } from './services/telemetry-service'
 import { perfDiagnostics } from './services/perf-diagnostics'
 import { configure as configureCodexDebugLogger } from './services/codex-debug-logger'
 import { ptyService } from './services/pty-service'
+import { closeClaudeHookServer } from './services/claude-hook-server'
 import { scriptRunner } from './services/script-runner'
 import { bashService } from './effect/bash/facade'
 import { disposeAllRuntimes } from './effect/_shared/runtime'
@@ -76,6 +77,7 @@ import { openCodeService } from './services/opencode-service'
 import { agentEventBus } from './services/agent-event-bus'
 import { telegramForwardingService } from './services/telegram-forwarding-service'
 import { setKeepAwake, cleanupPowerSaveBlocker } from './services/power-save-blocker'
+import { sleepNow } from './services/sleep-now'
 import {
   configurePetWindow,
   destroyPetWindow,
@@ -495,6 +497,8 @@ function registerSystemHandlers(openCodeLaunchSpec: OpenCodeLaunchSpec | null): 
     setKeepAwake(Boolean(active))
   })
 
+  ipcMain.handle('system:sleepNow', () => sleepNow())
+
   // Mirror renderer-side follow-up message queue state into the main process so
   // notification-service can suppress session-complete notifications while more
   // queued messages are about to be auto-sent.
@@ -861,6 +865,8 @@ app.on('will-quit', async () => {
   updaterService.cleanup()
   // Cleanup terminal PTYs
   cleanupTerminals()
+  // Cleanup Claude CLI hook server
+  await closeClaudeHookServer()
   // Cleanup running scripts
   cleanupScripts()
   // Cleanup running bash runs (best-effort, no await)

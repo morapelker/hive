@@ -1,4 +1,5 @@
 import { deleteAttachment } from '../services/attachment-storage'
+import type { AgentSdk } from '@shared/types/agent-sdk'
 import Database from 'better-sqlite3'
 import { app } from 'electron'
 import { join } from 'path'
@@ -138,6 +139,7 @@ export class DatabaseService {
   private mapSessionRow(row: Record<string, unknown>): Session {
     return {
       ...row,
+      claude_session_id: (row.claude_session_id as string) ?? null,
       pinned_to_board: !!(row.pinned_to_board as number),
       session_type: (row.session_type as string) ?? 'default'
     } as Session
@@ -462,6 +464,7 @@ export class DatabaseService {
       'TEXT DEFAULT NULL REFERENCES connections(id) ON DELETE SET NULL'
     )
     this.safeAddColumn('sessions', 'agent_sdk', "TEXT NOT NULL DEFAULT 'opencode'")
+    this.safeAddColumn('sessions', 'claude_session_id', 'TEXT DEFAULT NULL')
     this.safeAddColumn('connections', 'color', 'TEXT DEFAULT NULL')
     this.safeAddColumn('connections', 'custom_name', 'TEXT DEFAULT NULL')
     this.safeAddColumn('worktrees', 'attachments', "TEXT DEFAULT '[]'")
@@ -1220,6 +1223,7 @@ export class DatabaseService {
       name: data.name ?? null,
       status: 'active',
       opencode_session_id: data.opencode_session_id ?? null,
+      claude_session_id: data.claude_session_id ?? null,
       agent_sdk: data.agent_sdk ?? 'opencode',
       mode: data.mode ?? 'build',
       session_type: data.session_type ?? 'default',
@@ -1233,8 +1237,8 @@ export class DatabaseService {
     }
 
     db.prepare(
-      `INSERT INTO sessions (id, worktree_id, project_id, connection_id, name, status, opencode_session_id, agent_sdk, mode, session_type, model_provider_id, model_id, model_variant, created_at, updated_at, completed_at, pinned_to_board)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO sessions (id, worktree_id, project_id, connection_id, name, status, opencode_session_id, claude_session_id, agent_sdk, mode, session_type, model_provider_id, model_id, model_variant, created_at, updated_at, completed_at, pinned_to_board)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       session.id,
       session.worktree_id,
@@ -1243,6 +1247,7 @@ export class DatabaseService {
       session.name,
       session.status,
       session.opencode_session_id,
+      session.claude_session_id,
       session.agent_sdk,
       session.mode,
       session.session_type,
@@ -1276,12 +1281,12 @@ export class DatabaseService {
 
   getAgentSdkForSession(
     agentSessionId: string
-  ): 'opencode' | 'claude-code' | 'codex' | 'terminal' | null {
+  ): AgentSdk | null {
     const db = this.getDb()
     const row = db
       .prepare('SELECT agent_sdk FROM sessions WHERE opencode_session_id = ? LIMIT 1')
       .get(agentSessionId) as
-      | { agent_sdk: 'opencode' | 'claude-code' | 'codex' | 'terminal' }
+      | { agent_sdk: AgentSdk }
       | undefined
     return row?.agent_sdk ?? null
   }
@@ -1349,6 +1354,10 @@ export class DatabaseService {
     if (data.opencode_session_id !== undefined) {
       updates.push('opencode_session_id = ?')
       values.push(data.opencode_session_id)
+    }
+    if (data.claude_session_id !== undefined) {
+      updates.push('claude_session_id = ?')
+      values.push(data.claude_session_id)
     }
     if (data.agent_sdk !== undefined) {
       updates.push('agent_sdk = ?')

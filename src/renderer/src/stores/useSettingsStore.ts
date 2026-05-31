@@ -4,6 +4,7 @@ import { APP_SETTINGS_DB_KEY } from '@shared/types/settings'
 import type { TelegramConfig } from '@shared/types/telegram'
 import type { UsageProvider } from '@shared/types/usage'
 import type { PetSettings } from '@shared/types/pet'
+import type { AgentSdk, HandoffAgentSdk } from '@shared/types/agent-sdk'
 import type { ReviewPromptType } from '@/constants/reviewPrompts'
 import type { CustomProjectCommand } from '@/lib/custom-commands'
 import { validateCustomCommand } from '@/lib/custom-commands'
@@ -31,8 +32,9 @@ export type TerminalPosition = 'sidebar' | 'bottom'
 export type MergeConflictMode = 'build' | 'plan' | 'always-ask'
 export type FollowUpTriggerColumn = 'review' | 'done'
 
-export type AgentSdk = 'opencode' | 'claude-code' | 'codex' | 'terminal'
-export type HandoffAgentSdk = Exclude<AgentSdk, 'terminal'>
+// Re-exported from the shared single source of truth (see @shared/types/agent-sdk)
+// so existing `import { AgentSdk } from '@/stores/useSettingsStore'` sites keep working.
+export type { AgentSdk, HandoffAgentSdk }
 
 export interface SelectedModel {
   agentSdk?: HandoffAgentSdk
@@ -556,8 +558,8 @@ export const useSettingsStore = create<SettingsState>()(
           delete current[agentSdk]
         }
         set({ selectedModelByProvider: current })
-        // Push to backend (skip for terminal — no backend service, or when caller already pushed)
-        if (agentSdk !== 'terminal' && !options?.skipBackendPush) {
+        // Push to backend only for SDKs with a structured implementer.
+        if (agentSdk !== 'terminal' && agentSdk !== 'claude-code-cli' && !options?.skipBackendPush) {
           try {
             unwrapEnvelope(await window.opencodeOps.setModel(model ? { ...model, agentSdk } : null))
           } catch (error) {
@@ -739,6 +741,7 @@ export const useSettingsStore = create<SettingsState>()(
 // Load from database on startup, then detect available agent SDKs
 if (typeof window !== 'undefined') {
   setTimeout(() => {
+    if (typeof window === 'undefined') return
     useSettingsStore
       .getState()
       .loadFromDatabase()

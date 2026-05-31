@@ -7,6 +7,7 @@ import type {
   TelegramMode
 } from '../shared/types/telegram'
 import type { Envelope } from '@shared/types/ipc-envelope'
+import type { AgentSdk } from '@shared/types/agent-sdk'
 import type { CustomProjectCommand } from '@shared/lib/custom-commands'
 import type { SuggestionItem } from '../shared/types/setup-suggestions'
 import type { ConnectionWithMembers } from '../main/db/types'
@@ -113,7 +114,8 @@ const db = {
       connection_id?: string | null
       name?: string | null
       opencode_session_id?: string | null
-      agent_sdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+      claude_session_id?: string | null
+      agent_sdk?: AgentSdk
       mode?: 'build' | 'plan' | 'super-plan'
       session_type?: 'default' | 'board-assistant'
       model_provider_id?: string | null
@@ -132,7 +134,8 @@ const db = {
         name?: string | null
         status?: 'active' | 'completed' | 'error'
         opencode_session_id?: string | null
-        agent_sdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+        claude_session_id?: string | null
+        agent_sdk?: AgentSdk
         mode?: 'build' | 'plan' | 'super-plan'
         session_type?: 'default' | 'board-assistant'
         model_provider_id?: string | null
@@ -657,6 +660,9 @@ const systemOps = {
   // display stays awake while a session is streaming.
   setKeepAwake: (active: boolean): Promise<void> =>
     ipcRenderer.invoke('system:setKeepAwake', active),
+
+  // Ask the main process to put the machine to sleep now.
+  sleepNow: (): Promise<boolean> => ipcRenderer.invoke('system:sleepNow'),
 
   // Push the renderer's follow-up-message queue state into the main process so
   // `notificationService.showSessionComplete` can suppress notifications while
@@ -1542,7 +1548,7 @@ const opencodeOps = {
 
   // List available models from all configured providers
   listModels: (opts?: {
-    agentSdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+    agentSdk?: AgentSdk
   }): Promise<
     Envelope<{
       success: boolean
@@ -1557,7 +1563,7 @@ const opencodeOps = {
       providerID: string
       modelID: string
       variant?: string
-      agentSdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+      agentSdk?: AgentSdk
     } | null
   ): Promise<Envelope<{ success: boolean; error?: string }>> =>
     ipcRenderer.invoke('opencode:setModel', model),
@@ -1566,7 +1572,7 @@ const opencodeOps = {
   modelInfo: (
     worktreePath: string,
     modelId: string,
-    agentSdk?: 'opencode' | 'claude-code' | 'codex' | 'terminal'
+    agentSdk?: AgentSdk
   ): Promise<
     Envelope<{
       success: boolean
@@ -1971,6 +1977,18 @@ const terminalOps = {
   ): Promise<Envelope<{ success: boolean; cols?: number; rows?: number; error?: string }>> =>
     ipcRenderer.invoke('terminal:create', terminalId, cwd, shell),
 
+  createClaudeCli: (
+    sessionId: string,
+    opts?: { pendingPrompt?: string | null }
+  ): Promise<Envelope<{ success: boolean; cols?: number; rows?: number; error?: string }>> =>
+    ipcRenderer.invoke('terminal:createClaudeCli', sessionId, opts),
+
+  sendClaudeCliPrompt: (
+    sessionId: string,
+    prompt: string
+  ): Promise<Envelope<{ delivered: boolean }>> =>
+    ipcRenderer.invoke('terminal:sendClaudeCliPrompt', sessionId, prompt),
+
   write: (terminalId: string, data: string): void =>
     ipcRenderer.send('terminal:write', terminalId, data),
 
@@ -1999,6 +2017,81 @@ const terminalOps = {
     ipcRenderer.on(channel, handler)
     return () => {
       ipcRenderer.removeListener(channel, handler)
+    }
+  },
+
+  onClaudeSessionId: (sessionId: string, callback: (claudeSessionId: string) => void): (() => void) => {
+    const channel = `terminal:claude-session-id:${sessionId}`
+    const handler = (_event: Electron.IpcRendererEvent, claudeSessionId: string): void => {
+      callback(claudeSessionId)
+    }
+    ipcRenderer.on(channel, handler)
+    return () => {
+      ipcRenderer.removeListener(channel, handler)
+    }
+  },
+
+  onClaudeCliStatus: (
+    callback: (payload: {
+      sessionId: string
+      status:
+        | 'working'
+        | 'planning'
+        | 'answering'
+        | 'permission'
+        | 'command_approval'
+        | 'unread'
+        | 'completed'
+        | 'plan_ready'
+      metadata?: {
+        reason?: string
+        hookEventName?: string
+        hookPath?: string
+        toolName?: string
+        plan?: string
+      }
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      payload: {
+        sessionId: string
+        status:
+          | 'working'
+          | 'planning'
+          | 'answering'
+          | 'permission'
+          | 'command_approval'
+          | 'unread'
+          | 'completed'
+          | 'plan_ready'
+        metadata?: {
+          reason?: string
+          hookEventName?: string
+          hookPath?: string
+          toolName?: string
+          plan?: string
+        }
+      }
+    ): void => {
+      callback(payload)
+    }
+    ipcRenderer.on('claude-cli:status', handler)
+    return () => {
+      ipcRenderer.off('claude-cli:status', handler)
+    }
+  },
+
+  onClaudeCliPlanFollowup: (callback: (payload: { sessionId: string }) => void): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      payload: { sessionId: string }
+    ): void => {
+      callback(payload)
+    }
+    ipcRenderer.on('claude-cli:plan-followup', handler)
+    return () => {
+      ipcRenderer.off('claude-cli:plan-followup', handler)
     }
   },
 
@@ -2034,7 +2127,13 @@ const terminalOps = {
   ghosttyCreateSurface: (
     terminalId: string,
     rect: { x: number; y: number; w: number; h: number },
-    opts?: { cwd?: string; shell?: string; scaleFactor?: number; fontSize?: number }
+    opts?: {
+      cwd?: string
+      shell?: string
+      scaleFactor?: number
+      fontSize?: number
+      shiftEnterAsNewline?: boolean
+    }
   ): Promise<Envelope<{ success: boolean; surfaceId?: number; error?: string }>> =>
     ipcRenderer.invoke('terminal:ghostty:createSurface', terminalId, rect, opts),
 

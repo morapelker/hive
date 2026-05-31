@@ -439,7 +439,7 @@ describe('Session 13: Ticket Attachment', () => {
 
     render(
       <TicketAttachments
-        attachments={[ticketAttachment]}
+        ticketAttachments={[ticketAttachment]}
         onRemove={() => {}}
       />
     )
@@ -469,7 +469,7 @@ describe('Session 13: Ticket Attachment', () => {
 
     render(
       <TicketAttachments
-        attachments={attachments}
+        ticketAttachments={attachments}
         onRemove={() => {}}
       />
     )

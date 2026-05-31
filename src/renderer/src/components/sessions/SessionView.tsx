@@ -46,6 +46,7 @@ import { PlanReadyImplementFab } from './PlanReadyImplementFab'
 import { IndeterminateProgressBar } from './IndeterminateProgressBar'
 import { TaskListWidget } from './TaskListWidget'
 import { GoalStatusWidget } from './GoalStatusWidget'
+import { ClaudeCliSessionView } from './ClaudeCliSessionView'
 import { useLatestTodoList } from './useLatestTodoList'
 import { usePRStackTopOffset } from './usePRStackTopOffset'
 import { useFileMentions } from '@/hooks/useFileMentions'
@@ -274,6 +275,7 @@ function delay(ms: number): Promise<void> {
 
 interface SessionViewProps {
   sessionId: string
+  isVisible?: boolean
 }
 
 interface SessionRetryState {
@@ -576,7 +578,7 @@ const PrCommentAttachments = memo(function PrCommentAttachments(): React.JSX.Ele
 })
 
 // Main SessionView component
-export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element {
+function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
   // State
   const [messages, setMessagesState] = useState<OpenCodeMessage[]>([])
   const [inputValue, setInputValue] = useState('')
@@ -5033,19 +5035,27 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       }
 
       if (connectionId) {
-        const handoffPrompt = buildHandoffPrompt(planContent, override)
+        const handoffPrompt = buildHandoffPrompt(planContent, {
+          ...override,
+          superPlan: mode === 'super-plan'
+        })
         const sessionStore = useSessionStore.getState()
         const result = await sessionStore.createConnectionSession(
           connectionId,
           override?.agentSdk,
-          undefined,
+          override?.agentSdk === 'claude-code-cli' && mode === 'super-plan'
+            ? 'super-plan'
+            : undefined,
           { modelOverride: override?.model }
         )
         if (!result.success || !result.session) {
           toast.error(result.error ?? 'Failed to create handoff session')
           return
         }
-        const setModePromise = sessionStore.setSessionMode(result.session.id, 'build')
+        const setModePromise =
+          result.session.agent_sdk === 'claude-code-cli' && mode === 'super-plan'
+            ? Promise.resolve()
+            : sessionStore.setSessionMode(result.session.id, 'build')
         sessionStore.setPendingMessage(result.session.id, handoffPrompt)
         await useKanbanStore
           .getState()
@@ -5062,14 +5072,19 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         return
       }
 
-      const handoffPrompt = buildHandoffPrompt(planContent, override)
+      const handoffPrompt = buildHandoffPrompt(planContent, {
+        ...override,
+        superPlan: mode === 'super-plan'
+      })
 
       const sessionStore = useSessionStore.getState()
       const result = await sessionStore.createSession(
         currentWorktreeId,
         currentProjectId,
         override?.agentSdk,
-        undefined,
+        override?.agentSdk === 'claude-code-cli' && mode === 'super-plan'
+          ? 'super-plan'
+          : undefined,
         { modelOverride: override?.model }
       )
       if (!result.success || !result.session) {
@@ -5077,7 +5092,10 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
         return
       }
 
-      const setModePromise = sessionStore.setSessionMode(result.session.id, 'build')
+      const setModePromise =
+        result.session.agent_sdk === 'claude-code-cli' && mode === 'super-plan'
+          ? Promise.resolve()
+          : sessionStore.setSessionMode(result.session.id, 'build')
       sessionStore.setPendingMessage(result.session.id, handoffPrompt)
       await useKanbanStore
         .getState()
@@ -5093,7 +5111,8 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       sessionId,
       worktreePath,
       opencodeSessionId,
-      pendingPlan
+      pendingPlan,
+      mode
     ]
   )
 
@@ -6425,4 +6444,16 @@ export function SessionView({ sessionId }: SessionViewProps): React.JSX.Element 
       )}
     </div>
   )
+}
+
+export function SessionView({ sessionId, isVisible = true }: SessionViewProps): React.JSX.Element {
+  // Subscribe to just the agent_sdk: routing only needs that, so unrelated
+  // session updates no longer re-render this wrapper with a new object identity.
+  const agentSdk = useSessionStore((state) => state.getSessionById(sessionId)?.agent_sdk ?? null)
+
+  if (agentSdk === 'claude-code-cli') {
+    return <ClaudeCliSessionView sessionId={sessionId} isVisible={isVisible} />
+  }
+
+  return <LegacySessionView sessionId={sessionId} />
 }

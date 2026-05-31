@@ -17,6 +17,11 @@ interface TerminalViewProps {
   terminalId: string
   cwd: string
   isVisible?: boolean
+  showToolbar?: boolean
+  backendTypeOverride?: TerminalBackendType
+  shiftEnterAsNewline?: boolean
+  createTerminal?: Parameters<ITerminalBackend['mount']>[1]['createTerminal']
+  onStatusChange?: (status: 'creating' | 'running' | 'exited', exitCode?: number) => void
 }
 
 /** Imperative handle exposed to parent (TerminalManager) */
@@ -37,7 +42,16 @@ function createBackend(type: TerminalBackendType): ITerminalBackend {
 }
 
 export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(function TerminalView(
-  { terminalId, cwd, isVisible = true },
+  {
+    terminalId,
+    cwd,
+    isVisible = true,
+    showToolbar = true,
+    backendTypeOverride,
+    shiftEnterAsNewline,
+    createTerminal,
+    onStatusChange
+  },
   ref
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -73,6 +87,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
   const embeddedTerminalBackend = useSettingsStore(
     (s) => s.embeddedTerminalBackend
   ) as EmbeddedTerminalBackend
+  const effectiveBackendType = backendTypeOverride ?? embeddedTerminalBackend
   const ghosttyFontSize = useSettingsStore((s) => s.ghosttyFontSize)
   const ghosttyOverlaySuppressed = useLayoutStore((s) => s.ghosttyOverlaySuppressed)
 
@@ -86,6 +101,9 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
   // NSView on-screen even though the UI is hidden — see GhosttyBackend.mount.
   const effectiveVisibleRef = useRef(effectiveVisible)
   effectiveVisibleRef.current = effectiveVisible
+
+  const shiftEnterAsNewlineRef = useRef(shiftEnterAsNewline ?? false)
+  shiftEnterAsNewlineRef.current = shiftEnterAsNewline ?? false
 
   // Expose imperative methods to parent via ref
   useImperativeHandle(
@@ -116,6 +134,17 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
     }, 50)
     return () => clearTimeout(timer)
   }, [themeId])
+
+  // xterm can update the Shift+Enter behavior live — it's just an internal flag
+  // the keydown handler reads. Ghostty bakes the keybinding into the native
+  // surface at creation time (ghosttyCreateSurface) and has no in-place setter,
+  // so its runtime-update path is a surface remount handled by the effect below.
+  useEffect(() => {
+    const backend = backendRef.current
+    if (backend instanceof XtermBackend) {
+      backend.setShiftEnterAsNewline(shiftEnterAsNewline ?? false)
+    }
+  }, [shiftEnterAsNewline])
 
   // Re-fit and focus when becoming visible.
   // Note: GhosttyBackend.setVisible(true) already restores macOS first responder
@@ -170,7 +199,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
     return cleanup
     // embeddedTerminalBackend in deps ensures re-evaluation when the user switches backends,
     // since activeBackendTypeRef is a ref and doesn't trigger re-renders on its own.
-  }, [effectiveVisible, terminalId, embeddedTerminalBackend])
+  }, [effectiveVisible, terminalId, effectiveBackendType])
 
   // Search helpers (only for xterm backend)
   const handleSearch = useCallback((query: string) => {
@@ -276,6 +305,8 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
           cursorStyle: config.cursorStyle,
           scrollback: config.scrollbackLimit,
           shell: config.shell,
+          createTerminal,
+          shiftEnterAsNewline: shiftEnterAsNewlineRef.current,
           // Seed visibility from the current UI state. Critical when the
           // backend is recreated (e.g. fontSize change, cwd change, StrictMode
           // double-mount) while the bottom panel is collapsed: defaulting to
@@ -289,13 +320,14 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
             setTerminalStatus(status)
             if (code !== undefined) setExitCode(code)
             useTerminalTabStore.getState().setTabStatus(terminalId, status, code)
+            onStatusChange?.(status, code)
           }
         }
       )
 
       backendRef.current = backend
     },
-    [terminalId, cwd, destroyTerminal]
+    [terminalId, cwd, destroyTerminal, createTerminal, onStatusChange]
   )
 
   // Handle restart — destroy old PTY and re-create terminal
@@ -319,12 +351,12 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
     }
 
     await restartTerminal(terminalId, cwd, shell)
-    setupTerminal(embeddedTerminalBackend || 'xterm')
-  }, [terminalId, cwd, restartTerminal, setupTerminal, embeddedTerminalBackend])
+    setupTerminal(effectiveBackendType || 'xterm')
+  }, [terminalId, cwd, restartTerminal, setupTerminal, effectiveBackendType])
 
   // Initialize terminal on mount, and re-create when backend setting changes
   useEffect(() => {
-    setupTerminal(embeddedTerminalBackend || 'xterm')
+    setupTerminal(effectiveBackendType || 'xterm')
 
     return () => {
       // Invalidate the in-flight setupTerminal so its post-await continuation
@@ -341,7 +373,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
       initializedRef.current = null
       activeBackendTypeRef.current = null
     }
-  }, [setupTerminal, embeddedTerminalBackend])
+  }, [setupTerminal, effectiveBackendType])
 
   // Restart the Ghostty terminal when font size changes so the new size takes effect.
   // We track the previous value so the effect only fires on actual changes, not on mount.
@@ -370,6 +402,37 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
     restart()
   }, [ghosttyFontSize, terminalId, cwd, destroyTerminal, restartTerminal, setupTerminal])
 
+  // Ghostty bakes `shiftEnterAsNewline` into the surface at creation, so a
+  // runtime change requires recreating it — mirror the font-size remount above.
+  // The xterm backend updates this flag in place (see the effect near the top),
+  // so this only acts when the live backend is Ghostty. We track the previous
+  // value so it fires on an actual change, not on mount (mount already seeds the
+  // flag via backend.mount's opts).
+  const prevShiftEnterAsNewlineRef = useRef(shiftEnterAsNewline ?? false)
+  useEffect(() => {
+    const next = shiftEnterAsNewline ?? false
+    if (prevShiftEnterAsNewlineRef.current === next) return
+    prevShiftEnterAsNewlineRef.current = next
+
+    if (activeBackendTypeRef.current !== 'ghostty') return
+
+    const restart = async (): Promise<void> => {
+      if (backendRef.current) {
+        backendRef.current.dispose()
+        backendRef.current = null
+      }
+      initializedRef.current = null
+      activeBackendTypeRef.current = null
+      setTerminalStatus('creating')
+      setExitCode(undefined)
+
+      await destroyTerminal(terminalId)
+      await restartTerminal(terminalId, cwd)
+      setupTerminal('ghostty')
+    }
+    restart()
+  }, [shiftEnterAsNewline, terminalId, cwd, destroyTerminal, restartTerminal, setupTerminal])
+
   // Focus terminal on click
   const handleClick = useCallback(() => {
     backendRef.current?.focus()
@@ -379,20 +442,22 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
 
   return (
     <div className="flex flex-col h-full w-full" data-testid="terminal-view">
-      <TerminalToolbar
-        status={terminalStatus}
-        exitCode={exitCode}
-        searchVisible={searchVisible && !isGhostty}
-        searchQuery={searchQuery}
-        onToggleSearch={handleToggleSearch}
-        onSearchChange={handleSearch}
-        onSearchNext={handleSearchNext}
-        onSearchPrev={handleSearchPrev}
-        onSearchClose={handleSearchClose}
-        onRestart={handleRestart}
-        onClear={() => backendRef.current?.clear()}
-        backendType={activeBackendTypeRef.current || 'xterm'}
-      />
+      {showToolbar && (
+        <TerminalToolbar
+          status={terminalStatus}
+          exitCode={exitCode}
+          searchVisible={searchVisible && !isGhostty}
+          searchQuery={searchQuery}
+          onToggleSearch={handleToggleSearch}
+          onSearchChange={handleSearch}
+          onSearchNext={handleSearchNext}
+          onSearchPrev={handleSearchPrev}
+          onSearchClose={handleSearchClose}
+          onRestart={handleRestart}
+          onClear={() => backendRef.current?.clear()}
+          backendType={activeBackendTypeRef.current || 'xterm'}
+        />
+      )}
       <div
         ref={containerRef}
         className="terminal-view-container flex-1 min-h-0"

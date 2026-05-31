@@ -24,6 +24,8 @@ interface PtyInstance {
 
 export interface PtyCreateOpts {
   cwd: string
+  command?: string
+  args?: string[]
   shell?: string
   env?: Record<string, string>
   cols?: number
@@ -52,7 +54,8 @@ class PtyService {
       }
     }
 
-    const shell =
+    const command =
+      opts.command ||
       opts.shell ||
       process.env.SHELL ||
       (process.platform === 'win32'
@@ -60,6 +63,7 @@ class PtyService {
         : process.platform === 'darwin'
           ? '/bin/zsh'
           : '/bin/bash')
+    const args = opts.command ? (opts.args ?? []) : []
     const cols = opts.cols || 80
     const rows = opts.rows || 24
 
@@ -70,9 +74,16 @@ class PtyService {
       ...opts.env
     } as Record<string, string>
 
-    log.info('Creating PTY', { id, shell, cwd: opts.cwd, cols, rows })
+    log.info('Creating PTY', {
+      id,
+      command,
+      args: args.length,
+      cwd: opts.cwd,
+      cols,
+      rows
+    })
 
-    const ptyProcess = pty.spawn(shell, [], {
+    const ptyProcess = pty.spawn(command, args, {
       name: 'xterm-256color',
       cols,
       rows,
