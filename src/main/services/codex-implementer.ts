@@ -387,8 +387,12 @@ export class CodexImplementer implements AgentSdkImplementer {
 
     if (event.kind === 'notification' && event.method === 'skills/changed') {
       if (targetSession) {
+        this.skillCommandsBySessionKey.delete(
+          this.getSessionKey(targetSession.worktreePath, targetSession.threadId)
+        )
         this.sendCommandsAvailable(targetSession)
       } else {
+        this.skillCommandsBySessionKey.clear()
         for (const session of this.sessions.values()) {
           this.sendCommandsAvailable(session)
         }
@@ -803,13 +807,11 @@ export class CodexImplementer implements AgentSdkImplementer {
     session: CodexSessionState,
     worktreePath: string,
     agentSessionId: string,
-    displayText: string,
+    text: string,
     turnInput: UserInput[],
     modelOverride?: { providerID: string; modelID: string; variant?: string },
     options?: PromptOptions
   ): Promise<void> {
-    const text = displayText
-
     if (!session.titleGenerationStarted) {
       const currentTitle = this.dbService?.getSession(session.hiveSessionId)?.name ?? null
       const shouldGenerateTitle = isDefaultSessionTitle(currentTitle)
@@ -1741,6 +1743,7 @@ export class CodexImplementer implements AgentSdkImplementer {
         agentSessionId,
         error: error instanceof Error ? error.message : String(error)
       })
+      this.skillCommandsBySessionKey.delete(sessionKey)
       return [CODEX_GOAL_COMMAND]
     }
   }
@@ -1879,9 +1882,7 @@ export class CodexImplementer implements AgentSdkImplementer {
     }
 
     const defaultPrompt = skill.interface?.defaultPrompt?.trim()
-    const template = defaultPrompt
-      ? `/${name} ${defaultPrompt}${/\s$/.test(skill.interface?.defaultPrompt ?? '') ? '' : ' '}`
-      : `/${name} `
+    const template = defaultPrompt ? `/${name} ${defaultPrompt} ` : `/${name} `
 
     return {
       name,

@@ -233,7 +233,7 @@ describe('CodexImplementer skeleton', () => {
                   shortDescription: 'Legacy short',
                   interface: {
                     shortDescription: 'Explore requirements',
-                    defaultPrompt: 'design this'
+                    defaultPrompt: '  design this  '
                   },
                   path: '/skills/brainstorming/SKILL.md',
                   scope: 'user',
@@ -374,6 +374,41 @@ describe('CodexImplementer skeleton', () => {
       ])
     })
 
+    it('clears cached skills when skills/list fails after a previous successful fetch', async () => {
+      const manager = {
+        listSkills: vi
+          .fn()
+          .mockResolvedValueOnce({
+            data: [
+              {
+                cwd: '/path',
+                skills: [
+                  {
+                    name: 'imagegen',
+                    description: 'Generate an image',
+                    path: '/skills/imagegen/SKILL.md',
+                    scope: 'system',
+                    enabled: true
+                  }
+                ],
+                errors: []
+              }
+            ]
+          })
+          .mockRejectedValueOnce(new Error('protocol unavailable'))
+      }
+      ;(impl as any).manager = manager
+
+      await impl.listCommands('/path', 'thread-1')
+      await expect(impl.listCommands('/path', 'thread-1')).resolves.toEqual([
+        expect.objectContaining({ name: 'goal' })
+      ])
+
+      await expect(impl.sendCommand('/path', 'thread-1', 'imagegen', 'a poster')).rejects.toThrow(
+        'Unsupported Codex command: /imagegen'
+      )
+    })
+
     it('emits commands_available when Codex reports skills/changed', () => {
       seedCodexSession()
       const mockWindow = {
@@ -392,6 +427,55 @@ describe('CodexImplementer skeleton', () => {
         payload: {}
       })
 
+      expect(mockWindow.webContents.send).toHaveBeenCalledWith('opencode:stream', {
+        type: 'session.commands_available',
+        sessionId: 'hive-1',
+        data: {}
+      })
+    })
+
+    it('clears cached skills for the changed session before notifying commands_available', async () => {
+      seedCodexSession()
+      const manager = {
+        listSkills: vi.fn().mockResolvedValue({
+          data: [
+            {
+              cwd: '/path',
+              skills: [
+                {
+                  name: 'imagegen',
+                  description: 'Generate an image',
+                  path: '/skills/imagegen/SKILL.md',
+                  scope: 'system',
+                  enabled: true
+                }
+              ],
+              errors: []
+            }
+          ]
+        })
+      }
+      ;(impl as any).manager = manager
+      const mockWindow = {
+        isDestroyed: () => false,
+        webContents: { send: vi.fn() }
+      } as any
+      impl.setMainWindow(mockWindow)
+
+      await impl.listCommands('/path', 'thread-1')
+      ;(impl as any).handleManagerEvent({
+        id: 'skills-changed-1',
+        kind: 'notification',
+        provider: 'codex',
+        threadId: 'thread-1',
+        createdAt: new Date().toISOString(),
+        method: 'skills/changed',
+        payload: {}
+      })
+
+      await expect(impl.sendCommand('/path', 'thread-1', 'imagegen', 'a poster')).rejects.toThrow(
+        'Unsupported Codex command: /imagegen'
+      )
       expect(mockWindow.webContents.send).toHaveBeenCalledWith('opencode:stream', {
         type: 'session.commands_available',
         sessionId: 'hive-1',

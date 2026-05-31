@@ -69,7 +69,7 @@ describe('IPC Codex goal command routing', () => {
     expect(sdkManager.getImplementer).toHaveBeenCalledWith('codex')
     expect(codexImpl.listCommands).toHaveBeenCalledWith('/project', 'hive-1')
     expect(openCodeService.listCommands).not.toHaveBeenCalled()
-    expect(result.value).toEqual({
+    expect(result).toEqual({
       success: true,
       commands: [{ name: 'goal', template: '/goal ' }]
     })
@@ -110,6 +110,6 @@ describe('IPC Codex goal command routing', () => {
       { codexFastMode: true }
     )
     expect(openCodeService.sendCommand).not.toHaveBeenCalled()
-    expect(result.value).toEqual({ success: true })
+    expect(result).toEqual({ success: true })
   })
 })
