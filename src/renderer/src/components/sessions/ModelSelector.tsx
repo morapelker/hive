@@ -287,7 +287,12 @@ export const ModelSelector = memo(function ModelSelector({
       return model.providerID === 'anthropic' && model.id === 'claude-opus-4-5-20251101'
     }
     if (allowAgentSdkSelection && !selectedModel.agentSdk && agentSdkFilter === null) {
-      return selectedModel.providerID === model.providerID && selectedModel.modelID === model.id
+      const matchesModel =
+        selectedModel.providerID === model.providerID && selectedModel.modelID === model.id
+      if (!matchesModel) return false
+      return isModelAvailableForCurrentSdk(selectedModel.providerID, selectedModel.modelID)
+        ? model.agentSdk === agentSdk
+        : true
     }
     const selectedAgentSdk = selectedModel.agentSdk ?? agentSdk
     return (
@@ -302,10 +307,24 @@ export const ModelSelector = memo(function ModelSelector({
     const modelID = selectedModel?.modelID || 'claude-opus-4-5-20251101'
     const providerID = selectedModel?.providerID || 'anthropic'
     const selectedAgentSdk = selectedModel?.agentSdk ?? agentSdk
-    const sdkProviders =
-      allowAgentSdkSelection && selectedModel && !selectedModel.agentSdk && agentSdkFilter === null
-        ? providers
-        : providers.filter((provider) => provider.agentSdk === selectedAgentSdk)
+    if (
+      allowAgentSdkSelection &&
+      selectedModel &&
+      !selectedModel.agentSdk &&
+      agentSdkFilter === null
+    ) {
+      const currentSdkProviders = providers.filter((provider) => provider.agentSdk === agentSdk)
+      const currentSdkModel = findModelInfo(
+        currentSdkProviders,
+        providerID,
+        modelID
+      ) as SelectableModelInfo | null
+      if (currentSdkModel) return currentSdkModel
+
+      return findModelInfo(providers, providerID, modelID) as SelectableModelInfo | null
+    }
+
+    const sdkProviders = providers.filter((provider) => provider.agentSdk === selectedAgentSdk)
     return findModelInfo(sdkProviders, providerID, modelID) as SelectableModelInfo | null
   }, [selectedModel, providers, agentSdk, allowAgentSdkSelection, agentSdkFilter])
 

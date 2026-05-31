@@ -7,6 +7,22 @@ const mockSettingsDb = {
   set: vi.fn().mockResolvedValue({ success: true, value: undefined })
 }
 
+const opencodeProviders = [
+  {
+    id: 'anthropic',
+    name: 'Anthropic',
+    models: {
+      'sonnet-4.6': {
+        id: 'sonnet-4.6',
+        name: 'OpenCode Sonnet 4.6',
+        variants: {
+          low: {}
+        }
+      }
+    }
+  }
+]
+
 const claudeProviders = [
   {
     id: 'anthropic',
@@ -78,6 +94,10 @@ Object.defineProperty(window, 'opencodeOps', {
   configurable: true,
   value: {
     listModels: vi.fn().mockImplementation(async ({ agentSdk }: { agentSdk?: string } = {}) => {
+      if (agentSdk === 'opencode') {
+        return { success: true, value: { success: true, providers: opencodeProviders } }
+      }
+
       if (agentSdk === 'codex') {
         return { success: true, value: { success: true, providers: codexProviders } }
       }
@@ -131,6 +151,7 @@ describe('handoff model picker', () => {
       },
       lastHandoffOverride: null,
       defaultAgentSdk: 'claude-code',
+      showModelProvider: false,
       availableAgentSdks: {
         opencode: true,
         claude: true,
@@ -337,6 +358,34 @@ describe('handoff model picker', () => {
       modelID: 'gpt-5.5',
       variant: 'high'
     })
+  })
+
+  test('controlled model selector resolves SDK-agnostic defaults against the current SDK first', async () => {
+    useSettingsStore.setState({
+      showModelProvider: true,
+      defaultAgentSdk: 'claude-code'
+    })
+
+    render(
+      <ModelSelector
+        value={{
+          providerID: 'anthropic',
+          modelID: 'sonnet-4.6',
+          variant: 'high'
+        }}
+        onChange={vi.fn()}
+        allowAgentSdkSelection
+      />
+    )
+
+    await waitFor(() => {
+      expect(window.opencodeOps.listModels).toHaveBeenCalledWith({ agentSdk: 'opencode' })
+      expect(window.opencodeOps.listModels).toHaveBeenCalledWith({ agentSdk: 'claude-code' })
+    })
+
+    expect(await screen.findByText('Claude Code')).toBeInTheDocument()
+    expect(screen.getByTestId('model-selector')).toHaveTextContent('Sonnet 4.6')
+    expect(screen.getByTestId('model-selector')).not.toHaveTextContent('OpenCode Sonnet 4.6')
   })
 
   test('controlled model selector keeps agentSdk when selecting under a specific provider', async () => {
