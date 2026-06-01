@@ -28,26 +28,32 @@ describe('getCustomCommandsFilePath', () => {
 })
 
 describe('getFileModTime', () => {
-  it('should return null if file does not exist', async () => {
-    const result = await getFileModTime('/nonexistent/path/to/file.json')
+  it('should return null if file does not exist', () => {
+    vi.mocked(app.getPath).mockReturnValue('/nonexistent')
+
+    const result = getFileModTime()
 
     expect(result).toBeNull()
   })
 
-  it('should return mtime if file exists', async () => {
+  it('should return mtime in milliseconds if file exists', async () => {
     const fs = await import('fs/promises')
     const os = await import('os')
     const path = await import('path')
 
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'custom-commands-test-'))
-    const testFile = path.join(tempDir, 'test.json')
+    const hiveDir = path.join(tempDir, '.hive')
+    await fs.mkdir(hiveDir, { recursive: true })
+    const testFile = path.join(hiveDir, 'custom-commands.json')
 
     try {
       await fs.writeFile(testFile, '{}')
-      const result = await getFileModTime(testFile)
+      vi.mocked(app.getPath).mockReturnValue(tempDir)
 
-      expect(result).toBeInstanceOf(Date)
-      expect(result!.getTime()).toBeGreaterThan(0)
+      const result = getFileModTime()
+
+      expect(typeof result).toBe('number')
+      expect(result).toBeGreaterThan(0)
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true })
     }
@@ -61,12 +67,16 @@ describe('createTemplateFile', () => {
     const path = await import('path')
 
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'custom-commands-test-'))
-    const testFile = path.join(tempDir, 'custom-commands.json')
+    const hiveDir = path.join(tempDir, '.hive')
+    const testFile = path.join(hiveDir, 'custom-commands.json')
 
     try {
-      const result = await createTemplateFile(testFile)
+      vi.mocked(app.getPath).mockReturnValue(tempDir)
+
+      const result = createTemplateFile()
 
       expect(result.success).toBe(true)
+      expect(result.created).toBe(true)
 
       // Verify file exists and has correct content
       const content = await fs.readFile(testFile, 'utf-8')
@@ -86,22 +96,27 @@ describe('createTemplateFile', () => {
     }
   })
 
-  it('should not overwrite existing file', async () => {
+  it('should return success with created=false when file exists', async () => {
     const fs = await import('fs/promises')
     const os = await import('os')
     const path = await import('path')
 
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'custom-commands-test-'))
-    const testFile = path.join(tempDir, 'custom-commands.json')
+    const hiveDir = path.join(tempDir, '.hive')
+    await fs.mkdir(hiveDir, { recursive: true })
+    const testFile = path.join(hiveDir, 'custom-commands.json')
 
     try {
       const existingContent = '[]'
       await fs.writeFile(testFile, existingContent)
 
-      const result = await createTemplateFile(testFile)
+      vi.mocked(app.getPath).mockReturnValue(tempDir)
 
-      expect(result.success).toBe(false)
-      expect(result.error).toContain('already exists')
+      const result = createTemplateFile()
+
+      expect(result.success).toBe(true)
+      expect(result.created).toBe(false)
+      expect(result.error).toBeUndefined()
 
       // Verify file was not modified
       const content = await fs.readFile(testFile, 'utf-8')
@@ -111,29 +126,37 @@ describe('createTemplateFile', () => {
     }
   })
 
-  it('should handle directory creation errors', async () => {
-    const result = await createTemplateFile('/root/cannot-write-here/custom-commands.json')
+  it('should handle directory creation errors', () => {
+    vi.mocked(app.getPath).mockReturnValue('/root/cannot-write-here')
+
+    const result = createTemplateFile()
 
     expect(result.success).toBe(false)
+    expect(result.created).toBe(false)
     expect(result.error).toBeDefined()
   })
 })
 
 describe('loadCustomCommandsFromFile', () => {
-  it('should return empty array if file does not exist', async () => {
-    const result = await loadCustomCommandsFromFile('/nonexistent/path/to/file.json')
+  it('should return empty array with mtime null if file does not exist', () => {
+    vi.mocked(app.getPath).mockReturnValue('/nonexistent')
+
+    const result = loadCustomCommandsFromFile()
 
     expect(result.success).toBe(true)
     expect(result.commands).toEqual([])
+    expect(result.mtime).toBeNull()
   })
 
-  it('should load and return valid commands', async () => {
+  it('should load and return valid commands with mtime', async () => {
     const fs = await import('fs/promises')
     const os = await import('os')
     const path = await import('path')
 
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'custom-commands-test-'))
-    const testFile = path.join(tempDir, 'test.json')
+    const hiveDir = path.join(tempDir, '.hive')
+    await fs.mkdir(hiveDir, { recursive: true })
+    const testFile = path.join(hiveDir, 'custom-commands.json')
 
     try {
       const validCommands = [
@@ -142,10 +165,14 @@ describe('loadCustomCommandsFromFile', () => {
       ]
       await fs.writeFile(testFile, JSON.stringify(validCommands))
 
-      const result = await loadCustomCommandsFromFile(testFile)
+      vi.mocked(app.getPath).mockReturnValue(tempDir)
+
+      const result = loadCustomCommandsFromFile()
 
       expect(result.success).toBe(true)
       expect(result.commands).toEqual(validCommands)
+      expect(typeof result.mtime).toBe('number')
+      expect(result.mtime).toBeGreaterThan(0)
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true })
     }
@@ -157,12 +184,16 @@ describe('loadCustomCommandsFromFile', () => {
     const path = await import('path')
 
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'custom-commands-test-'))
-    const testFile = path.join(tempDir, 'test.json')
+    const hiveDir = path.join(tempDir, '.hive')
+    await fs.mkdir(hiveDir, { recursive: true })
+    const testFile = path.join(hiveDir, 'custom-commands.json')
 
     try {
       await fs.writeFile(testFile, '{ invalid json }')
 
-      const result = await loadCustomCommandsFromFile(testFile)
+      vi.mocked(app.getPath).mockReturnValue(tempDir)
+
+      const result = loadCustomCommandsFromFile()
 
       expect(result.success).toBe(false)
       expect(result.error).toContain('Invalid JSON')
@@ -177,15 +208,19 @@ describe('loadCustomCommandsFromFile', () => {
     const path = await import('path')
 
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'custom-commands-test-'))
-    const testFile = path.join(tempDir, 'test.json')
+    const hiveDir = path.join(tempDir, '.hive')
+    await fs.mkdir(hiveDir, { recursive: true })
+    const testFile = path.join(hiveDir, 'custom-commands.json')
 
     try {
       await fs.writeFile(testFile, JSON.stringify({ notAnArray: true }))
 
-      const result = await loadCustomCommandsFromFile(testFile)
+      vi.mocked(app.getPath).mockReturnValue(tempDir)
+
+      const result = loadCustomCommandsFromFile()
 
       expect(result.success).toBe(false)
-      expect(result.error).toContain('must be an array')
+      expect(result.error).toContain('must contain a JSON array')
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true })
     }
@@ -197,7 +232,9 @@ describe('loadCustomCommandsFromFile', () => {
     const path = await import('path')
 
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'custom-commands-test-'))
-    const testFile = path.join(tempDir, 'test.json')
+    const hiveDir = path.join(tempDir, '.hive')
+    await fs.mkdir(hiveDir, { recursive: true })
+    const testFile = path.join(hiveDir, 'custom-commands.json')
 
     try {
       const mixedCommands = [
@@ -208,12 +245,14 @@ describe('loadCustomCommandsFromFile', () => {
       ]
       await fs.writeFile(testFile, JSON.stringify(mixedCommands))
 
-      const result = await loadCustomCommandsFromFile(testFile)
+      vi.mocked(app.getPath).mockReturnValue(tempDir)
+
+      const result = loadCustomCommandsFromFile()
 
       expect(result.success).toBe(true)
       expect(result.commands).toHaveLength(2)
-      expect(result.commands[0].id).toBe('cmd-1')
-      expect(result.commands[1].id).toBe('cmd-3')
+      expect(result.commands![0].id).toBe('cmd-1')
+      expect(result.commands![1].id).toBe('cmd-3')
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true })
     }
@@ -225,7 +264,9 @@ describe('loadCustomCommandsFromFile', () => {
     const path = await import('path')
 
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'custom-commands-test-'))
-    const testFile = path.join(tempDir, 'test.json')
+    const hiveDir = path.join(tempDir, '.hive')
+    await fs.mkdir(hiveDir, { recursive: true })
+    const testFile = path.join(hiveDir, 'custom-commands.json')
 
     try {
       // Create a file larger than 1MB
@@ -233,7 +274,9 @@ describe('loadCustomCommandsFromFile', () => {
       const repeatedContent = largeContent.repeat(150) // Create ~1.5MB file
       await fs.writeFile(testFile, repeatedContent)
 
-      const result = await loadCustomCommandsFromFile(testFile)
+      vi.mocked(app.getPath).mockReturnValue(tempDir)
+
+      const result = loadCustomCommandsFromFile()
 
       expect(result.success).toBe(false)
       expect(result.error).toContain('too large')
@@ -242,13 +285,14 @@ describe('loadCustomCommandsFromFile', () => {
     }
   })
 
-  it('should handle permission errors', async () => {
-    // This test attempts to read a file without read permission
-    // On some systems this might not work as expected
-    const result = await loadCustomCommandsFromFile('/root/no-permission.json')
+  it('should return empty array if file does not exist in home directory', () => {
+    vi.mocked(app.getPath).mockReturnValue('/some/nonexistent/path')
 
-    // Either file doesn't exist (returns empty array) or permission denied
+    const result = loadCustomCommandsFromFile()
+
+    // Either file doesn't exist (returns empty array)
     expect(result.success).toBe(true)
     expect(result.commands).toEqual([])
+    expect(result.mtime).toBeNull()
   })
 })
