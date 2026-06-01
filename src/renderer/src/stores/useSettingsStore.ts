@@ -230,6 +230,8 @@ const DEFAULT_SETTINGS: AppSettings = {
     petId: 'bee',
     size: 'M',
     opacity: 1,
+    animationSpeedEnabled: false,
+    animationSpeed: 5,
     hasHatched: false
   },
   environmentVariables: [],
@@ -559,7 +561,11 @@ export const useSettingsStore = create<SettingsState>()(
         }
         set({ selectedModelByProvider: current })
         // Push to backend only for SDKs with a structured implementer.
-        if (agentSdk !== 'terminal' && agentSdk !== 'claude-code-cli' && !options?.skipBackendPush) {
+        if (
+          agentSdk !== 'terminal' &&
+          agentSdk !== 'claude-code-cli' &&
+          !options?.skipBackendPush
+        ) {
           try {
             unwrapEnvelope(await window.opencodeOps.setModel(model ? { ...model, agentSdk } : null))
           } catch (error) {

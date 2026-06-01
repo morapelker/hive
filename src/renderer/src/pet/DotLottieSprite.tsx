@@ -31,15 +31,19 @@ export function DotLottieSprite({
   fallbackSrc,
   scale,
   size,
+  speed = 1,
   state
 }: {
   src: string
   fallbackSrc: string
   scale: number
   size: number
+  speed?: number
   state: string
 }): React.JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const playerRef = useRef<DotLottie | null>(null)
+  const speedRef = useRef(speed)
   const [hasRendered, setHasRendered] = useState(false)
 
   useEffect(() => {
@@ -68,6 +72,8 @@ export function DotLottieSprite({
             freezeOnOffscreen: false
           }
         })
+        playerRef.current = player
+        player.setSpeed(speedRef.current)
 
         player.addEventListener('render', () => {
           requestAnimationFrame(() => {
@@ -83,9 +89,15 @@ export function DotLottieSprite({
 
     return () => {
       cancelled = true
+      playerRef.current = null
       player?.destroy()
     }
   }, [src])
+
+  useEffect(() => {
+    speedRef.current = speed
+    playerRef.current?.setSpeed(speed)
+  }, [speed])
 
   return (
     <span className="pet-lottie-stage">

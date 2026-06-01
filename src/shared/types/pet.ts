@@ -6,12 +6,15 @@ export interface PetSettings {
   petId: string
   size: PetSize
   opacity: number
+  animationSpeedEnabled: boolean
+  animationSpeed: number
   hasHatched: boolean
 }
 
 export interface PetStatusPayload {
   state: PetState
   sourceWorktreeId: string | null
+  workingSessionCount: number
 }
 
 export interface PetManifest {

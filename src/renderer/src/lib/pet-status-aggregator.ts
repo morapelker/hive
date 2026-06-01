@@ -23,6 +23,8 @@ const PET_STATE_BY_STATUS: Record<SessionStatusType, PetState> = {
   unread: 'idle'
 }
 
+const WORKING_SESSION_STATUSES = new Set<SessionStatusType>(['working', 'planning'])
+
 type SessionRef = { id: string }
 type ConnectionRef = { id: string; members: Array<{ worktree_id: string }> }
 
@@ -63,6 +65,9 @@ function chooseBetter(current: Candidate | null, next: Candidate): Candidate {
 
 export function aggregatePetStatus(input: PetAggregateInput): PetStatusPayload {
   let best: Candidate | null = null
+  const workingSessionCount = Object.values(input.sessionStatuses).filter((entry) =>
+    entry?.status ? WORKING_SESSION_STATUSES.has(entry.status) : false
+  ).length
 
   for (const [worktreeId, sessions] of input.worktreeSessions.entries()) {
     const status = bestStatusForSessions(sessions, input.sessionStatuses)
@@ -85,11 +90,12 @@ export function aggregatePetStatus(input: PetAggregateInput): PetStatusPayload {
     })
   }
 
-  if (!best) return { state: 'idle', sourceWorktreeId: null }
+  if (!best) return { state: 'idle', sourceWorktreeId: null, workingSessionCount }
 
   const state = PET_STATE_BY_STATUS[best.status]
   return {
     state,
-    sourceWorktreeId: state === 'idle' ? null : best.sourceWorktreeId
+    sourceWorktreeId: state === 'idle' ? null : best.sourceWorktreeId,
+    workingSessionCount
   }
 }
