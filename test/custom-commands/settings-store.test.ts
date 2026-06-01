@@ -13,6 +13,8 @@ function installSettingsRpcMock(settingsValue: string | null = null): void {
           return settingsValue
         case 'db.setting.set':
           return true
+        case 'settingsOps.loadCustomCommandsFile':
+          return { success: true, commands: [], mtime: null }
         case 'telegramOps.getConfig':
           return null
         default:
