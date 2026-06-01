@@ -23,7 +23,6 @@ import { systemApi } from '@/api/system-api'
 import { worktreeApi } from '@/api/worktree-api'
 import { projectApi } from '@/api/project-api'
 import { settingsApi } from '@/api/settings-api'
-import type { CustomProjectCommand } from '@/lib/custom-commands'
 
 /**
  * Hook that registers all available commands and returns filtered commands
