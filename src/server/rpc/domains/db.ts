@@ -202,6 +202,11 @@ const projectCreateParamsSchema = z.object({
   run_script: z.string().nullable().optional(),
   archive_script: z.string().nullable().optional()
 }) satisfies z.ZodType<ProjectCreate>
+const customProjectCommandSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  prompt: z.string()
+})
 const projectUpdateDataSchema = z.object({
   name: z.string().optional(),
   description: z.string().nullable().optional(),
@@ -212,6 +217,7 @@ const projectUpdateDataSchema = z.object({
   setup_script: z.string().nullable().optional(),
   run_script: z.string().nullable().optional(),
   archive_script: z.string().nullable().optional(),
+  custom_commands: z.array(customProjectCommandSchema).nullable().optional(),
   auto_assign_port: z.boolean().optional(),
   last_accessed_at: z.string().optional()
 }) satisfies z.ZodType<ProjectUpdate>

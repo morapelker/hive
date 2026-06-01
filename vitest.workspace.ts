@@ -42,7 +42,11 @@ export default defineWorkspace([
       name: 'renderer',
       environment: 'jsdom',
       testTimeout: 30000,
-      include: ['test/**/*.test.{ts,tsx}', 'src/renderer/src/**/*.test.{ts,tsx}'],
+      include: [
+        'test/**/*.test.{ts,tsx}',
+        'src/renderer/src/**/*.test.{ts,tsx}',
+        'src/shared/**/*.test.{ts,tsx}'
+      ],
       exclude: [
         'test/session-3/**/*.test.ts',
         'test/session-7/**/*.test.ts',

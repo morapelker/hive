@@ -4,6 +4,7 @@ import { useKanbanStore } from './useKanbanStore'
 import { LANGUAGE_MAP } from '@/components/projects/LanguageIcon'
 import { dbApi } from '@/api/db-api'
 import { projectApi } from '@/api/project-api'
+import type { CustomProjectCommand } from '@/lib/custom-commands'
 
 // Project type matching the database schema
 interface Project {
@@ -18,6 +19,7 @@ interface Project {
   setup_script: string | null
   run_script: string | null
   archive_script: string | null
+  custom_commands: CustomProjectCommand[] | null
   auto_assign_port: boolean
   sort_order: number
   created_at: string
@@ -57,6 +59,7 @@ interface ProjectState {
       setup_script?: string | null
       run_script?: string | null
       archive_script?: string | null
+      custom_commands?: CustomProjectCommand[] | null
       auto_assign_port?: boolean
     }
   ) => Promise<boolean>
@@ -255,6 +258,7 @@ export const useProjectStore = create<ProjectState>()(
           setup_script?: string | null
           run_script?: string | null
           archive_script?: string | null
+          custom_commands?: CustomProjectCommand[] | null
           auto_assign_port?: boolean
         }
       ) => {

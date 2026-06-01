@@ -13,10 +13,13 @@ import {
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { CustomCommandsEditor } from '@/components/custom-commands/CustomCommandsEditor'
 import { useProjectStore } from '@/stores'
 import { LanguageIcon } from './LanguageIcon'
 import { SetupScriptSuggestionsDialog } from './SetupScriptSuggestionsDialog'
 import { projectApi } from '@/api/project-api'
+import type { CustomProjectCommand } from '@/lib/custom-commands'
 
 interface Project {
   id: string
@@ -28,6 +31,7 @@ interface Project {
   setup_script: string | null
   run_script: string | null
   archive_script: string | null
+  custom_commands: CustomProjectCommand[] | null
   auto_assign_port: boolean
   is_remote?: boolean
 }
@@ -49,6 +53,7 @@ export function ProjectSettingsDialog({
   const [runScript, setRunScript] = useState('')
   const [archiveScript, setArchiveScript] = useState('')
   const [customIcon, setCustomIcon] = useState<string | null>(null)
+  const [customCommands, setCustomCommands] = useState<CustomProjectCommand[]>([])
   const [autoAssignPort, setAutoAssignPort] = useState(false)
   const [saving, setSaving] = useState(false)
   const [pickingIcon, setPickingIcon] = useState(false)
@@ -62,6 +67,7 @@ export function ProjectSettingsDialog({
       setRunScript(project.run_script ?? '')
       setArchiveScript(project.archive_script ?? '')
       setCustomIcon(project.custom_icon ?? null)
+      setCustomCommands(project.custom_commands ?? [])
       setAutoAssignPort(project.auto_assign_port ?? false)
       setSuggestionsOpen(false)
 
@@ -99,6 +105,7 @@ export function ProjectSettingsDialog({
     project.run_script,
     project.archive_script,
     project.custom_icon,
+    project.custom_commands,
     project.auto_assign_port
   ])
 
@@ -133,6 +140,9 @@ export function ProjectSettingsDialog({
         setup_script: setupScript.trim() || null,
         run_script: runScript.trim() || null,
         archive_script: archiveScript.trim() || null,
+        custom_commands: customCommands.filter(
+          (command) => command.name.trim() !== '' && command.prompt.trim() !== ''
+        ),
         custom_icon: customIcon,
         auto_assign_port: autoAssignPort
       })
@@ -164,122 +174,134 @@ export function ProjectSettingsDialog({
             <DialogDescription className="text-xs truncate">{project.path}</DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-5">
-            {/* Project Icon */}
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium">Project Icon</label>
-              <p className="text-xs text-muted-foreground">
-                Custom icon displayed in the sidebar. Supports SVG, PNG, JPG, and WebP.
-              </p>
-              <div className="flex items-center gap-3">
-                <div className="h-8 w-8 flex items-center justify-center rounded-md border border-border bg-muted/30">
-                  <LanguageIcon
-                    language={project.language}
-                    customIcon={customIcon}
-                    detectedIcon={project.detected_icon}
-                    className="h-5 w-5 text-muted-foreground shrink-0"
-                  />
-                </div>
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-7 text-xs"
-                    onClick={handlePickIcon}
-                    disabled={pickingIcon}
-                  >
-                    <ImageIcon className="h-3 w-3 mr-1.5" />
-                    {pickingIcon ? 'Picking...' : 'Change'}
-                  </Button>
-                  {customIcon && (
+          <Tabs defaultValue="general">
+            <TabsList>
+              <TabsTrigger value="general">General</TabsTrigger>
+              <TabsTrigger value="custom-commands">Custom Commands</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="general" className="space-y-5">
+              {/* Project Icon */}
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium">Project Icon</label>
+                <p className="text-xs text-muted-foreground">
+                  Custom icon displayed in the sidebar. Supports SVG, PNG, JPG, and WebP.
+                </p>
+                <div className="flex items-center gap-3">
+                  <div className="h-8 w-8 flex items-center justify-center rounded-md border border-border bg-muted/30">
+                    <LanguageIcon
+                      language={project.language}
+                      customIcon={customIcon}
+                      detectedIcon={project.detected_icon}
+                      className="h-5 w-5 text-muted-foreground shrink-0"
+                    />
+                  </div>
+                  <div className="flex gap-2">
                     <Button
                       variant="outline"
                       size="sm"
                       className="h-7 text-xs"
-                      onClick={handleClearIcon}
+                      onClick={handlePickIcon}
+                      disabled={pickingIcon}
                     >
-                      <X className="h-3 w-3 mr-1.5" />
-                      Clear
+                      <ImageIcon className="h-3 w-3 mr-1.5" />
+                      {pickingIcon ? 'Picking...' : 'Change'}
+                    </Button>
+                    {customIcon && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-xs"
+                        onClick={handleClearIcon}
+                      >
+                        <X className="h-3 w-3 mr-1.5" />
+                        Clear
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Auto Port Assignment */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="text-sm font-medium">Auto-assign Port</label>
+                    <p className="text-xs text-muted-foreground">
+                      Assign a unique port to each worktree and inject PORT into run/setup scripts.
+                      Ports start at 3011.
+                    </p>
+                  </div>
+                  <Switch checked={autoAssignPort} onCheckedChange={setAutoAssignPort} />
+                </div>
+              </div>
+
+              {/* Setup Script */}
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <label className="text-sm font-medium">Setup Script</label>
+                  {suggestions.length > 0 && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
+                      onClick={() => setSuggestionsOpen(true)}
+                      aria-label="Suggest setup script commands"
+                      title="Suggest setup script commands"
+                    >
+                      <Brain className="h-3.5 w-3.5" />
                     </Button>
                   )}
                 </div>
+                <p className="text-xs text-muted-foreground">
+                  Commands to run when a new worktree is initialized. Each line is a separate
+                  command.
+                </p>
+                <Textarea
+                  value={setupScript}
+                  onChange={(e) => setSetupScript(e.target.value)}
+                  placeholder={'pnpm install\npnpm run build'}
+                  rows={4}
+                  className="font-mono text-sm resize-y"
+                />
               </div>
-            </div>
 
-            {/* Auto Port Assignment */}
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <div>
-                  <label className="text-sm font-medium">Auto-assign Port</label>
-                  <p className="text-xs text-muted-foreground">
-                    Assign a unique port to each worktree and inject PORT into run/setup scripts.
-                    Ports start at 3011.
-                  </p>
-                </div>
-                <Switch checked={autoAssignPort} onCheckedChange={setAutoAssignPort} />
+              {/* Run Script */}
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium">Run Script</label>
+                <p className="text-xs text-muted-foreground">
+                  Commands triggered by {'\u2318'}R. Press {'\u2318'}R again while running to stop.
+                </p>
+                <Textarea
+                  value={runScript}
+                  onChange={(e) => setRunScript(e.target.value)}
+                  placeholder={'pnpm run dev'}
+                  rows={4}
+                  className="font-mono text-sm resize-y"
+                />
               </div>
-            </div>
 
-            {/* Setup Script */}
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-2">
-                <label className="text-sm font-medium">Setup Script</label>
-                {suggestions.length > 0 && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
-                    onClick={() => setSuggestionsOpen(true)}
-                    aria-label="Suggest setup script commands"
-                    title="Suggest setup script commands"
-                  >
-                    <Brain className="h-3.5 w-3.5" />
-                  </Button>
-                )}
+              {/* Archive Script */}
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium">Archive Script</label>
+                <p className="text-xs text-muted-foreground">
+                  Commands to run before worktree archival. Failures won't block archival.
+                </p>
+                <Textarea
+                  value={archiveScript}
+                  onChange={(e) => setArchiveScript(e.target.value)}
+                  placeholder={'pnpm run clean'}
+                  rows={4}
+                  className="font-mono text-sm resize-y"
+                />
               </div>
-              <p className="text-xs text-muted-foreground">
-                Commands to run when a new worktree is initialized. Each line is a separate command.
-              </p>
-              <Textarea
-                value={setupScript}
-                onChange={(e) => setSetupScript(e.target.value)}
-                placeholder={'pnpm install\npnpm run build'}
-                rows={4}
-                className="font-mono text-sm resize-y"
-              />
-            </div>
+            </TabsContent>
 
-            {/* Run Script */}
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium">Run Script</label>
-              <p className="text-xs text-muted-foreground">
-                Commands triggered by {'\u2318'}R. Press {'\u2318'}R again while running to stop.
-              </p>
-              <Textarea
-                value={runScript}
-                onChange={(e) => setRunScript(e.target.value)}
-                placeholder={'pnpm run dev'}
-                rows={4}
-                className="font-mono text-sm resize-y"
-              />
-            </div>
-
-            {/* Archive Script */}
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium">Archive Script</label>
-              <p className="text-xs text-muted-foreground">
-                Commands to run before worktree archival. Failures won't block archival.
-              </p>
-              <Textarea
-                value={archiveScript}
-                onChange={(e) => setArchiveScript(e.target.value)}
-                placeholder={'pnpm run clean'}
-                rows={4}
-                className="font-mono text-sm resize-y"
-              />
-            </div>
-          </div>
+            <TabsContent value="custom-commands">
+              <CustomCommandsEditor value={customCommands} onChange={setCustomCommands} />
+            </TabsContent>
+          </Tabs>
 
           <DialogFooter>
             <Button variant="outline" onClick={() => onOpenChange(false)}>

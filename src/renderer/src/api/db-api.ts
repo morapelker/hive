@@ -3,6 +3,7 @@ import type { SessionSearchOptions } from '@shared/types/session'
 import type { Setting } from '@shared/types/settings'
 import type { ProjectSpaceAssignment, Space } from '@shared/types/space'
 import type { Worktree } from '@shared/types/worktree'
+import type { CustomProjectCommand } from '@shared/lib/custom-commands'
 
 type SpaceCreateData = {
   name: string
@@ -46,6 +47,7 @@ type ProjectCreateData = {
   setup_script?: string | null
   run_script?: string | null
   archive_script?: string | null
+  custom_commands?: CustomProjectCommand[] | null
 }
 
 type ProjectUpdateData = {
@@ -58,6 +60,7 @@ type ProjectUpdateData = {
   setup_script?: string | null
   run_script?: string | null
   archive_script?: string | null
+  custom_commands?: CustomProjectCommand[] | null
   auto_assign_port?: boolean
   last_accessed_at?: string
 }
