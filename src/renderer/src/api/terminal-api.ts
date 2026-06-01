@@ -91,7 +91,7 @@ export const terminalApi = {
     try {
       await getRendererRpcClient().request<void>('terminalOps.write', {
         terminalId: sessionId,
-        data: `${prompt}\r`
+        data: `\x1b[200~${prompt}\x1b[201~\r`
       })
       return { success: true, value: { delivered: true } }
     } catch {

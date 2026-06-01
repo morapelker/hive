@@ -80,7 +80,7 @@ describe('terminalApi', () => {
     })
     expect(request).toHaveBeenCalledWith('terminalOps.write', {
       terminalId: 'session-1',
-      data: 'continue\r'
+      data: '\x1b[200~continue\x1b[201~\r'
     })
   })
 
@@ -96,7 +96,7 @@ describe('terminalApi', () => {
     })
     expect(request).toHaveBeenCalledWith('terminalOps.write', {
       terminalId: 'session-1',
-      data: 'continue\r'
+      data: '\x1b[200~continue\x1b[201~\r'
     })
   })
 

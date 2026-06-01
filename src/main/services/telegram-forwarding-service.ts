@@ -10,12 +10,15 @@ import {
   TELEGRAM_STATUS_CHANGED_CHANNEL,
   type TelegramPlanImplementRequestedPayload
 } from '@shared/telegram-events'
+import { isClaudeCli } from '@shared/types/agent-sdk'
 import { openCodeService } from './opencode-service'
 import { ClaudeCodeImplementer } from './claude-code-implementer'
 import { CodexImplementer } from './codex-implementer'
 import type { AgentSdkManager } from './agent-sdk-manager'
 import type { DatabaseService } from '../db/database'
 import { agentEventBus } from './agent-event-bus'
+import { claudeCliTelegramBridge } from './claude-cli-telegram-bridge'
+import { writeClaudeCliPrompt } from './claude-cli-pty-prompt'
 
 const TELEGRAM_CONFIG_KEY = 'telegram_config'
 const MAX_TELEGRAM_TEXT = 4096
@@ -211,12 +214,20 @@ export class TelegramForwardingService {
   private callbackRequestIds = new Map<string, string>()
   private unsubscribeBus: (() => void) | null = null
   private backendEventPublisher: BackendEventPublisher | null = null
+  private unsubscribeBridge: (() => void) | null = null
 
   initialize(opts: { db: DatabaseService; sdkManager: AgentSdkManager }): void {
     this.db = opts.db
     this.sdkManager = opts.sdkManager
     if (!this.unsubscribeBus) {
       this.unsubscribeBus = agentEventBus.subscribe((event) => {
+        void this.handleAgentEvent(event)
+      })
+    }
+    // Claude CLI hook events arrive on the bridge's private channel (not the
+    // renderer-visible agentEventBus), routed through the same handler.
+    if (!this.unsubscribeBridge) {
+      this.unsubscribeBridge = claudeCliTelegramBridge.subscribe((event) => {
         void this.handleAgentEvent(event)
       })
     }
@@ -231,6 +242,8 @@ export class TelegramForwardingService {
     this.cancelAssistantFlush()
     this.unsubscribeBus?.()
     this.unsubscribeBus = null
+    this.unsubscribeBridge?.()
+    this.unsubscribeBridge = null
   }
 
   getConfig(): TelegramConfig | null {
@@ -342,6 +355,13 @@ export class TelegramForwardingService {
       firstFailureSurfaced: false
     }
 
+    // Claude CLI sessions have no SDK implementer to route answers to; the bridge
+    // intercepts their hooks instead. Only intercept while forwarding is enabled.
+    const session = this.db?.getSession(params.sessionId)
+    if (session && isClaudeCli(session.agent_sdk)) {
+      claudeCliTelegramBridge.register(params.sessionId)
+    }
+
     const label = this.getSessionLabel(params.sessionId)
     const verb =
       previous && previous.sessionId !== params.sessionId
@@ -360,6 +380,11 @@ export class TelegramForwardingService {
     const cfg = this.getConfig()
     const state = this.state
     if (!state) return this.getStatus()
+
+    // Unblock any held CLI hook (resolves with `{}` → CLI falls back to its
+    // terminal prompt) and stop intercepting this session. Covers manual stop,
+    // move (handoff), replace, and session-ended.
+    claudeCliTelegramBridge.cancelSession(state.sessionId)
 
     this.stopPolling()
     this.cancelAssistantFlush()
@@ -752,6 +777,10 @@ export class TelegramForwardingService {
     answers: string[][],
     worktreePath?: string
   ): Promise<void> {
+    if (claudeCliTelegramBridge.hasPendingQuestion(requestId)) {
+      claudeCliTelegramBridge.resolveQuestion(requestId, answers)
+      return
+    }
     if (this.sdkManager) {
       const claudeImpl = this.sdkManager.getImplementer('claude-code') as ClaudeCodeImplementer
       if (claudeImpl.hasPendingQuestion(requestId)) {
@@ -892,6 +921,15 @@ export class TelegramForwardingService {
 
   private async requestPlanHandoff(interaction: TrackedInteraction): Promise<void> {
     if (!this.state) return
+    // For a CLI session the ExitPlanMode hook is held open; resolve it (deny) so
+    // the original session parks while the handoff spawns a new session below.
+    if (claudeCliTelegramBridge.hasPendingPlan(interaction.requestId)) {
+      claudeCliTelegramBridge.resolvePlan(
+        interaction.requestId,
+        false,
+        'Plan handed off to a new session'
+      )
+    }
     const payload: TelegramPlanImplementRequestedPayload = {
       sessionId: this.state.sessionId,
       worktreeId: this.state.worktreeId ?? null,
@@ -903,6 +941,10 @@ export class TelegramForwardingService {
   }
 
   private async rejectPlan(interaction: TrackedInteraction, feedback: string): Promise<void> {
+    if (claudeCliTelegramBridge.hasPendingPlan(interaction.requestId)) {
+      claudeCliTelegramBridge.resolvePlan(interaction.requestId, false, feedback)
+      return
+    }
     const state = this.state
     const impl = this.sdkManager?.getImplementer('claude-code')
     if (
@@ -924,6 +966,10 @@ export class TelegramForwardingService {
   private async approvePlan(interaction: TrackedInteraction): Promise<void> {
     const state = this.state
     if (!state) return
+    if (claudeCliTelegramBridge.hasPendingPlan(interaction.requestId)) {
+      claudeCliTelegramBridge.resolvePlan(interaction.requestId, true)
+      return
+    }
     const impl = this.sdkManager?.getImplementer('claude-code')
     if (
       impl instanceof ClaudeCodeImplementer &&
@@ -990,8 +1036,18 @@ export class TelegramForwardingService {
     const state = this.state
     if (!state) return
     const session = this.db?.getSession(state.sessionId)
+    if (!session) throw new Error('Active session not found')
+
+    // CLI sessions have no implementer; inject the prompt straight into the PTY.
+    if (isClaudeCli(session.agent_sdk)) {
+      const { delivered } = writeClaudeCliPrompt(state.sessionId, text)
+      // No live PTY yet — keep it queued for the next idle flush (best-effort).
+      if (!delivered) state.pendingQueuedPrompt = text
+      return
+    }
+
     const workspacePath = this.getSessionWorkspacePath()
-    if (!session || !workspacePath) throw new Error('Active session not found')
+    if (!workspacePath) throw new Error('Active session not found')
     const agentSessionId = session.opencode_session_id ?? state.sessionId
     const parts = [{ type: 'text' as const, text }]
 
