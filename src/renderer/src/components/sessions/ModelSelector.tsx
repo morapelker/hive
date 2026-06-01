@@ -21,6 +21,7 @@ import {
   type HandoffAgentSdk
 } from '@/stores/useSettingsStore'
 import { useSessionStore } from '@/stores/useSessionStore'
+import { toModelCatalogSdk } from '@shared/types/agent-sdk'
 import { toast } from '@/lib/toast'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { opencodeApi } from '@/api/opencode-api'
@@ -123,7 +124,7 @@ export const ModelSelector = memo(function ModelSelector({
         setIsLoading(true)
         const catalogs = await Promise.all(
           catalogAgentSdks.map(async (sdk) => {
-            const listModelsSdk = sdk === 'claude-code-cli' ? 'claude-code' : sdk
+            const listModelsSdk = toModelCatalogSdk(sdk)
             const result = unwrapEnvelope(await opencodeApi.listModels({ agentSdk: listModelsSdk }))
             if (!result.success || !result.providers) return []
             const parsed = parseProviders(result.providers)

@@ -68,6 +68,38 @@ describe('terminalApi', () => {
     })
   })
 
+  it('delivers Claude CLI prompts through terminal writes', async () => {
+    const request = vi.fn().mockResolvedValue(undefined)
+    const subscribe = vi.fn()
+
+    setRendererRpcClient({ request, subscribe })
+
+    await expect(terminalApi.sendClaudeCliPrompt('session-1', 'continue')).resolves.toEqual({
+      success: true,
+      value: { delivered: true }
+    })
+    expect(request).toHaveBeenCalledWith('terminalOps.write', {
+      terminalId: 'session-1',
+      data: 'continue\r'
+    })
+  })
+
+  it('reports undelivered Claude CLI prompts when the terminal write fails', async () => {
+    const request = vi.fn().mockRejectedValue(new Error('Terminal not found'))
+    const subscribe = vi.fn()
+
+    setRendererRpcClient({ request, subscribe })
+
+    await expect(terminalApi.sendClaudeCliPrompt('session-1', 'continue')).resolves.toEqual({
+      success: true,
+      value: { delivered: false }
+    })
+    expect(request).toHaveBeenCalledWith('terminalOps.write', {
+      terminalId: 'session-1',
+      data: 'continue\r'
+    })
+  })
+
   it('routes write through the renderer RPC client without returning a promise', () => {
     const request = vi.fn().mockResolvedValue(undefined)
     const subscribe = vi.fn()

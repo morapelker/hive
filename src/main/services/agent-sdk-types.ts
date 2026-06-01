@@ -1,4 +1,7 @@
-export type AgentSdkId = 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
+import type { AgentSdk } from '@shared/types/agent-sdk'
+
+/** Alias of the shared {@link AgentSdk} union, kept for the main-process implementer registry's naming. */
+export type AgentSdkId = AgentSdk
 
 export interface AgentSdkCapabilities {
   supportsUndo: boolean

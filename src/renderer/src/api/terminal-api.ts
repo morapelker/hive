@@ -84,6 +84,20 @@ export const terminalApi = {
     }>('terminalOps.createClaudeCli', { sessionId, opts })
     return { success: true, value: result }
   },
+  sendClaudeCliPrompt: async (
+    sessionId: string,
+    prompt: string
+  ): Promise<Envelope<{ delivered: boolean }>> => {
+    try {
+      await getRendererRpcClient().request<void>('terminalOps.write', {
+        terminalId: sessionId,
+        data: `${prompt}\r`
+      })
+      return { success: true, value: { delivered: true } }
+    } catch {
+      return { success: true, value: { delivered: false } }
+    }
+  },
   destroy: async (terminalId: string): Promise<Envelope<void>> => {
     await getRendererRpcClient().request<void>('terminalOps.destroy', { terminalId })
     return { success: true, value: undefined }

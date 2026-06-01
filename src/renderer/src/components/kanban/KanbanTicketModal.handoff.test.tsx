@@ -123,6 +123,44 @@ vi.mock('@/api/terminal-api', () => ({
   terminalApi: terminalApiMocks
 }))
 
+const opencodeApiMocks = vi.hoisted(() => ({
+  abort: vi.fn().mockResolvedValue({ success: true, value: { success: true } }),
+  commands: vi.fn().mockResolvedValue({ success: true, value: { success: true, commands: [] } }),
+  listModels: vi.fn().mockResolvedValue({ success: true, value: { success: true, providers: [] } })
+}))
+
+vi.mock('@/api/opencode-api', () => ({
+  opencodeApi: opencodeApiMocks
+}))
+
+const dbApiMocks = vi.hoisted(() => ({
+  session: {
+    get: vi.fn().mockResolvedValue(null),
+    update: vi.fn().mockResolvedValue({ success: true, value: undefined })
+  },
+  worktree: {
+    get: vi.fn().mockResolvedValue(null),
+    getActiveByProject: vi.fn().mockResolvedValue([]),
+    update: vi.fn().mockResolvedValue({ success: true, value: undefined })
+  },
+  setting: {
+    get: vi.fn().mockResolvedValue(null),
+    set: vi.fn().mockResolvedValue(undefined)
+  }
+}))
+
+vi.mock('@/api/db-api', () => ({
+  dbApi: dbApiMocks
+}))
+
+const gitApiMocks = vi.hoisted(() => ({
+  listBranchesWithStatus: vi.fn().mockResolvedValue({ success: true, branches: [] })
+}))
+
+vi.mock('@/api/git-api', () => ({
+  gitApi: gitApiMocks
+}))
+
 const sourceSession: Session = {
   id: 'source-session',
   worktree_id: 'worktree-1',
@@ -207,29 +245,23 @@ function setupWindowApis(): void {
   terminalApiMocks.createClaudeCli.mockResolvedValue({ success: true, value: { success: true } })
   terminalApiMocks.onClaudeSessionId.mockReturnValue(() => {})
 
-  Object.defineProperty(window, 'opencodeOps', {
-    configurable: true,
-    writable: true,
-    value: {
-      abort: vi.fn().mockResolvedValue({ success: true, value: { success: true } }),
-      commands: vi.fn().mockResolvedValue({ success: true, value: { success: true, commands: [] } }),
-      listModels: vi.fn().mockResolvedValue({ success: true, value: { success: true, providers: [] } })
-    }
+  opencodeApiMocks.abort.mockResolvedValue({ success: true, value: { success: true } })
+  opencodeApiMocks.commands.mockResolvedValue({
+    success: true,
+    value: { success: true, commands: [] }
   })
-
-  Object.defineProperty(window, 'db', {
-    configurable: true,
-    writable: true,
-    value: {
-      session: {
-        get: vi.fn().mockResolvedValue(null),
-        update: vi.fn().mockResolvedValue({ success: true, value: undefined })
-      },
-      worktree: {
-        get: vi.fn().mockResolvedValue(worktree)
-      }
-    }
+  opencodeApiMocks.listModels.mockResolvedValue({
+    success: true,
+    value: { success: true, providers: [] }
   })
+  dbApiMocks.session.get.mockResolvedValue(null)
+  dbApiMocks.session.update.mockResolvedValue({ success: true, value: undefined })
+  dbApiMocks.worktree.get.mockResolvedValue(worktree)
+  dbApiMocks.worktree.getActiveByProject.mockResolvedValue([])
+  dbApiMocks.worktree.update.mockResolvedValue({ success: true, value: undefined })
+  dbApiMocks.setting.get.mockResolvedValue(null)
+  dbApiMocks.setting.set.mockResolvedValue(undefined)
+  gitApiMocks.listBranchesWithStatus.mockResolvedValue({ success: true, branches: [] })
 }
 
 function setupStores(): {
@@ -357,8 +389,6 @@ describe('KanbanTicketModal handoff from Claude CLI plan review', () => {
     useKanbanStore.setState(initialKanbanState, true)
     useProjectStore.setState(initialProjectState, true)
     useWorktreeStatusStore.setState(initialWorktreeStatusState, true)
-    delete (window as { opencodeOps?: unknown }).opencodeOps
-    delete (window as { db?: unknown }).db
   })
 
   it('starts the Claude CLI handoff without focusing the new session', async () => {
@@ -472,6 +502,60 @@ describe('KanbanTicketModal handoff from Claude CLI plan review', () => {
 
     act(() => {
       useWorktreeStatusStore.getState().setSessionStatus(sourceSession.id, 'working')
+    })
+
+    await waitFor(() => {
+      expect(useKanbanStore.getState().selectedTicketId).toBeNull()
+    })
+  })
+
+  it('auto-closes a DB-loaded CLI question ticket even when working arrives before isClaudeCli resolves', async () => {
+    setupStores()
+    // Race setup: the session is NOT in the in-memory store, so `isClaudeCli`
+    // only becomes known after the async DB fallback (findSessionById) resolves.
+    // We hold that lookup open, flip answering→working while it's pending
+    // (isClaudeCli still false), then resolve it — the modal must still close.
+    useSessionStore.setState({
+      sessionsByWorktree: new Map(),
+      sessionsByConnection: new Map(),
+      hydrateSession: vi.fn(),
+      loadSessions: vi.fn(async () => undefined)
+    })
+    useKanbanStore.setState({
+      tickets: new Map([['project-1', [{ ...ticket, column: 'in_progress', plan_ready: false }]]])
+    })
+    useWorktreeStatusStore.getState().setSessionStatus(sourceSession.id, 'answering')
+
+    let resolveDbSession: (value: Session | null) => void = () => {}
+    const dbSessionPromise = new Promise<Session | null>((resolve) => {
+      resolveDbSession = resolve
+    })
+    const dbSessionGet = vi.fn().mockReturnValue(dbSessionPromise)
+    dbApiMocks.session.get.mockImplementation(dbSessionGet)
+    dbApiMocks.worktree.get.mockResolvedValue(worktree)
+
+    render(
+      <ClaudeCliSessionPortalProvider>
+        <KanbanTicketModal />
+      </ClaudeCliSessionPortalProvider>
+    )
+
+    expect(screen.getByTestId('kanban-ticket-modal')).toBeInTheDocument()
+
+    // Flip to working while the DB lookup (and thus isClaudeCli) is still pending.
+    act(() => {
+      useWorktreeStatusStore.getState().setSessionStatus(sourceSession.id, 'working')
+    })
+
+    // Still open: isClaudeCli hasn't resolved, so the close action is gated off —
+    // but the latch must have remembered the earlier `answering`.
+    expect(useKanbanStore.getState().selectedTicketId).toBe(ticket.id)
+
+    // Resolve the DB lookup → isClaudeCli flips true → the latched answering→working
+    // transition is honored on the re-run and the modal closes.
+    await act(async () => {
+      resolveDbSession(sourceSession)
+      await dbSessionPromise
     })
 
     await waitFor(() => {

@@ -2737,6 +2737,9 @@ const handleDesktopBackendCommand = (
 
   if (message.command === 'terminalWrite') {
     try {
+      if (!ptyService.has(message.payload.terminalId)) {
+        throw new Error('Terminal not found')
+      }
       ptyService.write(message.payload.terminalId, message.payload.data)
       sendDesktopBackendCommandResult(
         child,

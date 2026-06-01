@@ -6396,9 +6396,11 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
 }
 
 export function SessionView({ sessionId, isVisible = true }: SessionViewProps): React.JSX.Element {
-  const session = useSessionStore((state) => state.getSessionById(sessionId))
+  // Subscribe to just the agent_sdk: routing only needs that, so unrelated
+  // session updates no longer re-render this wrapper with a new object identity.
+  const agentSdk = useSessionStore((state) => state.getSessionById(sessionId)?.agent_sdk ?? null)
 
-  if (session?.agent_sdk === 'claude-code-cli') {
+  if (agentSdk === 'claude-code-cli') {
     return <ClaudeCliSessionView sessionId={sessionId} isVisible={isVisible} />
   }
 

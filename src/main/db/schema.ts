@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 29
+export const CURRENT_SCHEMA_VERSION = 31
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -492,13 +492,29 @@ DROP TABLE IF EXISTS diff_comments;`
     down: `-- SQLite cannot drop columns; this is a no-op for safety`
   },
   {
-    version: 27,
+    version: 28,
+    name: 'add_project_custom_commands',
+    up: `ALTER TABLE projects ADD COLUMN custom_commands TEXT DEFAULT NULL`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
+  },
+  {
+    version: 29,
+    name: 'add_project_worktree_create_script',
+    up: `ALTER TABLE projects ADD COLUMN worktree_create_script TEXT DEFAULT NULL`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
+  },
+  // Migrations added on the claude-ui-terminal branch. Appended at the end
+  // (v30+) rather than inserted mid-sequence so they never collide with or
+  // renumber migrations that already shipped on main. (v27 is intentionally
+  // skipped — it briefly held add_claude_session_id before this reordering.)
+  {
+    version: 30,
     name: 'add_claude_session_id',
     up: `ALTER TABLE sessions ADD COLUMN claude_session_id TEXT DEFAULT NULL`,
     down: `-- SQLite cannot drop columns; this is a no-op for safety`
   },
   {
-    version: 28,
+    version: 31,
     name: 'add_saved_usage_accounts',
     up: `
       CREATE TABLE IF NOT EXISTS saved_usage_accounts (
@@ -523,17 +539,5 @@ DROP TABLE IF EXISTS diff_comments;`
       DROP INDEX IF EXISTS idx_saved_usage_accounts_provider_email;
       DROP TABLE IF EXISTS saved_usage_accounts;
     `
-  },
-  {
-    version: 28,
-    name: 'add_project_custom_commands',
-    up: `ALTER TABLE projects ADD COLUMN custom_commands TEXT DEFAULT NULL`,
-    down: `-- SQLite cannot drop columns; this is a no-op for safety`
-  },
-  {
-    version: 29,
-    name: 'add_project_worktree_create_script',
-    up: `ALTER TABLE projects ADD COLUMN worktree_create_script TEXT DEFAULT NULL`,
-    down: `-- SQLite cannot drop columns; this is a no-op for safety`
   }
 ]

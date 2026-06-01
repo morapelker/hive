@@ -8,6 +8,7 @@ import {
   useMemo,
   type KeyboardEvent
 } from 'react'
+import type { AgentSdk } from '@shared/types/agent-sdk'
 import {
   Plus,
   X,
@@ -99,7 +100,7 @@ interface SessionTabProps {
   sessionId: string
   name: string
   isActive: boolean
-  agentSdk: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
+  agentSdk: AgentSdk
   onClick: () => void
   onClose: (e: React.MouseEvent) => void
   onMiddleClick: (e: React.MouseEvent) => void
@@ -874,7 +875,7 @@ export function SessionTabs(): React.JSX.Element | null {
 
   // Handle creating a new session with a specific agent SDK (from context menu)
   const handleCreateSessionWithSdk = async (
-    sdk: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
+    sdk: AgentSdk
   ) => {
     if (isConnectionMode && selectedConnectionId) {
       const result = await createConnectionSession(selectedConnectionId, sdk)

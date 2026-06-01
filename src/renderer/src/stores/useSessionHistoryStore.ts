@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import type { AgentSdk } from '@shared/types/agent-sdk'
 import { mapOpencodeMessagesToSessionViewMessages } from '@/lib/opencode-transcript'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { dbApi } from '@/api/db-api'
@@ -14,7 +15,7 @@ interface SessionWithWorktree {
   status: 'active' | 'completed' | 'error'
   opencode_session_id: string | null
   claude_session_id: string | null
-  agent_sdk: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
+  agent_sdk: AgentSdk
   mode: 'build' | 'plan' | 'super-plan'
   session_type: 'default' | 'board-assistant'
   model_provider_id: string | null

@@ -1,4 +1,5 @@
 import { isAgentSdkAvailable, type AvailableAgentSdks } from './agent-sdk-availability'
+import { type AgentSdk, toModelCatalogSdk } from '@shared/types/agent-sdk'
 import {
   findModelInfo,
   getFirstModelInfo,
@@ -112,7 +113,7 @@ function getWorktreeFallbackModel(worktreeId?: string): SelectedModel | null {
 
 function resolveSessionSelection(opts: {
   worktreeId?: string
-  agentSdk?: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
+  agentSdk?: AgentSdk
   mode?: 'build' | 'plan' | 'super-plan'
   explicitSdk?: boolean
 }): EffectiveHandoffSelection {
@@ -206,7 +207,7 @@ export async function loadHandoffModelCatalog(
   const inflight = inflightModelCatalogRequests.get(agentSdk)
   if (inflight) return inflight
 
-  const listModelsSdk = agentSdk === 'claude-code-cli' ? 'claude-code' : agentSdk
+  const listModelsSdk = toModelCatalogSdk(agentSdk)
   const request = opencodeApi
     .listModels({ agentSdk: listModelsSdk })
     .then(unwrapEnvelope)
@@ -269,11 +270,11 @@ export function getEffectiveHandoffSelection(opts: {
 
 export function resolveSessionCreationSelection(opts: {
   worktreeId?: string
-  agentSdkOverride?: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
+  agentSdkOverride?: AgentSdk
   initialMode?: 'build' | 'plan' | 'super-plan'
   modelOverride?: SelectedModel
 }): {
-  agentSdk: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
+  agentSdk: AgentSdk
   model: SelectedModel | null
 } {
   const settings = useSettingsStore.getState()

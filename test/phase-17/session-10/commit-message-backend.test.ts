@@ -25,9 +25,13 @@ describe('Session 10: Default Commit Message Backend', () => {
       expect(schema!.up).toContain("DEFAULT '[]'")
     })
 
-    test('migrations are sequential', () => {
+    test('migration versions are strictly increasing', () => {
+      // Versions must increase monotonically (so the runner applies them in
+      // order and never skips a higher version), but gaps are allowed: a
+      // version may be retired/reserved without renumbering later migrations.
+      // This still catches duplicate versions, the bug a strict +1 check caught.
       for (let i = 1; i < MIGRATIONS.length; i++) {
-        expect(MIGRATIONS[i].version).toBe(MIGRATIONS[i - 1].version + 1)
+        expect(MIGRATIONS[i].version).toBeGreaterThan(MIGRATIONS[i - 1].version)
       }
     })
   })

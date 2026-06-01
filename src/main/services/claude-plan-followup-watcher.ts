@@ -1,23 +1,12 @@
 import { readFile } from 'fs/promises'
 import { join } from 'path'
-import { homedir } from 'os'
-import { encodePath } from './claude-transcript-reader'
+import { encodePath, resolveProjectsDir } from './claude-transcript-reader'
 import { createLogger } from './logger'
 
 const log = createLogger({ component: 'ClaudePlanFollowupWatcher' })
 
 export interface ClaudePlanFollowupWatchHandle {
   close(): void
-}
-
-function resolveProjectsDir(): string {
-  const configuredDir = process.env.CLAUDE_CONFIG_DIR
-  const configRoot =
-    typeof configuredDir === 'string' && configuredDir.trim().length > 0
-      ? configuredDir
-      : join(homedir(), '.claude')
-
-  return join(configRoot.normalize('NFC'), 'projects')
 }
 
 function messageContentBlocks(entry: Record<string, unknown>): Record<string, unknown>[] {
@@ -70,26 +59,41 @@ function hasExitPlanFollowup(
   return false
 }
 
+function splitTranscriptLines(raw: string): string[] {
+  return raw.split(/\r?\n/).filter((line) => line.trim().length > 0)
+}
+
+// Scan lines[fromIndex..], accumulating every ExitPlanMode tool_use id into the
+// caller-owned `exitPlanToolIds` set, and report the first error tool_result (a
+// plan follow-up) at or after `baselineLine`. The set is passed in so a caller
+// can keep it across incremental calls instead of re-parsing the whole file.
+export function scanPlanFollowupLines(
+  lines: string[],
+  fromIndex: number,
+  baselineLine: number,
+  exitPlanToolIds: Set<string>
+): boolean {
+  for (let index = Math.max(0, fromIndex); index < lines.length; index++) {
+    try {
+      const entry = JSON.parse(lines[index]) as Record<string, unknown>
+      collectExitPlanToolIds(entry, exitPlanToolIds)
+      if (index >= Math.max(0, baselineLine) && hasExitPlanFollowup(entry, exitPlanToolIds)) {
+        return true
+      }
+    } catch {
+      // Ignore malformed / partially-written transcript lines.
+    }
+  }
+  return false
+}
+
 export function findClaudePlanFollowupAfterLine(
   raw: string,
   startLine: number
 ): { found: boolean; nextLine: number } {
-  const lines = raw.split(/\r?\n/).filter((line) => line.trim().length > 0)
-  const exitPlanToolIds = new Set<string>()
-
-  for (let index = 0; index < lines.length; index++) {
-    try {
-      const entry = JSON.parse(lines[index]) as Record<string, unknown>
-      collectExitPlanToolIds(entry, exitPlanToolIds)
-      if (index >= Math.max(0, startLine) && hasExitPlanFollowup(entry, exitPlanToolIds)) {
-        return { found: true, nextLine: lines.length }
-      }
-    } catch {
-      // Ignore malformed transcript lines but keep advancing the baseline.
-    }
-  }
-
-  return { found: false, nextLine: lines.length }
+  const lines = splitTranscriptLines(raw)
+  const found = scanPlanFollowupLines(lines, 0, startLine, new Set<string>())
+  return { found, nextLine: lines.length }
 }
 
 export function watchForClaudePlanFollowup(
@@ -104,6 +108,14 @@ export function watchForClaudePlanFollowup(
   let interval: NodeJS.Timeout | null = null
   let polling = false
 
+  // Persist parse progress across polls so we don't re-JSON.parse the whole
+  // transcript every tick (it can grow to many MB during a plan review). The
+  // ExitPlanMode tool ids accumulate across polls; `scannedThrough` leaves the
+  // last line volatile so a partially-written final line is re-read once it
+  // settles rather than skipped.
+  const exitPlanToolIds = new Set<string>()
+  let scannedThrough = 0
+
   const close = (): void => {
     if (closed) return
     closed = true
@@ -116,14 +128,21 @@ export function watchForClaudePlanFollowup(
     polling = true
     try {
       const raw = await readFile(filePath, 'utf-8')
+      const lines = splitTranscriptLines(raw)
+
       if (baselineLine === null) {
-        baselineLine = findClaudePlanFollowupAfterLine(raw, Number.MAX_SAFE_INTEGER).nextLine
+        // First read: parse everything once to capture ExitPlanMode tool ids that
+        // predate the watcher, but only treat lines appended after now as
+        // candidates (a follow-up must come after the plan was proposed).
+        scanPlanFollowupLines(lines, 0, Number.MAX_SAFE_INTEGER, exitPlanToolIds)
+        baselineLine = lines.length
+        scannedThrough = Math.max(0, lines.length - 1)
         return
       }
 
-      const result = findClaudePlanFollowupAfterLine(raw, baselineLine)
-      baselineLine = result.nextLine
-      if (result.found) {
+      const found = scanPlanFollowupLines(lines, scannedThrough, baselineLine, exitPlanToolIds)
+      scannedThrough = Math.max(0, lines.length - 1)
+      if (found) {
         log.info('Detected Claude CLI plan follow-up in transcript', {
           worktreePath,
           claudeSessionId

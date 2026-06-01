@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { terminalApi } from '@/api/terminal-api'
 import { TerminalView, type TerminalViewHandle } from '@/components/terminal/TerminalView'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
@@ -143,6 +143,23 @@ function ClaudeCliPlanReadyCard({
 
   const preview = planContent.trim().split('\n').find(Boolean) ?? 'Plan ready'
 
+  // Clamp a persisted position against the current container on mount. A
+  // position saved while the window was larger could otherwise place the card
+  // (and its Handoff / Save-as-ticket buttons) off-screen until the user
+  // happens to drag it back. Runs once on mount (before paint to avoid a flash);
+  // re-clamping on every position change would fight an in-progress drag.
+  useLayoutEffect(() => {
+    if (!position) return
+    const container = containerRef.current?.getBoundingClientRect()
+    const card = cardRef.current?.getBoundingClientRect()
+    if (!container || !card) return
+    const clamped = clampPlanCardPosition(position, container, card)
+    if (clamped.left !== position.left || clamped.top !== position.top) {
+      setPosition(clamped)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const moveToPointer = useCallback((clientX: number, clientY: number): void => {
     const container = containerRef.current?.getBoundingClientRect()
     const card = cardRef.current?.getBoundingClientRect()
@@ -268,17 +285,7 @@ export function ClaudeCliSessionView({
   const { getTarget, revision: portalRevision } = useClaudeCliSessionPortal()
   void portalRevision
   const isMountedInTicketModal = !!getTarget(sessionId)
-  const sessionRecord = useSessionStore((state) => {
-    for (const sessions of state.sessionsByWorktree.values()) {
-      const found = sessions.find((session) => session.id === sessionId)
-      if (found) return found
-    }
-    for (const sessions of state.sessionsByConnection.values()) {
-      const found = sessions.find((session) => session.id === sessionId)
-      if (found) return found
-    }
-    return state.orphanedSessions.get(sessionId) ?? null
-  })
+  const sessionRecord = useSessionStore((state) => state.getSessionById(sessionId))
 
   useEffect(() => {
     setPlanSavedAsTicket(false)

@@ -137,6 +137,10 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
     return () => clearTimeout(timer)
   }, [themeId])
 
+  // xterm can update the Shift+Enter behavior live — it's just an internal flag
+  // the keydown handler reads. Ghostty bakes the keybinding into the native
+  // surface at creation time (ghosttyCreateSurface) and has no in-place setter,
+  // so its runtime-update path is a surface remount handled by the effect below.
   useEffect(() => {
     const backend = backendRef.current
     if (backend instanceof XtermBackend) {
@@ -398,6 +402,37 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
     }
     restart()
   }, [ghosttyFontSize, terminalId, cwd, destroyTerminal, restartTerminal, setupTerminal])
+
+  // Ghostty bakes `shiftEnterAsNewline` into the surface at creation, so a
+  // runtime change requires recreating it — mirror the font-size remount above.
+  // The xterm backend updates this flag in place (see the effect near the top),
+  // so this only acts when the live backend is Ghostty. We track the previous
+  // value so it fires on an actual change, not on mount (mount already seeds the
+  // flag via backend.mount's opts).
+  const prevShiftEnterAsNewlineRef = useRef(shiftEnterAsNewline ?? false)
+  useEffect(() => {
+    const next = shiftEnterAsNewline ?? false
+    if (prevShiftEnterAsNewlineRef.current === next) return
+    prevShiftEnterAsNewlineRef.current = next
+
+    if (activeBackendTypeRef.current !== 'ghostty') return
+
+    const restart = async (): Promise<void> => {
+      if (backendRef.current) {
+        backendRef.current.dispose()
+        backendRef.current = null
+      }
+      initializedRef.current = null
+      activeBackendTypeRef.current = null
+      setTerminalStatus('creating')
+      setExitCode(undefined)
+
+      await destroyTerminal(terminalId)
+      await restartTerminal(terminalId, cwd)
+      setupTerminal('ghostty')
+    }
+    restart()
+  }, [shiftEnterAsNewline, terminalId, cwd, destroyTerminal, restartTerminal, setupTerminal])
 
   // Focus terminal on click
   const handleClick = useCallback(() => {

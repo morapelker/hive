@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { type AgentSdk, isClaudeFamily } from '@shared/types/agent-sdk'
 import type {
   UsageData,
   AnthropicRateLimitInfo,
@@ -361,7 +362,7 @@ interface SessionLike {
 }
 
 export function resolveUsageProvider(session: SessionLike): UsageProvider {
-  if (session.agent_sdk === 'claude-code' || session.agent_sdk === 'claude-code-cli') {
+  if (isClaudeFamily(session.agent_sdk)) {
     return 'anthropic'
   }
   if (session.model_provider_id === 'openai') return 'openai'
@@ -370,7 +371,7 @@ export function resolveUsageProvider(session: SessionLike): UsageProvider {
 }
 
 export function resolveDefaultUsageProvider(
-  agentSdk: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
+  agentSdk: AgentSdk
 ): UsageProvider {
   if (agentSdk === 'codex') return 'openai'
   return 'anthropic'

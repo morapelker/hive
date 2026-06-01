@@ -15,6 +15,7 @@ import { SessionTerminalView } from '@/components/sessions/SessionTerminalView'
 import { FileViewer } from '@/components/file-viewer'
 import { ImageDiffView } from '@/components/diff'
 import { isImageFile } from '@shared/types/file-utils'
+import { isTerminalBacked } from '@shared/types/agent-sdk'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useSessionStore, BOARD_TAB_ID } from '@/stores/useSessionStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
@@ -42,7 +43,7 @@ interface MainPaneProps {
 }
 
 function isStatefulTerminalSession(agentSdk: string | null): boolean {
-  return agentSdk === 'terminal' || agentSdk === 'claude-code-cli'
+  return isTerminalBacked(agentSdk)
 }
 
 function ClaudeCliSessionPortal({

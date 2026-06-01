@@ -1,15 +1,6 @@
 import http from 'http'
+import type { SessionStatusType } from '@shared/types/session-status'
 import { createLogger } from './logger'
-
-export type ClaudeCliSessionStatusType =
-  | 'working'
-  | 'planning'
-  | 'answering'
-  | 'permission'
-  | 'command_approval'
-  | 'unread'
-  | 'completed'
-  | 'plan_ready'
 
 export interface ParsedClaudeHook {
   hook_event_name?: string
@@ -22,7 +13,7 @@ export interface ParsedClaudeHook {
 
 export interface ClaudeCliStatusPayload {
   sessionId: string
-  status: ClaudeCliSessionStatusType
+  status: SessionStatusType
   metadata?: {
     reason?: string
     hookEventName?: string
@@ -37,7 +28,7 @@ const host = '127.0.0.1'
 let server: http.Server | null = null
 let boundPort: number | null = null
 let startingPromise: Promise<{ port: number }> | null = null
-const lastStatusBySession = new Map<string, ClaudeCliSessionStatusType>()
+const lastStatusBySession = new Map<string, SessionStatusType>()
 const statusSubscribers = new Set<(payload: ClaudeCliStatusPayload) => void>()
 
 function hookUrl(port: number, hiveSessionId: string, path: string): string {
@@ -95,7 +86,7 @@ export function buildClaudeCliHookSettings(port: number, hiveSessionId: string):
   })
 }
 
-export function mapHookEventToStatus(hook: ParsedClaudeHook): ClaudeCliSessionStatusType | null {
+export function mapHookEventToStatus(hook: ParsedClaudeHook): SessionStatusType | null {
   switch (hook.hook_event_name) {
     case 'SessionStart':
     case 'SessionEnd':
@@ -160,6 +151,16 @@ export function publishClaudeCliStatus(payload: ClaudeCliStatusPayload): void {
       publishDesktopBackendEvent('claude-cli:status', payload)
     )
     .catch(() => undefined)
+}
+
+/**
+ * Drop a session's last-published status. Call from the PTY exit / destroy
+ * teardown paths so the dedup map does not grow for the lifetime of the app and
+ * a session re-created with the same id starts with fresh dedup state (otherwise
+ * a stale 'completed' would swallow the restarted session's first status).
+ */
+export function clearClaudeCliStatus(sessionId: string): void {
+  lastStatusBySession.delete(sessionId)
 }
 
 export function subscribeClaudeCliStatus(

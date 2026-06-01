@@ -1,7 +1,6 @@
 import { watch, existsSync, readdirSync, statSync, type FSWatcher } from 'fs'
 import { join, basename } from 'path'
-import { homedir } from 'os'
-import { encodePath } from './claude-transcript-reader'
+import { encodePath, resolveProjectsDir } from './claude-transcript-reader'
 import { createLogger } from './logger'
 
 const log = createLogger({ component: 'ClaudeSessionWatcher' })
@@ -39,17 +38,25 @@ export function watchForClaudeSessionId(
   worktreePath: string,
   onSessionId: (sessionId: string) => void
 ): ClaudeSessionWatchHandle {
-  const dir = join(homedir(), '.claude', 'projects', encodePath(worktreePath))
+  const dir = join(resolveProjectsDir(), encodePath(worktreePath))
   const existing = listJsonlFiles(dir)
   const startedAtMs = Date.now()
   let closed = false
   let watcher: FSWatcher | null = null
   let interval: NodeJS.Timeout | null = null
+  let scanScheduled: NodeJS.Timeout | null = null
+
+  const stopTimers = (): void => {
+    if (interval) clearInterval(interval)
+    interval = null
+    if (scanScheduled) clearTimeout(scanScheduled)
+    scanScheduled = null
+  }
 
   const complete = (sessionId: string): void => {
     if (closed) return
     closed = true
-    if (interval) clearInterval(interval)
+    stopTimers()
     watcher?.close()
     log.info('Detected Claude CLI session id', { worktreePath, sessionId })
     onSessionId(sessionId)
@@ -60,11 +67,21 @@ export function watchForClaudeSessionId(
     if (sessionId) complete(sessionId)
   }
 
+  // Coalesce bursts of fs events (the CLI appends many lines while a transcript
+  // is created) into a single directory scan.
+  const requestScan = (): void => {
+    if (closed || scanScheduled) return
+    scanScheduled = setTimeout(() => {
+      scanScheduled = null
+      if (!closed) scan()
+    }, 50)
+  }
+
   try {
     if (existsSync(dir)) {
       watcher = watch(dir, (_eventType, filename) => {
         if (typeof filename === 'string' && filename.endsWith('.jsonl')) {
-          scan()
+          requestScan()
         }
       })
     } else {
@@ -77,14 +94,19 @@ export function watchForClaudeSessionId(
     })
   }
 
-  interval = setInterval(scan, 1000)
+  // Poll only as a fallback when fs.watch could not be attached (most commonly
+  // because the transcript directory does not exist yet). When the watcher is
+  // active its events drive detection, so the periodic full scan is redundant.
+  if (!watcher) {
+    interval = setInterval(scan, 1000)
+  }
   scan()
 
   return {
     close: () => {
       if (closed) return
       closed = true
-      if (interval) clearInterval(interval)
+      stopTimers()
       watcher?.close()
     }
   }
