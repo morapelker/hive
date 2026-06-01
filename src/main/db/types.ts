@@ -245,6 +245,48 @@ export interface SessionActivityCreate {
   created_at?: string
 }
 
+export interface StorageStats {
+  dbFileBytes: number
+  walFileBytes: number
+  shmFileBytes: number
+  totalFileBytes: number
+  freeBytes: number
+  pageSize: number
+  pageCount: number
+}
+
+export interface CompactionPreview {
+  storage: StorageStats
+  reclaimableFreeBytes: number
+  orphaned: {
+    rows: {
+      messages: number
+      activities: number
+    }
+    bytes: number
+  }
+  archivedWorktrees: {
+    rows: {
+      sessions: number
+      messages: number
+      activities: number
+    }
+    bytes: number
+  }
+  estimatedSavedBytes: number
+}
+
+export interface CompactionResult {
+  beforeBytes: number
+  afterBytes: number
+  savedBytes: number
+  deletedCounts: {
+    orphanedMessages: number
+    orphanedActivities: number
+    archivedSessions: number
+  }
+}
+
 export interface Setting {
   key: string
   value: string

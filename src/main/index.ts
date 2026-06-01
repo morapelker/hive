@@ -20,6 +20,7 @@ import {
   getWorktreeWatcherCount,
   getBranchWatcherCount,
   registerSettingsHandlers,
+  registerStorageHandlers,
   registerFileHandlers,
   registerScriptHandlers,
   cleanupScripts,
@@ -567,6 +568,7 @@ app
     registerWorktreeHandlers()
     registerSystemHandlers(openCodeLaunchSpec)
     registerSettingsHandlers()
+    registerStorageHandlers()
     registerFileHandlers()
     registerAttachmentHandlers()
     registerConnectionHandlers()

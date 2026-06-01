@@ -309,6 +309,48 @@ declare global {
     space_id: string
   }
 
+  interface StorageStats {
+    dbFileBytes: number
+    walFileBytes: number
+    shmFileBytes: number
+    totalFileBytes: number
+    freeBytes: number
+    pageSize: number
+    pageCount: number
+  }
+
+  interface CompactionPreview {
+    storage: StorageStats
+    reclaimableFreeBytes: number
+    orphaned: {
+      rows: {
+        messages: number
+        activities: number
+      }
+      bytes: number
+    }
+    archivedWorktrees: {
+      rows: {
+        sessions: number
+        messages: number
+        activities: number
+      }
+      bytes: number
+    }
+    estimatedSavedBytes: number
+  }
+
+  interface CompactionResult {
+    beforeBytes: number
+    afterBytes: number
+    savedBytes: number
+    deletedCounts: {
+      orphanedMessages: number
+      orphanedActivities: number
+      archivedSessions: number
+    }
+  }
+
   // Bash run snapshot (ephemeral in-memory state from main process)
   interface BashRunSnapshot {
     sessionId: string
@@ -1754,6 +1796,11 @@ declare global {
       onError: (
         callback: (data: { message: string; isManualCheck?: boolean }) => void
       ) => () => void
+    }
+    storageOps: {
+      getStats: () => Promise<Envelope<StorageStats>>
+      previewCompaction: () => Promise<Envelope<CompactionPreview>>
+      compact: () => Promise<Envelope<CompactionResult>>
     }
     connectionOps: {
       create: (

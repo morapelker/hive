@@ -15,6 +15,7 @@ export {
   getBranchWatcherCount
 } from './git-file-handlers'
 export { registerSettingsHandlers } from './settings-handlers'
+export { registerStorageHandlers } from './storage-handlers'
 export { registerFileHandlers } from './file-handlers'
 export { registerScriptHandlers, cleanupScripts } from './script-handlers'
 export { registerTerminalHandlers, cleanupTerminals } from './terminal-handlers'

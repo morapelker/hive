@@ -10,7 +10,12 @@ import type { Envelope } from '@shared/types/ipc-envelope'
 import type { AgentSdk } from '@shared/types/agent-sdk'
 import type { CustomProjectCommand } from '@shared/lib/custom-commands'
 import type { SuggestionItem } from '../shared/types/setup-suggestions'
-import type { ConnectionWithMembers } from '../main/db/types'
+import type {
+  ConnectionWithMembers,
+  StorageStats,
+  CompactionPreview,
+  CompactionResult
+} from '../main/db/types'
 import type { BashRunSnapshot, BashStreamEvent } from '../main/effect/bash/types'
 
 const invokeEnvelope = <A>(channel: string, ...args: unknown[]): Promise<Envelope<A>> =>
@@ -2318,6 +2323,13 @@ const updaterOps = {
   }
 }
 
+const storageOps = {
+  getStats: (): Promise<Envelope<StorageStats>> => ipcRenderer.invoke('storage:getStats'),
+  previewCompaction: (): Promise<Envelope<CompactionPreview>> =>
+    ipcRenderer.invoke('storage:previewCompaction'),
+  compact: (): Promise<Envelope<CompactionResult>> => ipcRenderer.invoke('storage:compact')
+}
+
 // Connection operations API
 const connectionOps = {
   create: (
@@ -2705,6 +2717,7 @@ if (process.contextIsolated) {
     contextBridge.exposeInMainWorld('scriptOps', scriptOps)
     contextBridge.exposeInMainWorld('terminalOps', terminalOps)
     contextBridge.exposeInMainWorld('updaterOps', updaterOps)
+    contextBridge.exposeInMainWorld('storageOps', storageOps)
     contextBridge.exposeInMainWorld('connectionOps', connectionOps)
     contextBridge.exposeInMainWorld('usageOps', usageOps)
     contextBridge.exposeInMainWorld('accountOps', accountOps)
@@ -2748,6 +2761,8 @@ if (process.contextIsolated) {
   window.terminalOps = terminalOps
   // @ts-expect-error (define in dts)
   window.updaterOps = updaterOps
+  // @ts-expect-error (define in dts)
+  window.storageOps = storageOps
   // @ts-expect-error (define in dts)
   window.connectionOps = connectionOps
   // @ts-expect-error (define in dts)

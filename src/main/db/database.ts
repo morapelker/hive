@@ -3,7 +3,7 @@ import type { AgentSdk } from '@shared/types/agent-sdk'
 import Database from 'better-sqlite3'
 import { app } from 'electron'
 import { join } from 'path'
-import { existsSync, mkdirSync } from 'fs'
+import { existsSync, mkdirSync, statSync } from 'fs'
 import { randomUUID } from 'crypto'
 import { MIGRATIONS } from './schema'
 import type {
@@ -22,6 +22,9 @@ import type {
   SessionMessageUpsertByOpenCode,
   SessionActivity,
   SessionActivityCreate,
+  StorageStats,
+  CompactionPreview,
+  CompactionResult,
   Setting,
   SessionSearchOptions,
   SessionWithWorktree,
@@ -2048,6 +2051,177 @@ export class DatabaseService {
   }
 
   // Utility methods
+  private getFileSize(filePath: string): number {
+    if (!existsSync(filePath)) return 0
+    return statSync(filePath).size
+  }
+
+  private getTotalDatabaseFileBytes(): number {
+    return this.getFileSize(this.dbPath) + this.getFileSize(`${this.dbPath}-wal`)
+  }
+
+  private getPragmaNumber(name: 'freelist_count' | 'page_size' | 'page_count'): number {
+    const db = this.getDb()
+    const value = db.pragma(name, { simple: true }) as unknown
+    return typeof value === 'number' ? value : Number(value) || 0
+  }
+
+  getStorageStats(): StorageStats {
+    const pageSize = this.getPragmaNumber('page_size')
+    const pageCount = this.getPragmaNumber('page_count')
+    const freePages = this.getPragmaNumber('freelist_count')
+    const dbFileBytes = this.getFileSize(this.dbPath)
+    const walFileBytes = this.getFileSize(`${this.dbPath}-wal`)
+    const shmFileBytes = this.getFileSize(`${this.dbPath}-shm`)
+
+    return {
+      dbFileBytes,
+      walFileBytes,
+      shmFileBytes,
+      totalFileBytes: dbFileBytes + walFileBytes,
+      freeBytes: freePages * pageSize,
+      pageSize,
+      pageCount
+    }
+  }
+
+  previewCompaction(): CompactionPreview {
+    const db = this.getDb()
+    const storage = this.getStorageStats()
+    const orphanedMessages = db
+      .prepare(
+        `SELECT
+           COUNT(*) AS rows,
+           COALESCE(SUM(
+             LENGTH(content) +
+             LENGTH(COALESCE(opencode_message_json, '')) +
+             LENGTH(COALESCE(opencode_parts_json, '')) +
+             LENGTH(COALESCE(opencode_timeline_json, ''))
+           ), 0) AS bytes
+         FROM session_messages
+         WHERE session_id NOT IN (SELECT id FROM sessions)`
+      )
+      .get() as { rows: number; bytes: number }
+    const orphanedActivities = db
+      .prepare(
+        `SELECT
+           COUNT(*) AS rows,
+           COALESCE(SUM(LENGTH(summary) + LENGTH(COALESCE(payload_json, ''))), 0) AS bytes
+         FROM session_activities
+         WHERE session_id NOT IN (SELECT id FROM sessions)`
+      )
+      .get() as { rows: number; bytes: number }
+    const archivedSessions = db
+      .prepare(
+        `SELECT COUNT(*) AS rows
+         FROM sessions
+         WHERE worktree_id IN (SELECT id FROM worktrees WHERE status = 'archived')`
+      )
+      .get() as { rows: number }
+    const archivedMessages = db
+      .prepare(
+        `SELECT
+           COUNT(*) AS rows,
+           COALESCE(SUM(
+             LENGTH(sm.content) +
+             LENGTH(COALESCE(sm.opencode_message_json, '')) +
+             LENGTH(COALESCE(sm.opencode_parts_json, '')) +
+             LENGTH(COALESCE(sm.opencode_timeline_json, ''))
+           ), 0) AS bytes
+         FROM session_messages sm
+         WHERE sm.session_id IN (
+           SELECT s.id
+           FROM sessions s
+           JOIN worktrees w ON w.id = s.worktree_id
+           WHERE w.status = 'archived'
+         )`
+      )
+      .get() as { rows: number; bytes: number }
+    const archivedActivities = db
+      .prepare(
+        `SELECT
+           COUNT(*) AS rows,
+           COALESCE(SUM(LENGTH(sa.summary) + LENGTH(COALESCE(sa.payload_json, ''))), 0) AS bytes
+         FROM session_activities sa
+         WHERE sa.session_id IN (
+           SELECT s.id
+           FROM sessions s
+           JOIN worktrees w ON w.id = s.worktree_id
+           WHERE w.status = 'archived'
+         )`
+      )
+      .get() as { rows: number; bytes: number }
+
+    const orphanedBytes = orphanedMessages.bytes + orphanedActivities.bytes
+    const archivedWorktreeBytes = archivedMessages.bytes + archivedActivities.bytes
+    const estimatedSavedBytes = storage.freeBytes + orphanedBytes + archivedWorktreeBytes
+
+    return {
+      storage,
+      reclaimableFreeBytes: storage.freeBytes,
+      orphaned: {
+        rows: {
+          messages: orphanedMessages.rows,
+          activities: orphanedActivities.rows
+        },
+        bytes: orphanedBytes
+      },
+      archivedWorktrees: {
+        rows: {
+          sessions: archivedSessions.rows,
+          messages: archivedMessages.rows,
+          activities: archivedActivities.rows
+        },
+        bytes: archivedWorktreeBytes
+      },
+      estimatedSavedBytes
+    }
+  }
+
+  compactDatabase(): CompactionResult {
+    const db = this.getDb()
+    const beforeBytes = this.getTotalDatabaseFileBytes()
+    const prune = db.transaction(() => {
+      const orphanedMessages = db
+        .prepare(
+          `DELETE FROM session_messages
+           WHERE session_id NOT IN (SELECT id FROM sessions)`
+        )
+        .run().changes
+      const orphanedActivities = db
+        .prepare(
+          `DELETE FROM session_activities
+           WHERE session_id NOT IN (SELECT id FROM sessions)`
+        )
+        .run().changes
+      const archivedSessions = db
+        .prepare(
+          `DELETE FROM sessions
+           WHERE worktree_id IN (SELECT id FROM worktrees WHERE status = 'archived')`
+        )
+        .run().changes
+
+      return {
+        orphanedMessages,
+        orphanedActivities,
+        archivedSessions
+      }
+    })
+    const deletedCounts = prune()
+
+    db.pragma('wal_checkpoint(TRUNCATE)')
+    db.exec('VACUUM')
+    db.pragma('wal_checkpoint(TRUNCATE)')
+
+    const afterBytes = this.getTotalDatabaseFileBytes()
+    return {
+      beforeBytes,
+      afterBytes,
+      savedBytes: Math.max(0, beforeBytes - afterBytes),
+      deletedCounts
+    }
+  }
+
   getSchemaVersion(): number {
     const version = this.getSetting('schema_version')
     return version ? parseInt(version, 10) : 0
