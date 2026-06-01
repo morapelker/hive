@@ -24,6 +24,19 @@ export interface SessionStatusEntry {
   plan?: string
 }
 
+export function isProviderSwitchBlockingSessionStatus(
+  entry: SessionStatusEntry | null | undefined
+): boolean {
+  return (
+    entry?.status === 'working' ||
+    entry?.status === 'planning' ||
+    entry?.status === 'answering' ||
+    entry?.status === 'permission' ||
+    entry?.status === 'command_approval' ||
+    entry?.status === 'plan_ready'
+  )
+}
+
 export type MergeConflictFlow =
   | { phase: 'starting' }
   | { phase: 'running'; sessionId: string; seenBusy: boolean }

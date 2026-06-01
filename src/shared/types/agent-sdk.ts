@@ -36,6 +36,15 @@ export type HandoffAgentSdk = Exclude<AgentSdk, 'terminal'>
 
 type MaybeSdk = AgentSdk | string | null | undefined
 
+/**
+ * Narrow a loosely-carried SDK value to a handoff-capable SDK. Unknown strings
+ * and the bare terminal are not handoff providers.
+ */
+export function toHandoffAgentSdk(sdk: MaybeSdk): HandoffAgentSdk | null {
+  if (!sdk || sdk === 'terminal') return null
+  return (AGENT_SDK_VALUES as readonly string[]).includes(sdk) ? (sdk as HandoffAgentSdk) : null
+}
+
 /** The Claude Code CLI session type (terminal-backed Claude, distinct from the SDK-driven `claude-code`). */
 export function isClaudeCli(sdk: MaybeSdk): boolean {
   return sdk === 'claude-code-cli'

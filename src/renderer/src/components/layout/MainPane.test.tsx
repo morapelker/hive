@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MainPane } from './MainPane'
 import { useConnectionStore } from '@/stores/useConnectionStore'
@@ -11,29 +11,33 @@ import { useSessionStore } from '@/stores/useSessionStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 
+const mainPaneMocks = vi.hoisted(() => ({
+  sessionViewHostAttachedOnMount: [] as boolean[],
+  claudeCliModalTarget: null as HTMLDivElement | null,
+  claudeCliPortalRevision: 0
+}))
+
 vi.mock('@/components/sessions', () => ({
   SessionTabs: () => <div data-testid="session-tabs" />,
-  SessionView: ({
-    sessionId,
-    isVisible
-  }: {
-    sessionId: string
-    isVisible?: boolean
-  }) => (
-    <div data-testid={`session-view-${sessionId}`} data-visible={String(isVisible)}>
+  SessionView: ({ sessionId, isVisible }: { sessionId: string; isVisible?: boolean }) => (
+    <div
+      ref={(node) => {
+        if (node) {
+          mainPaneMocks.sessionViewHostAttachedOnMount.push(
+            Boolean(node.parentElement?.parentElement)
+          )
+        }
+      }}
+      data-testid={`session-view-${sessionId}`}
+      data-visible={String(isVisible)}
+    >
       session {sessionId}
     </div>
   )
 }))
 
 vi.mock('@/components/sessions/SessionTerminalView', () => ({
-  SessionTerminalView: ({
-    sessionId,
-    isVisible
-  }: {
-    sessionId: string
-    isVisible?: boolean
-  }) => (
+  SessionTerminalView: ({ sessionId, isVisible }: { sessionId: string; isVisible?: boolean }) => (
     <div data-testid={`terminal-view-${sessionId}`} data-visible={String(isVisible)}>
       terminal {sessionId}
     </div>
@@ -56,6 +60,13 @@ vi.mock('@/components/kanban/BoardAssistantView', () => ({
 
 vi.mock('@/components/pr/PRNotificationStack', () => ({
   PRNotificationStack: () => null
+}))
+
+vi.mock('@/contexts/ClaudeCliSessionPortalContext', () => ({
+  useClaudeCliSessionPortal: () => ({
+    getTarget: () => mainPaneMocks.claudeCliModalTarget,
+    revision: mainPaneMocks.claudeCliPortalRevision
+  })
 }))
 
 vi.mock('./MainPaneTerminalPanel', () => ({
@@ -178,6 +189,9 @@ function setupMainPaneState(session: MainPaneSession = makeSession()): void {
 
 afterEach(() => {
   cleanup()
+  mainPaneMocks.claudeCliModalTarget = null
+  mainPaneMocks.claudeCliPortalRevision = 0
+  mainPaneMocks.sessionViewHostAttachedOnMount = []
   useConnectionStore.setState(initialConnectionState, true)
   useFileViewerStore.setState(initialFileViewerState, true)
   useKanbanStore.setState(initialKanbanState, true)
@@ -215,7 +229,6 @@ describe('MainPane terminal visibility', () => {
 
     const terminal = screen.getByTestId('session-view-session-1')
     expect(terminal.getAttribute('data-visible')).toBe('false')
-    expect(terminal.parentElement?.classList.contains('hidden')).toBe(true)
   })
 
   it('keeps a plain terminal session mounted but hidden during board view', () => {
@@ -227,5 +240,102 @@ describe('MainPane terminal visibility', () => {
     const terminal = screen.getByTestId('terminal-view-terminal-1')
     expect(terminal.getAttribute('data-visible')).toBe('false')
     expect(terminal.parentElement?.classList.contains('hidden')).toBe(true)
+  })
+
+  it('keeps Claude CLI mounted and visible while a dropdown suppresses Ghostty overlays', () => {
+    setupMainPaneState()
+    useLayoutStore.setState({ ghosttyOverlaySuppressed: true })
+
+    render(<MainPane />)
+
+    const terminal = screen.getByTestId('session-view-session-1')
+    expect(terminal.getAttribute('data-visible')).toBe('true')
+    expect(terminal.parentElement?.classList.contains('hidden')).toBe(false)
+  })
+
+  it('moves Claude CLI into and out of a modal target without remounting the session view', async () => {
+    setupMainPaneState()
+    const { rerender } = render(<MainPane />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('session-view-session-1').getAttribute('data-visible')).toBe('true')
+    })
+    const initialView = screen.getByTestId('session-view-session-1')
+    const inlineHost = initialView.parentElement
+    expect(inlineHost?.parentElement).toBeTruthy()
+
+    const modalTarget = document.createElement('div')
+    document.body.appendChild(modalTarget)
+
+    act(() => {
+      mainPaneMocks.claudeCliModalTarget = modalTarget
+      mainPaneMocks.claudeCliPortalRevision += 1
+    })
+    rerender(<MainPane />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('session-view-session-1').parentElement?.parentElement).toBe(
+        modalTarget
+      )
+    })
+    expect(screen.getByTestId('session-view-session-1')).toBe(initialView)
+    expect(screen.getByTestId('session-view-session-1').getAttribute('data-visible')).toBe('true')
+
+    act(() => {
+      mainPaneMocks.claudeCliModalTarget = null
+      mainPaneMocks.claudeCliPortalRevision += 1
+    })
+    rerender(<MainPane />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('session-view-session-1').parentElement).toBe(inlineHost)
+    })
+    expect(screen.getByTestId('session-view-session-1')).toBe(initialView)
+    modalTarget.remove()
+  })
+
+  it('mounts Claude CLI after provider switch and prunes it when switching back', async () => {
+    const opencodeSession = makeSession({
+      id: 'session-1',
+      name: 'Session 1',
+      agent_sdk: 'opencode'
+    })
+    setupMainPaneState(opencodeSession)
+
+    render(<MainPane />)
+
+    expect(screen.getAllByTestId('session-view-session-1')).toHaveLength(1)
+    expect(screen.getByTestId('session-view-session-1').getAttribute('data-visible')).toBe(
+      'undefined'
+    )
+
+    act(() => {
+      mainPaneMocks.sessionViewHostAttachedOnMount = []
+      useSessionStore.setState({
+        activeSessionId: 'session-1',
+        sessionsByWorktree: new Map([
+          ['worktree-1', [{ ...opencodeSession, agent_sdk: 'claude-code-cli' }]]
+        ])
+      })
+    })
+
+    expect(screen.getAllByTestId('session-view-session-1')).toHaveLength(1)
+    await waitFor(() => {
+      expect(screen.getByTestId('session-view-session-1').getAttribute('data-visible')).toBe('true')
+    })
+    expect(mainPaneMocks.sessionViewHostAttachedOnMount).not.toContain(false)
+
+    act(() => {
+      useSessionStore.setState({
+        activeSessionId: 'session-1',
+        sessionsByWorktree: new Map([['worktree-1', [opencodeSession]]])
+      })
+    })
+
+    expect(screen.getAllByTestId('session-view-session-1')).toHaveLength(1)
+    expect(screen.getByTestId('session-view-session-1').getAttribute('data-visible')).toBe(
+      'undefined'
+    )
+    expect(screen.queryByTestId('terminal-view-session-1')).not.toBeInTheDocument()
   })
 })

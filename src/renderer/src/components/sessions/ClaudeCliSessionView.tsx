@@ -2,7 +2,10 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { TerminalView, type TerminalViewHandle } from '@/components/terminal/TerminalView'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { useSessionStore, BOARD_TAB_ID } from '@/stores/useSessionStore'
-import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
+import {
+  isProviderSwitchBlockingSessionStatus,
+  useWorktreeStatusStore
+} from '@/stores/useWorktreeStatusStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
@@ -12,7 +15,8 @@ import { useTelegramStore } from '@/stores/useTelegramStore'
 import { useClaudeCliSessionPortal } from '@/contexts/ClaudeCliSessionPortalContext'
 import { ModeToggle } from './ModeToggle'
 import { SuperToggle } from './SuperToggle'
-import { ModelSelector } from './ModelSelector'
+import { SessionProviderSelector } from './SessionProviderSelector'
+import { useDurableSessionHistory } from './useDurableSessionHistory'
 import { QuestionPrompt } from './QuestionPrompt'
 import { ClaudeCliEndedOverlay } from './ClaudeCliEndedOverlay'
 import { HandoffSplitButton } from './HandoffSplitButton'
@@ -25,6 +29,7 @@ import { cn } from '@/lib/utils'
 import { extractPlanTitle } from '@shared/types/branch-utils'
 import '@xterm/xterm/css/xterm.css'
 import '@/styles/xterm.css'
+import { toHandoffAgentSdk } from '@shared/types/agent-sdk'
 
 interface ClaudeCliSessionViewProps {
   sessionId: string
@@ -284,10 +289,15 @@ export function ClaudeCliSessionView({
   const pendingMessage = useSessionStore((state) => state.pendingMessages.get(sessionId) ?? null)
   const pendingPlan = useSessionStore((state) => state.pendingPlans.get(sessionId) ?? null)
   const mode = useSessionStore((state) => state.modeBySession.get(sessionId) ?? 'build')
+  const pendingFollowUpMessages =
+    useSessionStore((state) => state.pendingFollowUpMessages.get(sessionId)) ?? []
+  const sessionStatus = useWorktreeStatusStore((state) => state.sessionStatuses[sessionId] ?? null)
   const { getTarget, revision: portalRevision } = useClaudeCliSessionPortal()
   void portalRevision
   const isMountedInTicketModal = !!getTarget(sessionId)
   const sessionRecord = useSessionStore((state) => state.getSessionById(sessionId))
+  const selectableAgentSdk = toHandoffAgentSdk(sessionRecord?.agent_sdk)
+  const hasDurableHistory = useDurableSessionHistory(sessionId)
 
   // While Telegram forwarding is active, AskUserQuestion is intercepted by the
   // hook bridge (so it never renders in the terminal) and surfaced through the
@@ -295,6 +305,15 @@ export function ClaudeCliSessionView({
   // providers use; when forwarding is off the question shows natively in the CLI.
   const activeQuestion = useQuestionStore((state) => state.getActiveQuestion(sessionId))
   const isForwarding = useTelegramStore((state) => state.activeForwardingSessionId === sessionId)
+
+  const canChangeBlankSessionProvider =
+    !!selectableAgentSdk &&
+    sessionRecord?.session_type === 'default' &&
+    !hasDurableHistory &&
+    !pendingMessage &&
+    pendingFollowUpMessages.length === 0 &&
+    !pendingPlan &&
+    !isProviderSwitchBlockingSessionStatus(sessionStatus)
 
   useEffect(() => {
     setPlanSavedAsTicket(false)
@@ -333,16 +352,13 @@ export function ClaudeCliSessionView({
     })
   }, [sessionId])
 
-  const handleStatusChange = useCallback(
-    (status: 'creating' | 'running' | 'exited') => {
-      if (status === 'running') {
-        setEnded(false)
-      } else if (status === 'exited') {
-        setEnded(true)
-      }
-    },
-    []
-  )
+  const handleStatusChange = useCallback((status: 'creating' | 'running' | 'exited') => {
+    if (status === 'running') {
+      setEnded(false)
+    } else if (status === 'exited') {
+      setEnded(true)
+    }
+  }, [])
 
   const handleRestart = useCallback(() => {
     setEnded(false)
@@ -423,9 +439,7 @@ export function ClaudeCliSessionView({
         sessionRecord.worktree_id,
         sessionRecord.project_id,
         override.agentSdk,
-        override.agentSdk === 'claude-code-cli' && mode === 'super-plan'
-          ? 'super-plan'
-          : undefined,
+        override.agentSdk === 'claude-code-cli' && mode === 'super-plan' ? 'super-plan' : undefined,
         { autoFocus: !isMountedInTicketModal, modelOverride: override.model }
       )
       if (!result.success || !result.session) {
@@ -506,7 +520,9 @@ export function ClaudeCliSessionView({
   const handleQuestionReply = useCallback(
     async (requestId: string, answers: string[][]) => {
       try {
-        unwrapEnvelope(await window.opencodeOps.questionReply(requestId, answers, resolveQuestionPath()))
+        unwrapEnvelope(
+          await window.opencodeOps.questionReply(requestId, answers, resolveQuestionPath())
+        )
       } catch (err) {
         console.error('Failed to reply to question:', err)
         toast.error('Failed to send answer')
@@ -541,7 +557,15 @@ export function ClaudeCliSessionView({
             <span className="truncate text-xs text-muted-foreground">handoff prompt pending</span>
           )}
         </div>
-        <ModelSelector sessionId={sessionId} />
+        <div className="flex min-w-0 items-center gap-2">
+          {selectableAgentSdk && (
+            <SessionProviderSelector
+              sessionId={sessionId}
+              agentSdk={selectableAgentSdk}
+              canChange={canChangeBlankSessionProvider}
+            />
+          )}
+        </div>
       </div>
 
       <div className="relative min-h-0 flex-1">
