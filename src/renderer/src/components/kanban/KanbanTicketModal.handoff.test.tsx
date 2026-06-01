@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useEffect, useRef } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -369,5 +369,29 @@ describe('KanbanTicketModal handoff from Claude CLI plan review', () => {
     expect(setActiveSession).not.toHaveBeenCalledWith('handoff-session')
     expect(useKanbanStore.getState().isBoardViewActive).toBe(true)
     expect(useKanbanStore.getState().selectedTicketId).toBeNull()
+  })
+
+  it('auto-closes when an open Claude CLI question ticket returns to working', async () => {
+    setupStores()
+    useKanbanStore.setState({
+      tickets: new Map([['project-1', [{ ...ticket, column: 'in_progress', plan_ready: false }]]])
+    })
+    useWorktreeStatusStore.getState().setSessionStatus(sourceSession.id, 'answering')
+
+    render(
+      <ClaudeCliSessionPortalProvider>
+        <KanbanTicketModal />
+      </ClaudeCliSessionPortalProvider>
+    )
+
+    expect(screen.getByTestId('kanban-ticket-modal')).toBeInTheDocument()
+
+    act(() => {
+      useWorktreeStatusStore.getState().setSessionStatus(sourceSession.id, 'working')
+    })
+
+    await waitFor(() => {
+      expect(useKanbanStore.getState().selectedTicketId).toBeNull()
+    })
   })
 })
