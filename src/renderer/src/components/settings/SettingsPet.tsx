@@ -15,6 +15,7 @@ const SIZE_OPTIONS: Array<{ id: PetSize; label: string; description: string }> =
 export function SettingsPet(): React.JSX.Element {
   const { pet, updateSetting } = useSettingsStore()
   const pets = listPets()
+  const animationSpeed = Math.min(Math.max(pet.animationSpeed, 2), 5)
 
   const updatePet = (partial: Partial<PetSettings>): void => {
     updateSetting('pet', { ...pet, ...partial })
@@ -114,6 +115,47 @@ export function SettingsPet(): React.JSX.Element {
           className="w-full accent-primary"
           data-testid="pet-opacity-slider"
         />
+      </div>
+
+      <div className="space-y-2">
+        <label className="flex items-start gap-2 text-sm font-medium">
+          <input
+            type="checkbox"
+            checked={pet.animationSpeedEnabled}
+            onChange={(event) => updatePet({ animationSpeedEnabled: event.target.checked })}
+            className="mt-0.5 h-4 w-4 accent-primary"
+            data-testid="pet-animation-speed-enabled-checkbox"
+          />
+          <span>
+            <span className="block">Scale animation speed</span>
+            <span className="block text-xs font-normal text-muted-foreground">
+              Speeds up the working animation as more sessions are active.
+            </span>
+          </span>
+        </label>
+        <div className="flex items-center justify-between">
+          <label className="text-sm font-medium">Max animation speed</label>
+          <span className="text-xs text-muted-foreground">
+            {pet.animationSpeedEnabled ? `${animationSpeed}x` : '1x'}
+          </span>
+        </div>
+        <input
+          type="range"
+          min={2}
+          max={5}
+          step={1}
+          value={animationSpeed}
+          onChange={(event) => updatePet({ animationSpeed: Number(event.target.value) })}
+          disabled={!pet.animationSpeedEnabled}
+          className={cn(
+            'w-full accent-primary',
+            !pet.animationSpeedEnabled && 'cursor-not-allowed opacity-50'
+          )}
+          data-testid="pet-animation-speed-slider"
+        />
+        <p className="text-xs text-muted-foreground">
+          When disabled, the working animation always runs at normal speed.
+        </p>
       </div>
 
       {pet.enabled && (

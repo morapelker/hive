@@ -46,14 +46,26 @@ describe('PetApp drag and click behavior', () => {
     request = vi.fn((method: string) => {
       if (method === 'petOps.getConfig') {
         return Promise.resolve({
-          settings: { enabled: true, petId: 'bee', size: 'M', opacity: 1, hasHatched: true },
+          settings: {
+            enabled: true,
+            petId: 'bee',
+            size: 'M',
+            opacity: 1,
+            animationSpeedEnabled: false,
+            animationSpeed: 5,
+            hasHatched: true
+          },
           position: { x: 10, y: 20 },
           manifest: { id: 'bee', name: 'Bee', version: '1.0.0', assets: {} }
         })
       }
 
       if (method === 'petOps.getCurrentStatus') {
-        return Promise.resolve({ state: 'idle', sourceWorktreeId: 'worktree-1' })
+        return Promise.resolve({
+          state: 'idle',
+          sourceWorktreeId: 'worktree-1',
+          workingSessionCount: 0
+        })
       }
 
       return Promise.resolve(undefined)

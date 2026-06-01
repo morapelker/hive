@@ -235,6 +235,8 @@ const DEFAULT_SETTINGS: AppSettings = {
     petId: 'bee',
     size: 'M',
     opacity: 1,
+    animationSpeedEnabled: false,
+    animationSpeed: 5,
     hasHatched: false
   },
   environmentVariables: [],

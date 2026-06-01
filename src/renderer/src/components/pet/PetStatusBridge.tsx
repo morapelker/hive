@@ -12,7 +12,11 @@ import {
 } from '@/stores'
 
 function sameStatus(a: PetStatusPayload | null, b: PetStatusPayload): boolean {
-  return a?.state === b.state && a.sourceWorktreeId === b.sourceWorktreeId
+  return (
+    a?.state === b.state &&
+    a.sourceWorktreeId === b.sourceWorktreeId &&
+    a.workingSessionCount === b.workingSessionCount
+  )
 }
 
 function computeStatus(): PetStatusPayload {

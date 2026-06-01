@@ -23,6 +23,8 @@ export const DEFAULT_PET_SETTINGS: PetSettings = {
   petId: 'bee',
   size: 'M',
   opacity: 1,
+  animationSpeedEnabled: false,
+  animationSpeed: 5,
   hasHatched: false
 }
 
@@ -81,7 +83,11 @@ const PET_SIZE_PX: Record<PetSize, number> = {
 
 let petWindow: BrowserWindow | null = null
 let getMainWindow: (() => BrowserWindow | null) | null = null
-let latestStatus: PetStatusPayload = { state: 'idle', sourceWorktreeId: null }
+let latestStatus: PetStatusPayload = {
+  state: 'idle',
+  sourceWorktreeId: null,
+  workingSessionCount: 0
+}
 let latestSettings: PetSettings = DEFAULT_PET_SETTINGS
 let petPointerInteractionActive = false
 let petPointerInteractionTimer: NodeJS.Timeout | null = null

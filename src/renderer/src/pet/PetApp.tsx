@@ -8,7 +8,11 @@ import { usePetDrag } from './usePetDrag'
 import { usePetHover } from './usePetHover'
 import { petApi } from '@/api/pet-api'
 
-const DEFAULT_STATUS: PetStatusPayload = { state: 'idle', sourceWorktreeId: null }
+const DEFAULT_STATUS: PetStatusPayload = {
+  state: 'idle',
+  sourceWorktreeId: null,
+  workingSessionCount: 0
+}
 
 export function PetApp(): React.JSX.Element {
   const [settings, setSettings] = useState<PetSettings | null>(null)
@@ -92,6 +96,7 @@ export function PetApp(): React.JSX.Element {
           pet={pet}
           state={visibleState}
           settings={settings}
+          workingSessionCount={status.workingSessionCount}
           onPointerDown={onPointerDown}
           onMouseEnter={hover.onMouseEnter}
           onMouseLeave={hover.onMouseLeave}
