@@ -303,25 +303,14 @@ export function useOpenCodeGlobalListener(): void {
         return
       }
 
-      // Keep session.updated for background title sync (some events use this type)
+      // session.updated — sync title for both background and active sessions.
+      // ClaudeCliSessionView has no stream listener of its own, so active
+      // claude-cli renames need to flow through the global listener.
       if (event.type === 'session.updated') {
-        console.log('[TITLE_DEBUG] globalListener received session.updated', {
-          eventSessionId: sessionId,
-          activeId,
-          isBackground: sessionId !== activeId,
-          title: event.data?.info?.title || event.data?.title
-        })
-      }
-      if (event.type === 'session.updated' && sessionId !== activeId) {
         const rawTitle = event.data?.info?.title || event.data?.title
         const sessionTitle = rawTitle ? maybeExtractJsonTitle(rawTitle) : rawTitle
-        // Skip OpenCode default placeholder titles like "New session - 2026-02-12T21:33:03.013Z"
         const isOpenCodeDefault = /^New session\s*-?\s*\d{4}-\d{2}-\d{2}/i.test(sessionTitle || '')
         if (sessionTitle && !isOpenCodeDefault) {
-          console.log('[TITLE_DEBUG] globalListener calling updateSessionName', {
-            sessionId,
-            sessionTitle
-          })
           useSessionStore.getState().updateSessionName(sessionId, sessionTitle)
         }
         return

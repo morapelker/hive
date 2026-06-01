@@ -1,3 +1,4 @@
+import path from 'node:path'
 import { getDatabase } from '../db'
 import {
   buildClaudeCliHookSettings,
@@ -7,6 +8,12 @@ import {
 import { resolveClaudeBinaryPath } from './claude-binary-resolver'
 import { buildClaudeCliPtySpawn } from './claude-cli-spawner'
 import { watchForClaudeSessionId, type ClaudeSessionWatchHandle } from './claude-session-watcher'
+import {
+  applyClaudeCliTitle,
+  processClaudeCliPtyData,
+  resetAllClaudeCliTitleState,
+  resetClaudeCliTitleState
+} from './claude-cli-title-handler'
 import { ghosttyService } from './ghostty-service'
 import { createLogger } from './logger'
 import { ptyService } from './pty-service'
@@ -18,6 +25,7 @@ const dataBuffers = new Map<string, string>()
 const flushScheduled = new Set<string>()
 const claudeWatchers = new Map<string, ClaudeSessionWatchHandle>()
 const claudeCliSessions = new Set<string>()
+const claudeCliWorktreeBasenames = new Map<string, string>()
 
 export function destroyNodePtyTerminal(terminalId: string): void {
   const cleanup = listenerCleanups.get(terminalId)
@@ -31,6 +39,8 @@ export function destroyNodePtyTerminal(terminalId: string): void {
   claudeWatchers.get(terminalId)?.close()
   claudeWatchers.delete(terminalId)
   claudeCliSessions.delete(terminalId)
+  claudeCliWorktreeBasenames.delete(terminalId)
+  resetClaudeCliTitleState(terminalId)
   ptyService.destroy(terminalId)
 }
 
@@ -45,6 +55,21 @@ function attachNodePtyListeners(terminalId: string): void {
   const removeData = ptyService.onData(terminalId, (data) => {
     const existing = dataBuffers.get(terminalId)
     dataBuffers.set(terminalId, existing ? existing + data : data)
+
+    if (claudeCliSessions.has(terminalId)) {
+      const title = processClaudeCliPtyData(terminalId, data, {
+        worktreeBasename: claudeCliWorktreeBasenames.get(terminalId)
+      })
+      if (title) {
+        applyClaudeCliTitle({
+          sessionId: terminalId,
+          title,
+          db: getDatabase()
+        }).catch(() => {
+          // applyClaudeCliTitle logs and swallows internally.
+        })
+      }
+    }
 
     if (!flushScheduled.has(terminalId)) {
       flushScheduled.add(terminalId)
@@ -82,6 +107,8 @@ function attachNodePtyListeners(terminalId: string): void {
       })
       claudeCliSessions.delete(terminalId)
     }
+    claudeCliWorktreeBasenames.delete(terminalId)
+    resetClaudeCliTitleState(terminalId)
   })
 
   listenerCleanups.set(terminalId, { removeData, removeExit })
@@ -168,6 +195,7 @@ export async function createClaudeCliTerminal(
       env: spawn.env
     })
     claudeCliSessions.add(sessionId)
+    claudeCliWorktreeBasenames.set(sessionId, path.basename(worktreePath))
     if (!pendingPrompt) {
       publishClaudeCliStatus({
         sessionId,
@@ -204,6 +232,8 @@ export function cleanupTerminals(): void {
   dataBuffers.clear()
   flushScheduled.clear()
   claudeCliSessions.clear()
+  claudeCliWorktreeBasenames.clear()
+  resetAllClaudeCliTitleState()
   ptyService.destroyAll()
   ghosttyService.shutdown()
 }
