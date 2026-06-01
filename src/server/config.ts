@@ -20,6 +20,7 @@ export interface ServerConfig extends ServerDerivedPaths {
   readonly devUrl: string | null
   readonly staticDir: string | null
   readonly desktopBootstrapToken: string | null
+  readonly requireAuth: boolean
   readonly logLevel: ServerLogLevel
 }
 
@@ -31,6 +32,7 @@ export interface ServerConfigInput {
   readonly devUrl?: string | null
   readonly staticDir?: string | null
   readonly desktopBootstrapToken?: string | null
+  readonly requireAuth?: boolean
   readonly logLevel?: ServerLogLevel
 }
 
@@ -59,6 +61,9 @@ const parseMode = (value: string | undefined): ServerMode =>
 const parseLogLevel = (value: string | undefined): ServerLogLevel =>
   value === 'debug' || value === 'info' || value === 'warn' || value === 'error' ? value : 'info'
 
+const parseRequireAuth = (value: string | undefined): boolean =>
+  value === 'false' || value === '0' ? false : true
+
 export const resolveServerConfig = (
   input: ServerConfigInput = {},
   env: NodeJS.ProcessEnv = process.env
@@ -74,6 +79,7 @@ export const resolveServerConfig = (
       staticDir: input.staticDir ?? env.HIVE_SERVER_STATIC_DIR ?? null,
       desktopBootstrapToken:
         input.desktopBootstrapToken ?? env.HIVE_DESKTOP_BOOTSTRAP_TOKEN ?? null,
+      requireAuth: input.requireAuth ?? parseRequireAuth(env.HIVE_SERVER_REQUIRE_AUTH),
       logLevel: input.logLevel ?? parseLogLevel(env.HIVE_SERVER_LOG_LEVEL),
       ...deriveServerPaths(baseDir)
     }

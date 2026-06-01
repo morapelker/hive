@@ -64,6 +64,8 @@ scripts/*
 !scripts/dev-web.mjs
 !scripts/probe-effect-logger.ts
 
+.playwright-cli
+
 # Claude worktrees
 .claude/worktrees/
 

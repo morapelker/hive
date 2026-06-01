@@ -470,6 +470,7 @@ app
       httpBaseUrl: desktopBackend.bootstrap.httpBaseUrl,
       wsBaseUrl: desktopBackend.bootstrap.wsBaseUrl
     })
+    log.info(`Hive web UI available at ${desktopBackend.bootstrap.httpBaseUrl} (open in Chrome)`)
 
     // Set app user model id for windows
     electronApp.setAppUserModelId('com.hive')

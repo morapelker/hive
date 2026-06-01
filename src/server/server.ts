@@ -7,6 +7,7 @@ import { makeEventBus } from './events/event-bus'
 import { resolveServerConfig, type ServerConfig, type ServerConfigInput } from './config'
 import { makeRpcRouter } from './rpc/router'
 import { attachWebSocketRpcServer } from './rpc/ws-server'
+import { resolveStaticFile, serveStaticFile } from './static'
 import { cleanupBranchWatchers } from '../main/services/branch-watcher'
 import { setGitEventPublisher } from '../main/services/git-events'
 import { cleanupWorktreeWatchers } from '../main/services/worktree-watcher'
@@ -117,6 +118,23 @@ export const startHiveServer = (
               return
             }
 
+            // Serve the built web UI (public — the page loads before any session
+            // exists). API routes keep priority: /health and /.well-known are handled
+            // above, and `/api/*` is excluded so it never shadows an API endpoint.
+            if (
+              request.method === 'GET' &&
+              config.staticDir &&
+              !url.pathname.startsWith('/api/')
+            ) {
+              const resolved = resolveStaticFile(url.pathname, config.staticDir)
+              if (resolved) {
+                serveStaticFile(resolved, response, makeCorsHeaders(corsOrigin))
+              } else {
+                writeJson(response, 404, { error: 'Not Found' }, corsOrigin)
+              }
+              return
+            }
+
             if (!isPublicHttpRoute(request.method, url.pathname) && !sessionStatus.authenticated) {
               writeJson(response, 401, { error: 'Unauthorized' }, corsOrigin)
               return
@@ -162,7 +180,11 @@ export const startHiveServer = (
           })
 
           const wsServer = attachWebSocketRpcServer(server, router, eventBus, {
-            authenticateToken: (token) => authSessions.getWebSocketToken(token) !== null
+            // When auth is disabled (loopback web serving), accept token-less
+            // upgrades so a plain browser can connect without a bootstrap token.
+            authenticateToken: config.requireAuth
+              ? (token) => authSessions.getWebSocketToken(token) !== null
+              : undefined
           })
 
           server.once('error', reject)

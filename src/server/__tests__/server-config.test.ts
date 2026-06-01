@@ -57,5 +57,35 @@ describe('server config', () => {
     expect(config.port).toBe(DEFAULT_PORT)
     expect(config.logLevel).toBe('info')
   })
+
+  it('requires auth by default', async () => {
+    const config = await Effect.runPromise(
+      resolveServerConfig({ baseDir: mkdtempSync(join(tmpdir(), 'hive-server-config-')) }, {})
+    )
+
+    expect(config.requireAuth).toBe(true)
+  })
+
+  it('disables auth when HIVE_SERVER_REQUIRE_AUTH is false', async () => {
+    const config = await Effect.runPromise(
+      resolveServerConfig(
+        { baseDir: mkdtempSync(join(tmpdir(), 'hive-server-config-')) },
+        { HIVE_SERVER_REQUIRE_AUTH: 'false' }
+      )
+    )
+
+    expect(config.requireAuth).toBe(false)
+  })
+
+  it('resolves the static directory from HIVE_SERVER_STATIC_DIR', async () => {
+    const config = await Effect.runPromise(
+      resolveServerConfig(
+        { baseDir: mkdtempSync(join(tmpdir(), 'hive-server-config-')) },
+        { HIVE_SERVER_STATIC_DIR: '/tmp/hive-web' }
+      )
+    )
+
+    expect(config.staticDir).toBe('/tmp/hive-web')
+  })
 })
 

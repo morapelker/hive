@@ -1,14 +1,18 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process'
-import { randomBytes } from 'node:crypto'
+import { createServer } from 'node:net'
 import process from 'node:process'
+
+// dev:web runs the FULL Electron app (so the desktop command bridge + agent handlers
+// are available) and serves the renderer from a Vite dev server with HMR. The Vite
+// page is pointed at the full app's desktop backend, which runs with auth disabled on
+// loopback — so a plain browser tab connects token-less and can drive agents/terminals.
+// Open the Vite URL (default http://127.0.0.1:5173) in your browser.
 
 const viteHost = process.env.HIVE_WEB_HOST ?? '127.0.0.1'
 const vitePort = process.env.HIVE_WEB_PORT ?? process.env.PORT ?? '5173'
 const viteOriginHost = viteHost === '0.0.0.0' ? 'localhost' : viteHost
-const viteOrigin = process.env.HIVE_SERVER_DEV_URL ?? `http://${viteOriginHost}:${vitePort}`
-const serverPort = process.env.HIVE_SERVER_PORT ?? '0'
-const bootstrapToken = process.env.HIVE_DESKTOP_BOOTSTRAP_TOKEN ?? randomBytes(32).toString('base64url')
+const viteOrigin = `http://${viteOriginHost}:${vitePort}`
 
 const children = new Set()
 let shuttingDown = false
@@ -55,63 +59,61 @@ const run = (command, args, options = {}) =>
     })
   })
 
-const waitForBackend = (child) =>
+const getFreePort = () =>
   new Promise((resolve, reject) => {
-    let buffer = ''
-    const timeout = setTimeout(() => {
-      reject(new Error('Timed out waiting for hive-server-ready'))
-    }, 15000)
-
-    child.stdout.setEncoding('utf8')
-    child.stdout.on('data', (chunk) => {
-      buffer += chunk
-      const lines = buffer.split(/\n/)
-      buffer = lines.pop() ?? ''
-
-      for (const line of lines) {
-        if (!line.trim()) continue
-        let event
-        try {
-          event = JSON.parse(line)
-        } catch {
-          process.stdout.write(line + '\n')
-          continue
-        }
-
-        if (event.event === 'hive-server-ready') {
-          clearTimeout(timeout)
-          resolve(event)
-          continue
-        }
-
-        process.stdout.write(line + '\n')
-      }
-    })
-
-    child.once('exit', (code, signal) => {
-      clearTimeout(timeout)
-      reject(new Error(`Hive server exited before ready: code=${code} signal=${signal}`))
+    const server = createServer()
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address()
+      const port = typeof address === 'object' && address ? address.port : 0
+      server.close(() => resolve(port))
     })
   })
+
+const waitForBackend = async (port, timeoutMs = 90000) => {
+  const url = `http://127.0.0.1:${port}/.well-known/hive/environment`
+  const start = Date.now()
+  for (;;) {
+    try {
+      const response = await fetch(url)
+      if (response.ok) return await response.json()
+    } catch {
+      // backend not up yet — keep polling
+    }
+    if (Date.now() - start > timeoutMs) {
+      throw new Error(`Timed out waiting for the Hive desktop backend on :${port}`)
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500))
+  }
+}
 
 try {
-  await run('pnpm', ['run', 'build'])
+  // Build the main/preload/renderer bundles the full app runs from (out/main/index.js,
+  // out/main/server.js, out/renderer). The browser renderer is served by Vite, so the
+  // static web build (build:web) is not needed here.
+  await run('pnpm', ['exec', 'electron-vite', 'build'])
 
-  const backend = spawnTracked('pnpm', ['exec', 'electron', 'out/main/server.js'], {
-    stdio: ['ignore', 'pipe', 'pipe'],
+  const backendPort = await getFreePort()
+
+  const app = spawnTracked('pnpm', ['exec', 'electron', '.'], {
+    stdio: ['ignore', 'inherit', 'inherit'],
     env: {
       ...process.env,
-      ELECTRON_RUN_AS_NODE: '1',
-      HIVE_SERVER_MODE: 'browser',
-      HIVE_SERVER_PORT: serverPort,
-      HIVE_DESKTOP_BOOTSTRAP_TOKEN: bootstrapToken,
-      HIVE_SERVER_DEV_URL: viteOrigin
+      // Pin the desktop backend to the free port we just reserved so Vite can target it.
+      HIVE_DESKTOP_BACKEND_PORT: String(backendPort)
     }
   })
-  backend.stderr.pipe(process.stderr)
 
-  const ready = await waitForBackend(backend)
-  process.stdout.write(`[dev:web] Hive backend ready at ${ready.httpBaseUrl}\n`)
+  process.stdout.write(
+    `[dev:web] launching full Hive app; desktop backend pinned to :${backendPort}\n`
+  )
+
+  const env = await waitForBackend(backendPort)
+  const httpBaseUrl = env.httpBaseUrl ?? `http://127.0.0.1:${backendPort}`
+  const wsBaseUrl = env.wsBaseUrl ?? `ws://127.0.0.1:${backendPort}/ws`
+
+  process.stdout.write(`[dev:web] backend ready at ${httpBaseUrl} (bridge + agents available)\n`)
+  process.stdout.write(`[dev:web] open the web UI (HMR) at ${viteOrigin}\n`)
 
   const vite = spawnTracked(
     'pnpm',
@@ -119,16 +121,15 @@ try {
     {
       env: {
         ...process.env,
-        VITE_HIVE_BOOTSTRAP_TOKEN: bootstrapToken,
-        VITE_HIVE_HTTP_BASE_URL: ready.httpBaseUrl,
-        VITE_HIVE_WS_BASE_URL: ready.wsBaseUrl
+        VITE_HIVE_HTTP_BASE_URL: httpBaseUrl,
+        VITE_HIVE_WS_BASE_URL: wsBaseUrl
       }
     }
   )
 
-  backend.once('exit', (code, signal) => {
+  app.once('exit', (code, signal) => {
     if (shuttingDown) return
-    process.stderr.write(`Hive backend exited: code=${code} signal=${signal}\n`)
+    process.stderr.write(`Hive app exited: code=${code} signal=${signal}\n`)
     vite.kill('SIGTERM')
     shutdown(1)
   })

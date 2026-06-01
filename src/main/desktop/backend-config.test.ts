@@ -6,13 +6,27 @@ import { describe, expect, it } from 'vitest'
 import {
   createDesktopBootstrapToken,
   makeDesktopBackendSpawnConfig,
+  parseDesktopBackendPortEnv,
   resolveDesktopBackendEntryPath,
+  resolveDesktopWebStaticDir,
   selectDesktopBackendPort
 } from './backend-config'
 
 describe('desktop backend config', () => {
   it('generates a 48-character bootstrap token', () => {
     expect(createDesktopBootstrapToken()).toMatch(/^[0-9a-f]{48}$/)
+  })
+
+  it('parses a valid HIVE_DESKTOP_BACKEND_PORT override', () => {
+    expect(parseDesktopBackendPortEnv('51234')).toBe(51234)
+    expect(parseDesktopBackendPortEnv('0')).toBe(0)
+  })
+
+  it('ignores missing or invalid port overrides', () => {
+    expect(parseDesktopBackendPortEnv(undefined)).toBeUndefined()
+    expect(parseDesktopBackendPortEnv('')).toBeUndefined()
+    expect(parseDesktopBackendPortEnv('not-a-number')).toBeUndefined()
+    expect(parseDesktopBackendPortEnv('70000')).toBeUndefined()
   })
 
   it('selects the next port when the default is occupied', async () => {
@@ -58,6 +72,32 @@ describe('desktop backend config', () => {
     expect(config.env.HIVE_SERVER_BASE_DIR).toBe(baseDir)
     expect(config.env.HIVE_DESKTOP_BOOTSTRAP_TOKEN).toBe('a'.repeat(48))
     expect(config.env.KEEP_ME).toBe('yes')
+  })
+
+  it('serves the web UI without auth on loopback', async () => {
+    const baseDir = mkdtempSync(join(tmpdir(), 'hive-desktop-backend-'))
+    const config = await makeDesktopBackendSpawnConfig({
+      baseDir,
+      port: 0,
+      staticDir: '/app/out/renderer-web'
+    })
+
+    expect(config.env.HIVE_SERVER_REQUIRE_AUTH).toBe('false')
+    expect(config.env.HIVE_SERVER_STATIC_DIR).toBe('/app/out/renderer-web')
+  })
+
+  it('derives the web static dir as a sibling of the server bundle by default', async () => {
+    const baseDir = mkdtempSync(join(tmpdir(), 'hive-desktop-backend-'))
+    const config = await makeDesktopBackendSpawnConfig({ baseDir, port: 0 })
+
+    expect(config.env.HIVE_SERVER_STATIC_DIR).toMatch(/renderer-web$/)
+  })
+
+  it('resolves renderer-web as a sibling of the server bundle, regardless of chunk depth', () => {
+    // The server entry is at out/main/server.js; the web build is at out/renderer-web.
+    // Deriving from the entry path must not depend on where backend-config itself is
+    // chunked (it may be bundled under out/main/chunks).
+    expect(resolveDesktopWebStaticDir('/app/out/main/server.js')).toBe('/app/out/renderer-web')
   })
 
   it('resolves the bundled server entry next to main chunks', () => {

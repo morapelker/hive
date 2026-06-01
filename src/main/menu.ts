@@ -1,5 +1,6 @@
 import { BrowserWindow, Menu, app, clipboard, shell } from 'electron'
 import { createLogger, getLogDir } from './services/logger'
+import { getDesktopBackendBootstrap } from './desktop/backend-manager'
 import { ghosttyService } from './services/ghostty-service'
 import { updaterService } from './services/updater'
 import { markQuitViaShortcut } from './quit-confirmation'
@@ -348,6 +349,29 @@ export function buildMenu(mainWindow: BrowserWindow, isDev: boolean): Menu {
           label: 'Check for Updates...',
           click: () => {
             updaterService.checkForUpdates({ manual: true })
+          }
+        },
+        { type: 'separator' },
+        {
+          label: 'Open Web UI in Browser',
+          click: () => {
+            const bootstrap = getDesktopBackendBootstrap()
+            if (!bootstrap) {
+              log.warn('Open Web UI requested before backend was ready')
+              return
+            }
+            void shell.openExternal(bootstrap.httpBaseUrl)
+          }
+        },
+        {
+          label: 'Copy Web UI URL',
+          click: () => {
+            const bootstrap = getDesktopBackendBootstrap()
+            if (!bootstrap) {
+              log.warn('Copy Web UI URL requested before backend was ready')
+              return
+            }
+            clipboard.writeText(bootstrap.httpBaseUrl)
           }
         },
         { type: 'separator' },
