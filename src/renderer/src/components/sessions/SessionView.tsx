@@ -5599,6 +5599,29 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
     }
   }, [sessionId, toggleSessionMode, toggleSuperPlanShortcut])
 
+  // Listen for custom command prompt injection events
+  useEffect(() => {
+    const handler = (e: Event): void => {
+      const event = e as CustomEvent<{ sessionId: string; prompt: string }>
+      // Only handle events for this session
+      if (event.detail.sessionId !== sessionId) return
+
+      // Set the input value and send the prompt
+      const prompt = event.detail.prompt
+      setInputValue(prompt)
+      inputValueRef.current = prompt
+
+      // Clear any draft timer
+      if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
+
+      // Send the prompt
+      handleSend(prompt)
+    }
+
+    window.addEventListener('hive:send-prompt-to-session', handler)
+    return () => window.removeEventListener('hive:send-prompt-to-session', handler)
+  }, [sessionId, handleSend])
+
   // Listen for undo/redo turn events from the application menu
   useEffect(() => {
     const handleUndo = async (): Promise<void> => {

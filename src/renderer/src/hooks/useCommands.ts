@@ -23,6 +23,7 @@ import { systemApi } from '@/api/system-api'
 import { worktreeApi } from '@/api/worktree-api'
 import { projectApi } from '@/api/project-api'
 import { settingsApi } from '@/api/settings-api'
+import type { CustomProjectCommand } from '@/lib/custom-commands'
 
 /**
  * Hook that registers all available commands and returns filtered commands
@@ -649,6 +650,83 @@ export function useCommands() {
     pushCommandLevel,
     isPackaged,
     toggleBoardView
+  ])
+
+  // Handle custom command execution events
+  useEffect(() => {
+    const handler = async (e: Event): Promise<void> => {
+      const event = e as CustomEvent<{
+        projectId: string
+        commandId: string
+        commandName: string
+        renderedPrompt: string
+      }>
+
+      const { projectId, renderedPrompt } = event.detail
+
+      // Find the project
+      const project = projects.find((p) => p.id === projectId)
+      if (!project) {
+        toast.error('Project not found')
+        return
+      }
+
+      // Get worktrees for the project
+      const worktrees = getWorktreesForProject(projectId)
+
+      if (worktrees.length === 0) {
+        toast.error('No worktrees found for this project')
+        return
+      }
+
+      // Use the first worktree (could be enhanced to let user choose)
+      const worktree = worktrees[0]
+
+      // Select the worktree
+      selectWorktree(worktree.id)
+
+      // Get or create a session for this worktree
+      const existingSessions = getSessionsForWorktree(worktree.id)
+      let targetSessionId: string
+
+      if (existingSessions.length > 0) {
+        // Use the active session or the first one
+        targetSessionId = activeSessionId && existingSessions.find(s => s.id === activeSessionId)
+          ? activeSessionId
+          : existingSessions[0].id
+      } else {
+        // Create a new session
+        const result = await createSession(worktree.id, projectId)
+        if (!result.success || !result.session) {
+          toast.error('Failed to create session')
+          return
+        }
+        targetSessionId = result.session.id
+      }
+
+      // Set the active session
+      setActiveSession(targetSessionId)
+
+      // Dispatch event to inject prompt into the session
+      const sendEvent = new CustomEvent('hive:send-prompt-to-session', {
+        detail: {
+          sessionId: targetSessionId,
+          prompt: renderedPrompt
+        }
+      })
+      window.dispatchEvent(sendEvent)
+    }
+
+    window.addEventListener('hive:execute-custom-command', handler)
+    return () => window.removeEventListener('hive:execute-custom-command', handler)
+  }, [
+    projects,
+    getWorktreesForProject,
+    selectWorktree,
+    getSessionsForWorktree,
+    activeSessionId,
+    createSession,
+    setActiveSession
   ])
 
   // Get filtered commands based on search query
