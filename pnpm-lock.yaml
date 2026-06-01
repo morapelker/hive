@@ -5985,8 +5985,8 @@ packages:
   undici-types@7.16.0:
     resolution: {integrity: sha512-Zz+aZWSj8LE6zoxD+xrjh4VfkIG8Ya6LvYkZqtUQGJPZjYl53ypCaUwWqo7eI0x66KBGeRo+mlBEkMSeSZ38Nw==}
 
-  undici@6.25.0:
-    resolution: {integrity: sha512-ZgpWDC5gmNiuY9CnLVXEH8rl50xhRCuLNA97fAUnKi8RRuV4E6KG31pDTsLVUKnohJE0I3XDrTeEydAXRw47xg==}
+  undici@6.26.0:
+    resolution: {integrity: sha512-4yqz8a3n5HmGTlsbADNtr/dJlhkh/55Rq798G6ibiULcXbDtaLpTl1pvdqcbFfeoj3iSi52lePFM7h9H21cw/A==}
     engines: {node: '>=18.17'}
 
   unicorn-magic@0.3.0:
@@ -10468,7 +10468,7 @@ snapshots:
     dependencies:
       foreground-child: 3.3.1
       jackspeak: 3.4.3
-      minimatch: 9.0.9
+      minimatch: 9.0.5
       minipass: 7.1.2
       package-json-from-dist: 1.0.1
       path-scurry: 1.11.1
@@ -11774,7 +11774,7 @@ snapshots:
       semver: 7.7.4
       tar: 7.5.13
       tinyglobby: 0.2.15
-      undici: 6.25.0
+      undici: 6.26.0
       which: 6.0.1
 
   node-gyp@9.4.1:
@@ -13147,7 +13147,7 @@ snapshots:
 
   undici-types@7.16.0: {}
 
-  undici@6.25.0: {}
+  undici@6.26.0: {}
 
   unicorn-magic@0.3.0: {}
 
