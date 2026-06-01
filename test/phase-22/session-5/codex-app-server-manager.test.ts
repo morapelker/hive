@@ -11,11 +11,13 @@ vi.mock('../../../src/main/services/logger', () => ({
   })
 }))
 
-const { mockSupportsCodexAppServer } = vi.hoisted(() => ({
+const { mockResolveCodexBinaryPath, mockSupportsCodexAppServer } = vi.hoisted(() => ({
+  mockResolveCodexBinaryPath: vi.fn(() => null as string | null),
   mockSupportsCodexAppServer: vi.fn(() => true)
 }))
 
 vi.mock('../../../src/main/services/codex-binary-resolver', () => ({
+  resolveCodexBinaryPath: (...args: unknown[]) => mockResolveCodexBinaryPath(...args),
   supportsCodexAppServer: (...args: unknown[]) => mockSupportsCodexAppServer(...args)
 }))
 
@@ -94,6 +96,7 @@ describe('CodexAppServerManager — collaborationMode in sendTurn', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    mockResolveCodexBinaryPath.mockReturnValue(null)
     mockSupportsCodexAppServer.mockReturnValue(true)
     manager = new CodexAppServerManager()
   })
@@ -128,6 +131,23 @@ describe('CodexAppServerManager — collaborationMode in sendTurn', () => {
     ).rejects.toThrow(
       'Installed Codex CLI does not support app-server: /usr/local/bin/codex. Upgrade @openai/codex to 0.118.0 or newer.'
     )
+  })
+
+  it('re-resolves the Codex binary before probing support when no path was injected', async () => {
+    mockResolveCodexBinaryPath.mockReturnValue('/resolved/bin/codex')
+    mockSupportsCodexAppServer.mockReturnValue(false)
+
+    await expect(
+      manager.startSession({
+        cwd: '/test/project'
+      })
+    ).rejects.toThrow(
+      'Installed Codex CLI does not support app-server: /resolved/bin/codex. Upgrade @openai/codex to 0.118.0 or newer.'
+    )
+
+    expect(mockResolveCodexBinaryPath).toHaveBeenCalledTimes(1)
+    expect(mockSupportsCodexAppServer).toHaveBeenCalledWith('/resolved/bin/codex')
+    expect(mockSupportsCodexAppServer).not.toHaveBeenCalledWith('codex')
   })
 
   it('includes collaborationMode with mode: plan and plan developer instructions when interactionMode is plan', async () => {
