@@ -126,6 +126,10 @@ describe('CodexImplementer.prompt()', () => {
     return eventBusMocks.publish.mock.calls.map((call) => call[0])
   }
 
+  function expectedTextInput(text: string) {
+    return [{ type: 'text', text, text_elements: [] }]
+  }
+
   // ── Basic prompt flow ───────────────────────────────────────
 
   it('calls sendTurn with extracted text', async () => {
@@ -146,7 +150,7 @@ describe('CodexImplementer.prompt()', () => {
     await impl.prompt('/test/project', 'thread-1', 'Hello Codex')
 
     expect(mockManager.sendTurn).toHaveBeenCalledWith('thread-1', {
-      text: 'Hello Codex',
+      input: expectedTextInput('Hello Codex'),
       model: expect.any(String),
       interactionMode: 'default'
     })
@@ -217,7 +221,7 @@ describe('CodexImplementer.prompt()', () => {
     ])
 
     expect(mockManager.sendTurn).toHaveBeenCalledWith('thread-1', {
-      text: 'Part 1\nPart 2',
+      input: expectedTextInput('Part 1\nPart 2'),
       model: expect.any(String),
       interactionMode: 'default'
     })
@@ -881,7 +885,7 @@ describe('CodexImplementer.prompt()', () => {
     })
 
     expect(mockManager.sendTurn).toHaveBeenCalledWith('thread-1', {
-      text: 'test',
+      input: expectedTextInput('test'),
       model: 'gpt-5.3-codex',
       interactionMode: 'default'
     })
@@ -905,7 +909,7 @@ describe('CodexImplementer.prompt()', () => {
     await impl.prompt('/test/project', 'thread-1', 'test', undefined, { codexFastMode: true })
 
     expect(mockManager.sendTurn).toHaveBeenCalledWith('thread-1', {
-      text: 'test',
+      input: expectedTextInput('test'),
       model: 'gpt-5.5',
       serviceTier: 'fast',
       interactionMode: 'default'
@@ -939,7 +943,7 @@ describe('CodexImplementer.prompt()', () => {
       await impl.prompt('/test/project', 'thread-1', 'Plan something')
 
       expect(mockManager.sendTurn).toHaveBeenCalledWith('thread-1', {
-        text: 'Plan something',
+        input: expectedTextInput('Plan something'),
         model: expect.any(String),
         interactionMode: 'plan'
       })
@@ -969,7 +973,7 @@ describe('CodexImplementer.prompt()', () => {
       await impl.prompt('/test/project', 'thread-1', 'Build something')
 
       expect(mockManager.sendTurn).toHaveBeenCalledWith('thread-1', {
-        text: 'Build something',
+        input: expectedTextInput('Build something'),
         model: expect.any(String),
         interactionMode: 'default'
       })
@@ -994,7 +998,7 @@ describe('CodexImplementer.prompt()', () => {
       await impl.prompt('/test/project', 'thread-1', 'Do something')
 
       expect(mockManager.sendTurn).toHaveBeenCalledWith('thread-1', {
-        text: 'Do something',
+        input: expectedTextInput('Do something'),
         model: expect.any(String),
         interactionMode: 'default'
       })

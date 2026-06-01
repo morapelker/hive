@@ -195,6 +195,8 @@ describe('pet window activation suppression', () => {
       petId: 'bee',
       size: 'L',
       opacity: 0.75,
+      animationSpeedEnabled: false,
+      animationSpeed: 5,
       hasHatched: false
     }
     await vi.waitFor(() => {

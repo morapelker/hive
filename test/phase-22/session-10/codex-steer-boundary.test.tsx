@@ -77,7 +77,20 @@ const apiMocks = vi.hoisted(() => ({
     setSessionQueuedState: vi.fn()
   },
   telegramApi: {
-    getConfig: vi.fn(() => Promise.resolve(null))
+    getConfig: vi.fn(() => Promise.resolve(null)),
+    getStatus: vi.fn(() =>
+      Promise.resolve({
+        active: false,
+        sessionId: null,
+        worktreeId: null,
+        connectionId: null,
+        mode: null,
+        health: 'ok',
+        lastError: null
+      })
+    ),
+    onStatusChanged: vi.fn(() => () => {}),
+    onPlanImplementRequested: vi.fn(() => () => {})
   },
   terminalApi: {
     destroy: vi.fn()

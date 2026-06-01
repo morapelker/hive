@@ -119,6 +119,10 @@ describe('Codex child session routing', () => {
     return eventBusMocks.publish.mock.calls.map((call) => call[0])
   }
 
+  function expectedTextInput(text: string) {
+    return [{ type: 'text', text, text_elements: [] }]
+  }
+
   // ── Prompt routes to correct session ────────────────────────
 
   describe('prompt routing', () => {
@@ -141,7 +145,7 @@ describe('Codex child session routing', () => {
       await impl.prompt('/project-a', 'thread-a', 'Hello A')
 
       expect(mockManager.sendTurn).toHaveBeenCalledWith('thread-a', {
-        text: 'Hello A',
+        input: expectedTextInput('Hello A'),
         model: expect.any(String),
         interactionMode: 'default'
       })
@@ -293,7 +297,7 @@ describe('Codex child session routing', () => {
       await impl.prompt('/project', 'thread-ctx', contextMessage)
 
       expect(mockManager.sendTurn).toHaveBeenCalledWith('thread-ctx', {
-        text: contextMessage,
+        input: expectedTextInput(contextMessage),
         model: expect.any(String),
         interactionMode: 'default'
       })
@@ -328,7 +332,7 @@ describe('Codex child session routing', () => {
       await impl.prompt('/project', 'thread-ctx2', parts)
 
       expect(mockManager.sendTurn).toHaveBeenCalledWith('thread-ctx2', {
-        text: '[Worktree Context]\nContext here\n\n[User Message]\nDo something',
+        input: expectedTextInput('[Worktree Context]\nContext here\n\n[User Message]\nDo something'),
         model: expect.any(String),
         interactionMode: 'default'
       })

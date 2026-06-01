@@ -397,9 +397,10 @@ describe('WorktreePickerModal Claude CLI launch', () => {
   })
 
   it('starts a connection ticket with Claude CLI through terminalApi and skips OpenCode', async () => {
-    const { createConnectionSession, updateTicket } = setupStores()
+    const { createConnectionSession, setSessionModel, updateTicket } = setupStores()
     await renderAndSelectClaudeCliForConnection()
 
+    await userEvent.click(screen.getByTestId('model-selector-pick-opus'))
     await userEvent.click(screen.getByTestId('wt-picker-send-btn'))
 
     await waitFor(() =>
@@ -409,10 +410,22 @@ describe('WorktreePickerModal Claude CLI launch', () => {
       'connection-1',
       'claude-code-cli',
       'build',
-      {
+      expect.objectContaining({
+        modelOverride: {
+          agentSdk: 'claude-code-cli',
+          providerID: 'anthropic',
+          modelID: 'opus',
+          variant: 'high'
+        },
         pendingMessage: expect.stringContaining('Please implement the following ticket.')
-      }
+      })
     )
+    expect(setSessionModel).toHaveBeenCalledWith('connection-session-1', {
+      agentSdk: 'claude-code-cli',
+      providerID: 'anthropic',
+      modelID: 'opus',
+      variant: 'high'
+    })
     expect(updateTicket).toHaveBeenCalledWith('ticket-1', 'project-1', {
       current_session_id: 'connection-session-1',
       worktree_id: null,
@@ -432,6 +445,7 @@ describe('WorktreePickerModal Claude CLI launch', () => {
   it('omits the synthetic plan prefix for Claude CLI plan launches', async () => {
     await renderAndSelectClaudeCli()
 
+    await userEvent.click(screen.getByTestId('model-selector-pick-opus'))
     await userEvent.click(screen.getByTestId('wt-picker-mode-toggle'))
     await userEvent.click(screen.getByTestId('worktree-item-worktree-1'))
     await userEvent.click(screen.getByTestId('wt-picker-send-btn'))
@@ -451,6 +465,7 @@ describe('WorktreePickerModal Claude CLI launch', () => {
     const { setSessionMode } = setupStores()
     await renderAndSelectClaudeCli()
 
+    await userEvent.click(screen.getByTestId('model-selector-pick-opus'))
     await userEvent.click(screen.getByTestId('wt-picker-mode-toggle'))
     await userEvent.click(screen.getByTestId('wt-picker-super-toggle'))
     await userEvent.click(screen.getByTestId('worktree-item-worktree-1'))

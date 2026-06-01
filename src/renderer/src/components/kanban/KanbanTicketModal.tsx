@@ -2051,11 +2051,12 @@ function PlanReviewModeContent({
             sessionStore.setPendingMessage(newSessionId, handoffPrompt)
           }
 
-          // Handoff from the ticket modal starts work in the background and keeps
-          // the board in focus. Sticky-tab mode represents the board as a tab, so
-          // explicitly preserve that tab; toggle mode is already on the board.
-          if (useSettingsStore.getState().boardMode === 'sticky-tab') {
+          const boardMode = useSettingsStore.getState().boardMode
+          if (boardMode === 'sticky-tab') {
             sessionStore.setActiveSession(BOARD_TAB_ID)
+          } else if (newSession.agent_sdk !== 'claude-code-cli') {
+            sessionStore.setActiveConnection(sessionRecord.connection_id)
+            sessionStore.setActiveConnectionSession(newSessionId)
           }
 
           onClose()
@@ -2138,11 +2139,12 @@ function PlanReviewModeContent({
           sessionStore.setPendingMessage(newSessionId, handoffPrompt)
         }
 
-        // Handoff from the ticket modal starts work in the background and keeps
-        // the board in focus. Sticky-tab mode represents the board as a tab, so
-        // explicitly preserve that tab; toggle mode is already on the board.
-        if (useSettingsStore.getState().boardMode === 'sticky-tab') {
+        const boardMode = useSettingsStore.getState().boardMode
+        if (boardMode === 'sticky-tab') {
           sessionStore.setActiveSession(BOARD_TAB_ID)
+        } else if (newSession.agent_sdk !== 'claude-code-cli') {
+          sessionStore.setActiveWorktree(worktreeId)
+          sessionStore.setActiveSession(newSessionId)
         }
 
         onClose()

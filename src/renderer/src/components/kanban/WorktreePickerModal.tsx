@@ -231,7 +231,7 @@ export function WorktreePickerModal({
     return resolveModelForSdk(baseAgentSdk) ?? null
   }, [mode, baseAgentSdk, selectedSdk])
 
-  const agentSdk = selectedSdk ?? autoResolvedModel?.agentSdk ?? baseAgentSdk
+  const agentSdk = selectedSdk ?? selectedModel?.agentSdk ?? autoResolvedModel?.agentSdk ?? baseAgentSdk
   const goalAvailable = agentSdk === 'codex' && mode === 'build' && !preAssignOnly
   const availableSdkButtonCount = availableAgentSdks
     ? [
