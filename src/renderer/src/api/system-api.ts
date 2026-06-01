@@ -64,6 +64,9 @@ export const systemApi = {
   setKeepAwake: async (active: boolean): Promise<void> => {
     return getRendererRpcClient().request<void>('systemOps.setKeepAwake', { active })
   },
+  sleepNow: async (): Promise<boolean> => {
+    return getRendererRpcClient().request<boolean>('systemOps.sleepNow', {})
+  },
   setSessionQueuedState: async (sessionId: string, hasQueued: boolean): Promise<void> =>
     getRendererRpcClient().request<void>('systemOps.setSessionQueuedState', {
       sessionId,

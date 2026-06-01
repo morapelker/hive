@@ -25,6 +25,7 @@ type SystemDesktopCommandName =
   | 'openInChrome'
   | 'updateMenuState'
   | 'setKeepAwake'
+  | 'sleepNow'
   | 'setSessionQueuedState'
 
 export interface SystemOpsRpcService {
@@ -47,6 +48,7 @@ export interface SystemOpsRpcService {
   readonly isPackaged?: () => Effect.Effect<boolean, unknown, never>
   readonly getPlatform?: () => Effect.Effect<NodeJS.Platform, unknown, never>
   readonly setKeepAwake?: (active: boolean) => Effect.Effect<void, unknown, never>
+  readonly sleepNow?: () => Effect.Effect<boolean, unknown, never>
   readonly setSessionQueuedState?: (
     sessionId: string,
     hasQueued: boolean
@@ -184,6 +186,11 @@ export const makeLiveSystemOpsRpcService = (): SystemOpsRpcService => ({
   setKeepAwake: (active) =>
     Effect.tryPromise({
       try: () => requestDesktopCommand<void>('setKeepAwake', { active }).then(() => undefined),
+      catch: (cause) => cause
+    }),
+  sleepNow: () =>
+    Effect.tryPromise({
+      try: () => requestDesktopCommand<boolean>('sleepNow'),
       catch: (cause) => cause
     }),
   setSessionQueuedState: (sessionId, hasQueued) =>
@@ -362,6 +369,20 @@ export const makeSystemOpsRpcHandlers = (
         })
     ],
     [
+      'systemOps.sleepNow',
+      (params) =>
+        Effect.gen(function* () {
+          yield* Effect.try({
+            try: () => emptyParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          if (!service.sleepNow) {
+            return yield* Effect.fail(new Error('systemOps.sleepNow is unavailable'))
+          }
+          return yield* service.sleepNow()
+        })
+    ],
+    [
       'systemOps.setSessionQueuedState',
       (params) =>
         Effect.gen(function* () {
@@ -440,6 +461,10 @@ const requestDesktopCommand = <A = unknown>(
     if (command === 'setKeepAwake') {
       if (!payload) throw new Error('Missing setKeepAwake payload')
       return Promise.resolve(undefined as A)
+    }
+
+    if (command === 'sleepNow') {
+      return import('../../../main/services/sleep-now').then(({ sleepNow }) => sleepNow() as A)
     }
 
     if (command === 'setSessionQueuedState') {

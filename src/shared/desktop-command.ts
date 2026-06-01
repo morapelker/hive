@@ -24,6 +24,7 @@ export type DesktopCommandName =
   | 'openInChrome'
   | 'updateMenuState'
   | 'setKeepAwake'
+  | 'sleepNow'
   | 'setSessionQueuedState'
   | 'updaterCheckForUpdate'
   | 'updaterDownloadUpdate'
@@ -829,6 +830,7 @@ export type DesktopCommandRequest =
   | OpenInChromeDesktopCommandRequest
   | UpdateMenuStateDesktopCommandRequest
   | SetKeepAwakeDesktopCommandRequest
+  | SleepNowDesktopCommandRequest
   | SetSessionQueuedStateDesktopCommandRequest
   | UpdaterCheckForUpdateDesktopCommandRequest
   | UpdaterDownloadUpdateDesktopCommandRequest
@@ -1036,6 +1038,12 @@ export interface SetKeepAwakeDesktopCommandRequest {
   readonly id: string
   readonly command: 'setKeepAwake'
   readonly payload: SetKeepAwakePayload
+}
+
+export interface SleepNowDesktopCommandRequest {
+  readonly type: typeof DESKTOP_COMMAND_REQUEST_TYPE
+  readonly id: string
+  readonly command: 'sleepNow'
 }
 
 export interface SetSessionQueuedStateDesktopCommandRequest {
@@ -1650,6 +1658,10 @@ export function makeDesktopCommandRequest(
   command: 'setKeepAwake',
   payload: SetKeepAwakePayload
 ): SetKeepAwakeDesktopCommandRequest
+export function makeDesktopCommandRequest(
+  id: string,
+  command: 'sleepNow'
+): SleepNowDesktopCommandRequest
 export function makeDesktopCommandRequest(
   id: string,
   command: 'setSessionQueuedState',
@@ -3180,6 +3192,7 @@ export const isDesktopCommandRequest = (value: unknown): value is DesktopCommand
       (value.command === 'openInChrome' && isOpenInChromePayload(value.payload)) ||
       (value.command === 'updateMenuState' && isUpdateMenuStatePayload(value.payload)) ||
       (value.command === 'setKeepAwake' && isSetKeepAwakePayload(value.payload)) ||
+      value.command === 'sleepNow' ||
       (value.command === 'setSessionQueuedState' &&
         isSetSessionQueuedStatePayload(value.payload)) ||
       (value.command === 'updaterCheckForUpdate' &&

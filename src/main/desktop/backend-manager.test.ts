@@ -15,6 +15,10 @@ const powerSaveMocks = vi.hoisted(() => ({
   setKeepAwake: vi.fn()
 }))
 
+const sleepNowMocks = vi.hoisted(() => ({
+  sleepNow: vi.fn()
+}))
+
 const notificationMocks = vi.hoisted(() => ({
   setSessionQueuedState: vi.fn()
 }))
@@ -63,6 +67,7 @@ const scriptRunnerMocks = vi.hoisted(() => ({
 }))
 
 const ptyServiceMocks = vi.hoisted(() => ({
+  has: vi.fn(),
   resize: vi.fn(),
   write: vi.fn()
 }))
@@ -107,6 +112,10 @@ vi.mock('../menu', () => ({
 
 vi.mock('../services/power-save-blocker', () => ({
   setKeepAwake: powerSaveMocks.setKeepAwake
+}))
+
+vi.mock('../services/sleep-now', () => ({
+  sleepNow: sleepNowMocks.sleepNow
 }))
 
 vi.mock('../services/notification-service', () => ({
@@ -164,6 +173,7 @@ vi.mock('../services/script-runner', () => ({
 
 vi.mock('../services/pty-service', () => ({
   ptyService: {
+    has: ptyServiceMocks.has,
     resize: ptyServiceMocks.resize,
     write: ptyServiceMocks.write
   }
@@ -244,6 +254,7 @@ describe('desktop backend manager', () => {
     await __resetDesktopBackendForTests()
     menuMocks.updateMenuState.mockClear()
     powerSaveMocks.setKeepAwake.mockClear()
+    sleepNowMocks.sleepNow.mockClear()
     notificationMocks.setSessionQueuedState.mockClear()
     updaterMocks.checkForUpdates.mockClear()
     updaterMocks.downloadUpdate.mockClear()
@@ -253,6 +264,9 @@ describe('desktop backend manager', () => {
     responseLoggerMocks.appendResponseLog.mockClear()
     responseLoggerMocks.createResponseLog.mockClear()
     attachmentStorageMocks.deleteAttachment.mockClear()
+    ptyServiceMocks.has.mockClear()
+    ptyServiceMocks.resize.mockClear()
+    ptyServiceMocks.write.mockClear()
     attachmentStorageMocks.saveAttachment.mockClear()
     projectIconsMocks.getProjectIconDataUrl.mockClear()
     projectIconsMocks.removeProjectIcon.mockClear()
@@ -2319,6 +2333,35 @@ describe('desktop backend manager', () => {
     )
   })
 
+  it('forwards backend sleepNow commands to the native sleep implementation', async () => {
+    const child = new FakeChildProcess()
+    sleepNowMocks.sleepNow.mockReturnValue(true)
+
+    await startDesktopBackend(
+      {
+        executablePath: '/electron',
+        entryPath: '/app/server.js',
+        cwd: '/app',
+        baseDir: mkdtempSync(join(tmpdir(), 'hive-backend-manager-')),
+        port: 0
+      },
+      {
+        spawnProcess: vi.fn(() => child as never),
+        fetch: vi.fn(async () => new Response('{}', { status: 200 })),
+        logger: makeLogger()
+      }
+    )
+
+    child.emit('message', makeDesktopCommandRequest('sleep-now-1', 'sleepNow'))
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(sleepNowMocks.sleepNow).toHaveBeenCalledWith()
+    expect(child.send).toHaveBeenCalledWith(
+      makeDesktopCommandResult('sleep-now-1', { ok: true, value: true }),
+      expect.any(Function)
+    )
+  })
+
   it('forwards backend setSessionQueuedState commands to the notification service', async () => {
     const child = new FakeChildProcess()
 
@@ -3327,6 +3370,7 @@ describe('desktop backend manager', () => {
 
   it('forwards backend terminalWrite commands to the legacy PTY service', async () => {
     const child = new FakeChildProcess()
+    ptyServiceMocks.has.mockReturnValue(true)
 
     await startDesktopBackend(
       {

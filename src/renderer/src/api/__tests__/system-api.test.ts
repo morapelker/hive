@@ -212,6 +212,16 @@ describe('systemApi', () => {
     expect(request).toHaveBeenCalledWith('systemOps.setKeepAwake', { active: true })
   })
 
+  it('routes sleepNow through the renderer RPC client', async () => {
+    const request = vi.fn().mockResolvedValue(true)
+    const subscribe = vi.fn()
+
+    setRendererRpcClient({ request, subscribe })
+
+    await expect(systemApi.sleepNow()).resolves.toBe(true)
+    expect(request).toHaveBeenCalledWith('systemOps.sleepNow', {})
+  })
+
   it('routes setSessionQueuedState through the renderer RPC client', async () => {
     const request = vi.fn().mockResolvedValue(undefined)
     const subscribe = vi.fn()

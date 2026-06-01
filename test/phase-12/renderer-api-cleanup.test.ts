@@ -12172,7 +12172,7 @@ describe('renderer API cleanup', () => {
       'utf-8'
     )
     const listenerStart = source.indexOf('// Listen for settings updates from main process')
-    const listenerEnd = source.indexOf('  })\n}', listenerStart)
+    const listenerEnd = source.indexOf('  })\n\n}', listenerStart)
     const listenerSource = source.slice(listenerStart, listenerEnd)
 
     expect(listenerStart).toBeGreaterThan(-1)

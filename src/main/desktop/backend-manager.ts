@@ -42,6 +42,7 @@ import { openInChrome } from '../services/open-in-chrome'
 import { createLogger } from '../services/logger'
 import { updateMenuState } from '../menu'
 import { setKeepAwake } from '../services/power-save-blocker'
+import { sleepNow } from '../services/sleep-now'
 import { notificationService } from '../services/notification-service'
 import { updaterService } from '../services/updater'
 import { appendResponseLog, createResponseLog } from '../services/response-logger'
@@ -2106,6 +2107,26 @@ const handleDesktopBackendCommand = (
       sendDesktopBackendCommandResult(
         child,
         makeDesktopCommandResult(message.id, { ok: true }),
+        log
+      )
+    } catch (error) {
+      sendDesktopBackendCommandResult(
+        child,
+        makeDesktopCommandResult(message.id, {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error)
+        }),
+        log
+      )
+    }
+  }
+
+  if (message.command === 'sleepNow') {
+    try {
+      const issued = sleepNow()
+      sendDesktopBackendCommandResult(
+        child,
+        makeDesktopCommandResult(message.id, { ok: true, value: issued }),
         log
       )
     } catch (error) {

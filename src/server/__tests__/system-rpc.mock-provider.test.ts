@@ -629,6 +629,54 @@ describe('system ops RPC mocked provider', () => {
     })
   })
 
+  it('routes systemOps.sleepNow to the injected provider service', async () => {
+    const sleepNow = vi.fn(() => Effect.succeed(true))
+    const service = { sleepNow } as unknown as SystemOpsRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      systemOps: service
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'system-sleep-now-1',
+        method: 'systemOps.sleepNow',
+        params: {}
+      })
+    )
+
+    expect(sleepNow).toHaveBeenCalledWith()
+    expect(response).toEqual({
+      id: 'system-sleep-now-1',
+      ok: true,
+      value: true
+    })
+  })
+
+  it('validates systemOps.sleepNow params before calling the provider service', async () => {
+    const sleepNow = vi.fn(() => Effect.succeed(true))
+    const service = { sleepNow } as unknown as SystemOpsRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      systemOps: service
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'system-sleep-now-invalid',
+        method: 'systemOps.sleepNow',
+        params: { force: true }
+      })
+    )
+
+    expect(sleepNow).not.toHaveBeenCalled()
+    expect(response).toMatchObject({
+      id: 'system-sleep-now-invalid',
+      ok: false,
+      error: { code: 'VALIDATION_FAILED' }
+    })
+  })
+
   it('routes systemOps.setSessionQueuedState to the injected provider service', async () => {
     const setSessionQueuedState = vi.fn(() => Effect.succeed(undefined))
     const service = { setSessionQueuedState } as unknown as SystemOpsRpcService

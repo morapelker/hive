@@ -21,6 +21,7 @@ import { useWorktreeWatcher } from '@/hooks/useWorktreeWatcher'
 import { useConnectionWatcher } from '@/hooks/useConnectionWatcher'
 import { useAutoUpdate } from '@/hooks/useAutoUpdate'
 import { useKeepAwake } from '@/hooks/useKeepAwake'
+import { useSleepWhenIdle } from '@/hooks/useSleepWhenIdle'
 import { ErrorBoundary, ErrorFallback } from '@/components/error'
 import { CreatePRModal } from '@/components/pr/CreatePRModal'
 import { ProjectSettingsDialog } from '@/components/projects/ProjectSettingsDialog'
@@ -146,6 +147,8 @@ export function AppLayout({ children }: AppLayoutProps): React.JSX.Element {
   useAutoUpdate()
   // Keep the computer awake while any session is actively streaming (opt-in via settings)
   useKeepAwake()
+  // One-shot sleep after all sessions have been idle for a continuous minute.
+  useSleepWhenIdle()
 
   // Drag-and-drop from Finder
   const activeSessionId = useSessionStore((s) => s.activeSessionId)
