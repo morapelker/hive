@@ -157,7 +157,8 @@ export class GhosttyBackend implements TerminalBackend {
           cwd: this.opts.cwd,
           shell: this.opts.shell,
           scaleFactor: window.devicePixelRatio || 2.0,
-          fontSize: useSettingsStore.getState().ghosttyFontSize || GhosttyBackend.FALLBACK_FONT_SIZE
+          fontSize: useSettingsStore.getState().ghosttyFontSize || GhosttyBackend.FALLBACK_FONT_SIZE,
+          shiftEnterAsNewline: this.opts.shiftEnterAsNewline ?? false
         })
 
         if (!result.success) {

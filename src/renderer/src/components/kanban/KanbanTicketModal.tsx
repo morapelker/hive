@@ -95,6 +95,7 @@ import { systemApi } from '@/api/system-api'
 import { dbApi } from '@/api/db-api'
 import { gitApi } from '@/api/git-api'
 import { fileApi } from '@/api/file-api'
+import { terminalApi } from '@/api/terminal-api'
 
 // ── Types ───────────────────────────────────────────────────────────
 type ModalMode = 'edit' | 'plan_review' | 'review' | 'error' | 'question'
@@ -2008,7 +2009,7 @@ function PlanReviewModeContent({
             if (newSession.agent_sdk === 'claude-code-cli') {
               bumpWorktreeLastMessage({ connectionId: sessionRecord.connection_id })
               const cliResult = unwrapEnvelope(
-                await window.terminalOps.createClaudeCli(newSessionId, {
+                await terminalApi.createClaudeCli(newSessionId, {
                   pendingPrompt: handoffPrompt
                 })
               )
@@ -2095,7 +2096,7 @@ function PlanReviewModeContent({
           if (newSession.agent_sdk === 'claude-code-cli') {
             bumpWorktreeLastMessage({ worktreeId })
             const cliResult = unwrapEnvelope(
-              await window.terminalOps.createClaudeCli(newSessionId, {
+              await terminalApi.createClaudeCli(newSessionId, {
                 pendingPrompt: handoffPrompt
               })
             )

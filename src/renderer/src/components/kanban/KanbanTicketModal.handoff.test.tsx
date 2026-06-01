@@ -92,6 +92,15 @@ const initialWorktreeStatusState = useWorktreeStatusStore.getState()
 
 const now = '2026-01-01T00:00:00.000Z'
 
+const terminalApiMocks = vi.hoisted(() => ({
+  createClaudeCli: vi.fn().mockResolvedValue({ success: true, value: { success: true } }),
+  onClaudeSessionId: vi.fn().mockReturnValue(() => {})
+}))
+
+vi.mock('@/api/terminal-api', () => ({
+  terminalApi: terminalApiMocks
+}))
+
 const sourceSession: Session = {
   id: 'source-session',
   worktree_id: 'worktree-1',
@@ -173,14 +182,8 @@ const worktree: Worktree = {
 }
 
 function setupWindowApis(): void {
-  Object.defineProperty(window, 'terminalOps', {
-    configurable: true,
-    writable: true,
-    value: {
-      createClaudeCli: vi.fn().mockResolvedValue({ success: true, value: { success: true } }),
-      onClaudeSessionId: vi.fn().mockReturnValue(() => {})
-    }
-  })
+  terminalApiMocks.createClaudeCli.mockResolvedValue({ success: true, value: { success: true } })
+  terminalApiMocks.onClaudeSessionId.mockReturnValue(() => {})
 
   Object.defineProperty(window, 'opencodeOps', {
     configurable: true,
@@ -312,7 +315,6 @@ describe('KanbanTicketModal handoff from Claude CLI plan review', () => {
     useKanbanStore.setState(initialKanbanState, true)
     useProjectStore.setState(initialProjectState, true)
     useWorktreeStatusStore.setState(initialWorktreeStatusState, true)
-    delete (window as { terminalOps?: unknown }).terminalOps
     delete (window as { opencodeOps?: unknown }).opencodeOps
     delete (window as { db?: unknown }).db
   })
@@ -334,8 +336,8 @@ describe('KanbanTicketModal handoff from Claude CLI plan review', () => {
       autoFocus: false,
       modelOverride: undefined
     })
-    await waitFor(() => expect(window.terminalOps.createClaudeCli).toHaveBeenCalledTimes(1))
-    expect(window.terminalOps.createClaudeCli).toHaveBeenCalledWith('handoff-session', {
+    await waitFor(() => expect(terminalApiMocks.createClaudeCli).toHaveBeenCalledTimes(1))
+    expect(terminalApiMocks.createClaudeCli).toHaveBeenCalledWith('handoff-session', {
       pendingPrompt: expect.stringContaining('Implement the plan.')
     })
     expect(setActiveSession).not.toHaveBeenCalledWith('handoff-session')
@@ -360,7 +362,7 @@ describe('KanbanTicketModal handoff from Claude CLI plan review', () => {
       autoFocus: false,
       modelOverride: undefined
     })
-    await waitFor(() => expect(window.terminalOps.createClaudeCli).toHaveBeenCalledWith(
+    await waitFor(() => expect(terminalApiMocks.createClaudeCli).toHaveBeenCalledWith(
       'handoff-session',
       { pendingPrompt: expect.stringContaining('Implement the plan.') }
     ))

@@ -360,6 +360,7 @@ export interface TerminalGhosttyCreateSurfaceOptions {
   readonly shell?: string
   readonly scaleFactor?: number
   readonly fontSize?: number
+  readonly shiftEnterAsNewline?: boolean
 }
 
 export interface TerminalGhosttyCreateSurfacePayload {

@@ -22,6 +22,12 @@ export interface TerminalOpts {
   theme?: Record<string, string>
   shell?: string
   /**
+   * When true, Shift+Enter is intercepted and ESC+CR (`\x1b\r`) is sent
+   * instead of the default `\r`. Claude-style chat TUIs parse this sequence
+   * as "newline" while plain Enter still submits.
+   */
+  shiftEnterAsNewline?: boolean
+  /**
    * Whether the terminal is visible at the moment of mount.
    *
    * Critical for Ghostty: the native NSView is positioned exclusively from JS

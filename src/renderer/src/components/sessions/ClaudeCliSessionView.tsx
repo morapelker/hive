@@ -78,7 +78,7 @@ async function startTicketModalHandoffSession(opts: {
       connectionId: opts.connectionId
     })
     const result = unwrapEnvelope(
-      await window.terminalOps.createClaudeCli(opts.sessionId, {
+      await terminalApi.createClaudeCli(opts.sessionId, {
         pendingPrompt: opts.handoffPrompt
       })
     )
@@ -495,6 +495,7 @@ export function ClaudeCliSessionView({
           isVisible={isVisible}
           showToolbar={false}
           backendTypeOverride="xterm"
+          shiftEnterAsNewline
           createTerminal={createClaudeTerminal}
           onStatusChange={handleStatusChange}
         />

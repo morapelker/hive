@@ -119,7 +119,8 @@ const ghosttyCreateSurfaceParamsSchema = z
         cwd: z.string().optional(),
         shell: z.string().optional(),
         scaleFactor: z.number().optional(),
-        fontSize: z.number().optional()
+        fontSize: z.number().optional(),
+        shiftEnterAsNewline: z.boolean().optional()
       })
       .strict()
       .optional()
