@@ -740,6 +740,7 @@ export class DatabaseService {
       setup_script: data.setup_script ?? null,
       run_script: data.run_script ?? null,
       archive_script: data.archive_script ?? null,
+      worktree_create_script: data.worktree_create_script ?? null,
       custom_commands: null,
       auto_assign_port: false,
       sort_order: 0,
@@ -748,8 +749,8 @@ export class DatabaseService {
     }
 
     db.prepare(
-      `INSERT INTO projects (id, name, path, description, tags, language, setup_script, run_script, archive_script, custom_commands, auto_assign_port, sort_order, created_at, last_accessed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO projects (id, name, path, description, tags, language, setup_script, run_script, archive_script, worktree_create_script, custom_commands, auto_assign_port, sort_order, created_at, last_accessed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       project.id,
       project.name,
@@ -760,6 +761,7 @@ export class DatabaseService {
       project.setup_script,
       project.run_script,
       project.archive_script,
+      project.worktree_create_script,
       project.custom_commands ? JSON.stringify(project.custom_commands) : null,
       project.auto_assign_port ? 1 : 0,
       project.sort_order,
@@ -861,6 +863,10 @@ export class DatabaseService {
     if (data.archive_script !== undefined) {
       updates.push('archive_script = ?')
       values.push(data.archive_script)
+    }
+    if (data.worktree_create_script !== undefined) {
+      updates.push('worktree_create_script = ?')
+      values.push(data.worktree_create_script)
     }
     if (data.custom_commands !== undefined) {
       updates.push('custom_commands = ?')
