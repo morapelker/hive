@@ -954,7 +954,12 @@ const make = Effect.gen(function* () {
             const lines = block.split('\n')
             const wtPath = lines.find((l) => l.startsWith('worktree '))?.replace('worktree ', '')
             const branch = lines.find((l) => l.startsWith('branch '))?.replace('branch refs/heads/', '')
-            if (wtPath && branch) checkedOut.set(branch, wtPath)
+            if (wtPath && branch) {
+              checkedOut.set(
+                branch,
+                normalizeWorktreePath(wtPath) === normalizeWorktreePath(repoPath) ? repoPath : wtPath
+              )
+            }
           }
           return Object.entries(branchSummary.branches).map(([name, info]) => ({
             name: normalizeBranchDisplayName(name),

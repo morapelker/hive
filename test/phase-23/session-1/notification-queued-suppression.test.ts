@@ -1,4 +1,4 @@
-import { vi, describe, test, expect, beforeEach } from 'vitest'
+import { vi, describe, test, expect, beforeEach, afterEach } from 'vitest'
 
 const apiMocks = vi.hoisted(() => ({
   systemApi: {
@@ -41,6 +41,7 @@ const mockSetBadgeCount = vi.fn()
 const mockNotificationShow = vi.fn()
 const mockNotificationOn = vi.fn()
 let notificationsSupported = true
+const originalPlatform = process.platform
 
 vi.mock('electron', () => ({
   Notification: class MockNotification {
@@ -117,8 +118,13 @@ function resetNotificationServiceState(): void {
 
 describe('Phase 23 · Session 1: NotificationService queued-state suppression', () => {
   beforeEach(() => {
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true })
     notificationsSupported = true
     resetNotificationServiceState()
+  })
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
   })
 
   test('showSessionComplete suppresses notification + badge when session has queued messages', () => {

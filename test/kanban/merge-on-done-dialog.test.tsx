@@ -301,12 +301,14 @@ describe('MergeOnDoneDialog', () => {
 
     expect(useKanbanStore.getState().pendingDoneMove).toBeNull()
     expect(screen.queryByText('Archive worktree')).not.toBeInTheDocument()
-    expect(archiveWorktree).toHaveBeenCalledWith(
-      'feature-wt',
-      '/repo/feature',
-      'feature',
-      '/repo/main'
-    )
+    await waitFor(() => {
+      expect(archiveWorktree).toHaveBeenCalledWith(
+        'feature-wt',
+        '/repo/feature',
+        'feature',
+        '/repo/main'
+      )
+    })
     expect(toastSuccess).not.toHaveBeenCalledWith('Worktree archived')
 
     resolveArchive({ success: true })

@@ -4,6 +4,7 @@ import {
   mkdtempSync,
   promises as fsPromises,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   unlinkSync,
@@ -11,7 +12,7 @@ import {
 } from 'node:fs'
 import { execFile } from 'node:child_process'
 import { tmpdir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { Effect } from 'effect'
 import simpleGit from 'simple-git'
@@ -552,6 +553,19 @@ const invalidBranch = (branch: string): boolean => !branch || branch.startsWith(
 const normalizeBranchDisplayName = (branchName: string): string =>
   branchName.startsWith('remotes/') ? branchName.replace(/^remotes\//, '') : branchName
 
+const canonicalizePathForComparison = (path: string): string => {
+  try {
+    return realpathSync(path)
+  } catch {
+    return resolve(path)
+  }
+}
+
+const preserveRequestedProjectPath = (reportedPath: string, projectPath: string): string =>
+  canonicalizePathForComparison(reportedPath) === canonicalizePathForComparison(projectPath)
+    ? projectPath
+    : reportedPath
+
 export interface GitOpsRpcServiceDependencies {
   readonly runCommand?: CommandRunner
   readonly track?: (event: string, properties?: Record<string, unknown>) => void
@@ -1027,7 +1041,9 @@ export const makeLiveGitOpsRpcService = (
               const branch = lines
                 .find((line) => line.startsWith('branch '))
                 ?.replace('branch refs/heads/', '')
-              if (worktreePath && branch) checkedOut.set(branch, worktreePath)
+              if (worktreePath && branch) {
+                checkedOut.set(branch, preserveRequestedProjectPath(worktreePath, projectPath))
+              }
             }
 
             return {

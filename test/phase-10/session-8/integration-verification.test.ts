@@ -27,13 +27,14 @@ const apiMocks = vi.hoisted(() => ({
     showInFolder: vi.fn()
   },
   settingsApi: {
+    loadCustomCommandsFile: vi.fn(() => Promise.resolve({ success: true, commands: [] })),
     onSettingsUpdated: vi.fn()
   },
   systemApi: {
     detectAgentSdks: vi.fn()
   },
   telegramApi: {
-    getConfig: vi.fn()
+    getConfig: vi.fn(() => Promise.resolve(null))
   }
 }))
 
