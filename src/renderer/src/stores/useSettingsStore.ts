@@ -790,4 +790,9 @@ if (typeof window !== 'undefined') {
       useSettingsStore.setState({ customProjectCommands: validCommands })
     }
   })
+
+  // Listen for custom commands file changes from main process
+  window.settingsOps?.onCustomCommandsFileChanged(() => {
+    useSettingsStore.getState().loadFromDatabase()
+  })
 }
