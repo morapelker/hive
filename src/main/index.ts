@@ -102,6 +102,11 @@ import {
 } from './services/ticket-providers'
 import { APP_SETTINGS_DB_KEY } from '../shared/types/settings'
 import { openCodeService } from './services/opencode-service'
+import {
+  createTemplateFile,
+  getFileModTime,
+  loadCustomCommandsFromFile
+} from './services/custom-commands-file-service'
 import { telegramForwardingService } from './services/telegram-forwarding-service'
 import { cleanupPowerSaveBlocker } from './services/power-save-blocker'
 import {
@@ -123,8 +128,51 @@ import {
   QUIT_CONFIRM_WINDOW_MS,
   readWarnBeforeQuitting
 } from './quit-confirmation'
+import { emitSettingsUpdated } from './services/settings-events'
 
 const log = createLogger({ component: 'Main' })
+
+// Track custom commands file mtime for change detection
+let lastKnownMtime: number | null = null
+
+function initializeCustomCommandsFile(): void {
+  const templateResult = createTemplateFile()
+  if (templateResult.created) {
+    log.info('Created custom commands template file')
+  } else if (!templateResult.success && templateResult.error) {
+    log.error('Failed to create custom commands template:', templateResult.error)
+  }
+
+  lastKnownMtime = getFileModTime()
+}
+
+function syncCustomCommandsFileIfChanged(): void {
+  const currentMtime = getFileModTime()
+  if (currentMtime === null || currentMtime === lastKnownMtime) {
+    return
+  }
+
+  lastKnownMtime = currentMtime
+  log.info('Custom commands file changed, reloading')
+
+  const fileResult = loadCustomCommandsFromFile()
+  if (!fileResult.success) {
+    log.error('Failed to load custom commands:', fileResult.error)
+    return
+  }
+
+  try {
+    const db = getDatabase()
+    const existingSettings = db.getSetting(APP_SETTINGS_DB_KEY)
+    const settings = existingSettings ? JSON.parse(existingSettings) : {}
+
+    settings.customProjectCommands = fileResult.commands
+    db.setSetting(APP_SETTINGS_DB_KEY, JSON.stringify(settings))
+    emitSettingsUpdated({ customProjectCommands: fileResult.commands })
+  } catch (error) {
+    log.error('Failed to sync custom commands to database:', error)
+  }
+}
 
 // Global error handlers — prevent uncaught errors from crashing the Electron process
 process.on('uncaughtException', (error) => {
@@ -401,6 +449,9 @@ app
     // Initialize database
     log.info('Initializing database')
     getDatabase()
+
+    // Ensure the file-based custom command template exists and record its mtime.
+    initializeCustomCommandsFile()
 
     // Initialize telemetry (must come after DB init since it reads/writes settings)
     telemetryService.init()
@@ -687,6 +738,8 @@ app
         mainWindow.show()
         mainWindow.focus()
       }
+
+      syncCustomCommandsFileIfChanged()
     })
   })
   .catch((error) => {
