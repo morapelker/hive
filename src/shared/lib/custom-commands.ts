@@ -67,16 +67,19 @@ export function validateCustomCommand(command: unknown): ValidationResult {
  * - {{project.description}} - Project description (fallback: "")
  * - {{project.tags}} - Project tags (fallback: "")
  *
+ * Uses replacer callbacks to avoid $ escape sequences in project data being
+ * interpreted as replacement tokens (e.g., $1, $&).
+ *
  * @param template - Prompt string with {{variable}} placeholders
  * @param project - Project object with data to inject
  * @returns Rendered prompt string with variables replaced
  */
 export function replaceTemplateVariables(template: string, project: Project): string {
   return template
-    .replace(/\{\{project\.name\}\}/g, project.name)
-    .replace(/\{\{project\.path\}\}/g, project.path)
-    .replace(/\{\{project\.id\}\}/g, project.id)
-    .replace(/\{\{project\.language\}\}/g, project.language || 'unknown')
-    .replace(/\{\{project\.description\}\}/g, project.description || '')
-    .replace(/\{\{project\.tags\}\}/g, project.tags || '')
+    .replace(/\{\{project\.name\}\}/g, () => project.name)
+    .replace(/\{\{project\.path\}\}/g, () => project.path)
+    .replace(/\{\{project\.id\}\}/g, () => project.id)
+    .replace(/\{\{project\.language\}\}/g, () => project.language || 'unknown')
+    .replace(/\{\{project\.description\}\}/g, () => project.description || '')
+    .replace(/\{\{project\.tags\}\}/g, () => project.tags || '')
 }

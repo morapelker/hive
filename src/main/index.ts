@@ -136,11 +136,22 @@ const log = createLogger({ component: 'Main' })
 let lastKnownMtime: number | null = null
 
 function initializeCustomCommandsFile(): void {
-  const templateResult = createTemplateFile()
-  if (templateResult.created) {
-    log.info('Created custom commands template file')
-  } else if (!templateResult.success && templateResult.error) {
-    log.error('Failed to create custom commands template:', templateResult.error)
+  try {
+    const db = getDatabase()
+    const existingSettings = db.getSetting(APP_SETTINGS_DB_KEY)
+    const settings = existingSettings ? JSON.parse(existingSettings) : {}
+    const hasCustomCommandsInDb = Array.isArray(settings.customProjectCommands)
+
+    if (!hasCustomCommandsInDb && getFileModTime() === null) {
+      const templateResult = createTemplateFile()
+      if (templateResult.created) {
+        log.info('Created custom commands template file (first launch)')
+      } else if (!templateResult.success && templateResult.error) {
+        log.error('Failed to create custom commands template:', templateResult.error)
+      }
+    }
+  } catch (error) {
+    log.error('Failed to initialize custom commands file:', error)
   }
 
   lastKnownMtime = getFileModTime()
@@ -148,11 +159,28 @@ function initializeCustomCommandsFile(): void {
 
 function syncCustomCommandsFileIfChanged(): void {
   const currentMtime = getFileModTime()
-  if (currentMtime === null || currentMtime === lastKnownMtime) {
+  if (currentMtime === lastKnownMtime) {
     return
   }
 
   lastKnownMtime = currentMtime
+
+  if (currentMtime === null) {
+    log.info('Custom commands file deleted, clearing commands')
+    try {
+      const db = getDatabase()
+      const existingSettings = db.getSetting(APP_SETTINGS_DB_KEY)
+      const settings = existingSettings ? JSON.parse(existingSettings) : {}
+
+      settings.customProjectCommands = []
+      db.setSetting(APP_SETTINGS_DB_KEY, JSON.stringify(settings))
+      emitSettingsUpdated({ customProjectCommands: [] })
+    } catch (error) {
+      log.error('Failed to clear custom commands from database:', error)
+    }
+    return
+  }
+
   log.info('Custom commands file changed, reloading')
 
   const fileResult = loadCustomCommandsFromFile()
@@ -166,9 +194,9 @@ function syncCustomCommandsFileIfChanged(): void {
     const existingSettings = db.getSetting(APP_SETTINGS_DB_KEY)
     const settings = existingSettings ? JSON.parse(existingSettings) : {}
 
-    settings.customProjectCommands = fileResult.commands
+    settings.customProjectCommands = fileResult.commands ?? []
     db.setSetting(APP_SETTINGS_DB_KEY, JSON.stringify(settings))
-    emitSettingsUpdated({ customProjectCommands: fileResult.commands })
+    emitSettingsUpdated({ customProjectCommands: fileResult.commands ?? [] })
   } catch (error) {
     log.error('Failed to sync custom commands to database:', error)
   }
@@ -331,6 +359,7 @@ function createWindow(backendBootstrap?: LocalEnvironmentBootstrap | null): void
   // Emit focus event to renderer for git refresh on window focus
   mainWindow.on('focus', () => {
     emitWindowFocused()
+    syncCustomCommandsFileIfChanged()
   })
 
   // Save window bounds on resize and move

@@ -154,6 +154,7 @@ describe('Custom Command Execution', () => {
     expect(event.type).toBe('hive:execute-custom-command')
     expect(event.detail).toEqual({
       projectId: 'proj-1',
+      worktreeId: 'wt-1',
       commandId: 'cmd-1',
       commandName: 'Test Command',
       renderedPrompt: 'Test Test Project in /path/to/project'
