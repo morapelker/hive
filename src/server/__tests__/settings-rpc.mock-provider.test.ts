@@ -281,4 +281,108 @@ describe('settings ops RPC mocked provider', () => {
       error: { code: 'VALIDATION_FAILED' }
     })
   })
+
+  it('routes settingsOps.getCustomCommandsFilePath to the injected provider service', async () => {
+    const getCustomCommandsFilePath = vi.fn(() =>
+      Effect.succeed('/Users/mor/.hive/custom-commands.json')
+    )
+    const service = { getCustomCommandsFilePath } as unknown as SettingsOpsRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      settingsOps: service
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'settings-custom-commands-path-1',
+        method: 'settingsOps.getCustomCommandsFilePath',
+        params: {}
+      })
+    )
+
+    expect(getCustomCommandsFilePath).toHaveBeenCalledWith()
+    expect(response).toEqual({
+      id: 'settings-custom-commands-path-1',
+      ok: true,
+      value: '/Users/mor/.hive/custom-commands.json'
+    })
+  })
+
+  it('routes settingsOps.loadCustomCommandsFile to the injected provider service', async () => {
+    const result = {
+      success: true,
+      commands: [{ id: 'cmd-1', name: 'Run tests', prompt: 'Run {{project.name}} tests' }],
+      mtime: 123
+    }
+    const loadCustomCommandsFile = vi.fn(() => Effect.succeed(result))
+    const service = { loadCustomCommandsFile } as unknown as SettingsOpsRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      settingsOps: service
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'settings-load-custom-commands-1',
+        method: 'settingsOps.loadCustomCommandsFile',
+        params: {}
+      })
+    )
+
+    expect(loadCustomCommandsFile).toHaveBeenCalledWith()
+    expect(response).toEqual({
+      id: 'settings-load-custom-commands-1',
+      ok: true,
+      value: result
+    })
+  })
+
+  it('routes settingsOps.reloadCustomCommands to the injected provider service', async () => {
+    const result = { success: true, count: 1, mtime: 123 }
+    const reloadCustomCommands = vi.fn(() => Effect.succeed(result))
+    const service = { reloadCustomCommands } as unknown as SettingsOpsRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      settingsOps: service
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'settings-reload-custom-commands-1',
+        method: 'settingsOps.reloadCustomCommands',
+        params: {}
+      })
+    )
+
+    expect(reloadCustomCommands).toHaveBeenCalledWith()
+    expect(response).toEqual({
+      id: 'settings-reload-custom-commands-1',
+      ok: true,
+      value: result
+    })
+  })
+
+  it('validates custom command file operation params before calling the provider service', async () => {
+    const loadCustomCommandsFile = vi.fn(() => Effect.succeed({ success: true, commands: [] }))
+    const service = { loadCustomCommandsFile } as unknown as SettingsOpsRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      settingsOps: service
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'settings-load-custom-commands-invalid',
+        method: 'settingsOps.loadCustomCommandsFile',
+        params: { unexpected: true }
+      })
+    )
+
+    expect(loadCustomCommandsFile).not.toHaveBeenCalled()
+    expect(response).toMatchObject({
+      id: 'settings-load-custom-commands-invalid',
+      ok: false,
+      error: { code: 'VALIDATION_FAILED' }
+    })
+  })
 })

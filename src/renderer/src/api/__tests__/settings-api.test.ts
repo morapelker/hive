@@ -58,6 +58,44 @@ describe('settingsApi', () => {
     expect(request).toHaveBeenCalledWith('settingsOps.getAll', {})
   })
 
+  it('routes getCustomCommandsFilePath through the renderer RPC client', async () => {
+    const request = vi.fn().mockResolvedValue('/Users/mor/.hive/custom-commands.json')
+    const subscribe = vi.fn()
+
+    setRendererRpcClient({ request, subscribe })
+
+    await expect(settingsApi.getCustomCommandsFilePath()).resolves.toBe(
+      '/Users/mor/.hive/custom-commands.json'
+    )
+    expect(request).toHaveBeenCalledWith('settingsOps.getCustomCommandsFilePath', {})
+  })
+
+  it('routes loadCustomCommandsFile through the renderer RPC client', async () => {
+    const result = {
+      success: true,
+      commands: [{ id: 'cmd-1', name: 'Run tests', prompt: 'Run {{project.name}} tests' }],
+      mtime: 123
+    }
+    const request = vi.fn().mockResolvedValue(result)
+    const subscribe = vi.fn()
+
+    setRendererRpcClient({ request, subscribe })
+
+    await expect(settingsApi.loadCustomCommandsFile()).resolves.toBe(result)
+    expect(request).toHaveBeenCalledWith('settingsOps.loadCustomCommandsFile', {})
+  })
+
+  it('routes reloadCustomCommands through the renderer RPC client', async () => {
+    const result = { success: true, count: 1, mtime: 123 }
+    const request = vi.fn().mockResolvedValue(result)
+    const subscribe = vi.fn()
+
+    setRendererRpcClient({ request, subscribe })
+
+    await expect(settingsApi.reloadCustomCommands()).resolves.toBe(result)
+    expect(request).toHaveBeenCalledWith('settingsOps.reloadCustomCommands', {})
+  })
+
   it('routes openWithTerminal through the renderer RPC client', async () => {
     const result = { success: true }
     const request = vi.fn().mockResolvedValue(result)

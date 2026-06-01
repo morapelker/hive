@@ -3,7 +3,14 @@ import { z } from 'zod'
 import { isDesktopCommandResult, makeDesktopCommandRequest } from '../../../shared/desktop-command'
 import { detectEditors, detectTerminals } from '../../../main/services/settings-detection'
 import { getAllSettingsMap } from '../../../main/services/settings-openers'
+import {
+  getCustomCommandsFilePath,
+  loadCustomCommandsFromFile,
+  type CustomCommandFileResult
+} from '../../../main/services/custom-commands-file-service'
+import { getDatabase } from '../../../main/db'
 import type { DetectedApp } from '../../../shared/types/settings'
+import { APP_SETTINGS_DB_KEY } from '../../../shared/types/settings'
 import type { RpcHandler } from '../router'
 
 export interface SettingsOperationResult {
@@ -11,10 +18,20 @@ export interface SettingsOperationResult {
   readonly error?: string
 }
 
+export interface ReloadCustomCommandsResult {
+  readonly success: boolean
+  readonly count?: number
+  readonly mtime?: number | null
+  readonly error?: string
+}
+
 export interface SettingsOpsRpcService {
   readonly detectEditors: () => Effect.Effect<DetectedApp[], unknown, never>
   readonly detectTerminals: () => Effect.Effect<DetectedApp[], unknown, never>
   readonly getAll: () => Effect.Effect<Record<string, string>, unknown, never>
+  readonly getCustomCommandsFilePath: () => Effect.Effect<string, unknown, never>
+  readonly loadCustomCommandsFile: () => Effect.Effect<CustomCommandFileResult, unknown, never>
+  readonly reloadCustomCommands: () => Effect.Effect<ReloadCustomCommandsResult, unknown, never>
   readonly openWithEditor: (
     worktreePath: string,
     editorId: string,
@@ -61,6 +78,53 @@ export const makeLiveSettingsOpsRpcService = (): SettingsOpsRpcService => ({
       }
     }),
   getAll: () => Effect.sync(() => getAllSettingsMap()),
+  getCustomCommandsFilePath: () => Effect.sync(() => getCustomCommandsFilePath()),
+  loadCustomCommandsFile: () =>
+    Effect.sync(() => {
+      try {
+        return loadCustomCommandsFromFile()
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    }),
+  reloadCustomCommands: () =>
+    Effect.sync(() => {
+      try {
+        const fileResult = loadCustomCommandsFromFile()
+
+        if (!fileResult.success) {
+          return fileResult
+        }
+
+        if (fileResult.commands && fileResult.commands.length > 0) {
+          const db = getDatabase()
+          const existingSettings = db.getSetting(APP_SETTINGS_DB_KEY)
+          const settings =
+            existingSettings && existingSettings.trim().length > 0
+              ? (JSON.parse(existingSettings) as Record<string, unknown>)
+              : {}
+
+          settings.customProjectCommands = fileResult.commands
+          db.setSetting(APP_SETTINGS_DB_KEY, JSON.stringify(settings))
+
+          return {
+            success: true,
+            count: fileResult.commands.length,
+            mtime: fileResult.mtime
+          }
+        }
+
+        return { success: true, count: 0, mtime: fileResult.mtime }
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    }),
   openWithEditor: (worktreePath, editorId, customCommand) =>
     Effect.tryPromise({
       try: () => requestOpenWithEditorCommand(worktreePath, editorId, customCommand),
@@ -108,6 +172,39 @@ export const makeSettingsOpsRpcHandlers = (
             catch: (cause) => cause
           })
           return yield* service.getAll()
+        })
+    ],
+    [
+      'settingsOps.getCustomCommandsFilePath',
+      (params) =>
+        Effect.gen(function* () {
+          yield* Effect.try({
+            try: () => emptyParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          return yield* service.getCustomCommandsFilePath()
+        })
+    ],
+    [
+      'settingsOps.loadCustomCommandsFile',
+      (params) =>
+        Effect.gen(function* () {
+          yield* Effect.try({
+            try: () => emptyParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          return yield* service.loadCustomCommandsFile()
+        })
+    ],
+    [
+      'settingsOps.reloadCustomCommands',
+      (params) =>
+        Effect.gen(function* () {
+          yield* Effect.try({
+            try: () => emptyParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          return yield* service.reloadCustomCommands()
         })
     ],
     [

@@ -8,6 +8,20 @@ type SettingsOperationResult = {
   error?: string
 }
 
+export type CustomCommandsFileResult = {
+  success: boolean
+  commands?: Array<{ id: string; name: string; prompt: string }>
+  error?: string
+  mtime?: number | null
+}
+
+export type ReloadCustomCommandsResult = {
+  success: boolean
+  count?: number
+  mtime?: number | null
+  error?: string
+}
+
 export const settingsApi = {
   detectEditors: async (): Promise<DetectedApp[]> =>
     getRendererRpcClient().request<DetectedApp[]>('settingsOps.detectEditors', {}),
@@ -15,6 +29,18 @@ export const settingsApi = {
     getRendererRpcClient().request<DetectedApp[]>('settingsOps.detectTerminals', {}),
   getAll: async (): Promise<Record<string, string>> =>
     getRendererRpcClient().request<Record<string, string>>('settingsOps.getAll', {}),
+  getCustomCommandsFilePath: async (): Promise<string> =>
+    getRendererRpcClient().request<string>('settingsOps.getCustomCommandsFilePath', {}),
+  loadCustomCommandsFile: async (): Promise<CustomCommandsFileResult> =>
+    getRendererRpcClient().request<CustomCommandsFileResult>(
+      'settingsOps.loadCustomCommandsFile',
+      {}
+    ),
+  reloadCustomCommands: async (): Promise<ReloadCustomCommandsResult> =>
+    getRendererRpcClient().request<ReloadCustomCommandsResult>(
+      'settingsOps.reloadCustomCommands',
+      {}
+    ),
   openWithEditor: async (
     worktreePath: string,
     editorId: string,
