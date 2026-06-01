@@ -2,9 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { terminalApi } from '@/api/terminal-api'
 import { TerminalView, type TerminalViewHandle } from '@/components/terminal/TerminalView'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
-import { useSessionStore } from '@/stores/useSessionStore'
+import { useSessionStore, BOARD_TAB_ID } from '@/stores/useSessionStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
+import { useWorktreeStore } from '@/stores/useWorktreeStore'
+import { useConnectionStore } from '@/stores/useConnectionStore'
+import { useSettingsStore } from '@/stores/useSettingsStore'
+import { useClaudeCliSessionPortal } from '@/contexts/ClaudeCliSessionPortalContext'
 import { ModeToggle } from './ModeToggle'
 import { SuperToggle } from './SuperToggle'
 import { ModelSelector } from './ModelSelector'
@@ -12,6 +16,8 @@ import { ClaudeCliEndedOverlay } from './ClaudeCliEndedOverlay'
 import { HandoffSplitButton } from './HandoffSplitButton'
 import { buildHandoffPrompt, type HandoffSelectionOverride } from '@/lib/handoffSelection'
 import { lastSendMode } from '@/lib/message-send-times'
+import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
+import { startBackgroundSessionPrompt } from '@/lib/backgroundSessionStart'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 import { extractPlanTitle } from '@shared/types/branch-utils'
@@ -41,6 +47,63 @@ function loadPlanCardPosition(): PlanCardPosition | null {
 
 function savePlanCardPosition(position: PlanCardPosition): void {
   localStorage.setItem(PLAN_CARD_POSITION_KEY, JSON.stringify(position))
+}
+
+function findWorktreePathById(worktreeId: string): string | null {
+  for (const worktrees of useWorktreeStore.getState().worktreesByProject.values()) {
+    const found = worktrees.find((worktree) => worktree.id === worktreeId)
+    if (found) return found.path
+  }
+  return null
+}
+
+function findConnectionPathById(connectionId: string): string | null {
+  return (
+    useConnectionStore.getState().connections.find((connection) => connection.id === connectionId)
+      ?.path ?? null
+  )
+}
+
+async function startTicketModalHandoffSession(opts: {
+  sessionId: string
+  agentSdk: string
+  handoffPrompt: string
+  worktreeId?: string | null
+  connectionId?: string | null
+  worktreePath?: string | null
+}): Promise<void> {
+  if (opts.agentSdk === 'claude-code-cli') {
+    bumpWorktreeLastMessage({
+      worktreeId: opts.worktreeId,
+      connectionId: opts.connectionId
+    })
+    const result = unwrapEnvelope(
+      await window.terminalOps.createClaudeCli(opts.sessionId, {
+        pendingPrompt: opts.handoffPrompt
+      })
+    )
+    if (!result.success) {
+      throw new Error(result.error ?? 'Failed to start Claude CLI handoff')
+    }
+    if (opts.handoffPrompt) {
+      useSessionStore.getState().dequeuePendingMessage(opts.sessionId)
+    }
+    return
+  }
+
+  if (!opts.worktreePath) {
+    throw new Error('Could not find handoff working path')
+  }
+
+  await startBackgroundSessionPrompt({
+    worktreePath: opts.worktreePath,
+    sessionId: opts.sessionId,
+    prompt: opts.handoffPrompt,
+    bumpTarget: {
+      worktreeId: opts.worktreeId,
+      connectionId: opts.connectionId
+    }
+  })
 }
 
 function clampPlanCardPosition(
@@ -202,6 +265,9 @@ export function ClaudeCliSessionView({
   const pendingMessage = useSessionStore((state) => state.pendingMessages.get(sessionId) ?? null)
   const pendingPlan = useSessionStore((state) => state.pendingPlans.get(sessionId) ?? null)
   const mode = useSessionStore((state) => state.modeBySession.get(sessionId) ?? 'build')
+  const { getTarget, revision: portalRevision } = useClaudeCliSessionPortal()
+  void portalRevision
+  const isMountedInTicketModal = !!getTarget(sessionId)
   const sessionRecord = useSessionStore((state) => {
     for (const sessions of state.sessionsByWorktree.values()) {
       const found = sessions.find((session) => session.id === sessionId)
@@ -291,7 +357,7 @@ export function ClaudeCliSessionView({
           override.agentSdk === 'claude-code-cli' && mode === 'super-plan'
             ? 'super-plan'
             : undefined,
-          { modelOverride: override.model }
+          { autoFocus: !isMountedInTicketModal, modelOverride: override.model }
         )
         if (!result.success || !result.session) {
           toast.error(result.error ?? 'Failed to create handoff session')
@@ -304,6 +370,23 @@ export function ClaudeCliSessionView({
             : sessionStore.setSessionMode(result.session.id, 'build')
         sessionStore.setPendingMessage(result.session.id, handoffPrompt)
         await useKanbanStore.getState().relinkTicketsForHandoff(sessionId, result.session.id)
+        if (isMountedInTicketModal) {
+          if (useSettingsStore.getState().boardMode === 'sticky-tab') {
+            sessionStore.setActiveSession(BOARD_TAB_ID)
+          }
+          useKanbanStore.getState().setSelectedTicketId(null)
+          const connectionPath = findConnectionPathById(sessionRecord.connection_id)
+          await setModePromise
+          await startTicketModalHandoffSession({
+            sessionId: result.session.id,
+            agentSdk: result.session.agent_sdk,
+            handoffPrompt,
+            connectionId: sessionRecord.connection_id,
+            worktreePath: connectionPath
+          })
+          toast.success('Handoff session started')
+          return
+        }
         sessionStore.setActiveConnectionSession(result.session.id)
         await setModePromise
         return
@@ -318,8 +401,10 @@ export function ClaudeCliSessionView({
         sessionRecord.worktree_id,
         sessionRecord.project_id,
         override.agentSdk,
-        override.agentSdk === 'claude-code-cli' && mode === 'super-plan' ? 'super-plan' : undefined,
-        { modelOverride: override.model }
+        override.agentSdk === 'claude-code-cli' && mode === 'super-plan'
+          ? 'super-plan'
+          : undefined,
+        { autoFocus: !isMountedInTicketModal, modelOverride: override.model }
       )
       if (!result.success || !result.session) {
         toast.error(result.error ?? 'Failed to create handoff session')
@@ -332,10 +417,27 @@ export function ClaudeCliSessionView({
           : sessionStore.setSessionMode(result.session.id, 'build')
       sessionStore.setPendingMessage(result.session.id, handoffPrompt)
       await useKanbanStore.getState().relinkTicketsForHandoff(sessionId, result.session.id)
+      if (isMountedInTicketModal) {
+        if (useSettingsStore.getState().boardMode === 'sticky-tab') {
+          sessionStore.setActiveSession(BOARD_TAB_ID)
+        }
+        useKanbanStore.getState().setSelectedTicketId(null)
+        const worktreePath = findWorktreePathById(sessionRecord.worktree_id)
+        await setModePromise
+        await startTicketModalHandoffSession({
+          sessionId: result.session.id,
+          agentSdk: result.session.agent_sdk,
+          handoffPrompt,
+          worktreeId: sessionRecord.worktree_id,
+          worktreePath
+        })
+        toast.success('Handoff session started')
+        return
+      }
       sessionStore.setActiveSession(result.session.id)
       await setModePromise
     },
-    [mode, pendingPlan?.planContent, sessionId, sessionRecord]
+    [isMountedInTicketModal, mode, pendingPlan?.planContent, sessionId, sessionRecord]
   )
 
   const handlePlanReadySaveAsTicket = useCallback(async () => {
