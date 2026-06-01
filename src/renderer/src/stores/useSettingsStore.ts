@@ -769,9 +769,24 @@ if (typeof window !== 'undefined') {
 
   // Listen for settings updates from main process (e.g., when "Allow always" adds to allowlist)
   settingsApi.onSettingsUpdated((data) => {
-    const typedData = data as { commandFilter?: CommandFilterSettings }
+    const typedData = data as {
+      commandFilter?: CommandFilterSettings
+      customProjectCommands?: unknown
+    }
     if (typedData.commandFilter) {
       useSettingsStore.setState({ commandFilter: typedData.commandFilter })
+    }
+    if (Array.isArray(typedData.customProjectCommands)) {
+      const validCommands: CustomProjectCommand[] = []
+      typedData.customProjectCommands.forEach((cmd) => {
+        const validation = validateCustomCommand(cmd)
+        if (validation.valid) {
+          validCommands.push(cmd as CustomProjectCommand)
+        } else {
+          console.warn('Invalid custom command filtered during settings update:', validation.errors)
+        }
+      })
+      useSettingsStore.setState({ customProjectCommands: validCommands })
     }
   })
 }
