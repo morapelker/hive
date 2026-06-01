@@ -36,8 +36,8 @@ export function validateCustomCommand(command: unknown): ValidationResult {
   const cmd = command as Record<string, unknown>
 
   // Validate id
-  if (typeof cmd.id !== 'string') {
-    errors.push('id must be a string')
+  if (typeof cmd.id !== 'string' || cmd.id.trim() === '') {
+    errors.push('id must be a non-empty string')
   }
 
   // Validate name
