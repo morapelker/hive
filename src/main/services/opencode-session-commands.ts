@@ -833,10 +833,11 @@ export async function sendOpenCodeCommand(
     modelID: string
     variant?: string
   },
+  options?: PromptOptions,
   sdkManager?: AgentSdkManager,
   dbService?: DatabaseService
 ): Promise<{ success: boolean; error?: string }> {
-  log.info('OpenCode session command', { worktreePath, sessionId, command, args, model })
+  log.info('OpenCode session command', { worktreePath, sessionId, command, args, model, options })
   try {
     // SDK-aware dispatch: route non-OpenCode sessions to their implementer
     if (sdkManager && dbService) {
@@ -855,7 +856,7 @@ export async function sendOpenCodeCommand(
       })
       if (sdkId && sdkId !== 'opencode' && sdkId !== 'terminal') {
         const impl = sdkManager.getImplementer(sdkId)
-        await impl.sendCommand(worktreePath, resolvedAgentSessionId, command, args)
+        await impl.sendCommand(worktreePath, resolvedAgentSessionId, command, args, model, options)
         return { success: true }
       }
     }
@@ -898,7 +899,10 @@ export async function listOpenCodeCommands(
       const sdkId = resolveSdkId(dbService, sessionId)
       if (sdkId && sdkId !== 'opencode' && sdkId !== 'terminal') {
         const impl = sdkManager.getImplementer(sdkId)
-        const commands = await impl.listCommands(worktreePath)
+        const commands = await impl.listCommands(
+          worktreePath,
+          resolveAgentSessionId(dbService, sessionId)
+        )
         return {
           success: true,
           commands: commands as Awaited<ReturnType<typeof openCodeService.listCommands>>

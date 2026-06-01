@@ -128,6 +128,10 @@ type OpenCodeCommandModel = {
   readonly variant?: string
 }
 
+type OpenCodeCommandOptions = {
+  readonly codexFastMode?: boolean
+}
+
 type OpenCodeCommandResult = {
   readonly success: boolean
   readonly error?: string
@@ -139,6 +143,10 @@ type OpenCodeSlashCommandInfo = {
   readonly template: string
   readonly agent?: string
   readonly builtIn?: boolean
+  readonly source?: 'command' | 'mcp' | 'skill' | 'codex'
+  readonly path?: string
+  readonly scope?: 'user' | 'repo' | 'system' | 'admin'
+  readonly enabled?: boolean
 }
 
 type OpenCodeCommandsResult = {
@@ -394,7 +402,8 @@ export const opencodeApi = {
     opencodeSessionId: string,
     command: string,
     args: string,
-    model?: OpenCodeCommandModel
+    model?: OpenCodeCommandModel,
+    options?: OpenCodeCommandOptions
   ): Promise<Envelope<OpenCodeCommandResult>> => ({
     success: true,
     value: await getRendererRpcClient().request<OpenCodeCommandResult>('opencodeOps.command', {
@@ -402,7 +411,8 @@ export const opencodeApi = {
       opencodeSessionId,
       command,
       args,
-      model
+      model,
+      options
     })
   }),
   commands: async (

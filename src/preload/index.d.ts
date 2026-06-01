@@ -65,7 +65,10 @@ declare global {
     template: string
     agent?: string
     model?: string
-    source?: 'command' | 'mcp' | 'skill'
+    source?: 'command' | 'mcp' | 'skill' | 'codex'
+    path?: string
+    scope?: 'user' | 'repo' | 'system' | 'admin'
+    enabled?: boolean
     subtask?: boolean
     hints?: string[]
   }

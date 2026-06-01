@@ -735,6 +735,7 @@ export interface OpenCodeCommandPayload {
   readonly command: string
   readonly args: string
   readonly model?: OpenCodePromptModel
+  readonly options?: OpenCodePromptOptions
 }
 
 export interface OpenCodeCommandResult {
@@ -754,6 +755,9 @@ export interface OpenCodeSlashCommand {
   readonly agent?: string
   readonly model?: string
   readonly source?: string
+  readonly path?: string
+  readonly scope?: 'user' | 'repo' | 'system' | 'admin'
+  readonly enabled?: boolean
   readonly subtask?: boolean
   readonly hints?: string[]
 }
@@ -3748,7 +3752,8 @@ const isOpenCodeCommandPayload = (value: unknown): value is OpenCodeCommandPaylo
   typeof value.opencodeSessionId === 'string' &&
   typeof value.command === 'string' &&
   typeof value.args === 'string' &&
-  (value.model === undefined || isOpenCodePromptModel(value.model))
+  (value.model === undefined || isOpenCodePromptModel(value.model)) &&
+  (value.options === undefined || isOpenCodePromptOptions(value.options))
 
 const isOpenCodeCommandsPayload = (value: unknown): value is OpenCodeCommandsPayload =>
   isRecord(value) &&

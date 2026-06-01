@@ -2080,7 +2080,14 @@ describe('desktop backend manager', () => {
     )
     await new Promise((resolve) => setImmediate(resolve))
 
-    expect(commandHandler).toHaveBeenCalledWith('/tmp/hive', 'session-1', 'review', '--fast', model)
+    expect(commandHandler).toHaveBeenCalledWith(
+      '/tmp/hive',
+      'session-1',
+      'review',
+      '--fast',
+      model,
+      undefined
+    )
     expect(child.send).toHaveBeenCalledWith(
       makeDesktopCommandResult('opencode-command-1', {
         ok: true,

@@ -140,7 +140,8 @@ export interface OpenCodeOpsRpcService {
     opencodeSessionId: string,
     command: string,
     args: string,
-    model?: OpenCodePromptModel
+    model?: OpenCodePromptModel,
+    options?: OpenCodePromptOptions
   ) => Effect.Effect<OpenCodeCommandResult, unknown, never>
   readonly commands: (
     worktreePath: string,
@@ -304,7 +305,8 @@ const commandParamsSchema = z
         variant: z.string().optional()
       })
       .strict()
-      .optional()
+      .optional(),
+    options: z.object({ codexFastMode: z.boolean().optional() }).strict().optional()
   })
   .strict()
 const commandsParamsSchema = z
@@ -447,10 +449,17 @@ export const makeLiveOpenCodeOpsRpcService = (): OpenCodeOpsRpcService => ({
       try: () => requestOpenCodeRedoCommand(worktreePath, opencodeSessionId),
       catch: (cause) => cause
     }),
-  command: (worktreePath, opencodeSessionId, command, args, model) =>
+  command: (worktreePath, opencodeSessionId, command, args, model, options) =>
     Effect.tryPromise({
       try: () =>
-        requestOpenCodeCommandCommand(worktreePath, opencodeSessionId, command, args, model),
+        requestOpenCodeCommandCommand(
+          worktreePath,
+          opencodeSessionId,
+          command,
+          args,
+          model,
+          options
+        ),
       catch: (cause) => cause
     }),
   commands: (worktreePath, sessionId) =>
@@ -729,11 +738,19 @@ export const makeOpenCodeOpsRpcHandlers = (
       'opencodeOps.command',
       (params) =>
         Effect.gen(function* () {
-          const { worktreePath, opencodeSessionId, command, args, model } = yield* Effect.try({
-            try: () => commandParamsSchema.parse(params),
-            catch: (cause) => cause
-          })
-          return yield* service.command(worktreePath, opencodeSessionId, command, args, model)
+          const { worktreePath, opencodeSessionId, command, args, model, options } =
+            yield* Effect.try({
+              try: () => commandParamsSchema.parse(params),
+              catch: (cause) => cause
+            })
+          return yield* service.command(
+            worktreePath,
+            opencodeSessionId,
+            command,
+            args,
+            model,
+            options
+          )
         })
     ],
     [
@@ -2096,7 +2113,8 @@ const requestOpenCodeCommandCommand = (
   opencodeSessionId: string,
   commandName: string,
   args: string,
-  model?: OpenCodePromptModel
+  model?: OpenCodePromptModel,
+  options?: OpenCodePromptOptions
 ): Promise<OpenCodeCommandResult> => {
   const send = process.send
   if (!send) {
@@ -2147,7 +2165,8 @@ const requestOpenCodeCommandCommand = (
         opencodeSessionId,
         command: commandName,
         args,
-        model
+        model,
+        options
       }),
       (error) => {
         if (!error) return
@@ -2681,6 +2700,9 @@ const isOpenCodeSlashCommand = (value: unknown): boolean => {
     (record.agent === undefined || typeof record.agent === 'string') &&
     (record.model === undefined || typeof record.model === 'string') &&
     (record.source === undefined || typeof record.source === 'string') &&
+    (record.path === undefined || typeof record.path === 'string') &&
+    (record.scope === undefined || typeof record.scope === 'string') &&
+    (record.enabled === undefined || typeof record.enabled === 'boolean') &&
     (record.subtask === undefined || typeof record.subtask === 'boolean') &&
     (record.hints === undefined ||
       (Array.isArray(record.hints) && record.hints.every((hint) => typeof hint === 'string')))

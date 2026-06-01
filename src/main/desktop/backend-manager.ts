@@ -240,7 +240,8 @@ let openCodeCommandHandler:
       opencodeSessionId: string,
       command: string,
       args: string,
-      model?: OpenCodePromptModel
+      model?: OpenCodePromptModel,
+      options?: OpenCodePromptOptions
     ) => Promise<OpenCodeCommandResult>)
   | null = null
 let openCodeCommandsHandler:
@@ -478,7 +479,8 @@ export const setDesktopBackendOpenCodeCommandHandler = (
         opencodeSessionId: string,
         command: string,
         args: string,
-        model?: OpenCodePromptModel
+        model?: OpenCodePromptModel,
+        options?: OpenCodePromptOptions
       ) => Promise<OpenCodeCommandResult>)
     | null
 ): void => {
@@ -1903,7 +1905,8 @@ const handleDesktopBackendCommand = (
       message.payload.opencodeSessionId,
       message.payload.command,
       message.payload.args,
-      message.payload.model
+      message.payload.model,
+      message.payload.options
     )
       .then((value) => {
         sendDesktopBackendCommandResult(

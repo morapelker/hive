@@ -646,13 +646,14 @@ app
         redoOpenCodeSession(worktreePath, opencodeSessionId, sdkManager, databaseService)
       )
       setDesktopBackendOpenCodeCommandHandler(
-        (worktreePath, opencodeSessionId, command, args, model) =>
+        (worktreePath, opencodeSessionId, command, args, model, options) =>
           sendOpenCodeCommand(
             worktreePath,
             opencodeSessionId,
             command,
             args,
             model,
+            options,
             sdkManager,
             databaseService
           )

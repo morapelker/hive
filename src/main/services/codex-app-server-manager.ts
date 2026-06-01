@@ -31,6 +31,8 @@ import type { CommandExecutionRequestApprovalParams } from '@shared/codex-schema
 import type { FileChangeRequestApprovalParams } from '@shared/codex-schemas/v2/FileChangeRequestApprovalParams'
 import type { ToolRequestUserInputParams } from '@shared/codex-schemas/v2/ToolRequestUserInputParams'
 import type { ToolRequestUserInputAnswer } from '@shared/codex-schemas/v2/ToolRequestUserInputAnswer'
+import type { UserInput } from '@shared/codex-schemas/v2/UserInput'
+import type { SkillsListResponse } from '@shared/codex-schemas/v2/SkillsListResponse'
 import type { ServerNotification } from '@shared/codex-schemas/ServerNotification'
 import type { ServerRequest } from '@shared/codex-schemas/ServerRequest'
 import type { ThreadResumeParams } from '@shared/codex-schemas/v2/ThreadResumeParams'
@@ -134,7 +136,7 @@ export interface CodexStartSessionOptions {
 
 export interface CodexTurnInput {
   text?: string
-  input?: Array<{ type: string; text: string }>
+  input?: UserInput[]
   model?: string
   reasoningEffort?: string
   serviceTier?: string | null
@@ -747,6 +749,18 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       turnId,
       threadId: context.session.threadId
     }
+  }
+
+  async listSkills(
+    threadId: string,
+    worktreePath: string,
+    forceReload = false
+  ): Promise<SkillsListResponse> {
+    const context = this.getSessionContextForThreadRpc(threadId, 'listSkills')
+    return this.sendRequest<SkillsListResponse>(context, 'skills/list', {
+      cwds: [worktreePath],
+      forceReload
+    })
   }
 
   async steerTurn(threadId: string, input: CodexTurnInput, expectedTurnId: string): Promise<CodexTurnSteerResult> {

@@ -76,7 +76,7 @@ describe('Codex goal command routing', () => {
     expect(dbService.getAgentSdkForSession).toHaveBeenCalledWith('hive-1')
     expect(dbService.getSession).toHaveBeenCalledWith('hive-1')
     expect(sdkManager.getImplementer).toHaveBeenCalledWith('codex')
-    expect(codexImpl.listCommands).toHaveBeenCalledWith('/project')
+    expect(codexImpl.listCommands).toHaveBeenCalledWith('/project', 'hive-1')
     expect(openCodeService.listCommands).not.toHaveBeenCalled()
     expect(result).toEqual({
       success: true,
@@ -101,7 +101,8 @@ describe('Codex goal command routing', () => {
       'hive-1',
       'goal',
       'ship the feature',
-      undefined,
+      { providerID: 'codex', modelID: 'gpt-5', variant: 'high' },
+      { codexFastMode: true },
       sdkManager,
       dbService
     )
@@ -110,7 +111,9 @@ describe('Codex goal command routing', () => {
       '/project',
       'thread-1',
       'goal',
-      'ship the feature'
+      'ship the feature',
+      { providerID: 'codex', modelID: 'gpt-5', variant: 'high' },
+      { codexFastMode: true }
     )
     expect(openCodeService.sendCommand).not.toHaveBeenCalled()
     expect(result).toEqual({ success: true })

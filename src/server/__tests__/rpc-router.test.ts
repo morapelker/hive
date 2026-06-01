@@ -23959,6 +23959,7 @@ describe('rpc router', () => {
       command: string
       args: string
       model?: { providerID: string; modelID: string; variant?: string }
+      options?: { codexFastMode?: boolean }
     }> = []
     const model = { providerID: 'anthropic', modelID: 'claude-sonnet', variant: 'opus' }
     const router = makeRpcRouter({
@@ -23985,9 +23986,9 @@ describe('rpc router', () => {
         sessionInfo: () => Effect.succeed({ success: false }),
         undo: () => Effect.succeed({ success: false }),
         redo: () => Effect.succeed({ success: false }),
-        command: (worktreePath, opencodeSessionId, command, args, model) =>
+        command: (worktreePath, opencodeSessionId, command, args, model, options) =>
           Effect.sync(() => {
-            calls.push({ worktreePath, opencodeSessionId, command, args, model })
+            calls.push({ worktreePath, opencodeSessionId, command, args, model, options })
             return { success: true }
           }),
         commands: () => Effect.succeed({ success: false, commands: [] }),
@@ -24022,7 +24023,8 @@ describe('rpc router', () => {
         opencodeSessionId: 'session-1',
         command: 'review',
         args: '--fast',
-        model
+        model,
+        options: undefined
       }
     ])
   })

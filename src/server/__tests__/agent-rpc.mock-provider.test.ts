@@ -1196,7 +1196,14 @@ describe('agent RPC mocked provider', () => {
       })
     )
 
-    expect(runCommand).toHaveBeenCalledWith('/repo', 'session-1', 'review', '--fast', model)
+    expect(runCommand).toHaveBeenCalledWith(
+      '/repo',
+      'session-1',
+      'review',
+      '--fast',
+      model,
+      undefined
+    )
     expect(response).toEqual({
       id: 'command-1',
       ok: true,
