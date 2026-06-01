@@ -106,6 +106,11 @@ describe('mapHookEventToStatus', () => {
       { hook_event_name: 'PermissionRequest', tool_name: 'ExitPlanMode' },
       'plan_ready'
     ],
+    [
+      'PermissionRequest for AskUserQuestion maps to answering',
+      { hook_event_name: 'PermissionRequest', tool_name: 'AskUserQuestion' },
+      'answering'
+    ],
     ['unknown events are ignored', { hook_event_name: 'BogusEvent' }, null],
     [
       'unmatched PreToolUse events are ignored',
