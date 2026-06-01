@@ -5606,7 +5606,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
       // Only handle events for this session
       if (event.detail.sessionId !== sessionId) return
 
-      // Set the input value and send the prompt
+      // Set the input value
       const prompt = event.detail.prompt
       setInputValue(prompt)
       inputValueRef.current = prompt
@@ -5614,13 +5614,27 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
       // Clear any draft timer
       if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
 
-      // Send the prompt
-      handleSend(prompt)
+      // Wait for OpenCode connection before sending
+      // Check periodically until connected or timeout after 5 seconds
+      const startTime = Date.now()
+      const checkAndSend = (): void => {
+        if (opencodeSessionId && worktreePath) {
+          // Connected - send the prompt
+          handleSend(prompt)
+        } else if (Date.now() - startTime < 5000) {
+          // Not connected yet - check again in 100ms
+          setTimeout(checkAndSend, 100)
+        } else {
+          // Timeout - just set the input value without sending
+          toast.info('Connection not ready. Please send manually.')
+        }
+      }
+      checkAndSend()
     }
 
     window.addEventListener('hive:send-prompt-to-session', handler)
     return () => window.removeEventListener('hive:send-prompt-to-session', handler)
-  }, [sessionId, handleSend])
+  }, [sessionId, handleSend, opencodeSessionId, worktreePath])
 
   // Listen for undo/redo turn events from the application menu
   useEffect(() => {
