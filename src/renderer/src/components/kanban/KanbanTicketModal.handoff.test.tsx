@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useEffect, useRef } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -22,19 +22,41 @@ vi.mock('../sessions/HandoffSplitButton', () => ({
     testIdPrefix = 'plan-ready',
     disabled = false
   }: {
-    onHandoff: (override: { agentSdk: 'claude-code-cli'; model?: undefined }) => void
+    onHandoff: (override: {
+      agentSdk: 'claude-code-cli' | 'codex'
+      model?: { providerID: string; modelID: string }
+      goalMode?: boolean
+    }) => void
     testIdPrefix?: string
     disabled?: boolean
-  }) => (
-    <button
-      type="button"
-      data-testid={`${testIdPrefix}-handoff-btn`}
-      disabled={disabled}
-      onClick={() => onHandoff({ agentSdk: 'claude-code-cli' })}
-    >
-      Handoff
-    </button>
-  )
+  }) => {
+    let goalMode = false
+
+    return (
+      <button
+        type="button"
+        data-testid={`${testIdPrefix}-handoff-btn`}
+        disabled={disabled}
+        onContextMenu={(event) => {
+          event.preventDefault()
+          goalMode = true
+        }}
+        onClick={() =>
+          onHandoff(
+            goalMode
+              ? {
+                  agentSdk: 'codex',
+                  model: { providerID: 'codex', modelID: 'gpt-5.5' },
+                  goalMode: true
+                }
+              : { agentSdk: 'claude-code-cli' }
+          )
+        }
+      >
+        Handoff
+      </button>
+    )
+  }
 }))
 
 vi.mock('@/components/terminal/TerminalView', () => ({
@@ -213,9 +235,29 @@ function setupWindowApis(): void {
 function setupStores(): {
   createSession: ReturnType<typeof vi.fn>
   setActiveSession: ReturnType<typeof vi.fn>
+  relinkTicketsForHandoff: ReturnType<typeof vi.fn>
+  setPendingMessage: ReturnType<typeof vi.fn>
 } {
-  const createSession = vi.fn(async () => ({ success: true, session: handoffSession }))
+  const createSession = vi.fn(
+    async (
+      _worktreeId: string,
+      _projectId: string,
+      agentSdk: Session['agent_sdk'] = 'claude-code-cli',
+      mode?: Session['mode']
+    ) => ({
+      success: true,
+      session: {
+        ...handoffSession,
+        agent_sdk: agentSdk,
+        mode: mode ?? 'build',
+        model_provider_id: agentSdk === 'codex' ? 'codex' : 'anthropic',
+        model_id: agentSdk === 'codex' ? 'gpt-5.5' : 'opus'
+      }
+    })
+  )
   const setActiveSession = vi.fn()
+  const relinkTicketsForHandoff = vi.fn(async () => undefined)
+  const setPendingMessage = vi.fn()
 
   useSettingsStore.setState({
     availableAgentSdks: { opencode: true, claude: true, codex: true },
@@ -258,7 +300,7 @@ function setupStores(): {
     tickets: new Map([['project-1', [ticket]]]),
     updateTicket: vi.fn(async () => undefined),
     moveTicket: vi.fn(async () => undefined),
-    relinkTicketsForHandoff: vi.fn(async () => undefined)
+    relinkTicketsForHandoff
   })
   useSessionStore.setState({
     activeSessionId: sourceSession.id,
@@ -273,7 +315,7 @@ function setupStores(): {
     ]),
     createSession,
     setSessionMode: vi.fn(async () => undefined),
-    setPendingMessage: vi.fn(),
+    setPendingMessage,
     dequeuePendingMessage: vi.fn(),
     clearPendingPlan: vi.fn(),
     requestSessionMount: vi.fn(),
@@ -286,7 +328,7 @@ function setupStores(): {
     clearSessionStatus: vi.fn()
   })
 
-  return { createSession, setActiveSession }
+  return { createSession, setActiveSession, relinkTicketsForHandoff, setPendingMessage }
 }
 
 function RegisterClaudeCliPortalTarget({ sessionId }: { sessionId: string }): React.JSX.Element {
@@ -385,6 +427,32 @@ describe('KanbanTicketModal handoff from Claude CLI plan review', () => {
     expect(setActiveSession).not.toHaveBeenCalledWith('handoff-session')
     expect(useKanbanStore.getState().isBoardViewActive).toBe(true)
     expect(useKanbanStore.getState().selectedTicketId).toBeNull()
+  })
+
+  it('marks the relinked ticket as goal mode when the Claude CLI plan card hands off to Codex goal mode', async () => {
+    const { createSession, relinkTicketsForHandoff, setPendingMessage } = setupStores()
+    const user = userEvent.setup()
+
+    render(
+      <ClaudeCliSessionPortalProvider>
+        <ClaudeCliSessionView sessionId={sourceSession.id} />
+      </ClaudeCliSessionPortalProvider>
+    )
+
+    const handoffButton = screen.getByTestId('claude-cli-plan-ready-handoff-btn')
+    fireEvent.contextMenu(handoffButton)
+    await user.click(handoffButton)
+
+    await waitFor(() => expect(createSession).toHaveBeenCalledTimes(1))
+    expect(createSession).toHaveBeenCalledWith('worktree-1', 'project-1', 'codex', undefined, {
+      autoFocus: true,
+      modelOverride: { providerID: 'codex', modelID: 'gpt-5.5' }
+    })
+    expect(setPendingMessage).toHaveBeenCalledWith(
+      'handoff-session',
+      '/goal Implement the following plan\nImplement the plan.'
+    )
+    expect(relinkTicketsForHandoff).toHaveBeenCalledWith(sourceSession.id, 'handoff-session', true)
   })
 
   it('auto-closes when an open Claude CLI question ticket returns to working', async () => {

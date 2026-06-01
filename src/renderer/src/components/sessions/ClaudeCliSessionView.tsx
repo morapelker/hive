@@ -343,6 +343,7 @@ export function ClaudeCliSessionView({
       useSessionStore.getState().clearPendingPlan(sessionId)
       useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
       lastSendMode.delete(sessionId)
+      const handoffGoalMode = override.goalMode === true && override.agentSdk === 'codex'
 
       const handoffPrompt = buildHandoffPrompt(planContent, {
         ...override,
@@ -369,7 +370,9 @@ export function ClaudeCliSessionView({
             ? Promise.resolve()
             : sessionStore.setSessionMode(result.session.id, 'build')
         sessionStore.setPendingMessage(result.session.id, handoffPrompt)
-        await useKanbanStore.getState().relinkTicketsForHandoff(sessionId, result.session.id)
+        await useKanbanStore
+          .getState()
+          .relinkTicketsForHandoff(sessionId, result.session.id, handoffGoalMode)
         if (isMountedInTicketModal) {
           if (useSettingsStore.getState().boardMode === 'sticky-tab') {
             sessionStore.setActiveSession(BOARD_TAB_ID)
@@ -416,7 +419,9 @@ export function ClaudeCliSessionView({
           ? Promise.resolve()
           : sessionStore.setSessionMode(result.session.id, 'build')
       sessionStore.setPendingMessage(result.session.id, handoffPrompt)
-      await useKanbanStore.getState().relinkTicketsForHandoff(sessionId, result.session.id)
+      await useKanbanStore
+        .getState()
+        .relinkTicketsForHandoff(sessionId, result.session.id, handoffGoalMode)
       if (isMountedInTicketModal) {
         if (useSettingsStore.getState().boardMode === 'sticky-tab') {
           sessionStore.setActiveSession(BOARD_TAB_ID)
