@@ -791,8 +791,4 @@ if (typeof window !== 'undefined') {
     }
   })
 
-  // Listen for custom commands file changes from main process
-  window.settingsOps?.onCustomCommandsFileChanged(() => {
-    useSettingsStore.getState().loadFromDatabase()
-  })
 }

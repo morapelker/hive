@@ -27,6 +27,14 @@ describe('validateCustomCommand', () => {
         expectedErrors: ['id must be a non-empty string']
       },
       {
+        command: { id: '', name: 'Test', prompt: 'Test prompt' },
+        expectedErrors: ['id must be a non-empty string']
+      },
+      {
+        command: { id: '   ', name: 'Test', prompt: 'Test prompt' },
+        expectedErrors: ['id must be a non-empty string']
+      },
+      {
         command: { id: 'cmd-1', name: '', prompt: 'Test prompt' },
         expectedErrors: ['name must be a non-empty string']
       },
