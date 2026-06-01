@@ -314,7 +314,13 @@ export function ProjectSettingsDialog({
                   <code className="font-mono text-[0.7rem]">$HIVE_BRANCH_NAME</code>. Available env
                   vars: <code className="font-mono text-[0.7rem]">HIVE_WORKTREE_PATH</code>,{' '}
                   <code className="font-mono text-[0.7rem]">HIVE_BRANCH_NAME</code>,{' '}
-                  <code className="font-mono text-[0.7rem]">HIVE_BASE_BRANCH</code>,{' '}
+                  <code className="font-mono text-[0.7rem]">HIVE_BASE_BRANCH</code> (human-readable
+                  base branch name),{' '}
+                  <code className="font-mono text-[0.7rem]">HIVE_BASE_REF</code> (git ref to use
+                  with <code className="font-mono text-[0.7rem]">git worktree add</code>; equals{' '}
+                  <code className="font-mono text-[0.7rem]">HIVE_BASE_BRANCH</code> in most flows,
+                  but is <code className="font-mono text-[0.7rem]">FETCH_HEAD</code> when checking
+                  out a pull-request ref),{' '}
                   <code className="font-mono text-[0.7rem]">HIVE_PROJECT_PATH</code>,{' '}
                   <code className="font-mono text-[0.7rem]">HIVE_WORKTREE_MODE</code> (
                   <code className="font-mono text-[0.7rem]">new</code> |{' '}
@@ -322,13 +328,15 @@ export function ProjectSettingsDialog({
                   <code className="font-mono text-[0.7rem]">duplicate</code>). In{' '}
                   <code className="font-mono text-[0.7rem]">duplicate</code> mode, also receives{' '}
                   <code className="font-mono text-[0.7rem]">HIVE_SOURCE_WORKTREE_PATH</code> and{' '}
-                  <code className="font-mono text-[0.7rem]">HIVE_SOURCE_BRANCH</code>.
+                  <code className="font-mono text-[0.7rem]">HIVE_SOURCE_BRANCH</code>. Hive aborts
+                  the script after 5 minutes if it does not exit, and best-effort cleans up any
+                  partial worktree/branch on failure.
                 </p>
                 <Textarea
                   value={worktreeCreateScript}
                   onChange={(e) => setWorktreeCreateScript(e.target.value)}
                   placeholder={
-                    'git worktree add --no-checkout "$HIVE_WORKTREE_PATH" -b "$HIVE_BRANCH_NAME" "$HIVE_BASE_BRANCH"\n# ... any tool-specific post-create work, e.g. copying encryption keys ...\ngit -C "$HIVE_WORKTREE_PATH" reset --hard HEAD'
+                    'git worktree add --no-checkout "$HIVE_WORKTREE_PATH" -b "$HIVE_BRANCH_NAME" "$HIVE_BASE_REF"\n# ... any tool-specific post-create work, e.g. copying encryption keys ...\ngit -C "$HIVE_WORKTREE_PATH" reset --hard HEAD'
                   }
                   rows={5}
                   className="font-mono text-sm resize-y"
