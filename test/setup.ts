@@ -154,11 +154,23 @@ if (typeof window !== 'undefined') {
         move: vi.fn(),
         focusMain: vi.fn().mockResolvedValue(undefined),
         getConfig: vi.fn().mockResolvedValue({
-          settings: { enabled: false, petId: 'bee', size: 'M', opacity: 1, hasHatched: true },
+          settings: {
+            enabled: false,
+            petId: 'bee',
+            size: 'M',
+            opacity: 1,
+            animationSpeedEnabled: false,
+            animationSpeed: 5,
+            hasHatched: true
+          },
           position: { x: 0, y: 0 },
           manifest: { id: 'bee', name: 'Bee', version: '1.0.0', assets: {} }
         }),
-        getCurrentStatus: vi.fn().mockResolvedValue({ state: 'idle', sourceWorktreeId: null }),
+        getCurrentStatus: vi.fn().mockResolvedValue({
+          state: 'idle',
+          sourceWorktreeId: null,
+          workingSessionCount: 0
+        }),
         updateSettings: vi.fn(),
         markHatched: vi.fn(),
         onStatus: vi.fn().mockReturnValue(() => {}),

@@ -24,7 +24,8 @@ vi.mock('@lottiefiles/dotlottie-web', () => ({
     vi.fn().mockImplementation(() => ({
       addEventListener: vi.fn(),
       destroy: vi.fn(),
-      resize: vi.fn()
+      resize: vi.fn(),
+      setSpeed: vi.fn()
     })),
     { setWasmUrl: vi.fn() }
   )
@@ -39,6 +40,8 @@ const settings: PetSettings = {
   petId: 'bee',
   size: 'M',
   opacity: 1,
+  animationSpeedEnabled: false,
+  animationSpeed: 5,
   hasHatched: true
 }
 
@@ -107,6 +110,7 @@ describe('pet Lottie rendering', () => {
         pet={pet}
         state="working"
         settings={settings}
+        workingSessionCount={1}
         onPointerDown={vi.fn()}
         onMouseEnter={vi.fn()}
         onMouseLeave={vi.fn()}
@@ -141,6 +145,7 @@ describe('pet Lottie rendering', () => {
         pet={pet}
         state="question"
         settings={settings}
+        workingSessionCount={1}
         onPointerDown={vi.fn()}
         onMouseEnter={vi.fn()}
         onMouseLeave={vi.fn()}
@@ -161,6 +166,7 @@ describe('pet Lottie rendering', () => {
         pet={pet}
         state="working"
         settings={{ ...settings, petId: 'corgi' }}
+        workingSessionCount={1}
         onPointerDown={vi.fn()}
         onMouseEnter={vi.fn()}
         onMouseLeave={vi.fn()}
@@ -183,6 +189,7 @@ describe('pet Lottie rendering', () => {
         pet={pet}
         state="permission"
         settings={{ ...settings, petId: 'corgi' }}
+        workingSessionCount={1}
         onPointerDown={vi.fn()}
         onMouseEnter={vi.fn()}
         onMouseLeave={vi.fn()}
@@ -193,5 +200,89 @@ describe('pet Lottie rendering', () => {
 
     expect(screen.queryByTestId('pet-lottie-working')).not.toBeInTheDocument()
     expect(container.querySelector('img')?.getAttribute('src')).toContain('corgi-static')
+  })
+
+  it('caps the working Lottie speed at the configured animation speed', async () => {
+    const pet = getPet('corgi')
+
+    render(
+      <PetSprite
+        pet={pet}
+        state="working"
+        settings={
+          {
+            ...settings,
+            petId: 'corgi',
+            animationSpeed: 2,
+            animationSpeedEnabled: true
+          } as PetSettings
+        }
+        workingSessionCount={5}
+        onPointerDown={vi.fn()}
+        onMouseEnter={vi.fn()}
+        onMouseLeave={vi.fn()}
+        onClick={vi.fn()}
+        onContextMenu={vi.fn()}
+      />
+    )
+
+    await waitFor(() => expect(DotLottie).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(DotLottie).mock.results[0]?.value.setSpeed).toHaveBeenCalledWith(2)
+  })
+
+  it('keeps the working Lottie at 1x when animation speed scaling is disabled', async () => {
+    const pet = getPet('corgi')
+
+    render(
+      <PetSprite
+        pet={pet}
+        state="working"
+        settings={
+          {
+            ...settings,
+            petId: 'corgi',
+            animationSpeed: 5,
+            animationSpeedEnabled: false
+          } as PetSettings
+        }
+        workingSessionCount={5}
+        onPointerDown={vi.fn()}
+        onMouseEnter={vi.fn()}
+        onMouseLeave={vi.fn()}
+        onClick={vi.fn()}
+        onContextMenu={vi.fn()}
+      />
+    )
+
+    await waitFor(() => expect(DotLottie).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(DotLottie).mock.results[0]?.value.setSpeed).toHaveBeenCalledWith(1)
+  })
+
+  it('caps enabled working Lottie speed at 5x', async () => {
+    const pet = getPet('corgi')
+
+    render(
+      <PetSprite
+        pet={pet}
+        state="working"
+        settings={
+          {
+            ...settings,
+            petId: 'corgi',
+            animationSpeed: 10,
+            animationSpeedEnabled: true
+          } as PetSettings
+        }
+        workingSessionCount={10}
+        onPointerDown={vi.fn()}
+        onMouseEnter={vi.fn()}
+        onMouseLeave={vi.fn()}
+        onClick={vi.fn()}
+        onContextMenu={vi.fn()}
+      />
+    )
+
+    await waitFor(() => expect(DotLottie).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(DotLottie).mock.results[0]?.value.setSpeed).toHaveBeenCalledWith(5)
   })
 })

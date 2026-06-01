@@ -9,11 +9,17 @@ const SIZE_PX: Record<PetSettings['size'], number> = {
   L: 128
 }
 
-function animationForState(state: PetState): Record<string, unknown> {
+function workingAnimationSpeed(settings: PetSettings, workingSessionCount: number): number {
+  if (!settings.animationSpeedEnabled) return 1
+  const maxSpeed = Math.min(Math.max(settings.animationSpeed, 2), 5)
+  return Math.min(Math.max(workingSessionCount, 1), maxSpeed)
+}
+
+function animationForState(state: PetState, speed: number): Record<string, unknown> {
   if (state === 'working') {
     return {
       animate: { rotate: [-4, 4, -4], y: [0, -3, 0] },
-      transition: { duration: 1.8, repeat: Infinity, ease: 'easeInOut' }
+      transition: { duration: 1.8 / speed, repeat: Infinity, ease: 'easeInOut' }
     }
   }
   if (state === 'question') {
@@ -48,6 +54,7 @@ export function PetSprite({
   pet,
   state,
   settings,
+  workingSessionCount,
   onPointerDown,
   onMouseEnter,
   onMouseLeave,
@@ -57,6 +64,7 @@ export function PetSprite({
   pet: LoadedPet
   state: PetState
   settings: PetSettings
+  workingSessionCount: number
   onPointerDown: (event: React.PointerEvent<HTMLElement>) => void
   onMouseEnter: () => void
   onMouseLeave: () => void
@@ -64,10 +72,11 @@ export function PetSprite({
   onContextMenu: (event: React.MouseEvent<HTMLElement>) => void
 }): React.JSX.Element {
   const size = SIZE_PX[settings.size]
+  const speed = workingAnimationSpeed(settings, workingSessionCount)
   const overlay = overlayForState(state)
   const lottieSrc = state === 'working' ? pet.resolvedLottieAssets?.working : undefined
   const lottieScale = state === 'working' ? (pet.lottieScale?.working ?? 1) : 1
-  const activeAnimation = lottieSrc ? {} : animationForState(state)
+  const activeAnimation = lottieSrc ? {} : animationForState(state, speed)
 
   return (
     <button
@@ -93,6 +102,7 @@ export function PetSprite({
             fallbackSrc={pet.resolvedAssets[state]}
             scale={lottieScale}
             size={size}
+            speed={speed}
             state={state}
           />
         ) : (

@@ -22,6 +22,8 @@ export const DEFAULT_PET_SETTINGS: PetSettings = {
   petId: 'bee',
   size: 'M',
   opacity: 1,
+  animationSpeedEnabled: false,
+  animationSpeed: 5,
   hasHatched: false
 }
 
@@ -80,7 +82,11 @@ const PET_SIZE_PX: Record<PetSize, number> = {
 
 let petWindow: BrowserWindow | null = null
 let getMainWindow: (() => BrowserWindow | null) | null = null
-let latestStatus: PetStatusPayload = { state: 'idle', sourceWorktreeId: null }
+let latestStatus: PetStatusPayload = {
+  state: 'idle',
+  sourceWorktreeId: null,
+  workingSessionCount: 0
+}
 let latestSettings: PetSettings = DEFAULT_PET_SETTINGS
 let petPointerInteractionActive = false
 let petPointerInteractionTimer: NodeJS.Timeout | null = null
@@ -101,12 +107,7 @@ function constrainPosition(position: PetPosition, size = petWindowSize()): PetPo
   const display =
     displays.find((candidate) => {
       const { x, y, width, height } = candidate.workArea
-      return (
-        position.x >= x &&
-        position.y >= y &&
-        position.x < x + width &&
-        position.y < y + height
-      )
+      return position.x >= x && position.y >= y && position.x < x + width && position.y < y + height
     }) ?? screen.getDisplayNearestPoint(position)
 
   const { x, y, width, height } = display.workArea
@@ -173,9 +174,7 @@ function broadcast(channel: string, payload: unknown): void {
   }
 }
 
-export function configurePetWindow(options: {
-  getMainWindow: () => BrowserWindow | null
-}): void {
+export function configurePetWindow(options: { getMainWindow: () => BrowserWindow | null }): void {
   getMainWindow = options.getMainWindow
 }
 

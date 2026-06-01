@@ -40,11 +40,23 @@ describe('PetApp drag and click behavior', () => {
     Element.prototype.setPointerCapture = vi.fn()
 
     petOps().getConfig.mockResolvedValue({
-      settings: { enabled: true, petId: 'bee', size: 'M', opacity: 1, hasHatched: true },
+      settings: {
+        enabled: true,
+        petId: 'bee',
+        size: 'M',
+        opacity: 1,
+        animationSpeedEnabled: false,
+        animationSpeed: 5,
+        hasHatched: true
+      },
       position: { x: 10, y: 20 },
       manifest: { id: 'bee', name: 'Bee', version: '1.0.0', assets: {} }
     })
-    petOps().getCurrentStatus.mockResolvedValue({ state: 'idle', sourceWorktreeId: 'worktree-1' })
+    petOps().getCurrentStatus.mockResolvedValue({
+      state: 'idle',
+      sourceWorktreeId: 'worktree-1',
+      workingSessionCount: 0
+    })
     petOps().onStatus.mockReturnValue(() => {})
     petOps().onSettingsUpdated.mockReturnValue(() => {})
   })
