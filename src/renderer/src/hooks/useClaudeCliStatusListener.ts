@@ -2,15 +2,52 @@ import { useEffect } from 'react'
 import { terminalApi } from '@/api/terminal-api'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useSessionStore } from '@/stores/useSessionStore'
+import { useKanbanStore } from '@/stores/useKanbanStore'
 import { lastSendMode } from '@/lib/message-send-times'
 import { notifyKanbanSessionSync } from '@/stores/store-coordination'
+
+type ClaudeCliStatusMetadata = {
+  reason?: string
+  hookEventName?: string
+  hookPath?: string
+  toolName?: string
+  plan?: string
+}
 
 function isPlanLike(mode: string | undefined): boolean {
   return mode === 'plan' || mode === 'super-plan'
 }
 
+function closeLinkedTicketModal(sessionId: string): void {
+  const kanbanState = useKanbanStore.getState()
+  const selectedTicketId = kanbanState.selectedTicketId
+  if (!selectedTicketId) return
+
+  for (const projectTickets of kanbanState.tickets.values()) {
+    const selectedTicket = projectTickets.find((ticket) => ticket.id === selectedTicketId)
+    if (!selectedTicket) continue
+    if (selectedTicket.current_session_id === sessionId) {
+      kanbanState.setSelectedTicketId(null)
+    }
+    return
+  }
+}
+
 export function useClaudeCliStatusListener(): void {
   useEffect(() => {
+    const handlePlanFollowup = (
+      sessionId: string,
+      metadata: ClaudeCliStatusMetadata = {
+        reason: 'claude_cli_plan_followup'
+      }
+    ): void => {
+      useSessionStore.getState().clearPendingPlan(sessionId)
+      notifyKanbanSessionSync(sessionId, { type: 'plan_followup' })
+      closeLinkedTicketModal(sessionId)
+      lastSendMode.set(sessionId, 'plan')
+      useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'planning', metadata)
+    }
+
     const unsubscribe = terminalApi.onClaudeCliStatus(({ sessionId, status, metadata }) => {
       const worktreeStatus = useWorktreeStatusStore.getState()
       const sessionStore = useSessionStore.getState()
@@ -37,6 +74,17 @@ export function useClaudeCliStatusListener(): void {
           planContent: metadata.plan,
           toolUseID: syntheticId
         })
+      }
+
+      if (
+        status === 'planning' &&
+        ((metadata?.hookEventName === 'UserPromptSubmit' && currentStatus === 'plan_ready') ||
+          (metadata?.hookEventName === 'PostToolUseFailure' &&
+            metadata.toolName === 'ExitPlanMode') ||
+          metadata?.reason === 'claude_cli_plan_followup')
+      ) {
+        handlePlanFollowup(sessionId, metadata)
+        return
       }
 
       if (

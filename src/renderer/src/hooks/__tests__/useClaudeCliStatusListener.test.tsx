@@ -7,9 +7,14 @@ const mocks = vi.hoisted(() => ({
   setPendingPlan: vi.fn(),
   clearPendingPlan: vi.fn(),
   notifyKanbanSessionSync: vi.fn(),
+  setSelectedTicketId: vi.fn(),
   lastSendMode: new Map<string, 'plan' | 'build'>(),
   modeBySession: new Map<string, 'build' | 'plan' | 'super-plan'>(),
-  sessionStatuses: {} as Record<string, { status: string } | null>
+  sessionStatuses: {} as Record<string, { status: string } | null>,
+  kanbanState: {
+    selectedTicketId: null as string | null,
+    tickets: new Map<string, Array<{ id: string; current_session_id: string | null }>>()
+  }
 }))
 
 vi.mock('@/stores/useWorktreeStatusStore', () => ({
@@ -35,6 +40,18 @@ vi.mock('@/api/terminal-api', () => ({
   terminalApi: {
     onClaudeCliStatus: mocks.onClaudeCliStatus
   }
+}))
+
+vi.mock('@/stores/useKanbanStore', () => ({
+  useKanbanStore: Object.assign(
+    (selector: (state: typeof mocks.kanbanState) => unknown) => selector(mocks.kanbanState),
+    {
+      getState: () => ({
+        ...mocks.kanbanState,
+        setSelectedTicketId: mocks.setSelectedTicketId
+      })
+    }
+  )
 }))
 
 vi.mock('@/stores/store-coordination', () => ({
@@ -82,10 +99,15 @@ describe('useClaudeCliStatusListener', () => {
     mocks.setSessionStatus.mockClear()
     mocks.setPendingPlan.mockClear()
     mocks.clearPendingPlan.mockClear()
+    mocks.setSelectedTicketId.mockClear()
     mocks.notifyKanbanSessionSync.mockClear()
     mocks.lastSendMode.clear()
     mocks.modeBySession.clear()
     mocks.sessionStatuses = {}
+    mocks.kanbanState = {
+      selectedTicketId: null,
+      tickets: new Map()
+    }
   })
 
   afterEach(() => {
@@ -217,6 +239,86 @@ describe('useClaudeCliStatusListener', () => {
     expect(mocks.setSessionStatus).toHaveBeenNthCalledWith(2, 'hive-session-1', 'completed', {
       hookEventName: 'Stop',
       hookPath: 'stop'
+    })
+  })
+
+  it('handles transcript-detected plan followups by returning the session and ticket to planning', () => {
+    renderHook(() => useClaudeCliStatusListener())
+
+    subscribedCallback?.({
+      sessionId: 'hive-session-1',
+      status: 'planning',
+      metadata: { reason: 'claude_cli_plan_followup' }
+    })
+
+    expect(mocks.clearPendingPlan).toHaveBeenCalledWith('hive-session-1')
+    expect(mocks.notifyKanbanSessionSync).toHaveBeenCalledWith('hive-session-1', {
+      type: 'plan_followup'
+    })
+    expect(mocks.lastSendMode.get('hive-session-1')).toBe('plan')
+    expect(mocks.setSessionStatus).toHaveBeenCalledWith('hive-session-1', 'planning', {
+      reason: 'claude_cli_plan_followup'
+    })
+  })
+
+  it('closes the selected ticket modal when a linked Claude CLI plan followup is detected', () => {
+    mocks.kanbanState = {
+      selectedTicketId: 'ticket-plan',
+      tickets: new Map([
+        ['project-1', [{ id: 'ticket-plan', current_session_id: 'hive-session-1' }]]
+      ])
+    }
+    renderHook(() => useClaudeCliStatusListener())
+
+    subscribedCallback?.({
+      sessionId: 'hive-session-1',
+      status: 'planning',
+      metadata: { reason: 'claude_cli_plan_followup' }
+    })
+
+    expect(mocks.setSelectedTicketId).toHaveBeenCalledWith(null)
+  })
+
+  it('does not close the selected ticket modal for a different session followup', () => {
+    mocks.kanbanState = {
+      selectedTicketId: 'ticket-plan',
+      tickets: new Map([
+        ['project-1', [{ id: 'ticket-plan', current_session_id: 'other-session' }]]
+      ])
+    }
+    renderHook(() => useClaudeCliStatusListener())
+
+    subscribedCallback?.({
+      sessionId: 'hive-session-1',
+      status: 'planning',
+      metadata: { reason: 'claude_cli_plan_followup' }
+    })
+
+    expect(mocks.setSelectedTicketId).not.toHaveBeenCalled()
+  })
+
+  it('handles ExitPlanMode failure hooks as plan followups', () => {
+    renderHook(() => useClaudeCliStatusListener())
+
+    subscribedCallback?.({
+      sessionId: 'hive-session-1',
+      status: 'planning',
+      metadata: {
+        hookEventName: 'PostToolUseFailure',
+        hookPath: 'tool',
+        toolName: 'ExitPlanMode'
+      }
+    })
+
+    expect(mocks.clearPendingPlan).toHaveBeenCalledWith('hive-session-1')
+    expect(mocks.notifyKanbanSessionSync).toHaveBeenCalledWith('hive-session-1', {
+      type: 'plan_followup'
+    })
+    expect(mocks.lastSendMode.get('hive-session-1')).toBe('plan')
+    expect(mocks.setSessionStatus).toHaveBeenCalledWith('hive-session-1', 'planning', {
+      hookEventName: 'PostToolUseFailure',
+      hookPath: 'tool',
+      toolName: 'ExitPlanMode'
     })
   })
 })

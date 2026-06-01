@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => {
     getClaudeHookServer: vi.fn(),
     buildClaudeCliHookSettings: vi.fn(),
     publishClaudeCliStatus: vi.fn(),
+    subscribeClaudeCliStatus: vi.fn(() => vi.fn()),
     ptyService: {
       has: vi.fn(() => false),
       create: vi.fn(() => ({ cols: 120, rows: 40 })),
@@ -99,7 +100,8 @@ vi.mock('./claude-session-watcher', () => ({
 vi.mock('./claude-hook-server', () => ({
   getClaudeHookServer: mocks.getClaudeHookServer,
   buildClaudeCliHookSettings: mocks.buildClaudeCliHookSettings,
-  publishClaudeCliStatus: mocks.publishClaudeCliStatus
+  publishClaudeCliStatus: mocks.publishClaudeCliStatus,
+  subscribeClaudeCliStatus: mocks.subscribeClaudeCliStatus
 }))
 
 vi.mock('../desktop/backend-manager', () => ({

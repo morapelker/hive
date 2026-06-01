@@ -505,6 +505,36 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
     expect(mockKanbanApi.ticket.move).toHaveBeenCalledWith('t1', 'review', 0)
   })
 
+  test('plan_followup event clears plan_ready and moves ticket back to in_progress', async () => {
+    const ticket = makeTicket({
+      id: 't1',
+      column: 'review',
+      current_session_id: 'session-7',
+      mode: 'plan',
+      plan_ready: true
+    })
+
+    act(() => {
+      useKanbanStore.setState({
+        tickets: new Map([['proj-1', [ticket]]])
+      })
+    })
+
+    await act(async () => {
+      useKanbanStore.getState().syncTicketWithSession('session-7', {
+        type: 'plan_followup'
+      } as KanbanSessionEvent)
+      await new Promise((r) => setTimeout(r, 0))
+    })
+
+    const tickets = useKanbanStore.getState().tickets.get('proj-1')
+    const updated = tickets!.find((t) => t.id === 't1')
+    expect(updated!.plan_ready).toBe(false)
+    expect(updated!.column).toBe('in_progress')
+    expect(mockKanbanApi.ticket.update).toHaveBeenCalledWith('t1', { plan_ready: false })
+    expect(mockKanbanApi.ticket.move).toHaveBeenCalledWith('t1', 'in_progress', 0)
+  })
+
   // ────────────────────────────────────────────────────────────────────
   // Tickets across different projects are handled independently
   // ────────────────────────────────────────────────────────────────────

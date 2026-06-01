@@ -3,11 +3,17 @@ import { getDatabase } from '../db'
 import {
   buildClaudeCliHookSettings,
   getClaudeHookServer,
-  publishClaudeCliStatus
+  publishClaudeCliStatus,
+  subscribeClaudeCliStatus,
+  type ClaudeCliStatusPayload
 } from './claude-hook-server'
 import { resolveClaudeBinaryPath } from './claude-binary-resolver'
 import { buildClaudeCliPtySpawn } from './claude-cli-spawner'
 import { watchForClaudeSessionId, type ClaudeSessionWatchHandle } from './claude-session-watcher'
+import {
+  watchForClaudePlanFollowup,
+  type ClaudePlanFollowupWatchHandle
+} from './claude-plan-followup-watcher'
 import {
   applyClaudeCliTitle,
   processClaudeCliPtyData,
@@ -24,8 +30,69 @@ const listenerCleanups = new Map<string, { removeData: () => void; removeExit: (
 const dataBuffers = new Map<string, string>()
 const flushScheduled = new Set<string>()
 const claudeWatchers = new Map<string, ClaudeSessionWatchHandle>()
+const claudePlanFollowupWatchers = new Map<string, ClaudePlanFollowupWatchHandle>()
 const claudeCliSessions = new Set<string>()
 const claudeCliWorktreeBasenames = new Map<string, string>()
+const claudeCliTranscriptSources = new Map<
+  string,
+  { worktreePath: string; claudeSessionId: string | null }
+>()
+const claudeCliLastStatus = new Map<string, ClaudeCliStatusPayload>()
+let unsubscribeClaudeCliStatus: (() => void) | null = null
+
+function closeClaudePlanFollowupWatcher(sessionId: string): void {
+  claudePlanFollowupWatchers.get(sessionId)?.close()
+  claudePlanFollowupWatchers.delete(sessionId)
+}
+
+function armClaudePlanFollowupWatcher(sessionId: string): void {
+  const source = claudeCliTranscriptSources.get(sessionId)
+  if (!source?.claudeSessionId) return
+
+  closeClaudePlanFollowupWatcher(sessionId)
+  claudePlanFollowupWatchers.set(
+    sessionId,
+    watchForClaudePlanFollowup(source.worktreePath, source.claudeSessionId, () => {
+      closeClaudePlanFollowupWatcher(sessionId)
+      publishClaudeCliStatus({
+        sessionId,
+        status: 'planning',
+        metadata: { reason: 'claude_cli_plan_followup' }
+      })
+    })
+  )
+}
+
+function ensureClaudeCliStatusSubscription(): void {
+  if (unsubscribeClaudeCliStatus) return
+
+  unsubscribeClaudeCliStatus = subscribeClaudeCliStatus((payload) => {
+    if (!claudeCliSessions.has(payload.sessionId)) return
+
+    claudeCliLastStatus.set(payload.sessionId, payload)
+    if (payload.status === 'plan_ready') {
+      armClaudePlanFollowupWatcher(payload.sessionId)
+      return
+    }
+
+    if (
+      payload.status === 'working' &&
+      payload.metadata?.hookEventName === 'PostToolUse' &&
+      payload.metadata.toolName === 'ExitPlanMode'
+    ) {
+      closeClaudePlanFollowupWatcher(payload.sessionId)
+      return
+    }
+
+    if (
+      payload.status === 'planning' &&
+      payload.metadata?.hookEventName === 'PostToolUseFailure' &&
+      payload.metadata.toolName === 'ExitPlanMode'
+    ) {
+      closeClaudePlanFollowupWatcher(payload.sessionId)
+    }
+  })
+}
 
 export function destroyNodePtyTerminal(terminalId: string): void {
   const cleanup = listenerCleanups.get(terminalId)
@@ -38,8 +105,11 @@ export function destroyNodePtyTerminal(terminalId: string): void {
   flushScheduled.delete(terminalId)
   claudeWatchers.get(terminalId)?.close()
   claudeWatchers.delete(terminalId)
+  closeClaudePlanFollowupWatcher(terminalId)
   claudeCliSessions.delete(terminalId)
   claudeCliWorktreeBasenames.delete(terminalId)
+  claudeCliTranscriptSources.delete(terminalId)
+  claudeCliLastStatus.delete(terminalId)
   resetClaudeCliTitleState(terminalId)
   ptyService.destroy(terminalId)
 }
@@ -99,6 +169,7 @@ function attachNodePtyListeners(terminalId: string): void {
     flushScheduled.delete(terminalId)
     claudeWatchers.get(terminalId)?.close()
     claudeWatchers.delete(terminalId)
+    closeClaudePlanFollowupWatcher(terminalId)
     if (claudeCliSessions.has(terminalId)) {
       publishClaudeCliStatus({
         sessionId: terminalId,
@@ -108,6 +179,8 @@ function attachNodePtyListeners(terminalId: string): void {
       claudeCliSessions.delete(terminalId)
     }
     claudeCliWorktreeBasenames.delete(terminalId)
+    claudeCliTranscriptSources.delete(terminalId)
+    claudeCliLastStatus.delete(terminalId)
     resetClaudeCliTitleState(terminalId)
   })
 
@@ -147,6 +220,7 @@ export async function createClaudeCliTerminal(
 
     const alreadyExists = ptyService.has(sessionId)
     const { port } = await getClaudeHookServer()
+    ensureClaudeCliStatusSubscription()
     const hookSettingsJson = buildClaudeCliHookSettings(port, sessionId)
     const spawn = buildClaudeCliPtySpawn({
       session,
@@ -183,10 +257,18 @@ export async function createClaudeCliTerminal(
               publishDesktopBackendEvent(`terminal:claude-session-id:${sessionId}`, claudeSessionId)
             )
             .catch(() => undefined)
+          claudeCliTranscriptSources.set(sessionId, { worktreePath, claudeSessionId })
+          if (claudeCliLastStatus.get(sessionId)?.status === 'plan_ready') {
+            armClaudePlanFollowupWatcher(sessionId)
+          }
           claudeWatchers.delete(sessionId)
         })
       )
     }
+    claudeCliTranscriptSources.set(sessionId, {
+      worktreePath,
+      claudeSessionId: session.claude_session_id
+    })
 
     const { cols, rows } = ptyService.create(sessionId, {
       cwd: spawn.cwd,
@@ -231,8 +313,20 @@ export function cleanupTerminals(): void {
   listenerCleanups.clear()
   dataBuffers.clear()
   flushScheduled.clear()
+  for (const [, watcher] of claudeWatchers) {
+    watcher.close()
+  }
+  claudeWatchers.clear()
+  for (const [, watcher] of claudePlanFollowupWatchers) {
+    watcher.close()
+  }
+  claudePlanFollowupWatchers.clear()
   claudeCliSessions.clear()
   claudeCliWorktreeBasenames.clear()
+  claudeCliTranscriptSources.clear()
+  claudeCliLastStatus.clear()
+  unsubscribeClaudeCliStatus?.()
+  unsubscribeClaudeCliStatus = null
   resetAllClaudeCliTitleState()
   ptyService.destroyAll()
   ghosttyService.shutdown()

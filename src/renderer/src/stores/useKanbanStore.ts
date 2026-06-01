@@ -695,6 +695,23 @@ export const useKanbanStore = create<KanbanState>()(
                 break
               }
 
+              case 'plan_followup': {
+                // User rejected or revised a ready plan in the Claude CLI terminal.
+                // The session is planning again, so clear review state and return
+                // the ticket to active work.
+                if (ticket.plan_ready) {
+                  get()
+                    .updateTicket(ticket.id, projectId, { plan_ready: false })
+                    .catch(() => {})
+                }
+                if (ticket.column !== 'in_progress') {
+                  get()
+                    .moveTicket(ticket.id, projectId, 'in_progress', ticket.sort_order)
+                    .catch(() => {})
+                }
+                break
+              }
+
               case 'supercharge': {
                 // Supercharge creates a new session — re-attach ticket and reset plan_ready
                 // Idempotent: skip if already pointing at the new session
