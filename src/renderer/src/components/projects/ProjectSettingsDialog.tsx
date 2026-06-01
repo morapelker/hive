@@ -328,9 +328,13 @@ export function ProjectSettingsDialog({
                   <code className="font-mono text-[0.7rem]">duplicate</code>). In{' '}
                   <code className="font-mono text-[0.7rem]">duplicate</code> mode, also receives{' '}
                   <code className="font-mono text-[0.7rem]">HIVE_SOURCE_WORKTREE_PATH</code> and{' '}
-                  <code className="font-mono text-[0.7rem]">HIVE_SOURCE_BRANCH</code>. Hive aborts
-                  the script after 5 minutes if it does not exit, and best-effort cleans up any
-                  partial worktree/branch on failure.
+                  <code className="font-mono text-[0.7rem]">HIVE_SOURCE_BRANCH</code>. Scripts run
+                  via <code className="font-mono text-[0.7rem]">/bin/sh -c</code> by default; a{' '}
+                  <code className="font-mono text-[0.7rem]">#!/usr/bin/env bash</code> or{' '}
+                  <code className="font-mono text-[0.7rem]">#!/bin/bash</code> shebang on the first
+                  line switches to <code className="font-mono text-[0.7rem]">bash -c</code>. Hive
+                  aborts the script (and its whole process group) after 5 minutes if it does not
+                  exit, and best-effort cleans up any partial worktree/branch on failure.
                 </p>
                 <Textarea
                   value={worktreeCreateScript}
