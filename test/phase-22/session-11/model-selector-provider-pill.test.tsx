@@ -128,7 +128,9 @@ describe('ModelSelector provider filter pill', () => {
       />
     )
 
-    expect(await screen.findByTestId('model-provider-filter')).toHaveTextContent('Codex')
+    await waitFor(() => {
+      expect(screen.getByTestId('model-provider-filter')).toHaveTextContent('Codex')
+    })
   })
 
   test('updates the provider pill when the controlled SDK changes', async () => {

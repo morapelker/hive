@@ -1461,6 +1461,7 @@ export const useSessionStore = create<SessionState>()(
         // Cross-SDK mode default on a live session is impossible to apply because the
         // provider cannot change in an existing session. The mode still flips; model stays.
         if (modeDefault?.agentSdk && modeDefault.agentSdk !== sessionSdk) return
+        if (modeDefault && !modeDefault.agentSdk && sessionSdk !== settings.defaultAgentSdk) return
 
         const newModeDefault = modeDefault ?? resolveModelForSdk(sessionSdk, settings)
         if (!newModeDefault) return
