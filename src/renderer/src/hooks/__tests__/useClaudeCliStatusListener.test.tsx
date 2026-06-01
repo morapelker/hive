@@ -5,6 +5,8 @@ const mocks = vi.hoisted(() => ({
   onClaudeCliStatus: vi.fn(),
   setSessionStatus: vi.fn(),
   setPendingPlan: vi.fn(),
+  clearPendingPlan: vi.fn(),
+  notifyKanbanSessionSync: vi.fn(),
   lastSendMode: new Map<string, 'plan' | 'build'>(),
   modeBySession: new Map<string, 'build' | 'plan' | 'super-plan'>(),
   sessionStatuses: {} as Record<string, { status: string } | null>
@@ -23,7 +25,8 @@ vi.mock('@/stores/useSessionStore', () => ({
   useSessionStore: {
     getState: () => ({
       modeBySession: mocks.modeBySession,
-      setPendingPlan: mocks.setPendingPlan
+      setPendingPlan: mocks.setPendingPlan,
+      clearPendingPlan: mocks.clearPendingPlan
     })
   }
 }))
@@ -32,6 +35,10 @@ vi.mock('@/api/terminal-api', () => ({
   terminalApi: {
     onClaudeCliStatus: mocks.onClaudeCliStatus
   }
+}))
+
+vi.mock('@/stores/store-coordination', () => ({
+  notifyKanbanSessionSync: mocks.notifyKanbanSessionSync
 }))
 
 vi.mock('@/lib/message-send-times', () => ({
@@ -74,6 +81,8 @@ describe('useClaudeCliStatusListener', () => {
     unsubscribe.mockClear()
     mocks.setSessionStatus.mockClear()
     mocks.setPendingPlan.mockClear()
+    mocks.clearPendingPlan.mockClear()
+    mocks.notifyKanbanSessionSync.mockClear()
     mocks.lastSendMode.clear()
     mocks.modeBySession.clear()
     mocks.sessionStatuses = {}
@@ -126,6 +135,31 @@ describe('useClaudeCliStatusListener', () => {
       hookPath: 'tool',
       toolName: 'ExitPlanMode',
       plan: '# Plan\n\n1. Add CLI card.'
+    })
+  })
+
+  it('implements the pending plan when terminal approval completes ExitPlanMode', () => {
+    renderHook(() => useClaudeCliStatusListener())
+
+    subscribedCallback?.({
+      sessionId: 'hive-session-1',
+      status: 'working',
+      metadata: {
+        hookEventName: 'PostToolUse',
+        hookPath: 'tool',
+        toolName: 'ExitPlanMode'
+      }
+    })
+
+    expect(mocks.clearPendingPlan).toHaveBeenCalledWith('hive-session-1')
+    expect(mocks.notifyKanbanSessionSync).toHaveBeenCalledWith('hive-session-1', {
+      type: 'implement'
+    })
+    expect(mocks.lastSendMode.get('hive-session-1')).toBe('build')
+    expect(mocks.setSessionStatus).toHaveBeenCalledWith('hive-session-1', 'working', {
+      hookEventName: 'PostToolUse',
+      hookPath: 'tool',
+      toolName: 'ExitPlanMode'
     })
   })
 

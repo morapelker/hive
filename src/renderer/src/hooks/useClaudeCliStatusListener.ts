@@ -3,6 +3,7 @@ import { terminalApi } from '@/api/terminal-api'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { lastSendMode } from '@/lib/message-send-times'
+import { notifyKanbanSessionSync } from '@/stores/store-coordination'
 
 function isPlanLike(mode: string | undefined): boolean {
   return mode === 'plan' || mode === 'super-plan'
@@ -15,6 +16,15 @@ export function useClaudeCliStatusListener(): void {
       const sessionStore = useSessionStore.getState()
       const currentStatus = worktreeStatus.sessionStatuses[sessionId]?.status
       const currentMode = sessionStore.modeBySession.get(sessionId)
+
+      if (metadata?.hookEventName === 'PostToolUse' && metadata.toolName === 'ExitPlanMode') {
+        // User approved ExitPlanMode from the terminal, matching the in-app implement action.
+        sessionStore.clearPendingPlan(sessionId)
+        notifyKanbanSessionSync(sessionId, { type: 'implement' })
+        lastSendMode.set(sessionId, 'build')
+        worktreeStatus.setSessionStatus(sessionId, 'working', metadata)
+        return
+      }
 
       if (
         status === 'plan_ready' &&
