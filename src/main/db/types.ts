@@ -258,16 +258,9 @@ export interface StorageStats {
 export interface CompactionPreview {
   storage: StorageStats
   reclaimableFreeBytes: number
+  reclaimableWalBytes: number
   orphaned: {
     rows: {
-      messages: number
-      activities: number
-    }
-    bytes: number
-  }
-  archivedWorktrees: {
-    rows: {
-      sessions: number
       messages: number
       activities: number
     }
@@ -283,7 +276,6 @@ export interface CompactionResult {
   deletedCounts: {
     orphanedMessages: number
     orphanedActivities: number
-    archivedSessions: number
   }
 }
 

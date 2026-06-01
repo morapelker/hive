@@ -31,6 +31,9 @@ export function registerStorageHandlers(): void {
   )
 
   defineHandler('storage:compact', z.tuple([]), () =>
-    tryDb('storage:compact', () => getDatabase().compactDatabase())
+    Effect.tryPromise({
+      try: () => getDatabase().compactDatabase(),
+      catch: (error) => storageFailed('storage:compact', error)
+    })
   )
 }

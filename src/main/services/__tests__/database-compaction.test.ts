@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'fs'
+import { mkdtempSync, rmSync, statSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -22,7 +22,7 @@ describe('DatabaseService compaction', () => {
     return service
   }
 
-  it('previews and removes archived-worktree sessions plus orphaned child rows only', () => {
+  it('previews orphaned child rows and preserves archived-worktree session history', async () => {
     const service = createService()
     const db = service.getRawDb()
     const project = service.createProject({ name: 'Project', path: '/tmp/project' })
@@ -100,27 +100,61 @@ describe('DatabaseService compaction', () => {
 
     const preview = service.previewCompaction()
     expect(preview.orphaned.rows).toEqual({ messages: 1, activities: 1 })
-    expect(preview.archivedWorktrees.rows.sessions).toBe(1)
-    expect(preview.archivedWorktrees.rows.messages).toBe(1)
-    expect(preview.archivedWorktrees.rows.activities).toBe(1)
-    expect(preview.archivedWorktrees.bytes).toBeGreaterThan('archived message payload'.length)
     expect(preview.estimatedSavedBytes).toBeGreaterThan(0)
 
-    const result = service.compactDatabase()
+    const result = await service.compactDatabase()
     expect(result.deletedCounts).toEqual({
       orphanedMessages: 1,
-      orphanedActivities: 1,
-      archivedSessions: 1
+      orphanedActivities: 1
     })
     expect(service.getSession(activeSession.id)).not.toBeNull()
-    expect(service.getSession(archivedSession.id)).toBeNull()
+    expect(service.getSession(archivedSession.id)).not.toBeNull()
     expect(service.getWorktree(archivedWorktree.id)?.status).toBe('archived')
     expect(service.getSessionMessages(activeSession.id)).toHaveLength(1)
+    expect(service.getSessionMessages(archivedSession.id)).toHaveLength(1)
     expect(service.getSessionActivities(activeSession.id)).toHaveLength(1)
+    expect(service.getSessionActivities(archivedSession.id)).toHaveLength(1)
 
     const secondPreview = service.previewCompaction()
     expect(secondPreview.orphaned.rows).toEqual({ messages: 0, activities: 0 })
-    expect(secondPreview.archivedWorktrees.rows.sessions).toBe(0)
+
+    service.close()
+  })
+
+  it('includes WAL bytes in the compaction estimate', () => {
+    const service = createService()
+    const db = service.getRawDb()
+
+    db.pragma('wal_checkpoint(TRUNCATE)')
+    for (let i = 0; i < 50; i += 1) {
+      service.setSetting(`wal-test-${i}`, 'x'.repeat(200))
+    }
+
+    const walBytes = statSync(`${service.getDbPath()}-wal`).size
+    expect(walBytes).toBeGreaterThan(0)
+
+    const preview = service.previewCompaction()
+    expect(preview.reclaimableWalBytes).toBe(walBytes)
+    expect(preview.estimatedSavedBytes).toBeGreaterThanOrEqual(walBytes)
+
+    service.close()
+  })
+
+  it('estimates text payload sizes as UTF-8 bytes', () => {
+    const service = createService()
+    const db = service.getRawDb()
+    const content = 'emoji 😀 and cjk 漢字'
+
+    db.pragma('foreign_keys = OFF')
+    db.prepare(
+      `INSERT INTO session_messages (id, session_id, role, content, created_at)
+       VALUES (?, ?, ?, ?, ?)`
+    ).run('multibyte-orphan-message', 'missing-session', 'user', content, new Date().toISOString())
+    db.pragma('foreign_keys = ON')
+
+    const preview = service.previewCompaction()
+    expect(preview.orphaned.rows.messages).toBe(1)
+    expect(preview.orphaned.bytes).toBe(Buffer.byteLength(content, 'utf8'))
 
     service.close()
   })

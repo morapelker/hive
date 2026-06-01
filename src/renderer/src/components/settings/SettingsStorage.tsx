@@ -135,9 +135,7 @@ export function SettingsStorage(): React.JSX.Element {
                 {stats
                   ? `${formatBytes(stats.dbFileBytes)} DB, ${formatBytes(
                       stats.walFileBytes
-                    )} WAL, ${formatBytes(
-                      stats.freeBytes
-                    )} free pages`
+                    )} WAL, ${formatBytes(stats.freeBytes)} free pages`
                   : loadingStats
                     ? 'Loading...'
                     : 'Size unavailable'}
@@ -198,9 +196,9 @@ export function SettingsStorage(): React.JSX.Element {
                 value={formatBytes(preview.orphaned.bytes)}
               />
               <BreakdownRow
-                label="Archived worktree sessions"
-                detail={`${preview.archivedWorktrees.rows.sessions.toLocaleString()} sessions, ${preview.archivedWorktrees.rows.messages.toLocaleString()} messages, ${preview.archivedWorktrees.rows.activities.toLocaleString()} activities`}
-                value={formatBytes(preview.archivedWorktrees.bytes)}
+                label="Write-ahead log"
+                detail="Pending SQLite log data that can be checkpointed and truncated"
+                value={formatBytes(preview.reclaimableWalBytes)}
               />
               <BreakdownRow
                 label="Reclaimable free space"
@@ -209,7 +207,11 @@ export function SettingsStorage(): React.JSX.Element {
               />
               <BreakdownRow
                 label="Estimated saved"
-                detail={estimatedSavedBytes > 0 ? 'Actual result is reported after VACUUM' : 'Already compact'}
+                detail={
+                  estimatedSavedBytes > 0
+                    ? 'Actual result is reported after VACUUM'
+                    : 'Already compact'
+                }
                 value={formatBytes(estimatedSavedBytes)}
               />
             </div>

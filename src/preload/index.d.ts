@@ -322,16 +322,9 @@ declare global {
   interface CompactionPreview {
     storage: StorageStats
     reclaimableFreeBytes: number
+    reclaimableWalBytes: number
     orphaned: {
       rows: {
-        messages: number
-        activities: number
-      }
-      bytes: number
-    }
-    archivedWorktrees: {
-      rows: {
-        sessions: number
         messages: number
         activities: number
       }
@@ -347,7 +340,6 @@ declare global {
     deletedCounts: {
       orphanedMessages: number
       orphanedActivities: number
-      archivedSessions: number
     }
   }
 
@@ -881,9 +873,7 @@ declare global {
         opencodeSessionId: string
       ) => Promise<Envelope<{ success: boolean; count?: number; error?: string }>>
       // List available models from all configured providers
-      listModels: (opts?: {
-        agentSdk?: AgentSdk
-      }) => Promise<
+      listModels: (opts?: { agentSdk?: AgentSdk }) => Promise<
         Envelope<{
           success: boolean
           providers: Record<string, unknown>
