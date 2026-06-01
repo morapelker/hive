@@ -5,11 +5,18 @@ import {
   setRendererRpcClient
 } from '../../../src/renderer/src/api/rpc-client'
 import { opencodeApi } from '../../../src/renderer/src/api/opencode-api'
+import { terminalApi } from '../../../src/renderer/src/api/terminal-api'
 
 vi.mock('@/api/opencode-api', () => ({
   opencodeApi: {
     connect: vi.fn(),
     prompt: vi.fn()
+  }
+}))
+
+vi.mock('@/api/terminal-api', () => ({
+  terminalApi: {
+    createClaudeCli: vi.fn()
   }
 }))
 
@@ -101,6 +108,9 @@ function installTestRpcClient() {
         const { key, value } = params as { key: string; value: string }
         return mockDb.setting.set(key, value)
       }
+      if (method === 'settingsOps.loadCustomCommandsFile') {
+        return { success: true }
+      }
       if (method === 'db.session.setPinnedToBoard') {
         const { sessionId, pinned } = params as { sessionId: string; pinned: boolean }
         return mockDb.session.setPinnedToBoard(sessionId, pinned)
@@ -129,6 +139,10 @@ describe('Session 4: Code Review', () => {
       value: { success: true, sessionId: 'opc-review-session' }
     })
     vi.mocked(opencodeApi.prompt).mockResolvedValue({
+      success: true,
+      value: { success: true }
+    })
+    vi.mocked(terminalApi.createClaudeCli).mockResolvedValue({
       success: true,
       value: { success: true }
     })
@@ -457,6 +471,128 @@ describe('Session 4: Code Review', () => {
           }
         )
       })
+    })
+
+    test('starts Claude CLI review sessions with the review prompt as pendingPrompt', async () => {
+      const { useGitStore } = await import('../../../src/renderer/src/stores/useGitStore')
+      const { useSessionStore } = await import('../../../src/renderer/src/stores/useSessionStore')
+      const { useSettingsStore } = await import('../../../src/renderer/src/stores/useSettingsStore')
+      const { useWorktreeStore } = await import('../../../src/renderer/src/stores/useWorktreeStore')
+      const { useWorktreeStatusStore } =
+        await import('../../../src/renderer/src/stores/useWorktreeStatusStore')
+      const { useLifecycleActions } =
+        await import('../../../src/renderer/src/hooks/useLifecycleActions')
+
+      const reviewModel = {
+        agentSdk: 'claude-code-cli' as const,
+        providerID: 'anthropic',
+        modelID: 'opus',
+        variant: 'high'
+      }
+      const createSession = vi.fn().mockResolvedValue({
+        success: true,
+        session: {
+          id: 'review-cli-session',
+          worktree_id: 'wt-1',
+          project_id: 'proj-1',
+          connection_id: null,
+          name: 'Session 14:00',
+          status: 'active',
+          opencode_session_id: null,
+          agent_sdk: 'claude-code-cli',
+          mode: 'build',
+          model_provider_id: 'anthropic',
+          model_id: 'opus',
+          model_variant: 'high',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          completed_at: null
+        }
+      })
+      const updateSessionName = vi.fn().mockResolvedValue(undefined)
+
+      act(() => {
+        useWorktreeStore.setState({
+          worktreesByProject: new Map([
+            [
+              'proj-1',
+              [
+                {
+                  id: 'wt-1',
+                  project_id: 'proj-1',
+                  name: 'feature-auth',
+                  branch_name: 'feature-auth',
+                  path: '/tmp/review-cli-worktree',
+                  status: 'active',
+                  is_default: false,
+                  branch_renamed: 0,
+                  last_message_at: null,
+                  session_titles: '[]',
+                  last_model_provider_id: null,
+                  last_model_id: null,
+                  last_model_variant: null,
+                  attachments: '[]',
+                  pinned: 0,
+                  context: null,
+                  github_pr_number: null,
+                  github_pr_url: null,
+                  base_branch: null,
+                  created_at: new Date().toISOString(),
+                  last_accessed_at: new Date().toISOString()
+                }
+              ]
+            ]
+          ])
+        })
+        useGitStore.setState({
+          branchInfoByWorktree: new Map([
+            [
+              '/tmp/review-cli-worktree',
+              { name: 'feature-auth', tracking: 'origin/main', ahead: 0, behind: 0 }
+            ]
+          ])
+        })
+        useSettingsStore.setState({
+          defaultModels: {
+            build: null,
+            plan: null,
+            ask: null,
+            review: reviewModel
+          }
+        })
+        useSessionStore.setState({
+          createSession,
+          updateSessionName,
+          setPendingMessage: vi.fn()
+        })
+        useWorktreeStatusStore.setState({
+          setReviewSession: vi.fn(),
+          setSessionStatus: vi.fn(),
+          clearSessionStatus: vi.fn(),
+          setLastMessageTime: vi.fn()
+        })
+      })
+
+      const { result } = renderHook(() => useLifecycleActions('wt-1'))
+
+      await result.current.createCodeReview('origin/main')
+
+      expect(createSession).toHaveBeenCalledWith('wt-1', 'proj-1', 'claude-code-cli', undefined, {
+        autoFocus: false,
+        modelOverride: reviewModel,
+        pendingMessage: expect.stringContaining('Compare the current branch (feature-auth)')
+      })
+      expect(useSessionStore.getState().setPendingMessage).toHaveBeenCalledWith(
+        'review-cli-session',
+        expect.stringContaining('Compare the current branch (feature-auth)')
+      )
+      await vi.waitFor(() => {
+        expect(terminalApi.createClaudeCli).toHaveBeenCalledWith('review-cli-session', {
+          pendingPrompt: expect.stringContaining('Compare the current branch (feature-auth)')
+        })
+      })
+      expect(opencodeApi.connect).not.toHaveBeenCalled()
+      expect(opencodeApi.prompt).not.toHaveBeenCalled()
     })
 
     test('focuses the new review tab when not currently on the board', async () => {
