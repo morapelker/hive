@@ -527,14 +527,20 @@ export const startDesktopBackend = async (
   if (currentBackend) return currentBackend
 
   const log = deps.logger ?? defaultLog
+  const baseDir = input.baseDir ?? join(app.getPath('home'), '.hive')
   const config = await makeDesktopBackendSpawnConfig({
     executablePath: input.executablePath,
     entryPath: input.entryPath,
     cwd: input.cwd,
-    baseDir: input.baseDir ?? join(app.getPath('home'), '.hive'),
+    baseDir,
     host: input.host ?? DEFAULT_DESKTOP_BACKEND_HOST,
     port: input.port ?? DEFAULT_DESKTOP_BACKEND_PORT,
-    maxPort: input.maxPort ?? DEFAULT_DESKTOP_BACKEND_MAX_PORT
+    maxPort: input.maxPort ?? DEFAULT_DESKTOP_BACKEND_MAX_PORT,
+    // TESTING: point the backend at the legacy desktop database
+    // (<baseDir>/hive.db) so it loads existing projects/sessions instead of a
+    // fresh empty userdata/state.sqlite. Remove this env override to use the
+    // new server state database.
+    env: { HIVE_SERVER_DB_PATH: join(baseDir, 'hive.db') }
   })
 
   let stopping = false

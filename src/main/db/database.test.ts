@@ -15,4 +15,13 @@ describe('database path resolution', () => {
       join('/tmp/hive-home-test', '.hive', 'hive.db')
     )
   })
+
+  it('prefers an explicit database path override over server base dir', () => {
+    expect(
+      resolveDatabasePath({
+        explicitPath: '/tmp/legacy/hive.db',
+        serverBaseDir: '/tmp/hive-server-test'
+      })
+    ).toBe('/tmp/legacy/hive.db')
+  })
 })
