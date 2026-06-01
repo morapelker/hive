@@ -5618,7 +5618,11 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
       // Check periodically until connected or timeout after 5 seconds
       const startTime = Date.now()
       const checkAndSend = (): void => {
-        if (opencodeSessionId && worktreePath) {
+        // Read from ref to avoid stale closure
+        const currentOpencodeSessionId = transcriptSourceRef.current.opencodeSessionId
+        const currentWorktreePath = transcriptSourceRef.current.worktreePath
+
+        if (currentOpencodeSessionId && currentWorktreePath) {
           // Connected - send the prompt
           handleSend(prompt)
         } else if (Date.now() - startTime < 5000) {
@@ -5634,7 +5638,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
 
     window.addEventListener('hive:send-prompt-to-session', handler)
     return () => window.removeEventListener('hive:send-prompt-to-session', handler)
-  }, [sessionId, handleSend, opencodeSessionId, worktreePath])
+  }, [sessionId, handleSend])
 
   // Listen for undo/redo turn events from the application menu
   useEffect(() => {
