@@ -131,6 +131,29 @@ describe('runWorktreeCreateScript', () => {
     expect(result.error).toContain('timed out after 200ms')
   })
 
+  test('waits for SIGKILL to actually exit the script before resolving', async () => {
+    // Script traps SIGTERM and keeps running, forcing the SIGKILL fallback.
+    // The resolve must wait for the child to actually exit, otherwise callers
+    // race with cleanup against a still-running script.
+    const start = Date.now()
+    const result = await runWorktreeCreateScript({
+      script: "trap '' TERM; sleep 10",
+      projectPath: tmpdir(),
+      worktreePath: '/tmp/foo',
+      branchName: 'feature',
+      baseBranch: 'main',
+      baseRef: 'main',
+      mode: 'new',
+      timeoutMs: 100
+    })
+    const elapsed = Date.now() - start
+
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('timed out after 100ms')
+    // 100ms timeout + 500ms grace before SIGKILL = ~600ms minimum
+    expect(elapsed).toBeGreaterThanOrEqual(500)
+  })
+
   test('passes through HIVE_BASE_REF distinct from HIVE_BASE_BRANCH', async () => {
     const tmp = mkdtempSync(join(tmpdir(), 'hive-test-'))
     const envFile = join(tmp, 'env.out')
