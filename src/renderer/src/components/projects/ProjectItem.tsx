@@ -11,7 +11,8 @@ import {
   RefreshCw,
   Settings,
   GitBranch,
-  FolderHeart
+  FolderHeart,
+  Zap
 } from 'lucide-react'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
@@ -54,6 +55,7 @@ import { HighlightedText } from './HighlightedText'
 import { gitToast } from '@/lib/toast'
 import { projectApi } from '@/api/project-api'
 import { worktreeApi } from '@/api/worktree-api'
+import type { CustomProjectCommand } from '@/lib/custom-commands'
 
 interface Project {
   id: string
@@ -133,6 +135,7 @@ export const ProjectItem = memo(function ProjectItem({
   const vimMode = useVimModeStore((s) => s.mode)
   const vimModeEnabled = useSettingsStore((s) => s.vimModeEnabled)
   const autoPullBeforeWorktree = useSettingsStore((s) => s.autoPullBeforeWorktree)
+  const customProjectCommands = useSettingsStore((s) => s.customProjectCommands)
   const projectHint = useHintStore((s) => s.hintMap.get('project:' + project.id))
 
   const [editName, setEditName] = useState(project.name)
@@ -341,6 +344,14 @@ export const ProjectItem = memo(function ProjectItem({
     [project, autoPullBeforeWorktree]
   )
 
+  const handleCustomCommand = useCallback(
+    async (command: CustomProjectCommand): Promise<void> => {
+      console.log('Custom command clicked:', command.name)
+      // TODO: Implement prompt execution
+    },
+    []
+  )
+
   return (
     <div>
       <ContextMenu>
@@ -528,6 +539,21 @@ export const ProjectItem = memo(function ProjectItem({
                     })}
                   </ContextMenuSubContent>
                 </ContextMenuSub>
+              </>
+            )}
+            {/* Custom Commands */}
+            {customProjectCommands && customProjectCommands.length > 0 && (
+              <>
+                <ContextMenuSeparator />
+                {customProjectCommands.map((cmd) => (
+                  <ContextMenuItem
+                    key={cmd.id}
+                    onClick={() => handleCustomCommand(cmd)}
+                  >
+                    <Zap className="h-4 w-4 mr-2" />
+                    {cmd.name}
+                  </ContextMenuItem>
+                ))}
               </>
             )}
             <ContextMenuSeparator />

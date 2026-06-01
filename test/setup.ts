@@ -143,6 +143,8 @@ const makeDefaultRendererRpcClient = (): RendererRpcClient => ({
         return [] as T
       case 'settingsOps.getAll':
         return {} as T
+      case 'projectOps.loadLanguageIcons':
+        return {} as T
       default:
         return undefined as T
     }
