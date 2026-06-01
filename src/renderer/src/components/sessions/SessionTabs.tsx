@@ -43,7 +43,6 @@ import { useProjectStore } from '@/stores/useProjectStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
-import { useLayoutStore } from '@/stores/useLayoutStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { TicketCreateModal } from '@/components/kanban/TicketCreateModal'
 import { ImportTicketsModal } from '@/components/kanban/ImportTicketsModal'
@@ -82,9 +81,10 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Tip } from '@/components/ui/Tip'
 import { useTipStore } from '@/stores/useTipStore'
-import { unwrapEnvelopeApi } from '@/lib/ipc-envelope'
+import { opencodeApi } from '@/api/opencode-api'
+import { kanbanApi } from '@/api/kanban-api'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
-const kanban = unwrapEnvelopeApi(() => window.kanban)
 const TRANSCRIPT_CACHE_KEY_PREFIX = 'hive:session-transcript:'
 
 function clearTranscriptCache(sessionId: string): void {
@@ -573,7 +573,7 @@ export function SessionTabs(): React.JSX.Element | null {
       id: string
       title: string
       description?: string | null
-      attachments?: unknown[]
+      attachments?: unknown[] | null
       column?: string
     }>
   >([])
@@ -970,11 +970,9 @@ export function SessionTabs(): React.JSX.Element | null {
     }
 
     try {
-      const result = unwrapEnvelopeApi(() => window.opencodeOps).refreshFromThread(
-        worktreePath,
-        opencodeSessionId
+      const refreshed = unwrapEnvelope(
+        await opencodeApi.refreshFromThread(worktreePath, opencodeSessionId)
       )
-      const refreshed = await result
       if (!refreshed.success) {
         toast.error(refreshed.error || 'Refresh from file failed')
         return
@@ -1633,7 +1631,11 @@ export function SessionTabs(): React.JSX.Element | null {
             </DropdownMenuItem>
             <DropdownMenuItem
               onClick={async () => {
-                const result = await kanban.board.openImportFile()
+                const result = await kanbanApi.board.openImportFile<{
+                  tickets: typeof hiveImportTickets
+                  dependencies?: typeof hiveImportDependencies
+                  projectName?: string | null
+                }>()
                 if (result) {
                   setHiveImportTickets(result.tickets)
                   setHiveImportDependencies(result.dependencies ?? [])
@@ -1648,7 +1650,12 @@ export function SessionTabs(): React.JSX.Element | null {
             <DropdownMenuItem
               onClick={async () => {
                 if (!project) return
-                const result = await kanban.board.export(project.id, project.name)
+                const result = await kanbanApi.board.export<{
+                  success: boolean
+                  ticketCount: number
+                  path?: string
+                  error?: string
+                }>(project.id, project.name)
                 if (result.success) {
                   toast.success(`Exported ${result.ticketCount} tickets`)
                 }

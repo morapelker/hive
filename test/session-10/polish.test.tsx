@@ -7,6 +7,7 @@ import { ErrorFallback } from '@/components/error/ErrorFallback'
 import { LoadingSpinner, LoadingPlaceholder, LoadingOverlay } from '@/components/ui/loading'
 import * as toastModule from '@/lib/toast'
 import { toast as sonnerToast } from 'sonner'
+import { systemApi } from '@/api/system-api'
 
 // Mock sonner toast
 vi.mock('sonner', () => ({
@@ -22,16 +23,13 @@ vi.mock('sonner', () => ({
   Toaster: () => null
 }))
 
-// Mock system ops
-const mockSystemOps = {
-  getLogDir: vi.fn().mockResolvedValue('/Users/test/.hive/logs'),
-  getAppVersion: vi.fn().mockResolvedValue('1.0.0'),
-  getAppPaths: vi.fn().mockResolvedValue({
-    userData: '/Users/test/.hive',
-    home: '/Users/test',
-    logs: '/Users/test/.hive/logs'
-  })
-}
+vi.mock('@/api/system-api', () => ({
+  systemApi: {
+    getLogDir: vi.fn(),
+    getAppVersion: vi.fn(),
+    getAppPaths: vi.fn()
+  }
+}))
 
 // Mock clipboard
 const mockClipboard = {
@@ -42,11 +40,12 @@ const mockClipboard = {
 beforeEach(() => {
   vi.clearAllMocks()
 
-  // Mock window.systemOps
-  Object.defineProperty(window, 'systemOps', {
-    value: mockSystemOps,
-    writable: true,
-    configurable: true
+  vi.mocked(systemApi.getLogDir).mockResolvedValue('/Users/test/.hive/logs')
+  vi.mocked(systemApi.getAppVersion).mockResolvedValue('1.0.0')
+  vi.mocked(systemApi.getAppPaths).mockResolvedValue({
+    userData: '/Users/test/.hive',
+    home: '/Users/test',
+    logs: '/Users/test/.hive/logs'
   })
 
   // Mock navigator.clipboard
@@ -64,19 +63,19 @@ afterEach(() => {
 
 describe('Session 10: Error Handling & Polish', () => {
   describe('Logging System', () => {
-    test('Log directory path is accessible via systemOps', async () => {
-      const logDir = await window.systemOps.getLogDir()
+    test('Log directory path is accessible via systemApi', async () => {
+      const logDir = await systemApi.getLogDir()
       expect(logDir).toBe('/Users/test/.hive/logs')
     })
 
-    test('App paths are accessible via systemOps', async () => {
-      const paths = await window.systemOps.getAppPaths()
+    test('App paths are accessible via systemApi', async () => {
+      const paths = await systemApi.getAppPaths()
       expect(paths.logs).toBe('/Users/test/.hive/logs')
       expect(paths.home).toBe('/Users/test')
     })
 
     test('Logs should be written to ~/.hive/logs/', async () => {
-      const logDir = await window.systemOps.getLogDir()
+      const logDir = await systemApi.getLogDir()
       expect(logDir).toContain('.hive/logs')
     })
   })

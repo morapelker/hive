@@ -3,6 +3,18 @@ import { createLogger, getLogDir } from './services/logger'
 import { ghosttyService } from './services/ghostty-service'
 import { updaterService } from './services/updater'
 import { markQuitViaShortcut } from './quit-confirmation'
+import { emitEditPaste } from './services/edit-events'
+import { emitMenuActionIfKnown } from './services/menu-events'
+import {
+  emitCloseSessionShortcut,
+  emitFileSearchShortcut,
+  emitNewSessionShortcut
+} from './services/shortcut-events'
+import {
+  CLOSE_SESSION_SHORTCUT_CHANNEL,
+  FILE_SEARCH_SHORTCUT_CHANNEL,
+  NEW_SESSION_SHORTCUT_CHANNEL
+} from '../shared/shortcut-events'
 
 const log = createLogger({ component: 'Menu' })
 
@@ -22,8 +34,21 @@ export function shutdownMenu(): void {
 }
 
 function send(channel: string, ...args: unknown[]): void {
-  if (_mainWindow && !_mainWindow.isDestroyed()) {
-    _mainWindow.webContents.send(channel, ...args)
+  if (channel === NEW_SESSION_SHORTCUT_CHANNEL) {
+    emitNewSessionShortcut()
+    return
+  }
+  if (channel === CLOSE_SESSION_SHORTCUT_CHANNEL) {
+    emitCloseSessionShortcut()
+    return
+  }
+  if (channel === FILE_SEARCH_SHORTCUT_CHANNEL) {
+    emitFileSearchShortcut()
+    return
+  }
+
+  if (emitMenuActionIfKnown(channel, ...args)) {
+    return
   }
 }
 
@@ -88,12 +113,12 @@ export function buildMenu(mainWindow: BrowserWindow, isDev: boolean): Menu {
         {
           label: 'New Session',
           accelerator: 'CmdOrCtrl+T',
-          click: () => send('shortcut:new-session')
+          click: () => send(NEW_SESSION_SHORTCUT_CHANNEL)
         },
         {
           label: 'Close Session',
           accelerator: 'CmdOrCtrl+W',
-          click: () => send('shortcut:close-session')
+          click: () => send(CLOSE_SESSION_SHORTCUT_CHANNEL)
         },
         { type: 'separator' },
         {
@@ -155,7 +180,7 @@ export function buildMenu(mainWindow: BrowserWindow, isDev: boolean): Menu {
               })
               const text = clipboard.readText()
               if (text) {
-                _mainWindow.webContents.send('edit:paste', text)
+                emitEditPaste(text)
               }
             } else {
               _mainWindow.webContents.paste()
@@ -276,7 +301,7 @@ export function buildMenu(mainWindow: BrowserWindow, isDev: boolean): Menu {
         {
           label: 'Search Files',
           accelerator: 'CmdOrCtrl+D',
-          click: () => send('shortcut:file-search')
+          click: () => send(FILE_SEARCH_SHORTCUT_CHANNEL)
         },
         {
           label: 'Session History',

@@ -1,7 +1,7 @@
 import type { TerminalBackend, TerminalOpts, TerminalBackendCallbacks } from './types'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { hasFocusedEditableElement } from '@/lib/focus-utils'
-import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { terminalApi } from '@/api/terminal-api'
 
 /**
  * Native Ghostty terminal backend (macOS only).
@@ -87,7 +87,7 @@ export class GhosttyBackend implements TerminalBackend {
 
     this.runtimeInitPromise = (async () => {
       try {
-        const initResult = unwrapEnvelope(await window.terminalOps.ghosttyInit())
+        const initResult = await terminalApi.ghosttyInit()
         if (!initResult.success) {
           console.error('Failed to initialize Ghostty:', initResult.error)
           return false
@@ -153,15 +153,12 @@ export class GhosttyBackend implements TerminalBackend {
           }
 
       try {
-        const result = unwrapEnvelope(
-          await window.terminalOps.ghosttyCreateSurface(this.terminalId, createRect, {
-            cwd: this.opts.cwd,
-            shell: this.opts.shell,
-            scaleFactor: window.devicePixelRatio || 2.0,
-            fontSize:
-              useSettingsStore.getState().ghosttyFontSize || GhosttyBackend.FALLBACK_FONT_SIZE
-          })
-        )
+        const result = await terminalApi.ghosttyCreateSurface(this.terminalId, createRect, {
+          cwd: this.opts.cwd,
+          shell: this.opts.shell,
+          scaleFactor: window.devicePixelRatio || 2.0,
+          fontSize: useSettingsStore.getState().ghosttyFontSize || GhosttyBackend.FALLBACK_FONT_SIZE
+        })
 
         if (!result.success) {
           console.error('Failed to create Ghostty surface:', result.error)
@@ -173,7 +170,7 @@ export class GhosttyBackend implements TerminalBackend {
           // Disposed or failed between the create call and its resolution.
           // The native surface exists but we never stored it as surfaceCreated,
           // so dispose() skipped cleanup — destroy it here to avoid leaking.
-          window.terminalOps.ghosttyDestroySurface(this.terminalId).catch(() => {
+          terminalApi.ghosttyDestroySurface(this.terminalId).catch(() => {
             // Best-effort cleanup
           })
           return
@@ -185,7 +182,7 @@ export class GhosttyBackend implements TerminalBackend {
         if (this.visible) {
           this.syncFrame()
           if (!hasFocusedEditableElement()) {
-            unwrapEnvelope(await window.terminalOps.ghosttySetFocus(this.terminalId, true))
+            await terminalApi.ghosttySetFocus(this.terminalId, true)
           }
         } else {
           this.hideSurface()
@@ -218,7 +215,7 @@ export class GhosttyBackend implements TerminalBackend {
       this.syncFrameTimer = null
     }
 
-    window.terminalOps.ghosttySetFocus(this.terminalId, false).catch(() => {
+    terminalApi.ghosttySetFocus(this.terminalId, false).catch(() => {
       // Ignore focus errors
     })
     const hiddenRect = this.lastVisibleRect
@@ -230,7 +227,7 @@ export class GhosttyBackend implements TerminalBackend {
         }
       : GhosttyBackend.HIDDEN_RECT
 
-    window.terminalOps.ghosttySetFrame(this.terminalId, hiddenRect).catch(() => {
+    terminalApi.ghosttySetFrame(this.terminalId, hiddenRect).catch(() => {
       // Ignore frame sync errors during teardown
     })
   }
@@ -247,7 +244,7 @@ export class GhosttyBackend implements TerminalBackend {
     // restoration depends on a fragile setTimeout in TerminalView that can be
     // cancelled by rapid effectiveVisible changes (e.g. overlay suppression race).
     if (!hasFocusedEditableElement()) {
-      window.terminalOps.ghosttySetFocus(this.terminalId, true).catch(() => {
+      terminalApi.ghosttySetFocus(this.terminalId, true).catch(() => {
         // Ignore focus errors
       })
     }
@@ -336,7 +333,7 @@ export class GhosttyBackend implements TerminalBackend {
 
     this.lastVisibleRect = rect
 
-    window.terminalOps.ghosttySetFrame(this.terminalId, rect).catch(() => {
+    terminalApi.ghosttySetFrame(this.terminalId, rect).catch(() => {
       // Ignore frame sync errors during teardown
     })
   }
@@ -357,7 +354,7 @@ export class GhosttyBackend implements TerminalBackend {
       void this.ensureSurface()
       return
     }
-    window.terminalOps.ghosttySetFocus(this.terminalId, true).catch(() => {
+    terminalApi.ghosttySetFocus(this.terminalId, true).catch(() => {
       // Ignore focus errors
     })
   }
@@ -401,7 +398,7 @@ export class GhosttyBackend implements TerminalBackend {
     }
 
     if (this.surfaceCreated) {
-      window.terminalOps.ghosttyDestroySurface(this.terminalId).catch(() => {
+      terminalApi.ghosttyDestroySurface(this.terminalId).catch(() => {
         // Best-effort cleanup
       })
     }
@@ -422,7 +419,7 @@ export class GhosttyBackend implements TerminalBackend {
  */
 export async function isGhosttyAvailable(): Promise<boolean> {
   try {
-    const result = unwrapEnvelope(await window.terminalOps.ghosttyIsAvailable())
+    const result = await terminalApi.ghosttyIsAvailable()
     return result.available
   } catch {
     return false

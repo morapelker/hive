@@ -1,4 +1,3 @@
-import type { BrowserWindow } from 'electron'
 import type { ChildProcess } from 'node:child_process'
 import { Cause, Effect, Exit } from 'effect'
 import { createLogger } from './logger'
@@ -12,12 +11,14 @@ import { toError } from './error-utils'
 import { agentEventBus } from './agent-event-bus'
 import { LowLevelSpawn } from '../effect/spawn/service'
 import { getRuntime } from '../effect/spawn/runtime'
-import {
-  openCodeAgentFacade,
-  type SubscriptionHandle
-} from '../effect/opencode/facade'
+import { openCodeAgentFacade, type SubscriptionHandle } from '../effect/opencode/facade'
 import { SessionCreateResponseSchema } from '../effect/opencode/schemas'
 import { decodeWithZod } from '../effect/_shared/zod-adapter'
+import {
+  WORKTREE_BRANCH_RENAMED_CHANNEL,
+  type WorktreeBranchRenamedEvent
+} from '../../shared/worktree-events'
+import { emitWorktreeBranchRenamed } from './worktree-events'
 
 const log = createLogger({ component: 'OpenCodeService' })
 
@@ -129,14 +130,12 @@ async function loadOpenCodeSDK(): Promise<{ createOpencode: any; createOpencodeC
  * Spawn `opencode serve` without forcing a port, letting it auto-assign one.
  * Parses the listening URL from stdout.
  */
-async function spawnOpenCodeServer(
-  options: {
-    hostname?: string
-    timeout?: number
-    signal?: AbortSignal
-    launchSpec: OpenCodeLaunchSpec
-  }
-): Promise<{ url: string; close(): void }> {
+async function spawnOpenCodeServer(options: {
+  hostname?: string
+  timeout?: number
+  signal?: AbortSignal
+  launchSpec: OpenCodeLaunchSpec
+}): Promise<{ url: string; close(): void }> {
   const hostname = options.hostname ?? '127.0.0.1'
   const timeout = options.timeout ?? 10000
   const launchSpec = options.launchSpec
@@ -277,14 +276,8 @@ function enrichModelsWithVariants(providers: any[]): any[] {
 class OpenCodeService {
   // Single server instance (OpenCode handles multiple directories via query params)
   private instance: OpenCodeInstance | null = null
-  private mainWindow: BrowserWindow | null = null
   private pendingConnection: Promise<OpenCodeInstance> | null = null
   private openCodeLaunchSpec: OpenCodeLaunchSpec | null = null
-
-  setMainWindow(window: BrowserWindow): void {
-    this.mainWindow = window
-    agentEventBus.setMainWindow(window)
-  }
 
   setOpenCodeLaunchSpec(spec: OpenCodeLaunchSpec | null): void {
     this.openCodeLaunchSpec = spec
@@ -430,7 +423,8 @@ class OpenCodeService {
       client: instance.client,
       directory,
       hiveSessionId: '',
-      onEvent: (event, eventDirectory) => this.handleEvent(instance, { data: event }, eventDirectory)
+      onEvent: (event, eventDirectory) =>
+        this.handleEvent(instance, { data: event }, eventDirectory)
     })
 
     instance.directorySubscriptions.set(directory, {
@@ -1227,7 +1221,9 @@ class OpenCodeService {
     if (eventType === 'session.updated') {
       const sessionInfo = event.properties?.info
       const rawSessionTitle = sessionInfo?.title || event.properties?.title
-      const sessionTitle = rawSessionTitle ? maybeExtractJsonTitle(rawSessionTitle) : rawSessionTitle
+      const sessionTitle = rawSessionTitle
+        ? maybeExtractJsonTitle(rawSessionTitle)
+        : rawSessionTitle
       if (hiveSessionId && sessionTitle) {
         try {
           const db = getDatabase()
@@ -1266,7 +1262,7 @@ class OpenCodeService {
                 db
               })
               if (result.renamed) {
-                this.sendToRenderer('worktree:branchRenamed', {
+                this.sendToRenderer(WORKTREE_BRANCH_RENAMED_CHANNEL, {
                   worktreeId: worktree.id,
                   newBranch: result.newBranch
                 })
@@ -1308,7 +1304,7 @@ class OpenCodeService {
                       db
                     })
                     if (result.renamed) {
-                      this.sendToRenderer('worktree:branchRenamed', {
+                      this.sendToRenderer(WORKTREE_BRANCH_RENAMED_CHANNEL, {
                         worktreeId: memberWorktree.id,
                         newBranch: result.newBranch
                       })
@@ -1405,10 +1401,9 @@ class OpenCodeService {
       agentEventBus.publish(data)
       return
     }
-    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-      this.mainWindow.webContents.send(channel, data)
-    } else {
-      log.warn('Cannot send to renderer: window not available')
+    if (channel === WORKTREE_BRANCH_RENAMED_CHANNEL) {
+      emitWorktreeBranchRenamed(data as WorktreeBranchRenamedEvent)
+      return
     }
   }
 
@@ -1417,8 +1412,7 @@ class OpenCodeService {
    */
   private maybeNotifySessionComplete(hiveSessionId: string): void {
     try {
-      // Only notify when the window is not focused
-      if (!this.mainWindow || this.mainWindow.isDestroyed() || this.mainWindow.isFocused()) {
+      if (!notificationService.shouldNotifyWhenWindowUnfocused()) {
         return
       }
 
@@ -1456,7 +1450,7 @@ class OpenCodeService {
     kind: 'question' | 'permission'
   ): void {
     try {
-      if (!this.mainWindow || this.mainWindow.isDestroyed() || this.mainWindow.isFocused()) {
+      if (!notificationService.shouldNotifyWhenWindowUnfocused()) {
         return
       }
 

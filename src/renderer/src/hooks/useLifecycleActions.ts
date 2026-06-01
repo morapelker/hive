@@ -10,9 +10,11 @@ import { useSettingsStore, resolveModelForSdk } from '@/stores/useSettingsStore'
 import { messageSendTimes, userExplicitSendTimes, lastSendMode } from '@/lib/message-send-times'
 import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
 import { snapshotTokenBaseline } from '@/lib/token-baselines'
-import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
-
-const db = unwrapEnvelopeApi(() => window.db)
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { systemApi } from '@/api/system-api'
+import { opencodeApi } from '@/api/opencode-api'
+import { dbApi } from '@/api/db-api'
+import { gitApi } from '@/api/git-api'
 
 interface AttachedPR {
   number: number
@@ -148,32 +150,29 @@ export function useLifecycleActions(worktreeId: string | null): LifecycleActions
       setRemoteBranches([])
       return
     }
-    window.gitOps
-      .listBranchesWithStatus(worktree.path)
-      .then(unwrapEnvelope)
-      .then((result) => {
-        if (result.success) {
-          const filtered = result.branches.filter((b: { isRemote: boolean }) => b.isRemote)
+    gitApi.listBranchesWithStatus(worktree.path).then((result) => {
+      if (result.success) {
+        const filtered = result.branches.filter((b: { isRemote: boolean }) => b.isRemote)
 
-          // Pin the default branch (e.g. origin/main) to the top
-          if (worktreeId) {
-            const projectId = resolveProjectId(worktreeId)
-            if (projectId) {
-              const defaultWt = useWorktreeStore.getState().getDefaultWorktree(projectId)
-              if (defaultWt?.branch_name) {
-                const defaultRemoteName = `origin/${defaultWt.branch_name}`
-                filtered.sort((a, b) => {
-                  if (a.name === defaultRemoteName) return -1
-                  if (b.name === defaultRemoteName) return 1
-                  return 0
-                })
-              }
+        // Pin the default branch (e.g. origin/main) to the top
+        if (worktreeId) {
+          const projectId = resolveProjectId(worktreeId)
+          if (projectId) {
+            const defaultWt = useWorktreeStore.getState().getDefaultWorktree(projectId)
+            if (defaultWt?.branch_name) {
+              const defaultRemoteName = `origin/${defaultWt.branch_name}`
+              filtered.sort((a, b) => {
+                if (a.name === defaultRemoteName) return -1
+                if (b.name === defaultRemoteName) return 1
+                return 0
+              })
             }
           }
-
-          setRemoteBranches(filtered)
         }
-      })
+
+        setRemoteBranches(filtered)
+      }
+    })
   }, [worktree?.path, worktreeId])
 
   // --- Clear live state when attached PR changes ---
@@ -251,12 +250,10 @@ export function useLifecycleActions(worktreeId: string | null): LifecycleActions
 
       void (async () => {
         try {
-          const connectResult = unwrapEnvelope(
-            await window.opencodeOps.connect(worktreePath, sessionId)
-          )
+          const connectResult = unwrapEnvelope(await opencodeApi.connect(worktreePath, sessionId))
           if (connectResult.success && connectResult.sessionId) {
             sessionStore.setOpenCodeSessionId(sessionId, connectResult.sessionId)
-            db.session
+            dbApi.session
               .update(sessionId, { opencode_session_id: connectResult.sessionId })
               .catch(() => {})
 
@@ -268,7 +265,7 @@ export function useLifecycleActions(worktreeId: string | null): LifecycleActions
             bumpWorktreeLastMessage({ worktreeId })
 
             unwrapEnvelope(
-              await window.opencodeOps.prompt(
+              await opencodeApi.prompt(
                 worktreePath,
                 connectResult.sessionId,
                 [{ type: 'text', text: prompt }],
@@ -295,7 +292,7 @@ export function useLifecycleActions(worktreeId: string | null): LifecycleActions
 
     setIsMergingPR(true)
     try {
-      const result = unwrapEnvelope(await window.gitOps.prMerge(worktree.path, pr.number))
+      const result = await gitApi.prMerge(worktree.path, pr.number)
       if (result.success) {
         toast.success('PR merged successfully')
         setPrLiveState((prev) => ({ state: 'MERGED', title: prev?.title }))
@@ -352,7 +349,7 @@ export function useLifecycleActions(worktreeId: string | null): LifecycleActions
 
   const openPRInBrowser = useCallback(() => {
     if (!storeAttachedPR?.url) return
-    window.systemOps.openInChrome(storeAttachedPR.url)
+    void systemApi.openInChrome(storeAttachedPR.url)
   }, [storeAttachedPR?.url])
 
   const copyPRUrl = useCallback(() => {
@@ -372,7 +369,7 @@ export function useLifecycleActions(worktreeId: string | null): LifecycleActions
     const currentBranch = currentBranchInfo?.name ?? ''
 
     try {
-      const res = unwrapEnvelope(await window.gitOps.listPRs(projectPath))
+      const res = await gitApi.listPRs(projectPath)
       if (res.success) {
         const sorted = [...res.prs].sort((a, b) => {
           const aMatch = a.headRefName === currentBranch ? 1 : 0
@@ -399,7 +396,7 @@ export function useLifecycleActions(worktreeId: string | null): LifecycleActions
     if (!projectPath) return
 
     try {
-      const res = unwrapEnvelope(await window.gitOps.getPRState(projectPath, pr.number))
+      const res = await gitApi.getPRState(projectPath, pr.number)
       if (res.success) {
         setPrLiveState({ state: res.state, title: res.title })
       }

@@ -5,7 +5,7 @@ import { useGitStore } from '@/stores/useGitStore'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { FileIcon } from './FileIcon'
 import { GitStatusIndicator, type GitStatusCode } from './GitStatusIndicator'
-import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { gitApi } from '@/api/git-api'
 
 interface BranchDiffViewProps {
   worktreePath: string | null
@@ -50,7 +50,7 @@ export function BranchDiffView({ worktreePath }: BranchDiffViewProps): React.JSX
     if (!worktreePath) return
     setIsLoadingBranches(true)
     try {
-      const result = unwrapEnvelope(await window.gitOps.listBranchesWithStatus(worktreePath))
+      const result = await gitApi.listBranchesWithStatus(worktreePath)
       if (result.success && result.branches) {
         setBranches(result.branches)
       }
@@ -69,9 +69,7 @@ export function BranchDiffView({ worktreePath }: BranchDiffViewProps): React.JSX
     }
     setIsLoadingFiles(true)
     try {
-      const result = unwrapEnvelope(
-        await window.gitOps.getBranchDiffFiles(worktreePath, selectedBranch)
-      )
+      const result = await gitApi.getBranchDiffFiles(worktreePath, selectedBranch)
       if (result.success && result.files) {
         setFiles(result.files)
         setDiffError(null)
@@ -101,7 +99,7 @@ export function BranchDiffView({ worktreePath }: BranchDiffViewProps): React.JSX
   // Listen for git status changes to auto-refresh file list
   useEffect(() => {
     if (!worktreePath || !selectedBranch) return
-    const cleanup = window.gitOps.onStatusChanged((event) => {
+    const cleanup = gitApi.onStatusChanged((event) => {
       if (event.worktreePath === worktreePath) {
         loadDiffFiles()
       }

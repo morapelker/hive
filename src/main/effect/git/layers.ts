@@ -1,10 +1,9 @@
 import { execFile } from 'child_process'
 import { existsSync, mkdirSync, rmSync, cpSync, writeFileSync, unlinkSync, readdirSync, readFileSync, appendFileSync, mkdtempSync } from 'fs'
 import { readFile as readFileAsync } from 'fs/promises'
-import { tmpdir } from 'os'
+import { homedir, tmpdir } from 'os'
 import { basename, dirname, join } from 'path'
 import { promisify } from 'util'
-import { app } from 'electron'
 import { Effect, Either, Layer, Ref } from 'effect'
 import simpleGit, { type SimpleGit, type BranchSummary } from 'simple-git'
 
@@ -22,8 +21,13 @@ type GitOperation = 'merge' | 'rebase' | 'cherry-pick' | 'apply'
 const normalizeBranchDisplayName = (branchName: string): string =>
   branchName.startsWith('remotes/') ? branchName.replace(/^remotes\//, '') : branchName
 
+export const resolveGitWorktreesDir = (
+  projectName: string,
+  homeDir: string = homedir()
+): string => join(homeDir, '.hive-worktrees', projectName)
+
 const ensureWorktreesDir = (projectName: string): string => {
-  const projectWorktreesDir = join(app.getPath('home'), '.hive-worktrees', projectName)
+  const projectWorktreesDir = resolveGitWorktreesDir(projectName)
   if (!existsSync(projectWorktreesDir)) {
     mkdirSync(projectWorktreesDir, { recursive: true })
   }

@@ -1,19 +1,27 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-const handlers = new Map<string, (...args: any[]) => any>()
-
 vi.mock('electron', () => ({
-  ipcMain: {
-    handle: vi.fn((channel: string, handler: (...args: any[]) => any) => {
-      handlers.set(channel, async (...args: any[]) => {
-        const result = await handler(...args)
-        return result?.success === true && 'value' in result ? result.value : result
-      })
-    })
-  },
   app: {
-    getPath: vi.fn(() => '/tmp')
+    getPath: vi.fn(() => '/tmp'),
+    getVersion: vi.fn(() => '0.0.0'),
+    isPackaged: false
+  },
+  BrowserWindow: vi.fn(),
+  screen: {
+    getPrimaryDisplay: vi.fn(() => ({ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }))
+  }
+}))
+
+vi.mock('electron-updater', () => ({
+  autoUpdater: {
+    autoDownload: false,
+    autoInstallOnAppQuit: true,
+    logger: null,
+    on: vi.fn(),
+    checkForUpdates: vi.fn(),
+    downloadUpdate: vi.fn(),
+    quitAndInstall: vi.fn()
   }
 }))
 
@@ -28,22 +36,26 @@ vi.mock('../../../src/main/services/logger', () => ({
 
 vi.mock('../../../src/main/services/opencode-service', () => ({
   openCodeService: {
-    setMainWindow: vi.fn(),
     listCommands: vi.fn().mockResolvedValue([]),
     sendCommand: vi.fn().mockResolvedValue(undefined)
   }
 }))
 
-import { registerOpenCodeHandlers } from '../../../src/main/ipc/opencode-handlers'
+vi.mock('../../../src/main/services/claude-code-implementer', () => ({
+  ClaudeCodeImplementer: vi.fn()
+}))
+
+vi.mock('../../../src/main/services/codex-implementer', () => ({
+  CodexImplementer: vi.fn()
+}))
+
+import { listOpenCodeCommands, sendOpenCodeCommand } from '../../../src/main/services/opencode-session-commands'
 import { openCodeService } from '../../../src/main/services/opencode-service'
 import type { AgentSdkManager } from '../../../src/main/services/agent-sdk-manager'
 import type { DatabaseService } from '../../../src/main/db/database'
 
-const mockEvent = {} as any
-
-describe('IPC Codex goal command routing', () => {
+describe('Codex goal command routing', () => {
   beforeEach(() => {
-    handlers.clear()
     vi.clearAllMocks()
   })
 
@@ -59,10 +71,7 @@ describe('IPC Codex goal command routing', () => {
       getSession: vi.fn().mockReturnValue({ agent_sdk: 'codex', opencode_session_id: null })
     } as unknown as DatabaseService
 
-    registerOpenCodeHandlers({ isDestroyed: () => false, webContents: { send: vi.fn() } } as any, sdkManager, dbService)
-
-    const handler = handlers.get('opencode:commands')!
-    const result = await handler(mockEvent, { worktreePath: '/project', sessionId: 'hive-1' })
+    const result = await listOpenCodeCommands('/project', 'hive-1', sdkManager, dbService)
 
     expect(dbService.getAgentSdkForSession).toHaveBeenCalledWith('hive-1')
     expect(dbService.getSession).toHaveBeenCalledWith('hive-1')
@@ -84,22 +93,25 @@ describe('IPC Codex goal command routing', () => {
     } as unknown as AgentSdkManager
     const dbService = {
       getAgentSdkForSession: vi.fn().mockReturnValue(null),
-      getSession: vi
-        .fn()
-        .mockReturnValue({ agent_sdk: 'codex', opencode_session_id: 'thread-1' })
+      getSession: vi.fn().mockReturnValue({ agent_sdk: 'codex', opencode_session_id: 'thread-1' })
     } as unknown as DatabaseService
 
-    registerOpenCodeHandlers({ isDestroyed: () => false, webContents: { send: vi.fn() } } as any, sdkManager, dbService)
+    const result = await sendOpenCodeCommand(
+      '/project',
+      'hive-1',
+      'goal',
+      'ship the feature',
+      undefined,
+      sdkManager,
+      dbService
+    )
 
-    const handler = handlers.get('opencode:command')!
-    const result = await handler(mockEvent, {
-      worktreePath: '/project',
-      sessionId: 'hive-1',
-      command: 'goal',
-      args: 'ship the feature'
-    })
-
-    expect(codexImpl.sendCommand).toHaveBeenCalledWith('/project', 'thread-1', 'goal', 'ship the feature')
+    expect(codexImpl.sendCommand).toHaveBeenCalledWith(
+      '/project',
+      'thread-1',
+      'goal',
+      'ship the feature'
+    )
     expect(openCodeService.sendCommand).not.toHaveBeenCalled()
     expect(result).toEqual({ success: true })
   })

@@ -1,9 +1,9 @@
 import { deleteAttachment } from '../services/attachment-storage'
 import Database from 'better-sqlite3'
-import { app } from 'electron'
-import { join } from 'path'
+import { dirname, join } from 'path'
 import { existsSync, mkdirSync } from 'fs'
 import { randomUUID } from 'crypto'
+import { homedir } from 'os'
 import { MIGRATIONS } from './schema'
 import type {
   Project,
@@ -53,6 +53,20 @@ import type {
   SavedUsageProvider
 } from './types'
 
+export function resolveDatabasePath(options?: {
+  readonly serverBaseDir?: string
+  readonly homeDir?: string
+}): string {
+  const serverBaseDir = options?.serverBaseDir ?? process.env.HIVE_SERVER_BASE_DIR
+  const homeDir = options?.homeDir ?? homedir()
+
+  if (serverBaseDir) {
+    return join(serverBaseDir, 'userdata', 'state.sqlite')
+  }
+
+  return join(homeDir, '.hive', 'hive.db')
+}
+
 export class DatabaseService {
   private db: Database.Database | null = null
   private dbPath: string
@@ -61,11 +75,11 @@ export class DatabaseService {
     if (dbPath) {
       this.dbPath = dbPath
     } else {
-      const hiveDir = join(app.getPath('home'), '.hive')
-      if (!existsSync(hiveDir)) {
-        mkdirSync(hiveDir, { recursive: true })
+      this.dbPath = resolveDatabasePath()
+      const dbDir = dirname(this.dbPath)
+      if (!existsSync(dbDir)) {
+        mkdirSync(dbDir, { recursive: true })
       }
-      this.dbPath = join(hiveDir, 'hive.db')
     }
   }
 

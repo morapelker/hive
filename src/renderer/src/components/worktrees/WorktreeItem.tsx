@@ -1,6 +1,5 @@
 import { memo, useCallback, useState, useRef, useEffect } from 'react'
 import { revealLabel } from '@/lib/platform'
-import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
 import {
   AlertCircle,
   GitBranch,
@@ -69,8 +68,11 @@ import { ModelIcon } from './ModelIcon'
 import { ArchiveConfirmDialog } from './ArchiveConfirmDialog'
 import { AddAttachmentDialog } from './AddAttachmentDialog'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
-
-const db = unwrapEnvelopeApi(() => window.db)
+import { systemApi } from '@/api/system-api'
+import { dbApi } from '@/api/db-api'
+import { worktreeApi } from '@/api/worktree-api'
+import { projectApi } from '@/api/project-api'
+import { gitApi } from '@/api/git-api'
 
 interface Worktree {
   id: string
@@ -215,12 +217,12 @@ export const WorktreeItem = memo(function WorktreeItem({
   }, [worktree.attachments])
 
   const handleOpenAttachment = useCallback(async (url: string): Promise<void> => {
-    await window.systemOps.openInChrome(url)
+    await systemApi.openInChrome(url)
   }, [])
 
   const handleDetachAttachment = useCallback(
     async (attachmentId: string): Promise<void> => {
-      const result = await db.worktree.removeAttachment(worktree.id, attachmentId)
+      const result = await dbApi.worktree.removeAttachment(worktree.id, attachmentId)
       if (result.success) {
         setAttachments((prev) => prev.filter((a) => a.id !== attachmentId))
         toast.success('Attachment removed')
@@ -233,7 +235,7 @@ export const WorktreeItem = memo(function WorktreeItem({
 
   const handleAttachmentAdded = useCallback((): void => {
     // Reload worktree data to get fresh attachments
-    db.worktree.get(worktree.id).then((w) => {
+    dbApi.worktree.get<Worktree>(worktree.id).then((w) => {
       if (w) {
         try {
           setAttachments(JSON.parse(w.attachments || '[]'))
@@ -312,14 +314,12 @@ export const WorktreeItem = memo(function WorktreeItem({
       return
     }
 
-    const result = unwrapEnvelope(
-      await window.worktreeOps.renameBranch(
-        worktree.id,
-        worktree.path,
-        worktree.branch_name,
-        newBranch
-      )
-    )
+    const result = await worktreeApi.renameBranch({
+      worktreeId: worktree.id,
+      worktreePath: worktree.path,
+      oldBranch: worktree.branch_name,
+      newBranch
+    })
 
     if (result.success) {
       useWorktreeStore.getState().updateWorktreeBranch(worktree.id, newBranch)
@@ -341,7 +341,7 @@ export const WorktreeItem = memo(function WorktreeItem({
   }
 
   const handleOpenInTerminal = useCallback(async (): Promise<void> => {
-    const result = unwrapEnvelope(await window.worktreeOps.openInTerminal(worktree.path))
+    const result = await worktreeApi.openInTerminal(worktree.path)
     if (result.success) {
       toast.success('Opened in Terminal')
     } else {
@@ -353,7 +353,7 @@ export const WorktreeItem = memo(function WorktreeItem({
   }, [worktree.path])
 
   const handleOpenInEditor = useCallback(async (): Promise<void> => {
-    const result = unwrapEnvelope(await window.worktreeOps.openInEditor(worktree.path))
+    const result = await worktreeApi.openInEditor(worktree.path)
     if (result.success) {
       toast.success('Opened in Editor')
     } else {
@@ -365,11 +365,11 @@ export const WorktreeItem = memo(function WorktreeItem({
   }, [worktree.path])
 
   const handleOpenInFinder = async (): Promise<void> => {
-    unwrapEnvelope(await window.projectOps.showInFolder(worktree.path))
+    await projectApi.showInFolder(worktree.path)
   }
 
   const handleCopyPath = async (): Promise<void> => {
-    unwrapEnvelope(await window.projectOps.copyToClipboard(worktree.path))
+    await projectApi.copyToClipboard(worktree.path)
     clipboardToast.copied('Path')
   }
 
@@ -389,7 +389,7 @@ export const WorktreeItem = memo(function WorktreeItem({
 
   const handleArchive = useCallback(async (): Promise<void> => {
     try {
-      const result = unwrapEnvelope(await window.gitOps.getDiffStat(worktree.path))
+      const result = await gitApi.getDiffStat(worktree.path)
       if (result.success && result.files && result.files.length > 0) {
         setArchiveConfirmFiles(result.files)
         setArchiveConfirmOpen(true)

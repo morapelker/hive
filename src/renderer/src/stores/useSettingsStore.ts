@@ -5,9 +5,14 @@ import type { TelegramConfig } from '@shared/types/telegram'
 import type { UsageProvider } from '@shared/types/usage'
 import type { PetSettings } from '@shared/types/pet'
 import type { ReviewPromptType } from '@/constants/reviewPrompts'
-import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
-
-const db = unwrapEnvelopeApi(() => window.db)
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { systemApi } from '@/api/system-api'
+import { dbApi } from '@/api/db-api'
+import { opencodeApi } from '@/api/opencode-api'
+import { updaterApi } from '@/api/updater-api'
+import { petApi } from '@/api/pet-api'
+import { telegramApi } from '@/api/telegram-api'
+import { settingsApi } from '@/api/settings-api'
 
 // ==========================================
 // Types
@@ -275,8 +280,8 @@ interface SettingsState extends AppSettings {
 
 async function saveToDatabase(settings: AppSettings): Promise<void> {
   try {
-    if (typeof window !== 'undefined' && db?.setting) {
-      await db.setting.set(APP_SETTINGS_DB_KEY, JSON.stringify(settings))
+    if (typeof window !== 'undefined') {
+      await dbApi.setting.set(APP_SETTINGS_DB_KEY, JSON.stringify(settings))
     }
   } catch (error) {
     console.error('Failed to save settings to database:', error)
@@ -285,8 +290,8 @@ async function saveToDatabase(settings: AppSettings): Promise<void> {
 
 async function loadSettingsFromDatabase(): Promise<AppSettings | null> {
   try {
-    if (typeof window !== 'undefined' && db?.setting) {
-      const value = await db.setting.get(APP_SETTINGS_DB_KEY)
+    if (typeof window !== 'undefined') {
+      const value = await dbApi.setting.get(APP_SETTINGS_DB_KEY)
       if (value) {
         const parsed = JSON.parse(value)
         const result = {
@@ -435,25 +440,16 @@ export const useSettingsStore = create<SettingsState>()(
         const settings = extractSettings({ ...get(), [key]: value } as SettingsState)
         saveToDatabase(settings)
         // Notify main process of channel change
-        if (key === 'updateChannel' && window.updaterOps?.setChannel) {
-          window.updaterOps
-            .setChannel(value as string)
-            .then(unwrapEnvelope)
-            .catch(() => {})
+        if (key === 'updateChannel') {
+          updaterApi.setChannel(value as AppSettings['updateChannel']).catch(() => {})
         }
-        if (key === 'pet' && window.petOps) {
+        if (key === 'pet') {
           const pet = value as PetSettings
-          window.petOps.updateSettings(pet)
+          petApi.updateSettings(pet)
           if (pet.enabled) {
-            window.petOps
-              .show()
-              .then(unwrapEnvelope)
-              .catch(() => {})
+            petApi.show().catch(() => {})
           } else {
-            window.petOps
-              .hide()
-              .then(unwrapEnvelope)
-              .catch(() => {})
+            petApi.hide().catch(() => {})
           }
         }
         // Handle board mode switching side effects
@@ -506,7 +502,7 @@ export const useSettingsStore = create<SettingsState>()(
         set({ selectedModel: model })
         // Persist to backend (settings DB + opencode service)
         try {
-          unwrapEnvelope(await window.opencodeOps.setModel(model))
+          unwrapEnvelope(await opencodeApi.setModel(model))
         } catch (error) {
           console.error('Failed to persist model selection:', error)
         }
@@ -529,9 +525,13 @@ export const useSettingsStore = create<SettingsState>()(
         }
         set({ selectedModelByProvider: current })
         // Push to backend only for SDKs with a structured implementer.
-        if (agentSdk !== 'terminal' && agentSdk !== 'claude-code-cli' && !options?.skipBackendPush) {
+        if (
+          agentSdk !== 'terminal' &&
+          agentSdk !== 'claude-code-cli' &&
+          !options?.skipBackendPush
+        ) {
           try {
-            unwrapEnvelope(await window.opencodeOps.setModel(model ? { ...model, agentSdk } : null))
+            unwrapEnvelope(await opencodeApi.setModel(model ? { ...model, agentSdk } : null))
           } catch (error) {
             console.error('Failed to persist model selection for SDK:', error)
           }
@@ -603,19 +603,13 @@ export const useSettingsStore = create<SettingsState>()(
       resetToDefaults: () => {
         set({ ...DEFAULT_SETTINGS })
         saveToDatabase(DEFAULT_SETTINGS)
-        window.petOps?.updateSettings(DEFAULT_SETTINGS.pet)
-        window.petOps
-          ?.hide()
-          .then(unwrapEnvelope)
-          .catch(() => {})
+        petApi.updateSettings(DEFAULT_SETTINGS.pet)
+        petApi.hide().catch(() => {})
       },
 
       loadFromDatabase: async () => {
         const dbSettings = await loadSettingsFromDatabase()
-        const telegramConfig = await window.telegramOps
-          ?.getConfig?.()
-          .then(unwrapEnvelope)
-          .catch(() => null)
+        const telegramConfig = await telegramApi.getConfig().catch(() => null)
         if (dbSettings) {
           set({
             ...dbSettings,
@@ -624,23 +618,20 @@ export const useSettingsStore = create<SettingsState>()(
             initialSetupComplete: dbSettings.initialSetupComplete ?? true,
             isLoading: false
           })
-          window.petOps?.updateSettings(dbSettings.pet)
+          petApi.updateSettings(dbSettings.pet)
           if (dbSettings.pet.enabled) {
-            window.petOps
-              ?.show()
-              .then(unwrapEnvelope)
-              .catch(() => {})
+            petApi.show().catch(() => {})
           }
         } else {
           set({ isLoading: false, telegramConfig: telegramConfig ?? null })
           await saveToDatabase(extractSettings(get()))
-          window.petOps?.updateSettings(get().pet)
+          petApi.updateSettings(get().pet)
         }
       },
 
       detectAvailableAgentSdks: async () => {
         try {
-          const result = await window.systemOps.detectAgentSdks()
+          const result = await systemApi.detectAgentSdks()
           set({ availableAgentSdks: result })
         } catch {
           // Fail gracefully — context menu just won't show
@@ -719,7 +710,7 @@ if (typeof window !== 'undefined') {
   }, 200)
 
   // Listen for settings updates from main process (e.g., when "Allow always" adds to allowlist)
-  window.settingsOps?.onSettingsUpdated((data) => {
+  settingsApi.onSettingsUpdated((data) => {
     const typedData = data as { commandFilter?: CommandFilterSettings }
     if (typedData.commandFilter) {
       useSettingsStore.setState({ commandFilter: typedData.commandFilter })

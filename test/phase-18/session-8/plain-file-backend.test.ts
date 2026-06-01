@@ -1,52 +1,49 @@
-import { describe, test, expect, vi, beforeEach } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { join } from 'path'
+import { gitApi } from '../../../src/renderer/src/api/git-api'
+import {
+  resetRendererRpcClientForTests,
+  setRendererRpcClient
+} from '../../../src/renderer/src/api/rpc-client'
 
-describe('Session 8: Plain File Rendering Backend', () => {
-  // ── Type declaration contract ──────────────────────────────────────────────
-  describe('Type declaration', () => {
-    test('getFileContent type declaration exists on window.gitOps', () => {
-      // Verify the type contract matches: (worktreePath, filePath) => Promise<{success, content, error?}>
-      type Expected = (
-        worktreePath: string,
-        filePath: string
-      ) => Promise<{
-        success: boolean
-        content: string | null
-        error?: string
-      }>
+describe('Session 8: Plain File Rendering RPC Backend', () => {
+  afterEach(() => {
+    resetRendererRpcClientForTests()
+  })
 
-      // If this compiles, the type declaration is correct
-      const _typeCheck: Expected = window.gitOps.getFileContent
+  // ── Renderer API type contract ────────────────────────────────────────────
+  describe('Renderer API type declaration', () => {
+    test('getFileContent type declaration exists on gitApi', () => {
+      type Expected = typeof gitApi.getFileContent
+
+      const _typeCheck: Expected = gitApi.getFileContent
       expect(_typeCheck).toBeDefined()
     })
   })
 
-  // ── Preload bridge contract ────────────────────────────────────────────────
-  describe('Preload bridge', () => {
-    let mockGetFileContent: ReturnType<typeof vi.fn>
+  // ── Renderer RPC client contract ──────────────────────────────────────────
+  describe('Renderer RPC client contract', () => {
+    let request: ReturnType<typeof vi.fn>
+    let subscribe: ReturnType<typeof vi.fn>
 
     beforeEach(() => {
-      mockGetFileContent = vi.fn()
-
-      Object.defineProperty(window, 'gitOps', {
-        writable: true,
-        configurable: true,
-        value: {
-          ...window.gitOps,
-          getFileContent: mockGetFileContent
-        }
-      })
+      request = vi.fn()
+      subscribe = vi.fn()
+      setRendererRpcClient({ request, subscribe })
     })
 
     test('getFileContent is callable with worktreePath and filePath', async () => {
-      mockGetFileContent.mockResolvedValue({
+      request.mockResolvedValue({
         success: true,
         content: 'console.log("hello")'
       })
 
-      const result = await window.gitOps.getFileContent('/path/to/worktree', 'src/index.ts')
+      const result = await gitApi.getFileContent('/path/to/worktree', 'src/index.ts')
 
-      expect(mockGetFileContent).toHaveBeenCalledWith('/path/to/worktree', 'src/index.ts')
+      expect(request).toHaveBeenCalledWith('gitOps.getFileContent', {
+        worktreePath: '/path/to/worktree',
+        filePath: 'src/index.ts'
+      })
       expect(result).toEqual({
         success: true,
         content: 'console.log("hello")'
@@ -54,13 +51,13 @@ describe('Session 8: Plain File Rendering Backend', () => {
     })
 
     test('getFileContent returns error for missing file', async () => {
-      mockGetFileContent.mockResolvedValue({
+      request.mockResolvedValue({
         success: false,
         content: null,
         error: "ENOENT: no such file or directory, open '/path/to/worktree/missing.ts'"
       })
 
-      const result = await window.gitOps.getFileContent('/path/to/worktree', 'missing.ts')
+      const result = await gitApi.getFileContent('/path/to/worktree', 'missing.ts')
 
       expect(result.success).toBe(false)
       expect(result.content).toBeNull()
@@ -76,12 +73,12 @@ describe('Session 8: Plain File Rendering Backend', () => {
         '}'
       ].join('\n')
 
-      mockGetFileContent.mockResolvedValue({
+      request.mockResolvedValue({
         success: true,
         content: fileContent
       })
 
-      const result = await window.gitOps.getFileContent('/worktree', 'src/App.tsx')
+      const result = await gitApi.getFileContent('/worktree', 'src/App.tsx')
 
       expect(result.success).toBe(true)
       expect(result.content).toBe(fileContent)
@@ -89,14 +86,14 @@ describe('Session 8: Plain File Rendering Backend', () => {
     })
   })
 
-  // ── IPC handler contract ──────────────────────────────────────────────────
-  describe('IPC handler contract', () => {
-    test('IPC channel name is git:getFileContent', () => {
-      const expectedChannel = 'git:getFileContent'
-      expect(expectedChannel).toBe('git:getFileContent')
+  // ── RPC method contract ───────────────────────────────────────────────────
+  describe('RPC method contract', () => {
+    test('RPC method name is gitOps.getFileContent', () => {
+      const expectedMethod = 'gitOps.getFileContent'
+      expect(expectedMethod).toBe('gitOps.getFileContent')
     })
 
-    test('handler accepts { worktreePath, filePath } payload', () => {
+    test('method accepts { worktreePath, filePath } params', () => {
       const payload = { worktreePath: '/path/to/worktree', filePath: 'src/index.ts' }
       expect(payload).toHaveProperty('worktreePath')
       expect(payload).toHaveProperty('filePath')

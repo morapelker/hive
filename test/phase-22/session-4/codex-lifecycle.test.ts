@@ -1,6 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
+const eventBusMocks = vi.hoisted(() => ({
+  publish: vi.fn()
+}))
+
 // Mock logger
 vi.mock('../../../src/main/services/logger', () => ({
   createLogger: () => ({
@@ -28,6 +32,26 @@ vi.mock('../../../src/main/services/codex-app-server-manager', () => {
     CodexAppServerManager: MockManager
   }
 })
+
+vi.mock('../../../src/main/services/agent-event-bus', () => ({
+  agentEventBus: eventBusMocks
+}))
+
+vi.mock('../../../src/main/services/notification-service', () => ({
+  notificationService: { shouldNotifyWhenWindowUnfocused: vi.fn(() => false) }
+}))
+
+vi.mock('../../../src/main/services/codex-session-title', () => ({
+  generateCodexSessionTitle: vi.fn()
+}))
+
+vi.mock('../../../src/main/services/git-service', () => ({
+  autoRenameWorktreeBranch: vi.fn()
+}))
+
+vi.mock('../../../src/main/services/worktree-events', () => ({
+  emitWorktreeBranchRenamed: vi.fn()
+}))
 
 import { CodexImplementer } from '../../../src/main/services/codex-implementer'
 import { CODEX_DEFAULT_MODEL } from '../../../src/main/services/codex-models'
@@ -175,13 +199,7 @@ describe('CodexImplementer lifecycle', () => {
       )
     })
 
-    it('sends session.materialized event to renderer', async () => {
-      const mockWindow = {
-        isDestroyed: () => false,
-        webContents: { send: vi.fn() }
-      } as any
-      impl.setMainWindow(mockWindow)
-
+    it('publishes session.materialized through the agent event bus', async () => {
       mockManager.startSession.mockResolvedValue({
         provider: 'codex',
         status: 'ready',
@@ -196,7 +214,7 @@ describe('CodexImplementer lifecycle', () => {
 
       await impl.connect('/test', 'hive-session-3')
 
-      expect(mockWindow.webContents.send).toHaveBeenCalledWith('opencode:stream', {
+      expect(eventBusMocks.publish).toHaveBeenCalledWith({
         type: 'session.materialized',
         sessionId: 'hive-session-3',
         data: { newSessionId: 'thread-mat', wasFork: false }
@@ -353,18 +371,6 @@ describe('CodexImplementer lifecycle', () => {
       await impl.cleanup()
 
       expect(sessions.size).toBe(0)
-    })
-
-    it('clears mainWindow', async () => {
-      const mockWindow = {
-        isDestroyed: () => false,
-        webContents: { send: vi.fn() }
-      } as any
-      impl.setMainWindow(mockWindow)
-
-      await impl.cleanup()
-
-      expect(impl.getMainWindow()).toBeNull()
     })
 
     it('resets model to default', async () => {

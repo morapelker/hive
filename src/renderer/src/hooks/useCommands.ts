@@ -19,7 +19,10 @@ import { commandRegistry, fuzzySearch } from '@/lib/command-registry'
 import { THEME_PRESETS, getThemeById } from '@/lib/themes'
 import { toast } from '@/lib/toast'
 import { revealLabel, fileManagerName } from '@/lib/platform'
-import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { systemApi } from '@/api/system-api'
+import { worktreeApi } from '@/api/worktree-api'
+import { projectApi } from '@/api/project-api'
+import { settingsApi } from '@/api/settings-api'
 
 /**
  * Hook that registers all available commands and returns filtered commands
@@ -54,7 +57,7 @@ export function useCommands() {
   // Track whether the app is running in packaged mode (not dev)
   const [isPackaged, setIsPackaged] = useState(false)
   useEffect(() => {
-    window.systemOps.isPackaged().then(setIsPackaged)
+    systemApi.isPackaged().then(setIsPackaged).catch(console.error)
   }, [])
 
   // Get the currently selected worktree path
@@ -306,7 +309,7 @@ export function useCommands() {
         action: async () => {
           closeCommandPalette()
           // Trigger the add project dialog
-          const selectedPath = unwrapEnvelope(await window.projectOps.openDirectoryDialog())
+          const selectedPath = await projectApi.openDirectoryDialog()
           if (selectedPath) {
             const addResult = await useProjectStore.getState().addProject(selectedPath)
             if (addResult.success) {
@@ -331,7 +334,7 @@ export function useCommands() {
             return
           }
           try {
-            unwrapEnvelope(await window.worktreeOps.openInEditor(worktreePath))
+            await worktreeApi.openInEditor(worktreePath)
             toast.success('Opened in editor')
           } catch {
             toast.error('Failed to open in editor')
@@ -355,12 +358,10 @@ export function useCommands() {
           }
           try {
             const { defaultTerminal, customTerminalCommand } = useSettingsStore.getState()
-            const result = unwrapEnvelope(
-              await window.settingsOps.openWithTerminal(
-                worktreePath,
-                defaultTerminal,
-                defaultTerminal === 'custom' ? customTerminalCommand : undefined
-              )
+            const result = await settingsApi.openWithTerminal(
+              worktreePath,
+              defaultTerminal,
+              defaultTerminal === 'custom' ? customTerminalCommand : undefined
             )
             if (!result.success) throw new Error(result.error ?? 'Failed to open in terminal')
             toast.success('Opened in terminal')
@@ -385,7 +386,7 @@ export function useCommands() {
             return
           }
           try {
-            unwrapEnvelope(await window.projectOps.showInFolder(worktreePath))
+            await projectApi.showInFolder(worktreePath)
           } catch {
             toast.error(`Failed to reveal in ${fileManagerName()}`)
           }

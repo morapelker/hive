@@ -6,6 +6,14 @@ import tailwindcss from '@tailwindcss/vite'
 export default defineConfig({
   main: {
     plugins: [externalizeDepsPlugin()],
+    build: {
+      rollupOptions: {
+        input: {
+          index: resolve(__dirname, 'src/main/index.ts'),
+          server: resolve(__dirname, 'src/server/bin.ts')
+        }
+      }
+    },
     resolve: {
       alias: {
         '@main': resolve('src/main'),

@@ -1,6 +1,5 @@
 import { memo, useState, useRef, useEffect, useCallback } from 'react'
 import { revealLabel } from '@/lib/platform'
-import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import {
   ChevronRight,
   Plus,
@@ -53,6 +52,8 @@ import { WorktreeList, BranchPickerDialog } from '@/components/worktrees'
 import { LanguageIcon } from './LanguageIcon'
 import { HighlightedText } from './HighlightedText'
 import { gitToast } from '@/lib/toast'
+import { projectApi } from '@/api/project-api'
+import { worktreeApi } from '@/api/worktree-api'
 
 interface Project {
   id: string
@@ -204,11 +205,11 @@ export const ProjectItem = memo(function ProjectItem({
   }
 
   const handleOpenInFinder = async (): Promise<void> => {
-    unwrapEnvelope(await window.projectOps.showInFolder(project.path))
+    await projectApi.showInFolder(project.path)
   }
 
   const handleCopyPath = async (): Promise<void> => {
-    unwrapEnvelope(await window.projectOps.copyToClipboard(project.path))
+    await projectApi.copyToClipboard(project.path)
     toast.success('Path copied to clipboard')
   }
 
@@ -221,7 +222,7 @@ export const ProjectItem = memo(function ProjectItem({
     if (isCreatingWorktree) return
 
     // Check if repo has any commits before attempting worktree creation
-    const hasCommits = unwrapEnvelope(await window.worktreeOps.hasCommits(project.path))
+    const hasCommits = await worktreeApi.hasCommits(project.path)
     if (!hasCommits) {
       setNoCommitsDialogOpen(true)
       return
@@ -295,15 +296,13 @@ export const ProjectItem = memo(function ProjectItem({
           : toast.loading('Creating worktree...')
 
       try {
-        const result = unwrapEnvelope(
-          await window.worktreeOps.createFromBranch(
-            project.id,
-            project.path,
-            project.name,
-            branchName,
-            prNumber
-          )
-        )
+        const result = await worktreeApi.createFromBranch({
+          projectId: project.id,
+          projectPath: project.path,
+          projectName: project.name,
+          branchName,
+          ...(prNumber === undefined ? {} : { prNumber })
+        })
 
         // Dismiss loading toast
         toast.dismiss(loadingToastId)

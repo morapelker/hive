@@ -10,7 +10,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { getTelegramForwardingTarget } from '@/lib/telegramForwardingTarget'
 import { cn } from '@/lib/utils'
-import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { telegramApi } from '@/api/telegram-api'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useSessionStore } from '@/stores/useSessionStore'
@@ -57,14 +57,12 @@ export function HeaderTelegramToggle(): React.JSX.Element {
 
   const startForwarding = async (mode: TelegramMode): Promise<void> => {
     if (!activeSessionId || (!activeWorktreeId && !activeConnectionId)) return
-    const result = unwrapEnvelope(
-      await window.telegramOps.startForwarding({
-        sessionId: activeSessionId,
-        worktreeId: activeWorktreeId,
-        connectionId: activeConnectionId,
-        mode
-      })
-    )
+    const result = await telegramApi.startForwarding({
+      sessionId: activeSessionId,
+      worktreeId: activeWorktreeId,
+      connectionId: activeConnectionId,
+      mode
+    })
     useTelegramStore.getState().setStatus(result.status)
     if (result.ok) {
       toast.success(
@@ -78,7 +76,7 @@ export function HeaderTelegramToggle(): React.JSX.Element {
   }
 
   const stopForwarding = async (): Promise<void> => {
-    const result = unwrapEnvelope(await window.telegramOps.stopForwarding())
+    const result = await telegramApi.stopForwarding()
     useTelegramStore.getState().setStatus(result.status)
     toast.success('Telegram forwarding stopped')
   }

@@ -12,35 +12,33 @@ vi.mock('../../src/main/services/logger', () => ({
   })
 }))
 
-import { BashService, type BashStreamEvent } from '../../src/main/services/bash-service'
+const backendEvents = vi.hoisted(() => ({
+  events: [] as Array<{ channel: string; event: unknown }>,
+  publishDesktopBackendEvent: vi.fn((channel: string, event: unknown) => {
+    backendEvents.events.push({ channel, event })
+    return Promise.resolve(true)
+  })
+}))
 
-interface MockWindow {
-  isDestroyed: () => boolean
-  webContents: {
-    send: (channel: string, event: BashStreamEvent) => void
-  }
-}
+vi.mock('../../src/main/desktop/backend-manager', () => ({
+  publishDesktopBackendEvent: backendEvents.publishDesktopBackendEvent
+}))
+
+import { BashService, type BashStreamEvent } from '../../src/main/services/bash-service'
 
 interface RecordedEvent {
   channel: string
   event: BashStreamEvent
 }
 
-function createMockWindow(events: RecordedEvent[]): MockWindow {
-  return {
-    isDestroyed: () => false,
-    webContents: {
-      send: (channel: string, event: BashStreamEvent) => {
-        events.push({ channel, event })
-      }
-    }
-  }
-}
-
 function eventsForSession(events: RecordedEvent[], sessionId: string): BashStreamEvent[] {
   return events
     .filter((e) => e.channel === 'bash:stream' && e.event.sessionId === sessionId)
     .map((e) => e.event)
+}
+
+function recordedBackendEvents(): RecordedEvent[] {
+  return backendEvents.events as RecordedEvent[]
 }
 
 function findEnd(events: BashStreamEvent[]): Extract<BashStreamEvent, { type: 'end' }> | undefined {
@@ -70,15 +68,12 @@ async function waitForEnd(
 
 describe('BashService', () => {
   let service: BashService
-  let events: RecordedEvent[]
   let tmpCwd: string
 
   beforeEach(() => {
     service = new BashService()
-    events = []
-    service.setMainWindow(createMockWindow(events) as unknown as Parameters<
-      BashService['setMainWindow']
-    >[0])
+    backendEvents.events = []
+    backendEvents.publishDesktopBackendEvent.mockClear()
     tmpCwd = fs.mkdtempSync(`${os.tmpdir()}/bash-svc-test-`)
   })
 
@@ -98,11 +93,11 @@ describe('BashService', () => {
     expect(result.runId).toBeDefined()
     expect(result.runId.length).toBeGreaterThan(0)
 
-    const end = await waitForEnd(events, sessionId, 5000)
+    const end = await waitForEnd(recordedBackendEvents(), sessionId, 5000)
     expect(end.status).toBe('exited')
     expect(end.exitCode).toBe(0)
 
-    const sessionEvents = eventsForSession(events, sessionId)
+    const sessionEvents = eventsForSession(recordedBackendEvents(), sessionId)
     const startEvent = sessionEvents.find(
       (e): e is Extract<BashStreamEvent, { type: 'start' }> => e.type === 'start'
     )
@@ -122,10 +117,10 @@ describe('BashService', () => {
     const sessionId = 's2'
     await service.run(sessionId, 'echo OUT; echo ERR 1>&2', tmpCwd)
 
-    const end = await waitForEnd(events, sessionId, 5000)
+    const end = await waitForEnd(recordedBackendEvents(), sessionId, 5000)
     expect(end.status).toBe('exited')
 
-    const combined = joinedOutput(eventsForSession(events, sessionId))
+    const combined = joinedOutput(eventsForSession(recordedBackendEvents(), sessionId))
     expect(combined).toContain('OUT')
     expect(combined).toContain('ERR')
   })
@@ -135,13 +130,11 @@ describe('BashService', () => {
     // Use a slow-finishing command so the first run is still running.
     await service.run(sessionId, 'sleep 2', tmpCwd)
 
-    await expect(service.run(sessionId, 'echo nope', tmpCwd)).rejects.toThrow(
-      /already running/i
-    )
+    await expect(service.run(sessionId, 'echo nope', tmpCwd)).rejects.toThrow(/already running/i)
 
     // Tear down the slow run so the test exits cleanly.
     await service.abort(sessionId)
-    await waitForEnd(events, sessionId, 5000)
+    await waitForEnd(recordedBackendEvents(), sessionId, 5000)
   })
 
   it('runs different sessions concurrently without leaking events', async () => {
@@ -153,13 +146,13 @@ describe('BashService', () => {
       service.run(b, 'echo bbb; sleep 0.2; echo bbb-end', tmpCwd)
     ])
 
-    const endA = await waitForEnd(events, a, 5000)
-    const endB = await waitForEnd(events, b, 5000)
+    const endA = await waitForEnd(recordedBackendEvents(), a, 5000)
+    const endB = await waitForEnd(recordedBackendEvents(), b, 5000)
     expect(endA.status).toBe('exited')
     expect(endB.status).toBe('exited')
 
-    const aEvents = eventsForSession(events, a)
-    const bEvents = eventsForSession(events, b)
+    const aEvents = eventsForSession(recordedBackendEvents(), a)
+    const bEvents = eventsForSession(recordedBackendEvents(), b)
 
     const aOutput = joinedOutput(aEvents)
     const bOutput = joinedOutput(bEvents)
@@ -177,7 +170,7 @@ describe('BashService', () => {
     const aborted = await service.abort(sessionId)
     expect(aborted).toBe(true)
 
-    const end = await waitForEnd(events, sessionId, 4000)
+    const end = await waitForEnd(recordedBackendEvents(), sessionId, 4000)
     expect(end.status).toBe('killed')
   }, 10_000)
 
@@ -186,7 +179,7 @@ describe('BashService', () => {
     // Generate ~2 MB of stdout quickly.
     await service.run(sessionId, "head -c 2000000 /dev/zero | tr '\\0' 'A'", tmpCwd)
 
-    const end = await waitForEnd(events, sessionId, 10_000)
+    const end = await waitForEnd(recordedBackendEvents(), sessionId, 10_000)
     expect(end.status).toBe('truncated')
 
     const snapshot = service.getRun(sessionId)
@@ -196,7 +189,7 @@ describe('BashService', () => {
 
   it('getRun returns a live snapshot during run and a final snapshot after end (without proc)', async () => {
     const sessionId = 's-snap'
-    await service.run(sessionId, "echo first; sleep 0.4; echo second", tmpCwd)
+    await service.run(sessionId, 'echo first; sleep 0.4; echo second', tmpCwd)
 
     // Live snapshot — status should be running.
     const live = service.getRun(sessionId)
@@ -204,7 +197,7 @@ describe('BashService', () => {
     expect(live?.status).toBe('running')
     expect(Object.prototype.hasOwnProperty.call(live ?? {}, 'proc')).toBe(false)
 
-    const end = await waitForEnd(events, sessionId, 5000)
+    const end = await waitForEnd(recordedBackendEvents(), sessionId, 5000)
     expect(end.status).toBe('exited')
 
     const finalSnap = service.getRun(sessionId)

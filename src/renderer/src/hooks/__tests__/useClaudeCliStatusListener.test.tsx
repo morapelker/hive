@@ -2,6 +2,7 @@ import { renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
+  onClaudeCliStatus: vi.fn(),
   setSessionStatus: vi.fn(),
   setPendingPlan: vi.fn(),
   lastSendMode: new Map<string, 'plan' | 'build'>(),
@@ -27,53 +28,62 @@ vi.mock('@/stores/useSessionStore', () => ({
   }
 }))
 
+vi.mock('@/api/terminal-api', () => ({
+  terminalApi: {
+    onClaudeCliStatus: mocks.onClaudeCliStatus
+  }
+}))
+
 vi.mock('@/lib/message-send-times', () => ({
   lastSendMode: mocks.lastSendMode
 }))
 
+type SubscribedPayload = {
+  sessionId: string
+  status:
+    | 'working'
+    | 'planning'
+    | 'answering'
+    | 'permission'
+    | 'command_approval'
+    | 'unread'
+    | 'completed'
+    | 'plan_ready'
+  metadata?: {
+    reason?: string
+    hookEventName?: string
+    hookPath?: string
+    toolName?: string
+    plan?: string
+  }
+}
+
 import { useClaudeCliStatusListener } from '../useClaudeCliStatusListener'
 
 describe('useClaudeCliStatusListener', () => {
-  let subscribedCallback:
-    | ((payload: {
-        sessionId: string
-        status: 'completed' | 'working' | 'plan_ready'
-        metadata?: {
-          reason?: string
-          hookEventName?: string
-          hookPath?: string
-          toolName?: string
-          plan?: string
-        }
-      }) => void)
-    | null
+  let subscribedCallback: ((payload: SubscribedPayload) => void) | null
   const unsubscribe = vi.fn()
 
   beforeEach(() => {
     subscribedCallback = null
+    mocks.onClaudeCliStatus.mockReset()
+    mocks.onClaudeCliStatus.mockImplementation((callback: (payload: SubscribedPayload) => void) => {
+      subscribedCallback = callback
+      return unsubscribe
+    })
     unsubscribe.mockClear()
     mocks.setSessionStatus.mockClear()
     mocks.setPendingPlan.mockClear()
     mocks.lastSendMode.clear()
     mocks.modeBySession.clear()
     mocks.sessionStatuses = {}
-
-    Object.defineProperty(window, 'terminalOps', {
-      configurable: true,
-      value: {
-        onClaudeCliStatus: vi.fn((callback) => {
-          subscribedCallback = callback
-          return unsubscribe
-        })
-      }
-    })
   })
 
   afterEach(() => {
-    delete (window as { terminalOps?: unknown }).terminalOps
+    mocks.onClaudeCliStatus.mockReset()
   })
 
-  it('subscribes to Claude CLI status IPC and writes payloads into the worktree status store', () => {
+  it('subscribes to Claude CLI status events and writes payloads into the worktree status store', () => {
     const { unmount } = renderHook(() => useClaudeCliStatusListener())
 
     subscribedCallback?.({
@@ -82,7 +92,7 @@ describe('useClaudeCliStatusListener', () => {
       metadata: { hookEventName: 'PreToolUse', hookPath: 'tool' }
     })
 
-    expect(window.terminalOps.onClaudeCliStatus).toHaveBeenCalledTimes(1)
+    expect(mocks.onClaudeCliStatus).toHaveBeenCalledTimes(1)
     expect(mocks.setSessionStatus).toHaveBeenCalledWith('hive-session-1', 'plan_ready', {
       hookEventName: 'PreToolUse',
       hookPath: 'tool'
@@ -117,15 +127,6 @@ describe('useClaudeCliStatusListener', () => {
       toolName: 'ExitPlanMode',
       plan: '# Plan\n\n1. Add CLI card.'
     })
-  })
-
-  it('does nothing when the preload API is unavailable', () => {
-    delete (window as { terminalOps?: unknown }).terminalOps
-
-    const { unmount } = renderHook(() => useClaudeCliStatusListener())
-
-    expect(mocks.setSessionStatus).not.toHaveBeenCalled()
-    expect(() => unmount()).not.toThrow()
   })
 
   it('derives planning and plan_ready for Claude CLI plan-mode hook sequences', () => {

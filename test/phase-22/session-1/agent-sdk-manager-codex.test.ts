@@ -48,8 +48,7 @@ function createMockImplementer(id: AgentSdkId): AgentSdkImplementer {
     redo: vi.fn().mockResolvedValue({}),
     listCommands: vi.fn().mockResolvedValue([]),
     sendCommand: vi.fn().mockResolvedValue(undefined),
-    renameSession: vi.fn().mockResolvedValue(undefined),
-    setMainWindow: vi.fn()
+    renameSession: vi.fn().mockResolvedValue(undefined)
   }
 }
 
@@ -128,33 +127,6 @@ describe('AgentSdkManager with Codex', () => {
   describe('defaultSdkId', () => {
     it('defaults to opencode (not codex)', () => {
       expect(manager.defaultSdkId).toBe('opencode')
-    })
-  })
-
-  describe('setMainWindow', () => {
-    it('propagates to codex implementer', () => {
-      const mockWindow = { fake: 'window' } as any
-      manager.setMainWindow(mockWindow)
-
-      expect(mockCodex.setMainWindow).toHaveBeenCalledWith(mockWindow)
-    })
-
-    it('propagates to all three implementers', () => {
-      const mockWindow = { fake: 'window' } as any
-      manager.setMainWindow(mockWindow)
-
-      expect(mockOpencode.setMainWindow).toHaveBeenCalledWith(mockWindow)
-      expect(mockClaudeCode.setMainWindow).toHaveBeenCalledWith(mockWindow)
-      expect(mockCodex.setMainWindow).toHaveBeenCalledWith(mockWindow)
-    })
-
-    it('calls each implementer exactly once', () => {
-      const mockWindow = { fake: 'window' } as any
-      manager.setMainWindow(mockWindow)
-
-      expect(mockOpencode.setMainWindow).toHaveBeenCalledTimes(1)
-      expect(mockClaudeCode.setMainWindow).toHaveBeenCalledTimes(1)
-      expect(mockCodex.setMainWindow).toHaveBeenCalledTimes(1)
     })
   })
 

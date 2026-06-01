@@ -1,5 +1,5 @@
 import simpleGit, { type SimpleGit } from 'simple-git'
-import { app } from 'electron'
+import { homedir } from 'os'
 import { join, basename } from 'path'
 import { existsSync, mkdirSync } from 'fs'
 import {
@@ -131,7 +131,7 @@ export class GitService {
    * Get the base directory for all Hive worktrees
    */
   static getWorktreesBaseDir(): string {
-    return join(app.getPath('home'), '.hive-worktrees')
+    return join(homedir(), '.hive-worktrees')
   }
 
   /**

@@ -2,6 +2,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { EventEmitter } from 'events'
 
+const eventBusMocks = vi.hoisted(() => ({
+  publish: vi.fn()
+}))
+
 // Mock logger
 vi.mock('../../../src/main/services/logger', () => ({
   createLogger: () => ({
@@ -12,6 +16,26 @@ vi.mock('../../../src/main/services/logger', () => ({
   })
 }))
 
+vi.mock('../../../src/main/services/agent-event-bus', () => ({
+  agentEventBus: eventBusMocks
+}))
+
+vi.mock('../../../src/main/services/notification-service', () => ({
+  notificationService: { shouldNotifyWhenWindowUnfocused: vi.fn(() => false) }
+}))
+
+vi.mock('../../../src/main/services/codex-session-title', () => ({
+  generateCodexSessionTitle: vi.fn()
+}))
+
+vi.mock('../../../src/main/services/git-service', () => ({
+  autoRenameWorktreeBranch: vi.fn()
+}))
+
+vi.mock('../../../src/main/services/worktree-events', () => ({
+  emitWorktreeBranchRenamed: vi.fn()
+}))
+
 import { CodexImplementer } from '../../../src/main/services/codex-implementer'
 import { CODEX_CAPABILITIES } from '../../../src/main/services/agent-sdk-types'
 import { CODEX_DEFAULT_MODEL } from '../../../src/main/services/codex-models'
@@ -20,6 +44,7 @@ describe('CodexImplementer skeleton', () => {
   let impl: CodexImplementer
 
   beforeEach(() => {
+    vi.clearAllMocks()
     impl = new CodexImplementer()
   })
 
@@ -117,27 +142,19 @@ describe('CodexImplementer skeleton', () => {
     })
   })
 
-  // ── setMainWindow ──────────────────────────────────────────────
+  // ── renderer delivery ──────────────────────────────────────────
 
-  describe('setMainWindow', () => {
-    it('stores the window reference', () => {
-      const mockWindow = { webContents: { send: vi.fn() } } as any
-      impl.setMainWindow(mockWindow)
-      expect(impl.getMainWindow()).toBe(mockWindow)
+  describe('renderer delivery', () => {
+    it('does not expose desktop window hooks after event bus migration', () => {
+      for (const hook of ['set' + 'MainWindow', 'get' + 'MainWindow']) {
+        expect((impl as any)[hook]).toBeUndefined()
+      }
     })
   })
 
   // ── cleanup ────────────────────────────────────────────────────
 
   describe('cleanup', () => {
-    it('clears mainWindow', async () => {
-      const mockWindow = { webContents: { send: vi.fn() } } as any
-      impl.setMainWindow(mockWindow)
-
-      await impl.cleanup()
-      expect(impl.getMainWindow()).toBeNull()
-    })
-
     it('resets selected model to default', async () => {
       impl.setSelectedModel({ providerID: 'codex', modelID: 'gpt-5.3-codex', variant: 'low' })
 
@@ -233,12 +250,6 @@ describe('CodexImplementer skeleton', () => {
         titleGenerationStarted: true,
         persistDebounceTimer: null
       })
-      const mockWindow = {
-        isDestroyed: () => false,
-        webContents: { send: vi.fn() }
-      } as any
-      impl.setMainWindow(mockWindow)
-
       await impl.sendCommand('/path', 'thread-1', 'goal', 'Finish the migration')
 
       expect(manager.setThreadGoal).toHaveBeenCalledWith('thread-1', {
@@ -258,8 +269,7 @@ describe('CodexImplementer skeleton', () => {
           })
         ])
       )
-      expect(mockWindow.webContents.send).toHaveBeenCalledWith(
-        'opencode:stream',
+      expect(eventBusMocks.publish).toHaveBeenCalledWith(
         expect.objectContaining({
           type: 'codex.goal.updated',
           sessionId: 'hive-1',
@@ -272,8 +282,7 @@ describe('CodexImplementer skeleton', () => {
           })
         })
       )
-      expect(mockWindow.webContents.send).toHaveBeenCalledWith(
-        'opencode:stream',
+      expect(eventBusMocks.publish).toHaveBeenCalledWith(
         expect.objectContaining({
           type: 'message.part.updated',
           sessionId: 'hive-1',
@@ -288,11 +297,6 @@ describe('CodexImplementer skeleton', () => {
     })
 
     it('does not stream goal notifications whose payload thread does not match the running session thread', async () => {
-      const mockWindow = {
-        isDestroyed: () => false,
-        webContents: { send: vi.fn() }
-      } as any
-      impl.setMainWindow(mockWindow)
       const manager = new EventEmitter() as EventEmitter & {
         sendTurn: ReturnType<typeof vi.fn>
       }
@@ -351,8 +355,7 @@ describe('CodexImplementer skeleton', () => {
 
       await impl.prompt('/path', 'thread-1', 'continue')
 
-      expect(mockWindow.webContents.send).not.toHaveBeenCalledWith(
-        'opencode:stream',
+      expect(eventBusMocks.publish).not.toHaveBeenCalledWith(
         expect.objectContaining({
           type: 'codex.goal.updated',
           sessionId: 'hive-1'
@@ -381,17 +384,10 @@ describe('CodexImplementer skeleton', () => {
         titleGenerationStarted: true,
         persistDebounceTimer: null
       })
-      const mockWindow = {
-        isDestroyed: () => false,
-        webContents: { send: vi.fn() }
-      } as any
-      impl.setMainWindow(mockWindow)
-
       await impl.sendCommand('/path', 'thread-1', 'goal', 'clear')
 
       expect(manager.clearThreadGoal).toHaveBeenCalledWith('thread-1')
-      expect(mockWindow.webContents.send).toHaveBeenCalledWith(
-        'opencode:stream',
+      expect(eventBusMocks.publish).toHaveBeenCalledWith(
         expect.objectContaining({
           type: 'codex.goal.cleared',
           sessionId: 'hive-1',
@@ -403,11 +399,6 @@ describe('CodexImplementer skeleton', () => {
     })
 
     it('streams autonomous goal continuation events from the global manager listener', () => {
-      const mockWindow = {
-        isDestroyed: () => false,
-        webContents: { send: vi.fn() }
-      } as any
-      impl.setMainWindow(mockWindow)
       const manager = new EventEmitter()
       ;(impl as any).manager = manager
       ;(impl as any).sessions.set('/path::thread-1', {
@@ -467,8 +458,7 @@ describe('CodexImplementer skeleton', () => {
         createdAt: '2026-05-06T10:00:02.000Z'
       })
 
-      expect(mockWindow.webContents.send).toHaveBeenCalledWith(
-        'opencode:stream',
+      expect(eventBusMocks.publish).toHaveBeenCalledWith(
         expect.objectContaining({
           type: 'message.part.updated',
           sessionId: 'hive-1',
@@ -481,8 +471,7 @@ describe('CodexImplementer skeleton', () => {
           })
         })
       )
-      expect(mockWindow.webContents.send).toHaveBeenCalledWith(
-        'opencode:stream',
+      expect(eventBusMocks.publish).toHaveBeenCalledWith(
         expect.objectContaining({
           type: 'session.status',
           sessionId: 'hive-1',
@@ -666,8 +655,7 @@ describe('CodexImplementer skeleton', () => {
         'redo',
         'listCommands',
         'sendCommand',
-        'renameSession',
-        'setMainWindow'
+        'renameSession'
       ]
 
       for (const method of requiredMethods) {

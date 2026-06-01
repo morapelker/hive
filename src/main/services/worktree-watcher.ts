@@ -1,8 +1,8 @@
 import * as chokidar from 'chokidar'
 import { join } from 'path'
 import { existsSync, statSync, readFileSync } from 'fs'
-import { BrowserWindow } from 'electron'
 import { createLogger } from './logger'
+import { emitGitStatusChanged } from './git-events'
 
 const log = createLogger({ component: 'WorktreeWatcher' })
 
@@ -13,7 +13,7 @@ const log = createLogger({ component: 'WorktreeWatcher' })
  * external changes (from AI agents, terminals, other editors, etc.).
  *
  * This runs in the main process, independent of any React component lifecycle.
- * It emits 'git:statusChanged' events to the renderer whenever changes are detected.
+ * It emits 'git:statusChanged' backend events whenever changes are detected.
  *
  * Watched paths:
  * - .git/index       -> stage/unstage/commit/stash/reset/checkout
@@ -38,9 +38,6 @@ interface WatcherEntry {
 
 // Active watchers keyed by worktree path
 const watchers = new Map<string, WatcherEntry>()
-
-// Main window reference
-let mainWindow: BrowserWindow | null = null
 
 /**
  * Resolve the .git directory for a worktree path.
@@ -86,18 +83,13 @@ function resolveCommonGitDir(gitDir: string): string {
   return gitDir
 }
 
-function emitGitStatusChanged(worktreePath: string): void {
-  if (!mainWindow || mainWindow.isDestroyed()) return
-  mainWindow.webContents.send('git:statusChanged', { worktreePath })
-}
-
 function scheduleGitRefresh(entry: WatcherEntry, worktreePath: string): void {
   if (entry.gitDebounceTimer) {
     clearTimeout(entry.gitDebounceTimer)
   }
   entry.gitDebounceTimer = setTimeout(() => {
     entry.gitDebounceTimer = null
-    emitGitStatusChanged(worktreePath)
+    emitGitStatusChanged({ worktreePath })
   }, GIT_DEBOUNCE_MS)
 }
 
@@ -107,11 +99,11 @@ function scheduleWorktreeRefresh(entry: WatcherEntry, worktreePath: string): voi
   }
   entry.worktreeDebounceTimer = setTimeout(() => {
     entry.worktreeDebounceTimer = null
-    emitGitStatusChanged(worktreePath)
+    emitGitStatusChanged({ worktreePath })
   }, WORKTREE_DEBOUNCE_MS)
 }
 
-// Ignore patterns for working tree watcher (same as file-tree-handlers)
+// Ignore patterns for working tree watcher (same as file-tree-watcher)
 const WORKTREE_IGNORE_PATTERNS = [
   '**/node_modules/**',
   '**/.git/**',
@@ -126,11 +118,6 @@ const WORKTREE_IGNORE_PATTERNS = [
   '**/Thumbs.db',
   '**/*.log'
 ]
-
-export function initWorktreeWatcher(window: BrowserWindow): void {
-  mainWindow = window
-  log.info('WorktreeWatcher initialized')
-}
 
 export async function watchWorktree(worktreePath: string): Promise<void> {
   // If already watching, just bump the reference count

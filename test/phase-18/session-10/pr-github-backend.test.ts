@@ -12,6 +12,32 @@
  */
 
 import { describe, test, expect, vi, beforeEach } from 'vitest'
+
+const gitApiMocks = vi.hoisted(() => ({
+  getRemoteUrl: vi.fn()
+}))
+
+vi.mock('@/api/git-api', () => ({
+  gitApi: gitApiMocks
+}))
+
+vi.mock('../../../src/renderer/src/stores/useWorktreeStore', () => ({
+  useWorktreeStore: {
+    getState: () => ({
+      worktreesByProject: new Map()
+    })
+  }
+}))
+
+vi.mock('../../../src/renderer/src/stores/useKanbanStore', () => ({
+  useKanbanStore: {
+    getState: () => ({
+      syncPRToTicket: vi.fn(),
+      clearPRFromTicket: vi.fn()
+    })
+  }
+}))
+
 import { useGitStore } from '../../../src/renderer/src/stores/useGitStore'
 
 // --- GitService.getRemoteUrl() unit tests ---
@@ -158,39 +184,39 @@ describe('Session 10: PR to GitHub Backend', () => {
     })
   })
 
-  describe('IPC handler contract', () => {
-    test('git:getRemoteUrl handler should be registered', () => {
-      const expectedChannel = 'git:getRemoteUrl'
+  describe('RPC handler contract', () => {
+    test('gitOps.getRemoteUrl handler should be registered', () => {
+      const expectedChannel = 'gitOps.getRemoteUrl'
       const expectedParams = ['worktreePath', 'remote']
 
-      expect(expectedChannel).toBe('git:getRemoteUrl')
+      expect(expectedChannel).toBe('gitOps.getRemoteUrl')
       expect(expectedParams).toHaveLength(2)
     })
   })
 
-  describe('Preload bridge contract', () => {
+  describe('Renderer API contract', () => {
     test('gitOps.getRemoteUrl should accept worktreePath and optional remote', async () => {
-      const mockGetRemoteUrl = vi.fn().mockResolvedValue({
+      gitApiMocks.getRemoteUrl.mockResolvedValue({
         success: true,
         url: 'git@github.com:org/repo.git',
         remote: 'origin'
       })
 
-      const result = await mockGetRemoteUrl('/test/path')
+      const result = await gitApiMocks.getRemoteUrl('/test/path')
 
-      expect(mockGetRemoteUrl).toHaveBeenCalledWith('/test/path')
+      expect(gitApiMocks.getRemoteUrl).toHaveBeenCalledWith('/test/path')
       expect(result.success).toBe(true)
       expect(result.url).toBe('git@github.com:org/repo.git')
     })
 
     test('gitOps.getRemoteUrl returns null url when no remote', async () => {
-      const mockGetRemoteUrl = vi.fn().mockResolvedValue({
+      gitApiMocks.getRemoteUrl.mockResolvedValue({
         success: true,
         url: null,
         remote: null
       })
 
-      const result = await mockGetRemoteUrl('/test/path')
+      const result = await gitApiMocks.getRemoteUrl('/test/path')
 
       expect(result.url).toBeNull()
     })
@@ -198,25 +224,17 @@ describe('Session 10: PR to GitHub Backend', () => {
 
   describe('useGitStore remote info', () => {
     beforeEach(() => {
+      vi.clearAllMocks()
+
       // Reset store state
       useGitStore.setState({
         remoteInfo: new Map(),
         prTargetBranch: new Map()
       })
-
-      // Mock window.gitOps.getRemoteUrl
-      Object.defineProperty(window, 'gitOps', {
-        writable: true,
-        value: {
-          ...window.gitOps,
-          getRemoteUrl: vi.fn()
-        }
-      })
     })
 
     test('checkRemoteInfo detects GitHub from SSH URL', async () => {
-      const mockGetRemoteUrl = window.gitOps.getRemoteUrl as ReturnType<typeof vi.fn>
-      mockGetRemoteUrl.mockResolvedValue({
+      gitApiMocks.getRemoteUrl.mockResolvedValue({
         success: true,
         url: 'git@github.com:org/repo.git',
         remote: 'origin'
@@ -233,8 +251,7 @@ describe('Session 10: PR to GitHub Backend', () => {
     })
 
     test('checkRemoteInfo detects GitHub from HTTPS URL', async () => {
-      const mockGetRemoteUrl = window.gitOps.getRemoteUrl as ReturnType<typeof vi.fn>
-      mockGetRemoteUrl.mockResolvedValue({
+      gitApiMocks.getRemoteUrl.mockResolvedValue({
         success: true,
         url: 'https://github.com/org/repo.git',
         remote: 'origin'
@@ -251,8 +268,7 @@ describe('Session 10: PR to GitHub Backend', () => {
     })
 
     test('checkRemoteInfo detects non-GitHub remote', async () => {
-      const mockGetRemoteUrl = window.gitOps.getRemoteUrl as ReturnType<typeof vi.fn>
-      mockGetRemoteUrl.mockResolvedValue({
+      gitApiMocks.getRemoteUrl.mockResolvedValue({
         success: true,
         url: 'https://gitlab.com/org/repo.git',
         remote: 'origin'
@@ -269,8 +285,7 @@ describe('Session 10: PR to GitHub Backend', () => {
     })
 
     test('checkRemoteInfo handles no remote', async () => {
-      const mockGetRemoteUrl = window.gitOps.getRemoteUrl as ReturnType<typeof vi.fn>
-      mockGetRemoteUrl.mockResolvedValue({
+      gitApiMocks.getRemoteUrl.mockResolvedValue({
         success: true,
         url: null,
         remote: null
@@ -286,9 +301,8 @@ describe('Session 10: PR to GitHub Backend', () => {
       })
     })
 
-    test('checkRemoteInfo handles IPC failure gracefully', async () => {
-      const mockGetRemoteUrl = window.gitOps.getRemoteUrl as ReturnType<typeof vi.fn>
-      mockGetRemoteUrl.mockRejectedValue(new Error('IPC failed'))
+    test('checkRemoteInfo handles remote lookup failure gracefully', async () => {
+      gitApiMocks.getRemoteUrl.mockRejectedValue(new Error('RPC failed'))
 
       await useGitStore.getState().checkRemoteInfo('wt-5', '/test/path')
 
@@ -301,8 +315,7 @@ describe('Session 10: PR to GitHub Backend', () => {
     })
 
     test('remote check only runs once per worktree (cached)', async () => {
-      const mockGetRemoteUrl = window.gitOps.getRemoteUrl as ReturnType<typeof vi.fn>
-      mockGetRemoteUrl.mockResolvedValue({
+      gitApiMocks.getRemoteUrl.mockResolvedValue({
         success: true,
         url: 'git@github.com:org/repo.git',
         remote: 'origin'
@@ -310,7 +323,7 @@ describe('Session 10: PR to GitHub Backend', () => {
 
       // First call
       await useGitStore.getState().checkRemoteInfo('wt-6', '/test/path')
-      expect(mockGetRemoteUrl).toHaveBeenCalledTimes(1)
+      expect(gitApiMocks.getRemoteUrl).toHaveBeenCalledTimes(1)
 
       // Verify info is cached
       const info = useGitStore.getState().remoteInfo.get('wt-6')
@@ -324,7 +337,7 @@ describe('Session 10: PR to GitHub Backend', () => {
       }
 
       // Still only called once
-      expect(mockGetRemoteUrl).toHaveBeenCalledTimes(1)
+      expect(gitApiMocks.getRemoteUrl).toHaveBeenCalledTimes(1)
     })
 
     test('setPrTargetBranch stores per worktree', () => {
@@ -343,8 +356,7 @@ describe('Session 10: PR to GitHub Backend', () => {
     })
 
     test('checkRemoteInfo detects Bitbucket as non-GitHub', async () => {
-      const mockGetRemoteUrl = window.gitOps.getRemoteUrl as ReturnType<typeof vi.fn>
-      mockGetRemoteUrl.mockResolvedValue({
+      gitApiMocks.getRemoteUrl.mockResolvedValue({
         success: true,
         url: 'git@bitbucket.org:org/repo.git',
         remote: 'origin'

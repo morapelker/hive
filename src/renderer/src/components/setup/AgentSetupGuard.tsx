@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useSettingsStore } from '@/stores/useSettingsStore'
+import { analyticsApi } from '@/api/analytics-api'
 import { AgentNotFoundDialog } from './AgentNotFoundDialog'
 import { AgentPickerDialog } from './AgentPickerDialog'
+import { systemApi } from '@/api/system-api'
 
 type SetupStatus = 'detecting' | 'none-found' | 'choose' | 'done'
 
@@ -22,7 +24,7 @@ export function AgentSetupGuard(): React.JSX.Element | null {
 
     let cancelled = false
 
-    window.systemOps
+    systemApi
       .detectAgentSdks()
       .then((result) => {
         if (cancelled) return
@@ -41,7 +43,7 @@ export function AgentSetupGuard(): React.JSX.Element | null {
           // Exactly one found — auto-select it
           updateSetting('defaultAgentSdk', found[0])
           updateSetting('initialSetupComplete', true)
-          window.analyticsOps.track('onboarding_completed', {
+          analyticsApi.track('onboarding_completed', {
             sdk: found[0],
             auto_selected: true
           })
@@ -79,7 +81,7 @@ export function AgentSetupGuard(): React.JSX.Element | null {
         onSelect={(sdk) => {
           updateSetting('defaultAgentSdk', sdk)
           updateSetting('initialSetupComplete', true)
-          window.analyticsOps.track('onboarding_completed', {
+          analyticsApi.track('onboarding_completed', {
             sdk,
             auto_selected: false
           })

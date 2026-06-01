@@ -6,9 +6,7 @@ import { Input } from '@/components/ui/input'
 import { parseAttachmentUrl } from '@/lib/attachment-utils'
 import type { AttachmentInfo } from '@/lib/attachment-utils'
 import { toast } from '@/lib/toast'
-import { unwrapEnvelopeApi } from '@/lib/ipc-envelope'
-
-const db = unwrapEnvelopeApi(() => window.db)
+import { dbApi } from '@/api/db-api'
 
 interface AddAttachmentDialogProps {
   open: boolean
@@ -41,7 +39,7 @@ export function AddAttachmentDialog({
     if (detected.type !== 'jira' && detected.type !== 'figma') return
     setIsAdding(true)
     try {
-      const result = await db.worktree.addAttachment(worktreeId, {
+      const result = await dbApi.worktree.addAttachment(worktreeId, {
         type: detected.type,
         url: url.trim(),
         label: detected.label

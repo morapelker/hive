@@ -1,6 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import type { BrowserWindow } from 'electron'
 
 const { mockQuery } = vi.hoisted(() => ({
   mockQuery: vi.fn()
@@ -18,17 +17,19 @@ vi.mock('../../../src/main/services/logger', () => ({
   })
 }))
 
+vi.mock('../../../src/main/services/agent-event-bus', () => ({
+  agentEventBus: { publish: vi.fn() }
+}))
+
+vi.mock('../../../src/main/desktop/backend-manager', () => ({
+  publishDesktopBackendEvent: vi.fn()
+}))
+
 import {
   ClaudeCodeImplementer,
   type ClaudeSessionState
 } from '../../../src/main/services/claude-code-implementer'
-
-function createMockWindow(): BrowserWindow {
-  return {
-    isDestroyed: () => false,
-    webContents: { send: vi.fn() }
-  } as unknown as BrowserWindow
-}
+import { agentEventBus } from '../../../src/main/services/agent-event-bus'
 
 function createMockQueryIterator(messages: Array<Record<string, unknown>>) {
   let index = 0
@@ -47,24 +48,19 @@ function createMockQueryIterator(messages: Array<Record<string, unknown>>) {
   return iterator
 }
 
-function getStreamEvents(window: BrowserWindow): any[] {
-  const send = (window.webContents as any).send as ReturnType<typeof vi.fn>
-  return send.mock.calls
-    .filter((call: any[]) => call[0] === 'opencode:stream')
-    .map((call: any[]) => call[1])
+function getStreamEvents(): any[] {
+  const publish = agentEventBus.publish as ReturnType<typeof vi.fn>
+  return publish.mock.calls.map((call: any[]) => call[0])
 }
 
 describe('ClaudeCodeImplementer – prompt streaming (Session 4)', () => {
   let impl: ClaudeCodeImplementer
   let sessions: Map<string, ClaudeSessionState>
-  let mockWindow: BrowserWindow
 
   beforeEach(() => {
     vi.clearAllMocks()
     impl = new ClaudeCodeImplementer()
     sessions = (impl as any).sessions
-    mockWindow = createMockWindow()
-    impl.setMainWindow(mockWindow)
   })
 
   // ── prompt() ────────────────────────────────────────────────────────
@@ -90,7 +86,7 @@ describe('ClaudeCodeImplementer – prompt streaming (Session 4)', () => {
 
       await impl.prompt('/proj', sessionId, 'hi')
 
-      const events = getStreamEvents(mockWindow)
+      const events = getStreamEvents()
 
       // First event should be busy status
       expect(events[0]).toMatchObject({
@@ -156,7 +152,7 @@ describe('ClaudeCodeImplementer – prompt streaming (Session 4)', () => {
 
       await impl.prompt('/proj', sessionId, 'test')
 
-      const events = getStreamEvents(mockWindow)
+      const events = getStreamEvents()
       const partEvents = events.filter((e: any) => e.type === 'message.part.updated')
       expect(partEvents.length).toBeGreaterThanOrEqual(2)
       expect(partEvents[0].data.part).toMatchObject({
@@ -214,7 +210,7 @@ describe('ClaudeCodeImplementer – prompt streaming (Session 4)', () => {
 
       await impl.prompt('/proj', sessionId, 'test')
 
-      const events = getStreamEvents(mockWindow)
+      const events = getStreamEvents()
 
       // No events should have init type data forwarded
       const initEvents = events.filter((e: any) => e.data?.type === 'init')
@@ -230,7 +226,7 @@ describe('ClaudeCodeImplementer – prompt streaming (Session 4)', () => {
 
       await impl.prompt('/proj', sessionId, 'test')
 
-      const events = getStreamEvents(mockWindow)
+      const events = getStreamEvents()
 
       // Should have busy, then error, then idle
       expect(events[0]).toMatchObject({
@@ -265,7 +261,7 @@ describe('ClaudeCodeImplementer – prompt streaming (Session 4)', () => {
 
       await impl.prompt('/proj', sessionId, 'test')
 
-      const events = getStreamEvents(mockWindow)
+      const events = getStreamEvents()
 
       // First event should be busy status
       expect(events[0]).toMatchObject({

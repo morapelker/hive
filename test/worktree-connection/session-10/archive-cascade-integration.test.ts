@@ -3,47 +3,88 @@ import { act } from '@testing-library/react'
 import { useWorktreeStore } from '../../../src/renderer/src/stores/useWorktreeStore'
 import { useConnectionStore } from '../../../src/renderer/src/stores/useConnectionStore'
 
-// ---------- Mock window.connectionOps ----------
-const mockConnectionOps = {
-  create: vi.fn(),
-  delete: vi.fn(),
-  addMember: vi.fn(),
-  removeMember: vi.fn(),
-  rename: vi.fn(),
-  getAll: vi.fn(),
-  get: vi.fn(),
-  openInTerminal: vi.fn(),
-  openInEditor: vi.fn(),
-  removeWorktreeFromAll: vi.fn()
-}
-
-// ---------- Mock window.worktreeOps ----------
-const mockWorktreeOps = {
-  delete: vi.fn()
-}
-
-const mockKanban = {
-  ticket: {
-    detachWorktree: vi.fn()
+const apiMocks = vi.hoisted(() => ({
+  connectionApi: {
+    create: vi.fn(),
+    delete: vi.fn(),
+    addMember: vi.fn(),
+    removeMember: vi.fn(),
+    rename: vi.fn(),
+    getAll: vi.fn(),
+    get: vi.fn(),
+    openInTerminal: vi.fn(),
+    openInEditor: vi.fn(),
+    removeWorktreeFromAll: vi.fn()
+  },
+  worktreeApi: {
+    delete: vi.fn()
+  },
+  kanbanApi: {
+    ticket: {
+      detachWorktree: vi.fn()
+    }
+  },
+  dbApi: {
+    worktree: {
+      touch: vi.fn().mockResolvedValue(undefined)
+    },
+    setting: {
+      get: vi.fn().mockResolvedValue(null),
+      set: vi.fn().mockResolvedValue(true),
+      delete: vi.fn().mockResolvedValue(true),
+      getAll: vi.fn().mockResolvedValue([])
+    }
+  },
+  scriptApi: {
+    kill: vi.fn(),
+    onOutput: vi.fn(() => vi.fn())
+  },
+  opencodeApi: {
+    listModels: vi.fn().mockResolvedValue([]),
+    abort: vi.fn()
+  },
+  settingsApi: {
+    onSettingsUpdated: vi.fn(() => vi.fn())
+  },
+  systemApi: {
+    detectClaudeCode: vi.fn().mockResolvedValue(false),
+    detectClaudeCli: vi.fn().mockResolvedValue(false),
+    detectCodex: vi.fn().mockResolvedValue(false),
+    detectOpencode: vi.fn().mockResolvedValue(false),
+    getEnvVar: vi.fn().mockResolvedValue(null)
+  },
+  updaterApi: {
+    getCurrentVersion: vi.fn().mockResolvedValue('0.0.0'),
+    checkForUpdates: vi.fn().mockResolvedValue({ available: false }),
+    onUpdateStatus: vi.fn(() => vi.fn())
+  },
+  petApi: {
+    updateSettings: vi.fn().mockResolvedValue(undefined)
+  },
+  telegramApi: {
+    getConfig: vi.fn().mockResolvedValue({ enabled: false }),
+    getStatus: vi.fn().mockResolvedValue({ connected: false }),
+    onStatusChanged: vi.fn(() => vi.fn()),
+    onMessageReceived: vi.fn(() => vi.fn()),
+    onPlanImplementRequested: vi.fn(() => vi.fn())
+  },
+  terminalApi: {
+    onClosed: vi.fn(() => vi.fn())
   }
-}
+}))
 
-// ---------- Mock window.db ----------
-const mockDb = {
-  worktree: {
-    touch: vi.fn().mockResolvedValue(undefined)
-  }
-}
-
-// ---------- Mock window.scriptOps ----------
-const mockScriptOps = {
-  kill: vi.fn()
-}
-
-// ---------- Mock window.opencodeOps ----------
-const mockOpencodeOps = {
-  abort: vi.fn()
-}
+vi.mock('@/api/connection-api', () => ({ connectionApi: apiMocks.connectionApi }))
+vi.mock('@/api/worktree-api', () => ({ worktreeApi: apiMocks.worktreeApi }))
+vi.mock('@/api/kanban-api', () => ({ kanbanApi: apiMocks.kanbanApi }))
+vi.mock('@/api/db-api', () => ({ dbApi: apiMocks.dbApi }))
+vi.mock('@/api/script-api', () => ({ scriptApi: apiMocks.scriptApi }))
+vi.mock('@/api/opencode-api', () => ({ opencodeApi: apiMocks.opencodeApi }))
+vi.mock('@/api/settings-api', () => ({ settingsApi: apiMocks.settingsApi }))
+vi.mock('@/api/system-api', () => ({ systemApi: apiMocks.systemApi }))
+vi.mock('@/api/updater-api', () => ({ updaterApi: apiMocks.updaterApi }))
+vi.mock('@/api/pet-api', () => ({ petApi: apiMocks.petApi }))
+vi.mock('@/api/telegram-api', () => ({ telegramApi: apiMocks.telegramApi }))
+vi.mock('@/api/terminal-api', () => ({ terminalApi: apiMocks.terminalApi }))
 
 // ---------- Mock toast ----------
 vi.mock('@/lib/toast', () => ({
@@ -55,51 +96,9 @@ vi.mock('@/lib/toast', () => ({
   }
 }))
 
-// Set up window mocks
-Object.defineProperty(window, 'connectionOps', {
-  writable: true,
-  configurable: true,
-  value: mockConnectionOps
-})
-
-Object.defineProperty(window, 'worktreeOps', {
-  writable: true,
-  configurable: true,
-  value: mockWorktreeOps
-})
-
-Object.defineProperty(window, 'scriptOps', {
-  writable: true,
-  configurable: true,
-  value: mockScriptOps
-})
-
-Object.defineProperty(window, 'opencodeOps', {
-  writable: true,
-  configurable: true,
-  value: mockOpencodeOps
-})
-
-Object.defineProperty(window, 'kanban', {
-  writable: true,
-  configurable: true,
-  value: mockKanban
-})
-
-/* eslint-disable @typescript-eslint/no-explicit-any */
-if (!(window as any).db) {
-  Object.defineProperty(window, 'db', {
-    writable: true,
-    configurable: true,
-    value: mockDb
-  })
-} else {
-  const existing = (window as any).db
-  if (!existing.worktree) {
-    existing.worktree = mockDb.worktree
-  }
-}
-/* eslint-enable @typescript-eslint/no-explicit-any */
+const mockConnectionOps = apiMocks.connectionApi
+const mockWorktreeOps = apiMocks.worktreeApi
+const mockKanban = apiMocks.kanbanApi
 
 // ---------- Test data factories ----------
 function makeWorktree(overrides: Record<string, unknown> = {}) {

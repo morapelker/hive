@@ -12,10 +12,36 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest'
 import { useGitStore } from '../../../src/renderer/src/stores/useGitStore'
 
+const gitApiMocks = vi.hoisted(() => ({
+  getFileStatuses: vi.fn()
+}))
+
+vi.mock('@/api/git-api', () => ({
+  gitApi: gitApiMocks
+}))
+
+vi.mock('../../../src/renderer/src/stores/useWorktreeStore', () => ({
+  useWorktreeStore: {
+    getState: () => ({
+      worktrees: [],
+      loadWorktrees: vi.fn()
+    })
+  }
+}))
+
+vi.mock('../../../src/renderer/src/stores/useKanbanStore', () => ({
+  useKanbanStore: {
+    getState: () => ({
+      updateTicket: vi.fn()
+    })
+  }
+}))
+
 // -- Git store conflict detection tests --
 
 describe('Session 7: Merge Conflict Header Button', () => {
   beforeEach(() => {
+    vi.clearAllMocks()
     // Reset the store to initial state
     useGitStore.setState({
       fileStatusesByWorktree: new Map(),
@@ -65,12 +91,9 @@ describe('Session 7: Merge Conflict Header Button', () => {
         { path: '/wt/src/index.ts', relativePath: 'src/index.ts', status: 'M', staged: false }
       ]
 
-      const mockGitOps = window.gitOps as Record<string, ReturnType<typeof vi.fn>>
-      mockGitOps.getFileStatuses = vi
-        .fn()
-        .mockResolvedValue({ success: true, value: { success: true, files: mockFiles } })
+      gitApiMocks.getFileStatuses.mockResolvedValue({ success: true, files: mockFiles })
 
-      await useGitStore.getState().loadFileStatuses('/wt')
+      await useGitStore.getState().loadFileStatuses('/wt', { force: true })
       const state = useGitStore.getState()
       expect(state.conflictsByWorktree['/wt']).toBe(true)
     })
@@ -81,23 +104,17 @@ describe('Session 7: Merge Conflict Header Button', () => {
         { path: '/wt/src/index.ts', relativePath: 'src/index.ts', status: 'A', staged: true }
       ]
 
-      const mockGitOps = window.gitOps as Record<string, ReturnType<typeof vi.fn>>
-      mockGitOps.getFileStatuses = vi
-        .fn()
-        .mockResolvedValue({ success: true, value: { success: true, files: mockFiles } })
+      gitApiMocks.getFileStatuses.mockResolvedValue({ success: true, files: mockFiles })
 
-      await useGitStore.getState().loadFileStatuses('/wt')
+      await useGitStore.getState().loadFileStatuses('/wt', { force: true })
       const state = useGitStore.getState()
       expect(state.conflictsByWorktree['/wt']).toBe(false)
     })
 
     test('loadFileStatuses sets hasConflicts false for empty file list', async () => {
-      const mockGitOps = window.gitOps as Record<string, ReturnType<typeof vi.fn>>
-      mockGitOps.getFileStatuses = vi
-        .fn()
-        .mockResolvedValue({ success: true, value: { success: true, files: [] } })
+      gitApiMocks.getFileStatuses.mockResolvedValue({ success: true, files: [] })
 
-      await useGitStore.getState().loadFileStatuses('/wt')
+      await useGitStore.getState().loadFileStatuses('/wt', { force: true })
       const state = useGitStore.getState()
       expect(state.conflictsByWorktree['/wt']).toBe(false)
     })

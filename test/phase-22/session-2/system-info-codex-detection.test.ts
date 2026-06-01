@@ -3,8 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 /**
  * Tests for the codex detection logic in detectAgentSdks().
  *
- * Since the actual system-info.ts module depends on Electron (`app` from 'electron'),
- * we test the detection logic by exercising the same pattern used in the source:
+ * We test the detection logic by exercising the same pattern used in the source:
  * shell-out to `which`/`where`, parse the path, and verify with existsSync.
  *
  * This validates:

@@ -1,6 +1,17 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest'
-import { renderHook, act } from '@testing-library/react'
-import { cleanup } from '@testing-library/react'
+import { renderHook, act, cleanup, waitFor } from '@testing-library/react'
+import {
+  resetRendererRpcClientForTests,
+  setRendererRpcClient
+} from '../../../src/renderer/src/api/rpc-client'
+import { opencodeApi } from '../../../src/renderer/src/api/opencode-api'
+
+vi.mock('@/api/opencode-api', () => ({
+  opencodeApi: {
+    connect: vi.fn(),
+    prompt: vi.fn()
+  }
+}))
 
 // ---------------------------------------------------------------------------
 // Mock setup
@@ -25,10 +36,6 @@ const mockGitOps = {
   openInEditor: vi.fn().mockResolvedValue({ success: true }),
   showInFinder: vi.fn().mockResolvedValue({ success: true }),
   onStatusChanged: vi.fn().mockReturnValue(() => {})
-}
-
-const mockFileOps = {
-  readFile: vi.fn().mockResolvedValue({ success: false })
 }
 
 const mockDb = {
@@ -84,47 +91,48 @@ const mockDb = {
   getIndexes: vi.fn()
 }
 
-const mockWorktreeOps = {
-  create: vi.fn(),
-  delete: vi.fn(),
-  sync: vi.fn(),
-  exists: vi.fn(),
-  openInTerminal: vi.fn(),
-  openInEditor: vi.fn(),
-  getBranches: vi.fn(),
-  branchExists: vi.fn(),
-  duplicate: vi.fn()
-}
-
-const mockProjectOps = {
-  openDirectoryDialog: vi.fn(),
-  isGitRepository: vi.fn(),
-  validateProject: vi.fn(),
-  showInFolder: vi.fn(),
-  openPath: vi.fn(),
-  copyToClipboard: vi.fn().mockResolvedValue(undefined),
-  readFromClipboard: vi.fn(),
-  detectLanguage: vi.fn(),
-  loadLanguageIcons: vi.fn()
+function installTestRpcClient() {
+  setRendererRpcClient({
+    request: vi.fn(async (method: string, params: unknown) => {
+      if (method === 'db.setting.get') {
+        return mockDb.setting.get((params as { key: string }).key)
+      }
+      if (method === 'db.setting.set') {
+        const { key, value } = params as { key: string; value: string }
+        return mockDb.setting.set(key, value)
+      }
+      if (method === 'db.session.setPinnedToBoard') {
+        const { sessionId, pinned } = params as { sessionId: string; pinned: boolean }
+        return mockDb.session.setPinnedToBoard(sessionId, pinned)
+      }
+      if (method === 'db.session.update') {
+        const { id, data } = params as { id: string; data: unknown }
+        return mockDb.session.update(id, data)
+      }
+      if (method === 'gitOps.listBranchesWithStatus') {
+        return mockGitOps.listBranchesWithStatus((params as { projectPath: string }).projectPath)
+      }
+      throw new Error(`Unexpected RPC method: ${method}`)
+    }),
+    subscribe: vi.fn()
+  })
 }
 
 describe('Session 4: Code Review', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    resetRendererRpcClientForTests()
     cleanup()
 
-    Object.defineProperty(window, 'gitOps', { writable: true, value: mockGitOps })
-    Object.defineProperty(window, 'fileOps', { writable: true, value: mockFileOps })
-    Object.defineProperty(window, 'db', { writable: true, value: mockDb })
-    Object.defineProperty(window, 'worktreeOps', { writable: true, value: mockWorktreeOps })
-    Object.defineProperty(window, 'projectOps', { writable: true, value: mockProjectOps })
-    Object.defineProperty(window, 'opencodeOps', {
-      writable: true,
-      value: {
-        connect: vi.fn().mockResolvedValue({ success: false }),
-        prompt: vi.fn().mockResolvedValue({ success: true })
-      }
+    vi.mocked(opencodeApi.connect).mockResolvedValue({
+      success: true,
+      value: { success: true, sessionId: 'opc-review-session' }
     })
+    vi.mocked(opencodeApi.prompt).mockResolvedValue({
+      success: true,
+      value: { success: true }
+    })
+    installTestRpcClient()
   })
 
   // ---------------------------------------------------------------------------
@@ -427,6 +435,27 @@ describe('Session 4: Code Review', () => {
       expect(createSession).toHaveBeenCalledWith('wt-1', 'proj-1', 'codex', undefined, {
         autoFocus: false,
         modelOverride: reviewModel
+      })
+      expect(opencodeApi.connect).toHaveBeenCalledWith(
+        '/tmp/review-model-worktree',
+        'review-session-model'
+      )
+      await waitFor(() => {
+        expect(opencodeApi.prompt).toHaveBeenCalledWith(
+          '/tmp/review-model-worktree',
+          'opc-review-session',
+          expect.arrayContaining([
+            expect.objectContaining({
+              type: 'text',
+              text: expect.stringContaining('Compare the current branch (feature-auth)')
+            })
+          ]),
+          {
+            providerID: 'codex',
+            modelID: 'gpt-5.5',
+            variant: 'high'
+          }
+        )
       })
     })
 

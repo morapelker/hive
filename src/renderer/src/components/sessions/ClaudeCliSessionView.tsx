@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { terminalApi } from '@/api/terminal-api'
 import { TerminalView, type TerminalViewHandle } from '@/components/terminal/TerminalView'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { useSessionStore } from '@/stores/useSessionStore'
@@ -228,7 +229,7 @@ export function ClaudeCliSessionView({
   const createClaudeTerminal = useCallback(async () => {
     const pendingPrompt = useSessionStore.getState().dequeuePendingMessage(sessionId)
     try {
-      const envelope = await window.terminalOps.createClaudeCli(sessionId, {
+      const envelope = await terminalApi.createClaudeCli(sessionId, {
         pendingPrompt
       })
       const result = unwrapEnvelope(envelope)
@@ -245,21 +246,18 @@ export function ClaudeCliSessionView({
   }, [sessionId])
 
   useEffect(() => {
-    return window.terminalOps.onClaudeSessionId(sessionId, (claudeSessionId) => {
+    return terminalApi.onClaudeSessionId(sessionId, (claudeSessionId) => {
       useSessionStore.getState().setClaudeSessionId(sessionId, claudeSessionId)
     })
   }, [sessionId])
 
-  const handleStatusChange = useCallback(
-    (status: 'creating' | 'running' | 'exited') => {
-      if (status === 'running') {
-        setEnded(false)
-      } else if (status === 'exited') {
-        setEnded(true)
-      }
-    },
-    []
-  )
+  const handleStatusChange = useCallback((status: 'creating' | 'running' | 'exited') => {
+    if (status === 'running') {
+      setEnded(false)
+    } else if (status === 'exited') {
+      setEnded(true)
+    }
+  }, [])
 
   const handleRestart = useCallback(() => {
     setEnded(false)
@@ -320,9 +318,7 @@ export function ClaudeCliSessionView({
         sessionRecord.worktree_id,
         sessionRecord.project_id,
         override.agentSdk,
-        override.agentSdk === 'claude-code-cli' && mode === 'super-plan'
-          ? 'super-plan'
-          : undefined,
+        override.agentSdk === 'claude-code-cli' && mode === 'super-plan' ? 'super-plan' : undefined,
         { modelOverride: override.model }
       )
       if (!result.success || !result.session) {

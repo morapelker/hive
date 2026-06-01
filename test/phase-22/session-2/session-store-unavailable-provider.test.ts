@@ -1,6 +1,27 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const mockSessionCreate = vi.fn()
+const apiMocks = vi.hoisted(() => ({
+  dbApi: {
+    setting: {
+      get: vi.fn(),
+      set: vi.fn()
+    },
+    session: {
+      create: vi.fn()
+    }
+  },
+  settingsApi: {
+    onSettingsUpdated: vi.fn()
+  },
+  petApi: {
+    hide: vi.fn(),
+    show: vi.fn(),
+    updateSettings: vi.fn()
+  },
+  systemApi: {
+    detectAgentSdks: vi.fn()
+  }
+}))
 
 vi.mock('@/stores/store-coordination', () => ({
   notifyKanbanSessionSync: vi.fn(),
@@ -13,36 +34,37 @@ vi.mock('@/stores/store-coordination', () => ({
   registerKanbanNewSession: vi.fn()
 }))
 
+vi.mock('@/api/db-api', () => ({
+  dbApi: apiMocks.dbApi
+}))
+
+vi.mock('@/api/settings-api', () => ({
+  settingsApi: apiMocks.settingsApi
+}))
+
+vi.mock('@/api/pet-api', () => ({
+  petApi: apiMocks.petApi
+}))
+
+vi.mock('@/api/system-api', () => ({
+  systemApi: apiMocks.systemApi
+}))
+
 describe('useSessionStore unavailable provider guard', () => {
   beforeEach(() => {
     vi.resetModules()
-    mockSessionCreate.mockReset()
+    vi.clearAllMocks()
 
-    Object.defineProperty(window, 'db', {
-      writable: true,
-      configurable: true,
-      value: {
-        setting: {
-          get: vi.fn().mockResolvedValue(null),
-          set: vi.fn().mockResolvedValue(undefined)
-        },
-        session: {
-          create: mockSessionCreate
-        }
-      }
-    })
-
-    Object.defineProperty(window, 'systemOps', {
-      writable: true,
-      configurable: true,
-      value: {
-        ...(window.systemOps ?? {}),
-        detectAgentSdks: vi.fn().mockResolvedValue({
-          opencode: false,
-          claude: true,
-          codex: true
-        })
-      }
+    apiMocks.dbApi.setting.get.mockResolvedValue(null)
+    apiMocks.dbApi.setting.set.mockResolvedValue(true)
+    apiMocks.settingsApi.onSettingsUpdated.mockReturnValue(vi.fn())
+    apiMocks.petApi.hide.mockResolvedValue(undefined)
+    apiMocks.petApi.show.mockResolvedValue(undefined)
+    apiMocks.petApi.updateSettings.mockResolvedValue({ success: true })
+    apiMocks.systemApi.detectAgentSdks.mockResolvedValue({
+      opencode: false,
+      claude: true,
+      codex: true
     })
   })
 
@@ -63,6 +85,6 @@ describe('useSessionStore unavailable provider guard', () => {
 
     expect(result.success).toBe(false)
     expect(result.error).toContain('OpenCode is not available on this system')
-    expect(mockSessionCreate).not.toHaveBeenCalled()
+    expect(apiMocks.dbApi.session.create).not.toHaveBeenCalled()
   })
 })

@@ -15,9 +15,7 @@ import { isPlanLike } from '../lib/constants'
 import { useConnectionStore } from './useConnectionStore'
 import { usePinnedStore } from './usePinnedStore'
 import { useWorktreeStatusStore } from './useWorktreeStatusStore'
-import { unwrapEnvelopeApi } from '@/lib/ipc-envelope'
-
-const kanban = unwrapEnvelopeApi(() => window.kanban)
+import { kanbanApi } from '@/api/kanban-api'
 
 export interface BoardTelegramTarget {
   ticketId: string
@@ -231,7 +229,10 @@ export const useKanbanStore = create<KanbanState>()(
         set({ isLoading: true })
         try {
           const includeArchived = get().showArchivedByProject[projectId] ?? false
-          const tickets = await kanban.ticket.getByProject(projectId, includeArchived)
+          const tickets = await kanbanApi.ticket.getByProject<KanbanTicket>(
+            projectId,
+            includeArchived
+          )
           set((state) => {
             const next = new Map(state.tickets)
             next.set(projectId, tickets)
@@ -246,7 +247,7 @@ export const useKanbanStore = create<KanbanState>()(
 
       // ── createTicket ─────────────────────────────────────────────
       createTicket: async (projectId: string, data: KanbanTicketCreate) => {
-        const ticket = await kanban.ticket.create(data)
+        const ticket = await kanbanApi.ticket.create<KanbanTicket, KanbanTicketCreate>(data)
         set((state) => {
           const next = new Map(state.tickets)
           const existing = next.get(projectId) ?? []
@@ -272,7 +273,7 @@ export const useKanbanStore = create<KanbanState>()(
         })
 
         try {
-          await kanban.ticket.update(ticketId, data)
+          await kanbanApi.ticket.update<KanbanTicket | null, KanbanTicketUpdate>(ticketId, data)
         } catch (err) {
           // Revert on failure
           set((state) => {
@@ -298,10 +299,10 @@ export const useKanbanStore = create<KanbanState>()(
         })
 
         try {
-          await kanban.ticket.delete(ticketId)
+          await kanbanApi.ticket.delete(ticketId)
 
           // Remove all dependency links for deleted ticket
-          kanban.dependency.removeAll(ticketId).catch(() => {})
+          kanbanApi.dependency.removeAll(ticketId).catch(() => {})
           // Update local dependency map
           set((state) => {
             const newMap = new Map(state.dependencyMap)
@@ -347,10 +348,10 @@ export const useKanbanStore = create<KanbanState>()(
         })
 
         try {
-          await kanban.ticket.archive(ticketId)
+          await kanbanApi.ticket.archive<KanbanTicket | null>(ticketId)
 
           // Remove all dependency links for archived ticket
-          await kanban.dependency.removeAll(ticketId)
+          await kanbanApi.dependency.removeAll(ticketId)
           // Update local dependency map
           set((state) => {
             const newMap = new Map(state.dependencyMap)
@@ -403,7 +404,7 @@ export const useKanbanStore = create<KanbanState>()(
         })
 
         try {
-          await kanban.ticket.archiveAllDone(projectId)
+          await kanbanApi.ticket.archiveAllDone(projectId)
           return count
         } catch (err) {
           // Revert on failure
@@ -433,7 +434,7 @@ export const useKanbanStore = create<KanbanState>()(
         })
 
         try {
-          await kanban.ticket.unarchive(ticketId)
+          await kanbanApi.ticket.unarchive<KanbanTicket | null>(ticketId)
         } catch (err) {
           // Revert on failure
           set((state) => {
@@ -480,7 +481,7 @@ export const useKanbanStore = create<KanbanState>()(
         })
 
         try {
-          await kanban.ticket.detachWorktree(worktreeId)
+          await kanbanApi.ticket.detachWorktree(worktreeId)
         } catch (err) {
           if (snapshot.size > 0) {
             set((state) => {
@@ -534,7 +535,7 @@ export const useKanbanStore = create<KanbanState>()(
         }
 
         try {
-          await kanban.ticket.move(ticketId, column, sortOrder)
+          await kanbanApi.ticket.move<KanbanTicket | null>(ticketId, column, sortOrder)
 
           // When a ticket moves to done (or review, if that's the trigger), check if any dependents can be auto-launched
           const { useSettingsStore } = await import('./useSettingsStore')
@@ -607,7 +608,7 @@ export const useKanbanStore = create<KanbanState>()(
         })
 
         try {
-          await kanban.ticket.reorder(ticketId, newSortOrder)
+          await kanbanApi.ticket.reorder(ticketId, newSortOrder)
         } catch (err) {
           // Revert on failure
           set((state) => {
@@ -629,7 +630,7 @@ export const useKanbanStore = create<KanbanState>()(
         set((state) => ({
           simpleModeByProject: { ...state.simpleModeByProject, [projectId]: enabled }
         }))
-        await kanban.simpleMode.toggle(projectId, enabled)
+        await kanbanApi.simpleMode.toggle(projectId, enabled)
       },
 
       // ── syncTicketWithSession (called via store-coordination) ────
@@ -660,8 +661,8 @@ export const useKanbanStore = create<KanbanState>()(
                 }
                 // Accumulate token delta to ticket's persistent total
                 if (event.tokenDelta && event.tokenDelta > 0) {
-                  kanban.ticket
-                    .addTokens(ticket.id, event.tokenDelta)
+                  kanbanApi.ticket
+                    .addTokens<KanbanTicket | null>(ticket.id, event.tokenDelta)
                     .then((updated) => {
                       if (updated) {
                         set((state) => {
@@ -764,7 +765,7 @@ export const useKanbanStore = create<KanbanState>()(
         newSessionId: string,
         goalMode?: boolean
       ) => {
-        const linkedTickets = await kanban.ticket.getBySession(oldSessionId)
+        const linkedTickets = await kanbanApi.ticket.getBySession<KanbanTicket>(oldSessionId)
         if (!linkedTickets || linkedTickets.length === 0) return
 
         const nextGoalMode = goalMode === true
@@ -782,7 +783,7 @@ export const useKanbanStore = create<KanbanState>()(
             ticket.goal_success_criteria === nextGoalSuccessCriteria
 
           if (!alreadyRelinked) {
-            await kanban.ticket.update(ticket.id, {
+            await kanbanApi.ticket.update<KanbanTicket | null, KanbanTicketUpdate>(ticket.id, {
               current_session_id: newSessionId,
               plan_ready: false,
               mode: 'build',
@@ -910,7 +911,9 @@ export const useKanbanStore = create<KanbanState>()(
           const includeArchived = (pid: string) =>
             get().showArchivedByProject[pid] ?? get().showArchivedByProject[''] ?? false
           const results = await Promise.all(
-            projectIds.map((pid) => kanban.ticket.getByProject(pid, includeArchived(pid)))
+            projectIds.map((pid) =>
+              kanbanApi.ticket.getByProject<KanbanTicket>(pid, includeArchived(pid))
+            )
           )
 
           // Batch update all projects at once
@@ -965,7 +968,9 @@ export const useKanbanStore = create<KanbanState>()(
           const includeArchived = (pid: string) =>
             get().showArchivedByProject[pid] ?? get().showArchivedByProject[''] ?? false
           const results = await Promise.all(
-            projectIds.map((pid) => kanban.ticket.getByProject(pid, includeArchived(pid)))
+            projectIds.map((pid) =>
+              kanbanApi.ticket.getByProject<KanbanTicket>(pid, includeArchived(pid))
+            )
           )
 
           // Batch update all projects at once
@@ -1097,7 +1102,10 @@ export const useKanbanStore = create<KanbanState>()(
       // ── loadDependencies ────────────────────────────────────────────
       loadDependencies: async (projectId: string) => {
         try {
-          const deps = await kanban.dependency.getForProject(projectId)
+          const deps = await kanbanApi.dependency.getForProject<{
+            dependent_id: string
+            blocker_id: string
+          }>(projectId)
           set((state) => {
             const newMap = new Map(state.dependencyMap)
             // Clear existing entries for this project's tickets
@@ -1121,7 +1129,7 @@ export const useKanbanStore = create<KanbanState>()(
 
       // ── addDependency ───────────────────────────────────────────────
       addDependency: async (dependentId: string, blockerId: string) => {
-        const result = await kanban.dependency.add(dependentId, blockerId)
+        const result = await kanbanApi.dependency.add(dependentId, blockerId)
         if (result.success) {
           set((state) => {
             const newMap = new Map(state.dependencyMap)
@@ -1137,7 +1145,7 @@ export const useKanbanStore = create<KanbanState>()(
 
       // ── removeDependency ────────────────────────────────────────────
       removeDependency: async (dependentId: string, blockerId: string) => {
-        await kanban.dependency.remove(dependentId, blockerId)
+        await kanbanApi.dependency.remove(dependentId, blockerId)
         set((state) => {
           const newMap = new Map(state.dependencyMap)
           const existing = newMap.get(dependentId)

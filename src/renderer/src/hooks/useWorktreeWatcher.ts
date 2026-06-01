@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useGitStore } from '@/stores/useGitStore'
+import { gitApi } from '@/api/git-api'
 
 /**
  * Manages the main-process worktree watcher lifecycle.
@@ -39,14 +40,14 @@ export function useWorktreeWatcher(): void {
 
     // Stop watching the previous worktree
     if (prevPath) {
-      window.gitOps.unwatchWorktree(prevPath).catch(() => {
+      gitApi.unwatchWorktree(prevPath).catch(() => {
         // Non-critical - watcher may already be stopped
       })
     }
 
     // Start watching the new worktree
     if (worktreePath) {
-      window.gitOps.watchWorktree(worktreePath).catch(() => {
+      gitApi.watchWorktree(worktreePath).catch(() => {
         // Non-critical - watcher setup failed
       })
 
@@ -63,7 +64,7 @@ export function useWorktreeWatcher(): void {
   // in ChangesView, GitStatusPanel, and FileTree. Uses the debounced refreshStatuses
   // to batch rapid file-change events.
   useEffect(() => {
-    const unsubscribe = window.gitOps.onStatusChanged((event) => {
+    const unsubscribe = gitApi.onStatusChanged((event) => {
       const currentPath = previousPathRef.current
       if (currentPath && event.worktreePath === currentPath) {
         useGitStore.getState().refreshStatuses(currentPath)
@@ -79,7 +80,7 @@ export function useWorktreeWatcher(): void {
     return () => {
       const currentPath = previousPathRef.current
       if (currentPath) {
-        window.gitOps.unwatchWorktree(currentPath).catch(() => {
+        gitApi.unwatchWorktree(currentPath).catch(() => {
           // Non-critical
         })
       }

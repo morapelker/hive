@@ -13,7 +13,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover'
 import { Input } from '@/components/ui/input'
-import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { cn } from '@/lib/utils'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
@@ -30,10 +30,12 @@ import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
 import { snapshotTokenBaseline } from '@/lib/token-baselines'
 import { PLAN_MODE_PREFIX, getSuperPlanModePrefix, isPlanLike } from '@/lib/constants'
 import { toast } from '@/lib/toast'
-import type { KanbanTicket } from '../../../../main/db/types'
+import { opencodeApi } from '@/api/opencode-api'
+import { dbApi } from '@/api/db-api'
+import { terminalApi } from '@/api/terminal-api'
+import { gitApi } from '@/api/git-api'
+import type { KanbanTicket, Session } from '../../../../main/db/types'
 import { canonicalizeTicketTitle } from '@shared/types/branch-utils'
-
-const db = unwrapEnvelopeApi(() => window.db)
 
 // Stable empty array to avoid referential-inequality loops in Zustand selectors
 const EMPTY_ARRAY: readonly never[] = []
@@ -256,9 +258,8 @@ export function WorktreePickerModal({
     // branches.length guard: only fetch once per modal-open cycle (reset clears branches on close)
     if (!isNewWorktree || !project?.path || branches.length > 0) return
     setBranchesLoading(true)
-    window.gitOps
+    gitApi
       .listBranchesWithStatus(project.path)
-      .then(unwrapEnvelope)
       .then((result) => {
         if (result.success) {
           setBranches(result.branches)
@@ -521,7 +522,7 @@ export function WorktreePickerModal({
 
           bumpWorktreeLastMessage({ connectionId })
           const result = unwrapEnvelope(
-            await window.terminalOps.createClaudeCli(sessionId, {
+            await terminalApi.createClaudeCli(sessionId, {
               pendingPrompt: outboundPrompt
             })
           )
@@ -537,13 +538,13 @@ export function WorktreePickerModal({
           .connections.find((c) => c.id === connectionId)?.path
         if (!connectionPath) return
 
-        const connectResult = unwrapEnvelope(
-          await window.opencodeOps.connect(connectionPath, sessionId)
-        )
+        const connectResult = unwrapEnvelope(await opencodeApi.connect(connectionPath, sessionId))
         if (!connectResult.success || !connectResult.sessionId) return
 
         useSessionStore.getState().setOpenCodeSessionId(sessionId, connectResult.sessionId)
-        await db.session.update(sessionId, { opencode_session_id: connectResult.sessionId })
+        await dbApi.session.update<Session>(sessionId, {
+          opencode_session_id: connectResult.sessionId
+        })
 
         // Send prompt
         if (promptText.trim()) {
@@ -563,7 +564,7 @@ export function WorktreePickerModal({
 
           bumpWorktreeLastMessage({ connectionId })
           unwrapEnvelope(
-            await window.opencodeOps.prompt(
+            await opencodeApi.prompt(
               connectionPath,
               connectResult.sessionId,
               [{ type: 'text', text: outboundPrompt }],
@@ -708,7 +709,13 @@ export function WorktreePickerModal({
         ...(modelOverride ? { modelOverride } : {}),
         ...(cliPendingPrompt ? { pendingMessage: cliPendingPrompt } : {})
       }
-      const sessionResult = await createSession(worktreeId, projectId, agentSdk, mode, createOptions)
+      const sessionResult = await createSession(
+        worktreeId,
+        projectId,
+        agentSdk,
+        mode,
+        createOptions
+      )
 
       if (!sessionResult.success || !sessionResult.session) {
         toast.error(sessionResult.error || 'Failed to create session')
@@ -779,7 +786,7 @@ export function WorktreePickerModal({
 
         bumpWorktreeLastMessage({ worktreeId })
         const result = unwrapEnvelope(
-          await window.terminalOps.createClaudeCli(sessionId, {
+          await terminalApi.createClaudeCli(sessionId, {
             pendingPrompt: outboundPrompt
           })
         )
@@ -798,14 +805,12 @@ export function WorktreePickerModal({
       if (!worktree?.path) return
 
       // Connect to OpenCode to create the AI session
-      const connectResult = unwrapEnvelope(
-        await window.opencodeOps.connect(worktree.path, sessionId)
-      )
+      const connectResult = unwrapEnvelope(await opencodeApi.connect(worktree.path, sessionId))
       if (!connectResult.success || !connectResult.sessionId) return
 
       // Persist the opencodeSessionId to Zustand + DB
       useSessionStore.getState().setOpenCodeSessionId(sessionId, connectResult.sessionId)
-      await db.session.update(sessionId, {
+      await dbApi.session.update<Session>(sessionId, {
         opencode_session_id: connectResult.sessionId
       })
 
@@ -829,7 +834,7 @@ export function WorktreePickerModal({
 
         bumpWorktreeLastMessage({ worktreeId })
         unwrapEnvelope(
-          await window.opencodeOps.prompt(
+          await opencodeApi.prompt(
             worktree.path,
             connectResult.sessionId,
             [{ type: 'text', text: outboundPrompt }],
@@ -1106,69 +1111,69 @@ export function WorktreePickerModal({
               </label>
               {/* SDK toggle — only when 2+ SDKs are available */}
               {availableAgentSdks && availableSdkButtonCount >= 2 && (
-                  <div className="flex gap-1.5" data-testid="sdk-toggle">
-                    {availableAgentSdks.opencode && (
-                      <button
-                        type="button"
-                        data-testid="sdk-toggle-opencode"
-                        onClick={() => handleSdkChange('opencode')}
-                        className={cn(
-                          'px-2.5 py-1 rounded-md text-xs border transition-colors',
-                          agentSdk === 'opencode'
-                            ? 'bg-primary text-primary-foreground border-primary'
-                            : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
-                        )}
-                      >
-                        OpenCode
-                      </button>
-                    )}
-                    {availableAgentSdks.claude && (
-                      <button
-                        type="button"
-                        data-testid="sdk-toggle-claude-code-cli"
-                        onClick={() => handleSdkChange('claude-code-cli')}
-                        className={cn(
-                          'px-2.5 py-1 rounded-md text-xs border transition-colors',
-                          agentSdk === 'claude-code-cli'
-                            ? 'bg-primary text-primary-foreground border-primary'
-                            : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
-                        )}
-                      >
-                        Claude CLI
-                      </button>
-                    )}
-                    {availableAgentSdks.codex && (
-                      <button
-                        type="button"
-                        data-testid="sdk-toggle-codex"
-                        onClick={() => handleSdkChange('codex')}
-                        className={cn(
-                          'px-2.5 py-1 rounded-md text-xs border transition-colors',
-                          agentSdk === 'codex'
-                            ? 'bg-primary text-primary-foreground border-primary'
-                            : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
-                        )}
-                      >
-                        Codex
-                      </button>
-                    )}
-                    {availableAgentSdks.claude && (
-                      <button
-                        type="button"
-                        data-testid="sdk-toggle-claude-code"
-                        onClick={() => handleSdkChange('claude-code')}
-                        className={cn(
-                          'px-2.5 py-1 rounded-md text-xs border transition-colors',
-                          agentSdk === 'claude-code'
-                            ? 'bg-primary text-primary-foreground border-primary'
-                            : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
-                        )}
-                      >
-                        Claude Code (SDK)
-                      </button>
-                    )}
-                  </div>
-                )}
+                <div className="flex gap-1.5" data-testid="sdk-toggle">
+                  {availableAgentSdks.opencode && (
+                    <button
+                      type="button"
+                      data-testid="sdk-toggle-opencode"
+                      onClick={() => handleSdkChange('opencode')}
+                      className={cn(
+                        'px-2.5 py-1 rounded-md text-xs border transition-colors',
+                        agentSdk === 'opencode'
+                          ? 'bg-primary text-primary-foreground border-primary'
+                          : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
+                      )}
+                    >
+                      OpenCode
+                    </button>
+                  )}
+                  {availableAgentSdks.claude && (
+                    <button
+                      type="button"
+                      data-testid="sdk-toggle-claude-code-cli"
+                      onClick={() => handleSdkChange('claude-code-cli')}
+                      className={cn(
+                        'px-2.5 py-1 rounded-md text-xs border transition-colors',
+                        agentSdk === 'claude-code-cli'
+                          ? 'bg-primary text-primary-foreground border-primary'
+                          : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
+                      )}
+                    >
+                      Claude CLI
+                    </button>
+                  )}
+                  {availableAgentSdks.codex && (
+                    <button
+                      type="button"
+                      data-testid="sdk-toggle-codex"
+                      onClick={() => handleSdkChange('codex')}
+                      className={cn(
+                        'px-2.5 py-1 rounded-md text-xs border transition-colors',
+                        agentSdk === 'codex'
+                          ? 'bg-primary text-primary-foreground border-primary'
+                          : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
+                      )}
+                    >
+                      Codex
+                    </button>
+                  )}
+                  {availableAgentSdks.claude && (
+                    <button
+                      type="button"
+                      data-testid="sdk-toggle-claude-code"
+                      onClick={() => handleSdkChange('claude-code')}
+                      className={cn(
+                        'px-2.5 py-1 rounded-md text-xs border transition-colors',
+                        agentSdk === 'claude-code'
+                          ? 'bg-primary text-primary-foreground border-primary'
+                          : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
+                      )}
+                    >
+                      Claude Code (SDK)
+                    </button>
+                  )}
+                </div>
+              )}
               {goalAvailable && (
                 <div className="space-y-2 rounded-md border border-border/50 bg-muted/20 px-3 py-2.5">
                   <div className="flex items-center justify-between gap-3">

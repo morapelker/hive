@@ -2,28 +2,68 @@ import { describe, test, expect, beforeEach, vi } from 'vitest'
 import { act } from '@testing-library/react'
 import type { KanbanTicket } from '../../../src/main/db/types'
 
-// ── Mock window.kanban before importing stores ──────────────────────────
-const mockKanban = {
-  ticket: {
-    create: vi.fn(),
-    get: vi.fn(),
-    getByProject: vi.fn(),
-    update: vi.fn(),
-    delete: vi.fn(),
-    move: vi.fn(),
-    reorder: vi.fn(),
-    getBySession: vi.fn()
+const apiMocks = vi.hoisted(() => ({
+  kanbanApi: {
+    ticket: {
+      create: vi.fn(),
+      getByProject: vi.fn(),
+      update: vi.fn(),
+      delete: vi.fn(),
+      move: vi.fn(),
+      reorder: vi.fn(),
+      getBySession: vi.fn(),
+      addTokens: vi.fn()
+    },
+    dependency: {
+      removeAll: vi.fn(),
+      getForProject: vi.fn(),
+      add: vi.fn(),
+      remove: vi.fn()
+    },
+    simpleMode: {
+      toggle: vi.fn()
+    }
   },
-  simpleMode: {
-    toggle: vi.fn()
+  dbApi: {
+    setting: {
+      get: vi.fn().mockResolvedValue(null),
+      set: vi.fn().mockResolvedValue(true)
+    }
+  },
+  petApi: {
+    updateSettings: vi.fn().mockResolvedValue(undefined),
+    show: vi.fn().mockResolvedValue(undefined),
+    hide: vi.fn().mockResolvedValue(undefined)
+  },
+  settingsApi: {
+    onSettingsUpdated: vi.fn(() => vi.fn())
+  },
+  systemApi: {
+    detectAgentSdks: vi.fn().mockResolvedValue([])
   }
-}
+}))
 
-Object.defineProperty(window, 'kanban', {
-  writable: true,
-  configurable: true,
-  value: mockKanban
-})
+vi.mock('@/api/kanban-api', () => ({
+  kanbanApi: apiMocks.kanbanApi
+}))
+
+vi.mock('@/api/db-api', () => ({
+  dbApi: apiMocks.dbApi
+}))
+
+vi.mock('@/api/pet-api', () => ({
+  petApi: apiMocks.petApi
+}))
+
+vi.mock('@/api/settings-api', () => ({
+  settingsApi: apiMocks.settingsApi
+}))
+
+vi.mock('@/api/system-api', () => ({
+  systemApi: apiMocks.systemApi
+}))
+
+const mockKanbanApi = apiMocks.kanbanApi
 
 // Import store-coordination first so we can inspect registrations
 import {
@@ -69,8 +109,8 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
 
     // Reset all mocks — resolve by default so optimistic updates succeed
     vi.clearAllMocks()
-    mockKanban.ticket.update.mockResolvedValue(undefined)
-    mockKanban.ticket.move.mockResolvedValue(undefined)
+    mockKanbanApi.ticket.update.mockResolvedValue(undefined)
+    mockKanbanApi.ticket.move.mockResolvedValue(undefined)
   })
 
   // ────────────────────────────────────────────────────────────────────
@@ -102,7 +142,7 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
     const tickets = useKanbanStore.getState().tickets.get('proj-1')
     const moved = tickets!.find((t) => t.id === 't1')
     expect(moved!.column).toBe('review')
-    expect(mockKanban.ticket.move).toHaveBeenCalledWith('t1', 'review', 0)
+    expect(mockKanbanApi.ticket.move).toHaveBeenCalledWith('t1', 'review', 0)
   })
 
   // ────────────────────────────────────────────────────────────────────
@@ -134,8 +174,8 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
     const updated = tickets!.find((t) => t.id === 't1')
     expect(updated!.plan_ready).toBe(true)
     expect(updated!.column).toBe('review')
-    expect(mockKanban.ticket.update).toHaveBeenCalledWith('t1', { plan_ready: true })
-    expect(mockKanban.ticket.move).toHaveBeenCalledWith('t1', 'review', 0)
+    expect(mockKanbanApi.ticket.update).toHaveBeenCalledWith('t1', { plan_ready: true })
+    expect(mockKanbanApi.ticket.move).toHaveBeenCalledWith('t1', 'review', 0)
   })
 
   // ────────────────────────────────────────────────────────────────────
@@ -166,7 +206,7 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
     const tickets = useKanbanStore.getState().tickets.get('proj-1')
     const updated = tickets!.find((t) => t.id === 't1')
     expect(updated!.column).toBe('review')
-    expect(mockKanban.ticket.move).toHaveBeenCalledWith('t1', 'review', 0)
+    expect(mockKanbanApi.ticket.move).toHaveBeenCalledWith('t1', 'review', 0)
   })
 
   // ────────────────────────────────────────────────────────────────────
@@ -196,8 +236,8 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
     const tickets = useKanbanStore.getState().tickets.get('proj-1')
     const moved = tickets!.find((t) => t.id === 't1')
     expect(moved!.column).toBe('review')
-    expect(mockKanban.ticket.move).toHaveBeenCalledWith('t1', 'review', 0)
-    expect(mockKanban.ticket.update).not.toHaveBeenCalled()
+    expect(mockKanbanApi.ticket.move).toHaveBeenCalledWith('t1', 'review', 0)
+    expect(mockKanbanApi.ticket.update).not.toHaveBeenCalled()
   })
 
   // ────────────────────────────────────────────────────────────────────
@@ -229,7 +269,7 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
     const tickets = useKanbanStore.getState().tickets.get('proj-1')
     const updated = tickets!.find((t) => t.id === 't1')
     expect(updated!.current_session_id).toBe('session-new')
-    expect(mockKanban.ticket.update).toHaveBeenCalledWith('t1', {
+    expect(mockKanbanApi.ticket.update).toHaveBeenCalledWith('t1', {
       current_session_id: 'session-new',
       plan_ready: false,
       mode: 'build'
@@ -268,9 +308,9 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
   })
 
   // ────────────────────────────────────────────────────────────────────
-  // Auto-advance persists column change via IPC
+  // Auto-advance persists column change through kanbanApi
   // ────────────────────────────────────────────────────────────────────
-  test('auto-advance persists column change via IPC', async () => {
+  test('auto-advance persists column change through kanbanApi', async () => {
     const ticket = makeTicket({
       id: 't1',
       column: 'in_progress',
@@ -293,14 +333,14 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
       await new Promise((r) => setTimeout(r, 0))
     })
 
-    // The move action calls window.kanban.ticket.move which persists to DB
-    expect(mockKanban.ticket.move).toHaveBeenCalledWith('t1', 'review', 3)
+    // The move action calls kanbanApi.ticket.move which persists through RPC.
+    expect(mockKanbanApi.ticket.move).toHaveBeenCalledWith('t1', 'review', 3)
   })
 
   // ────────────────────────────────────────────────────────────────────
-  // plan_ready change persists via IPC
+  // plan_ready change persists through kanbanApi
   // ────────────────────────────────────────────────────────────────────
-  test('plan_ready change persists via IPC and moves to review', async () => {
+  test('plan_ready change persists through kanbanApi and moves to review', async () => {
     const ticket = makeTicket({
       id: 't1',
       column: 'in_progress',
@@ -322,8 +362,8 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
       await new Promise((r) => setTimeout(r, 0))
     })
 
-    expect(mockKanban.ticket.update).toHaveBeenCalledWith('t1', { plan_ready: true })
-    expect(mockKanban.ticket.move).toHaveBeenCalledWith('t1', 'review', 0)
+    expect(mockKanbanApi.ticket.update).toHaveBeenCalledWith('t1', { plan_ready: true })
+    expect(mockKanbanApi.ticket.move).toHaveBeenCalledWith('t1', 'review', 0)
   })
 
   // ────────────────────────────────────────────────────────────────────
@@ -354,8 +394,8 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
     const tickets = useKanbanStore.getState().tickets.get('proj-1')
     const unchanged = tickets!.find((t) => t.id === 't1')
     expect(unchanged!.column).toBe('in_progress')
-    expect(mockKanban.ticket.move).not.toHaveBeenCalled()
-    expect(mockKanban.ticket.update).not.toHaveBeenCalled()
+    expect(mockKanbanApi.ticket.move).not.toHaveBeenCalled()
+    expect(mockKanbanApi.ticket.update).not.toHaveBeenCalled()
   })
 
   // ────────────────────────────────────────────────────────────────────
@@ -462,7 +502,7 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
     const updated = tickets!.find((t) => t.id === 't1')
     expect(updated!.plan_ready).toBe(true)
     expect(updated!.column).toBe('review')
-    expect(mockKanban.ticket.move).toHaveBeenCalledWith('t1', 'review', 0)
+    expect(mockKanbanApi.ticket.move).toHaveBeenCalledWith('t1', 'review', 0)
   })
 
   // ────────────────────────────────────────────────────────────────────
@@ -538,7 +578,7 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
     })
 
     // Should NOT call move again — ticket is already in review
-    expect(mockKanban.ticket.move).not.toHaveBeenCalled()
+    expect(mockKanbanApi.ticket.move).not.toHaveBeenCalled()
   })
 
   // ────────────────────────────────────────────────────────────────────
@@ -568,7 +608,7 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
     })
 
     // Should NOT call update again — plan_ready is already true
-    expect(mockKanban.ticket.update).not.toHaveBeenCalled()
+    expect(mockKanbanApi.ticket.update).not.toHaveBeenCalled()
   })
 
   // ────────────────────────────────────────────────────────────────────
@@ -603,7 +643,7 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
     //  looks at the OLD sessionId. This ticket has session-new as current_session_id,
     //  and the event comes for session-new too, so the lookup matches but
     //  the guard `ticket.current_session_id !== event.newSessionId` prevents the update)
-    expect(mockKanban.ticket.update).not.toHaveBeenCalled()
+    expect(mockKanbanApi.ticket.update).not.toHaveBeenCalled()
   })
 
   // ────────────────────────────────────────────────────────────────────
@@ -636,7 +676,7 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
     const updated = tickets!.find((t) => t.id === 't1')
     expect(updated!.mode).toBe('build')
     expect(updated!.plan_ready).toBe(false)
-    expect(mockKanban.ticket.update).toHaveBeenCalledWith('t1', {
+    expect(mockKanbanApi.ticket.update).toHaveBeenCalledWith('t1', {
       mode: 'build',
       plan_ready: false
     })
@@ -672,7 +712,7 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
     const updated = tickets!.find((t) => t.id === 't1')
     expect(updated!.mode).toBe('plan')
     expect(updated!.plan_ready).toBe(false) // preserved from original
-    expect(mockKanban.ticket.update).toHaveBeenCalledWith('t1', {
+    expect(mockKanbanApi.ticket.update).toHaveBeenCalledWith('t1', {
       mode: 'plan',
       plan_ready: false
     })
@@ -705,7 +745,7 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
     })
 
     // Already in build mode with plan_ready=false — should be a no-op
-    expect(mockKanban.ticket.update).not.toHaveBeenCalled()
+    expect(mockKanbanApi.ticket.update).not.toHaveBeenCalled()
   })
 
   // ────────────────────────────────────────────────────────────────────
@@ -739,6 +779,6 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
     const unchanged = tickets!.find((t) => t.id === 't1')
     expect(unchanged!.mode).toBe('plan')
     expect(unchanged!.plan_ready).toBe(true)
-    expect(mockKanban.ticket.update).not.toHaveBeenCalled()
+    expect(mockKanbanApi.ticket.update).not.toHaveBeenCalled()
   })
 })

@@ -1,8 +1,16 @@
-import { app, BrowserWindow } from 'electron'
+import { app } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { createLogger } from './logger'
 import { getDatabase } from '../db'
 import { APP_SETTINGS_DB_KEY } from '@shared/types/settings'
+import {
+  emitUpdaterAvailable,
+  emitUpdaterChecking,
+  emitUpdaterDownloaded,
+  emitUpdaterError,
+  emitUpdaterNotAvailable,
+  emitUpdaterProgress
+} from './updater-events'
 
 const log = createLogger({ component: 'AutoUpdater' })
 
@@ -31,14 +39,8 @@ let isManualCheck = false
 let checkInterval: ReturnType<typeof setInterval> | null = null
 let initialTimeout: ReturnType<typeof setTimeout> | null = null
 
-function safeSend(win: BrowserWindow, channel: string, data?: unknown): void {
-  if (!win.isDestroyed()) {
-    win.webContents.send(channel, data)
-  }
-}
-
 export const updaterService = {
-  init(mainWindow: BrowserWindow): void {
+  init(): void {
     if (!app.isPackaged) {
       log.debug('Skipping auto-updater in development mode')
       return
@@ -52,12 +54,12 @@ export const updaterService = {
 
     autoUpdater.on('checking-for-update', () => {
       log.info('Checking for update')
-      safeSend(mainWindow, 'updater:checking')
+      emitUpdaterChecking()
     })
 
     autoUpdater.on('update-available', (info) => {
       log.info('Update available', { version: info.version, isManualCheck })
-      safeSend(mainWindow, 'updater:available', {
+      emitUpdaterAvailable({
         version: info.version,
         releaseNotes: info.releaseNotes,
         releaseDate: info.releaseDate,
@@ -68,7 +70,7 @@ export const updaterService = {
 
     autoUpdater.on('update-not-available', (info) => {
       log.info('No update available', { version: info.version, isManualCheck })
-      safeSend(mainWindow, 'updater:not-available', {
+      emitUpdaterNotAvailable({
         version: info.version,
         isManualCheck
       })
@@ -77,7 +79,7 @@ export const updaterService = {
 
     autoUpdater.on('download-progress', (progress) => {
       log.info('Download progress', { percent: Math.round(progress.percent) })
-      safeSend(mainWindow, 'updater:progress', {
+      emitUpdaterProgress({
         percent: progress.percent,
         bytesPerSecond: progress.bytesPerSecond,
         transferred: progress.transferred,
@@ -87,7 +89,7 @@ export const updaterService = {
 
     autoUpdater.on('update-downloaded', (info) => {
       log.info('Update downloaded', { version: info.version })
-      safeSend(mainWindow, 'updater:downloaded', {
+      emitUpdaterDownloaded({
         version: info.version,
         releaseNotes: info.releaseNotes
       })
@@ -95,7 +97,7 @@ export const updaterService = {
 
     autoUpdater.on('error', (error) => {
       log.error('Update error', error)
-      safeSend(mainWindow, 'updater:error', {
+      emitUpdaterError({
         message: error?.message ?? String(error),
         isManualCheck
       })

@@ -1,6 +1,6 @@
-import { app, BrowserWindow, webContents } from 'electron'
 import { join } from 'path'
 import { existsSync, mkdirSync, appendFileSync, statSync, renameSync } from 'fs'
+import { homedir } from 'os'
 import * as v8 from 'v8'
 import { createLogger } from './logger'
 
@@ -18,6 +18,7 @@ export interface MetricCollectors {
   getWorktreeWatcherCount: () => number
   getBranchWatcherCount: () => number
   getActiveSessionCount: () => number
+  getElectronProcessCounts?: () => { windows: number; webContents: number }
 }
 
 export interface PerfSnapshot {
@@ -80,7 +81,7 @@ class PerfDiagnosticsService {
   private running = false
 
   constructor() {
-    const homeDir = app.getPath('home')
+    const homeDir = homedir()
     this.logDir = join(homeDir, '.hive', 'logs')
     this.logFile = join(this.logDir, 'perf-diagnostics.jsonl')
   }
@@ -184,15 +185,10 @@ class PerfDiagnosticsService {
     // Native memory estimate: everything in RSS that isn't V8 heap or external
     const nativeEstimate = Math.max(0, mem.rss - mem.heapTotal - mem.external)
 
-    // Electron process counts
-    let windowCount = -1
-    let webContentsCount = -1
-    try {
-      windowCount = BrowserWindow.getAllWindows().length
-      webContentsCount = webContents.getAllWebContents().length
-    } catch {
-      // May fail during shutdown
-    }
+    // Desktop-only process counts are supplied by Electron main via collectors.
+    const electronCounts = collectors?.getElectronProcessCounts?.()
+    const windowCount = electronCounts?.windows ?? -1
+    const webContentsCount = electronCounts?.webContents ?? -1
 
     return {
       perfVersion: PERF_VERSION,
@@ -308,4 +304,18 @@ class PerfDiagnosticsService {
   }
 }
 
-export const perfDiagnostics = new PerfDiagnosticsService()
+let perfDiagnosticsInstance: PerfDiagnosticsService | null = null
+
+const getPerfDiagnostics = (): PerfDiagnosticsService => {
+  perfDiagnosticsInstance ??= new PerfDiagnosticsService()
+  return perfDiagnosticsInstance
+}
+
+export const perfDiagnostics = {
+  setCollectors: (collectors: MetricCollectors): void => getPerfDiagnostics().setCollectors(collectors),
+  start: (): void => getPerfDiagnostics().start(),
+  stop: (): void => getPerfDiagnostics().stop(),
+  isRunning: (): boolean => getPerfDiagnostics().isRunning(),
+  getSnapshot: (): PerfSnapshot => getPerfDiagnostics().getSnapshot(),
+  cleanup: (): void => getPerfDiagnostics().cleanup()
+}

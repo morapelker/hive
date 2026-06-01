@@ -29,7 +29,7 @@ import { usePRNotificationStore } from '@/stores/usePRNotificationStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useProjectStore } from '@/stores/useProjectStore'
-import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { gitApi } from '@/api/git-api'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -139,9 +139,8 @@ export function CreatePRModal({ worktreeId, worktreePath }: CreatePRModalProps):
 
     // Fetch remote branches
     setLoadingBranches(true)
-    window.gitOps
+    gitApi
       .listBranchesWithStatus(worktreePath)
-      .then(unwrapEnvelope)
       .then((result) => {
         if (result.success) {
           setRemoteBranches(result.branches.filter((b) => b.isRemote))
@@ -153,10 +152,7 @@ export function CreatePRModal({ worktreeId, worktreePath }: CreatePRModalProps):
       .finally(() => setLoadingBranches(false))
 
     // Check for uncommitted changes — show commit phase if any
-    Promise.all([
-      window.gitOps.hasUncommittedChanges(worktreePath).then(unwrapEnvelope),
-      loadFileStatuses(worktreePath)
-    ])
+    Promise.all([gitApi.hasUncommittedChanges(worktreePath), loadFileStatuses(worktreePath)])
       .then(([hasUncommitted]) => {
         if (hasUncommitted) setPhase('commit')
       })
@@ -169,9 +165,8 @@ export function CreatePRModal({ worktreeId, worktreePath }: CreatePRModalProps):
   useEffect(() => {
     if (!open || !baseBranch) return
     setCommitCount(null)
-    window.gitOps
+    gitApi
       .getRangeDiff(worktreePath, baseBranch)
-      .then(unwrapEnvelope)
       .then((rd) => setCommitCount(rd.commitCount))
       .catch(() => {
         // Non-critical
@@ -245,9 +240,8 @@ export function CreatePRModal({ worktreeId, worktreePath }: CreatePRModalProps):
       })
       // Refresh commit count and branch info after committing
       if (baseBranch) {
-        window.gitOps
+        gitApi
           .getRangeDiff(worktreePath, baseBranch)
-          .then(unwrapEnvelope)
           .then((rd) => setCommitCount(rd.commitCount))
           .catch(() => {})
       }
@@ -300,14 +294,14 @@ export function CreatePRModal({ worktreeId, worktreePath }: CreatePRModalProps):
       // Step 1: Push if needed
       let willPush = false
       try {
-        willPush = unwrapEnvelope(await window.gitOps.needsPush(worktreePath))
+        willPush = await gitApi.needsPush(worktreePath)
       } catch {
         // Assume no push needed
       }
 
       if (willPush) {
         update(notifId, { message: 'Pushing branch...' })
-        const pushResult = unwrapEnvelope(await window.gitOps.push(worktreePath))
+        const pushResult = await gitApi.push(worktreePath)
         if (!pushResult.success) {
           throw new Error(pushResult.error ?? 'Push failed')
         }
@@ -325,9 +319,7 @@ export function CreatePRModal({ worktreeId, worktreePath }: CreatePRModalProps):
             'No AI provider available for PR content generation. Using default title and description.'
         } else {
           try {
-            const genResult = unwrapEnvelope(
-              await window.gitOps.generatePRContent(worktreePath, targetBase, provider)
-            )
+            const genResult = await gitApi.generatePRContent(worktreePath, targetBase, provider)
             if (genResult.success) {
               if (!finalTitle && genResult.title) finalTitle = genResult.title
               if (!finalBody && genResult.body) finalBody = genResult.body
@@ -351,9 +343,7 @@ export function CreatePRModal({ worktreeId, worktreePath }: CreatePRModalProps):
 
       // Step 3: Create PR
       update(notifId, { message: 'Creating pull request...' })
-      const createResult = unwrapEnvelope(
-        await window.gitOps.createPR(worktreePath, targetBase, finalTitle, finalBody)
-      )
+      const createResult = await gitApi.createPR(worktreePath, targetBase, finalTitle, finalBody)
 
       if (!createResult.success) {
         // The backend populates url/number even on failure when a PR already
@@ -397,9 +387,7 @@ export function CreatePRModal({ worktreeId, worktreePath }: CreatePRModalProps):
               ? useProjectStore.getState().projects.find((p) => p.id === projectId)?.path
               : undefined
             if (projectPath) {
-              const state = unwrapEnvelope(
-                await window.gitOps.getPRState(projectPath, existingNumber)
-              )
+              const state = await gitApi.getPRState(projectPath, existingNumber)
               if (state.success) existingTitle = state.title
             }
           } catch {

@@ -1,5 +1,3 @@
-import type { BrowserWindow } from 'electron'
-
 export type AgentSdkId = 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
 
 export interface AgentSdkCapabilities {
@@ -98,9 +96,6 @@ export interface AgentSdkImplementer {
 
   // Session management
   renameSession(worktreePath: string, agentSessionId: string, name: string): Promise<void>
-
-  // Window binding (for event forwarding to renderer)
-  setMainWindow(window: BrowserWindow): void
 }
 
 export const OPENCODE_CAPABILITIES: AgentSdkCapabilities = {

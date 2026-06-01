@@ -4,6 +4,8 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { SearchAddon } from '@xterm/addon-search'
 import type { TerminalBackend, TerminalOpts, TerminalBackendCallbacks } from './types'
+import { projectApi } from '@/api/project-api'
+import { terminalApi } from '@/api/terminal-api'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 /** Default Catppuccin Mocha theme used when no Ghostty config is found */
@@ -205,9 +207,9 @@ export class XtermBackend implements TerminalBackend {
       if (e.metaKey && e.shiftKey && e.key === 'V' && e.type === 'keydown') {
         navigator.clipboard
           .readText()
-          .catch(() => window.projectOps.readFromClipboard().then(unwrapEnvelope))
+          .catch(() => projectApi.readFromClipboard())
           .then((text) => {
-            if (text) window.terminalOps.write(this.terminalId, text)
+            if (text) terminalApi.write(this.terminalId, text)
           })
           .catch((err) => console.error('Terminal paste failed:', err))
         return false
@@ -224,7 +226,7 @@ export class XtermBackend implements TerminalBackend {
     this.searchAddon = searchAddon
 
     const webLinksAddon = new WebLinksAddon((_event, uri) => {
-      window.projectOps.openPath(uri).then(unwrapEnvelope).catch(console.error)
+      projectApi.openPath(uri).catch(console.error)
     })
     terminal.loadAddon(webLinksAddon)
 
@@ -252,23 +254,23 @@ export class XtermBackend implements TerminalBackend {
 
     // Wire user input -> PTY
     this.inputDisposable = terminal.onData((data) => {
-      window.terminalOps.write(this.terminalId, data)
+      terminalApi.write(this.terminalId, data)
     })
 
     // Wire PTY output -> terminal display
-    this.removeDataListener = window.terminalOps.onData(this.terminalId, (data) => {
+    this.removeDataListener = terminalApi.onData(this.terminalId, (data) => {
       terminal.write(data)
     })
 
     // Wire PTY exit -> status change
-    this.removeExitListener = window.terminalOps.onExit(this.terminalId, (code) => {
+    this.removeExitListener = terminalApi.onExit(this.terminalId, (code) => {
       terminal.write(`\r\n\x1b[90m[Process exited with code ${code}]\x1b[0m\r\n`)
       callbacks.onStatusChange('exited', code)
     })
 
     // Create the PTY
     callbacks.onStatusChange('creating')
-    const createTerminal = opts.createTerminal ?? window.terminalOps.create
+    const createTerminal = opts.createTerminal ?? terminalApi.create
     createTerminal(this.terminalId, opts.cwd, opts.shell)
       .then(unwrapEnvelope)
       .then((result) => {
@@ -287,9 +289,7 @@ export class XtermBackend implements TerminalBackend {
               this.fitAddon.fit()
               const dims = this.fitAddon.proposeDimensions()
               if (dims) {
-                window.terminalOps
-                  .resize(this.terminalId, dims.cols, dims.rows)
-                  .then(unwrapEnvelope)
+                terminalApi.resize(this.terminalId, dims.cols, dims.rows).then(unwrapEnvelope)
               }
             }
           } catch {
@@ -308,7 +308,7 @@ export class XtermBackend implements TerminalBackend {
           this.fitAddon.fit()
           const dims = this.fitAddon.proposeDimensions()
           if (dims) {
-            window.terminalOps.resize(this.terminalId, dims.cols, dims.rows).then(unwrapEnvelope)
+            terminalApi.resize(this.terminalId, dims.cols, dims.rows).then(unwrapEnvelope)
           }
         }
       } catch {
@@ -323,7 +323,7 @@ export class XtermBackend implements TerminalBackend {
   }
 
   resize(cols: number, rows: number): void {
-    window.terminalOps.resize(this.terminalId, cols, rows).then(unwrapEnvelope)
+    terminalApi.resize(this.terminalId, cols, rows).then(unwrapEnvelope)
   }
 
   focus(): void {
@@ -346,7 +346,7 @@ export class XtermBackend implements TerminalBackend {
       this.fitAddon?.fit()
       const dims = this.fitAddon?.proposeDimensions()
       if (dims) {
-        window.terminalOps.resize(this.terminalId, dims.cols, dims.rows).then(unwrapEnvelope)
+        terminalApi.resize(this.terminalId, dims.cols, dims.rows).then(unwrapEnvelope)
       }
     } catch {
       // Ignore fit errors

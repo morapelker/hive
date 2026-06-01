@@ -11,6 +11,55 @@ vi.mock('../../src/main/services/logger', () => ({
   })
 }))
 
+vi.mock('electron', () => ({
+  app: {
+    getPath: vi.fn(() => '/tmp'),
+    getVersion: vi.fn(() => '1.1.10'),
+    isPackaged: false,
+    quit: vi.fn()
+  },
+  BrowserWindow: {
+    getAllWindows: vi.fn(() => []),
+    getFocusedWindow: vi.fn(() => null)
+  },
+  clipboard: {
+    readText: vi.fn(() => ''),
+    writeText: vi.fn()
+  },
+  dialog: {
+    showMessageBox: vi.fn(),
+    showOpenDialog: vi.fn(),
+    showSaveDialog: vi.fn()
+  },
+  nativeImage: {
+    createFromPath: vi.fn(() => ({ isEmpty: () => true }))
+  },
+  screen: {
+    getPrimaryDisplay: vi.fn(() => ({ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }))
+  },
+  shell: {
+    openExternal: vi.fn(),
+    openPath: vi.fn(),
+    showItemInFolder: vi.fn()
+  }
+}))
+
+vi.mock('electron-updater', () => ({
+  autoUpdater: {
+    autoDownload: false,
+    autoInstallOnAppQuit: true,
+    logger: null,
+    on: vi.fn(),
+    checkForUpdates: vi.fn(),
+    downloadUpdate: vi.fn(),
+    quitAndInstall: vi.fn()
+  }
+}))
+
+vi.mock('../../src/main/desktop/backend-manager', () => ({
+  publishDesktopBackendEvent: vi.fn()
+}))
+
 const { questionReply, prompt } = vi.hoisted(() => ({
   questionReply: vi.fn(),
   prompt: vi.fn()
@@ -31,19 +80,24 @@ import {
   TelegramForwardingService
 } from '../../src/main/services/telegram-forwarding-service'
 import { agentEventBus } from '../../src/main/services/agent-event-bus'
+import { TELEGRAM_PLAN_IMPLEMENT_REQUESTED_CHANNEL } from '../../src/shared/telegram-events'
 import type { OpenCodeStreamEvent } from '../../src/shared/types/opencode'
 
 type SendMessageBody = { text: string }
 
 function createTelegramFetchMock(): ReturnType<typeof vi.fn> {
   const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
-    const body = init?.body ? JSON.parse(String(init.body)) as SendMessageBody : {}
+    const body = init?.body ? (JSON.parse(String(init.body)) as SendMessageBody) : {}
     if (String(_url).endsWith('/sendMessage')) {
       return {
         ok: true,
         json: async () => ({
           ok: true,
-          result: { message_id: fetchMock.mock.calls.length, text: body.text, chat: { id: 123, type: 'private' } }
+          result: {
+            message_id: fetchMock.mock.calls.length,
+            text: body.text,
+            chat: { id: 123, type: 'private' }
+          }
         })
       } as Response
     }
@@ -67,7 +121,8 @@ function seedForwardingState(
   overrides: Record<string, unknown> = {}
 ): void {
   Reflect.set(service, 'db', {
-    getSetting: () => JSON.stringify({ botToken: 'token', chatId: 123, chatName: 'me', contextSize: 3 }),
+    getSetting: () =>
+      JSON.stringify({ botToken: 'token', chatId: 123, chatName: 'me', contextSize: 3 }),
     getWorktree: () => ({ path: '/repo', branch_name: 'branch' }),
     getSession: () => ({ project_id: 'p1', agent_sdk: 'opencode', opencode_session_id: 'agent-1' }),
     getProject: () => ({ name: 'Project' })
@@ -186,13 +241,17 @@ describe('telegram forwarding helpers', () => {
   it('forwards multi-question batches sequentially and replies only after the last answer', async () => {
     const service = new TelegramForwardingService()
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
-      const body = init?.body ? JSON.parse(String(init.body)) as { text?: string } : {}
+      const body = init?.body ? (JSON.parse(String(init.body)) as { text?: string }) : {}
       if (String(_url).endsWith('/sendMessage')) {
         return {
           ok: true,
           json: async () => ({
             ok: true,
-            result: { message_id: fetchMock.mock.calls.length, text: body.text, chat: { id: 123, type: 'private' } }
+            result: {
+              message_id: fetchMock.mock.calls.length,
+              text: body.text,
+              chat: { id: 123, type: 'private' }
+            }
           })
         } as Response
       }
@@ -205,7 +264,8 @@ describe('telegram forwarding helpers', () => {
     questionReply.mockResolvedValue(undefined)
 
     Reflect.set(service, 'db', {
-      getSetting: () => JSON.stringify({ botToken: 'token', chatId: 123, chatName: 'me', contextSize: 3 }),
+      getSetting: () =>
+        JSON.stringify({ botToken: 'token', chatId: 123, chatName: 'me', contextSize: 3 }),
       getWorktree: () => ({ path: '/repo', branch_name: 'branch' }),
       getSession: () => ({ project_id: 'p1', agent_sdk: 'opencode' }),
       getProject: () => ({ name: 'Project' })
@@ -280,7 +340,9 @@ describe('telegram forwarding helpers', () => {
       'First (1/2)\n\nFirst?',
       'Second (2/2)\n\nSecond?'
     ])
-    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/answerCallbackQuery'))).toBe(true)
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/answerCallbackQuery'))).toBe(
+      true
+    )
 
     const streamEvents: OpenCodeStreamEvent[] = []
     const unsubscribe = agentEventBus.subscribe((event) => streamEvents.push(event))
@@ -302,15 +364,21 @@ describe('telegram forwarding helpers', () => {
 
   it('handles plan handoff callbacks for request ids containing colons', async () => {
     const service = new TelegramForwardingService()
-    const webContentsSend = vi.fn()
+    const backendPublish = vi.fn()
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
-      const body = init?.body ? JSON.parse(String(init.body)) as { text?: string; reply_markup?: unknown } : {}
+      const body = init?.body
+        ? (JSON.parse(String(init.body)) as { text?: string; reply_markup?: unknown })
+        : {}
       if (String(_url).endsWith('/sendMessage')) {
         return {
           ok: true,
           json: async () => ({
             ok: true,
-            result: { message_id: fetchMock.mock.calls.length, text: body.text, chat: { id: 123, type: 'private' } }
+            result: {
+              message_id: fetchMock.mock.calls.length,
+              text: body.text,
+              chat: { id: 123, type: 'private' }
+            }
           })
         } as Response
       }
@@ -321,12 +389,10 @@ describe('telegram forwarding helpers', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
 
-    Reflect.set(service, 'mainWindow', {
-      isDestroyed: () => false,
-      webContents: { send: webContentsSend }
-    })
+    service.setBackendEventPublisher(backendPublish)
     Reflect.set(service, 'db', {
-      getSetting: () => JSON.stringify({ botToken: 'token', chatId: 123, chatName: 'me', contextSize: 3 }),
+      getSetting: () =>
+        JSON.stringify({ botToken: 'token', chatId: 123, chatName: 'me', contextSize: 3 }),
       getWorktree: () => ({ path: '/repo', branch_name: 'branch' }),
       getSession: () => ({ project_id: 'p1', agent_sdk: 'codex' }),
       getProject: () => ({ name: 'Project' })
@@ -368,7 +434,9 @@ describe('telegram forwarding helpers', () => {
       }
     })
 
-    const sendMessageCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/sendMessage'))
+    const sendMessageCall = fetchMock.mock.calls.find(([url]) =>
+      String(url).endsWith('/sendMessage')
+    )
     const sendBody = JSON.parse(String((sendMessageCall?.[1] as RequestInit).body)) as {
       reply_markup: { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> }
     }
@@ -385,9 +453,11 @@ describe('telegram forwarding helpers', () => {
       message: { message_id: 1, chat: { id: 123, type: 'private' } }
     })
 
-    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/answerCallbackQuery'))).toBe(true)
-    expect(webContentsSend).toHaveBeenCalledWith(
-      'telegram:planImplementRequested',
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/answerCallbackQuery'))).toBe(
+      true
+    )
+    expect(backendPublish).toHaveBeenCalledWith(
+      TELEGRAM_PLAN_IMPLEMENT_REQUESTED_CHANNEL,
       expect.objectContaining({
         sessionId: 's1',
         worktreeId: 'w1',
@@ -401,13 +471,17 @@ describe('telegram forwarding helpers', () => {
   it('starts forwarding for connection sessions and sends prompts from the connection path', async () => {
     const service = new TelegramForwardingService()
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
-      const body = init?.body ? JSON.parse(String(init.body)) as SendMessageBody : {}
+      const body = init?.body ? (JSON.parse(String(init.body)) as SendMessageBody) : {}
       if (String(_url).endsWith('/sendMessage')) {
         return {
           ok: true,
           json: async () => ({
             ok: true,
-            result: { message_id: fetchMock.mock.calls.length, text: body.text, chat: { id: 123, type: 'private' } }
+            result: {
+              message_id: fetchMock.mock.calls.length,
+              text: body.text,
+              chat: { id: 123, type: 'private' }
+            }
           })
         } as Response
       }
@@ -426,7 +500,8 @@ describe('telegram forwarding helpers', () => {
     prompt.mockResolvedValue(undefined)
     Reflect.set(service, 'startPolling', vi.fn())
     Reflect.set(service, 'db', {
-      getSetting: () => JSON.stringify({ botToken: 'token', chatId: 123, chatName: 'me', contextSize: 3 }),
+      getSetting: () =>
+        JSON.stringify({ botToken: 'token', chatId: 123, chatName: 'me', contextSize: 3 }),
       getWorktree: vi.fn(),
       getConnection: (id: string) =>
         id === 'c1'
@@ -486,13 +561,17 @@ describe('telegram forwarding helpers', () => {
     const service = new TelegramForwardingService()
     const approvePlan = vi.fn().mockResolvedValue(undefined)
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
-      const body = init?.body ? JSON.parse(String(init.body)) as { text?: string } : {}
+      const body = init?.body ? (JSON.parse(String(init.body)) as { text?: string }) : {}
       if (String(_url).endsWith('/sendMessage')) {
         return {
           ok: true,
           json: async () => ({
             ok: true,
-            result: { message_id: fetchMock.mock.calls.length, text: body.text, chat: { id: 123, type: 'private' } }
+            result: {
+              message_id: fetchMock.mock.calls.length,
+              text: body.text,
+              chat: { id: 123, type: 'private' }
+            }
           })
         } as Response
       }
@@ -504,7 +583,8 @@ describe('telegram forwarding helpers', () => {
     vi.stubGlobal('fetch', fetchMock)
     Reflect.set(service, 'approvePlan', approvePlan)
     Reflect.set(service, 'db', {
-      getSetting: () => JSON.stringify({ botToken: 'token', chatId: 123, chatName: 'me', contextSize: 3 }),
+      getSetting: () =>
+        JSON.stringify({ botToken: 'token', chatId: 123, chatName: 'me', contextSize: 3 }),
       getWorktree: () => ({ path: '/repo', branch_name: 'branch' }),
       getSession: () => ({ project_id: 'p1', agent_sdk: 'claude-code' }),
       getProject: () => ({ name: 'Project' })
@@ -566,13 +646,17 @@ describe('telegram forwarding helpers', () => {
     const service = new TelegramForwardingService()
     const approvePlan = vi.fn().mockResolvedValue(undefined)
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
-      const body = init?.body ? JSON.parse(String(init.body)) as { text?: string } : {}
+      const body = init?.body ? (JSON.parse(String(init.body)) as { text?: string }) : {}
       if (String(_url).endsWith('/sendMessage')) {
         return {
           ok: true,
           json: async () => ({
             ok: true,
-            result: { message_id: fetchMock.mock.calls.length, text: body.text, chat: { id: 123, type: 'private' } }
+            result: {
+              message_id: fetchMock.mock.calls.length,
+              text: body.text,
+              chat: { id: 123, type: 'private' }
+            }
           })
         } as Response
       }
@@ -584,7 +668,8 @@ describe('telegram forwarding helpers', () => {
     vi.stubGlobal('fetch', fetchMock)
     Reflect.set(service, 'approvePlan', approvePlan)
     Reflect.set(service, 'db', {
-      getSetting: () => JSON.stringify({ botToken: 'token', chatId: 123, chatName: 'me', contextSize: 3 }),
+      getSetting: () =>
+        JSON.stringify({ botToken: 'token', chatId: 123, chatName: 'me', contextSize: 3 }),
       getWorktree: () => ({ path: '/repo', branch_name: 'branch' }),
       getSession: () => ({ project_id: 'p1', agent_sdk: 'claude-code' }),
       getProject: () => ({ name: 'Project' })
@@ -657,13 +742,17 @@ describe('telegram forwarding helpers', () => {
     const service = new TelegramForwardingService()
     const rejectPlan = vi.fn().mockResolvedValue(undefined)
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
-      const body = init?.body ? JSON.parse(String(init.body)) as { text?: string } : {}
+      const body = init?.body ? (JSON.parse(String(init.body)) as { text?: string }) : {}
       if (String(_url).endsWith('/sendMessage')) {
         return {
           ok: true,
           json: async () => ({
             ok: true,
-            result: { message_id: fetchMock.mock.calls.length, text: body.text, chat: { id: 123, type: 'private' } }
+            result: {
+              message_id: fetchMock.mock.calls.length,
+              text: body.text,
+              chat: { id: 123, type: 'private' }
+            }
           })
         } as Response
       }
@@ -675,7 +764,8 @@ describe('telegram forwarding helpers', () => {
     vi.stubGlobal('fetch', fetchMock)
     Reflect.set(service, 'rejectPlan', rejectPlan)
     Reflect.set(service, 'db', {
-      getSetting: () => JSON.stringify({ botToken: 'token', chatId: 123, chatName: 'me', contextSize: 3 }),
+      getSetting: () =>
+        JSON.stringify({ botToken: 'token', chatId: 123, chatName: 'me', contextSize: 3 }),
       getWorktree: () => ({ path: '/repo', branch_name: 'branch' }),
       getSession: () => ({ project_id: 'p1', agent_sdk: 'claude-code' }),
       getProject: () => ({ name: 'Project' })
@@ -747,13 +837,17 @@ describe('telegram forwarding helpers', () => {
   it('sends plan feedback as a prompt for non-blocking plan sessions and clears Hive plan UI', async () => {
     const service = new TelegramForwardingService()
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
-      const body = init?.body ? JSON.parse(String(init.body)) as { text?: string } : {}
+      const body = init?.body ? (JSON.parse(String(init.body)) as { text?: string }) : {}
       if (String(_url).endsWith('/sendMessage')) {
         return {
           ok: true,
           json: async () => ({
             ok: true,
-            result: { message_id: fetchMock.mock.calls.length, text: body.text, chat: { id: 123, type: 'private' } }
+            result: {
+              message_id: fetchMock.mock.calls.length,
+              text: body.text,
+              chat: { id: 123, type: 'private' }
+            }
           })
         } as Response
       }
@@ -765,9 +859,14 @@ describe('telegram forwarding helpers', () => {
     vi.stubGlobal('fetch', fetchMock)
     prompt.mockResolvedValue(undefined)
     Reflect.set(service, 'db', {
-      getSetting: () => JSON.stringify({ botToken: 'token', chatId: 123, chatName: 'me', contextSize: 3 }),
+      getSetting: () =>
+        JSON.stringify({ botToken: 'token', chatId: 123, chatName: 'me', contextSize: 3 }),
       getWorktree: () => ({ path: '/repo', branch_name: 'branch' }),
-      getSession: () => ({ project_id: 'p1', agent_sdk: 'opencode', opencode_session_id: 'agent-1' }),
+      getSession: () => ({
+        project_id: 'p1',
+        agent_sdk: 'opencode',
+        opencode_session_id: 'agent-1'
+      }),
       getProject: () => ({ name: 'Project' })
     })
     Reflect.set(service, 'state', {
@@ -835,9 +934,14 @@ describe('telegram forwarding helpers', () => {
     const service = new TelegramForwardingService()
     prompt.mockResolvedValue(undefined)
     Reflect.set(service, 'db', {
-      getSetting: () => JSON.stringify({ botToken: 'token', chatId: 123, chatName: 'me', contextSize: 3 }),
+      getSetting: () =>
+        JSON.stringify({ botToken: 'token', chatId: 123, chatName: 'me', contextSize: 3 }),
       getWorktree: () => ({ path: '/repo', branch_name: 'branch' }),
-      getSession: () => ({ project_id: 'p1', agent_sdk: 'opencode', opencode_session_id: 'agent-1' }),
+      getSession: () => ({
+        project_id: 'p1',
+        agent_sdk: 'opencode',
+        opencode_session_id: 'agent-1'
+      }),
       getProject: () => ({ name: 'Project' })
     })
     Reflect.set(service, 'state', {
@@ -889,20 +993,34 @@ describe('telegram forwarding helpers', () => {
         chat: { id: 123, type: 'private' }
       }
     })
-    expect(prompt).toHaveBeenCalledWith('/repo', 'agent-1', [
-      { type: 'text', text: 'new text' }
-    ])
+    expect(prompt).toHaveBeenCalledWith('/repo', 'agent-1', [{ type: 'text', text: 'new text' }])
   })
 
   it('drains pending Telegram updates before polling a new forwarding session', async () => {
     const service = new TelegramForwardingService()
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
-      const body = init?.body ? JSON.parse(String(init.body)) as { offset?: number } : {}
+      const body = init?.body ? (JSON.parse(String(init.body)) as { offset?: number }) : {}
       const result =
         body.offset === undefined
           ? [
-              { update_id: 3, message: { message_id: 1, date: 10, text: 'old-1', chat: { id: 123, type: 'private' } } },
-              { update_id: 4, message: { message_id: 2, date: 11, text: 'old-2', chat: { id: 123, type: 'private' } } }
+              {
+                update_id: 3,
+                message: {
+                  message_id: 1,
+                  date: 10,
+                  text: 'old-1',
+                  chat: { id: 123, type: 'private' }
+                }
+              },
+              {
+                update_id: 4,
+                message: {
+                  message_id: 2,
+                  date: 11,
+                  text: 'old-2',
+                  chat: { id: 123, type: 'private' }
+                }
+              }
             ]
           : []
       return {

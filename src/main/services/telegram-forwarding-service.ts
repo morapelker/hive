@@ -1,4 +1,3 @@
-import type { BrowserWindow } from 'electron'
 import type { OpenCodeStreamEvent } from '@shared/types/opencode'
 import type {
   TelegramConfig,
@@ -6,6 +5,11 @@ import type {
   TelegramForwardingStatus,
   TelegramMode
 } from '@shared/types/telegram'
+import {
+  TELEGRAM_PLAN_IMPLEMENT_REQUESTED_CHANNEL,
+  TELEGRAM_STATUS_CHANGED_CHANNEL,
+  type TelegramPlanImplementRequestedPayload
+} from '@shared/telegram-events'
 import { openCodeService } from './opencode-service'
 import { ClaudeCodeImplementer } from './claude-code-implementer'
 import { CodexImplementer } from './codex-implementer'
@@ -20,6 +24,7 @@ const LONG_PLAN_THRESHOLD = 3500
 
 type CallbackKind = 'question' | 'permission' | 'command' | 'plan'
 type TrackedKind = 'question' | 'permission' | 'command' | 'plan'
+type BackendEventPublisher = (channel: string, payload: unknown) => void
 
 interface ForwardingState {
   sessionId: string
@@ -181,7 +186,8 @@ export function buildTelegramCallbackData(
   requestId: string,
   action: string
 ): string {
-  const prefix = kind === 'question' ? 'q' : kind === 'permission' ? 'p' : kind === 'command' ? 'c' : 'pl'
+  const prefix =
+    kind === 'question' ? 'q' : kind === 'permission' ? 'p' : kind === 'command' ? 'c' : 'pl'
   const data = `${prefix}:${requestId}:${action}`
   if (data.length > 64) {
     return `${prefix}:${requestId.slice(0, 64 - prefix.length - action.length - 2)}:${action}`
@@ -197,7 +203,6 @@ export function isTrackedInteractionStale(
 }
 
 export class TelegramForwardingService {
-  private mainWindow: BrowserWindow | null = null
   private db: DatabaseService | null = null
   private sdkManager: AgentSdkManager | null = null
   private state: ForwardingState | null = null
@@ -205,13 +210,9 @@ export class TelegramForwardingService {
   private questionBatches = new Map<string, QuestionBatch>()
   private callbackRequestIds = new Map<string, string>()
   private unsubscribeBus: (() => void) | null = null
+  private backendEventPublisher: BackendEventPublisher | null = null
 
-  initialize(opts: {
-    mainWindow: BrowserWindow
-    db: DatabaseService
-    sdkManager: AgentSdkManager
-  }): void {
-    this.mainWindow = opts.mainWindow
+  initialize(opts: { db: DatabaseService; sdkManager: AgentSdkManager }): void {
     this.db = opts.db
     this.sdkManager = opts.sdkManager
     if (!this.unsubscribeBus) {
@@ -219,6 +220,10 @@ export class TelegramForwardingService {
         void this.handleAgentEvent(event)
       })
     }
+  }
+
+  setBackendEventPublisher(publisher: BackendEventPublisher | null): void {
+    this.backendEventPublisher = publisher
   }
 
   dispose(): void {
@@ -259,7 +264,9 @@ export class TelegramForwardingService {
     }
   }
 
-  async verifyToken(botToken: string): Promise<{ ok: boolean; botUsername?: string; error?: string }> {
+  async verifyToken(
+    botToken: string
+  ): Promise<{ ok: boolean; botUsername?: string; error?: string }> {
     try {
       const result = await this.api<{ username?: string; first_name?: string }>(botToken, 'getMe')
       return { ok: true, botUsername: result.username ?? result.first_name }
@@ -336,7 +343,10 @@ export class TelegramForwardingService {
     }
 
     const label = this.getSessionLabel(params.sessionId)
-    const verb = previous && previous.sessionId !== params.sessionId ? 'Forwarding moved to' : 'Forwarding started'
+    const verb =
+      previous && previous.sessionId !== params.sessionId
+        ? 'Forwarding moved to'
+        : 'Forwarding started'
     this.state.lastUpdateId = await this.discardPendingUpdates(cfg)
     await this.sendMessage(cfg, `${verb}: ${label}. Mode: ${params.mode}.`)
     this.startPolling()
@@ -344,7 +354,9 @@ export class TelegramForwardingService {
     return this.getStatus()
   }
 
-  async stopForwarding(reason: 'manual' | 'move' | 'replace' | 'session-ended' = 'manual'): Promise<TelegramForwardingStatus> {
+  async stopForwarding(
+    reason: 'manual' | 'move' | 'replace' | 'session-ended' = 'manual'
+  ): Promise<TelegramForwardingStatus> {
     const cfg = this.getConfig()
     const state = this.state
     if (!state) return this.getStatus()
@@ -498,12 +510,20 @@ export class TelegramForwardingService {
       this.contextPrefix(),
       'Permission requested',
       asString(data?.permission) ?? asString(data?.message) ?? ''
-    ].filter(Boolean).join('\n\n')
+    ]
+      .filter(Boolean)
+      .join('\n\n')
     const sent = await this.sendMessage(cfg, prompt, {
       inline_keyboard: [
         [
-          { text: 'Allow Once', callback_data: this.encodeCallbackData('permission', requestId, 'o') },
-          { text: 'Allow Always', callback_data: this.encodeCallbackData('permission', requestId, 'a') },
+          {
+            text: 'Allow Once',
+            callback_data: this.encodeCallbackData('permission', requestId, 'o')
+          },
+          {
+            text: 'Allow Always',
+            callback_data: this.encodeCallbackData('permission', requestId, 'a')
+          },
           { text: 'Reject', callback_data: this.encodeCallbackData('permission', requestId, 'r') }
         ]
       ]
@@ -525,8 +545,11 @@ export class TelegramForwardingService {
     if (!requestId) return
     state.hasOutstandingInteraction = true
     const data = asRecord(event.data)
-    const command = asString(data?.commandStr) ?? asString(data?.command) ?? 'Command approval needed'
-    const prompt = [this.contextPrefix(), 'Command approval requested', command].filter(Boolean).join('\n\n')
+    const command =
+      asString(data?.commandStr) ?? asString(data?.command) ?? 'Command approval needed'
+    const prompt = [this.contextPrefix(), 'Command approval requested', command]
+      .filter(Boolean)
+      .join('\n\n')
     const patternSuggestions = Array.isArray(data?.patternSuggestions)
       ? data.patternSuggestions.filter((item): item is string => typeof item === 'string')
       : []
@@ -534,10 +557,16 @@ export class TelegramForwardingService {
       inline_keyboard: [
         [
           { text: 'Allow Once', callback_data: this.encodeCallbackData('command', requestId, 'o') },
-          { text: 'Allow Always', callback_data: this.encodeCallbackData('command', requestId, 'a') }
+          {
+            text: 'Allow Always',
+            callback_data: this.encodeCallbackData('command', requestId, 'a')
+          }
         ],
         [
-          { text: 'Block Always', callback_data: this.encodeCallbackData('command', requestId, 'b') },
+          {
+            text: 'Block Always',
+            callback_data: this.encodeCallbackData('command', requestId, 'b')
+          },
           { text: 'Deny', callback_data: this.encodeCallbackData('command', requestId, 'r') }
         ]
       ]
@@ -581,7 +610,11 @@ export class TelegramForwardingService {
       return
     }
 
-    const sent = await this.sendMessage(cfg, `${this.contextPrefix()}\n\nPlan ready:\n\n${plan}`, keyboard)
+    const sent = await this.sendMessage(
+      cfg,
+      `${this.contextPrefix()}\n\nPlan ready:\n\n${plan}`,
+      keyboard
+    )
     this.trackPlan(requestId, sent.message_id, plan)
   }
 
@@ -681,7 +714,9 @@ export class TelegramForwardingService {
 
     const repliedTo = message.reply_to_message?.message_id
     if (repliedTo) {
-      const interaction = Array.from(this.messageIndex.values()).find((item) => item.messageId === repliedTo)
+      const interaction = Array.from(this.messageIndex.values()).find(
+        (item) => item.messageId === repliedTo
+      )
       if (interaction?.kind === 'question') {
         await this.answerQuestionInteraction(interaction, text)
         return
@@ -712,7 +747,11 @@ export class TelegramForwardingService {
     await this.sendPrompt(text)
   }
 
-  private async replyQuestion(requestId: string, answers: string[][], worktreePath?: string): Promise<void> {
+  private async replyQuestion(
+    requestId: string,
+    answers: string[][],
+    worktreePath?: string
+  ): Promise<void> {
     if (this.sdkManager) {
       const claudeImpl = this.sdkManager.getImplementer('claude-code') as ClaudeCodeImplementer
       if (claudeImpl.hasPendingQuestion(requestId)) {
@@ -746,7 +785,8 @@ export class TelegramForwardingService {
     await this.resolveTelegramMessage(interaction, `Answered: ${answer}`)
     this.deleteInteraction(interaction)
 
-    const complete = batch.answers.length === batch.total && batch.answers.every((item) => item.length > 0)
+    const complete =
+      batch.answers.length === batch.total && batch.answers.every((item) => item.length > 0)
     if (!complete) {
       await this.sendQuestionStep(interaction.requestId, questionIndex + 1)
       return
@@ -766,14 +806,17 @@ export class TelegramForwardingService {
     if (!question) return
     batch.currentIndex = questionIndex
 
-    const title = batch.total > 1
-      ? `${question.header} (${questionIndex + 1}/${batch.total})`
-      : question.header
+    const title =
+      batch.total > 1 ? `${question.header} (${questionIndex + 1}/${batch.total})` : question.header
     const prompt = [title, question.question].filter(Boolean).join('\n\n')
     const keyboard = question.options.map((label, optionIdx) => [
       {
         text: label,
-        callback_data: this.encodeCallbackData('question', requestId, `${questionIndex}-${optionIdx}`)
+        callback_data: this.encodeCallbackData(
+          'question',
+          requestId,
+          `${questionIndex}-${optionIdx}`
+        )
       }
     ])
     const sent = await this.sendMessage(cfg, prompt, { inline_keyboard: keyboard })
@@ -788,7 +831,9 @@ export class TelegramForwardingService {
     })
   }
 
-  private parseCallbackData(data: string): { prefix: string; requestId: string; action: string } | null {
+  private parseCallbackData(
+    data: string
+  ): { prefix: string; requestId: string; action: string } | null {
     const firstSeparator = data.indexOf(':')
     const lastSeparator = data.lastIndexOf(':')
     if (firstSeparator <= 0 || lastSeparator <= firstSeparator) return null
@@ -822,27 +867,39 @@ export class TelegramForwardingService {
 
   private async replyCommand(interaction: TrackedInteraction, action: string): Promise<void> {
     const impl = this.sdkManager?.getImplementer('claude-code')
-    if (!(impl instanceof ClaudeCodeImplementer)) throw new Error('Claude Code implementer not available')
+    if (!(impl instanceof ClaudeCodeImplementer))
+      throw new Error('Claude Code implementer not available')
     if (action === 'o') {
       impl.handleApprovalReply(interaction.requestId, true)
     } else if (action === 'a') {
-      impl.handleApprovalReply(interaction.requestId, true, 'allow', interaction.patternSuggestions?.[0])
+      impl.handleApprovalReply(
+        interaction.requestId,
+        true,
+        'allow',
+        interaction.patternSuggestions?.[0]
+      )
     } else if (action === 'b') {
-      impl.handleApprovalReply(interaction.requestId, false, 'block', interaction.patternSuggestions?.[0])
+      impl.handleApprovalReply(
+        interaction.requestId,
+        false,
+        'block',
+        interaction.patternSuggestions?.[0]
+      )
     } else {
       impl.handleApprovalReply(interaction.requestId, false)
     }
   }
 
   private async requestPlanHandoff(interaction: TrackedInteraction): Promise<void> {
-    if (!this.mainWindow || !this.state) return
-    this.mainWindow.webContents.send('telegram:planImplementRequested', {
+    if (!this.state) return
+    const payload: TelegramPlanImplementRequestedPayload = {
       sessionId: this.state.sessionId,
       worktreeId: this.state.worktreeId ?? null,
       connectionId: this.state.connectionId ?? null,
       requestId: interaction.requestId,
-      plan: interaction.plan
-    })
+      plan: interaction.plan ?? ''
+    }
+    this.backendEventPublisher?.(TELEGRAM_PLAN_IMPLEMENT_REQUESTED_CHANNEL, payload)
   }
 
   private async rejectPlan(interaction: TrackedInteraction, feedback: string): Promise<void> {
@@ -853,7 +910,12 @@ export class TelegramForwardingService {
       state &&
       (impl.hasPendingPlan(interaction.requestId) || impl.hasPendingPlanForSession(state.sessionId))
     ) {
-      await impl.planReject(interaction.worktreePath ?? '', state.sessionId, feedback, interaction.requestId)
+      await impl.planReject(
+        interaction.worktreePath ?? '',
+        state.sessionId,
+        feedback,
+        interaction.requestId
+      )
       return
     }
     await this.sendPrompt(feedback)
@@ -934,7 +996,9 @@ export class TelegramForwardingService {
     const parts = [{ type: 'text' as const, text }]
 
     if (session.agent_sdk !== 'opencode' && session.agent_sdk !== 'terminal' && this.sdkManager) {
-      await this.sdkManager.getImplementer(session.agent_sdk).prompt(workspacePath, agentSessionId, parts)
+      await this.sdkManager
+        .getImplementer(session.agent_sdk)
+        .prompt(workspacePath, agentSessionId, parts)
     } else {
       await openCodeService.prompt(workspacePath, agentSessionId, parts)
     }
@@ -1022,7 +1086,8 @@ export class TelegramForwardingService {
   }
 
   private encodeCallbackData(kind: CallbackKind, requestId: string, action: string): string {
-    const prefix = kind === 'question' ? 'q' : kind === 'permission' ? 'p' : kind === 'command' ? 'c' : 'pl'
+    const prefix =
+      kind === 'question' ? 'q' : kind === 'permission' ? 'p' : kind === 'command' ? 'c' : 'pl'
     const direct = `${prefix}:${requestId}:${action}`
     if (direct.length <= 64) return direct
 
@@ -1040,7 +1105,10 @@ export class TelegramForwardingService {
     }
   }
 
-  private async resolveTelegramMessage(interaction: TrackedInteraction, status: string): Promise<void> {
+  private async resolveTelegramMessage(
+    interaction: TrackedInteraction,
+    status: string
+  ): Promise<void> {
     const cfg = this.getConfig()
     if (!cfg) return
     await this.editMessageText(
@@ -1156,10 +1224,15 @@ export class TelegramForwardingService {
       const cfg = this.getConfig()
       if (!cfg) return
       try {
-        const updates = await this.api<TelegramUpdate[]>(cfg.botToken, 'getUpdates', {
-          timeout: 30,
-          offset: this.state.lastUpdateId + 1
-        }, controller.signal)
+        const updates = await this.api<TelegramUpdate[]>(
+          cfg.botToken,
+          'getUpdates',
+          {
+            timeout: 30,
+            offset: this.state.lastUpdateId + 1
+          },
+          controller.signal
+        )
         for (const update of updates) {
           if (!this.state) return
           this.state.lastUpdateId = Math.max(this.state.lastUpdateId, update.update_id)
@@ -1195,12 +1268,12 @@ export class TelegramForwardingService {
   }
 
   private emitStatus(lastError?: string): void {
-    if (!this.mainWindow || this.mainWindow.isDestroyed()) return
     const status = this.getStatus()
-    this.mainWindow.webContents.send('telegram:statusChanged', {
+    const payload = {
       ...status,
       lastError: lastError ?? status.lastError
-    })
+    }
+    this.backendEventPublisher?.(TELEGRAM_STATUS_CHANGED_CHANNEL, payload)
   }
 
   private async sendMessage(
@@ -1212,19 +1285,6 @@ export class TelegramForwardingService {
       chat_id: cfg.chatId,
       text: formatTelegramText(text || ' '),
       ...(replyMarkup ? { reply_markup: replyMarkup } : {})
-    })
-  }
-
-  private async sendForceReply(
-    cfg: TelegramConfig,
-    text: string,
-    replyToMessageId: number
-  ): Promise<TelegramMessage> {
-    return this.api<TelegramMessage>(cfg.botToken, 'sendMessage', {
-      chat_id: cfg.chatId,
-      text,
-      reply_to_message_id: replyToMessageId,
-      reply_markup: { force_reply: true, selective: true }
     })
   }
 

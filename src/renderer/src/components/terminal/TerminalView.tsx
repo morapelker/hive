@@ -12,6 +12,8 @@ import type { TerminalBackend as ITerminalBackend, TerminalBackendType } from '.
 import '@xterm/xterm/css/xterm.css'
 import '@/styles/xterm.css'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { systemApi } from '@/api/system-api'
+import { terminalApi } from '@/api/terminal-api'
 
 interface TerminalViewProps {
   terminalId: string
@@ -170,13 +172,12 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
   // by TerminalManager's single-active invariant), so only one listener fires.
   useEffect(() => {
     if (!effectiveVisible) return
-    if (!window.systemOps?.onEditPaste) return
 
-    const cleanup = window.systemOps.onEditPaste((text) => {
+    const cleanup = systemApi.onEditPaste((text) => {
       if (activeBackendTypeRef.current === 'ghostty') {
-        window.terminalOps.ghosttyPasteText(terminalId, text).then(unwrapEnvelope)
+        terminalApi.ghosttyPasteText(terminalId, text).then(unwrapEnvelope)
       } else if (activeBackendTypeRef.current === 'xterm') {
-        window.terminalOps.write(terminalId, text)
+        terminalApi.write(terminalId, text)
       }
     })
 
@@ -257,7 +258,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
       // Fetch Ghostty config for theming and shell preferences
       let config: GhosttyTerminalConfig = {}
       try {
-        config = unwrapEnvelope(await window.terminalOps.getConfig())
+        config = unwrapEnvelope(await terminalApi.getConfig())
       } catch {
         // Failed to fetch config, use defaults
       }
@@ -327,7 +328,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
     // Get the current config for shell preference
     let shell: string | undefined
     try {
-      const config = unwrapEnvelope(await window.terminalOps.getConfig())
+      const config = unwrapEnvelope(await terminalApi.getConfig())
       shell = config.shell
     } catch {
       // Use default shell

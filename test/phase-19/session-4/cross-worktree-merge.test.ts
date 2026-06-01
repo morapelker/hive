@@ -1,6 +1,16 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest'
 import { useGitStore } from '../../../src/renderer/src/stores/useGitStore'
 
+const gitApiMocks = vi.hoisted(() => ({
+  commit: vi.fn(),
+  getFileStatuses: vi.fn(),
+  getBranchInfo: vi.fn()
+}))
+
+vi.mock('@/api/git-api', () => ({
+  gitApi: gitApiMocks
+}))
+
 // Mock useWorktreeStore before importing useGitStore internals
 vi.mock('../../../src/renderer/src/stores/useWorktreeStore', () => ({
   useWorktreeStore: {
@@ -18,8 +28,23 @@ vi.mock('../../../src/renderer/src/stores/useWorktreeStore', () => ({
   }
 }))
 
+vi.mock('../../../src/renderer/src/stores/useKanbanStore', () => ({
+  useKanbanStore: {
+    getState: () => ({
+      updateTicket: vi.fn()
+    })
+  }
+}))
+
 describe('Session 4: Cross-Worktree Merge Default', () => {
   beforeEach(() => {
+    vi.clearAllMocks()
+    gitApiMocks.getFileStatuses.mockResolvedValue({ success: true, files: [] })
+    gitApiMocks.getBranchInfo.mockResolvedValue({
+      success: true,
+      branch: { name: 'feature-x', tracking: null, ahead: 0, behind: 0 }
+    })
+
     // Reset the store between tests
     useGitStore.setState({
       defaultMergeBranch: new Map(),
@@ -60,19 +85,7 @@ describe('Session 4: Cross-Worktree Merge Default', () => {
       ])
     })
 
-    // Mock window.gitOps.commit
-    Object.defineProperty(window, 'gitOps', {
-      writable: true,
-      configurable: true,
-      value: {
-        commit: vi.fn().mockResolvedValue({ success: true, commitHash: 'abc123' }),
-        getFileStatuses: vi.fn().mockResolvedValue({ success: true, files: [] }),
-        getBranchInfo: vi.fn().mockResolvedValue({
-          success: true,
-          branch: { name: 'feature-x', tracking: null, ahead: 0, behind: 0 }
-        })
-      }
-    })
+    gitApiMocks.commit.mockResolvedValue({ success: true, commitHash: 'abc123' })
 
     const result = await useGitStore.getState().commit('/repo/wt-1', 'test commit')
 
@@ -85,13 +98,7 @@ describe('Session 4: Cross-Worktree Merge Default', () => {
   })
 
   test('commit does not set defaultMergeBranch on failure', async () => {
-    Object.defineProperty(window, 'gitOps', {
-      writable: true,
-      configurable: true,
-      value: {
-        commit: vi.fn().mockResolvedValue({ success: false, error: 'nothing to commit' })
-      }
-    })
+    gitApiMocks.commit.mockResolvedValue({ success: false, error: 'nothing to commit' })
 
     await useGitStore.getState().commit('/repo/wt-1', 'test commit')
     expect(useGitStore.getState().defaultMergeBranch.size).toBe(0)
@@ -108,18 +115,7 @@ describe('Session 4: Cross-Worktree Merge Default', () => {
       ])
     })
 
-    Object.defineProperty(window, 'gitOps', {
-      writable: true,
-      configurable: true,
-      value: {
-        commit: vi.fn().mockResolvedValue({ success: true, commitHash: 'def456' }),
-        getFileStatuses: vi.fn().mockResolvedValue({ success: true, files: [] }),
-        getBranchInfo: vi.fn().mockResolvedValue({
-          success: true,
-          branch: { name: 'feature-x', tracking: null, ahead: 0, behind: 0 }
-        })
-      }
-    })
+    gitApiMocks.commit.mockResolvedValue({ success: true, commitHash: 'def456' })
 
     expect(useGitStore.getState().mergeSelectionVersion).toBe(0)
 
@@ -136,13 +132,7 @@ describe('Session 4: Cross-Worktree Merge Default', () => {
   })
 
   test('failed commit does not increment mergeSelectionVersion', async () => {
-    Object.defineProperty(window, 'gitOps', {
-      writable: true,
-      configurable: true,
-      value: {
-        commit: vi.fn().mockResolvedValue({ success: false, error: 'nothing to commit' })
-      }
-    })
+    gitApiMocks.commit.mockResolvedValue({ success: false, error: 'nothing to commit' })
 
     expect(useGitStore.getState().mergeSelectionVersion).toBe(0)
     await useGitStore.getState().commit('/repo/wt-1', 'test commit')

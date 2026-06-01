@@ -1,20 +1,27 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-// Capture registered IPC handlers
-const handlers = new Map<string, (...args: any[]) => any>()
-
 vi.mock('electron', () => ({
-  ipcMain: {
-    handle: vi.fn((channel: string, handler: (...args: any[]) => any) => {
-      handlers.set(channel, async (...args: any[]) => {
-        const result = await handler(...args)
-        return result?.success === true && 'value' in result ? result.value : result
-      })
-    })
-  },
   app: {
-    getPath: vi.fn(() => '/tmp')
+    getPath: vi.fn(() => '/tmp'),
+    getVersion: vi.fn(() => '0.0.0'),
+    isPackaged: false
+  },
+  BrowserWindow: vi.fn(),
+  screen: {
+    getPrimaryDisplay: vi.fn(() => ({ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }))
+  }
+}))
+
+vi.mock('electron-updater', () => ({
+  autoUpdater: {
+    autoDownload: false,
+    autoInstallOnAppQuit: true,
+    logger: null,
+    on: vi.fn(),
+    checkForUpdates: vi.fn(),
+    downloadUpdate: vi.fn(),
+    quitAndInstall: vi.fn()
   }
 }))
 
@@ -29,13 +36,23 @@ vi.mock('../../../src/main/services/logger', () => ({
 
 vi.mock('../../../src/main/services/opencode-service', () => ({
   openCodeService: {
-    setMainWindow: vi.fn(),
     getMessages: vi.fn().mockResolvedValue([{ id: 'oc-msg-1', role: 'user' }]),
     getSessionInfo: vi.fn().mockResolvedValue({ canUndo: true, canRedo: false })
   }
 }))
 
-import { registerOpenCodeHandlers } from '../../../src/main/ipc/opencode-handlers'
+vi.mock('../../../src/main/services/claude-code-implementer', () => ({
+  ClaudeCodeImplementer: vi.fn()
+}))
+
+vi.mock('../../../src/main/services/codex-implementer', () => ({
+  CodexImplementer: vi.fn()
+}))
+
+import {
+  getOpenCodeSessionInfo,
+  getOpenCodeSessionMessages
+} from '../../../src/main/services/opencode-session-commands'
 import { openCodeService } from '../../../src/main/services/opencode-service'
 import type { AgentSdkManager } from '../../../src/main/services/agent-sdk-manager'
 import type { DatabaseService } from '../../../src/main/db/database'
@@ -73,8 +90,7 @@ function createMockClaudeImpl(): AgentSdkImplementer {
     redo: vi.fn(),
     listCommands: vi.fn(),
     sendCommand: vi.fn(),
-    renameSession: vi.fn(),
-    setMainWindow: vi.fn()
+    renameSession: vi.fn()
   }
 }
 
@@ -95,13 +111,10 @@ function createMockDbService(sdkId: 'opencode' | 'claude-code' | null): Database
   } as unknown as DatabaseService
 }
 
-const mockEvent = {} as any
-
-describe('IPC opencode:messages SDK-aware routing', () => {
+describe('OpenCode message SDK-aware routing', () => {
   let claudeImpl: AgentSdkImplementer
 
   beforeEach(() => {
-    handlers.clear()
     vi.clearAllMocks()
     claudeImpl = createMockClaudeImpl()
   })
@@ -109,14 +122,13 @@ describe('IPC opencode:messages SDK-aware routing', () => {
   it('routes to Claude implementer for claude-code sessions', async () => {
     const sdkManager = createMockSdkManager(claudeImpl)
     const dbService = createMockDbService('claude-code')
-    const mainWindow = { isDestroyed: () => false, webContents: { send: vi.fn() } } as any
 
-    registerOpenCodeHandlers(mainWindow, sdkManager, dbService)
-
-    const handler = handlers.get('opencode:messages')!
-    expect(handler).toBeDefined()
-
-    const result = await handler(mockEvent, '/project', 'claude-session-1')
+    const result = await getOpenCodeSessionMessages(
+      '/project',
+      'claude-session-1',
+      sdkManager,
+      dbService
+    )
 
     expect(dbService.getAgentSdkForSession).toHaveBeenCalledWith('claude-session-1')
     expect(sdkManager.getImplementer).toHaveBeenCalledWith('claude-code')
@@ -131,12 +143,13 @@ describe('IPC opencode:messages SDK-aware routing', () => {
   it('falls through to OpenCode for opencode sessions', async () => {
     const sdkManager = createMockSdkManager(claudeImpl)
     const dbService = createMockDbService('opencode')
-    const mainWindow = { isDestroyed: () => false, webContents: { send: vi.fn() } } as any
 
-    registerOpenCodeHandlers(mainWindow, sdkManager, dbService)
-
-    const handler = handlers.get('opencode:messages')!
-    const result = await handler(mockEvent, '/project', 'oc-session-1')
+    const result = await getOpenCodeSessionMessages(
+      '/project',
+      'oc-session-1',
+      sdkManager,
+      dbService
+    )
 
     expect(dbService.getAgentSdkForSession).toHaveBeenCalledWith('oc-session-1')
     expect(claudeImpl.getMessages).not.toHaveBeenCalled()
@@ -148,12 +161,7 @@ describe('IPC opencode:messages SDK-aware routing', () => {
   })
 
   it('falls through to OpenCode when sdkManager is null', async () => {
-    const mainWindow = { isDestroyed: () => false, webContents: { send: vi.fn() } } as any
-
-    registerOpenCodeHandlers(mainWindow, undefined, undefined)
-
-    const handler = handlers.get('opencode:messages')!
-    const result = await handler(mockEvent, '/project', 'any-session')
+    const result = await getOpenCodeSessionMessages('/project', 'any-session')
 
     expect(claudeImpl.getMessages).not.toHaveBeenCalled()
     expect(openCodeService.getMessages).toHaveBeenCalledWith('/project', 'any-session')
@@ -164,11 +172,10 @@ describe('IPC opencode:messages SDK-aware routing', () => {
   })
 })
 
-describe('IPC opencode:sessionInfo SDK-aware routing', () => {
+describe('OpenCode sessionInfo SDK-aware routing', () => {
   let claudeImpl: AgentSdkImplementer
 
   beforeEach(() => {
-    handlers.clear()
     vi.clearAllMocks()
     claudeImpl = createMockClaudeImpl()
   })
@@ -176,17 +183,13 @@ describe('IPC opencode:sessionInfo SDK-aware routing', () => {
   it('routes to Claude implementer for claude-code sessions', async () => {
     const sdkManager = createMockSdkManager(claudeImpl)
     const dbService = createMockDbService('claude-code')
-    const mainWindow = { isDestroyed: () => false, webContents: { send: vi.fn() } } as any
 
-    registerOpenCodeHandlers(mainWindow, sdkManager, dbService)
-
-    const handler = handlers.get('opencode:sessionInfo')!
-    expect(handler).toBeDefined()
-
-    const result = await handler(mockEvent, {
-      worktreePath: '/project',
-      sessionId: 'claude-session-1'
-    })
+    const result = await getOpenCodeSessionInfo(
+      '/project',
+      'claude-session-1',
+      sdkManager,
+      dbService
+    )
 
     expect(dbService.getAgentSdkForSession).toHaveBeenCalledWith('claude-session-1')
     expect(sdkManager.getImplementer).toHaveBeenCalledWith('claude-code')
@@ -202,15 +205,8 @@ describe('IPC opencode:sessionInfo SDK-aware routing', () => {
   it('falls through to OpenCode for opencode sessions', async () => {
     const sdkManager = createMockSdkManager(claudeImpl)
     const dbService = createMockDbService('opencode')
-    const mainWindow = { isDestroyed: () => false, webContents: { send: vi.fn() } } as any
 
-    registerOpenCodeHandlers(mainWindow, sdkManager, dbService)
-
-    const handler = handlers.get('opencode:sessionInfo')!
-    const result = await handler(mockEvent, {
-      worktreePath: '/project',
-      sessionId: 'oc-session-1'
-    })
+    const result = await getOpenCodeSessionInfo('/project', 'oc-session-1', sdkManager, dbService)
 
     expect(dbService.getAgentSdkForSession).toHaveBeenCalledWith('oc-session-1')
     expect(claudeImpl.getSessionInfo).not.toHaveBeenCalled()

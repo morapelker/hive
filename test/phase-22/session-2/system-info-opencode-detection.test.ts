@@ -5,13 +5,6 @@ const { mockExecFileSync, mockExistsSync } = vi.hoisted(() => ({
   mockExistsSync: vi.fn()
 }))
 
-vi.mock('electron', () => ({
-  app: {
-    getPath: vi.fn().mockReturnValue('/tmp'),
-    getVersion: vi.fn().mockReturnValue('1.0.0')
-  }
-}))
-
 vi.mock('child_process', () => ({
   default: { execFileSync: (...args: unknown[]) => mockExecFileSync(...args) },
   execFileSync: (...args: unknown[]) => mockExecFileSync(...args)

@@ -3,9 +3,7 @@ import { useSessionStore } from './useSessionStore'
 import { useConnectionStore } from './useConnectionStore'
 import { lastSendMode } from '@/lib/message-send-times'
 import { notifyKanbanSessionSync } from './store-coordination'
-import { unwrapEnvelopeApi } from '@/lib/ipc-envelope'
-
-const db = unwrapEnvelopeApi(() => window.db)
+import { dbApi } from '@/api/db-api'
 
 export type SessionStatusType =
   | 'working'
@@ -346,7 +344,7 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
     }))
 
     // Persist to SQLite (fire-and-forget)
-    db?.worktree?.update?.(worktreeId, { last_message_at: next }).catch(() => {})
+    dbApi.worktree.update(worktreeId, { last_message_at: next }).catch(() => {})
   },
 
   getLastMessageTime: (worktreeId: string) => {
@@ -438,6 +436,8 @@ declare global {
   }
 }
 
-if (import.meta.env.DEV && typeof window !== 'undefined') {
+const importMeta = import.meta as ImportMeta & { env?: { DEV?: boolean } }
+
+if (importMeta.env?.DEV && typeof window !== 'undefined') {
   window.__hive_useWorktreeStatusStore__ = useWorktreeStatusStore
 }

@@ -23,6 +23,7 @@ import {
 import { useSessionStore } from '@/stores/useSessionStore'
 import { toast } from '@/lib/toast'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { opencodeApi } from '@/api/opencode-api'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -82,7 +83,7 @@ export const ModelSelector = memo(function ModelSelector({
   const agentSdk = rawAgentSdk === 'terminal' ? 'opencode' : rawAgentSdk
   const globalModel = useSettingsStore((state) => resolveModelForSdk(agentSdk, state))
   const availableAgentSdks = useSettingsStore((s) => s.availableAgentSdks)
-  const sessionModel =
+  const sessionModel: SelectedModel | null =
     session?.model_id && session.model_provider_id
       ? {
           providerID: session.model_provider_id,
@@ -123,9 +124,7 @@ export const ModelSelector = memo(function ModelSelector({
         const catalogs = await Promise.all(
           catalogAgentSdks.map(async (sdk) => {
             const listModelsSdk = sdk === 'claude-code-cli' ? 'claude-code' : sdk
-            const result = unwrapEnvelope(
-              await window.opencodeOps.listModels({ agentSdk: listModelsSdk })
-            )
+            const result = unwrapEnvelope(await opencodeApi.listModels({ agentSdk: listModelsSdk }))
             if (!result.success || !result.providers) return []
             const parsed = parseProviders(result.providers)
             cacheHandoffModelCatalog(sdk, result.providers)
@@ -331,8 +330,7 @@ export const ModelSelector = memo(function ModelSelector({
   const displayName = currentModel
     ? getModelDisplayName(currentModel)
     : getModelDisplayName({
-        id: selectedModel?.modelID || 'claude-opus-4-5-20251101',
-        providerID: selectedModel?.providerID || 'anthropic'
+        id: selectedModel?.modelID || 'claude-opus-4-5-20251101'
       })
 
   const sdkFilterOptions = useMemo((): SdkFilterOption[] => {

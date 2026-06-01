@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState, useRef } from 'react'
 import { revealLabel } from '@/lib/platform'
-import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import {
   AlertCircle,
   Code,
@@ -44,6 +43,8 @@ import {
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { HintBadge } from '@/components/ui/HintBadge'
 import { toast, clipboardToast } from '@/lib/toast'
+import { connectionApi } from '@/api/connection-api'
+import { projectApi } from '@/api/project-api'
 
 interface ConnectionMemberEnriched {
   id: string
@@ -228,7 +229,7 @@ export function ConnectionItem({
   }
 
   const handleOpenInTerminal = useCallback(async (): Promise<void> => {
-    const result = unwrapEnvelope(await window.connectionOps.openInTerminal(connection.path))
+    const result = await connectionApi.openInTerminal(connection.path)
     if (result.success) {
       toast.success('Opened in Terminal')
     } else {
@@ -237,7 +238,7 @@ export function ConnectionItem({
   }, [connection.path])
 
   const handleOpenInEditor = useCallback(async (): Promise<void> => {
-    const result = unwrapEnvelope(await window.connectionOps.openInEditor(connection.path))
+    const result = await connectionApi.openInEditor(connection.path)
     if (result.success) {
       toast.success('Opened in Editor')
     } else {
@@ -246,11 +247,11 @@ export function ConnectionItem({
   }, [connection.path])
 
   const handleOpenInFinder = async (): Promise<void> => {
-    unwrapEnvelope(await window.projectOps.showInFolder(connection.path))
+    await projectApi.showInFolder(connection.path)
   }
 
   const handleCopyPath = async (): Promise<void> => {
-    unwrapEnvelope(await window.projectOps.copyToClipboard(connection.path))
+    await projectApi.copyToClipboard(connection.path)
     clipboardToast.copied('Path')
   }
 

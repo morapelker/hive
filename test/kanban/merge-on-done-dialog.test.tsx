@@ -2,10 +2,70 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { KanbanTicket, Project, Worktree } from '../../src/main/db/types'
 import { MergeOnDoneDialog } from '../../src/renderer/src/components/kanban/MergeOnDoneDialog'
+import { dbApi } from '../../src/renderer/src/api/db-api'
 import { useGitStore } from '../../src/renderer/src/stores/useGitStore'
 import { useKanbanStore } from '../../src/renderer/src/stores/useKanbanStore'
 import { useWorktreeStatusStore } from '../../src/renderer/src/stores/useWorktreeStatusStore'
 import { useWorktreeStore } from '../../src/renderer/src/stores/useWorktreeStore'
+
+const apiMocks = vi.hoisted(() => ({
+  dbApi: {
+    setting: {
+      get: vi.fn(),
+      set: vi.fn()
+    },
+    worktree: {
+      get: vi.fn(),
+      getActiveByProject: vi.fn()
+    },
+    project: {
+      get: vi.fn()
+    }
+  },
+  gitApi: {
+    hasUncommittedChanges: vi.fn(),
+    branchDiffShortStat: vi.fn(),
+    getDiffStat: vi.fn(),
+    getRemoteUrl: vi.fn(),
+    pull: vi.fn(),
+    merge: vi.fn(),
+    mergeAbort: vi.fn(),
+    stageAll: vi.fn(),
+    commit: vi.fn(),
+    getBranchInfo: vi.fn()
+  },
+  kanbanApi: {
+    ticket: {
+      move: vi.fn()
+    }
+  },
+  petApi: {
+    updateSettings: vi.fn()
+  },
+  settingsApi: {
+    onSettingsUpdated: vi.fn(() => () => {})
+  }
+}))
+
+vi.mock('../../src/renderer/src/api/db-api', () => ({
+  dbApi: apiMocks.dbApi
+}))
+
+vi.mock('../../src/renderer/src/api/git-api', () => ({
+  gitApi: apiMocks.gitApi
+}))
+
+vi.mock('../../src/renderer/src/api/kanban-api', () => ({
+  kanbanApi: apiMocks.kanbanApi
+}))
+
+vi.mock('../../src/renderer/src/api/pet-api', () => ({
+  petApi: apiMocks.petApi
+}))
+
+vi.mock('../../src/renderer/src/api/settings-api', () => ({
+  settingsApi: apiMocks.settingsApi
+}))
 
 const toastError = vi.fn()
 const toastSuccess = vi.fn()
@@ -19,11 +79,10 @@ vi.mock('sonner', () => ({
   }
 }))
 
-const ticketMove = vi.fn()
-const mergeAbort = vi.fn()
-const merge = vi.fn()
+const ticketMove = apiMocks.kanbanApi.ticket.move
+const mergeAbort = apiMocks.gitApi.mergeAbort
+const merge = apiMocks.gitApi.merge
 const originalArchiveWorktree = useWorktreeStore.getState().archiveWorktree
-const envelope = <T,>(value: T) => ({ success: true, value })
 
 function makeTicket(overrides: Partial<KanbanTicket> = {}): KanbanTicket {
   return {
@@ -112,49 +171,31 @@ describe('MergeOnDoneDialog', () => {
   beforeEach(() => {
     vi.clearAllMocks()
 
-    Object.defineProperty(window, 'kanban', {
-      writable: true,
-      configurable: true,
-      value: {
-        ticket: {
-          move: ticketMove.mockResolvedValue(envelope(undefined))
-        }
-      }
+    vi.mocked(dbApi.setting.get).mockResolvedValue(null)
+    vi.mocked(dbApi.setting.set).mockResolvedValue(true)
+    vi.mocked(dbApi.worktree.get).mockResolvedValue(makeWorktree())
+    vi.mocked(dbApi.worktree.getActiveByProject).mockResolvedValue([makeWorktree(), baseWorktree])
+    vi.mocked(dbApi.project.get).mockResolvedValue(project)
+    ticketMove.mockResolvedValue(null)
+    apiMocks.gitApi.hasUncommittedChanges.mockResolvedValue(false)
+    apiMocks.gitApi.branchDiffShortStat.mockResolvedValue({
+      success: true,
+      filesChanged: 2,
+      insertions: 4,
+      deletions: 1,
+      commitsAhead: 1
     })
-
-    Object.defineProperty(window, 'db', {
-      writable: true,
-      configurable: true,
-      value: {
-        worktree: {
-          get: vi.fn().mockResolvedValue(envelope(makeWorktree())),
-          getActiveByProject: vi.fn().mockResolvedValue(envelope([makeWorktree(), baseWorktree]))
-        },
-        project: {
-          get: vi.fn().mockResolvedValue(envelope(project))
-        }
-      }
+    apiMocks.gitApi.getDiffStat.mockResolvedValue({
+      success: true,
+      files: []
     })
-
-    Object.defineProperty(window, 'gitOps', {
-      writable: true,
-      configurable: true,
-      value: {
-        hasUncommittedChanges: vi.fn().mockResolvedValue(envelope(false)),
-        branchDiffShortStat: vi.fn().mockResolvedValue(envelope({
-          success: true,
-          filesChanged: 2,
-          insertions: 4,
-          deletions: 1,
-          commitsAhead: 1
-        })),
-        getDiffStat: vi.fn(),
-        getRemoteUrl: vi.fn().mockResolvedValue(envelope({ success: true, url: null, remote: null })),
-        pull: vi.fn().mockResolvedValue(envelope({ success: true })),
-        merge,
-        mergeAbort
-      }
-    })
+    apiMocks.gitApi.getRemoteUrl.mockResolvedValue({ success: true, url: null, remote: null })
+    apiMocks.gitApi.pull.mockResolvedValue({ success: true })
+    apiMocks.gitApi.stageAll.mockResolvedValue({ success: true })
+    apiMocks.gitApi.commit.mockResolvedValue({ success: true, commitHash: 'commit-1' })
+    apiMocks.gitApi.getBranchInfo.mockResolvedValue({ success: true, branch: null })
+    apiMocks.petApi.updateSettings.mockResolvedValue({ success: true })
+    mergeAbort.mockResolvedValue({ success: true })
 
     useKanbanStore.setState({
       tickets: new Map([['project-1', [makeTicket()]]]),
@@ -169,14 +210,14 @@ describe('MergeOnDoneDialog', () => {
 
     useWorktreeStore.setState({ archiveWorktree: originalArchiveWorktree })
   })
-
   test('keeps ticket in review when merge returns conflicts', async () => {
-    merge.mockResolvedValue(envelope({
-      success: false,
-      error: 'Merge conflicts in 1 file(s). Resolve conflicts before continuing.',
-      conflicts: ['src/file.ts']
-    }))
-    mergeAbort.mockResolvedValue(envelope({ success: true }))
+    merge.mockResolvedValue(
+      {
+        success: false,
+        error: 'Merge conflicts in 1 file(s). Resolve conflicts before continuing.',
+        conflicts: ['src/file.ts']
+      }
+    )
 
     render(<MergeOnDoneDialog />)
 
@@ -197,10 +238,12 @@ describe('MergeOnDoneDialog', () => {
   })
 
   test('keeps ticket in review when merge fails without conflicts', async () => {
-    merge.mockResolvedValue(envelope({
-      success: false,
-      error: 'merge failed'
-    }))
+    merge.mockResolvedValue(
+      {
+        success: false,
+        error: 'merge failed'
+      }
+    )
 
     render(<MergeOnDoneDialog />)
 
@@ -217,7 +260,7 @@ describe('MergeOnDoneDialog', () => {
   })
 
   test('moves ticket to done only after a successful merge reaches the archive step', async () => {
-    merge.mockResolvedValue(envelope({ success: true }))
+    merge.mockResolvedValue({ success: true })
 
     render(<MergeOnDoneDialog />)
 
@@ -237,7 +280,7 @@ describe('MergeOnDoneDialog', () => {
   })
 
   test('moves ticket to done and closes immediately while archive continues in the background', async () => {
-    merge.mockResolvedValue(envelope({ success: true }))
+    merge.mockResolvedValue({ success: true })
     let resolveArchive!: (value: { success: boolean }) => void
     const archiveWorktree = vi.fn(
       () =>
@@ -285,13 +328,15 @@ describe('MergeOnDoneDialog', () => {
       branch_name: 'feature-two',
       path: '/repo/feature-two'
     })
-    ;(window.db.worktree.get as ReturnType<typeof vi.fn>).mockImplementation((id: string) =>
-      Promise.resolve(envelope(id === 'feature-wt-2' ? secondWorktree : makeWorktree()))
+    vi.mocked(dbApi.worktree.get).mockImplementation((id: string) =>
+      Promise.resolve(id === 'feature-wt-2' ? secondWorktree : makeWorktree())
     )
-    ;(window.db.worktree.getActiveByProject as ReturnType<typeof vi.fn>).mockResolvedValue(
-      envelope([makeWorktree(), secondWorktree, baseWorktree])
-    )
-    merge.mockResolvedValue(envelope({ success: true }))
+    vi.mocked(dbApi.worktree.getActiveByProject).mockResolvedValue([
+      makeWorktree(),
+      secondWorktree,
+      baseWorktree
+    ])
+    merge.mockResolvedValue({ success: true })
     const archiveWorktree = vi.fn(
       () =>
         new Promise<{ success: boolean }>(() => {
@@ -313,13 +358,7 @@ describe('MergeOnDoneDialog', () => {
     act(() => {
       useKanbanStore.setState({
         tickets: new Map([
-          [
-            'project-1',
-            [
-              makeTicket({ column: 'done', sort_order: 100 }),
-              secondTicket
-            ]
-          ]
+          ['project-1', [makeTicket({ column: 'done', sort_order: 100 }), secondTicket]]
         ]),
         pendingDoneMove: {
           ticketId: 'ticket-2',
