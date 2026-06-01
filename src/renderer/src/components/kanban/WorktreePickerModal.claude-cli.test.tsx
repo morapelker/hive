@@ -297,11 +297,12 @@ async function renderAndSelectClaudeCli(ticket: KanbanTicket = baseTicket): Prom
   )
 
   const toggle = screen.getByTestId('sdk-toggle')
-  expect(
-    within(toggle)
-      .getAllByRole('button')
-      .map((button) => button.textContent)
-  ).toEqual(['OpenCode', 'Claude CLI', 'Codex', 'Claude Code (SDK)'])
+  expect(within(toggle).getAllByRole('button').map((button) => button.textContent)).toEqual([
+    'OpenCode',
+    'Claude Code',
+    'Codex',
+    'Claude CLI'
+  ])
   await userEvent.click(screen.getByTestId('sdk-toggle-claude-code-cli'))
 }
 
@@ -319,6 +320,13 @@ async function renderAndSelectClaudeCliForConnection(
     />
   )
 
+  const toggle = screen.getByTestId('sdk-toggle')
+  expect(within(toggle).getAllByRole('button').map((button) => button.textContent)).toEqual([
+    'OpenCode',
+    'Claude Code',
+    'Codex',
+    'Claude CLI'
+  ])
   await userEvent.click(screen.getByTestId('sdk-toggle-claude-code-cli'))
 }
 

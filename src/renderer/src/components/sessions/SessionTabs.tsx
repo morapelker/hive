@@ -1327,13 +1327,13 @@ export function SessionTabs(): React.JSX.Element | null {
                   </ContextMenuItem>
                 )}
                 {availableAgentSdks?.claude && (
-                  <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('claude-code-cli')}>
-                    New Claude Code CLI Session
+                  <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('claude-code')}>
+                    New Claude Code Session
                   </ContextMenuItem>
                 )}
                 {availableAgentSdks?.claude && (
-                  <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('claude-code')}>
-                    New Claude Code Legacy Session
+                  <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('claude-code-cli')}>
+                    New Claude Code CLI Session
                   </ContextMenuItem>
                 )}
                 {availableAgentSdks?.codex && (

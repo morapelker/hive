@@ -47,7 +47,7 @@ export function buildHandoffPrompt(
 
 const SDK_DISPLAY_NAMES: Record<HandoffAgentSdk, string> = {
   opencode: 'OpenCode',
-  'claude-code': 'Claude Code (legacy SDK)',
+  'claude-code': 'Claude Code',
   'claude-code-cli': 'Claude Code (CLI)',
   codex: 'Codex'
 }
@@ -175,7 +175,7 @@ export function getHandoffSdkDisplayName(agentSdk: HandoffAgentSdk): string {
 export function getAvailableHandoffAgentSdks(
   availableAgentSdks?: AvailableAgentSdks | null
 ): HandoffAgentSdk[] {
-  const orderedSdks: HandoffAgentSdk[] = ['opencode', 'claude-code-cli', 'claude-code', 'codex']
+  const orderedSdks: HandoffAgentSdk[] = ['opencode', 'claude-code', 'codex', 'claude-code-cli']
   return orderedSdks.filter((sdk) => isAgentSdkAvailable(sdk, availableAgentSdks))
 }
 

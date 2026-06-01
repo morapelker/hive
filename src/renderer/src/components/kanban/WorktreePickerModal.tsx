@@ -1130,16 +1130,16 @@ export function WorktreePickerModal({
                   {availableAgentSdks.claude && (
                     <button
                       type="button"
-                      data-testid="sdk-toggle-claude-code-cli"
-                      onClick={() => handleSdkChange('claude-code-cli')}
+                      data-testid="sdk-toggle-claude-code"
+                      onClick={() => handleSdkChange('claude-code')}
                       className={cn(
                         'px-2.5 py-1 rounded-md text-xs border transition-colors',
-                        agentSdk === 'claude-code-cli'
+                        agentSdk === 'claude-code'
                           ? 'bg-primary text-primary-foreground border-primary'
                           : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
                       )}
                     >
-                      Claude CLI
+                      Claude Code
                     </button>
                   )}
                   {availableAgentSdks.codex && (
@@ -1160,16 +1160,16 @@ export function WorktreePickerModal({
                   {availableAgentSdks.claude && (
                     <button
                       type="button"
-                      data-testid="sdk-toggle-claude-code"
-                      onClick={() => handleSdkChange('claude-code')}
+                      data-testid="sdk-toggle-claude-code-cli"
+                      onClick={() => handleSdkChange('claude-code-cli')}
                       className={cn(
                         'px-2.5 py-1 rounded-md text-xs border transition-colors',
-                        agentSdk === 'claude-code'
+                        agentSdk === 'claude-code-cli'
                           ? 'bg-primary text-primary-foreground border-primary'
                           : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
                       )}
                     >
-                      Claude Code (SDK)
+                      Claude CLI
                     </button>
                   )}
                 </div>
