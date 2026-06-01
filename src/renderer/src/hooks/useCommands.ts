@@ -657,12 +657,13 @@ export function useCommands() {
     const handler = async (e: Event): Promise<void> => {
       const event = e as CustomEvent<{
         projectId: string
+        worktreeId: string
         commandId: string
         commandName: string
         renderedPrompt: string
       }>
 
-      const { projectId, renderedPrompt } = event.detail
+      const { projectId, worktreeId, renderedPrompt } = event.detail
 
       // Find the project
       const project = projects.find((p) => p.id === projectId)
@@ -679,8 +680,12 @@ export function useCommands() {
         return
       }
 
-      // Use the first worktree (could be enhanced to let user choose)
-      const worktree = worktrees[0]
+      // Find the specific worktree that was clicked
+      const worktree = worktrees.find((w) => w.id === worktreeId)
+      if (!worktree) {
+        toast.error('Worktree not found')
+        return
+      }
 
       // Select the worktree
       selectWorktree(worktree.id)

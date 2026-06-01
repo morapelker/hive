@@ -179,6 +179,7 @@ export const WorktreeItem = memo(function WorktreeItem({
         const event = new CustomEvent('hive:execute-custom-command', {
           detail: {
             projectId: project.id,
+            worktreeId: worktree.id,
             commandId: command.id,
             commandName: command.name,
             renderedPrompt
