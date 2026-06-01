@@ -300,7 +300,8 @@ async function loadSettingsFromDatabase(): Promise<AppSettings | null> {
     if (typeof window !== 'undefined') {
       const fileResult = await settingsApi.loadCustomCommandsFile()
 
-      if (fileResult.success && fileResult.commands && fileResult.commands.length > 0) {
+      // Always sync to database when file load succeeds, even if empty.
+      if (fileResult.success && fileResult.commands !== undefined) {
         const dbValue = await dbApi.setting.get(APP_SETTINGS_DB_KEY)
         const settings = dbValue ? JSON.parse(dbValue) : {}
         settings.customProjectCommands = fileResult.commands
