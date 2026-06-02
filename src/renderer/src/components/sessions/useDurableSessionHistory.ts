@@ -42,6 +42,11 @@ async function getRuntimePath(session: {
 export function useDurableSessionHistory(sessionId: string): boolean {
   const [hasDurableHistory, setHasDurableHistory] = useState(true)
   const session = useSessionStore((state) => state.getSessionById(sessionId))
+  const opencodeSessionId = session?.opencode_session_id
+  const claudeSessionId = session?.claude_session_id
+  const agentSdk = session?.agent_sdk
+  const worktreeId = session?.worktree_id
+  const connectionId = session?.connection_id
 
   useEffect(() => {
     let mounted = true
@@ -61,18 +66,26 @@ export function useDurableSessionHistory(sessionId: string): boolean {
           return
         }
 
-        if (session?.opencode_session_id) {
+        if (agentSdk === 'claude-code-cli' && claudeSessionId) {
+          if (mounted) setHasDurableHistory(true)
+          return
+        }
+
+        if (opencodeSessionId) {
           if (!window.opencodeOps?.getMessages) {
             if (mounted) setHasDurableHistory(true)
             return
           }
-          const runtimePath = await getRuntimePath(session)
+          const runtimePath = await getRuntimePath({
+            worktree_id: worktreeId ?? null,
+            connection_id: connectionId ?? null
+          })
           if (!runtimePath) {
             if (mounted) setHasDurableHistory(true)
             return
           }
           const result = unwrapEnvelope(
-            await window.opencodeOps.getMessages(runtimePath, session.opencode_session_id)
+            await window.opencodeOps.getMessages(runtimePath, opencodeSessionId)
           )
           if (!result.success || !Array.isArray(result.messages)) {
             if (mounted) setHasDurableHistory(true)
@@ -98,7 +111,7 @@ export function useDurableSessionHistory(sessionId: string): boolean {
       mounted = false
       window.clearInterval(intervalId)
     }
-  }, [session, sessionId])
+  }, [sessionId, opencodeSessionId, claudeSessionId, agentSdk, worktreeId, connectionId])
 
   return hasDurableHistory
 }

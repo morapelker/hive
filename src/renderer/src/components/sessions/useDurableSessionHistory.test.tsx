@@ -1,4 +1,4 @@
-import { cleanup, renderHook, waitFor } from '@testing-library/react'
+import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useDurableSessionHistory } from './useDurableSessionHistory'
 import { useConnectionStore } from '@/stores/useConnectionStore'
@@ -29,16 +29,20 @@ const session = {
   completed_at: null
 }
 
+function seedSession(overrides: Partial<typeof session> = {}): void {
+  useSessionStore.setState({
+    sessionsByWorktree: new Map([['worktree-1', [{ ...session, ...overrides }]]]),
+    sessionsByConnection: new Map()
+  })
+}
+
 describe('useDurableSessionHistory', () => {
   beforeEach(() => {
     useConnectionStore.setState(initialConnectionState, true)
     useSessionStore.setState(initialSessionState, true)
     useWorktreeStore.setState(initialWorktreeState, true)
 
-    useSessionStore.setState({
-      sessionsByWorktree: new Map([['worktree-1', [session]]]),
-      sessionsByConnection: new Map()
-    })
+    seedSession()
     useWorktreeStore.setState({
       worktreesByProject: new Map([
         [
@@ -122,5 +126,73 @@ describe('useDurableSessionHistory', () => {
     await waitFor(() => {
       expect(result.current).toBe(false)
     })
+  })
+
+  it('treats launched Claude CLI sessions as durable when transcript cannot be verified', async () => {
+    seedSession({
+      agent_sdk: 'claude-code-cli',
+      opencode_session_id: null,
+      claude_session_id: 'claude-session-1'
+    })
+    Object.defineProperty(window, 'opencodeOps', {
+      writable: true,
+      configurable: true,
+      value: {
+        getMessages: vi.fn(async () => ({
+          success: true,
+          messages: []
+        }))
+      }
+    })
+
+    const { result } = renderHook(() => useDurableSessionHistory('session-1'))
+
+    await waitFor(() => {
+      expect(result.current).toBe(true)
+    })
+    expect(window.opencodeOps.getMessages).not.toHaveBeenCalled()
+  })
+
+  it('returns false for not-yet-launched Claude CLI sessions with empty DB history', async () => {
+    seedSession({
+      agent_sdk: 'claude-code-cli',
+      opencode_session_id: null,
+      claude_session_id: null
+    })
+
+    const { result } = renderHook(() => useDurableSessionHistory('session-1'))
+
+    await waitFor(() => {
+      expect(result.current).toBe(false)
+    })
+  })
+
+  it('does not reset or recheck when unrelated session fields change', async () => {
+    const getMessages = vi.fn(async () => ({
+      success: true,
+      messages: []
+    }))
+    Object.defineProperty(window, 'opencodeOps', {
+      writable: true,
+      configurable: true,
+      value: { getMessages }
+    })
+
+    const { result } = renderHook(() => useDurableSessionHistory('session-1'))
+
+    await waitFor(() => {
+      expect(result.current).toBe(false)
+    })
+    expect(getMessages).toHaveBeenCalledTimes(1)
+
+    act(() => {
+      seedSession({
+        name: 'Renamed Session',
+        updated_at: '2026-01-01T00:00:02.000Z'
+      })
+    })
+
+    expect(result.current).toBe(false)
+    expect(getMessages).toHaveBeenCalledTimes(1)
   })
 })

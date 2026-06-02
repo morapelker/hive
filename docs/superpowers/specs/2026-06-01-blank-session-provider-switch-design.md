@@ -67,11 +67,12 @@ A session is durably blank only when all of the following are true:
 2. `window.db.sessionMessage.list(sessionId)` returns no messages.
 3. `window.db.sessionActivity.list(sessionId)` returns no activities.
 4. If an existing `opencode_session_id` exists, the live backend transcript can be verified and is empty.
-5. No prompt is currently sending.
-6. No stream is active.
-7. No queued follow-up or pending follow-up prompt exists.
-8. The session is not a bare Terminal session.
-9. No pending initial prompt exists for the session.
+5. If the session is Claude Code CLI, no `claude_session_id` has been captured yet; launched CLI transcripts are treated as unverifiable and therefore nonblank for switching.
+6. No prompt is currently sending.
+7. No stream is active.
+8. No queued follow-up or pending follow-up prompt exists.
+9. The session is not a bare Terminal session.
+10. No pending initial prompt exists for the session.
 
 Draft input does not affect blankness. A session with unsent composer text is still blank if the durable checks above pass.
 
@@ -103,22 +104,23 @@ Action flow:
 2. Reject bare Terminal sessions.
 3. Check durable blankness with `sessionMessage.list` and `sessionActivity.list`; reject if either API is unavailable or throws.
 4. If the current session has an `opencode_session_id`, query the live backend transcript and reject if it is nonempty or cannot be verified.
-5. Reject if provider availability is unknown or if `nextAgentSdk` is unavailable.
-6. Reject if any sent message, activity, active stream, queued prompt, pending follow-up, pending initial prompt, or store-owned local send/stream/queued-follow-up activity exists.
-7. Resolve a default model for `nextAgentSdk` if `nextModel` is not supplied.
-8. Update the session row:
+5. If the current session is Claude CLI and has a `claude_session_id`, reject because Hive has no reliable session-only transcript verification API for the live CLI transcript.
+6. Reject if provider availability is unknown or if `nextAgentSdk` is unavailable.
+7. Reject if any sent message, activity, active stream, queued prompt, pending follow-up, pending initial prompt, or store-owned local send/stream/queued-follow-up activity exists.
+8. Resolve a default model for `nextAgentSdk` if `nextModel` is not supplied.
+9. Update the session row:
    - `agent_sdk = nextAgentSdk`
    - `model_provider_id = resolvedModel.providerID`
    - `model_id = resolvedModel.modelID`
    - `model_variant = resolvedModel.variant ?? null`
    - `opencode_session_id = null`
    - `claude_session_id = null`
-9. After the database update succeeds, best-effort tear down the old runtime:
+10. After the database update succeeds, best-effort tear down the old runtime:
    - Disconnect the old `opencode_session_id` through `opencodeOps.disconnect`.
    - Destroy the old Claude CLI PTY through `terminalOps.destroy(sessionId)`.
-10. Update the in-memory session in the owning scope.
-11. Do not update worktree `last_model_*`.
-12. Do not update global or per-SDK selected model defaults as a side effect.
+11. Update the in-memory session in the owning scope.
+12. Do not update worktree `last_model_*`.
+13. Do not update global or per-SDK selected model defaults as a side effect.
 
 `setSessionModel` remains responsible for explicit model changes and can keep its current last-used default behavior.
 
@@ -169,6 +171,7 @@ Claude CLI model choice remains a launch-time concern. Hive may persist `model_i
 | Durable-blank validation fails | Do not switch; return an error |
 | Durable-blank validation cannot be verified | Fail closed; do not switch |
 | Live backend transcript cannot be verified | Fail closed; do not switch |
+| Launched Claude CLI transcript exists but cannot be verified | Fail closed; show static provider text |
 | Database update fails | Keep old provider and old runtime; show a toast |
 | Old backend teardown fails after DB update | Log and continue |
 | Store update succeeds but new provider connect fails | Keep selected provider; show existing connection retry UI |

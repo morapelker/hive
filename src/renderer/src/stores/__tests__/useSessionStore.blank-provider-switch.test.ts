@@ -447,6 +447,25 @@ describe('useSessionStore.changeBlankSessionProvider', () => {
     )
   })
 
+  it('fails closed for launched Claude CLI sessions with an unverifiable transcript', async () => {
+    const session = makeSession({
+      agent_sdk: 'claude-code-cli',
+      opencode_session_id: null,
+      claude_session_id: 'claude-session-1'
+    })
+    seedSession(session)
+    const { sessionUpdate } = setupWindowDb(session)
+
+    const result = await useSessionStore.getState().changeBlankSessionProvider('session-1', 'codex')
+
+    expect(result).toMatchObject({
+      success: false,
+      error: 'Could not verify whether this session has live transcript history'
+    })
+    expect(sessionUpdate).not.toHaveBeenCalled()
+    expect(window.terminalOps.destroy).not.toHaveBeenCalled()
+  })
+
   it('continues when old backend disconnect fails', async () => {
     const session = makeSession()
     seedSession(session)

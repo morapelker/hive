@@ -340,6 +340,7 @@ async function getSessionRuntimePath(session: Session): Promise<string | null> {
 }
 
 async function hasLiveTranscriptHistory(session: Session): Promise<boolean | null> {
+  if (session.agent_sdk === 'claude-code-cli' && session.claude_session_id) return null
   if (!session.opencode_session_id) return false
   if (!window.opencodeOps?.getMessages) return null
 
