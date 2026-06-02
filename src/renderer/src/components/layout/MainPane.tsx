@@ -20,7 +20,6 @@ import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useSessionStore, BOARD_TAB_ID } from '@/stores/useSessionStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
-import { useLayoutStore } from '@/stores/useLayoutStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { usePinnedStore } from '@/stores/usePinnedStore'
@@ -61,8 +60,8 @@ function ClaudeCliSessionPortal({
     host.className = 'flex-1 flex flex-col min-h-0'
     hostRef.current = host
   }
-
   const [localTarget, setLocalTarget] = useState<HTMLDivElement | null>(null)
+  const [hostAttached, setHostAttached] = useState(false)
   const modalTarget = getTarget(sessionId)
   const targetParent = modalTarget ?? localTarget
 
@@ -72,6 +71,7 @@ function ClaudeCliSessionPortal({
     if (host.parentElement !== targetParent) {
       targetParent.appendChild(host)
     }
+    setHostAttached(true)
   }, [targetParent])
 
   useEffect(() => {
@@ -81,15 +81,15 @@ function ClaudeCliSessionPortal({
     }
   }, [])
 
-  const sessionView = (
-    <SessionView sessionId={sessionId} isVisible={modalTarget ? true : isActive} />
-  )
-
   return (
     <>
       <div ref={setLocalTarget} className="flex-1 flex flex-col min-h-0" />
-      {hostRef.current && targetParent
-        ? createPortal(sessionView, hostRef.current, sessionId)
+      {hostRef.current && hostAttached
+        ? createPortal(
+            <SessionView sessionId={sessionId} isVisible={modalTarget ? true : isActive} />,
+            hostRef.current,
+            sessionId
+          )
         : null}
     </>
   )
@@ -105,7 +105,6 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
   const activeDiff = useFileViewerStore((state) => state.activeDiff)
   const contextEditorWorktreeId = useFileViewerStore((state) => state.contextEditorWorktreeId)
   const closedTerminalSessionIds = useSessionStore((state) => state.closedTerminalSessionIds)
-  const ghosttyOverlaySuppressed = useLayoutStore((state) => state.ghosttyOverlaySuppressed)
   const activePinnedSessionId = useSessionStore((state) => state.activePinnedSessionId)
   const activeBoardAssistantProjectId = useSessionStore((state) => state.activeBoardAssistantProjectId)
   const isBoardViewActive = useKanbanStore((state) => state.isBoardViewActive)
@@ -191,8 +190,22 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
     })
   }, [terminalSessions, getAgentSdk])
 
-  // Prune terminals that were explicitly closed (tab close).
-  // This is the ONLY path that removes from mountedTerminalSessionIds.
+  useEffect(() => {
+    setMountedTerminalSessionIds((current) => {
+      const filtered = current.filter((sessionId) => {
+        const agentSdk =
+          getAgentSdk(sessionId) ?? mountedTerminalAgentSdkBySessionId.current.get(sessionId)
+        if (!agentSdk) return true
+        if (isStatefulTerminalSession(agentSdk)) return true
+        mountedTerminalAgentSdkBySessionId.current.delete(sessionId)
+        return false
+      })
+      return filtered.length === current.length ? current : filtered
+    })
+  }, [sessionsByWorktree, sessionsByConnection, getAgentSdk])
+
+  // Prune terminals that were explicitly closed (tab close). Provider switching
+  // can also prune stale terminal-backed mounts when a session changes SDK.
   useEffect(() => {
     if (closedTerminalSessionIds.size === 0) return
 
@@ -211,10 +224,6 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
   // Determine which terminal session is currently visible (if any).
   // A terminal is visible when it's the active session AND no diff/file/loading overlay is on top.
   const visibleTerminalId = useMemo(() => {
-    if (ghosttyOverlaySuppressed) {
-      return null
-    }
-
     // When the board, pinned board, or board assistant is occupying the main
     // pane, hide all stateful terminal sessions — otherwise the always-mounted
     // terminal would render as flex-1 alongside the board and split the pane.
@@ -248,10 +257,11 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
     activeDiff,
     activeFilePath,
     getAgentSdk,
-    ghosttyOverlaySuppressed,
     isBoardViewActive,
     isPinnedBoardActive,
-    activeBoardAssistantProjectId
+    activeBoardAssistantProjectId,
+    sessionsByWorktree,
+    sessionsByConnection
   ])
 
   const handleCloseDiff = useCallback(() => {
@@ -463,16 +473,21 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
         {/* Always-mounted terminal sessions — kept alive to preserve PTY state across tab switches */}
         {mountedTerminalSessionIds.map((sessionId) => {
           const isActive = visibleTerminalId === sessionId
+          const currentAgentSdk = getAgentSdk(sessionId)
+          if (currentAgentSdk && !isStatefulTerminalSession(currentAgentSdk)) {
+            return null
+          }
           const agentSdk =
-            getAgentSdk(sessionId) ?? mountedTerminalAgentSdkBySessionId.current.get(sessionId)
+            currentAgentSdk ?? mountedTerminalAgentSdkBySessionId.current.get(sessionId)
+          if (!isStatefulTerminalSession(agentSdk ?? null)) {
+            return null
+          }
           return (
             <div key={sessionId} className={isActive ? 'flex-1 flex flex-col min-h-0' : 'hidden'}>
               {agentSdk === 'terminal' ? (
                 <SessionTerminalView sessionId={sessionId} isVisible={isActive} />
-              ) : agentSdk === 'claude-code-cli' ? (
-                <ClaudeCliSessionPortal sessionId={sessionId} isActive={isActive} />
               ) : (
-                <SessionView sessionId={sessionId} isVisible={isActive} />
+                <ClaudeCliSessionPortal sessionId={sessionId} isActive={isActive} />
               )}
             </div>
           )

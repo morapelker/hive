@@ -63,14 +63,7 @@ const modelCatalogCache = new Map<HandoffAgentSdk, ProviderModels[]>()
 const inflightModelCatalogRequests = new Map<HandoffAgentSdk, Promise<ProviderModels[]>>()
 
 function normalizeHandoffSdk(
-  sdk:
-    | 'opencode'
-    | 'claude-code'
-    | 'claude-code-cli'
-    | 'codex'
-    | 'terminal'
-    | null
-    | undefined
+  sdk: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal' | null | undefined
 ): HandoffAgentSdk {
   if (sdk === 'claude-code' || sdk === 'claude-code-cli' || sdk === 'codex') return sdk
   return 'opencode'
@@ -98,6 +91,15 @@ function buildModelSelection(
   }
 
   return FALLBACK_MODELS[agentSdk]
+}
+
+function modelBelongsToSdk(model: SelectedModel, agentSdk: HandoffAgentSdk): boolean {
+  if (model.agentSdk) return normalizeHandoffSdk(model.agentSdk) === agentSdk
+
+  const cachedProviders = getCachedModelCatalog(agentSdk)
+  if (!cachedProviders) return false
+
+  return !!findModelInfo(cachedProviders, model.providerID, model.modelID)
 }
 
 function getWorktreeFallbackModel(worktreeId?: string): SelectedModel | null {
@@ -132,10 +134,16 @@ function resolveSessionSelection(opts: {
   const modeDefault = settings.getModelForMode(getModeDefaultKey(opts.mode))
   // Session creation can pass an explicit SDK; in that case the mode default may only
   // supply a model that already belongs to the requested SDK.
-  if (modeDefault && (modeDefault.agentSdk || requestedSdk === configuredDefaultSdk)) {
+  if (
+    modeDefault &&
+    (modeDefault.agentSdk || opts.explicitSdk || requestedSdk === configuredDefaultSdk)
+  ) {
     const modeDefaultSdk = modeDefault.agentSdk ? normalizeHandoffSdk(modeDefault.agentSdk) : null
     if (opts.explicitSdk) {
-      if (modeDefaultSdk === requestedSdk) {
+      if (
+        modeDefaultSdk === requestedSdk ||
+        (!modeDefaultSdk && modelBelongsToSdk(modeDefault, requestedSdk))
+      ) {
         model = modeDefault
       }
     } else {
@@ -145,10 +153,23 @@ function resolveSessionSelection(opts: {
   }
 
   if (!model) {
-    model = resolveModelForSdk(resolvedSdk, settings)
+    if (opts.explicitSdk) {
+      const sdkModel = settings.selectedModelByProvider[resolvedSdk]
+      if (sdkModel) {
+        model = sdkModel
+      } else if (
+        Object.keys(settings.selectedModelByProvider).length === 0 &&
+        settings.selectedModel &&
+        modelBelongsToSdk(settings.selectedModel, resolvedSdk)
+      ) {
+        model = settings.selectedModel
+      }
+    } else {
+      model = resolveModelForSdk(resolvedSdk, settings)
+    }
   }
 
-  if (!model && Object.keys(settings.selectedModelByProvider).length === 0) {
+  if (!model && !opts.explicitSdk && Object.keys(settings.selectedModelByProvider).length === 0) {
     model = getWorktreeFallbackModel(opts.worktreeId)
   }
 
@@ -298,10 +319,15 @@ export function resolveSessionCreationSelection(opts: {
 
   if (opts.agentSdkOverride) {
     const resolvedAgentSdk = normalizeHandoffSdk(opts.agentSdkOverride)
-    const model = resolveModelForSdk(resolvedAgentSdk, settings)
+    const resolved = resolveSessionSelection({
+      worktreeId: opts.worktreeId,
+      agentSdk: resolvedAgentSdk,
+      mode: opts.initialMode,
+      explicitSdk: true
+    })
     return {
       agentSdk: resolvedAgentSdk,
-      model: buildModelSelection(model, resolvedAgentSdk)
+      model: resolved.model
     }
   }
 

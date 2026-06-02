@@ -7,7 +7,7 @@ import { useSettingsStore } from './useSettingsStore'
 import { getUnavailableAgentSdkMessage } from '@/lib/agent-sdk-availability'
 import { resolveSessionCreationSelection } from '@/lib/handoffSelection'
 import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
-import { type AgentSdk, isTerminalBacked } from '@shared/types/agent-sdk'
+import { type AgentSdk, type HandoffAgentSdk, isTerminalBacked } from '@shared/types/agent-sdk'
 
 const db = unwrapEnvelopeApi(() => window.db)
 
@@ -40,8 +40,14 @@ function isVisibleSession(session: { name: string | null; session_type?: string 
   return !isBoardAssistantSessionName(session.name)
 }
 
-function getUnavailableProviderError(sdk: AgentSdk): string | null {
+function getUnavailableProviderError(
+  sdk: AgentSdk,
+  options?: { failWhenUnknown?: boolean }
+): string | null {
   const { availableAgentSdks } = useSettingsStore.getState()
+  if (!availableAgentSdks && options?.failWhenUnknown) {
+    return 'Provider availability has not loaded yet'
+  }
   return getUnavailableAgentSdkMessage(sdk, availableAgentSdks)
 }
 
@@ -65,6 +71,12 @@ export interface CodexThreadGoal {
   createdAt: number
   updatedAt: number
   observedAtMs?: number
+}
+
+export interface ProviderSwitchActivity {
+  sending: boolean
+  streaming: boolean
+  queuedLocalFollowUps: number
 }
 
 // Session type matching the database schema
@@ -103,6 +115,8 @@ interface SessionState {
   pendingPlans: Map<string, PendingPlan>
   // Pending follow-up messages - keyed by session ID, ordered queue of messages to auto-send
   pendingFollowUpMessages: Map<string, string[]>
+  // Renderer-owned transient activity that blocks blank-session provider switching.
+  providerSwitchActivityBySession: Map<string, ProviderSwitchActivity>
   // Current Codex thread goals - keyed by Hive session ID
   codexGoalsBySession: Map<string, CodexThreadGoal>
   isLoading: boolean
@@ -185,6 +199,15 @@ interface SessionState {
     model: SelectedModel,
     options?: { skipGlobalUpdate?: boolean }
   ) => Promise<void>
+  changeBlankSessionProvider: (
+    sessionId: string,
+    nextAgentSdk: HandoffAgentSdk,
+    nextModel?: SelectedModel
+  ) => Promise<{ success: boolean; error?: string }>
+  setProviderSwitchActivity: (
+    sessionId: string,
+    activity: ProviderSwitchActivity | null
+  ) => void
   setOpenCodeSessionId: (sessionId: string, opencodeSessionId: string | null) => void
   setClaudeSessionId: (sessionId: string, claudeSessionId: string | null) => void
   setPendingMessage: (sessionId: string, message: string) => void
@@ -276,6 +299,65 @@ function findSessionInState(state: SessionState, sessionId: string): Session | n
   return state.orphanedSessions.get(sessionId) ?? null
 }
 
+function findSessionWithScope(
+  state: SessionState,
+  sessionId: string
+):
+  | { type: 'worktree'; scopeId: string; session: Session }
+  | { type: 'connection'; scopeId: string; session: Session }
+  | null {
+  for (const [worktreeId, sessions] of state.sessionsByWorktree.entries()) {
+    const found = sessions.find((session) => session.id === sessionId)
+    if (found) return { type: 'worktree', scopeId: worktreeId, session: found }
+  }
+  for (const [connectionId, sessions] of state.sessionsByConnection.entries()) {
+    const found = sessions.find((session) => session.id === sessionId)
+    if (found) return { type: 'connection', scopeId: connectionId, session: found }
+  }
+  return null
+}
+
+function getWorktreePath(worktreeId: string | null): string | null {
+  if (!worktreeId) return null
+  for (const worktrees of useWorktreeStore.getState().worktreesByProject.values()) {
+    const worktree = worktrees.find((candidate) => candidate.id === worktreeId)
+    if (worktree) return worktree.path
+  }
+  return null
+}
+
+async function getSessionRuntimePath(session: Session): Promise<string | null> {
+  const worktreePath = getWorktreePath(session.worktree_id)
+  if (worktreePath) return worktreePath
+
+  if (!session.connection_id || !window.connectionOps?.get) return null
+  try {
+    const result = unwrapEnvelope(await window.connectionOps.get(session.connection_id))
+    return result.success && result.connection ? result.connection.path : null
+  } catch {
+    return null
+  }
+}
+
+async function hasLiveTranscriptHistory(session: Session): Promise<boolean | null> {
+  if (session.agent_sdk === 'claude-code-cli') return null
+  if (!session.opencode_session_id) return false
+  if (!window.opencodeOps?.getMessages) return null
+
+  const runtimePath = await getSessionRuntimePath(session)
+  if (!runtimePath) return null
+
+  try {
+    const result = unwrapEnvelope(
+      await window.opencodeOps.getMessages(runtimePath, session.opencode_session_id)
+    )
+    if (!result.success || !Array.isArray(result.messages)) return null
+    return result.messages.length > 0
+  } catch {
+    return null
+  }
+}
+
 // Shift+Tab — Claude Code's "cycle permission mode" key.
 const CLAUDE_CLI_SHIFT_TAB = '\u001b[Z'
 
@@ -313,6 +395,7 @@ export const useSessionStore = create<SessionState>()(
       pendingMessages: new Map(),
       pendingPlans: new Map(),
       pendingFollowUpMessages: new Map(),
+      providerSwitchActivityBySession: new Map(),
       codexGoalsBySession: new Map(),
       isLoading: false,
       error: null,
@@ -1450,6 +1533,204 @@ export const useSessionStore = create<SessionState>()(
             /* non-critical */
           }
         }
+      },
+
+      changeBlankSessionProvider: async (
+        sessionId: string,
+        nextAgentSdk: HandoffAgentSdk,
+        nextModel?: SelectedModel
+      ) => {
+        try {
+          const initialScope = findSessionWithScope(get(), sessionId)
+          if (!initialScope) {
+            return { success: false, error: 'Session not found' }
+          }
+          if (initialScope.session.session_type !== 'default') {
+            return { success: false, error: 'This session cannot change providers' }
+          }
+          if (initialScope.session.agent_sdk === 'terminal') {
+            return { success: false, error: 'Terminal sessions cannot change providers' }
+          }
+          if (initialScope.session.agent_sdk === nextAgentSdk && !nextModel) {
+            return { success: true }
+          }
+
+          const unavailableProviderError = getUnavailableProviderError(nextAgentSdk, {
+            failWhenUnknown: true
+          })
+          if (unavailableProviderError) {
+            return { success: false, error: unavailableProviderError }
+          }
+
+          const dbSession = await db.session.get(sessionId)
+          if (!dbSession) {
+            return { success: false, error: 'Session not found in database' }
+          }
+          if (dbSession.session_type !== 'default') {
+            return { success: false, error: 'This session cannot change providers' }
+          }
+          if (dbSession.agent_sdk === 'terminal') {
+            return { success: false, error: 'Terminal sessions cannot change providers' }
+          }
+
+          if (!db.sessionMessage?.list || !db.sessionActivity?.list) {
+            return {
+              success: false,
+              error: 'Could not verify whether this session has history'
+            }
+          }
+          const [messageRows, activityRows] = await Promise.all([
+            db.sessionMessage.list(sessionId),
+            db.sessionActivity.list(sessionId)
+          ])
+          if (messageRows.length > 0 || activityRows.length > 0) {
+            return { success: false, error: 'Provider can only be changed before history exists' }
+          }
+          const liveTranscriptHasHistory = await hasLiveTranscriptHistory(dbSession)
+          if (liveTranscriptHasHistory === null) {
+            return {
+              success: false,
+              error: 'Could not verify whether this session has live transcript history'
+            }
+          }
+          if (liveTranscriptHasHistory) {
+            return { success: false, error: 'Provider can only be changed before history exists' }
+          }
+
+          const latestScope = findSessionWithScope(get(), sessionId)
+          if (!latestScope) {
+            return { success: false, error: 'Session not found' }
+          }
+          if (latestScope.session.agent_sdk === 'terminal') {
+            return { success: false, error: 'Terminal sessions cannot change providers' }
+          }
+          const activity = get().providerSwitchActivityBySession.get(sessionId)
+          if (activity?.sending || activity?.streaming || activity?.queuedLocalFollowUps) {
+            return { success: false, error: 'Provider cannot change while the session is active' }
+          }
+          if (get().pendingMessages.has(sessionId)) {
+            return {
+              success: false,
+              error: 'Provider cannot change while an initial prompt is pending'
+            }
+          }
+          if ((get().pendingFollowUpMessages.get(sessionId)?.length ?? 0) > 0) {
+            return {
+              success: false,
+              error: 'Provider cannot change while follow-up messages are queued'
+            }
+          }
+          if (get().pendingPlans.has(sessionId)) {
+            return { success: false, error: 'Provider cannot change while a plan is pending' }
+          }
+
+          try {
+            const { isProviderSwitchBlockingSessionStatus, useWorktreeStatusStore } = await import(
+              './useWorktreeStatusStore'
+            )
+            const status = useWorktreeStatusStore.getState().sessionStatuses[sessionId]
+            if (isProviderSwitchBlockingSessionStatus(status)) {
+              return { success: false, error: 'Provider cannot change while the session is active' }
+            }
+          } catch {
+            return {
+              success: false,
+              error: 'Could not verify whether this session is active'
+            }
+          }
+
+          const { model: resolvedModel } = resolveSessionCreationSelection({
+            agentSdkOverride: nextAgentSdk,
+            initialMode: latestScope.session.mode,
+            modelOverride: nextModel ? { ...nextModel, agentSdk: nextAgentSdk } : undefined
+          })
+
+          if (!resolvedModel) {
+            return { success: false, error: 'Could not resolve a model for the selected provider' }
+          }
+
+          const updatedSession = await db.session.update(sessionId, {
+            agent_sdk: nextAgentSdk,
+            model_provider_id: resolvedModel.providerID,
+            model_id: resolvedModel.modelID,
+            model_variant: resolvedModel.variant ?? null,
+            opencode_session_id: null,
+            claude_session_id: null
+          })
+
+          if (!updatedSession) {
+            return { success: false, error: 'Failed to update session provider' }
+          }
+
+          const previousOpencodeSessionId = dbSession.opencode_session_id
+          if (previousOpencodeSessionId && window.opencodeOps?.disconnect) {
+            try {
+              const runtimePath = await getSessionRuntimePath(dbSession)
+              if (runtimePath) {
+                unwrapEnvelope(
+                  await window.opencodeOps.disconnect(runtimePath, previousOpencodeSessionId)
+                )
+              }
+            } catch (error) {
+              console.warn('Failed to disconnect previous provider session:', error)
+            }
+          }
+          if (dbSession.agent_sdk === 'claude-code-cli' && window.terminalOps?.destroy) {
+            try {
+              unwrapEnvelope(await window.terminalOps.destroy(sessionId))
+            } catch (error) {
+              console.warn('Failed to destroy previous Claude CLI session:', error)
+            }
+          }
+
+          set((state) => {
+            const scope = findSessionWithScope(state, sessionId)
+            if (!scope) return {}
+
+            if (scope.type === 'worktree') {
+              const sessionsByWorktree = new Map(state.sessionsByWorktree)
+              const sessions = sessionsByWorktree.get(scope.scopeId) ?? []
+              sessionsByWorktree.set(
+                scope.scopeId,
+                sessions.map((session) => (session.id === sessionId ? updatedSession : session))
+              )
+              return { sessionsByWorktree }
+            }
+
+            const sessionsByConnection = new Map(state.sessionsByConnection)
+            const sessions = sessionsByConnection.get(scope.scopeId) ?? []
+            sessionsByConnection.set(
+              scope.scopeId,
+              sessions.map((session) => (session.id === sessionId ? updatedSession : session))
+            )
+            return { sessionsByConnection }
+          })
+
+          return { success: true }
+        } catch (error) {
+          return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Failed to change session provider'
+          }
+        }
+      },
+
+      setProviderSwitchActivity: (
+        sessionId: string,
+        activity: ProviderSwitchActivity | null
+      ) => {
+        set((state) => {
+          const next = new Map(state.providerSwitchActivityBySession)
+          const isIdle =
+            !activity ||
+            (!activity.sending && !activity.streaming && activity.queuedLocalFollowUps === 0)
+          if (isIdle) {
+            next.delete(sessionId)
+          } else {
+            next.set(sessionId, activity)
+          }
+          return { providerSwitchActivityBySession: next }
+        })
       },
 
       // Apply mode-specific default model when toggling modes

@@ -20,6 +20,9 @@ import { toast } from '@/lib/toast'
 import { ModeToggle } from './ModeToggle'
 import { SuperToggle } from './SuperToggle'
 import { ModelSelector } from './ModelSelector'
+import { SessionProviderSelector } from './SessionProviderSelector'
+import { useDurableSessionHistory } from './useDurableSessionHistory'
+import { useProviderSwitchActivitySync } from './useProviderSwitchActivitySync'
 import {
   VirtualizedMessageList,
   type VirtualizedMessageListHandle,
@@ -93,6 +96,7 @@ import { isComposingKeyboardEvent } from '@/lib/message-composer-shortcuts'
 import { handleSessionIdleFollowUp } from '@/lib/session-follow-up-dispatch'
 import { buildSdkPlanImplementationPrompt, looksLikeCodexProposedPlan } from '@/lib/proposedPlan'
 import { buildHandoffPrompt, type HandoffSelectionOverride } from '@/lib/handoffSelection'
+import { toHandoffAgentSdk } from '@shared/types/agent-sdk'
 
 const db = unwrapEnvelopeApi(() => window.db)
 
@@ -687,6 +691,15 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
   useEffect(() => {
     isStreamingRef.current = isStreaming
   }, [isStreaming])
+  const providerSwitchActivity = useMemo(
+    () => ({
+      sending: isSending,
+      streaming: isStreaming,
+      queuedLocalFollowUps: queuedMessages.length
+    }),
+    [isSending, isStreaming, queuedMessages.length]
+  )
+  useProviderSwitchActivitySync(sessionId, providerSwitchActivity)
   const [isCompacting, setIsCompacting] = useState(false)
   const {
     runs: bashRuns,
@@ -794,6 +807,8 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
 
   // Pending plan approval (ExitPlanMode blocking tool)
   const pendingPlan = useSessionStore((s) => s.pendingPlans.get(sessionId) ?? null)
+  const hasPendingInitialPrompt = useSessionStore((s) => s.pendingMessages.has(sessionId))
+  const hasDurableHistory = useDurableSessionHistory(sessionId)
 
   // Completion badge — reactive subscription to this session's status entry
   const completionEntry = useWorktreeStatusStore((state) => {
@@ -1490,20 +1505,28 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
     planXmlDetectionRef.current = { state: 'scanning', buffer: '', cardId: null }
   }, [])
 
+  // Load saved draft only when the Hive session changes. Provider switches
+  // reconnect the view in-place and must not overwrite unsaved composer edits
+  // with a stale debounced DB draft.
+  useEffect(() => {
+    let mounted = true
+    db.session.getDraft(sessionId).then((draft) => {
+      if (mounted && draft) {
+        setInputValue(draft)
+        inputValueRef.current = draft
+      }
+    })
+    return () => {
+      mounted = false
+    }
+  }, [sessionId])
+
   // Load session info and connect to OpenCode
   useEffect(() => {
     finalizedMessageIdsRef.current.clear()
     hasFinalizedCurrentResponseRef.current = false
     sessionModelHydratedRef.current = false
     childToSubtaskIndexRef.current.clear()
-
-    // Load saved draft for this session
-    db.session.getDraft(sessionId).then((draft) => {
-      if (draft) {
-        setInputValue(draft)
-        inputValueRef.current = draft
-      }
-    })
 
     transcriptSourceRef.current = {
       worktreePath: null,
@@ -3569,7 +3592,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
       // event subscriptions alive so responses are not lost.
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId])
+  }, [sessionId, sessionRecord?.agent_sdk])
 
   // Save draft on unmount or session change
   useEffect(() => {
@@ -6026,6 +6049,21 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
 
   const isActive = isStreaming || isSending
   const elapsedTimerText = useSessionTimer(sessionId, isActive)
+  const selectableAgentSdk = toHandoffAgentSdk(sessionRecord?.agent_sdk)
+  const canChangeBlankSessionProvider =
+    !!selectableAgentSdk &&
+    sessionRecord?.session_type === 'default' &&
+    !isOrphanedSession &&
+    viewState.status === 'connected' &&
+    visibleMessages.length === 0 &&
+    !hasStreamingContent &&
+    !hasDurableHistory &&
+    !isSending &&
+    !isStreaming &&
+    queuedMessages.length === 0 &&
+    !hasPendingInitialPrompt &&
+    persistedFollowUpMessages.length === 0 &&
+    !pendingPlan
 
   // Render based on view state
   if (viewState.status === 'connecting') {
@@ -6312,7 +6350,14 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
             {/* Bottom row: model selector + context indicator + hint text + send/implement buttons */}
             <div className="flex items-center justify-between px-3 pb-2.5 @container">
               <div className="flex items-center gap-2 min-w-0 overflow-hidden">
-                <ModelSelector sessionId={sessionId} />
+                {selectableAgentSdk && (
+                  <SessionProviderSelector
+                    sessionId={sessionId}
+                    agentSdk={selectableAgentSdk}
+                    canChange={canChangeBlankSessionProvider}
+                  />
+                )}
+                <ModelSelector sessionId={sessionId} hideProviderPrefix />
                 {sessionAgentSdk === 'codex' && (
                   <CodexFastToggle
                     enabled={codexFastMode}

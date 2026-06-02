@@ -91,7 +91,8 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
   const ghosttyFontSize = useSettingsStore((s) => s.ghosttyFontSize)
   const ghosttyOverlaySuppressed = useLayoutStore((s) => s.ghosttyOverlaySuppressed)
 
-  const effectiveVisible = isVisible && !ghosttyOverlaySuppressed
+  const effectiveVisible =
+    isVisible && (effectiveBackendType !== 'ghostty' || !ghosttyOverlaySuppressed)
 
   // Always-current ref so setupTerminal (a useCallback whose deps intentionally
   // do NOT include effectiveVisible) can read the latest value when it
