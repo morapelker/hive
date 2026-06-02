@@ -796,6 +796,24 @@ export class CodexImplementer implements AgentSdkImplementer {
     modelOverride?: { providerID: string; modelID: string; variant?: string },
     options?: PromptOptions
   ): Promise<void> {
+    // Idempotency guard: a turn is already in flight for this session. This happens
+    // when a prompt is resent — e.g. the renderer requeues a pending handoff prompt
+    // after a transient transport failure that occurred *after* codex already
+    // accepted the turn, then resends it on a remount/reconnect. Starting a second
+    // concurrent turn would duplicate the run and leak a second event listener.
+    // Return as a no-op success (do NOT throw) so the renderer treats it as delivered
+    // and does not enter a requeue loop.
+    if (session.status === 'running') {
+      log.warn('Prompt: turn already running, ignoring duplicate prompt', {
+        worktreePath,
+        agentSessionId,
+        hiveSessionId: session.hiveSessionId,
+        threadId: session.threadId,
+        textPreview: previewText(text)
+      })
+      return
+    }
+
     if (!session.titleGenerationStarted) {
       const currentTitle = this.dbService?.getSession(session.hiveSessionId)?.name ?? null
       const shouldGenerateTitle = isDefaultSessionTitle(currentTitle)

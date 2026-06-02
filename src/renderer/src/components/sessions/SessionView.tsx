@@ -3333,10 +3333,32 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
         }
 
         // Send any pending initial message (e.g., from code review)
-        const sendPendingMessage = async (path: string, opcId: string): Promise<void> => {
+        const sendPendingMessage = async (
+          path: string,
+          opcId: string,
+          sessionStatusHint?: string
+        ): Promise<void> => {
           if (shouldAbortInit()) return
           const pendingMsg = useSessionStore.getState().dequeuePendingMessage(sessionId)
           if (!pendingMsg) return
+
+          // If the session is already busy, its turn is in flight — which means this
+          // pending prompt was almost certainly already delivered (e.g. a handoff
+          // implement prompt whose turn started, then the prompt RPC failed at the
+          // transport layer and the message was requeued, and we are now remounting/
+          // reconnecting). Re-sending it would duplicate the run, so drop it. Layer A
+          // (the codex idempotency guard) is the backstop if this heuristic is wrong.
+          const busySessionStatus =
+            useWorktreeStatusStore.getState().sessionStatuses[sessionId]?.status
+          const isBusy =
+            sessionStatusHint === 'busy' ||
+            sessionStatusHint === 'retry' ||
+            isStreamingRef.current ||
+            busySessionStatus === 'working' ||
+            busySessionStatus === 'planning'
+          if (isBusy) {
+            return
+          }
 
           const restorePendingAfterFailure = (): void => {
             useSessionStore.getState().requeuePendingMessage(sessionId, pendingMsg)
@@ -3486,7 +3508,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
               if (shouldAbortInit()) return
             }
 
-            await sendPendingMessage(wtPath, existingOpcSessionId)
+            await sendPendingMessage(wtPath, existingOpcSessionId, reconnectResult.sessionStatus)
             return
           }
         }
