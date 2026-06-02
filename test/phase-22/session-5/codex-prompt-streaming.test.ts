@@ -108,22 +108,33 @@ describe('CodexImplementer.prompt()', () => {
   }
 
   function simulateManagerEvents(events: any[]) {
-    // sendTurn resolves immediately, then we fire events asynchronously
+    // sendTurn resolves after dispatch, then manager events stream separately.
     mockManager.sendTurn.mockImplementation(async () => {
-      // Schedule events to fire after the sendTurn resolves
-      setTimeout(() => {
+      queueMicrotask(() => {
         for (const event of events) {
           for (const listener of [...eventListeners]) {
             listener(event)
           }
         }
-      }, 5)
+      })
       return { turnId: 'turn-1', threadId: 'thread-1' }
+    })
+  }
+
+  async function waitForBackgroundTurn() {
+    await vi.waitFor(() => {
+      expect(mockManager.removeListener).toHaveBeenCalledWith('event', expect.any(Function))
     })
   }
 
   function publishedEvents(): any[] {
     return eventBusMocks.publish.mock.calls.map((call) => call[0])
+  }
+
+  function emitManagerEvent(event: any) {
+    for (const listener of [...eventListeners]) {
+      listener(event)
+    }
   }
 
   function expectedTextInput(text: string) {
@@ -154,11 +165,7 @@ describe('CodexImplementer.prompt()', () => {
       model: expect.any(String),
       interactionMode: 'default'
     })
-    expect(mockGenerateCodexSessionTitle).toHaveBeenCalledWith(
-      'Hello Codex',
-      '/test/project',
-      null
-    )
+    expect(mockGenerateCodexSessionTitle).toHaveBeenCalledWith('Hello Codex', '/test/project', null)
     expect(mockLogInfo).toHaveBeenCalledWith(
       'Prompt: evaluating title generation',
       expect.objectContaining({
@@ -171,6 +178,18 @@ describe('CodexImplementer.prompt()', () => {
       'handleTitleGeneration: generator returned null title',
       { hiveSessionId: 'hive-session-1', threadId: 'thread-1' }
     )
+  })
+
+  it('resolves after dispatch without waiting for turn completion', async () => {
+    const session = seedSession()
+    mockManager.sendTurn.mockResolvedValue({ turnId: 'turn-1', threadId: 'thread-1' })
+
+    await impl.prompt('/test/project', 'thread-1', 'Long task')
+
+    expect(mockManager.sendTurn).toHaveBeenCalledTimes(1)
+    expect(session.status).toBe('running')
+    expect(mockManager.removeListener).not.toHaveBeenCalled()
+    expect(publishedEvents().filter((e: any) => e.type === 'session.status')).toHaveLength(1)
   })
 
   it('logs when title generation is skipped for a pre-titled session', async () => {
@@ -245,6 +264,7 @@ describe('CodexImplementer.prompt()', () => {
     ])
 
     await impl.prompt('/test/project', 'thread-1', 'test')
+    await waitForBackgroundTurn()
 
     const statusEvents = publishedEvents().filter((e: any) => e.type === 'session.status')
 
@@ -286,6 +306,7 @@ describe('CodexImplementer.prompt()', () => {
     ])
 
     await impl.prompt('/test/project', 'thread-1', 'test')
+    await waitForBackgroundTurn()
 
     const textEvents = publishedEvents().filter(
       (e: any) => e.type === 'message.part.updated' && e.data?.part?.type === 'text'
@@ -358,6 +379,7 @@ describe('CodexImplementer.prompt()', () => {
     ])
 
     await impl.prompt('/test/project', 'thread-1', 'My question')
+    await waitForBackgroundTurn()
 
     // Should have user message and assistant message
     expect(session.messages.length).toBe(2)
@@ -493,7 +515,7 @@ describe('CodexImplementer.prompt()', () => {
     seedSession()
     mockManager.sendTurn.mockRejectedValue(new Error('API error'))
 
-    await impl.prompt('/test/project', 'thread-1', 'test')
+    await expect(impl.prompt('/test/project', 'thread-1', 'test')).rejects.toThrow('API error')
 
     const errorEvents = publishedEvents().filter((e: any) => e.type === 'session.error')
     expect(errorEvents).toHaveLength(1)
@@ -504,7 +526,7 @@ describe('CodexImplementer.prompt()', () => {
     const session = seedSession()
     mockManager.sendTurn.mockRejectedValue(new Error('fail'))
 
-    await impl.prompt('/test/project', 'thread-1', 'test')
+    await expect(impl.prompt('/test/project', 'thread-1', 'test')).rejects.toThrow('fail')
 
     expect(session.status).toBe('error')
   })
@@ -525,6 +547,7 @@ describe('CodexImplementer.prompt()', () => {
     ])
 
     await impl.prompt('/test/project', 'thread-1', 'test')
+    await waitForBackgroundTurn()
 
     expect(mockManager.removeListener).toHaveBeenCalledWith('event', expect.any(Function))
   })
@@ -533,7 +556,7 @@ describe('CodexImplementer.prompt()', () => {
     seedSession()
     mockManager.sendTurn.mockRejectedValue(new Error('fail'))
 
-    await impl.prompt('/test/project', 'thread-1', 'test')
+    await expect(impl.prompt('/test/project', 'thread-1', 'test')).rejects.toThrow('fail')
 
     expect(mockManager.removeListener).toHaveBeenCalledWith('event', expect.any(Function))
   })
@@ -541,19 +564,19 @@ describe('CodexImplementer.prompt()', () => {
   it('rejects when process crashes (error kind event)', async () => {
     const session = seedSession()
 
-    simulateManagerEvents([
-      {
-        id: 'e1',
-        kind: 'error',
-        provider: 'codex',
-        threadId: 'thread-1',
-        createdAt: new Date().toISOString(),
-        method: 'process/error',
-        message: 'codex app-server process crashed'
-      }
-    ])
+    mockManager.sendTurn.mockResolvedValue({ turnId: 'turn-1', threadId: 'thread-1' })
 
     await impl.prompt('/test/project', 'thread-1', 'test')
+    emitManagerEvent({
+      id: 'e1',
+      kind: 'error',
+      provider: 'codex',
+      threadId: 'thread-1',
+      createdAt: new Date().toISOString(),
+      method: 'process/error',
+      message: 'codex app-server process crashed'
+    })
+    await waitForBackgroundTurn()
 
     // Should have set status to error
     expect(session.status).toBe('error')
@@ -599,6 +622,7 @@ describe('CodexImplementer.prompt()', () => {
     ])
 
     await impl.prompt('/test/project', 'thread-1', 'test')
+    await waitForBackgroundTurn()
 
     // Turn should complete successfully — not error out
     expect(session.status).toBe('ready')
@@ -613,19 +637,19 @@ describe('CodexImplementer.prompt()', () => {
   it('rejects when session exits (session/exited)', async () => {
     const session = seedSession()
 
-    simulateManagerEvents([
-      {
-        id: 'e1',
-        kind: 'session',
-        provider: 'codex',
-        threadId: 'thread-1',
-        createdAt: new Date().toISOString(),
-        method: 'session/exited',
-        message: 'codex app-server exited (code=1, signal=null).'
-      }
-    ])
+    mockManager.sendTurn.mockResolvedValue({ turnId: 'turn-1', threadId: 'thread-1' })
 
     await impl.prompt('/test/project', 'thread-1', 'test')
+    emitManagerEvent({
+      id: 'e1',
+      kind: 'session',
+      provider: 'codex',
+      threadId: 'thread-1',
+      createdAt: new Date().toISOString(),
+      method: 'session/exited',
+      message: 'codex app-server exited (code=1, signal=null).'
+    })
+    await waitForBackgroundTurn()
 
     expect(session.status).toBe('error')
   })
@@ -633,19 +657,19 @@ describe('CodexImplementer.prompt()', () => {
   it('rejects when session closes (session/closed)', async () => {
     const session = seedSession()
 
-    simulateManagerEvents([
-      {
-        id: 'e1',
-        kind: 'session',
-        provider: 'codex',
-        threadId: 'thread-1',
-        createdAt: new Date().toISOString(),
-        method: 'session/closed',
-        message: 'Session stopped'
-      }
-    ])
+    mockManager.sendTurn.mockResolvedValue({ turnId: 'turn-1', threadId: 'thread-1' })
 
     await impl.prompt('/test/project', 'thread-1', 'test')
+    emitManagerEvent({
+      id: 'e1',
+      kind: 'session',
+      provider: 'codex',
+      threadId: 'thread-1',
+      createdAt: new Date().toISOString(),
+      method: 'session/closed',
+      message: 'Session stopped'
+    })
+    await waitForBackgroundTurn()
 
     expect(session.status).toBe('error')
   })
@@ -653,19 +677,19 @@ describe('CodexImplementer.prompt()', () => {
   it('rejects when session.state.changed emits error', async () => {
     const session = seedSession()
 
-    simulateManagerEvents([
-      {
-        id: 'e1',
-        kind: 'notification',
-        provider: 'codex',
-        threadId: 'thread-1',
-        createdAt: new Date().toISOString(),
-        method: 'session.state.changed',
-        payload: { state: 'error', reason: 'API key revoked' }
-      }
-    ])
+    mockManager.sendTurn.mockResolvedValue({ turnId: 'turn-1', threadId: 'thread-1' })
 
     await impl.prompt('/test/project', 'thread-1', 'test')
+    emitManagerEvent({
+      id: 'e1',
+      kind: 'notification',
+      provider: 'codex',
+      threadId: 'thread-1',
+      createdAt: new Date().toISOString(),
+      method: 'session.state.changed',
+      payload: { state: 'error', reason: 'API key revoked' }
+    })
+    await waitForBackgroundTurn()
 
     expect(session.status).toBe('error')
 
@@ -691,6 +715,7 @@ describe('CodexImplementer.prompt()', () => {
         })
 
       await Promise.resolve()
+      await promptPromise
 
       for (const listener of [...eventListeners]) {
         listener({
@@ -709,7 +734,7 @@ describe('CodexImplementer.prompt()', () => {
 
       await vi.advanceTimersByTimeAsync(301_000)
 
-      expect(settled).toBe(false)
+      expect(settled).toBe(true)
       expect(session.status).toBe('running')
 
       expect(publishedEvents().some((e: any) => e.type === 'session.error')).toBe(false)
@@ -736,7 +761,8 @@ describe('CodexImplementer.prompt()', () => {
         })
       }
 
-      await promptPromise
+      await Promise.resolve()
+      await Promise.resolve()
       expect(session.status).toBe('ready')
     } finally {
       vi.useRealTimers()
@@ -753,13 +779,12 @@ describe('CodexImplementer.prompt()', () => {
       ;(impl as any).attachManagerListener()
       mockManager.sendTurn.mockResolvedValue({ turnId: 'turn-1', threadId: 'thread-1' })
 
-      const promptPromise = impl
-        .prompt('/test/project', 'thread-1', 'Run a command')
-        .then(() => {
-          settled = true
-        })
+      const promptPromise = impl.prompt('/test/project', 'thread-1', 'Run a command').then(() => {
+        settled = true
+      })
 
       await Promise.resolve()
+      await promptPromise
 
       for (const listener of [...eventListeners]) {
         listener({
@@ -776,7 +801,7 @@ describe('CodexImplementer.prompt()', () => {
 
       await vi.advanceTimersByTimeAsync(301_000)
 
-      expect(settled).toBe(false)
+      expect(settled).toBe(true)
       expect(session.status).toBe('running')
 
       const promptState = impl.getSessions().get('/test/project::thread-1')
@@ -796,7 +821,8 @@ describe('CodexImplementer.prompt()', () => {
         })
       }
 
-      await promptPromise
+      await Promise.resolve()
+      await Promise.resolve()
       expect(session.status).toBe('ready')
       expect(promptState?.pendingHitlRequestIds?.size ?? 0).toBe(0)
     } finally {
@@ -820,6 +846,7 @@ describe('CodexImplementer.prompt()', () => {
     ])
 
     await impl.prompt('/test/project', 'thread-1', 'test')
+    await waitForBackgroundTurn()
 
     expect(session.status).toBe('error')
   })
@@ -1041,6 +1068,7 @@ describe('CodexImplementer.prompt()', () => {
       ])
 
       await impl.prompt('/test/project', 'thread-1', 'Plan something')
+      await waitForBackgroundTurn()
 
       const planReadyEvent = publishedEvents().find((e: any) => e.type === 'plan.ready')
       expect(planReadyEvent).toBeDefined()
@@ -1085,6 +1113,7 @@ describe('CodexImplementer.prompt()', () => {
       ])
 
       await impl.prompt('/test/project', 'thread-1', 'Plan something')
+      await waitForBackgroundTurn()
 
       const planReadyEvent = publishedEvents().find((e: any) => e.type === 'plan.ready')
       expect(planReadyEvent).toBeUndefined()

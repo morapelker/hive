@@ -937,37 +937,82 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         }
       })
       session.subscription = subscription
-      const subscriptionExit = await subscription.awaitDone()
-      session.subscription = null
-      if (Exit.isFailure(subscriptionExit) && !Cause.isInterruptedOnly(subscriptionExit.cause)) {
-        throw new Error(Cause.pretty(subscriptionExit.cause))
+
+      const finishPromptInBackground = async () => {
+        try {
+          const subscriptionExit = await subscription.awaitDone()
+          session.subscription = null
+          if (
+            Exit.isFailure(subscriptionExit) &&
+            !Cause.isInterruptedOnly(subscriptionExit.cause)
+          ) {
+            throw new Error(Cause.pretty(subscriptionExit.cause))
+          }
+
+          log.info('Prompt: async iteration loop finished', {
+            totalMessages: messageIndex,
+            aborted: session.abortController?.signal.aborted ?? false
+          })
+
+          // Safety net: if the SDK exited without throwing but stderr was captured
+          // and no meaningful messages were produced, forward the stderr as an error.
+          // This handles cases where Claude exits with a bad code but the SDK
+          // ends iteration normally instead of throwing.
+          const stderrAfterLoop = session.stderrBuffer.join('').trim()
+
+          if (stderrAfterLoop && messageIndex === 0 && !session.abortController?.signal.aborted) {
+            log.warn('Prompt: SDK exited silently with stderr and no messages', {
+              worktreePath,
+              agentSessionId,
+              stderr: stderrAfterLoop
+            })
+            this.sendToRenderer('opencode:stream', {
+              type: 'session.error',
+              sessionId: session.hiveSessionId,
+              data: { error: 'Claude exited unexpectedly', stderr: stderrAfterLoop }
+            })
+          }
+
+          this.emitStatus(session.hiveSessionId, 'idle')
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error)
+          const stderrOutput = session.stderrBuffer.join('').trim() || undefined
+
+          // Capture any extra properties the SDK may attach to the error
+          const errorExtras: Record<string, unknown> = {}
+          if (error && typeof error === 'object') {
+            for (const key of Object.getOwnPropertyNames(error)) {
+              if (!['name', 'message', 'stack'].includes(key)) {
+                errorExtras[key] = (error as Record<string, unknown>)[key]
+              }
+            }
+          }
+
+          log.error(
+            'Prompt streaming error',
+            error instanceof Error ? error : new Error(errorMessage),
+            {
+              worktreePath,
+              agentSessionId,
+              error: errorMessage,
+              stderr: stderrOutput,
+              ...(Object.keys(errorExtras).length > 0 ? { errorExtras } : {})
+            }
+          )
+
+          this.sendToRenderer('opencode:stream', {
+            type: 'session.error',
+            sessionId: session.hiveSessionId,
+            data: { error: errorMessage, stderr: stderrOutput }
+          })
+          this.emitStatus(session.hiveSessionId, 'idle')
+        } finally {
+          session.lastQuery = session.query
+          session.query = null
+        }
       }
 
-      log.info('Prompt: async iteration loop finished', {
-        totalMessages: messageIndex,
-        aborted: session.abortController?.signal.aborted ?? false
-      })
-
-      // Safety net: if the SDK exited without throwing but stderr was captured
-      // and no meaningful messages were produced, forward the stderr as an error.
-      // This handles cases where Claude exits with a bad code but the SDK
-      // ends iteration normally instead of throwing.
-      const stderrAfterLoop = session.stderrBuffer.join('').trim()
-
-      if (stderrAfterLoop && messageIndex === 0 && !session.abortController?.signal.aborted) {
-        log.warn('Prompt: SDK exited silently with stderr and no messages', {
-          worktreePath,
-          agentSessionId,
-          stderr: stderrAfterLoop
-        })
-        this.sendToRenderer('opencode:stream', {
-          type: 'session.error',
-          sessionId: session.hiveSessionId,
-          data: { error: 'Claude exited unexpectedly', stderr: stderrAfterLoop }
-        })
-      }
-
-      this.emitStatus(session.hiveSessionId, 'idle')
+      void finishPromptInBackground()
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
       const stderrOutput = session.stderrBuffer.join('').trim() || undefined
@@ -1000,9 +1045,9 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         data: { error: errorMessage, stderr: stderrOutput }
       })
       this.emitStatus(session.hiveSessionId, 'idle')
-    } finally {
       session.lastQuery = session.query
       session.query = null
+      throw error
     }
   }
 

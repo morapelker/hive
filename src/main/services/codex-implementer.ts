@@ -1,10 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
-import type {
-  AgentSdkCapabilities,
-  AgentSdkImplementer,
-  PromptOptions
-} from './agent-sdk-types'
+import type { AgentSdkCapabilities, AgentSdkImplementer, PromptOptions } from './agent-sdk-types'
 import { CODEX_CAPABILITIES } from './agent-sdk-types'
 import {
   getAvailableCodexModels,
@@ -47,7 +43,7 @@ import { emitWorktreeBranchRenamed } from './worktree-events'
 const log = createLogger({ component: 'CodexImplementer' })
 // Balances write coalescing during rapid streaming against data freshness for crash recovery.
 const PERSIST_DEBOUNCE_MS = 2000
-const CODEX_TURN_TIMEOUT_MS = 36_000_000
+const CODEX_TURN_TIMEOUT_MS = 7 * 24 * 60 * 60 * 1000
 const CODEX_GOAL_COMMAND = {
   name: 'goal',
   description: 'Set or manage a persistent Codex goal',
@@ -874,6 +870,7 @@ export class CodexImplementer implements AgentSdkImplementer {
     let pendingPlanText: string | null = null
     let turnCompleted = false
     let turnFailed = false
+    let turnFatalError: Error | null = null
     let completedTurnId: string | undefined
 
     const handleEvent = (event: CodexManagerEvent) => {
@@ -1022,6 +1019,30 @@ export class CodexImplementer implements AgentSdkImplementer {
           turnFailed = true
         }
       }
+
+      const isFatalError =
+        event.method === 'process/error' ||
+        event.method === 'session/exited' ||
+        event.method === 'session/closed'
+
+      if (isFatalError) {
+        turnFatalError = new Error(event.message ?? 'Codex process error')
+        return
+      }
+
+      const isErrorStateChange =
+        (event.method === 'session.state.changed' || event.method === 'session/state/changed') &&
+        (event.payload as Record<string, unknown> | undefined)?.state === 'error'
+
+      if (isErrorStateChange) {
+        const payload = event.payload as Record<string, unknown>
+        const reason =
+          (payload?.reason as string) ??
+          (payload?.error as string) ??
+          event.message ??
+          'Session entered error state'
+        turnFatalError = new Error(reason)
+      }
     }
 
     this.promptHandledThreadIds.add(session.threadId)
@@ -1051,106 +1072,138 @@ export class CodexImplementer implements AgentSdkImplementer {
         interactionMode
       })
 
-      // Wait for turn completion (the sendTurn starts the turn, but
-      // events stream asynchronously via the manager's event emitter)
-      await this.waitForTurnCompletion(session, () => turnCompleted)
+      const finishTurnInBackground = async () => {
+        try {
+          if (turnFatalError) {
+            throw turnFatalError
+          }
 
-      // Persist the canonical streamed transcript first. This keeps reload
-      // aligned with the exact structure that was rendered during streaming.
-      this.flushPendingPersist(session)
-      if (session.currentAssistantMessageId) {
-        this.persistCanonicalMessages(session)
-        session.liveAssistantDraft = null
-      } else {
-        // Fallback: use accumulated text as single message
-        const assistantParts: unknown[] = []
-        if (assistantText) {
-          assistantParts.push({
-            type: 'text',
-            text: assistantText,
-            timestamp: new Date().toISOString()
-          })
-        }
-        if (reasoningText) {
-          assistantParts.push({
-            type: 'reasoning',
-            text: reasoningText,
-            timestamp: new Date().toISOString()
-          })
-        }
-        if (assistantParts.length > 0) {
-          session.messages.push({
-            id: `assistant-${completedTurnId ?? randomUUID()}`,
-            role: 'assistant',
-            parts: assistantParts,
-            timestamp: new Date().toISOString()
-          })
-        }
-        this.persistCanonicalMessages(session)
-        session.liveAssistantDraft = null
-      }
+          // Wait for turn completion (the sendTurn starts the turn, but
+          // events stream asynchronously via the manager's event emitter)
+          await this.waitForTurnCompletion(session, () => turnCompleted)
 
-      // If no plan was detected from streaming events, extract from the parsed
-      // thread snapshot.  session.messages has properly separated messages
-      // (unlike assistantText which concatenates all deltas without separators).
-      // Use the last assistant text message — in plan mode that's the plan.
-      if (interactionMode === 'plan' && !pendingPlanText) {
-        const msgs = session.messages as Array<Record<string, unknown>>
-        for (let i = msgs.length - 1; i >= 0; i--) {
-          if (msgs[i]?.role !== 'assistant') continue
-          const parts = msgs[i].parts as Array<Record<string, unknown>> | undefined
-          if (!Array.isArray(parts)) continue
-          for (let j = parts.length - 1; j >= 0; j--) {
-            if (parts[j]?.type === 'text' && typeof parts[j]?.text === 'string') {
-              const text = parts[j].text as string
-              const extracted = extractProposedPlanMarkdown(text)
-              pendingPlanText = extracted ?? text
-              break
+          // Persist the canonical streamed transcript first. This keeps reload
+          // aligned with the exact structure that was rendered during streaming.
+          this.flushPendingPersist(session)
+          if (session.currentAssistantMessageId) {
+            this.persistCanonicalMessages(session)
+            session.liveAssistantDraft = null
+          } else {
+            // Fallback: use accumulated text as single message
+            const assistantParts: unknown[] = []
+            if (assistantText) {
+              assistantParts.push({
+                type: 'text',
+                text: assistantText,
+                timestamp: new Date().toISOString()
+              })
+            }
+            if (reasoningText) {
+              assistantParts.push({
+                type: 'reasoning',
+                text: reasoningText,
+                timestamp: new Date().toISOString()
+              })
+            }
+            if (assistantParts.length > 0) {
+              session.messages.push({
+                id: `assistant-${completedTurnId ?? randomUUID()}`,
+                role: 'assistant',
+                parts: assistantParts,
+                timestamp: new Date().toISOString()
+              })
+            }
+            this.persistCanonicalMessages(session)
+            session.liveAssistantDraft = null
+          }
+
+          // If no plan was detected from streaming events, extract from the parsed
+          // thread snapshot.  session.messages has properly separated messages
+          // (unlike assistantText which concatenates all deltas without separators).
+          // Use the last assistant text message — in plan mode that's the plan.
+          if (interactionMode === 'plan' && !pendingPlanText) {
+            const msgs = session.messages as Array<Record<string, unknown>>
+            for (let i = msgs.length - 1; i >= 0; i--) {
+              if (msgs[i]?.role !== 'assistant') continue
+              const parts = msgs[i].parts as Array<Record<string, unknown>> | undefined
+              if (!Array.isArray(parts)) continue
+              for (let j = parts.length - 1; j >= 0; j--) {
+                if (parts[j]?.type === 'text' && typeof parts[j]?.text === 'string') {
+                  const text = parts[j].text as string
+                  const extracted = extractProposedPlanMarkdown(text)
+                  pendingPlanText = extracted ?? text
+                  break
+                }
+              }
+              if (pendingPlanText) break
+            }
+
+            // Ultimate fallback: accumulated streaming text (lossy but better than nothing)
+            if (!pendingPlanText && assistantText) {
+              const extracted = extractProposedPlanMarkdown(assistantText)
+              pendingPlanText = extracted ?? assistantText
             }
           }
-          if (pendingPlanText) break
-        }
 
-        // Ultimate fallback: accumulated streaming text (lossy but better than nothing)
-        if (!pendingPlanText && assistantText) {
-          const extracted = extractProposedPlanMarkdown(assistantText)
-          pendingPlanText = extracted ?? assistantText
-        }
-      }
-
-      if (interactionMode === 'plan' && pendingPlanText) {
-        const toolUseID = `codex-exitplan-${session.threadId}-${Date.now()}`
-        const requestId = `codex-plan:${session.threadId}`
-        this.persistSyntheticActivity(session, {
-          id: requestId,
-          kind: 'plan.ready',
-          tone: 'info',
-          summary: 'Plan ready',
-          requestId,
-          turnId: completedTurnId,
-          payload: { plan: pendingPlanText, toolUseID }
-        })
-        this.sendToRenderer('opencode:stream', {
-          type: 'plan.ready',
-          sessionId: session.hiveSessionId,
-          data: {
-            id: requestId,
-            requestId,
-            plan: pendingPlanText,
-            toolUseID
+          if (interactionMode === 'plan' && pendingPlanText) {
+            const toolUseID = `codex-exitplan-${session.threadId}-${Date.now()}`
+            const requestId = `codex-plan:${session.threadId}`
+            this.persistSyntheticActivity(session, {
+              id: requestId,
+              kind: 'plan.ready',
+              tone: 'info',
+              summary: 'Plan ready',
+              requestId,
+              turnId: completedTurnId,
+              payload: { plan: pendingPlanText, toolUseID }
+            })
+            this.sendToRenderer('opencode:stream', {
+              type: 'plan.ready',
+              sessionId: session.hiveSessionId,
+              data: {
+                id: requestId,
+                requestId,
+                plan: pendingPlanText,
+                toolUseID
+              }
+            })
           }
-        })
+
+          session.status = turnFailed ? 'error' : 'ready'
+          this.emitStatus(session.hiveSessionId, 'idle')
+
+          log.info('Prompt: completed', {
+            worktreePath,
+            agentSessionId,
+            assistantTextLength: assistantText.length,
+            reasoningTextLength: reasoningText.length
+          })
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error)
+          log.error(
+            'Prompt streaming error',
+            error instanceof Error ? error : new Error(errorMessage),
+            { worktreePath, agentSessionId, error: errorMessage }
+          )
+
+          session.status = 'error'
+          session.liveAssistantDraft = null
+          this.sendToRenderer('opencode:stream', {
+            type: 'session.error',
+            sessionId: session.hiveSessionId,
+            data: { error: errorMessage }
+          })
+          this.emitStatus(session.hiveSessionId, 'idle')
+        } finally {
+          this.flushPendingPersist(session)
+          session.currentTurnId = null
+          session.currentAssistantMessageId = null
+          this.manager.removeListener('event', handleEvent)
+          this.promptHandledThreadIds.delete(session.threadId)
+        }
       }
 
-      session.status = turnFailed ? 'error' : 'ready'
-      this.emitStatus(session.hiveSessionId, 'idle')
-
-      log.info('Prompt: completed', {
-        worktreePath,
-        agentSessionId,
-        assistantTextLength: assistantText.length,
-        reasoningTextLength: reasoningText.length
-      })
+      void finishTurnInBackground()
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
       log.error(
@@ -1167,12 +1220,12 @@ export class CodexImplementer implements AgentSdkImplementer {
         data: { error: errorMessage }
       })
       this.emitStatus(session.hiveSessionId, 'idle')
-    } finally {
       this.flushPendingPersist(session)
       session.currentTurnId = null
       session.currentAssistantMessageId = null
       this.manager.removeListener('event', handleEvent)
       this.promptHandledThreadIds.delete(session.threadId)
+      throw error
     }
   }
 
@@ -1851,9 +1904,7 @@ export class CodexImplementer implements AgentSdkImplementer {
     }
 
     const exactEntry = entries.find((entry) => entry.cwd === worktreePath)
-    const skills = exactEntry
-      ? exactEntry.skills
-      : entries.flatMap((entry) => entry.skills ?? [])
+    const skills = exactEntry ? exactEntry.skills : entries.flatMap((entry) => entry.skills ?? [])
 
     if (!exactEntry && entries.length > 0) {
       log.warn('skills/list did not return exact cwd match; flattening all skills', {
@@ -1886,8 +1937,7 @@ export class CodexImplementer implements AgentSdkImplementer {
 
     return {
       name,
-      description:
-        skill.interface?.shortDescription ?? skill.shortDescription ?? skill.description,
+      description: skill.interface?.shortDescription ?? skill.shortDescription ?? skill.description,
       template,
       source: 'skill',
       path,

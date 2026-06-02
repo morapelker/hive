@@ -53,6 +53,20 @@ function getStreamEvents(): any[] {
   return publish.mock.calls.map((call: any[]) => call[0])
 }
 
+async function waitForIdle(sessionId = 'hive-1') {
+  await vi.waitFor(() => {
+    const events = getStreamEvents()
+    expect(
+      events.some(
+        (event: any) =>
+          event.type === 'session.status' &&
+          event.sessionId === sessionId &&
+          event.statusPayload?.type === 'idle'
+      )
+    ).toBe(true)
+  })
+}
+
 describe('ClaudeCodeImplementer – prompt streaming (Session 4)', () => {
   let impl: ClaudeCodeImplementer
   let sessions: Map<string, ClaudeSessionState>
@@ -85,6 +99,7 @@ describe('ClaudeCodeImplementer – prompt streaming (Session 4)', () => {
       mockQuery.mockReturnValue(iter)
 
       await impl.prompt('/proj', sessionId, 'hi')
+      await waitForIdle()
 
       const events = getStreamEvents()
 
@@ -101,6 +116,33 @@ describe('ClaudeCodeImplementer – prompt streaming (Session 4)', () => {
         sessionId: 'hive-1',
         statusPayload: { type: 'idle' }
       })
+    })
+
+    it('resolves after SDK query dispatch without waiting for iteration completion', async () => {
+      const { sessionId } = await impl.connect('/proj', 'hive-1')
+      const iter = {
+        interrupt: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn(),
+        next: vi.fn().mockImplementation(() => new Promise(() => {})),
+        return: vi.fn().mockResolvedValue({ done: true, value: undefined }),
+        [Symbol.asyncIterator]() {
+          return this
+        }
+      }
+      mockQuery.mockReturnValue(iter)
+
+      await impl.prompt('/proj', sessionId, 'long task')
+
+      const events = getStreamEvents()
+      expect(events).toHaveLength(1)
+      expect(events[0]).toMatchObject({
+        type: 'session.status',
+        sessionId: 'hive-1',
+        statusPayload: { type: 'busy' }
+      })
+      expect((impl as any).getSession('/proj', sessionId)?.subscription).toBeTruthy()
+
+      await impl.cleanup()
     })
 
     it('materializes pending:: session ID on first SDK message', async () => {
@@ -120,6 +162,9 @@ describe('ClaudeCodeImplementer – prompt streaming (Session 4)', () => {
       mockQuery.mockReturnValue(iter)
 
       await impl.prompt('/proj', sessionId, 'hello')
+      await vi.waitFor(() => {
+        expect(sessions.has(oldKey)).toBe(false)
+      })
 
       // Old pending key should be gone
       expect(sessions.has(oldKey)).toBe(false)
@@ -151,6 +196,10 @@ describe('ClaudeCodeImplementer – prompt streaming (Session 4)', () => {
       mockQuery.mockReturnValue(iter)
 
       await impl.prompt('/proj', sessionId, 'test')
+      await vi.waitFor(() => {
+        const partEvents = getStreamEvents().filter((e: any) => e.type === 'message.part.updated')
+        expect(partEvents.length).toBeGreaterThanOrEqual(2)
+      })
 
       const events = getStreamEvents()
       const partEvents = events.filter((e: any) => e.type === 'message.part.updated')
@@ -184,6 +233,10 @@ describe('ClaudeCodeImplementer – prompt streaming (Session 4)', () => {
       mockQuery.mockReturnValue(iter)
 
       await impl.prompt('/proj', sessionId, 'test')
+      await vi.waitFor(() => {
+        const newKey = (impl as any).getSessionKey('/proj', 'sdk-1')
+        expect(sessions.get(newKey)?.checkpoints.has('user-msg-uuid-42')).toBe(true)
+      })
 
       // Find the session (may have been re-keyed)
       const newKey = (impl as any).getSessionKey('/proj', 'sdk-1')
@@ -209,6 +262,7 @@ describe('ClaudeCodeImplementer – prompt streaming (Session 4)', () => {
       mockQuery.mockReturnValue(iter)
 
       await impl.prompt('/proj', sessionId, 'test')
+      await waitForIdle()
 
       const events = getStreamEvents()
 
@@ -224,7 +278,7 @@ describe('ClaudeCodeImplementer – prompt streaming (Session 4)', () => {
         throw new Error('SDK query failed')
       })
 
-      await impl.prompt('/proj', sessionId, 'test')
+      await expect(impl.prompt('/proj', sessionId, 'test')).rejects.toThrow('SDK query failed')
 
       const events = getStreamEvents()
 
@@ -260,6 +314,9 @@ describe('ClaudeCodeImplementer – prompt streaming (Session 4)', () => {
       })
 
       await impl.prompt('/proj', sessionId, 'test')
+      await vi.waitFor(() => {
+        expect(getStreamEvents().find((e: any) => e.type === 'session.error')).toBeDefined()
+      })
 
       const events = getStreamEvents()
 
@@ -295,6 +352,7 @@ describe('ClaudeCodeImplementer – prompt streaming (Session 4)', () => {
       mockQuery.mockReturnValue(iter)
 
       await impl.prompt('/proj', 'real-sdk-id-1', 'continue')
+      await waitForIdle()
 
       expect(mockQuery).toHaveBeenCalledTimes(1)
       const callArgs = mockQuery.mock.calls[0][0]
@@ -319,6 +377,11 @@ describe('ClaudeCodeImplementer – prompt streaming (Session 4)', () => {
       mockQuery.mockReturnValue(createMockQueryIterator(messages))
 
       await impl.prompt('/proj', sessionId, 'Hello')
+      await vi.waitFor(() => {
+        expect(mockDb.updateSession).toHaveBeenCalledWith('hive-1', {
+          opencode_session_id: 'real-sdk-id'
+        })
+      })
 
       expect(mockDb.updateSession).toHaveBeenCalledWith('hive-1', {
         opencode_session_id: 'real-sdk-id'
@@ -335,6 +398,7 @@ describe('ClaudeCodeImplementer – prompt streaming (Session 4)', () => {
 
       // Should not throw
       await impl.prompt('/proj', sessionId, 'Hello')
+      await waitForIdle()
     })
 
     it('handles DB update error gracefully', async () => {
@@ -354,6 +418,11 @@ describe('ClaudeCodeImplementer – prompt streaming (Session 4)', () => {
 
       // Should not throw even if DB fails
       await impl.prompt('/proj', sessionId, 'Hello')
+      await vi.waitFor(() => {
+        expect(mockDb.updateSession).toHaveBeenCalledWith('hive-1', {
+          opencode_session_id: 'real-sdk-id'
+        })
+      })
 
       expect(mockDb.updateSession).toHaveBeenCalledWith('hive-1', {
         opencode_session_id: 'real-sdk-id'
@@ -379,6 +448,7 @@ describe('ClaudeCodeImplementer – prompt streaming (Session 4)', () => {
       mockQuery.mockReturnValue(createMockQueryIterator(messages))
 
       await impl.prompt('/proj', 'existing-sdk-id', 'continue')
+      await waitForIdle()
 
       // DB should NOT be updated since session was already materialized
       expect(mockDb.updateSession).not.toHaveBeenCalled()
