@@ -2,6 +2,7 @@ import { describe, test, expect, beforeEach, vi } from 'vitest'
 import { act } from '@testing-library/react'
 import { useWorktreeStore } from '../../../src/renderer/src/stores/useWorktreeStore'
 import { useConnectionStore } from '../../../src/renderer/src/stores/useConnectionStore'
+import { useSessionStore } from '../../../src/renderer/src/stores/useSessionStore'
 
 const apiMocks = vi.hoisted(() => ({
   connectionApi: {
@@ -27,6 +28,9 @@ const apiMocks = vi.hoisted(() => ({
   dbApi: {
     worktree: {
       touch: vi.fn().mockResolvedValue(undefined)
+    },
+    session: {
+      update: vi.fn()
     },
     setting: {
       get: vi.fn().mockResolvedValue(null),
@@ -69,6 +73,7 @@ const apiMocks = vi.hoisted(() => ({
     onPlanImplementRequested: vi.fn(() => vi.fn())
   },
   terminalApi: {
+    destroy: vi.fn(),
     onClosed: vi.fn(() => vi.fn())
   }
 }))
@@ -99,6 +104,7 @@ vi.mock('@/lib/toast', () => ({
 const mockConnectionOps = apiMocks.connectionApi
 const mockWorktreeOps = apiMocks.worktreeApi
 const mockKanban = apiMocks.kanbanApi
+const closeSessionMock = vi.fn()
 
 // ---------- Test data factories ----------
 function makeWorktree(overrides: Record<string, unknown> = {}) {
@@ -221,6 +227,8 @@ function makeSecondConnection(overrides: Record<string, unknown> = {}) {
 describe('Session 10: Archive Cascade & Integration', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    closeSessionMock.mockReset()
+    closeSessionMock.mockResolvedValue({ success: true })
 
     // Reset worktree store
     useWorktreeStore.setState({
@@ -261,6 +269,11 @@ describe('Session 10: Archive Cascade & Integration', () => {
       isLoading: false,
       error: null,
       selectedConnectionId: null
+    })
+
+    useSessionStore.setState({
+      sessionsByWorktree: new Map(),
+      closeSession: closeSessionMock
     })
 
     // Default mock: successful archive
@@ -358,6 +371,55 @@ describe('Session 10: Archive Cascade & Integration', () => {
       // Worktree should be removed from state
       const worktrees = useWorktreeStore.getState().worktreesByProject.get('proj-1')
       expect(worktrees?.find((w) => w.id === 'wt-1')).toBeUndefined()
+    })
+
+    test('archiving closes all worktree sessions before deleting the worktree', async () => {
+      const callOrder: string[] = []
+      closeSessionMock
+        .mockImplementationOnce(async () => {
+          callOrder.push('close:s-idle-codex')
+          throw new Error('already disconnected')
+        })
+        .mockImplementationOnce(async () => {
+          callOrder.push('close:s-terminal')
+          return { success: true }
+        })
+      mockWorktreeOps.delete.mockImplementation(async () => {
+        callOrder.push('delete')
+        return { success: true }
+      })
+
+      useSessionStore.setState({
+        sessionsByWorktree: new Map([
+          [
+            'wt-1',
+            [
+              {
+                id: 's-idle-codex',
+                opencode_session_id: 'codex-session-id',
+                agent_sdk: 'codex'
+              },
+              {
+                id: 's-terminal',
+                opencode_session_id: null,
+                agent_sdk: 'claude-cli'
+              }
+            ] as never
+          ]
+        ])
+      })
+
+      const result = await act(async () => {
+        return useWorktreeStore
+          .getState()
+          .archiveWorktree('wt-1', '/repos/frontend/city-one', 'feat/auth', '/repos/frontend')
+      })
+
+      expect(result.success).toBe(true)
+      expect(closeSessionMock).toHaveBeenNthCalledWith(1, 's-idle-codex')
+      expect(closeSessionMock).toHaveBeenNthCalledWith(2, 's-terminal')
+      expect(mockWorktreeOps.delete).toHaveBeenCalledTimes(1)
+      expect(callOrder).toEqual(['close:s-idle-codex', 'close:s-terminal', 'delete'])
     })
 
     test('archive failure after detach leaves detached tickets in place', async () => {

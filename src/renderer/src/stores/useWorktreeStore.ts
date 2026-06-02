@@ -13,7 +13,6 @@ import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { registerWorktreeClear, clearConnectionSelection } from './store-coordination'
 import { connectionApi } from '@/api/connection-api'
 import { dbApi } from '@/api/db-api'
-import { opencodeApi } from '@/api/opencode-api'
 import { scriptApi } from '@/api/script-api'
 import { worktreeApi } from '@/api/worktree-api'
 
@@ -489,19 +488,13 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
         }
       }
 
-      // 3. Abort any active streaming sessions
-      const sessionIds = useSessionStore.getState().sessionsByWorktree.get(worktreeId) || []
-      const statusStore = useWorktreeStatusStore.getState()
-      for (const session of sessionIds) {
-        const status = statusStore.sessionStatuses[session.id]
-        if (status?.status === 'working' || status?.status === 'planning') {
-          if (session.opencode_session_id) {
-            try {
-              unwrapEnvelope(await opencodeApi.abort(worktreePath, session.opencode_session_id))
-            } catch {
-              // Non-critical — session may already be idle
-            }
-          }
+      // 3. Close all sessions so terminal PTYs and agent child processes are released before delete
+      const sessions = useSessionStore.getState().sessionsByWorktree.get(worktreeId) || []
+      for (const session of sessions) {
+        try {
+          await useSessionStore.getState().closeSession(session.id)
+        } catch {
+          // Non-critical — session cleanup may already have happened
         }
       }
 
