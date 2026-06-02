@@ -184,7 +184,9 @@ const makeDefaultRpcHandlers = (context: RpcContext): ReadonlyMap<string, RpcHan
     ...makeDbRpcHandlers(context.db ?? makeLiveDbRpcService()),
     ...makeFileOpsRpcHandlers(context.fileOps ?? makeLiveFileOpsRpcService()),
     ...makeFileTreeOpsRpcHandlers(context.fileTreeOps ?? makeLiveFileTreeOpsRpcService()),
-    ...makeGitOpsRpcHandlers(context.gitOps ?? makeLiveGitOpsRpcService()),
+    ...makeGitOpsRpcHandlers(
+      context.gitOps ?? makeLiveGitOpsRpcService({ eventBus: context.eventBus })
+    ),
     ...makeKanbanRpcHandlers(context.kanban ?? makeLiveKanbanRpcService()),
     ...makeLoggingOpsRpcHandlers(context.loggingOps ?? makeLiveLoggingOpsRpcService()),
     ...makeOpenCodeOpsRpcHandlers(context.opencodeOps ?? makeLiveOpenCodeOpsRpcService()),

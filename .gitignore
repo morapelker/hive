@@ -4,6 +4,7 @@ node_modules/
 # Build output
 dist/
 out/
+.dev-server/
 *.tsbuildinfo
 
 # Environment
@@ -61,6 +62,7 @@ scripts/*
 !scripts/release.sh
 !scripts/prepare-win-deps.sh
 !scripts/codex-app-server-probe.ts
+!scripts/dev-desktop.mjs
 !scripts/dev-web.mjs
 !scripts/probe-effect-logger.ts
 

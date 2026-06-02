@@ -12,6 +12,8 @@ const pendingResolvers = new Map<string, Array<() => void>>()
 const REFRESH_DEBOUNCE_MS = 150
 const inflightFileStatuses = new Map<string, Promise<void>>()
 const inflightBranchInfo = new Map<string, Promise<void>>()
+const pendingForcedFileStatusLoads = new Map<string, Promise<void>>()
+const pendingForcedBranchInfoLoads = new Map<string, Promise<void>>()
 const lastFileStatusLoad = new Map<string, number>()
 const lastBranchInfoLoad = new Map<string, number>()
 const LOAD_TTL_MS = 2500
@@ -184,7 +186,20 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
   // Load file statuses for a worktree
   loadFileStatuses: async (worktreePath: string, opts?: { force?: boolean }) => {
     const inflight = inflightFileStatuses.get(worktreePath)
-    if (inflight) return inflight
+    if (inflight) {
+      if (!opts?.force) return inflight
+
+      const pendingForced = pendingForcedFileStatusLoads.get(worktreePath)
+      if (pendingForced) return pendingForced
+
+      const forcedLoad = inflight
+        .then(() => get().loadFileStatuses(worktreePath, { force: true }))
+        .finally(() => {
+          pendingForcedFileStatusLoads.delete(worktreePath)
+        })
+      pendingForcedFileStatusLoads.set(worktreePath, forcedLoad)
+      return forcedLoad
+    }
 
     const lastLoad = lastFileStatusLoad.get(worktreePath)
     if (!opts?.force && lastLoad !== undefined && Date.now() - lastLoad < LOAD_TTL_MS) {
@@ -235,7 +250,20 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
   // Load branch info for a worktree
   loadBranchInfo: async (worktreePath: string, opts?: { force?: boolean }) => {
     const inflight = inflightBranchInfo.get(worktreePath)
-    if (inflight) return inflight
+    if (inflight) {
+      if (!opts?.force) return inflight
+
+      const pendingForced = pendingForcedBranchInfoLoads.get(worktreePath)
+      if (pendingForced) return pendingForced
+
+      const forcedLoad = inflight
+        .then(() => get().loadBranchInfo(worktreePath, { force: true }))
+        .finally(() => {
+          pendingForcedBranchInfoLoads.delete(worktreePath)
+        })
+      pendingForcedBranchInfoLoads.set(worktreePath, forcedLoad)
+      return forcedLoad
+    }
 
     const lastLoad = lastBranchInfoLoad.get(worktreePath)
     if (!opts?.force && lastLoad !== undefined && Date.now() - lastLoad < LOAD_TTL_MS) {
@@ -295,6 +323,9 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
   stageFile: async (worktreePath: string, relativePath: string) => {
     try {
       const result = await gitApi.stageFile(worktreePath, relativePath)
+      if (result.success) {
+        await get().loadFileStatuses(worktreePath, { force: true })
+      }
       return result.success
     } catch (error) {
       console.error('Failed to stage file:', error)
@@ -306,6 +337,9 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
   unstageFile: async (worktreePath: string, relativePath: string) => {
     try {
       const result = await gitApi.unstageFile(worktreePath, relativePath)
+      if (result.success) {
+        await get().loadFileStatuses(worktreePath, { force: true })
+      }
       return result.success
     } catch (error) {
       console.error('Failed to unstage file:', error)
@@ -317,6 +351,9 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
   stageAll: async (worktreePath: string) => {
     try {
       const result = await gitApi.stageAll(worktreePath)
+      if (result.success) {
+        await get().loadFileStatuses(worktreePath, { force: true })
+      }
       return result.success
     } catch (error) {
       console.error('Failed to stage all files:', error)
@@ -328,6 +365,9 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
   unstageAll: async (worktreePath: string) => {
     try {
       const result = await gitApi.unstageAll(worktreePath)
+      if (result.success) {
+        await get().loadFileStatuses(worktreePath, { force: true })
+      }
       return result.success
     } catch (error) {
       console.error('Failed to unstage all files:', error)
@@ -339,6 +379,7 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
   discardChanges: async (worktreePath: string, relativePath: string) => {
     try {
       await gitApi.discardChanges(worktreePath, relativePath)
+      await get().loadFileStatuses(worktreePath, { force: true })
       return true
     } catch (error) {
       console.error('Failed to discard changes:', error)
@@ -350,6 +391,9 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
   addToGitignore: async (worktreePath: string, pattern: string) => {
     try {
       const result = await gitApi.addToGitignore(worktreePath, pattern)
+      if (result.success) {
+        await get().loadFileStatuses(worktreePath, { force: true })
+      }
       return result.success
     } catch (error) {
       console.error('Failed to add to .gitignore:', error)

@@ -22,6 +22,7 @@ import { GIT_STATUS_CHANGED_CHANNEL } from '@shared/git-events'
 import { getImageMimeType } from '@shared/types/file-utils'
 import type { GitBranchInfo, GitFileStatus, PRReviewComment } from '@shared/types/git'
 import { telemetryService } from '../../../main/services/telemetry-service'
+import type { EventBus } from '../../events/event-bus'
 import type { RpcHandler } from '../router'
 
 export interface GitFileStatusResult {
@@ -569,6 +570,7 @@ const preserveRequestedProjectPath = (reportedPath: string, projectPath: string)
 export interface GitOpsRpcServiceDependencies {
   readonly runCommand?: CommandRunner
   readonly track?: (event: string, properties?: Record<string, unknown>) => void
+  readonly eventBus?: EventBus
   readonly generatePRContent?: (options: {
     readonly baseBranch: string
     readonly headBranch: string
@@ -585,6 +587,7 @@ export const makeLiveGitOpsRpcService = (
 ): GitOpsRpcService => {
   const runCommand = dependencies.runCommand ?? execFileAsync
   const track = dependencies.track ?? telemetryService.track.bind(telemetryService)
+  const eventBus = dependencies.eventBus
   const applyHunkPatch = async (
     worktreePath: string,
     patch: string,
@@ -754,7 +757,7 @@ export const makeLiveGitOpsRpcService = (
       }),
     watchWorktree: (worktreePath) =>
       Effect.tryPromise({
-        try: () => requestGitWorktreeMutationCommand('watchGitWorktree', worktreePath),
+        try: () => requestGitWorktreeMutationCommand('watchGitWorktree', worktreePath, eventBus),
         catch: (cause) => cause
       }),
     unwatchWorktree: (worktreePath) =>
@@ -2378,28 +2381,36 @@ export const makeGitOpsRpcHandlers = (
 
 const requestGitWorktreeMutationCommand = (
   command: 'watchGitWorktree' | 'unwatchGitWorktree' | 'watchGitBranch' | 'unwatchGitBranch',
-  worktreePath: string
+  worktreePath: string,
+  eventBus?: EventBus
 ): Promise<GitOperationResult> => {
   if (command === 'watchGitBranch' || command === 'unwatchGitBranch') {
-    return import('../../../main/services/branch-watcher').then(async ({ unwatchBranch, watchBranch }) => {
-      try {
-        if (command === 'watchGitBranch') await watchBranch(worktreePath)
-        else await unwatchBranch(worktreePath)
-        return { success: true }
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : String(error)
+    return import('../../../main/services/branch-watcher').then(
+      async ({ unwatchBranch, watchBranch }) => {
+        try {
+          if (command === 'watchGitBranch') await watchBranch(worktreePath)
+          else await unwatchBranch(worktreePath)
+          return { success: true }
+        } catch (error) {
+          return {
+            success: false,
+            error: error instanceof Error ? error.message : String(error)
+          }
         }
       }
-    })
+    )
   }
 
   return import('../../../main/services/worktree-watcher').then(
     async ({ unwatchWorktree, watchWorktree }) => {
       try {
-        if (command === 'watchGitWorktree') await watchWorktree(worktreePath)
-        else await unwatchWorktree(worktreePath)
+        if (command === 'watchGitWorktree') {
+          await watchWorktree(worktreePath, {
+            publishGitEvent: eventBus
+              ? (channel, payload) => Effect.runPromise(eventBus.publish({ channel, payload }))
+              : undefined
+          })
+        } else await unwatchWorktree(worktreePath)
         return { success: true }
       } catch (error) {
         return {
