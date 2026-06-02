@@ -2286,7 +2286,7 @@ const handleDesktopBackendCommand = (
 
   if (message.command === 'showPet') {
     try {
-      createPetWindow()
+      createPetWindow(getDesktopBackendBootstrap())
       sendDesktopBackendCommandResult(
         child,
         makeDesktopCommandResult(message.id, { ok: true }),
@@ -2488,7 +2488,7 @@ const handleDesktopBackendCommand = (
     try {
       updatePetSettings(message.payload)
       if (message.payload.enabled === true) {
-        createPetWindow()
+        createPetWindow(getDesktopBackendBootstrap())
       } else if (message.payload.enabled === false) {
         destroyPetWindow()
       }

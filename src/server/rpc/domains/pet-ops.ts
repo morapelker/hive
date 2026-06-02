@@ -50,6 +50,8 @@ const updateSettingsParamsSchema = z
     petId: z.string().optional(),
     size: z.enum(['S', 'M', 'L']).optional(),
     opacity: z.number().finite().optional(),
+    animationSpeedEnabled: z.boolean().optional(),
+    animationSpeed: z.number().finite().optional(),
     hasHatched: z.boolean().optional()
   })
   .strict()
@@ -59,6 +61,8 @@ const DEFAULT_PET_SETTINGS: PetSettings = {
   petId: 'bee',
   size: 'M',
   opacity: 1,
+  animationSpeedEnabled: false,
+  animationSpeed: 5,
   hasHatched: false
 }
 

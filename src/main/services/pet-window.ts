@@ -4,6 +4,10 @@ import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 import { getDatabase } from '../db'
 import { APP_SETTINGS_DB_KEY } from '../../shared/types/settings'
+import {
+  encodeLocalEnvironmentBootstrapArg,
+  type LocalEnvironmentBootstrap
+} from '../../shared/desktop-bridge'
 import type {
   PetManifest,
   PetPosition,
@@ -215,7 +219,9 @@ export function getPetConfig(): {
   }
 }
 
-export function createPetWindow(): BrowserWindow | null {
+export function createPetWindow(
+  bootstrap: LocalEnvironmentBootstrap | null = null
+): BrowserWindow | null {
   if (process.platform !== 'darwin') return null
   ensureRegularMacAppActivation()
   if (petWindow && !petWindow.isDestroyed()) return petWindow
@@ -245,7 +251,8 @@ export function createPetWindow(): BrowserWindow | null {
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
-      backgroundThrottling: false
+      backgroundThrottling: false,
+      additionalArguments: [encodeLocalEnvironmentBootstrapArg(bootstrap)]
     }
   })
 
