@@ -67,7 +67,7 @@ A session is durably blank only when all of the following are true:
 2. `window.db.sessionMessage.list(sessionId)` returns no messages.
 3. `window.db.sessionActivity.list(sessionId)` returns no activities.
 4. If an existing `opencode_session_id` exists, the live backend transcript can be verified and is empty.
-5. If the session is Claude Code CLI, no `claude_session_id` has been captured yet; launched CLI transcripts are treated as unverifiable and therefore nonblank for switching.
+5. The session is not already Claude Code CLI; live CLI transcripts cannot be verified through a reliable session-only API, so CLI sessions are treated as nonblank for switching.
 6. No prompt is currently sending.
 7. No stream is active.
 8. No queued follow-up or pending follow-up prompt exists.
@@ -104,7 +104,7 @@ Action flow:
 2. Reject bare Terminal sessions.
 3. Check durable blankness with `sessionMessage.list` and `sessionActivity.list`; reject if either API is unavailable or throws.
 4. If the current session has an `opencode_session_id`, query the live backend transcript and reject if it is nonempty or cannot be verified.
-5. If the current session is Claude CLI and has a `claude_session_id`, reject because Hive has no reliable session-only transcript verification API for the live CLI transcript.
+5. If the current session is Claude CLI, reject because Hive has no reliable session-only transcript verification API for the live CLI transcript.
 6. Reject if provider availability is unknown or if `nextAgentSdk` is unavailable.
 7. Reject if any sent message, activity, active stream, queued prompt, pending follow-up, pending initial prompt, or store-owned local send/stream/queued-follow-up activity exists.
 8. Resolve a default model for `nextAgentSdk` if `nextModel` is not supplied.
@@ -117,7 +117,7 @@ Action flow:
    - `claude_session_id = null`
 10. After the database update succeeds, best-effort tear down the old runtime:
    - Disconnect the old `opencode_session_id` through `opencodeOps.disconnect`.
-   - Destroy the old Claude CLI PTY through `terminalOps.destroy(sessionId)`.
+   - Do not tear down Claude CLI here; switching away from current Claude CLI sessions fails before the database update.
 11. Update the in-memory session in the owning scope.
 12. Do not update worktree `last_model_*`.
 13. Do not update global or per-SDK selected model defaults as a side effect.
@@ -171,7 +171,7 @@ Claude CLI model choice remains a launch-time concern. Hive may persist `model_i
 | Durable-blank validation fails | Do not switch; return an error |
 | Durable-blank validation cannot be verified | Fail closed; do not switch |
 | Live backend transcript cannot be verified | Fail closed; do not switch |
-| Launched Claude CLI transcript exists but cannot be verified | Fail closed; show static provider text |
+| Current session is Claude CLI | Fail closed; show static provider text |
 | Database update fails | Keep old provider and old runtime; show a toast |
 | Old backend teardown fails after DB update | Log and continue |
 | Store update succeeds but new provider connect fails | Keep selected provider; show existing connection retry UI |
@@ -197,7 +197,7 @@ Claude CLI model choice remains a launch-time concern. Hive may persist `model_i
 11. Missing history APIs or failed status verification reject the switch.
 12. Database update failure does not disconnect OpenCode or destroy a Claude CLI PTY.
 13. Plain `completed` status is allowed after durable blankness is verified.
-14. Switching away from Claude CLI tears down the PTY after a successful DB update.
+14. Claude CLI sessions reject provider switching before DB update or PTY teardown.
 15. Live backend transcript history blocks switching.
 16. Live backend transcript verification failure rejects the switch.
 17. Unknown provider availability rejects the switch.

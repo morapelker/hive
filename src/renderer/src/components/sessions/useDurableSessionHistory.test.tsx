@@ -153,7 +153,7 @@ describe('useDurableSessionHistory', () => {
     expect(window.opencodeOps.getMessages).not.toHaveBeenCalled()
   })
 
-  it('returns false for not-yet-launched Claude CLI sessions with empty DB history', async () => {
+  it('treats Claude CLI sessions without a captured session id as durable', async () => {
     seedSession({
       agent_sdk: 'claude-code-cli',
       opencode_session_id: null,
@@ -163,7 +163,7 @@ describe('useDurableSessionHistory', () => {
     const { result } = renderHook(() => useDurableSessionHistory('session-1'))
 
     await waitFor(() => {
-      expect(result.current).toBe(false)
+      expect(result.current).toBe(true)
     })
   })
 

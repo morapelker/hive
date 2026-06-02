@@ -94,7 +94,7 @@ describe('ClaudeCliSessionView blank provider switch', () => {
     cleanup()
   })
 
-  it('keeps the provider selector enabled for an idle pty_start status', async () => {
+  it('renders static provider text for an idle pty_start status', async () => {
     useWorktreeStatusStore.setState({
       sessionStatuses: {
         'session-1': {
@@ -108,17 +108,17 @@ describe('ClaudeCliSessionView blank provider switch', () => {
     render(<ClaudeCliSessionView sessionId="session-1" />)
 
     await waitFor(() => {
-      expect(screen.getByTestId('session-provider-selector')).toBeInTheDocument()
+      expect(screen.getByTestId('session-provider-label')).toBeInTheDocument()
     })
-    expect(screen.queryByTestId('session-provider-label')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('session-provider-selector')).not.toBeInTheDocument()
     expect(screen.queryByTestId('model-selector')).not.toBeInTheDocument()
   })
 
-  it('returns to static provider text when durable history appears after mount', async () => {
+  it('keeps static provider text when durable history appears after mount', async () => {
     render(<ClaudeCliSessionView sessionId="session-1" />)
 
     await waitFor(() => {
-      expect(screen.getByTestId('session-provider-selector')).toBeInTheDocument()
+      expect(screen.getByTestId('session-provider-label')).toBeInTheDocument()
     })
 
     sessionMessageList.mockResolvedValue([{ id: 'message-1' }])

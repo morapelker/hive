@@ -231,6 +231,34 @@ describe('useSessionStore.changeBlankSessionProvider', () => {
     )
   })
 
+  it('still allows switching a blank OpenCode-style session into Claude CLI', async () => {
+    const session = makeSession({
+      agent_sdk: 'opencode',
+      opencode_session_id: null,
+      claude_session_id: null
+    })
+    seedSession(session)
+    const { sessionUpdate } = setupWindowDb(session)
+
+    const result = await useSessionStore
+      .getState()
+      .changeBlankSessionProvider('session-1', 'claude-code-cli')
+
+    expect(result.success).toBe(true)
+    expect(sessionUpdate).toHaveBeenCalledWith(
+      'session-1',
+      expect.objectContaining({
+        agent_sdk: 'claude-code-cli',
+        model_provider_id: 'anthropic',
+        model_id: 'sonnet',
+        model_variant: 'high',
+        opencode_session_id: null,
+        claude_session_id: null
+      })
+    )
+    expect(window.terminalOps.destroy).not.toHaveBeenCalled()
+  })
+
   it('rejects sessions with durable messages or activities', async () => {
     const session = makeSession()
     seedSession(session)
@@ -414,7 +442,7 @@ describe('useSessionStore.changeBlankSessionProvider', () => {
     )
   })
 
-  it('allows idle Claude CLI pty_start status and tears down the PTY', async () => {
+  it('fails closed for Claude CLI sessions before a session id is captured', async () => {
     const session = makeSession({
       agent_sdk: 'claude-code-cli',
       opencode_session_id: null,
@@ -434,17 +462,13 @@ describe('useSessionStore.changeBlankSessionProvider', () => {
 
     const result = await useSessionStore.getState().changeBlankSessionProvider('session-1', 'codex')
 
-    expect(result.success).toBe(true)
-    expect(window.terminalOps.destroy).toHaveBeenCalledWith('session-1')
+    expect(result).toMatchObject({
+      success: false,
+      error: 'Could not verify whether this session has live transcript history'
+    })
+    expect(sessionUpdate).not.toHaveBeenCalled()
+    expect(window.terminalOps.destroy).not.toHaveBeenCalled()
     expect(window.opencodeOps.disconnect).not.toHaveBeenCalled()
-    expect(sessionUpdate).toHaveBeenCalledWith(
-      'session-1',
-      expect.objectContaining({
-        agent_sdk: 'codex',
-        opencode_session_id: null,
-        claude_session_id: null
-      })
-    )
   })
 
   it('fails closed for launched Claude CLI sessions with an unverifiable transcript', async () => {

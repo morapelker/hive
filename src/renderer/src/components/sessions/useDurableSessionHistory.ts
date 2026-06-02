@@ -43,7 +43,6 @@ export function useDurableSessionHistory(sessionId: string): boolean {
   const [hasDurableHistory, setHasDurableHistory] = useState(true)
   const session = useSessionStore((state) => state.getSessionById(sessionId))
   const opencodeSessionId = session?.opencode_session_id
-  const claudeSessionId = session?.claude_session_id
   const agentSdk = session?.agent_sdk
   const worktreeId = session?.worktree_id
   const connectionId = session?.connection_id
@@ -66,7 +65,7 @@ export function useDurableSessionHistory(sessionId: string): boolean {
           return
         }
 
-        if (agentSdk === 'claude-code-cli' && claudeSessionId) {
+        if (agentSdk === 'claude-code-cli') {
           if (mounted) setHasDurableHistory(true)
           return
         }
@@ -111,7 +110,7 @@ export function useDurableSessionHistory(sessionId: string): boolean {
       mounted = false
       window.clearInterval(intervalId)
     }
-  }, [sessionId, opencodeSessionId, claudeSessionId, agentSdk, worktreeId, connectionId])
+  }, [sessionId, opencodeSessionId, agentSdk, worktreeId, connectionId])
 
   return hasDurableHistory
 }
