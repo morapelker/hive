@@ -2,9 +2,10 @@ import { deleteAttachment } from '../services/attachment-storage'
 import type { AgentSdk } from '@shared/types/agent-sdk'
 import Database from 'better-sqlite3'
 import { dirname, join } from 'path'
-import { existsSync, mkdirSync } from 'fs'
+import { existsSync, mkdirSync, statSync } from 'fs'
 import { randomUUID } from 'crypto'
 import { homedir } from 'os'
+import { Worker as NodeWorker } from 'node:worker_threads'
 import { MIGRATIONS } from './schema'
 import type {
   Project,
@@ -22,6 +23,9 @@ import type {
   SessionMessageUpsertByOpenCode,
   SessionActivity,
   SessionActivityCreate,
+  StorageStats,
+  CompactionPreview,
+  CompactionResult,
   Setting,
   SessionSearchOptions,
   SessionWithWorktree,
@@ -82,9 +86,132 @@ type ProjectRow = Omit<Project, 'auto_assign_port' | 'custom_commands'> & {
   custom_commands: string | null
 }
 
+type CompactionWorkerSuccess = CompactionResult & { ok: true }
+type CompactionWorkerFailure = {
+  ok: false
+  message: string
+  stack?: string
+}
+type CompactionWorkerMessage = CompactionWorkerSuccess | CompactionWorkerFailure
+
+const DATABASE_COMPACTION_WORKER = String.raw`
+const { parentPort, workerData } = require('node:worker_threads')
+const { copyFileSync, existsSync, renameSync, rmSync, statSync } = require('node:fs')
+const Database = require('better-sqlite3')
+
+const fileSize = (filePath) => (existsSync(filePath) ? statSync(filePath).size : 0)
+const cleanupTemp = (basePath) => {
+  rmSync(basePath, { force: true })
+  rmSync(basePath + '-wal', { force: true })
+  rmSync(basePath + '-shm', { force: true })
+}
+
+let db
+try {
+  const { dbPath, beforeBytes, tempPath } = workerData
+  cleanupTemp(tempPath)
+  copyFileSync(dbPath, tempPath)
+
+  db = new Database(tempPath)
+  db.pragma('journal_mode = DELETE')
+  db.pragma('foreign_keys = ON')
+
+  const prune = db.transaction(() => {
+    const orphanedMessages = db
+      .prepare('DELETE FROM session_messages WHERE session_id NOT IN (SELECT id FROM sessions)')
+      .run().changes
+    const orphanedActivities = db
+      .prepare('DELETE FROM session_activities WHERE session_id NOT IN (SELECT id FROM sessions)')
+      .run().changes
+
+    return {
+      orphanedMessages,
+      orphanedActivities
+    }
+  })
+  const deletedCounts = prune()
+
+  db.exec('VACUUM')
+  db.close()
+  db = undefined
+
+  rmSync(dbPath + '-wal', { force: true })
+  rmSync(dbPath + '-shm', { force: true })
+  renameSync(tempPath, dbPath)
+  cleanupTemp(tempPath)
+
+  const afterBytes = fileSize(dbPath) + fileSize(dbPath + '-wal')
+  parentPort.postMessage({
+    ok: true,
+    beforeBytes,
+    afterBytes,
+    savedBytes: Math.max(0, beforeBytes - afterBytes),
+    deletedCounts
+  })
+} catch (error) {
+  if (db) {
+    try {
+      db.close()
+    } catch {
+      // Ignore cleanup failure while reporting the original compaction error.
+    }
+  }
+  cleanupTemp(workerData.tempPath)
+  parentPort.postMessage({
+    ok: false,
+    message: error instanceof Error ? error.message : String(error),
+    stack: error instanceof Error ? error.stack : undefined
+  })
+}
+`
+
+const runCompactionWorker = (dbPath: string, beforeBytes: number): Promise<CompactionResult> => {
+  const tempPath = `${dbPath}.compact-${process.pid}-${Date.now()}-${randomUUID()}.tmp`
+
+  return new Promise((resolve, reject) => {
+    const worker = new NodeWorker(DATABASE_COMPACTION_WORKER, {
+      eval: true,
+      workerData: { dbPath, beforeBytes, tempPath }
+    })
+    let settled = false
+
+    worker.once('message', (message: CompactionWorkerMessage) => {
+      settled = true
+      if (message.ok) {
+        resolve({
+          beforeBytes: message.beforeBytes,
+          afterBytes: message.afterBytes,
+          savedBytes: message.savedBytes,
+          deletedCounts: message.deletedCounts
+        })
+      } else {
+        const error = new Error(message.message)
+        if (message.stack) error.stack = message.stack
+        reject(error)
+      }
+    })
+
+    worker.once('error', (error) => {
+      if (!settled) {
+        settled = true
+        reject(error)
+      }
+    })
+
+    worker.once('exit', (code) => {
+      if (!settled && code !== 0) {
+        settled = true
+        reject(new Error(`Database compaction worker exited with code ${code}`))
+      }
+    })
+  })
+}
+
 export class DatabaseService {
   private db: Database.Database | null = null
   private dbPath: string
+  private compactionInProgress = false
+  private maintenanceMode = false
 
   constructor(dbPath?: string) {
     if (dbPath) {
@@ -120,6 +247,9 @@ export class DatabaseService {
   }
 
   private getDb(): Database.Database {
+    if (this.maintenanceMode) {
+      throw new Error('Database compaction is in progress. Try again after it finishes.')
+    }
     if (!this.db) {
       throw new Error('Database not initialized. Call init() first.')
     }
@@ -2071,6 +2201,113 @@ export class DatabaseService {
   }
 
   // Utility methods
+  private getFileSize(filePath: string): number {
+    if (!existsSync(filePath)) return 0
+    return statSync(filePath).size
+  }
+
+  private getTotalDatabaseFileBytes(): number {
+    return this.getFileSize(this.dbPath) + this.getFileSize(`${this.dbPath}-wal`)
+  }
+
+  private getPragmaNumber(name: 'freelist_count' | 'page_size' | 'page_count'): number {
+    const db = this.getDb()
+    const value = db.pragma(name, { simple: true }) as unknown
+    return typeof value === 'number' ? value : Number(value) || 0
+  }
+
+  getStorageStats(): StorageStats {
+    const pageSize = this.getPragmaNumber('page_size')
+    const pageCount = this.getPragmaNumber('page_count')
+    const freePages = this.getPragmaNumber('freelist_count')
+    const dbFileBytes = this.getFileSize(this.dbPath)
+    const walFileBytes = this.getFileSize(`${this.dbPath}-wal`)
+    const shmFileBytes = this.getFileSize(`${this.dbPath}-shm`)
+
+    return {
+      dbFileBytes,
+      walFileBytes,
+      shmFileBytes,
+      totalFileBytes: dbFileBytes + walFileBytes,
+      freeBytes: freePages * pageSize,
+      pageSize,
+      pageCount
+    }
+  }
+
+  previewCompaction(): CompactionPreview {
+    const db = this.getDb()
+    const storage = this.getStorageStats()
+    const orphanedMessages = db
+      .prepare(
+        `SELECT
+           COUNT(*) AS rows,
+           COALESCE(SUM(
+             LENGTH(CAST(content AS BLOB)) +
+             LENGTH(CAST(COALESCE(opencode_message_json, '') AS BLOB)) +
+             LENGTH(CAST(COALESCE(opencode_parts_json, '') AS BLOB)) +
+             LENGTH(CAST(COALESCE(opencode_timeline_json, '') AS BLOB))
+           ), 0) AS bytes
+         FROM session_messages
+         WHERE session_id NOT IN (SELECT id FROM sessions)`
+      )
+      .get() as { rows: number; bytes: number }
+    const orphanedActivities = db
+      .prepare(
+        `SELECT
+           COUNT(*) AS rows,
+           COALESCE(SUM(
+             LENGTH(CAST(summary AS BLOB)) +
+             LENGTH(CAST(COALESCE(payload_json, '') AS BLOB))
+           ), 0) AS bytes
+         FROM session_activities
+         WHERE session_id NOT IN (SELECT id FROM sessions)`
+      )
+      .get() as { rows: number; bytes: number }
+
+    const orphanedBytes = orphanedMessages.bytes + orphanedActivities.bytes
+    const estimatedSavedBytes = storage.freeBytes + storage.walFileBytes + orphanedBytes
+
+    return {
+      storage,
+      reclaimableFreeBytes: storage.freeBytes,
+      reclaimableWalBytes: storage.walFileBytes,
+      orphaned: {
+        rows: {
+          messages: orphanedMessages.rows,
+          activities: orphanedActivities.rows
+        },
+        bytes: orphanedBytes
+      },
+      estimatedSavedBytes
+    }
+  }
+
+  async compactDatabase(): Promise<CompactionResult> {
+    if (this.compactionInProgress) {
+      throw new Error('Database compaction is already in progress.')
+    }
+
+    this.compactionInProgress = true
+    const beforeBytes = this.getTotalDatabaseFileBytes()
+
+    try {
+      const db = this.getDb()
+      db.pragma('wal_checkpoint(TRUNCATE)')
+      this.maintenanceMode = true
+      this.close()
+
+      return await runCompactionWorker(this.dbPath, beforeBytes)
+    } finally {
+      this.maintenanceMode = false
+      try {
+        this.init()
+      } finally {
+        this.compactionInProgress = false
+      }
+    }
+  }
+
   getSchemaVersion(): number {
     const version = this.getSetting('schema_version')
     return version ? parseInt(version, 10) : 0

@@ -81,6 +81,11 @@ import {
   type SettingsOpsRpcService
 } from './domains/settings-ops'
 import {
+  makeLiveStorageOpsRpcService,
+  makeStorageOpsRpcHandlers,
+  type StorageOpsRpcService
+} from './domains/storage-ops'
+import {
   makeLiveScriptOpsRpcService,
   makeScriptOpsRpcHandlers,
   type ScriptOpsRpcService
@@ -141,6 +146,7 @@ export interface RpcContext {
   readonly projectOps?: ProjectOpsRpcService
   readonly scriptOps?: ScriptOpsRpcService
   readonly settingsOps?: SettingsOpsRpcService
+  readonly storageOps?: StorageOpsRpcService
   readonly systemOps?: SystemOpsRpcService
   readonly terminalOps?: TerminalOpsRpcService
   readonly ticketImport?: TicketImportRpcService
@@ -197,6 +203,7 @@ const makeDefaultRpcHandlers = (context: RpcContext): ReadonlyMap<string, RpcHan
     ...makeProjectOpsRpcHandlers(context.projectOps ?? makeLiveProjectOpsRpcService()),
     ...makeScriptOpsRpcHandlers(context.scriptOps ?? makeLiveScriptOpsRpcService(context.eventBus)),
     ...makeSettingsOpsRpcHandlers(context.settingsOps ?? makeLiveSettingsOpsRpcService()),
+    ...makeStorageOpsRpcHandlers(context.storageOps ?? makeLiveStorageOpsRpcService()),
     ...makeSystemOpsRpcHandlers(context.systemOps ?? makeLiveSystemOpsRpcService()),
     ...makeTerminalOpsRpcHandlers(
       context.terminalOps ?? makeLiveTerminalOpsRpcService(context.eventBus)

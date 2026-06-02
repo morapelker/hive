@@ -116,5 +116,4 @@ declare global {
       next?: number
     }
   }
-
 }
