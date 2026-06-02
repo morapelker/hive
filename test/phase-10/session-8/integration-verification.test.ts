@@ -1,4 +1,5 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest'
+import { projectApi } from '@/api/project-api'
 import { useQuestionStore } from '../../../src/renderer/src/stores/useQuestionStore'
 import type { QuestionRequest } from '../../../src/renderer/src/stores/useQuestionStore'
 
@@ -9,6 +10,57 @@ import type { QuestionRequest } from '../../../src/renderer/src/stores/useQuesti
  * work together correctly. Each test exercises interactions between
  * two or more Phase 10 features.
  */
+
+const apiMocks = vi.hoisted(() => ({
+  dbApi: {
+    setting: {
+      get: vi.fn(),
+      set: vi.fn()
+    }
+  },
+  petApi: {
+    hide: vi.fn(),
+    show: vi.fn(),
+    updateSettings: vi.fn()
+  },
+  projectApi: {
+    showInFolder: vi.fn()
+  },
+  settingsApi: {
+    loadCustomCommandsFile: vi.fn(() => Promise.resolve({ success: true, commands: [] })),
+    onSettingsUpdated: vi.fn()
+  },
+  systemApi: {
+    detectAgentSdks: vi.fn()
+  },
+  telegramApi: {
+    getConfig: vi.fn(() => Promise.resolve(null))
+  }
+}))
+
+vi.mock('@/api/db-api', () => ({
+  dbApi: apiMocks.dbApi
+}))
+
+vi.mock('@/api/pet-api', () => ({
+  petApi: apiMocks.petApi
+}))
+
+vi.mock('@/api/project-api', () => ({
+  projectApi: apiMocks.projectApi
+}))
+
+vi.mock('@/api/settings-api', () => ({
+  settingsApi: apiMocks.settingsApi
+}))
+
+vi.mock('@/api/system-api', () => ({
+  systemApi: apiMocks.systemApi
+}))
+
+vi.mock('@/api/telegram-api', () => ({
+  telegramApi: apiMocks.telegramApi
+}))
 
 // ─── Scroll tracker (extracted from Session 4 FAB logic) ─────────────────────
 
@@ -127,6 +179,20 @@ function detectSlashCommand(
 
 describe('Session 8: Integration & Verification', () => {
   beforeEach(() => {
+    vi.clearAllMocks()
+    apiMocks.dbApi.setting.get.mockResolvedValue(null)
+    apiMocks.dbApi.setting.set.mockResolvedValue(true)
+    apiMocks.petApi.hide.mockResolvedValue(undefined)
+    apiMocks.petApi.show.mockResolvedValue(undefined)
+    apiMocks.petApi.updateSettings.mockResolvedValue({ success: true })
+    apiMocks.projectApi.showInFolder.mockResolvedValue(undefined)
+    apiMocks.settingsApi.onSettingsUpdated.mockReturnValue(vi.fn())
+    apiMocks.systemApi.detectAgentSdks.mockResolvedValue({
+      opencode: true,
+      claude: true,
+      codex: true
+    })
+    apiMocks.telegramApi.getConfig.mockResolvedValue(null)
     useQuestionStore.setState({ pendingBySession: new Map() })
   })
 
@@ -378,30 +444,16 @@ describe('Session 8: Integration & Verification', () => {
       expect(store.getState().lastOpenAction).toBe('finder')
     })
 
-    test('showInFolder is called for finder action (not openInFinder)', () => {
-      // Verify window.projectOps.showInFolder exists and is the correct API
-      const mockShowInFolder = vi.fn().mockResolvedValue(undefined)
-      Object.defineProperty(window, 'projectOps', {
-        value: {
-          ...((window as unknown as Record<string, unknown>).projectOps || {}),
-          showInFolder: mockShowInFolder,
-          copyToClipboard: vi.fn()
-        },
-        writable: true,
-        configurable: true
-      })
+    test('projectApi.showInFolder is called for finder action (not openInFinder)', async () => {
+      await projectApi.showInFolder('/path/to/worktree')
 
-      // Execute the finder action path
-      ;(
-        window as unknown as { projectOps: { showInFolder: (p: string) => Promise<void> } }
-      ).projectOps.showInFolder('/path/to/worktree')
-      expect(mockShowInFolder).toHaveBeenCalledWith('/path/to/worktree')
+      expect(apiMocks.projectApi.showInFolder).toHaveBeenCalledWith('/path/to/worktree')
 
       // Verify worktreeOps.openInFinder is NOT the pattern used
       // (the bug that was fixed in Session 6)
     })
 
-    test('command palette reveal-in-finder uses projectOps.showInFolder', async () => {
+    test('command palette reveal-in-finder uses projectApi.showInFolder', async () => {
       // Verify by source code inspection that useCommands uses the correct API
       const fs = await import('fs')
       const path = await import('path')
@@ -410,8 +462,8 @@ describe('Session 8: Integration & Verification', () => {
         'utf-8'
       )
 
-      // The fix from Session 6: should use projectOps.showInFolder, not worktreeOps.openInFinder
-      expect(commandsSource).toContain('projectOps.showInFolder')
+      // The fix from Session 6: should use the reveal-in-folder API, not worktreeOps.openInFinder
+      expect(commandsSource).toContain('projectApi.showInFolder')
       expect(commandsSource).not.toContain('worktreeOps.openInFinder')
     })
   })

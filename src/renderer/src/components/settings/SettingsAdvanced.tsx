@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import { codexDebugLoggerApi } from '@/api/codex-debug-logger-api'
+import { perfDiagnosticsApi } from '@/api/perf-diagnostics-api'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { Trash2, Plus } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -21,28 +23,36 @@ export function SettingsAdvanced(): React.JSX.Element {
   const [errors, setErrors] = useState<Record<number, string | null>>({})
 
   // Store access
-  const { environmentVariables: rawEnvVars, perfDiagnosticsEnabled, codexJsonlLoggingEnabled, codexJsonlResetPerSession, updateSetting } = useSettingsStore()
+  const {
+    environmentVariables: rawEnvVars,
+    perfDiagnosticsEnabled,
+    codexJsonlLoggingEnabled,
+    codexJsonlResetPerSession,
+    updateSetting
+  } = useSettingsStore()
   const envVars = rawEnvVars ?? []
 
   const handlePerfDiagnosticsToggle = (): void => {
     const newValue = !perfDiagnosticsEnabled
     updateSetting('perfDiagnosticsEnabled', newValue)
-    window.perfDiagnosticsOps.enable(newValue)
+    perfDiagnosticsApi.enable(newValue)
     toast.success(newValue ? 'Performance diagnostics enabled' : 'Performance diagnostics disabled')
   }
 
   const handleCodexJsonlLoggingToggle = (): void => {
     const newValue = !codexJsonlLoggingEnabled
     updateSetting('codexJsonlLoggingEnabled', newValue)
-    window.codexDebugLoggerOps.configure(newValue, codexJsonlResetPerSession)
+    codexDebugLoggerApi.configure(newValue, codexJsonlResetPerSession)
     toast.success(newValue ? 'Codex JSONL logging enabled' : 'Codex JSONL logging disabled')
   }
 
   const handleCodexJsonlResetToggle = (): void => {
     const newValue = !codexJsonlResetPerSession
     updateSetting('codexJsonlResetPerSession', newValue)
-    window.codexDebugLoggerOps.configure(codexJsonlLoggingEnabled, newValue)
-    toast.success(newValue ? 'Log will reset each Codex session' : 'Log will append across sessions')
+    codexDebugLoggerApi.configure(codexJsonlLoggingEnabled, newValue)
+    toast.success(
+      newValue ? 'Log will reset each Codex session' : 'Log will append across sessions'
+    )
   }
 
   const handleAdd = () => {
@@ -65,9 +75,7 @@ export function SettingsAdvanced(): React.JSX.Element {
   }
 
   const handleChange = (index: number, field: 'key' | 'value', val: string) => {
-    const updated = envVars.map((entry, i) =>
-      i === index ? { ...entry, [field]: val } : entry
-    )
+    const updated = envVars.map((entry, i) => (i === index ? { ...entry, [field]: val } : entry))
 
     // Validate key
     if (field === 'key') {
@@ -95,7 +103,8 @@ export function SettingsAdvanced(): React.JSX.Element {
         <div>
           <label className="text-sm font-medium">Performance Diagnostics</label>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Log CPU, memory, process, and handle metrics every 30s to ~/.hive/logs/perf-diagnostics.jsonl
+            Log CPU, memory, process, and handle metrics every 30s to
+            ~/.hive/logs/perf-diagnostics.jsonl
           </p>
         </div>
         <button
@@ -143,11 +152,17 @@ export function SettingsAdvanced(): React.JSX.Element {
       </div>
 
       {/* Reset log each session sub-toggle */}
-      <div className={cn('flex items-center justify-between pl-4', !codexJsonlLoggingEnabled && 'opacity-50 pointer-events-none')}>
+      <div
+        className={cn(
+          'flex items-center justify-between pl-4',
+          !codexJsonlLoggingEnabled && 'opacity-50 pointer-events-none'
+        )}
+      >
         <div>
           <label className="text-sm font-medium">Reset log each session</label>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Truncate the log file when a new Codex session starts. When off, logs append across sessions.
+            Truncate the log file when a new Codex session starts. When off, logs append across
+            sessions.
           </p>
         </div>
         <button

@@ -14,7 +14,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { ProviderIcon } from '@/components/ui/provider-icon'
 import { toast } from '@/lib/toast'
 import { ModeToggle } from './ModeToggle'
@@ -93,8 +93,11 @@ import { isComposingKeyboardEvent } from '@/lib/message-composer-shortcuts'
 import { handleSessionIdleFollowUp } from '@/lib/session-follow-up-dispatch'
 import { buildSdkPlanImplementationPrompt, looksLikeCodexProposedPlan } from '@/lib/proposedPlan'
 import { buildHandoffPrompt, type HandoffSelectionOverride } from '@/lib/handoffSelection'
-
-const db = unwrapEnvelopeApi(() => window.db)
+import { systemApi } from '@/api/system-api'
+import { opencodeApi } from '@/api/opencode-api'
+import { dbApi } from '@/api/db-api'
+import { connectionApi } from '@/api/connection-api'
+import { loggingApi } from '@/api/logging-api'
 
 // Stable empty array to avoid creating new references in selectors
 const EMPTY_FILE_INDEX: FlatFile[] = []
@@ -438,12 +441,9 @@ function insertSteeredMessageAtBoundary(
 async function loadCodexDurableState(
   sessionId: string
 ): Promise<{ messages: OpenCodeMessage[]; activities: SessionActivity[] }> {
-  if (!db.sessionMessage?.list || !db.sessionActivity?.list) {
-    return { messages: [], activities: [] }
-  }
   const [messageRows, activityRows] = await Promise.all([
-    db.sessionMessage.list(sessionId),
-    db.sessionActivity.list(sessionId)
+    dbApi.sessionMessage.list<SessionMessage>(sessionId),
+    dbApi.sessionActivity.list<SessionActivity>(sessionId)
   ])
   return {
     messages: deriveCodexTimelineMessages(messageRows, activityRows, true),
@@ -710,15 +710,15 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
       setSessionCapabilities(null)
       return
     }
-    window.opencodeOps
-      ?.capabilities?.(opencodeSessionId)
+    opencodeApi
+      .capabilities(opencodeSessionId)
       .then(unwrapEnvelope)
-      ?.then((result) => {
+      .then((result) => {
         if (result.success && result.capabilities) {
           setSessionCapabilities(result.capabilities)
         }
       })
-      ?.catch(() => {})
+      .catch(() => {})
   }, [opencodeSessionId])
 
   // Prompt history navigation
@@ -1218,7 +1218,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
   useEffect(() => {
     const model = getModelForRequests()
     if (!model) return
-    window.opencodeOps.setModel(model).catch((error) => {
+    opencodeApi.setModel(model).catch((error) => {
       console.error('Failed to push session model to OpenCode:', error)
     })
   }, [
@@ -1285,8 +1285,8 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
 
     // First check after a short delay, then periodic
     const timerId = setInterval(() => {
-      window.opencodeOps
-        ?.permissionList(worktreePath)
+      opencodeApi
+        .permissionList(worktreePath)
         .then(unwrapEnvelope)
         .then((result) => {
           if (result.success && result.permissions) {
@@ -1325,7 +1325,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
 
   // Check if response logging is enabled on mount
   useEffect(() => {
-    window.systemOps
+    systemApi
       .isLogMode()
       .then((enabled) => {
         isLogModeRef.current = enabled
@@ -1498,7 +1498,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
     childToSubtaskIndexRef.current.clear()
 
     // Load saved draft for this session
-    db.session.getDraft(sessionId).then((draft) => {
+    dbApi.session.getDraft(sessionId).then((draft) => {
       if (draft) {
         setInputValue(draft)
         inputValueRef.current = draft
@@ -1532,7 +1532,6 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
       }
 
       const canUseOpenCodeSource =
-        Boolean(window.opencodeOps) &&
         typeof sourceWorktreePath === 'string' &&
         sourceWorktreePath.length > 0 &&
         typeof sourceOpencodeSessionId === 'string' &&
@@ -1572,7 +1571,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
         canUseOpenCodeSource
       ) {
         const result = unwrapEnvelope(
-          await window.opencodeOps.getMessages(sourceWorktreePath, sourceOpencodeSessionId)
+          await opencodeApi.getMessages(sourceWorktreePath, sourceOpencodeSessionId)
         )
         if (result.success) {
           loadedFromOpenCode = true
@@ -1835,1229 +1834,1219 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
     // This prevents a race condition where session.idle arrives during async
     // initialization (DB loads, reconnect) and is missed by both this handler
     // (not yet set up) and the global listener (which skips the active session).
-    const unsubscribe = window.opencodeOps?.onStream
-      ? window.opencodeOps.onStream((event) => {
-          // Debug: log ALL session.updated events, even if filtered out
-          if (event.type === 'session.updated') {
-            console.log('[TITLE_DEBUG] onStream received session.updated (before filter)', {
+    const unsubscribe = opencodeApi.onStream((event) => {
+      // Debug: log ALL session.updated events, even if filtered out
+      if (event.type === 'session.updated') {
+        console.log('[TITLE_DEBUG] onStream received session.updated (before filter)', {
+          eventSessionId: event.sessionId,
+          componentSessionId: sessionId,
+          match: event.sessionId === sessionId,
+          title: event.data?.info?.title || event.data?.title
+        })
+      }
+
+      const shouldTraceCodexStream =
+        sessionRecord?.agent_sdk === 'codex' ||
+        event.sessionId === sessionId ||
+        event.type?.startsWith('codex.') === true
+
+      if (shouldTraceCodexStream) {
+        console.info('[CODEX_STREAM_DEBUG] renderer received before filters', {
+          ...summarizeStreamEventForDebug(event),
+          componentSessionId: sessionId,
+          currentOpencodeSessionId: transcriptSourceRef.current.opencodeSessionId,
+          matchesComponentSession: event.sessionId === sessionId,
+          streamGeneration: streamGenerationRef.current,
+          currentGeneration
+        })
+      }
+
+      // Only handle events for this session
+      if (event.sessionId !== sessionId) {
+        if (shouldTraceCodexStream) {
+          console.info('[CODEX_STREAM_DEBUG] renderer dropped session mismatch', {
+            eventSessionId: event.sessionId,
+            componentSessionId: sessionId,
+            type: event.type
+          })
+        }
+        return
+      }
+
+      // Guard: generation check — prevents stale closures from processing
+      // events when the user has already switched to a different session.
+      if (streamGenerationRef.current !== currentGeneration) {
+        if (shouldTraceCodexStream) {
+          console.info('[CODEX_STREAM_DEBUG] renderer dropped stale generation', {
+            eventSessionId: event.sessionId,
+            componentSessionId: sessionId,
+            type: event.type,
+            streamGeneration: streamGenerationRef.current,
+            currentGeneration
+          })
+        }
+        return
+      }
+
+      if (sessionRecord?.agent_sdk === 'codex') {
+        const codexEventId =
+          event.data &&
+          typeof event.data === 'object' &&
+          !Array.isArray(event.data) &&
+          typeof (event.data as Record<string, unknown>)._codexEventId === 'string'
+            ? ((event.data as Record<string, unknown>)._codexEventId as string)
+            : null
+
+        if (codexEventId) {
+          if (seenCodexEventIdsRef.current.has(codexEventId)) {
+            console.info('[CODEX_STREAM_DEBUG] renderer dropped duplicate codex event', {
               eventSessionId: event.sessionId,
               componentSessionId: sessionId,
-              match: event.sessionId === sessionId,
-              title: event.data?.info?.title || event.data?.title
+              type: event.type,
+              codexEventId
             })
-          }
-
-          const shouldTraceCodexStream =
-            sessionRecord?.agent_sdk === 'codex' ||
-            event.sessionId === sessionId ||
-            event.type?.startsWith('codex.') === true
-
-          if (shouldTraceCodexStream) {
-            console.info('[CODEX_STREAM_DEBUG] renderer received before filters', {
-              ...summarizeStreamEventForDebug(event),
-              componentSessionId: sessionId,
-              currentOpencodeSessionId: transcriptSourceRef.current.opencodeSessionId,
-              matchesComponentSession: event.sessionId === sessionId,
-              streamGeneration: streamGenerationRef.current,
-              currentGeneration
-            })
-          }
-
-          // Only handle events for this session
-          if (event.sessionId !== sessionId) {
-            if (shouldTraceCodexStream) {
-              console.info('[CODEX_STREAM_DEBUG] renderer dropped session mismatch', {
-                eventSessionId: event.sessionId,
-                componentSessionId: sessionId,
-                type: event.type
-              })
-            }
             return
           }
-
-          // Guard: generation check — prevents stale closures from processing
-          // events when the user has already switched to a different session.
-          if (streamGenerationRef.current !== currentGeneration) {
-            if (shouldTraceCodexStream) {
-              console.info('[CODEX_STREAM_DEBUG] renderer dropped stale generation', {
-                eventSessionId: event.sessionId,
-                componentSessionId: sessionId,
-                type: event.type,
-                streamGeneration: streamGenerationRef.current,
-                currentGeneration
-              })
-            }
-            return
+          seenCodexEventIdsRef.current.add(codexEventId)
+          seenCodexEventIdsQueueRef.current.push(codexEventId)
+          if (seenCodexEventIdsQueueRef.current.length > 500) {
+            const recentIds = seenCodexEventIdsQueueRef.current.slice(-250)
+            seenCodexEventIdsRef.current = new Set(recentIds)
+            seenCodexEventIdsQueueRef.current = recentIds
           }
+        }
+      }
 
-          if (sessionRecord?.agent_sdk === 'codex') {
-            const codexEventId =
-              event.data &&
-              typeof event.data === 'object' &&
-              !Array.isArray(event.data) &&
-              typeof (event.data as Record<string, unknown>)._codexEventId === 'string'
-                ? ((event.data as Record<string, unknown>)._codexEventId as string)
-                : null
-
-            if (codexEventId) {
-              if (seenCodexEventIdsRef.current.has(codexEventId)) {
-                console.info('[CODEX_STREAM_DEBUG] renderer dropped duplicate codex event', {
-                  eventSessionId: event.sessionId,
-                  componentSessionId: sessionId,
-                  type: event.type,
-                  codexEventId
-                })
-                return
-              }
-              seenCodexEventIdsRef.current.add(codexEventId)
-              seenCodexEventIdsQueueRef.current.push(codexEventId)
-              if (seenCodexEventIdsQueueRef.current.length > 500) {
-                const recentIds = seenCodexEventIdsQueueRef.current.slice(-250)
-                seenCodexEventIdsRef.current = new Set(recentIds)
-                seenCodexEventIdsQueueRef.current = recentIds
-              }
-            }
-          }
-
-          // Log event if response logging is active
-          if (isLogModeRef.current && logFilePathRef.current) {
-            try {
-              if (event.type === 'message.part.updated') {
-                window.loggingOps.appendResponseLog(logFilePathRef.current, {
-                  type: 'part_updated',
-                  event: event.data
-                })
-              } else if (event.type === 'message.updated') {
-                window.loggingOps.appendResponseLog(logFilePathRef.current, {
-                  type: 'message_updated',
-                  event: event.data
-                })
-              } else if (event.type === 'session.idle') {
-                window.loggingOps.appendResponseLog(logFilePathRef.current, {
-                  type: 'session_idle'
-                })
-              }
-            } catch {
-              // Never let logging failures break the UI
-            }
-          }
-
-          // Handle session.updated events — update session title in store
-          // The SDK event structure is: { data: { info: { title, ... } } }
-          if (event.type === 'session.updated') {
-            const rawTitle = event.data?.info?.title || event.data?.title
-            const sessionTitle = rawTitle ? maybeExtractJsonTitle(rawTitle) : rawTitle
-            console.log('[TITLE_DEBUG] SessionView received session.updated', {
-              eventSessionId: event.sessionId,
-              componentSessionId: sessionId,
-              sessionTitle,
-              eventData: event.data
-            })
-            // Skip OpenCode default placeholder titles like "New session - 2026-02-12T21:33:03.013Z"
-            const isOpenCodeDefault = /^New session\s*-?\s*\d{4}-\d{2}-\d{2}/i.test(
-              sessionTitle || ''
-            )
-            if (sessionTitle && !isOpenCodeDefault) {
-              console.log('[TITLE_DEBUG] SessionView calling updateSessionName', {
-                sessionId,
-                sessionTitle
-              })
-              useSessionStore.getState().updateSessionName(sessionId, sessionTitle)
-            } else {
-              console.log('[TITLE_DEBUG] SessionView SKIPPED updateSessionName', {
-                sessionTitle,
-                isOpenCodeDefault
-              })
-            }
-            return
-          }
-
-          // Handle session materialization — update the stale pending:: session ID
-          // so subsequent loadMessages() calls use the real SDK session ID.
-          // Also handles fork transitions: when the SDK returns a new session ID
-          // after forkSession: true, clear old messages to avoid showing stale
-          // content from the pre-fork branch.
-          if (event.type === 'session.materialized') {
-            const newId = event.data?.newSessionId as string | undefined
-            if (newId) {
-              // Use the authoritative wasFork flag from the backend instead of
-              // guessing based on the old session ID format. The backend knows
-              // whether this is initial materialization (pending:: → real ID),
-              // an actual fork (undo+resend with forkSession: true), or just an
-              // SDK session ID change during normal resume. Only true forks
-              // should clear messages. Defaults to false (safe — no clearing)
-              // if the backend doesn't send the flag.
-              const wasFork = event.data?.wasFork === true
-              setOpencodeSessionId(newId)
-              transcriptSourceRef.current.opencodeSessionId = newId
-              useSessionStore.getState().setOpenCodeSessionId(sessionId, newId)
-
-              // On fork, the new session has its own transcript. Clear old
-              // messages so the user only sees the local prompt bubble while
-              // the fork streams. finalizeResponse() will reload from the
-              // new transcript when the stream completes.
-              if (wasFork) {
-                setMessages((prev) => prev.filter((m) => m.id.startsWith('local-')))
-              }
-            }
-            return
-          }
-
-          // Handle commands_available — re-fetch slash commands after SDK init
-          if (event.type === 'session.commands_available') {
-            const wtPath = transcriptSourceRef.current.worktreePath
-            if (wtPath) {
-              window.opencodeOps
-                .commands(wtPath, sessionId)
-                .then(unwrapEnvelope)
-                .then((result) => {
-                  if (result.success && result.commands) {
-                    setSlashCommands(result.commands)
-                  }
-                })
-                .catch(() => {
-                  // Silently ignore — commands will be fetched on next prompt cycle
-                })
-            }
-            return
-          }
-
-          if (event.type === 'codex.goal.updated') {
-            const data = asRecord(event.data)
-            const goal = asRecord(data?.goal)
-            const eventThreadId = asString(data?.threadId) ?? asString(goal?.threadId)
-            const currentThreadId =
-              transcriptSourceRef.current.opencodeSessionId ?? opencodeSessionId
-
-            if (goal && (!currentThreadId || !eventThreadId || eventThreadId === currentThreadId)) {
-              console.info('[CODEX_STREAM_DEBUG] renderer applying goal updated', {
-                componentSessionId: sessionId,
-                eventThreadId,
-                currentThreadId,
-                goalStatus: asString(goal.status),
-                objectiveLength: asString(goal.objective)?.length ?? 0
-              })
-              useSessionStore.getState().setCodexGoal(sessionId, goal as unknown as CodexThreadGoal)
-            } else {
-              console.info('[CODEX_STREAM_DEBUG] renderer skipped goal updated', {
-                componentSessionId: sessionId,
-                eventThreadId,
-                currentThreadId,
-                hasGoal: !!goal
-              })
-            }
-            return
-          }
-
-          if (event.type === 'codex.goal.cleared') {
-            const data = asRecord(event.data)
-            const eventThreadId = asString(data?.threadId)
-            const currentThreadId =
-              transcriptSourceRef.current.opencodeSessionId ?? opencodeSessionId
-
-            if (!currentThreadId || !eventThreadId || eventThreadId === currentThreadId) {
-              console.info('[CODEX_STREAM_DEBUG] renderer applying goal cleared', {
-                componentSessionId: sessionId,
-                eventThreadId,
-                currentThreadId
-              })
-              useSessionStore.getState().clearCodexGoal(sessionId)
-            } else {
-              console.info('[CODEX_STREAM_DEBUG] renderer skipped goal cleared', {
-                componentSessionId: sessionId,
-                eventThreadId,
-                currentThreadId
-              })
-            }
-            return
-          }
-
-          // Handle question events
-          if (event.type === 'question.asked') {
-            const request = event.data
-            if (request?.id && request?.questions) {
-              useQuestionStore.getState().addQuestion(sessionId, request)
-            }
-            return
-          }
-
-          if (event.type === 'question.replied' || event.type === 'question.rejected') {
-            const requestId = event.data?.requestID || event.data?.requestId || event.data?.id
-            if (requestId) {
-              useQuestionStore.getState().removeQuestion(sessionId, requestId)
-            }
-            return
-          }
-
-          // Handle permission events
-          if (event.type === 'permission.asked') {
-            const request = event.data
-            if (request?.id && request?.permission) {
-              const { commandFilter } = useSettingsStore.getState()
-              // Security globally off OR all sub-patterns in commandFilter allowlist → auto-approve
-              if (
-                !commandFilter.enabled ||
-                checkAutoApprove(request as PermissionRequest, commandFilter.allowlist)
-              ) {
-                window.opencodeOps
-                  .permissionReply(request.id, 'once', worktreePath || undefined)
-                  .catch((err: unknown) => {
-                    console.warn('Auto-approve permissionReply failed:', err)
-                  })
-                return
-              }
-              usePermissionStore.getState().addPermission(sessionId, request)
-            }
-            return
-          }
-
-          if (event.type === 'permission.replied') {
-            const requestId = event.data?.requestID || event.data?.requestId || event.data?.id
-            if (requestId) {
-              usePermissionStore.getState().removePermission(sessionId, requestId)
-            }
-            return
-          }
-
-          // Handle command approval events (command filter system)
-          if (event.type === 'command.approval_needed') {
-            const request = event.data
-            if (request?.id && request?.toolName) {
-              useCommandApprovalStore.getState().addApproval(sessionId, request)
-            }
-            return
-          }
-
-          // Handle command approval replies
-          if (event.type === 'command.approval_replied') {
-            const requestId = event.data?.requestID || event.data?.requestId || event.data?.id
-            if (requestId) {
-              useCommandApprovalStore.getState().removeApproval(sessionId, requestId)
-              // Reset status if no more pending approvals (handles transition from background to active)
-              const remaining = useCommandApprovalStore.getState().getApprovals(sessionId)
-              if (remaining.length === 0) {
-                const currentStatus = useWorktreeStatusStore.getState().sessionStatuses[sessionId]
-                if (currentStatus?.status === 'command_approval') {
-                  const mode = useSessionStore.getState().getSessionMode(sessionId)
-                  useWorktreeStatusStore
-                    .getState()
-                    .setSessionStatus(sessionId, isPlanLike(mode) ? 'planning' : 'working')
-                }
-              }
-            }
-            return
-          }
-
-          // Handle plan events (ExitPlanMode blocking tool)
-          if (event.type === 'plan.ready') {
-            const data = event.data as {
-              id?: string
-              requestId?: string
-              plan?: string
-              toolUseID?: string
-            }
-            const requestId = data?.id || data?.requestId
-            if (requestId) {
-              let planText = data.plan ?? ''
-
-              // If backend didn't provide plan content, extract from preceding streaming text
-              if (!planText && data.toolUseID) {
-                const parts = streamingPartsRef.current
-                const toolIdx = parts.findIndex(
-                  (p) => p.type === 'tool_use' && p.toolUse?.id === data.toolUseID
-                )
-                if (toolIdx > 0) {
-                  for (let i = toolIdx - 1; i >= 0; i--) {
-                    if (parts[i].type === 'text' && parts[i].text) {
-                      planText = parts[i].text!
-                      break
-                    }
-                  }
-                }
-              }
-
-              // Finalize the streaming plan card (if XML tag detection created one)
-              // or create a new one from plan.ready data (fallback for Claude Code /
-              // sessions where <proposed_plan> tags weren't present).
-              const det = planXmlDetectionRef.current
-              const streamingCardId = det.cardId
-
-              // Flush any leftover scanning buffer as regular text
-              if (det.buffer) {
-                appendTextDelta(det.buffer)
-                det.buffer = ''
-              }
-              // Reset detection state
-              planXmlDetectionRef.current = { state: 'scanning', buffer: '', cardId: null }
-
-              if (streamingCardId) {
-                // Progressive card exists — finalize with clean plan text + real ID
-                updateStreamingPartsRef((parts) =>
-                  parts.map((p) => {
-                    if (p.type !== 'tool_use' || p.toolUse?.id !== streamingCardId) return p
-                    const finalPlan = planText || (p.toolUse!.input.plan as string) || ''
-                    return {
-                      ...p,
-                      toolUse: {
-                        ...p.toolUse!,
-                        id: data.toolUseID || p.toolUse!.id,
-                        input: { ...p.toolUse!.input, plan: finalPlan },
-                        status: 'pending' as const
-                      }
-                    }
-                  })
-                )
-                immediateFlush()
-              } else {
-                // No progressive card — strip XML from text parts and inject card
-                updateStreamingPartsRef((parts) =>
-                  parts.map((p) => {
-                    if (p.type !== 'text' || !p.text) return p
-                    const stripped = p.text
-                      .replace(/<proposed_plan>\s*[\s\S]*?\s*<\/proposed_plan>/gi, '')
-                      .trim()
-                    if (!stripped) return { ...p, text: '' }
-                    return { ...p, text: stripped }
-                  })
-                )
-
-                if (planText && data.toolUseID) {
-                  const hasExisting = streamingPartsRef.current.some(
-                    (p) => p.type === 'tool_use' && p.toolUse?.id === data.toolUseID
-                  )
-                  if (hasExisting) {
-                    updateStreamingPartsRef((parts) =>
-                      parts.map((p) =>
-                        p.type === 'tool_use' && p.toolUse?.id === data.toolUseID
-                          ? {
-                              ...p,
-                              toolUse: {
-                                ...p.toolUse!,
-                                input: { ...p.toolUse!.input, plan: planText },
-                                status: 'pending' as const
-                              }
-                            }
-                          : p
-                      )
-                    )
-                  } else {
-                    updateStreamingPartsRef((parts) => [
-                      ...parts,
-                      {
-                        type: 'tool_use' as const,
-                        toolUse: {
-                          id: data.toolUseID,
-                          name: 'ExitPlanMode',
-                          input: { plan: planText },
-                          status: 'pending' as const,
-                          startTime: Date.now()
-                        }
-                      }
-                    ])
-                  }
-                  immediateFlush()
-                }
-              }
-
-              useSessionStore.getState().setPendingPlan(sessionId, {
-                requestId,
-                planContent: planText,
-                toolUseID: data.toolUseID ?? ''
-              })
-              if (sessionRecord?.agent_sdk === 'codex') {
-                scheduleCodexStreamingRefresh()
-              }
-              setIsStreaming(false)
-              setIsSending(false)
-              setQueuedMessages([])
-              useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'plan_ready')
-            }
-            return
-          }
-
-          if (event.type === 'plan.resolved') {
-            useSessionStore.getState().clearPendingPlan(sessionId)
-            if (sessionRecord?.agent_sdk === 'codex') {
-              scheduleCodexStreamingRefresh()
-            }
-            return
-          }
-
-          // Handle different event types
-          const eventRole = getEventMessageRole(event.data)
-
-          if (event.type === 'session.error') {
-            if (event.childSessionId) return
-            setSessionErrorMessage(extractSessionErrorMessage(event.data))
-            setSessionErrorStderr(extractSessionErrorStderr(event.data))
-            // Notify kanban store so errored tickets auto-move to review
-            notifyKanbanSessionSync(sessionId, { type: 'session_error' })
-            return
-          }
-
+      // Log event if response logging is active
+      if (isLogModeRef.current && logFilePathRef.current) {
+        try {
           if (event.type === 'message.part.updated') {
-            // Skip user-message echoes; user messages are already rendered locally.
-            if (eventRole === 'user') {
-              if (sessionRecord?.agent_sdk === 'codex') {
-                console.info('[CODEX_STREAM_DEBUG] renderer skipped user echo part', {
-                  componentSessionId: sessionId,
-                  ...summarizeStreamEventForDebug(event)
-                })
+            loggingApi.appendResponseLog(logFilePathRef.current, {
+              type: 'part_updated',
+              event: event.data
+            })
+          } else if (event.type === 'message.updated') {
+            loggingApi.appendResponseLog(logFilePathRef.current, {
+              type: 'message_updated',
+              event: event.data
+            })
+          } else if (event.type === 'session.idle') {
+            loggingApi.appendResponseLog(logFilePathRef.current, {
+              type: 'session_idle'
+            })
+          }
+        } catch {
+          // Never let logging failures break the UI
+        }
+      }
+
+      // Handle session.updated events — update session title in store
+      // The SDK event structure is: { data: { info: { title, ... } } }
+      if (event.type === 'session.updated') {
+        const rawTitle = event.data?.info?.title || event.data?.title
+        const sessionTitle = rawTitle ? maybeExtractJsonTitle(rawTitle) : rawTitle
+        console.log('[TITLE_DEBUG] SessionView received session.updated', {
+          eventSessionId: event.sessionId,
+          componentSessionId: sessionId,
+          sessionTitle,
+          eventData: event.data
+        })
+        // Skip OpenCode default placeholder titles like "New session - 2026-02-12T21:33:03.013Z"
+        const isOpenCodeDefault = /^New session\s*-?\s*\d{4}-\d{2}-\d{2}/i.test(sessionTitle || '')
+        if (sessionTitle && !isOpenCodeDefault) {
+          console.log('[TITLE_DEBUG] SessionView calling updateSessionName', {
+            sessionId,
+            sessionTitle
+          })
+          useSessionStore.getState().updateSessionName(sessionId, sessionTitle)
+        } else {
+          console.log('[TITLE_DEBUG] SessionView SKIPPED updateSessionName', {
+            sessionTitle,
+            isOpenCodeDefault
+          })
+        }
+        return
+      }
+
+      // Handle session materialization — update the stale pending:: session ID
+      // so subsequent loadMessages() calls use the real SDK session ID.
+      // Also handles fork transitions: when the SDK returns a new session ID
+      // after forkSession: true, clear old messages to avoid showing stale
+      // content from the pre-fork branch.
+      if (event.type === 'session.materialized') {
+        const newId = event.data?.newSessionId as string | undefined
+        if (newId) {
+          // Use the authoritative wasFork flag from the backend instead of
+          // guessing based on the old session ID format. The backend knows
+          // whether this is initial materialization (pending:: → real ID),
+          // an actual fork (undo+resend with forkSession: true), or just an
+          // SDK session ID change during normal resume. Only true forks
+          // should clear messages. Defaults to false (safe — no clearing)
+          // if the backend doesn't send the flag.
+          const wasFork = event.data?.wasFork === true
+          setOpencodeSessionId(newId)
+          transcriptSourceRef.current.opencodeSessionId = newId
+          useSessionStore.getState().setOpenCodeSessionId(sessionId, newId)
+
+          // On fork, the new session has its own transcript. Clear old
+          // messages so the user only sees the local prompt bubble while
+          // the fork streams. finalizeResponse() will reload from the
+          // new transcript when the stream completes.
+          if (wasFork) {
+            setMessages((prev) => prev.filter((m) => m.id.startsWith('local-')))
+          }
+        }
+        return
+      }
+
+      // Handle commands_available — re-fetch slash commands after SDK init
+      if (event.type === 'session.commands_available') {
+        const wtPath = transcriptSourceRef.current.worktreePath
+        if (wtPath) {
+          opencodeApi
+            .commands(wtPath, sessionId)
+            .then(unwrapEnvelope)
+            .then((result) => {
+              if (result.success && result.commands) {
+                setSlashCommands(result.commands)
               }
-              return
+            })
+            .catch(() => {
+              // Silently ignore — commands will be fetched on next prompt cycle
+            })
+        }
+        return
+      }
+
+      if (event.type === 'codex.goal.updated') {
+        const data = asRecord(event.data)
+        const goal = asRecord(data?.goal)
+        const eventThreadId = asString(data?.threadId) ?? asString(goal?.threadId)
+        const currentThreadId = transcriptSourceRef.current.opencodeSessionId ?? opencodeSessionId
+
+        if (goal && (!currentThreadId || !eventThreadId || eventThreadId === currentThreadId)) {
+          console.info('[CODEX_STREAM_DEBUG] renderer applying goal updated', {
+            componentSessionId: sessionId,
+            eventThreadId,
+            currentThreadId,
+            goalStatus: asString(goal.status),
+            objectiveLength: asString(goal.objective)?.length ?? 0
+          })
+          useSessionStore.getState().setCodexGoal(sessionId, goal as unknown as CodexThreadGoal)
+        } else {
+          console.info('[CODEX_STREAM_DEBUG] renderer skipped goal updated', {
+            componentSessionId: sessionId,
+            eventThreadId,
+            currentThreadId,
+            hasGoal: !!goal
+          })
+        }
+        return
+      }
+
+      if (event.type === 'codex.goal.cleared') {
+        const data = asRecord(event.data)
+        const eventThreadId = asString(data?.threadId)
+        const currentThreadId = transcriptSourceRef.current.opencodeSessionId ?? opencodeSessionId
+
+        if (!currentThreadId || !eventThreadId || eventThreadId === currentThreadId) {
+          console.info('[CODEX_STREAM_DEBUG] renderer applying goal cleared', {
+            componentSessionId: sessionId,
+            eventThreadId,
+            currentThreadId
+          })
+          useSessionStore.getState().clearCodexGoal(sessionId)
+        } else {
+          console.info('[CODEX_STREAM_DEBUG] renderer skipped goal cleared', {
+            componentSessionId: sessionId,
+            eventThreadId,
+            currentThreadId
+          })
+        }
+        return
+      }
+
+      // Handle question events
+      if (event.type === 'question.asked') {
+        const request = event.data
+        if (request?.id && request?.questions) {
+          useQuestionStore.getState().addQuestion(sessionId, request)
+        }
+        return
+      }
+
+      if (event.type === 'question.replied' || event.type === 'question.rejected') {
+        const requestId = event.data?.requestID || event.data?.requestId || event.data?.id
+        if (requestId) {
+          useQuestionStore.getState().removeQuestion(sessionId, requestId)
+        }
+        return
+      }
+
+      // Handle permission events
+      if (event.type === 'permission.asked') {
+        const request = event.data
+        if (request?.id && request?.permission) {
+          const { commandFilter } = useSettingsStore.getState()
+          // Security globally off OR all sub-patterns in commandFilter allowlist → auto-approve
+          if (
+            !commandFilter.enabled ||
+            checkAutoApprove(request as PermissionRequest, commandFilter.allowlist)
+          ) {
+            opencodeApi
+              .permissionReply(request.id, 'once', worktreePath || undefined)
+              .catch((err: unknown) => {
+                console.warn('Auto-approve permissionReply failed:', err)
+              })
+            return
+          }
+          usePermissionStore.getState().addPermission(sessionId, request)
+        }
+        return
+      }
+
+      if (event.type === 'permission.replied') {
+        const requestId = event.data?.requestID || event.data?.requestId || event.data?.id
+        if (requestId) {
+          usePermissionStore.getState().removePermission(sessionId, requestId)
+        }
+        return
+      }
+
+      // Handle command approval events (command filter system)
+      if (event.type === 'command.approval_needed') {
+        const request = event.data
+        if (request?.id && request?.toolName) {
+          useCommandApprovalStore.getState().addApproval(sessionId, request)
+        }
+        return
+      }
+
+      // Handle command approval replies
+      if (event.type === 'command.approval_replied') {
+        const requestId = event.data?.requestID || event.data?.requestId || event.data?.id
+        if (requestId) {
+          useCommandApprovalStore.getState().removeApproval(sessionId, requestId)
+          // Reset status if no more pending approvals (handles transition from background to active)
+          const remaining = useCommandApprovalStore.getState().getApprovals(sessionId)
+          if (remaining.length === 0) {
+            const currentStatus = useWorktreeStatusStore.getState().sessionStatuses[sessionId]
+            if (currentStatus?.status === 'command_approval') {
+              const mode = useSessionStore.getState().getSessionMode(sessionId)
+              useWorktreeStatusStore
+                .getState()
+                .setSessionStatus(sessionId, isPlanLike(mode) ? 'planning' : 'working')
             }
+          }
+        }
+        return
+      }
 
-            // Route child/subagent events into their SubtaskCard
-            if (event.childSessionId) {
-              if (sessionRecord?.agent_sdk === 'codex') {
-                const childPart = event.data?.part
-                if (childPart?.type === 'text') {
-                  const delta = event.data?.delta || childPart.text || ''
-                  if (delta) {
-                    applyCodexChildStreamingPart(event.childSessionId, {
-                      type: 'text',
-                      text: delta
-                    })
-                  }
-                } else if (childPart?.type === 'tool') {
-                  const state = childPart.state || {}
-                  const statusMap: Record<string, ToolStatus> = {
-                    pending: 'pending',
-                    running: 'running',
-                    completed: 'success',
-                    error: 'error'
-                  }
-                  applyCodexChildStreamingPart(event.childSessionId, {
-                    type: 'tool_use',
-                    toolUse: {
-                      id: childPart.callID || childPart.id || `tool-${Date.now()}`,
-                      name: childPart.tool || 'Unknown',
-                      input: state.input || {},
-                      status: statusMap[state.status] || 'running',
-                      startTime: state.time?.start || Date.now(),
-                      endTime: state.time?.end,
-                      output: state.status === 'completed' ? state.output : undefined,
-                      error: state.status === 'error' ? state.error : undefined
-                    }
-                  })
-                } else if (childPart?.type === 'subtask') {
-                  applyCodexChildStreamingPart(event.childSessionId, {
-                    type: 'subtask',
-                    subtask: {
-                      id: childPart.id || event.childSessionId,
-                      sessionID: childPart.sessionID || event.childSessionId,
-                      prompt: childPart.prompt || '',
-                      description: childPart.description || '',
-                      agent: childPart.agent || 'task',
-                      parts: [],
-                      status: childPart.status || 'running'
-                    }
-                  })
+      // Handle plan events (ExitPlanMode blocking tool)
+      if (event.type === 'plan.ready') {
+        const data = event.data as {
+          id?: string
+          requestId?: string
+          plan?: string
+          toolUseID?: string
+        }
+        const requestId = data?.id || data?.requestId
+        if (requestId) {
+          let planText = data.plan ?? ''
+
+          // If backend didn't provide plan content, extract from preceding streaming text
+          if (!planText && data.toolUseID) {
+            const parts = streamingPartsRef.current
+            const toolIdx = parts.findIndex(
+              (p) => p.type === 'tool_use' && p.toolUse?.id === data.toolUseID
+            )
+            if (toolIdx > 0) {
+              for (let i = toolIdx - 1; i >= 0; i--) {
+                if (parts[i].type === 'text' && parts[i].text) {
+                  planText = parts[i].text!
+                  break
                 }
-                setIsStreaming(true)
-                return
               }
+            }
+          }
 
-              let subtaskIdx = childToSubtaskIndexRef.current.get(event.childSessionId)
+          // Finalize the streaming plan card (if XML tag detection created one)
+          // or create a new one from plan.ready data (fallback for Claude Code /
+          // sessions where <proposed_plan> tags weren't present).
+          const det = planXmlDetectionRef.current
+          const streamingCardId = det.cardId
 
-              // Auto-create subtask entry on first child event (SDK doesn't
-              // emit a dedicated "subtask" part — the child session just starts
-              // streaming).
-              if (subtaskIdx === undefined) {
-                subtaskIdx = streamingPartsRef.current.length
+          // Flush any leftover scanning buffer as regular text
+          if (det.buffer) {
+            appendTextDelta(det.buffer)
+            det.buffer = ''
+          }
+          // Reset detection state
+          planXmlDetectionRef.current = { state: 'scanning', buffer: '', cardId: null }
+
+          if (streamingCardId) {
+            // Progressive card exists — finalize with clean plan text + real ID
+            updateStreamingPartsRef((parts) =>
+              parts.map((p) => {
+                if (p.type !== 'tool_use' || p.toolUse?.id !== streamingCardId) return p
+                const finalPlan = planText || (p.toolUse!.input.plan as string) || ''
+                return {
+                  ...p,
+                  toolUse: {
+                    ...p.toolUse!,
+                    id: data.toolUseID || p.toolUse!.id,
+                    input: { ...p.toolUse!.input, plan: finalPlan },
+                    status: 'pending' as const
+                  }
+                }
+              })
+            )
+            immediateFlush()
+          } else {
+            // No progressive card — strip XML from text parts and inject card
+            updateStreamingPartsRef((parts) =>
+              parts.map((p) => {
+                if (p.type !== 'text' || !p.text) return p
+                const stripped = p.text
+                  .replace(/<proposed_plan>\s*[\s\S]*?\s*<\/proposed_plan>/gi, '')
+                  .trim()
+                if (!stripped) return { ...p, text: '' }
+                return { ...p, text: stripped }
+              })
+            )
+
+            if (planText && data.toolUseID) {
+              const hasExisting = streamingPartsRef.current.some(
+                (p) => p.type === 'tool_use' && p.toolUse?.id === data.toolUseID
+              )
+              if (hasExisting) {
+                updateStreamingPartsRef((parts) =>
+                  parts.map((p) =>
+                    p.type === 'tool_use' && p.toolUse?.id === data.toolUseID
+                      ? {
+                          ...p,
+                          toolUse: {
+                            ...p.toolUse!,
+                            input: { ...p.toolUse!.input, plan: planText },
+                            status: 'pending' as const
+                          }
+                        }
+                      : p
+                  )
+                )
+              } else {
                 updateStreamingPartsRef((parts) => [
                   ...parts,
                   {
-                    type: 'subtask',
-                    subtask: {
-                      id: event.childSessionId!,
-                      sessionID: event.childSessionId!,
-                      prompt: '',
-                      description: '',
-                      agent: 'task',
-                      parts: [],
-                      status: 'running'
+                    type: 'tool_use' as const,
+                    toolUse: {
+                      id: data.toolUseID,
+                      name: 'ExitPlanMode',
+                      input: { plan: planText },
+                      status: 'pending' as const,
+                      startTime: Date.now()
                     }
                   }
                 ])
-                childToSubtaskIndexRef.current.set(event.childSessionId, subtaskIdx)
-                immediateFlush()
               }
-
-              if (subtaskIdx !== undefined) {
-                const childPart = event.data?.part
-                if (childPart?.type === 'text') {
-                  updateStreamingPartsRef((parts) => {
-                    const updated = [...parts]
-                    const subtask = updated[subtaskIdx]
-                    if (subtask?.type === 'subtask' && subtask.subtask) {
-                      const lastPart = subtask.subtask.parts[subtask.subtask.parts.length - 1]
-                      if (lastPart?.type === 'text') {
-                        lastPart.text =
-                          (lastPart.text || '') + (event.data?.delta || childPart.text || '')
-                      } else {
-                        subtask.subtask.parts = [
-                          ...subtask.subtask.parts,
-                          { type: 'text', text: event.data?.delta || childPart.text || '' }
-                        ]
-                      }
-                    }
-                    return updated
-                  })
-                  scheduleFlush()
-                } else if (childPart?.type === 'tool') {
-                  const state = childPart.state || childPart
-                  const toolId =
-                    state.toolCallId || childPart.callID || childPart.id || `tool-${Date.now()}`
-                  updateStreamingPartsRef((parts) => {
-                    const updated = [...parts]
-                    const subtask = updated[subtaskIdx]
-                    if (subtask?.type === 'subtask' && subtask.subtask) {
-                      const existing = subtask.subtask.parts.find(
-                        (p) => p.type === 'tool_use' && p.toolUse?.id === toolId
-                      )
-                      if (existing && existing.type === 'tool_use' && existing.toolUse) {
-                        // Update existing tool
-                        const statusMap: Record<string, string> = {
-                          running: 'running',
-                          completed: 'success',
-                          error: 'error'
-                        }
-                        existing.toolUse.status = (statusMap[state.status] || 'running') as
-                          | 'pending'
-                          | 'running'
-                          | 'success'
-                          | 'error'
-                        if (state.time?.end) existing.toolUse.endTime = state.time.end
-                        if (state.status === 'completed') existing.toolUse.output = state.output
-                        if (state.status === 'error') existing.toolUse.error = state.error
-                      } else {
-                        // Add new tool
-                        subtask.subtask.parts = [
-                          ...subtask.subtask.parts,
-                          {
-                            type: 'tool_use',
-                            toolUse: {
-                              id: toolId,
-                              name: childPart.tool || state.name || 'unknown',
-                              input: state.input,
-                              status: 'running',
-                              startTime: state.time?.start || Date.now()
-                            }
-                          }
-                        ]
-                      }
-                    }
-                    return updated
-                  })
-                  immediateFlush()
-                }
-                setIsStreaming(true)
-                return // Don't process as top-level part
-              }
+              immediateFlush()
             }
+          }
 
-            const part = event.data?.part
-            if (!part) return
+          useSessionStore.getState().setPendingPlan(sessionId, {
+            requestId,
+            planContent: planText,
+            toolUseID: data.toolUseID ?? ''
+          })
+          if (sessionRecord?.agent_sdk === 'codex') {
+            scheduleCodexStreamingRefresh()
+          }
+          setIsStreaming(false)
+          setIsSending(false)
+          setQueuedMessages([])
+          useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'plan_ready')
+        }
+        return
+      }
 
-            // Detect echoed user prompts by content.  The SDK often re-emits
-            // the user message as a text part without any role field, so we
-            // compare against the prompt we just sent.  Once we see non-matching
-            // content (i.e. the real assistant response) we clear the ref so it
-            // doesn't interfere with later messages.
-            if (lastSentPromptRef.current && part.type === 'text') {
-              const incoming = (event.data?.delta || part.text || '').trimEnd()
-              if (incoming.length > 0 && lastSentPromptRef.current.startsWith(incoming)) {
-                // Looks like an echo — skip it
-                return
-              }
-              // First non-matching text means assistant response has started
-              lastSentPromptRef.current = null
-            }
+      if (event.type === 'plan.resolved') {
+        useSessionStore.getState().clearPendingPlan(sessionId)
+        if (sessionRecord?.agent_sdk === 'codex') {
+          scheduleCodexStreamingRefresh()
+        }
+        return
+      }
 
-            if (sessionRecord?.agent_sdk === 'codex') {
-              if (part.type === 'text') {
-                const delta = event.data?.delta || part.text || ''
-                if (delta) {
-                  console.info('[CODEX_STREAM_DEBUG] renderer applying codex text part', {
-                    componentSessionId: sessionId,
-                    deltaLength: String(delta).length,
-                    messageCountBefore: messages.length
-                  })
-                  applyCodexStreamingPart({ type: 'text', text: delta })
-                }
-              } else if (part.type === 'reasoning') {
-                const delta = event.data?.delta || part.text || ''
-                if (delta) {
-                  console.info('[CODEX_STREAM_DEBUG] renderer applying codex reasoning part', {
-                    componentSessionId: sessionId,
-                    deltaLength: String(delta).length,
-                    messageCountBefore: messages.length
-                  })
-                  applyCodexStreamingPart({ type: 'reasoning', reasoning: delta })
-                }
-              } else if (part.type === 'tool') {
-                const state = part.state || {}
-                const statusMap: Record<string, ToolStatus> = {
-                  pending: 'pending',
-                  running: 'running',
-                  completed: 'success',
-                  error: 'error'
-                }
-                console.info('[CODEX_STREAM_DEBUG] renderer applying codex tool part', {
-                  componentSessionId: sessionId,
-                  tool: part.tool || 'Unknown',
-                  toolId: part.callID || part.id || null,
-                  toolStatus: state.status,
-                  outputDeltaLength:
-                    typeof state.outputDelta === 'string' ? state.outputDelta.length : 0,
-                  messageCountBefore: messages.length
-                })
-                applyCodexStreamingPart({
-                  type: 'tool_use',
-                  toolUse: {
-                    id: part.callID || part.id || `tool-${Date.now()}`,
-                    name: part.tool || 'Unknown',
-                    input: state.input || {},
-                    status: statusMap[state.status] || 'running',
-                    startTime: state.time?.start || Date.now(),
-                    endTime: state.time?.end,
-                    output: state.status === 'completed' ? state.output : undefined,
-                    error: state.status === 'error' ? state.error : undefined
-                  }
-                })
-              } else if (part.type === 'subtask') {
-                applyCodexStreamingPart({
-                  type: 'subtask',
-                  subtask: {
-                    id: part.id || `subtask-${Date.now()}`,
-                    sessionID: part.sessionID || part.id || '',
-                    prompt: part.prompt || '',
-                    description: part.description || '',
-                    agent: part.agent || 'task',
-                    parts: [],
-                    status: part.status || 'running'
-                  }
+      // Handle different event types
+      const eventRole = getEventMessageRole(event.data)
+
+      if (event.type === 'session.error') {
+        if (event.childSessionId) return
+        setSessionErrorMessage(extractSessionErrorMessage(event.data))
+        setSessionErrorStderr(extractSessionErrorStderr(event.data))
+        // Notify kanban store so errored tickets auto-move to review
+        notifyKanbanSessionSync(sessionId, { type: 'session_error' })
+        return
+      }
+
+      if (event.type === 'message.part.updated') {
+        // Skip user-message echoes; user messages are already rendered locally.
+        if (eventRole === 'user') {
+          if (sessionRecord?.agent_sdk === 'codex') {
+            console.info('[CODEX_STREAM_DEBUG] renderer skipped user echo part', {
+              componentSessionId: sessionId,
+              ...summarizeStreamEventForDebug(event)
+            })
+          }
+          return
+        }
+
+        // Route child/subagent events into their SubtaskCard
+        if (event.childSessionId) {
+          if (sessionRecord?.agent_sdk === 'codex') {
+            const childPart = event.data?.part
+            if (childPart?.type === 'text') {
+              const delta = event.data?.delta || childPart.text || ''
+              if (delta) {
+                applyCodexChildStreamingPart(event.childSessionId, {
+                  type: 'text',
+                  text: delta
                 })
               }
-
-              setIsStreaming(true)
-              return
-            }
-
-            // New stream content means we're processing a new assistant response.
-            if (
-              streamingPartsRef.current.length === 0 &&
-              streamingContentRef.current.length === 0
-            ) {
-              hasFinalizedCurrentResponseRef.current = false
-            }
-
-            if (part.type === 'text') {
-              setIsCompacting(false)
-              const delta = event.data?.delta
-
-              // Codex plan mode: scan for <proposed_plan> XML tags and route
-              // only the plan content into an ExitPlanMode card. Text before/
-              // after the tags renders as normal chat text.
-              const isCodexPlan =
-                sessionRecord?.agent_sdk === 'codex' &&
-                useSessionStore.getState().getSessionMode(sessionId) === 'plan'
-
-              if (isCodexPlan) {
-                const textDelta = delta || part.text || ''
-                if (!textDelta) {
-                  setIsStreaming(true)
-                } else {
-                  const det = planXmlDetectionRef.current
-                  const OPEN_TAG = '<proposed_plan>'
-                  const CLOSE_TAG = '</proposed_plan>'
-
-                  if (det.state === 'scanning') {
-                    det.buffer += textDelta
-                    const tagIdx = det.buffer.toLowerCase().indexOf(OPEN_TAG)
-
-                    if (tagIdx !== -1) {
-                      // Found opening tag — split at the tag boundary
-                      const beforeTag = det.buffer.slice(0, tagIdx)
-                      const afterTag = det.buffer.slice(tagIdx + OPEN_TAG.length)
-                      det.buffer = ''
-
-                      if (beforeTag) appendTextDelta(beforeTag)
-
-                      // Check if closing tag is already present
-                      const closeIdx = afterTag.toLowerCase().indexOf(CLOSE_TAG)
-                      let planContent: string
-
-                      if (closeIdx !== -1) {
-                        planContent = afterTag.slice(0, closeIdx).trim()
-                        det.state = 'done'
-                        const afterClose = afterTag.slice(closeIdx + CLOSE_TAG.length)
-                        if (afterClose.trim()) appendTextDelta(afterClose)
-                      } else {
-                        planContent = afterTag
-                        det.state = 'routing'
-                      }
-
-                      const tempId = `codex-plan-streaming-${Date.now()}`
-                      det.cardId = tempId
-                      updateStreamingPartsRef((parts) => [
-                        ...parts,
-                        {
-                          type: 'tool_use' as const,
-                          toolUse: {
-                            id: tempId,
-                            name: 'ExitPlanMode',
-                            input: { plan: planContent },
-                            status: 'running' as const,
-                            startTime: Date.now()
-                          }
-                        }
-                      ])
-                      immediateFlush()
-                    } else {
-                      // No opening tag yet — flush text that can't be a partial tag match.
-                      // Any suffix of the buffer that matches a prefix of the open tag
-                      // must be retained (e.g. buffer ends with "<propo").
-                      const maxPartial = Math.min(det.buffer.length, OPEN_TAG.length - 1)
-                      let safePoint = det.buffer.length
-                      for (let len = maxPartial; len >= 1; len--) {
-                        if (OPEN_TAG.startsWith(det.buffer.slice(-len).toLowerCase())) {
-                          safePoint = det.buffer.length - len
-                          break
-                        }
-                      }
-                      if (safePoint > 0) {
-                        appendTextDelta(det.buffer.slice(0, safePoint))
-                        det.buffer = det.buffer.slice(safePoint)
-                      }
-                    }
-                  } else if (det.state === 'routing') {
-                    // Inside <proposed_plan> — append to card, watch for close tag
-                    const toolId = det.cardId!
-                    const currentCard = streamingPartsRef.current.find(
-                      (p) => p.type === 'tool_use' && p.toolUse?.id === toolId
-                    )
-                    const currentPlan = (currentCard?.toolUse?.input?.plan as string) || ''
-                    const combined = currentPlan + textDelta
-                    const closeIdx = combined.toLowerCase().indexOf(CLOSE_TAG)
-
-                    if (closeIdx !== -1) {
-                      const planContent = combined.slice(0, closeIdx)
-                      const afterClose = combined.slice(closeIdx + CLOSE_TAG.length)
-                      det.state = 'done'
-
-                      updateStreamingPartsRef((parts) =>
-                        parts.map((p) =>
-                          p.type === 'tool_use' && p.toolUse?.id === toolId
-                            ? {
-                                ...p,
-                                toolUse: {
-                                  ...p.toolUse!,
-                                  input: { ...p.toolUse!.input, plan: planContent }
-                                }
-                              }
-                            : p
-                        )
-                      )
-                      scheduleFlush()
-                      if (afterClose.trim()) appendTextDelta(afterClose)
-                    } else {
-                      updateStreamingPartsRef((parts) =>
-                        parts.map((p) =>
-                          p.type === 'tool_use' && p.toolUse?.id === toolId
-                            ? {
-                                ...p,
-                                toolUse: {
-                                  ...p.toolUse!,
-                                  input: { ...p.toolUse!.input, plan: combined }
-                                }
-                              }
-                            : p
-                        )
-                      )
-                      scheduleFlush()
-                    }
-                  } else {
-                    // state === 'done' — after closing tag, route as regular text
-                    if (delta) appendTextDelta(delta)
-                    else if (part.text) setTextContent(part.text)
-                  }
-                  setIsStreaming(true)
-                }
-              } else {
-                // Normal text handling (non-Codex or non-plan mode)
-                if (delta) {
-                  appendTextDelta(delta)
-                } else if (part.text) {
-                  setTextContent(part.text)
-                }
-                setIsStreaming(true)
-              }
-            } else if (part.type === 'tool') {
-              setIsCompacting(false)
-              // Tool part from OpenCode SDK - has callID, tool (name), state
-              const toolId = part.callID || part.id || `tool-${Date.now()}`
-              const toolName = part.tool || undefined
-              const state = part.state || {}
-
-              console.debug('[TOOL_DEBUG] stream event', {
-                toolId,
-                toolName,
-                status: state.status,
-                hasOutput: !!state.output,
-                hasError: !!state.error,
-                hasInput: !!state.input
-              })
-
+            } else if (childPart?.type === 'tool') {
+              const state = childPart.state || {}
               const statusMap: Record<string, ToolStatus> = {
                 pending: 'pending',
                 running: 'running',
                 completed: 'success',
                 error: 'error'
               }
+              applyCodexChildStreamingPart(event.childSessionId, {
+                type: 'tool_use',
+                toolUse: {
+                  id: childPart.callID || childPart.id || `tool-${Date.now()}`,
+                  name: childPart.tool || 'Unknown',
+                  input: state.input || {},
+                  status: statusMap[state.status] || 'running',
+                  startTime: state.time?.start || Date.now(),
+                  endTime: state.time?.end,
+                  output: state.status === 'completed' ? state.output : undefined,
+                  error: state.status === 'error' ? state.error : undefined
+                }
+              })
+            } else if (childPart?.type === 'subtask') {
+              applyCodexChildStreamingPart(event.childSessionId, {
+                type: 'subtask',
+                subtask: {
+                  id: childPart.id || event.childSessionId,
+                  sessionID: childPart.sessionID || event.childSessionId,
+                  prompt: childPart.prompt || '',
+                  description: childPart.description || '',
+                  agent: childPart.agent || 'task',
+                  parts: [],
+                  status: childPart.status || 'running'
+                }
+              })
+            }
+            setIsStreaming(true)
+            return
+          }
 
-              upsertToolUse(toolId, {
-                ...(toolName ? { name: toolName } : {}),
-                // Only include input when the SDK actually provides it, so we don't
-                // overwrite the initial input with {} on subsequent status updates.
-                ...(state.input ? { input: state.input } : {}),
+          let subtaskIdx = childToSubtaskIndexRef.current.get(event.childSessionId)
+
+          // Auto-create subtask entry on first child event (SDK doesn't
+          // emit a dedicated "subtask" part — the child session just starts
+          // streaming).
+          if (subtaskIdx === undefined) {
+            subtaskIdx = streamingPartsRef.current.length
+            updateStreamingPartsRef((parts) => [
+              ...parts,
+              {
+                type: 'subtask',
+                subtask: {
+                  id: event.childSessionId!,
+                  sessionID: event.childSessionId!,
+                  prompt: '',
+                  description: '',
+                  agent: 'task',
+                  parts: [],
+                  status: 'running'
+                }
+              }
+            ])
+            childToSubtaskIndexRef.current.set(event.childSessionId, subtaskIdx)
+            immediateFlush()
+          }
+
+          if (subtaskIdx !== undefined) {
+            const childPart = event.data?.part
+            if (childPart?.type === 'text') {
+              updateStreamingPartsRef((parts) => {
+                const updated = [...parts]
+                const subtask = updated[subtaskIdx]
+                if (subtask?.type === 'subtask' && subtask.subtask) {
+                  const lastPart = subtask.subtask.parts[subtask.subtask.parts.length - 1]
+                  if (lastPart?.type === 'text') {
+                    lastPart.text =
+                      (lastPart.text || '') + (event.data?.delta || childPart.text || '')
+                  } else {
+                    subtask.subtask.parts = [
+                      ...subtask.subtask.parts,
+                      { type: 'text', text: event.data?.delta || childPart.text || '' }
+                    ]
+                  }
+                }
+                return updated
+              })
+              scheduleFlush()
+            } else if (childPart?.type === 'tool') {
+              const state = childPart.state || childPart
+              const toolId =
+                state.toolCallId || childPart.callID || childPart.id || `tool-${Date.now()}`
+              updateStreamingPartsRef((parts) => {
+                const updated = [...parts]
+                const subtask = updated[subtaskIdx]
+                if (subtask?.type === 'subtask' && subtask.subtask) {
+                  const existing = subtask.subtask.parts.find(
+                    (p) => p.type === 'tool_use' && p.toolUse?.id === toolId
+                  )
+                  if (existing && existing.type === 'tool_use' && existing.toolUse) {
+                    // Update existing tool
+                    const statusMap: Record<string, string> = {
+                      running: 'running',
+                      completed: 'success',
+                      error: 'error'
+                    }
+                    existing.toolUse.status = (statusMap[state.status] || 'running') as
+                      | 'pending'
+                      | 'running'
+                      | 'success'
+                      | 'error'
+                    if (state.time?.end) existing.toolUse.endTime = state.time.end
+                    if (state.status === 'completed') existing.toolUse.output = state.output
+                    if (state.status === 'error') existing.toolUse.error = state.error
+                  } else {
+                    // Add new tool
+                    subtask.subtask.parts = [
+                      ...subtask.subtask.parts,
+                      {
+                        type: 'tool_use',
+                        toolUse: {
+                          id: toolId,
+                          name: childPart.tool || state.name || 'unknown',
+                          input: state.input,
+                          status: 'running',
+                          startTime: state.time?.start || Date.now()
+                        }
+                      }
+                    ]
+                  }
+                }
+                return updated
+              })
+              immediateFlush()
+            }
+            setIsStreaming(true)
+            return // Don't process as top-level part
+          }
+        }
+
+        const part = event.data?.part
+        if (!part) return
+
+        // Detect echoed user prompts by content.  The SDK often re-emits
+        // the user message as a text part without any role field, so we
+        // compare against the prompt we just sent.  Once we see non-matching
+        // content (i.e. the real assistant response) we clear the ref so it
+        // doesn't interfere with later messages.
+        if (lastSentPromptRef.current && part.type === 'text') {
+          const incoming = (event.data?.delta || part.text || '').trimEnd()
+          if (incoming.length > 0 && lastSentPromptRef.current.startsWith(incoming)) {
+            // Looks like an echo — skip it
+            return
+          }
+          // First non-matching text means assistant response has started
+          lastSentPromptRef.current = null
+        }
+
+        if (sessionRecord?.agent_sdk === 'codex') {
+          if (part.type === 'text') {
+            const delta = event.data?.delta || part.text || ''
+            if (delta) {
+              console.info('[CODEX_STREAM_DEBUG] renderer applying codex text part', {
+                componentSessionId: sessionId,
+                deltaLength: String(delta).length,
+                messageCountBefore: messages.length
+              })
+              applyCodexStreamingPart({ type: 'text', text: delta })
+            }
+          } else if (part.type === 'reasoning') {
+            const delta = event.data?.delta || part.text || ''
+            if (delta) {
+              console.info('[CODEX_STREAM_DEBUG] renderer applying codex reasoning part', {
+                componentSessionId: sessionId,
+                deltaLength: String(delta).length,
+                messageCountBefore: messages.length
+              })
+              applyCodexStreamingPart({ type: 'reasoning', reasoning: delta })
+            }
+          } else if (part.type === 'tool') {
+            const state = part.state || {}
+            const statusMap: Record<string, ToolStatus> = {
+              pending: 'pending',
+              running: 'running',
+              completed: 'success',
+              error: 'error'
+            }
+            console.info('[CODEX_STREAM_DEBUG] renderer applying codex tool part', {
+              componentSessionId: sessionId,
+              tool: part.tool || 'Unknown',
+              toolId: part.callID || part.id || null,
+              toolStatus: state.status,
+              outputDeltaLength:
+                typeof state.outputDelta === 'string' ? state.outputDelta.length : 0,
+              messageCountBefore: messages.length
+            })
+            applyCodexStreamingPart({
+              type: 'tool_use',
+              toolUse: {
+                id: part.callID || part.id || `tool-${Date.now()}`,
+                name: part.tool || 'Unknown',
+                input: state.input || {},
                 status: statusMap[state.status] || 'running',
                 startTime: state.time?.start || Date.now(),
                 endTime: state.time?.end,
                 output: state.status === 'completed' ? state.output : undefined,
                 error: state.status === 'error' ? state.error : undefined
-              })
-              setIsStreaming(true)
-            } else if (part.type === 'subtask') {
-              const subtaskIndex = streamingPartsRef.current.length // index it will be at
-              updateStreamingPartsRef((parts) => [
-                ...parts,
-                {
-                  type: 'subtask',
-                  subtask: {
-                    id: part.id || `subtask-${Date.now()}`,
-                    sessionID: part.sessionID || '',
-                    prompt: part.prompt || '',
-                    description: part.description || '',
-                    agent: part.agent || 'unknown',
-                    parts: [],
-                    status: 'running'
-                  }
-                }
-              ])
-              // Map child session ID to this subtask's index
-              if (part.sessionID) {
-                childToSubtaskIndexRef.current.set(part.sessionID, subtaskIndex)
               }
-              immediateFlush()
+            })
+          } else if (part.type === 'subtask') {
+            applyCodexStreamingPart({
+              type: 'subtask',
+              subtask: {
+                id: part.id || `subtask-${Date.now()}`,
+                sessionID: part.sessionID || part.id || '',
+                prompt: part.prompt || '',
+                description: part.description || '',
+                agent: part.agent || 'task',
+                parts: [],
+                status: part.status || 'running'
+              }
+            })
+          }
+
+          setIsStreaming(true)
+          return
+        }
+
+        // New stream content means we're processing a new assistant response.
+        if (streamingPartsRef.current.length === 0 && streamingContentRef.current.length === 0) {
+          hasFinalizedCurrentResponseRef.current = false
+        }
+
+        if (part.type === 'text') {
+          setIsCompacting(false)
+          const delta = event.data?.delta
+
+          // Codex plan mode: scan for <proposed_plan> XML tags and route
+          // only the plan content into an ExitPlanMode card. Text before/
+          // after the tags renders as normal chat text.
+          const isCodexPlan =
+            sessionRecord?.agent_sdk === 'codex' &&
+            useSessionStore.getState().getSessionMode(sessionId) === 'plan'
+
+          if (isCodexPlan) {
+            const textDelta = delta || part.text || ''
+            if (!textDelta) {
               setIsStreaming(true)
-            } else if (part.type === 'reasoning') {
-              updateStreamingPartsRef((parts) => {
-                const last = parts[parts.length - 1]
-                if (last?.type === 'reasoning') {
-                  return [
-                    ...parts.slice(0, -1),
+            } else {
+              const det = planXmlDetectionRef.current
+              const OPEN_TAG = '<proposed_plan>'
+              const CLOSE_TAG = '</proposed_plan>'
+
+              if (det.state === 'scanning') {
+                det.buffer += textDelta
+                const tagIdx = det.buffer.toLowerCase().indexOf(OPEN_TAG)
+
+                if (tagIdx !== -1) {
+                  // Found opening tag — split at the tag boundary
+                  const beforeTag = det.buffer.slice(0, tagIdx)
+                  const afterTag = det.buffer.slice(tagIdx + OPEN_TAG.length)
+                  det.buffer = ''
+
+                  if (beforeTag) appendTextDelta(beforeTag)
+
+                  // Check if closing tag is already present
+                  const closeIdx = afterTag.toLowerCase().indexOf(CLOSE_TAG)
+                  let planContent: string
+
+                  if (closeIdx !== -1) {
+                    planContent = afterTag.slice(0, closeIdx).trim()
+                    det.state = 'done'
+                    const afterClose = afterTag.slice(closeIdx + CLOSE_TAG.length)
+                    if (afterClose.trim()) appendTextDelta(afterClose)
+                  } else {
+                    planContent = afterTag
+                    det.state = 'routing'
+                  }
+
+                  const tempId = `codex-plan-streaming-${Date.now()}`
+                  det.cardId = tempId
+                  updateStreamingPartsRef((parts) => [
+                    ...parts,
                     {
-                      ...last,
-                      reasoning: (last.reasoning || '') + (event.data?.delta || part.text || '')
+                      type: 'tool_use' as const,
+                      toolUse: {
+                        id: tempId,
+                        name: 'ExitPlanMode',
+                        input: { plan: planContent },
+                        status: 'running' as const,
+                        startTime: Date.now()
+                      }
                     }
-                  ]
-                }
-                return [
-                  ...parts,
-                  { type: 'reasoning' as const, reasoning: event.data?.delta || part.text || '' }
-                ]
-              })
-              scheduleFlush()
-              setIsStreaming(true)
-            } else if (part.type === 'step-start') {
-              updateStreamingPartsRef((parts) => [
-                ...parts,
-                { type: 'step_start' as const, stepStart: { snapshot: part.snapshot } }
-              ])
-              immediateFlush()
-              setIsStreaming(true)
-            } else if (part.type === 'step-finish') {
-              updateStreamingPartsRef((parts) => [
-                ...parts,
-                {
-                  type: 'step_finish' as const,
-                  stepFinish: {
-                    reason: part.reason || '',
-                    cost: typeof part.cost === 'number' ? part.cost : 0,
-                    tokens: {
-                      input: typeof part.tokens?.input === 'number' ? part.tokens.input : 0,
-                      output: typeof part.tokens?.output === 'number' ? part.tokens.output : 0,
-                      reasoning:
-                        typeof part.tokens?.reasoning === 'number' ? part.tokens.reasoning : 0
+                  ])
+                  immediateFlush()
+                } else {
+                  // No opening tag yet — flush text that can't be a partial tag match.
+                  // Any suffix of the buffer that matches a prefix of the open tag
+                  // must be retained (e.g. buffer ends with "<propo").
+                  const maxPartial = Math.min(det.buffer.length, OPEN_TAG.length - 1)
+                  let safePoint = det.buffer.length
+                  for (let len = maxPartial; len >= 1; len--) {
+                    if (OPEN_TAG.startsWith(det.buffer.slice(-len).toLowerCase())) {
+                      safePoint = det.buffer.length - len
+                      break
                     }
                   }
-                }
-              ])
-              immediateFlush()
-              setIsStreaming(true)
-            } else if (part.type === 'compaction_started') {
-              setIsCompacting(true)
-              setIsStreaming(true)
-              immediateFlush()
-            } else if (part.type === 'compaction') {
-              setIsCompacting(false)
-              updateStreamingPartsRef((parts) => [
-                ...parts,
-                { type: 'compaction' as const, compactionAuto: part.auto === true }
-              ])
-              // Reset stale token snapshot — compaction truncates the context window.
-              // The next assistant message.updated will carry accurate post-compaction tokens.
-              // Use clearSessionTokenSnapshot (not resetSessionTokens) to preserve
-              // the accumulated cost and model identity for the session.
-              useContextStore.getState().clearSessionTokenSnapshot(sessionId)
-              immediateFlush()
-              setIsStreaming(true)
-            }
-          } else if (event.type === 'message.updated') {
-            // Skip user-message echoes
-            if (eventRole === 'user') return
-
-            // Skip child/subagent messages
-            if (event.childSessionId) return
-
-            // Content-based echo detection for message.updated
-            if (lastSentPromptRef.current) {
-              const parts = event.data?.parts
-              if (Array.isArray(parts) && parts.length > 0) {
-                const textContent = parts
-                  .filter((p: { type?: string }) => p?.type === 'text')
-                  .map((p: { text?: string }) => p?.text || '')
-                  .join('')
-                  .trimEnd()
-                if (textContent.length > 0 && lastSentPromptRef.current.startsWith(textContent)) {
-                  return // echo -- skip
-                }
-              }
-            }
-
-            // Extract token usage from completed messages (snapshot replacement).
-            // On each completed assistant message, replace the token snapshot.
-            const info = event.data?.info
-            if (info?.time?.completed) {
-              const data = event.data as Record<string, unknown> | undefined
-              if (data) {
-                const tokens = extractTokens(data)
-                if (tokens) {
-                  const modelRef = extractModelRef(data) ?? undefined
-                  useContextStore.getState().setSessionTokens(sessionId, tokens, modelRef)
-                }
-                const cost = extractCost(data)
-                if (cost > 0) {
-                  useContextStore.getState().addSessionCost(sessionId, cost)
-                }
-                // Extract per-model usage (from SDK result messages) to update context limits
-                const modelUsageEntries = extractModelUsage(data)
-                if (modelUsageEntries) {
-                  for (const entry of modelUsageEntries) {
-                    if (entry.contextWindow > 0) {
-                      useContextStore.getState().setModelLimit(entry.modelName, entry.contextWindow)
-                    }
+                  if (safePoint > 0) {
+                    appendTextDelta(det.buffer.slice(0, safePoint))
+                    det.buffer = det.buffer.slice(safePoint)
                   }
                 }
-              }
-            }
-          } else if (event.type === 'session.idle') {
-            // Child session idle — update subtask status, don't finalize parent
-            if (event.childSessionId) {
-              if (sessionRecord?.agent_sdk === 'codex') {
-                applyCodexChildStreamingPart(event.childSessionId, {
-                  type: 'subtask',
-                  subtask: {
-                    id: event.childSessionId,
-                    sessionID: event.childSessionId,
-                    prompt: '',
-                    description: '',
-                    agent: 'task',
-                    parts: [],
-                    status: 'completed'
-                  }
-                })
-                return
-              }
+              } else if (det.state === 'routing') {
+                // Inside <proposed_plan> — append to card, watch for close tag
+                const toolId = det.cardId!
+                const currentCard = streamingPartsRef.current.find(
+                  (p) => p.type === 'tool_use' && p.toolUse?.id === toolId
+                )
+                const currentPlan = (currentCard?.toolUse?.input?.plan as string) || ''
+                const combined = currentPlan + textDelta
+                const closeIdx = combined.toLowerCase().indexOf(CLOSE_TAG)
 
-              const subtaskIdx = childToSubtaskIndexRef.current.get(event.childSessionId)
-              if (subtaskIdx !== undefined) {
-                updateStreamingPartsRef((parts) => {
-                  const updated = [...parts]
-                  const subtask = updated[subtaskIdx]
-                  if (subtask?.type === 'subtask' && subtask.subtask) {
-                    subtask.subtask.status = 'completed'
-                  }
-                  return updated
-                })
-                immediateFlush()
-              }
-              return // Don't finalize the parent session
-            }
+                if (closeIdx !== -1) {
+                  const planContent = combined.slice(0, closeIdx)
+                  const afterClose = combined.slice(closeIdx + CLOSE_TAG.length)
+                  det.state = 'done'
 
-            // Fallback: session.idle for parent acts as safety net.
-            // Primary finalization is handled by session.status {type:'idle'}.
-            // This catches edge cases where session.status events are unavailable.
-            immediateFlush()
-            setIsSending(false)
-            setIsCompacting(false)
-            // Only clear visual queue if no follow-ups remain
-            const hasFollowUps =
-              (useSessionStore.getState().pendingFollowUpMessages.get(sessionId)?.length ?? 0) > 0
-            if (!hasFollowUps) {
-              setQueuedMessages([])
-            }
-            // Clear any stale command approvals when session goes idle
-            useCommandApprovalStore.getState().clearSession(sessionId)
-
-            if (!hasFinalizedCurrentResponseRef.current) {
-              hasFinalizedCurrentResponseRef.current = true
-              void finalizeResponse()
-            }
-          } else if (event.type === 'session.status') {
-            const status = event.statusPayload || event.data?.status
-            if (!status) return
-
-            // Skip child session status -- only parent status drives isStreaming
-            if (event.childSessionId) return
-
-            if (status.type === 'busy') {
-              // Don't overwrite plan_ready — session is blocked waiting for plan approval
-              if (useSessionStore.getState().getPendingPlan(sessionId)) return
-
-              // Session became active (again) — restart streaming state.
-              // If we previously finalized on idle, reset so the next idle
-              // can finalize the new response.
-              setSessionRetry(null)
-              setSessionErrorMessage(null)
-              setSessionErrorStderr(null)
-              setIsCompacting(false)
-              setIsStreaming(true)
-              codexStreamingMessageIdRef.current = null
-              hasFinalizedCurrentResponseRef.current = false
-              newPromptPendingRef.current = false
-              planXmlDetectionRef.current = { state: 'scanning', buffer: '', cardId: null }
-              setIsSending(true)
-
-              // Restore worktree status to working/planning
-              const currentMode = useSessionStore.getState().getSessionMode(sessionId)
-              useWorktreeStatusStore
-                .getState()
-                .setSessionStatus(sessionId, isPlanLike(currentMode) ? 'planning' : 'working')
-            } else if (status.type === 'idle') {
-              // Don't overwrite plan_ready — session is blocked waiting for plan approval
-              if (useSessionStore.getState().getPendingPlan(sessionId)) return
-
-              setIsCompacting(false)
-              let optimisticMessageId: string | null = null
-
-              void handleSessionIdleFollowUp({
-                sessionId,
-                isBlocked: () => {
-                  const currentStatus = useWorktreeStatusStore.getState().sessionStatuses[sessionId]
-                  return (
-                    currentStatus?.status === 'command_approval' ||
-                    currentStatus?.status === 'permission'
-                  )
-                },
-                dequeueFollowUp: () => useSessionStore.getState().consumeFollowUpMessage(sessionId),
-                requeueFollowUp: (message) =>
-                  useSessionStore.getState().requeueFollowUpMessageFront(sessionId, message),
-                onBeforeDispatch: (message) => {
-                  const optimisticMessage = createLocalMessage('user', message)
-                  optimisticMessageId = optimisticMessage.id
-                  setQueuedMessages((prev) => prev.slice(1))
-                  hasFinalizedCurrentResponseRef.current = false
-                  setIsStreaming(true)
-                  setIsSending(true)
-                  setMessages((prev) => [...prev, optimisticMessage])
-                  newPromptPendingRef.current = true
-                  messageSendTimes.set(sessionId, Date.now())
-                  lastSendMode.set(sessionId, 'build')
-                  useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'working')
-                  lastSentPromptRef.current = message
-                },
-                dispatchFollowUp: async (message) => {
-                  const wtPath = transcriptSourceRef.current.worktreePath
-                  const opcSid = transcriptSourceRef.current.opencodeSessionId
-                  if (!wtPath || !opcSid) {
-                    return false
-                  }
-
-                  const result = unwrapEnvelope(
-                    await window.opencodeOps.prompt(
-                      wtPath,
-                      opcSid,
-                      [{ type: 'text', text: message }],
-                      getModelForRequests()
+                  updateStreamingPartsRef((parts) =>
+                    parts.map((p) =>
+                      p.type === 'tool_use' && p.toolUse?.id === toolId
+                        ? {
+                            ...p,
+                            toolUse: {
+                              ...p.toolUse!,
+                              input: { ...p.toolUse!.input, plan: planContent }
+                            }
+                          }
+                        : p
                     )
                   )
-
-                  if (!result.success) {
-                    console.error('Failed to send follow-up message:', result.error)
-                    return false
-                  }
-
-                  return true
-                },
-                onDispatchFailure: (message) => {
-                  toast.error('Failed to send follow-up prompt')
-                  setIsStreaming(false)
-                  setIsSending(false)
-                  useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
-                  setQueuedMessages((prev) => [
-                    {
-                      id: `queued-${crypto.randomUUID()}`,
-                      content: message,
-                      timestamp: Date.now()
-                    },
-                    ...prev
-                  ])
-                  if (optimisticMessageId) {
-                    setMessages((prev) => prev.filter((entry) => entry.id !== optimisticMessageId))
-                  }
-                },
-                onComplete: () => {
-                  // Session is done — flush and finalize immediately
-                  setSessionRetry(null)
-                  immediateFlush()
-                  setIsSending(false)
-                  setQueuedMessages([])
-                  // Clear any stale command approvals when session goes idle
-                  useCommandApprovalStore.getState().clearSession(sessionId)
-
-                  if (!hasFinalizedCurrentResponseRef.current) {
-                    hasFinalizedCurrentResponseRef.current = true
-                    void finalizeResponse()
-                  }
-
-                  // Set completion badge with duration since user sent the message
-                  const sendTime = messageSendTimes.get(sessionId)
-                  const durationMs = sendTime ? Date.now() - sendTime : 0
-                  const word = COMPLETION_WORDS[Math.floor(Math.random() * COMPLETION_WORDS.length)]
-                  const tokenDelta = computeTokenDelta(sessionId)
-                  const statusStore = useWorktreeStatusStore.getState()
-                  statusStore.setSessionStatus(sessionId, 'completed', {
-                    word,
-                    durationMs,
-                    tokenDelta
-                  })
+                  scheduleFlush()
+                  if (afterClose.trim()) appendTextDelta(afterClose)
+                } else {
+                  updateStreamingPartsRef((parts) =>
+                    parts.map((p) =>
+                      p.type === 'tool_use' && p.toolUse?.id === toolId
+                        ? {
+                            ...p,
+                            toolUse: {
+                              ...p.toolUse!,
+                              input: { ...p.toolUse!.input, plan: combined }
+                            }
+                          }
+                        : p
+                    )
+                  )
+                  scheduleFlush()
                 }
-              })
-            } else if (status.type === 'retry') {
+              } else {
+                // state === 'done' — after closing tag, route as regular text
+                if (delta) appendTextDelta(delta)
+                else if (part.text) setTextContent(part.text)
+              }
               setIsStreaming(true)
-              setIsSending(true)
-              setSessionRetry({
-                attempt: asNumber(status.attempt),
-                message: asString(status.message),
-                next: asNumber(status.next)
-              })
+            }
+          } else {
+            // Normal text handling (non-Codex or non-plan mode)
+            if (delta) {
+              appendTextDelta(delta)
+            } else if (part.text) {
+              setTextContent(part.text)
+            }
+            setIsStreaming(true)
+          }
+        } else if (part.type === 'tool') {
+          setIsCompacting(false)
+          // Tool part from OpenCode SDK - has callID, tool (name), state
+          const toolId = part.callID || part.id || `tool-${Date.now()}`
+          const toolName = part.tool || undefined
+          const state = part.state || {}
+
+          console.debug('[TOOL_DEBUG] stream event', {
+            toolId,
+            toolName,
+            status: state.status,
+            hasOutput: !!state.output,
+            hasError: !!state.error,
+            hasInput: !!state.input
+          })
+
+          const statusMap: Record<string, ToolStatus> = {
+            pending: 'pending',
+            running: 'running',
+            completed: 'success',
+            error: 'error'
+          }
+
+          upsertToolUse(toolId, {
+            ...(toolName ? { name: toolName } : {}),
+            // Only include input when the SDK actually provides it, so we don't
+            // overwrite the initial input with {} on subsequent status updates.
+            ...(state.input ? { input: state.input } : {}),
+            status: statusMap[state.status] || 'running',
+            startTime: state.time?.start || Date.now(),
+            endTime: state.time?.end,
+            output: state.status === 'completed' ? state.output : undefined,
+            error: state.status === 'error' ? state.error : undefined
+          })
+          setIsStreaming(true)
+        } else if (part.type === 'subtask') {
+          const subtaskIndex = streamingPartsRef.current.length // index it will be at
+          updateStreamingPartsRef((parts) => [
+            ...parts,
+            {
+              type: 'subtask',
+              subtask: {
+                id: part.id || `subtask-${Date.now()}`,
+                sessionID: part.sessionID || '',
+                prompt: part.prompt || '',
+                description: part.description || '',
+                agent: part.agent || 'unknown',
+                parts: [],
+                status: 'running'
+              }
+            }
+          ])
+          // Map child session ID to this subtask's index
+          if (part.sessionID) {
+            childToSubtaskIndexRef.current.set(part.sessionID, subtaskIndex)
+          }
+          immediateFlush()
+          setIsStreaming(true)
+        } else if (part.type === 'reasoning') {
+          updateStreamingPartsRef((parts) => {
+            const last = parts[parts.length - 1]
+            if (last?.type === 'reasoning') {
+              return [
+                ...parts.slice(0, -1),
+                {
+                  ...last,
+                  reasoning: (last.reasoning || '') + (event.data?.delta || part.text || '')
+                }
+              ]
+            }
+            return [
+              ...parts,
+              { type: 'reasoning' as const, reasoning: event.data?.delta || part.text || '' }
+            ]
+          })
+          scheduleFlush()
+          setIsStreaming(true)
+        } else if (part.type === 'step-start') {
+          updateStreamingPartsRef((parts) => [
+            ...parts,
+            { type: 'step_start' as const, stepStart: { snapshot: part.snapshot } }
+          ])
+          immediateFlush()
+          setIsStreaming(true)
+        } else if (part.type === 'step-finish') {
+          updateStreamingPartsRef((parts) => [
+            ...parts,
+            {
+              type: 'step_finish' as const,
+              stepFinish: {
+                reason: part.reason || '',
+                cost: typeof part.cost === 'number' ? part.cost : 0,
+                tokens: {
+                  input: typeof part.tokens?.input === 'number' ? part.tokens.input : 0,
+                  output: typeof part.tokens?.output === 'number' ? part.tokens.output : 0,
+                  reasoning: typeof part.tokens?.reasoning === 'number' ? part.tokens.reasoning : 0
+                }
+              }
+            }
+          ])
+          immediateFlush()
+          setIsStreaming(true)
+        } else if (part.type === 'compaction_started') {
+          setIsCompacting(true)
+          setIsStreaming(true)
+          immediateFlush()
+        } else if (part.type === 'compaction') {
+          setIsCompacting(false)
+          updateStreamingPartsRef((parts) => [
+            ...parts,
+            { type: 'compaction' as const, compactionAuto: part.auto === true }
+          ])
+          // Reset stale token snapshot — compaction truncates the context window.
+          // The next assistant message.updated will carry accurate post-compaction tokens.
+          // Use clearSessionTokenSnapshot (not resetSessionTokens) to preserve
+          // the accumulated cost and model identity for the session.
+          useContextStore.getState().clearSessionTokenSnapshot(sessionId)
+          immediateFlush()
+          setIsStreaming(true)
+        }
+      } else if (event.type === 'message.updated') {
+        // Skip user-message echoes
+        if (eventRole === 'user') return
+
+        // Skip child/subagent messages
+        if (event.childSessionId) return
+
+        // Content-based echo detection for message.updated
+        if (lastSentPromptRef.current) {
+          const parts = event.data?.parts
+          if (Array.isArray(parts) && parts.length > 0) {
+            const textContent = parts
+              .filter((p: { type?: string }) => p?.type === 'text')
+              .map((p: { text?: string }) => p?.text || '')
+              .join('')
+              .trimEnd()
+            if (textContent.length > 0 && lastSentPromptRef.current.startsWith(textContent)) {
+              return // echo -- skip
             }
           }
-        })
-      : () => {}
+        }
+
+        // Extract token usage from completed messages (snapshot replacement).
+        // On each completed assistant message, replace the token snapshot.
+        const info = event.data?.info
+        if (info?.time?.completed) {
+          const data = event.data as Record<string, unknown> | undefined
+          if (data) {
+            const tokens = extractTokens(data)
+            if (tokens) {
+              const modelRef = extractModelRef(data) ?? undefined
+              useContextStore.getState().setSessionTokens(sessionId, tokens, modelRef)
+            }
+            const cost = extractCost(data)
+            if (cost > 0) {
+              useContextStore.getState().addSessionCost(sessionId, cost)
+            }
+            // Extract per-model usage (from SDK result messages) to update context limits
+            const modelUsageEntries = extractModelUsage(data)
+            if (modelUsageEntries) {
+              for (const entry of modelUsageEntries) {
+                if (entry.contextWindow > 0) {
+                  useContextStore.getState().setModelLimit(entry.modelName, entry.contextWindow)
+                }
+              }
+            }
+          }
+        }
+      } else if (event.type === 'session.idle') {
+        // Child session idle — update subtask status, don't finalize parent
+        if (event.childSessionId) {
+          if (sessionRecord?.agent_sdk === 'codex') {
+            applyCodexChildStreamingPart(event.childSessionId, {
+              type: 'subtask',
+              subtask: {
+                id: event.childSessionId,
+                sessionID: event.childSessionId,
+                prompt: '',
+                description: '',
+                agent: 'task',
+                parts: [],
+                status: 'completed'
+              }
+            })
+            return
+          }
+
+          const subtaskIdx = childToSubtaskIndexRef.current.get(event.childSessionId)
+          if (subtaskIdx !== undefined) {
+            updateStreamingPartsRef((parts) => {
+              const updated = [...parts]
+              const subtask = updated[subtaskIdx]
+              if (subtask?.type === 'subtask' && subtask.subtask) {
+                subtask.subtask.status = 'completed'
+              }
+              return updated
+            })
+            immediateFlush()
+          }
+          return // Don't finalize the parent session
+        }
+
+        // Fallback: session.idle for parent acts as safety net.
+        // Primary finalization is handled by session.status {type:'idle'}.
+        // This catches edge cases where session.status events are unavailable.
+        immediateFlush()
+        setIsSending(false)
+        setIsCompacting(false)
+        // Only clear visual queue if no follow-ups remain
+        const hasFollowUps =
+          (useSessionStore.getState().pendingFollowUpMessages.get(sessionId)?.length ?? 0) > 0
+        if (!hasFollowUps) {
+          setQueuedMessages([])
+        }
+        // Clear any stale command approvals when session goes idle
+        useCommandApprovalStore.getState().clearSession(sessionId)
+
+        if (!hasFinalizedCurrentResponseRef.current) {
+          hasFinalizedCurrentResponseRef.current = true
+          void finalizeResponse()
+        }
+      } else if (event.type === 'session.status') {
+        const status = event.statusPayload || event.data?.status
+        if (!status) return
+
+        // Skip child session status -- only parent status drives isStreaming
+        if (event.childSessionId) return
+
+        if (status.type === 'busy') {
+          // Don't overwrite plan_ready — session is blocked waiting for plan approval
+          if (useSessionStore.getState().getPendingPlan(sessionId)) return
+
+          // Session became active (again) — restart streaming state.
+          // If we previously finalized on idle, reset so the next idle
+          // can finalize the new response.
+          setSessionRetry(null)
+          setSessionErrorMessage(null)
+          setSessionErrorStderr(null)
+          setIsCompacting(false)
+          setIsStreaming(true)
+          codexStreamingMessageIdRef.current = null
+          hasFinalizedCurrentResponseRef.current = false
+          newPromptPendingRef.current = false
+          planXmlDetectionRef.current = { state: 'scanning', buffer: '', cardId: null }
+          setIsSending(true)
+
+          // Restore worktree status to working/planning
+          const currentMode = useSessionStore.getState().getSessionMode(sessionId)
+          useWorktreeStatusStore
+            .getState()
+            .setSessionStatus(sessionId, isPlanLike(currentMode) ? 'planning' : 'working')
+        } else if (status.type === 'idle') {
+          // Don't overwrite plan_ready — session is blocked waiting for plan approval
+          if (useSessionStore.getState().getPendingPlan(sessionId)) return
+
+          setIsCompacting(false)
+          let optimisticMessageId: string | null = null
+
+          void handleSessionIdleFollowUp({
+            sessionId,
+            isBlocked: () => {
+              const currentStatus = useWorktreeStatusStore.getState().sessionStatuses[sessionId]
+              return (
+                currentStatus?.status === 'command_approval' ||
+                currentStatus?.status === 'permission'
+              )
+            },
+            dequeueFollowUp: () => useSessionStore.getState().consumeFollowUpMessage(sessionId),
+            requeueFollowUp: (message) =>
+              useSessionStore.getState().requeueFollowUpMessageFront(sessionId, message),
+            onBeforeDispatch: (message) => {
+              const optimisticMessage = createLocalMessage('user', message)
+              optimisticMessageId = optimisticMessage.id
+              setQueuedMessages((prev) => prev.slice(1))
+              hasFinalizedCurrentResponseRef.current = false
+              setIsStreaming(true)
+              setIsSending(true)
+              setMessages((prev) => [...prev, optimisticMessage])
+              newPromptPendingRef.current = true
+              messageSendTimes.set(sessionId, Date.now())
+              lastSendMode.set(sessionId, 'build')
+              useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'working')
+              lastSentPromptRef.current = message
+            },
+            dispatchFollowUp: async (message) => {
+              const wtPath = transcriptSourceRef.current.worktreePath
+              const opcSid = transcriptSourceRef.current.opencodeSessionId
+              if (!wtPath || !opcSid) {
+                return false
+              }
+
+              const result = unwrapEnvelope(
+                await opencodeApi.prompt(
+                  wtPath,
+                  opcSid,
+                  [{ type: 'text', text: message }],
+                  getModelForRequests()
+                )
+              )
+
+              if (!result.success) {
+                console.error('Failed to send follow-up message:', result.error)
+                return false
+              }
+
+              return true
+            },
+            onDispatchFailure: (message) => {
+              toast.error('Failed to send follow-up prompt')
+              setIsStreaming(false)
+              setIsSending(false)
+              useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
+              setQueuedMessages((prev) => [
+                {
+                  id: `queued-${crypto.randomUUID()}`,
+                  content: message,
+                  timestamp: Date.now()
+                },
+                ...prev
+              ])
+              if (optimisticMessageId) {
+                setMessages((prev) => prev.filter((entry) => entry.id !== optimisticMessageId))
+              }
+            },
+            onComplete: () => {
+              // Session is done — flush and finalize immediately
+              setSessionRetry(null)
+              immediateFlush()
+              setIsSending(false)
+              setQueuedMessages([])
+              // Clear any stale command approvals when session goes idle
+              useCommandApprovalStore.getState().clearSession(sessionId)
+
+              if (!hasFinalizedCurrentResponseRef.current) {
+                hasFinalizedCurrentResponseRef.current = true
+                void finalizeResponse()
+              }
+
+              // Set completion badge with duration since user sent the message
+              const sendTime = messageSendTimes.get(sessionId)
+              const durationMs = sendTime ? Date.now() - sendTime : 0
+              const word = COMPLETION_WORDS[Math.floor(Math.random() * COMPLETION_WORDS.length)]
+              const tokenDelta = computeTokenDelta(sessionId)
+              const statusStore = useWorktreeStatusStore.getState()
+              statusStore.setSessionStatus(sessionId, 'completed', {
+                word,
+                durationMs,
+                tokenDelta
+              })
+            }
+          })
+        } else if (status.type === 'retry') {
+          setIsStreaming(true)
+          setIsSending(true)
+          setSessionRetry({
+            attempt: asNumber(status.attempt),
+            message: asString(status.message),
+            next: asNumber(status.next)
+          })
+        }
+      }
+    })
 
     const initializeSession = async (): Promise<void> => {
       if (shouldAbortInit()) return
@@ -3079,7 +3068,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
 
       try {
         // 1. Resolve session/worktree metadata so transcript loading can prefer OpenCode
-        const session = (await db.session.get(sessionId)) as DbSession | null
+        const session = await dbApi.session.get<DbSession>(sessionId)
         if (shouldAbortInit()) return
         if (!session) {
           throw new Error('Session not found')
@@ -3087,7 +3076,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
 
         if (session.model_provider_id && session.model_id) {
           sessionModelHydratedRef.current = true
-          await window.opencodeOps
+          await opencodeApi
             .setModel({
               providerID: session.model_provider_id,
               modelID: session.model_id,
@@ -3101,7 +3090,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
         let wtPath: string | null = null
         if (session.worktree_id) {
           setWorktreeId(session.worktree_id)
-          const worktree = (await db.worktree.get(session.worktree_id)) as DbWorktree | null
+          const worktree = await dbApi.worktree.get(session.worktree_id)
           if (shouldAbortInit()) return
           if (worktree) {
             wtPath = worktree.path
@@ -3112,7 +3101,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
           // Connection session: resolve the connection folder path
           setConnectionId(session.connection_id)
           try {
-            const connResult = unwrapEnvelope(await window.connectionOps.get(session.connection_id))
+            const connResult = await connectionApi.get(session.connection_id)
             if (shouldAbortInit()) return
             if (connResult.success && connResult.connection) {
               wtPath = connResult.connection.path
@@ -3132,10 +3121,10 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
 
         // 1b. Hydrate revert boundary BEFORE loading messages so the filter
         // is applied to the very first render that includes transcript data.
-        if (wtPath && existingOpcSessionId && window.opencodeOps?.sessionInfo) {
+        if (wtPath && existingOpcSessionId) {
           try {
             const sessionInfo = unwrapEnvelope(
-              await window.opencodeOps.sessionInfo(wtPath, existingOpcSessionId)
+              await opencodeApi.sessionInfo(wtPath, existingOpcSessionId)
             )
             if (shouldAbortInit()) return
             if (sessionInfo.success) {
@@ -3220,12 +3209,6 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
           return
         }
 
-        if (!window.opencodeOps) {
-          console.warn('OpenCode API unavailable, session view running in local-only mode')
-          setViewState({ status: 'connected' })
-          return
-        }
-
         // 4. Connect to OpenCode
 
         // For Claude Code sessions, set known model limits immediately so the
@@ -3266,7 +3249,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
         // This avoids model-id collisions across providers and lets context usage use
         // the exact model that produced the latest assistant message.
         const fetchModelLimits = (): void => {
-          window.opencodeOps
+          opencodeApi
             .listModels()
             .then(unwrapEnvelope)
             .then((result) => {
@@ -3310,7 +3293,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
 
         // Fetch slash commands (fire-and-forget)
         const fetchCommands = (path: string): void => {
-          window.opencodeOps
+          opencodeApi
             .commands(path, sessionId)
             .then(unwrapEnvelope)
             .then((result) => {
@@ -3329,7 +3312,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
         // each permission to the correct Hive session rather than blindly
         // assigning to the mounting session.
         const hydratePermissions = (path: string): void => {
-          window.opencodeOps
+          opencodeApi
             .permissionList(path)
             .then(unwrapEnvelope)
             .then((result) => {
@@ -3399,7 +3382,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
               { type: 'text' as const, text: promptMessage }
             ]
             const result = unwrapEnvelope(
-              await window.opencodeOps.prompt(path, opcId, parts, model, codexPromptOptions)
+              await opencodeApi.prompt(path, opcId, parts, model, codexPromptOptions)
             )
             if (shouldAbortInit()) {
               if (!result.success) {
@@ -3425,7 +3408,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
         if (existingOpcSessionId) {
           // Try to reconnect to existing session
           const reconnectResult = unwrapEnvelope(
-            await window.opencodeOps.reconnect(wtPath, existingOpcSessionId, sessionId)
+            await opencodeApi.reconnect(wtPath, existingOpcSessionId, sessionId)
           )
           if (shouldAbortInit()) return
           if (reconnectResult.success) {
@@ -3443,7 +3426,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
             // Create response log file if logging is enabled
             if (isLogModeRef.current) {
               try {
-                const logPath = await window.loggingOps.createResponseLog(sessionId)
+                const logPath = await loggingApi.createResponseLog(sessionId)
                 logFilePathRef.current = logPath
               } catch (e) {
                 console.warn('Failed to create response log:', e)
@@ -3509,7 +3492,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
         }
 
         // Create new OpenCode session
-        const connectResult = unwrapEnvelope(await window.opencodeOps.connect(wtPath, sessionId))
+        const connectResult = unwrapEnvelope(await opencodeApi.connect(wtPath, sessionId))
         if (shouldAbortInit()) return
         if (connectResult.success && connectResult.sessionId) {
           setOpencodeSessionId(connectResult.sessionId)
@@ -3522,7 +3505,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
           // open a temporary replacement session, keep the original pointer in
           // DB to avoid losing historical transcript linkage.
           if (!existingOpcSessionId) {
-            await db.session.update(sessionId, {
+            await dbApi.session.update<DbSession>(sessionId, {
               opencode_session_id: connectResult.sessionId
             })
           }
@@ -3531,7 +3514,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
           // Create response log file if logging is enabled
           if (isLogModeRef.current) {
             try {
-              const logPath = await window.loggingOps.createResponseLog(sessionId)
+              const logPath = await loggingApi.createResponseLog(sessionId)
               logFilePathRef.current = logPath
             } catch (e) {
               console.warn('Failed to create response log:', e)
@@ -3577,7 +3560,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
       if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
       const currentValue = inputValueRef.current
       if (currentValue) {
-        db.session.updateDraft(sessionId, currentValue)
+        dbApi.session.updateDraft(sessionId, currentValue)
       }
     }
   }, [sessionId])
@@ -3597,7 +3580,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
     }
 
     try {
-      const session = (await db.session.get(sessionId)) as DbSession | null
+      const session = await dbApi.session.get<DbSession>(sessionId)
       if (!session) {
         throw new Error('Session not found')
       }
@@ -3608,7 +3591,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
         return
       }
 
-      const worktree = (await db.worktree.get(session.worktree_id)) as DbWorktree | null
+      const worktree = await dbApi.worktree.get(session.worktree_id)
       if (!worktree) {
         setMessages([])
         setViewState({ status: 'connected' })
@@ -3619,18 +3602,11 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
       transcriptSourceRef.current.worktreePath = worktree.path
       const existingOpcSessionId = session.opencode_session_id
 
-      if (!window.opencodeOps) {
-        console.warn('OpenCode API unavailable, retry falling back to local-only mode')
-        setMessages([])
-        setViewState({ status: 'connected' })
-        return
-      }
-
       let activeOpcSessionId = existingOpcSessionId
 
       if (existingOpcSessionId) {
         const reconnectResult = unwrapEnvelope(
-          await window.opencodeOps.reconnect(worktree.path, existingOpcSessionId, sessionId)
+          await opencodeApi.reconnect(worktree.path, existingOpcSessionId, sessionId)
         )
         if (reconnectResult.success) {
           setOpencodeSessionId(existingOpcSessionId)
@@ -3647,9 +3623,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
       }
 
       if (!activeOpcSessionId) {
-        const connectResult = unwrapEnvelope(
-          await window.opencodeOps.connect(worktree.path, sessionId)
-        )
+        const connectResult = unwrapEnvelope(await opencodeApi.connect(worktree.path, sessionId))
         if (!connectResult.success || !connectResult.sessionId) {
           throw new Error(connectResult.error || 'Failed to connect')
         }
@@ -3660,14 +3634,14 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
         transcriptSourceRef.current.opencodeSessionId = connectResult.sessionId
         setRevertMessageID(null)
         if (!existingOpcSessionId) {
-          await db.session.update(sessionId, {
+          await dbApi.session.update<DbSession>(sessionId, {
             opencode_session_id: connectResult.sessionId
           })
         }
       }
 
       const transcriptResult = unwrapEnvelope(
-        await window.opencodeOps.getMessages(worktree.path, activeOpcSessionId)
+        await opencodeApi.getMessages(worktree.path, activeOpcSessionId)
       )
       if (!transcriptResult.success) {
         console.warn('Retry transcript load from OpenCode failed:', transcriptResult.error)
@@ -3703,7 +3677,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
     async (requestId: string, answers: string[][]) => {
       try {
         unwrapEnvelope(
-          await window.opencodeOps.questionReply(requestId, answers, worktreePath || undefined)
+          await opencodeApi.questionReply(requestId, answers, worktreePath || undefined)
         )
       } catch (err) {
         console.error('Failed to reply to question:', err)
@@ -3717,9 +3691,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
   const handleQuestionReject = useCallback(
     async (requestId: string) => {
       try {
-        unwrapEnvelope(
-          await window.opencodeOps.questionReject(requestId, worktreePath || undefined)
-        )
+        unwrapEnvelope(await opencodeApi.questionReject(requestId, worktreePath || undefined))
       } catch (err) {
         console.error('Failed to reject question:', err)
         toast.error('Failed to dismiss question')
@@ -3733,12 +3705,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
     async (requestId: string, reply: 'once' | 'always' | 'reject', message?: string) => {
       try {
         unwrapEnvelope(
-          await window.opencodeOps.permissionReply(
-            requestId,
-            reply,
-            worktreePath || undefined,
-            message
-          )
+          await opencodeApi.permissionReply(requestId, reply, worktreePath || undefined, message)
         )
       } catch (err) {
         console.error('Failed to reply to permission:', err)
@@ -3759,7 +3726,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
     ) => {
       try {
         unwrapEnvelope(
-          await window.opencodeOps.commandApprovalReply(
+          await opencodeApi.commandApprovalReply(
             requestId,
             approved,
             remember,
@@ -3783,7 +3750,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
       const durableState = await loadCodexDurableState(sessionId)
       if (worktreePath && opencodeSessionId) {
         const transcriptResult = unwrapEnvelope(
-          await window.opencodeOps.getMessages(worktreePath, opencodeSessionId)
+          await opencodeApi.getMessages(worktreePath, opencodeSessionId)
         )
         if (transcriptResult.success) {
           const isIdle = !isStreamingRef.current
@@ -3809,7 +3776,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
     if (!worktreePath || !opencodeSessionId) return false
 
     const transcriptResult = unwrapEnvelope(
-      await window.opencodeOps.getMessages(worktreePath, opencodeSessionId)
+      await opencodeApi.getMessages(worktreePath, opencodeSessionId)
     )
     if (!transcriptResult.success) {
       console.warn('Failed to refresh OpenCode transcript:', transcriptResult.error)
@@ -3835,7 +3802,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
 
     const durableState = await loadCodexDurableState(sessionId)
     const transcriptResult = unwrapEnvelope(
-      await window.opencodeOps.getMessages(worktreePath, opencodeSessionId)
+      await opencodeApi.getMessages(worktreePath, opencodeSessionId)
     )
     if (!transcriptResult.success) return
 
@@ -4166,7 +4133,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
       setSteeringMessageId(messageId)
       try {
         const result = unwrapEnvelope(
-          await window.opencodeOps?.steer?.(worktreePath, opencodeSessionId, content)
+          await opencodeApi.steer(worktreePath, opencodeSessionId, content)
         )
         if (result?.success) {
           setQueuedMessages((prev) => prev.filter((msg) => msg.id !== messageId))
@@ -4224,7 +4191,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
         return
       }
 
-      const sourceSession = sessionRecord ?? (await db.session.get(sessionId))
+      const sourceSession = sessionRecord ?? (await dbApi.session.get<DbSession>(sessionId))
       if (!sourceSession) {
         toast.error('Session is not ready to fork yet')
         return
@@ -4250,7 +4217,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
 
       try {
         const forkResult = unwrapEnvelope(
-          await window.opencodeOps.fork(worktreePath, opencodeSessionId, cutoffMessage?.id)
+          await opencodeApi.fork(worktreePath, opencodeSessionId, cutoffMessage?.id)
         )
 
         if (!forkResult.success || !forkResult.sessionId) {
@@ -4258,7 +4225,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
         }
 
         const fallbackForkName = sourceSession.name ? `${sourceSession.name} (fork)` : null
-        const forkedSession = await db.session.create({
+        const forkedSession = await dbApi.session.create<DbSession>({
           worktree_id: targetWorktreeId,
           project_id: sourceSession.project_id,
           name: fallbackForkName,
@@ -4289,7 +4256,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
         setInputValue('')
         inputValueRef.current = ''
         if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
-        db.session.updateDraft(sessionId, null)
+        dbApi.session.updateDraft(sessionId, null)
         await runBashCommand(command, worktreePath)
         return
       }
@@ -4318,13 +4285,11 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
           setHistoryIndex(null)
           savedDraftRef.current = ''
           if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
-          db.session.updateDraft(sessionId, null)
+          dbApi.session.updateDraft(sessionId, null)
 
           try {
             if (commandName === 'undo') {
-              const result = unwrapEnvelope(
-                await window.opencodeOps.undo(worktreePath, opencodeSessionId)
-              )
+              const result = unwrapEnvelope(await opencodeApi.undo(worktreePath, opencodeSessionId))
               if (!result.success) {
                 toast.error(result.error || 'Nothing to undo')
                 return
@@ -4344,9 +4309,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
                 toast.error('Redo is not supported for this session type')
                 return
               }
-              const result = unwrapEnvelope(
-                await window.opencodeOps.redo(worktreePath, opencodeSessionId)
-              )
+              const result = unwrapEnvelope(await opencodeApi.redo(worktreePath, opencodeSessionId))
               if (!result.success) {
                 toast.error(result.error || 'Nothing to redo')
                 return
@@ -4417,7 +4380,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
           inputValueRef.current = ''
           fileMentions.clearMentions()
           if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
-          db.session.updateDraft(sessionId, null)
+          dbApi.session.updateDraft(sessionId, null)
 
           // Set sending state
           hasFinalizedCurrentResponseRef.current = false
@@ -4485,7 +4448,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
 
           try {
             const result = unwrapEnvelope(
-              await window.opencodeOps.prompt(
+              await opencodeApi.prompt(
                 worktreePath,
                 opencodeSessionId,
                 parts,
@@ -4527,14 +4490,14 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
         inputValueRef.current = ''
         fileMentions.clearMentions()
         if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
-        db.session.updateDraft(sessionId, null)
+        dbApi.session.updateDraft(sessionId, null)
         return
       }
       setInputValue('')
       inputValueRef.current = ''
       fileMentions.clearMentions()
       if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
-      db.session.updateDraft(sessionId, null)
+      dbApi.session.updateDraft(sessionId, null)
 
       resetAutoScrollState()
 
@@ -4632,7 +4595,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
         if (isLogModeRef.current && logFilePathRef.current) {
           try {
             const currentMode = useSessionStore.getState().getSessionMode(sessionId)
-            window.loggingOps.appendResponseLog(logFilePathRef.current, {
+            loggingApi.appendResponseLog(logFilePathRef.current, {
               type: 'user_prompt',
               content: trimmedValue,
               mode: currentMode
@@ -4649,8 +4612,8 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
           // Track which model is being used on this worktree
           if (requestModel && worktreeId) {
             useWorktreeStore.getState().updateWorktreeModel(worktreeId, requestModel)
-            db?.worktree
-              ?.updateModel({
+            dbApi.worktree
+              .updateModel({
                 worktreeId,
                 modelProviderId: requestModel.providerID,
                 modelId: requestModel.modelID,
@@ -4683,7 +4646,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
               usePRReviewStore.getState().clearAttachments()
               useDiffCommentStore.getState().clearAttached()
               const result = unwrapEnvelope(
-                await window.opencodeOps.command(
+                await opencodeApi.command(
                   worktreePath,
                   opencodeSessionId,
                   commandName,
@@ -4724,7 +4687,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
               usePRReviewStore.getState().clearAttachments()
               useDiffCommentStore.getState().clearAttached()
               const result = unwrapEnvelope(
-                await window.opencodeOps.prompt(
+                await opencodeApi.prompt(
                   worktreePath,
                   opencodeSessionId,
                   parts,
@@ -4768,7 +4731,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
             usePRReviewStore.getState().clearAttachments()
             useDiffCommentStore.getState().clearAttached()
             const result = unwrapEnvelope(
-              await window.opencodeOps.prompt(
+              await opencodeApi.prompt(
                 worktreePath,
                 opencodeSessionId,
                 parts,
@@ -4867,11 +4830,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
       try {
         // Approve first (unblocks the SDK), then update frontend state.
         const result = unwrapEnvelope(
-          await window.opencodeOps.planApprove(
-            worktreePath,
-            sessionId,
-            pendingBeforeAction.requestId
-          )
+          await opencodeApi.planApprove(worktreePath, sessionId, pendingBeforeAction.requestId)
         )
         if (!result.success) {
           toast.error(`Plan approve failed: ${result.error ?? 'unknown'}`)
@@ -4963,7 +4922,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
       try {
         // Reject first (unblocks the SDK with feedback), then clear frontend state
         const result = unwrapEnvelope(
-          await window.opencodeOps.planReject(
+          await opencodeApi.planReject(
             worktreePath,
             sessionId,
             feedback,
@@ -5031,7 +4990,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
       // Abort the original backend session so it stops spinning
       if (worktreePath && opencodeSessionId) {
         useCommandApprovalStore.getState().clearSession(sessionId)
-        unwrapEnvelope(await window.opencodeOps.abort(worktreePath, opencodeSessionId))
+        unwrapEnvelope(await opencodeApi.abort(worktreePath, opencodeSessionId))
       }
 
       if (connectionId) {
@@ -5152,7 +5111,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
     // Abort the original backend session so it stops spinning
     if (worktreePath && opencodeSessionId) {
       useCommandApprovalStore.getState().clearSession(sessionId)
-      unwrapEnvelope(await window.opencodeOps.abort(worktreePath, opencodeSessionId))
+      unwrapEnvelope(await opencodeApi.abort(worktreePath, opencodeSessionId))
     }
 
     if (connectionId) {
@@ -5259,7 +5218,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
     // Abort the original backend session so it stops spinning
     if (worktreePath && opencodeSessionId) {
       useCommandApprovalStore.getState().clearSession(sessionId)
-      unwrapEnvelope(await window.opencodeOps.abort(worktreePath, opencodeSessionId))
+      unwrapEnvelope(await opencodeApi.abort(worktreePath, opencodeSessionId))
     }
 
     // 2. Create session in the same worktree (no duplication)
@@ -5347,7 +5306,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
     if (!worktreePath || !opencodeSessionId) return
     // Clear any pending command approvals — the abort will auto-deny them on the main process side
     useCommandApprovalStore.getState().clearSession(sessionId)
-    unwrapEnvelope(await window.opencodeOps.abort(worktreePath, opencodeSessionId))
+    unwrapEnvelope(await opencodeApi.abort(worktreePath, opencodeSessionId))
   }, [isBashRunning, abortBash, worktreePath, opencodeSessionId, sessionId])
 
   // Handle keyboard shortcuts
@@ -5385,7 +5344,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
           setInputValue('')
           inputValueRef.current = ''
           if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
-          db.session.updateDraft(sessionId, null)
+          dbApi.session.updateDraft(sessionId, null)
           return
         }
         handleSend()
@@ -5547,7 +5506,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
       // Debounce draft persistence (3 seconds)
       if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
       draftTimerRef.current = setTimeout(() => {
-        db.session.updateDraft(sessionId, value || null)
+        dbApi.session.updateDraft(sessionId, value || null)
       }, 3000)
     },
     [sessionId, slashDismissed, fileMentionsOpen, fileMentionCount, updateFileMentions]
@@ -5693,9 +5652,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
       if (useSessionStore.getState().activeSessionId !== sessionId) return
       if (!worktreePath || !opencodeSessionId) return
       try {
-        const result = unwrapEnvelope(
-          await window.opencodeOps.undo(worktreePath, opencodeSessionId)
-        )
+        const result = unwrapEnvelope(await opencodeApi.undo(worktreePath, opencodeSessionId))
         if (!result.success) {
           toast.error(result.error || 'Nothing to undo')
           return
@@ -5722,9 +5679,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
         return
       }
       try {
-        const result = unwrapEnvelope(
-          await window.opencodeOps.redo(worktreePath, opencodeSessionId)
-        )
+        const result = unwrapEnvelope(await opencodeApi.redo(worktreePath, opencodeSessionId))
         if (!result.success) {
           toast.error(result.error || 'Nothing to redo')
           return
@@ -5776,7 +5731,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
           }
 
           const result = unwrapEnvelope(
-            await window.opencodeOps.refreshFromThread(worktreePath, opencodeSessionId)
+            await opencodeApi.refreshFromThread(worktreePath, opencodeSessionId)
           )
           if (!result.success) {
             toast.error(result.error || 'Refresh from file failed')
@@ -6384,7 +6339,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
                         setInputValue('')
                         inputValueRef.current = ''
                         if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
-                        db.session.updateDraft(sessionId, null)
+                        dbApi.session.updateDraft(sessionId, null)
                         return
                       }
                       void handleSend()

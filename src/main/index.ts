@@ -1,44 +1,41 @@
 import { loadShellEnv } from './services/shell-env'
-import { app, shell, BrowserWindow, screen, ipcMain, clipboard } from 'electron'
+import { app, shell, BrowserWindow, screen, webContents } from 'electron'
 import { join } from 'path'
-import { spawn, exec } from 'child_process'
-import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'fs'
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { electronApp, is } from '@electron-toolkit/utils'
 import { getDatabase, closeDatabase } from './db'
 import {
-  registerDatabaseHandlers,
-  registerProjectHandlers,
-  registerWorktreeHandlers,
-  registerOpenCodeHandlers,
-  cleanupOpenCode,
-  registerFileTreeHandlers,
-  cleanupFileTreeWatchers,
-  getFileTreeWatcherCount,
-  registerGitFileHandlers,
-  cleanupWorktreeWatchers,
-  cleanupBranchWatchers,
-  getWorktreeWatcherCount,
-  getBranchWatcherCount,
-  registerSettingsHandlers,
-  registerFileHandlers,
-  registerScriptHandlers,
-  cleanupScripts,
-  registerTerminalHandlers,
-  cleanupTerminals,
-  registerUpdaterHandlers,
-  registerConnectionHandlers,
-  registerUsageHandlers,
-  registerAccountHandlers,
-  registerKanbanHandlers,
-  registerAttachmentHandlers,
-  registerPetHandlers,
-  registerTelegramHandlers
-} from './ipc'
-import { buildMenu, updateMenuState, shutdownMenu } from './menu'
-import type { MenuState } from './menu'
-import { createLogger, getLogDir } from './services/logger'
-import { detectAgentSdks } from './services/system-info'
-import { createResponseLog, appendResponseLog } from './services/response-logger'
+  connectOpenCodeSession,
+  reconnectOpenCodeSession,
+  promptOpenCodeSession,
+  abortOpenCodeSession,
+  steerOpenCodeSession,
+  disconnectOpenCodeSession,
+  getOpenCodeSessionMessages,
+  refreshOpenCodeSessionFromThread,
+  listOpenCodeModels,
+  setOpenCodeSelectedModel,
+  getOpenCodeModelInfo,
+  replyOpenCodeQuestion,
+  rejectOpenCodeQuestion,
+  approveOpenCodePlan,
+  rejectOpenCodePlan,
+  replyOpenCodePermission,
+  listOpenCodePermissions,
+  replyOpenCodeCommandApproval,
+  getOpenCodeSessionInfo,
+  undoOpenCodeSession,
+  redoOpenCodeSession,
+  sendOpenCodeCommand,
+  listOpenCodeCommands,
+  renameOpenCodeSession,
+  getOpenCodeCapabilities,
+  forkOpenCodeSession,
+  cleanupOpenCode
+} from './services/opencode-session-commands'
+import { buildMenu, shutdownMenu } from './menu'
+import { createLogger } from './services/logger'
+import { emitWindowFocused } from './services/app-events'
 import { notificationService } from './services/notification-service'
 import { updaterService } from './services/updater'
 import { ClaudeCodeImplementer } from './services/claude-code-implementer'
@@ -46,10 +43,7 @@ import { CodexImplementer } from './services/codex-implementer'
 import { AgentSdkManager } from './services/agent-sdk-manager'
 import { resolveClaudeBinaryPath } from './services/claude-binary-resolver'
 import { resolveCodexBinaryPath } from './services/codex-binary-resolver'
-import {
-  resolveOpenCodeLaunchSpec,
-  type OpenCodeLaunchSpec
-} from './services/opencode-binary-resolver'
+import { resolveOpenCodeLaunchSpec } from './services/opencode-binary-resolver'
 import {
   setClaudeBinaryPath as setRouterClaudeBinaryPath,
   setCodexBinaryPath as setRouterCodexBinaryPath,
@@ -60,13 +54,47 @@ import { telemetryService } from './services/telemetry-service'
 import { perfDiagnostics } from './services/perf-diagnostics'
 import { configure as configureCodexDebugLogger } from './services/codex-debug-logger'
 import { ptyService } from './services/pty-service'
+import { ghosttyService } from './services/ghostty-service'
 import { closeClaudeHookServer } from './services/claude-hook-server'
 import { scriptRunner } from './services/script-runner'
+import { cleanupScripts } from './services/script-cleanup'
+import { cleanupFileTreeWatchers, getFileTreeWatcherCount } from './services/file-tree-watcher'
+import { cleanupTerminals } from './services/terminal-pty-bridge'
 import { bashService } from './effect/bash/facade'
 import { disposeAllRuntimes } from './effect/_shared/runtime'
 import { getRuntime as getSpawnRuntime } from './effect/spawn/runtime'
-import { registerBashHandlers } from './ipc/bash-handlers'
-import { registerTicketImportHandlers } from './ipc/ticket-import-handlers'
+import {
+  setDesktopBackendOpenCodeAbortHandler,
+  setDesktopBackendOpenCodeCapabilitiesHandler,
+  setDesktopBackendOpenCodeCommandHandler,
+  setDesktopBackendOpenCodeCommandsHandler,
+  setDesktopBackendOpenCodeConnectHandler,
+  setDesktopBackendOpenCodeDisconnectHandler,
+  setDesktopBackendOpenCodeForkHandler,
+  setDesktopBackendOpenCodeGetMessagesHandler,
+  setDesktopBackendOpenCodeListModelsHandler,
+  setDesktopBackendOpenCodeModelInfoHandler,
+  setDesktopBackendOpenCodePlanApproveHandler,
+  setDesktopBackendOpenCodePlanRejectHandler,
+  setDesktopBackendOpenCodeCommandApprovalReplyHandler,
+  setDesktopBackendOpenCodePermissionListHandler,
+  setDesktopBackendOpenCodePermissionReplyHandler,
+  setDesktopBackendOpenCodePromptHandler,
+  setDesktopBackendOpenCodeQuestionReplyHandler,
+  setDesktopBackendOpenCodeQuestionRejectHandler,
+  setDesktopBackendOpenCodeRefreshFromThreadHandler,
+  setDesktopBackendOpenCodeRedoHandler,
+  setDesktopBackendOpenCodeReconnectHandler,
+  setDesktopBackendOpenCodeRenameSessionHandler,
+  setDesktopBackendOpenCodeSetModelHandler,
+  setDesktopBackendOpenCodeSessionInfoHandler,
+  setDesktopBackendOpenCodeSteerHandler,
+  setDesktopBackendOpenCodeUndoHandler,
+  startDesktopBackend,
+  stopDesktopBackend
+} from './desktop/backend-manager'
+import { getDesktopPreloadBootstrapArguments } from './desktop/desktop-bridge-handlers'
+import type { LocalEnvironmentBootstrap } from '@shared/desktop-bridge'
 import {
   initTicketProviderManager,
   GitHubProvider,
@@ -74,10 +102,20 @@ import {
 } from './services/ticket-providers'
 import { APP_SETTINGS_DB_KEY } from '../shared/types/settings'
 import { openCodeService } from './services/opencode-service'
-import { agentEventBus } from './services/agent-event-bus'
+import {
+  createTemplateFile,
+  getFileModTime,
+  loadCustomCommandsFromFile
+} from './services/custom-commands-file-service'
 import { telegramForwardingService } from './services/telegram-forwarding-service'
-import { setKeepAwake, cleanupPowerSaveBlocker } from './services/power-save-blocker'
-import { sleepNow } from './services/sleep-now'
+import { cleanupPowerSaveBlocker } from './services/power-save-blocker'
+import {
+  emitCloseSessionShortcut,
+  emitFileSearchShortcut,
+  emitNewSessionShortcut,
+  emitQuitConfirmationHide,
+  emitQuitConfirmationShow
+} from './services/shortcut-events'
 import {
   configurePetWindow,
   destroyPetWindow,
@@ -90,39 +128,77 @@ import {
   QUIT_CONFIRM_WINDOW_MS,
   readWarnBeforeQuitting
 } from './quit-confirmation'
+import { emitSettingsUpdated } from './services/settings-events'
 
 const log = createLogger({ component: 'Main' })
 
-function resetCustomCommandsV28(): void {
+// Track custom commands file mtime for change detection
+let lastKnownMtime: number | null = null
+
+function initializeCustomCommandsFile(): void {
+  try {
+    const db = getDatabase()
+    const existingSettings = db.getSetting(APP_SETTINGS_DB_KEY)
+    const settings = existingSettings ? JSON.parse(existingSettings) : {}
+    const hasCustomCommandsInDb = Array.isArray(settings.customProjectCommands)
+
+    if (!hasCustomCommandsInDb && getFileModTime() === null) {
+      const templateResult = createTemplateFile()
+      if (templateResult.created) {
+        log.info('Created custom commands template file (first launch)')
+      } else if (!templateResult.success && templateResult.error) {
+        log.error('Failed to create custom commands template:', templateResult.error)
+      }
+    }
+  } catch (error) {
+    log.error('Failed to initialize custom commands file:', error)
+  }
+
+  lastKnownMtime = getFileModTime()
+}
+
+function syncCustomCommandsFileIfChanged(): void {
+  const currentMtime = getFileModTime()
+  if (currentMtime === lastKnownMtime) {
+    return
+  }
+
+  lastKnownMtime = currentMtime
+
+  if (currentMtime === null) {
+    log.info('Custom commands file deleted, clearing commands')
+    try {
+      const db = getDatabase()
+      const existingSettings = db.getSetting(APP_SETTINGS_DB_KEY)
+      const settings = existingSettings ? JSON.parse(existingSettings) : {}
+
+      settings.customProjectCommands = []
+      db.setSetting(APP_SETTINGS_DB_KEY, JSON.stringify(settings))
+      emitSettingsUpdated({ customProjectCommands: [] })
+    } catch (error) {
+      log.error('Failed to clear custom commands from database:', error)
+    }
+    return
+  }
+
+  log.info('Custom commands file changed, reloading')
+
+  const fileResult = loadCustomCommandsFromFile()
+  if (!fileResult.success) {
+    log.error('Failed to load custom commands:', fileResult.error)
+    return
+  }
+
   try {
     const db = getDatabase()
     const existingSettings = db.getSetting(APP_SETTINGS_DB_KEY)
     const settings = existingSettings ? JSON.parse(existingSettings) : {}
 
-    if (settings.customCommandsResetV28 === true) {
-      return
-    }
-
-    settings.customProjectCommands = []
-    settings.customCommandsResetV28 = true
+    settings.customProjectCommands = fileResult.commands ?? []
     db.setSetting(APP_SETTINGS_DB_KEY, JSON.stringify(settings))
-
-    try {
-      unlinkSync(join(app.getPath('home'), '.hive', `custom-${'commands'}.json`))
-    } catch (error) {
-      const code =
-        typeof error === 'object' && error !== null && 'code' in error
-          ? (error as { code?: string }).code
-          : undefined
-      if (code !== 'ENOENT') {
-        log.warn('Failed to delete custom commands file during v28 reset', { error })
-      }
-    }
+    emitSettingsUpdated({ customProjectCommands: fileResult.commands ?? [] })
   } catch (error) {
-    log.error(
-      'Failed to reset custom commands during v28 upgrade',
-      error instanceof Error ? error : new Error(String(error))
-    )
+    log.error('Failed to sync custom commands to database:', error)
   }
 }
 
@@ -213,7 +289,7 @@ function ensureDockVisible(reason: string): void {
   }
 }
 
-function createWindow(): void {
+function createWindow(backendBootstrap?: LocalEnvironmentBootstrap | null): void {
   const savedBounds = loadWindowBounds()
 
   mainWindow = new BrowserWindow({
@@ -235,7 +311,8 @@ function createWindow(): void {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true
+      sandbox: true,
+      additionalArguments: getDesktopPreloadBootstrapArguments(backendBootstrap)
     }
   })
 
@@ -281,19 +358,15 @@ function createWindow(): void {
 
   // Emit focus event to renderer for git refresh on window focus
   mainWindow.on('focus', () => {
-    mainWindow!.webContents.send('app:windowFocused')
+    emitWindowFocused()
+    syncCustomCommandsFileIfChanged()
   })
 
   // Save window bounds on resize and move
-  mainWindow.on('resize', () => {
-    if (mainWindow) saveWindowBounds(mainWindow)
-  })
-  mainWindow.on('move', () => {
-    if (mainWindow) saveWindowBounds(mainWindow)
-  })
-  mainWindow.on('close', () => {
-    if (mainWindow) saveWindowBounds(mainWindow)
-  })
+  const createdWindow = mainWindow
+  mainWindow.on('resize', () => saveWindowBounds(createdWindow))
+  mainWindow.on('move', () => saveWindowBounds(createdWindow))
+  mainWindow.on('close', () => saveWindowBounds(createdWindow))
   mainWindow.on('closed', () => {
     mainWindow = null
   })
@@ -308,7 +381,7 @@ function createWindow(): void {
       input.type === 'keyDown'
     ) {
       event.preventDefault()
-      mainWindow!.webContents.send('shortcut:new-session')
+      emitNewSessionShortcut()
     }
 
     // Intercept Cmd+D — forward to renderer to toggle file search dialog
@@ -320,7 +393,7 @@ function createWindow(): void {
       input.type === 'keyDown'
     ) {
       event.preventDefault()
-      mainWindow!.webContents.send('shortcut:file-search')
+      emitFileSearchShortcut()
     }
 
     // Intercept Cmd+W — never close the window, forward to renderer to close session tab
@@ -332,7 +405,7 @@ function createWindow(): void {
       input.type === 'keyDown'
     ) {
       event.preventDefault()
-      mainWindow!.webContents.send('shortcut:close-session')
+      emitCloseSessionShortcut()
     }
 
     // Block zoom shortcuts — Ghostty native overlay requires 1:1 coordinate mapping.
@@ -364,163 +437,6 @@ function createWindow(): void {
   }
 }
 
-// Register system IPC handlers
-function registerSystemHandlers(openCodeLaunchSpec: OpenCodeLaunchSpec | null): void {
-  // Get log directory path
-  ipcMain.handle('system:getLogDir', () => {
-    return getLogDir()
-  })
-
-  // Get app version
-  ipcMain.handle('system:getAppVersion', () => {
-    return app.getVersion()
-  })
-
-  // Get app paths
-  ipcMain.handle('system:getAppPaths', () => {
-    return {
-      userData: app.getPath('userData'),
-      home: app.getPath('home'),
-      logs: getLogDir()
-    }
-  })
-
-  // Check if response logging is enabled
-  ipcMain.handle('system:isLogMode', () => isLogMode)
-
-  // Open a URL in Chrome (or default browser) with optional custom command
-  ipcMain.handle(
-    'system:openInChrome',
-    async (_event, { url, customCommand }: { url: string; customCommand?: string }) => {
-      try {
-        if (customCommand) {
-          // If the command contains {url}, substitute it; otherwise append the URL
-          const cmd = customCommand.includes('{url}')
-            ? customCommand.replace(/\{url\}/g, url)
-            : `${customCommand} ${url}`
-          await new Promise<void>((resolve, reject) => {
-            exec(cmd, (error) => {
-              if (error) reject(error)
-              else resolve()
-            })
-          })
-        } else {
-          await shell.openExternal(url)
-        }
-        return { success: true }
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : String(error)
-        }
-      }
-    }
-  )
-
-  // Open a path in an external app (Cursor, Ghostty) or copy to clipboard
-  ipcMain.handle('system:openInApp', async (_, appName: string, path: string) => {
-    try {
-      switch (appName) {
-        case 'cursor':
-          if (process.platform === 'darwin') {
-            spawn('open', ['-a', 'Cursor', path], { detached: true, stdio: 'ignore' })
-          } else if (process.platform === 'win32') {
-            spawn('cmd', ['/c', 'start', '', 'cursor', path], {
-              detached: true,
-              stdio: 'ignore'
-            })
-          } else {
-            spawn('cursor', [path], { detached: true, stdio: 'ignore' })
-          }
-          break
-        case 'ghostty':
-          if (process.platform === 'win32') {
-            return { success: false, error: 'Ghostty is not available on Windows' }
-          }
-          if (process.platform === 'darwin') {
-            spawn('open', ['-a', 'Ghostty', path], { detached: true, stdio: 'ignore' })
-          } else {
-            spawn('ghostty', ['--working-directory=' + path], { detached: true, stdio: 'ignore' })
-          }
-          break
-        case 'android-studio':
-          if (process.platform === 'darwin') {
-            spawn('open', ['-a', 'Android Studio', path], { detached: true, stdio: 'ignore' })
-          } else if (process.platform === 'win32') {
-            spawn('cmd', ['/c', 'start', '', 'studio64.exe', path], {
-              detached: true,
-              stdio: 'ignore'
-            })
-          } else {
-            spawn('studio', [path], { detached: true, stdio: 'ignore' })
-          }
-          break
-        case 'copy-path':
-          clipboard.writeText(path)
-          break
-        default:
-          return { success: false, error: `Unknown app: ${appName}` }
-      }
-      return { success: true }
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to open in app'
-      }
-    }
-  })
-
-  // Detect which agent SDKs are installed on the system (first-launch setup)
-  ipcMain.handle('system:detectAgentSdks', () => {
-    return detectAgentSdks(openCodeLaunchSpec)
-  })
-
-  // Quit the app (needed for macOS where window.close() doesn't quit)
-  ipcMain.handle('system:quitApp', () => {
-    app.quit()
-  })
-
-  // Check if the app is running in packaged mode (not dev)
-  ipcMain.handle('system:isPackaged', () => {
-    return app.isPackaged
-  })
-
-  // Get the current platform (darwin, win32, linux)
-  ipcMain.handle('system:getPlatform', () => {
-    return process.platform
-  })
-
-  // Prevent display sleep while renderer-driven sessions are active.
-  // The renderer owns the decision of when to hold the blocker; this handler
-  // simply forwards the desired state to the idempotent service.
-  ipcMain.handle('system:setKeepAwake', (_event, active: boolean) => {
-    setKeepAwake(Boolean(active))
-  })
-
-  ipcMain.handle('system:sleepNow', () => sleepNow())
-
-  // Mirror renderer-side follow-up message queue state into the main process so
-  // notification-service can suppress session-complete notifications while more
-  // queued messages are about to be auto-sent.
-  ipcMain.handle(
-    'notification:setSessionQueuedState',
-    (_event, sessionId: string, hasQueued: boolean) => {
-      notificationService.setSessionQueuedState(sessionId, hasQueued)
-    }
-  )
-}
-
-// Register response logging IPC handlers (only when --log is active)
-function registerLoggingHandlers(): void {
-  ipcMain.handle('logging:createResponseLog', (_, sessionId: string) => {
-    return createResponseLog(sessionId)
-  })
-
-  ipcMain.handle('logging:appendResponseLog', (_, filePath: string, data: unknown) => {
-    appendResponseLog(filePath, data)
-  })
-}
-
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
@@ -548,6 +464,14 @@ app
       log.info('Response logging enabled via --log flag')
     }
 
+    log.info('Starting local backend server')
+    const desktopBackend = await startDesktopBackend()
+    log.info('Local backend server ready', {
+      httpBaseUrl: desktopBackend.bootstrap.httpBaseUrl,
+      wsBaseUrl: desktopBackend.bootstrap.wsBaseUrl
+    })
+    log.info(`Hive web UI available at ${desktopBackend.bootstrap.httpBaseUrl} (open in Chrome)`)
+
     // Set app user model id for windows
     electronApp.setAppUserModelId('com.hive')
     ensureDockVisible('startup')
@@ -555,75 +479,20 @@ app
     // Initialize database
     log.info('Initializing database')
     getDatabase()
-    resetCustomCommandsV28()
+
+    // Ensure the file-based custom command template exists and record its mtime.
+    initializeCustomCommandsFile()
 
     // Initialize telemetry (must come after DB init since it reads/writes settings)
     telemetryService.init()
 
-    // Register IPC handlers
-    log.info('Registering IPC handlers')
-    registerDatabaseHandlers()
-    registerProjectHandlers()
-    registerWorktreeHandlers()
-    registerSystemHandlers(openCodeLaunchSpec)
-    registerSettingsHandlers()
-    registerFileHandlers()
-    registerAttachmentHandlers()
-    registerConnectionHandlers()
-    registerUsageHandlers()
-    registerAccountHandlers()
-    registerKanbanHandlers()
-    registerTelegramHandlers()
+    // Register desktop-side integrations that back server desktop commands.
+    log.info('Registering desktop integrations')
     configurePetWindow({ getMainWindow: () => mainWindow })
-    registerPetHandlers()
     initTicketProviderManager([new GitHubProvider(), new JiraProvider()])
-    registerTicketImportHandlers()
-
-    // Telemetry IPC
-    ipcMain.handle(
-      'telemetry:track',
-      (_event, eventName: string, properties?: Record<string, unknown>) => {
-        telemetryService.track(eventName, properties)
-      }
-    )
-
-    ipcMain.handle('telemetry:setEnabled', (_event, enabled: boolean) => {
-      return telemetryService.setEnabled(enabled)
-    })
-
-    ipcMain.handle('telemetry:isEnabled', () => {
-      return telemetryService.isEnabled()
-    })
-
-    // Performance diagnostics IPC
-    ipcMain.handle('perf-diagnostics:enable', (_event, enabled: boolean) => {
-      if (enabled) {
-        perfDiagnostics.start()
-      } else {
-        perfDiagnostics.stop()
-      }
-    })
-
-    ipcMain.handle('perf-diagnostics:snapshot', () => {
-      return perfDiagnostics.getSnapshot()
-    })
-
-    // Codex debug logger IPC
-    ipcMain.handle(
-      'codex-debug-logger:configure',
-      (_event, enabled: boolean, resetPerSession: boolean) => {
-        configureCodexDebugLogger({ enabled, resetPerSession })
-      }
-    )
-
-    // Register response logging handlers only when --log is active
-    if (isLogMode) {
-      log.info('Registering response logging handlers')
-      registerLoggingHandlers()
-    }
 
     log.info('Creating main window')
-    createWindow()
+    createWindow(desktopBackend.bootstrap)
     log.info('Main window created, waiting for renderer to load')
 
     // Register OpenCode handlers after window is created
@@ -631,11 +500,6 @@ app
       // Build the full application menu (File, Edit, Session, Git, View, Window, Help)
       log.info('Building application menu')
       buildMenu(mainWindow, is.dev)
-
-      // Register menu state update handler (renderer tells main which items to enable/disable)
-      ipcMain.handle('menu:updateState', (_event, state: MenuState) => {
-        updateMenuState(state)
-      })
 
       // Create SDK manager for multi-provider dispatch
       // OpenCode sessions still route through openCodeService directly (fallback path in handlers)
@@ -678,55 +542,162 @@ app
         redo: async () => ({}),
         listCommands: async () => [],
         sendCommand: async () => {},
-        renameSession: async () => {},
-        setMainWindow: () => {}
+        renameSession: async () => {}
       } satisfies AgentSdkImplementer
       const codexImpl = new CodexImplementer()
       codexImpl.setDatabaseService(getDatabase())
       codexImpl.setCodexBinaryPath(codexBinaryPath)
       setRouterCodexBinaryPath(codexBinaryPath)
       const sdkManager = new AgentSdkManager([openCodePlaceholder, claudeImpl, codexImpl])
-      sdkManager.setMainWindow(mainWindow)
-      agentEventBus.setMainWindow(mainWindow)
       getSpawnRuntime()
 
       const databaseService = getDatabase()
-      telegramForwardingService.initialize({ mainWindow, db: databaseService, sdkManager })
+      telegramForwardingService.initialize({ db: databaseService, sdkManager })
 
-      log.info('Registering OpenCode handlers')
-      registerOpenCodeHandlers(mainWindow, sdkManager, databaseService)
-      log.info('Registering FileTree handlers')
-      registerFileTreeHandlers(mainWindow)
-      log.info('Registering GitFile handlers')
-      registerGitFileHandlers(mainWindow)
-      log.info('Registering Script handlers')
-      registerScriptHandlers(mainWindow)
-      log.info('Registering Bash handlers')
-      registerBashHandlers(mainWindow)
-      log.info('Registering Terminal handlers')
-      registerTerminalHandlers(mainWindow)
+      log.info('Initializing OpenCode desktop integration')
+      setDesktopBackendOpenCodeConnectHandler((worktreePath, hiveSessionId) =>
+        connectOpenCodeSession(worktreePath, hiveSessionId, sdkManager, databaseService)
+      )
+      setDesktopBackendOpenCodeReconnectHandler((worktreePath, opencodeSessionId, hiveSessionId) =>
+        reconnectOpenCodeSession(
+          worktreePath,
+          opencodeSessionId,
+          hiveSessionId,
+          sdkManager,
+          databaseService
+        )
+      )
+      setDesktopBackendOpenCodePromptHandler(
+        (worktreePath, opencodeSessionId, messageOrParts, model, options) =>
+          promptOpenCodeSession(
+            worktreePath,
+            opencodeSessionId,
+            messageOrParts,
+            model,
+            options,
+            sdkManager,
+            databaseService
+          )
+      )
+      setDesktopBackendOpenCodeAbortHandler((worktreePath, opencodeSessionId) =>
+        abortOpenCodeSession(worktreePath, opencodeSessionId, sdkManager, databaseService)
+      )
+      setDesktopBackendOpenCodeSteerHandler((worktreePath, opencodeSessionId, message) =>
+        steerOpenCodeSession(worktreePath, opencodeSessionId, message, sdkManager, databaseService)
+      )
+      setDesktopBackendOpenCodeDisconnectHandler((worktreePath, opencodeSessionId) =>
+        disconnectOpenCodeSession(worktreePath, opencodeSessionId, sdkManager, databaseService)
+      )
+      setDesktopBackendOpenCodeGetMessagesHandler((worktreePath, opencodeSessionId) =>
+        getOpenCodeSessionMessages(worktreePath, opencodeSessionId, sdkManager, databaseService)
+      )
+      setDesktopBackendOpenCodeRefreshFromThreadHandler((worktreePath, opencodeSessionId) =>
+        refreshOpenCodeSessionFromThread(
+          worktreePath,
+          opencodeSessionId,
+          sdkManager,
+          databaseService
+        )
+      )
+      setDesktopBackendOpenCodeListModelsHandler((opts) => listOpenCodeModels(opts, sdkManager))
+      setDesktopBackendOpenCodeSetModelHandler((model) =>
+        setOpenCodeSelectedModel(model, sdkManager)
+      )
+      setDesktopBackendOpenCodeModelInfoHandler((worktreePath, modelId, agentSdk) =>
+        getOpenCodeModelInfo(worktreePath, modelId, agentSdk, sdkManager)
+      )
+      setDesktopBackendOpenCodeQuestionReplyHandler((requestId, answers, worktreePath) =>
+        replyOpenCodeQuestion(requestId, answers, worktreePath, sdkManager)
+      )
+      setDesktopBackendOpenCodeQuestionRejectHandler((requestId, worktreePath) =>
+        rejectOpenCodeQuestion(requestId, worktreePath, sdkManager)
+      )
+      setDesktopBackendOpenCodePlanApproveHandler((worktreePath, hiveSessionId, requestId) =>
+        approveOpenCodePlan(worktreePath, hiveSessionId, requestId, sdkManager)
+      )
+      setDesktopBackendOpenCodePlanRejectHandler(
+        (worktreePath, hiveSessionId, feedback, requestId) =>
+          rejectOpenCodePlan(worktreePath, hiveSessionId, feedback, requestId, sdkManager)
+      )
+      setDesktopBackendOpenCodePermissionReplyHandler((requestId, reply, worktreePath, message) =>
+        replyOpenCodePermission(requestId, reply, worktreePath, message, sdkManager)
+      )
+      setDesktopBackendOpenCodePermissionListHandler((worktreePath) =>
+        listOpenCodePermissions(worktreePath, sdkManager)
+      )
+      setDesktopBackendOpenCodeCommandApprovalReplyHandler(
+        (requestId, approved, remember, pattern, worktreePath, patterns) =>
+          replyOpenCodeCommandApproval(
+            requestId,
+            approved,
+            remember,
+            pattern,
+            worktreePath,
+            patterns,
+            sdkManager
+          )
+      )
+      setDesktopBackendOpenCodeSessionInfoHandler((worktreePath, opencodeSessionId) =>
+        getOpenCodeSessionInfo(worktreePath, opencodeSessionId, sdkManager, databaseService)
+      )
+      setDesktopBackendOpenCodeUndoHandler((worktreePath, opencodeSessionId) =>
+        undoOpenCodeSession(worktreePath, opencodeSessionId, sdkManager, databaseService)
+      )
+      setDesktopBackendOpenCodeRedoHandler((worktreePath, opencodeSessionId) =>
+        redoOpenCodeSession(worktreePath, opencodeSessionId, sdkManager, databaseService)
+      )
+      setDesktopBackendOpenCodeCommandHandler(
+        (worktreePath, opencodeSessionId, command, args, model, options) =>
+          sendOpenCodeCommand(
+            worktreePath,
+            opencodeSessionId,
+            command,
+            args,
+            model,
+            options,
+            sdkManager,
+            databaseService
+          )
+      )
+      setDesktopBackendOpenCodeCommandsHandler((worktreePath, sessionId) =>
+        listOpenCodeCommands(worktreePath, sessionId, sdkManager, databaseService)
+      )
+      setDesktopBackendOpenCodeRenameSessionHandler((opencodeSessionId, title, worktreePath) =>
+        renameOpenCodeSession(opencodeSessionId, title, worktreePath, sdkManager, databaseService)
+      )
+      setDesktopBackendOpenCodeCapabilitiesHandler((sessionId) =>
+        getOpenCodeCapabilities(sessionId, sdkManager, databaseService)
+      )
+      setDesktopBackendOpenCodeForkHandler((worktreePath, opencodeSessionId, messageId) =>
+        forkOpenCodeSession(worktreePath, opencodeSessionId, messageId)
+      )
+      log.info('Initializing Ghostty desktop integration')
+      ghosttyService.setMainWindow(mainWindow)
 
       // Set up notification service with main window reference
       notificationService.setMainWindow(mainWindow)
 
-      // Register updater IPC handlers and initialize auto-updater
-      registerUpdaterHandlers()
-      updaterService.init(mainWindow)
+      // Initialize auto-updater after backend event publishing is available.
+      updaterService.init()
 
       // Wire up performance diagnostics collectors and auto-start if enabled
       perfDiagnostics.setCollectors({
         getPtyCount: () => ptyService.getCount(),
         getScriptStats: () => scriptRunner.getStats(),
         getFileWatcherCount: () => getFileTreeWatcherCount(),
-        getWorktreeWatcherCount: () => getWorktreeWatcherCount(),
-        getBranchWatcherCount: () => getBranchWatcherCount(),
+        getWorktreeWatcherCount: () => -1,
+        getBranchWatcherCount: () => -1,
         getActiveSessionCount: () => {
           try {
             return getDatabase().countActiveSessions()
           } catch {
             return -1
           }
-        }
+        },
+        getElectronProcessCounts: () => ({
+          windows: BrowserWindow.getAllWindows().length,
+          webContents: webContents.getAllWebContents().length
+        })
       })
 
       // Auto-start perf diagnostics if setting is enabled
@@ -798,6 +769,8 @@ app
         mainWindow.show()
         mainWindow.focus()
       }
+
+      syncCustomCommandsFileIfChanged()
     })
   })
   .catch((error) => {
@@ -841,13 +814,13 @@ app.on('before-quit', (event) => {
   }
   mainWindow.show()
   mainWindow.focus()
-  mainWindow.webContents.send('shortcut:quit-confirmation-show')
+  emitQuitConfirmationShow()
 
   setTimeout(() => {
     if (lastQuitConfirmAt && Date.now() - lastQuitConfirmAt >= QUIT_CONFIRM_WINDOW_MS) {
       lastQuitConfirmAt = null
       if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('shortcut:quit-confirmation-hide')
+        emitQuitConfirmationHide()
       }
     }
   }, QUIT_CONFIRM_WINDOW_MS + 50)
@@ -872,14 +845,12 @@ app.on('will-quit', async () => {
   // Cleanup running bash runs (best-effort, no await)
   bashService.killAll()
   await disposeAllRuntimes()
+  // Stop local backend server
+  await stopDesktopBackend()
   // Release any held power save blocker so the display can sleep again
   cleanupPowerSaveBlocker()
   // Cleanup file tree watchers
   await cleanupFileTreeWatchers()
-  // Cleanup worktree watchers (git status monitoring)
-  await cleanupWorktreeWatchers()
-  // Cleanup branch watchers (sidebar branch names)
-  await cleanupBranchWatchers()
   // Cleanup OpenCode connections
   await cleanupOpenCode()
   telegramForwardingService.dispose()

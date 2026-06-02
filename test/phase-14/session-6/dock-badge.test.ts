@@ -1,10 +1,12 @@
-import { vi, describe, test, expect, beforeEach } from 'vitest'
+import { vi, describe, test, expect, beforeEach, afterEach } from 'vitest'
 
 // Mock electron module
 const mockSetBadge = vi.fn()
+const mockSetBadgeCount = vi.fn()
 const mockNotificationShow = vi.fn()
 const mockNotificationOn = vi.fn()
 let notificationsSupported = true
+const originalPlatform = process.platform
 
 vi.mock('electron', () => ({
   Notification: class MockNotification {
@@ -20,7 +22,8 @@ vi.mock('electron', () => ({
     getPath: () => '/tmp/test-home',
     dock: {
       setBadge: (...args: string[]) => mockSetBadge(...args)
-    }
+    },
+    setBadgeCount: (...args: number[]) => mockSetBadgeCount(...args)
   }
 }))
 
@@ -31,6 +34,10 @@ vi.mock('../../../src/main/services/logger', () => ({
     warn: vi.fn(),
     error: vi.fn()
   })
+}))
+
+vi.mock('../../../src/main/desktop/backend-manager', () => ({
+  publishDesktopBackendEvent: vi.fn()
 }))
 
 // Import after mocks are established
@@ -67,8 +74,13 @@ function resetServiceState(): void {
 
 describe('Session 6: Dock Badge', () => {
   beforeEach(() => {
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
     notificationsSupported = true
     resetServiceState()
+  })
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
   })
 
   test('increments badge count on notification', () => {
@@ -139,11 +151,10 @@ describe('Session 6: Dock Badge', () => {
   })
 
   test('uses optional chaining for app.dock (no crash on non-macOS)', () => {
-    // The implementation uses app.dock?.setBadge() which is safe when
-    // dock is undefined. We verify this by checking the source code pattern.
-    // The fact that all other tests pass with the mock dock confirms
-    // the setBadge calls work. The optional chaining is a code-level guarantee.
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true })
+
     notificationService.showSessionComplete(mockSessionData)
-    expect(mockSetBadge).toHaveBeenCalledWith('1')
+
+    expect(mockSetBadgeCount).toHaveBeenCalledWith(1)
   })
 })

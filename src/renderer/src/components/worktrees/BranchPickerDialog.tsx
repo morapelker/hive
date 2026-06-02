@@ -9,7 +9,7 @@ import {
   DialogDescription
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { gitApi } from '@/api/git-api'
 
 interface BranchInfo {
   name: string
@@ -63,9 +63,8 @@ export function BranchPickerDialog({
     setLoading(true)
     setError(null)
 
-    window.gitOps
+    gitApi
       .listBranchesWithStatus(projectPath)
-      .then(unwrapEnvelope)
       .then((result) => {
         if (result.success) {
           setBranches(result.branches)
@@ -88,9 +87,8 @@ export function BranchPickerDialog({
     setPrsLoading(true)
     setPrsError(null)
 
-    window.gitOps
+    gitApi
       .listPRs(projectPath)
-      .then(unwrapEnvelope)
       .then((result) => {
         if (result.success) {
           setPrs(result.prs)

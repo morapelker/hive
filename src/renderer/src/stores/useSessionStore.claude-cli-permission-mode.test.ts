@@ -3,6 +3,14 @@ import { useSessionStore, syncClaudeCliPermissionModeIfNeeded } from '@/stores/u
 
 const SHIFT_TAB = '\u001b[Z'
 
+const terminalApiMocks = vi.hoisted(() => ({
+  write: vi.fn()
+}))
+
+vi.mock('@/api/terminal-api', () => ({
+  terminalApi: terminalApiMocks
+}))
+
 function seedSession(agentSdk: string): void {
   useSessionStore.setState({
     sessionsByWorktree: new Map([['wt1', [{ id: 's1', agent_sdk: agentSdk }]]]),
@@ -13,9 +21,8 @@ function seedSession(agentSdk: string): void {
 }
 
 function mockWrite(): ReturnType<typeof vi.fn> {
-  const write = vi.fn()
-  ;(window as unknown as { terminalOps: { write: unknown } }).terminalOps = { write }
-  return write
+  terminalApiMocks.write.mockClear()
+  return terminalApiMocks.write
 }
 
 describe('syncClaudeCliPermissionModeIfNeeded — Shift+Tab press counts', () => {

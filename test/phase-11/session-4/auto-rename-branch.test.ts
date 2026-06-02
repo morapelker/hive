@@ -40,7 +40,7 @@ describe('Session 4: Auto-Rename Branch on First Title', () => {
       expect(content).toContain('Auto-rename branch for the session')
       expect(content).toContain('getWorktreeBySessionId')
       expect(content).toContain('autoRenameWorktreeBranch')
-      expect(content).toContain("'worktree:branchRenamed'")
+      expect(content).toContain('WORKTREE_BRANCH_RENAMED_CHANNEL')
     })
 
     test('imports autoRenameWorktreeBranch from git-service', () => {
@@ -56,9 +56,7 @@ describe('Session 4: Auto-Rename Branch on First Title', () => {
       )
       const content = fs.readFileSync(servicePath, 'utf-8')
 
-      expect(content).toContain(
-        "import { autoRenameWorktreeBranch } from './git-service'"
-      )
+      expect(content).toContain("import { autoRenameWorktreeBranch } from './git-service'")
     })
 
     test('checks branch_renamed flag before renaming', () => {
@@ -95,7 +93,7 @@ describe('Session 4: Auto-Rename Branch on First Title', () => {
       expect(content).toContain('branch_renamed: 1')
     })
 
-    test('notifies renderer via sendToRenderer after rename', () => {
+    test('notifies renderer via shared worktree channel after rename', () => {
       const servicePath = path.join(
         __dirname,
         '..',
@@ -108,9 +106,65 @@ describe('Session 4: Auto-Rename Branch on First Title', () => {
       )
       const content = fs.readFileSync(servicePath, 'utf-8')
 
-      expect(content).toContain("this.sendToRenderer('worktree:branchRenamed'")
+      expect(content).toContain('this.sendToRenderer(WORKTREE_BRANCH_RENAMED_CHANNEL')
       expect(content).toContain('worktreeId: worktree.id')
       expect(content).toContain('newBranch')
+    })
+
+    test('routes branch rename sends through the shared worktree event emitter', () => {
+      const servicePath = path.join(
+        __dirname,
+        '..',
+        '..',
+        '..',
+        'src',
+        'main',
+        'services',
+        'opencode-service.ts'
+      )
+      const content = fs.readFileSync(servicePath, 'utf-8')
+
+      expect(content).toContain("import { emitWorktreeBranchRenamed } from './worktree-events'")
+      expect(content).toContain('emitWorktreeBranchRenamed(data as WorktreeBranchRenamedEvent)')
+      expect(content).not.toContain('emitWorktreeBranchRenamed(this.mainWindow')
+    })
+
+    test('claude title generation routes branch rename sends through the shared emitter', () => {
+      const servicePath = path.join(
+        __dirname,
+        '..',
+        '..',
+        '..',
+        'src',
+        'main',
+        'services',
+        'claude-code-implementer.ts'
+      )
+      const content = fs.readFileSync(servicePath, 'utf-8')
+
+      expect(content).toContain('this.sendToRenderer(WORKTREE_BRANCH_RENAMED_CHANNEL')
+      expect(content).toContain("import { emitWorktreeBranchRenamed } from './worktree-events'")
+      expect(content).toContain('emitWorktreeBranchRenamed(data as WorktreeBranchRenamedEvent)')
+      expect(content).not.toContain('emitWorktreeBranchRenamed(this.mainWindow')
+    })
+
+    test('codex title generation routes branch rename sends through the shared emitter', () => {
+      const servicePath = path.join(
+        __dirname,
+        '..',
+        '..',
+        '..',
+        'src',
+        'main',
+        'services',
+        'codex-implementer.ts'
+      )
+      const content = fs.readFileSync(servicePath, 'utf-8')
+
+      expect(content).toContain('this.sendToRenderer(WORKTREE_BRANCH_RENAMED_CHANNEL')
+      expect(content).toContain("import { emitWorktreeBranchRenamed } from './worktree-events'")
+      expect(content).toContain('emitWorktreeBranchRenamed(data as WorktreeBranchRenamedEvent)')
+      expect(content).not.toContain('emitWorktreeBranchRenamed(this.mainWindow')
     })
 
     test('deduplicates branch name with -2, -3 suffix when target exists', () => {
@@ -172,22 +226,46 @@ describe('Session 4: Auto-Rename Branch on First Title', () => {
     })
   })
 
-  describe('preload: onBranchRenamed listener', () => {
-    test('preload exposes onBranchRenamed on worktreeOps', () => {
-      const preloadPath = path.join(__dirname, '..', '..', '..', 'src', 'preload', 'index.ts')
-      const content = fs.readFileSync(preloadPath, 'utf-8')
+  describe('worktreeApi: onBranchRenamed listener', () => {
+    test('worktreeApi subscribes to branch rename events through the renderer RPC client', () => {
+      const apiPath = path.join(
+        __dirname,
+        '..',
+        '..',
+        '..',
+        'src',
+        'renderer',
+        'src',
+        'api',
+        'worktree-api.ts'
+      )
+      const content = fs.readFileSync(apiPath, 'utf-8')
+      const legacyIpcRenderer = 'ipc' + 'Renderer'
 
       expect(content).toContain('onBranchRenamed')
-      expect(content).toContain("ipcRenderer.on('worktree:branchRenamed'")
-      expect(content).toContain("ipcRenderer.removeListener('worktree:branchRenamed'")
+      expect(content).toContain('getRendererRpcClient().subscribe(WORKTREE_BRANCH_RENAMED_CHANNEL')
+      expect(content).toContain('isWorktreeBranchRenamedEvent(event.payload)')
+      expect(content).not.toContain(legacyIpcRenderer)
     })
 
-    test('preload type declarations include onBranchRenamed', () => {
+    test('preload no longer exposes the old branch rename listener global', () => {
+      const preloadPath = path.join(__dirname, '..', '..', '..', 'src', 'preload', 'index.ts')
       const dtsPath = path.join(__dirname, '..', '..', '..', 'src', 'preload', 'index.d.ts')
-      const content = fs.readFileSync(dtsPath, 'utf-8')
+      const preloadSource = fs.readFileSync(preloadPath, 'utf-8')
+      const dtsSource = fs.readFileSync(dtsPath, 'utf-8')
+      const legacyIpcRenderer = 'ipc' + 'Renderer'
+      const legacyContextBridge = 'context' + 'Bridge'
+      const legacyWorktreeOps = 'worktree' + 'Ops'
 
-      expect(content).toContain('onBranchRenamed')
-      expect(content).toContain('worktreeId: string; newBranch: string')
+      expect(preloadSource).not.toContain(`${legacyIpcRenderer}.on('worktree:branchRenamed'`)
+      expect(preloadSource).not.toContain(
+        `${legacyIpcRenderer}.removeListener('worktree:branchRenamed'`
+      )
+      expect(preloadSource).not.toContain(
+        `${legacyContextBridge}.exposeInMainWorld('${legacyWorktreeOps}'`
+      )
+      expect(dtsSource).not.toContain(`${legacyWorktreeOps}:`)
+      expect(dtsSource).not.toContain('onBranchRenamed: (')
     })
   })
 

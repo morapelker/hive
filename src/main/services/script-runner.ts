@@ -1,6 +1,7 @@
 import { spawn, ChildProcess } from 'child_process'
-import { BrowserWindow } from 'electron'
 import { createLogger } from './logger'
+import { killPid as killProcessPid, type KillPidResult } from './script-kill-pid'
+import type { ScriptOutputEvent } from '../../shared/types/script'
 
 const log = createLogger({ component: 'ScriptRunner' })
 
@@ -20,18 +21,7 @@ interface RunAndWaitResult {
   error?: string
 }
 
-interface KillPidResult {
-  killed: boolean
-  reason?: string
-}
-
-interface ScriptEvent {
-  type: 'command-start' | 'output' | 'error' | 'done' | 'long-running'
-  command?: string
-  data?: string
-  exitCode?: number
-  elapsed?: number  // For long-running events
-}
+type ScriptEventPublisher = (eventKey: string, event: ScriptOutputEvent) => void | Promise<void>
 
 function getColorEnv(): NodeJS.ProcessEnv {
   return {
@@ -43,10 +33,10 @@ function getColorEnv(): NodeJS.ProcessEnv {
 }
 
 export class ScriptRunner {
-  private mainWindow: BrowserWindow | null = null
   private runningProcesses: Map<string, ChildProcess> = new Map()
   private outputBuffers: Map<string, string> = new Map()
   private outputFlushTimers: Map<string, NodeJS.Timeout> = new Map()
+  private eventPublisher: ScriptEventPublisher | null = null
   private totalOpened = 0
   private totalClosed = 0
 
@@ -141,13 +131,20 @@ export class ScriptRunner {
     }
   }
 
-  setMainWindow(window: BrowserWindow): void {
-    this.mainWindow = window
+  setEventPublisher(publisher: ScriptEventPublisher | null): void {
+    this.eventPublisher = publisher
   }
 
-  private sendEvent(eventKey: string, event: ScriptEvent): void {
-    if (!this.mainWindow || this.mainWindow.isDestroyed()) return
-    this.mainWindow.webContents.send(eventKey, event)
+  private sendEvent(eventKey: string, event: ScriptOutputEvent): void {
+    try {
+      void Promise.resolve(this.eventPublisher?.(eventKey, event)).catch(() => undefined)
+    } catch {
+      // Event publishing is best-effort; script execution should not depend on subscribers.
+    }
+
+    void import('../desktop/backend-manager')
+      .then(({ publishDesktopBackendEvent }) => publishDesktopBackendEvent(eventKey, event))
+      .catch(() => undefined)
   }
 
   private scheduleOutputFlush(eventKey: string): void {
@@ -232,7 +229,7 @@ export class ScriptRunner {
       const proc = spawn('sh', ['-c', command], {
         cwd,
         env: { ...getColorEnv(), ...extraEnv },
-        stdio: ['pipe', 'pipe', 'pipe']  // Fixed: Allow piped commands to work
+        stdio: ['pipe', 'pipe', 'pipe'] // Fixed: Allow piped commands to work
       })
 
       // Immediately close stdin to prevent hanging on commands that wait for input
@@ -311,7 +308,7 @@ export class ScriptRunner {
     const proc = spawn('sh', ['-c', combined], {
       cwd,
       env: { ...getColorEnv(), ...extraEnv },
-      stdio: ['pipe', 'pipe', 'pipe'],  // Fixed: Allow piped commands to work
+      stdio: ['pipe', 'pipe', 'pipe'], // Fixed: Allow piped commands to work
       detached: process.platform !== 'win32'
     })
 
@@ -397,7 +394,7 @@ export class ScriptRunner {
       const proc = spawn('sh', ['-c', command], {
         cwd,
         env: getColorEnv(),
-        stdio: ['pipe', 'pipe', 'pipe']  // Fixed: Allow piped commands to work
+        stdio: ['pipe', 'pipe', 'pipe'] // Fixed: Allow piped commands to work
       })
       this.totalOpened++
 
@@ -515,46 +512,8 @@ export class ScriptRunner {
     return true
   }
 
-  private isAlive(pid: number): boolean {
-    try {
-      process.kill(pid, 0)
-      return true
-    } catch (err) {
-      const error = err as NodeJS.ErrnoException
-      return error.code === 'EPERM'
-    }
-  }
-
   async killPid(pid: number): Promise<KillPidResult> {
-    if (!Number.isFinite(pid) || pid <= 1 || pid === process.pid) {
-      return { killed: false, reason: 'EINVAL' }
-    }
-
-    try {
-      process.kill(pid, 'SIGTERM')
-    } catch (err) {
-      const error = err as NodeJS.ErrnoException
-      return { killed: false, reason: error.code ?? String(err) }
-    }
-
-    for (let i = 0; i < 8; i++) {
-      await new Promise((resolve) => setTimeout(resolve, 100))
-      if (!this.isAlive(pid)) return { killed: true }
-    }
-
-    try {
-      process.kill(pid, 'SIGKILL')
-    } catch (err) {
-      const error = err as NodeJS.ErrnoException
-      return { killed: false, reason: error.code ?? String(err) }
-    }
-
-    for (let i = 0; i < 5; i++) {
-      await new Promise((resolve) => setTimeout(resolve, 100))
-      if (!this.isAlive(pid)) return { killed: true }
-    }
-
-    return { killed: false, reason: 'still alive after SIGKILL' }
+    return killProcessPid(pid)
   }
 
   getStats(): { active: number; totalOpened: number; totalClosed: number } {

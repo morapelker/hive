@@ -18,6 +18,9 @@ const mainInclude = [
   'test/kanban/session-3/**/*.test.ts',
   'test/codex-migration/**/*.test.ts',
   'test/utils/**/*.test.ts',
+  'src/server/**/*.test.ts',
+  'src/main/db/**/*.test.ts',
+  'src/main/desktop/**/*.test.ts',
   'src/main/effect/**/*.test.ts',
   'src/main/ipc/**/*.test.ts',
   'src/main/services/**/*.test.ts'

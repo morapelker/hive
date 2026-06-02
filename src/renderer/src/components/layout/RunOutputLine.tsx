@@ -3,6 +3,7 @@ import Ansi from 'ansi-to-react'
 import { parseAnsiSegments } from '@/lib/ansi-utils'
 import { splitLineByUrls } from '@/lib/url-utils'
 import { useSettingsStore } from '@/stores/useSettingsStore'
+import { systemApi } from '@/api/system-api'
 
 export interface SearchHighlight {
   /** Character offset where the match starts (in the stripped-ANSI plain text) */
@@ -27,7 +28,7 @@ function RunUrlSpan({ url, display }: { url: string; display: string }): React.J
     e.stopPropagation()
 
     const customCommand = useSettingsStore.getState().customChromeCommand || undefined
-    window.systemOps.openInChrome(url, customCommand)
+    void systemApi.openInChrome(url, customCommand)
   }
   const onContextMenu = (e: React.MouseEvent): void => {
     e.preventDefault()

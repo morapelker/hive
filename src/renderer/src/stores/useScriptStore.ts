@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { getOrCreateBuffer } from '@/lib/output-ring-buffer'
-import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { detectSuggestion, type Suggestion } from '@/lib/run-suggestions/patterns'
+import { scriptApi } from '@/api/script-api'
 
 // Module-level: active IPC subscriptions for run scripts, keyed by worktreeId.
 // Keeps listeners alive regardless of which worktree the UI is showing.
@@ -289,7 +289,7 @@ export function fireRunScript(worktreeId: string, commands: string[], cwd: strin
   runSubscriptions.get(worktreeId)?.()
 
   const channel = `script:run:${worktreeId}`
-  const unsub = window.scriptOps.onOutput(channel, (event) => {
+  const unsub = scriptApi.onOutput(channel, (event) => {
     const s = useScriptStore.getState()
     switch (event.type) {
       case 'command-start':
@@ -337,9 +337,8 @@ export function fireRunScript(worktreeId: string, commands: string[], cwd: strin
 
   runSubscriptions.set(worktreeId, unsub)
 
-  window.scriptOps
+  scriptApi
     .runProject(commands, cwd, worktreeId)
-    .then((envelope) => unwrapEnvelope(envelope))
     .then((result) => {
       if (result.success && result.pid) {
         useScriptStore.getState().setRunPid(worktreeId, result.pid)
@@ -365,7 +364,7 @@ export function fireRunScript(worktreeId: string, commands: string[], cwd: strin
 
 /** Kill a running project script and clean up its IPC subscription. */
 export async function killRunScript(worktreeId: string): Promise<void> {
-  unwrapEnvelope(await window.scriptOps.kill(worktreeId))
+  await scriptApi.kill(worktreeId)
   useScriptStore.getState().setRunRunning(worktreeId, false)
   useScriptStore.getState().setRunPid(worktreeId, null)
   // The 'done'/'error' event callback will also try to clean up,

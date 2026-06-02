@@ -1,4 +1,35 @@
-import { vi, describe, test, expect, beforeEach } from 'vitest'
+import { vi, describe, test, expect, beforeEach, afterEach } from 'vitest'
+
+const apiMocks = vi.hoisted(() => ({
+  systemApi: {
+    setSessionQueuedState: vi.fn(),
+    detectAgentSdks: vi.fn()
+  },
+  dbApi: {
+    setting: {
+      get: vi.fn(),
+      set: vi.fn()
+    },
+    session: {
+      update: vi.fn()
+    }
+  },
+  settingsApi: {
+    onSettingsUpdated: vi.fn(() => vi.fn())
+  }
+}))
+
+vi.mock('@/api/system-api', () => ({
+  systemApi: apiMocks.systemApi
+}))
+
+vi.mock('@/api/db-api', () => ({
+  dbApi: apiMocks.dbApi
+}))
+
+vi.mock('@/api/settings-api', () => ({
+  settingsApi: apiMocks.settingsApi
+}))
 
 // -----------------------------------------------------------------------------
 // Suite 1 setup: mock electron + logger BEFORE importing notificationService.
@@ -6,9 +37,11 @@ import { vi, describe, test, expect, beforeEach } from 'vitest'
 // -----------------------------------------------------------------------------
 
 const mockSetBadge = vi.fn()
+const mockSetBadgeCount = vi.fn()
 const mockNotificationShow = vi.fn()
 const mockNotificationOn = vi.fn()
 let notificationsSupported = true
+const originalPlatform = process.platform
 
 vi.mock('electron', () => ({
   Notification: class MockNotification {
@@ -24,7 +57,8 @@ vi.mock('electron', () => ({
     getPath: () => '/tmp/test-home',
     dock: {
       setBadge: (...args: string[]) => mockSetBadge(...args)
-    }
+    },
+    setBadgeCount: (...args: number[]) => mockSetBadgeCount(...args)
   }
 }))
 
@@ -36,10 +70,16 @@ vi.mock('../../../src/main/services/logger', () => ({
   })
 }))
 
+vi.mock('../../../src/main/desktop/backend-manager', () => ({
+  publishDesktopBackendEvent: vi.fn()
+}))
+
 // Import AFTER mocks so notificationService resolves the mocked electron module.
 import { notificationService } from '../../../src/main/services/notification-service'
 import type { BrowserWindow } from 'electron'
 import { useSessionStore } from '../../../src/renderer/src/stores/useSessionStore'
+import { systemApi } from '@/api/system-api'
+import { dbApi } from '@/api/db-api'
 
 const mockSessionData = {
   projectName: 'Test Project',
@@ -78,8 +118,13 @@ function resetNotificationServiceState(): void {
 
 describe('Phase 23 · Session 1: NotificationService queued-state suppression', () => {
   beforeEach(() => {
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true })
     notificationsSupported = true
     resetNotificationServiceState()
+  })
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
   })
 
   test('showSessionComplete suppresses notification + badge when session has queued messages', () => {
@@ -98,7 +143,7 @@ describe('Phase 23 · Session 1: NotificationService queued-state suppression', 
     notificationService.showSessionComplete({ ...mockSessionData, sessionId: 's1' })
 
     expect(mockNotificationShow).toHaveBeenCalledTimes(1)
-    expect(mockSetBadge).toHaveBeenCalledWith('1')
+    expect(mockSetBadgeCount).toHaveBeenCalledWith(1)
   })
 
   test('suppression is per-session — setting "s1" does not affect "s2"', () => {
@@ -107,7 +152,7 @@ describe('Phase 23 · Session 1: NotificationService queued-state suppression', 
     notificationService.showSessionComplete({ ...mockSessionData, sessionId: 's2' })
 
     expect(mockNotificationShow).toHaveBeenCalledTimes(1)
-    expect(mockSetBadge).toHaveBeenCalledWith('1')
+    expect(mockSetBadgeCount).toHaveBeenCalledWith(1)
   })
 
   test('redundant setSessionQueuedState("s1", true) calls are idempotent', () => {
@@ -125,26 +170,27 @@ describe('Phase 23 · Session 1: NotificationService queued-state suppression', 
     notificationService.showSessionComplete({ ...mockSessionData, sessionId: 's1' })
 
     expect(mockNotificationShow).toHaveBeenCalledTimes(1)
-    expect(mockSetBadge).toHaveBeenCalledWith('1')
+    expect(mockSetBadgeCount).toHaveBeenCalledWith(1)
   })
 })
 
 // -----------------------------------------------------------------------------
-// Suite 2: Zustand store mutators push queued-state into the main-process IPC.
+// Suite 2: Zustand store mutators push queued-state through the renderer API.
 // -----------------------------------------------------------------------------
 
-describe('Phase 23 · Session 1: Zustand queue → IPC push', () => {
-  let mockSetSessionQueuedState: ReturnType<typeof vi.fn>
+describe('Phase 23 · Session 1: Zustand queue → systemApi push', () => {
+  const mockSetSessionQueuedState = vi.mocked(systemApi.setSessionQueuedState)
+  const mockDetectAgentSdks = vi.mocked(systemApi.detectAgentSdks)
+  const mockSessionUpdate = vi.mocked(dbApi.session.update)
 
   beforeEach(() => {
-    mockSetSessionQueuedState = vi.fn().mockResolvedValue(undefined)
-
-    // test/setup.ts already defines window.systemOps with writable:true,
-    // configurable:true. We only need to overwrite the one method we assert on,
-    // leaving every other mock (onNotificationNavigate etc.) intact.
-    ;(window as unknown as {
-      systemOps: { setSessionQueuedState: typeof mockSetSessionQueuedState }
-    }).systemOps.setSessionQueuedState = mockSetSessionQueuedState
+    vi.clearAllMocks()
+    mockSetSessionQueuedState.mockResolvedValue(undefined)
+    mockDetectAgentSdks.mockResolvedValue({ opencode: false, claude: false, codex: false })
+    apiMocks.dbApi.setting.get.mockResolvedValue(null)
+    apiMocks.dbApi.setting.set.mockResolvedValue(true)
+    apiMocks.settingsApi.onSettingsUpdated.mockReturnValue(vi.fn())
+    mockSessionUpdate.mockResolvedValue({ id: 's1', status: 'completed' })
 
     // Reset only the slices this suite touches. Other slices (connection,
     // orphaned, board-assistant, etc.) keep their initial Map/Set values from
@@ -208,20 +254,6 @@ describe('Phase 23 · Session 1: Zustand queue → IPC push', () => {
   })
 
   test('closeSession("s1") pushes ("s1", false) and clears the map entry', async () => {
-    // closeSession hits window.db.session.update regardless of whether it finds
-    // the session in any map, so we need that method to resolve. The rest of
-    // closeSession's DB surface is not exercised for a non-terminal session
-    // with no opencode_session_id.
-    Object.defineProperty(window, 'db', {
-      writable: true,
-      configurable: true,
-      value: {
-        session: {
-          update: vi.fn().mockResolvedValue({ id: 's1', status: 'completed' })
-        }
-      }
-    })
-
     // Seed a queued message so we can assert the entry is removed afterwards.
     useSessionStore.getState().enqueueFollowUpMessage('s1', 'pending-msg')
     mockSetSessionQueuedState.mockClear()
@@ -230,20 +262,5 @@ describe('Phase 23 · Session 1: Zustand queue → IPC push', () => {
 
     expect(mockSetSessionQueuedState).toHaveBeenCalledWith('s1', false)
     expect(useSessionStore.getState().pendingFollowUpMessages.has('s1')).toBe(false)
-  })
-})
-
-// -----------------------------------------------------------------------------
-// Suite 3: Smoke test — preload IPC surface exposes the expected method shape.
-// test/setup.ts provides window.systemOps.setSessionQueuedState globally.
-// -----------------------------------------------------------------------------
-
-describe('Phase 23 · Session 1: Preload IPC contract', () => {
-  test('window.systemOps.setSessionQueuedState exists and is callable', async () => {
-    expect(typeof window.systemOps.setSessionQueuedState).toBe('function')
-
-    const result = window.systemOps.setSessionQueuedState('s1', true)
-    expect(result).toBeInstanceOf(Promise)
-    await expect(result).resolves.toBeUndefined()
   })
 })

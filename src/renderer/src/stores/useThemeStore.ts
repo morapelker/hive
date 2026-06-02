@@ -2,9 +2,7 @@ import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { THEME_PRESETS, THEME_CSS_PROPERTIES, DEFAULT_THEME_ID, getThemeById } from '@/lib/themes'
 import type { ThemePreset } from '@/lib/themes'
-import { unwrapEnvelopeApi } from '@/lib/ipc-envelope'
-
-const db = unwrapEnvelopeApi(() => window.db)
+import { dbApi } from '@/api/db-api'
 
 const THEME_SETTING_KEY = 'selected_theme'
 const STORAGE_KEY = 'hive-theme'
@@ -60,8 +58,8 @@ function resolveThemeId(value: string | undefined | null): string {
 
 async function saveThemeToDatabase(themeId: string): Promise<void> {
   try {
-    if (typeof window !== 'undefined' && db?.setting) {
-      await db.setting.set(THEME_SETTING_KEY, themeId)
+    if (typeof window !== 'undefined') {
+      await dbApi.setting.set(THEME_SETTING_KEY, themeId)
     }
   } catch (error) {
     console.error('Failed to save theme to database:', error)
@@ -70,8 +68,8 @@ async function saveThemeToDatabase(themeId: string): Promise<void> {
 
 async function loadThemeFromDatabase(): Promise<string | null> {
   try {
-    if (typeof window !== 'undefined' && db?.setting) {
-      const value = await db.setting.get(THEME_SETTING_KEY)
+    if (typeof window !== 'undefined') {
+      const value = await dbApi.setting.get(THEME_SETTING_KEY)
       if (typeof value === 'string' && value.length > 0) {
         return value
       }

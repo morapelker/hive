@@ -6,11 +6,17 @@ import type { UsageProvider } from '@shared/types/usage'
 import type { PetSettings } from '@shared/types/pet'
 import type { AgentSdk, HandoffAgentSdk } from '@shared/types/agent-sdk'
 import type { ReviewPromptType } from '@/constants/reviewPrompts'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { systemApi } from '@/api/system-api'
+import { dbApi } from '@/api/db-api'
+import { opencodeApi } from '@/api/opencode-api'
+import { updaterApi } from '@/api/updater-api'
+import { petApi } from '@/api/pet-api'
+import { telegramApi } from '@/api/telegram-api'
+import { settingsApi } from '@/api/settings-api'
 import type { CustomProjectCommand } from '@/lib/custom-commands'
 import { validateCustomCommand } from '@/lib/custom-commands'
-import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
-
-const db = unwrapEnvelopeApi(() => window.db)
+import { toast } from '@/lib/toast'
 
 // ==========================================
 // Types
@@ -163,7 +169,6 @@ export interface AppSettings {
 
   // Migration flags
   _boardModeMigratedToStickyTab?: boolean
-  customCommandsResetV28?: boolean
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -240,14 +245,14 @@ const DEFAULT_SETTINGS: AppSettings = {
   codexJsonlLoggingEnabled: false,
   codexJsonlResetPerSession: true,
   reviewPromptType: 'standard',
-  _boardModeMigratedToStickyTab: false,
-  customCommandsResetV28: true
+  _boardModeMigratedToStickyTab: false
 }
 
 interface SettingsState extends AppSettings {
   isOpen: boolean
   activeSection: string
   isLoading: boolean
+  customCommandsFileMtime: number | null
 
   // Cached SDK availability (non-persisted, re-detected each launch)
   availableAgentSdks: { opencode: boolean; claude: boolean; codex: boolean } | null
@@ -281,12 +286,13 @@ interface SettingsState extends AppSettings {
   resetToDefaults: () => void
   loadFromDatabase: () => Promise<void>
   detectAvailableAgentSdks: () => Promise<void>
+  reloadCustomCommands: () => Promise<void>
 }
 
 async function saveToDatabase(settings: AppSettings): Promise<void> {
   try {
-    if (typeof window !== 'undefined' && db?.setting) {
-      await db.setting.set(APP_SETTINGS_DB_KEY, JSON.stringify(settings))
+    if (typeof window !== 'undefined') {
+      await dbApi.setting.set(APP_SETTINGS_DB_KEY, JSON.stringify(settings))
     }
   } catch (error) {
     console.error('Failed to save settings to database:', error)
@@ -295,8 +301,19 @@ async function saveToDatabase(settings: AppSettings): Promise<void> {
 
 async function loadSettingsFromDatabase(): Promise<AppSettings | null> {
   try {
-    if (typeof window !== 'undefined' && db?.setting) {
-      const value = await db.setting.get(APP_SETTINGS_DB_KEY)
+    if (typeof window !== 'undefined') {
+      const fileResult = await settingsApi.loadCustomCommandsFile()
+
+      // Always sync to database when file load succeeds, even if empty.
+      if (fileResult.success && fileResult.commands !== undefined) {
+        const dbValue = await dbApi.setting.get(APP_SETTINGS_DB_KEY)
+        const settings = dbValue ? JSON.parse(dbValue) : {}
+        settings.customProjectCommands = fileResult.commands
+
+        await dbApi.setting.set(APP_SETTINGS_DB_KEY, JSON.stringify(settings))
+      }
+
+      const value = await dbApi.setting.get(APP_SETTINGS_DB_KEY)
       if (value) {
         const parsed = JSON.parse(value)
         const result = {
@@ -342,10 +359,7 @@ async function loadSettingsFromDatabase(): Promise<AppSettings | null> {
             if (validation.valid) {
               validCommands.push(cmd as CustomProjectCommand)
             } else {
-              console.warn(
-                'Invalid custom command filtered during settings load:',
-                validation.errors
-              )
+              console.warn('Invalid custom command filtered during settings load:', validation.errors)
             }
           })
           result.customProjectCommands = validCommands
@@ -414,8 +428,7 @@ function extractSettings(state: SettingsState): AppSettings {
     codexJsonlLoggingEnabled: state.codexJsonlLoggingEnabled,
     codexJsonlResetPerSession: state.codexJsonlResetPerSession,
     reviewPromptType: state.reviewPromptType,
-    _boardModeMigratedToStickyTab: state._boardModeMigratedToStickyTab,
-    customCommandsResetV28: state.customCommandsResetV28
+    _boardModeMigratedToStickyTab: state._boardModeMigratedToStickyTab
   }
 }
 
@@ -448,6 +461,7 @@ export const useSettingsStore = create<SettingsState>()(
       activeSection: 'appearance',
       isLoading: true,
       availableAgentSdks: null,
+      customCommandsFileMtime: null,
 
       openSettings: (section?: string) => {
         set({ isOpen: true, activeSection: section || get().activeSection })
@@ -467,25 +481,16 @@ export const useSettingsStore = create<SettingsState>()(
         const settings = extractSettings({ ...get(), [key]: value } as SettingsState)
         saveToDatabase(settings)
         // Notify main process of channel change
-        if (key === 'updateChannel' && window.updaterOps?.setChannel) {
-          window.updaterOps
-            .setChannel(value as string)
-            .then(unwrapEnvelope)
-            .catch(() => {})
+        if (key === 'updateChannel') {
+          updaterApi.setChannel(value as AppSettings['updateChannel']).catch(() => {})
         }
-        if (key === 'pet' && window.petOps) {
+        if (key === 'pet') {
           const pet = value as PetSettings
-          window.petOps.updateSettings(pet)
+          petApi.updateSettings(pet)
           if (pet.enabled) {
-            window.petOps
-              .show()
-              .then(unwrapEnvelope)
-              .catch(() => {})
+            petApi.show().catch(() => {})
           } else {
-            window.petOps
-              .hide()
-              .then(unwrapEnvelope)
-              .catch(() => {})
+            petApi.hide().catch(() => {})
           }
         }
         // Handle board mode switching side effects
@@ -538,7 +543,7 @@ export const useSettingsStore = create<SettingsState>()(
         set({ selectedModel: model })
         // Persist to backend (settings DB + opencode service)
         try {
-          unwrapEnvelope(await window.opencodeOps.setModel(model))
+          unwrapEnvelope(await opencodeApi.setModel(model))
         } catch (error) {
           console.error('Failed to persist model selection:', error)
         }
@@ -567,7 +572,7 @@ export const useSettingsStore = create<SettingsState>()(
           !options?.skipBackendPush
         ) {
           try {
-            unwrapEnvelope(await window.opencodeOps.setModel(model ? { ...model, agentSdk } : null))
+            unwrapEnvelope(await opencodeApi.setModel(model ? { ...model, agentSdk } : null))
           } catch (error) {
             console.error('Failed to persist model selection for SDK:', error)
           }
@@ -639,19 +644,13 @@ export const useSettingsStore = create<SettingsState>()(
       resetToDefaults: () => {
         set({ ...DEFAULT_SETTINGS })
         saveToDatabase(DEFAULT_SETTINGS)
-        window.petOps?.updateSettings(DEFAULT_SETTINGS.pet)
-        window.petOps
-          ?.hide()
-          .then(unwrapEnvelope)
-          .catch(() => {})
+        petApi.updateSettings(DEFAULT_SETTINGS.pet)
+        petApi.hide().catch(() => {})
       },
 
       loadFromDatabase: async () => {
         const dbSettings = await loadSettingsFromDatabase()
-        const telegramConfig = await window.telegramOps
-          ?.getConfig?.()
-          .then(unwrapEnvelope)
-          .catch(() => null)
+        const telegramConfig = await telegramApi.getConfig().catch(() => null)
         if (dbSettings) {
           set({
             ...dbSettings,
@@ -660,27 +659,45 @@ export const useSettingsStore = create<SettingsState>()(
             initialSetupComplete: dbSettings.initialSetupComplete ?? true,
             isLoading: false
           })
-          window.petOps?.updateSettings(dbSettings.pet)
+          petApi.updateSettings(dbSettings.pet)
           if (dbSettings.pet.enabled) {
-            window.petOps
-              ?.show()
-              .then(unwrapEnvelope)
-              .catch(() => {})
+            petApi.show().catch(() => {})
           }
         } else {
           set({ isLoading: false, telegramConfig: telegramConfig ?? null })
           await saveToDatabase(extractSettings(get()))
-          window.petOps?.updateSettings(get().pet)
+          petApi.updateSettings(get().pet)
         }
       },
 
       detectAvailableAgentSdks: async () => {
         try {
-          const result = await window.systemOps.detectAgentSdks()
+          const result = await systemApi.detectAgentSdks()
           set({ availableAgentSdks: result })
         } catch {
           // Fail gracefully — context menu just won't show
           set({ availableAgentSdks: null })
+        }
+      },
+
+      reloadCustomCommands: async () => {
+        try {
+          const result = await settingsApi.reloadCustomCommands()
+
+          if (result.success) {
+            // Reload all settings from database
+            await get().loadFromDatabase()
+
+            // Update mtime
+            set({ customCommandsFileMtime: result.mtime ?? null })
+
+            toast.success(`Loaded ${result.count ?? 0} custom commands`)
+          } else {
+            toast.error(`Failed to reload: ${result.error || 'Unknown error'}`)
+          }
+        } catch (error) {
+          console.error('Failed to reload custom commands:', error)
+          toast.error('Failed to reload custom commands')
         }
       }
     }),
@@ -737,8 +754,7 @@ export const useSettingsStore = create<SettingsState>()(
         codexJsonlLoggingEnabled: state.codexJsonlLoggingEnabled,
         codexJsonlResetPerSession: state.codexJsonlResetPerSession,
         reviewPromptType: state.reviewPromptType,
-        _boardModeMigratedToStickyTab: state._boardModeMigratedToStickyTab,
-        customCommandsResetV28: state.customCommandsResetV28
+        _boardModeMigratedToStickyTab: state._boardModeMigratedToStickyTab
       })
     }
   )
@@ -757,10 +773,26 @@ if (typeof window !== 'undefined') {
   }, 200)
 
   // Listen for settings updates from main process (e.g., when "Allow always" adds to allowlist)
-  window.settingsOps?.onSettingsUpdated((data) => {
-    const typedData = data as { commandFilter?: CommandFilterSettings }
+  settingsApi.onSettingsUpdated((data) => {
+    const typedData = data as {
+      commandFilter?: CommandFilterSettings
+      customProjectCommands?: unknown
+    }
     if (typedData.commandFilter) {
       useSettingsStore.setState({ commandFilter: typedData.commandFilter })
     }
+    if (Array.isArray(typedData.customProjectCommands)) {
+      const validCommands: CustomProjectCommand[] = []
+      typedData.customProjectCommands.forEach((cmd) => {
+        const validation = validateCustomCommand(cmd)
+        if (validation.valid) {
+          validCommands.push(cmd as CustomProjectCommand)
+        } else {
+          console.warn('Invalid custom command filtered during settings update:', validation.errors)
+        }
+      })
+      useSettingsStore.setState({ customProjectCommands: validCommands })
+    }
   })
+
 }

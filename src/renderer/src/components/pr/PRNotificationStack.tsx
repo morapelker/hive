@@ -15,7 +15,7 @@ import { usePRNotificationStore } from '@/stores/usePRNotificationStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { toast } from '@/lib/toast'
-import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { gitApi } from '@/api/git-api'
 
 // ---------------------------------------------------------------------------
 // Status icon
@@ -94,7 +94,7 @@ function PRNotificationCard({
 
     setMergePhase('merging')
     try {
-      const result = unwrapEnvelope(await window.gitOps.prMerge(worktreePath, prNumber))
+      const result = await gitApi.prMerge(worktreePath, prNumber)
       if (result.success) {
         setMergePhase('merged')
       } else {

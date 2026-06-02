@@ -19,7 +19,8 @@ import {
 import { Input } from '@/components/ui/input'
 import { parseAttachmentUrl } from '@/lib/attachment-utils'
 import type { AttachmentInfo } from '@/lib/attachment-utils'
-import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { fileApi } from '@/api/file-api'
+import { attachmentApi } from '@/api/attachment-api'
 
 export interface TicketAttachment extends AttachmentInfo {
   url: string
@@ -56,10 +57,7 @@ export function TicketAttachmentEditor({
       const removed = attachments[index]
       // Delete image files from disk
       if (removed?.type === 'image' && removed.url) {
-        window.attachmentOps
-          .deleteImage(removed.url)
-          .then(unwrapEnvelope)
-          .catch(() => {})
+        attachmentApi.deleteImage(removed.url).catch(() => {})
       }
       onChange(attachments.filter((_, i) => i !== index))
     },
@@ -72,7 +70,7 @@ export function TicketAttachmentEditor({
       if (!files) return
       const newAttachments = [...attachments]
       for (const file of Array.from(files)) {
-        const filePath = window.fileOps.getPathForFile(file)
+        const filePath = fileApi.getPathForFile(file)
         newAttachments.push({ type: 'file' as const, url: filePath, label: file.name })
       }
       onChange(newAttachments)
@@ -198,7 +196,7 @@ function AttachmentChip({
     if (attachment.type !== 'image') return
     let cancelled = false
 
-    window.fileOps.readImageAsBase64(attachment.url).then((envelope) => {
+    fileApi.readImageAsBase64(attachment.url).then((envelope) => {
       if (cancelled || !envelope.success) return
       const { data, mimeType } = envelope.value
       setThumbnailSrc(`data:${mimeType ?? 'image/png'};base64,${data}`)

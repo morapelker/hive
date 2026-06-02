@@ -15,6 +15,7 @@ import { RunTab } from './RunTab'
 import { toast } from '@/lib/toast'
 import { useGhosttyPromotion } from '@/hooks/useGhosttyPromotion'
 import { TerminalTabsHorizontal } from '@/components/terminal/TerminalTabsHorizontal'
+import { systemApi } from '@/api/system-api'
 
 const tabs: { id: BottomPanelTab; label: string; keybind: string }[] = [
   { id: 'setup', label: 'Setup', keybind: 'S' },
@@ -46,19 +47,22 @@ export function BottomPanel({
   const effectiveTab = isConnectionMode ? 'terminal' : activeTab
   const setActiveTab = useLayoutStore((s) => s.setBottomPanelTab)
   const selectedWorktreeId = useWorktreeStore((s) => s.selectedWorktreeId)
-  const visibleTabs = terminalPosition === 'bottom'
-    ? tabs.filter((t) => t.id !== 'terminal')
-    : isConnectionMode
-      ? tabs.filter((t) => t.id === 'terminal')
-      : tabs.filter((t) => t.id !== 'terminal')   // sidebar: hide static terminal, use dynamic
+  const visibleTabs =
+    terminalPosition === 'bottom'
+      ? tabs.filter((t) => t.id !== 'terminal')
+      : isConnectionMode
+        ? tabs.filter((t) => t.id === 'terminal')
+        : tabs.filter((t) => t.id !== 'terminal') // sidebar: hide static terminal, use dynamic
 
   // If terminal tab was active but is now hidden, fall back to 'run':
   // - bottom mode: terminal lives in the sidebar, not the bottom panel
   // - sidebar mode without a worktree: dynamic terminal tabs can't render
   const resolvedTab =
-    (terminalPosition === 'bottom' && effectiveTab === 'terminal') ? 'run' :
-    (terminalPosition === 'sidebar' && effectiveTab === 'terminal' && !selectedWorktreeId) ? 'run' :
-    effectiveTab
+    terminalPosition === 'bottom' && effectiveTab === 'terminal'
+      ? 'run'
+      : terminalPosition === 'sidebar' && effectiveTab === 'terminal' && !selectedWorktreeId
+        ? 'run'
+        : effectiveTab
   useGhosttyPromotion(resolvedTab === 'terminal')
 
   // Open in Chrome state
@@ -146,7 +150,7 @@ export function BottomPanel({
           <div className="relative shrink-0">
             <button
               onClick={() => {
-                window.systemOps.openInChrome(detectedUrl, customChromeCommand || undefined)
+                void systemApi.openInChrome(detectedUrl, customChromeCommand || undefined)
               }}
               onContextMenu={(e) => {
                 e.preventDefault()
@@ -169,7 +173,13 @@ export function BottomPanel({
                 <input
                   value={chromeCommandInput}
                   onChange={(e) => setChromeCommandInput(e.target.value)}
-                  placeholder={isMac() ? 'open -a "Google Chrome" {url}' : isLinux() ? 'xdg-open {url}' : 'start chrome {url}'}
+                  placeholder={
+                    isMac()
+                      ? 'open -a "Google Chrome" {url}'
+                      : isLinux()
+                        ? 'xdg-open {url}'
+                        : 'start chrome {url}'
+                  }
                   className="w-full text-xs bg-background border rounded px-2 py-1 mb-2"
                   onKeyDown={(e) => e.stopPropagation()}
                 />
@@ -214,7 +224,10 @@ export function BottomPanel({
         )}
       </div>
       {/* Use CSS hidden (not conditional rendering) to keep TerminalManager mounted and preserve PTY state */}
-      <div className={cn("flex-1 min-h-0 overflow-hidden", isCollapsed && "hidden")} data-testid="bottom-panel-content">
+      <div
+        className={cn('flex-1 min-h-0 overflow-hidden', isCollapsed && 'hidden')}
+        data-testid="bottom-panel-content"
+      >
         {resolvedTab === 'setup' && <SetupTab worktreeId={selectedWorktreeId} />}
         {resolvedTab === 'run' && <RunTab worktreeId={selectedWorktreeId} />}
         {/* Terminal portal target — always mounted when in sidebar mode to preserve PTY state */}

@@ -1,4 +1,3 @@
-import type { BrowserWindow } from 'electron'
 import http from 'http'
 import type { SessionStatusType } from '@shared/types/session-status'
 import { createLogger } from './logger'
@@ -34,7 +33,6 @@ const host = '127.0.0.1'
 let server: http.Server | null = null
 let boundPort: number | null = null
 let startingPromise: Promise<{ port: number }> | null = null
-let rendererWindow: BrowserWindow | null = null
 const lastStatusBySession = new Map<string, SessionStatusType>()
 const statusSubscribers = new Set<(payload: ClaudeCliStatusPayload) => void>()
 
@@ -147,10 +145,7 @@ function buildStatusMetadata(
   return metadata
 }
 
-export function publishClaudeCliStatus(
-  mainWindow: BrowserWindow,
-  payload: ClaudeCliStatusPayload
-): void {
+export function publishClaudeCliStatus(payload: ClaudeCliStatusPayload): void {
   if (lastStatusBySession.get(payload.sessionId) === payload.status) {
     return
   }
@@ -159,9 +154,11 @@ export function publishClaudeCliStatus(
   for (const subscriber of statusSubscribers) {
     subscriber(payload)
   }
-  if (!mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('claude-cli:status', payload)
-  }
+  void import('../desktop/backend-manager')
+    .then(({ publishDesktopBackendEvent }) =>
+      publishDesktopBackendEvent('claude-cli:status', payload)
+    )
+    .catch(() => undefined)
 }
 
 /**
@@ -237,8 +234,8 @@ async function handleHook(req: http.IncomingMessage, res: http.ServerResponse): 
     const body = JSON.parse(rawBody || '{}') as ParsedClaudeHook
     if (route) {
       const status = mapHookEventToStatus(body)
-      if (status && rendererWindow) {
-        publishClaudeCliStatus(rendererWindow, {
+      if (status) {
+        publishClaudeCliStatus({
           sessionId: route.sessionId,
           status,
           metadata: buildStatusMetadata(body, route.hookPath)
@@ -260,9 +257,7 @@ async function handleHook(req: http.IncomingMessage, res: http.ServerResponse): 
   }
 }
 
-export async function getClaudeHookServer(mainWindow: BrowserWindow): Promise<{ port: number }> {
-  rendererWindow = mainWindow
-
+export async function getClaudeHookServer(): Promise<{ port: number }> {
   if (server && boundPort !== null) {
     return { port: boundPort }
   }
@@ -326,7 +321,6 @@ export async function closeClaudeHookServer(): Promise<void> {
   claudeCliTelegramBridge.cancelAll()
 
   if (!server) {
-    rendererWindow = null
     boundPort = null
     startingPromise = null
     lastStatusBySession.clear()
@@ -345,7 +339,6 @@ export async function closeClaudeHookServer(): Promise<void> {
   })
 
   log.info('ClaudeHookServer closed')
-  rendererWindow = null
   boundPort = null
   startingPromise = null
   lastStatusBySession.clear()

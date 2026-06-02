@@ -1,9 +1,8 @@
 import { create } from 'zustand'
 import { useWorktreeStore } from './useWorktreeStore'
 import { type ReanchorResult } from '@/lib/diff-comment-anchor'
-import { unwrapEnvelopeApi } from '@/lib/ipc-envelope'
-
-const db = unwrapEnvelopeApi(() => window.db)
+import { systemApi } from '@/api/system-api'
+import { dbApi } from '@/api/db-api'
 
 // ---------------------------------------------------------------------------
 // Local type aliases — DiffComment is global (preload/index.d.ts),
@@ -131,7 +130,7 @@ export const useDiffCommentStore = create<DiffCommentStoreState>((set, get) => (
       return { loadingByWorktree, errorByWorktree }
     })
     try {
-      const result = await db.diffComment.list(worktreeId)
+      const result = await dbApi.diffComment.list<DiffComment>(worktreeId)
       set((s) => {
         const comments = new Map(s.comments)
         comments.set(worktreeId, result)
@@ -155,7 +154,7 @@ export const useDiffCommentStore = create<DiffCommentStoreState>((set, get) => (
 
   create: async (data) => {
     try {
-      const created = await db.diffComment.create(data)
+      const created = await dbApi.diffComment.create<DiffComment>(data)
       set((s) => {
         const comments = new Map(s.comments)
         const bucket = comments.get(data.worktree_id) ?? []
@@ -181,7 +180,7 @@ export const useDiffCommentStore = create<DiffCommentStoreState>((set, get) => (
     if (!found) return null
 
     try {
-      const updated = await db.diffComment.update(id, data)
+      const updated = await dbApi.diffComment.update<DiffComment>(id, data)
       if (!updated) return null
 
       set((s) => {
@@ -212,7 +211,7 @@ export const useDiffCommentStore = create<DiffCommentStoreState>((set, get) => (
     if (!found) return false
 
     try {
-      const deleted = await db.diffComment.delete(id)
+      const deleted = await dbApi.diffComment.delete(id)
       if (!deleted) return false
 
       set((s) => {
@@ -245,7 +244,7 @@ export const useDiffCommentStore = create<DiffCommentStoreState>((set, get) => (
     const idsToStrip = (get().comments.get(worktreeId) ?? []).map((c) => c.id)
 
     try {
-      await db.diffComment.clearAll(worktreeId)
+      await dbApi.diffComment.clearAll(worktreeId)
 
       set((s) => {
         const comments = new Map(s.comments)
@@ -387,7 +386,7 @@ export const useDiffCommentStore = create<DiffCommentStoreState>((set, get) => (
   subscribeFocusRefresh: () => {
     let lastRefreshTime = 0
 
-    const unsubscribe = window.systemOps.onWindowFocused(() => {
+    const unsubscribe = systemApi.onWindowFocused(() => {
       const now = Date.now()
       if (now - lastRefreshTime < VISIBILITY_THROTTLE_MS) return
       lastRefreshTime = now

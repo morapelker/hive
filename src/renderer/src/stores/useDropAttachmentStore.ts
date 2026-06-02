@@ -1,10 +1,10 @@
 import { create } from 'zustand'
-import type { Attachment } from '@/components/sessions/AttachmentPreview'
+import type { AttachmentInput } from '@/components/sessions/AttachmentPreview'
 
 interface DropAttachmentState {
-  pending: Array<Omit<Attachment, 'id'>>
-  push: (items: Array<Omit<Attachment, 'id'>>) => void
-  consume: () => Array<Omit<Attachment, 'id'>>
+  pending: AttachmentInput[]
+  push: (items: AttachmentInput[]) => void
+  consume: () => AttachmentInput[]
 }
 
 export const useDropAttachmentStore = create<DropAttachmentState>((set, get) => ({

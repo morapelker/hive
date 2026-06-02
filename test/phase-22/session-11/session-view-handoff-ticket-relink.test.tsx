@@ -77,6 +77,160 @@ vi.mock('../../../src/renderer/src/components/sessions/PlanReadyImplementFab', (
     ) : null
 }))
 
+const apiMocks = vi.hoisted(() => ({
+  bashApi: {
+    getRun: vi.fn(),
+    onStream: vi.fn()
+  },
+  connectionApi: {
+    get: vi.fn(),
+    getAll: vi.fn()
+  },
+  dbApi: {
+    setting: {
+      get: vi.fn().mockResolvedValue(null),
+      set: vi.fn().mockResolvedValue(true)
+    },
+    session: {
+      get: vi.fn(),
+      getDraft: vi.fn(),
+      updateDraft: vi.fn(),
+      update: vi.fn(),
+      create: vi.fn(),
+      getActiveByWorktree: vi.fn(),
+      getActiveByConnection: vi.fn()
+    },
+    sessionActivity: {
+      list: vi.fn()
+    },
+    sessionMessage: {
+      list: vi.fn()
+    },
+    worktree: {
+      get: vi.fn(),
+      update: vi.fn(),
+      touch: vi.fn()
+    },
+    project: {
+      getAll: vi.fn()
+    }
+  },
+  kanbanApi: {
+    ticket: {
+      getBySession: vi.fn(),
+      update: vi.fn(),
+      getByProject: vi.fn()
+    },
+    dependency: {
+      getForProject: vi.fn(),
+      removeAll: vi.fn(),
+      add: vi.fn(),
+      remove: vi.fn()
+    },
+    simpleMode: {
+      toggle: vi.fn()
+    }
+  },
+  loggingApi: {
+    createResponseLog: vi.fn(),
+    appendResponseLog: vi.fn()
+  },
+  opencodeApi: {
+    reconnect: vi.fn(),
+    connect: vi.fn(),
+    prompt: vi.fn(),
+    command: vi.fn(),
+    fork: vi.fn(),
+    sessionInfo: vi.fn(),
+    undo: vi.fn(),
+    redo: vi.fn(),
+    disconnect: vi.fn(),
+    abort: vi.fn(),
+    getMessages: vi.fn(),
+    listModels: vi.fn(),
+    setModel: vi.fn(),
+    modelInfo: vi.fn(),
+    questionReply: vi.fn(),
+    questionReject: vi.fn(),
+    permissionReply: vi.fn(),
+    permissionList: vi.fn(),
+    commands: vi.fn(),
+    capabilities: vi.fn(),
+    onStream: vi.fn()
+  },
+  petApi: {
+    hide: vi.fn(),
+    show: vi.fn(),
+    updateSettings: vi.fn()
+  },
+  scriptApi: {
+    onStarted: vi.fn(),
+    onOutput: vi.fn(),
+    onFinished: vi.fn()
+  },
+  settingsApi: {
+    onSettingsUpdated: vi.fn()
+  },
+  systemApi: {
+    isLogMode: vi.fn(),
+    getLogDir: vi.fn(),
+    getAppVersion: vi.fn(),
+    getAppPaths: vi.fn(),
+    detectAgentSdks: vi.fn(),
+    setSessionQueuedState: vi.fn()
+  },
+  telegramApi: {
+    getConfig: vi.fn().mockResolvedValue(null),
+    getStatus: vi.fn().mockResolvedValue({
+      active: false,
+      sessionId: null,
+      worktreeId: null,
+      connectionId: null,
+      mode: null,
+      health: 'ok',
+      lastError: null
+    }),
+    onStatusChanged: vi.fn(() => () => {}),
+    onMessageReceived: vi.fn(() => () => {}),
+    onPlanImplementRequested: vi.fn(() => () => {})
+  },
+  terminalApi: {
+    destroy: vi.fn(),
+    onOutput: vi.fn(),
+    onExit: vi.fn(),
+    onCreated: vi.fn(),
+    onClosed: vi.fn()
+  },
+  updaterApi: {
+    onChecking: vi.fn(),
+    onUpdateAvailable: vi.fn(),
+    onUpdateNotAvailable: vi.fn(),
+    onProgress: vi.fn(),
+    onUpdateDownloaded: vi.fn(),
+    onError: vi.fn(),
+    onUpdateStatus: vi.fn()
+  },
+  worktreeApi: {
+    duplicate: vi.fn(),
+    onBranchRenamed: vi.fn()
+  }
+}))
+
+vi.mock('@/api/bash-api', () => ({ bashApi: apiMocks.bashApi }))
+vi.mock('@/api/connection-api', () => ({ connectionApi: apiMocks.connectionApi }))
+vi.mock('@/api/db-api', () => ({ dbApi: apiMocks.dbApi }))
+vi.mock('@/api/kanban-api', () => ({ kanbanApi: apiMocks.kanbanApi }))
+vi.mock('@/api/logging-api', () => ({ loggingApi: apiMocks.loggingApi }))
+vi.mock('@/api/opencode-api', () => ({ opencodeApi: apiMocks.opencodeApi }))
+vi.mock('@/api/pet-api', () => ({ petApi: apiMocks.petApi }))
+vi.mock('@/api/script-api', () => ({ scriptApi: apiMocks.scriptApi }))
+vi.mock('@/api/settings-api', () => ({ settingsApi: apiMocks.settingsApi }))
+vi.mock('@/api/system-api', () => ({ systemApi: apiMocks.systemApi }))
+vi.mock('@/api/telegram-api', () => ({ telegramApi: apiMocks.telegramApi }))
+vi.mock('@/api/terminal-api', () => ({ terminalApi: apiMocks.terminalApi }))
+vi.mock('@/api/updater-api', () => ({ updaterApi: apiMocks.updaterApi }))
+vi.mock('@/api/worktree-api', () => ({ worktreeApi: apiMocks.worktreeApi }))
+
 import { SessionView } from '../../../src/renderer/src/components/sessions/SessionView'
 import { useKanbanStore } from '../../../src/renderer/src/stores/useKanbanStore'
 import { useProjectStore } from '../../../src/renderer/src/stores/useProjectStore'
@@ -84,10 +238,6 @@ import { useSessionStore } from '../../../src/renderer/src/stores/useSessionStor
 import { useSettingsStore } from '../../../src/renderer/src/stores/useSettingsStore'
 import { useWorktreeStore } from '../../../src/renderer/src/stores/useWorktreeStore'
 import { useWorktreeStatusStore } from '../../../src/renderer/src/stores/useWorktreeStatusStore'
-
-function envelope<T>(value: T): { success: true; value: T } {
-  return { success: true, value }
-}
 
 function createSessionRecord(
   overrides: Partial<{
@@ -129,24 +279,9 @@ function createSessionRecord(
 }
 
 describe('SessionView handoff ticket relinking', () => {
-  const mockKanban = {
-    ticket: {
-      getBySession: vi.fn(),
-      update: vi.fn()
-    }
-  }
-
-  const mockWorktreeOps = {
-    duplicate: vi.fn()
-  }
-
-  const mockDbSession = {
-    get: vi.fn(),
-    getDraft: vi.fn(),
-    updateDraft: vi.fn(),
-    update: vi.fn(),
-    create: vi.fn()
-  }
+  const mockKanban = apiMocks.kanbanApi
+  const mockWorktreeOps = apiMocks.worktreeApi
+  const mockDbSession = apiMocks.dbApi.session
 
   beforeEach(() => {
     vi.clearAllMocks()
@@ -264,41 +399,169 @@ describe('SessionView handoff ticket relinking', () => {
       archivingWorktreeIds: new Set()
     })
 
-    mockKanban.ticket.getBySession.mockResolvedValue(
-      envelope([
-        {
-          id: 'ticket-1',
-          project_id: 'proj-1',
-          current_session_id: 'session-plan-old',
-          plan_ready: true,
-          mode: 'plan'
-        }
-      ])
-    )
-    mockKanban.ticket.update.mockResolvedValue(envelope(undefined))
+    apiMocks.bashApi.getRun.mockResolvedValue(null)
+    apiMocks.bashApi.onStream.mockReturnValue(() => {})
+    apiMocks.connectionApi.get.mockResolvedValue(null)
+    apiMocks.connectionApi.getAll.mockResolvedValue({ success: true, connections: [] })
+    apiMocks.dbApi.setting.get.mockResolvedValue(null)
+    apiMocks.dbApi.setting.set.mockResolvedValue(true)
+    apiMocks.dbApi.sessionActivity.list.mockResolvedValue([])
+    apiMocks.dbApi.sessionMessage.list.mockResolvedValue([])
+    apiMocks.dbApi.worktree.get.mockResolvedValue({
+      id: 'wt-1',
+      project_id: 'proj-1',
+      name: 'WT',
+      branch_name: 'main',
+      path: '/tmp/worktree-handoff',
+      status: 'active',
+      is_default: true,
+      created_at: new Date().toISOString(),
+      last_accessed_at: new Date().toISOString()
+    })
+    apiMocks.dbApi.worktree.update.mockResolvedValue(null)
+    apiMocks.dbApi.worktree.touch.mockResolvedValue(undefined)
+    apiMocks.dbApi.project.getAll.mockResolvedValue([])
+    mockKanban.ticket.getBySession.mockResolvedValue([
+      {
+        id: 'ticket-1',
+        project_id: 'proj-1',
+        current_session_id: 'session-plan-old',
+        plan_ready: true,
+        mode: 'plan'
+      }
+    ])
+    mockKanban.ticket.update.mockResolvedValue(undefined)
+    mockKanban.ticket.getByProject.mockResolvedValue([])
+    apiMocks.kanbanApi.dependency.getForProject.mockResolvedValue([])
 
-    mockDbSession.get.mockResolvedValue(envelope(createSessionRecord()))
-    mockDbSession.getDraft.mockResolvedValue(envelope(null))
-    mockDbSession.updateDraft.mockResolvedValue(envelope(undefined))
+    mockDbSession.get.mockResolvedValue(createSessionRecord())
+    mockDbSession.getDraft.mockResolvedValue(null)
+    mockDbSession.updateDraft.mockResolvedValue(undefined)
+    mockDbSession.getActiveByWorktree.mockResolvedValue([])
+    mockDbSession.getActiveByConnection.mockResolvedValue([])
     mockDbSession.update.mockImplementation(
       async (sessionId: string, data: Record<string, unknown>) =>
-        envelope({
+        ({
           ...createSessionRecord({ id: sessionId }),
           ...data
         })
     )
     mockDbSession.create.mockResolvedValue(
-      envelope(
-        createSessionRecord({
-          id: 'session-build-new',
-          mode: 'build',
-          opencode_session_id: null,
-          name: 'Session 2'
-        })
-      )
+      createSessionRecord({
+        id: 'session-build-new',
+        mode: 'build',
+        opencode_session_id: null,
+        name: 'Session 2'
+      })
     )
+    apiMocks.loggingApi.createResponseLog.mockResolvedValue('/tmp/log.jsonl')
+    apiMocks.loggingApi.appendResponseLog.mockResolvedValue(undefined)
+    apiMocks.opencodeApi.reconnect.mockResolvedValue({ success: true })
+    apiMocks.opencodeApi.connect.mockResolvedValue({ success: false })
+    apiMocks.opencodeApi.prompt.mockResolvedValue({ success: true })
+    apiMocks.opencodeApi.command.mockResolvedValue({ success: true })
+    apiMocks.opencodeApi.fork.mockResolvedValue({ success: true })
+    apiMocks.opencodeApi.sessionInfo.mockResolvedValue({
+      success: true,
+      revertMessageID: null,
+      revertDiff: null
+    })
+    apiMocks.opencodeApi.undo.mockResolvedValue({ success: true })
+    apiMocks.opencodeApi.redo.mockResolvedValue({ success: true })
+    apiMocks.opencodeApi.disconnect.mockResolvedValue({ success: true })
+    apiMocks.opencodeApi.abort.mockResolvedValue({ success: true })
+    apiMocks.opencodeApi.getMessages.mockResolvedValue({
+      success: true,
+      messages: [
+        {
+          info: {
+            id: 'turn-1:user',
+            role: 'user',
+            time: { created: Date.now() - 2000 }
+          },
+          parts: [{ type: 'text', text: 'Please draft a plan' }]
+        },
+        {
+          info: {
+            id: 'turn-1:assistant',
+            role: 'assistant',
+            time: { created: Date.now() - 1000 }
+          },
+          parts: [{ type: 'text', text: '1. Add the relink helper\n2. Use it during handoff' }]
+        }
+      ]
+    })
+    apiMocks.opencodeApi.listModels.mockResolvedValue({ success: true, providers: [] })
+    apiMocks.opencodeApi.setModel.mockResolvedValue({ success: true })
+    apiMocks.opencodeApi.modelInfo.mockResolvedValue({ success: true })
+    apiMocks.opencodeApi.questionReply.mockResolvedValue({ success: true })
+    apiMocks.opencodeApi.questionReject.mockResolvedValue({ success: true })
+    apiMocks.opencodeApi.permissionReply.mockResolvedValue({ success: true })
+    apiMocks.opencodeApi.permissionList.mockResolvedValue({ success: true, permissions: [] })
+    apiMocks.opencodeApi.commands.mockResolvedValue({ success: true, commands: [] })
+    apiMocks.opencodeApi.capabilities.mockResolvedValue({
+      success: true,
+      capabilities: {
+        supportsUndo: true,
+        supportsRedo: true,
+        supportsCommands: true,
+        supportsPermissionRequests: true,
+        supportsQuestionPrompts: true,
+        supportsModelSelection: true,
+        supportsReconnect: true,
+        supportsPartialStreaming: true,
+        supportsSteer: true
+      }
+    })
+    apiMocks.opencodeApi.onStream.mockReturnValue(() => {})
+    apiMocks.petApi.hide.mockResolvedValue(undefined)
+    apiMocks.petApi.show.mockResolvedValue(undefined)
+    apiMocks.petApi.updateSettings.mockResolvedValue({ success: true })
+    apiMocks.scriptApi.onStarted.mockReturnValue(() => {})
+    apiMocks.scriptApi.onOutput.mockReturnValue(() => {})
+    apiMocks.scriptApi.onFinished.mockReturnValue(() => {})
+    apiMocks.settingsApi.onSettingsUpdated.mockReturnValue(() => {})
+    apiMocks.systemApi.isLogMode.mockResolvedValue(false)
+    apiMocks.systemApi.getLogDir.mockResolvedValue('/tmp/logs')
+    apiMocks.systemApi.getAppVersion.mockResolvedValue('1.0.0')
+    apiMocks.systemApi.getAppPaths.mockResolvedValue({
+      userData: '/tmp',
+      home: '/tmp',
+      logs: '/tmp/logs'
+    })
+    apiMocks.systemApi.detectAgentSdks.mockResolvedValue({
+      opencode: false,
+      claude: true,
+      codex: false
+    })
+    apiMocks.systemApi.setSessionQueuedState.mockResolvedValue(undefined)
+    apiMocks.telegramApi.getConfig.mockResolvedValue(null)
+    apiMocks.telegramApi.getStatus.mockResolvedValue({
+      active: false,
+      sessionId: null,
+      worktreeId: null,
+      connectionId: null,
+      mode: null,
+      health: 'ok',
+      lastError: null
+    })
+    apiMocks.telegramApi.onStatusChanged.mockReturnValue(() => {})
+    apiMocks.telegramApi.onMessageReceived.mockReturnValue(() => {})
+    apiMocks.telegramApi.onPlanImplementRequested.mockReturnValue(() => {})
+    apiMocks.terminalApi.destroy.mockResolvedValue({ success: true })
+    apiMocks.terminalApi.onOutput.mockReturnValue(() => {})
+    apiMocks.terminalApi.onExit.mockReturnValue(() => {})
+    apiMocks.terminalApi.onCreated.mockReturnValue(() => {})
+    apiMocks.terminalApi.onClosed.mockReturnValue(() => {})
+    apiMocks.updaterApi.onChecking.mockReturnValue(() => {})
+    apiMocks.updaterApi.onUpdateAvailable.mockReturnValue(() => {})
+    apiMocks.updaterApi.onUpdateNotAvailable.mockReturnValue(() => {})
+    apiMocks.updaterApi.onProgress.mockReturnValue(() => {})
+    apiMocks.updaterApi.onUpdateDownloaded.mockReturnValue(() => {})
+    apiMocks.updaterApi.onError.mockReturnValue(() => {})
+    apiMocks.updaterApi.onUpdateStatus.mockReturnValue(() => {})
     mockWorktreeOps.duplicate.mockResolvedValue(
-      envelope({
+      {
         success: true,
         worktree: {
           id: 'wt-2',
@@ -323,145 +586,8 @@ describe('SessionView handoff ticket relinking', () => {
           created_at: new Date().toISOString(),
           last_accessed_at: new Date().toISOString()
         }
-      })
+      }
     )
-
-    Object.defineProperty(window, 'kanban', {
-      value: mockKanban,
-      writable: true,
-      configurable: true
-    })
-
-    Object.defineProperty(window, 'db', {
-      value: {
-        session: mockDbSession,
-        worktree: {
-          get: vi.fn().mockResolvedValue(
-            envelope({
-              id: 'wt-1',
-              project_id: 'proj-1',
-              name: 'WT',
-              branch_name: 'main',
-              path: '/tmp/worktree-handoff',
-              status: 'active',
-              is_default: true,
-              created_at: new Date().toISOString(),
-              last_accessed_at: new Date().toISOString()
-            })
-          ),
-          update: vi.fn().mockResolvedValue(envelope(null))
-        }
-      },
-      writable: true,
-      configurable: true
-    })
-
-    Object.defineProperty(window, 'opencodeOps', {
-      value: {
-        reconnect: vi.fn().mockResolvedValue(envelope({ success: true })),
-        connect: vi.fn().mockResolvedValue(envelope({ success: false })),
-        prompt: vi.fn().mockResolvedValue(envelope({ success: true })),
-        command: vi.fn().mockResolvedValue(envelope({ success: true })),
-        fork: vi.fn().mockResolvedValue(envelope({ success: true })),
-        sessionInfo: vi
-          .fn()
-          .mockResolvedValue(envelope({ success: true, revertMessageID: null, revertDiff: null })),
-        undo: vi.fn().mockResolvedValue(envelope({ success: true })),
-        redo: vi.fn().mockResolvedValue(envelope({ success: true })),
-        disconnect: vi.fn().mockResolvedValue(envelope({ success: true })),
-        abort: vi.fn().mockResolvedValue(envelope({ success: true })),
-        getMessages: vi.fn().mockResolvedValue(
-          envelope({
-            success: true,
-            messages: [
-              {
-                info: {
-                  id: 'turn-1:user',
-                  role: 'user',
-                  time: { created: Date.now() - 2000 }
-                },
-                parts: [{ type: 'text', text: 'Please draft a plan' }]
-              },
-              {
-                info: {
-                  id: 'turn-1:assistant',
-                  role: 'assistant',
-                  time: { created: Date.now() - 1000 }
-                },
-                parts: [
-                  { type: 'text', text: '1. Add the relink helper\n2. Use it during handoff' }
-                ]
-              }
-            ]
-          })
-        ),
-        listModels: vi.fn().mockResolvedValue(envelope({ success: true, providers: [] })),
-        setModel: vi.fn().mockResolvedValue(envelope({ success: true })),
-        modelInfo: vi.fn().mockResolvedValue(envelope({ success: true })),
-        questionReply: vi.fn().mockResolvedValue(envelope({ success: true })),
-        questionReject: vi.fn().mockResolvedValue(envelope({ success: true })),
-        permissionReply: vi.fn().mockResolvedValue(envelope({ success: true })),
-        permissionList: vi.fn().mockResolvedValue(envelope({ success: true, permissions: [] })),
-        commands: vi.fn().mockResolvedValue(envelope({ success: true, commands: [] })),
-        capabilities: vi.fn().mockResolvedValue(
-          envelope({
-            success: true,
-            capabilities: {
-              supportsUndo: true,
-              supportsRedo: true,
-              supportsCommands: true,
-              supportsPermissionRequests: true,
-              supportsQuestionPrompts: true,
-              supportsModelSelection: true,
-              supportsReconnect: true,
-              supportsPartialStreaming: true,
-              supportsSteer: true
-            }
-          })
-        ),
-        onStream: vi.fn().mockImplementation(() => () => {})
-      },
-      writable: true,
-      configurable: true
-    })
-
-    Object.defineProperty(window, 'systemOps', {
-      value: {
-        isLogMode: vi.fn().mockResolvedValue(false),
-        getLogDir: vi.fn().mockResolvedValue('/tmp/logs'),
-        getAppVersion: vi.fn().mockResolvedValue('1.0.0'),
-        getAppPaths: vi
-          .fn()
-          .mockResolvedValue({ userData: '/tmp', home: '/tmp', logs: '/tmp/logs' }),
-        setSessionQueuedState: vi.fn().mockResolvedValue(undefined)
-      },
-      writable: true,
-      configurable: true
-    })
-
-    Object.defineProperty(window, 'loggingOps', {
-      value: {
-        createResponseLog: vi.fn().mockResolvedValue('/tmp/log.jsonl'),
-        appendResponseLog: vi.fn().mockResolvedValue(undefined)
-      },
-      writable: true,
-      configurable: true
-    })
-
-    Object.defineProperty(window, 'bash', {
-      value: {
-        getRun: vi.fn().mockResolvedValue(envelope(null)),
-        onStream: vi.fn().mockImplementation(() => () => {})
-      },
-      writable: true,
-      configurable: true
-    })
-
-    Object.defineProperty(window, 'worktreeOps', {
-      value: mockWorktreeOps,
-      writable: true,
-      configurable: true
-    })
   })
 
   afterEach(() => {

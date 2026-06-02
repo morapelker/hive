@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { systemApi } from '@/api/system-api'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useSleepWhenIdleStore } from '@/stores/useSleepWhenIdleStore'
 import { useWorktreeStatusStore, type SessionStatusType } from '@/stores/useWorktreeStatusStore'
@@ -56,7 +57,7 @@ export function useSleepWhenIdle(): void {
           useSleepWhenIdleStore.getState().armed &&
           useSettingsStore.getState().keepAwakeEnabled
         ) {
-          window.systemOps?.sleepNow?.().catch((err) => {
+          systemApi.sleepNow().catch((err) => {
             console.error('[sleepWhenIdle] failed', err)
           })
         }

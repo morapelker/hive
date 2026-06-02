@@ -3,6 +3,152 @@ import { render, screen, waitFor, act, cleanup } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { forwardRef } from 'react'
 
+const apiMocks = vi.hoisted(() => ({
+  bashApi: {
+    getRun: vi.fn(),
+    onStream: vi.fn()
+  },
+  connectionApi: {
+    get: vi.fn()
+  },
+  dbApi: {
+    setting: {
+      get: vi.fn(),
+      set: vi.fn()
+    },
+    session: {
+      get: vi.fn(),
+      getDraft: vi.fn(),
+      updateDraft: vi.fn()
+    },
+    sessionActivity: {
+      list: vi.fn()
+    },
+    sessionMessage: {
+      list: vi.fn()
+    },
+    worktree: {
+      get: vi.fn(),
+      update: vi.fn()
+    }
+  },
+  loggingApi: {
+    createResponseLog: vi.fn(),
+    appendResponseLog: vi.fn()
+  },
+  opencodeApi: {
+    reconnect: vi.fn(),
+    connect: vi.fn(),
+    prompt: vi.fn(),
+    steer: vi.fn(),
+    command: vi.fn(),
+    fork: vi.fn(),
+    sessionInfo: vi.fn(),
+    undo: vi.fn(),
+    redo: vi.fn(),
+    disconnect: vi.fn(),
+    abort: vi.fn(),
+    getMessages: vi.fn(),
+    listModels: vi.fn(),
+    setModel: vi.fn(),
+    modelInfo: vi.fn(),
+    questionReply: vi.fn(),
+    questionReject: vi.fn(),
+    permissionReply: vi.fn(),
+    permissionList: vi.fn(),
+    commands: vi.fn(),
+    capabilities: vi.fn(),
+    onStream: vi.fn()
+  },
+  petApi: {
+    hide: vi.fn(() => Promise.resolve(undefined)),
+    show: vi.fn(() => Promise.resolve(undefined)),
+    updateSettings: vi.fn(() => Promise.resolve({ success: true }))
+  },
+  settingsApi: {
+    onSettingsUpdated: vi.fn(() => () => {})
+  },
+  systemApi: {
+    isLogMode: vi.fn(),
+    getLogDir: vi.fn(),
+    getAppVersion: vi.fn(),
+    getAppPaths: vi.fn(),
+    detectAgentSdks: vi.fn(),
+    setSessionQueuedState: vi.fn()
+  },
+  telegramApi: {
+    getConfig: vi.fn(() => Promise.resolve(null)),
+    getStatus: vi.fn(() =>
+      Promise.resolve({
+        active: false,
+        sessionId: null,
+        worktreeId: null,
+        connectionId: null,
+        mode: null,
+        health: 'ok',
+        lastError: null
+      })
+    ),
+    onStatusChanged: vi.fn(() => () => {}),
+    onPlanImplementRequested: vi.fn(() => () => {})
+  },
+  terminalApi: {
+    destroy: vi.fn()
+  },
+  updaterApi: {
+    onChecking: vi.fn(),
+    onUpdateAvailable: vi.fn(),
+    onUpdateNotAvailable: vi.fn(),
+    onProgress: vi.fn(),
+    onUpdateDownloaded: vi.fn(),
+    onError: vi.fn()
+  }
+}))
+
+vi.mock('@/api/bash-api', () => ({
+  bashApi: apiMocks.bashApi
+}))
+
+vi.mock('@/api/connection-api', () => ({
+  connectionApi: apiMocks.connectionApi
+}))
+
+vi.mock('@/api/db-api', () => ({
+  dbApi: apiMocks.dbApi
+}))
+
+vi.mock('@/api/logging-api', () => ({
+  loggingApi: apiMocks.loggingApi
+}))
+
+vi.mock('@/api/opencode-api', () => ({
+  opencodeApi: apiMocks.opencodeApi
+}))
+
+vi.mock('@/api/pet-api', () => ({
+  petApi: apiMocks.petApi
+}))
+
+vi.mock('@/api/settings-api', () => ({
+  settingsApi: apiMocks.settingsApi
+}))
+
+vi.mock('@/api/system-api', () => ({
+  systemApi: apiMocks.systemApi
+}))
+
+vi.mock('@/api/telegram-api', () => ({
+  telegramApi: apiMocks.telegramApi
+}))
+
+vi.mock('@/api/terminal-api', () => ({
+  terminalApi: apiMocks.terminalApi
+}))
+
+vi.mock('@/api/updater-api', () => ({
+  updaterApi: apiMocks.updaterApi
+}))
+
 import { useSessionStore } from '../../../src/renderer/src/stores/useSessionStore'
 import { useWorktreeStatusStore } from '../../../src/renderer/src/stores/useWorktreeStatusStore'
 import { resetSessionFollowUpDispatchState } from '../../../src/renderer/src/lib/session-follow-up-dispatch'
@@ -106,6 +252,164 @@ describe('Codex steer boundary ordering', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     resetSessionFollowUpDispatchState()
+    apiMocks.bashApi.getRun.mockResolvedValue(null)
+    apiMocks.bashApi.onStream.mockReturnValue(() => {})
+    apiMocks.connectionApi.get.mockResolvedValue(null)
+    apiMocks.dbApi.setting.get.mockResolvedValue(null)
+    apiMocks.dbApi.setting.set.mockResolvedValue(true)
+    apiMocks.dbApi.session.get.mockResolvedValue({
+      id: 'test-session-1',
+      worktree_id: 'wt-1',
+      project_id: 'proj-1',
+      name: 'Test Session',
+      status: 'active',
+      opencode_session_id: 'opc-session-1',
+      mode: 'build',
+      agent_sdk: 'codex',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      completed_at: null
+    })
+    apiMocks.dbApi.session.getDraft.mockResolvedValue(null)
+    apiMocks.dbApi.session.updateDraft.mockResolvedValue(undefined)
+    apiMocks.dbApi.sessionActivity.list.mockResolvedValue([])
+    apiMocks.dbApi.sessionMessage.list.mockResolvedValue([])
+    apiMocks.dbApi.worktree.get.mockResolvedValue({
+      id: 'wt-1',
+      project_id: 'proj-1',
+      name: 'WT',
+      branch_name: 'main',
+      path: '/tmp/worktree-codex-steer',
+      status: 'active',
+      is_default: true,
+      created_at: new Date().toISOString(),
+      last_accessed_at: new Date().toISOString()
+    })
+    apiMocks.dbApi.worktree.update.mockResolvedValue(null)
+    apiMocks.loggingApi.createResponseLog.mockResolvedValue('/tmp/log.jsonl')
+    apiMocks.loggingApi.appendResponseLog.mockResolvedValue(undefined)
+    apiMocks.opencodeApi.reconnect.mockResolvedValue({ success: true, value: { success: true } })
+    apiMocks.opencodeApi.connect.mockResolvedValue({ success: true, value: { success: false } })
+    apiMocks.opencodeApi.prompt.mockResolvedValue({ success: true, value: { success: true } })
+    apiMocks.opencodeApi.steer.mockResolvedValue({
+      success: true,
+      value: {
+        success: true,
+        insertedMessageId: 'turn-1:user:2',
+        nextAssistantMessageId: 'turn-1:assistant:2',
+        turnId: 'turn-1'
+      }
+    })
+    apiMocks.opencodeApi.command.mockResolvedValue({ success: true, value: { success: true } })
+    apiMocks.opencodeApi.fork.mockResolvedValue({ success: true, value: { success: true } })
+    apiMocks.opencodeApi.sessionInfo.mockResolvedValue({
+      success: true,
+      value: { success: true, revertMessageID: null, revertDiff: null }
+    })
+    apiMocks.opencodeApi.undo.mockResolvedValue({ success: true, value: { success: true } })
+    apiMocks.opencodeApi.redo.mockResolvedValue({ success: true, value: { success: true } })
+    apiMocks.opencodeApi.disconnect.mockResolvedValue({ success: true, value: { success: true } })
+    apiMocks.opencodeApi.abort.mockResolvedValue({ success: true, value: { success: true } })
+    apiMocks.opencodeApi.getMessages.mockResolvedValue({
+      success: true,
+      value: {
+        success: true,
+        messages: [
+          {
+            info: {
+              id: 'turn-1:user',
+              role: 'user',
+              time: { created: Date.now() - 2000 }
+            },
+            parts: [{ type: 'text', text: 'First question' }]
+          },
+          {
+            info: {
+              id: 'turn-1:assistant',
+              role: 'assistant',
+              time: { created: Date.now() - 1000 }
+            },
+            parts: [{ type: 'text', text: 'First answer' }]
+          }
+        ]
+      }
+    })
+    apiMocks.opencodeApi.listModels.mockResolvedValue({
+      success: true,
+      value: { success: true, providers: [] }
+    })
+    apiMocks.opencodeApi.setModel.mockResolvedValue({ success: true, value: { success: true } })
+    apiMocks.opencodeApi.modelInfo.mockResolvedValue({ success: true, value: { success: true } })
+    apiMocks.opencodeApi.questionReply.mockResolvedValue({
+      success: true,
+      value: { success: true }
+    })
+    apiMocks.opencodeApi.questionReject.mockResolvedValue({
+      success: true,
+      value: { success: true }
+    })
+    apiMocks.opencodeApi.permissionReply.mockResolvedValue({
+      success: true,
+      value: { success: true }
+    })
+    apiMocks.opencodeApi.permissionList.mockResolvedValue({
+      success: true,
+      value: { success: true, permissions: [] }
+    })
+    apiMocks.opencodeApi.commands.mockResolvedValue({
+      success: true,
+      value: { success: true, commands: [] }
+    })
+    apiMocks.opencodeApi.capabilities.mockResolvedValue({
+      success: true,
+      value: {
+        success: true,
+        capabilities: {
+          supportsUndo: true,
+          supportsRedo: true,
+          supportsCommands: true,
+          supportsPermissionRequests: true,
+          supportsQuestionPrompts: true,
+          supportsModelSelection: true,
+          supportsReconnect: true,
+          supportsPartialStreaming: true,
+          supportsSteer: true
+        }
+      }
+    })
+    apiMocks.opencodeApi.onStream.mockImplementation(
+      (callback: (event: Record<string, unknown>) => void) => {
+        ;(window as Window & { __testStreamCallback?: typeof callback }).__testStreamCallback =
+          callback
+        return () => {}
+      }
+    )
+    apiMocks.petApi.hide.mockResolvedValue(undefined)
+    apiMocks.petApi.show.mockResolvedValue(undefined)
+    apiMocks.petApi.updateSettings.mockResolvedValue({ success: true })
+    apiMocks.settingsApi.onSettingsUpdated.mockReturnValue(() => {})
+    apiMocks.systemApi.isLogMode.mockResolvedValue(false)
+    apiMocks.systemApi.getLogDir.mockResolvedValue('/tmp/logs')
+    apiMocks.systemApi.getAppVersion.mockResolvedValue('1.0.0')
+    apiMocks.systemApi.getAppPaths.mockResolvedValue({
+      userData: '/tmp',
+      home: '/tmp',
+      logs: '/tmp/logs'
+    })
+    apiMocks.systemApi.detectAgentSdks.mockResolvedValue({
+      opencode: true,
+      claude: true,
+      codex: true
+    })
+    apiMocks.systemApi.setSessionQueuedState.mockResolvedValue(undefined)
+    apiMocks.telegramApi.getConfig.mockResolvedValue(null)
+    apiMocks.terminalApi.destroy.mockResolvedValue({ success: true, value: undefined })
+    apiMocks.updaterApi.onChecking.mockReturnValue(() => {})
+    apiMocks.updaterApi.onUpdateAvailable.mockReturnValue(() => {})
+    apiMocks.updaterApi.onUpdateNotAvailable.mockReturnValue(() => {})
+    apiMocks.updaterApi.onProgress.mockReturnValue(() => {})
+    apiMocks.updaterApi.onUpdateDownloaded.mockReturnValue(() => {})
+    apiMocks.updaterApi.onError.mockReturnValue(() => {})
 
     if (!HTMLElement.prototype.animate) {
       Object.defineProperty(HTMLElement.prototype, 'animate', {
@@ -139,144 +443,6 @@ describe('Codex steer boundary ordering', () => {
     })
     useWorktreeStatusStore.setState({ sessionStatuses: {}, lastMessageTimeByWorktree: {} })
 
-    Object.defineProperty(window, 'db', {
-      value: {
-        session: {
-          get: vi.fn().mockResolvedValue({
-            id: 'test-session-1',
-            worktree_id: 'wt-1',
-            project_id: 'proj-1',
-            name: 'Test Session',
-            status: 'active',
-            opencode_session_id: 'opc-session-1',
-            mode: 'build',
-            agent_sdk: 'codex',
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-            completed_at: null
-          }),
-          getDraft: vi.fn().mockResolvedValue(null),
-          updateDraft: vi.fn().mockResolvedValue(undefined)
-        },
-        worktree: {
-          get: vi.fn().mockResolvedValue({
-            id: 'wt-1',
-            project_id: 'proj-1',
-            name: 'WT',
-            branch_name: 'main',
-            path: '/tmp/worktree-codex-steer',
-            status: 'active',
-            is_default: true,
-            created_at: new Date().toISOString(),
-            last_accessed_at: new Date().toISOString()
-          }),
-          update: vi.fn().mockResolvedValue(null)
-        }
-      },
-      writable: true,
-      configurable: true
-    })
-
-    Object.defineProperty(window, 'opencodeOps', {
-      value: {
-        reconnect: vi.fn().mockResolvedValue({ success: true }),
-        connect: vi.fn().mockResolvedValue({ success: false }),
-        prompt: vi.fn().mockResolvedValue({ success: true }),
-        steer: vi.fn().mockResolvedValue({
-          success: true,
-          insertedMessageId: 'turn-1:user:2',
-          nextAssistantMessageId: 'turn-1:assistant:2',
-          turnId: 'turn-1'
-        }),
-        command: vi.fn().mockResolvedValue({ success: true }),
-        fork: vi.fn().mockResolvedValue({ success: true }),
-        sessionInfo: vi
-          .fn()
-          .mockResolvedValue({ success: true, revertMessageID: null, revertDiff: null }),
-        undo: vi.fn().mockResolvedValue({ success: true }),
-        redo: vi.fn().mockResolvedValue({ success: true }),
-        disconnect: vi.fn().mockResolvedValue({ success: true }),
-        abort: vi.fn().mockResolvedValue({ success: true }),
-        getMessages: vi.fn().mockResolvedValue({
-          success: true,
-          messages: [
-            {
-              info: {
-                id: 'turn-1:user',
-                role: 'user',
-                time: { created: Date.now() - 2000 }
-              },
-              parts: [{ type: 'text', text: 'First question' }]
-            },
-            {
-              info: {
-                id: 'turn-1:assistant',
-                role: 'assistant',
-                time: { created: Date.now() - 1000 }
-              },
-              parts: [{ type: 'text', text: 'First answer' }]
-            }
-          ]
-        }),
-        listModels: vi.fn().mockResolvedValue({ success: true, providers: [] }),
-        setModel: vi.fn().mockResolvedValue({ success: true }),
-        modelInfo: vi.fn().mockResolvedValue({ success: true }),
-        questionReply: vi.fn().mockResolvedValue({ success: true }),
-        questionReject: vi.fn().mockResolvedValue({ success: true }),
-        permissionReply: vi.fn().mockResolvedValue({ success: true }),
-        permissionList: vi.fn().mockResolvedValue({ success: true, permissions: [] }),
-        commands: vi.fn().mockResolvedValue({ success: true, commands: [] }),
-        capabilities: vi.fn().mockResolvedValue({
-          success: true,
-          capabilities: {
-            supportsUndo: true,
-            supportsRedo: true,
-            supportsCommands: true,
-            supportsPermissionRequests: true,
-            supportsQuestionPrompts: true,
-            supportsModelSelection: true,
-            supportsReconnect: true,
-            supportsPartialStreaming: true,
-            supportsSteer: true
-          }
-        }),
-        onStream: vi.fn().mockImplementation((callback: (event: Record<string, unknown>) => void) => {
-          ;(window as Window & { __testStreamCallback?: typeof callback }).__testStreamCallback = callback
-          return () => {}
-        })
-      },
-      writable: true,
-      configurable: true
-    })
-
-    Object.defineProperty(window, 'systemOps', {
-      value: {
-        isLogMode: vi.fn().mockResolvedValue(false),
-        getLogDir: vi.fn().mockResolvedValue('/tmp/logs'),
-        getAppVersion: vi.fn().mockResolvedValue('1.0.0'),
-        getAppPaths: vi.fn().mockResolvedValue({ userData: '/tmp', home: '/tmp', logs: '/tmp/logs' })
-      },
-      writable: true,
-      configurable: true
-    })
-
-    Object.defineProperty(window, 'loggingOps', {
-      value: {
-        createResponseLog: vi.fn().mockResolvedValue('/tmp/log.jsonl'),
-        appendResponseLog: vi.fn().mockResolvedValue(undefined)
-      },
-      writable: true,
-      configurable: true
-    })
-
-    Object.defineProperty(window, 'bash', {
-      value: {
-        getRun: vi.fn().mockResolvedValue(null),
-        onStream: vi.fn().mockReturnValue(() => {})
-      },
-      writable: true,
-      configurable: true
-    })
   })
 
   afterEach(() => {
@@ -311,7 +477,7 @@ describe('Codex steer boundary ordering', () => {
     await user.click(screen.getByTitle('Steer — inject into active turn'))
 
     await waitFor(() => {
-      expect(window.opencodeOps.steer).toHaveBeenCalledWith(
+      expect(apiMocks.opencodeApi.steer).toHaveBeenCalledWith(
         '/tmp/worktree-codex-steer',
         'opc-session-1',
         'Follow-up steer'

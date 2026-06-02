@@ -3,9 +3,13 @@ import { vi, describe, test, expect, beforeEach } from 'vitest'
 // Mock electron + logger BEFORE importing notificationService (pattern copied
 // from test/phase-23/session-1/notification-queued-suppression.test.ts).
 const mockSetBadge = vi.fn()
+const mockSetBadgeCount = vi.fn()
 const mockNotificationShow = vi.fn()
 const mockNotificationOn = vi.fn()
 const notificationCtorSpy = vi.fn()
+const backendManagerMock = vi.hoisted(() => ({
+  publishDesktopBackendEvent: vi.fn()
+}))
 let notificationsSupported = true
 
 vi.mock('electron', () => ({
@@ -24,7 +28,8 @@ vi.mock('electron', () => ({
     getPath: () => '/tmp/test-home',
     dock: {
       setBadge: (...args: string[]) => mockSetBadge(...args)
-    }
+    },
+    setBadgeCount: (...args: number[]) => mockSetBadgeCount(...args)
   }
 }))
 
@@ -34,6 +39,10 @@ vi.mock('../../../src/main/services/logger', () => ({
     warn: vi.fn(),
     error: vi.fn()
   })
+}))
+
+vi.mock('../../../src/main/desktop/backend-manager', () => ({
+  publishDesktopBackendEvent: backendManagerMock.publishDesktopBackendEvent
 }))
 
 import { notificationService } from '../../../src/main/services/notification-service'
@@ -52,12 +61,10 @@ function createMockWindow(): {
   triggerFocus: () => void
   showSpy: ReturnType<typeof vi.fn>
   focusSpy: ReturnType<typeof vi.fn>
-  sendSpy: ReturnType<typeof vi.fn>
 } {
   let focusHandler: (() => void) | undefined
   const showSpy = vi.fn()
   const focusSpy = vi.fn()
-  const sendSpy = vi.fn()
   const mockWindow = {
     on: vi.fn((event: string, handler: () => void) => {
       if (event === 'focus') focusHandler = handler
@@ -65,16 +72,13 @@ function createMockWindow(): {
     show: showSpy,
     focus: focusSpy,
     isDestroyed: vi.fn(() => false),
-    webContents: {
-      send: sendSpy
-    }
+    isFocused: vi.fn(() => false)
   } as unknown as BrowserWindow
   return {
     window: mockWindow,
     triggerFocus: () => focusHandler?.(),
     showSpy,
-    focusSpy,
-    sendSpy
+    focusSpy
   }
 }
 
@@ -129,6 +133,20 @@ describe('Phase 23 · Session 1: showPendingUserFeedback', () => {
     expect(mockSetBadge).not.toHaveBeenCalled()
   })
 
+  test('reports whether native notifications should be gated by an unfocused window', () => {
+    const { window } = createMockWindow()
+    notificationService.setMainWindow(window)
+
+    expect(notificationService.shouldNotifyWhenWindowUnfocused()).toBe(true)
+
+    vi.mocked(window.isFocused).mockReturnValue(true)
+    expect(notificationService.shouldNotifyWhenWindowUnfocused()).toBe(false)
+
+    vi.mocked(window.isFocused).mockReturnValue(false)
+    vi.mocked(window.isDestroyed).mockReturnValue(true)
+    expect(notificationService.shouldNotifyWhenWindowUnfocused()).toBe(false)
+  })
+
   test('does NOT apply queued-message suppression (feedback must always fire)', () => {
     notificationService.setSessionQueuedState(baseData.sessionId, true)
     notificationService.showPendingUserFeedback(baseData, 'question')
@@ -137,7 +155,7 @@ describe('Phase 23 · Session 1: showPendingUserFeedback', () => {
   })
 
   test('clicking the notification navigates to the session', () => {
-    const { window, showSpy, focusSpy, sendSpy } = createMockWindow()
+    const { window, showSpy, focusSpy } = createMockWindow()
     notificationService.setMainWindow(window)
     // setMainWindow called before the Notification is constructed — clear
     // any mock state on the Notification-level spies so our handler lookup
@@ -154,10 +172,13 @@ describe('Phase 23 · Session 1: showPendingUserFeedback', () => {
 
     expect(showSpy).toHaveBeenCalledTimes(1)
     expect(focusSpy).toHaveBeenCalledTimes(1)
-    expect(sendSpy).toHaveBeenCalledWith('notification:navigate', {
-      projectId: 'p-1',
-      worktreeId: 'wt-1',
-      sessionId: 's-1'
-    })
+    expect(backendManagerMock.publishDesktopBackendEvent).toHaveBeenCalledWith(
+      'notification:navigate',
+      {
+        projectId: 'p-1',
+        worktreeId: 'wt-1',
+        sessionId: 's-1'
+      }
+    )
   })
 })

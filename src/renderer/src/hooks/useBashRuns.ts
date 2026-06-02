@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { Effect, Either } from 'effect'
 import { toast } from '@/lib/toast'
 import { runIpcEffect } from '@/lib/effect'
+import { bashApi } from '@/api/bash-api'
 
 export interface BashRunView {
   id: string
@@ -24,31 +25,29 @@ export function useBashRuns(sessionId: string): {
   // Seed state from any existing run on mount
   useEffect(() => {
     let cancelled = false
-    Effect.runPromise(
-      Effect.either(
-        runIpcEffect(() => window.bash.getRun(sessionId))
-      )
-    ).then((result) => {
-      if (cancelled || Either.isLeft(result)) return
+    Effect.runPromise(Effect.either(runIpcEffect(() => bashApi.getRun(sessionId)))).then(
+      (result) => {
+        if (cancelled || Either.isLeft(result)) return
 
-      const snapshot = result.right
-      if (!snapshot) return
+        const snapshot = result.right
+        if (!snapshot) return
 
-      // Avoid duplicates if a stream event already added this run
-      setRuns((prev) => {
-        if (prev.some((r) => r.id === snapshot.id)) return prev
-        return [
-          ...prev,
-          {
-            id: snapshot.id,
-            command: snapshot.command,
-            output: snapshot.outputBuffer,
-            status: snapshot.status,
-            startedAt: snapshot.startedAt
-          }
-        ]
-      })
-    })
+        // Avoid duplicates if a stream event already added this run
+        setRuns((prev) => {
+          if (prev.some((r) => r.id === snapshot.id)) return prev
+          return [
+            ...prev,
+            {
+              id: snapshot.id,
+              command: snapshot.command,
+              output: snapshot.outputBuffer,
+              status: snapshot.status,
+              startedAt: snapshot.startedAt
+            }
+          ]
+        })
+      }
+    )
     return () => {
       cancelled = true
     }
@@ -56,7 +55,7 @@ export function useBashRuns(sessionId: string): {
 
   // Subscribe to stream events
   useEffect(() => {
-    const unsubscribe = window.bash.onStream((event: BashStreamEvent) => {
+    const unsubscribe = bashApi.onStream((event) => {
       if (event.sessionId !== sessionId) return
 
       if (event.type === 'start') {
@@ -93,9 +92,7 @@ export function useBashRuns(sessionId: string): {
   const runCommand = useCallback(
     async (command: string, cwd: string) => {
       const result = await Effect.runPromise(
-        Effect.either(
-          runIpcEffect(() => window.bash.run(sessionId, command, cwd))
-        )
+        Effect.either(runIpcEffect(() => bashApi.run(sessionId, command, cwd)))
       )
       if (Either.isLeft(result)) {
         toast.error(result.left.error)
@@ -105,9 +102,7 @@ export function useBashRuns(sessionId: string): {
   )
 
   const abort = useCallback(async () => {
-    await Effect.runPromise(
-      Effect.either(runIpcEffect(() => window.bash.abort(sessionId)))
-    )
+    await Effect.runPromise(Effect.either(runIpcEffect(() => bashApi.abort(sessionId))))
   }, [sessionId])
 
   return { runs, isRunning, runCommand, abort }

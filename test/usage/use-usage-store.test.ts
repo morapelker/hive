@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { resetRendererRpcClientForTests, setRendererRpcClient } from '@/api/rpc-client'
 import { useUsageStore, type UsageData } from '@/stores/useUsageStore'
 
 const sampleUsage: UsageData = {
@@ -24,18 +25,17 @@ function usageState(): ReturnType<typeof useUsageStore.getState> & {
 }
 
 describe('useUsageStore', () => {
+  let request: ReturnType<typeof vi.fn>
+
   beforeEach(() => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-05-14T09:00:00.000Z'))
 
-    Object.defineProperty(window, 'usageOps', {
-      writable: true,
-      configurable: true,
-      value: {
-        fetch: vi.fn(),
-        fetchOpenai: vi.fn()
-      }
+    request = vi.fn(async (method: string) => {
+      if (method === 'accountOps.listSaved') return []
+      return null
     })
+    setRendererRpcClient({ request, subscribe: vi.fn() })
 
     useUsageStore.setState({
       anthropicUsage: null,
@@ -52,6 +52,7 @@ describe('useUsageStore', () => {
   })
 
   afterEach(() => {
+    resetRendererRpcClientForTests()
     vi.useRealTimers()
   })
 
@@ -60,9 +61,10 @@ describe('useUsageStore', () => {
       anthropicUsage: sampleUsage,
       anthropicLastFetchedAt: null
     })
-    vi.mocked(window.usageOps.fetch).mockResolvedValue({
-      success: true,
-      value: { success: false, error: 'No access token found' }
+    request.mockImplementation(async (method: string) => {
+      if (method === 'usageOps.fetch') return { success: false, error: 'No access token found' }
+      if (method === 'accountOps.listSaved') return []
+      return null
     })
 
     await useUsageStore.getState().fetchUsageForProvider('anthropic')
@@ -75,10 +77,16 @@ describe('useUsageStore', () => {
   })
 
   it('records envelope-level Anthropic failures without rejecting or advancing debounce', async () => {
-    vi.mocked(window.usageOps.fetch).mockResolvedValue({
-      success: false,
-      errorCode: 'ZodDecodeError',
-      error: 'Could not decode usage response'
+    request.mockImplementation(async (method: string) => {
+      if (method === 'usageOps.fetch') {
+        return {
+          success: false,
+          errorCode: 'ZodDecodeError',
+          error: 'Could not decode usage response'
+        }
+      }
+      if (method === 'accountOps.listSaved') return []
+      return null
     })
 
     await expect(
@@ -95,9 +103,10 @@ describe('useUsageStore', () => {
     useUsageStore.setState({
       anthropicLastError: 'No access token found'
     } as Partial<ReturnType<typeof useUsageStore.getState>>)
-    vi.mocked(window.usageOps.fetch).mockResolvedValue({
-      success: true,
-      value: { success: true, data: sampleUsage }
+    request.mockImplementation(async (method: string) => {
+      if (method === 'usageOps.fetch') return { success: true, data: sampleUsage }
+      if (method === 'accountOps.listSaved') return []
+      return null
     })
 
     await useUsageStore.getState().fetchUsageForProvider('anthropic')
@@ -110,9 +119,10 @@ describe('useUsageStore', () => {
   })
 
   it('records inner OpenAI failures without advancing debounce', async () => {
-    vi.mocked(window.usageOps.fetchOpenai).mockResolvedValue({
-      success: true,
-      value: { success: false, error: 'OpenAI auth failed' }
+    request.mockImplementation(async (method: string) => {
+      if (method === 'usageOps.fetchOpenai') return { success: false, error: 'OpenAI auth failed' }
+      if (method === 'accountOps.listSaved') return []
+      return null
     })
 
     await useUsageStore.getState().forceRefreshProvider('openai')

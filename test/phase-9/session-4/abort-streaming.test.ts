@@ -1,4 +1,11 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest'
+import { opencodeApi } from '../../../src/renderer/src/api/opencode-api'
+
+vi.mock('../../../src/renderer/src/api/opencode-api', () => ({
+  opencodeApi: {
+    abort: vi.fn()
+  }
+}))
 
 // Mock the stores before importing any components
 vi.mock('../../../src/renderer/src/stores', () => ({
@@ -53,30 +60,15 @@ vi.mock('../../../src/renderer/src/stores', () => ({
   })
 }))
 
-// Mock opencodeOps
-const mockAbort = vi.fn().mockResolvedValue({ success: true })
-const mockOpencodeOps = {
-  connect: vi.fn().mockResolvedValue({ success: true, sessionId: 'oc-1' }),
-  reconnect: vi.fn().mockResolvedValue({ success: true }),
-  prompt: vi.fn().mockResolvedValue({ success: true }),
-  abort: mockAbort,
-  disconnect: vi.fn().mockResolvedValue({ success: true }),
-  getMessages: vi.fn().mockResolvedValue({ success: true, messages: [] }),
-  listModels: vi.fn().mockResolvedValue({ success: true, providers: {} }),
-  setModel: vi.fn().mockResolvedValue({ success: true }),
-  modelInfo: vi.fn().mockResolvedValue({ success: true, model: null }),
-  commands: vi.fn().mockResolvedValue({ success: true, commands: [] }),
-  onStream: vi.fn().mockReturnValue(() => {})
-}
-
-Object.defineProperty(window, 'opencodeOps', {
-  writable: true,
-  value: mockOpencodeOps
-})
+const mockAbort = vi.mocked(opencodeApi.abort)
 
 describe('Session 4: Abort Streaming', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockAbort.mockResolvedValue({
+      success: true,
+      value: { success: true }
+    })
   })
 
   describe('Stop button visibility logic', () => {
@@ -114,29 +106,35 @@ describe('Session 4: Abort Streaming', () => {
     })
   })
 
-  describe('IPC abort chain', () => {
-    test('window.opencodeOps.abort is callable with correct params', async () => {
+  describe('opencodeApi abort chain', () => {
+    test('opencodeApi.abort is callable with correct params', async () => {
       const worktreePath = '/path/to/worktree'
       const opencodeSessionId = 'session-123'
 
-      await window.opencodeOps.abort(worktreePath, opencodeSessionId)
+      await opencodeApi.abort(worktreePath, opencodeSessionId)
 
       expect(mockAbort).toHaveBeenCalledWith(worktreePath, opencodeSessionId)
       expect(mockAbort).toHaveBeenCalledTimes(1)
     })
 
     test('abort returns success result', async () => {
-      mockAbort.mockResolvedValueOnce({ success: true })
+      mockAbort.mockResolvedValueOnce({
+        success: true,
+        value: { success: true }
+      })
 
-      const result = await window.opencodeOps.abort('/path', 'session-1')
-      expect(result).toEqual({ success: true })
+      const result = await opencodeApi.abort('/path', 'session-1')
+      expect(result).toEqual({ success: true, value: { success: true } })
     })
 
     test('abort returns failure result on error', async () => {
-      mockAbort.mockResolvedValueOnce({ success: false, error: 'No session' })
+      mockAbort.mockResolvedValueOnce({
+        success: true,
+        value: { success: false, error: 'No session' }
+      })
 
-      const result = await window.opencodeOps.abort('/path', 'session-1')
-      expect(result).toEqual({ success: false, error: 'No session' })
+      const result = await opencodeApi.abort('/path', 'session-1')
+      expect(result).toEqual({ success: true, value: { success: false, error: 'No session' } })
     })
   })
 
@@ -148,7 +146,7 @@ describe('Session 4: Abort Streaming', () => {
 
       // This mirrors the guard in handleAbort
       if (!worktreePath || !opencodeSessionId) return
-      await window.opencodeOps.abort(worktreePath, opencodeSessionId)
+      await opencodeApi.abort(worktreePath, opencodeSessionId)
 
       expect(mockAbort).not.toHaveBeenCalled()
     })
@@ -158,7 +156,7 @@ describe('Session 4: Abort Streaming', () => {
       const opencodeSessionId: string | null = null
 
       if (!worktreePath || !opencodeSessionId) return
-      await window.opencodeOps.abort(worktreePath, opencodeSessionId)
+      await opencodeApi.abort(worktreePath, opencodeSessionId)
 
       expect(mockAbort).not.toHaveBeenCalled()
     })
@@ -168,7 +166,7 @@ describe('Session 4: Abort Streaming', () => {
       const opencodeSessionId: string | null = 'session-123'
 
       if (!worktreePath || !opencodeSessionId) return
-      await window.opencodeOps.abort(worktreePath, opencodeSessionId)
+      await opencodeApi.abort(worktreePath, opencodeSessionId)
 
       expect(mockAbort).toHaveBeenCalledWith('/path/to/worktree', 'session-123')
     })

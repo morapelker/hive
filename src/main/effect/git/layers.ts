@@ -1,10 +1,9 @@
 import { execFile, spawn } from 'child_process'
 import { existsSync, mkdirSync, rmSync, cpSync, writeFileSync, unlinkSync, readdirSync, readFileSync, appendFileSync, mkdtempSync } from 'fs'
 import { readFile as readFileAsync } from 'fs/promises'
-import { tmpdir } from 'os'
+import { homedir, tmpdir } from 'os'
 import { basename, dirname, join } from 'path'
 import { promisify } from 'util'
-import { app } from 'electron'
 import { Effect, Either, Layer, Ref } from 'effect'
 import simpleGit, { type SimpleGit, type BranchSummary } from 'simple-git'
 
@@ -22,8 +21,13 @@ type GitOperation = 'merge' | 'rebase' | 'cherry-pick' | 'apply'
 const normalizeBranchDisplayName = (branchName: string): string =>
   branchName.startsWith('remotes/') ? branchName.replace(/^remotes\//, '') : branchName
 
+export const resolveGitWorktreesDir = (
+  projectName: string,
+  homeDir: string = homedir()
+): string => join(homeDir, '.hive-worktrees', projectName)
+
 const ensureWorktreesDir = (projectName: string): string => {
-  const projectWorktreesDir = join(app.getPath('home'), '.hive-worktrees', projectName)
+  const projectWorktreesDir = resolveGitWorktreesDir(projectName)
   if (!existsSync(projectWorktreesDir)) {
     mkdirSync(projectWorktreesDir, { recursive: true })
   }
@@ -950,7 +954,12 @@ const make = Effect.gen(function* () {
             const lines = block.split('\n')
             const wtPath = lines.find((l) => l.startsWith('worktree '))?.replace('worktree ', '')
             const branch = lines.find((l) => l.startsWith('branch '))?.replace('branch refs/heads/', '')
-            if (wtPath && branch) checkedOut.set(branch, wtPath)
+            if (wtPath && branch) {
+              checkedOut.set(
+                branch,
+                normalizeWorktreePath(wtPath) === normalizeWorktreePath(repoPath) ? repoPath : wtPath
+              )
+            }
           }
           return Object.entries(branchSummary.branches).map(([name, info]) => ({
             name: normalizeBranchDisplayName(name),

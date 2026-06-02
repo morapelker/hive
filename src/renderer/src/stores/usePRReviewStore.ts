@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { PRReviewComment } from '@shared/types/git'
-import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { gitApi } from '@/api/git-api'
 
 interface PRReviewStoreState {
   // Data - keyed by worktreeId
@@ -52,7 +52,7 @@ export const usePRReviewStore = create<PRReviewStoreState>((set, get) => ({
       return { loading, error }
     })
     try {
-      const result = unwrapEnvelope(await window.gitOps.getPRReviewComments(projectPath, prNumber))
+      const result = await gitApi.getPRReviewComments(projectPath, prNumber)
       if (result.success && result.comments) {
         set((s) => {
           const comments = new Map(s.comments)

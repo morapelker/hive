@@ -2,10 +2,9 @@ import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { useKanbanStore } from './useKanbanStore'
 import { LANGUAGE_MAP } from '@/components/projects/LanguageIcon'
-import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
+import { dbApi } from '@/api/db-api'
+import { projectApi } from '@/api/project-api'
 import type { CustomProjectCommand } from '@/lib/custom-commands'
-
-const db = unwrapEnvelopeApi(() => window.db)
 
 // Project type matching the database schema
 interface Project {
@@ -93,7 +92,7 @@ export const useProjectStore = create<ProjectState>()(
       loadProjects: async () => {
         set({ isLoading: true, error: null })
         try {
-          const projects = await db.project.getAll()
+          const projects = await dbApi.project.getAll<Project>()
           set({ projects, isLoading: false })
 
           // On startup, only scan projects that have no visual icon at all
@@ -107,10 +106,8 @@ export const useProjectStore = create<ProjectState>()(
             ;(async () => {
               for (const project of unscanned) {
                 try {
-                  const detectedIcon = unwrapEnvelope(
-                    await window.projectOps.detectFavicon(project.path)
-                  )
-                  await db.project.update(project.id, {
+                  const detectedIcon = await projectApi.detectFavicon(project.path)
+                  await dbApi.project.update(project.id, {
                     detected_icon: detectedIcon ?? 'none'
                   })
                   set((state) => ({
@@ -136,30 +133,29 @@ export const useProjectStore = create<ProjectState>()(
       addProject: async (path: string) => {
         try {
           // Validate the project path
-          const validation = unwrapEnvelope(await window.projectOps.validateProject(path))
+          const validation = await projectApi.validateProject(path)
           if (!validation.success) {
             return { success: false, error: validation.error }
           }
 
           // Check if project already exists
-          const existingProject = await db.project.getByPath(path)
+          const existingProject = await dbApi.project.getByPath<Project>(path)
           if (existingProject) {
             return { success: false, error: 'This project has already been added to Hive.' }
           }
 
           // Create the project
-          const project = await db.project.create({
+          const project = await dbApi.project.create<Project>({
             name: validation.name!,
             path: validation.path!
           })
 
           // Auto-detect language (fire and forget for speed)
-          window.projectOps
+          projectApi
             .detectLanguage(validation.path!)
-            .then(unwrapEnvelope)
             .then(async (language) => {
               if (language) {
-                await db.project.update(project.id, { language })
+                await dbApi.project.update(project.id, { language })
                 set((state) => ({
                   projects: state.projects.map((p) =>
                     p.id === project.id ? { ...p, language } : p
@@ -172,11 +168,10 @@ export const useProjectStore = create<ProjectState>()(
             })
 
           // Auto-detect favicon (fire and forget for speed)
-          window.projectOps
+          projectApi
             .detectFavicon(validation.path!)
-            .then(unwrapEnvelope)
             .then(async (detectedIcon) => {
-              await db.project.update(project.id, {
+              await dbApi.project.update(project.id, {
                 detected_icon: detectedIcon ?? 'none'
               })
               set((state) => ({
@@ -216,7 +211,7 @@ export const useProjectStore = create<ProjectState>()(
       // Remove a project
       removeProject: async (id: string) => {
         try {
-          const success = await db.project.delete(id)
+          const success = await dbApi.project.delete(id)
           if (success) {
             set((state) => {
               const newExpandedIds = new Set(state.expandedProjectIds)
@@ -238,7 +233,7 @@ export const useProjectStore = create<ProjectState>()(
       // Update project name
       updateProjectName: async (id: string, name: string) => {
         try {
-          const updatedProject = await db.project.update(id, { name })
+          const updatedProject = await dbApi.project.update(id, { name })
           if (updatedProject) {
             set((state) => ({
               projects: state.projects.map((p) => (p.id === id ? { ...p, name } : p)),
@@ -271,7 +266,7 @@ export const useProjectStore = create<ProjectState>()(
         }
       ) => {
         try {
-          const updatedProject = await db.project.update(id, data)
+          const updatedProject = await dbApi.project.update(id, data)
           if (updatedProject) {
             // Convert tags from string[] to JSON string for local state
             const { tags, ...rest } = data
@@ -325,7 +320,7 @@ export const useProjectStore = create<ProjectState>()(
       // Touch project (update last_accessed_at)
       touchProject: async (id: string) => {
         try {
-          await db.project.touch(id)
+          await dbApi.project.touch(id)
           // Update local state
           set((state) => ({
             projects: state.projects.map((p) =>
@@ -343,18 +338,17 @@ export const useProjectStore = create<ProjectState>()(
         if (!project) return
         try {
           const path = detectionPath ?? project.path
-          const language = unwrapEnvelope(await window.projectOps.detectLanguage(path))
-          await db.project.update(projectId, { language })
+          const language = await projectApi.detectLanguage(path)
+          await dbApi.project.update(projectId, { language })
           set((state) => ({
             projects: state.projects.map((p) => (p.id === projectId ? { ...p, language } : p))
           }))
 
           // Also refresh favicon detection
-          window.projectOps
+          projectApi
             .detectFavicon(path)
-            .then(unwrapEnvelope)
             .then(async (detectedIcon) => {
-              await db.project.update(projectId, {
+              await dbApi.project.update(projectId, {
                 detected_icon: detectedIcon ?? 'none'
               })
               set((state) => ({
@@ -389,7 +383,7 @@ export const useProjectStore = create<ProjectState>()(
 
           // Persist new order to database (fire and forget)
           const orderedIds = projects.map((p) => p.id)
-          db.project.reorder(orderedIds).catch(() => {
+          dbApi.project.reorder(orderedIds).catch(() => {
             // Ignore reorder persistence errors
           })
 
@@ -400,8 +394,8 @@ export const useProjectStore = create<ProjectState>()(
       // Sort projects by last AI message activity (newest first, NULLs last)
       sortProjectsByLastMessage: async () => {
         try {
-          const orderedIds = await db.project.sortByLastMessage()
-          await db.project.reorder(orderedIds)
+          const orderedIds = await dbApi.project.sortByLastMessage()
+          await dbApi.project.reorder(orderedIds)
 
           set((state) => {
             const projectMap = new Map(state.projects.map((p) => [p.id, p]))

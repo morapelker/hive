@@ -1,9 +1,8 @@
 import { create } from 'zustand'
 import { toast } from '@/lib/toast'
 import { useWorktreeStore } from './useWorktreeStore'
-import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
-
-const db = unwrapEnvelopeApi(() => window.db)
+import { dbApi } from '@/api/db-api'
+import { connectionApi } from '@/api/connection-api'
 
 interface PinnedState {
   pinnedWorktreeIds: Set<string>
@@ -49,8 +48,8 @@ export const usePinnedStore = create<PinnedState>()((set, get) => ({
   loadPinned: async () => {
     try {
       const [pinnedWorktrees, pinnedConnections] = await Promise.all([
-        db.worktree.getPinned(),
-        window.connectionOps.getPinned().then(unwrapEnvelope)
+        dbApi.worktree.getPinned<{ id: string; project_id: string }>(),
+        connectionApi.getPinned()
       ])
 
       const worktreeIds = new Set(pinnedWorktrees.map((wt) => wt.id))
@@ -84,7 +83,7 @@ export const usePinnedStore = create<PinnedState>()((set, get) => ({
   },
 
   pinWorktree: async (id: string) => {
-    const result = await db.worktree.setPinned(id, true)
+    const result = await dbApi.worktree.setPinned(id, true)
     if (result.success) {
       const projectId = findProjectIdForWorktree(id)
       set((state) => {
@@ -100,7 +99,7 @@ export const usePinnedStore = create<PinnedState>()((set, get) => ({
   },
 
   unpinWorktree: async (id: string) => {
-    const result = await db.worktree.setPinned(id, false)
+    const result = await dbApi.worktree.setPinned(id, false)
     if (result.success) {
       const projectId = findProjectIdForWorktree(id)
       set((state) => {
@@ -121,7 +120,7 @@ export const usePinnedStore = create<PinnedState>()((set, get) => ({
   },
 
   pinConnection: async (id: string) => {
-    const result = unwrapEnvelope(await window.connectionOps.setPinned(id, true))
+    const result = await connectionApi.setPinned(id, true)
     if (result.success) {
       set((state) => {
         const next = new Set(state.pinnedConnectionIds)
@@ -134,7 +133,7 @@ export const usePinnedStore = create<PinnedState>()((set, get) => ({
   },
 
   unpinConnection: async (id: string) => {
-    const result = unwrapEnvelope(await window.connectionOps.setPinned(id, false))
+    const result = await connectionApi.setPinned(id, false)
     if (result.success) {
       set((state) => {
         const next = new Set(state.pinnedConnectionIds)

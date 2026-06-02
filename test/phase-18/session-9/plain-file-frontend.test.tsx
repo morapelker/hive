@@ -5,6 +5,23 @@ import {
   type ActiveDiff
 } from '../../../src/renderer/src/stores/useFileViewerStore'
 
+const gitApiMocks = vi.hoisted(() => ({
+  getFileContent: vi.fn(),
+  getDiff: vi.fn()
+}))
+
+const projectApiMocks = vi.hoisted(() => ({
+  copyToClipboard: vi.fn()
+}))
+
+vi.mock('@/api/git-api', () => ({
+  gitApi: gitApiMocks
+}))
+
+vi.mock('@/api/project-api', () => ({
+  projectApi: projectApiMocks
+}))
+
 describe('Session 9: Plain File Rendering Frontend', () => {
   // ── Store: isNewFile field in interfaces ──────────────────────────────────
   describe('useFileViewerStore isNewFile support', () => {
@@ -163,32 +180,17 @@ describe('Session 9: Plain File Rendering Frontend', () => {
     let mockGetDiff: ReturnType<typeof vi.fn>
 
     beforeEach(() => {
-      mockGetFileContent = vi.fn().mockResolvedValue({
+      vi.clearAllMocks()
+
+      mockGetFileContent = gitApiMocks.getFileContent.mockResolvedValue({
         success: true,
         content: 'const x = 1\nexport default x'
       })
-      mockGetDiff = vi.fn().mockResolvedValue({
+      mockGetDiff = gitApiMocks.getDiff.mockResolvedValue({
         success: true,
         diff: '--- a/file.ts\n+++ b/file.ts\n@@ -1 +1 @@\n-old\n+new'
       })
-
-      Object.defineProperty(window, 'gitOps', {
-        writable: true,
-        configurable: true,
-        value: {
-          ...window.gitOps,
-          getFileContent: mockGetFileContent,
-          getDiff: mockGetDiff
-        }
-      })
-
-      Object.defineProperty(window, 'projectOps', {
-        writable: true,
-        configurable: true,
-        value: {
-          copyToClipboard: vi.fn().mockResolvedValue(undefined)
-        }
-      })
+      projectApiMocks.copyToClipboard.mockResolvedValue(undefined)
     })
 
     test('fetches raw content via getFileContent when isNewFile is true', async () => {
@@ -295,6 +297,9 @@ describe('Session 9: Plain File Rendering Frontend', () => {
       )
 
       expect(getByText('New file')).toBeInTheDocument()
+      await waitFor(() => {
+        expect(mockGetFileContent).toHaveBeenCalledWith('/worktree', 'src/new-file.ts')
+      })
     })
 
     test('shows "New file" for staged added files (isNewFile=true, staged=true)', async () => {
@@ -314,6 +319,9 @@ describe('Session 9: Plain File Rendering Frontend', () => {
       )
 
       expect(getByText('New file')).toBeInTheDocument()
+      await waitFor(() => {
+        expect(mockGetFileContent).toHaveBeenCalledWith('/worktree', 'src/added.ts')
+      })
     })
 
     test('shows "Staged" for staged modified files', async () => {
@@ -333,6 +341,9 @@ describe('Session 9: Plain File Rendering Frontend', () => {
       )
 
       expect(getByText('Staged')).toBeInTheDocument()
+      await waitFor(() => {
+        expect(mockGetDiff).toHaveBeenCalled()
+      })
     })
 
     test('shows "Unstaged" for unstaged modified files', async () => {
@@ -352,6 +363,9 @@ describe('Session 9: Plain File Rendering Frontend', () => {
       )
 
       expect(getByText('Unstaged')).toBeInTheDocument()
+      await waitFor(() => {
+        expect(mockGetDiff).toHaveBeenCalled()
+      })
     })
   })
 })

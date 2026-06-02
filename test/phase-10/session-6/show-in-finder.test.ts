@@ -1,17 +1,42 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest'
 import { useSettingsStore, type QuickActionType } from '@/stores/useSettingsStore'
 
+const apiMocks = vi.hoisted(() => ({
+  dbApi: {
+    setting: {
+      set: vi.fn()
+    }
+  },
+  settingsApi: {
+    onSettingsUpdated: vi.fn()
+  }
+}))
+
+vi.mock('@/api/db-api', () => ({
+  dbApi: apiMocks.dbApi
+}))
+
+vi.mock('@/api/settings-api', () => ({
+  settingsApi: apiMocks.settingsApi
+}))
+
 /**
  * Session 6: Show in Finder — Tests
  *
  * These tests verify:
  * 1. QuickActionType includes 'finder'
  * 2. The ACTIONS array in QuickActions includes a finder entry
- * 3. executeAction routes finder to projectOps.showInFolder
- * 4. Command palette reveal-in-finder uses projectOps.showInFolder (not worktreeOps.openInFinder)
+ * 3. executeAction routes finder to projectApi.showInFolder
+ * 4. Command palette reveal-in-finder uses projectApi.showInFolder (not worktreeOps.openInFinder)
  */
 
 describe('Session 6: Show in Finder', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    apiMocks.dbApi.setting.set.mockResolvedValue(true)
+    apiMocks.settingsApi.onSettingsUpdated.mockReturnValue(vi.fn())
+  })
+
   describe('QuickActionType includes finder', () => {
     test('finder is a valid QuickActionType', () => {
       // TypeScript compile-time check: assigning 'finder' to QuickActionType
@@ -139,7 +164,7 @@ describe('Session 6: Show in Finder', () => {
   })
 
   describe('Command palette reveal-in-finder fix', () => {
-    test('useCommands source uses projectOps.showInFolder (not worktreeOps.openInFinder)', async () => {
+    test('useCommands source uses projectApi.showInFolder (not worktreeOps.openInFinder)', async () => {
       // Read the source to verify the fix — this is a source-level verification
       // The actual runtime test would require rendering the full command palette,
       // but we verify the import pattern is correct
@@ -151,9 +176,9 @@ describe('Session 6: Show in Finder', () => {
       )
 
       // Should contain the fixed call
-      expect(commandsSource).toContain('window.projectOps.showInFolder')
+      expect(commandsSource).toContain('projectApi.showInFolder')
       // Should NOT contain the old broken call
-      expect(commandsSource).not.toContain('window.worktreeOps.openInFinder')
+      expect(commandsSource).not.toContain('worktreeOps.openInFinder')
     })
   })
 })

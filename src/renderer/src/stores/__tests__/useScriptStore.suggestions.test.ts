@@ -1,39 +1,32 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { deleteBuffer } from '@/lib/output-ring-buffer'
+import type { ScriptOutputEvent } from '@shared/types/script'
+import { resetRendererRpcClientForTests, setRendererRpcClient } from '@/api/rpc-client'
 import { fireRunScript, useScriptStore } from '../useScriptStore'
-
-type ScriptOutputEvent = Parameters<typeof window.scriptOps.onOutput>[1] extends (
-  event: infer Event
-) => void
-  ? Event
-  : never
 
 describe('useScriptStore run suggestions', () => {
   const worktreeId = 'wt-suggestions'
   let emitOutput: (event: ScriptOutputEvent) => void
+  let request: ReturnType<typeof vi.fn>
 
   beforeEach(() => {
+    resetRendererRpcClientForTests()
     useScriptStore.setState({ scriptStates: {} })
     deleteBuffer(worktreeId)
     vi.clearAllMocks()
-
-    Object.defineProperty(window, 'scriptOps', {
-      writable: true,
-      configurable: true,
-      value: {
-        runProject: vi
-          .fn()
-          .mockResolvedValue({ success: true, value: { success: true, pid: 123 } }),
-        kill: vi.fn().mockResolvedValue({ success: true, value: { success: true } }),
-        killPid: vi.fn().mockResolvedValue({ success: true, value: { killed: true } }),
-        getPort: vi.fn().mockResolvedValue({ success: true, value: { port: null } }),
-        onOutput: vi.fn((_channel: string, callback: (event: ScriptOutputEvent) => void) => {
-          emitOutput = callback
+    request = vi.fn(async (method: string) => {
+      if (method === 'scriptOps.runProject') return { success: true, pid: 123 }
+      return null
+    })
+    setRendererRpcClient({
+      request,
+      subscribe: vi.fn(
+        (_channel: string, callback: (event: { channel: string; payload: unknown }) => void) => {
+          emitOutput = (event) => callback({ channel: `script:run:${worktreeId}`, payload: event })
           return vi.fn()
-        }),
-        offOutput: vi.fn()
-      }
+        }
+      )
     })
   })
 
@@ -46,6 +39,11 @@ describe('useScriptStore run suggestions', () => {
 
     emitOutput({ type: 'output', data: 'Run kill 1 to stop it.\n' })
 
+    expect(request).toHaveBeenCalledWith('scriptOps.runProject', {
+      commands: ['pnpm dev'],
+      cwd: '/tmp/project',
+      worktreeId
+    })
     expect(useScriptStore.getState().getScriptState(worktreeId).activeSuggestion).toMatchObject({
       signature: 'killPid:1',
       label: 'kill 1',

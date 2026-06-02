@@ -6,9 +6,10 @@ import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
 import { lastSendMode, messageSendTimes, userExplicitSendTimes } from '@/lib/message-send-times'
 import { snapshotTokenBaseline } from '@/lib/token-baselines'
-import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
-
-const db = unwrapEnvelopeApi(() => window.db)
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { opencodeApi } from '@/api/opencode-api'
+import { dbApi } from '@/api/db-api'
+import { terminalApi } from '@/api/terminal-api'
 
 type SessionModelSource = {
   id: string
@@ -61,7 +62,7 @@ export async function startBackgroundSessionPrompt(opts: {
     // (createClaudeTerminal -> dequeuePendingMessage). Without the live-PTY path
     // a follow-up to a running CLI session would be silently dropped.
     const { delivered } = unwrapEnvelope(
-      await window.terminalOps.sendClaudeCliPrompt(opts.sessionId, opts.prompt)
+      await terminalApi.sendClaudeCliPrompt(opts.sessionId, opts.prompt)
     )
     if (!delivered) {
       useSessionStore.getState().setPendingMessage(opts.sessionId, opts.prompt)
@@ -69,15 +70,13 @@ export async function startBackgroundSessionPrompt(opts: {
     return
   }
 
-  const connectResult = unwrapEnvelope(
-    await window.opencodeOps.connect(opts.worktreePath, opts.sessionId)
-  )
+  const connectResult = unwrapEnvelope(await opencodeApi.connect(opts.worktreePath, opts.sessionId))
   if (!connectResult.success || !connectResult.sessionId) {
     throw new Error(connectResult.error ?? 'Failed to connect to handoff session')
   }
 
   useSessionStore.getState().setOpenCodeSessionId(opts.sessionId, connectResult.sessionId)
-  await db.session.update(opts.sessionId, {
+  await dbApi.session.update(opts.sessionId, {
     opencode_session_id: connectResult.sessionId
   })
 
@@ -90,7 +89,7 @@ export async function startBackgroundSessionPrompt(opts: {
 
   const model = resolveBackgroundSessionModel(opts.sessionId)
   const result = unwrapEnvelope(
-    await window.opencodeOps.prompt(
+    await opencodeApi.prompt(
       opts.worktreePath,
       connectResult.sessionId,
       [{ type: 'text', text: opts.prompt }],

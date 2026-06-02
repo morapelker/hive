@@ -6,7 +6,11 @@ import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useSettingsStore, type EditorOption, type TerminalOption } from '@/stores/useSettingsStore'
 import { useProjectStore } from '@/stores/useProjectStore'
-import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { systemApi } from '@/api/system-api'
+import { worktreeApi } from '@/api/worktree-api'
+import { projectApi } from '@/api/project-api'
+import { connectionApi } from '@/api/connection-api'
+import { settingsApi } from '@/api/settings-api'
 
 function CursorIcon({ className }: { className?: string }): React.JSX.Element {
   return (
@@ -360,9 +364,8 @@ export function QuickActions(): React.JSX.Element | null {
       setXcworkspacePath(null)
       return
     }
-    window.projectOps
+    projectApi
       .findXcworkspace(searchPath)
-      .then(unwrapEnvelope)
       .then(setXcworkspacePath)
       .catch(() => setXcworkspacePath(null))
   }, [isSwiftProject, activePath, selectedProject?.path, isConnectionMode])
@@ -377,9 +380,8 @@ export function QuickActions(): React.JSX.Element | null {
       setIsAndroidProject(false)
       return
     }
-    window.projectOps
+    projectApi
       .isAndroidProject(searchPath)
-      .then(unwrapEnvelope)
       .then(setIsAndroidProject)
       .catch(() => setIsAndroidProject(false))
   }, [isKotlinOrJava, activePath, selectedProject?.path, isConnectionMode])
@@ -391,9 +393,9 @@ export function QuickActions(): React.JSX.Element | null {
     if (!activePath) return
     try {
       if (isConnectionMode) {
-        unwrapEnvelope(await window.connectionOps.openInEditor(activePath))
+        await connectionApi.openInEditor(activePath)
       } else {
-        unwrapEnvelope(await window.worktreeOps.openInEditor(activePath))
+        await worktreeApi.openInEditor(activePath)
       }
     } catch (error) {
       console.error('Open in editor failed:', error)
@@ -407,27 +409,25 @@ export function QuickActions(): React.JSX.Element | null {
         if (actionId === 'editor') {
           await handleOpenInEditor()
         } else if (actionId === 'copy-path') {
-          unwrapEnvelope(await window.projectOps.copyToClipboard(activePath))
+          await projectApi.copyToClipboard(activePath)
           setCopied(true)
           setTimeout(() => setCopied(false), 1500)
         } else if (actionId === 'copy-branch') {
           if (!branchName) return
-          unwrapEnvelope(await window.projectOps.copyToClipboard(branchName))
+          await projectApi.copyToClipboard(branchName)
           setBranchCopied(true)
           setTimeout(() => setBranchCopied(false), 1500)
         } else if (actionId === 'finder') {
-          unwrapEnvelope(await window.projectOps.showInFolder(activePath))
+          await projectApi.showInFolder(activePath)
         } else if (actionId === 'terminal') {
-          const result = unwrapEnvelope(
-            await window.settingsOps.openWithTerminal(
-              activePath,
-              defaultTerminal,
-              defaultTerminal === 'custom' ? customTerminalCommand : undefined
-            )
+          const result = await settingsApi.openWithTerminal(
+            activePath,
+            defaultTerminal,
+            defaultTerminal === 'custom' ? customTerminalCommand : undefined
           )
           if (!result.success) throw new Error(result.error ?? 'Failed to open in terminal')
         } else {
-          await window.systemOps.openInApp(actionId, activePath)
+          await systemApi.openInApp(actionId, activePath)
         }
       } catch (error) {
         console.error('Quick action failed:', error)
@@ -445,7 +445,7 @@ export function QuickActions(): React.JSX.Element | null {
           className="h-7 px-2 gap-1.5 text-xs cursor-pointer"
           disabled={disabled}
           onClick={() => {
-            window.projectOps.openPath(xcworkspacePath).then(unwrapEnvelope).catch(console.error)
+            projectApi.openPath(xcworkspacePath).catch(console.error)
           }}
           title="Open in Xcode"
           data-testid="quick-action-xcode"
@@ -462,7 +462,7 @@ export function QuickActions(): React.JSX.Element | null {
           disabled={disabled}
           onClick={() => {
             const openPath = activePath || selectedProject?.path
-            if (openPath) window.systemOps.openInApp('android-studio', openPath)
+            if (openPath) void systemApi.openInApp('android-studio', openPath)
           }}
           title="Open in Android Studio"
           data-testid="quick-action-android-studio"

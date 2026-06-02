@@ -59,9 +59,9 @@ vi.mock('electron', () => ({
 describe('getCustomCommandsFilePath', () => {
   it('should return path in home directory', () => {
     vi.mocked(app.getPath).mockReturnValue('/Users/testuser')
-    
+
     const result = getCustomCommandsFilePath()
-    
+
     expect(result).toBe('/Users/testuser/.hive/custom-commands.json')
     expect(app.getPath).toHaveBeenCalledWith('home')
   })
@@ -120,18 +120,18 @@ describe('getFileModTime', () => {
 
   it('should return null if file does not exist', () => {
     vi.mocked(app.getPath).mockReturnValue(testDir)
-    
+
     const result = getFileModTime()
-    
+
     expect(result).toBeNull()
   })
 
   it('should return mtime as number if file exists', () => {
     vi.mocked(app.getPath).mockReturnValue(testDir)
     writeFileSync(join(testDir, '.hive', 'custom-commands.json'), '[]')
-    
+
     const result = getFileModTime()
-    
+
     expect(result).toBeTypeOf('number')
     expect(result).toBeGreaterThan(0)
   })
@@ -194,16 +194,16 @@ describe('createTemplateFile', () => {
 
   it('should create template file if it does not exist', () => {
     vi.mocked(app.getPath).mockReturnValue(testDir)
-    
+
     const result = createTemplateFile()
-    
+
     expect(result.success).toBe(true)
     expect(result.created).toBe(true)
     expect(result.error).toBeUndefined()
-    
+
     const filePath = join(testDir, '.hive', 'custom-commands.json')
     expect(existsSync(filePath)).toBe(true)
-    
+
     const content = JSON.parse(readFileSync(filePath, 'utf-8'))
     expect(Array.isArray(content)).toBe(true)
     expect(content.length).toBe(3)
@@ -217,21 +217,21 @@ describe('createTemplateFile', () => {
     const filePath = join(testDir, '.hive', 'custom-commands.json')
     mkdirSync(join(testDir, '.hive'), { recursive: true })
     writeFileSync(filePath, '[{"id":"existing","name":"test","prompt":"test"}]')
-    
+
     const result = createTemplateFile()
-    
+
     expect(result.success).toBe(true)
     expect(result.created).toBe(false)
-    
+
     const content = JSON.parse(readFileSync(filePath, 'utf-8'))
     expect(content[0].id).toBe('existing')
   })
 
   it('should handle directory creation errors', () => {
     vi.mocked(app.getPath).mockReturnValue('/invalid/readonly/path')
-    
+
     const result = createTemplateFile()
-    
+
     expect(result.success).toBe(false)
     expect(result.created).toBe(false)
     expect(result.error).toBeDefined()
@@ -276,18 +276,18 @@ const TEMPLATE_COMMANDS = [
  */
 export function createTemplateFile(): { success: boolean; created: boolean; error?: string } {
   const filePath = getCustomCommandsFilePath()
-  
+
   if (existsSync(filePath)) {
     return { success: true, created: false }
   }
-  
+
   try {
     const dir = dirname(filePath)
     mkdirSync(dir, { recursive: true })
-    
+
     const content = JSON.stringify(TEMPLATE_COMMANDS, null, 2)
     writeFileSync(filePath, content, 'utf-8')
-    
+
     return { success: true, created: true }
   } catch (error) {
     return {
@@ -326,9 +326,9 @@ describe('loadCustomCommandsFromFile', () => {
 
   it('should return empty result if file does not exist', () => {
     vi.mocked(app.getPath).mockReturnValue(testDir)
-    
+
     const result = loadCustomCommandsFromFile()
-    
+
     expect(result.success).toBe(true)
     expect(result.commands).toEqual([])
     expect(result.mtime).toBeNull()
@@ -338,15 +338,15 @@ describe('loadCustomCommandsFromFile', () => {
     vi.mocked(app.getPath).mockReturnValue(testDir)
     const filePath = join(testDir, '.hive', 'custom-commands.json')
     mkdirSync(dirname(filePath), { recursive: true })
-    
+
     const commands = [
       { id: '1', name: 'Test 1', prompt: 'Prompt 1' },
       { id: '2', name: 'Test 2', prompt: 'Prompt 2' }
     ]
     writeFileSync(filePath, JSON.stringify(commands))
-    
+
     const result = loadCustomCommandsFromFile()
-    
+
     expect(result.success).toBe(true)
     expect(result.commands).toHaveLength(2)
     expect(result.commands![0].id).toBe('1')
@@ -358,9 +358,9 @@ describe('loadCustomCommandsFromFile', () => {
     const filePath = join(testDir, '.hive', 'custom-commands.json')
     mkdirSync(dirname(filePath), { recursive: true })
     writeFileSync(filePath, 'invalid json{')
-    
+
     const result = loadCustomCommandsFromFile()
-    
+
     expect(result.success).toBe(false)
     expect(result.error).toContain('Invalid JSON')
   })
@@ -370,9 +370,9 @@ describe('loadCustomCommandsFromFile', () => {
     const filePath = join(testDir, '.hive', 'custom-commands.json')
     mkdirSync(dirname(filePath), { recursive: true })
     writeFileSync(filePath, '{"commands": []}')
-    
+
     const result = loadCustomCommandsFromFile()
-    
+
     expect(result.success).toBe(false)
     expect(result.error).toContain('must be an array')
   })
@@ -381,16 +381,16 @@ describe('loadCustomCommandsFromFile', () => {
     vi.mocked(app.getPath).mockReturnValue(testDir)
     const filePath = join(testDir, '.hive', 'custom-commands.json')
     mkdirSync(dirname(filePath), { recursive: true })
-    
+
     const commands = [
       { id: '1', name: 'Valid', prompt: 'Test' },
       { id: '2', name: '', prompt: 'Test' }, // Invalid: empty name
       { id: '3', name: 'Valid 2', prompt: 'Test 2' }
     ]
     writeFileSync(filePath, JSON.stringify(commands))
-    
+
     const result = loadCustomCommandsFromFile()
-    
+
     expect(result.success).toBe(true)
     expect(result.commands).toHaveLength(2)
     expect(result.commands![0].id).toBe('1')
@@ -401,22 +401,22 @@ describe('loadCustomCommandsFromFile', () => {
     vi.mocked(app.getPath).mockReturnValue(testDir)
     const filePath = join(testDir, '.hive', 'custom-commands.json')
     mkdirSync(dirname(filePath), { recursive: true })
-    
+
     // Create 2MB file (over 1MB limit)
     const largeContent = JSON.stringify({ data: 'x'.repeat(2 * 1024 * 1024) })
     writeFileSync(filePath, largeContent)
-    
+
     const result = loadCustomCommandsFromFile()
-    
+
     expect(result.success).toBe(false)
     expect(result.error).toContain('too large')
   })
 
   it('should handle permission errors', () => {
     vi.mocked(app.getPath).mockReturnValue('/root/forbidden')
-    
+
     const result = loadCustomCommandsFromFile()
-    
+
     expect(result.success).toBe(false)
     expect(result.error).toBeDefined()
   })
@@ -452,12 +452,12 @@ export interface CustomCommandFileResult {
  */
 export function loadCustomCommandsFromFile(): CustomCommandFileResult {
   const filePath = getCustomCommandsFilePath()
-  
+
   // File doesn't exist - not an error, just return empty
   if (!existsSync(filePath)) {
     return { success: true, commands: [], mtime: null }
   }
-  
+
   try {
     // Check file size
     const stats = statSync(filePath)
@@ -467,11 +467,11 @@ export function loadCustomCommandsFromFile(): CustomCommandFileResult {
         error: 'Custom commands file too large (max 1MB)'
       }
     }
-    
+
     // Read and parse file
     const content = readFileSync(filePath, 'utf-8')
     let parsed: unknown
-    
+
     try {
       parsed = JSON.parse(content)
     } catch {
@@ -480,7 +480,7 @@ export function loadCustomCommandsFromFile(): CustomCommandFileResult {
         error: 'Invalid JSON in custom commands file'
       }
     }
-    
+
     // Validate root is array
     if (!Array.isArray(parsed)) {
       return {
@@ -488,7 +488,7 @@ export function loadCustomCommandsFromFile(): CustomCommandFileResult {
         error: 'Custom commands file must contain a JSON array'
       }
     }
-    
+
     // Validate and filter commands
     const validCommands: CustomProjectCommand[] = []
     for (const item of parsed) {
@@ -499,7 +499,7 @@ export function loadCustomCommandsFromFile(): CustomCommandFileResult {
         console.warn('Skipped invalid command in file:', validation.errors)
       }
     }
-    
+
     return {
       success: true,
       commands: validCommands,
@@ -611,11 +611,11 @@ import {
   ipcMain.handle('reload-custom-commands', async () => {
     try {
       const fileResult = loadCustomCommandsFromFile()
-      
+
       if (!fileResult.success) {
         return fileResult
       }
-      
+
       if (fileResult.commands && fileResult.commands.length > 0) {
         // Save to database
         const db = getDatabase()
@@ -623,17 +623,17 @@ import {
         const settings = existingSettings
           ? JSON.parse(existingSettings.value)
           : {}
-        
+
         settings.customProjectCommands = fileResult.commands
         db.setSetting(APP_SETTINGS_DB_KEY, JSON.stringify(settings))
-        
+
         return {
           success: true,
           count: fileResult.commands.length,
           mtime: fileResult.mtime
         }
       }
-      
+
       return { success: true, count: 0, mtime: fileResult.mtime }
     } catch (error) {
       log.error(
@@ -702,7 +702,7 @@ Find the `app.whenReady().then()` block in `src/main/index.ts` and add this code
   } else if (!templateResult.success && templateResult.error) {
     log.error('Failed to create custom commands template:', templateResult.error)
   }
-  
+
   // Store initial file mtime for change detection
   let lastKnownMtime: number | null = getFileModTime()
 ```
@@ -719,7 +719,7 @@ Find the `app.on('activate', ...)` handler in `src/main/index.ts` and add this c
   if (currentMtime !== null && currentMtime !== lastKnownMtime) {
     lastKnownMtime = currentMtime
     log.info('Custom commands file changed, reloading')
-    
+
     // Load file and sync to database
     const fileResult = loadCustomCommandsFromFile()
     if (fileResult.success && fileResult.commands) {
@@ -727,10 +727,10 @@ Find the `app.on('activate', ...)` handler in `src/main/index.ts` and add this c
         const db = getDatabase()
         const existingSettings = db.getSetting(APP_SETTINGS_DB_KEY)
         const settings = existingSettings ? JSON.parse(existingSettings.value) : {}
-        
+
         settings.customProjectCommands = fileResult.commands
         db.setSetting(APP_SETTINGS_DB_KEY, JSON.stringify(settings))
-        
+
         // Notify all windows to reload
         BrowserWindow.getAllWindows().forEach(win => {
           win.webContents.send('custom-commands-file-changed')
@@ -831,23 +831,23 @@ async function loadSettingsFromDatabase(): Promise<AppSettings | null> {
   try {
     // Step 1: Load from file if it exists
     const fileResult = await window.electron.ipcRenderer.invoke('load-custom-commands-file')
-    
+
     if (fileResult.success && fileResult.commands && fileResult.commands.length > 0) {
       // Sync file commands to database (file is source of truth)
       const db = await window.electron.ipcRenderer.invoke('db:setting:get', 'app-settings')
       const settings = db?.value ? JSON.parse(db.value) : {}
       settings.customProjectCommands = fileResult.commands
-      
+
       await window.electron.ipcRenderer.invoke(
         'db:setting:set',
         'app-settings',
         JSON.stringify(settings)
       )
     }
-    
+
     // Step 2: Load all settings from database (now has latest file data)
     const result = await window.electron.ipcRenderer.invoke('db:setting:get', 'app-settings')
-    
+
     // ... rest of existing loadSettingsFromDatabase logic
   } catch (error) {
     console.error('Failed to load settings:', error)
@@ -866,14 +866,14 @@ Add this method to the store actions:
 async reloadCustomCommands(): Promise<void> {
   try {
     const result = await window.electron.ipcRenderer.invoke('reload-custom-commands')
-    
+
     if (result.success) {
       // Reload all settings from database
       await this.loadSettings()
-      
+
       // Update mtime
       set({ customCommandsFileMtime: result.mtime })
-      
+
       toast.success(`Loaded ${result.count} custom commands`)
     } else {
       toast.error(`Failed to reload: ${result.error || 'Unknown error'}`)
@@ -931,9 +931,9 @@ useEffect(() => {
     // Reload settings which will trigger re-render
     await useSettingsStore.getState().loadSettings()
   }
-  
+
   window.electron.ipcRenderer.on('custom-commands-file-changed', handleFileChange)
-  
+
   return () => {
     window.electron.ipcRenderer.off('custom-commands-file-changed', handleFileChange)
   }

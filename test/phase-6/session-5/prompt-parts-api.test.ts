@@ -1,4 +1,9 @@
-import { describe, test, expect } from 'vitest'
+import { afterEach, describe, test, expect, vi } from 'vitest'
+import { opencodeApi } from '../../../src/renderer/src/api/opencode-api'
+import {
+  resetRendererRpcClientForTests,
+  setRendererRpcClient
+} from '../../../src/renderer/src/api/rpc-client'
 
 /**
  * Session 5: Prompt Parts API
@@ -7,120 +12,151 @@ import { describe, test, expect } from 'vitest'
  * (text + files) instead of just a string message.
  *
  * The tests cover:
- * - Preload bridge converts string to parts array
- * - Preload bridge passes parts array through
+ * - Renderer RPC API converts string to parts array
+ * - Renderer RPC API passes parts array through
  * - MessagePart type correctness
  * - SessionView sends text as parts array
  */
 
 describe('Session 5: Prompt Parts API', () => {
-  describe('Preload bridge - prompt function', () => {
-    // Simulate the preload prompt function logic
-    function preloadPrompt(
-      worktreePath: string,
-      opencodeSessionId: string,
-      messageOrParts: string | Array<{ type: 'text'; text: string } | { type: 'file'; mime: string; url: string; filename?: string }>
-    ): { worktreePath: string; sessionId: string; parts: unknown[] } {
-      const parts = typeof messageOrParts === 'string'
-        ? [{ type: 'text' as const, text: messageOrParts }]
-        : messageOrParts
-      return { worktreePath, sessionId: opencodeSessionId, parts }
+  afterEach(() => {
+    resetRendererRpcClientForTests()
+  })
+
+  describe('Renderer RPC API - prompt function', () => {
+    const setupPromptRequest = () => {
+      const request = vi.fn().mockResolvedValue({ success: true })
+      const subscribe = vi.fn()
+      setRendererRpcClient({ request, subscribe })
+      return request
     }
 
-    test('prompt() converts string to parts array', () => {
-      const result = preloadPrompt('/path/to/worktree', 'session-1', 'hello world')
+    test('prompt() converts string to parts array', async () => {
+      const request = setupPromptRequest()
 
-      expect(result.parts).toEqual([{ type: 'text', text: 'hello world' }])
-      expect(result.worktreePath).toBe('/path/to/worktree')
-      expect(result.sessionId).toBe('session-1')
+      await expect(
+        opencodeApi.prompt('/path/to/worktree', 'session-1', 'hello world')
+      ).resolves.toEqual({
+        success: true,
+        value: { success: true }
+      })
+      expect(request).toHaveBeenCalledWith('opencodeOps.prompt', {
+        worktreePath: '/path/to/worktree',
+        opencodeSessionId: 'session-1',
+        messageOrParts: [{ type: 'text', text: 'hello world' }],
+        model: undefined,
+        options: undefined
+      })
     })
 
-    test('prompt() passes parts array through', () => {
+    test('prompt() passes parts array through', async () => {
+      const request = setupPromptRequest()
       const parts = [
         { type: 'text' as const, text: 'look at this' },
         { type: 'file' as const, mime: 'image/png', url: 'data:image/png;base64,abc', filename: 'screenshot.png' }
       ]
-      const result = preloadPrompt('/path/to/worktree', 'session-1', parts)
 
-      expect(result.parts).toEqual(parts)
-      expect(result.parts).toHaveLength(2)
+      await opencodeApi.prompt('/path/to/worktree', 'session-1', parts)
+
+      expect(request).toHaveBeenCalledWith('opencodeOps.prompt', {
+        worktreePath: '/path/to/worktree',
+        opencodeSessionId: 'session-1',
+        messageOrParts: parts,
+        model: undefined,
+        options: undefined
+      })
     })
 
-    test('empty string converts to single text part with empty text', () => {
-      const result = preloadPrompt('/path', 'session-1', '')
+    test('empty string converts to single text part with empty text', async () => {
+      const request = setupPromptRequest()
 
-      expect(result.parts).toEqual([{ type: 'text', text: '' }])
+      await opencodeApi.prompt('/path', 'session-1', '')
+
+      expect(request).toHaveBeenCalledWith('opencodeOps.prompt', {
+        worktreePath: '/path',
+        opencodeSessionId: 'session-1',
+        messageOrParts: [{ type: 'text', text: '' }],
+        model: undefined,
+        options: undefined
+      })
     })
 
-    test('multiple text parts preserved', () => {
+    test('multiple text parts preserved', async () => {
+      const request = setupPromptRequest()
       const parts = [
         { type: 'text' as const, text: 'first' },
         { type: 'text' as const, text: 'second' }
       ]
-      const result = preloadPrompt('/path', 'session-1', parts)
 
-      expect(result.parts).toHaveLength(2)
-      expect(result.parts[0]).toEqual({ type: 'text', text: 'first' })
-      expect(result.parts[1]).toEqual({ type: 'text', text: 'second' })
+      await opencodeApi.prompt('/path', 'session-1', parts)
+
+      expect(request).toHaveBeenCalledWith('opencodeOps.prompt', {
+        worktreePath: '/path',
+        opencodeSessionId: 'session-1',
+        messageOrParts: parts,
+        model: undefined,
+        options: undefined
+      })
     })
 
-    test('file part included in prompt', () => {
+    test('file part included in prompt', async () => {
+      const request = setupPromptRequest()
       const parts = [
         { type: 'text' as const, text: 'look at this' },
         { type: 'file' as const, mime: 'image/png', url: 'data:image/png;base64,abc123' }
       ]
-      const result = preloadPrompt('/path', 'session-1', parts)
 
-      expect(result.parts).toHaveLength(2)
-      expect(result.parts[1]).toEqual({
-        type: 'file',
-        mime: 'image/png',
-        url: 'data:image/png;base64,abc123'
+      await opencodeApi.prompt('/path', 'session-1', parts)
+
+      expect(request).toHaveBeenCalledWith('opencodeOps.prompt', {
+        worktreePath: '/path',
+        opencodeSessionId: 'session-1',
+        messageOrParts: parts,
+        model: undefined,
+        options: undefined
       })
     })
 
-    test('file part with optional filename', () => {
+    test('file part with optional filename', async () => {
+      const request = setupPromptRequest()
       const parts = [
         { type: 'file' as const, mime: 'application/pdf', url: 'data:application/pdf;base64,xyz', filename: 'report.pdf' }
       ]
-      const result = preloadPrompt('/path', 'session-1', parts)
 
-      expect(result.parts[0]).toEqual({
-        type: 'file',
-        mime: 'application/pdf',
-        url: 'data:application/pdf;base64,xyz',
-        filename: 'report.pdf'
+      await opencodeApi.prompt('/path', 'session-1', parts)
+
+      expect(request).toHaveBeenCalledWith('opencodeOps.prompt', {
+        worktreePath: '/path',
+        opencodeSessionId: 'session-1',
+        messageOrParts: parts,
+        model: undefined,
+        options: undefined
       })
     })
   })
 
-  describe('IPC handler - backward compatibility', () => {
-    // Simulate IPC handler logic for parsing args
-    function parseIpcArgs(...args: unknown[]): {
+  describe('RPC params - backward compatibility', () => {
+    function parseRpcPromptParams(params: unknown): {
       worktreePath: string
       opencodeSessionId: string
       messageOrParts: string | unknown[]
     } {
-      if (args.length === 1 && typeof args[0] === 'object' && args[0] !== null) {
-        const obj = args[0] as Record<string, unknown>
-        return {
-          worktreePath: obj.worktreePath as string,
-          opencodeSessionId: obj.sessionId as string,
-          messageOrParts: (obj.parts as unknown[]) || [{ type: 'text', text: obj.message as string }]
-        }
+      if (typeof params !== 'object' || params === null || Array.isArray(params)) {
+        throw new Error('Prompt params must be an object')
       }
+      const obj = params as Record<string, unknown>
       return {
-        worktreePath: args[0] as string,
-        opencodeSessionId: args[1] as string,
-        messageOrParts: args[2] as string
+        worktreePath: obj.worktreePath as string,
+        opencodeSessionId: obj.opencodeSessionId as string,
+        messageOrParts: obj.messageOrParts as string | unknown[]
       }
     }
 
-    test('IPC handler accepts object-style call with parts', () => {
-      const result = parseIpcArgs({
+    test('RPC params accept object-style call with parts', () => {
+      const result = parseRpcPromptParams({
         worktreePath: '/path',
-        sessionId: 'session-1',
-        parts: [{ type: 'text', text: 'hello' }]
+        opencodeSessionId: 'session-1',
+        messageOrParts: [{ type: 'text', text: 'hello' }]
       })
 
       expect(result.worktreePath).toBe('/path')
@@ -128,22 +164,20 @@ describe('Session 5: Prompt Parts API', () => {
       expect(result.messageOrParts).toEqual([{ type: 'text', text: 'hello' }])
     })
 
-    test('IPC handler accepts object-style call with message fallback', () => {
-      const result = parseIpcArgs({
+    test('RPC params accept string message for router-level compatibility', () => {
+      const result = parseRpcPromptParams({
         worktreePath: '/path',
-        sessionId: 'session-1',
-        message: 'hello'
+        opencodeSessionId: 'session-1',
+        messageOrParts: 'hello'
       })
 
-      expect(result.messageOrParts).toEqual([{ type: 'text', text: 'hello' }])
-    })
-
-    test('IPC handler accepts legacy positional args', () => {
-      const result = parseIpcArgs('/path', 'session-1', 'hello')
-
-      expect(result.worktreePath).toBe('/path')
-      expect(result.opencodeSessionId).toBe('session-1')
       expect(result.messageOrParts).toBe('hello')
+    })
+
+    test('RPC params reject legacy positional args', () => {
+      expect(() => parseRpcPromptParams(['/path', 'session-1', 'hello'])).toThrow(
+        'Prompt params must be an object'
+      )
     })
   })
 

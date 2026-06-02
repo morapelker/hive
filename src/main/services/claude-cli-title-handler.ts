@@ -1,7 +1,9 @@
-import type { BrowserWindow } from 'electron'
 import type { DatabaseService } from '../db/database'
+import { OPENCODE_STREAM_CHANNEL } from '../../shared/opencode-events'
 import { autoRenameWorktreeBranch } from './git-service'
 import { createLogger } from './logger'
+import { publishDesktopBackendEvent } from '../desktop/backend-manager'
+import { emitWorktreeBranchRenamed } from './worktree-events'
 
 const log = createLogger({ component: 'ClaudeCliTitle' })
 
@@ -136,7 +138,6 @@ export interface ApplyClaudeCliTitleParams {
   sessionId: string
   title: string
   db: DatabaseService
-  mainWindow: BrowserWindow
 }
 
 /**
@@ -150,8 +151,7 @@ export interface ApplyClaudeCliTitleParams {
 export async function applyClaudeCliTitle({
   sessionId,
   title,
-  db,
-  mainWindow
+  db
 }: ApplyClaudeCliTitleParams): Promise<void> {
   try {
     const session = db.getSession(sessionId)
@@ -160,13 +160,11 @@ export async function applyClaudeCliTitle({
     db.updateSession(sessionId, { name: title })
     log.info('applied claude-cli title', { sessionId, title })
 
-    if (!mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('opencode:stream', {
-        type: 'session.updated',
-        sessionId,
-        data: { title, info: { title } }
-      })
-    }
+    void publishDesktopBackendEvent(OPENCODE_STREAM_CHANNEL, {
+      type: 'session.updated',
+      sessionId,
+      data: { title, info: { title } }
+    })
 
     const worktree = db.getWorktreeBySessionId(sessionId)
     if (worktree && !worktree.branch_renamed) {
@@ -178,8 +176,8 @@ export async function applyClaudeCliTitle({
           sessionTitle: title,
           db
         })
-        if (result.renamed && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('worktree:branchRenamed', {
+        if (result.renamed) {
+          emitWorktreeBranchRenamed({
             worktreeId: worktree.id,
             newBranch: result.newBranch
           })
@@ -211,8 +209,8 @@ export async function applyClaudeCliTitle({
           sessionTitle: title,
           db
         })
-        if (result.renamed && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('worktree:branchRenamed', {
+        if (result.renamed) {
+          emitWorktreeBranchRenamed({
             worktreeId: memberWt.id,
             newBranch: result.newBranch
           })

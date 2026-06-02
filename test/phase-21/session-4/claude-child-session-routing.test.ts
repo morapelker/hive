@@ -1,6 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import type { BrowserWindow } from 'electron'
 
 const { mockQuery } = vi.hoisted(() => ({
   mockQuery: vi.fn()
@@ -19,14 +18,16 @@ vi.mock('../../../src/main/services/logger', () => ({
   })
 }))
 
-import { ClaudeCodeImplementer } from '../../../src/main/services/claude-code-implementer'
+vi.mock('../../../src/main/services/agent-event-bus', () => ({
+  agentEventBus: { publish: vi.fn() }
+}))
 
-function createMockWindow(): BrowserWindow {
-  return {
-    isDestroyed: () => false,
-    webContents: { send: vi.fn() }
-  } as unknown as BrowserWindow
-}
+vi.mock('../../../src/main/desktop/backend-manager', () => ({
+  publishDesktopBackendEvent: vi.fn()
+}))
+
+import { ClaudeCodeImplementer } from '../../../src/main/services/claude-code-implementer'
+import { agentEventBus } from '../../../src/main/services/agent-event-bus'
 
 function createMockQueryIterator(messages: Array<Record<string, unknown>>) {
   let index = 0
@@ -45,22 +46,17 @@ function createMockQueryIterator(messages: Array<Record<string, unknown>>) {
   return iterator
 }
 
-function getStreamEvents(window: BrowserWindow): any[] {
-  const send = (window.webContents as any).send as ReturnType<typeof vi.fn>
-  return send.mock.calls
-    .filter((call: any[]) => call[0] === 'opencode:stream')
-    .map((call: any[]) => call[1])
+function getStreamEvents(): any[] {
+  const publish = agentEventBus.publish as ReturnType<typeof vi.fn>
+  return publish.mock.calls.map((call: any[]) => call[0])
 }
 
 describe('Claude child session routing', () => {
   let impl: ClaudeCodeImplementer
-  let mockWindow: BrowserWindow
 
   beforeEach(() => {
     vi.clearAllMocks()
     impl = new ClaudeCodeImplementer()
-    mockWindow = createMockWindow()
-    impl.setMainWindow(mockWindow)
   })
 
   it('forwards childSessionId on assistant message.updated', async () => {
@@ -82,7 +78,7 @@ describe('Claude child session routing', () => {
 
     await impl.prompt('/proj', sessionId, 'hello')
 
-    const events = getStreamEvents(mockWindow)
+    const events = getStreamEvents()
     const event = events.find((e) => e.type === 'message.updated')
     expect(event).toBeDefined()
     expect(event.childSessionId).toBe('task-tool-1')
@@ -104,7 +100,7 @@ describe('Claude child session routing', () => {
 
     await impl.prompt('/proj', sessionId, 'hello')
 
-    const events = getStreamEvents(mockWindow)
+    const events = getStreamEvents()
     const event = events.find((e) => e.type === 'message.updated')
     expect(event).toBeDefined()
     expect(event.childSessionId).toBe('task-tool-2')
@@ -138,7 +134,7 @@ describe('Claude child session routing', () => {
 
     await impl.prompt('/proj', sessionId, 'hello')
 
-    const events = getStreamEvents(mockWindow)
+    const events = getStreamEvents()
     const event = events.find(
       (e) =>
         e.type === 'message.part.updated' &&

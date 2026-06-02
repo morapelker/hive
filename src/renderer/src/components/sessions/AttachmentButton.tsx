@@ -8,6 +8,7 @@ import {
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { isImageMime } from '@/lib/file-attachment-utils'
+import { fileApi } from '@/api/file-api'
 import type { AttachmentInput } from './AttachmentPreview'
 
 interface AttachmentButtonProps {
@@ -55,7 +56,7 @@ export const AttachmentButton = memo(function AttachmentButton({
           kind: 'path',
           name: file.name,
           mime: file.type || 'application/octet-stream',
-          filePath: window.fileOps.getPathForFile(file)
+          filePath: fileApi.getPathForFile(file)
         })
       }
     }

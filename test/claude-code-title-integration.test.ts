@@ -32,18 +32,23 @@ vi.mock('../src/main/services/git-service', () => ({
   autoRenameWorktreeBranch: (...args: any[]) => mockAutoRenameWorktreeBranch(...args)
 }))
 
+const mockAgentPublish = vi.fn()
+vi.mock('../src/main/services/agent-event-bus', () => ({
+  agentEventBus: { publish: (...args: any[]) => mockAgentPublish(...args) }
+}))
+
+const mockEmitWorktreeBranchRenamed = vi.fn()
+vi.mock('../src/main/services/worktree-events', () => ({
+  emitWorktreeBranchRenamed: (...args: any[]) => mockEmitWorktreeBranchRenamed(...args)
+}))
+
+vi.mock('../src/main/desktop/backend-manager', () => ({
+  publishDesktopBackendEvent: vi.fn()
+}))
+
 // ── Helpers ────────────────────────────────────────────────────────────
 
 import { ClaudeCodeImplementer } from '../src/main/services/claude-code-implementer'
-
-function createMockWindow() {
-  return {
-    isDestroyed: vi.fn(() => false),
-    webContents: {
-      send: vi.fn()
-    }
-  } as any
-}
 
 function createMockDbService(worktreeOverrides: Record<string, any> = {}) {
   return {
@@ -89,15 +94,12 @@ function injectSession(impl: ClaudeCodeImplementer, session: ClaudeSessionState)
 
 describe('handleTitleGeneration', () => {
   let impl: ClaudeCodeImplementer
-  let mockWindow: ReturnType<typeof createMockWindow>
   let mockDb: ReturnType<typeof createMockDbService>
   let session: ClaudeSessionState
 
   beforeEach(() => {
     vi.clearAllMocks()
     impl = new ClaudeCodeImplementer()
-    mockWindow = createMockWindow()
-    impl.setMainWindow(mockWindow)
     mockDb = createMockDbService()
     impl.setDatabaseService(mockDb)
     impl.setClaudeBinaryPath('/usr/local/bin/claude')
@@ -124,7 +126,7 @@ describe('handleTitleGeneration', () => {
 
     await (impl as any).handleTitleGeneration(session, 'Add a dark mode toggle')
 
-    expect(mockWindow.webContents.send).toHaveBeenCalledWith('opencode:stream', {
+    expect(mockAgentPublish).toHaveBeenCalledWith({
       type: 'session.updated',
       sessionId: 'hive-session-456',
       data: {
@@ -158,7 +160,7 @@ describe('handleTitleGeneration', () => {
       sessionTitle: 'Fix auth refresh',
       db: mockDb
     })
-    expect(mockWindow.webContents.send).toHaveBeenCalledWith('worktree:branchRenamed', {
+    expect(mockEmitWorktreeBranchRenamed).toHaveBeenCalledWith({
       worktreeId: 'wt-1',
       newBranch: 'fix-auth-refresh'
     })
@@ -242,7 +244,7 @@ describe('handleTitleGeneration', () => {
     await (impl as any).handleTitleGeneration(session, 'Fix the auth refresh bug')
 
     expect(mockAutoRenameWorktreeBranch).toHaveBeenCalled()
-    expect(mockWindow.webContents.send).toHaveBeenCalledWith('worktree:branchRenamed', {
+    expect(mockEmitWorktreeBranchRenamed).toHaveBeenCalledWith({
       worktreeId: 'wt-1',
       newBranch: 'fix-auth-refresh-2'
     })
@@ -256,7 +258,8 @@ describe('handleTitleGeneration', () => {
     await (impl as any).handleTitleGeneration(session, 'some message')
 
     expect(mockDb.updateSession).not.toHaveBeenCalled()
-    expect(mockWindow.webContents.send).not.toHaveBeenCalled()
+    expect(mockAgentPublish).not.toHaveBeenCalled()
+    expect(mockEmitWorktreeBranchRenamed).not.toHaveBeenCalled()
   })
 
   it('handles missing dbService gracefully', async () => {
@@ -267,13 +270,17 @@ describe('handleTitleGeneration', () => {
     await expect((impl as any).handleTitleGeneration(session, 'message')).resolves.toBeUndefined()
   })
 
-  it('handles missing mainWindow gracefully', async () => {
+  it('publishes title updates without retained desktop window state', async () => {
     mockGenerateSessionTitle.mockResolvedValue('Some title')
-    ;(impl as any).mainWindow = null
 
-    // Should not throw — DB still gets updated
     await expect((impl as any).handleTitleGeneration(session, 'message')).resolves.toBeUndefined()
     expect(mockDb.updateSession).toHaveBeenCalledWith('hive-session-456', { name: 'Some title' })
+    expect(mockAgentPublish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'session.updated',
+        sessionId: 'hive-session-456'
+      })
+    )
   })
 
   it('handles generateSessionTitle rejection gracefully', async () => {

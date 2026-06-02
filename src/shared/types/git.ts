@@ -11,6 +11,10 @@ export interface GitStatusChangedEvent {
   worktreePath: string
 }
 
+export interface GitBranchChangedEvent {
+  worktreePath: string
+}
+
 export interface GitBranchInfo {
   name: string
   tracking: string | null

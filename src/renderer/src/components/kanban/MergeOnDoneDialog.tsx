@@ -8,11 +8,24 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { toast } from 'sonner'
 import { Loader2, GitMerge, GitCommit, Archive } from 'lucide-react'
-import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
-
-const db = unwrapEnvelopeApi(() => window.db)
+import { dbApi } from '@/api/db-api'
+import { gitApi } from '@/api/git-api'
 
 type Step = 'loading' | 'commit_base' | 'commit' | 'merge' | 'archive'
+
+type MergeWorktree = {
+  id: string
+  project_id: string
+  branch_name: string
+  path: string
+  status: 'active' | 'archived'
+  is_default: boolean
+  base_branch: string | null
+}
+
+type MergeProject = {
+  path: string
+}
 
 interface BranchStats {
   filesChanged: number
@@ -76,7 +89,7 @@ export function MergeOnDoneDialog() {
         }
 
         // Fetch feature worktree
-        const featureWorktree = await db.worktree.get(ticket.worktree_id)
+        const featureWorktree = await dbApi.worktree.get<MergeWorktree>(ticket.worktree_id)
         if (!featureWorktree || featureWorktree.status !== 'active') {
           toast.warning('Cannot merge — feature worktree is not active')
           clearPendingDoneMove()
@@ -84,7 +97,9 @@ export function MergeOnDoneDialog() {
         }
 
         // Resolve base branch
-        const activeWorktrees = await db.worktree.getActiveByProject(pending.projectId)
+        const activeWorktrees = await dbApi.worktree.getActiveByProject<MergeWorktree>(
+          pending.projectId
+        )
         const defaultWt = activeWorktrees.find((w) => w.is_default)
         const resolvedBaseBranch = featureWorktree.base_branch ?? defaultWt?.branch_name
 
@@ -107,23 +122,17 @@ export function MergeOnDoneDialog() {
 
         // Check both worktrees for dirty state in parallel
         const [baseDirty, hasUncommitted, branchStatResult] = await Promise.all([
-          window.gitOps.hasUncommittedChanges(baseWorktree.path).then(unwrapEnvelope),
-          window.gitOps.hasUncommittedChanges(featureWorktree.path).then(unwrapEnvelope),
-          window.gitOps
-            .branchDiffShortStat(featureWorktree.path, resolvedBaseBranch)
-            .then(unwrapEnvelope)
+          gitApi.hasUncommittedChanges(baseWorktree.path),
+          gitApi.hasUncommittedChanges(featureWorktree.path),
+          gitApi.branchDiffShortStat(featureWorktree.path, resolvedBaseBranch)
         ])
 
         if (cancelled) return
 
         // Get uncommitted diff stats for both worktrees if needed
         const [featureDiffResult, baseDiffResult] = await Promise.all([
-          hasUncommitted
-            ? window.gitOps.getDiffStat(featureWorktree.path).then(unwrapEnvelope)
-            : Promise.resolve(null),
-          baseDirty
-            ? window.gitOps.getDiffStat(baseWorktree.path).then(unwrapEnvelope)
-            : Promise.resolve(null)
+          hasUncommitted ? gitApi.getDiffStat(featureWorktree.path) : Promise.resolve(null),
+          baseDirty ? gitApi.getDiffStat(baseWorktree.path) : Promise.resolve(null)
         ])
 
         let uncommittedStats = { filesChanged: 0, insertions: 0, deletions: 0 }
@@ -166,7 +175,7 @@ export function MergeOnDoneDialog() {
         }
 
         // Get project path for archive step
-        const project = await db.project.get(featureWorktree.project_id)
+        const project = await dbApi.project.get<MergeProject>(featureWorktree.project_id)
         if (cancelled) return
 
         setResolved({
@@ -204,15 +213,13 @@ export function MergeOnDoneDialog() {
     if (!resolved || !commitMessage.trim()) return
     setCommitting(true)
     try {
-      const stageResult = unwrapEnvelope(await window.gitOps.stageAll(resolved.featureWorktreePath))
+      const stageResult = await gitApi.stageAll(resolved.featureWorktreePath)
       if (!stageResult.success) {
         toast.error(`Failed to stage: ${stageResult.error}`)
         return
       }
 
-      const commitResult = unwrapEnvelope(
-        await window.gitOps.commit(resolved.featureWorktreePath, commitMessage.trim())
-      )
+      const commitResult = await gitApi.commit(resolved.featureWorktreePath, commitMessage.trim())
       if (!commitResult.success) {
         toast.error(`Failed to commit: ${commitResult.error}`)
         return
@@ -221,8 +228,9 @@ export function MergeOnDoneDialog() {
       toast.success('Changes committed')
 
       // Re-check branch divergence after commit
-      const statResult = unwrapEnvelope(
-        await window.gitOps.branchDiffShortStat(resolved.featureWorktreePath, resolved.baseBranch)
+      const statResult = await gitApi.branchDiffShortStat(
+        resolved.featureWorktreePath,
+        resolved.baseBranch
       )
 
       if (!statResult.success) {
@@ -261,15 +269,13 @@ export function MergeOnDoneDialog() {
     if (!resolved || !baseCommitMessage.trim()) return
     setCommittingBase(true)
     try {
-      const stageResult = unwrapEnvelope(await window.gitOps.stageAll(resolved.baseWorktreePath))
+      const stageResult = await gitApi.stageAll(resolved.baseWorktreePath)
       if (!stageResult.success) {
         toast.error(`Failed to stage on ${resolved.baseBranch}: ${stageResult.error}`)
         return
       }
 
-      const commitResult = unwrapEnvelope(
-        await window.gitOps.commit(resolved.baseWorktreePath, baseCommitMessage.trim())
-      )
+      const commitResult = await gitApi.commit(resolved.baseWorktreePath, baseCommitMessage.trim())
       if (!commitResult.success) {
         toast.error(`Failed to commit on ${resolved.baseBranch}: ${commitResult.error}`)
         return
@@ -278,16 +284,15 @@ export function MergeOnDoneDialog() {
       toast.success(`Changes committed on ${resolved.baseBranch}`)
 
       // Check if feature branch still has uncommitted changes
-      const featureHasUncommitted = unwrapEnvelope(
-        await window.gitOps.hasUncommittedChanges(resolved.featureWorktreePath)
-      )
+      const featureHasUncommitted = await gitApi.hasUncommittedChanges(resolved.featureWorktreePath)
 
       if (featureHasUncommitted) {
         setStep('commit')
       } else {
         // Re-check branch divergence
-        const statResult = unwrapEnvelope(
-          await window.gitOps.branchDiffShortStat(resolved.featureWorktreePath, resolved.baseBranch)
+        const statResult = await gitApi.branchDiffShortStat(
+          resolved.featureWorktreePath,
+          resolved.baseBranch
         )
         if (!statResult.success) {
           toast.warning(`Cannot verify merge status: ${statResult.error ?? 'unknown error'}`)
@@ -326,20 +331,16 @@ export function MergeOnDoneDialog() {
     setMerging(true)
     try {
       // Pull latest on base branch first (only if remote exists)
-      const remoteResult = unwrapEnvelope(
-        await window.gitOps.getRemoteUrl(resolved.baseWorktreePath)
-      )
+      const remoteResult = await gitApi.getRemoteUrl(resolved.baseWorktreePath)
       if (remoteResult.url) {
-        const pullResult = unwrapEnvelope(await window.gitOps.pull(resolved.baseWorktreePath))
+        const pullResult = await gitApi.pull(resolved.baseWorktreePath)
         if (!pullResult.success) {
           toast.warning(`Pull failed on ${resolved.baseBranch} — continuing with local merge`)
         }
       }
 
       // Merge feature into base
-      const mergeResult = unwrapEnvelope(
-        await window.gitOps.merge(resolved.baseWorktreePath, resolved.featureBranch)
-      )
+      const mergeResult = await gitApi.merge(resolved.baseWorktreePath, resolved.featureBranch)
 
       if (!mergeResult.success) {
         // Conflicts or error — keep conflicts on disk so the ticket-level fix flow can act on them.

@@ -10,6 +10,7 @@ import { useProjectStore } from '@/stores/useProjectStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
+import { ClaudeCliSessionPortalProvider } from '@/contexts/ClaudeCliSessionPortalContext'
 
 vi.mock('@/components/sessions', () => ({
   SessionTabs: () => <div data-testid="session-tabs" />,
@@ -176,6 +177,14 @@ function setupMainPaneState(session: MainPaneSession = makeSession()): void {
   })
 }
 
+function renderMainPane(): ReturnType<typeof render> {
+  return render(
+    <ClaudeCliSessionPortalProvider>
+      <MainPane />
+    </ClaudeCliSessionPortalProvider>
+  )
+}
+
 afterEach(() => {
   cleanup()
   useConnectionStore.setState(initialConnectionState, true)
@@ -193,7 +202,7 @@ describe('MainPane terminal visibility', () => {
   it('shows a stateful terminal session when it is the active main content', () => {
     setupMainPaneState()
 
-    render(<MainPane />)
+    renderMainPane()
 
     const terminal = screen.getByTestId('session-view-session-1')
     expect(terminal.getAttribute('data-visible')).toBe('true')
@@ -211,18 +220,18 @@ describe('MainPane terminal visibility', () => {
     setupMainPaneState()
     activateView()
 
-    render(<MainPane />)
+    renderMainPane()
 
     const terminal = screen.getByTestId('session-view-session-1')
     expect(terminal.getAttribute('data-visible')).toBe('false')
-    expect(terminal.parentElement?.classList.contains('hidden')).toBe(true)
+    expect(terminal.closest('.hidden')).not.toBeNull()
   })
 
   it('keeps a plain terminal session mounted but hidden during board view', () => {
     setupMainPaneState(makeSession({ id: 'terminal-1', agent_sdk: 'terminal' }))
     useKanbanStore.setState({ isBoardViewActive: true })
 
-    render(<MainPane />)
+    renderMainPane()
 
     const terminal = screen.getByTestId('terminal-view-terminal-1')
     expect(terminal.getAttribute('data-visible')).toBe('false')

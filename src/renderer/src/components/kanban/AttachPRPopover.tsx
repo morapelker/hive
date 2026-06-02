@@ -8,9 +8,8 @@ import { useProjectStore } from '@/stores/useProjectStore'
 import { useGitStore } from '@/stores/useGitStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import type { KanbanTicket } from '../../../../main/db/types'
-import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
-
-const kanban = unwrapEnvelopeApi(() => window.kanban)
+import { gitApi } from '@/api/git-api'
+import { kanbanApi } from '@/api/kanban-api'
 
 interface PRItem {
   number: number
@@ -100,9 +99,8 @@ export function AttachPRPopover({ ticket, open, onOpenChange }: AttachPRPopoverP
     }
 
     setIsLoading(true)
-    window.gitOps
+    gitApi
       .listPRs(projectPath)
-      .then(unwrapEnvelope)
       .then((result) => {
         if (stale) return
         if (result.success) {
@@ -178,7 +176,7 @@ export function AttachPRPopover({ ticket, open, onOpenChange }: AttachPRPopoverP
         return
       }
       try {
-        const result = unwrapEnvelope(await window.gitOps.getPRState(projectPath, prNumber))
+        const result = await gitApi.getPRState(projectPath, prNumber)
         if (result.success && result.state && result.title) {
           setLookedUpPR({ number: prNumber, title: result.title, state: result.state })
         } else {
@@ -275,7 +273,7 @@ export function AttachPRPopover({ ticket, open, onOpenChange }: AttachPRPopoverP
     // Optimistic update
     useKanbanStore.getState().attachPRToTicket(ticket.id, ticket.project_id, pr.number, prUrl)
     try {
-      await kanban.ticket.attachPR(ticket.id, ticket.project_id, pr.number, prUrl)
+      await kanbanApi.ticket.attachPR(ticket.id, ticket.project_id, pr.number, prUrl)
       toast.success(`PR #${pr.number} attached`)
     } catch {
       // Rollback
@@ -294,7 +292,7 @@ export function AttachPRPopover({ ticket, open, onOpenChange }: AttachPRPopoverP
     // Optimistic
     useKanbanStore.getState().detachPRFromTicket(ticket.id, ticket.project_id)
     try {
-      await kanban.ticket.detachPR(ticket.id, ticket.project_id)
+      await kanbanApi.ticket.detachPR(ticket.id, ticket.project_id)
       toast.success('PR detached')
     } catch {
       // Rollback

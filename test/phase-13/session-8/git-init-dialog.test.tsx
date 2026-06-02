@@ -3,6 +3,29 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { GitInitDialog } from '../../../src/renderer/src/components/projects/GitInitDialog'
 
+vi.mock('../../../src/renderer/src/api/project-api', () => ({
+  projectApi: {
+    openDirectoryDialog: vi.fn(),
+    initRepository: vi.fn()
+  }
+}))
+
+vi.mock('../../../src/renderer/src/api/settings-api', () => ({
+  settingsApi: {
+    onSettingsUpdated: vi.fn(() => () => {})
+  }
+}))
+
+vi.mock('../../../src/renderer/src/api/pet-api', () => ({
+  petApi: {
+    hide: vi.fn(() => Promise.resolve(undefined)),
+    show: vi.fn(() => Promise.resolve(undefined)),
+    updateSettings: vi.fn(() => Promise.resolve({ success: true }))
+  }
+}))
+
+import { projectApi } from '../../../src/renderer/src/api/project-api'
+
 describe('Session 8: Git Init Dialog', () => {
   describe('GitInitDialog', () => {
     test('renders dialog with title and path when open', () => {
@@ -55,25 +78,10 @@ describe('Session 8: Git Init Dialog', () => {
     let _mockInitRepository: ReturnType<typeof vi.fn>
 
     beforeEach(() => {
-      mockOpenDirectoryDialog = vi.fn()
-      _mockInitRepository = vi.fn()
-
-      // Mock window.projectOps
-      Object.defineProperty(window, 'projectOps', {
-        writable: true,
-        value: {
-          openDirectoryDialog: mockOpenDirectoryDialog,
-          initRepository: _mockInitRepository,
-          copyToClipboard: vi.fn(),
-          showInFolder: vi.fn(),
-          validateProject: vi.fn(),
-          isGitRepository: vi.fn(),
-          openPath: vi.fn(),
-          readFromClipboard: vi.fn(),
-          detectLanguage: vi.fn(),
-          loadLanguageIcons: vi.fn()
-        }
-      })
+      vi.clearAllMocks()
+      mockOpenDirectoryDialog = vi.mocked(projectApi.openDirectoryDialog)
+      _mockInitRepository = vi.mocked(projectApi.initRepository)
+      _mockInitRepository.mockResolvedValue({ success: true })
     })
 
     test('shows dialog when adding non-git directory', async () => {

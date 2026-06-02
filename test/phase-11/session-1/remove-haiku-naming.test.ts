@@ -2,12 +2,60 @@ import { describe, test, expect, vi, beforeEach } from 'vitest'
 import * as fs from 'fs'
 import * as path from 'path'
 
+const apiMocks = vi.hoisted(() => ({
+  dbApi: {
+    setting: {
+      get: vi.fn(),
+      set: vi.fn()
+    },
+    session: {
+      create: vi.fn()
+    }
+  },
+  petApi: {
+    hide: vi.fn(),
+    show: vi.fn(),
+    updateSettings: vi.fn()
+  },
+  settingsApi: {
+    onSettingsUpdated: vi.fn()
+  },
+  systemApi: {
+    detectAgentSdks: vi.fn()
+  },
+  telegramApi: {
+    getConfig: vi.fn()
+  }
+}))
+
+vi.mock('@/api/db-api', () => ({
+  dbApi: apiMocks.dbApi
+}))
+
+vi.mock('@/api/pet-api', () => ({
+  petApi: apiMocks.petApi
+}))
+
+vi.mock('@/api/settings-api', () => ({
+  settingsApi: apiMocks.settingsApi
+}))
+
+vi.mock('@/api/system-api', () => ({
+  systemApi: apiMocks.systemApi
+}))
+
+vi.mock('@/api/telegram-api', () => ({
+  telegramApi: apiMocks.telegramApi
+}))
+
 describe('Session 1: Remove Haiku Naming', () => {
   describe('createSession uses ISO date format title', () => {
-    let mockSessionCreate: ReturnType<typeof vi.fn>
-
     beforeEach(() => {
-      mockSessionCreate = vi.fn().mockImplementation((data) => ({
+      vi.clearAllMocks()
+
+      apiMocks.dbApi.setting.get.mockResolvedValue(null)
+      apiMocks.dbApi.setting.set.mockResolvedValue(true)
+      apiMocks.dbApi.session.create.mockImplementation((data) => ({
         id: 'session-1',
         worktree_id: data.worktree_id,
         project_id: data.project_id,
@@ -19,68 +67,28 @@ describe('Session 1: Remove Haiku Naming', () => {
         updated_at: new Date().toISOString(),
         completed_at: null
       }))
-
-      Object.defineProperty(window, 'db', {
-        writable: true,
-        configurable: true,
-        value: {
-          session: {
-            create: mockSessionCreate,
-            get: vi.fn(),
-            getByWorktree: vi.fn().mockResolvedValue([]),
-            getByProject: vi.fn().mockResolvedValue([]),
-            getActiveByWorktree: vi.fn().mockResolvedValue([]),
-            update: vi.fn(),
-            delete: vi.fn(),
-            search: vi.fn(),
-            getDraft: vi.fn().mockResolvedValue(null),
-            updateDraft: vi.fn()
-          },
-          project: {
-            create: vi.fn(),
-            get: vi.fn(),
-            getByPath: vi.fn(),
-            getAll: vi.fn(),
-            update: vi.fn(),
-            delete: vi.fn(),
-            touch: vi.fn()
-          },
-          worktree: {
-            create: vi.fn(),
-            get: vi.fn(),
-            getByProject: vi.fn(),
-            getActiveByProject: vi.fn(),
-            update: vi.fn(),
-            delete: vi.fn(),
-            archive: vi.fn(),
-            touch: vi.fn()
-          },
-          message: {
-            create: vi.fn(),
-            getBySession: vi.fn().mockResolvedValue([]),
-            delete: vi.fn()
-          },
-          setting: {
-            get: vi.fn(),
-            set: vi.fn(),
-            delete: vi.fn(),
-            getAll: vi.fn()
-          },
-          schemaVersion: vi.fn(),
-          tableExists: vi.fn(),
-          getIndexes: vi.fn()
-        }
+      apiMocks.petApi.hide.mockResolvedValue(undefined)
+      apiMocks.petApi.show.mockResolvedValue(undefined)
+      apiMocks.petApi.updateSettings.mockResolvedValue({ success: true })
+      apiMocks.settingsApi.onSettingsUpdated.mockReturnValue(vi.fn())
+      apiMocks.systemApi.detectAgentSdks.mockResolvedValue({
+        opencode: true,
+        claude: true,
+        codex: true
       })
+      apiMocks.telegramApi.getConfig.mockResolvedValue(null)
     })
 
     test('createSession uses sequential counter title', async () => {
       // Dynamically import the store after mocks are set up
       const { useSessionStore } = await import('../../../src/renderer/src/stores/useSessionStore')
 
-      await useSessionStore.getState().createSession('worktree-1', 'project-1')
+      await useSessionStore
+        .getState()
+        .createSession('worktree-1', 'project-1', undefined, undefined, { autoFocus: false })
 
-      expect(mockSessionCreate).toHaveBeenCalledOnce()
-      const callArgs = mockSessionCreate.mock.calls[0][0]
+      expect(apiMocks.dbApi.session.create).toHaveBeenCalledOnce()
+      const callArgs = apiMocks.dbApi.session.create.mock.calls[0][0]
 
       // Verify name matches the expected format: "Session N"
       expect(callArgs.name).toMatch(/^Session \d+$/)
@@ -88,7 +96,7 @@ describe('Session 1: Remove Haiku Naming', () => {
   })
 
   describe('generateSessionName removed from codebase', () => {
-    test('generateSessionName does not exist on window.opencodeOps type', () => {
+    test('generateSessionName does not exist in preload type declarations', () => {
       // Source-level verification: read the preload type declarations
       const dtsPath = path.join(__dirname, '..', '..', '..', 'src', 'preload', 'index.d.ts')
       const content = fs.readFileSync(dtsPath, 'utf-8')
@@ -118,18 +126,18 @@ describe('Session 1: Remove Haiku Naming', () => {
       expect(content).not.toContain('generateSessionName')
     })
 
-    test('opencode:generateSessionName IPC handler removed', () => {
-      const handlersPath = path.join(
+    test('generateSessionName command helper removed', () => {
+      const commandsPath = path.join(
         __dirname,
         '..',
         '..',
         '..',
         'src',
         'main',
-        'ipc',
-        'opencode-handlers.ts'
+        'services',
+        'opencode-session-commands.ts'
       )
-      const content = fs.readFileSync(handlersPath, 'utf-8')
+      const content = fs.readFileSync(commandsPath, 'utf-8')
       expect(content).not.toContain('generateSessionName')
     })
 

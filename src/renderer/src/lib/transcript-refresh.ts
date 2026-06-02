@@ -17,7 +17,7 @@ export interface TranscriptStreamingPart {
 
 export interface TranscriptMessage {
   id: string
-  role: 'user' | 'assistant' | 'system'
+  role: 'user' | 'assistant' | 'system' | 'bash'
   content: string
   timestamp: string
   parts?: TranscriptStreamingPart[]

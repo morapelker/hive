@@ -5,6 +5,40 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useUsageStore } from '@/stores/useUsageStore'
 import type { OpenCodeStreamEvent } from '@shared/types/opencode'
 
+const apiMocks = vi.hoisted(() => ({
+  dbApi: {
+    setting: {
+      get: vi.fn(),
+      set: vi.fn()
+    }
+  },
+  opencodeApi: {
+    onStream: vi.fn()
+  },
+  settingsApi: {
+    onSettingsUpdated: vi.fn()
+  },
+  worktreeApi: {
+    onBranchRenamed: vi.fn()
+  }
+}))
+
+vi.mock('@/api/db-api', () => ({
+  dbApi: apiMocks.dbApi
+}))
+
+vi.mock('@/api/opencode-api', () => ({
+  opencodeApi: apiMocks.opencodeApi
+}))
+
+vi.mock('@/api/settings-api', () => ({
+  settingsApi: apiMocks.settingsApi
+}))
+
+vi.mock('@/api/worktree-api', () => ({
+  worktreeApi: apiMocks.worktreeApi
+}))
+
 describe('useOpenCodeGlobalListener rate-limit events', () => {
   let streamListener: ((event: OpenCodeStreamEvent) => void) | null
 
@@ -13,27 +47,17 @@ describe('useOpenCodeGlobalListener rate-limit events', () => {
     vi.setSystemTime(new Date('2026-05-19T09:00:00.000Z'))
     streamListener = null
 
-    Object.defineProperty(window, 'opencodeOps', {
-      writable: true,
-      configurable: true,
-      value: {
-        onStream: vi.fn((listener: (event: OpenCodeStreamEvent) => void) => {
-          streamListener = listener
-          return vi.fn()
-        })
+    vi.clearAllMocks()
+    apiMocks.dbApi.setting.get.mockResolvedValue(null)
+    apiMocks.dbApi.setting.set.mockResolvedValue(true)
+    apiMocks.settingsApi.onSettingsUpdated.mockReturnValue(vi.fn())
+    apiMocks.worktreeApi.onBranchRenamed.mockReturnValue(vi.fn())
+    apiMocks.opencodeApi.onStream.mockImplementation(
+      (listener: (event: OpenCodeStreamEvent) => void) => {
+        streamListener = listener
+        return vi.fn()
       }
-    })
-
-    Object.defineProperty(window, 'db', {
-      writable: true,
-      configurable: true,
-      value: {
-        setting: {
-          get: vi.fn().mockResolvedValue({ success: true, value: null }),
-          set: vi.fn().mockResolvedValue({ success: true, value: undefined })
-        }
-      }
-    })
+    )
 
     useUsageStore.setState({
       anthropicRateLimit: null,

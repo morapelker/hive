@@ -12,6 +12,23 @@ const mocks = vi.hoisted(() => ({
   openPath: vi.fn()
 }))
 
+vi.mock('@/api/terminal-api', () => ({
+  terminalApi: {
+    write: mocks.write,
+    create: mocks.create,
+    onData: mocks.onData,
+    onExit: mocks.onExit,
+    resize: mocks.resize
+  }
+}))
+
+vi.mock('@/api/project-api', () => ({
+  projectApi: {
+    openPath: mocks.openPath,
+    readFromClipboard: vi.fn().mockResolvedValue('')
+  }
+}))
+
 vi.mock('@xterm/xterm', () => ({
   Terminal: class MockTerminal {
     options: Record<string, unknown> = {}
@@ -103,26 +120,6 @@ describe('XtermBackend Shift+Enter handling', () => {
     mocks.onExit.mockReturnValue(vi.fn())
     mocks.resize.mockResolvedValue({ success: true })
     mocks.openPath.mockResolvedValue({ success: true })
-
-    Object.defineProperty(window, 'terminalOps', {
-      writable: true,
-      configurable: true,
-      value: {
-        write: mocks.write,
-        create: mocks.create,
-        onData: mocks.onData,
-        onExit: mocks.onExit,
-        resize: mocks.resize
-      }
-    })
-
-    Object.defineProperty(window, 'projectOps', {
-      writable: true,
-      configurable: true,
-      value: {
-        openPath: mocks.openPath
-      }
-    })
 
     Object.defineProperty(window, 'ResizeObserver', {
       writable: true,

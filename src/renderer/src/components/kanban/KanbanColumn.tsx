@@ -36,10 +36,16 @@ import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useUsageStore, resolveDefaultUsageProvider } from '@/stores/useUsageStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { isBlockerSatisfied } from '@/lib/blocker-utils'
-import type { KanbanTicket, KanbanTicketColumn as ColumnType } from '../../../../main/db/types'
-import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
-
-const db = unwrapEnvelopeApi(() => window.db)
+import type {
+  KanbanTicket,
+  KanbanTicketColumn as ColumnType,
+  Session,
+  Worktree
+} from '../../../../main/db/types'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { opencodeApi } from '@/api/opencode-api'
+import { dbApi } from '@/api/db-api'
+import { gitApi } from '@/api/git-api'
 
 // ── Layout animation spring ─────────────────────────────────────────
 const CARD_LAYOUT_SPRING = {
@@ -383,10 +389,11 @@ export function KanbanColumn({
           const draggedTicket = findTicket(ticketId)
           if (draggedTicket?.worktree_id) {
             try {
-              const worktree = await db.worktree.get(draggedTicket.worktree_id)
+              const worktree = await dbApi.worktree.get<Worktree>(draggedTicket.worktree_id)
               if (worktree) {
                 // Resolve the effective base branch
-                const defaultWorktrees = await db.worktree.getActiveByProject(ticketProjectId)
+                const defaultWorktrees =
+                  await dbApi.worktree.getActiveByProject<Worktree>(ticketProjectId)
                 const defaultWt = defaultWorktrees.find((w) => w.is_default)
                 const resolvedBaseBranch = worktree.base_branch ?? defaultWt?.branch_name
 
@@ -399,10 +406,8 @@ export function KanbanColumn({
                   if (baseWorktree) {
                     // Pre-check: does the feature branch actually have work to merge?
                     const [hasUncommitted, branchStatResult] = await Promise.all([
-                      window.gitOps.hasUncommittedChanges(worktree.path).then(unwrapEnvelope),
-                      window.gitOps
-                        .branchDiffShortStat(worktree.path, resolvedBaseBranch)
-                        .then(unwrapEnvelope)
+                      gitApi.hasUncommittedChanges(worktree.path),
+                      gitApi.branchDiffShortStat(worktree.path, resolvedBaseBranch)
                     ])
 
                     const commitsAhead = branchStatResult.success
@@ -470,21 +475,19 @@ export function KanbanColumn({
       const draggedTicket = findTicket(ticketId)
       if (draggedTicket?.current_session_id) {
         // Abort the running agent process (not just the DB status)
-        const session = await db.session.get(draggedTicket.current_session_id)
+        const session = await dbApi.session.get<Session>(draggedTicket.current_session_id)
         if (session?.opencode_session_id && session.worktree_id) {
-          const worktree = await db.worktree.get(session.worktree_id)
+          const worktree = await dbApi.worktree.get<Worktree>(session.worktree_id)
           if (worktree?.path) {
             try {
-              unwrapEnvelope(
-                await window.opencodeOps.abort(worktree.path, session.opencode_session_id)
-              )
+              unwrapEnvelope(await opencodeApi.abort(worktree.path, session.opencode_session_id))
             } catch {
               // Non-critical — session may already be idle
             }
           }
         }
 
-        await db.session.update(draggedTicket.current_session_id, {
+        await dbApi.session.update<Session>(draggedTicket.current_session_id, {
           status: 'completed',
           completed_at: new Date().toISOString()
         })

@@ -1,8 +1,7 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
-import { unwrapEnvelopeApi } from '@/lib/ipc-envelope'
-
-const db = unwrapEnvelopeApi(() => window.db)
+import { dbApi } from '@/api/db-api'
+import type { Space } from '@shared/types/space'
 
 interface SpaceState {
   spaces: Space[]
@@ -34,8 +33,8 @@ export const useSpaceStore = create<SpaceState>()(
       loadSpaces: async () => {
         try {
           const [spaces, assignments] = await Promise.all([
-            db.space.list(),
-            db.space.getAllAssignments()
+            dbApi.space.list(),
+            dbApi.space.getAllAssignments()
           ])
 
           // Build projectSpaceMap from assignments
@@ -55,7 +54,7 @@ export const useSpaceStore = create<SpaceState>()(
 
       createSpace: async (name: string, iconType: string, iconValue: string) => {
         try {
-          const space = await db.space.create({
+          const space = await dbApi.space.create({
             name,
             icon_type: iconType,
             icon_value: iconValue
@@ -69,7 +68,7 @@ export const useSpaceStore = create<SpaceState>()(
 
       updateSpace: async (id: string, data) => {
         try {
-          const updated = await db.space.update(id, data)
+          const updated = await dbApi.space.update(id, data)
           if (updated) {
             set((state) => ({
               spaces: state.spaces.map((s) => (s.id === id ? updated : s))
@@ -82,7 +81,7 @@ export const useSpaceStore = create<SpaceState>()(
 
       deleteSpace: async (id: string) => {
         try {
-          await db.space.delete(id)
+          await dbApi.space.delete(id)
           set((state) => {
             // Remove space from list
             const spaces = state.spaces.filter((s) => s.id !== id)
@@ -112,7 +111,7 @@ export const useSpaceStore = create<SpaceState>()(
 
       assignProjectToSpace: async (projectId: string, spaceId: string) => {
         try {
-          await db.space.assignProject(projectId, spaceId)
+          await dbApi.space.assignProject(projectId, spaceId)
           set((state) => {
             const existing = state.projectSpaceMap[projectId] ?? []
             if (existing.includes(spaceId)) return state
@@ -130,7 +129,7 @@ export const useSpaceStore = create<SpaceState>()(
 
       removeProjectFromSpace: async (projectId: string, spaceId: string) => {
         try {
-          await db.space.removeProject(projectId, spaceId)
+          await dbApi.space.removeProject(projectId, spaceId)
           set((state) => {
             const existing = state.projectSpaceMap[projectId] ?? []
             const filtered = existing.filter((sid) => sid !== spaceId)
@@ -172,7 +171,7 @@ export const useSpaceStore = create<SpaceState>()(
 
         // Persist to database
         const orderedIds = updated.map((s) => s.id)
-        db.space.reorder(orderedIds).catch(() => {
+        dbApi.space.reorder(orderedIds).catch(() => {
           // Silently fail — revert on next load
         })
       }
