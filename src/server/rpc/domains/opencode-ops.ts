@@ -37,6 +37,12 @@ import {
 } from '../../../shared/desktop-command'
 import type { RpcHandler } from '../router'
 
+// Prompt turns stream for the full duration of an agent turn. Codex blocks until
+// completion, with CODEX_TURN_TIMEOUT_MS = 36_000_000ms / 10h, so keep the
+// bridge bound safely above that and let real dispatch errors return via the
+// result envelope.
+const PROMPT_COMMAND_TIMEOUT_MS = 11 * 60 * 60 * 1000
+
 export interface OpenCodeOpsRpcService {
   readonly connect: (
     worktreePath: string,
@@ -948,7 +954,7 @@ const requestOpenCodePromptCommand = (
       settled = true
       process.off('message', onMessage)
       reject(new Error(`Timed out waiting for desktop command response: ${command}`))
-    }, 10_000)
+    }, PROMPT_COMMAND_TIMEOUT_MS)
 
     const onMessage = (message: unknown): void => {
       if (!isDesktopCommandResult(message) || message.id !== id) return
