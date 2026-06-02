@@ -1,6 +1,6 @@
+import { app } from 'electron'
 import { join } from 'path'
 import { existsSync, mkdirSync, appendFileSync, readdirSync, statSync, unlinkSync } from 'fs'
-import { homedir } from 'os'
 
 export enum LogLevel {
   DEBUG = 0,
@@ -47,7 +47,7 @@ export class LoggerService {
 
   private constructor() {
     // Use ~/.hive/logs/ for logs
-    const homeDir = homedir()
+    const homeDir = app.getPath('home')
     this.logDir = join(homeDir, '.hive', LOG_DIR_NAME)
     this.ensureLogDir()
     this.currentLogFile = this.getLogFileName()
@@ -218,32 +218,23 @@ export function createLogger(options: LoggerOptions): {
   warn: (message: string, data?: Record<string, unknown>) => void
   error: (message: string, error?: Error, data?: Record<string, unknown>) => void
 } {
+  const service = LoggerService.getInstance()
   const component = options.component
 
   return {
     debug: (message: string, data?: Record<string, unknown>) =>
-      LoggerService.getInstance().debug(component, message, data),
+      service.debug(component, message, data),
     info: (message: string, data?: Record<string, unknown>) =>
-      LoggerService.getInstance().info(component, message, data),
+      service.info(component, message, data),
     warn: (message: string, data?: Record<string, unknown>) =>
-      LoggerService.getInstance().warn(component, message, data),
+      service.warn(component, message, data),
     error: (message: string, error?: Error, data?: Record<string, unknown>) =>
-      LoggerService.getInstance().error(component, message, error, data)
+      service.error(component, message, error, data)
   }
 }
 
-// Export a lazy singleton facade so importing this module does not touch Electron app APIs.
-export const logger = {
-  debug: (component: string, message: string, data?: Record<string, unknown>): void =>
-    LoggerService.getInstance().debug(component, message, data),
-  info: (component: string, message: string, data?: Record<string, unknown>): void =>
-    LoggerService.getInstance().info(component, message, data),
-  warn: (component: string, message: string, data?: Record<string, unknown>): void =>
-    LoggerService.getInstance().warn(component, message, data),
-  error: (component: string, message: string, error?: Error, data?: Record<string, unknown>): void =>
-    LoggerService.getInstance().error(component, message, error, data),
-  getLogDir: (): string => LoggerService.getInstance().getLogDir()
-}
+// Export singleton instance
+export const logger = LoggerService.getInstance()
 
 // Export function to get log directory (for IPC)
 export function getLogDir(): string {

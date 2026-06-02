@@ -24,7 +24,6 @@ import { useConnectionStore } from '@/stores'
 import { getProviderSettings } from '@/lib/provider-settings'
 import { toast } from 'sonner'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
-import { ticketImportApi } from '@/api/ticket-import-api'
 
 interface RemoteIssue {
   externalId: string
@@ -122,7 +121,7 @@ export function ImportTicketsModal({
     setIssues([])
     setSelected(new Set())
 
-    ticketImportApi
+    window.ticketImport
       .detectRepo('github', effectiveProjectPath)
       .then(unwrapEnvelope)
       .then(({ repo: detected }) => {
@@ -142,7 +141,7 @@ export function ImportTicketsModal({
     setLoading(true)
     const state = showClosed ? 'all' : 'open'
 
-    ticketImportApi
+    window.ticketImport
       .listIssues(
         'github',
         effectiveRepo,
@@ -197,7 +196,7 @@ export function ImportTicketsModal({
 
     try {
       const result = unwrapEnvelope(
-        await ticketImportApi.importIssues(
+        await window.ticketImport.importIssues(
           'github',
           effectiveProjectId,
           effectiveRepo,

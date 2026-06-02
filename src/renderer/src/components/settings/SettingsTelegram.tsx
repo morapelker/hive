@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useTelegramStore } from '@/stores/useTelegramStore'
 import type { TelegramConfig } from '@shared/types/telegram'
-import { telegramApi } from '@/api/telegram-api'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 const DEFAULT_CONFIG: TelegramConfig = {
   botToken: '',
@@ -32,11 +32,14 @@ export function SettingsTelegram(): React.JSX.Element {
   const [verifyResult, setVerifyResult] = useState<boolean | null>(null)
 
   useEffect(() => {
-    telegramApi.getConfig().then((config) => {
-      const next = config ?? DEFAULT_CONFIG
-      setDraft(next)
-      setTelegramConfig(config)
-    })
+    window.telegramOps
+      .getConfig()
+      .then(unwrapEnvelope)
+      .then((config) => {
+        const next = config ?? DEFAULT_CONFIG
+        setDraft(next)
+        setTelegramConfig(config)
+      })
   }, [setTelegramConfig])
 
   const canTest = useMemo(() => !!draft.botToken.trim() && !!draft.chatId, [draft])
@@ -50,8 +53,10 @@ export function SettingsTelegram(): React.JSX.Element {
     }
     setDraft(normalized)
     setTelegramConfig(normalized.botToken || normalized.chatId ? normalized : null)
-    const result = await telegramApi.setConfig(
-      normalized.botToken || normalized.chatId ? normalized : null
+    const result = unwrapEnvelope(
+      await window.telegramOps.setConfig(
+        normalized.botToken || normalized.chatId ? normalized : null
+      )
     )
     if (!result.ok) toast.error(result.error ?? 'Failed to save Telegram settings')
   }
@@ -61,7 +66,7 @@ export function SettingsTelegram(): React.JSX.Element {
     setVerifying(true)
     setVerifyResult(null)
     try {
-      const result = await telegramApi.verifyToken(draft.botToken.trim())
+      const result = unwrapEnvelope(await window.telegramOps.verifyToken(draft.botToken.trim()))
       setVerifyResult(result.ok)
       if (result.ok) {
         toast.success(
@@ -79,7 +84,7 @@ export function SettingsTelegram(): React.JSX.Element {
     setRefreshing(true)
     try {
       await saveConfig(draft)
-      const chats = await telegramApi.discoverChats(draft)
+      const chats = unwrapEnvelope(await window.telegramOps.discoverChats(draft))
       setDiscoveredChats(chats)
       if (chats.length === 0) {
         toast.error('No chats found. Send a message to the bot, then refresh.')
@@ -93,7 +98,7 @@ export function SettingsTelegram(): React.JSX.Element {
     setTesting(true)
     try {
       await saveConfig(draft)
-      const result = await telegramApi.sendTestMessage()
+      const result = unwrapEnvelope(await window.telegramOps.sendTestMessage())
       if (result.ok) toast.success('Telegram test message sent')
       else toast.error(result.error ?? 'Telegram test failed')
     } finally {

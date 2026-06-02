@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { Play, Square, RotateCcw, Trash2, Settings } from 'lucide-react'
-import { scriptApi } from '@/api/script-api'
 import { Button } from '@/components/ui/button'
 import { useScriptStore, fireRunScript, killRunScript } from '@/stores/useScriptStore'
 import { useProjectStore } from '@/stores/useProjectStore'
@@ -11,6 +10,7 @@ import { RunOutputLine } from './RunOutputLine'
 import type { SearchHighlight } from './RunOutputLine'
 import { RunOutputSearch } from './RunOutputSearch'
 import type { RunSearchMatch } from './RunOutputSearch'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { RunSuggestionBanner } from './RunSuggestionBanner'
 
 interface RunTabProps {
@@ -190,8 +190,9 @@ export function RunTab({ worktreeId }: RunTabProps): React.JSX.Element {
       setAssignedPort(null)
       return
     }
-    scriptApi
+    window.scriptOps
       .getPort(cwd)
+      .then(unwrapEnvelope)
       .then(({ port }) => setAssignedPort(port))
       .catch(() => setAssignedPort(null))
   }, [worktreeId, getWorktreePath])

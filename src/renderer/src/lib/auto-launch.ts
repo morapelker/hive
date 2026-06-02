@@ -10,10 +10,9 @@ import { snapshotTokenBaseline } from '@/lib/token-baselines'
 import { PLAN_MODE_PREFIX, getSuperPlanModePrefix, isPlanLike } from '@/lib/constants'
 import { toast } from '@/lib/toast'
 import { canonicalizeTicketTitle } from '@shared/types/branch-utils'
-import { unwrapEnvelope } from '@/lib/ipc-envelope'
-import { opencodeApi } from '@/api/opencode-api'
-import { dbApi } from '@/api/db-api'
-import { terminalApi } from '@/api/terminal-api'
+import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
+
+const db = unwrapEnvelopeApi(() => window.db)
 
 type AutoLaunchMode = 'build' | 'plan' | 'super-plan'
 
@@ -168,15 +167,9 @@ export async function autoLaunchTicket(ticket: AutoLaunchTicket): Promise<void> 
     if (sessionAgentSdk === 'claude-code-cli') {
       const outboundPrompt =
         cliPendingPrompt ??
-        composeAutoLaunchPrompt(
-          config,
-          sessionAgentSdk,
-          configGoalMode,
-          configGoalSuccessCriteria,
-          {
-            claudeCli: true
-          }
-        )
+        composeAutoLaunchPrompt(config, sessionAgentSdk, configGoalMode, configGoalSuccessCriteria, {
+          claudeCli: true
+        })
 
       if (config.mode === 'super-plan') {
         // Await so the persisted mode is committed before the main process
@@ -186,7 +179,7 @@ export async function autoLaunchTicket(ticket: AutoLaunchTicket): Promise<void> 
 
       bumpWorktreeLastMessage({ worktreeId })
       const result = unwrapEnvelope(
-        await terminalApi.createClaudeCli(sessionId, {
+        await window.terminalOps.createClaudeCli(sessionId, {
           pendingPrompt: outboundPrompt
         })
       )
@@ -201,11 +194,11 @@ export async function autoLaunchTicket(ticket: AutoLaunchTicket): Promise<void> 
     const worktree = allWorktrees.find((w) => w.id === worktreeId)
     if (!worktree?.path) return
 
-    const connectResult = unwrapEnvelope(await opencodeApi.connect(worktree.path, sessionId))
+    const connectResult = unwrapEnvelope(await window.opencodeOps.connect(worktree.path, sessionId))
     if (!connectResult.success || !connectResult.sessionId) return
 
     useSessionStore.getState().setOpenCodeSessionId(sessionId, connectResult.sessionId)
-    await dbApi.session.update(sessionId, { opencode_session_id: connectResult.sessionId })
+    await db.session.update(sessionId, { opencode_session_id: connectResult.sessionId })
 
     // 9. Send prompt
     if (config.prompt.trim()) {
@@ -216,8 +209,6 @@ export async function autoLaunchTicket(ticket: AutoLaunchTicket): Promise<void> 
         configGoalSuccessCriteria,
         { claudeCli: false }
       )
-      if (!outboundPrompt) return
-
       const promptOptions =
         sessionAgentSdk === 'codex' ? { codexFastMode: config.codexFastMode } : undefined
 
@@ -227,7 +218,7 @@ export async function autoLaunchTicket(ticket: AutoLaunchTicket): Promise<void> 
 
       bumpWorktreeLastMessage({ worktreeId })
       unwrapEnvelope(
-        await opencodeApi.prompt(
+        await window.opencodeOps.prompt(
           worktree.path,
           connectResult.sessionId,
           [{ type: 'text', text: outboundPrompt }],

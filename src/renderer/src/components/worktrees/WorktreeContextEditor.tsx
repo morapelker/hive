@@ -4,8 +4,7 @@ import { Button } from '@/components/ui/button'
 import { MarkdownRenderer } from '@/components/sessions/MarkdownRenderer'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { toast } from '@/lib/toast'
-import { worktreeApi } from '@/api/worktree-api'
-import { systemApi } from '@/api/system-api'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 interface WorktreeContextEditorProps {
   worktreeId: string
@@ -29,7 +28,7 @@ export function WorktreeContextEditor({
     void (async () => {
       setIsLoading(true)
       try {
-        const result = await worktreeApi.getContext(worktreeId)
+        const result = unwrapEnvelope(await window.worktreeOps.getContext(worktreeId))
         if (cancelled) return
         const ctx = result.success ? (result.context ?? '') : ''
         setContent(ctx)
@@ -57,7 +56,9 @@ export function WorktreeContextEditor({
   const handleSave = useCallback(async () => {
     setIsSaving(true)
     try {
-      const result = await worktreeApi.updateContext(worktreeId, content || null)
+      const result = unwrapEnvelope(
+        await window.worktreeOps.updateContext(worktreeId, content || null)
+      )
       if (result.success) {
         setSavedContent(content)
         toast.success('Context saved')
@@ -88,9 +89,9 @@ export function WorktreeContextEditor({
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [isEditing, hasUnsavedChanges, isSaving, handleSave])
 
-  const handleClose = useCallback(async () => {
+  const handleClose = useCallback(() => {
     if (hasUnsavedChanges) {
-      const confirmed = await systemApi.confirm('You have unsaved changes. Discard them?')
+      const confirmed = window.confirm('You have unsaved changes. Discard them?')
       if (!confirmed) return
     }
     useFileViewerStore.getState().closeContextEditor()

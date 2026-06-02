@@ -3,33 +3,11 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import type { CustomProjectCommand } from '@/lib/custom-commands'
-import { setRendererRpcClient } from '@/api/rpc-client'
-
-function installSettingsRpcMock(settingsValue: string | null = null): void {
-  setRendererRpcClient({
-    request: vi.fn(async (method: string) => {
-      switch (method) {
-        case 'db.setting.get':
-          return settingsValue
-        case 'db.setting.set':
-          return true
-        case 'settingsOps.loadCustomCommandsFile':
-          return { success: true, commands: [], mtime: null }
-        case 'telegramOps.getConfig':
-          return null
-        default:
-          return undefined
-      }
-    }),
-    subscribe: vi.fn(() => () => {})
-  })
-}
 
 describe('Settings Store - Custom Project Commands', () => {
   beforeEach(() => {
     // Reset store to defaults before each test
-    useSettingsStore.setState(useSettingsStore.getState())
-    installSettingsRpcMock()
+    useSettingsStore.setState({ customProjectCommands: [] })
     // Clear any previous console.warn spies
     vi.restoreAllMocks()
   })
@@ -67,18 +45,30 @@ describe('Settings Store - Custom Project Commands', () => {
   it('should filter out invalid commands during settings load', async () => {
     const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
-    installSettingsRpcMock(
-      JSON.stringify({
-        customProjectCommands: [
-          { id: 'valid-1', name: 'Valid Command', prompt: 'Test prompt' },
-          { id: 'invalid-1', name: '', prompt: 'Test prompt' },
-          { id: 'valid-2', name: 'Another Valid', prompt: 'Another prompt' },
-          { id: 123, name: 'Invalid ID', prompt: 'Test prompt' },
-          null,
-          { id: 'invalid-2', name: 'No Prompt' }
-        ]
-      })
-    )
+    // Mock the database to return settings with mixed valid/invalid commands
+    const mockDb = {
+      setting: {
+        get: vi.fn().mockResolvedValue({
+          success: true,
+          value: JSON.stringify({
+            customProjectCommands: [
+              { id: 'valid-1', name: 'Valid Command', prompt: 'Test prompt' },
+              { id: 'invalid-1', name: '', prompt: 'Test prompt' }, // Invalid: empty name
+              { id: 'valid-2', name: 'Another Valid', prompt: 'Another prompt' },
+              { id: 123, name: 'Invalid ID', prompt: 'Test prompt' }, // Invalid: non-string id
+              null, // Invalid: null command
+              { id: 'invalid-2', name: 'No Prompt' } // Invalid: missing prompt
+            ]
+          })
+        }),
+        set: vi.fn().mockResolvedValue({ success: true, value: true })
+      }
+    }
+
+    // Temporarily override window.db
+    const dbWindow = window as unknown as { db: unknown }
+    const originalDb = dbWindow.db
+    dbWindow.db = mockDb
 
     try {
       // Load settings from database
@@ -96,6 +86,8 @@ describe('Settings Store - Custom Project Commands', () => {
         expect.any(Array)
       )
     } finally {
+      // Restore original window.db
+      dbWindow.db = originalDb
       consoleWarnSpy.mockRestore()
     }
   })
@@ -103,11 +95,23 @@ describe('Settings Store - Custom Project Commands', () => {
   it('should set customProjectCommands to empty array if not an array', async () => {
     const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
-    installSettingsRpcMock(
-      JSON.stringify({
-        customProjectCommands: 'not-an-array'
-      })
-    )
+    // Mock the database to return settings with non-array customProjectCommands
+    const mockDb = {
+      setting: {
+        get: vi.fn().mockResolvedValue({
+          success: true,
+          value: JSON.stringify({
+            customProjectCommands: 'not-an-array'
+          })
+        }),
+        set: vi.fn().mockResolvedValue({ success: true, value: true })
+      }
+    }
+
+    // Temporarily override window.db
+    const dbWindow = window as unknown as { db: unknown }
+    const originalDb = dbWindow.db
+    dbWindow.db = mockDb
 
     try {
       // Load settings from database
@@ -122,6 +126,8 @@ describe('Settings Store - Custom Project Commands', () => {
         'customProjectCommands is not an array, setting to empty array'
       )
     } finally {
+      // Restore original window.db
+      dbWindow.db = originalDb
       consoleWarnSpy.mockRestore()
     }
   })

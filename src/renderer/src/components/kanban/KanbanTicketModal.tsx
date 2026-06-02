@@ -74,11 +74,10 @@ import { TicketRunButton } from './TicketRunButton'
 import { useQuestionStore, type QuestionRequest } from '@/stores/useQuestionStore'
 import { QuestionPrompt } from '@/components/sessions/QuestionPrompt'
 import { FollowupInput } from './FollowupInput'
-import type { Attachment, AttachmentInput } from '@/components/sessions/AttachmentPreview'
+import type { Attachment } from '@/components/sessions/AttachmentPreview'
 import { buildMessageParts, isImageMime, MAX_ATTACHMENTS } from '@/lib/file-attachment-utils'
 import { useDropZone } from '@/hooks/useDropZone'
 import { SessionStreamPanel } from './SessionStreamPanel'
-import { opencodeApi } from '@/api/opencode-api'
 import { ReviewTicketDiffSummary, type ReviewTicketDiffFile } from './ReviewTicketDiffSummary'
 import { ProviderIcon, getProviderLabel } from '@/components/ui/provider-icon'
 import { useLifecycleActions } from '@/hooks/useLifecycleActions'
@@ -89,13 +88,10 @@ import { TicketDiscardChangesDialog } from './TicketDiscardChangesDialog'
 import { useImagePaste } from '@/hooks/useImagePaste'
 import { buildHandoffPrompt, type HandoffSelectionOverride } from '@/lib/handoffSelection'
 import { canonicalizeTicketTitle, extractPlanTitle } from '@shared/types/branch-utils'
-import type { KanbanTicket, KanbanTicketUpdate, Session, Worktree } from '../../../../main/db/types'
-import { unwrapEnvelope } from '@/lib/ipc-envelope'
-import { systemApi } from '@/api/system-api'
-import { dbApi } from '@/api/db-api'
-import { gitApi } from '@/api/git-api'
-import { fileApi } from '@/api/file-api'
-import { terminalApi } from '@/api/terminal-api'
+import type { KanbanTicket, KanbanTicketUpdate, Worktree } from '../../../../main/db/types'
+import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
+
+const db = unwrapEnvelopeApi(() => window.db)
 
 // ── Types ───────────────────────────────────────────────────────────
 type ModalMode = 'edit' | 'plan_review' | 'review' | 'error' | 'question'
@@ -210,7 +206,7 @@ async function findSessionById(sessionId: string): Promise<{
       let worktreePath = found.worktree_id ? findWorktreePathById(found.worktree_id) : null
       // Worktree not in the in-memory store (project not loaded in sidebar) — try DB
       if (!worktreePath && found.worktree_id) {
-        worktreePath = (await dbApi.worktree.get(found.worktree_id))?.path ?? null
+        worktreePath = (await db.worktree.get(found.worktree_id))?.path ?? null
       }
       return { session: found, worktreePath, connectionId: null, workingPath: worktreePath }
     }
@@ -229,7 +225,7 @@ async function findSessionById(sessionId: string): Promise<{
     }
   }
   // DB fallback: session not in store (worktree not currently selected)
-  const dbSession = await dbApi.session.get<Session>(sessionId)
+  const dbSession = await db.session.get(sessionId)
   if (!dbSession) {
     console.warn(
       `[KanbanTicketModal] findSessionById: session not found in store or DB — sessionId=${sessionId}`
@@ -241,7 +237,7 @@ async function findSessionById(sessionId: string): Promise<{
   useSessionStore.getState().hydrateSession(dbSession)
 
   const worktreePath = dbSession.worktree_id
-    ? ((await dbApi.worktree.get<Worktree>(dbSession.worktree_id))?.path ?? null)
+    ? ((await db.worktree.get(dbSession.worktree_id))?.path ?? null)
     : null
   return {
     session: {
@@ -375,7 +371,7 @@ async function sendFollowupToSession(opts: {
   // followup path bypasses SessionView entirely.  Without this, the Claude Code
   // implementer throws "session not found" because its Map was never populated.
   const reconnectResult = unwrapEnvelope(
-    await opencodeApi.reconnect(workingPath, session.opencode_session_id, opts.sessionId)
+    await window.opencodeOps.reconnect(workingPath, session.opencode_session_id, opts.sessionId)
   )
   if (!reconnectResult.success) {
     throw new Error(`Failed to reconnect to session: ${opts.sessionId}`)
@@ -386,7 +382,7 @@ async function sendFollowupToSession(opts: {
     : [{ type: 'text' as const, text: fullPrompt }]
 
   const promptResult = unwrapEnvelope(
-    await opencodeApi.prompt(workingPath, session.opencode_session_id, messageParts, model)
+    await window.opencodeOps.prompt(workingPath, session.opencode_session_id, messageParts, model)
   )
 
   if (promptResult && !promptResult.success) {
@@ -538,7 +534,11 @@ function MergeConflictBanner({ ticket }: { ticket: KanbanTicket }) {
       ) : mergeConflictMode === 'always-ask' ? (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button size="sm" variant="destructive" className="h-7 text-xs font-semibold">
+            <Button
+              size="sm"
+              variant="destructive"
+              className="h-7 text-xs font-semibold"
+            >
               <AlertTriangle className="h-3.5 w-3.5 mr-1" />
               Fix conflicts
               <ChevronDown className="h-3 w-3 ml-1" />
@@ -773,7 +773,7 @@ function KanbanTicketModalContent({
     }
 
     // Worktree not in store — load from DB
-    dbApi.worktree.get<Worktree>(sessionRecord.worktree_id).then((wt) => {
+    db.worktree.get(sessionRecord.worktree_id).then((wt) => {
       setDbWorktreePath(wt?.path ?? null)
     })
   }, [sessionRecord?.worktree_id])
@@ -898,8 +898,8 @@ function KanbanTicketModalContent({
       return
     }
     let cancelled = false
-    dbApi.session
-      .get<{ opencode_session_id?: string | null }>(ticket.current_session_id)
+    db.session
+      .get(ticket.current_session_id)
       .then((dbSess: { opencode_session_id?: string | null } | null) => {
         if (cancelled) return
         const dbId = dbSess?.opencode_session_id ?? null
@@ -972,7 +972,7 @@ function KanbanTicketModalContent({
     ;(async () => {
       try {
         const reconnResult = unwrapEnvelope(
-          await opencodeApi.reconnect(worktreePath, opcSessionId, ticket.current_session_id)
+          await window.opencodeOps.reconnect(worktreePath, opcSessionId, ticket.current_session_id)
         )
         console.info('[KanbanModal:sessionReady] reconnect result:', reconnResult)
       } catch (err) {
@@ -983,7 +983,9 @@ function KanbanTicketModalContent({
       // Pre-warm: load messages into the backend cache so the next
       // getMessages() call from useSessionStream finds them immediately.
       try {
-        const warmResult = unwrapEnvelope(await opencodeApi.getMessages(worktreePath, opcSessionId))
+        const warmResult = unwrapEnvelope(
+          await window.opencodeOps.getMessages(worktreePath, opcSessionId)
+        )
         console.info(
           '[KanbanModal:sessionReady] pre-warm getMessages — success=%s, messageCount=%d',
           warmResult.success,
@@ -1362,7 +1364,7 @@ function EditModeContent({
             <DialogTitle>Edit Ticket</DialogTitle>
             {ticket.external_provider && ticket.external_url && (
               <button
-                onClick={() => void systemApi.openInChrome(ticket.external_url!)}
+                onClick={() => window.systemOps.openInChrome(ticket.external_url!)}
                 className="transition-opacity hover:opacity-80"
                 title={`Open ${getProviderLabel(ticket.external_provider)} #${ticket.external_id}`}
               >
@@ -1691,7 +1693,7 @@ function PlanReviewModeContent({
   useEffect(() => {
     if (isClaudeCliPlanSession || !worktreePath || !opcSessionId) return
     let cancelled = false
-    opencodeApi
+    window.opencodeOps
       .commands(worktreePath, opcSessionId)
       .then(unwrapEnvelope)
       .then((result) => {
@@ -1709,7 +1711,7 @@ function PlanReviewModeContent({
 
   const planContent = pendingPlan?.planContent ?? ticket.description ?? ''
 
-  const handleAttach = useCallback((file: AttachmentInput) => {
+  const handleAttach = useCallback((file: Omit<Attachment, 'id'>) => {
     setAttachments((prev) => {
       if (prev.length >= MAX_ATTACHMENTS) {
         toast.warning(`Maximum ${MAX_ATTACHMENTS} attachments reached`)
@@ -1747,7 +1749,7 @@ function PlanReviewModeContent({
             kind: 'path',
             name: file.name,
             mime: file.type || 'application/octet-stream',
-            filePath: fileApi.getPathForFile(file)
+            filePath: window.fileOps.getPathForFile(file)
           })
         }
       }
@@ -1966,7 +1968,11 @@ function PlanReviewModeContent({
           return
         }
         unwrapEnvelope(
-          await opencodeApi.planApprove(approvePath, sessionId, pendingBeforeAction.requestId)
+          await window.opencodeOps.planApprove(
+            approvePath,
+            sessionId,
+            pendingBeforeAction.requestId
+          )
         )
       }
 
@@ -2007,7 +2013,7 @@ function PlanReviewModeContent({
         if (sessionRecord?.connection_id) {
           if (worktreePath && opcSessionId) {
             useCommandApprovalStore.getState().clearSession(sessionId)
-            unwrapEnvelope(await opencodeApi.abort(worktreePath, opcSessionId))
+            unwrapEnvelope(await window.opencodeOps.abort(worktreePath, opcSessionId))
           }
 
           if (!worktreePath) {
@@ -2051,12 +2057,11 @@ function PlanReviewModeContent({
             sessionStore.setPendingMessage(newSessionId, handoffPrompt)
           }
 
-          const boardMode = useSettingsStore.getState().boardMode
-          if (boardMode === 'sticky-tab') {
+          // Handoff from the ticket modal starts work in the background and keeps
+          // the board in focus. Sticky-tab mode represents the board as a tab, so
+          // explicitly preserve that tab; toggle mode is already on the board.
+          if (useSettingsStore.getState().boardMode === 'sticky-tab') {
             sessionStore.setActiveSession(BOARD_TAB_ID)
-          } else if (newSession.agent_sdk !== 'claude-code-cli') {
-            sessionStore.setActiveConnection(sessionRecord.connection_id)
-            sessionStore.setActiveConnectionSession(newSessionId)
           }
 
           onClose()
@@ -2065,7 +2070,7 @@ function PlanReviewModeContent({
             if (newSession.agent_sdk === 'claude-code-cli') {
               bumpWorktreeLastMessage({ connectionId: sessionRecord.connection_id })
               const cliResult = unwrapEnvelope(
-                await terminalApi.createClaudeCli(newSessionId, {
+                await window.terminalOps.createClaudeCli(newSessionId, {
                   pendingPrompt: handoffPrompt
                 })
               )
@@ -2139,12 +2144,11 @@ function PlanReviewModeContent({
           sessionStore.setPendingMessage(newSessionId, handoffPrompt)
         }
 
-        const boardMode = useSettingsStore.getState().boardMode
-        if (boardMode === 'sticky-tab') {
+        // Handoff from the ticket modal starts work in the background and keeps
+        // the board in focus. Sticky-tab mode represents the board as a tab, so
+        // explicitly preserve that tab; toggle mode is already on the board.
+        if (useSettingsStore.getState().boardMode === 'sticky-tab') {
           sessionStore.setActiveSession(BOARD_TAB_ID)
-        } else if (newSession.agent_sdk !== 'claude-code-cli') {
-          sessionStore.setActiveWorktree(worktreeId)
-          sessionStore.setActiveSession(newSessionId)
         }
 
         onClose()
@@ -2153,7 +2157,7 @@ function PlanReviewModeContent({
           if (newSession.agent_sdk === 'claude-code-cli') {
             bumpWorktreeLastMessage({ worktreeId })
             const cliResult = unwrapEnvelope(
-              await terminalApi.createClaudeCli(newSessionId, {
+              await window.terminalOps.createClaudeCli(newSessionId, {
                 pendingPrompt: handoffPrompt
               })
             )
@@ -2232,14 +2236,16 @@ function PlanReviewModeContent({
     ) => {
       // Connect to OpenCode. Surface failure so the caller can alert the user — staying silent
       // here would leave optimistic UI state with no work running and no error feedback.
-      const connectResult = unwrapEnvelope(await opencodeApi.connect(worktreePath, newSessionId))
+      const connectResult = unwrapEnvelope(
+        await window.opencodeOps.connect(worktreePath, newSessionId)
+      )
       if (!connectResult.success || !connectResult.sessionId) {
         throw new Error('Failed to connect to supercharge session')
       }
 
       // Persist the opencode session ID to Zustand + DB
       useSessionStore.getState().setOpenCodeSessionId(newSessionId, connectResult.sessionId)
-      await dbApi.session.update<Session>(newSessionId, {
+      await db.session.update(newSessionId, {
         opencode_session_id: connectResult.sessionId
       })
 
@@ -2262,7 +2268,7 @@ function PlanReviewModeContent({
       // Send /using-superpowers — global listener handles follow-up on idle
       const model = resolveSessionModel(newSessionId)
       unwrapEnvelope(
-        await opencodeApi.prompt(
+        await window.opencodeOps.prompt(
           worktreePath,
           connectResult.sessionId,
           [{ type: 'text', text: '/using-superpowers' }],
@@ -2280,13 +2286,15 @@ function PlanReviewModeContent({
       handoffPrompt: string,
       bumpTarget: { worktreeId?: string | null; connectionId?: string | null }
     ) => {
-      const connectResult = unwrapEnvelope(await opencodeApi.connect(workingPath, newSessionId))
+      const connectResult = unwrapEnvelope(
+        await window.opencodeOps.connect(workingPath, newSessionId)
+      )
       if (!connectResult.success || !connectResult.sessionId) {
         throw new Error('Failed to connect to handoff session')
       }
 
       useSessionStore.getState().setOpenCodeSessionId(newSessionId, connectResult.sessionId)
-      await dbApi.session.update<Session>(newSessionId, {
+      await db.session.update(newSessionId, {
         opencode_session_id: connectResult.sessionId
       })
 
@@ -2299,7 +2307,7 @@ function PlanReviewModeContent({
 
       const model = resolveSessionModel(newSessionId)
       unwrapEnvelope(
-        await opencodeApi.prompt(
+        await window.opencodeOps.prompt(
           workingPath,
           connectResult.sessionId,
           [{ type: 'text', text: handoffPrompt }],
@@ -2324,7 +2332,7 @@ function PlanReviewModeContent({
       // Abort the original backend session so it stops spinning
       if (worktreePath && opcSessionId) {
         useCommandApprovalStore.getState().clearSession(sessionId)
-        unwrapEnvelope(await opencodeApi.abort(worktreePath, opcSessionId))
+        unwrapEnvelope(await window.opencodeOps.abort(worktreePath, opcSessionId))
       }
 
       // Connection-session branch: use eager start since modal closes to the board.
@@ -2478,7 +2486,7 @@ function PlanReviewModeContent({
       // Abort the original backend session so it stops spinning
       if (worktreePath && opcSessionId) {
         useCommandApprovalStore.getState().clearSession(sessionId)
-        unwrapEnvelope(await opencodeApi.abort(worktreePath, opcSessionId))
+        unwrapEnvelope(await window.opencodeOps.abort(worktreePath, opcSessionId))
       }
 
       const localWorktreePath = findWorktreePathById(ticket.worktree_id)
@@ -2689,7 +2697,7 @@ function ReviewModeContent({
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const dropZoneRef = useRef<HTMLDivElement>(null)
 
-  const handleAttach = useCallback((file: AttachmentInput) => {
+  const handleAttach = useCallback((file: Omit<Attachment, 'id'>) => {
     setAttachments((prev) => {
       if (prev.length >= MAX_ATTACHMENTS) {
         toast.warning(`Maximum ${MAX_ATTACHMENTS} attachments reached`)
@@ -2726,7 +2734,7 @@ function ReviewModeContent({
             kind: 'path',
             name: file.name,
             mime: file.type || 'application/octet-stream',
-            filePath: fileApi.getPathForFile(file)
+            filePath: window.fileOps.getPathForFile(file)
           })
         }
       }
@@ -2767,8 +2775,8 @@ function ReviewModeContent({
       return
     }
 
-    dbApi.worktree
-      .get<Worktree>(ticket.worktree_id)
+    db.worktree
+      .get(ticket.worktree_id)
       .then((dbWorktree) => {
         if (!cancelled) {
           setResolvedWorktree(dbWorktree ?? null)
@@ -2795,9 +2803,7 @@ function ReviewModeContent({
 
     ;(async () => {
       try {
-        const defaultWorktrees = await dbApi.worktree.getActiveByProject<Worktree>(
-          ticket.project_id
-        )
+        const defaultWorktrees = await db.worktree.getActiveByProject(ticket.project_id)
         const defaultWt = defaultWorktrees.find((w) => w.is_default)
         if (!cancelled) {
           setResolvedBaseBranch(resolvedWorktree.base_branch ?? defaultWt?.branch_name ?? null)
@@ -2827,7 +2833,9 @@ function ReviewModeContent({
     const loadDiffSummary = async (): Promise<void> => {
       setDiffSummaryLoading(true)
       try {
-        const result = await gitApi.getBranchDiffFiles(resolvedWorktree.path, resolvedBaseBranch)
+        const result = unwrapEnvelope(
+          await window.gitOps.getBranchDiffFiles(resolvedWorktree.path, resolvedBaseBranch)
+        )
         if (cancelled) return
 
         if (result.success) {
@@ -2853,7 +2861,7 @@ function ReviewModeContent({
 
     loadDiffSummary()
 
-    const cleanup = gitApi.onStatusChanged((event) => {
+    const cleanup = window.gitOps.onStatusChanged((event) => {
       if (event.worktreePath === resolvedWorktree.path) {
         void loadDiffSummary()
       }
@@ -2973,11 +2981,9 @@ function ReviewModeContent({
     // Merge-on-done: intercept for feature-branch worktrees
     if (ticket.worktree_id) {
       try {
-        const worktree = await dbApi.worktree.get<Worktree>(ticket.worktree_id)
+        const worktree = await db.worktree.get(ticket.worktree_id)
         if (worktree) {
-          const defaultWorktrees = await dbApi.worktree.getActiveByProject<Worktree>(
-            ticket.project_id
-          )
+          const defaultWorktrees = await db.worktree.getActiveByProject(ticket.project_id)
           const defaultWt = defaultWorktrees.find((w) => w.is_default)
           const resolvedBaseBranch = worktree.base_branch ?? defaultWt?.branch_name
 
@@ -3212,7 +3218,7 @@ function ErrorModeContent({
     )
   )
 
-  const handleAttach = useCallback((file: AttachmentInput) => {
+  const handleAttach = useCallback((file: Omit<Attachment, 'id'>) => {
     setAttachments((prev) => {
       if (prev.length >= MAX_ATTACHMENTS) {
         toast.warning(`Maximum ${MAX_ATTACHMENTS} attachments reached`)
@@ -3249,7 +3255,7 @@ function ErrorModeContent({
             kind: 'path',
             name: file.name,
             mime: file.type || 'application/octet-stream',
-            filePath: fileApi.getPathForFile(file)
+            filePath: window.fileOps.getPathForFile(file)
           })
         }
       }
@@ -3439,7 +3445,7 @@ function QuestionModeContent({
           questionPath = (await findSessionById(ticket.current_session_id))?.workingPath ?? null
         }
         unwrapEnvelope(
-          await opencodeApi.questionReply(requestId, answers, questionPath || undefined)
+          await window.opencodeOps.questionReply(requestId, answers, questionPath || undefined)
         )
         // Optimistically set session back to working so the progress bar resumes immediately
         if (ticket.current_session_id) {
@@ -3468,7 +3474,9 @@ function QuestionModeContent({
         } else if (ticket.current_session_id) {
           questionPath = (await findSessionById(ticket.current_session_id))?.workingPath ?? null
         }
-        unwrapEnvelope(await opencodeApi.questionReject(requestId, questionPath || undefined))
+        unwrapEnvelope(
+          await window.opencodeOps.questionReject(requestId, questionPath || undefined)
+        )
         // Optimistically set session back to working so the progress bar resumes immediately
         if (ticket.current_session_id) {
           useWorktreeStatusStore

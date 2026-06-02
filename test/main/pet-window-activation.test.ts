@@ -9,7 +9,6 @@ const electronMock = vi.hoisted(() => {
       isDestroyed: vi.fn(() => false),
       getPosition: vi.fn(() => [options.x ?? 0, options.y ?? 0]),
       getBounds: vi.fn(() => ({ width: options.width ?? 0, height: options.height ?? 0 })),
-      setBounds: vi.fn(),
       setVisibleOnAllWorkspaces: vi.fn(),
       setAlwaysOnTop: vi.fn(),
       setFullScreenable: vi.fn(),
@@ -18,7 +17,10 @@ const electronMock = vi.hoisted(() => {
       loadFile: vi.fn(),
       loadURL: vi.fn(),
       showInactive: vi.fn(),
-      destroy: vi.fn()
+      destroy: vi.fn(),
+      webContents: {
+        send: vi.fn()
+      }
     }
     windows.push(window)
     return window
@@ -40,15 +42,13 @@ const electronMock = vi.hoisted(() => {
   }
 })
 
-const backendManagerMock = vi.hoisted(() => ({
-  publishDesktopBackendEvent: vi.fn()
-}))
-
 vi.mock('electron', () => ({
   app: electronMock.app,
   BrowserWindow: electronMock.BrowserWindow,
   screen: {
-    getAllDisplays: vi.fn(() => [{ workArea: { x: 0, y: 0, width: 1440, height: 900 } }]),
+    getAllDisplays: vi.fn(() => [
+      { workArea: { x: 0, y: 0, width: 1440, height: 900 } }
+    ]),
     getDisplayNearestPoint: vi.fn(() => ({
       workArea: { x: 0, y: 0, width: 1440, height: 900 }
     })),
@@ -66,15 +66,6 @@ vi.mock('../../src/main/db', () => ({
   getDatabase: vi.fn()
 }))
 
-vi.mock('../../src/main/desktop/backend-manager', () => ({
-  publishDesktopBackendEvent: backendManagerMock.publishDesktopBackendEvent
-}))
-
-import {
-  PET_JUMP_TO_WORKTREE_CHANNEL,
-  PET_SETTINGS_UPDATED_CHANNEL,
-  PET_STATUS_CHANNEL
-} from '../../src/shared/pet-events'
 import {
   beginPetPointerInteraction,
   configurePetWindow,
@@ -82,9 +73,7 @@ import {
   destroyPetWindow,
   endPetPointerInteraction,
   focusMainWindowFromPet,
-  forwardStatusToPet,
-  shouldSuppressMainWindowActivationFromPet,
-  updatePetSettings
+  shouldSuppressMainWindowActivationFromPet
 } from '../../src/main/services/pet-window'
 
 describe('pet window activation suppression', () => {
@@ -102,7 +91,6 @@ describe('pet window activation suppression', () => {
     Object.defineProperty(process, 'platform', { value: originalPlatform })
     electronMock.windows.length = 0
     electronMock.BrowserWindow.mockClear()
-    backendManagerMock.publishDesktopBackendEvent.mockReset()
   })
 
   it('suppresses main-window activation during pet pointer interaction until the grace period ends', () => {
@@ -127,7 +115,10 @@ describe('pet window activation suppression', () => {
       isMinimized: vi.fn(() => false),
       restore: vi.fn(),
       show: vi.fn(),
-      focus: vi.fn()
+      focus: vi.fn(),
+      webContents: {
+        send: vi.fn()
+      }
     }
 
     configurePetWindow({ getMainWindow: () => mainWindow as never })
@@ -140,71 +131,6 @@ describe('pet window activation suppression', () => {
     expect(shouldSuppressMainWindowActivationFromPet()).toBe(false)
     expect(mainWindow.show).toHaveBeenCalledTimes(1)
     expect(mainWindow.focus).toHaveBeenCalledTimes(1)
-  })
-
-  it('publishes pet jump events through the backend event bus without renderer IPC', async () => {
-    const mainWindow = {
-      isDestroyed: vi.fn(() => false),
-      isMinimized: vi.fn(() => false),
-      restore: vi.fn(),
-      show: vi.fn(),
-      focus: vi.fn()
-    }
-
-    configurePetWindow({ getMainWindow: () => mainWindow as never })
-
-    focusMainWindowFromPet('worktree-1')
-
-    await vi.waitFor(() => {
-      expect(backendManagerMock.publishDesktopBackendEvent).toHaveBeenCalledWith(
-        PET_JUMP_TO_WORKTREE_CHANNEL,
-        { worktreeId: 'worktree-1' }
-      )
-    })
-  })
-
-  it('publishes pet window status events through the backend event bus without renderer IPC', async () => {
-    Object.defineProperty(process, 'platform', { value: 'darwin' })
-    createPetWindow()
-    const petWindow = electronMock.windows[0]
-    const payload = {
-      status: 'working' as const,
-      sessionId: 'session-1',
-      worktreeId: 'worktree-1'
-    }
-
-    forwardStatusToPet(payload)
-
-    await vi.waitFor(() => {
-      expect(backendManagerMock.publishDesktopBackendEvent).toHaveBeenCalledWith(
-        PET_STATUS_CHANNEL,
-        payload
-      )
-    })
-  })
-
-  it('publishes pet settings updates through the backend event bus without renderer IPC', async () => {
-    Object.defineProperty(process, 'platform', { value: 'darwin' })
-    createPetWindow()
-    const petWindow = electronMock.windows[0]
-
-    updatePetSettings({ enabled: true, size: 'L', opacity: 0.75 })
-
-    const expectedSettings = {
-      enabled: true,
-      petId: 'bee',
-      size: 'L',
-      opacity: 0.75,
-      animationSpeedEnabled: false,
-      animationSpeed: 5,
-      hasHatched: false
-    }
-    await vi.waitFor(() => {
-      expect(backendManagerMock.publishDesktopBackendEvent).toHaveBeenCalledWith(
-        PET_SETTINGS_UPDATED_CHANNEL,
-        expectedSettings
-      )
-    })
   })
 
   it('creates the pet as a non-activating macOS panel', () => {

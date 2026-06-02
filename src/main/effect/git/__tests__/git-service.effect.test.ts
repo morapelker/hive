@@ -5,7 +5,15 @@ import { Effect, Either } from 'effect'
 import simpleGit from 'simple-git'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { GitLive, resolveGitWorktreesDir } from '../layers'
+const mockHome = vi.hoisted(() => ({ path: '' }))
+
+vi.mock('electron', () => ({
+  app: {
+    getPath: vi.fn(() => mockHome.path)
+  }
+}))
+
+import { GitLive } from '../layers'
 import { Git } from '../service'
 
 const runGit = <A, E>(program: Effect.Effect<A, E, Git>) =>
@@ -18,7 +26,7 @@ describe('GitLive', () => {
   beforeEach(async () => {
     repoPath = mkdtempSync(join(tmpdir(), 'hive-git-effect-'))
     homePath = mkdtempSync(join(tmpdir(), 'hive-home-'))
-    vi.stubEnv('HOME', homePath)
+    mockHome.path = homePath
     const git = simpleGit(repoPath)
     await git.init()
     await git.addConfig('user.email', 'test@test.com')
@@ -31,13 +39,6 @@ describe('GitLive', () => {
   afterEach(() => {
     rmSync(repoPath, { recursive: true, force: true })
     rmSync(homePath, { recursive: true, force: true })
-    vi.unstubAllEnvs()
-  })
-
-  it('resolves project worktree directories from the Node home directory', () => {
-    expect(resolveGitWorktreesDir('project-a', '/tmp/hive-home-test')).toBe(
-      join('/tmp/hive-home-test', '.hive-worktrees', 'project-a')
-    )
   })
 
   it('stages and commits through the Git service', async () => {

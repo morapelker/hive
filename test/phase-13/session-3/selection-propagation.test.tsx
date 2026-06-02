@@ -2,68 +2,35 @@ import { describe, test, expect, beforeEach, vi } from 'vitest'
 import { render, screen, fireEvent } from '../../utils/render'
 import { WorktreeItem } from '@/components/worktrees/WorktreeItem'
 import { useProjectStore, useWorktreeStore } from '@/stores'
-import { dbApi } from '@/api/db-api'
 
-vi.mock('@/api/db-api', () => ({
-  dbApi: {
-    worktree: {
-      touch: vi.fn()
-    },
-    setting: {
-      get: vi.fn(),
-      set: vi.fn()
-    }
-  }
-}))
+// Mock window APIs needed by WorktreeItem
+const mockProjectOps = {
+  showInFolder: vi.fn(),
+  copyToClipboard: vi.fn()
+}
 
-vi.mock('@/api/worktree-api', () => ({
-  worktreeApi: {
-    openInTerminal: vi.fn(),
-    openInEditor: vi.fn(),
-    delete: vi.fn(),
-    renameBranch: vi.fn()
-  }
-}))
+const mockWorktreeOps = {
+  openInTerminal: vi.fn().mockResolvedValue({ success: true }),
+  openInEditor: vi.fn().mockResolvedValue({ success: true }),
+  delete: vi.fn().mockResolvedValue({ success: true }),
+  renameBranch: vi.fn().mockResolvedValue({ success: true })
+}
 
-vi.mock('@/api/project-api', () => ({
-  projectApi: {
-    showInFolder: vi.fn(),
-    copyToClipboard: vi.fn(),
-    detectLanguage: vi.fn()
+const mockDb = {
+  worktree: {
+    touch: vi.fn().mockResolvedValue(true)
   }
-}))
-
-vi.mock('@/api/system-api', () => ({
-  systemApi: {
-    openInChrome: vi.fn()
-  }
-}))
-
-vi.mock('@/api/settings-api', () => ({
-  settingsApi: {
-    onSettingsUpdated: vi.fn(() => () => {})
-  }
-}))
-
-vi.mock('@/api/pet-api', () => ({
-  petApi: {
-    updateSettings: vi.fn(() => Promise.resolve({ success: true })),
-    hide: vi.fn(() => Promise.resolve(undefined)),
-    show: vi.fn(() => Promise.resolve(undefined))
-  }
-}))
-
-vi.mock('@/api/git-api', () => ({
-  gitApi: {
-    getBranchInfo: vi.fn()
-  }
-}))
+}
 
 beforeEach(() => {
+  // @ts-expect-error - Mock window.projectOps
+  window.projectOps = mockProjectOps
+  // @ts-expect-error - Mock window.worktreeOps
+  window.worktreeOps = mockWorktreeOps
+  // @ts-expect-error - Mock window.db
+  window.db = mockDb
+
   vi.clearAllMocks()
-  vi.mocked(dbApi.worktree.touch).mockResolvedValue(true)
-  vi.mocked(dbApi.setting.get).mockResolvedValue(null)
-  vi.mocked(dbApi.setting.set).mockResolvedValue(true)
 
   useProjectStore.setState({
     projects: [],

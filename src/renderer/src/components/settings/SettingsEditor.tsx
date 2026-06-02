@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useSettingsStore, type EditorOption } from '@/stores/useSettingsStore'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
-import { settingsApi } from '@/api/settings-api'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { Check, Loader2 } from 'lucide-react'
 import { isMac, isLinux } from '@/lib/platform'
 
@@ -31,9 +31,11 @@ export function SettingsEditor(): React.JSX.Element {
     let cancelled = false
     async function detect(): Promise<void> {
       try {
-        const editors = await settingsApi.detectEditors()
-        if (!cancelled) {
-          setDetectedEditors(editors)
+        if (window.settingsOps?.detectEditors) {
+          const editors = unwrapEnvelope(await window.settingsOps.detectEditors())
+          if (!cancelled) {
+            setDetectedEditors(editors)
+          }
         }
       } catch {
         // Detection failed, show all options

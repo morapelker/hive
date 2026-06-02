@@ -49,7 +49,8 @@ function createMockOpenCodeImpl(): AgentSdkImplementer {
     redo: vi.fn(),
     listCommands: vi.fn(),
     sendCommand: vi.fn(),
-    renameSession: vi.fn()
+    renameSession: vi.fn(),
+    setMainWindow: vi.fn()
   }
 }
 

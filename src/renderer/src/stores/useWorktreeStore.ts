@@ -9,13 +9,10 @@ import { useFileViewerStore } from './useFileViewerStore'
 import type { SelectedModel } from './useSettingsStore'
 import { toast } from '@/lib/toast'
 import { deleteBuffer } from '@/lib/output-ring-buffer'
-import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
 import { registerWorktreeClear, clearConnectionSelection } from './store-coordination'
-import { connectionApi } from '@/api/connection-api'
-import { dbApi } from '@/api/db-api'
-import { scriptApi } from '@/api/script-api'
-import { worktreeApi } from '@/api/worktree-api'
 
+const db = unwrapEnvelopeApi(() => window.db)
 const inflightSync = new Map<string, Promise<void>>()
 const lastSync = new Map<string, number>()
 const inflightLoad = new Map<string, Promise<void>>()
@@ -40,7 +37,7 @@ export function fireSetupScript(projectId: string, worktreeId: string, cwd: stri
 
   // Subscribe to output events so output is captured regardless of UI state
   const channel = `script:setup:${worktreeId}`
-  const unsub = scriptApi.onOutput(channel, (event) => {
+  const unsub = window.scriptOps.onOutput(channel, (event) => {
     const s = useScriptStore.getState()
     switch (event.type) {
       case 'command-start':
@@ -70,10 +67,13 @@ export function fireSetupScript(projectId: string, worktreeId: string, cwd: stri
     }
   })
 
-  scriptApi.runSetup(commands, cwd, worktreeId).catch(() => {
-    useScriptStore.getState().setSetupRunning(worktreeId, false)
-    unsub()
-  })
+  window.scriptOps
+    .runSetup(commands, cwd, worktreeId)
+    .then(unwrapEnvelope)
+    .catch(() => {
+      useScriptStore.getState().setSetupRunning(worktreeId, false)
+      unsub()
+    })
 }
 
 // Worktree type matching the database schema
@@ -311,7 +311,7 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
     const promise = (async () => {
       set({ isLoading: true, error: null })
       try {
-        const worktrees = await dbApi.worktree.getActiveByProject<Worktree>(projectId)
+        const worktrees = await db.worktree.getActiveByProject(projectId)
         // Sort: non-default worktrees by last_accessed_at descending, default worktree last
         const sortedWorktrees = worktrees.sort((a, b) => {
           if (a.is_default && !b.is_default) return 1
@@ -360,11 +360,13 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
   createWorktree: async (projectId: string, projectPath: string, projectName: string) => {
     set({ creatingForProjectId: projectId })
     try {
-      const result = await worktreeApi.create({
-        projectId,
-        projectPath,
-        projectName
-      })
+      const result = unwrapEnvelope(
+        await window.worktreeOps.create({
+          projectId,
+          projectPath,
+          projectName
+        })
+      )
 
       if (!result.success || !result.worktree) {
         set({ creatingForProjectId: null })
@@ -413,13 +415,16 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
   ) => {
     set({ creatingForProjectId: projectId })
     try {
-      const result = await worktreeApi.createFromBranch({
-        projectId,
-        projectPath,
-        projectName,
-        branchName,
-        nameHint
-      })
+      const result = unwrapEnvelope(
+        await window.worktreeOps.createFromBranch(
+          projectId,
+          projectPath,
+          projectName,
+          branchName,
+          undefined, // prNumber — not used from store
+          nameHint
+        )
+      )
 
       if (!result.success || !result.worktree) {
         set({ creatingForProjectId: null })
@@ -488,24 +493,34 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
         }
       }
 
-      // 3. Close all sessions so terminal PTYs and agent child processes are released before delete
-      const sessions = useSessionStore.getState().sessionsByWorktree.get(worktreeId) || []
-      for (const session of sessions) {
-        try {
-          await useSessionStore.getState().closeSession(session.id)
-        } catch {
-          // Non-critical — session cleanup may already have happened
+      // 3. Abort any active streaming sessions
+      const sessionIds = useSessionStore.getState().sessionsByWorktree.get(worktreeId) || []
+      const statusStore = useWorktreeStatusStore.getState()
+      for (const session of sessionIds) {
+        const status = statusStore.sessionStatuses[session.id]
+        if (status?.status === 'working' || status?.status === 'planning') {
+          if (session.opencode_session_id) {
+            try {
+              unwrapEnvelope(
+                await window.opencodeOps.abort(worktreePath, session.opencode_session_id)
+              )
+            } catch {
+              // Non-critical — session may already be idle
+            }
+          }
         }
       }
 
       // 4. Proceed with archive
-      const result = await worktreeApi.delete({
-        worktreeId,
-        worktreePath,
-        branchName,
-        projectPath,
-        archive: true
-      })
+      const result = unwrapEnvelope(
+        await window.worktreeOps.delete({
+          worktreeId,
+          worktreePath,
+          branchName,
+          projectPath,
+          archive: true
+        })
+      )
 
       if (!result.success) {
         return { success: false, error: result.error || 'Failed to archive worktree' }
@@ -513,7 +528,7 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
 
       // 5. Clean up any connections referencing this worktree
       try {
-        unwrapEnvelope(await connectionApi.removeWorktreeFromAll(worktreeId))
+        unwrapEnvelope(await window.connectionOps.removeWorktreeFromAll(worktreeId))
         // Reload connections to reflect the change
         const { useConnectionStore } = await import('./useConnectionStore')
         await useConnectionStore.getState().loadConnections()
@@ -603,13 +618,15 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
     }))
 
     try {
-      const result = await worktreeApi.delete({
-        worktreeId,
-        worktreePath,
-        branchName,
-        projectPath,
-        archive: false
-      })
+      const result = unwrapEnvelope(
+        await window.worktreeOps.delete({
+          worktreeId,
+          worktreePath,
+          branchName,
+          projectPath,
+          archive: false
+        })
+      )
 
       if (!result.success) {
         return { success: false, error: result.error || 'Failed to unbranch worktree' }
@@ -617,7 +634,7 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
 
       // Clean up any connections referencing this worktree
       try {
-        unwrapEnvelope(await connectionApi.removeWorktreeFromAll(worktreeId))
+        unwrapEnvelope(await window.connectionOps.removeWorktreeFromAll(worktreeId))
         const { useConnectionStore } = await import('./useConnectionStore')
         await useConnectionStore.getState().loadConnections()
       } catch {
@@ -690,7 +707,7 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
   // Touch worktree (update last_accessed_at)
   touchWorktree: async (id: string) => {
     try {
-      await dbApi.worktree.touch(id)
+      await db.worktree.touch(id)
       // Update local state
       set((state) => {
         const newMap = new Map(state.worktreesByProject)
@@ -725,7 +742,7 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
 
     const promise = (async () => {
       try {
-        await worktreeApi.sync({ projectId, projectPath })
+        unwrapEnvelope(await window.worktreeOps.sync({ projectId, projectPath }))
         // Reload worktrees after sync
         await get().loadWorktrees(projectId, { force: true })
         lastSync.set(projectId, Date.now())
@@ -769,14 +786,16 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
     nameHint?: string
   ) => {
     try {
-      const result = await worktreeApi.duplicate({
-        projectId,
-        projectPath,
-        projectName,
-        sourceBranch,
-        sourceWorktreePath,
-        nameHint
-      })
+      const result = unwrapEnvelope(
+        await window.worktreeOps.duplicate({
+          projectId,
+          projectPath,
+          projectName,
+          sourceBranch,
+          sourceWorktreePath,
+          nameHint
+        })
+      )
       if (result.success && result.worktree) {
         // Reload worktrees for the project
         get().loadWorktrees(projectId, { force: true })
@@ -907,7 +926,7 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
     })
 
     // Persist to database (fire-and-forget)
-    void dbApi.worktree.appendSessionTitle(worktreeId, title)
+    db.worktree.appendSessionTitle?.(worktreeId, title)
   }
 }))
 

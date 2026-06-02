@@ -5,27 +5,20 @@ import {
   CLAUDE_CODE_CAPABILITIES
 } from '../../../src/main/services/agent-sdk-types'
 
-vi.mock('electron', () => ({
-  app: {
-    getPath: vi.fn(() => '/tmp'),
-    getVersion: vi.fn(() => '0.0.0'),
-    isPackaged: false
-  },
-  BrowserWindow: vi.fn(),
-  screen: {
-    getPrimaryDisplay: vi.fn(() => ({ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }))
-  }
-}))
+// Capture registered IPC handlers
+const handlers = new Map<string, (...args: any[]) => any>()
 
-vi.mock('electron-updater', () => ({
-  autoUpdater: {
-    autoDownload: false,
-    autoInstallOnAppQuit: true,
-    logger: null,
-    on: vi.fn(),
-    checkForUpdates: vi.fn(),
-    downloadUpdate: vi.fn(),
-    quitAndInstall: vi.fn()
+vi.mock('electron', () => ({
+  ipcMain: {
+    handle: vi.fn((channel: string, handler: (...args: any[]) => any) => {
+      handlers.set(channel, async (...args: any[]) => {
+        const result = await handler(...args)
+        return result?.success === true && 'value' in result ? result.value : result
+      })
+    })
+  },
+  app: {
+    getPath: vi.fn(() => '/tmp')
   }
 }))
 
@@ -40,18 +33,11 @@ vi.mock('../../../src/main/services/logger', () => ({
 
 vi.mock('../../../src/main/services/opencode-service', () => ({
   openCodeService: {
+    setMainWindow: vi.fn()
   }
 }))
 
-vi.mock('../../../src/main/services/claude-code-implementer', () => ({
-  ClaudeCodeImplementer: vi.fn()
-}))
-
-vi.mock('../../../src/main/services/codex-implementer', () => ({
-  CodexImplementer: vi.fn()
-}))
-
-import { getOpenCodeCapabilities } from '../../../src/main/services/opencode-session-commands'
+import { registerOpenCodeHandlers } from '../../../src/main/ipc/opencode-handlers'
 import type { AgentSdkManager } from '../../../src/main/services/agent-sdk-manager'
 import type { DatabaseService } from '../../../src/main/db/database'
 import type { AgentSdkCapabilities } from '../../../src/main/services/agent-sdk-types'
@@ -73,16 +59,25 @@ function createMockDbService(sdkId: 'opencode' | 'claude-code' | null): Database
   } as unknown as DatabaseService
 }
 
-describe('OpenCode capabilities routing', () => {
+const mockEvent = {} as any
+
+describe('IPC opencode:capabilities', () => {
   beforeEach(() => {
+    handlers.clear()
     vi.clearAllMocks()
   })
 
   it('returns CLAUDE_CODE_CAPABILITIES for claude-code sessions', async () => {
     const sdkManager = createMockSdkManager()
     const dbService = createMockDbService('claude-code')
+    const mainWindow = { isDestroyed: () => false, webContents: { send: vi.fn() } } as any
 
-    const result = await getOpenCodeCapabilities('claude-session-1', sdkManager, dbService)
+    registerOpenCodeHandlers(mainWindow, sdkManager, dbService)
+
+    const handler = handlers.get('opencode:capabilities')!
+    expect(handler).toBeDefined()
+
+    const result = await handler(mockEvent, { sessionId: 'claude-session-1' })
 
     expect(dbService.getAgentSdkForSession).toHaveBeenCalledWith('claude-session-1')
     expect(sdkManager.getCapabilities).toHaveBeenCalledWith('claude-code')
@@ -97,8 +92,12 @@ describe('OpenCode capabilities routing', () => {
   it('returns OPENCODE_CAPABILITIES for opencode sessions', async () => {
     const sdkManager = createMockSdkManager()
     const dbService = createMockDbService('opencode')
+    const mainWindow = { isDestroyed: () => false, webContents: { send: vi.fn() } } as any
 
-    const result = await getOpenCodeCapabilities('oc-session-1', sdkManager, dbService)
+    registerOpenCodeHandlers(mainWindow, sdkManager, dbService)
+
+    const handler = handlers.get('opencode:capabilities')!
+    const result = await handler(mockEvent, { sessionId: 'oc-session-1' })
 
     expect(dbService.getAgentSdkForSession).toHaveBeenCalledWith('oc-session-1')
     expect(sdkManager.getCapabilities).toHaveBeenCalledWith('opencode')
@@ -113,8 +112,12 @@ describe('OpenCode capabilities routing', () => {
   it('returns default opencode capabilities when no session is found', async () => {
     const sdkManager = createMockSdkManager()
     const dbService = createMockDbService(null)
+    const mainWindow = { isDestroyed: () => false, webContents: { send: vi.fn() } } as any
 
-    const result = await getOpenCodeCapabilities('unknown-session', sdkManager, dbService)
+    registerOpenCodeHandlers(mainWindow, sdkManager, dbService)
+
+    const handler = handlers.get('opencode:capabilities')!
+    const result = await handler(mockEvent, { sessionId: 'unknown-session' })
 
     // sdkId is null, so it falls through to default
     expect(result).toEqual({
@@ -126,8 +129,12 @@ describe('OpenCode capabilities routing', () => {
   it('returns default capabilities when no sessionId is provided', async () => {
     const sdkManager = createMockSdkManager()
     const dbService = createMockDbService(null)
+    const mainWindow = { isDestroyed: () => false, webContents: { send: vi.fn() } } as any
 
-    const result = await getOpenCodeCapabilities(undefined, sdkManager, dbService)
+    registerOpenCodeHandlers(mainWindow, sdkManager, dbService)
+
+    const handler = handlers.get('opencode:capabilities')!
+    const result = await handler(mockEvent, {})
 
     expect(result).toEqual({
       success: true,
@@ -136,7 +143,12 @@ describe('OpenCode capabilities routing', () => {
   })
 
   it('returns null capabilities when sdkManager is unavailable', async () => {
-    const result = await getOpenCodeCapabilities('any-session')
+    const mainWindow = { isDestroyed: () => false, webContents: { send: vi.fn() } } as any
+
+    registerOpenCodeHandlers(mainWindow, undefined, undefined)
+
+    const handler = handlers.get('opencode:capabilities')!
+    const result = await handler(mockEvent, { sessionId: 'any-session' })
 
     expect(result).toEqual({
       success: true,

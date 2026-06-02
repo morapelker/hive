@@ -3,7 +3,7 @@ import { persist, createJSONStorage } from 'zustand/middleware'
 import { toast } from '@/lib/toast'
 import { registerConnectionClear, clearWorktreeSelection } from './store-coordination'
 import { useKanbanStore } from './useKanbanStore'
-import { connectionApi } from '@/api/connection-api'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 // Connection types matching the database schema
 interface ConnectionMemberEnriched {
@@ -85,7 +85,7 @@ export const useConnectionStore = create<ConnectionState>()(
       loadConnections: async () => {
         set({ isLoading: true, error: null })
         try {
-          const result = await connectionApi.getAll()
+          const result = unwrapEnvelope(await window.connectionOps.getAll())
           if (!result.success) {
             set({
               error: result.error || 'Failed to load connections',
@@ -103,7 +103,7 @@ export const useConnectionStore = create<ConnectionState>()(
 
       createConnection: async (worktreeIds: string[]) => {
         try {
-          const result = await connectionApi.create(worktreeIds)
+          const result = unwrapEnvelope(await window.connectionOps.create(worktreeIds))
           if (!result.success || !result.connection) {
             toast.error(`Failed to create connection: ${result.error || 'Unknown error'}`)
             return null
@@ -127,7 +127,7 @@ export const useConnectionStore = create<ConnectionState>()(
 
       deleteConnection: async (connectionId: string) => {
         try {
-          const result = await connectionApi.delete(connectionId)
+          const result = unwrapEnvelope(await window.connectionOps.delete(connectionId))
           if (!result.success) {
             toast.error(result.error || 'Failed to delete connection')
             return
@@ -151,13 +151,15 @@ export const useConnectionStore = create<ConnectionState>()(
 
       addMember: async (connectionId: string, worktreeId: string) => {
         try {
-          const addResult = await connectionApi.addMember(connectionId, worktreeId)
+          const addResult = unwrapEnvelope(
+            await window.connectionOps.addMember(connectionId, worktreeId)
+          )
           if (!addResult.success) {
             toast.error(`Failed to add member: ${addResult.error || 'Unknown error'}`)
             return
           }
           // Reload the specific connection to get updated members
-          const result = await connectionApi.get(connectionId)
+          const result = unwrapEnvelope(await window.connectionOps.get(connectionId))
           if (result.success && result.connection) {
             set((state) => ({
               connections: state.connections.map((c) =>
@@ -173,7 +175,9 @@ export const useConnectionStore = create<ConnectionState>()(
 
       removeMember: async (connectionId: string, worktreeId: string) => {
         try {
-          const result = await connectionApi.removeMember(connectionId, worktreeId)
+          const result = unwrapEnvelope(
+            await window.connectionOps.removeMember(connectionId, worktreeId)
+          )
           if (!result.success) {
             toast.error(`Failed to remove member: ${result.error || 'Unknown error'}`)
             return
@@ -192,7 +196,7 @@ export const useConnectionStore = create<ConnectionState>()(
             })
           } else {
             // Reload the connection to get updated members
-            const getResult = await connectionApi.get(connectionId)
+            const getResult = unwrapEnvelope(await window.connectionOps.get(connectionId))
             if (getResult.success && getResult.connection) {
               set((state) => ({
                 connections: state.connections.map((c) =>
@@ -227,7 +231,7 @@ export const useConnectionStore = create<ConnectionState>()(
         try {
           // Add new members first (to avoid transiently having 0 members)
           for (const id of toAdd) {
-            const addResult = await connectionApi.addMember(connectionId, id)
+            const addResult = unwrapEnvelope(await window.connectionOps.addMember(connectionId, id))
             if (!addResult.success) {
               toast.error(`Failed to add member: ${addResult.error || 'Unknown error'}`)
               return
@@ -235,14 +239,16 @@ export const useConnectionStore = create<ConnectionState>()(
           }
           // Remove departing members
           for (const id of toRemove) {
-            const removeResult = await connectionApi.removeMember(connectionId, id)
+            const removeResult = unwrapEnvelope(
+              await window.connectionOps.removeMember(connectionId, id)
+            )
             if (!removeResult.success) {
               toast.error(`Failed to remove member: ${removeResult.error || 'Unknown error'}`)
               return
             }
           }
           // Reload the connection to get final state
-          const result = await connectionApi.get(connectionId)
+          const result = unwrapEnvelope(await window.connectionOps.get(connectionId))
           if (result.success && result.connection) {
             set((state) => ({
               connections: state.connections.map((c) =>
@@ -259,7 +265,7 @@ export const useConnectionStore = create<ConnectionState>()(
 
       renameConnection: async (connectionId: string, customName: string | null) => {
         try {
-          const result = await connectionApi.rename(connectionId, customName)
+          const result = unwrapEnvelope(await window.connectionOps.rename(connectionId, customName))
           if (!result.success) {
             toast.error(result.error || 'Failed to rename connection')
             return

@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { opencodeApi } from '@/api/opencode-api'
 import { mapOpencodeMessagesToSessionViewMessages } from '@/lib/opencode-transcript'
 import { appendStreamedAssistantFallback } from '@/lib/transcript-refresh'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
@@ -222,7 +221,7 @@ export function useSessionStream({
 
       try {
         const result = unwrapEnvelope(
-          await opencodeApi.getMessages(worktreePath, opencodeSessionId)
+          await window.opencodeOps.getMessages(worktreePath, opencodeSessionId)
         )
         if (!isCurrentGeneration()) return
 
@@ -252,337 +251,344 @@ export function useSessionStream({
 
     // Subscribe SYNCHRONOUSLY before any async work to prevent race conditions
     // where session.idle arrives during async init and is missed.
-    const unsubscribe = opencodeApi.onStream((event) => {
-      // Only handle events for this session
-      if (event.sessionId !== sessionId) return
+    const unsubscribe = window.opencodeOps?.onStream
+      ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        window.opencodeOps.onStream((event: any) => {
+          // Only handle events for this session
+          if (event.sessionId !== sessionId) return
 
-      // Guard: generation check — prevents stale closures
-      if (!isCurrentGeneration()) return
+          // Guard: generation check — prevents stale closures
+          if (!isCurrentGeneration()) return
 
-      // -----------------------------------------------------------
-      // message.part.updated
-      // -----------------------------------------------------------
-      if (event.type === 'message.part.updated') {
-        // Skip user-message echoes by role
-        const role = event.data?.role || event.data?.message?.role
-        if (role === 'user') return
+          // -----------------------------------------------------------
+          // message.part.updated
+          // -----------------------------------------------------------
+          if (event.type === 'message.part.updated') {
+            // Skip user-message echoes by role
+            const role = event.data?.role || event.data?.message?.role
+            if (role === 'user') return
 
-        // Route child/subagent events into subtask cards
-        if (event.childSessionId) {
-          let subtaskIdx = childToSubtaskIndexRef.current.get(event.childSessionId)
+            // Route child/subagent events into subtask cards
+            if (event.childSessionId) {
+              let subtaskIdx = childToSubtaskIndexRef.current.get(event.childSessionId)
 
-          if (subtaskIdx === undefined) {
-            subtaskIdx = streamingPartsRef.current.length
-            updateStreamingPartsRef((parts) => [
-              ...parts,
-              {
-                type: 'subtask',
-                subtask: {
-                  id: event.childSessionId!,
-                  sessionID: event.childSessionId!,
-                  prompt: '',
-                  description: '',
-                  agent: 'task',
-                  parts: [],
-                  status: 'running'
-                }
-              }
-            ])
-            childToSubtaskIndexRef.current.set(event.childSessionId, subtaskIdx)
-            immediateFlush()
-          }
-
-          const childPart = event.data?.part
-          if (childPart?.type === 'text') {
-            updateStreamingPartsRef((parts) => {
-              const updated = [...parts]
-              const orig = updated[subtaskIdx as number]
-              if (orig?.type === 'subtask' && orig.subtask) {
-                const oldParts = orig.subtask.parts
-                const lastPart = oldParts[oldParts.length - 1]
-                let newChildParts: typeof oldParts
-                if (lastPart?.type === 'text') {
-                  newChildParts = [
-                    ...oldParts.slice(0, -1),
-                    {
-                      ...lastPart,
-                      text: (lastPart.text || '') + (event.data?.delta || childPart.text || '')
+              if (subtaskIdx === undefined) {
+                subtaskIdx = streamingPartsRef.current.length
+                updateStreamingPartsRef((parts) => [
+                  ...parts,
+                  {
+                    type: 'subtask',
+                    subtask: {
+                      id: event.childSessionId!,
+                      sessionID: event.childSessionId!,
+                      prompt: '',
+                      description: '',
+                      agent: 'task',
+                      parts: [],
+                      status: 'running'
                     }
-                  ]
-                } else {
-                  newChildParts = [
-                    ...oldParts,
-                    { type: 'text' as const, text: event.data?.delta || childPart.text || '' }
-                  ]
-                }
-                updated[subtaskIdx as number] = {
-                  ...orig,
-                  subtask: { ...orig.subtask, parts: newChildParts }
-                }
-              }
-              return updated
-            })
-            scheduleFlush()
-          } else if (childPart?.type === 'tool') {
-            const state = childPart.state || childPart
-            const toolId =
-              state.toolCallId || childPart.callID || childPart.id || `tool-${Date.now()}`
-            updateStreamingPartsRef((parts) => {
-              const updated = [...parts]
-              const orig = updated[subtaskIdx as number]
-              if (orig?.type === 'subtask' && orig.subtask) {
-                const existingIdx = orig.subtask.parts.findIndex(
-                  (p) => p.type === 'tool_use' && p.toolUse?.id === toolId
-                )
-                let newChildParts: typeof orig.subtask.parts
-                if (existingIdx >= 0) {
-                  const existingTool = orig.subtask.parts[existingIdx].toolUse!
-                  const statusMap: Record<string, string> = {
-                    running: 'running',
-                    completed: 'success',
-                    error: 'error'
                   }
-                  newChildParts = [
-                    ...orig.subtask.parts.slice(0, existingIdx),
-                    {
-                      type: 'tool_use' as const,
-                      toolUse: {
-                        ...existingTool,
-                        status: (statusMap[state.status] || 'running') as
-                          | 'pending'
-                          | 'running'
-                          | 'success'
-                          | 'error',
-                        ...(state.time?.end ? { endTime: state.time.end } : {}),
-                        ...(state.status === 'completed' ? { output: state.output } : {}),
-                        ...(state.status === 'error' ? { error: state.error } : {})
+                ])
+                childToSubtaskIndexRef.current.set(event.childSessionId, subtaskIdx)
+                immediateFlush()
+              }
+
+              const childPart = event.data?.part
+              if (childPart?.type === 'text') {
+                updateStreamingPartsRef((parts) => {
+                  const updated = [...parts]
+                  const orig = updated[subtaskIdx as number]
+                  if (orig?.type === 'subtask' && orig.subtask) {
+                    const oldParts = orig.subtask.parts
+                    const lastPart = oldParts[oldParts.length - 1]
+                    let newChildParts: typeof oldParts
+                    if (lastPart?.type === 'text') {
+                      newChildParts = [
+                        ...oldParts.slice(0, -1),
+                        {
+                          ...lastPart,
+                          text: (lastPart.text || '') + (event.data?.delta || childPart.text || '')
+                        }
+                      ]
+                    } else {
+                      newChildParts = [
+                        ...oldParts,
+                        { type: 'text' as const, text: event.data?.delta || childPart.text || '' }
+                      ]
+                    }
+                    updated[subtaskIdx as number] = {
+                      ...orig,
+                      subtask: { ...orig.subtask, parts: newChildParts }
+                    }
+                  }
+                  return updated
+                })
+                scheduleFlush()
+              } else if (childPart?.type === 'tool') {
+                const state = childPart.state || childPart
+                const toolId =
+                  state.toolCallId || childPart.callID || childPart.id || `tool-${Date.now()}`
+                updateStreamingPartsRef((parts) => {
+                  const updated = [...parts]
+                  const orig = updated[subtaskIdx as number]
+                  if (orig?.type === 'subtask' && orig.subtask) {
+                    const existingIdx = orig.subtask.parts.findIndex(
+                      (p) => p.type === 'tool_use' && p.toolUse?.id === toolId
+                    )
+                    let newChildParts: typeof orig.subtask.parts
+                    if (existingIdx >= 0) {
+                      const existingTool = orig.subtask.parts[existingIdx].toolUse!
+                      const statusMap: Record<string, string> = {
+                        running: 'running',
+                        completed: 'success',
+                        error: 'error'
                       }
-                    },
-                    ...orig.subtask.parts.slice(existingIdx + 1)
-                  ]
-                } else {
-                  newChildParts = [
-                    ...orig.subtask.parts,
+                      newChildParts = [
+                        ...orig.subtask.parts.slice(0, existingIdx),
+                        {
+                          type: 'tool_use' as const,
+                          toolUse: {
+                            ...existingTool,
+                            status: (statusMap[state.status] || 'running') as
+                              | 'pending'
+                              | 'running'
+                              | 'success'
+                              | 'error',
+                            ...(state.time?.end ? { endTime: state.time.end } : {}),
+                            ...(state.status === 'completed' ? { output: state.output } : {}),
+                            ...(state.status === 'error' ? { error: state.error } : {})
+                          }
+                        },
+                        ...orig.subtask.parts.slice(existingIdx + 1)
+                      ]
+                    } else {
+                      newChildParts = [
+                        ...orig.subtask.parts,
+                        {
+                          type: 'tool_use' as const,
+                          toolUse: {
+                            id: toolId,
+                            name: childPart.tool || state.name || 'unknown',
+                            input: state.input,
+                            status: 'running' as const,
+                            startTime: state.time?.start || Date.now()
+                          }
+                        }
+                      ]
+                    }
+                    updated[subtaskIdx as number] = {
+                      ...orig,
+                      subtask: { ...orig.subtask, parts: newChildParts }
+                    }
+                  }
+                  return updated
+                })
+                immediateFlush()
+              }
+              setIsStreaming(true)
+              return
+            }
+
+            const part = event.data?.part
+            if (!part) return
+
+            // Reset finalization flag on new content
+            if (
+              streamingPartsRef.current.length === 0 &&
+              streamingContentRef.current.length === 0
+            ) {
+              hasFinalizedRef.current = false
+            }
+
+            if (part.type === 'text') {
+              const delta = event.data?.delta
+              if (delta) {
+                appendTextDelta(delta)
+              } else if (part.text) {
+                setTextContent(part.text)
+              }
+              setIsStreaming(true)
+            } else if (part.type === 'tool') {
+              const toolId = part.callID || part.id || `tool-${Date.now()}`
+              const toolName = part.tool || undefined
+              const state = part.state || {}
+              const statusMap: Record<string, 'pending' | 'running' | 'success' | 'error'> = {
+                pending: 'pending',
+                running: 'running',
+                completed: 'success',
+                error: 'error'
+              }
+              upsertToolUse(toolId, {
+                ...(toolName ? { name: toolName } : {}),
+                ...(state.input ? { input: state.input } : {}),
+                status: statusMap[state.status] || 'running',
+                startTime: state.time?.start || Date.now(),
+                endTime: state.time?.end,
+                output: state.status === 'completed' ? state.output : undefined,
+                error: state.status === 'error' ? state.error : undefined,
+                ...(state.outputDelta ? { outputDelta: state.outputDelta } : {})
+              })
+              setIsStreaming(true)
+            } else if (part.type === 'subtask') {
+              const subtaskIndex = streamingPartsRef.current.length
+              updateStreamingPartsRef((parts) => [
+                ...parts,
+                {
+                  type: 'subtask',
+                  subtask: {
+                    id: part.id || `subtask-${Date.now()}`,
+                    sessionID: part.sessionID || '',
+                    prompt: part.prompt || '',
+                    description: part.description || '',
+                    agent: part.agent || 'unknown',
+                    parts: [],
+                    status: 'running'
+                  }
+                }
+              ])
+              if (part.sessionID) {
+                childToSubtaskIndexRef.current.set(part.sessionID, subtaskIndex)
+              }
+              immediateFlush()
+              setIsStreaming(true)
+            } else if (part.type === 'reasoning') {
+              updateStreamingPartsRef((parts) => {
+                const last = parts[parts.length - 1]
+                if (last?.type === 'reasoning') {
+                  return [
+                    ...parts.slice(0, -1),
                     {
-                      type: 'tool_use' as const,
-                      toolUse: {
-                        id: toolId,
-                        name: childPart.tool || state.name || 'unknown',
-                        input: state.input,
-                        status: 'running' as const,
-                        startTime: state.time?.start || Date.now()
-                      }
+                      ...last,
+                      reasoning: (last.reasoning || '') + (event.data?.delta || part.text || '')
                     }
                   ]
                 }
-                updated[subtaskIdx as number] = {
-                  ...orig,
-                  subtask: { ...orig.subtask, parts: newChildParts }
-                }
-              }
-              return updated
-            })
-            immediateFlush()
-          }
-          setIsStreaming(true)
-          return
-        }
-
-        const part = event.data?.part
-        if (!part) return
-
-        // Reset finalization flag on new content
-        if (streamingPartsRef.current.length === 0 && streamingContentRef.current.length === 0) {
-          hasFinalizedRef.current = false
-        }
-
-        if (part.type === 'text') {
-          const delta = event.data?.delta
-          if (delta) {
-            appendTextDelta(delta)
-          } else if (part.text) {
-            setTextContent(part.text)
-          }
-          setIsStreaming(true)
-        } else if (part.type === 'tool') {
-          const toolId = part.callID || part.id || `tool-${Date.now()}`
-          const toolName = part.tool || undefined
-          const state = part.state || {}
-          const statusMap: Record<string, 'pending' | 'running' | 'success' | 'error'> = {
-            pending: 'pending',
-            running: 'running',
-            completed: 'success',
-            error: 'error'
-          }
-          upsertToolUse(toolId, {
-            ...(toolName ? { name: toolName } : {}),
-            ...(state.input ? { input: state.input } : {}),
-            status: statusMap[state.status] || 'running',
-            startTime: state.time?.start || Date.now(),
-            endTime: state.time?.end,
-            output: state.status === 'completed' ? state.output : undefined,
-            error: state.status === 'error' ? state.error : undefined,
-            ...(state.outputDelta ? { outputDelta: state.outputDelta } : {})
-          })
-          setIsStreaming(true)
-        } else if (part.type === 'subtask') {
-          const subtaskIndex = streamingPartsRef.current.length
-          updateStreamingPartsRef((parts) => [
-            ...parts,
-            {
-              type: 'subtask',
-              subtask: {
-                id: part.id || `subtask-${Date.now()}`,
-                sessionID: part.sessionID || '',
-                prompt: part.prompt || '',
-                description: part.description || '',
-                agent: part.agent || 'unknown',
-                parts: [],
-                status: 'running'
-              }
-            }
-          ])
-          if (part.sessionID) {
-            childToSubtaskIndexRef.current.set(part.sessionID, subtaskIndex)
-          }
-          immediateFlush()
-          setIsStreaming(true)
-        } else if (part.type === 'reasoning') {
-          updateStreamingPartsRef((parts) => {
-            const last = parts[parts.length - 1]
-            if (last?.type === 'reasoning') {
-              return [
-                ...parts.slice(0, -1),
+                return [
+                  ...parts,
+                  {
+                    type: 'reasoning' as const,
+                    reasoning: event.data?.delta || part.text || ''
+                  }
+                ]
+              })
+              scheduleFlush()
+              setIsStreaming(true)
+            } else if (part.type === 'step-start') {
+              updateStreamingPartsRef((parts) => [
+                ...parts,
+                { type: 'step_start' as const, stepStart: { snapshot: part.snapshot } }
+              ])
+              immediateFlush()
+              setIsStreaming(true)
+            } else if (part.type === 'step-finish') {
+              updateStreamingPartsRef((parts) => [
+                ...parts,
                 {
-                  ...last,
-                  reasoning: (last.reasoning || '') + (event.data?.delta || part.text || '')
+                  type: 'step_finish' as const,
+                  stepFinish: {
+                    reason: part.reason || '',
+                    cost: typeof part.cost === 'number' ? part.cost : 0,
+                    tokens: {
+                      input: typeof part.tokens?.input === 'number' ? part.tokens.input : 0,
+                      output: typeof part.tokens?.output === 'number' ? part.tokens.output : 0,
+                      reasoning:
+                        typeof part.tokens?.reasoning === 'number' ? part.tokens.reasoning : 0
+                    }
+                  }
                 }
-              ]
+              ])
+              immediateFlush()
+              setIsStreaming(true)
+            } else if (part.type === 'compaction') {
+              updateStreamingPartsRef((parts) => [
+                ...parts,
+                { type: 'compaction' as const, compactionAuto: part.auto === true }
+              ])
+              immediateFlush()
+              setIsStreaming(true)
             }
-            return [
-              ...parts,
-              {
-                type: 'reasoning' as const,
-                reasoning: event.data?.delta || part.text || ''
-              }
-            ]
-          })
-          scheduleFlush()
-          setIsStreaming(true)
-        } else if (part.type === 'step-start') {
-          updateStreamingPartsRef((parts) => [
-            ...parts,
-            { type: 'step_start' as const, stepStart: { snapshot: part.snapshot } }
-          ])
-          immediateFlush()
-          setIsStreaming(true)
-        } else if (part.type === 'step-finish') {
-          updateStreamingPartsRef((parts) => [
-            ...parts,
-            {
-              type: 'step_finish' as const,
-              stepFinish: {
-                reason: part.reason || '',
-                cost: typeof part.cost === 'number' ? part.cost : 0,
-                tokens: {
-                  input: typeof part.tokens?.input === 'number' ? part.tokens.input : 0,
-                  output: typeof part.tokens?.output === 'number' ? part.tokens.output : 0,
-                  reasoning: typeof part.tokens?.reasoning === 'number' ? part.tokens.reasoning : 0
-                }
-              }
-            }
-          ])
-          immediateFlush()
-          setIsStreaming(true)
-        } else if (part.type === 'compaction') {
-          updateStreamingPartsRef((parts) => [
-            ...parts,
-            { type: 'compaction' as const, compactionAuto: part.auto === true }
-          ])
-          immediateFlush()
-          setIsStreaming(true)
-        }
-      }
+          }
 
-      // -----------------------------------------------------------
-      // session.idle
-      // -----------------------------------------------------------
-      else if (event.type === 'session.idle') {
-        // Child session idle — update subtask status, don't finalize parent
-        if (event.childSessionId) {
-          const subtaskIdx = childToSubtaskIndexRef.current.get(event.childSessionId)
-          if (subtaskIdx !== undefined) {
-            updateStreamingPartsRef((parts) => {
-              const updated = [...parts]
-              const orig = updated[subtaskIdx]
-              if (orig?.type === 'subtask' && orig.subtask) {
-                updated[subtaskIdx] = {
-                  ...orig,
-                  subtask: { ...orig.subtask, status: 'completed' }
-                }
+          // -----------------------------------------------------------
+          // session.idle
+          // -----------------------------------------------------------
+          else if (event.type === 'session.idle') {
+            // Child session idle — update subtask status, don't finalize parent
+            if (event.childSessionId) {
+              const subtaskIdx = childToSubtaskIndexRef.current.get(event.childSessionId)
+              if (subtaskIdx !== undefined) {
+                updateStreamingPartsRef((parts) => {
+                  const updated = [...parts]
+                  const orig = updated[subtaskIdx]
+                  if (orig?.type === 'subtask' && orig.subtask) {
+                    updated[subtaskIdx] = {
+                      ...orig,
+                      subtask: { ...orig.subtask, status: 'completed' }
+                    }
+                  }
+                  return updated
+                })
+                immediateFlush()
               }
-              return updated
-            })
+              return
+            }
+
             immediateFlush()
+            if (!hasFinalizedRef.current) {
+              void finalizeResponse()
+            }
           }
-          return
-        }
 
-        immediateFlush()
-        if (!hasFinalizedRef.current) {
-          void finalizeResponse()
-        }
-      }
+          // -----------------------------------------------------------
+          // session.status
+          // -----------------------------------------------------------
+          else if (event.type === 'session.status') {
+            const status = event.statusPayload || event.data?.status
+            if (!status) return
 
-      // -----------------------------------------------------------
-      // session.status
-      // -----------------------------------------------------------
-      else if (event.type === 'session.status') {
-        const status = event.statusPayload || event.data?.status
-        if (!status) return
+            // Skip child session status
+            if (event.childSessionId) return
 
-        // Skip child session status
-        if (event.childSessionId) return
-
-        if (status.type === 'busy') {
-          setIsStreaming(true)
-          hasFinalizedRef.current = false
-        } else if (status.type === 'idle') {
-          immediateFlush()
-          if (!hasFinalizedRef.current) {
-            void finalizeResponse()
+            if (status.type === 'busy') {
+              setIsStreaming(true)
+              hasFinalizedRef.current = false
+            } else if (status.type === 'idle') {
+              immediateFlush()
+              if (!hasFinalizedRef.current) {
+                void finalizeResponse()
+              }
+            }
           }
-        }
-      }
 
-      // -----------------------------------------------------------
-      // Codex goal notifications
-      // -----------------------------------------------------------
-      else if (event.type === 'codex.goal.updated') {
-        const goal = event.data?.goal
-        if (goal && typeof goal === 'object') {
-          useSessionStore.getState().setCodexGoal(sessionId, goal as CodexThreadGoal)
-        }
-      } else if (event.type === 'codex.goal.cleared') {
-        useSessionStore.getState().clearCodexGoal(sessionId)
-      }
+          // -----------------------------------------------------------
+          // Codex goal notifications
+          // -----------------------------------------------------------
+          else if (event.type === 'codex.goal.updated') {
+            const goal = event.data?.goal
+            if (goal && typeof goal === 'object') {
+              useSessionStore.getState().setCodexGoal(sessionId, goal as CodexThreadGoal)
+            }
+          } else if (event.type === 'codex.goal.cleared') {
+            useSessionStore.getState().clearCodexGoal(sessionId)
+          }
 
-      // -----------------------------------------------------------
-      // session.materialized — real SDK session ID replaces the
-      // placeholder pending::UUID.  Update the session store so the
-      // parent re-renders with the correct opencodeSessionId and
-      // the next effect run fetches messages with the real ID.
-      // -----------------------------------------------------------
-      else if (event.type === 'session.materialized') {
-        const newId = (event.data as Record<string, unknown> | undefined)?.newSessionId as
-          | string
-          | undefined
-        if (newId) {
-          onMaterializedSessionId?.(newId)
-          useSessionStore.getState().setOpenCodeSessionId(sessionId, newId)
-        }
-      }
-    })
+          // -----------------------------------------------------------
+          // session.materialized — real SDK session ID replaces the
+          // placeholder pending::UUID.  Update the session store so the
+          // parent re-renders with the correct opencodeSessionId and
+          // the next effect run fetches messages with the real ID.
+          // -----------------------------------------------------------
+          else if (event.type === 'session.materialized') {
+            const newId = (event.data as Record<string, unknown> | undefined)?.newSessionId as
+              | string
+              | undefined
+            if (newId) {
+              onMaterializedSessionId?.(newId)
+              useSessionStore.getState().setOpenCodeSessionId(sessionId, newId)
+            }
+          }
+        })
+      : () => {}
 
     // ---- Async initialization: load initial messages ----
     const loadInitialMessages = async (): Promise<void> => {
@@ -594,7 +600,9 @@ export function useSessionStream({
         currentGeneration
       )
       try {
-        let result = unwrapEnvelope(await opencodeApi.getMessages(worktreePath, opencodeSessionId))
+        let result = unwrapEnvelope(
+          await window.opencodeOps.getMessages(worktreePath, opencodeSessionId)
+        )
         console.info(
           '[useSessionStream] getMessages result — success=%s, messageCount=%d, generation=%d (current=%d)',
           result.success,
@@ -621,7 +629,9 @@ export function useSessionStream({
             console.info('[useSessionStream] stale generation after retry delay, aborting')
             return
           }
-          result = unwrapEnvelope(await opencodeApi.getMessages(worktreePath, opencodeSessionId))
+          result = unwrapEnvelope(
+            await window.opencodeOps.getMessages(worktreePath, opencodeSessionId)
+          )
           console.info(
             '[useSessionStream] retry getMessages result — success=%s, messageCount=%d',
             result.success,

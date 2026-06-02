@@ -1,27 +1,17 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-vi.mock('electron', () => ({
-  app: {
-    getPath: vi.fn(() => '/tmp'),
-    getVersion: vi.fn(() => '0.0.0'),
-    isPackaged: false
-  },
-  BrowserWindow: vi.fn(),
-  screen: {
-    getPrimaryDisplay: vi.fn(() => ({ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }))
-  }
-}))
+// Capture registered IPC handlers
+const handlers = new Map<string, (...args: any[]) => any>()
 
-vi.mock('electron-updater', () => ({
-  autoUpdater: {
-    autoDownload: false,
-    autoInstallOnAppQuit: true,
-    logger: null,
-    on: vi.fn(),
-    checkForUpdates: vi.fn(),
-    downloadUpdate: vi.fn(),
-    quitAndInstall: vi.fn()
+vi.mock('electron', () => ({
+  ipcMain: {
+    handle: vi.fn((channel: string, handler: (...args: any[]) => any) => {
+      handlers.set(channel, handler)
+    })
+  },
+  app: {
+    getPath: vi.fn(() => '/tmp')
   }
 }))
 
@@ -36,6 +26,7 @@ vi.mock('../../../src/main/services/logger', () => ({
 
 vi.mock('../../../src/main/services/opencode-service', () => ({
   openCodeService: {
+    setMainWindow: vi.fn(),
     getAvailableModels: vi.fn().mockResolvedValue([{ id: 'anthropic', models: {} }]),
     getModelInfo: vi.fn().mockResolvedValue({
       id: 'opus',
@@ -46,19 +37,7 @@ vi.mock('../../../src/main/services/opencode-service', () => ({
   }
 }))
 
-vi.mock('../../../src/main/services/claude-code-implementer', () => ({
-  ClaudeCodeImplementer: vi.fn()
-}))
-
-vi.mock('../../../src/main/services/codex-implementer', () => ({
-  CodexImplementer: vi.fn()
-}))
-
-import {
-  getOpenCodeModelInfo,
-  listOpenCodeModels,
-  setOpenCodeSelectedModel
-} from '../../../src/main/services/opencode-session-commands'
+import { registerOpenCodeHandlers } from '../../../src/main/ipc/opencode-handlers'
 import { openCodeService } from '../../../src/main/services/opencode-service'
 import type { AgentSdkManager } from '../../../src/main/services/agent-sdk-manager'
 import type { AgentSdkImplementer } from '../../../src/main/services/agent-sdk-types'
@@ -99,7 +78,8 @@ function createMockClaudeImpl(): AgentSdkImplementer {
     redo: vi.fn(),
     listCommands: vi.fn(),
     sendCommand: vi.fn(),
-    renameSession: vi.fn()
+    renameSession: vi.fn(),
+    setMainWindow: vi.fn()
   }
 }
 
@@ -114,18 +94,27 @@ function createMockSdkManager(claudeImpl: AgentSdkImplementer): AgentSdkManager 
   } as unknown as AgentSdkManager
 }
 
-describe('OpenCode model SDK-aware routing', () => {
+const mockEvent = {} as any
+
+describe('IPC opencode:models SDK-aware routing', () => {
   let claudeImpl: AgentSdkImplementer
 
   beforeEach(() => {
+    handlers.clear()
     vi.clearAllMocks()
     claudeImpl = createMockClaudeImpl()
   })
 
   it('opencode:models without agentSdk routes to OpenCode', async () => {
     const sdkManager = createMockSdkManager(claudeImpl)
+    const mainWindow = { isDestroyed: () => false, webContents: { send: vi.fn() } } as any
 
-    await listOpenCodeModels(undefined, sdkManager)
+    registerOpenCodeHandlers(mainWindow, sdkManager)
+
+    const handler = handlers.get('opencode:models')!
+    expect(handler).toBeDefined()
+
+    await handler(mockEvent, undefined)
 
     expect(openCodeService.getAvailableModels).toHaveBeenCalled()
     expect(claudeImpl.getAvailableModels).not.toHaveBeenCalled()
@@ -133,8 +122,12 @@ describe('OpenCode model SDK-aware routing', () => {
 
   it('opencode:models with agentSdk claude-code routes to Claude', async () => {
     const sdkManager = createMockSdkManager(claudeImpl)
+    const mainWindow = { isDestroyed: () => false, webContents: { send: vi.fn() } } as any
 
-    await listOpenCodeModels({ agentSdk: 'claude-code' }, sdkManager)
+    registerOpenCodeHandlers(mainWindow, sdkManager)
+
+    const handler = handlers.get('opencode:models')!
+    await handler(mockEvent, { agentSdk: 'claude-code' })
 
     expect(sdkManager.getImplementer).toHaveBeenCalledWith('claude-code')
     expect(claudeImpl.getAvailableModels).toHaveBeenCalled()
@@ -142,18 +135,25 @@ describe('OpenCode model SDK-aware routing', () => {
   })
 })
 
-describe('OpenCode setModel SDK-aware routing', () => {
+describe('IPC opencode:setModel SDK-aware routing', () => {
   let claudeImpl: AgentSdkImplementer
 
   beforeEach(() => {
+    handlers.clear()
     vi.clearAllMocks()
     claudeImpl = createMockClaudeImpl()
   })
 
   it('opencode:setModel without agentSdk routes to OpenCode', async () => {
     const sdkManager = createMockSdkManager(claudeImpl)
+    const mainWindow = { isDestroyed: () => false, webContents: { send: vi.fn() } } as any
 
-    await setOpenCodeSelectedModel({ providerID: 'anthropic', modelID: 'opus' }, sdkManager)
+    registerOpenCodeHandlers(mainWindow, sdkManager)
+
+    const handler = handlers.get('opencode:setModel')!
+    expect(handler).toBeDefined()
+
+    await handler(mockEvent, { providerID: 'anthropic', modelID: 'opus' })
 
     expect(openCodeService.setSelectedModel).toHaveBeenCalledWith({
       providerID: 'anthropic',
@@ -164,15 +164,16 @@ describe('OpenCode setModel SDK-aware routing', () => {
 
   it('opencode:setModel with agentSdk claude-code routes to Claude', async () => {
     const sdkManager = createMockSdkManager(claudeImpl)
+    const mainWindow = { isDestroyed: () => false, webContents: { send: vi.fn() } } as any
 
-    await setOpenCodeSelectedModel(
-      {
-        providerID: 'claude-code',
-        modelID: 'opus',
-        agentSdk: 'claude-code'
-      },
-      sdkManager
-    )
+    registerOpenCodeHandlers(mainWindow, sdkManager)
+
+    const handler = handlers.get('opencode:setModel')!
+    await handler(mockEvent, {
+      providerID: 'claude-code',
+      modelID: 'opus',
+      agentSdk: 'claude-code'
+    })
 
     expect(sdkManager.getImplementer).toHaveBeenCalledWith('claude-code')
     expect(claudeImpl.setSelectedModel).toHaveBeenCalledWith({
@@ -184,18 +185,25 @@ describe('OpenCode setModel SDK-aware routing', () => {
   })
 })
 
-describe('OpenCode modelInfo SDK-aware routing', () => {
+describe('IPC opencode:modelInfo SDK-aware routing', () => {
   let claudeImpl: AgentSdkImplementer
 
   beforeEach(() => {
+    handlers.clear()
     vi.clearAllMocks()
     claudeImpl = createMockClaudeImpl()
   })
 
   it('opencode:modelInfo without agentSdk routes to OpenCode', async () => {
     const sdkManager = createMockSdkManager(claudeImpl)
+    const mainWindow = { isDestroyed: () => false, webContents: { send: vi.fn() } } as any
 
-    await getOpenCodeModelInfo('/path', 'opus', undefined, sdkManager)
+    registerOpenCodeHandlers(mainWindow, sdkManager)
+
+    const handler = handlers.get('opencode:modelInfo')!
+    expect(handler).toBeDefined()
+
+    await handler(mockEvent, { worktreePath: '/path', modelId: 'opus' })
 
     expect(openCodeService.getModelInfo).toHaveBeenCalledWith('/path', 'opus')
     expect(claudeImpl.getModelInfo).not.toHaveBeenCalled()
@@ -203,8 +211,16 @@ describe('OpenCode modelInfo SDK-aware routing', () => {
 
   it('opencode:modelInfo with agentSdk claude-code routes to Claude', async () => {
     const sdkManager = createMockSdkManager(claudeImpl)
+    const mainWindow = { isDestroyed: () => false, webContents: { send: vi.fn() } } as any
 
-    await getOpenCodeModelInfo('/path', 'opus', 'claude-code', sdkManager)
+    registerOpenCodeHandlers(mainWindow, sdkManager)
+
+    const handler = handlers.get('opencode:modelInfo')!
+    await handler(mockEvent, {
+      worktreePath: '/path',
+      modelId: 'opus',
+      agentSdk: 'claude-code'
+    })
 
     expect(sdkManager.getImplementer).toHaveBeenCalledWith('claude-code')
     expect(claudeImpl.getModelInfo).toHaveBeenCalledWith('/path', 'opus')
@@ -212,16 +228,22 @@ describe('OpenCode modelInfo SDK-aware routing', () => {
   })
 })
 
-describe('OpenCode model fallback when sdkManager is null', () => {
+describe('IPC opencode:models fallback when sdkManager is null', () => {
   let claudeImpl: AgentSdkImplementer
 
   beforeEach(() => {
+    handlers.clear()
     vi.clearAllMocks()
     claudeImpl = createMockClaudeImpl()
   })
 
   it('opencode:models falls through to OpenCode when sdkManager is null', async () => {
-    await listOpenCodeModels({ agentSdk: 'claude-code' })
+    const mainWindow = { isDestroyed: () => false, webContents: { send: vi.fn() } } as any
+
+    registerOpenCodeHandlers(mainWindow, undefined, undefined)
+
+    const handler = handlers.get('opencode:models')!
+    await handler(mockEvent, { agentSdk: 'claude-code' })
 
     expect(claudeImpl.getAvailableModels).not.toHaveBeenCalled()
     expect(openCodeService.getAvailableModels).toHaveBeenCalled()

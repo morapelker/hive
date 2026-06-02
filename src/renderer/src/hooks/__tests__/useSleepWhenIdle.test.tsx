@@ -6,14 +6,6 @@ import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useSleepWhenIdleStore } from '@/stores/useSleepWhenIdleStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 
-const systemApiMocks = vi.hoisted(() => ({
-  sleepNow: vi.fn().mockResolvedValue(true)
-}))
-
-vi.mock('@/api/system-api', () => ({
-  systemApi: systemApiMocks
-}))
-
 describe('useSleepWhenIdle', () => {
   const initialSettingsState = useSettingsStore.getState()
   const initialStatusState = useWorktreeStatusStore.getState()
@@ -23,7 +15,14 @@ describe('useSleepWhenIdle', () => {
     useSettingsStore.setState({ ...initialSettingsState, keepAwakeEnabled: true }, true)
     useWorktreeStatusStore.setState({ ...initialStatusState, sessionStatuses: {} }, true)
     useSleepWhenIdleStore.setState({ armed: true })
-    systemApiMocks.sleepNow.mockResolvedValue(true)
+
+    Object.defineProperty(window, 'systemOps', {
+      configurable: true,
+      writable: true,
+      value: {
+        sleepNow: vi.fn().mockResolvedValue(true)
+      }
+    })
   })
 
   afterEach(() => {
@@ -32,7 +31,7 @@ describe('useSleepWhenIdle', () => {
     useSettingsStore.setState(initialSettingsState, true)
     useWorktreeStatusStore.setState(initialStatusState, true)
     useSleepWhenIdleStore.setState({ armed: false })
-    systemApiMocks.sleepNow.mockClear()
+    delete (window as { systemOps?: unknown }).systemOps
   })
 
   it('sleeps once after all sessions have been idle for one continuous minute', async () => {
@@ -41,19 +40,19 @@ describe('useSleepWhenIdle', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(59_999)
     })
-    expect(systemApiMocks.sleepNow).not.toHaveBeenCalled()
+    expect(window.systemOps.sleepNow).not.toHaveBeenCalled()
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1)
     })
 
-    expect(systemApiMocks.sleepNow).toHaveBeenCalledTimes(1)
+    expect(window.systemOps.sleepNow).toHaveBeenCalledTimes(1)
     expect(useSleepWhenIdleStore.getState().armed).toBe(false)
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(60_000)
     })
-    expect(systemApiMocks.sleepNow).toHaveBeenCalledTimes(1)
+    expect(window.systemOps.sleepNow).toHaveBeenCalledTimes(1)
   })
 
   it('resets the idle timer when work resumes before the debounce expires', async () => {
@@ -69,7 +68,7 @@ describe('useSleepWhenIdle', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(60_000)
     })
-    expect(systemApiMocks.sleepNow).not.toHaveBeenCalled()
+    expect(window.systemOps.sleepNow).not.toHaveBeenCalled()
     expect(useSleepWhenIdleStore.getState().armed).toBe(true)
 
     await act(async () => {
@@ -81,12 +80,12 @@ describe('useSleepWhenIdle', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(59_999)
     })
-    expect(systemApiMocks.sleepNow).not.toHaveBeenCalled()
+    expect(window.systemOps.sleepNow).not.toHaveBeenCalled()
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1)
     })
-    expect(systemApiMocks.sleepNow).toHaveBeenCalledTimes(1)
+    expect(window.systemOps.sleepNow).toHaveBeenCalledTimes(1)
   })
 
   it('does not sleep while a session is waiting on user approval', async () => {
@@ -100,7 +99,7 @@ describe('useSleepWhenIdle', () => {
       await vi.advanceTimersByTimeAsync(60_000)
     })
 
-    expect(systemApiMocks.sleepNow).not.toHaveBeenCalled()
+    expect(window.systemOps.sleepNow).not.toHaveBeenCalled()
     expect(useSleepWhenIdleStore.getState().armed).toBe(true)
   })
 
@@ -118,6 +117,6 @@ describe('useSleepWhenIdle', () => {
       await vi.advanceTimersByTimeAsync(60_000)
     })
 
-    expect(systemApiMocks.sleepNow).not.toHaveBeenCalled()
+    expect(window.systemOps.sleepNow).not.toHaveBeenCalled()
   })
 })

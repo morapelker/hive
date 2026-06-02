@@ -1,8 +1,8 @@
 import * as chokidar from 'chokidar'
 import { join } from 'path'
 import { existsSync, statSync, readFileSync } from 'fs'
+import { BrowserWindow } from 'electron'
 import { createLogger } from './logger'
-import { emitGitBranchChanged } from './git-events'
 
 const log = createLogger({ component: 'BranchWatcher' })
 
@@ -18,7 +18,7 @@ const log = createLogger({ component: 'BranchWatcher' })
  * Includes refcounting so multiple renderer components can watch/unwatch the same
  * path without premature teardown.
  *
- * Emits 'git:branchChanged' backend events.
+ * Emits 'git:branchChanged' events to the renderer.
  */
 
 const DEBOUNCE_MS = 300
@@ -37,6 +37,8 @@ const watchedPaths = new Map<string, PathEntry>()
 
 // Reverse lookup: worktreePath → headPath (for unwatchBranch which receives worktreePath)
 const worktreeToHead = new Map<string, string>()
+
+let mainWindow: BrowserWindow | null = null
 
 /**
  * Resolve the git dir for a worktree path.
@@ -64,7 +66,13 @@ function resolveGitDir(worktreePath: string): string | null {
 }
 
 function emitBranchChanged(worktreePath: string): void {
-  emitGitBranchChanged({ worktreePath })
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  mainWindow.webContents.send('git:branchChanged', { worktreePath })
+}
+
+export function initBranchWatcher(window: BrowserWindow): void {
+  mainWindow = window
+  log.info('BranchWatcher initialized')
 }
 
 export async function watchBranch(worktreePath: string): Promise<void> {

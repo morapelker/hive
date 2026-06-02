@@ -1,10 +1,24 @@
 // @vitest-environment node
-import { describe, test, expect, beforeEach, afterEach } from 'vitest'
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest'
 import { promises as fs } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 
-import { scanDirectory, scanSingleDirectory } from '../../../src/shared/file-tree-scan'
+// Mock Electron and logger before importing the module under test
+vi.mock('electron', () => ({
+  ipcMain: { handle: vi.fn() },
+  BrowserWindow: vi.fn()
+}))
+vi.mock('../../../src/main/services/logger', () => ({
+  createLogger: () => ({
+    info: vi.fn(),
+    error: vi.fn(),
+    warn: vi.fn(),
+    debug: vi.fn()
+  })
+}))
+
+import { scanDirectory, scanSingleDirectory } from '../../../src/main/ipc/file-tree-handlers'
 
 describe('Session 2: Hidden Files', () => {
   let tempDir: string

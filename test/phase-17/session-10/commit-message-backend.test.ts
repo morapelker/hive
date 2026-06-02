@@ -1,13 +1,4 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest'
-import { dbApi } from '../../../src/renderer/src/api/db-api'
-
-vi.mock('../../../src/renderer/src/api/db-api', () => ({
-  dbApi: {
-    worktree: {
-      appendSessionTitle: vi.fn()
-    }
-  }
-}))
 
 // ── Schema tests ────────────────────────────────────────────────────────────
 import { CURRENT_SCHEMA_VERSION, MIGRATIONS } from '../../../src/main/db/schema'
@@ -117,11 +108,28 @@ describe('Session 10: Default Commit Message Backend', () => {
 
   // ── updateSessionName integration ─────────────────────────────────────────
   describe('updateSessionName title tracking', () => {
-    const mockAppendSessionTitle = vi.mocked(dbApi.worktree.appendSessionTitle)
+    let mockAppendSessionTitle: ReturnType<typeof vi.fn>
+    let mockSessionUpdate: ReturnType<typeof vi.fn>
 
     beforeEach(() => {
-      vi.clearAllMocks()
-      mockAppendSessionTitle.mockResolvedValue(true)
+      mockAppendSessionTitle = vi.fn().mockResolvedValue({ success: true })
+      mockSessionUpdate = vi.fn().mockResolvedValue({
+        id: 'session-1',
+        worktree_id: 'wt-1',
+        name: 'test'
+      })
+
+      Object.defineProperty(window, 'db', {
+        writable: true,
+        value: {
+          session: {
+            update: mockSessionUpdate
+          },
+          worktree: {
+            appendSessionTitle: mockAppendSessionTitle
+          }
+        }
+      })
     })
 
     test('meaningful session names trigger appendSessionTitle', async () => {
@@ -136,7 +144,7 @@ describe('Session 10: Default Commit Message Backend', () => {
       expect(isDefault).toBe(false)
 
       if (!isDefault && worktreeId) {
-        await dbApi.worktree.appendSessionTitle(worktreeId, name)
+        await window.db.worktree.appendSessionTitle(worktreeId, name)
       }
 
       expect(mockAppendSessionTitle).toHaveBeenCalledWith('wt-1', 'Implement dark mode')
@@ -150,7 +158,7 @@ describe('Session 10: Default Commit Message Backend', () => {
       expect(isDefault).toBe(true)
 
       if (!isDefault && worktreeId) {
-        await dbApi.worktree.appendSessionTitle(worktreeId, name)
+        await window.db.worktree.appendSessionTitle(worktreeId, name)
       }
 
       expect(mockAppendSessionTitle).not.toHaveBeenCalled()
@@ -164,18 +172,20 @@ describe('Session 10: Default Commit Message Backend', () => {
       expect(isDefault).toBe(false)
 
       if (!isDefault && worktreeId) {
-        await dbApi.worktree.appendSessionTitle(worktreeId, name)
+        await window.db.worktree.appendSessionTitle(worktreeId, name)
       }
 
       expect(mockAppendSessionTitle).not.toHaveBeenCalled()
     })
   })
 
-  // ── RPC handler contract ──────────────────────────────────────────────────
-  describe('RPC handler contract', () => {
-    test('appendSessionTitle RPC method name is correct', () => {
-      const expectedMethod = 'db.worktree.appendSessionTitle'
-      expect(expectedMethod).toBe('db.worktree.appendSessionTitle')
+  // ── IPC handler contract ──────────────────────────────────────────────────
+  describe('IPC handler contract', () => {
+    test('appendSessionTitle IPC channel name is correct', () => {
+      // Verify the preload bridge calls the correct channel
+      // This is a contract test — the actual handler is tested via integration
+      const expectedChannel = 'db:worktree:appendSessionTitle'
+      expect(expectedChannel).toBe('db:worktree:appendSessionTitle')
     })
 
     test('appendSessionTitle accepts { worktreeId, title } payload', () => {

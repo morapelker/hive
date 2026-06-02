@@ -5,7 +5,7 @@ vi.mock('../logger', () => ({
 }))
 
 vi.mock('../agent-event-bus', () => ({
-  agentEventBus: { publish: vi.fn() }
+  agentEventBus: { setMainWindow: vi.fn(), publish: vi.fn() }
 }))
 
 vi.mock('../codex-app-server-manager', () => ({

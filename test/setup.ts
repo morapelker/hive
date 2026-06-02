@@ -1,166 +1,7 @@
 import '@testing-library/jest-dom'
 import { beforeEach, vi } from 'vitest'
-import type { RendererRpcClient } from '../src/renderer/src/api/rpc-client'
-import { setRendererRpcClient } from '../src/renderer/src/api/rpc-client'
-
-const electronMock = vi.hoisted(() => {
-  const makeWebContents = () => ({
-    send: vi.fn(),
-    on: vi.fn(),
-    once: vi.fn(),
-    off: vi.fn(),
-    removeListener: vi.fn(),
-    setWindowOpenHandler: vi.fn(),
-    openDevTools: vi.fn()
-  })
-  const BrowserWindow = vi.fn(function MockBrowserWindow() {
-    return {
-      loadURL: vi.fn(),
-      loadFile: vi.fn(),
-      on: vi.fn(),
-      once: vi.fn(),
-      off: vi.fn(),
-      show: vi.fn(),
-      hide: vi.fn(),
-      close: vi.fn(),
-      destroy: vi.fn(),
-      isDestroyed: vi.fn(() => false),
-      isVisible: vi.fn(() => true),
-      setAlwaysOnTop: vi.fn(),
-      setVisibleOnAllWorkspaces: vi.fn(),
-      setPosition: vi.fn(),
-      getPosition: vi.fn(() => [0, 0]),
-      getBounds: vi.fn(() => ({ x: 0, y: 0, width: 800, height: 600 })),
-      webContents: makeWebContents()
-    }
-  })
-  Object.assign(BrowserWindow, {
-    getAllWindows: vi.fn(() => []),
-    getFocusedWindow: vi.fn(() => null),
-    fromWebContents: vi.fn(() => null)
-  })
-
-  return {
-    app: {
-      getPath: vi.fn((name: string) =>
-        name === 'home' ? '/tmp/hive-test-mock-home' : `/tmp/hive-test-mock-${name}`
-      ),
-      getVersion: vi.fn(() => '1.1.10'),
-      isPackaged: false,
-      quit: vi.fn(),
-      on: vi.fn(),
-      once: vi.fn(),
-      whenReady: vi.fn(() => Promise.resolve()),
-      setAppUserModelId: vi.fn(),
-      requestSingleInstanceLock: vi.fn(() => true)
-    },
-    BrowserWindow,
-    clipboard: {
-      readText: vi.fn(() => ''),
-      writeText: vi.fn()
-    },
-    dialog: {
-      showMessageBox: vi.fn(() => Promise.resolve({ response: 0 })),
-      showOpenDialog: vi.fn(() => Promise.resolve({ canceled: true, filePaths: [] })),
-      showSaveDialog: vi.fn(() => Promise.resolve({ canceled: true }))
-    },
-    ipcMain: {
-      handle: vi.fn(),
-      on: vi.fn(),
-      removeHandler: vi.fn(),
-      removeAllListeners: vi.fn()
-    },
-    nativeImage: {
-      createFromPath: vi.fn(() => ({ resize: vi.fn(() => ({})) }))
-    },
-    Notification: vi.fn(),
-    screen: {
-      getPrimaryDisplay: vi.fn(() => ({ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }))
-    },
-    session: {
-      defaultSession: {
-        webRequest: {
-          onHeadersReceived: vi.fn()
-        }
-      }
-    },
-    shell: {
-      openExternal: vi.fn(() => Promise.resolve()),
-      openPath: vi.fn(() => Promise.resolve('')),
-      showItemInFolder: vi.fn()
-    }
-  }
-})
-
-vi.mock('electron', () => electronMock)
-
-vi.mock('@electron-toolkit/utils', () => ({
-  electronApp: {
-    setAppUserModelId: vi.fn(),
-    setAutoLaunch: vi.fn()
-  },
-  is: {
-    dev: true,
-    macOS: false,
-    windows: false,
-    linux: true
-  },
-  optimizer: {
-    watchWindowShortcuts: vi.fn()
-  }
-}))
-
-vi.mock('electron-updater', () => ({
-  autoUpdater: {
-    autoDownload: false,
-    autoInstallOnAppQuit: true,
-    logger: null,
-    channel: 'latest',
-    allowPrerelease: false,
-    allowDowngrade: false,
-    on: vi.fn(),
-    checkForUpdates: vi.fn(),
-    downloadUpdate: vi.fn(),
-    quitAndInstall: vi.fn()
-  }
-}))
-
-const makeDefaultRendererRpcClient = (): RendererRpcClient => ({
-  request: async <T,>(method: string): Promise<T> => {
-    switch (method) {
-      case 'db.setting.get':
-      case 'db.project.get':
-      case 'db.project.getByPath':
-        return null as T
-      case 'db.setting.set':
-      case 'db.setting.delete':
-      case 'db.project.delete':
-      case 'db.project.touch':
-        return true as T
-      case 'db.setting.getAll':
-      case 'db.project.getAll':
-      case 'db.space.list':
-        return [] as T
-      case 'settingsOps.getAll':
-        return {} as T
-      case 'settingsOps.loadCustomCommandsFile':
-        return { success: true, commands: [], mtime: null } as T
-      case 'projectOps.loadLanguageIcons':
-        return {} as T
-      default:
-        return undefined as T
-    }
-  },
-  subscribe: () => () => {}
-})
-
-const installDefaultRendererRpcClient = (): void => {
-  setRendererRpcClient(makeDefaultRendererRpcClient())
-}
 
 if (typeof window !== 'undefined') {
-  installDefaultRendererRpcClient()
-
   // Synchronous rAF mock — fires the callback immediately so that
   // RAF-throttled store updates behave synchronously in tests.
   let rafId = 0
@@ -209,4 +50,133 @@ if (typeof window !== 'undefined') {
     window.localStorage?.clear?.()
   })
 
+  // Mock gitOps for components that use GitStatusPanel
+  const mockGitOps = {
+    getFileStatuses: vi.fn().mockResolvedValue({ success: true, files: [] }),
+    getBranchInfo: vi.fn().mockResolvedValue({
+      success: true,
+      branch: { name: 'main', tracking: null, ahead: 0, behind: 0 }
+    }),
+    stageFile: vi.fn().mockResolvedValue({ success: true }),
+    unstageFile: vi.fn().mockResolvedValue({ success: true }),
+    stageAll: vi.fn().mockResolvedValue({ success: true }),
+    unstageAll: vi.fn().mockResolvedValue({ success: true }),
+    discardChanges: vi.fn().mockResolvedValue({ success: true }),
+    addToGitignore: vi.fn().mockResolvedValue({ success: true }),
+    commit: vi.fn().mockResolvedValue({ success: true, commitHash: 'abc1234' }),
+    push: vi.fn().mockResolvedValue({ success: true }),
+    pull: vi.fn().mockResolvedValue({ success: true }),
+    openInEditor: vi.fn().mockResolvedValue({ success: true }),
+    showInFinder: vi.fn().mockResolvedValue({ success: true }),
+    onStatusChanged: vi.fn().mockReturnValue(() => {}),
+    watchBranch: vi.fn().mockResolvedValue({ success: true }),
+    unwatchBranch: vi.fn().mockResolvedValue({ success: true }),
+    onBranchChanged: vi.fn().mockReturnValue(() => {}),
+    getFileContent: vi.fn().mockResolvedValue({ success: true, content: '' }),
+    getRemoteUrl: vi.fn().mockResolvedValue({ success: true, url: null, remote: null })
+  }
+
+  // Mock fileTreeOps
+  const mockFileTreeOps = {
+    scan: vi.fn().mockResolvedValue({ success: true, tree: [] }),
+    loadChildren: vi.fn().mockResolvedValue({ success: true, children: [] }),
+    watch: vi.fn().mockResolvedValue({ success: true }),
+    unwatch: vi.fn().mockResolvedValue({ success: true }),
+    onChange: vi.fn().mockReturnValue(() => {})
+  }
+
+  // Set up window mocks if they don't exist
+  if (!window.gitOps) {
+    Object.defineProperty(window, 'gitOps', {
+      writable: true,
+      configurable: true,
+      value: mockGitOps
+    })
+  }
+
+  if (!window.fileTreeOps) {
+    Object.defineProperty(window, 'fileTreeOps', {
+      writable: true,
+      value: mockFileTreeOps
+    })
+  }
+
+  // Mock systemOps for components that use system operations
+  if (!window.systemOps) {
+    Object.defineProperty(window, 'systemOps', {
+      writable: true,
+      configurable: true,
+      value: {
+        getLogDir: vi.fn().mockResolvedValue('/tmp/logs'),
+        getAppVersion: vi.fn().mockResolvedValue('1.0.0'),
+        getAppPaths: vi.fn().mockResolvedValue({ userData: '/tmp', home: '/tmp', logs: '/tmp' }),
+        isLogMode: vi.fn().mockResolvedValue(false),
+        detectAgentSdks: vi.fn().mockResolvedValue({ opencode: true, claude: true, codex: false }),
+        quitApp: vi.fn().mockResolvedValue(undefined),
+        openInApp: vi.fn().mockResolvedValue({ success: true }),
+        openInChrome: vi.fn().mockResolvedValue({ success: true }),
+        onNewSessionShortcut: vi.fn().mockReturnValue(() => {}),
+        onCloseSessionShortcut: vi.fn().mockReturnValue(() => {}),
+        onFileSearchShortcut: vi.fn().mockReturnValue(() => {}),
+        onNotificationNavigate: vi.fn().mockReturnValue(() => {}),
+        onWindowFocused: vi.fn().mockReturnValue(() => {}),
+        updateMenuState: vi.fn().mockResolvedValue(undefined),
+        isPackaged: vi.fn().mockResolvedValue(false),
+        getPlatform: vi.fn().mockResolvedValue('darwin'),
+        setSessionQueuedState: vi.fn().mockResolvedValue(undefined)
+      }
+    })
+  }
+
+  if (!window.analyticsOps) {
+    Object.defineProperty(window, 'analyticsOps', {
+      writable: true,
+      configurable: true,
+      value: {
+        track: vi.fn().mockResolvedValue(undefined),
+        setEnabled: vi.fn().mockResolvedValue(undefined),
+        isEnabled: vi.fn().mockResolvedValue(true)
+      }
+    })
+  }
+
+  if (!window.petOps) {
+    Object.defineProperty(window, 'petOps', {
+      writable: true,
+      configurable: true,
+      value: {
+        show: vi.fn().mockResolvedValue(undefined),
+        hide: vi.fn().mockResolvedValue(undefined),
+        publishStatus: vi.fn(),
+        setIgnoreMouse: vi.fn(),
+        beginPointerInteraction: vi.fn(),
+        endPointerInteraction: vi.fn(),
+        move: vi.fn(),
+        focusMain: vi.fn().mockResolvedValue(undefined),
+        getConfig: vi.fn().mockResolvedValue({
+          settings: {
+            enabled: false,
+            petId: 'bee',
+            size: 'M',
+            opacity: 1,
+            animationSpeedEnabled: false,
+            animationSpeed: 5,
+            hasHatched: true
+          },
+          position: { x: 0, y: 0 },
+          manifest: { id: 'bee', name: 'Bee', version: '1.0.0', assets: {} }
+        }),
+        getCurrentStatus: vi.fn().mockResolvedValue({
+          state: 'idle',
+          sourceWorktreeId: null,
+          workingSessionCount: 0
+        }),
+        updateSettings: vi.fn(),
+        markHatched: vi.fn(),
+        onStatus: vi.fn().mockReturnValue(() => {}),
+        onSettingsUpdated: vi.fn().mockReturnValue(() => {}),
+        onJumpToWorktree: vi.fn().mockReturnValue(() => {})
+      }
+    })
+  }
 }

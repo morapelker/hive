@@ -2,9 +2,6 @@ import { EventEmitter } from 'events'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 const spawnMock = vi.fn()
-const backendManagerMock = vi.hoisted(() => ({
-  publishDesktopBackendEvent: vi.fn()
-}))
 
 vi.mock('child_process', () => ({
   spawn: (...args: unknown[]) => spawnMock(...args),
@@ -21,8 +18,8 @@ vi.mock('../../../src/main/services/logger', () => ({
   })
 }))
 
-vi.mock('../../../src/main/desktop/backend-manager', () => ({
-  publishDesktopBackendEvent: backendManagerMock.publishDesktopBackendEvent
+vi.mock('electron', () => ({
+  BrowserWindow: class {}
 }))
 
 import { ScriptRunner } from '../../../src/main/services/script-runner'
@@ -103,13 +100,23 @@ describe('ScriptRunner process lifecycle', () => {
     processKillSpy.mockRestore()
   })
 
-  test('runPersistent batches output chunks into fewer backend events', async () => {
+  test('runPersistent batches output chunks into fewer IPC events', async () => {
     vi.useFakeTimers()
 
     const runner = new ScriptRunner()
     const proc = new MockChildProcess(4001)
+    const sendSpy = vi.fn()
 
     spawnMock.mockReturnValue(proc)
+
+    const mockWindow = {
+      isDestroyed: () => false,
+      webContents: {
+        send: sendSpy
+      }
+    } as unknown as Parameters<ScriptRunner['setMainWindow']>[0]
+
+    runner.setMainWindow(mockWindow)
 
     await runner.runPersistent(['echo run'], '/tmp', 'script:run:batched')
 
@@ -117,24 +124,13 @@ describe('ScriptRunner process lifecycle', () => {
     proc.stdout.emit('data', Buffer.from('B'))
     proc.stderr.emit('data', Buffer.from('C'))
 
-    expect(backendManagerMock.publishDesktopBackendEvent).not.toHaveBeenCalledWith(
-      'script:run:batched',
-      {
-        type: 'output',
-        data: 'ABC'
-      }
-    )
+    expect(sendSpy).not.toHaveBeenCalled()
 
     vi.advanceTimersByTime(20)
 
-    await vi.waitFor(() => {
-      expect(backendManagerMock.publishDesktopBackendEvent).toHaveBeenCalledWith(
-        'script:run:batched',
-        {
-          type: 'output',
-          data: 'ABC'
-        }
-      )
+    expect(sendSpy).toHaveBeenCalledWith('script:run:batched', {
+      type: 'output',
+      data: 'ABC'
     })
   })
 })

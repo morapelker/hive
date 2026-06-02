@@ -1,6 +1,5 @@
 import { create } from 'zustand'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
-import { terminalApi } from '@/api/terminal-api'
 
 export type TerminalStatus = 'creating' | 'running' | 'exited'
 
@@ -41,8 +40,9 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       return { success: true }
     }
 
-    // Mark as creating; XtermBackend owns PTY creation and subscriptions so this store
-    // only tracks state without registering duplicate terminal listeners.
+    // Mark as creating — actual PTY creation is handled by the backend (XtermBackend.mount)
+    // The store only tracks state; the backend calls window.terminalOps.create() and
+    // registers its own onData/onExit listeners to avoid duplicate listener registration.
     set((state) => {
       const terminals = new Map(state.terminals)
       terminals.set(worktreeId, { status: 'creating' })
@@ -54,7 +54,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
   destroyTerminal: async (worktreeId: string) => {
     try {
-      unwrapEnvelope(await terminalApi.destroy(worktreeId))
+      unwrapEnvelope(await window.terminalOps.destroy(worktreeId))
     } catch {
       // Best-effort destroy
     }

@@ -1,26 +1,5 @@
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-
-const apiMocks = vi.hoisted(() => ({
-  gitApi: {
-    watchWorktree: vi.fn().mockResolvedValue({ success: true }),
-    unwatchWorktree: vi.fn().mockResolvedValue({ success: true }),
-    onStatusChanged: vi.fn(() => vi.fn())
-  },
-  settingsApi: {
-    onSettingsUpdated: vi.fn(() => vi.fn())
-  }
-}))
-
-vi.mock('@/api/git-api', () => ({
-  gitApi: apiMocks.gitApi
-}))
-
-vi.mock('@/api/settings-api', () => ({
-  settingsApi: apiMocks.settingsApi
-}))
-
-import { gitApi } from '@/api/git-api'
 import { useWorktreeWatcher } from '../../../src/renderer/src/hooks/useWorktreeWatcher'
 import { useGitStore } from '../../../src/renderer/src/stores/useGitStore'
 import { useWorktreeStore } from '../../../src/renderer/src/stores/useWorktreeStore'
@@ -63,8 +42,8 @@ function createWorktree(id: string, path: string): MockWorktree {
   }
 }
 
-const watchWorktreeMock = vi.mocked(gitApi.watchWorktree)
-const unwatchWorktreeMock = vi.mocked(gitApi.unwatchWorktree)
+const watchWorktreeMock = vi.fn().mockResolvedValue(undefined)
+const unwatchWorktreeMock = vi.fn().mockResolvedValue(undefined)
 const loadFileStatusesMock = vi.fn().mockResolvedValue(undefined)
 const loadBranchInfoMock = vi.fn().mockResolvedValue(undefined)
 
@@ -78,9 +57,17 @@ describe('worktree watcher hook', () => {
     originalLoadFileStatuses = useGitStore.getState().loadFileStatuses
     originalLoadBranchInfo = useGitStore.getState().loadBranchInfo
 
-    watchWorktreeMock.mockResolvedValue({ success: true })
-    unwatchWorktreeMock.mockResolvedValue({ success: true })
-    vi.mocked(gitApi.onStatusChanged).mockReturnValue(vi.fn())
+    const existingGitOps = (window as unknown as { gitOps?: Record<string, unknown> }).gitOps ?? {}
+
+    Object.defineProperty(window, 'gitOps', {
+      configurable: true,
+      writable: true,
+      value: {
+        ...existingGitOps,
+        watchWorktree: watchWorktreeMock,
+        unwatchWorktree: unwatchWorktreeMock
+      }
+    })
 
     useGitStore.setState({
       loadFileStatuses: loadFileStatusesMock,

@@ -12,35 +12,11 @@ vi.mock('../src/main/services/git-service', () => ({
   autoRenameWorktreeBranch: (...args: any[]) => mockAutoRenameWorktreeBranch(...args)
 }))
 
-const {
-  mockAgentPublish,
-  mockEmitWorktreeBranchRenamed,
-  mockLogInfo,
-  mockLogWarn,
-  mockLogDebug,
-  mockLogCodexLifecycleEvent
-} = vi.hoisted(() => ({
-  mockAgentPublish: vi.fn(),
-  mockEmitWorktreeBranchRenamed: vi.fn(),
+const { mockLogInfo, mockLogWarn, mockLogDebug, mockLogCodexLifecycleEvent } = vi.hoisted(() => ({
   mockLogInfo: vi.fn(),
   mockLogWarn: vi.fn(),
   mockLogDebug: vi.fn(),
   mockLogCodexLifecycleEvent: vi.fn()
-}))
-
-vi.mock('../src/main/services/agent-event-bus', () => ({
-  agentEventBus: { publish: mockAgentPublish }
-}))
-
-vi.mock('../src/main/services/worktree-events', () => ({
-  emitWorktreeBranchRenamed: mockEmitWorktreeBranchRenamed
-}))
-
-vi.mock('../src/main/services/notification-service', () => ({
-  notificationService: {
-    showPendingUserFeedback: vi.fn(),
-    showSessionComplete: vi.fn()
-  }
 }))
 
 vi.mock('../src/main/services/logger', () => ({
@@ -57,6 +33,15 @@ vi.mock('../src/main/services/codex-debug-logger', () => ({
 }))
 
 import { CodexImplementer } from '../src/main/services/codex-implementer'
+
+function createMockWindow() {
+  return {
+    isDestroyed: vi.fn(() => false),
+    webContents: {
+      send: vi.fn()
+    }
+  } as any
+}
 
 function createMockDbService(overrides: Record<string, any> = {}) {
   return {
@@ -91,12 +76,15 @@ function injectSession(impl: CodexImplementer, session: CodexSessionState): void
 
 describe('Codex title integration', () => {
   let impl: CodexImplementer
+  let mockWindow: ReturnType<typeof createMockWindow>
   let mockDb: ReturnType<typeof createMockDbService>
   let session: CodexSessionState
 
   beforeEach(() => {
     vi.clearAllMocks()
     impl = new CodexImplementer()
+    mockWindow = createMockWindow()
+    impl.setMainWindow(mockWindow)
     mockDb = createMockDbService()
     impl.setDatabaseService(mockDb)
     session = createMockSession()
@@ -122,7 +110,7 @@ describe('Codex title integration', () => {
     expect(mockDb.updateSession).toHaveBeenCalledWith('hive-session-1', {
       name: 'Fix auth refresh'
     })
-    expect(mockAgentPublish).toHaveBeenCalledWith({
+    expect(mockWindow.webContents.send).toHaveBeenCalledWith('opencode:stream', {
       type: 'session.updated',
       sessionId: 'hive-session-1',
       data: {
@@ -149,7 +137,7 @@ describe('Codex title integration', () => {
         title: 'Fix auth refresh'
       })
     )
-    expect(mockEmitWorktreeBranchRenamed).toHaveBeenCalledWith({
+    expect(mockWindow.webContents.send).toHaveBeenCalledWith('worktree:branchRenamed', {
       worktreeId: 'wt-1',
       newBranch: 'fix-auth-refresh'
     })
@@ -173,7 +161,8 @@ describe('Codex title integration', () => {
 
     expect(mockDb.updateSession).not.toHaveBeenCalled()
     expect(mockAutoRenameWorktreeBranch).toHaveBeenCalledTimes(1)
-    expect(mockAgentPublish).not.toHaveBeenCalledWith(
+    expect(mockWindow.webContents.send).not.toHaveBeenCalledWith(
+      'opencode:stream',
       expect.objectContaining({ type: 'session.updated' })
     )
     expect(mockLogDebug).toHaveBeenCalledWith(
@@ -195,7 +184,8 @@ describe('Codex title integration', () => {
     })
 
     expect(mockDb.updateSession).not.toHaveBeenCalled()
-    expect(mockAgentPublish).not.toHaveBeenCalledWith(
+    expect(mockWindow.webContents.send).not.toHaveBeenCalledWith(
+      'opencode:stream',
       expect.objectContaining({ type: 'session.updated' })
     )
     expect(mockLogInfo).toHaveBeenCalledWith(
@@ -223,7 +213,7 @@ describe('Codex title integration', () => {
     expect(mockDb.updateSession).toHaveBeenCalledWith('hive-session-1', {
       name: 'Dark mode settings'
     })
-    expect(mockAgentPublish).toHaveBeenCalledWith({
+    expect(mockWindow.webContents.send).toHaveBeenCalledWith('opencode:stream', {
       type: 'session.updated',
       sessionId: 'hive-session-1',
       data: {

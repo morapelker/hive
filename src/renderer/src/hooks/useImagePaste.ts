@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from 'react'
 import { toast } from '@/lib/toast'
-import { attachmentApi } from '@/api/attachment-api'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024 // 10MB
 const IMAGE_MIME_PREFIXES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg']
@@ -53,7 +53,7 @@ export function useImagePaste({ maxAttachments, currentCount, onAttach }: UseIma
       try {
         const arrayBuffer = await file.arrayBuffer()
         const name = file.name || `pasted-image.${extensionFromMime(file.type)}`
-        const result = await attachmentApi.saveImage(arrayBuffer, name)
+        const result = unwrapEnvelope(await window.attachmentOps.saveImage(arrayBuffer, name))
 
         if (!result.success || !result.filePath) {
           toast.error(result.error ?? 'Failed to save image')

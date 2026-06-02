@@ -55,133 +55,24 @@ vi.mock('@/lib/toast', () => ({
   }
 }))
 
-const apiMocks = vi.hoisted(() => ({
-  dbApi: {
-    session: {
-      update: vi.fn().mockResolvedValue(undefined),
-      get: vi.fn().mockResolvedValue(null)
-    },
-    worktree: {
-      touch: vi.fn().mockResolvedValue(undefined),
-      update: vi.fn().mockResolvedValue(undefined),
-      get: vi.fn().mockResolvedValue(null)
-    },
-    setting: {
-      get: vi.fn().mockResolvedValue(null),
-      set: vi.fn().mockResolvedValue(true),
-      getAll: vi.fn().mockResolvedValue([])
-    },
-    project: {
-      getAll: vi.fn().mockResolvedValue([])
-    }
+const mockDb = {
+  session: {
+    update: vi.fn().mockResolvedValue(undefined)
   },
-  telegramApi: {
-    startForwarding: vi.fn(),
-    stopForwarding: vi.fn().mockResolvedValue({
-      ok: true,
-      status: {
-        active: false,
-        sessionId: null,
-        worktreeId: null,
-        connectionId: null,
-        mode: null,
-        health: 'ok',
-        lastError: null
-      }
-    }),
-    getConfig: vi.fn().mockResolvedValue({
-      botToken: 'token',
-      chatId: 123,
-      chatName: 'me',
-      contextSize: 3
-    }),
-    getStatus: vi.fn().mockResolvedValue({
-      active: false,
-      sessionId: null,
-      worktreeId: null,
-      connectionId: null,
-      mode: null,
-      health: 'ok',
-      lastError: null
-    }),
-    onStatusChanged: vi.fn(() => vi.fn()),
-    onPlanImplementRequested: vi.fn(() => vi.fn()),
-    onMessageReceived: vi.fn(() => vi.fn())
-  },
-  kanbanApi: {
-    ticket: {
-      getBySession: vi.fn(),
-      update: vi.fn(),
-      getByProject: vi.fn().mockResolvedValue([])
-    },
-    dependency: {
-      getForProject: vi.fn().mockResolvedValue([]),
-      removeAll: vi.fn(),
-      add: vi.fn(),
-      remove: vi.fn()
-    }
-  },
-  opencodeApi: {
-    connect: vi.fn(),
-    prompt: vi.fn(),
-    abort: vi.fn().mockResolvedValue({ success: true }),
-    setModel: vi.fn().mockResolvedValue({ success: true }),
-    onStream: vi.fn(() => vi.fn())
-  },
-  connectionApi: {
-    get: vi.fn().mockResolvedValue({ success: false }),
-    getAll: vi.fn().mockResolvedValue({ success: true, connections: [] })
-  },
-  settingsApi: {
-    onSettingsUpdated: vi.fn(() => vi.fn())
-  },
-  systemApi: {
-    detectAgentSdks: vi.fn().mockResolvedValue({ opencode: true, claude: true, codex: true }),
-    setSessionQueuedState: vi.fn().mockResolvedValue(undefined)
-  },
-  petApi: {
-    updateSettings: vi.fn().mockResolvedValue(undefined),
-    show: vi.fn().mockResolvedValue(undefined),
-    hide: vi.fn().mockResolvedValue(undefined)
-  },
-  updaterApi: {
-    onUpdateStatus: vi.fn(() => vi.fn())
-  },
-  fileApi: {
-    selectAttachmentFiles: vi.fn().mockResolvedValue([])
-  },
-  terminalApi: {
-    onOutput: vi.fn(() => vi.fn()),
-    onExit: vi.fn(() => vi.fn()),
-    onCreated: vi.fn(() => vi.fn()),
-    onClosed: vi.fn(() => vi.fn())
-  },
-  scriptApi: {
-    onStarted: vi.fn(() => vi.fn()),
-    onOutput: vi.fn(() => vi.fn()),
-    onFinished: vi.fn(() => vi.fn())
+  worktree: {
+    touch: vi.fn().mockResolvedValue(undefined)
   }
-}))
+}
 
-vi.mock('@/api/db-api', () => ({ dbApi: apiMocks.dbApi }))
-vi.mock('@/api/telegram-api', () => ({ telegramApi: apiMocks.telegramApi }))
-vi.mock('@/api/kanban-api', () => ({ kanbanApi: apiMocks.kanbanApi }))
-vi.mock('@/api/opencode-api', () => ({ opencodeApi: apiMocks.opencodeApi }))
-vi.mock('@/api/connection-api', () => ({ connectionApi: apiMocks.connectionApi }))
-vi.mock('@/api/settings-api', () => ({ settingsApi: apiMocks.settingsApi }))
-vi.mock('@/api/system-api', () => ({ systemApi: apiMocks.systemApi }))
-vi.mock('@/api/pet-api', () => ({ petApi: apiMocks.petApi }))
-vi.mock('@/api/updater-api', () => ({ updaterApi: apiMocks.updaterApi }))
-vi.mock('@/api/file-api', () => ({ fileApi: apiMocks.fileApi }))
-vi.mock('@/api/terminal-api', () => ({ terminalApi: apiMocks.terminalApi }))
-vi.mock('@/api/script-api', () => ({ scriptApi: apiMocks.scriptApi }))
+const startForwarding = vi.fn()
+const connectPromptSession = vi.fn()
+const promptSession = vi.fn()
+const getTicketsBySession = vi.fn()
+const updateTicket = vi.fn()
 
-const mockDb = apiMocks.dbApi
-const startForwarding = apiMocks.telegramApi.startForwarding
-const connectPromptSession = apiMocks.opencodeApi.connect
-const promptSession = apiMocks.opencodeApi.prompt
-const getTicketsBySession = apiMocks.kanbanApi.ticket.getBySession
-const updateTicket = apiMocks.kanbanApi.ticket.update
+function envelope<T>(value: T): { success: true; value: T } {
+  return { success: true, value }
+}
 
 function makeTicket(overrides: Partial<KanbanTicket> = {}): KanbanTicket {
   return {
@@ -353,42 +244,78 @@ describe('Telegram forwarding board target', () => {
       configurable: true,
       value: ResizeObserverMock
     })
-    mockDb.session.update.mockResolvedValue(undefined)
-    mockDb.worktree.touch.mockResolvedValue(undefined)
-    mockDb.worktree.update.mockResolvedValue(undefined)
-    mockDb.setting.get.mockResolvedValue(null)
-    mockDb.setting.set.mockResolvedValue(true)
-    connectPromptSession.mockResolvedValue({ success: true, sessionId: 'opc-session-new' })
-    promptSession.mockResolvedValue({ success: true })
-    apiMocks.telegramApi.stopForwarding.mockResolvedValue({
-      ok: true,
-      status: {
-        active: false,
-        sessionId: null,
-        worktreeId: null,
-        connectionId: null,
-        mode: null,
-        health: 'ok',
-        lastError: null
+    Object.defineProperty(window, 'db', {
+      writable: true,
+      configurable: true,
+      value: mockDb
+    })
+    Object.defineProperty(window, 'telegramOps', {
+      writable: true,
+      configurable: true,
+      value: {
+        startForwarding,
+        stopForwarding: vi.fn().mockResolvedValue(
+          envelope({
+            ok: true,
+            status: {
+              active: false,
+              sessionId: null,
+              worktreeId: null,
+              connectionId: null,
+              mode: null,
+              health: 'ok',
+              lastError: null
+            }
+          })
+        ),
+        getConfig: vi.fn().mockResolvedValue(
+          envelope({
+            botToken: 'token',
+            chatId: 123,
+            chatName: 'me',
+            contextSize: 3
+          })
+        ),
+        getStatus: vi.fn().mockResolvedValue(
+          envelope({
+            active: false,
+            sessionId: null,
+            worktreeId: null,
+            connectionId: null,
+            mode: null,
+            health: 'ok',
+            lastError: null
+          })
+        ),
+        onStatusChanged: vi.fn(),
+        onPlanImplementRequested: vi.fn()
       }
     })
-    apiMocks.telegramApi.getConfig.mockResolvedValue({
-      botToken: 'token',
-      chatId: 123,
-      chatName: 'me',
-      contextSize: 3
+    Object.defineProperty(window, 'kanban', {
+      writable: true,
+      configurable: true,
+      value: {
+        ticket: {
+          getBySession: getTicketsBySession,
+          update: updateTicket
+        }
+      }
     })
-    apiMocks.telegramApi.getStatus.mockResolvedValue({
-      active: false,
-      sessionId: null,
-      worktreeId: null,
-      connectionId: null,
-      mode: null,
-      health: 'ok',
-      lastError: null
+    Object.defineProperty(window, 'opencodeOps', {
+      writable: true,
+      configurable: true,
+      value: {
+        connect: connectPromptSession,
+        prompt: promptSession
+      }
     })
+    mockDb.session.update.mockResolvedValue(envelope(undefined))
+    connectPromptSession.mockResolvedValue(
+      envelope({ success: true, sessionId: 'opc-session-new' })
+    )
+    promptSession.mockResolvedValue(envelope({ success: true }))
     startForwarding.mockResolvedValue(
-      {
+      envelope({
         ok: true,
         status: {
           active: true,
@@ -399,10 +326,10 @@ describe('Telegram forwarding board target', () => {
           health: 'ok',
           lastError: null
         }
-      }
+      })
     )
-    getTicketsBySession.mockResolvedValue([])
-    updateTicket.mockResolvedValue(undefined)
+    getTicketsBySession.mockResolvedValue(envelope([]))
+    updateTicket.mockResolvedValue(envelope(undefined))
   })
 
   it('records the ticket session as board Telegram target on cmd-click', () => {
@@ -572,7 +499,7 @@ describe('Telegram forwarding board target', () => {
       worktreeId: 'wt-1',
       sessionId: 'session-old'
     })
-    getTicketsBySession.mockResolvedValue([oldTicket])
+    getTicketsBySession.mockResolvedValue(envelope([oldTicket]))
 
     await useKanbanStore.getState().relinkTicketsForHandoff('session-old', 'session-new')
 

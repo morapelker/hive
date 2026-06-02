@@ -11,53 +11,13 @@
  */
 
 import { describe, test, expect, vi, beforeEach } from 'vitest'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import { useGitStore } from '../../../src/renderer/src/stores/useGitStore'
 import { GitCommitForm } from '../../../src/renderer/src/components/git/GitCommitForm'
 
-const gitApiMocks = vi.hoisted(() => ({
-  getFileStatuses: vi.fn()
-}))
-
-vi.mock('@/api/git-api', () => ({
-  gitApi: gitApiMocks
-}))
-
-const worktreeStoreMocks = vi.hoisted(() => {
-  const state = {
-    worktrees: [],
-    worktreesByProject: new Map(),
-    loadWorktrees: vi.fn()
-  }
-  const useStore = Object.assign(
-    vi.fn((selector?: (state: typeof state) => unknown) => (selector ? selector(state) : state)),
-    {
-      getState: () => state
-    }
-  )
-
-  return { useStore }
-})
-
-vi.mock('@/stores/useWorktreeStore', () => ({
-  useWorktreeStore: worktreeStoreMocks.useStore
-}))
-
-vi.mock('../../../src/renderer/src/stores/useWorktreeStore', () => ({
-  useWorktreeStore: worktreeStoreMocks.useStore
-}))
-
-vi.mock('../../../src/renderer/src/stores/useKanbanStore', () => ({
-  useKanbanStore: {
-    getState: () => ({
-      updateTicket: vi.fn()
-    })
-  }
-}))
 
 describe('Session 3: Merge Conflicts in Changes Sidebar', () => {
   beforeEach(() => {
-    vi.clearAllMocks()
     useGitStore.setState({
       fileStatusesByWorktree: new Map(),
       branchInfoByWorktree: new Map(),
@@ -79,9 +39,10 @@ describe('Session 3: Merge Conflicts in Changes Sidebar', () => {
         { path: '/wt/untracked.ts', relativePath: 'untracked.ts', status: '?', staged: false }
       ]
 
-      gitApiMocks.getFileStatuses.mockResolvedValue({ success: true, files: mockFiles })
+      const mockGitOps = window.gitOps as Record<string, ReturnType<typeof vi.fn>>
+      mockGitOps.getFileStatuses = vi.fn().mockResolvedValue({ success: true, files: mockFiles })
 
-      await useGitStore.getState().loadFileStatuses('/wt', { force: true })
+      await useGitStore.getState().loadFileStatuses('/wt')
       const state = useGitStore.getState()
       const files = state.fileStatusesByWorktree.get('/wt') || []
 
@@ -109,9 +70,10 @@ describe('Session 3: Merge Conflicts in Changes Sidebar', () => {
         { path: '/wt/added.ts', relativePath: 'added.ts', status: 'A', staged: true }
       ]
 
-      gitApiMocks.getFileStatuses.mockResolvedValue({ success: true, files: mockFiles })
+      const mockGitOps = window.gitOps as Record<string, ReturnType<typeof vi.fn>>
+      mockGitOps.getFileStatuses = vi.fn().mockResolvedValue({ success: true, files: mockFiles })
 
-      await useGitStore.getState().loadFileStatuses('/wt', { force: true })
+      await useGitStore.getState().loadFileStatuses('/wt')
       const state = useGitStore.getState()
       const files = state.fileStatusesByWorktree.get('/wt') || []
 
@@ -127,9 +89,10 @@ describe('Session 3: Merge Conflicts in Changes Sidebar', () => {
         { path: '/wt/c.ts', relativePath: 'c.ts', status: 'M', staged: false }
       ]
 
-      gitApiMocks.getFileStatuses.mockResolvedValue({ success: true, files: mockFiles })
+      const mockGitOps = window.gitOps as Record<string, ReturnType<typeof vi.fn>>
+      mockGitOps.getFileStatuses = vi.fn().mockResolvedValue({ success: true, files: mockFiles })
 
-      await useGitStore.getState().loadFileStatuses('/wt', { force: true })
+      await useGitStore.getState().loadFileStatuses('/wt')
       const state = useGitStore.getState()
       const files = state.fileStatusesByWorktree.get('/wt') || []
 
@@ -154,7 +117,16 @@ describe('Session 3: Merge Conflicts in Changes Sidebar', () => {
       render(<GitCommitForm worktreePath="/wt" hasConflicts={true} />)
 
       const summaryInput = screen.getByTestId('commit-summary-input')
-      fireEvent.change(summaryInput, { target: { value: 'test commit' } })
+      // Type a commit message to satisfy hasSummary
+      summaryInput.focus()
+      // Simulate change
+      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        'value'
+      )?.set
+      nativeInputValueSetter?.call(summaryInput, 'test commit')
+      summaryInput.dispatchEvent(new Event('input', { bubbles: true }))
+      summaryInput.dispatchEvent(new Event('change', { bubbles: true }))
 
       const commitButton = screen.getByTestId('commit-button')
       expect(commitButton).toBeDisabled()
@@ -164,7 +136,13 @@ describe('Session 3: Merge Conflicts in Changes Sidebar', () => {
       render(<GitCommitForm worktreePath="/wt" hasConflicts={false} />)
 
       const summaryInput = screen.getByTestId('commit-summary-input')
-      fireEvent.change(summaryInput, { target: { value: 'test commit' } })
+      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        'value'
+      )?.set
+      nativeInputValueSetter?.call(summaryInput, 'test commit')
+      summaryInput.dispatchEvent(new Event('input', { bubbles: true }))
+      summaryInput.dispatchEvent(new Event('change', { bubbles: true }))
 
       // Even without typing a message, the button should be disabled
       // because hasSummary is false. This test validates that hasConflicts=false

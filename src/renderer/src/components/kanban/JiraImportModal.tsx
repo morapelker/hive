@@ -22,7 +22,6 @@ import { useKanbanStore } from '@/stores/useKanbanStore'
 import { getProviderSettings } from '@/lib/provider-settings'
 import { toast } from 'sonner'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
-import { ticketImportApi } from '@/api/ticket-import-api'
 
 interface RemoteIssue {
   externalId: string
@@ -95,7 +94,7 @@ export function JiraImportModal({ open, onOpenChange, projectId }: JiraImportMod
 
     const token = pageTokensRef.current[page - 1] ?? undefined
 
-    ticketImportApi
+    window.ticketImport
       .listIssues(
         'jira',
         domain,
@@ -181,7 +180,7 @@ export function JiraImportModal({ open, onOpenChange, projectId }: JiraImportMod
 
     try {
       const result = unwrapEnvelope(
-        await ticketImportApi.importIssues(
+        await window.ticketImport.importIssues(
           'jira',
           projectId,
           domain,

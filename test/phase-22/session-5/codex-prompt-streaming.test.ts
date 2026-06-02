@@ -6,10 +6,6 @@ const { mockLogInfo, mockLogWarn } = vi.hoisted(() => ({
   mockLogWarn: vi.fn()
 }))
 
-const eventBusMocks = vi.hoisted(() => ({
-  publish: vi.fn()
-}))
-
 // Mock logger
 vi.mock('../../../src/main/services/logger', () => ({
   createLogger: () => ({
@@ -27,18 +23,6 @@ vi.mock('../../../src/main/services/codex-session-title', () => ({
 
 vi.mock('../../../src/main/services/git-service', () => ({
   autoRenameWorktreeBranch: vi.fn().mockResolvedValue({ success: true })
-}))
-
-vi.mock('../../../src/main/services/agent-event-bus', () => ({
-  agentEventBus: eventBusMocks
-}))
-
-vi.mock('../../../src/main/services/notification-service', () => ({
-  notificationService: { shouldNotifyWhenWindowUnfocused: vi.fn(() => false) }
-}))
-
-vi.mock('../../../src/main/services/worktree-events', () => ({
-  emitWorktreeBranchRenamed: vi.fn()
 }))
 
 // Track event listeners registered on the mock manager
@@ -80,6 +64,7 @@ import {
 describe('CodexImplementer.prompt()', () => {
   let impl: CodexImplementer
   let mockManager: any
+  let mockWindow: any
 
   beforeEach(() => {
     vi.clearAllMocks()
@@ -87,6 +72,11 @@ describe('CodexImplementer.prompt()', () => {
     mockGenerateCodexSessionTitle.mockResolvedValue(null)
     impl = new CodexImplementer()
     mockManager = impl.getManager()
+    mockWindow = {
+      isDestroyed: () => false,
+      webContents: { send: vi.fn() }
+    }
+    impl.setMainWindow(mockWindow)
   })
 
   function seedSession(overrides?: Partial<CodexSessionState>): CodexSessionState {
@@ -122,14 +112,6 @@ describe('CodexImplementer.prompt()', () => {
     })
   }
 
-  function publishedEvents(): any[] {
-    return eventBusMocks.publish.mock.calls.map((call) => call[0])
-  }
-
-  function expectedTextInput(text: string) {
-    return [{ type: 'text', text, text_elements: [] }]
-  }
-
   // ── Basic prompt flow ───────────────────────────────────────
 
   it('calls sendTurn with extracted text', async () => {
@@ -150,7 +132,7 @@ describe('CodexImplementer.prompt()', () => {
     await impl.prompt('/test/project', 'thread-1', 'Hello Codex')
 
     expect(mockManager.sendTurn).toHaveBeenCalledWith('thread-1', {
-      input: expectedTextInput('Hello Codex'),
+      text: 'Hello Codex',
       model: expect.any(String),
       interactionMode: 'default'
     })
@@ -221,7 +203,7 @@ describe('CodexImplementer.prompt()', () => {
     ])
 
     expect(mockManager.sendTurn).toHaveBeenCalledWith('thread-1', {
-      input: expectedTextInput('Part 1\nPart 2'),
+      text: 'Part 1\nPart 2',
       model: expect.any(String),
       interactionMode: 'default'
     })
@@ -246,7 +228,11 @@ describe('CodexImplementer.prompt()', () => {
 
     await impl.prompt('/test/project', 'thread-1', 'test')
 
-    const statusEvents = publishedEvents().filter((e: any) => e.type === 'session.status')
+    const sendCalls = mockWindow.webContents.send.mock.calls
+    const streamCalls = sendCalls.filter((c: any[]) => c[0] === 'opencode:stream')
+    const statusEvents = streamCalls
+      .map((c: any[]) => c[1])
+      .filter((e: any) => e.type === 'session.status')
 
     // At minimum: busy at start, idle at end
     expect(statusEvents.length).toBeGreaterThanOrEqual(2)
@@ -260,7 +246,7 @@ describe('CodexImplementer.prompt()', () => {
 
   // ── Event forwarding ────────────────────────────────────────
 
-  it('forwards mapped item/agentMessage/delta events through the agent event bus', async () => {
+  it('forwards mapped item/agentMessage/delta events to renderer', async () => {
     seedSession()
 
     simulateManagerEvents([
@@ -287,7 +273,12 @@ describe('CodexImplementer.prompt()', () => {
 
     await impl.prompt('/test/project', 'thread-1', 'test')
 
-    const textEvents = publishedEvents().filter(
+    const sendCalls = mockWindow.webContents.send.mock.calls
+    const streamCalls = sendCalls
+      .filter((c: any[]) => c[0] === 'opencode:stream')
+      .map((c: any[]) => c[1])
+
+    const textEvents = streamCalls.filter(
       (e: any) => e.type === 'message.part.updated' && e.data?.part?.type === 'text'
     )
 
@@ -322,7 +313,12 @@ describe('CodexImplementer.prompt()', () => {
 
     await impl.prompt('/test/project', 'thread-1', 'test')
 
-    const textEvents = publishedEvents().filter(
+    const sendCalls = mockWindow.webContents.send.mock.calls
+    const streamCalls = sendCalls
+      .filter((c: any[]) => c[0] === 'opencode:stream')
+      .map((c: any[]) => c[1])
+
+    const textEvents = streamCalls.filter(
       (e: any) => e.type === 'message.part.updated' && e.data?.part?.type === 'text'
     )
 
@@ -423,7 +419,10 @@ describe('CodexImplementer.prompt()', () => {
       name: 'Auth refresh fix'
     })
 
-    const streamCalls = publishedEvents().filter((e: any) => e.type === 'session.updated')
+    const streamCalls = mockWindow.webContents.send.mock.calls
+      .filter((c: any[]) => c[0] === 'opencode:stream')
+      .map((c: any[]) => c[1])
+      .filter((e: any) => e.type === 'session.updated')
 
     expect(streamCalls).toEqual([
       {
@@ -495,7 +494,12 @@ describe('CodexImplementer.prompt()', () => {
 
     await impl.prompt('/test/project', 'thread-1', 'test')
 
-    const errorEvents = publishedEvents().filter((e: any) => e.type === 'session.error')
+    const sendCalls = mockWindow.webContents.send.mock.calls
+    const streamCalls = sendCalls
+      .filter((c: any[]) => c[0] === 'opencode:stream')
+      .map((c: any[]) => c[1])
+
+    const errorEvents = streamCalls.filter((e: any) => e.type === 'session.error')
     expect(errorEvents).toHaveLength(1)
     expect(errorEvents[0].data.error).toBe('API error')
   })
@@ -558,7 +562,12 @@ describe('CodexImplementer.prompt()', () => {
     // Should have set status to error
     expect(session.status).toBe('error')
 
-    const errorEvents = publishedEvents().filter((e: any) => e.type === 'session.error')
+    // Should have emitted session.error to renderer
+    const sendCalls = mockWindow.webContents.send.mock.calls
+    const streamCalls = sendCalls
+      .filter((c: any[]) => c[0] === 'opencode:stream')
+      .map((c: any[]) => c[1])
+    const errorEvents = streamCalls.filter((e: any) => e.type === 'session.error')
     expect(errorEvents.length).toBeGreaterThanOrEqual(1)
   })
 
@@ -669,7 +678,11 @@ describe('CodexImplementer.prompt()', () => {
 
     expect(session.status).toBe('error')
 
-    const errorEvents = publishedEvents().filter((e: any) => e.type === 'session.error')
+    const sendCalls = mockWindow.webContents.send.mock.calls
+    const streamCalls = sendCalls
+      .filter((c: any[]) => c[0] === 'opencode:stream')
+      .map((c: any[]) => c[1])
+    const errorEvents = streamCalls.filter((e: any) => e.type === 'session.error')
     expect(errorEvents.length).toBeGreaterThanOrEqual(1)
     expect(errorEvents.some((e: any) => e.data?.error?.includes('API key revoked'))).toBe(true)
   })
@@ -712,7 +725,10 @@ describe('CodexImplementer.prompt()', () => {
       expect(settled).toBe(false)
       expect(session.status).toBe('running')
 
-      expect(publishedEvents().some((e: any) => e.type === 'session.error')).toBe(false)
+      const streamCalls = mockWindow.webContents.send.mock.calls
+        .filter((c: any[]) => c[0] === 'opencode:stream')
+        .map((c: any[]) => c[1])
+      expect(streamCalls.some((e: any) => e.type === 'session.error')).toBe(false)
 
       for (const listener of [...eventListeners]) {
         listener({
@@ -885,7 +901,7 @@ describe('CodexImplementer.prompt()', () => {
     })
 
     expect(mockManager.sendTurn).toHaveBeenCalledWith('thread-1', {
-      input: expectedTextInput('test'),
+      text: 'test',
       model: 'gpt-5.3-codex',
       interactionMode: 'default'
     })
@@ -909,7 +925,7 @@ describe('CodexImplementer.prompt()', () => {
     await impl.prompt('/test/project', 'thread-1', 'test', undefined, { codexFastMode: true })
 
     expect(mockManager.sendTurn).toHaveBeenCalledWith('thread-1', {
-      input: expectedTextInput('test'),
+      text: 'test',
       model: 'gpt-5.5',
       serviceTier: 'fast',
       interactionMode: 'default'
@@ -943,7 +959,7 @@ describe('CodexImplementer.prompt()', () => {
       await impl.prompt('/test/project', 'thread-1', 'Plan something')
 
       expect(mockManager.sendTurn).toHaveBeenCalledWith('thread-1', {
-        input: expectedTextInput('Plan something'),
+        text: 'Plan something',
         model: expect.any(String),
         interactionMode: 'plan'
       })
@@ -973,7 +989,7 @@ describe('CodexImplementer.prompt()', () => {
       await impl.prompt('/test/project', 'thread-1', 'Build something')
 
       expect(mockManager.sendTurn).toHaveBeenCalledWith('thread-1', {
-        input: expectedTextInput('Build something'),
+        text: 'Build something',
         model: expect.any(String),
         interactionMode: 'default'
       })
@@ -998,7 +1014,7 @@ describe('CodexImplementer.prompt()', () => {
       await impl.prompt('/test/project', 'thread-1', 'Do something')
 
       expect(mockManager.sendTurn).toHaveBeenCalledWith('thread-1', {
-        input: expectedTextInput('Do something'),
+        text: 'Do something',
         model: expect.any(String),
         interactionMode: 'default'
       })
@@ -1042,7 +1058,11 @@ describe('CodexImplementer.prompt()', () => {
 
       await impl.prompt('/test/project', 'thread-1', 'Plan something')
 
-      const planReadyEvent = publishedEvents().find((e: any) => e.type === 'plan.ready')
+      const streamCalls = mockWindow.webContents.send.mock.calls
+        .filter((c: any[]) => c[0] === 'opencode:stream')
+        .map((c: any[]) => c[1])
+
+      const planReadyEvent = streamCalls.find((e: any) => e.type === 'plan.ready')
       expect(planReadyEvent).toBeDefined()
       expect(planReadyEvent.data.plan).toContain('1. Add the function')
       expect(planReadyEvent.data.toolUseID).toBeTruthy()
@@ -1086,7 +1106,11 @@ describe('CodexImplementer.prompt()', () => {
 
       await impl.prompt('/test/project', 'thread-1', 'Plan something')
 
-      const planReadyEvent = publishedEvents().find((e: any) => e.type === 'plan.ready')
+      const streamCalls = mockWindow.webContents.send.mock.calls
+        .filter((c: any[]) => c[0] === 'opencode:stream')
+        .map((c: any[]) => c[1])
+
+      const planReadyEvent = streamCalls.find((e: any) => e.type === 'plan.ready')
       expect(planReadyEvent).toBeUndefined()
     })
   })

@@ -273,30 +273,28 @@ describe('Session 7: Slash Command Execution', () => {
     })
   })
 
-  describe('RPC compatibility layer (source verification)', () => {
-    test('OpenCode command helper is implemented in the service command module', async () => {
+  describe('IPC and preload layer (source verification)', () => {
+    test('opencode:command handler registered in opencode-handlers.ts', async () => {
       const fs = await import('fs')
       const path = await import('path')
-      const commandsSource = fs.readFileSync(
-        path.resolve(__dirname, '../../../src/main/services/opencode-session-commands.ts'),
+      const handlersSource = fs.readFileSync(
+        path.resolve(__dirname, '../../../src/main/ipc/opencode-handlers.ts'),
         'utf-8'
       )
 
-      expect(commandsSource).toContain('export async function sendOpenCodeCommand')
-      expect(commandsSource).toContain('openCodeService.sendCommand')
+      expect(handlersSource).toContain("'opencode:command'")
+      expect(handlersSource).toContain('openCodeService.sendCommand')
     })
 
-    test('opencodeApi.command routes through the RPC client', async () => {
+    test('preload exposes command() on opencodeOps', async () => {
       const fs = await import('fs')
       const path = await import('path')
-      const opencodeApiSource = fs.readFileSync(
-        path.resolve(__dirname, '../../../src/renderer/src/api/opencode-api.ts'),
+      const preloadSource = fs.readFileSync(
+        path.resolve(__dirname, '../../../src/preload/index.ts'),
         'utf-8'
       )
 
-      expect(opencodeApiSource).toContain(
-        "getRendererRpcClient().request<OpenCodeCommandResult>('opencodeOps.command'"
-      )
+      expect(preloadSource).toContain("ipcRenderer.invoke('opencode:command'")
     })
 
     test('sendCommand service method exists in opencode-service.ts', async () => {
@@ -311,17 +309,16 @@ describe('Session 7: Slash Command Execution', () => {
       expect(serviceSource).toContain('client.session.command(')
     })
 
-    test('renderer API includes command() params for opencodeOps.command', async () => {
+    test('type declarations include command() on opencodeOps', async () => {
       const fs = await import('fs')
       const path = await import('path')
-      const opencodeApiSource = fs.readFileSync(
-        path.resolve(__dirname, '../../../src/renderer/src/api/opencode-api.ts'),
+      const typesSource = fs.readFileSync(
+        path.resolve(__dirname, '../../../src/preload/index.d.ts'),
         'utf-8'
       )
 
-      expect(opencodeApiSource).toContain('command: async (')
-      expect(opencodeApiSource).toContain('opencodeSessionId: string')
-      expect(opencodeApiSource).toContain("'opencodeOps.command'")
+      expect(typesSource).toContain('command: (')
+      expect(typesSource).toContain('opencodeSessionId: string')
     })
   })
 

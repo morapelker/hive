@@ -17,7 +17,6 @@ import {
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { SUPER_PLAN_MODE_PREFIX } from '@/lib/constants'
-import { opencodeApi } from '@/api/opencode-api'
 
 export interface EffectiveHandoffSelection {
   agentSdk: HandoffAgentSdk
@@ -64,7 +63,14 @@ const modelCatalogCache = new Map<HandoffAgentSdk, ProviderModels[]>()
 const inflightModelCatalogRequests = new Map<HandoffAgentSdk, Promise<ProviderModels[]>>()
 
 function normalizeHandoffSdk(
-  sdk: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal' | null | undefined
+  sdk:
+    | 'opencode'
+    | 'claude-code'
+    | 'claude-code-cli'
+    | 'codex'
+    | 'terminal'
+    | null
+    | undefined
 ): HandoffAgentSdk {
   if (sdk === 'claude-code' || sdk === 'claude-code-cli' || sdk === 'codex') return sdk
   return 'opencode'
@@ -206,9 +212,10 @@ export async function loadHandoffModelCatalog(
 
   const inflight = inflightModelCatalogRequests.get(agentSdk)
   if (inflight) return inflight
+  if (typeof window.opencodeOps?.listModels !== 'function') return []
 
   const listModelsSdk = toModelCatalogSdk(agentSdk)
-  const request = opencodeApi
+  const request = window.opencodeOps
     .listModels({ agentSdk: listModelsSdk })
     .then(unwrapEnvelope)
     .then((result) => {

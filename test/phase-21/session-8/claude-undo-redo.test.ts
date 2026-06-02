@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import type { BrowserWindow } from 'electron'
 
 const { mockQuery, mockReadFile, mockWriteFile } = vi.hoisted(() => ({
   mockQuery: vi.fn(),
@@ -57,19 +58,17 @@ vi.mock('../../../src/main/services/claude-transcript-reader', () => ({
     )
 }))
 
-vi.mock('../../../src/main/services/agent-event-bus', () => ({
-  agentEventBus: { publish: vi.fn() }
-}))
-
-vi.mock('../../../src/main/desktop/backend-manager', () => ({
-  publishDesktopBackendEvent: vi.fn()
-}))
-
 import {
   ClaudeCodeImplementer,
   type ClaudeSessionState
 } from '../../../src/main/services/claude-code-implementer'
-import { agentEventBus } from '../../../src/main/services/agent-event-bus'
+
+function createMockWindow(): BrowserWindow {
+  return {
+    isDestroyed: () => false,
+    webContents: { send: vi.fn() }
+  } as unknown as BrowserWindow
+}
 
 /** Create a mock async iterator that yields SDK messages then completes */
 function createMockQueryIterator(
@@ -93,14 +92,10 @@ function createMockQueryIterator(
   return iterator
 }
 
-function getStreamEvents(): any[] {
-  const publish = agentEventBus.publish as ReturnType<typeof vi.fn>
-  return publish.mock.calls.map((call: any[]) => call[0])
-}
-
 describe('ClaudeCodeImplementer - undo/redo/getSessionInfo (Session 8)', () => {
   let impl: ClaudeCodeImplementer
   let sessions: Map<string, ClaudeSessionState>
+  let mockWindow: BrowserWindow
 
   beforeEach(() => {
     vi.clearAllMocks()
@@ -110,6 +105,8 @@ describe('ClaudeCodeImplementer - undo/redo/getSessionInfo (Session 8)', () => {
     mockWriteFile.mockResolvedValue(undefined)
     impl = new ClaudeCodeImplementer()
     sessions = (impl as any).sessions
+    mockWindow = createMockWindow()
+    impl.setMainWindow(mockWindow)
   })
 
   // ── Helper: run a prompt that materializes the session and sets checkpoints ──
@@ -1303,13 +1300,15 @@ describe('ClaudeCodeImplementer - undo/redo/getSessionInfo (Session 8)', () => {
       expect(forkedSession.checkpoints.size).toBe(0)
       expect(forkedSession.checkpointCounter).toBe(0)
 
-      // Renderer stream subscribers should have been notified about the new session ID
-      const materializeEvents = getStreamEvents().filter(
-        (event: any) =>
-          event?.type === 'session.materialized' &&
-          event?.data?.newSessionId === 'sdk-session-forked'
+      // Renderer should have been notified about the new session ID
+      const sendMock = mockWindow.webContents.send as ReturnType<typeof vi.fn>
+      const materializeCalls = sendMock.mock.calls.filter(
+        (call: any[]) =>
+          call[0] === 'opencode:stream' &&
+          call[1]?.type === 'session.materialized' &&
+          call[1]?.data?.newSessionId === 'sdk-session-forked'
       )
-      expect(materializeEvents.length).toBeGreaterThanOrEqual(1)
+      expect(materializeCalls.length).toBeGreaterThanOrEqual(1)
     })
 
     it('undo preserves checkpoints for old branch', async () => {

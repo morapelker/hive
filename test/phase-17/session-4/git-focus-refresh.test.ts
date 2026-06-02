@@ -1,6 +1,6 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
 
-// --- Mock app focus event subscription for renderer-level tests ---
+// --- Mock ipcRenderer for preload-level tests ---
 const listeners = new Map<string, Set<(...args: unknown[]) => void>>()
 
 function mockOn(channel: string, handler: (...args: unknown[]) => void): void {
@@ -16,7 +16,7 @@ function emit(channel: string, ...args: unknown[]): void {
   listeners.get(channel)?.forEach((handler) => handler(...args))
 }
 
-// Build onWindowFocused using the same event subscription shape as systemApi.
+// Build onWindowFocused using the same pattern as the preload
 function createOnWindowFocused() {
   return (callback: () => void): (() => void) => {
     const handler = (): void => {

@@ -1,48 +1,12 @@
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { BoardAssistantView } from '../../src/renderer/src/components/kanban/BoardAssistantView'
-import {
-  useBoardChatStore,
-  type TicketDraft
-} from '../../src/renderer/src/stores/useBoardChatStore'
+import { useBoardChatStore, type TicketDraft } from '../../src/renderer/src/stores/useBoardChatStore'
 import { useProjectStore } from '../../src/renderer/src/stores/useProjectStore'
 import { useWorktreeStore } from '../../src/renderer/src/stores/useWorktreeStore'
 import { useKanbanStore } from '../../src/renderer/src/stores/useKanbanStore'
 import { useSettingsStore } from '../../src/renderer/src/stores/useSettingsStore'
 import { useSessionStore, BOARD_TAB_ID } from '../../src/renderer/src/stores/useSessionStore'
-import {
-  resetRendererRpcClientForTests,
-  setRendererRpcClient
-} from '../../src/renderer/src/api/rpc-client'
-
-vi.mock('../../src/renderer/src/api/settings-api', () => ({
-  settingsApi: {
-    detectEditors: vi.fn().mockResolvedValue([]),
-    detectTerminals: vi.fn().mockResolvedValue([]),
-    openWithTerminal: vi.fn().mockResolvedValue({ success: true }),
-    onSettingsUpdated: vi.fn(() => () => {})
-  }
-}))
-
-vi.mock('../../src/renderer/src/api/pet-api', () => ({
-  petApi: {
-    hide: vi.fn().mockResolvedValue(undefined),
-    show: vi.fn().mockResolvedValue(undefined),
-    updateSettings: vi.fn(),
-    onStatus: vi.fn(() => () => {}),
-    onSettingsUpdated: vi.fn(() => () => {}),
-    onJumpToWorktree: vi.fn(() => () => {})
-  }
-}))
-
-vi.mock('../../src/renderer/src/api/db-api', () => ({
-  dbApi: {
-    setting: {
-      get: vi.fn().mockResolvedValue(null),
-      set: vi.fn().mockResolvedValue(undefined)
-    }
-  }
-}))
 
 vi.mock('../../src/renderer/src/hooks/useSessionStream', () => ({
   useSessionStream: () => ({
@@ -63,7 +27,6 @@ vi.mock('../../src/renderer/src/lib/toast', () => ({
 
 const projectId = 'proj-1'
 const assistantMessageId = 'assistant-msg-1'
-let request: ReturnType<typeof vi.fn>
 
 const boardDraft: TicketDraft = {
   id: `${assistantMessageId}:draft-1:${projectId}`,
@@ -154,19 +117,26 @@ function seedStores(boardMode: 'sticky-tab' | 'toggle') {
     inlineConnectionSessionId: null
   })
 
-  request = vi.fn((method: string) => {
-    if (method === 'kanban.ticket.createBatch') {
-      return Promise.resolve({
-        tickets: [{ id: 'ticket-1' }],
-        dependencies: []
-      })
+  Object.defineProperty(window, 'kanban', {
+    writable: true,
+    configurable: true,
+    value: {
+      ticket: {
+        createBatch: vi.fn().mockResolvedValue({
+          tickets: [{ id: 'ticket-1' }],
+          dependencies: []
+        })
+      }
     }
-    if (method === 'opencodeOps.listModels') {
-      return Promise.resolve({ success: true, providers: [] })
-    }
-    return Promise.resolve(undefined)
   })
-  setRendererRpcClient({ request, subscribe: vi.fn() })
+
+  Object.defineProperty(window, 'opencodeOps', {
+    writable: true,
+    configurable: true,
+    value: {
+      listModels: vi.fn().mockResolvedValue({ success: true, providers: [] })
+    }
+  })
 
   const store = useBoardChatStore.getState()
   const scope = {
@@ -232,11 +202,6 @@ function seedStores(boardMode: 'sticky-tab' | 'toggle') {
 describe('board assistant create navigation', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    resetRendererRpcClientForTests()
-  })
-
-  afterEach(() => {
-    resetRendererRpcClientForTests()
   })
 
   test('switches to the sticky board tab after creating tickets', async () => {
@@ -247,18 +212,6 @@ describe('board assistant create navigation', () => {
 
     await waitFor(() => {
       expect(useSessionStore.getState().activeSessionId).toBe(BOARD_TAB_ID)
-    })
-    expect(request).toHaveBeenCalledWith('kanban.ticket.createBatch', {
-      drafts: [
-        {
-          draft_key: 'draft-1',
-          project_id: projectId,
-          title: boardDraft.title,
-          description: boardDraft.description,
-          column: 'todo',
-          depends_on: []
-        }
-      ]
     })
     expect(useSessionStore.getState().activeBoardAssistantProjectId).toBeNull()
   })

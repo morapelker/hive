@@ -2,14 +2,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { startBackgroundSessionPrompt } from './backgroundSessionStart'
 
-const terminalApiMocks = vi.hoisted(() => ({
-  sendClaudeCliPrompt: vi.fn()
-}))
-
-vi.mock('@/api/terminal-api', () => ({
-  terminalApi: terminalApiMocks
-}))
-
 // Seed the store with a single claude-code-cli session so findSessionModelSource
 // resolves it. setState merges, so the store's methods stay intact.
 function seedClaudeCliSession(): void {
@@ -34,8 +26,11 @@ function seedClaudeCliSession(): void {
 }
 
 function mockSendClaudeCliPrompt(delivered: boolean): ReturnType<typeof vi.fn> {
-  terminalApiMocks.sendClaudeCliPrompt.mockResolvedValue({ success: true, value: { delivered } })
-  return terminalApiMocks.sendClaudeCliPrompt
+  const sendClaudeCliPrompt = vi.fn().mockResolvedValue({ success: true, value: { delivered } })
+  ;(window as unknown as { terminalOps: { sendClaudeCliPrompt: unknown } }).terminalOps = {
+    sendClaudeCliPrompt
+  }
+  return sendClaudeCliPrompt
 }
 
 describe('startBackgroundSessionPrompt — claude-code-cli follow-up delivery', () => {

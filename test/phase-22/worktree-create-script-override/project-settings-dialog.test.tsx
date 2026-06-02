@@ -18,16 +18,18 @@ vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() }
 }))
 
-const mockProjectOps = vi.hoisted(() => ({
-  detectSetupSuggestions: vi.fn().mockResolvedValue([]),
+const mockProjectOps = {
+  detectSetupSuggestions: vi.fn().mockResolvedValue({ success: true, value: [] }),
   pickProjectIcon: vi.fn(),
   removeProjectIcon: vi.fn(),
-  loadLanguageIcons: vi.fn().mockResolvedValue([])
-}))
+  loadLanguageIcons: vi.fn().mockResolvedValue({ success: true, value: [] })
+}
 
-vi.mock('@/api/project-api', () => ({
-  projectApi: mockProjectOps
-}))
+Object.defineProperty(window, 'projectOps', {
+  writable: true,
+  configurable: true,
+  value: mockProjectOps
+})
 
 interface ProjectMock {
   id: string

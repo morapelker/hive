@@ -3,12 +3,10 @@ import { useProjectStore } from '@/stores/useProjectStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useScriptStore, fireRunScript, killRunScript } from '@/stores/useScriptStore'
 import { toast } from '@/lib/toast'
-import type { KanbanTicket } from '../../../main/db/types'
-import { dbApi } from '@/api/db-api'
+import type { KanbanTicket, Worktree } from '../../../main/db/types'
+import { unwrapEnvelopeApi } from '@/lib/ipc-envelope'
 
-type TicketRunWorktree = {
-  path: string
-}
+const db = unwrapEnvelopeApi(() => window.db)
 
 /**
  * Combined state + actions for running the project's `run_script` against
@@ -50,7 +48,7 @@ export function useTicketRunScript(ticket: KanbanTicket): TicketRunScriptState {
 
   // DB fallback: when the worktree isn't in memory (project not loaded),
   // hydrate from the DB so the button still works on pinned-board cross-project views.
-  const [dbWorktree, setDbWorktree] = useState<TicketRunWorktree | null>(null)
+  const [dbWorktree, setDbWorktree] = useState<Worktree | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -64,7 +62,7 @@ export function useTicketRunScript(ticket: KanbanTicket): TicketRunScriptState {
       return
     }
 
-    dbApi.worktree
+    db.worktree
       .get(ticket.worktree_id)
       .then((wt) => {
         if (!cancelled) setDbWorktree(wt ?? null)

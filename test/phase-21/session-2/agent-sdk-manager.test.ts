@@ -43,7 +43,8 @@ function createMockImplementer(id: AgentSdkId): AgentSdkImplementer {
     redo: vi.fn(),
     listCommands: vi.fn(),
     sendCommand: vi.fn(),
-    renameSession: vi.fn()
+    renameSession: vi.fn(),
+    setMainWindow: vi.fn()
   }
 }
 
@@ -87,6 +88,24 @@ describe('AgentSdkManager', () => {
   describe('defaultSdkId', () => {
     it('defaults to opencode', () => {
       expect(manager.defaultSdkId).toBe('opencode')
+    })
+  })
+
+  describe('setMainWindow', () => {
+    it('forwards to all implementers', () => {
+      const mockWindow = { fake: 'window' } as any
+      manager.setMainWindow(mockWindow)
+
+      expect(mockOpencode.setMainWindow).toHaveBeenCalledWith(mockWindow)
+      expect(mockClaudeCode.setMainWindow).toHaveBeenCalledWith(mockWindow)
+    })
+
+    it('calls each implementer exactly once', () => {
+      const mockWindow = { fake: 'window' } as any
+      manager.setMainWindow(mockWindow)
+
+      expect(mockOpencode.setMainWindow).toHaveBeenCalledTimes(1)
+      expect(mockClaudeCode.setMainWindow).toHaveBeenCalledTimes(1)
     })
   })
 

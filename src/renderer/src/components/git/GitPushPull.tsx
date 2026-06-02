@@ -16,7 +16,7 @@ import { useProjectStore } from '@/stores/useProjectStore'
 import { cn } from '@/lib/utils'
 import { ArchiveConfirmDialog } from '@/components/worktrees/ArchiveConfirmDialog'
 import { MergeConfirmDialog } from '@/components/worktrees/MergeConfirmDialog'
-import { gitApi } from '@/api/git-api'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 interface BranchInfo {
   name: string
@@ -141,8 +141,9 @@ export function GitPushPull({
     if (!branchDropdownOpen || !worktreePath) return
 
     setBranchesLoading(true)
-    gitApi
+    window.gitOps
       .listBranchesWithStatus(worktreePath)
+      .then(unwrapEnvelope)
       .then((result) => {
         if (result.success) {
           setBranches(result.branches)
@@ -204,11 +205,14 @@ export function GitPushPull({
       setIsBranchMerged(false)
       return
     }
-    gitApi.isBranchMerged(worktreePath, mergeBranch).then((result) => {
-      if (result.success) {
-        setIsBranchMerged(result.isMerged)
-      }
-    })
+    window.gitOps
+      .isBranchMerged(worktreePath, mergeBranch)
+      .then(unwrapEnvelope)
+      .then((result) => {
+        if (result.success) {
+          setIsBranchMerged(result.isMerged)
+        }
+      })
   }, [worktreePath, mergeBranch, mergedCheckVersion])
 
   // Look up whether the selected merge branch is checked out in a worktree
@@ -263,7 +267,9 @@ export function GitPushPull({
     if (!selectedBranchInfo?.worktreePath) return
 
     try {
-      const result = await gitApi.getDiffStat(selectedBranchInfo.worktreePath)
+      const result = unwrapEnvelope(
+        await window.gitOps.getDiffStat(selectedBranchInfo.worktreePath)
+      )
       if (result.success && result.files && result.files.length > 0) {
         setArchiveConfirmFiles(result.files)
         setArchiveConfirmOpen(true)
@@ -290,13 +296,15 @@ export function GitPushPull({
     if (!worktreePath || !mergeBranch.trim()) return
     setIsMerging(true)
     try {
-      const result = await gitApi.merge(worktreePath, mergeBranch.trim())
+      const result = unwrapEnvelope(await window.gitOps.merge(worktreePath, mergeBranch.trim()))
       if (result.success) {
         toast.success(`Merged ${mergeBranch} successfully`)
         // Refresh file statuses and branch info after merge
         await refreshStatuses(worktreePath)
         // Refresh branch list so Archive/Delete decision has current isCheckedOut data
-        const branchResult = await gitApi.listBranchesWithStatus(worktreePath)
+        const branchResult = unwrapEnvelope(
+          await window.gitOps.listBranchesWithStatus(worktreePath)
+        )
         if (branchResult.success) {
           setBranches(branchResult.branches)
         }
@@ -316,7 +324,9 @@ export function GitPushPull({
     // Check if the source branch is checked out in a worktree with dirty files
     if (selectedBranchInfo?.worktreePath) {
       try {
-        const result = await gitApi.getDiffStat(selectedBranchInfo.worktreePath)
+        const result = unwrapEnvelope(
+          await window.gitOps.getDiffStat(selectedBranchInfo.worktreePath)
+        )
         if (result.success && result.files && result.files.length > 0) {
           setMergeConfirmFiles(result.files)
           setMergeConfirmOpen(true)

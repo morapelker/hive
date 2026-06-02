@@ -8,8 +8,7 @@ import {
 } from '@/stores/useSettingsStore'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
-import { terminalApi } from '@/api/terminal-api'
-import { settingsApi } from '@/api/settings-api'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { Check, Loader2, Info } from 'lucide-react'
 
 interface DetectedTerminal {
@@ -103,9 +102,11 @@ export function SettingsTerminal(): React.JSX.Element {
     let cancelled = false
     async function detect(): Promise<void> {
       try {
-        const terminals = await settingsApi.detectTerminals()
-        if (!cancelled) {
-          setDetectedTerminals(terminals)
+        if (window.settingsOps?.detectTerminals) {
+          const terminals = unwrapEnvelope(await window.settingsOps.detectTerminals())
+          if (!cancelled) {
+            setDetectedTerminals(terminals)
+          }
         }
       } catch {
         // Detection failed, show all options
@@ -124,7 +125,7 @@ export function SettingsTerminal(): React.JSX.Element {
     let cancelled = false
     async function checkGhostty(): Promise<void> {
       try {
-        const result = await terminalApi.ghosttyIsAvailable()
+        const result = unwrapEnvelope(await window.terminalOps.ghosttyIsAvailable())
         if (!cancelled) {
           setGhosttyAvailable(result.available)
           setIsMac(result.platform === 'darwin')

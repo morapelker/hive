@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react'
 import { revealLabel } from '@/lib/platform'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import {
   ContextMenu,
   ContextMenuContent,
@@ -19,8 +20,6 @@ import {
 } from 'lucide-react'
 import { useGitStore, type GitStatusCode } from '@/stores/useGitStore'
 import { DiffModal } from '@/components/diff'
-import { projectApi } from '@/api/project-api'
-import { gitApi } from '@/api/git-api'
 
 interface FileTreeNode {
   name: string
@@ -85,25 +84,25 @@ export function FileContextMenu({
 
   // Handle open in editor
   const handleOpenInEditor = useCallback(async () => {
-    await gitApi.openInEditor(node.path)
+    unwrapEnvelope(await window.gitOps.openInEditor(node.path))
     onClose?.()
   }, [node.path, onClose])
 
   // Handle open in Finder
   const handleOpenInFinder = useCallback(async () => {
-    await gitApi.showInFinder(node.path)
+    unwrapEnvelope(await window.gitOps.showInFinder(node.path))
     onClose?.()
   }, [node.path, onClose])
 
   // Handle copy absolute path
   const handleCopyPath = useCallback(async () => {
-    await projectApi.copyToClipboard(node.path)
+    unwrapEnvelope(await window.projectOps.copyToClipboard(node.path))
     onClose?.()
   }, [node.path, onClose])
 
   // Handle copy relative path
   const handleCopyRelativePath = useCallback(async () => {
-    await projectApi.copyToClipboard(node.relativePath)
+    unwrapEnvelope(await window.projectOps.copyToClipboard(node.relativePath))
     onClose?.()
   }, [node.relativePath, onClose])
 

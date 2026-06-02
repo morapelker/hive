@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync } from 'fs'
+import { existsSync, readdirSync } from 'fs'
 import { join } from 'path'
 import { createLogger } from './logger'
 
@@ -102,61 +102,5 @@ export function detectProjectFavicon(projectPath: string): string | null {
       { projectPath }
     )
     return null
-  }
-}
-
-/**
- * Find an Xcode workspace in the project root or Example/ subdirectory.
- */
-export function findXcworkspace(projectPath: string): string | null {
-  try {
-    const rootFiles = readdirSync(projectPath)
-    const rootMatch = rootFiles.find((file) => file.endsWith('.xcworkspace'))
-    if (rootMatch) return join(projectPath, rootMatch)
-
-    const exampleDir = join(projectPath, 'Example')
-    if (existsSync(exampleDir)) {
-      const exampleFiles = readdirSync(exampleDir)
-      const exampleMatch = exampleFiles.find((file) => file.endsWith('.xcworkspace'))
-      if (exampleMatch) return join(exampleDir, exampleMatch)
-    }
-
-    return null
-  } catch {
-    return null
-  }
-}
-
-/**
- * Detect whether a project is an Android project from manifests or Gradle plugins.
- */
-export function isAndroidProject(projectPath: string): boolean {
-  try {
-    if (existsSync(join(projectPath, 'app', 'src', 'main', 'AndroidManifest.xml'))) return true
-    if (existsSync(join(projectPath, 'AndroidManifest.xml'))) return true
-
-    for (const buildFile of ['build.gradle', 'build.gradle.kts']) {
-      const buildPath = join(projectPath, buildFile)
-      if (existsSync(buildPath)) {
-        const content = readFileSync(buildPath, 'utf-8')
-        if (content.includes('com.android.application') || content.includes('com.android.library')) {
-          return true
-        }
-      }
-    }
-
-    for (const buildFile of ['build.gradle', 'build.gradle.kts']) {
-      const buildPath = join(projectPath, 'app', buildFile)
-      if (existsSync(buildPath)) {
-        const content = readFileSync(buildPath, 'utf-8')
-        if (content.includes('com.android.application') || content.includes('com.android.library')) {
-          return true
-        }
-      }
-    }
-
-    return false
-  } catch {
-    return false
   }
 }

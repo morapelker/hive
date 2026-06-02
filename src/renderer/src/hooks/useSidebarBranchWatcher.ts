@@ -1,6 +1,5 @@
 import { useEffect, useRef } from 'react'
 import { useGitStore } from '@/stores/useGitStore'
-import { gitApi } from '@/api/git-api'
 
 /**
  * Watches .git/HEAD for all provided worktree paths to keep sidebar
@@ -33,7 +32,7 @@ export function useSidebarBranchWatcher(worktreePaths: string[]): void {
     // Stop watching removed paths
     for (const path of prevPaths) {
       if (!newSet.has(path)) {
-        gitApi.unwatchBranch(path).catch(() => {
+        window.gitOps.unwatchBranch(path).catch(() => {
           // Non-critical
         })
       }
@@ -42,7 +41,7 @@ export function useSidebarBranchWatcher(worktreePaths: string[]): void {
     // Start watching added paths
     for (const path of worktreePaths) {
       if (!prevSet.has(path)) {
-        gitApi.watchBranch(path).catch(() => {
+        window.gitOps.watchBranch(path).catch(() => {
           // Non-critical
         })
       }
@@ -67,7 +66,7 @@ export function useSidebarBranchWatcher(worktreePaths: string[]): void {
   useEffect(() => {
     if (worktreePaths.length === 0) return
 
-    const unsubscribe = gitApi.onBranchChanged((event) => {
+    const unsubscribe = window.gitOps.onBranchChanged((event) => {
       const currentPaths = previousPathsRef.current
       if (currentPaths.includes(event.worktreePath)) {
         useGitStore.getState().loadBranchInfo(event.worktreePath, { force: true })
@@ -84,7 +83,7 @@ export function useSidebarBranchWatcher(worktreePaths: string[]): void {
   useEffect(() => {
     return () => {
       for (const path of previousPathsRef.current) {
-        gitApi.unwatchBranch(path).catch(() => {
+        window.gitOps.unwatchBranch(path).catch(() => {
           // Non-critical
         })
       }

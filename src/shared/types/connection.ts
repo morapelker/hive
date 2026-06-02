@@ -1,11 +1,9 @@
 export interface Connection {
   id: string
   name: string
-  custom_name: string | null
   status: 'active' | 'archived'
   path: string
   color: string | null
-  pinned: number
   created_at: string
   updated_at: string
 }

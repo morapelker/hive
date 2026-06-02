@@ -2,6 +2,11 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
+const mockSettingsDb = {
+  get: vi.fn().mockResolvedValue({ success: true, value: null }),
+  set: vi.fn().mockResolvedValue({ success: true, value: undefined })
+}
+
 const opencodeProviders = [
   {
     id: 'anthropic',
@@ -103,60 +108,43 @@ const codexProviders = [
   }
 ]
 
-const apiMocks = vi.hoisted(() => ({
-  dbApi: {
-    setting: {
-      get: vi.fn(),
-      set: vi.fn()
-    }
-  },
-  opencodeApi: {
-    listModels: vi.fn()
-  },
-  petApi: {
-    hide: vi.fn(),
-    show: vi.fn(),
-    updateSettings: vi.fn()
-  },
-  settingsApi: {
-    onSettingsUpdated: vi.fn()
-  },
-  systemApi: {
-    detectAgentSdks: vi.fn()
+Object.defineProperty(window, 'db', {
+  writable: true,
+  configurable: true,
+  value: {
+    setting: mockSettingsDb
   }
-}))
+})
 
-vi.mock('@/api/db-api', () => ({
-  dbApi: apiMocks.dbApi
-}))
-
-vi.mock('@/api/opencode-api', () => ({
-  opencodeApi: apiMocks.opencodeApi
-}))
-
-vi.mock('@/api/pet-api', () => ({
-  petApi: apiMocks.petApi
-}))
-
-vi.mock('@/api/settings-api', () => ({
-  settingsApi: apiMocks.settingsApi
-}))
-
-vi.mock('@/api/system-api', () => ({
-  systemApi: apiMocks.systemApi
-}))
-
-function mockListModelsForAgentSdk({ agentSdk }: { agentSdk?: string } = {}) {
-  if (agentSdk === 'opencode') {
-    return { success: true, value: { success: true, providers: opencodeProviders } }
+Object.defineProperty(window, 'systemOps', {
+  writable: true,
+  configurable: true,
+  value: {
+    detectAgentSdks: vi.fn().mockResolvedValue({
+      opencode: true,
+      claude: true,
+      codex: true
+    })
   }
+})
 
-  if (agentSdk === 'codex') {
-    return { success: true, value: { success: true, providers: codexProviders } }
+Object.defineProperty(window, 'opencodeOps', {
+  writable: true,
+  configurable: true,
+  value: {
+    listModels: vi.fn().mockImplementation(async ({ agentSdk }: { agentSdk?: string } = {}) => {
+      if (agentSdk === 'opencode') {
+        return { success: true, value: { success: true, providers: opencodeProviders } }
+      }
+
+      if (agentSdk === 'codex') {
+        return { success: true, value: { success: true, providers: codexProviders } }
+      }
+
+      return { success: true, value: { success: true, providers: claudeProviders } }
+    })
   }
-
-  return { success: true, value: { success: true, providers: claudeProviders } }
-}
+})
 
 import {
   cacheHandoffModelCatalog,
@@ -175,18 +163,6 @@ describe('handoff model picker', () => {
     vi.clearAllMocks()
     clearHandoffModelCatalogCache()
     localStorage.clear()
-    apiMocks.dbApi.setting.get.mockResolvedValue(null)
-    apiMocks.dbApi.setting.set.mockResolvedValue(true)
-    apiMocks.opencodeApi.listModels.mockImplementation(mockListModelsForAgentSdk)
-    apiMocks.petApi.hide.mockResolvedValue(undefined)
-    apiMocks.petApi.show.mockResolvedValue(undefined)
-    apiMocks.petApi.updateSettings.mockResolvedValue({ success: true })
-    apiMocks.settingsApi.onSettingsUpdated.mockReturnValue(vi.fn())
-    apiMocks.systemApi.detectAgentSdks.mockResolvedValue({
-      opencode: true,
-      claude: true,
-      codex: true
-    })
 
     useSettingsStore.setState({
       selectedModel: null,
@@ -344,8 +320,8 @@ describe('handoff model picker', () => {
     render(<ModelSelector value={null} onChange={onChange} allowAgentSdkSelection />)
 
     await waitFor(() => {
-      expect(apiMocks.opencodeApi.listModels).toHaveBeenCalledWith({ agentSdk: 'claude-code' })
-      expect(apiMocks.opencodeApi.listModels).toHaveBeenCalledWith({ agentSdk: 'codex' })
+      expect(window.opencodeOps.listModels).toHaveBeenCalledWith({ agentSdk: 'claude-code' })
+      expect(window.opencodeOps.listModels).toHaveBeenCalledWith({ agentSdk: 'codex' })
     })
 
     await user.click(screen.getByTestId('model-selector'))
@@ -412,9 +388,9 @@ describe('handoff model picker', () => {
     )
 
     await waitFor(() => {
-      expect(apiMocks.opencodeApi.listModels).toHaveBeenCalledWith({ agentSdk: 'opencode' })
-      expect(apiMocks.opencodeApi.listModels).toHaveBeenCalledWith({ agentSdk: 'claude-code' })
-      expect(apiMocks.opencodeApi.listModels).toHaveBeenCalledWith({ agentSdk: 'codex' })
+      expect(window.opencodeOps.listModels).toHaveBeenCalledWith({ agentSdk: 'opencode' })
+      expect(window.opencodeOps.listModels).toHaveBeenCalledWith({ agentSdk: 'claude-code' })
+      expect(window.opencodeOps.listModels).toHaveBeenCalledWith({ agentSdk: 'codex' })
     })
 
     await user.click(await screen.findByTestId('model-provider-filter'))
@@ -434,9 +410,9 @@ describe('handoff model picker', () => {
     render(<ModelSelector value={null} onChange={onChange} allowAgentSdkSelection />)
 
     await waitFor(() => {
-      expect(apiMocks.opencodeApi.listModels).toHaveBeenCalledWith({ agentSdk: 'opencode' })
-      expect(apiMocks.opencodeApi.listModels).toHaveBeenCalledWith({ agentSdk: 'claude-code' })
-      expect(apiMocks.opencodeApi.listModels).toHaveBeenCalledWith({ agentSdk: 'codex' })
+      expect(window.opencodeOps.listModels).toHaveBeenCalledWith({ agentSdk: 'opencode' })
+      expect(window.opencodeOps.listModels).toHaveBeenCalledWith({ agentSdk: 'claude-code' })
+      expect(window.opencodeOps.listModels).toHaveBeenCalledWith({ agentSdk: 'codex' })
     })
 
     await user.click(screen.getByTestId('model-selector'))
@@ -496,8 +472,8 @@ describe('handoff model picker', () => {
     )
 
     await waitFor(() => {
-      expect(apiMocks.opencodeApi.listModels).toHaveBeenCalledWith({ agentSdk: 'opencode' })
-      expect(apiMocks.opencodeApi.listModels).toHaveBeenCalledWith({ agentSdk: 'claude-code' })
+      expect(window.opencodeOps.listModels).toHaveBeenCalledWith({ agentSdk: 'opencode' })
+      expect(window.opencodeOps.listModels).toHaveBeenCalledWith({ agentSdk: 'claude-code' })
     })
 
     await user.click(screen.getByTestId('model-selector'))
@@ -530,8 +506,8 @@ describe('handoff model picker', () => {
     )
 
     await waitFor(() => {
-      expect(apiMocks.opencodeApi.listModels).toHaveBeenCalledWith({ agentSdk: 'opencode' })
-      expect(apiMocks.opencodeApi.listModels).toHaveBeenCalledWith({ agentSdk: 'claude-code' })
+      expect(window.opencodeOps.listModels).toHaveBeenCalledWith({ agentSdk: 'opencode' })
+      expect(window.opencodeOps.listModels).toHaveBeenCalledWith({ agentSdk: 'claude-code' })
     })
 
     expect(await screen.findByText('Claude Code')).toBeInTheDocument()
@@ -575,8 +551,8 @@ describe('handoff model picker', () => {
     render(<ModelSelector value={null} onChange={onChange} allowAgentSdkSelection />)
 
     await waitFor(() => {
-      expect(apiMocks.opencodeApi.listModels).toHaveBeenCalledWith({ agentSdk: 'claude-code' })
-      expect(apiMocks.opencodeApi.listModels).toHaveBeenCalledWith({ agentSdk: 'codex' })
+      expect(window.opencodeOps.listModels).toHaveBeenCalledWith({ agentSdk: 'claude-code' })
+      expect(window.opencodeOps.listModels).toHaveBeenCalledWith({ agentSdk: 'codex' })
     })
 
     await user.click(await screen.findByTestId('model-provider-filter'))
@@ -615,7 +591,7 @@ describe('handoff model picker', () => {
     render(<ModelSelector value={null} onChange={onChange} allowAgentSdkSelection />)
 
     await waitFor(() => {
-      expect(apiMocks.opencodeApi.listModels).toHaveBeenCalledWith({ agentSdk: 'codex' })
+      expect(window.opencodeOps.listModels).toHaveBeenCalledWith({ agentSdk: 'codex' })
     })
 
     await user.click(await screen.findByTestId('model-provider-filter'))
@@ -636,7 +612,7 @@ describe('handoff model picker', () => {
     render(<ModelSelector value={null} onChange={onChange} allowAgentSdkSelection />)
 
     await waitFor(() => {
-      expect(apiMocks.opencodeApi.listModels).toHaveBeenCalledWith({ agentSdk: 'codex' })
+      expect(window.opencodeOps.listModels).toHaveBeenCalledWith({ agentSdk: 'codex' })
     })
 
     await user.click(await screen.findByTestId('model-provider-filter'))
@@ -670,10 +646,10 @@ describe('handoff model picker', () => {
     render(<ModelSelector value={null} onChange={vi.fn()} allowAgentSdkSelection />)
 
     await waitFor(() => {
-      expect(apiMocks.opencodeApi.listModels).toHaveBeenCalledWith({ agentSdk: 'claude-code' })
+      expect(window.opencodeOps.listModels).toHaveBeenCalledWith({ agentSdk: 'claude-code' })
     })
 
-    expect(await screen.findByTestId('model-provider-filter')).toBeInTheDocument()
+    expect(screen.getByTestId('model-provider-filter')).toBeInTheDocument()
   })
 
   test('button label rerenders when lastHandoffOverride changes', async () => {

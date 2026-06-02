@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { FolderGit2 } from 'lucide-react'
-import { projectApi } from '@/api/project-api'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 // Bundled language icons (Vite resolves these to hashed asset URLs at build time)
 import typescriptIcon from '@/assets/language-icons/typescript.svg'
@@ -70,8 +70,9 @@ const customIconsListeners: Array<() => void> = []
 function loadCustomIcons(): void {
   if (customIconsCache !== null || customIconsLoading) return
   customIconsLoading = true
-  projectApi
+  window.projectOps
     .loadLanguageIcons()
+    .then(unwrapEnvelope)
     .then((icons) => {
       customIconsCache = icons
       customIconsLoading = false
@@ -123,8 +124,9 @@ function useProjectIconUrl(customIcon: string | null | undefined): string | null
 
     // Resolve to data URL via main process
     let cancelled = false
-    projectApi
+    window.projectOps
       .getProjectIconPath(customIcon)
+      .then(unwrapEnvelope)
       .then((dataUrl) => {
         if (cancelled) return
         if (dataUrl) {
@@ -167,8 +169,9 @@ function useDetectedIconUrl(detectedIcon: string | null | undefined): string | n
 
     // Resolve to data URL via main process
     let cancelled = false
-    projectApi
+    window.projectOps
       .getAbsoluteIconDataUrl(detectedIcon)
+      .then(unwrapEnvelope)
       .then((dataUrl) => {
         if (cancelled) return
         if (dataUrl) {

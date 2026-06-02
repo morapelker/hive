@@ -3,10 +3,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
 
-const eventBusMocks = vi.hoisted(() => ({
-  publish: vi.fn()
-}))
-
 // Mock logger
 vi.mock('../../../src/main/services/logger', () => ({
   createLogger: () => ({
@@ -15,26 +11,6 @@ vi.mock('../../../src/main/services/logger', () => ({
     error: vi.fn(),
     debug: vi.fn()
   })
-}))
-
-vi.mock('../../../src/main/services/agent-event-bus', () => ({
-  agentEventBus: eventBusMocks
-}))
-
-vi.mock('../../../src/main/services/notification-service', () => ({
-  notificationService: { shouldNotifyWhenWindowUnfocused: vi.fn(() => false) }
-}))
-
-vi.mock('../../../src/main/services/codex-session-title', () => ({
-  generateCodexSessionTitle: vi.fn()
-}))
-
-vi.mock('../../../src/main/services/git-service', () => ({
-  autoRenameWorktreeBranch: vi.fn()
-}))
-
-vi.mock('../../../src/main/services/worktree-events', () => ({
-  emitWorktreeBranchRenamed: vi.fn()
 }))
 
 // Mock child_process
@@ -261,6 +237,11 @@ describe('Codex Undo/Redo', () => {
       )
       const impl = new CodexImplementer()
       const internalManager = impl.getManager() as any
+      const mockWindow = {
+        isDestroyed: () => false,
+        webContents: { send: vi.fn() }
+      }
+      impl.setMainWindow(mockWindow as any)
 
       const session = {
         threadId: 'thread-undo-1',
@@ -302,6 +283,11 @@ describe('Codex Undo/Redo', () => {
       )
       const impl = new CodexImplementer()
       const internalManager = impl.getManager() as any
+      const mockWindow = {
+        isDestroyed: () => false,
+        webContents: { send: vi.fn() }
+      }
+      impl.setMainWindow(mockWindow as any)
 
       const session = {
         threadId: 'thread-undo-1',
@@ -334,12 +320,17 @@ describe('Codex Undo/Redo', () => {
       expect(session.messages).toHaveLength(0) // Both messages popped
     })
 
-    it('publishes session.updated through the agent event bus', async () => {
+    it('emits session.updated event to renderer', async () => {
       const { CodexImplementer } = await import(
         '../../../src/main/services/codex-implementer'
       )
       const impl = new CodexImplementer()
       const internalManager = impl.getManager() as any
+      const mockWindow = {
+        isDestroyed: () => false,
+        webContents: { send: vi.fn() }
+      }
+      impl.setMainWindow(mockWindow as any)
 
       impl.getSessions().set('/test::thread-undo-1', {
         threadId: 'thread-undo-1',
@@ -358,9 +349,12 @@ describe('Codex Undo/Redo', () => {
 
       await impl.undo('/test', 'thread-undo-1', 'hive-undo-1')
 
-      const updateEvent = eventBusMocks.publish.mock.calls
-        .map((call) => call[0])
-        .find((event: any) => event.type === 'session.updated')
+      const sendCalls = mockWindow.webContents.send.mock.calls
+      const streamCalls = sendCalls
+        .filter((c: any[]) => c[0] === 'opencode:stream')
+        .map((c: any[]) => c[1])
+
+      const updateEvent = streamCalls.find((e: any) => e.type === 'session.updated')
       expect(updateEvent).toBeDefined()
       expect(updateEvent.data.revertMessageID).toBeTruthy()
     })
@@ -403,6 +397,11 @@ describe('Codex Undo/Redo', () => {
       )
       const impl = new CodexImplementer()
       const internalManager = impl.getManager() as any
+      const mockWindow = {
+        isDestroyed: () => false,
+        webContents: { send: vi.fn() }
+      }
+      impl.setMainWindow(mockWindow as any)
 
       const session = {
         threadId: 'thread-undo-1',

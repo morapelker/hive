@@ -8,7 +8,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle
 } from '@/components/ui/alert-dialog'
-import { systemApi } from '@/api/system-api'
 
 export function AgentNotFoundDialog(): React.JSX.Element {
   return (
@@ -25,7 +24,7 @@ export function AgentNotFoundDialog(): React.JSX.Element {
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogAction variant="destructive" onClick={() => void systemApi.quitApp()}>
+          <AlertDialogAction variant="destructive" onClick={() => window.systemOps.quitApp()}>
             Close
           </AlertDialogAction>
         </AlertDialogFooter>

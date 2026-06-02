@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import type { OpenCodeStreamEvent } from '../../../src/shared/types/opencode'
 
 const mockDb = {
   getSessionMessageByOpenCodeId: vi.fn(),
@@ -13,26 +12,8 @@ const mockDb = {
 
 vi.mock('electron', () => ({
   app: {
-    getPath: vi.fn(() => '/tmp'),
-    getVersion: vi.fn(() => '1.1.10'),
-    isPackaged: false
+    getPath: vi.fn(() => '/tmp')
   }
-}))
-
-vi.mock('electron-updater', () => ({
-  autoUpdater: {
-    autoDownload: false,
-    autoInstallOnAppQuit: true,
-    logger: null,
-    on: vi.fn(),
-    checkForUpdates: vi.fn(),
-    downloadUpdate: vi.fn(),
-    quitAndInstall: vi.fn()
-  }
-}))
-
-vi.mock('../../../src/main/desktop/backend-manager', () => ({
-  publishDesktopBackendEvent: vi.fn()
 }))
 
 vi.mock('../../../src/main/db', () => ({
@@ -40,7 +21,6 @@ vi.mock('../../../src/main/db', () => ({
 }))
 
 import { openCodeService } from '../../../src/main/services/opencode-service'
-import { agentEventBus } from '../../../src/main/services/agent-event-bus'
 
 describe('Session 9: OpenCode session routing', () => {
   beforeEach(() => {
@@ -50,8 +30,12 @@ describe('Session 9: OpenCode session routing', () => {
   })
 
   test('routes event to correct hive session when opencode session IDs collide across directories', async () => {
-    const events: OpenCodeStreamEvent[] = []
-    const unsubscribe = agentEventBus.subscribe((event) => events.push(event))
+    const send = vi.fn()
+
+    openCodeService.setMainWindow({
+      isDestroyed: () => false,
+      webContents: { send }
+    } as never)
 
     const instance = {
       client: {
@@ -69,41 +53,43 @@ describe('Session 9: OpenCode session routing', () => {
       childToParentMap: new Map<string, string>()
     }
 
-    try {
-      await (
-        openCodeService as never as {
-          handleEvent: (
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            instance: any,
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            rawEvent: any,
-            directory?: string
-          ) => Promise<void>
-        }
-      ).handleEvent(
-        instance,
-        {
-          data: {
-            type: 'session.idle',
-            properties: {
-              sessionID: 'opc-session-1'
-            }
+    await (
+      openCodeService as never as {
+        handleEvent: (
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          instance: any,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          rawEvent: any,
+          directory?: string
+        ) => Promise<void>
+      }
+    ).handleEvent(
+      instance,
+      {
+        data: {
+          type: 'session.idle',
+          properties: {
+            sessionID: 'opc-session-1'
           }
-        },
-        '/repo/a'
-      )
-    } finally {
-      unsubscribe()
-    }
+        }
+      },
+      '/repo/a'
+    )
 
-    expect(events).toContainEqual(
+    expect(send).toHaveBeenCalledWith(
+      'opencode:stream',
       expect.objectContaining({ sessionId: 'hive-session-a', type: 'session.idle' })
     )
   })
 
   test('routes message.updated without touching DB transcript persistence', async () => {
-    const events: OpenCodeStreamEvent[] = []
-    const unsubscribe = agentEventBus.subscribe((event) => events.push(event))
+    const send = vi.fn()
+
+    openCodeService.setMainWindow({
+      isDestroyed: () => false,
+      isFocused: () => true,
+      webContents: { send }
+    } as never)
 
     const instance = {
       client: {
@@ -121,37 +107,34 @@ describe('Session 9: OpenCode session routing', () => {
       childToParentMap: new Map<string, string>()
     }
 
-    try {
-      await (
-        openCodeService as never as {
-          handleEvent: (
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            instance: any,
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            rawEvent: any,
-            directory?: string
-          ) => Promise<void>
-        }
-      ).handleEvent(
-        instance,
-        {
-          data: {
-            type: 'message.updated',
-            properties: {
-              sessionID: 'opc-session-1',
-              info: { messageID: 'msg-1' },
-              message: { id: 'msg-1', role: 'assistant' },
-              parts: [{ type: 'text', text: 'hello' }]
-            }
+    await (
+      openCodeService as never as {
+        handleEvent: (
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          instance: any,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          rawEvent: any,
+          directory?: string
+        ) => Promise<void>
+      }
+    ).handleEvent(
+      instance,
+      {
+        data: {
+          type: 'message.updated',
+          properties: {
+            sessionID: 'opc-session-1',
+            info: { messageID: 'msg-1' },
+            message: { id: 'msg-1', role: 'assistant' },
+            parts: [{ type: 'text', text: 'hello' }]
           }
-        },
-        '/repo/b'
-      )
-    } finally {
-      unsubscribe()
-    }
+        }
+      },
+      '/repo/b'
+    )
 
-    expect(events).toContainEqual(
+    expect(send).toHaveBeenCalledWith(
+      'opencode:stream',
       expect.objectContaining({ sessionId: 'hive-session-b', type: 'message.updated' })
     )
     expect(mockDb.getSessionMessageByOpenCodeId).not.toHaveBeenCalled()

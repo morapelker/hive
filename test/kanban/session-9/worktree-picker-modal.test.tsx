@@ -15,141 +15,201 @@ vi.mock('simple-git', () => ({
   })
 }))
 
-const apiMocks = vi.hoisted(() => ({
-  kanbanApi: {
-    ticket: {
-      create: vi.fn(),
-      get: vi.fn(),
-      getByProject: vi.fn().mockResolvedValue([]),
-      update: vi.fn().mockResolvedValue(undefined),
-      delete: vi.fn(),
-      move: vi.fn().mockResolvedValue(undefined),
-      reorder: vi.fn().mockResolvedValue(undefined),
-      getBySession: vi.fn(),
-      addTokens: vi.fn()
-    },
-    dependency: {
-      removeAll: vi.fn(),
-      getForProject: vi.fn().mockResolvedValue([]),
-      add: vi.fn(),
-      remove: vi.fn()
-    },
-    simpleMode: {
-      toggle: vi.fn()
-    }
-  },
-  dbApi: {
-    session: {
-      create: vi.fn(),
-      update: vi.fn().mockResolvedValue(undefined),
-      getActiveByWorktree: vi.fn().mockResolvedValue([]),
-      getActiveByConnection: vi.fn().mockResolvedValue([]),
-      get: vi.fn().mockResolvedValue(null)
-    },
-    worktree: {
-      getActiveByProject: vi.fn().mockResolvedValue([]),
-      update: vi.fn().mockResolvedValue(undefined),
-      touch: vi.fn().mockResolvedValue(undefined),
-      get: vi.fn().mockResolvedValue(null)
-    },
-    project: {
-      touch: vi.fn().mockResolvedValue(true),
-      getAll: vi.fn().mockResolvedValue([])
-    },
-    setting: {
-      get: vi.fn().mockResolvedValue(null),
-      set: vi.fn().mockResolvedValue(true),
-      getAll: vi.fn().mockResolvedValue([])
-    }
-  },
-  worktreeApi: {
+// ── Mock window APIs BEFORE importing stores ────────────────────────
+const mockKanban = {
+  ticket: {
     create: vi.fn(),
-    createFromBranch: vi.fn(),
-    duplicate: vi.fn(),
-    onBranchRenamed: vi.fn(() => vi.fn())
-  },
-  gitApi: {
-    listBranchesWithStatus: vi.fn(),
-    onStatusChanged: vi.fn(() => vi.fn()),
-    onBranchChanged: vi.fn(() => vi.fn())
-  },
-  usageApi: {
-    fetch: vi.fn().mockResolvedValue({ success: true, data: null }),
-    fetchOpenai: vi.fn().mockResolvedValue({ success: true, data: null })
-  },
-  connectionApi: {
     get: vi.fn(),
-    getAll: vi.fn().mockResolvedValue({ success: true, connections: [] })
+    getByProject: vi.fn().mockResolvedValue({ success: true, value: [] }),
+    update: vi.fn().mockResolvedValue({ success: true, value: undefined }),
+    delete: vi.fn(),
+    move: vi.fn().mockResolvedValue({ success: true, value: undefined }),
+    reorder: vi.fn().mockResolvedValue({ success: true, value: undefined }),
+    getBySession: vi.fn()
   },
-  opencodeApi: {
-    connect: vi.fn(),
-    prompt: vi.fn(),
-    listModels: vi.fn(),
-    commands: vi.fn().mockResolvedValue({ success: true, commands: [] }),
-    onStream: vi.fn(() => vi.fn())
-  },
-  settingsApi: {
-    onSettingsUpdated: vi.fn(() => vi.fn())
-  },
-  systemApi: {
-    detectAgentSdks: vi.fn().mockResolvedValue({ opencode: true, claude: true, codex: true }),
-    setSessionQueuedState: vi.fn().mockResolvedValue(undefined)
-  },
-  petApi: {
-    updateSettings: vi.fn().mockResolvedValue(undefined),
-    show: vi.fn().mockResolvedValue(undefined),
-    hide: vi.fn().mockResolvedValue(undefined)
-  },
-  telegramApi: {
-    getConfig: vi.fn().mockResolvedValue(null),
-    getStatus: vi.fn().mockResolvedValue({ active: false }),
-    onStatusChanged: vi.fn(() => vi.fn()),
-    onMessageReceived: vi.fn(() => vi.fn()),
-    onPlanImplementRequested: vi.fn(() => vi.fn())
-  },
-  updaterApi: {
-    onUpdateStatus: vi.fn(() => vi.fn())
-  },
-  fileApi: {
-    selectAttachmentFiles: vi.fn().mockResolvedValue([])
-  },
-  terminalApi: {
-    create: vi.fn().mockResolvedValue({ success: true, terminalId: 'terminal-1' }),
-    onOutput: vi.fn(() => vi.fn()),
-    onExit: vi.fn(() => vi.fn()),
-    onCreated: vi.fn(() => vi.fn()),
-    onClosed: vi.fn(() => vi.fn())
-  },
-  scriptApi: {
-    onStarted: vi.fn(() => vi.fn()),
-    onOutput: vi.fn(() => vi.fn()),
-    onFinished: vi.fn(() => vi.fn())
+  simpleMode: {
+    toggle: vi.fn()
   }
-}))
+}
 
-vi.mock('@/api/kanban-api', () => ({ kanbanApi: apiMocks.kanbanApi }))
-vi.mock('@/api/db-api', () => ({ dbApi: apiMocks.dbApi }))
-vi.mock('@/api/worktree-api', () => ({ worktreeApi: apiMocks.worktreeApi }))
-vi.mock('@/api/git-api', () => ({ gitApi: apiMocks.gitApi }))
-vi.mock('@/api/usage-api', () => ({ usageApi: apiMocks.usageApi }))
-vi.mock('@/api/connection-api', () => ({ connectionApi: apiMocks.connectionApi }))
-vi.mock('@/api/opencode-api', () => ({ opencodeApi: apiMocks.opencodeApi }))
-vi.mock('@/api/settings-api', () => ({ settingsApi: apiMocks.settingsApi }))
-vi.mock('@/api/system-api', () => ({ systemApi: apiMocks.systemApi }))
-vi.mock('@/api/pet-api', () => ({ petApi: apiMocks.petApi }))
-vi.mock('@/api/telegram-api', () => ({ telegramApi: apiMocks.telegramApi }))
-vi.mock('@/api/updater-api', () => ({ updaterApi: apiMocks.updaterApi }))
-vi.mock('@/api/file-api', () => ({ fileApi: apiMocks.fileApi }))
-vi.mock('@/api/terminal-api', () => ({ terminalApi: apiMocks.terminalApi }))
-vi.mock('@/api/script-api', () => ({ scriptApi: apiMocks.scriptApi }))
+const mockDbSession = {
+  create: vi.fn().mockImplementation(async (input: Record<string, unknown>) => ({
+    success: true,
+    value: {
+      id: 'new-session-1',
+      worktree_id: (input.worktree_id as string | null) ?? 'wt-1',
+      project_id: (input.project_id as string | null) ?? 'proj-1',
+      connection_id: (input.connection_id as string | null) ?? null,
+      name: (input.name as string | null) ?? 'Session 1',
+      status: 'active',
+      opencode_session_id: null,
+      agent_sdk: (input.agent_sdk as string | null) ?? 'opencode',
+      mode: (input.mode as string | null) ?? 'build',
+      model_provider_id: (input.model_provider_id as string | null) ?? null,
+      model_id: (input.model_id as string | null) ?? null,
+      model_variant: (input.model_variant as string | null) ?? null,
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-01T00:00:00Z',
+      completed_at: null
+    }
+  })),
+  update: vi.fn().mockResolvedValue({ success: true, value: undefined }),
+  getActiveByWorktree: vi.fn().mockResolvedValue({ success: true, value: [] })
+}
 
-const mockKanban = apiMocks.kanbanApi
-const mockDbSession = apiMocks.dbApi.session
-const mockDbWorktree = apiMocks.dbApi.worktree
-const mockWorktreeOps = apiMocks.worktreeApi
-const mockGitOps = apiMocks.gitApi
-const mockOpencodeOps = apiMocks.opencodeApi
-const mockConnectionOps = apiMocks.connectionApi
+const mockDbWorktree = {
+  getActiveByProject: vi.fn().mockResolvedValue({ success: true, value: [] })
+}
+
+const mockWorktreeOps = {
+  create: vi.fn().mockResolvedValue({
+    success: true,
+    value: {
+      success: true,
+      worktree: {
+        id: 'wt-new',
+        project_id: 'proj-1',
+        name: 'new-worktree',
+        branch_name: 'new-worktree',
+        path: '/test/new-worktree',
+        status: 'active',
+        is_default: false,
+        branch_renamed: 0,
+        last_message_at: null,
+        session_titles: '[]',
+        last_model_provider_id: null,
+        last_model_id: null,
+        last_model_variant: null,
+        created_at: '2026-01-01T00:00:00Z',
+        last_accessed_at: '2026-01-01T00:00:00Z',
+        github_pr_number: null,
+        github_pr_url: null
+      }
+    }
+  }),
+  createFromBranch: vi.fn().mockResolvedValue({
+    success: true,
+    value: {
+      success: true,
+      worktree: {
+        id: 'wt-new',
+        project_id: 'proj-1',
+        name: 'new-worktree',
+        branch_name: 'new-worktree',
+        path: '/test/new-worktree',
+        status: 'active',
+        is_default: false,
+        branch_renamed: 0,
+        last_message_at: null,
+        session_titles: '[]',
+        last_model_provider_id: null,
+        last_model_id: null,
+        last_model_variant: null,
+        created_at: '2026-01-01T00:00:00Z',
+        last_accessed_at: '2026-01-01T00:00:00Z',
+        github_pr_number: null,
+        github_pr_url: null
+      }
+    }
+  })
+}
+
+const mockGitOps = {
+  listBranchesWithStatus: vi.fn().mockResolvedValue({
+    success: true,
+    value: {
+      success: true,
+      branches: [
+        { name: 'main', isRemote: false, isCheckedOut: true },
+        { name: 'feature-x', isRemote: false, isCheckedOut: false },
+        { name: 'develop', isRemote: true, isCheckedOut: false }
+      ]
+    }
+  })
+}
+
+const mockOpencodeOps = {
+  connect: vi
+    .fn()
+    .mockResolvedValue({ success: true, value: { success: true, sessionId: 'oc-session-1' } }),
+  prompt: vi.fn().mockResolvedValue({ success: true, value: { success: true } }),
+  listModels: vi.fn().mockResolvedValue({
+    success: true,
+    value: {
+      success: true,
+      providers: [
+        {
+          id: 'openai',
+          name: 'OpenAI',
+          models: {
+            'gpt-5.5': { id: 'gpt-5.5', name: 'GPT-5.5' },
+            'gpt-5.4': { id: 'gpt-5.4', name: 'GPT-5.4' },
+            'gpt-5.4-mini': { id: 'gpt-5.4-mini', name: 'GPT-5.4 Mini' }
+          }
+        }
+      ]
+    }
+  })
+}
+
+Object.defineProperty(window, 'kanban', {
+  writable: true,
+  configurable: true,
+  value: mockKanban
+})
+
+Object.defineProperty(window, 'db', {
+  writable: true,
+  configurable: true,
+  value: {
+    session: mockDbSession,
+    worktree: mockDbWorktree
+  }
+})
+
+Object.defineProperty(window, 'worktreeOps', {
+  writable: true,
+  configurable: true,
+  value: mockWorktreeOps
+})
+
+Object.defineProperty(window, 'gitOps', {
+  writable: true,
+  configurable: true,
+  value: mockGitOps
+})
+
+Object.defineProperty(window, 'usageOps', {
+  writable: true,
+  configurable: true,
+  value: {
+    fetch: vi.fn().mockResolvedValue({ success: true, value: { success: true, data: null } }),
+    fetchOpenai: vi.fn().mockResolvedValue({ success: true, value: { success: true, data: null } })
+  }
+})
+
+Object.defineProperty(window, 'connectionOps', {
+  writable: true,
+  configurable: true,
+  value: {
+    get: vi.fn().mockResolvedValue({
+      success: true,
+      value: {
+        success: true,
+        connection: {
+          id: 'conn-1',
+          members: [{ project_id: 'proj-1' }]
+        }
+      }
+    })
+  }
+})
+
+Object.defineProperty(window, 'opencodeOps', {
+  writable: true,
+  configurable: true,
+  value: mockOpencodeOps
+})
 
 // ── Import stores AFTER mocking ─────────────────────────────────────
 import { useKanbanStore } from '@/stores/useKanbanStore'
@@ -243,106 +303,6 @@ function makeProject(overrides: Record<string, unknown> = {}) {
   }
 }
 
-function makeCreatedWorktree() {
-  return {
-    id: 'wt-new',
-    project_id: 'proj-1',
-    name: 'new-worktree',
-    branch_name: 'new-worktree',
-    path: '/test/new-worktree',
-    status: 'active',
-    is_default: false,
-    branch_renamed: 0,
-    last_message_at: null,
-    session_titles: '[]',
-    last_model_provider_id: null,
-    last_model_id: null,
-    last_model_variant: null,
-    created_at: '2026-01-01T00:00:00Z',
-    last_accessed_at: '2026-01-01T00:00:00Z',
-    github_pr_number: null,
-    github_pr_url: null
-  }
-}
-
-function resetApiMocks() {
-  mockKanban.ticket.getByProject.mockResolvedValue([])
-  mockKanban.ticket.update.mockResolvedValue(undefined)
-  mockKanban.ticket.move.mockResolvedValue(undefined)
-  mockKanban.ticket.reorder.mockResolvedValue(undefined)
-  mockDbSession.create.mockImplementation(async (input: Record<string, unknown>) => ({
-    id: 'new-session-1',
-    worktree_id: (input.worktree_id as string | null) ?? 'wt-1',
-    project_id: (input.project_id as string | null) ?? 'proj-1',
-    connection_id: (input.connection_id as string | null) ?? null,
-    name: (input.name as string | null) ?? 'Session 1',
-    status: 'active',
-    opencode_session_id: null,
-    agent_sdk: (input.agent_sdk as string | null) ?? 'opencode',
-    mode: (input.mode as string | null) ?? 'build',
-    model_provider_id: (input.model_provider_id as string | null) ?? null,
-    model_id: (input.model_id as string | null) ?? null,
-    model_variant: (input.model_variant as string | null) ?? null,
-    created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
-    completed_at: null
-  }))
-  mockDbSession.update.mockResolvedValue(undefined)
-  mockDbSession.getActiveByWorktree.mockResolvedValue([])
-  mockDbSession.getActiveByConnection.mockResolvedValue([])
-  mockDbSession.get.mockResolvedValue(null)
-  mockDbWorktree.getActiveByProject.mockResolvedValue([])
-  mockDbWorktree.update.mockResolvedValue(undefined)
-  mockDbWorktree.touch.mockResolvedValue(undefined)
-  mockDbWorktree.get.mockResolvedValue(null)
-  mockWorktreeOps.create.mockResolvedValue({
-    success: true,
-    worktree: makeCreatedWorktree()
-  })
-  mockWorktreeOps.createFromBranch.mockResolvedValue({
-    success: true,
-    worktree: makeCreatedWorktree()
-  })
-  mockWorktreeOps.duplicate.mockResolvedValue({
-    success: true,
-    worktree: makeCreatedWorktree()
-  })
-  mockGitOps.listBranchesWithStatus.mockResolvedValue({
-    success: true,
-    branches: [
-      { name: 'main', isRemote: false, isCheckedOut: true },
-      { name: 'feature-x', isRemote: false, isCheckedOut: false },
-      { name: 'develop', isRemote: true, isCheckedOut: false }
-    ]
-  })
-  mockConnectionOps.get.mockResolvedValue({
-    success: true,
-    connection: {
-      id: 'conn-1',
-      members: [{ project_id: 'proj-1' }]
-    }
-  })
-  mockOpencodeOps.connect.mockResolvedValue({
-    success: true,
-    sessionId: 'oc-session-1'
-  })
-  mockOpencodeOps.prompt.mockResolvedValue({ success: true })
-  mockOpencodeOps.listModels.mockResolvedValue({
-    success: true,
-    providers: [
-      {
-        id: 'openai',
-        name: 'OpenAI',
-        models: {
-          'gpt-5.5': { id: 'gpt-5.5', name: 'GPT-5.5' },
-          'gpt-5.4': { id: 'gpt-5.4', name: 'GPT-5.4' },
-          'gpt-5.4-mini': { id: 'gpt-5.4-mini', name: 'GPT-5.4 Mini' }
-        }
-      }
-    ]
-  })
-}
-
 // ── Setup ───────────────────────────────────────────────────────────
 describe('Session 9: Worktree Picker Modal', () => {
   const defaultTicket = makeTicket()
@@ -426,7 +386,6 @@ describe('Session 9: Worktree Picker Modal', () => {
       })
     })
     vi.clearAllMocks()
-    resetApiMocks()
   })
 
   // ── Rendering tests ──────────────────────────────────────────────
@@ -1111,7 +1070,8 @@ describe('Session 9: Worktree Picker Modal', () => {
       fireEvent.click(sendBtn)
     })
 
-    // Should have created a session via sessionStore.
+    // Should have created a session via sessionStore
+    // The session creation goes through the store which calls window.db.session.create
     await waitFor(() => {
       expect(mockKanban.ticket.update).toHaveBeenCalled()
     })
@@ -1410,13 +1370,14 @@ describe('Session 9: Worktree Picker Modal', () => {
 
     // Should have called createFromBranch with the selected branch
     await waitFor(() => {
-      expect(mockWorktreeOps.createFromBranch).toHaveBeenCalledWith({
-        projectId: 'proj-1',
-        projectPath: '/test/my-project',
-        projectName: 'My Project',
-        branchName: 'feature-x',
-        nameHint: 'implement-auth-flow'
-      })
+      expect(mockWorktreeOps.createFromBranch).toHaveBeenCalledWith(
+        'proj-1',
+        '/test/my-project',
+        'My Project',
+        'feature-x',
+        undefined,
+        'implement-auth-flow'
+      )
     })
   })
 
@@ -1443,13 +1404,14 @@ describe('Session 9: Worktree Picker Modal', () => {
 
     // Should have called createFromBranch with the default branch "main"
     await waitFor(() => {
-      expect(mockWorktreeOps.createFromBranch).toHaveBeenCalledWith({
-        projectId: 'proj-1',
-        projectPath: '/test/my-project',
-        projectName: 'My Project',
-        branchName: 'main',
-        nameHint: 'implement-auth-flow'
-      })
+      expect(mockWorktreeOps.createFromBranch).toHaveBeenCalledWith(
+        'proj-1',
+        '/test/my-project',
+        'My Project',
+        'main',
+        undefined,
+        'implement-auth-flow'
+      )
     })
   })
 
@@ -1510,13 +1472,14 @@ describe('Session 9: Worktree Picker Modal', () => {
 
       // Verify createFromBranch was called with the nameHint
       await waitFor(() => {
-        expect(mockWorktreeOps.createFromBranch).toHaveBeenCalledWith({
-          projectId: 'proj-1',
-          projectPath: '/test/my-project',
-          projectName: 'My Project',
-          branchName: 'main',
-          nameHint: 'fix-login-bug'
-        })
+        expect(mockWorktreeOps.createFromBranch).toHaveBeenCalledWith(
+          'proj-1',
+          '/test/my-project',
+          'My Project',
+          'main',
+          undefined,
+          'fix-login-bug'
+        )
       })
     })
 
@@ -1537,13 +1500,14 @@ describe('Session 9: Worktree Picker Modal', () => {
       })
 
       await waitFor(() => {
-        expect(mockWorktreeOps.createFromBranch).toHaveBeenCalledWith({
-          projectId: 'proj-1',
-          projectPath: '/test/my-project',
-          projectName: 'My Project',
-          branchName: 'main',
-          nameHint: 'add-keyboard-shortcuts-for-playi'
-        })
+        expect(mockWorktreeOps.createFromBranch).toHaveBeenCalledWith(
+          'proj-1',
+          '/test/my-project',
+          'My Project',
+          'main',
+          undefined,
+          'add-keyboard-shortcuts-for-playi'
+        )
       })
     })
   })

@@ -27,56 +27,13 @@ const codexProviders = [
   }
 ]
 
-const apiMocks = vi.hoisted(() => ({
-  dbApi: {
-    setting: {
-      get: vi.fn(),
-      set: vi.fn()
-    }
-  },
-  opencodeApi: {
-    listModels: vi.fn()
-  },
-  petApi: {
-    hide: vi.fn(),
-    show: vi.fn(),
-    updateSettings: vi.fn()
-  },
-  settingsApi: {
-    onSettingsUpdated: vi.fn()
-  },
-  systemApi: {
-    detectAgentSdks: vi.fn()
-  }
-}))
-
-vi.mock('@/api/db-api', () => ({
-  dbApi: apiMocks.dbApi
-}))
-
-vi.mock('@/api/opencode-api', () => ({
-  opencodeApi: apiMocks.opencodeApi
-}))
-
-vi.mock('@/api/pet-api', () => ({
-  petApi: apiMocks.petApi
-}))
-
-vi.mock('@/api/settings-api', () => ({
-  settingsApi: apiMocks.settingsApi
-}))
-
-vi.mock('@/api/system-api', () => ({
-  systemApi: apiMocks.systemApi
-}))
-
-function mockListModelsForAgentSdk({ agentSdk }: { agentSdk?: string } = {}) {
+const mockListModels = vi.fn().mockImplementation(async ({ agentSdk }: { agentSdk?: string } = {}) => {
   if (agentSdk === 'codex') {
-    return { success: true, value: { success: true, providers: codexProviders } }
+    return { success: true, providers: codexProviders }
   }
 
-  return { success: true, value: { success: true, providers: claudeProviders } }
-}
+  return { success: true, providers: claudeProviders }
+})
 
 import { ModelSelector } from '@/components/sessions/ModelSelector'
 import { useSettingsStore } from '@/stores/useSettingsStore'
@@ -85,17 +42,19 @@ describe('ModelSelector provider filter pill', () => {
   beforeEach(() => {
     cleanup()
     vi.clearAllMocks()
-    apiMocks.dbApi.setting.get.mockResolvedValue(null)
-    apiMocks.dbApi.setting.set.mockResolvedValue(true)
-    apiMocks.opencodeApi.listModels.mockImplementation(mockListModelsForAgentSdk)
-    apiMocks.petApi.hide.mockResolvedValue(undefined)
-    apiMocks.petApi.show.mockResolvedValue(undefined)
-    apiMocks.petApi.updateSettings.mockResolvedValue({ success: true })
-    apiMocks.settingsApi.onSettingsUpdated.mockReturnValue(vi.fn())
-    apiMocks.systemApi.detectAgentSdks.mockResolvedValue({
-      opencode: false,
-      claude: true,
-      codex: true
+    mockListModels.mockImplementation(async ({ agentSdk }: { agentSdk?: string } = {}) => {
+      if (agentSdk === 'codex') {
+        return { success: true, providers: codexProviders }
+      }
+
+      return { success: true, providers: claudeProviders }
+    })
+    Object.defineProperty(window, 'opencodeOps', {
+      writable: true,
+      configurable: true,
+      value: {
+        listModels: mockListModels
+      }
     })
 
     useSettingsStore.setState({
@@ -166,7 +125,7 @@ describe('ModelSelector provider filter pill', () => {
     )
 
     await waitFor(() => {
-      expect(apiMocks.opencodeApi.listModels).toHaveBeenCalled()
+      expect(window.opencodeOps.listModels).toHaveBeenCalled()
     })
 
     expect(screen.queryByTestId('model-provider-filter')).not.toBeInTheDocument()

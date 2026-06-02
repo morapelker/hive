@@ -4,7 +4,7 @@ import { toast } from '@/lib/toast'
 import { UpdateProgressToast } from '@/components/toasts/UpdateProgressToast'
 import { UpdateAvailableToast } from '@/components/toasts/UpdateAvailableToast'
 import { useSettingsStore } from '@/stores/useSettingsStore'
-import { updaterApi } from '@/api/updater-api'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 export function useAutoUpdate(): void {
   const progressToastId = useRef<string | number | null>(null)
@@ -13,11 +13,14 @@ export function useAutoUpdate(): void {
   const dismissedForSessionRef = useRef<string | null>(null)
 
   useEffect(() => {
+    // Guard: updaterOps may not exist in test environments
+    if (!window.updaterOps) return
+
     const cleanups: (() => void)[] = []
 
     // Update available — show prompt toast with Later/Skip/Download options
     cleanups.push(
-      updaterApi.onUpdateAvailable((data) => {
+      window.updaterOps.onUpdateAvailable((data) => {
         const { skippedUpdateVersion, updateSetting } = useSettingsStore.getState()
         const isManual = data.isManualCheck ?? false
 
@@ -43,7 +46,10 @@ export function useAutoUpdate(): void {
                   sonnerToast.dismiss(promptToastId.current)
                   promptToastId.current = null
                 }
-                updaterApi.downloadUpdate().catch(() => {})
+                window.updaterOps
+                  .downloadUpdate()
+                  .then(unwrapEnvelope)
+                  .catch(() => {})
                 progressToastId.current = sonnerToast.custom(
                   () =>
                     createElement(UpdateProgressToast, {
@@ -75,7 +81,7 @@ export function useAutoUpdate(): void {
 
     // No update available — show info toast on manual checks
     cleanups.push(
-      updaterApi.onUpdateNotAvailable((data) => {
+      window.updaterOps.onUpdateNotAvailable((data) => {
         if (data.isManualCheck) {
           toast.info('You\u2019re up to date', {
             description: `Hive v${data.version} is the latest version`
@@ -86,7 +92,7 @@ export function useAutoUpdate(): void {
 
     // Download progress — update toast in-place
     cleanups.push(
-      updaterApi.onProgress((data) => {
+      window.updaterOps.onProgress((data) => {
         if (progressToastId.current == null) return
         sonnerToast.custom(
           () =>
@@ -101,7 +107,7 @@ export function useAutoUpdate(): void {
 
     // Update downloaded — dismiss progress toast, show restart prompt
     cleanups.push(
-      updaterApi.onUpdateDownloaded((data) => {
+      window.updaterOps.onUpdateDownloaded((data) => {
         if (progressToastId.current != null) {
           sonnerToast.dismiss(progressToastId.current)
           progressToastId.current = null
@@ -111,7 +117,10 @@ export function useAutoUpdate(): void {
           action: {
             label: 'Restart to Update',
             onClick: () => {
-              updaterApi.installUpdate().catch(() => {})
+              window.updaterOps
+                .installUpdate()
+                .then(unwrapEnvelope)
+                .catch(() => {})
             }
           }
         })
@@ -120,7 +129,7 @@ export function useAutoUpdate(): void {
 
     // Error — dismiss toasts if active, show error
     cleanups.push(
-      updaterApi.onError((data) => {
+      window.updaterOps.onError((data) => {
         if (progressToastId.current != null) {
           sonnerToast.dismiss(progressToastId.current)
           progressToastId.current = null

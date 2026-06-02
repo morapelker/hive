@@ -1,20 +1,26 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest'
-import { fileTreeApi } from '../../../src/renderer/src/api/file-tree-api'
 
-vi.mock('../../../src/renderer/src/api/file-tree-api', () => ({
-  fileTreeApi: {
-    scan: vi.fn(),
-    loadChildren: vi.fn(),
-    watch: vi.fn(),
-    unwatch: vi.fn(),
-    onChange: vi.fn()
-  }
-}))
+// Mock the window.fileTreeOps for testing
+const mockFileTreeOps = {
+  scan: vi.fn(),
+  loadChildren: vi.fn(),
+  watch: vi.fn(),
+  unwatch: vi.fn(),
+  onChange: vi.fn()
+}
 
-const mockFileTreeApi = vi.mocked(fileTreeApi)
+// Mock the window.worktreeOps for testing
+const mockWorktreeOps = {
+  openInEditor: vi.fn()
+}
 
+// Set up global mocks
 beforeEach(() => {
-  vi.clearAllMocks()
+  // @ts-expect-error - mocking global
+  global.window = {
+    fileTreeOps: mockFileTreeOps,
+    worktreeOps: mockWorktreeOps
+  }
 })
 
 afterEach(() => {
@@ -50,12 +56,12 @@ describe('Session 1: File Tree Foundation', () => {
         }
       ]
 
-      mockFileTreeApi.scan.mockResolvedValue({
+      mockFileTreeOps.scan.mockResolvedValue({
         success: true,
         tree: mockTree
       })
 
-      const result = await mockFileTreeApi.scan('/test/project')
+      const result = await mockFileTreeOps.scan('/test/project')
 
       expect(result.success).toBe(true)
       expect(result.tree).toHaveLength(2)
@@ -88,12 +94,12 @@ describe('Session 1: File Tree Foundation', () => {
         }
       ]
 
-      mockFileTreeApi.scan.mockResolvedValue({
+      mockFileTreeOps.scan.mockResolvedValue({
         success: true,
         tree: mockTree
       })
 
-      const result = await mockFileTreeApi.scan('/test')
+      const result = await mockFileTreeOps.scan('/test')
 
       // Directories should come first
       expect(result.tree[0].isDirectory).toBe(true)
@@ -112,12 +118,12 @@ describe('Session 1: File Tree Foundation', () => {
         }
       ]
 
-      mockFileTreeApi.scan.mockResolvedValue({
+      mockFileTreeOps.scan.mockResolvedValue({
         success: true,
         tree: mockTree
       })
 
-      const result = await mockFileTreeApi.scan('/test/project')
+      const result = await mockFileTreeOps.scan('/test/project')
 
       // node_modules should not be in the tree
       const hasNodeModules = result.tree.some(
@@ -137,12 +143,12 @@ describe('Session 1: File Tree Foundation', () => {
         }
       ]
 
-      mockFileTreeApi.scan.mockResolvedValue({
+      mockFileTreeOps.scan.mockResolvedValue({
         success: true,
         tree: mockTree
       })
 
-      const result = await mockFileTreeApi.scan('/test/project')
+      const result = await mockFileTreeOps.scan('/test/project')
 
       // .git should not be in the tree
       const hasGit = result.tree.some((node: { name: string }) => node.name === '.git')
@@ -150,12 +156,12 @@ describe('Session 1: File Tree Foundation', () => {
     })
 
     test('Scan handles errors gracefully', async () => {
-      mockFileTreeApi.scan.mockResolvedValue({
+      mockFileTreeOps.scan.mockResolvedValue({
         success: false,
         error: 'Directory does not exist'
       })
 
-      const result = await mockFileTreeApi.scan('/non/existent/path')
+      const result = await mockFileTreeOps.scan('/non/existent/path')
 
       expect(result.success).toBe(false)
       expect(result.error).toBe('Directory does not exist')
@@ -181,12 +187,12 @@ describe('Session 1: File Tree Foundation', () => {
         }
       ]
 
-      mockFileTreeApi.loadChildren.mockResolvedValue({
+      mockFileTreeOps.loadChildren.mockResolvedValue({
         success: true,
         children: mockChildren
       })
 
-      const result = await mockFileTreeApi.loadChildren('/test/src/components', '/test')
+      const result = await mockFileTreeOps.loadChildren('/test/src/components', '/test')
 
       expect(result.success).toBe(true)
       expect(result.children).toHaveLength(2)
@@ -195,39 +201,39 @@ describe('Session 1: File Tree Foundation', () => {
 
   describe('File Watching', () => {
     test('watch starts watching a directory', async () => {
-      mockFileTreeApi.watch.mockResolvedValue({ success: true })
+      mockFileTreeOps.watch.mockResolvedValue({ success: true })
 
-      const result = await mockFileTreeApi.watch('/test/project')
+      const result = await mockFileTreeOps.watch('/test/project')
 
       expect(result.success).toBe(true)
-      expect(mockFileTreeApi.watch).toHaveBeenCalledWith('/test/project')
+      expect(mockFileTreeOps.watch).toHaveBeenCalledWith('/test/project')
     })
 
     test('unwatch stops watching a directory', async () => {
-      mockFileTreeApi.unwatch.mockResolvedValue({ success: true })
+      mockFileTreeOps.unwatch.mockResolvedValue({ success: true })
 
-      const result = await mockFileTreeApi.unwatch('/test/project')
+      const result = await mockFileTreeOps.unwatch('/test/project')
 
       expect(result.success).toBe(true)
-      expect(mockFileTreeApi.unwatch).toHaveBeenCalledWith('/test/project')
+      expect(mockFileTreeOps.unwatch).toHaveBeenCalledWith('/test/project')
     })
 
     test('onChange subscribes to file change events', () => {
       const callback = vi.fn()
       const unsubscribe = vi.fn()
 
-      mockFileTreeApi.onChange.mockReturnValue(unsubscribe)
+      mockFileTreeOps.onChange.mockReturnValue(unsubscribe)
 
-      const result = mockFileTreeApi.onChange(callback)
+      const result = mockFileTreeOps.onChange(callback)
 
-      expect(mockFileTreeApi.onChange).toHaveBeenCalledWith(callback)
+      expect(mockFileTreeOps.onChange).toHaveBeenCalledWith(callback)
       expect(typeof result).toBe('function')
     })
 
     test('File changes update UI automatically (debounced)', async () => {
       // Test that file change events are properly debounced at 100ms
       const callback = vi.fn()
-      mockFileTreeApi.onChange.mockImplementation((cb: (event: unknown) => void) => {
+      mockFileTreeOps.onChange.mockImplementation((cb: (event: unknown) => void) => {
         // Simulate multiple rapid file changes
         cb({ worktreePath: '/test', eventType: 'add', changedPath: '/test/file1.ts', relativePath: 'file1.ts' })
         cb({ worktreePath: '/test', eventType: 'add', changedPath: '/test/file2.ts', relativePath: 'file2.ts' })
@@ -235,10 +241,10 @@ describe('Session 1: File Tree Foundation', () => {
         return vi.fn()
       })
 
-      mockFileTreeApi.onChange(callback)
+      mockFileTreeOps.onChange(callback)
 
       // Callback should be called for each event (debouncing happens in the store)
-      expect(mockFileTreeApi.onChange).toHaveBeenCalled()
+      expect(mockFileTreeOps.onChange).toHaveBeenCalled()
     })
   })
 

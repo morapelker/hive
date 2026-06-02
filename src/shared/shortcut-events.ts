@@ -1,5 +1,0 @@
-export const NEW_SESSION_SHORTCUT_CHANNEL = 'shortcut:new-session'
-export const CLOSE_SESSION_SHORTCUT_CHANNEL = 'shortcut:close-session'
-export const FILE_SEARCH_SHORTCUT_CHANNEL = 'shortcut:file-search'
-export const QUIT_CONFIRMATION_SHOW_CHANNEL = 'shortcut:quit-confirmation-show'
-export const QUIT_CONFIRMATION_HIDE_CHANNEL = 'shortcut:quit-confirmation-hide'

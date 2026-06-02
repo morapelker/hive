@@ -8,8 +8,7 @@ import type {
   UsageProvider,
   SavedAccountDTO
 } from '@shared/types/usage'
-import { accountApi } from '@/api/account-api'
-import { usageApi } from '@/api/usage-api'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 export type { UsageData, UsageProvider, AnthropicRateLimitInfo, AnthropicRateLimitState }
 
@@ -75,7 +74,7 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
 
   loadSavedAccounts: async (provider?: UsageProvider) => {
     try {
-      const accounts = await accountApi.listSaved(provider)
+      const accounts = unwrapEnvelope(await window.accountOps.listSaved(provider))
       if (provider) {
         set((state) => ({
           savedAccounts: { ...state.savedAccounts, [provider]: accounts },
@@ -117,7 +116,7 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
     }))
 
     try {
-      await usageApi.refreshAllForProvider(provider)
+      unwrapEnvelope(await window.usageOps.refreshAllForProvider(provider))
       await get().loadSavedAccounts(provider)
     } finally {
       set((current) => {
@@ -141,7 +140,7 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
       refreshingAccountIds: new Set([...current.refreshingAccountIds, id])
     }))
     try {
-      await usageApi.fetchForAccount(id)
+      unwrapEnvelope(await window.usageOps.fetchForAccount(id))
       await get().loadSavedAccounts(provider)
     } finally {
       set((current) => {
@@ -153,7 +152,7 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
   },
 
   removeSavedAccount: async (id: string) => {
-    await accountApi.removeSaved(id)
+    unwrapEnvelope(await window.accountOps.removeSaved(id))
     await get().loadSavedAccounts()
   },
 
@@ -168,7 +167,7 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
       set({ anthropicIsLoading: true, anthropicLastError: null })
       let succeeded = false
       try {
-        const result = await usageApi.fetch()
+        const result = unwrapEnvelope(await window.usageOps.fetch())
         if (result.success) {
           set({
             anthropicUsage: result.data ?? null,
@@ -202,7 +201,7 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
       set({ openaiIsLoading: true, openaiLastError: null })
       let succeeded = false
       try {
-        const result = await usageApi.fetchOpenai()
+        const result = unwrapEnvelope(await window.usageOps.fetchOpenai())
         if (result.success) {
           set({ openaiUsage: result.data ?? null, openaiLastError: null })
           succeeded = true
@@ -244,7 +243,7 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
       set({ anthropicIsLoading: true, anthropicLastError: null })
       let succeeded = false
       try {
-        const result = await usageApi.fetch()
+        const result = unwrapEnvelope(await window.usageOps.fetch())
         if (result.success) {
           set({
             anthropicUsage: result.data ?? null,
@@ -277,7 +276,7 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
       set({ openaiIsLoading: true, openaiLastError: null })
       let succeeded = false
       try {
-        const result = await usageApi.fetchOpenai()
+        const result = unwrapEnvelope(await window.usageOps.fetchOpenai())
         if (result.success) {
           set({ openaiUsage: result.data ?? null, openaiLastError: null })
           succeeded = true

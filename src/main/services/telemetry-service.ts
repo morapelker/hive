@@ -1,6 +1,6 @@
 import { PostHog } from 'posthog-node'
+import { app } from 'electron'
 import { randomUUID } from 'crypto'
-import { readFileSync } from 'fs'
 import { getDatabase } from '../db'
 import { createLogger } from './logger'
 
@@ -8,20 +8,6 @@ const log = createLogger({ component: 'Telemetry' })
 
 const POSTHOG_API_KEY = 'phc_G54QVGSplIjNs2VH0m3bxKQ3XBvmYYacMiiZWIwxBvl'
 const POSTHOG_HOST = 'https://us.i.posthog.com'
-
-export function resolveTelemetryAppVersion(): string {
-  if (process.env.npm_package_version) {
-    return process.env.npm_package_version
-  }
-
-  try {
-    const raw = readFileSync('package.json', 'utf-8')
-    const parsed = JSON.parse(raw) as { readonly version?: unknown }
-    return typeof parsed.version === 'string' ? parsed.version : ''
-  } catch {
-    return ''
-  }
-}
 
 class TelemetryService {
   private static instance: TelemetryService | null = null
@@ -79,7 +65,7 @@ class TelemetryService {
       distinctId: this.distinctId,
       event,
       properties: {
-        app_version: resolveTelemetryAppVersion(),
+        app_version: app.getVersion(),
         platform: process.platform,
         ...properties
       }
@@ -92,7 +78,7 @@ class TelemetryService {
     this.client.identify({
       distinctId: this.distinctId,
       properties: {
-        app_version: resolveTelemetryAppVersion(),
+        app_version: app.getVersion(),
         platform: process.platform,
         ...properties
       }

@@ -1,23 +1,26 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest'
-import { dbApi } from '@/api/db-api'
 import { useSpaceStore } from '@/stores/useSpaceStore'
 
-vi.mock('@/api/db-api', () => ({
-  dbApi: {
-    space: {
-      list: vi.fn(),
-      create: vi.fn(),
-      update: vi.fn(),
-      delete: vi.fn(),
-      assignProject: vi.fn(),
-      removeProject: vi.fn(),
-      getAllAssignments: vi.fn(),
-      reorder: vi.fn()
-    }
-  }
-}))
+// Mock window.db.space namespace
+const mockSpaceDb = {
+  list: vi.fn(),
+  create: vi.fn(),
+  update: vi.fn(),
+  delete: vi.fn(),
+  assignProject: vi.fn(),
+  removeProject: vi.fn(),
+  getProjectIds: vi.fn(),
+  getAllAssignments: vi.fn(),
+  reorder: vi.fn()
+}
 
-const mockSpaceDb = vi.mocked(dbApi.space)
+Object.defineProperty(window, 'db', {
+  writable: true,
+  value: {
+    ...(window.db ?? {}),
+    space: mockSpaceDb
+  }
+})
 
 // Helper to reset store state between tests
 function resetStore(): void {

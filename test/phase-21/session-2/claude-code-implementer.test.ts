@@ -16,24 +16,24 @@ vi.mock('../../../src/main/services/logger', () => ({
   })
 }))
 
-vi.mock('../../../src/main/desktop/backend-manager', () => ({
-  publishDesktopBackendEvent: vi.fn()
-}))
-
-vi.mock('../../../src/main/services/agent-event-bus', () => ({
-  agentEventBus: { publish: vi.fn() }
-}))
-
 import {
   ClaudeCodeImplementer,
   type ClaudeSessionState
 } from '../../../src/main/services/claude-code-implementer'
 
+function createMockWindow(options: { destroyed?: boolean } = {}) {
+  return {
+    isDestroyed: vi.fn(() => options.destroyed ?? false),
+    webContents: {
+      send: vi.fn()
+    }
+  } as any
+}
+
 describe('ClaudeCodeImplementer', () => {
   let impl: ClaudeCodeImplementer
 
   beforeEach(() => {
-    vi.clearAllMocks()
     impl = new ClaudeCodeImplementer()
   })
 
@@ -69,11 +69,21 @@ describe('ClaudeCodeImplementer', () => {
         'redo',
         'listCommands',
         'sendCommand',
-        'renameSession'
+        'renameSession',
+        'setMainWindow'
       ]
       for (const method of requiredMethods) {
         expect(typeof impl[method]).toBe('function')
       }
+    })
+  })
+
+  // ── setMainWindow ──────────────────────────────────────────────────
+
+  describe('setMainWindow', () => {
+    it('accepts a BrowserWindow mock without throwing', () => {
+      const win = createMockWindow()
+      expect(() => impl.setMainWindow(win)).not.toThrow()
     })
   })
 
@@ -196,24 +206,23 @@ describe('ClaudeCodeImplementer', () => {
   // ── sendToRenderer ─────────────────────────────────────────────────
 
   describe('sendToRenderer', () => {
-    it('does not throw for unknown channels', () => {
+    it('does not throw when no main window is set', () => {
       expect(() => (impl as any).sendToRenderer('ch', { a: 1 })).not.toThrow()
     })
 
-    it('does not route unknown channels through the agent event bus', async () => {
-      const { agentEventBus } = await import('../../../src/main/services/agent-event-bus')
+    it('sends data to main window webContents when window is set', () => {
+      const win = createMockWindow()
+      impl.setMainWindow(win)
       ;(impl as any).sendToRenderer('test:channel', { foo: 'bar' })
 
-      expect(agentEventBus.publish).not.toHaveBeenCalled()
+      expect(win.webContents.send).toHaveBeenCalledWith('test:channel', { foo: 'bar' })
     })
 
-    it('routes opencode stream events through the agent event bus', async () => {
-      const { agentEventBus } = await import('../../../src/main/services/agent-event-bus')
-      const event = { type: 'session.updated', sessionId: 'hive-1', data: {} }
-
-      ;(impl as any).sendToRenderer('opencode:stream', event)
-
-      expect(agentEventBus.publish).toHaveBeenCalledWith(event)
+    it('does not throw when window is destroyed', () => {
+      const win = createMockWindow({ destroyed: true })
+      impl.setMainWindow(win)
+      expect(() => (impl as any).sendToRenderer('ch', {})).not.toThrow()
+      expect(win.webContents.send).not.toHaveBeenCalled()
     })
   })
 

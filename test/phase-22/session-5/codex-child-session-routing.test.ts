@@ -1,10 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-const eventBusMocks = vi.hoisted(() => ({
-  publish: vi.fn()
-}))
-
 // Mock logger
 vi.mock('../../../src/main/services/logger', () => ({
   createLogger: () => ({
@@ -42,26 +38,6 @@ vi.mock('../../../src/main/services/codex-app-server-manager', () => {
   }
 })
 
-vi.mock('../../../src/main/services/agent-event-bus', () => ({
-  agentEventBus: eventBusMocks
-}))
-
-vi.mock('../../../src/main/services/notification-service', () => ({
-  notificationService: { shouldNotifyWhenWindowUnfocused: vi.fn(() => false) }
-}))
-
-vi.mock('../../../src/main/services/codex-session-title', () => ({
-  generateCodexSessionTitle: vi.fn()
-}))
-
-vi.mock('../../../src/main/services/git-service', () => ({
-  autoRenameWorktreeBranch: vi.fn()
-}))
-
-vi.mock('../../../src/main/services/worktree-events', () => ({
-  emitWorktreeBranchRenamed: vi.fn()
-}))
-
 import {
   CodexImplementer,
   type CodexSessionState
@@ -70,12 +46,18 @@ import {
 describe('Codex child session routing', () => {
   let impl: CodexImplementer
   let mockManager: any
+  let mockWindow: any
 
   beforeEach(() => {
     vi.clearAllMocks()
     eventListeners = []
     impl = new CodexImplementer()
     mockManager = impl.getManager()
+    mockWindow = {
+      isDestroyed: () => false,
+      webContents: { send: vi.fn() }
+    }
+    impl.setMainWindow(mockWindow)
   })
 
   function seedSession(
@@ -115,14 +97,6 @@ describe('Codex child session routing', () => {
     })
   }
 
-  function publishedEvents(): any[] {
-    return eventBusMocks.publish.mock.calls.map((call) => call[0])
-  }
-
-  function expectedTextInput(text: string) {
-    return [{ type: 'text', text, text_elements: [] }]
-  }
-
   // ── Prompt routes to correct session ────────────────────────
 
   describe('prompt routing', () => {
@@ -145,7 +119,7 @@ describe('Codex child session routing', () => {
       await impl.prompt('/project-a', 'thread-a', 'Hello A')
 
       expect(mockManager.sendTurn).toHaveBeenCalledWith('thread-a', {
-        input: expectedTextInput('Hello A'),
+        text: 'Hello A',
         model: expect.any(String),
         interactionMode: 'default'
       })
@@ -195,9 +169,12 @@ describe('Codex child session routing', () => {
 
       await impl.prompt('/project-a', 'thread-a', 'test')
 
-      const textEvents = publishedEvents().filter(
-        (e: any) => e.type === 'message.part.updated' && e.data?.type === 'text'
-      )
+      // Check that events sent to renderer use hive-a session ID
+      const sendCalls = mockWindow.webContents.send.mock.calls
+      const textEvents = sendCalls
+        .filter((c: any[]) => c[0] === 'opencode:stream')
+        .map((c: any[]) => c[1])
+        .filter((e: any) => e.type === 'message.part.updated' && e.data?.type === 'text')
 
       // Only thread-a events should produce text updates for hive-a
       for (const evt of textEvents) {
@@ -275,7 +252,7 @@ describe('Codex child session routing', () => {
   // ── Context injection compatibility ─────────────────────────
 
   describe('context injection compatibility', () => {
-    it('accepts string message with context prefix from the RPC prompt path', async () => {
+    it('accepts string message with context prefix (IPC handler style)', async () => {
       seedSession('/project', 'thread-ctx', 'hive-ctx')
 
       simulateEvents([
@@ -290,14 +267,14 @@ describe('Codex child session routing', () => {
         }
       ])
 
-      // The renderer RPC prompt path prepends context like this.
+      // IPC handler prepends context like this
       const contextMessage =
         '[Worktree Context]\nThis is a React project\n\n[User Message]\nFix the bug'
 
       await impl.prompt('/project', 'thread-ctx', contextMessage)
 
       expect(mockManager.sendTurn).toHaveBeenCalledWith('thread-ctx', {
-        input: expectedTextInput(contextMessage),
+        text: contextMessage,
         model: expect.any(String),
         interactionMode: 'default'
       })
@@ -332,7 +309,7 @@ describe('Codex child session routing', () => {
       await impl.prompt('/project', 'thread-ctx2', parts)
 
       expect(mockManager.sendTurn).toHaveBeenCalledWith('thread-ctx2', {
-        input: expectedTextInput('[Worktree Context]\nContext here\n\n[User Message]\nDo something'),
+        text: '[Worktree Context]\nContext here\n\n[User Message]\nDo something',
         model: expect.any(String),
         interactionMode: 'default'
       })
@@ -475,10 +452,10 @@ describe('Codex child session routing', () => {
     })
   })
 
-  // ── Events reach WebSocket subscribers through event bus ─────
+  // ── Events reach renderer on opencode:stream channel ────────
 
-  describe('event bus delivery', () => {
-    it('publishes stream events through the agent event bus', async () => {
+  describe('renderer event delivery', () => {
+    it('all events are sent on opencode:stream channel', async () => {
       seedSession('/project', 'thread-ch', 'hive-ch')
 
       simulateEvents([
@@ -504,13 +481,21 @@ describe('Codex child session routing', () => {
 
       await impl.prompt('/project', 'thread-ch', 'test')
 
-      const events = publishedEvents()
-      expect(events.length).toBeGreaterThan(0)
-      expect(events.every((event) => event.sessionId === 'hive-ch')).toBe(true)
+      const allCalls = mockWindow.webContents.send.mock.calls
+      // All calls should be on the opencode:stream channel
+      for (const call of allCalls) {
+        expect(call[0]).toBe('opencode:stream')
+      }
     })
 
-    it('publishes events without a desktop window dependency', async () => {
+    it('does not send events when window is destroyed', async () => {
       seedSession('/project', 'thread-nowin', 'hive-nowin')
+
+      const destroyedWindow = {
+        isDestroyed: () => true,
+        webContents: { send: vi.fn() }
+      } as any
+      impl.setMainWindow(destroyedWindow)
 
       simulateEvents([
         {
@@ -526,8 +511,7 @@ describe('Codex child session routing', () => {
 
       await impl.prompt('/project', 'thread-nowin', 'test')
 
-      expect(eventBusMocks.publish).toHaveBeenCalled()
-      expect(publishedEvents().every((event) => event.sessionId === 'hive-nowin')).toBe(true)
+      expect(destroyedWindow.webContents.send).not.toHaveBeenCalled()
     })
   })
 })

@@ -3,7 +3,7 @@ import { useSettingsStore } from '@/stores/useSettingsStore'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { RefreshCw } from 'lucide-react'
-import { updaterApi } from '@/api/updater-api'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 export function SettingsUpdates(): React.JSX.Element {
   const { updateChannel, updateSetting } = useSettingsStore()
@@ -11,8 +11,9 @@ export function SettingsUpdates(): React.JSX.Element {
   const [checking, setChecking] = useState(false)
 
   useEffect(() => {
-    updaterApi
-      .getVersion()
+    window.updaterOps
+      ?.getVersion()
+      .then(unwrapEnvelope)
       .then(setVersion)
       .catch(() => {})
   }, [])
@@ -20,7 +21,8 @@ export function SettingsUpdates(): React.JSX.Element {
   const handleCheckForUpdates = async (): Promise<void> => {
     setChecking(true)
     try {
-      await updaterApi.checkForUpdate({ manual: true })
+      const envelope = await window.updaterOps?.checkForUpdate({ manual: true })
+      if (envelope) unwrapEnvelope(envelope)
     } catch {
       /* ignored */
     }

@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { resetRendererRpcClientForTests, setRendererRpcClient } from '@/api/rpc-client'
 import { useUsageStore } from '../useUsageStore'
 
 const baseState = {
@@ -22,8 +21,6 @@ const baseState = {
 }
 
 describe('useUsageStore Anthropic rate-limit throttling', () => {
-  let request: ReturnType<typeof vi.fn>
-
   beforeEach(() => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-05-18T10:00:00.000Z'))
@@ -31,35 +28,43 @@ describe('useUsageStore Anthropic rate-limit throttling', () => {
 
     useUsageStore.setState(baseState)
 
-    request = vi.fn(async (method: string) => {
-      if (method === 'accountOps.listSaved') return []
-      return null
+    Object.defineProperty(window, 'usageOps', {
+      writable: true,
+      configurable: true,
+      value: {
+        fetch: vi.fn(),
+        fetchOpenai: vi.fn(),
+        fetchForAccount: vi.fn(),
+        refreshAllForProvider: vi.fn()
+      }
     })
-    setRendererRpcClient({ request, subscribe: vi.fn() })
+
+    Object.defineProperty(window, 'accountOps', {
+      writable: true,
+      configurable: true,
+      value: {
+        getClaudeEmail: vi.fn(),
+        getOpenAIEmail: vi.fn(),
+        listSaved: vi.fn().mockResolvedValue({ success: true, value: [] }),
+        removeSaved: vi.fn()
+      }
+    })
   })
 
   afterEach(() => {
-    resetRendererRpcClientForTests()
     vi.useRealTimers()
   })
 
   it('uses Retry-After from a failed Anthropic fetch to debounce the next fetch', async () => {
-    request.mockImplementation(async (method: string) => {
-      if (method === 'usageOps.fetch') {
-        return {
-          success: false,
-          error: 'Usage API returned 429: Too Many Requests',
-          retryAfter: 30
-        }
-      }
-      if (method === 'accountOps.listSaved') return []
-      return null
+    vi.mocked(window.usageOps.fetch).mockResolvedValue({
+      success: true,
+      value: { success: false, error: 'Usage API returned 429: Too Many Requests', retryAfter: 30 }
     })
 
     await useUsageStore.getState().fetchUsageForProvider('anthropic')
     await useUsageStore.getState().fetchUsageForProvider('anthropic')
 
-    expect(request.mock.calls.filter(([method]) => method === 'usageOps.fetch')).toHaveLength(1)
+    expect(window.usageOps.fetch).toHaveBeenCalledTimes(1)
     expect(useUsageStore.getState().anthropicLastFetchedAt).toBe(Date.now() - 180_000 + 30_000)
   })
 
@@ -71,6 +76,6 @@ describe('useUsageStore Anthropic rate-limit throttling', () => {
 
     await useUsageStore.getState().forceRefreshProvider('anthropic')
 
-    expect(request.mock.calls.filter(([method]) => method === 'usageOps.fetch')).toHaveLength(0)
+    expect(window.usageOps.fetch).not.toHaveBeenCalled()
   })
 })

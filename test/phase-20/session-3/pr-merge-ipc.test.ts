@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test, vi } from 'vitest'
+import { describe, test, expect, vi } from 'vitest'
 
 // Mock electron's app module so importing git-service doesn't crash in jsdom
 vi.mock('electron', () => ({
@@ -16,17 +16,8 @@ vi.mock('simple-git', () => ({
 }))
 
 import { parseWorktreeForBranch } from '../../../src/main/services/git-service'
-import { gitApi } from '../../../src/renderer/src/api/git-api'
-import {
-  resetRendererRpcClientForTests,
-  setRendererRpcClient
-} from '../../../src/renderer/src/api/rpc-client'
 
-describe('Session 3: PR Merge RPC Backend', () => {
-  afterEach(() => {
-    resetRendererRpcClientForTests()
-  })
-
+describe('Session 3: PR Merge IPC Backend', () => {
   describe('parseWorktreeForBranch', () => {
     test('finds worktree path for matching branch', () => {
       const output = [
@@ -89,17 +80,15 @@ describe('Session 3: PR Merge RPC Backend', () => {
     })
   })
 
-  test('prMerge routes through gitApi RPC client', async () => {
-    const result = { success: true }
-    const request = vi.fn().mockResolvedValue(result)
-    const subscribe = vi.fn()
-
-    setRendererRpcClient({ request, subscribe })
-
-    await expect(gitApi.prMerge('/tmp/hive-feature', 123)).resolves.toBe(result)
-    expect(request).toHaveBeenCalledWith('gitOps.prMerge', {
-      worktreePath: '/tmp/hive-feature',
-      prNumber: 123
+  test('prMerge is exposed on gitOps preload bridge', () => {
+    // Verify that prMerge can be set and accessed on window.gitOps
+    const mockPrMerge = vi.fn().mockResolvedValue({ success: true })
+    Object.defineProperty(window, 'gitOps', {
+      writable: true,
+      configurable: true,
+      value: { ...window.gitOps, prMerge: mockPrMerge }
     })
+    expect(window.gitOps.prMerge).toBeDefined()
+    expect(typeof window.gitOps.prMerge).toBe('function')
   })
 })

@@ -18,14 +18,13 @@ import { PrCommentGutter } from './PrCommentGutter'
 import { DiffCommentGutter } from './DiffCommentGutter'
 import { DiffCommentToolbar } from './DiffCommentToolbar'
 import { DiffCommentSidePanel } from './DiffCommentSidePanel'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { usePRReviewStore } from '@/stores/usePRReviewStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useDiffCommentStore } from '@/stores/useDiffCommentStore'
 import { useDiffPrefsStore } from '@/stores/useDiffPrefsStore'
 import { useGitStore } from '@/stores/useGitStore'
 import { toast } from '@/lib/toast'
-import { gitApi } from '@/api/git-api'
-import { projectApi } from '@/api/project-api'
 import type { PRReviewComment } from '@shared/types/git'
 import type { editor } from 'monaco-editor'
 
@@ -135,7 +134,7 @@ export default function MonacoDiffView({
     try {
       if (isNewFile || isUntracked) {
         // Untracked/new files have no git history – read from disk
-        const modResult = await gitApi.getFileContent(worktreePath, filePath)
+        const modResult = unwrapEnvelope(await window.gitOps.getFileContent(worktreePath, filePath))
         setOriginalContent('')
         setModifiedContent(modResult.success ? (modResult.content ?? '') : '')
         return
@@ -146,8 +145,10 @@ export default function MonacoDiffView({
         // Uses merge-base so only changes from commits ahead of the target branch
         // are shown (not changes introduced on the target after divergence).
         const [origResult, modResult] = await Promise.all([
-          gitApi.getBranchBaseContent(worktreePath, compareBranch, filePath),
-          gitApi.getFileContent(worktreePath, filePath)
+          window.gitOps
+            .getBranchBaseContent(worktreePath, compareBranch, filePath)
+            .then(unwrapEnvelope),
+          window.gitOps.getFileContent(worktreePath, filePath).then(unwrapEnvelope)
         ])
 
         // File added (doesn't exist in branch) — empty original
@@ -157,8 +158,8 @@ export default function MonacoDiffView({
       } else if (staged) {
         // Staged diff: original = HEAD, modified = Index (staged)
         const [origResult, modResult] = await Promise.all([
-          gitApi.getRefContent(worktreePath, 'HEAD', filePath),
-          gitApi.getRefContent(worktreePath, '', filePath)
+          window.gitOps.getRefContent(worktreePath, 'HEAD', filePath).then(unwrapEnvelope),
+          window.gitOps.getRefContent(worktreePath, '', filePath).then(unwrapEnvelope)
         ])
 
         if (!origResult.success && !origResult.error?.includes('does not exist')) {
@@ -175,10 +176,13 @@ export default function MonacoDiffView({
       } else {
         // Unstaged diff: original = Index (or HEAD if nothing staged), modified = Working tree
         const [origResult, modResult] = await Promise.all([
-          gitApi
+          window.gitOps
             .getRefContent(worktreePath, '', filePath)
-            .catch(() => gitApi.getRefContent(worktreePath, 'HEAD', filePath)),
-          gitApi.getFileContent(worktreePath, filePath)
+            .then(unwrapEnvelope)
+            .catch(() =>
+              window.gitOps.getRefContent(worktreePath, 'HEAD', filePath).then(unwrapEnvelope)
+            ),
+          window.gitOps.getFileContent(worktreePath, filePath).then(unwrapEnvelope)
         ])
 
         if (!origResult.success && !origResult.error?.includes('does not exist')) {
@@ -213,7 +217,7 @@ export default function MonacoDiffView({
 
   // Listen for external file changes (but skip if we just did a manual action)
   useEffect(() => {
-    const cleanup = gitApi.onStatusChanged((event) => {
+    const cleanup = window.gitOps.onStatusChanged((event) => {
       if (event.worktreePath === worktreePath && !recentActionRef.current) {
         setRefreshKey((k) => k + 1)
       }
@@ -396,7 +400,7 @@ export default function MonacoDiffView({
       setHunkActionLoading(hunk.index)
       try {
         const patch = createHunkPatch(filePath, originalLines, modifiedLines, hunk)
-        const result = await gitApi.stageHunk(worktreePath, patch)
+        const result = unwrapEnvelope(await window.gitOps.stageHunk(worktreePath, patch))
         if (result.success) {
           toast.success('Hunk staged')
           useGitStore.getState().refreshStatuses(worktreePath)
@@ -418,7 +422,7 @@ export default function MonacoDiffView({
       setHunkActionLoading(hunk.index)
       try {
         const patch = createHunkPatch(filePath, originalLines, modifiedLines, hunk)
-        const result = await gitApi.unstageHunk(worktreePath, patch)
+        const result = unwrapEnvelope(await window.gitOps.unstageHunk(worktreePath, patch))
         if (result.success) {
           toast.success('Hunk unstaged')
           useGitStore.getState().refreshStatuses(worktreePath)
@@ -440,7 +444,7 @@ export default function MonacoDiffView({
       setHunkActionLoading(hunk.index)
       try {
         const patch = createHunkPatch(filePath, originalLines, modifiedLines, hunk)
-        const result = await gitApi.revertHunk(worktreePath, patch)
+        const result = unwrapEnvelope(await window.gitOps.revertHunk(worktreePath, patch))
         if (result.success) {
           toast.success('Hunk discarded')
           useGitStore.getState().refreshStatuses(worktreePath)
@@ -480,14 +484,19 @@ export default function MonacoDiffView({
   // Copy diff content
   const handleCopy = useCallback(async () => {
     if (compareBranch) {
-      const result = await gitApi.getBranchFileDiff(worktreePath, compareBranch, filePath)
+      const result = unwrapEnvelope(
+        await window.gitOps.getBranchFileDiff(worktreePath, compareBranch, filePath)
+      )
       if (result.success && result.diff) {
-        await projectApi.copyToClipboard(result.diff)
+        unwrapEnvelope(await window.projectOps.copyToClipboard(result.diff))
       }
     } else {
-      const result = await gitApi.getDiff(worktreePath, filePath, staged, isUntracked)
+      // Get the unified diff via existing IPC
+      const result = unwrapEnvelope(
+        await window.gitOps.getDiff(worktreePath, filePath, staged, isUntracked)
+      )
       if (result.success && result.diff) {
-        await projectApi.copyToClipboard(result.diff)
+        unwrapEnvelope(await window.projectOps.copyToClipboard(result.diff))
       }
     }
   }, [worktreePath, filePath, staged, isUntracked, compareBranch])

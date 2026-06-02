@@ -3,7 +3,7 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, test, vi, beforeEach } from 'vitest'
-import { WorktreeItem } from '../../src/renderer/src/components/worktrees/WorktreeItem'
+import { ProjectItem } from '../../src/renderer/src/components/projects/ProjectItem'
 import { useProjectStore } from '../../src/renderer/src/stores/useProjectStore'
 import { useWorktreeStore } from '../../src/renderer/src/stores/useWorktreeStore'
 import { useSpaceStore } from '../../src/renderer/src/stores/useSpaceStore'
@@ -54,24 +54,10 @@ const mockProject = {
   last_accessed_at: '2026-01-01T00:00:00Z'
 }
 
-const mockWorktree = {
-  id: 'test-worktree-id',
-  project_id: mockProject.id,
-  name: 'main',
-  branch_name: 'main',
-  path: '/path/to/project',
-  status: 'active' as const,
-  is_default: true,
-  created_at: '2026-01-01T00:00:00Z',
-  last_accessed_at: '2026-01-01T00:00:00Z',
-  attachments: '[]'
-}
-
 describe('ProjectItem - Custom Commands Menu Integration', () => {
   beforeEach(() => {
     // Reset all stores
     useProjectStore.setState({
-      projects: [mockProject],
       selectedProjectId: null,
       expandedProjectIds: new Set(),
       editingProjectId: null,
@@ -124,10 +110,10 @@ describe('ProjectItem - Custom Commands Menu Integration', () => {
   test('should not render custom commands section when no commands are configured', async () => {
     const user = userEvent.setup()
 
-    render(<WorktreeItem worktree={mockWorktree} projectPath={mockProject.path} />)
+    render(<ProjectItem project={mockProject} />)
 
-    const worktreeItem = screen.getByTestId('worktree-item-test-worktree-id')
-    await user.pointer({ keys: '[MouseRight]', target: worktreeItem })
+    const projectItem = screen.getByTestId('project-item-test-project-id')
+    await user.pointer({ keys: '[MouseRight]', target: projectItem })
 
     // Context menu should open
     const menu = await screen.findByRole('menu')
@@ -162,10 +148,10 @@ describe('ProjectItem - Custom Commands Menu Integration', () => {
       ]
     } as any)
 
-    render(<WorktreeItem worktree={mockWorktree} projectPath={mockProject.path} />)
+    render(<ProjectItem project={mockProject} />)
 
-    const worktreeItem = screen.getByTestId('worktree-item-test-worktree-id')
-    await user.pointer({ keys: '[MouseRight]', target: worktreeItem })
+    const projectItem = screen.getByTestId('project-item-test-project-id')
+    await user.pointer({ keys: '[MouseRight]', target: projectItem })
 
     // Context menu should open
     const menu = await screen.findByRole('menu')

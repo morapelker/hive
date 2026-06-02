@@ -1,7 +1,6 @@
 import { spawn, ChildProcess } from 'child_process'
 import { randomUUID } from 'crypto'
-import { BASH_STREAM_CHANNEL } from '../../shared/bash-events'
-import { publishDesktopBackendEvent } from '../desktop/backend-manager'
+import { BrowserWindow } from 'electron'
 import { createLogger } from './logger'
 
 const log = createLogger({ component: 'BashService' })
@@ -72,12 +71,18 @@ function getColorEnv(): NodeJS.ProcessEnv {
 }
 
 export class BashService {
+  private mainWindow: BrowserWindow | null = null
   private runs: Map<string, BashRun> = new Map()
   private outputBuffers: Map<string, string> = new Map()
   private outputFlushTimers: Map<string, NodeJS.Timeout> = new Map()
 
+  setMainWindow(window: BrowserWindow): void {
+    this.mainWindow = window
+  }
+
   private sendEvent(event: BashStreamEvent): void {
-    void publishDesktopBackendEvent(BASH_STREAM_CHANNEL, event).catch(() => undefined)
+    if (!this.mainWindow || this.mainWindow.isDestroyed()) return
+    this.mainWindow.webContents.send('bash:stream', event)
   }
 
   private scheduleOutputFlush(sessionId: string): void {
@@ -217,8 +222,7 @@ export class BashService {
 
     // Append only enough to reach exactly 1 MB, then add the truncation sentinel
     // and kill the process tree.
-    const allowed =
-      remaining > 0 ? Buffer.from(chunk, 'utf-8').subarray(0, remaining).toString('utf-8') : ''
+    const allowed = remaining > 0 ? Buffer.from(chunk, 'utf-8').subarray(0, remaining).toString('utf-8') : ''
     if (allowed.length > 0) {
       run.outputBuffer += allowed
       run.outputBytes += Buffer.byteLength(allowed, 'utf-8')
@@ -242,10 +246,16 @@ export class BashService {
     }
   }
 
-  async run(sessionId: string, command: string, cwd: string): Promise<{ runId: string }> {
+  async run(
+    sessionId: string,
+    command: string,
+    cwd: string
+  ): Promise<{ runId: string }> {
     const existing = this.runs.get(sessionId)
     if (existing && existing.status === 'running') {
-      throw new Error(`A bash command is already running for session ${sessionId}`)
+      throw new Error(
+        `A bash command is already running for session ${sessionId}`
+      )
     }
 
     // A new run replaces any prior completed run for this session.

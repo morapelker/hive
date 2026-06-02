@@ -1,5 +1,4 @@
 import type { Envelope } from '@shared/types/ipc-envelope'
-import { getLegacyApiOverride } from '@/api/legacy-api-overrides'
 
 export function unwrapEnvelope<A>(envelope: Envelope<A> | A): A {
   if (envelope && typeof envelope === 'object') {
@@ -39,9 +38,7 @@ export function unwrapEnvelopeApi<T extends object>(api: T | (() => T)): Unwrapp
     {},
     {
       get(_target, prop) {
-        const owner = resolve()
-        const override = getLegacyApiOverride(owner, prop)
-        const value = override.found ? override.value : Reflect.get(owner, prop)
+        const value = Reflect.get(resolve(), prop)
 
         if (typeof value === 'function') {
           return async (...args: unknown[]) => unwrapEnvelope(await value(...args))

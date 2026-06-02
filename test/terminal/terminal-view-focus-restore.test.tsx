@@ -1,10 +1,6 @@
 import { act, render } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { TerminalView } from '../../src/renderer/src/components/terminal/TerminalView'
-import {
-  resetRendererRpcClientForTests,
-  setRendererRpcClient
-} from '../../src/renderer/src/api/rpc-client'
 import { useLayoutStore } from '../../src/renderer/src/stores/useLayoutStore'
 import { useSettingsStore } from '../../src/renderer/src/stores/useSettingsStore'
 
@@ -59,12 +55,6 @@ describe('TerminalView Ghostty focus restoration', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     vi.clearAllMocks()
-    setRendererRpcClient({
-      request: vi.fn(async (method: string) =>
-        method === 'terminalOps.getConfig' ? { fontFamily: 'JetBrains Mono', fontSize: 14 } : {}
-      ),
-      subscribe: vi.fn().mockReturnValue(() => {})
-    })
 
     act(() => {
       useSettingsStore.setState({
@@ -76,7 +66,6 @@ describe('TerminalView Ghostty focus restoration', () => {
   })
 
   afterEach(() => {
-    resetRendererRpcClientForTests()
     vi.useRealTimers()
   })
 

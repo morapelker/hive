@@ -1,20 +1,29 @@
 import { EventEmitter } from 'node:events'
-import { OPENCODE_STREAM_CHANNEL } from '@shared/opencode-events'
+import type { BrowserWindow } from 'electron'
 import type { OpenCodeStreamEvent } from '@shared/types/opencode'
+import { createLogger } from './logger'
+
+const log = createLogger({ component: 'AgentEventBus' })
 
 class AgentEventBus extends EventEmitter {
+  private mainWindow: BrowserWindow | null = null
+
+  setMainWindow(window: BrowserWindow | null): void {
+    this.mainWindow = window
+  }
+
   publish(event: OpenCodeStreamEvent): void {
-    void import('../desktop/backend-manager')
-      .then(({ publishDesktopBackendEvent }) =>
-        publishDesktopBackendEvent(OPENCODE_STREAM_CHANNEL, event)
-      )
-      .catch(() => undefined)
-    this.emit(OPENCODE_STREAM_CHANNEL, event)
+    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+      this.mainWindow.webContents.send('opencode:stream', event)
+    } else {
+      log.debug('publish: no renderer window')
+    }
+    this.emit('opencode:stream', event)
   }
 
   subscribe(listener: (event: OpenCodeStreamEvent) => void): () => void {
-    this.on(OPENCODE_STREAM_CHANNEL, listener)
-    return () => this.off(OPENCODE_STREAM_CHANNEL, listener)
+    this.on('opencode:stream', listener)
+    return () => this.off('opencode:stream', listener)
   }
 }
 

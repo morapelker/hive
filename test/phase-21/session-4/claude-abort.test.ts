@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import type { BrowserWindow } from 'electron'
 
 vi.mock('../../../src/main/services/claude-sdk-loader', () => ({
   loadClaudeSDK: vi.fn()
@@ -14,20 +15,18 @@ vi.mock('../../../src/main/services/logger', () => ({
   })
 }))
 
-vi.mock('../../../src/main/services/agent-event-bus', () => ({
-  agentEventBus: { publish: vi.fn() }
-}))
-
-vi.mock('../../../src/main/desktop/backend-manager', () => ({
-  publishDesktopBackendEvent: vi.fn()
-}))
-
 import {
   ClaudeCodeImplementer,
   type ClaudeSessionState,
   type ClaudeQuery
 } from '../../../src/main/services/claude-code-implementer'
-import { agentEventBus } from '../../../src/main/services/agent-event-bus'
+
+function createMockWindow(): BrowserWindow {
+  return {
+    isDestroyed: () => false,
+    webContents: { send: vi.fn() }
+  } as unknown as BrowserWindow
+}
 
 function createMockQuery(overrides: Partial<ClaudeQuery> = {}): ClaudeQuery {
   return {
@@ -39,19 +38,24 @@ function createMockQuery(overrides: Partial<ClaudeQuery> = {}): ClaudeQuery {
   }
 }
 
-function getStreamEvents(): any[] {
-  const publish = agentEventBus.publish as ReturnType<typeof vi.fn>
-  return publish.mock.calls.map((call: any[]) => call[0])
+function getStreamEvents(window: BrowserWindow): any[] {
+  const send = (window.webContents as any).send as ReturnType<typeof vi.fn>
+  return send.mock.calls
+    .filter((call: any[]) => call[0] === 'opencode:stream')
+    .map((call: any[]) => call[1])
 }
 
 describe('ClaudeCodeImplementer – abort (Session 4)', () => {
   let impl: ClaudeCodeImplementer
   let sessions: Map<string, ClaudeSessionState>
+  let mockWindow: BrowserWindow
 
   beforeEach(() => {
     vi.clearAllMocks()
     impl = new ClaudeCodeImplementer()
     sessions = (impl as any).sessions
+    mockWindow = createMockWindow()
+    impl.setMainWindow(mockWindow)
   })
 
   it('returns false when session is not found', async () => {
@@ -84,7 +88,7 @@ describe('ClaudeCodeImplementer – abort (Session 4)', () => {
 
     await impl.abort('/proj', sessionId)
 
-    const events = getStreamEvents()
+    const events = getStreamEvents(mockWindow)
 
     expect(events.length).toBeGreaterThanOrEqual(1)
     const idleEvent = events.find(

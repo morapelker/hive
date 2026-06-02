@@ -1,6 +1,5 @@
-import { Notification, app } from 'electron'
+import { Notification, BrowserWindow, app } from 'electron'
 import { createLogger } from './logger'
-import { emitNotificationNavigate } from './notification-events'
 
 const log = createLogger({ component: 'NotificationService' })
 
@@ -12,30 +11,18 @@ interface SessionNotificationData {
   sessionId: string
 }
 
-interface NotificationWindowTarget {
-  on(event: 'focus', listener: () => void): void
-  isDestroyed(): boolean
-  isFocused(): boolean
-  show(): void
-  focus(): void
-}
-
 class NotificationService {
-  private mainWindow: NotificationWindowTarget | null = null
+  private mainWindow: BrowserWindow | null = null
   private unreadCount = 0
   private sessionsWithQueuedMessages = new Set<string>()
 
-  setMainWindow(window: NotificationWindowTarget): void {
+  setMainWindow(window: BrowserWindow): void {
     this.mainWindow = window
 
     // Clear badge when window gains focus
     window.on('focus', () => {
       this.clearBadge()
     })
-  }
-
-  shouldNotifyWhenWindowUnfocused(): boolean {
-    return !!this.mainWindow && !this.mainWindow.isDestroyed() && !this.mainWindow.isFocused()
   }
 
   showSessionComplete(data: SessionNotificationData): void {
@@ -68,7 +55,7 @@ class NotificationService {
       if (this.mainWindow && !this.mainWindow.isDestroyed()) {
         this.mainWindow.show()
         this.mainWindow.focus()
-        emitNotificationNavigate({
+        this.mainWindow.webContents.send('notification:navigate', {
           projectId: data.projectId,
           worktreeId: data.worktreeId,
           sessionId: data.sessionId
@@ -93,7 +80,10 @@ class NotificationService {
    * `showSessionComplete`, this is NOT suppressed by queued-message state —
    * a blocking feedback request always needs the user's attention.
    */
-  showPendingUserFeedback(data: SessionNotificationData, kind: 'question' | 'permission'): void {
+  showPendingUserFeedback(
+    data: SessionNotificationData,
+    kind: 'question' | 'permission'
+  ): void {
     if (!Notification.isSupported()) {
       log.warn('Notifications not supported on this platform')
       return
@@ -120,7 +110,7 @@ class NotificationService {
       if (this.mainWindow && !this.mainWindow.isDestroyed()) {
         this.mainWindow.show()
         this.mainWindow.focus()
-        emitNotificationNavigate({
+        this.mainWindow.webContents.send('notification:navigate', {
           projectId: data.projectId,
           worktreeId: data.worktreeId,
           sessionId: data.sessionId

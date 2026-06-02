@@ -1,14 +1,37 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest'
 import { useWorktreeStore } from '../../../src/renderer/src/stores/useWorktreeStore'
 
-vi.mock('../../../src/renderer/src/api/settings-api', () => ({
-  settingsApi: {
-    detectEditors: vi.fn(),
-    detectTerminals: vi.fn(),
-    onSettingsUpdated: vi.fn(() => vi.fn()),
-    openWithTerminal: vi.fn()
+// Mock window APIs used by the store
+Object.defineProperty(window, 'db', {
+  writable: true,
+  value: {
+    worktree: {
+      getActiveByProject: vi.fn().mockResolvedValue([]),
+      touch: vi.fn().mockResolvedValue(undefined)
+    }
   }
-}))
+})
+
+Object.defineProperty(window, 'worktreeOps', {
+  writable: true,
+  value: {
+    create: vi.fn(),
+    delete: vi.fn(),
+    sync: vi.fn(),
+    openInTerminal: vi.fn(),
+    openInEditor: vi.fn(),
+    renameBranch: vi.fn(),
+    duplicate: vi.fn()
+  }
+})
+
+Object.defineProperty(window, 'projectOps', {
+  writable: true,
+  value: {
+    showInFolder: vi.fn(),
+    copyToClipboard: vi.fn()
+  }
+})
 
 const makeWorktree = (id: string, projectId: string, isDefault = false) => ({
   id,

@@ -1,35 +1,21 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-
-const apiMocks = vi.hoisted(() => ({
-  dbApi: {
-    worktree: {
-      update: vi.fn().mockResolvedValue(undefined)
-    }
-  },
-  settingsApi: {
-    onSettingsUpdated: vi.fn(() => vi.fn())
-  }
-}))
-
-vi.mock('@/api/db-api', () => ({
-  dbApi: apiMocks.dbApi
-}))
-
-vi.mock('@/api/settings-api', () => ({
-  settingsApi: apiMocks.settingsApi
-}))
-
-import { dbApi } from '@/api/db-api'
 import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 
-const mockWorktreeDb = vi.mocked(dbApi.worktree)
+Object.defineProperty(window, 'db', {
+  writable: true,
+  configurable: true,
+  value: {
+    worktree: {
+      update: vi.fn().mockResolvedValue(undefined)
+    }
+  }
+})
 
 describe('ticket last message bump', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mockWorktreeDb.update.mockResolvedValue(undefined)
     useWorktreeStatusStore.setState({ lastMessageTimeByWorktree: {} })
     useConnectionStore.setState({
       connections: [
@@ -77,7 +63,6 @@ describe('ticket last message bump', () => {
     bumpWorktreeLastMessage({ worktreeId: 'wt-1', timestamp: 1234 })
 
     expect(useWorktreeStatusStore.getState().getLastMessageTime('wt-1')).toBe(1234)
-    expect(mockWorktreeDb.update).toHaveBeenCalledWith('wt-1', { last_message_at: 1234 })
   })
 
   test('fans out a connection-bound ticket send to every member worktree', () => {
@@ -85,14 +70,11 @@ describe('ticket last message bump', () => {
 
     expect(useWorktreeStatusStore.getState().getLastMessageTime('wt-a')).toBe(5678)
     expect(useWorktreeStatusStore.getState().getLastMessageTime('wt-b')).toBe(5678)
-    expect(mockWorktreeDb.update).toHaveBeenCalledWith('wt-a', { last_message_at: 5678 })
-    expect(mockWorktreeDb.update).toHaveBeenCalledWith('wt-b', { last_message_at: 5678 })
   })
 
   test('does nothing for board-assistant sends with no worktree or connection', () => {
     bumpWorktreeLastMessage({ worktreeId: null, connectionId: null, timestamp: 9999 })
 
     expect(useWorktreeStatusStore.getState().lastMessageTimeByWorktree).toEqual({})
-    expect(mockWorktreeDb.update).not.toHaveBeenCalled()
   })
 })

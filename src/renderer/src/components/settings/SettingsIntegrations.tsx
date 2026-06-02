@@ -9,7 +9,6 @@ import {
   loadProviderSettingsFromDatabase
 } from '@/lib/provider-settings'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
-import { ticketImportApi } from '@/api/ticket-import-api'
 
 interface ProviderInfo {
   id: string
@@ -33,14 +32,14 @@ export function SettingsIntegrations() {
   const [testResult, setTestResult] = useState<Record<string, boolean | null>>({})
 
   useEffect(() => {
-    ticketImportApi
+    window.ticketImport
       .listProviders()
       .then(unwrapEnvelope)
       .then(async (provs) => {
         setProviders(provs)
         const schemaMap: Record<string, SettingsFieldDef[]> = {}
         for (const p of provs) {
-          schemaMap[p.id] = unwrapEnvelope(await ticketImportApi.getSettingsSchema(p.id))
+          schemaMap[p.id] = unwrapEnvelope(await window.ticketImport.getSettingsSchema(p.id))
         }
         setSchemas(schemaMap)
 
@@ -117,7 +116,7 @@ export function SettingsIntegrations() {
       }
 
       const result = unwrapEnvelope(
-        await ticketImportApi.authenticate(providerId, providerSettings)
+        await window.ticketImport.authenticate(providerId, providerSettings)
       )
       setTestResult((prev) => ({ ...prev, [providerId]: result.success }))
       if (result.success) {

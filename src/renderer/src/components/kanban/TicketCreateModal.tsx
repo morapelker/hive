@@ -22,7 +22,7 @@ import { TicketAttachmentEditor, MAX_ATTACHMENTS } from './TicketAttachmentEdito
 import { TicketDiscardChangesDialog } from './TicketDiscardChangesDialog'
 import type { TicketAttachment } from './TicketAttachmentEditor'
 import { useImagePaste } from '@/hooks/useImagePaste'
-import { attachmentApi } from '@/api/attachment-api'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 interface TicketCreateModalProps {
   open: boolean
@@ -119,7 +119,10 @@ export function TicketCreateModal({
       if (!createdSuccessfully.current) {
         for (const att of attachments) {
           if (att.type === 'image' && att.url) {
-            attachmentApi.deleteImage(att.url).catch(() => {})
+            window.attachmentOps
+              .deleteImage(att.url)
+              .then(unwrapEnvelope)
+              .catch(() => {})
           }
         }
       }

@@ -6,16 +6,6 @@ import tailwindcss from '@tailwindcss/vite'
 export default defineConfig({
   main: {
     plugins: [externalizeDepsPlugin()],
-    build: {
-      rollupOptions: {
-        input: {
-          index: resolve(__dirname, 'src/main/index.ts')
-          // The server (`src/server/bin.ts`) is built separately via
-          // electron.vite.server.config.ts so it can be electron-free — it runs
-          // as its own Node process and must not contain `require('electron')`.
-        }
-      }
-    },
     resolve: {
       alias: {
         '@main': resolve('src/main'),

@@ -4,8 +4,6 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { SearchAddon } from '@xterm/addon-search'
 import type { TerminalBackend, TerminalOpts, TerminalBackendCallbacks } from './types'
-import { projectApi } from '@/api/project-api'
-import { terminalApi } from '@/api/terminal-api'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 /** Default Catppuccin Mocha theme used when no Ghostty config is found */
@@ -137,10 +135,6 @@ export class XtermBackend implements TerminalBackend {
   private removeDataListener: (() => void) | null = null
   private removeExitListener: (() => void) | null = null
   private inputDisposable: { dispose: () => void } | null = null
-  private container: HTMLDivElement | null = null
-  private resizeDebounceTimer: ReturnType<typeof setTimeout> | null = null
-  private lastSyncedCols = 0
-  private lastSyncedRows = 0
   private terminalId: string = ''
   private shiftEnterAsNewline = false
   private ghosttyConfig: GhosttyTerminalConfig = {}
@@ -153,7 +147,6 @@ export class XtermBackend implements TerminalBackend {
   mount(container: HTMLDivElement, opts: TerminalOpts, callbacks: TerminalBackendCallbacks): void {
     this.terminalId = opts.terminalId
     this.shiftEnterAsNewline = opts.shiftEnterAsNewline ?? false
-    this.container = container
     container.innerHTML = ''
 
     // Store config for theme rebuilding
@@ -228,9 +221,9 @@ export class XtermBackend implements TerminalBackend {
       if (e.metaKey && e.shiftKey && e.key === 'V' && e.type === 'keydown') {
         navigator.clipboard
           .readText()
-          .catch(() => projectApi.readFromClipboard())
+          .catch(() => window.projectOps.readFromClipboard().then(unwrapEnvelope))
           .then((text) => {
-            if (text) terminalApi.write(this.terminalId, text)
+            if (text) window.terminalOps.write(this.terminalId, text)
           })
           .catch((err) => console.error('Terminal paste failed:', err))
         return false
@@ -247,7 +240,7 @@ export class XtermBackend implements TerminalBackend {
     this.searchAddon = searchAddon
 
     const webLinksAddon = new WebLinksAddon((_event, uri) => {
-      projectApi.openPath(uri).catch(console.error)
+      window.projectOps.openPath(uri).then(unwrapEnvelope).catch(console.error)
     })
     terminal.loadAddon(webLinksAddon)
 
@@ -275,23 +268,23 @@ export class XtermBackend implements TerminalBackend {
 
     // Wire user input -> PTY
     this.inputDisposable = terminal.onData((data) => {
-      terminalApi.write(this.terminalId, data)
+      window.terminalOps.write(this.terminalId, data)
     })
 
     // Wire PTY output -> terminal display
-    this.removeDataListener = terminalApi.onData(this.terminalId, (data) => {
+    this.removeDataListener = window.terminalOps.onData(this.terminalId, (data) => {
       terminal.write(data)
     })
 
     // Wire PTY exit -> status change
-    this.removeExitListener = terminalApi.onExit(this.terminalId, (code) => {
+    this.removeExitListener = window.terminalOps.onExit(this.terminalId, (code) => {
       terminal.write(`\r\n\x1b[90m[Process exited with code ${code}]\x1b[0m\r\n`)
       callbacks.onStatusChange('exited', code)
     })
 
     // Create the PTY
     callbacks.onStatusChange('creating')
-    const createTerminal = opts.createTerminal ?? terminalApi.create
+    const createTerminal = opts.createTerminal ?? window.terminalOps.create
     createTerminal(this.terminalId, opts.cwd, opts.shell)
       .then(unwrapEnvelope)
       .then((result) => {
@@ -305,51 +298,40 @@ export class XtermBackend implements TerminalBackend {
           // was silently dropped. Without this, zsh uses 80-col cursor positioning
           // while xterm.js renders at the actual width, causing visual mismatches
           // (e.g. auto-suggest redraws writing text at wrong positions).
-          // Must run immediately (not debounced) so the initial size is correct.
-          this.syncSizeToPty()
+          try {
+            if (this.fitAddon) {
+              this.fitAddon.fit()
+              const dims = this.fitAddon.proposeDimensions()
+              if (dims) {
+                window.terminalOps
+                  .resize(this.terminalId, dims.cols, dims.rows)
+                  .then(unwrapEnvelope)
+              }
+            }
+          } catch {
+            // Ignore fit errors during setup
+          }
         } else {
           terminal.write(`\x1b[31mFailed to create terminal: ${result.error}\x1b[0m\r\n`)
           callbacks.onStatusChange('exited')
         }
       })
 
-    // ResizeObserver for auto-fit. Debounced (trailing) so a storm of width
-    // changes — e.g. when the single session view is reparented between the
-    // main tab and the ticket modal, or during a modal open/close animation —
-    // collapses into one fit + one PTY resize at the final settled width.
-    // Without this, each intermediate width fires a resize whose SIGWINCH redraw
-    // arrives slowly over the multi-hop transport, so xterm reflows stale content
-    // at a width the PTY hasn't caught up to yet (garbled rendering).
+    // ResizeObserver for auto-fit
     this.resizeObserver = new ResizeObserver(() => {
-      if (this.resizeDebounceTimer) clearTimeout(this.resizeDebounceTimer)
-      this.resizeDebounceTimer = setTimeout(() => {
-        this.resizeDebounceTimer = null
-        this.syncSizeToPty()
-      }, 100)
+      try {
+        if (this.fitAddon && container.offsetWidth) {
+          this.fitAddon.fit()
+          const dims = this.fitAddon.proposeDimensions()
+          if (dims) {
+            window.terminalOps.resize(this.terminalId, dims.cols, dims.rows).then(unwrapEnvelope)
+          }
+        }
+      } catch {
+        // Ignore resize errors during teardown
+      }
     })
     this.resizeObserver.observe(container)
-  }
-
-  /**
-   * Fit xterm.js to its container and, only if the resulting dimensions differ
-   * from the last value we sent, push the new size to the PTY. The
-   * changed-dimensions guard avoids spurious reflows/resizes when the container
-   * is reparented between two equal-width targets or the observer fires at an
-   * unchanged size.
-   */
-  private syncSizeToPty(): void {
-    try {
-      if (!this.fitAddon || !this.container?.offsetWidth) return
-      this.fitAddon.fit()
-      const dims = this.fitAddon.proposeDimensions()
-      if (!dims) return
-      if (dims.cols === this.lastSyncedCols && dims.rows === this.lastSyncedRows) return
-      this.lastSyncedCols = dims.cols
-      this.lastSyncedRows = dims.rows
-      terminalApi.resize(this.terminalId, dims.cols, dims.rows).then(unwrapEnvelope)
-    } catch {
-      // Ignore fit/resize errors during setup or teardown
-    }
   }
 
   setShiftEnterAsNewline(enabled: boolean): void {
@@ -361,7 +343,7 @@ export class XtermBackend implements TerminalBackend {
   }
 
   resize(cols: number, rows: number): void {
-    terminalApi.resize(this.terminalId, cols, rows).then(unwrapEnvelope)
+    window.terminalOps.resize(this.terminalId, cols, rows).then(unwrapEnvelope)
   }
 
   focus(): void {
@@ -380,7 +362,15 @@ export class XtermBackend implements TerminalBackend {
 
   /** Re-fit after visibility change */
   fit(): void {
-    this.syncSizeToPty()
+    try {
+      this.fitAddon?.fit()
+      const dims = this.fitAddon?.proposeDimensions()
+      if (dims) {
+        window.terminalOps.resize(this.terminalId, dims.cols, dims.rows).then(unwrapEnvelope)
+      }
+    } catch {
+      // Ignore fit errors
+    }
   }
 
   searchOpen(): void {
@@ -404,10 +394,6 @@ export class XtermBackend implements TerminalBackend {
   }
 
   dispose(): void {
-    if (this.resizeDebounceTimer) {
-      clearTimeout(this.resizeDebounceTimer)
-      this.resizeDebounceTimer = null
-    }
     this.resizeObserver?.disconnect()
     this.inputDisposable?.dispose()
     this.removeDataListener?.()
@@ -416,7 +402,6 @@ export class XtermBackend implements TerminalBackend {
     this.terminal?.dispose()
     this.terminal = null
     this.fitAddon = null
-    this.container = null
     this.resizeObserver = null
     this.removeDataListener = null
     this.removeExitListener = null

@@ -178,10 +178,7 @@ export function GitStatusPanel({
     if (!worktreePath) return
     setIsRefreshing(true)
     try {
-      await Promise.all([
-        loadFileStatuses(worktreePath, { force: true }),
-        loadBranchInfo(worktreePath, { force: true })
-      ])
+      await Promise.all([loadFileStatuses(worktreePath), loadBranchInfo(worktreePath)])
     } finally {
       setIsRefreshing(false)
     }

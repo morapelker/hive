@@ -1,7 +1,6 @@
 import { useEffect } from 'react'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
-import { systemApi } from '@/api/system-api'
 
 /**
  * Drives the main-process powerSaveBlocker based on the user's keep-awake
@@ -21,7 +20,7 @@ export function useKeepAwake(): void {
   const shouldBeAwake = enabled && hasStreamingSession
 
   useEffect(() => {
-    systemApi.setKeepAwake(shouldBeAwake).catch((err) => {
+    window.systemOps?.setKeepAwake?.(shouldBeAwake).catch((err) => {
       console.error('[keepAwake] setKeepAwake failed', err)
     })
   }, [shouldBeAwake])

@@ -2,53 +2,6 @@ import { describe, test, expect, beforeEach, vi } from 'vitest'
 import { act } from '@testing-library/react'
 import { useSessionStore } from '../../src/renderer/src/stores/useSessionStore'
 
-const dbApiMocks = vi.hoisted(() => ({
-  setting: {
-    get: vi.fn(),
-    set: vi.fn()
-  },
-  session: {
-    update: vi.fn()
-  },
-  worktree: {
-    updateModel: vi.fn()
-  }
-}))
-
-const opencodeApiMocks = vi.hoisted(() => ({
-  disconnect: vi.fn(),
-  setModel: vi.fn()
-}))
-
-const terminalApiMocks = vi.hoisted(() => ({
-  destroy: vi.fn()
-}))
-
-const settingsApiMocks = vi.hoisted(() => ({
-  detectEditors: vi.fn(),
-  detectTerminals: vi.fn(),
-  getAll: vi.fn(),
-  openWithEditor: vi.fn(),
-  openWithTerminal: vi.fn(),
-  onSettingsUpdated: vi.fn()
-}))
-
-vi.mock('@/api/db-api', () => ({
-  dbApi: dbApiMocks
-}))
-
-vi.mock('@/api/opencode-api', () => ({
-  opencodeApi: opencodeApiMocks
-}))
-
-vi.mock('@/api/terminal-api', () => ({
-  terminalApi: terminalApiMocks
-}))
-
-vi.mock('@/api/settings-api', () => ({
-  settingsApi: settingsApiMocks
-}))
-
 function makeTerminalSession(id: string, worktreeId: string) {
   return {
     id,
@@ -71,15 +24,22 @@ function makeTerminalSession(id: string, worktreeId: string) {
 
 describe('closedTerminalSessionIds signal', () => {
   beforeEach(() => {
-    vi.clearAllMocks()
-    dbApiMocks.setting.get.mockResolvedValue(null)
-    dbApiMocks.setting.set.mockResolvedValue(true)
-    dbApiMocks.session.update.mockResolvedValue(undefined)
-    dbApiMocks.worktree.updateModel.mockResolvedValue({ success: true })
-    opencodeApiMocks.disconnect.mockResolvedValue({ success: true, value: { success: true } })
-    opencodeApiMocks.setModel.mockResolvedValue({ success: true, value: { success: true } })
-    terminalApiMocks.destroy.mockResolvedValue({ success: true, value: undefined })
-    settingsApiMocks.onSettingsUpdated.mockReturnValue(() => {})
+    Object.defineProperty(window, 'db', {
+      value: {
+        session: {
+          update: vi.fn().mockResolvedValue(undefined)
+        }
+      },
+      writable: true,
+      configurable: true
+    })
+    Object.defineProperty(window, 'terminalOps', {
+      value: {
+        destroy: vi.fn().mockResolvedValue(undefined)
+      },
+      writable: true,
+      configurable: true
+    })
 
     act(() => {
       useSessionStore.setState({
@@ -172,15 +132,26 @@ function makeConnectionTerminalSession(id: string, connectionId: string) {
 
 describe('setSessionModel with connection terminal sessions', () => {
   beforeEach(() => {
-    vi.clearAllMocks()
-    dbApiMocks.setting.get.mockResolvedValue(null)
-    dbApiMocks.setting.set.mockResolvedValue(true)
-    dbApiMocks.session.update.mockResolvedValue(undefined)
-    dbApiMocks.worktree.updateModel.mockResolvedValue({ success: true })
-    opencodeApiMocks.disconnect.mockResolvedValue({ success: true, value: { success: true } })
-    opencodeApiMocks.setModel.mockResolvedValue({ success: true, value: { success: true } })
-    terminalApiMocks.destroy.mockResolvedValue({ success: true, value: undefined })
-    settingsApiMocks.onSettingsUpdated.mockReturnValue(() => {})
+    Object.defineProperty(window, 'db', {
+      value: {
+        session: { update: vi.fn().mockResolvedValue(undefined) },
+        worktree: { updateModel: vi.fn().mockResolvedValue(undefined) }
+      },
+      writable: true,
+      configurable: true
+    })
+    Object.defineProperty(window, 'opencodeOps', {
+      value: {
+        setModel: vi.fn().mockResolvedValue(undefined)
+      },
+      writable: true,
+      configurable: true
+    })
+    Object.defineProperty(window, 'terminalOps', {
+      value: { destroy: vi.fn().mockResolvedValue(undefined) },
+      writable: true,
+      configurable: true
+    })
 
     act(() => {
       useSessionStore.setState({
@@ -202,7 +173,7 @@ describe('setSessionModel with connection terminal sessions', () => {
     })
   })
 
-  test('does NOT call opencodeApi.setModel for connection-scoped terminal sessions', async () => {
+  test('does NOT call opencodeOps.setModel for connection-scoped terminal sessions', async () => {
     await act(async () => {
       await useSessionStore.getState().setSessionModel('conn-term-1', {
         providerID: 'anthropic',
@@ -211,6 +182,6 @@ describe('setSessionModel with connection terminal sessions', () => {
       })
     })
 
-    expect(opencodeApiMocks.setModel).not.toHaveBeenCalled()
+    expect(window.opencodeOps.setModel).not.toHaveBeenCalled()
   })
 })

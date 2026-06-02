@@ -1,3 +1,4 @@
+import type { BrowserWindow } from 'electron'
 import type { AgentSdk } from '@shared/types/agent-sdk'
 
 /** Alias of the shared {@link AgentSdk} union, kept for the main-process implementer registry's naming. */
@@ -101,6 +102,9 @@ export interface AgentSdkImplementer {
 
   // Session management
   renameSession(worktreePath: string, agentSessionId: string, name: string): Promise<void>
+
+  // Window binding (for event forwarding to renderer)
+  setMainWindow(window: BrowserWindow): void
 }
 
 export const OPENCODE_CAPABILITIES: AgentSdkCapabilities = {

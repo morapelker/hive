@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import userEvent from '@testing-library/user-event'
 import { fireEvent, render, screen, waitFor } from '../utils/render'
 import { KanbanTicketCard } from '@/components/kanban/KanbanTicketCard'
@@ -13,50 +13,7 @@ import { useScriptStore } from '@/stores/useScriptStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
-import { resetRendererRpcClientForTests, setRendererRpcClient } from '@/api/rpc-client'
 import type { KanbanTicket } from '../../src/main/db/types'
-
-vi.mock('@/api/settings-api', () => ({
-  settingsApi: {
-    onSettingsUpdated: vi.fn(() => vi.fn())
-  }
-}))
-
-vi.mock('@/api/pet-api', () => ({
-  petApi: {
-    updateSettings: vi.fn().mockResolvedValue(undefined)
-  }
-}))
-
-vi.mock('@/api/telegram-api', () => ({
-  telegramApi: {
-    getConfig: vi.fn().mockResolvedValue(null),
-    getStatus: vi.fn().mockResolvedValue({
-      active: false,
-      sessionId: null,
-      worktreeId: null,
-      connectionId: null,
-      mode: null,
-      health: 'ok',
-      lastError: null
-    }),
-    startForwarding: vi.fn().mockResolvedValue({
-      ok: true,
-      status: {
-        active: false,
-        sessionId: null,
-        worktreeId: null,
-        connectionId: null,
-        mode: null,
-        health: 'ok',
-        lastError: null
-      }
-    }),
-    onStatusChanged: vi.fn(() => vi.fn()),
-    onMessageReceived: vi.fn(() => vi.fn()),
-    onPlanImplementRequested: vi.fn(() => vi.fn())
-  }
-}))
 
 vi.mock('@/components/kanban/WorktreePickerModal', () => ({
   WorktreePickerModal: () => null
@@ -93,7 +50,18 @@ vi.mock('@/lib/toast', () => ({
   }
 }))
 
-let request: ReturnType<typeof vi.fn>
+const mockDb = {
+  project: {
+    touch: vi.fn().mockResolvedValue(undefined)
+  },
+  worktree: {
+    touch: vi.fn().mockResolvedValue(undefined)
+  }
+}
+
+const mockOpencodeOps = {
+  command: vi.fn().mockResolvedValue({ success: true, value: { success: true } })
+}
 
 function makeTicket(overrides: Partial<KanbanTicket> = {}): KanbanTicket {
   return {
@@ -259,17 +227,6 @@ function seedStores(): void {
 describe('pinned board ticket navigation', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    resetRendererRpcClientForTests()
-    request = vi.fn(async (method: string) => {
-      if (method === 'db.project.touch') return true
-      if (method === 'db.worktree.touch') return undefined
-      if (method === 'opencodeOps.command') return { success: true }
-      return null
-    })
-    setRendererRpcClient({
-      request,
-      subscribe: vi.fn(() => vi.fn())
-    })
 
     if (!globalThis.ResizeObserver) {
       class MockResizeObserver {
@@ -285,11 +242,19 @@ describe('pinned board ticket navigation', () => {
       })
     }
 
-    seedStores()
-  })
+    Object.defineProperty(window, 'db', {
+      writable: true,
+      configurable: true,
+      value: mockDb
+    })
 
-  afterEach(() => {
-    resetRendererRpcClientForTests()
+    Object.defineProperty(window, 'opencodeOps', {
+      writable: true,
+      configurable: true,
+      value: mockOpencodeOps
+    })
+
+    seedStores()
   })
 
   test('cmd-click on a pinned-board ticket keeps the pinned board active', () => {
@@ -393,13 +358,12 @@ describe('pinned board ticket navigation', () => {
     await user.click(resumeItem)
 
     await waitFor(() => {
-      expect(request).toHaveBeenCalledWith('opencodeOps.command', {
-        worktreePath: '/tmp/proj-1/feature-auth',
-        opencodeSessionId: 'session-1',
-        command: 'goal',
-        args: 'resume',
-        model: undefined
-      })
+      expect(mockOpencodeOps.command).toHaveBeenCalledWith(
+        '/tmp/proj-1/feature-auth',
+        'session-1',
+        'goal',
+        'resume'
+      )
     })
     expect(useKanbanStore.getState().selectedTicketId).toBeNull()
   })

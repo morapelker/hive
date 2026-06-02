@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react'
 import type * as React from 'react'
 import type { PetPosition } from '@shared/types/pet'
-import { petApi } from '@/api/pet-api'
 
 const RESTORE_IGNORE_MOUSE_DELAY_MS = 100
 
@@ -39,7 +38,7 @@ export function usePetDrag(initialPosition: PetPosition | null): {
     clearRestoreIgnoreMouseTimer()
     restoreIgnoreMouseTimerRef.current = window.setTimeout(() => {
       restoreIgnoreMouseTimerRef.current = null
-      petApi.setIgnoreMouse(true)
+      window.petOps.setIgnoreMouse(true)
     }, RESTORE_IGNORE_MOUSE_DELAY_MS)
   }, [clearRestoreIgnoreMouseTimer])
 
@@ -52,7 +51,7 @@ export function usePetDrag(initialPosition: PetPosition | null): {
     drag.pending = null
     drag.raf = null
     positionRef.current = next
-    petApi.move(next)
+    window.petOps.move(next)
   }, [])
 
   const onPointerDown = useCallback(
@@ -63,8 +62,8 @@ export function usePetDrag(initialPosition: PetPosition | null): {
       clearRestoreIgnoreMouseTimer()
       isDraggingRef.current = true
       wasDraggedRef.current = false
-      petApi.beginPointerInteraction()
-      petApi.setIgnoreMouse(false)
+      window.petOps.beginPointerInteraction()
+      window.petOps.setIgnoreMouse(false)
 
       dragRef.current = {
         pointerId: event.pointerId,
@@ -101,11 +100,11 @@ export function usePetDrag(initialPosition: PetPosition | null): {
         }
         if (drag.pending) {
           positionRef.current = drag.pending
-          petApi.move(drag.pending)
+          window.petOps.move(drag.pending)
         }
         dragRef.current = null
         isDraggingRef.current = false
-        petApi.endPointerInteraction()
+        window.petOps.endPointerInteraction()
         restoreIgnoreMouseAfterClick()
         window.removeEventListener('pointermove', handlePointerMove)
         window.removeEventListener('pointerup', stopDrag)
@@ -116,13 +115,7 @@ export function usePetDrag(initialPosition: PetPosition | null): {
       window.addEventListener('pointerup', stopDrag)
       window.addEventListener('pointercancel', stopDrag)
     },
-    [
-      clearRestoreIgnoreMouseTimer,
-      flushMove,
-      isDraggingRef,
-      restoreIgnoreMouseAfterClick,
-      wasDraggedRef
-    ]
+    [clearRestoreIgnoreMouseTimer, flushMove, isDraggingRef, restoreIgnoreMouseAfterClick, wasDraggedRef]
   )
 
   return { isDraggingRef, wasDraggedRef, onPointerDown }

@@ -1,3 +1,4 @@
+import type { BrowserWindow } from 'electron'
 import type { AgentSdkId, AgentSdkCapabilities, AgentSdkImplementer } from './agent-sdk-types'
 import { createLogger } from './logger'
 
@@ -26,6 +27,12 @@ export class AgentSdkManager {
 
   getCapabilities(sdkId: AgentSdkId): AgentSdkCapabilities {
     return this.getImplementer(sdkId).capabilities
+  }
+
+  setMainWindow(window: BrowserWindow): void {
+    for (const impl of this.implementers.values()) {
+      impl.setMainWindow(window)
+    }
   }
 
   async cleanupAll(): Promise<void> {

@@ -1,5 +1,4 @@
 import { describe, test, expect, beforeEach } from 'vitest'
-import { opencodeApi } from '@/api/opencode-api'
 import { useQuestionStore } from '@/stores/useQuestionStore'
 import type { QuestionRequest } from '@/stores/useQuestionStore'
 
@@ -87,23 +86,23 @@ describe('Session 1: Question Store & IPC', () => {
     })
   })
 
-  describe('RPC API layer (type verification)', () => {
+  describe('IPC layer (type verification)', () => {
     test('questionReply type accepts correct arguments', () => {
       // Type-level verification: ensure the declarations compile correctly
       // by constructing a conforming mock. If the types are wrong, this won't compile.
-      const mockReply: typeof opencodeApi.questionReply = async (
+      const mockReply: typeof window.opencodeOps.questionReply = async (
         _requestId: string,
         _answers: string[][],
         _worktreePath?: string
-      ) => ({ success: true, value: { success: true } })
+      ) => ({ success: true })
       expect(mockReply).toBeDefined()
     })
 
     test('questionReject type accepts correct arguments', () => {
-      const mockReject: typeof opencodeApi.questionReject = async (
+      const mockReject: typeof window.opencodeOps.questionReject = async (
         _requestId: string,
         _worktreePath?: string
-      ) => ({ success: true, value: { success: true } })
+      ) => ({ success: true })
       expect(mockReject).toBeDefined()
     })
   })

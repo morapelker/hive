@@ -3,10 +3,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
 
-const eventBusMocks = vi.hoisted(() => ({
-  publish: vi.fn()
-}))
-
 // Mock logger
 vi.mock('../../../src/main/services/logger', () => ({
   createLogger: () => ({
@@ -15,26 +11,6 @@ vi.mock('../../../src/main/services/logger', () => ({
     error: vi.fn(),
     debug: vi.fn()
   })
-}))
-
-vi.mock('../../../src/main/services/agent-event-bus', () => ({
-  agentEventBus: eventBusMocks
-}))
-
-vi.mock('../../../src/main/services/notification-service', () => ({
-  notificationService: { shouldNotifyWhenWindowUnfocused: vi.fn(() => false) }
-}))
-
-vi.mock('../../../src/main/services/codex-session-title', () => ({
-  generateCodexSessionTitle: vi.fn()
-}))
-
-vi.mock('../../../src/main/services/git-service', () => ({
-  autoRenameWorktreeBranch: vi.fn()
-}))
-
-vi.mock('../../../src/main/services/worktree-events', () => ({
-  emitWorktreeBranchRenamed: vi.fn()
 }))
 
 // Mock child_process
@@ -473,13 +449,18 @@ describe('Codex Question Prompts', () => {
     })
   })
 
-  // ── Event forwarding through agent event bus ────────────────────
+  // ── Event forwarding to renderer ────────────────────────────────
 
   describe('CodexImplementer event forwarding', () => {
-    it('forwards question.asked event through the agent event bus on requestUserInput', async () => {
+    it('forwards question.asked event to renderer on requestUserInput', async () => {
       const { CodexImplementer } = await import('../../../src/main/services/codex-implementer')
       const impl = new CodexImplementer()
       const internalManager = impl.getManager() as any
+      const mockWindow = {
+        isDestroyed: () => false,
+        webContents: { send: vi.fn() }
+      }
+      impl.setMainWindow(mockWindow as any)
 
       // Seed a session
       impl.getSessions().set('/test::thread-q-1', {
@@ -516,10 +497,13 @@ describe('Codex Question Prompts', () => {
         }
       })
 
-      // Verify question.asked was published for WebSocket subscribers
-      const questionEvent = eventBusMocks.publish.mock.calls
-        .map((call) => call[0])
-        .find((event: any) => event.type === 'question.asked')
+      // Verify question.asked was sent to renderer
+      const sendCalls = mockWindow.webContents.send.mock.calls
+      const streamCalls = sendCalls
+        .filter((c: any[]) => c[0] === 'opencode:stream')
+        .map((c: any[]) => c[1])
+
+      const questionEvent = streamCalls.find((e: any) => e.type === 'question.asked')
       expect(questionEvent).toBeDefined()
       expect(questionEvent.sessionId).toBe('hive-q-1')
       expect(questionEvent.data.requestId).toBe('req-q-1')
@@ -529,10 +513,15 @@ describe('Codex Question Prompts', () => {
       expect(impl.getPendingQuestions().has('req-q-1')).toBe(true)
     })
 
-    it('forwards permission.asked event through the agent event bus on requestApproval', async () => {
+    it('forwards permission.asked event to renderer on requestApproval', async () => {
       const { CodexImplementer } = await import('../../../src/main/services/codex-implementer')
       const impl = new CodexImplementer()
       const internalManager = impl.getManager() as any
+      const mockWindow = {
+        isDestroyed: () => false,
+        webContents: { send: vi.fn() }
+      }
+      impl.setMainWindow(mockWindow as any)
 
       impl.getSessions().set('/test::thread-q-1', {
         threadId: 'thread-q-1',
@@ -561,9 +550,12 @@ describe('Codex Question Prompts', () => {
         payload: { command: 'rm -rf /' }
       })
 
-      const approvalEvent = eventBusMocks.publish.mock.calls
-        .map((call) => call[0])
-        .find((event: any) => event.type === 'permission.asked')
+      const sendCalls = mockWindow.webContents.send.mock.calls
+      const streamCalls = sendCalls
+        .filter((c: any[]) => c[0] === 'opencode:stream')
+        .map((c: any[]) => c[1])
+
+      const approvalEvent = streamCalls.find((e: any) => e.type === 'permission.asked')
       expect(approvalEvent).toBeDefined()
       expect(approvalEvent.sessionId).toBe('hive-q-1')
       expect(approvalEvent.data.id).toBe('req-a-1')
@@ -578,6 +570,11 @@ describe('Codex Question Prompts', () => {
       const { CodexImplementer } = await import('../../../src/main/services/codex-implementer')
       const impl = new CodexImplementer()
       const internalManager = impl.getManager() as any
+      const mockWindow = {
+        isDestroyed: () => false,
+        webContents: { send: vi.fn() }
+      }
+      impl.setMainWindow(mockWindow as any)
 
       let managerListener: any
       internalManager.on = vi.fn().mockImplementation((_: string, handler: any) => {
@@ -597,13 +594,19 @@ describe('Codex Question Prompts', () => {
         payload: { questions: [] }
       })
 
-      expect(eventBusMocks.publish).not.toHaveBeenCalled()
+      // Nothing should be sent to renderer
+      expect(mockWindow.webContents.send).not.toHaveBeenCalled()
     })
 
     it('does not throw for notification events with undefined payload', async () => {
       const { CodexImplementer } = await import('../../../src/main/services/codex-implementer')
       const impl = new CodexImplementer()
       const internalManager = impl.getManager() as any
+      const mockWindow = {
+        isDestroyed: () => false,
+        webContents: { send: vi.fn() }
+      }
+      impl.setMainWindow(mockWindow as any)
 
       impl.getSessions().set('/test::thread-q-1', {
         threadId: 'thread-q-1',
@@ -633,7 +636,7 @@ describe('Codex Question Prompts', () => {
         })
       ).not.toThrow()
 
-      expect(eventBusMocks.publish).not.toHaveBeenCalled()
+      expect(mockWindow.webContents.send).not.toHaveBeenCalled()
     })
   })
 })

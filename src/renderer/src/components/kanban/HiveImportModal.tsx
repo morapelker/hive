@@ -11,7 +11,9 @@ import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { toast } from 'sonner'
-import { kanbanApi } from '@/api/kanban-api'
+import { unwrapEnvelopeApi } from '@/lib/ipc-envelope'
+
+const kanban = unwrapEnvelopeApi(() => window.kanban)
 
 interface ExportedTicket {
   id: string
@@ -24,13 +26,6 @@ interface ExportedTicket {
 interface ExportedDependency {
   dependentId: string
   blockerId: string
-}
-
-interface HiveImportResult {
-  created: number
-  updated: number
-  dependencyCount: number
-  ignoredDependencyCount: number
 }
 
 interface HiveImportModalProps {
@@ -101,11 +96,7 @@ export function HiveImportModal({
           selectedIds.has(dependency.dependentId) && selectedIds.has(dependency.blockerId)
       )
 
-      const result = await kanbanApi.board.importTickets<
-        HiveImportResult,
-        ExportedTicket,
-        ExportedDependency
-      >(projectId, selected, importDependencies)
+      const result = await kanban.board.importTickets(projectId, selected, importDependencies)
       await loadTickets(projectId)
       await useKanbanStore.getState().loadDependencies(projectId)
 

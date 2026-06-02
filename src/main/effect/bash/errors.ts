@@ -20,4 +20,13 @@ export class BashAborted extends Data.TaggedError('BashAborted')<{
   readonly escalatedToKill: boolean
 }> {}
 
-export type BashError = BashAlreadyRunning | BashSpawnFailed | BashOutputCapReached | BashAborted
+export class BashWindowMissing extends Data.TaggedError('BashWindowMissing')<{
+  readonly reason: 'not-set' | 'destroyed'
+}> {}
+
+export type BashError =
+  | BashAlreadyRunning
+  | BashSpawnFailed
+  | BashOutputCapReached
+  | BashAborted
+  | BashWindowMissing

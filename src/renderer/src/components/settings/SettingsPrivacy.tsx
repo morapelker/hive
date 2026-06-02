@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react'
-import { analyticsApi } from '@/api/analytics-api'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { cn } from '@/lib/utils'
 
@@ -9,7 +8,7 @@ export function SettingsPrivacy(): React.JSX.Element {
   const [loaded, setLoaded] = useState(false)
 
   useEffect(() => {
-    analyticsApi
+    window.analyticsOps
       .isEnabled()
       .then((val) => {
         setEnabled(val)
@@ -24,7 +23,7 @@ export function SettingsPrivacy(): React.JSX.Element {
     const newValue = !enabled
     setEnabled(newValue)
     updateSetting('telemetryEnabled', newValue)
-    analyticsApi.setEnabled(newValue)
+    window.analyticsOps.setEnabled(newValue)
   }
 
   if (!loaded) return <div />

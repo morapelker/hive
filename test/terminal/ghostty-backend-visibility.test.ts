@@ -1,26 +1,14 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { GhosttyBackend } from '../../src/renderer/src/components/terminal/backends/GhosttyBackend'
 
-const terminalApiMocks = vi.hoisted(() => ({
+const mockTerminalOps = {
   ghosttyInit: vi.fn().mockResolvedValue({ success: true }),
   ghosttyCreateSurface: vi.fn().mockResolvedValue({ success: true, surfaceId: 1 }),
   ghosttySetFocus: vi.fn().mockResolvedValue(undefined),
   ghosttySetFrame: vi.fn().mockResolvedValue(undefined),
   ghosttySetSize: vi.fn().mockResolvedValue(undefined),
   ghosttyDestroySurface: vi.fn().mockResolvedValue(undefined)
-}))
-
-vi.mock('@/api/terminal-api', () => ({
-  terminalApi: terminalApiMocks
-}))
-
-vi.mock('@/stores/useSettingsStore', () => ({
-  useSettingsStore: {
-    getState: () => ({
-      ghosttyFontSize: 14
-    })
-  }
-}))
+}
 
 const observers: MockResizeObserver[] = []
 
@@ -55,6 +43,12 @@ describe('GhosttyBackend visibility', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     observers.length = 0
+
+    Object.defineProperty(window, 'terminalOps', {
+      value: mockTerminalOps,
+      writable: true,
+      configurable: true
+    })
 
     vi.stubGlobal('ResizeObserver', MockResizeObserver)
     vi.stubGlobal(
@@ -95,26 +89,26 @@ describe('GhosttyBackend visibility', () => {
     const visibilityBackend = backend as unknown as { setVisible: (visible: boolean) => void }
 
     expect(() => visibilityBackend.setVisible(false)).not.toThrow()
-    expect(terminalApiMocks.ghosttySetFocus).toHaveBeenCalledWith('wt-1', false)
+    expect(mockTerminalOps.ghosttySetFocus).toHaveBeenCalledWith('wt-1', false)
 
-    const hiddenFrame = terminalApiMocks.ghosttySetFrame.mock.calls.at(-1)?.[1]
+    const hiddenFrame = mockTerminalOps.ghosttySetFrame.mock.calls.at(-1)?.[1]
     expect(hiddenFrame.x).toBeLessThan(0)
     expect(hiddenFrame.y).toBeLessThan(0)
     expect(hiddenFrame.w).toBe(640)
     expect(hiddenFrame.h).toBe(360)
-    expect(terminalApiMocks.ghosttyDestroySurface).not.toHaveBeenCalled()
+    expect(mockTerminalOps.ghosttyDestroySurface).not.toHaveBeenCalled()
 
-    terminalApiMocks.ghosttySetFocus.mockClear()
+    mockTerminalOps.ghosttySetFocus.mockClear()
 
     visibilityBackend.setVisible(true)
 
-    const visibleFrame = terminalApiMocks.ghosttySetFrame.mock.calls.at(-1)?.[1]
+    const visibleFrame = mockTerminalOps.ghosttySetFrame.mock.calls.at(-1)?.[1]
     expect(visibleFrame).toEqual({ x: 100, y: 80, w: 640, h: 360 })
-    expect(terminalApiMocks.ghosttyDestroySurface).not.toHaveBeenCalled()
+    expect(mockTerminalOps.ghosttyDestroySurface).not.toHaveBeenCalled()
 
     // Focus must be restored when becoming visible again so that
     // focusedSurfaceId() returns this surface for the menu paste handler.
-    expect(terminalApiMocks.ghosttySetFocus).toHaveBeenCalledWith('wt-1', true)
+    expect(mockTerminalOps.ghosttySetFocus).toHaveBeenCalledWith('wt-1', true)
 
     backend.dispose()
   })
@@ -149,8 +143,8 @@ describe('GhosttyBackend visibility', () => {
 
     const visibilityBackend = backend as unknown as { setVisible: (visible: boolean) => void }
     visibilityBackend.setVisible(false)
-    terminalApiMocks.ghosttySetFocus.mockClear()
-    terminalApiMocks.ghosttySetFrame.mockClear()
+    mockTerminalOps.ghosttySetFocus.mockClear()
+    mockTerminalOps.ghosttySetFrame.mockClear()
 
     const input = document.createElement('input')
     document.body.appendChild(input)
@@ -159,9 +153,9 @@ describe('GhosttyBackend visibility', () => {
 
     visibilityBackend.setVisible(true)
 
-    const visibleFrame = terminalApiMocks.ghosttySetFrame.mock.calls.at(-1)?.[1]
+    const visibleFrame = mockTerminalOps.ghosttySetFrame.mock.calls.at(-1)?.[1]
     expect(visibleFrame).toEqual({ x: 100, y: 80, w: 640, h: 360 })
-    expect(terminalApiMocks.ghosttySetFocus).not.toHaveBeenCalledWith('wt-1', true)
+    expect(mockTerminalOps.ghosttySetFocus).not.toHaveBeenCalledWith('wt-1', true)
     expect(document.activeElement).toBe(input)
 
     input.remove()
@@ -198,8 +192,8 @@ describe('GhosttyBackend visibility', () => {
 
     await flushPromises()
 
-    expect(terminalApiMocks.ghosttyInit).not.toHaveBeenCalled()
-    expect(terminalApiMocks.ghosttyCreateSurface).not.toHaveBeenCalled()
+    expect(mockTerminalOps.ghosttyInit).not.toHaveBeenCalled()
+    expect(mockTerminalOps.ghosttyCreateSurface).not.toHaveBeenCalled()
     expect(onStatusChange).toHaveBeenNthCalledWith(1, 'creating')
     expect(onStatusChange).not.toHaveBeenCalledWith('exited')
 
@@ -215,8 +209,8 @@ describe('GhosttyBackend visibility', () => {
     await flushPromises()
     await flushPromises()
 
-    expect(terminalApiMocks.ghosttyInit).toHaveBeenCalledTimes(1)
-    expect(terminalApiMocks.ghosttyCreateSurface).toHaveBeenCalledTimes(1)
+    expect(mockTerminalOps.ghosttyInit).toHaveBeenCalledTimes(1)
+    expect(mockTerminalOps.ghosttyCreateSurface).toHaveBeenCalledTimes(1)
     expect(onStatusChange).toHaveBeenNthCalledWith(2, 'running')
     expect(onStatusChange).not.toHaveBeenCalledWith('exited')
 
@@ -240,7 +234,7 @@ describe('GhosttyBackend visibility', () => {
 
     // Make ghosttyCreateSurface hang so dispose happens before it resolves.
     let resolveCreate!: (value: { success: true; surfaceId: number }) => void
-    terminalApiMocks.ghosttyCreateSurface.mockImplementationOnce(
+    mockTerminalOps.ghosttyCreateSurface.mockImplementationOnce(
       () =>
         new Promise<{ success: true; surfaceId: number }>((resolve) => {
           resolveCreate = resolve
@@ -260,8 +254,8 @@ describe('GhosttyBackend visibility', () => {
 
     // Let the runtime init finish and createSurface kick off, but not resolve.
     await flushPromises()
-    expect(terminalApiMocks.ghosttyCreateSurface).toHaveBeenCalledTimes(1)
-    expect(terminalApiMocks.ghosttyDestroySurface).not.toHaveBeenCalled()
+    expect(mockTerminalOps.ghosttyCreateSurface).toHaveBeenCalledTimes(1)
+    expect(mockTerminalOps.ghosttyDestroySurface).not.toHaveBeenCalled()
 
     // Unmount while createSurface is still in flight.
     backend.dispose()
@@ -272,7 +266,7 @@ describe('GhosttyBackend visibility', () => {
     await flushPromises()
 
     // The orphaned native surface must be destroyed to avoid leaking NSViews.
-    expect(terminalApiMocks.ghosttyDestroySurface).toHaveBeenCalledWith('wt-1')
+    expect(mockTerminalOps.ghosttyDestroySurface).toHaveBeenCalledWith('wt-1')
   })
 
   test('passes off-screen rect to ghosttyCreateSurface when initialVisible=false', async () => {
@@ -317,10 +311,10 @@ describe('GhosttyBackend visibility', () => {
     await flushPromises()
     await flushPromises()
 
-    expect(terminalApiMocks.ghosttyCreateSurface).toHaveBeenCalledTimes(1)
+    expect(mockTerminalOps.ghosttyCreateSurface).toHaveBeenCalledTimes(1)
 
     // The rect passed to ghosttyCreateSurface itself must already be off-screen.
-    const createRect = terminalApiMocks.ghosttyCreateSurface.mock.calls[0][1] as {
+    const createRect = mockTerminalOps.ghosttyCreateSurface.mock.calls[0][1] as {
       x: number
       y: number
       w: number
@@ -366,8 +360,8 @@ describe('GhosttyBackend visibility', () => {
     await flushPromises()
     await flushPromises()
 
-    expect(terminalApiMocks.ghosttyCreateSurface).toHaveBeenCalledTimes(1)
-    expect(terminalApiMocks.ghosttyCreateSurface.mock.calls[0][2]).toMatchObject({
+    expect(mockTerminalOps.ghosttyCreateSurface).toHaveBeenCalledTimes(1)
+    expect(mockTerminalOps.ghosttyCreateSurface.mock.calls[0][2]).toMatchObject({
       shiftEnterAsNewline: true
     })
 
@@ -403,8 +397,8 @@ describe('GhosttyBackend visibility', () => {
     await flushPromises()
     await flushPromises()
 
-    expect(terminalApiMocks.ghosttyCreateSurface).toHaveBeenCalledTimes(1)
-    expect(terminalApiMocks.ghosttyCreateSurface.mock.calls[0][2]).toMatchObject({
+    expect(mockTerminalOps.ghosttyCreateSurface).toHaveBeenCalledTimes(1)
+    expect(mockTerminalOps.ghosttyCreateSurface.mock.calls[0][2]).toMatchObject({
       shiftEnterAsNewline: false
     })
 
@@ -461,12 +455,12 @@ describe('GhosttyBackend visibility', () => {
     await flushPromises()
 
     // Surface gets created because the container is measurable.
-    expect(terminalApiMocks.ghosttyCreateSurface).toHaveBeenCalledTimes(1)
+    expect(mockTerminalOps.ghosttyCreateSurface).toHaveBeenCalledTimes(1)
 
     // The post-creation setFrame call must position the NSView OFF-screen,
     // because initialVisible=false → ensureSurface takes hideSurface branch.
-    expect(terminalApiMocks.ghosttySetFrame).toHaveBeenCalled()
-    for (const call of terminalApiMocks.ghosttySetFrame.mock.calls) {
+    expect(mockTerminalOps.ghosttySetFrame).toHaveBeenCalled()
+    for (const call of mockTerminalOps.ghosttySetFrame.mock.calls) {
       const frame = call[1] as { x: number; y: number }
       expect(frame.x).toBeLessThan(0)
       expect(frame.y).toBeLessThan(0)
@@ -474,7 +468,7 @@ describe('GhosttyBackend visibility', () => {
 
     // Focus(true) must NOT have been requested — that path runs only on the
     // visible branch and would race a focused web input on initial mount.
-    expect(terminalApiMocks.ghosttySetFocus).not.toHaveBeenCalledWith('wt-1', true)
+    expect(mockTerminalOps.ghosttySetFocus).not.toHaveBeenCalledWith('wt-1', true)
 
     backend.dispose()
   })
@@ -521,7 +515,7 @@ describe('GhosttyBackend visibility', () => {
       setVisible: (visible: boolean) => void
     }
 
-    terminalApiMocks.ghosttySetFrame.mockClear()
+    mockTerminalOps.ghosttySetFrame.mockClear()
 
     // RO fires first with a shrinking rect and schedules an rAF for syncFrame.
     rect = { ...rect, height: 60, bottom: rect.top + 60 }
@@ -538,7 +532,7 @@ describe('GhosttyBackend visibility', () => {
 
     // The final IPC must be off-screen, and no intermediate on-screen IPC
     // may exist between the hide and the end of the flush.
-    const calls = terminalApiMocks.ghosttySetFrame.mock.calls
+    const calls = mockTerminalOps.ghosttySetFrame.mock.calls
     expect(calls.length).toBeGreaterThan(0)
     const lastFrame = calls.at(-1)?.[1] as { x: number; y: number }
     expect(lastFrame.x).toBeLessThan(0)
@@ -595,11 +589,11 @@ describe('GhosttyBackend visibility', () => {
     // Collapse the panel: setVisible(false) fires hideSurface() → off-screen IPC.
     visibilityBackend.setVisible(false)
 
-    const hiddenFrame = terminalApiMocks.ghosttySetFrame.mock.calls.at(-1)?.[1]
+    const hiddenFrame = mockTerminalOps.ghosttySetFrame.mock.calls.at(-1)?.[1]
     expect(hiddenFrame.x).toBeLessThan(0)
     expect(hiddenFrame.y).toBeLessThan(0)
 
-    terminalApiMocks.ghosttySetFrame.mockClear()
+    mockTerminalOps.ghosttySetFrame.mockClear()
 
     // Simulate a CSS height transition firing ResizeObserver repeatedly with
     // shrinking on-screen rects (180 → 60 → 5 pixels tall, still visible).
@@ -617,7 +611,7 @@ describe('GhosttyBackend visibility', () => {
     // None of those ResizeObserver-driven frames should have updated the
     // native NSView position back to an on-screen rect. Either no call was
     // made, or the call kept the off-screen x/y.
-    for (const call of terminalApiMocks.ghosttySetFrame.mock.calls) {
+    for (const call of mockTerminalOps.ghosttySetFrame.mock.calls) {
       const frame = call[1] as { x: number; y: number; w: number; h: number }
       expect(frame.x).toBeLessThan(0)
       expect(frame.y).toBeLessThan(0)

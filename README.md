@@ -316,28 +316,30 @@ If `libghostty` is not available, Hive still builds and runs -- the Ghostty term
 
 ### Architecture
 
-Hive starts a local Effect backend on a free localhost port, then points the
-desktop renderer at that server. Core application operations use HTTP/RPC and
-WebSocket events; Electron IPC is reserved for desktop shell integration only.
-The backend entrypoints, RPC router, and WebSocket event plumbing live under
-`src/server/`.
+Hive uses Electron's three-process model with strict sandboxing:
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│                 Effect Backend Server                │
-│         localhost:{freePort} + Node.js + SQLite      │
+│                    Main Process                      │
+│               (Node.js + SQLite)                     │
 │                                                      │
-│  ┌──────────┐ ┌──────────┐ ┌───────────────────┐    │
-│  │ Database │ │   Git    │ │  Agent SDK Mgr    │    │
-│  │ Service  │ │ Service  │ │  (AI Sessions)    │    │
-│  └──────────┘ └──────────┘ └───────────────────┘    │
+│  ┌──────────┐ ┌──────────┐ ┌───────────────────┐   │
+│  │ Database  │ │   Git    │ │  Agent SDK Mgr    │   │
+│  │ Service   │ │ Service  │ │  (AI Sessions)    │   │
+│  └──────────┘ └──────────┘ └───────────────────┘   │
 │                      │                               │
 │              ┌───────┴───────┐                       │
-│              │  RPC Domains  │                       │
-│              │ + Event Bus   │                       │
+│              │  IPC Handlers │                       │
 │              └───────┬───────┘                       │
 └──────────────────────┼──────────────────────────────┘
-                       │ HTTP/RPC + WebSocket
+                       │ Typed IPC
+┌──────────────────────┼──────────────────────────────┐
+│              ┌───────┴───────┐                       │
+│              │    Preload    │                       │
+│              │   (Bridge)    │                       │
+│              └───────┬───────┘                       │
+└──────────────────────┼──────────────────────────────┘
+                       │ window.* APIs
 ┌──────────────────────┼──────────────────────────────┐
 │                 Renderer Process                     │
 │              (React + Tailwind)                      │
@@ -347,27 +349,18 @@ The backend entrypoints, RPC router, and WebSocket event plumbing live under
 │  │ Stores    │ │ ui       │ │  (14 domains)     │   │
 │  └──────────┘ └──────────┘ └───────────────────┘   │
 └─────────────────────────────────────────────────────┘
-                       │ desktopBridge only
-┌──────────────────────┼──────────────────────────────┐
-│              Electron Desktop Shell                  │
-│      BrowserWindow, menus, dialogs, notifications    │
-└─────────────────────────────────────────────────────┘
 ```
 
 ### Project Structure
 
 ```
 src/
-├── main/                  # Electron desktop shell and shared services
+├── main/                  # Electron main process (Node.js)
 │   ├── db/                # SQLite database + schema + migrations
-│   ├── desktop/           # BrowserWindow and desktop bridge handlers
+│   ├── ipc/               # IPC handler modules
 │   └── services/          # Git, AI agents, logger, file services
-├── server/                # Effect HTTP/RPC server and WebSocket events
-│   ├── events/            # Backend event bus
-│   └── rpc/               # Typed RPC router and domain handlers
-├── preload/               # Minimal desktopBridge exposure
+├── preload/               # Bridge layer (typed window.* APIs)
 └── renderer/src/          # React SPA
-    ├── api/               # HTTP/RPC client modules
     ├── components/        # UI organized by domain
     ├── hooks/             # Custom React hooks
     ├── lib/               # Utilities, themes, helpers

@@ -2,29 +2,19 @@ import { app } from 'electron'
 import {
   existsSync,
   statSync,
+  readFileSync,
   writeFileSync,
   mkdirSync,
   unlinkSync,
   readdirSync
 } from 'fs'
+import { execSync } from 'child_process'
 import { join, basename, extname } from 'path'
 import { createLogger } from './logger'
 import { getDatabase } from '../db'
-import {
-  getAbsoluteIconDataUrl as getAbsoluteProjectIconDataUrl,
-  getProjectIconDataUrl,
-  removeProjectIcon
-} from './project-icons'
 
-export {
-  detectProjectLanguage,
-  detectProjectFavicon,
-  findXcworkspace,
-  isAndroidProject
-} from './language-detector'
+export { detectProjectLanguage, detectProjectFavicon } from './language-detector'
 export { detectSetupSuggestions } from './setup-script-suggester'
-export { loadLanguageIcons } from './language-icons'
-export { initRepository } from './git-repository'
 
 const log = createLogger({ component: 'ProjectOps' })
 
@@ -105,10 +95,91 @@ export function validateProject(path: string): {
 }
 
 /**
+ * Initialize a new git repository with main as the default branch
+ */
+export function initRepository(path: string): { success: boolean; error?: string } {
+  try {
+    log.info('Initializing git repository', { path })
+    execSync('git init --initial-branch=main', { cwd: path, encoding: 'utf-8' })
+    log.info('Git repository initialized successfully', { path })
+    return { success: true }
+  } catch (error) {
+    log.error(
+      'Failed to initialize git repository',
+      error instanceof Error ? error : new Error(String(error)),
+      { path }
+    )
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error)
+    }
+  }
+}
+
+/**
+ * Load custom language icons from the language_icons setting as data URLs
+ */
+export function loadLanguageIcons(): Record<string, string> {
+  const db = getDatabase()
+  const raw = db.getSetting('language_icons')
+  if (!raw) return {}
+
+  try {
+    const iconPaths: Record<string, string> = JSON.parse(raw)
+    const result: Record<string, string> = {}
+
+    for (const [language, filePath] of Object.entries(iconPaths)) {
+      try {
+        if (!existsSync(filePath)) {
+          log.warn('Language icon file not found', { language, filePath })
+          continue
+        }
+        const ext = extname(filePath).toLowerCase()
+        const mime = MIME_TYPES[ext]
+        if (!mime) {
+          log.warn('Unsupported icon file type', { language, filePath, ext })
+          continue
+        }
+        const data = readFileSync(filePath)
+        result[language] = `data:${mime};base64,${data.toString('base64')}`
+      } catch (err) {
+        log.warn('Failed to read language icon', {
+          language,
+          filePath,
+          error: err instanceof Error ? err.message : String(err)
+        })
+      }
+    }
+
+    return result
+  } catch {
+    log.warn('Failed to parse language_icons setting')
+    return {}
+  }
+}
+
+/**
  * Resolve an icon filename to a data URL
  */
 export function getIconDataUrl(filename: string): string | null {
-  return getProjectIconDataUrl(filename, iconDir)
+  if (!filename) return null
+  const fullPath = join(iconDir, filename)
+  if (!existsSync(fullPath)) return null
+
+  try {
+    const ext = extname(filename).toLowerCase()
+    const mime = MIME_TYPES[ext]
+    if (!mime) return null
+
+    const data = readFileSync(fullPath)
+    return `data:${mime};base64,${data.toString('base64')}`
+  } catch (err) {
+    log.warn('Failed to read project icon', {
+      filename,
+      error: err instanceof Error ? err.message : String(err)
+    })
+    return null
+  }
 }
 
 /**
@@ -116,7 +187,23 @@ export function getIconDataUrl(filename: string): string | null {
  * Used for auto-detected favicons stored as absolute paths.
  */
 export function getAbsoluteIconDataUrl(absolutePath: string): string | null {
-  return getAbsoluteProjectIconDataUrl(absolutePath)
+  if (!absolutePath) return null
+  if (!existsSync(absolutePath)) return null
+
+  try {
+    const ext = extname(absolutePath).toLowerCase()
+    const mime = MIME_TYPES[ext]
+    if (!mime) return null
+
+    const data = readFileSync(absolutePath)
+    return `data:${mime};base64,${data.toString('base64')}`
+  } catch (err) {
+    log.warn('Failed to read absolute icon path', {
+      absolutePath,
+      error: err instanceof Error ? err.message : String(err)
+    })
+    return null
+  }
 }
 
 /**
@@ -171,8 +258,26 @@ export function uploadIcon(
 }
 
 /**
- * Remove a custom project icon from disk.
+ * Remove a custom project icon from disk and clear the DB field
  */
 export function removeIcon(projectId: string): { success: boolean; error?: string } {
-  return removeProjectIcon(projectId, iconDir)
+  try {
+    ensureIconDir()
+    const existing = readdirSync(iconDir).filter((f) => f.startsWith(`${projectId}.`))
+    for (const old of existing) {
+      unlinkSync(join(iconDir, old))
+    }
+    log.info('Project icon removed', { projectId })
+    return { success: true }
+  } catch (error) {
+    log.error(
+      'Failed to remove project icon',
+      error instanceof Error ? error : new Error(String(error)),
+      { projectId }
+    )
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error)
+    }
+  }
 }

@@ -8,7 +8,7 @@ interface GitFileStatus {
   staged: boolean
 }
 
-interface GitApi {
+interface GitOps {
   getFileStatuses: (worktreePath: string) => Promise<{ success: boolean; files?: GitFileStatus[]; error?: string }>
   stageFile: (worktreePath: string, filePath: string) => Promise<{ success: boolean; error?: string }>
   unstageFile: (worktreePath: string, filePath: string) => Promise<{ success: boolean; error?: string }>
@@ -19,15 +19,15 @@ interface GitApi {
   onStatusChanged: (callback: (event: { worktreePath: string }) => void) => () => void
 }
 
-interface ProjectApi {
+interface ProjectOps {
   copyToClipboard: (text: string) => Promise<void>
 }
 
 // Create a mock unsubscribe function
 const mockUnsubscribe = vi.fn()
 
-// Mock explicit renderer API modules
-const mockGitApi: GitApi = {
+// Mock window.gitOps
+const mockGitOps: GitOps = {
   getFileStatuses: vi.fn(),
   stageFile: vi.fn(),
   unstageFile: vi.fn(),
@@ -38,7 +38,8 @@ const mockGitApi: GitApi = {
   onStatusChanged: vi.fn().mockReturnValue(mockUnsubscribe)
 }
 
-const mockProjectApi: ProjectApi = {
+// Mock window.projectOps
+const mockProjectOps: ProjectOps = {
   copyToClipboard: vi.fn()
 }
 
@@ -46,7 +47,12 @@ describe('Session 2: File Tree Git Integration', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     // Re-set the mock return value after clearing mocks
-    vi.mocked(mockGitApi.onStatusChanged).mockReturnValue(mockUnsubscribe)
+    vi.mocked(mockGitOps.onStatusChanged).mockReturnValue(mockUnsubscribe)
+    // @ts-expect-error - global mock
+    global.window = {
+      gitOps: mockGitOps,
+      projectOps: mockProjectOps
+    }
   })
 
   afterEach(() => {
@@ -59,12 +65,12 @@ describe('Session 2: File Tree Git Integration', () => {
         { path: '/repo/file.ts', relativePath: 'file.ts', status: 'M', staged: false }
       ]
 
-      vi.mocked(mockGitApi.getFileStatuses).mockResolvedValue({
+      vi.mocked(mockGitOps.getFileStatuses).mockResolvedValue({
         success: true,
         files: mockStatuses
       })
 
-      const result = await mockGitApi.getFileStatuses('/repo')
+      const result = await mockGitOps.getFileStatuses('/repo')
 
       expect(result.success).toBe(true)
       expect(result.files).toHaveLength(1)
@@ -77,12 +83,12 @@ describe('Session 2: File Tree Git Integration', () => {
         { path: '/repo/new-file.ts', relativePath: 'new-file.ts', status: 'A', staged: true }
       ]
 
-      vi.mocked(mockGitApi.getFileStatuses).mockResolvedValue({
+      vi.mocked(mockGitOps.getFileStatuses).mockResolvedValue({
         success: true,
         files: mockStatuses
       })
 
-      const result = await mockGitApi.getFileStatuses('/repo')
+      const result = await mockGitOps.getFileStatuses('/repo')
 
       expect(result.success).toBe(true)
       expect(result.files![0].status).toBe('A')
@@ -94,12 +100,12 @@ describe('Session 2: File Tree Git Integration', () => {
         { path: '/repo/deleted.ts', relativePath: 'deleted.ts', status: 'D', staged: false }
       ]
 
-      vi.mocked(mockGitApi.getFileStatuses).mockResolvedValue({
+      vi.mocked(mockGitOps.getFileStatuses).mockResolvedValue({
         success: true,
         files: mockStatuses
       })
 
-      const result = await mockGitApi.getFileStatuses('/repo')
+      const result = await mockGitOps.getFileStatuses('/repo')
 
       expect(result.files![0].status).toBe('D')
     })
@@ -109,12 +115,12 @@ describe('Session 2: File Tree Git Integration', () => {
         { path: '/repo/untracked.ts', relativePath: 'untracked.ts', status: '?', staged: false }
       ]
 
-      vi.mocked(mockGitApi.getFileStatuses).mockResolvedValue({
+      vi.mocked(mockGitOps.getFileStatuses).mockResolvedValue({
         success: true,
         files: mockStatuses
       })
 
-      const result = await mockGitApi.getFileStatuses('/repo')
+      const result = await mockGitOps.getFileStatuses('/repo')
 
       expect(result.files![0].status).toBe('?')
     })
@@ -124,12 +130,12 @@ describe('Session 2: File Tree Git Integration', () => {
         { path: '/repo/conflict.ts', relativePath: 'conflict.ts', status: 'C', staged: false }
       ]
 
-      vi.mocked(mockGitApi.getFileStatuses).mockResolvedValue({
+      vi.mocked(mockGitOps.getFileStatuses).mockResolvedValue({
         success: true,
         files: mockStatuses
       })
 
-      const result = await mockGitApi.getFileStatuses('/repo')
+      const result = await mockGitOps.getFileStatuses('/repo')
 
       expect(result.files![0].status).toBe('C')
     })
@@ -137,103 +143,103 @@ describe('Session 2: File Tree Git Integration', () => {
 
   describe('Context Menu Actions', () => {
     test('Stage file via context menu', async () => {
-      vi.mocked(mockGitApi.stageFile).mockResolvedValue({ success: true })
+      vi.mocked(mockGitOps.stageFile).mockResolvedValue({ success: true })
 
-      const result = await mockGitApi.stageFile('/repo', 'file.ts')
+      const result = await mockGitOps.stageFile('/repo', 'file.ts')
 
-      expect(mockGitApi.stageFile).toHaveBeenCalledWith('/repo', 'file.ts')
+      expect(mockGitOps.stageFile).toHaveBeenCalledWith('/repo', 'file.ts')
       expect(result.success).toBe(true)
     })
 
     test('Unstage file via context menu', async () => {
-      vi.mocked(mockGitApi.unstageFile).mockResolvedValue({ success: true })
+      vi.mocked(mockGitOps.unstageFile).mockResolvedValue({ success: true })
 
-      const result = await mockGitApi.unstageFile('/repo', 'file.ts')
+      const result = await mockGitOps.unstageFile('/repo', 'file.ts')
 
-      expect(mockGitApi.unstageFile).toHaveBeenCalledWith('/repo', 'file.ts')
+      expect(mockGitOps.unstageFile).toHaveBeenCalledWith('/repo', 'file.ts')
       expect(result.success).toBe(true)
     })
 
     test('Discard changes requires confirmation pattern', async () => {
-      vi.mocked(mockGitApi.discardChanges).mockResolvedValue({ success: true })
+      vi.mocked(mockGitOps.discardChanges).mockResolvedValue({ success: true })
 
       // The actual confirmation is handled in the UI component
       // This tests that the discard API works correctly
-      const result = await mockGitApi.discardChanges('/repo', 'file.ts')
+      const result = await mockGitOps.discardChanges('/repo', 'file.ts')
 
-      expect(mockGitApi.discardChanges).toHaveBeenCalledWith('/repo', 'file.ts')
+      expect(mockGitOps.discardChanges).toHaveBeenCalledWith('/repo', 'file.ts')
       expect(result.success).toBe(true)
     })
 
     test('Add to .gitignore works', async () => {
-      vi.mocked(mockGitApi.addToGitignore).mockResolvedValue({ success: true })
+      vi.mocked(mockGitOps.addToGitignore).mockResolvedValue({ success: true })
 
-      const result = await mockGitApi.addToGitignore('/repo', 'untracked.ts')
+      const result = await mockGitOps.addToGitignore('/repo', 'untracked.ts')
 
-      expect(mockGitApi.addToGitignore).toHaveBeenCalledWith('/repo', 'untracked.ts')
+      expect(mockGitOps.addToGitignore).toHaveBeenCalledWith('/repo', 'untracked.ts')
       expect(result.success).toBe(true)
     })
 
     test('Open in Editor launches editor', async () => {
-      vi.mocked(mockGitApi.openInEditor).mockResolvedValue({ success: true })
+      vi.mocked(mockGitOps.openInEditor).mockResolvedValue({ success: true })
 
-      const result = await mockGitApi.openInEditor('/repo/file.ts')
+      const result = await mockGitOps.openInEditor('/repo/file.ts')
 
-      expect(mockGitApi.openInEditor).toHaveBeenCalledWith('/repo/file.ts')
+      expect(mockGitOps.openInEditor).toHaveBeenCalledWith('/repo/file.ts')
       expect(result.success).toBe(true)
     })
 
     test('Show in Finder opens Finder', async () => {
-      vi.mocked(mockGitApi.showInFinder).mockResolvedValue({ success: true })
+      vi.mocked(mockGitOps.showInFinder).mockResolvedValue({ success: true })
 
-      const result = await mockGitApi.showInFinder('/repo/file.ts')
+      const result = await mockGitOps.showInFinder('/repo/file.ts')
 
-      expect(mockGitApi.showInFinder).toHaveBeenCalledWith('/repo/file.ts')
+      expect(mockGitOps.showInFinder).toHaveBeenCalledWith('/repo/file.ts')
       expect(result.success).toBe(true)
     })
 
     test('Copy path copies to clipboard', async () => {
-      vi.mocked(mockProjectApi.copyToClipboard).mockResolvedValue(undefined)
+      vi.mocked(mockProjectOps.copyToClipboard).mockResolvedValue(undefined)
 
-      await mockProjectApi.copyToClipboard('/repo/file.ts')
+      await mockProjectOps.copyToClipboard('/repo/file.ts')
 
-      expect(mockProjectApi.copyToClipboard).toHaveBeenCalledWith('/repo/file.ts')
+      expect(mockProjectOps.copyToClipboard).toHaveBeenCalledWith('/repo/file.ts')
     })
 
     test('Copy relative path copies to clipboard', async () => {
-      vi.mocked(mockProjectApi.copyToClipboard).mockResolvedValue(undefined)
+      vi.mocked(mockProjectOps.copyToClipboard).mockResolvedValue(undefined)
 
-      await mockProjectApi.copyToClipboard('src/file.ts')
+      await mockProjectOps.copyToClipboard('src/file.ts')
 
-      expect(mockProjectApi.copyToClipboard).toHaveBeenCalledWith('src/file.ts')
+      expect(mockProjectOps.copyToClipboard).toHaveBeenCalledWith('src/file.ts')
     })
   })
 
   describe('Git Status Events', () => {
     test('Subscribe to status changed events', () => {
       const callback = vi.fn()
-      const unsubscribe = mockGitApi.onStatusChanged(callback)
+      const unsubscribe = mockGitOps.onStatusChanged(callback)
 
-      expect(mockGitApi.onStatusChanged).toHaveBeenCalled()
+      expect(mockGitOps.onStatusChanged).toHaveBeenCalled()
       expect(typeof unsubscribe).toBe('function')
     })
 
     test('Status changes trigger refresh', async () => {
       // First call to get initial statuses
-      vi.mocked(mockGitApi.getFileStatuses).mockResolvedValue({
+      vi.mocked(mockGitOps.getFileStatuses).mockResolvedValue({
         success: true,
         files: [{ path: '/repo/file.ts', relativePath: 'file.ts', status: 'M', staged: false }]
       })
 
-      await mockGitApi.getFileStatuses('/repo')
+      await mockGitOps.getFileStatuses('/repo')
 
       // After a git operation, statuses should be refreshed
-      vi.mocked(mockGitApi.getFileStatuses).mockResolvedValue({
+      vi.mocked(mockGitOps.getFileStatuses).mockResolvedValue({
         success: true,
         files: [{ path: '/repo/file.ts', relativePath: 'file.ts', status: 'A', staged: true }]
       })
 
-      const result = await mockGitApi.getFileStatuses('/repo')
+      const result = await mockGitOps.getFileStatuses('/repo')
 
       expect(result.files![0].status).toBe('A')
       expect(result.files![0].staged).toBe(true)
@@ -242,36 +248,36 @@ describe('Session 2: File Tree Git Integration', () => {
 
   describe('Error Handling', () => {
     test('Handle getFileStatuses error gracefully', async () => {
-      vi.mocked(mockGitApi.getFileStatuses).mockResolvedValue({
+      vi.mocked(mockGitOps.getFileStatuses).mockResolvedValue({
         success: false,
         error: 'Not a git repository'
       })
 
-      const result = await mockGitApi.getFileStatuses('/non-repo')
+      const result = await mockGitOps.getFileStatuses('/non-repo')
 
       expect(result.success).toBe(false)
       expect(result.error).toBe('Not a git repository')
     })
 
     test('Handle stageFile error gracefully', async () => {
-      vi.mocked(mockGitApi.stageFile).mockResolvedValue({
+      vi.mocked(mockGitOps.stageFile).mockResolvedValue({
         success: false,
         error: 'File not found'
       })
 
-      const result = await mockGitApi.stageFile('/repo', 'nonexistent.ts')
+      const result = await mockGitOps.stageFile('/repo', 'nonexistent.ts')
 
       expect(result.success).toBe(false)
       expect(result.error).toBe('File not found')
     })
 
     test('Handle discardChanges error gracefully', async () => {
-      vi.mocked(mockGitApi.discardChanges).mockResolvedValue({
+      vi.mocked(mockGitOps.discardChanges).mockResolvedValue({
         success: false,
         error: 'Cannot discard: file is untracked'
       })
 
-      const result = await mockGitApi.discardChanges('/repo', 'file.ts')
+      const result = await mockGitOps.discardChanges('/repo', 'file.ts')
 
       expect(result.success).toBe(false)
       expect(result.error).toContain('Cannot discard')
@@ -305,12 +311,12 @@ describe('Session 2: File Tree Git Integration', () => {
         { path: '/repo/src/c.ts', relativePath: 'src/c.ts', status: '?', staged: false }
       ]
 
-      vi.mocked(mockGitApi.getFileStatuses).mockResolvedValue({
+      vi.mocked(mockGitOps.getFileStatuses).mockResolvedValue({
         success: true,
         files: mockStatuses
       })
 
-      const result = await mockGitApi.getFileStatuses('/repo')
+      const result = await mockGitOps.getFileStatuses('/repo')
 
       // The src directory should show D (most severe among its children)
       // This logic is implemented in getNodeGitStatus helper

@@ -10,8 +10,7 @@ import { Button } from '@/components/ui/button'
 import { DiffViewer, type DiffViewMode } from './DiffViewer'
 import { Columns2, AlignJustify, Copy, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { projectApi } from '@/api/project-api'
-import { gitApi } from '@/api/git-api'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 interface DiffModalProps {
   isOpen: boolean
@@ -49,7 +48,9 @@ export function DiffModal({
       setDiff('')
 
       try {
-        const result = await gitApi.getDiff(worktreePath, filePath, staged, isUntracked)
+        const result = unwrapEnvelope(
+          await window.gitOps.getDiff(worktreePath, filePath, staged, isUntracked)
+        )
 
         if (result.success && result.diff) {
           setDiff(result.diff)
@@ -69,7 +70,7 @@ export function DiffModal({
   // Copy diff content to clipboard
   const handleCopyDiff = useCallback(async () => {
     if (diff) {
-      await projectApi.copyToClipboard(diff)
+      unwrapEnvelope(await window.projectOps.copyToClipboard(diff))
     }
   }, [diff])
 

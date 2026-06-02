@@ -3,71 +3,66 @@ import { cleanup, renderHook, waitFor } from '@testing-library/react'
 import { useOpenCodeGlobalListener } from '@/hooks/useOpenCodeGlobalListener'
 import { resetSessionFollowUpDispatchState } from '@/lib/session-follow-up-dispatch'
 
-const apiMocks = vi.hoisted(() => {
-  const state = {
-    streamCallback: null as ((event: Record<string, unknown>) => void) | null,
-    notifyKanbanSessionSyncSpy: vi.fn(),
-    prompt: vi.fn<
-      (
-        path: string,
-        opencodeSessionId: string,
-        message: Array<{ type: 'text'; text: string }>
-      ) => Promise<{
-        success: boolean
-        error?: string
-      }>
-    >(),
-    onStream: vi.fn((cb: (event: Record<string, unknown>) => void) => {
-      state.streamCallback = cb
-      return () => {
-        state.streamCallback = null
-      }
-    }),
-    onBranchRenamed: vi.fn(() => () => {}),
-    dbSessionGet: vi.fn(),
-    dbWorktreeGet: vi.fn(),
-    connectionGet: vi.fn()
+const { notifyKanbanSessionSyncSpy } = vi.hoisted(() => ({
+  notifyKanbanSessionSyncSpy: vi.fn()
+}))
+
+let streamCallback: ((event: Record<string, unknown>) => void) | null = null
+
+const mockPrompt = vi.fn<
+  (
+    path: string,
+    opencodeSessionId: string,
+    message: Array<{ type: 'text'; text: string }>
+  ) => Promise<{
+    success: boolean
+    error?: string
+  }>
+>()
+
+const mockOnStream = vi.fn((cb: (event: Record<string, unknown>) => void) => {
+  streamCallback = cb
+  return () => {
+    streamCallback = null
   }
-  return state
 })
 
-const {
-  notifyKanbanSessionSyncSpy,
-  prompt: mockPrompt,
-  dbSessionGet: mockDbSessionGet,
-  dbWorktreeGet: mockDbWorktreeGet,
-  connectionGet: mockConnectionGet
-} = apiMocks
+const mockOnBranchRenamed = vi.fn(() => () => {})
+const mockDbSessionGet = vi.fn()
+const mockDbWorktreeGet = vi.fn()
+const mockConnectionGet = vi.fn()
 
-vi.mock('@/api/opencode-api', () => ({
-  opencodeApi: {
-    onStream: apiMocks.onStream,
-    prompt: apiMocks.prompt
+Object.defineProperty(window, 'opencodeOps', {
+  writable: true,
+  value: {
+    onStream: mockOnStream,
+    prompt: mockPrompt
   }
-}))
+})
 
-vi.mock('@/api/worktree-api', () => ({
-  worktreeApi: {
-    onBranchRenamed: apiMocks.onBranchRenamed
-  }
-}))
+Object.defineProperty(window, 'worktreeOps', {
+  writable: true,
+  value: { onBranchRenamed: mockOnBranchRenamed }
+})
 
-vi.mock('@/api/db-api', () => ({
-  dbApi: {
+Object.defineProperty(window, 'db', {
+  writable: true,
+  value: {
     session: {
-      get: apiMocks.dbSessionGet
+      get: mockDbSessionGet
     },
     worktree: {
-      get: apiMocks.dbWorktreeGet
+      get: mockDbWorktreeGet
     }
   }
-}))
+})
 
-vi.mock('@/api/connection-api', () => ({
-  connectionApi: {
-    get: apiMocks.connectionGet
+Object.defineProperty(window, 'connectionOps', {
+  writable: true,
+  value: {
+    get: mockConnectionGet
   }
-}))
+})
 
 const setSessionStatusSpy = vi.fn()
 const clearSessionStatusSpy = vi.fn()
@@ -146,16 +141,6 @@ vi.mock('@/stores/useConnectionStore', () => ({
   }
 }))
 
-vi.mock('@/stores/useSettingsStore', () => ({
-  useSettingsStore: {
-    getState: () => ({
-      commandFilter: { enabled: false, allowlist: [] },
-      usageIndicatorMode: 'off',
-      usageIndicatorProviders: []
-    })
-  }
-}))
-
 vi.mock('@/stores/useWorktreeStatusStore', () => ({
   useWorktreeStatusStore: {
     getState: () => ({
@@ -211,7 +196,7 @@ vi.mock('@/stores/store-coordination', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/stores/store-coordination')>()
   return {
     ...actual,
-    notifyKanbanSessionSync: apiMocks.notifyKanbanSessionSyncSpy
+    notifyKanbanSessionSync: notifyKanbanSessionSyncSpy
   }
 })
 
@@ -260,7 +245,7 @@ describe('Global listener background follow-up dispatcher', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     resetSessionFollowUpDispatchState()
-    apiMocks.streamCallback = null
+    streamCallback = null
     followUpQueues.clear()
     questionQueues.clear()
     permissionQueues.clear()
@@ -287,8 +272,8 @@ describe('Global listener background follow-up dispatcher', () => {
 
   function mountAndGetCallback() {
     renderHook(() => useOpenCodeGlobalListener())
-    expect(apiMocks.streamCallback).not.toBeNull()
-    return apiMocks.streamCallback!
+    expect(streamCallback).not.toBeNull()
+    return streamCallback!
   }
 
   test('background question reply clears the prompt and restores working status', () => {

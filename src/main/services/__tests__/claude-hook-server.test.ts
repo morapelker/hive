@@ -1,10 +1,6 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-const backendManagerMocks = vi.hoisted(() => ({
-  publishDesktopBackendEvent: vi.fn()
-}))
-
 vi.mock('../logger', () => ({
   createLogger: () => ({
     debug: vi.fn(),
@@ -12,10 +8,6 @@ vi.mock('../logger', () => ({
     warn: vi.fn(),
     error: vi.fn()
   })
-}))
-
-vi.mock('../../desktop/backend-manager', () => ({
-  publishDesktopBackendEvent: backendManagerMocks.publishDesktopBackendEvent
 }))
 
 import {
@@ -26,6 +18,15 @@ import {
   publishClaudeCliStatus,
   type ParsedClaudeHook
 } from '../claude-hook-server'
+
+function makeWindow() {
+  return {
+    isDestroyed: vi.fn(() => false),
+    webContents: {
+      send: vi.fn()
+    }
+  }
+}
 
 async function postHook(
   port: number,
@@ -57,7 +58,6 @@ async function getHook(
 afterEach(async () => {
   await closeClaudeHookServer()
   vi.clearAllMocks()
-  backendManagerMocks.publishDesktopBackendEvent.mockReset()
 })
 
 describe('mapHookEventToStatus', () => {
@@ -224,29 +224,25 @@ describe('buildClaudeCliHookSettings', () => {
 })
 
 describe('ClaudeHookServer HTTP round-trip', () => {
-  it('publishes mapped hook status through the backend event bus without legacy renderer IPC sends', async () => {
-    const { port } = await getClaudeHookServer()
-    backendManagerMocks.publishDesktopBackendEvent.mockResolvedValue(true)
+  it('forwards mapped hook status to the renderer', async () => {
+    const mockWindow = makeWindow()
+    const { port } = await getClaudeHookServer(mockWindow as never)
 
     const response = await postHook(port, 'hive-session-1', 'session', {
       hook_event_name: 'SessionStart'
     })
 
     expect(response).toEqual({ status: 200, text: '{}' })
-    await vi.waitFor(() => {
-      expect(backendManagerMocks.publishDesktopBackendEvent).toHaveBeenCalledWith(
-        'claude-cli:status',
-        {
-          sessionId: 'hive-session-1',
-          status: 'completed',
-          metadata: { hookEventName: 'SessionStart', hookPath: 'session' }
-        }
-      )
+    expect(mockWindow.webContents.send).toHaveBeenCalledWith('claude-cli:status', {
+      sessionId: 'hive-session-1',
+      status: 'completed',
+      metadata: { hookEventName: 'SessionStart', hookPath: 'session' }
     })
   })
 
-  it('publishes ExitPlanMode raw plan text through the backend event bus', async () => {
-    const { port } = await getClaudeHookServer()
+  it('forwards ExitPlanMode raw plan text to the renderer', async () => {
+    const mockWindow = makeWindow()
+    const { port } = await getClaudeHookServer(mockWindow as never)
 
     await postHook(port, 'hive-session-1', 'tool', {
       hook_event_name: 'PreToolUse',
@@ -256,25 +252,21 @@ describe('ClaudeHookServer HTTP round-trip', () => {
       }
     })
 
-    await vi.waitFor(() => {
-      expect(backendManagerMocks.publishDesktopBackendEvent).toHaveBeenCalledWith(
-        'claude-cli:status',
-        {
-          sessionId: 'hive-session-1',
-          status: 'plan_ready',
-          metadata: {
-            hookEventName: 'PreToolUse',
-            hookPath: 'tool',
-            toolName: 'ExitPlanMode',
-            plan: '# Plan\n\n1. Add CLI card.'
-          }
-        }
-      )
+    expect(mockWindow.webContents.send).toHaveBeenCalledWith('claude-cli:status', {
+      sessionId: 'hive-session-1',
+      status: 'plan_ready',
+      metadata: {
+        hookEventName: 'PreToolUse',
+        hookPath: 'tool',
+        toolName: 'ExitPlanMode',
+        plan: '# Plan\n\n1. Add CLI card.'
+      }
     })
   })
 
   it('forwards ExitPlanMode rejection as planning so plan followups can resume review', async () => {
-    const { port } = await getClaudeHookServer()
+    const mockWindow = makeWindow()
+    const { port } = await getClaudeHookServer(mockWindow as never)
 
     await postHook(port, 'hive-session-1', 'tool', {
       hook_event_name: 'PostToolUseFailure',
@@ -284,24 +276,20 @@ describe('ClaudeHookServer HTTP round-trip', () => {
       }
     })
 
-    await vi.waitFor(() => {
-      expect(backendManagerMocks.publishDesktopBackendEvent).toHaveBeenCalledWith(
-        'claude-cli:status',
-        {
-          sessionId: 'hive-session-1',
-          status: 'planning',
-          metadata: {
-            hookEventName: 'PostToolUseFailure',
-            hookPath: 'tool',
-            toolName: 'ExitPlanMode'
-          }
-        }
-      )
+    expect(mockWindow.webContents.send).toHaveBeenCalledWith('claude-cli:status', {
+      sessionId: 'hive-session-1',
+      status: 'planning',
+      metadata: {
+        hookEventName: 'PostToolUseFailure',
+        hookPath: 'tool',
+        toolName: 'ExitPlanMode'
+      }
     })
   })
 
-  it('does not publish duplicate sequential statuses for the same session', async () => {
-    const { port } = await getClaudeHookServer()
+  it('does not send duplicate sequential statuses for the same session', async () => {
+    const mockWindow = makeWindow()
+    const { port } = await getClaudeHookServer(mockWindow as never)
 
     await postHook(port, 'hive-session-1', 'start', {
       hook_event_name: 'UserPromptSubmit',
@@ -312,13 +300,12 @@ describe('ClaudeHookServer HTTP round-trip', () => {
       permission_mode: 'default'
     })
 
-    await vi.waitFor(() => {
-      expect(backendManagerMocks.publishDesktopBackendEvent).toHaveBeenCalledTimes(1)
-    })
+    expect(mockWindow.webContents.send).toHaveBeenCalledTimes(1)
   })
 
-  it('publishes again after the session status changes', async () => {
-    const { port } = await getClaudeHookServer()
+  it('sends again after the session status changes', async () => {
+    const mockWindow = makeWindow()
+    const { port } = await getClaudeHookServer(mockWindow as never)
 
     await postHook(port, 'hive-session-1', 'start', {
       hook_event_name: 'UserPromptSubmit',
@@ -332,74 +319,64 @@ describe('ClaudeHookServer HTTP round-trip', () => {
       permission_mode: 'default'
     })
 
-    await vi.waitFor(() => {
-      expect(backendManagerMocks.publishDesktopBackendEvent).toHaveBeenCalledTimes(3)
+    expect(mockWindow.webContents.send).toHaveBeenCalledTimes(3)
+    expect(mockWindow.webContents.send).toHaveBeenNthCalledWith(3, 'claude-cli:status', {
+      sessionId: 'hive-session-1',
+      status: 'working',
+      metadata: { hookEventName: 'UserPromptSubmit', hookPath: 'start' }
     })
-    expect(backendManagerMocks.publishDesktopBackendEvent).toHaveBeenNthCalledWith(
-      3,
-      'claude-cli:status',
-      {
-        sessionId: 'hive-session-1',
-        status: 'working',
-        metadata: { hookEventName: 'UserPromptSubmit', hookPath: 'start' }
-      }
-    )
   })
 
   it('dedupes direct PTY-exit fallback after an equivalent hook status', async () => {
-    const { port } = await getClaudeHookServer()
+    const mockWindow = makeWindow()
+    const { port } = await getClaudeHookServer(mockWindow as never)
 
     await postHook(port, 'hive-session-1', 'stop', {
       hook_event_name: 'Stop'
     })
-    await vi.waitFor(() => {
-      expect(backendManagerMocks.publishDesktopBackendEvent).toHaveBeenCalledTimes(1)
-    })
-    publishClaudeCliStatus({
+    publishClaudeCliStatus(mockWindow as never, {
       sessionId: 'hive-session-1',
       status: 'completed',
       metadata: { reason: 'pty_exit' }
     })
 
-    await vi.waitFor(() => {
-      expect(backendManagerMocks.publishDesktopBackendEvent).toHaveBeenCalledTimes(1)
+    expect(mockWindow.webContents.send).toHaveBeenCalledTimes(1)
+    expect(mockWindow.webContents.send).toHaveBeenCalledWith('claude-cli:status', {
+      sessionId: 'hive-session-1',
+      status: 'completed',
+      metadata: { hookEventName: 'Stop', hookPath: 'stop' }
     })
-    expect(backendManagerMocks.publishDesktopBackendEvent).toHaveBeenCalledWith(
-      'claude-cli:status',
-      {
-        sessionId: 'hive-session-1',
-        status: 'completed',
-        metadata: { hookEventName: 'Stop', hookPath: 'stop' }
-      }
-    )
   })
 
-  it('ignores unknown event names without publishing status events', async () => {
-    const { port } = await getClaudeHookServer()
+  it('ignores unknown event names without sending IPC', async () => {
+    const mockWindow = makeWindow()
+    const { port } = await getClaudeHookServer(mockWindow as never)
 
     const response = await postHook(port, 'hive-session-1', 'start', {
       hook_event_name: 'BogusEvent'
     })
 
     expect(response).toEqual({ status: 200, text: '{}' })
-    expect(backendManagerMocks.publishDesktopBackendEvent).not.toHaveBeenCalled()
+    expect(mockWindow.webContents.send).not.toHaveBeenCalled()
   })
 
-  it('handles malformed JSON without publishing status events', async () => {
-    const { port } = await getClaudeHookServer()
+  it('handles malformed JSON without sending IPC', async () => {
+    const mockWindow = makeWindow()
+    const { port } = await getClaudeHookServer(mockWindow as never)
 
     const response = await postHook(port, 'hive-session-1', 'start', 'not json')
 
     expect(response).toEqual({ status: 200, text: '{}' })
-    expect(backendManagerMocks.publishDesktopBackendEvent).not.toHaveBeenCalled()
+    expect(mockWindow.webContents.send).not.toHaveBeenCalled()
   })
 
-  it('rejects non-POST requests without publishing status events', async () => {
-    const { port } = await getClaudeHookServer()
+  it('rejects non-POST requests without sending IPC', async () => {
+    const mockWindow = makeWindow()
+    const { port } = await getClaudeHookServer(mockWindow as never)
 
     const response = await getHook(port, 'hive-session-1', 'start')
 
     expect(response).toEqual({ status: 405, text: '{}' })
-    expect(backendManagerMocks.publishDesktopBackendEvent).not.toHaveBeenCalled()
+    expect(mockWindow.webContents.send).not.toHaveBeenCalled()
   })
 })

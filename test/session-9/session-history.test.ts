@@ -5,60 +5,6 @@ import { useSessionHistoryStore } from '../../src/renderer/src/stores/useSession
 import { useProjectStore } from '../../src/renderer/src/stores/useProjectStore'
 import { useWorktreeStore } from '../../src/renderer/src/stores/useWorktreeStore'
 import { useSessionStore } from '../../src/renderer/src/stores/useSessionStore'
-import { dbApi } from '../../src/renderer/src/api/db-api'
-import { opencodeApi } from '../../src/renderer/src/api/opencode-api'
-
-const apiMocks = vi.hoisted(() => ({
-  dbApi: {
-    session: {
-      create: vi.fn(),
-      get: vi.fn(),
-      getByWorktree: vi.fn(),
-      getByProject: vi.fn(),
-      getActiveByWorktree: vi.fn(),
-      update: vi.fn(),
-      delete: vi.fn(),
-      search: vi.fn()
-    },
-    project: {
-      getAll: vi.fn()
-    },
-    worktree: {
-      get: vi.fn(),
-      getActiveByProject: vi.fn(),
-      touch: vi.fn()
-    },
-    setting: {
-      get: vi.fn(),
-      set: vi.fn()
-    }
-  },
-  opencodeApi: {
-    getMessages: vi.fn()
-  },
-  settingsApi: {
-    onSettingsUpdated: vi.fn(() => () => {})
-  },
-  petApi: {
-    updateSettings: vi.fn()
-  }
-}))
-
-vi.mock('../../src/renderer/src/api/db-api', () => ({
-  dbApi: apiMocks.dbApi
-}))
-
-vi.mock('../../src/renderer/src/api/opencode-api', () => ({
-  opencodeApi: apiMocks.opencodeApi
-}))
-
-vi.mock('../../src/renderer/src/api/settings-api', () => ({
-  settingsApi: apiMocks.settingsApi
-}))
-
-vi.mock('../../src/renderer/src/api/pet-api', () => ({
-  petApi: apiMocks.petApi
-}))
 
 // Mock session data with worktree info
 const mockSessionWithWorktree1 = {
@@ -153,9 +99,27 @@ const mockArchivedWorktree = {
   last_accessed_at: '2023-12-01T00:00:00Z'
 }
 
-const mockDbSession = apiMocks.dbApi.session
-const mockDbWorktree = apiMocks.dbApi.worktree
-const mockGetMessages = vi.mocked(opencodeApi.getMessages)
+// Mock window.db for database operations
+const mockDbSession = {
+  create: vi.fn(),
+  get: vi.fn(),
+  getByWorktree: vi.fn(),
+  getByProject: vi.fn(),
+  getActiveByWorktree: vi.fn(),
+  update: vi.fn(),
+  delete: vi.fn(),
+  search: vi.fn()
+}
+
+const mockDbProject = {
+  getAll: vi.fn()
+}
+
+const mockDbWorktree = {
+  get: vi.fn(),
+  getActiveByProject: vi.fn(),
+  touch: vi.fn()
+}
 
 const mockOpenCodeMessages = [
   {
@@ -176,16 +140,9 @@ const mockOpenCodeMessages = [
   }
 ]
 
+// Setup window.db mock
 beforeEach(() => {
   vi.clearAllMocks()
-  vi.mocked(dbApi.setting.get).mockResolvedValue(null)
-  vi.mocked(dbApi.setting.set).mockResolvedValue(true)
-  vi.mocked(dbApi.worktree.touch).mockResolvedValue(true)
-  apiMocks.petApi.updateSettings.mockResolvedValue({ success: true })
-  mockGetMessages.mockResolvedValue({
-    success: true,
-    value: { success: true, messages: [] }
-  })
 
   // Reset stores to initial state
   useSessionHistoryStore.setState({
@@ -230,6 +187,24 @@ beforeEach(() => {
     activeWorktreeId: null
   })
 
+  // Mock window.db
+  Object.defineProperty(window, 'db', {
+    value: {
+      session: mockDbSession,
+      project: mockDbProject,
+      worktree: mockDbWorktree
+    },
+    writable: true,
+    configurable: true
+  })
+
+  Object.defineProperty(window, 'opencodeOps', {
+    value: {
+      getMessages: vi.fn().mockResolvedValue({ success: true, messages: [] })
+    },
+    writable: true,
+    configurable: true
+  })
 })
 
 afterEach(() => {
@@ -607,9 +582,9 @@ describe('Session 9: Session History', () => {
 
     test('Session preview loads OpenCode transcript messages', async () => {
       mockDbWorktree.get.mockResolvedValue({ ...mockWorktree, path: '/tmp/worktree-preview' })
-      mockGetMessages.mockResolvedValue({
+      ;(window.opencodeOps.getMessages as ReturnType<typeof vi.fn>).mockResolvedValue({
         success: true,
-        value: { success: true, messages: mockOpenCodeMessages }
+        messages: mockOpenCodeMessages
       })
 
       const previewMessages = await useSessionHistoryStore
@@ -624,16 +599,16 @@ describe('Session 9: Session History', () => {
 
     test('Session preview prefers OpenCode transcript when available', async () => {
       mockDbWorktree.get.mockResolvedValue({ ...mockWorktree, path: '/tmp/worktree-preview' })
-      mockGetMessages.mockResolvedValue({
+      ;(window.opencodeOps.getMessages as ReturnType<typeof vi.fn>).mockResolvedValue({
         success: true,
-        value: { success: true, messages: mockOpenCodeMessages }
+        messages: mockOpenCodeMessages
       })
 
       const previewMessages = await useSessionHistoryStore
         .getState()
         .getSessionPreviewMessages(mockOpenCodeBackedSession)
 
-      expect(mockGetMessages).toHaveBeenCalledWith(
+      expect(window.opencodeOps.getMessages).toHaveBeenCalledWith(
         '/tmp/worktree-preview',
         'opc-session-1'
       )
@@ -645,9 +620,8 @@ describe('Session 9: Session History', () => {
 
     test('Session preview returns empty when OpenCode fetch fails', async () => {
       mockDbWorktree.get.mockResolvedValue({ ...mockWorktree, path: '/tmp/worktree-preview' })
-      mockGetMessages.mockResolvedValue({
+      ;(window.opencodeOps.getMessages as ReturnType<typeof vi.fn>).mockResolvedValue({
         success: false,
-        errorCode: 'OPENCODE_UNAVAILABLE',
         error: 'OpenCode unavailable'
       })
 
@@ -655,7 +629,7 @@ describe('Session 9: Session History', () => {
         .getState()
         .getSessionPreviewMessages(mockOpenCodeBackedSession)
 
-      expect(mockGetMessages).toHaveBeenCalledWith(
+      expect(window.opencodeOps.getMessages).toHaveBeenCalledWith(
         '/tmp/worktree-preview',
         'opc-session-1'
       )

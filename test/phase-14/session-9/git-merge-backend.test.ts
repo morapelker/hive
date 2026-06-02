@@ -5,8 +5,8 @@
  * - merge returns success on clean merge
  * - merge returns conflicts on conflict
  * - merge returns error on other failures
- * - RPC route delegates to git service
- * - Renderer gitApi.merge() preserves the merge result contract
+ * - IPC handler delegates to git service
+ * - Preload exposes window.gitOps.merge()
  */
 
 import { describe, test, expect, vi, beforeEach } from 'vitest'
@@ -118,24 +118,24 @@ describe('Session 9: Git Merge Backend', () => {
     })
   })
 
-  describe('RPC handler contract', () => {
-    test('gitOps.merge RPC method should be registered', () => {
-      // Verify the expected RPC method name and parameter contract.
-      const expectedChannel = 'gitOps.merge'
+  describe('IPC handler contract', () => {
+    test('git:merge handler should be registered', () => {
+      // Verify the expected IPC channel name and parameter contract
+      const expectedChannel = 'git:merge'
       const expectedParams = ['worktreePath', 'sourceBranch']
 
       // This is a contract test — we verify the expected interface
-      expect(expectedChannel).toBe('gitOps.merge')
+      expect(expectedChannel).toBe('git:merge')
       expect(expectedParams).toHaveLength(2)
     })
   })
 
-  describe('Renderer API contract', () => {
+  describe('Preload bridge contract', () => {
     test('gitOps.merge should accept worktreePath and sourceBranch', async () => {
-      // Verify the renderer API function signature contract.
+      // Verify the preload bridge function signature contract
       const mockMerge = vi.fn().mockResolvedValue({ success: true })
 
-      // Simulate the renderer API call.
+      // Simulate the preload bridge call
       const result = await mockMerge('/test/path', 'main')
 
       expect(mockMerge).toHaveBeenCalledWith('/test/path', 'main')

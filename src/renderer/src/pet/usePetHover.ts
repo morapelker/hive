@@ -1,4 +1,3 @@
-import { petApi } from '@/api/pet-api'
 import { useCallback, useRef } from 'react'
 import type * as React from 'react'
 
@@ -17,14 +16,14 @@ export function usePetHover(isDraggingRef: React.MutableRefObject<boolean>): {
 
   const onMouseEnter = useCallback(() => {
     clearLeaveTimer()
-    petApi.setIgnoreMouse(false)
+    window.petOps.setIgnoreMouse(false)
   }, [clearLeaveTimer])
 
   const onMouseLeave = useCallback(() => {
     clearLeaveTimer()
     leaveTimerRef.current = window.setTimeout(() => {
       if (!isDraggingRef.current) {
-        petApi.setIgnoreMouse(true)
+        window.petOps.setIgnoreMouse(true)
       }
     }, 50)
   }, [clearLeaveTimer, isDraggingRef])

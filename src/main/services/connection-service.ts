@@ -1,5 +1,5 @@
+import { app } from 'electron'
 import { join } from 'path'
-import { homedir } from 'os'
 import {
   existsSync,
   mkdirSync,
@@ -17,7 +17,7 @@ const log = createLogger({ component: 'ConnectionService' })
 const CONNECTIONS_DIR_NAME = 'connections'
 
 export function getConnectionsBaseDir(): string {
-  const homeDir = homedir()
+  const homeDir = app.getPath('home')
   return join(homeDir, '.hive', CONNECTIONS_DIR_NAME)
 }
 

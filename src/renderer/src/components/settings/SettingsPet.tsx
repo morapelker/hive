@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { listPets } from '@/pet/registry'
 import { useSettingsStore } from '@/stores/useSettingsStore'
-import { petApi } from '@/api/pet-api'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
 
 const SIZE_OPTIONS: Array<{ id: PetSize; label: string; description: string }> = [
   { id: 'S', label: 'S', description: '64 px' },
@@ -164,7 +164,10 @@ export function SettingsPet(): React.JSX.Element {
           variant="outline"
           className="gap-2"
           onClick={() => {
-            petApi.show().catch(() => {})
+            window.petOps
+              .show()
+              .then(unwrapEnvelope)
+              .catch(() => {})
           }}
           data-testid="show-pet-button"
         >

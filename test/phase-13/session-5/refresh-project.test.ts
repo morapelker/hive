@@ -1,27 +1,4 @@
-import { afterEach, beforeEach, describe, test, expect, vi } from 'vitest'
-
-vi.mock('@/api/worktree-api', () => ({
-  worktreeApi: {
-    sync: vi.fn()
-  }
-}))
-
-vi.mock('@/api/settings-api', () => ({
-  settingsApi: {
-    onSettingsUpdated: vi.fn(() => () => {})
-  }
-}))
-
-vi.mock('@/api/pet-api', () => ({
-  petApi: {
-    hide: vi.fn(() => Promise.resolve(undefined)),
-    show: vi.fn(() => Promise.resolve(undefined)),
-    updateSettings: vi.fn(() => Promise.resolve({ success: true }))
-  }
-}))
-
-import { resetRendererRpcClientForTests, setRendererRpcClient } from '@/api/rpc-client'
-import { worktreeApi } from '@/api/worktree-api'
+import { describe, test, expect, vi } from 'vitest'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 
 /**
@@ -55,20 +32,26 @@ vi.mock('@/stores', () => {
   return { useProjectStore, useWorktreeStore }
 })
 
-beforeEach(() => {
-  vi.clearAllMocks()
-  setRendererRpcClient({
-    request: vi.fn().mockImplementation((method) => {
-      if (method === 'db.worktree.getActiveByProject') return Promise.resolve([])
-      return Promise.resolve(null)
-    }),
-    subscribe: vi.fn()
-  })
-  vi.mocked(worktreeApi.sync).mockResolvedValue({ success: true })
+// Mock window.worktreeOps
+Object.defineProperty(window, 'worktreeOps', {
+  writable: true,
+  value: {
+    sync: vi.fn().mockResolvedValue({ success: true }),
+    create: vi.fn(),
+    remove: vi.fn(),
+    list: vi.fn(),
+    archive: vi.fn(),
+    createFromBranch: vi.fn()
+  }
 })
 
-afterEach(() => {
-  resetRendererRpcClientForTests()
+// Mock window.projectOps
+Object.defineProperty(window, 'projectOps', {
+  writable: true,
+  value: {
+    showInFolder: vi.fn(),
+    copyToClipboard: vi.fn()
+  }
 })
 
 describe('Session 5: Refresh Project', () => {
@@ -85,11 +68,20 @@ describe('Session 5: Refresh Project', () => {
       await expect(state.syncWorktrees('project-123', '/path/to/project')).resolves.not.toThrow()
     })
 
-    test('syncWorktrees calls worktreeApi.sync with correct payload', async () => {
+    test('syncWorktrees calls worktreeOps.sync with correct payload', async () => {
+      const syncSpy = vi.fn().mockResolvedValue({ success: true })
+      Object.defineProperty(window, 'worktreeOps', {
+        writable: true,
+        value: {
+          ...window.worktreeOps,
+          sync: syncSpy
+        }
+      })
+
       const state = useWorktreeStore.getState()
       await state.syncWorktrees('proj-1', '/projects/my-app')
 
-      expect(worktreeApi.sync).toHaveBeenCalledWith({
+      expect(syncSpy).toHaveBeenCalledWith({
         projectId: 'proj-1',
         projectPath: '/projects/my-app'
       })

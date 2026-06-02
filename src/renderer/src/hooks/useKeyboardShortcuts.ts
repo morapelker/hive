@@ -20,10 +20,6 @@ import { useTerminalStore } from '@/stores/useTerminalStore'
 import { eventMatchesBinding, type KeyBinding } from '@/lib/keyboard-shortcuts'
 import { toast } from '@/lib/toast'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
-import { systemApi } from '@/api/system-api'
-import { opencodeApi } from '@/api/opencode-api'
-import { worktreeApi } from '@/api/worktree-api'
-import type { MenuActionChannel } from '@shared/menu-events'
 
 /**
  * Check if the terminal panel is currently focused.
@@ -234,9 +230,11 @@ export function useKeyboardShortcuts(): void {
     return () => document.removeEventListener('keydown', handleKeyDown, true)
   }, [handleKeyDown])
 
-  // Listen for Cmd+T / Ctrl+T forwarded from the main process via WebSocket
+  // Listen for Cmd+T / Ctrl+T forwarded from the main process via IPC
   useEffect(() => {
-    const cleanup = systemApi.onNewSessionShortcut(() => {
+    if (!window.systemOps?.onNewSessionShortcut) return
+
+    const cleanup = window.systemOps.onNewSessionShortcut(() => {
       if (isTerminalFocused()) {
         const worktreeId = useWorktreeStore.getState().selectedWorktreeId
         if (worktreeId) {
@@ -250,9 +248,11 @@ export function useKeyboardShortcuts(): void {
     return cleanup
   }, [])
 
-  // Listen for Cmd+D / Ctrl+D forwarded from the main process via WebSocket
+  // Listen for Cmd+D / Ctrl+D forwarded from the main process via IPC
   useEffect(() => {
-    const cleanup = systemApi.onFileSearchShortcut(() => {
+    if (!window.systemOps?.onFileSearchShortcut) return
+
+    const cleanup = window.systemOps.onFileSearchShortcut(() => {
       useFileSearchStore.getState().toggle()
     })
 
@@ -265,9 +265,11 @@ export function useKeyboardShortcuts(): void {
   // Reactively update menu enabled/disabled state based on active session/worktree
   useMenuStateUpdater()
 
-  // Listen for Cmd+W / Ctrl+W forwarded from the main process via WebSocket
+  // Listen for Cmd+W / Ctrl+W forwarded from the main process via IPC
   useEffect(() => {
-    const cleanup = systemApi.onCloseSessionShortcut(() => {
+    if (!window.systemOps?.onCloseSessionShortcut) return
+
+    const cleanup = window.systemOps.onCloseSessionShortcut(() => {
       // Priority 0: Close any open modal/dialog
       if (tryCloseOpenModal()) return
 
@@ -729,10 +731,12 @@ function getActiveWorktreePath(): string | null {
  */
 function useMenuActionListeners(): void {
   useEffect(() => {
+    if (!window.systemOps?.onMenuAction) return
+
     const cleanups: (() => void)[] = []
 
-    const on = (channel: MenuActionChannel, handler: () => void): void => {
-      cleanups.push(systemApi.onMenuAction(channel, handler))
+    const on = (channel: string, handler: () => void): void => {
+      cleanups.push(window.systemOps.onMenuAction(channel, handler))
     }
 
     on('menu:new-worktree', () => {
@@ -829,13 +833,13 @@ function useMenuActionListeners(): void {
     on('menu:open-in-editor', () => {
       const worktreePath = getActiveWorktreePath()
       if (!worktreePath) return
-      worktreeApi.openInEditor(worktreePath).catch(console.error)
+      window.worktreeOps.openInEditor(worktreePath).then(unwrapEnvelope).catch(console.error)
     })
 
     on('menu:open-in-terminal', () => {
       const worktreePath = getActiveWorktreePath()
       if (!worktreePath) return
-      worktreeApi.openInTerminal(worktreePath).catch(console.error)
+      window.worktreeOps.openInTerminal(worktreePath).then(unwrapEnvelope).catch(console.error)
     })
 
     on('menu:command-palette', () => {
@@ -902,30 +906,30 @@ function useMenuStateUpdater(): void {
   })
 
   useEffect(() => {
+    if (!window.systemOps?.updateMenuState) return
+
     const baseState = {
       hasActiveSession: !!activeSessionId,
       hasActiveWorktree: !!selectedWorktreeId
     }
 
     if (!activeSessionId || !opencodeSessionId) {
-      void systemApi.updateMenuState(baseState).catch(() => {})
+      window.systemOps.updateMenuState(baseState)
       return
     }
 
-    opencodeApi
-      .capabilities(opencodeSessionId)
+    window.opencodeOps
+      ?.capabilities?.(opencodeSessionId)
       .then(unwrapEnvelope)
-      .then((result) => {
-        void systemApi
-          .updateMenuState({
-            ...baseState,
-            canUndo: result.success ? result.capabilities?.supportsUndo : true,
-            canRedo: result.success ? result.capabilities?.supportsRedo : true
-          })
-          .catch(() => {})
+      ?.then((result) => {
+        window.systemOps.updateMenuState({
+          ...baseState,
+          canUndo: result.success ? result.capabilities?.supportsUndo : true,
+          canRedo: result.success ? result.capabilities?.supportsRedo : true
+        })
       })
       .catch(() => {
-        void systemApi.updateMenuState(baseState).catch(() => {})
+        window.systemOps.updateMenuState(baseState)
       })
   }, [activeSessionId, selectedWorktreeId, opencodeSessionId])
 }

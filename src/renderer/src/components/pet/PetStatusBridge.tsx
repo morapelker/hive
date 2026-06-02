@@ -1,6 +1,5 @@
 import { useEffect, useRef } from 'react'
 import type { PetStatusPayload } from '@shared/types/pet'
-import { petApi } from '@/api/pet-api'
 import { aggregatePetStatus } from '@/lib/pet-status-aggregator'
 import {
   useConnectionStore,
@@ -34,8 +33,8 @@ function computeStatus(): PetStatusPayload {
 
 function jumpToWorktree(worktreeId: string): void {
   const worktreeState = useWorktreeStore.getState()
-  const projectEntry = Array.from(worktreeState.worktreesByProject.entries()).find(
-    ([, worktrees]) => worktrees.some((worktree) => worktree.id === worktreeId)
+  const projectEntry = Array.from(worktreeState.worktreesByProject.entries()).find(([, worktrees]) =>
+    worktrees.some((worktree) => worktree.id === worktreeId)
   )
   const projectId = projectEntry?.[0]
 
@@ -54,7 +53,7 @@ export function PetStatusBridge(): null {
       const next = computeStatus()
       if (sameStatus(lastPublishedRef.current, next)) return
       lastPublishedRef.current = next
-      petApi.publishStatus(next)
+      window.petOps.publishStatus(next)
     }
 
     publishIfChanged()
@@ -62,10 +61,10 @@ export function PetStatusBridge(): null {
     const cleanupStatus = useWorktreeStatusStore.subscribe(publishIfChanged)
     const cleanupSessions = useSessionStore.subscribe(publishIfChanged)
     const cleanupConnections = useConnectionStore.subscribe(publishIfChanged)
-    const cleanupJump = petApi.onJumpToWorktree(({ worktreeId }) => {
+    const cleanupJump = window.petOps.onJumpToWorktree(({ worktreeId }) => {
       if (worktreeId) jumpToWorktree(worktreeId)
     })
-    const cleanupSettings = petApi.onSettingsUpdated((settings) => {
+    const cleanupSettings = window.petOps.onSettingsUpdated((settings) => {
       const current = useSettingsStore.getState().pet
       if (current.hasHatched !== settings.hasHatched) {
         useSettingsStore.setState({ pet: { ...current, hasHatched: settings.hasHatched } })
