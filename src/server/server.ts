@@ -8,6 +8,7 @@ import { resolveServerConfig, type ServerConfig, type ServerConfigInput } from '
 import { makeRpcRouter } from './rpc/router'
 import { attachWebSocketRpcServer } from './rpc/ws-server'
 import { resolveStaticFile, serveStaticFile } from './static'
+import { isDesktopBackendEventMessage } from '../shared/desktop-command'
 import { cleanupBranchWatchers } from '../main/services/branch-watcher'
 import { setGitEventPublisher } from '../main/services/git-events'
 import { cleanupWorktreeWatchers } from '../main/services/worktree-watcher'
@@ -21,12 +22,30 @@ export interface StartedHiveServer {
   readonly close: () => Promise<void>
 }
 
+// Forwards desktop→server backend events received over the Node IPC channel
+// into the event bus (the low-latency replacement for the HTTP /api/events/publish
+// hop). Tracked at module scope so a re-start swaps the handler instead of
+// stacking listeners.
+let desktopBackendEventForwarder: ((message: unknown) => void) | null = null
+
 export const startHiveServer = (
   input: ServerConfigInput = {}
 ): Effect.Effect<StartedHiveServer, Error> =>
   Effect.gen(function* () {
     const config = yield* resolveServerConfig(input)
     const eventBus = makeEventBus()
+
+    if (desktopBackendEventForwarder) {
+      process.off('message', desktopBackendEventForwarder)
+    }
+    desktopBackendEventForwarder = (message: unknown): void => {
+      if (!isDesktopBackendEventMessage(message)) return
+      void Effect.runPromise(
+        eventBus.publish({ channel: message.channel, payload: message.payload })
+      ).catch(() => undefined)
+    }
+    process.on('message', desktopBackendEventForwarder)
+
     setGitEventPublisher((channel, payload) =>
       Effect.runPromise(
         eventBus.publish({
@@ -209,6 +228,10 @@ export const startHiveServer = (
                 await cleanupWorktreeWatchers()
                 await cleanupBranchWatchers()
                 setGitEventPublisher(null)
+                if (desktopBackendEventForwarder) {
+                  process.off('message', desktopBackendEventForwarder)
+                  desktopBackendEventForwarder = null
+                }
               }
             })
           })

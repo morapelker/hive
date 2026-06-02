@@ -4,6 +4,7 @@ import { app, BrowserWindow, clipboard, dialog, shell } from 'electron'
 import { join } from 'node:path'
 import {
   isDesktopCommandRequest,
+  makeDesktopBackendEventMessage,
   makeDesktopCommandResult,
   type OpenCodeAbortResult,
   type OpenCodeCapabilitiesResult,
@@ -91,6 +92,8 @@ export interface StartedDesktopBackend {
   readonly config: DesktopBackendSpawnConfig
   readonly bootstrap: DesktopBackendBootstrap
   readonly stop: () => Promise<void>
+  /** Current server child process, or null if not connected (restart-aware). */
+  readonly getChild: () => ChildProcess | null
 }
 
 interface DesktopBackendAuthSession {
@@ -622,6 +625,7 @@ export const startDesktopBackend = async (
       wsBaseUrl: config.wsBaseUrl,
       bootstrapToken: config.bootstrapToken
     },
+    getChild: () => processRef,
     stop: async () => {
       stopping = true
       const child = processRef
@@ -3162,6 +3166,20 @@ export const publishDesktopBackendEvent = async (
   const backend = currentBackend
   if (!backend) return false
 
+  // Fast path: push the event over the existing Node IPC channel to the server
+  // child, which forwards it into its event bus. This avoids a loopback HTTP
+  // POST per flush — important for high-frequency channels like terminal output.
+  // High volume is already bounded upstream by setImmediate coalescing.
+  const child = backend.getChild()
+  if (child?.connected && typeof child.send === 'function') {
+    return new Promise<boolean>((resolve) => {
+      child.send(makeDesktopBackendEventMessage(channel, payload), (error) => {
+        resolve(!error)
+      })
+    })
+  }
+
+  // Fallback (e.g. a remote backend with no IPC channel): publish over HTTP.
   try {
     const session = await getDesktopBackendAuthSession(backend, fetchImpl)
     const response = await fetchImpl(`${backend.bootstrap.httpBaseUrl}/api/events/publish`, {

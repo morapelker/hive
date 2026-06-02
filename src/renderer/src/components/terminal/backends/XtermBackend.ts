@@ -137,6 +137,10 @@ export class XtermBackend implements TerminalBackend {
   private removeDataListener: (() => void) | null = null
   private removeExitListener: (() => void) | null = null
   private inputDisposable: { dispose: () => void } | null = null
+  private container: HTMLDivElement | null = null
+  private resizeDebounceTimer: ReturnType<typeof setTimeout> | null = null
+  private lastSyncedCols = 0
+  private lastSyncedRows = 0
   private terminalId: string = ''
   private shiftEnterAsNewline = false
   private ghosttyConfig: GhosttyTerminalConfig = {}
@@ -149,6 +153,7 @@ export class XtermBackend implements TerminalBackend {
   mount(container: HTMLDivElement, opts: TerminalOpts, callbacks: TerminalBackendCallbacks): void {
     this.terminalId = opts.terminalId
     this.shiftEnterAsNewline = opts.shiftEnterAsNewline ?? false
+    this.container = container
     container.innerHTML = ''
 
     // Store config for theme rebuilding
@@ -300,38 +305,51 @@ export class XtermBackend implements TerminalBackend {
           // was silently dropped. Without this, zsh uses 80-col cursor positioning
           // while xterm.js renders at the actual width, causing visual mismatches
           // (e.g. auto-suggest redraws writing text at wrong positions).
-          try {
-            if (this.fitAddon) {
-              this.fitAddon.fit()
-              const dims = this.fitAddon.proposeDimensions()
-              if (dims) {
-                terminalApi.resize(this.terminalId, dims.cols, dims.rows).then(unwrapEnvelope)
-              }
-            }
-          } catch {
-            // Ignore fit errors during setup
-          }
+          // Must run immediately (not debounced) so the initial size is correct.
+          this.syncSizeToPty()
         } else {
           terminal.write(`\x1b[31mFailed to create terminal: ${result.error}\x1b[0m\r\n`)
           callbacks.onStatusChange('exited')
         }
       })
 
-    // ResizeObserver for auto-fit
+    // ResizeObserver for auto-fit. Debounced (trailing) so a storm of width
+    // changes — e.g. when the single session view is reparented between the
+    // main tab and the ticket modal, or during a modal open/close animation —
+    // collapses into one fit + one PTY resize at the final settled width.
+    // Without this, each intermediate width fires a resize whose SIGWINCH redraw
+    // arrives slowly over the multi-hop transport, so xterm reflows stale content
+    // at a width the PTY hasn't caught up to yet (garbled rendering).
     this.resizeObserver = new ResizeObserver(() => {
-      try {
-        if (this.fitAddon && container.offsetWidth) {
-          this.fitAddon.fit()
-          const dims = this.fitAddon.proposeDimensions()
-          if (dims) {
-            terminalApi.resize(this.terminalId, dims.cols, dims.rows).then(unwrapEnvelope)
-          }
-        }
-      } catch {
-        // Ignore resize errors during teardown
-      }
+      if (this.resizeDebounceTimer) clearTimeout(this.resizeDebounceTimer)
+      this.resizeDebounceTimer = setTimeout(() => {
+        this.resizeDebounceTimer = null
+        this.syncSizeToPty()
+      }, 100)
     })
     this.resizeObserver.observe(container)
+  }
+
+  /**
+   * Fit xterm.js to its container and, only if the resulting dimensions differ
+   * from the last value we sent, push the new size to the PTY. The
+   * changed-dimensions guard avoids spurious reflows/resizes when the container
+   * is reparented between two equal-width targets or the observer fires at an
+   * unchanged size.
+   */
+  private syncSizeToPty(): void {
+    try {
+      if (!this.fitAddon || !this.container?.offsetWidth) return
+      this.fitAddon.fit()
+      const dims = this.fitAddon.proposeDimensions()
+      if (!dims) return
+      if (dims.cols === this.lastSyncedCols && dims.rows === this.lastSyncedRows) return
+      this.lastSyncedCols = dims.cols
+      this.lastSyncedRows = dims.rows
+      terminalApi.resize(this.terminalId, dims.cols, dims.rows).then(unwrapEnvelope)
+    } catch {
+      // Ignore fit/resize errors during setup or teardown
+    }
   }
 
   setShiftEnterAsNewline(enabled: boolean): void {
@@ -362,15 +380,7 @@ export class XtermBackend implements TerminalBackend {
 
   /** Re-fit after visibility change */
   fit(): void {
-    try {
-      this.fitAddon?.fit()
-      const dims = this.fitAddon?.proposeDimensions()
-      if (dims) {
-        terminalApi.resize(this.terminalId, dims.cols, dims.rows).then(unwrapEnvelope)
-      }
-    } catch {
-      // Ignore fit errors
-    }
+    this.syncSizeToPty()
   }
 
   searchOpen(): void {
@@ -394,6 +404,10 @@ export class XtermBackend implements TerminalBackend {
   }
 
   dispose(): void {
+    if (this.resizeDebounceTimer) {
+      clearTimeout(this.resizeDebounceTimer)
+      this.resizeDebounceTimer = null
+    }
     this.resizeObserver?.disconnect()
     this.inputDisposable?.dispose()
     this.removeDataListener?.()
@@ -402,6 +416,7 @@ export class XtermBackend implements TerminalBackend {
     this.terminal?.dispose()
     this.terminal = null
     this.fitAddon = null
+    this.container = null
     this.resizeObserver = null
     this.removeDataListener = null
     this.removeExitListener = null

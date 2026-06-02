@@ -2,6 +2,7 @@ import type { PetManifest, PetPosition, PetSettings, PetStatusPayload } from './
 
 export const DESKTOP_COMMAND_REQUEST_TYPE = 'hive-desktop-command'
 export const DESKTOP_COMMAND_RESULT_TYPE = 'hive-desktop-command-result'
+export const DESKTOP_BACKEND_EVENT_TYPE = 'hive-desktop-backend-event'
 
 export type DesktopCommandName =
   | 'quitApp'
@@ -3306,6 +3307,37 @@ export const isDesktopCommandResult = (value: unknown): value is DesktopCommandR
     (value.error === undefined || typeof value.error === 'string')
   )
 }
+
+/**
+ * Fire-and-forget event pushed from the desktop (Electron main) to the server
+ * child over the Node IPC channel, to be forwarded into the server's event bus
+ * and fanned out to WebSocket subscribers. Unlike DesktopCommandRequest/Result
+ * this has no `id` and expects no response — it is the low-latency replacement
+ * for the per-flush loopback HTTP POST to /api/events/publish. The distinct
+ * `type` discriminator ensures it never matches the command request/result
+ * guards used by the per-request IPC message handlers.
+ */
+export interface DesktopBackendEventMessage {
+  readonly type: typeof DESKTOP_BACKEND_EVENT_TYPE
+  readonly channel: string
+  readonly payload: unknown
+}
+
+export const makeDesktopBackendEventMessage = (
+  channel: string,
+  payload: unknown
+): DesktopBackendEventMessage => ({
+  type: DESKTOP_BACKEND_EVENT_TYPE,
+  channel,
+  payload
+})
+
+export const isDesktopBackendEventMessage = (
+  value: unknown
+): value is DesktopBackendEventMessage =>
+  isRecord(value) &&
+  value.type === DESKTOP_BACKEND_EVENT_TYPE &&
+  typeof value.channel === 'string'
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null
