@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { WORKTREE_CREATED_CHANNEL } from '@shared/worktree-events'
 import { DiscordService } from './discord-service'
-import { createWorktreeFromBranchOp } from './worktree-ops'
+import { createWorktreeFromBranchOp, deleteWorktreeOp } from './worktree-ops'
 import { createGitService } from './git-service'
 import type { DiscordResource, Project, Worktree } from '../db/types'
 
@@ -13,6 +13,14 @@ const discordJsMock = vi.hoisted(() => {
     readonly login = vi.fn(async () => 'logged-in')
     readonly destroy = vi.fn()
     readonly isReady = vi.fn(() => true)
+    readonly application = {
+      commands: {
+        set: vi.fn(async () => undefined)
+      }
+    }
+    readonly channels = {
+      fetch: vi.fn(async () => null)
+    }
     private readonly handlers = new Map<string, Array<(...args: unknown[]) => void>>()
     private readonly onceHandlers = new Map<string, Array<(...args: unknown[]) => void>>()
 
@@ -64,7 +72,8 @@ vi.mock('discord.js', () => ({
 }))
 
 vi.mock('./worktree-ops', () => ({
-  createWorktreeFromBranchOp: vi.fn()
+  createWorktreeFromBranchOp: vi.fn(),
+  deleteWorktreeOp: vi.fn()
 }))
 
 vi.mock('./git-service', () => ({
@@ -234,10 +243,56 @@ const flushPromises = async (): Promise<void> => {
   await new Promise((resolve) => setTimeout(resolve, 0))
 }
 
+const makeResource = (overrides: Partial<DiscordResource> = {}): DiscordResource => ({
+  id: 'r-channel',
+  project_id: 'p1',
+  worktree_id: 'w1',
+  discord_id: 'channel-1',
+  type: 'channel',
+  guild_id: 'guild-1',
+  managed_session_id: null,
+  created_at: '2026-01-01T00:00:00.000Z',
+  ...overrides
+})
+
+const makeArchiveInteraction = (
+  client: any,
+  overrides: {
+    commandName?: string
+    guildId?: string
+    channelId?: string
+    isChatInputCommand?: () => boolean
+  } = {}
+) => {
+  const interaction = {
+    commandName: overrides.commandName ?? 'archive',
+    guildId: overrides.guildId ?? 'guild-1',
+    channelId: overrides.channelId ?? 'channel-1',
+    deferred: false,
+    replied: false,
+    client,
+    isChatInputCommand: overrides.isChatInputCommand ?? (() => true),
+    reply: vi.fn(async () => {
+      interaction.replied = true
+      return undefined
+    }),
+    deferReply: vi.fn(async () => {
+      interaction.deferred = true
+      return undefined
+    }),
+    editReply: vi.fn(async () => {
+      interaction.replied = true
+      return undefined
+    })
+  }
+  return interaction
+}
+
 beforeEach(() => {
   discordJsMock.Client.mockClear()
   discordJsMock.instances.length = 0
   vi.mocked(createWorktreeFromBranchOp).mockReset()
+  vi.mocked(deleteWorktreeOp).mockReset()
   vi.mocked(createGitService).mockClear()
 })
 
@@ -1002,7 +1057,138 @@ describe('DiscordService message listener', () => {
     expect(channel.sendTyping).not.toHaveBeenCalled()
     expect(channel.send).not.toHaveBeenCalled()
   })
+})
 
+describe('/archive slash command', () => {
+  it('registers the archive command when the Discord listener connects', async () => {
+    const db = new FakeDiscordDatabase()
+    configure(db)
+    const { gateway } = makeGateway()
+    const service = makeService(db, gateway)
+    await service.startListening()
+    const client = discordJsMock.instances[0]
+
+    client.emit('clientReady', client)
+    await flushPromises()
+
+    expect(client.application.commands.set).toHaveBeenCalledWith(
+      [{ name: 'archive', description: 'Archive this worktree and delete its channel' }],
+      'guild-1'
+    )
+  })
+
+  it('archives a feature worktree and deletes its channel', async () => {
+    const db = new FakeDiscordDatabase()
+    configure(db)
+    db.projects = [makeProject('p1', 'test-python')]
+    db.activeWorktrees.set('p1', [
+      makeWorktree('w1', 'p1', 'feature-a', { branch_name: 'feature-a' })
+    ])
+    db.resources = [makeResource()]
+    const deleteResource = vi.spyOn(db, 'deleteDiscordResource')
+    const channelDelete = vi.fn(async () => undefined)
+    vi.mocked(deleteWorktreeOp).mockResolvedValue({ success: true })
+    const { gateway } = makeGateway()
+    const service = makeService(db, gateway)
+    await service.startListening()
+    const client = discordJsMock.instances[0]
+    client.channels.fetch.mockResolvedValue({ delete: channelDelete })
+    const interaction = makeArchiveInteraction(client)
+
+    client.emit('interactionCreate', interaction)
+    await flushPromises()
+
+    expect(interaction.deferReply).toHaveBeenCalledWith({ ephemeral: true })
+    expect(deleteWorktreeOp).toHaveBeenCalledWith({
+      worktreeId: 'w1',
+      worktreePath: '/repo/p1/feature-a',
+      branchName: 'feature-a',
+      projectPath: '/repo/test-python',
+      archive: true
+    })
+    expect(interaction.editReply).toHaveBeenCalledWith('Worktree archived. Deleting channel...')
+    expect(channelDelete).toHaveBeenCalledTimes(1)
+    expect(deleteResource).toHaveBeenCalledWith('r-channel')
+    expect(db.resources).toEqual([])
+  })
+
+  it('refuses to archive the default worktree channel', async () => {
+    const db = new FakeDiscordDatabase()
+    configure(db)
+    db.projects = [makeProject('p1', 'test-python')]
+    db.activeWorktrees.set('p1', [
+      makeWorktree('w1', 'p1', 'main', { branch_name: 'main', is_default: true })
+    ])
+    db.resources = [makeResource()]
+    const channelDelete = vi.fn(async () => undefined)
+    const { gateway } = makeGateway()
+    const service = makeService(db, gateway)
+    await service.startListening()
+    const client = discordJsMock.instances[0]
+    client.channels.fetch.mockResolvedValue({ delete: channelDelete })
+    const interaction = makeArchiveInteraction(client)
+
+    client.emit('interactionCreate', interaction)
+    await flushPromises()
+
+    expect(interaction.editReply).toHaveBeenCalledWith('Cannot archive the base branch channel.')
+    expect(deleteWorktreeOp).not.toHaveBeenCalled()
+    expect(channelDelete).not.toHaveBeenCalled()
+    expect(db.resources).toHaveLength(1)
+  })
+
+  it('reports archive failures without deleting the channel or resource mapping', async () => {
+    const db = new FakeDiscordDatabase()
+    configure(db)
+    db.projects = [makeProject('p1', 'test-python')]
+    db.activeWorktrees.set('p1', [
+      makeWorktree('w1', 'p1', 'feature-a', { branch_name: 'feature-a' })
+    ])
+    db.resources = [makeResource()]
+    const channelDelete = vi.fn(async () => undefined)
+    vi.mocked(deleteWorktreeOp).mockResolvedValue({
+      success: false,
+      error: 'branch has unmerged changes'
+    })
+    const { gateway } = makeGateway()
+    const service = makeService(db, gateway)
+    await service.startListening()
+    const client = discordJsMock.instances[0]
+    client.channels.fetch.mockResolvedValue({ delete: channelDelete })
+    const interaction = makeArchiveInteraction(client)
+
+    client.emit('interactionCreate', interaction)
+    await flushPromises()
+
+    expect(interaction.editReply).toHaveBeenCalledWith(
+      'Could not archive worktree: branch has unmerged changes'
+    )
+    expect(channelDelete).not.toHaveBeenCalled()
+    expect(db.resources).toHaveLength(1)
+  })
+
+  it('replies when archive is invoked outside a linked worktree channel', async () => {
+    const db = new FakeDiscordDatabase()
+    configure(db)
+    const { gateway } = makeGateway()
+    const service = makeService(db, gateway)
+    await service.startListening()
+    const client = discordJsMock.instances[0]
+    const interaction = makeArchiveInteraction(client, { channelId: 'unlinked-channel' })
+
+    client.emit('interactionCreate', interaction)
+    await flushPromises()
+
+    expect(interaction.reply).toHaveBeenCalledWith({
+      content: 'This channel is not linked to a worktree.',
+      ephemeral: true
+    })
+    expect(interaction.deferReply).not.toHaveBeenCalled()
+    expect(deleteWorktreeOp).not.toHaveBeenCalled()
+  })
+})
+
+describe('DiscordService bridge configuration', () => {
   it('passes the backend event publisher to the Discord session bridge', () => {
     const db = new FakeDiscordDatabase()
     const { gateway } = makeGateway()

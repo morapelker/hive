@@ -63,7 +63,7 @@ export function SettingsDiscord(): React.JSX.Element {
       if (result.ok && result.guilds.length === 0) {
         setVerifyResult(false)
         toast.error(
-          'Discord bot verified, but it is not in any servers. Invite the bot to your server with Manage Channels, then verify again.'
+          'Discord bot verified, but it is not in any servers. Invite the bot with bot and applications.commands scopes plus Manage Channels, then verify again.'
         )
       } else if (result.ok && selectedGuild) {
         const next = {
@@ -88,7 +88,8 @@ export function SettingsDiscord(): React.JSX.Element {
       <div>
         <h3 className="text-sm font-medium mb-1">Discord</h3>
         <p className="text-xs text-muted-foreground">
-          Provision project categories and worktree channels in your Discord server.
+          Provision project categories and worktree channels in your Discord server. Invite the
+          bot with bot and applications.commands scopes plus Manage Channels so /archive appears.
         </p>
       </div>
 

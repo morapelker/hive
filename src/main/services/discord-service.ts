@@ -5,6 +5,7 @@ import {
   GatewayIntentBits,
   type CategoryChannel,
   type Guild,
+  type Interaction,
   type Message,
   type NonThreadGuildBasedChannel,
   type TextChannel
@@ -27,7 +28,7 @@ import { getDatabase } from '../db'
 import type { DiscordResource, Project, Worktree } from '../db/types'
 import { createGitService } from './git-service'
 import { createLogger } from './logger'
-import { createWorktreeFromBranchOp } from './worktree-ops'
+import { createWorktreeFromBranchOp, deleteWorktreeOp } from './worktree-ops'
 import { discordSessionBridge, type DiscordSessionBridge } from './discord-session-bridge'
 
 const DISCORD_CONFIG_KEY = 'discord_config'
@@ -390,11 +391,25 @@ export class DiscordService {
     client.on('channelCreate', (channel) => {
       void this.handleChannelCreate(channel)
     })
+    client.on('interactionCreate', (interaction) => {
+      void this.handleInteraction(interaction)
+    })
     client.once('clientReady', (readyClient) => {
       log.info('Discord listener connected', {
         botUser: readyClient.user?.tag ?? readyClient.user?.username ?? undefined,
         guildId: config.guildId
       })
+      void readyClient.application?.commands
+        .set(
+          [{ name: 'archive', description: 'Archive this worktree and delete its channel' }],
+          config.guildId
+        )
+        .catch((error) => {
+          log.error(
+            'Failed to register Discord commands',
+            error instanceof Error ? error : new Error(String(error))
+          )
+        })
     })
     client.on('error', (error) => {
       log.error(
@@ -474,6 +489,81 @@ export class DiscordService {
           channelId: message.channelId
         }
       )
+    }
+  }
+
+  private async handleInteraction(interaction: Interaction): Promise<void> {
+    if (!interaction.isChatInputCommand() || interaction.commandName !== 'archive') return
+
+    const config = this.getConfig()
+    if (!isConfigured(config) || interaction.guildId !== config.guildId) return
+
+    const db = this.getDb()
+    const provisionedChannel = db
+      .getDiscordResourcesByGuild(config.guildId)
+      .find(
+        (resource) =>
+          resource.type === 'channel' && resource.discord_id === interaction.channelId
+      )
+
+    if (!provisionedChannel) {
+      await interaction.reply({
+        content: 'This channel is not linked to a worktree.',
+        ephemeral: true
+      })
+      return
+    }
+
+    await interaction.deferReply({ ephemeral: true })
+
+    try {
+      const worktree = provisionedChannel.worktree_id
+        ? db.getWorktree(provisionedChannel.worktree_id)
+        : null
+      if (!worktree) {
+        await interaction.editReply('No worktree found for this channel.')
+        return
+      }
+
+      if (worktree.is_default) {
+        await interaction.editReply('Cannot archive the base branch channel.')
+        return
+      }
+
+      const project = db.getProject(provisionedChannel.project_id)
+      if (!project) {
+        await interaction.editReply('Project not found.')
+        return
+      }
+
+      const result = await deleteWorktreeOp({
+        worktreeId: worktree.id,
+        worktreePath: worktree.path,
+        branchName: worktree.branch_name,
+        projectPath: project.path,
+        archive: true
+      })
+
+      if (!result.success) {
+        await interaction.editReply(`Could not archive worktree: ${result.error}`)
+        return
+      }
+
+      await interaction.editReply('Worktree archived. Deleting channel...')
+      const channel = await interaction.client.channels.fetch(provisionedChannel.discord_id)
+      if (channel && 'delete' in channel && typeof channel.delete === 'function') {
+        await channel.delete()
+      }
+      db.deleteDiscordResource(provisionedChannel.id)
+    } catch (error) {
+      log.error(
+        'Failed to handle /archive',
+        error instanceof Error ? error : new Error(String(error)),
+        { channelId: interaction.channelId }
+      )
+      if (interaction.deferred || interaction.replied) {
+        await interaction.editReply('Failed to archive worktree.').catch(() => undefined)
+      }
     }
   }
 
