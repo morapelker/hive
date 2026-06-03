@@ -28,15 +28,17 @@ import { getDatabase } from '../db'
 import type { DiscordResource, Project, SessionMode, Worktree } from '../db/types'
 import { createGitService } from './git-service'
 import { createLogger } from './logger'
-import { createWorktreeFromBranchOp } from './worktree-ops'
+import { createWorktreeFromBranchOp, deleteWorktreeOp } from './worktree-ops'
 import { discordSessionBridge, type DiscordSessionBridge } from './discord-session-bridge'
 
 const DISCORD_CONFIG_KEY = 'discord_config'
 const log = createLogger({ component: 'Discord' })
-const DISCORD_MODE_COMMANDS: Array<{ name: string; description: string }> = [
+const DISCORD_COMMANDS: Array<{ name: string; description: string }> = [
   { name: 'plan', description: 'Switch this worktree to plan mode' },
   { name: 'build', description: 'Switch this worktree to build mode' },
-  { name: 'super-plan', description: 'Switch this worktree to super-plan mode' }
+  { name: 'super-plan', description: 'Switch this worktree to super-plan mode' },
+  { name: 'archive', description: 'Archive this worktree and delete its channel' },
+  { name: 'clear', description: 'Clear the session attached to this worktree channel' }
 ]
 
 export interface DiscordGateway {
@@ -91,7 +93,7 @@ class DiscordJsGateway implements DiscordGateway {
 
   async registerCommands(): Promise<void> {
     if (!this.guild) throw new Error('Discord guild is not connected')
-    await this.guild.commands.set(DISCORD_MODE_COMMANDS)
+    await this.guild.commands.set(DISCORD_COMMANDS)
   }
 
   async createCategory(name: string): Promise<string> {
@@ -420,6 +422,7 @@ export class DiscordService {
       await client.login(config.botToken)
       this.listenerClient = client
       this.sessionBridge.start()
+      await this.registerSlashCommands(client, config.guildId)
     } catch (error) {
       client.destroy()
       log.error(
@@ -493,11 +496,40 @@ export class DiscordService {
   private async handleInteraction(interaction: Interaction): Promise<void> {
     if (!interaction.isChatInputCommand()) return
 
+    const mode = this.modeFromCommand(interaction.commandName)
+    if (mode) {
+      await this.handleModeInteraction(interaction, mode)
+      return
+    }
+
+    if (interaction.commandName === 'archive') {
+      await this.handleArchiveInteraction(interaction)
+      return
+    }
+
+    if (interaction.commandName === 'clear') {
+      await this.handleClearInteraction(interaction)
+    }
+  }
+
+  private async registerSlashCommands(client: Client, guildId: string): Promise<void> {
+    try {
+      await client.application?.commands.set(DISCORD_COMMANDS, guildId)
+    } catch (error) {
+      log.error(
+        'Failed to register Discord commands. Re-invite the bot with the applications.commands OAuth scope if commands do not appear.',
+        error instanceof Error ? error : new Error(String(error)),
+        { guildId }
+      )
+    }
+  }
+
+  private async handleModeInteraction(
+    interaction: ChatInputCommandInteraction,
+    mode: SessionMode
+  ): Promise<void> {
     const config = this.getConfig()
     if (!isConfigured(config) || interaction.guildId !== config.guildId) return
-
-    const mode = this.modeFromCommand(interaction.commandName)
-    if (!mode) return
 
     const db = this.getDb()
     const provisionedChannel = db
@@ -554,6 +586,136 @@ export class DiscordService {
       return commandName
     }
     return null
+  }
+
+  private async handleArchiveInteraction(
+    interaction: ChatInputCommandInteraction
+  ): Promise<void> {
+    const config = this.getConfig()
+    if (!isConfigured(config) || interaction.guildId !== config.guildId) return
+
+    const db = this.getDb()
+    const provisionedChannel = db
+      .getDiscordResourcesByGuild(config.guildId)
+      .find(
+        (resource) =>
+          resource.type === 'channel' && resource.discord_id === interaction.channelId
+      )
+
+    if (!provisionedChannel) {
+      await interaction.reply({
+        content: 'This channel is not linked to a worktree.',
+        ephemeral: true
+      })
+      return
+    }
+
+    await interaction.deferReply({ ephemeral: true })
+
+    try {
+      const worktree = provisionedChannel.worktree_id
+        ? db.getWorktree(provisionedChannel.worktree_id)
+        : null
+      if (!worktree) {
+        await interaction.editReply('No worktree found for this channel.')
+        return
+      }
+
+      if (worktree.is_default) {
+        await interaction.editReply('Cannot archive the base branch channel.')
+        return
+      }
+
+      const project = db.getProject(provisionedChannel.project_id)
+      if (!project) {
+        await interaction.editReply('Project not found.')
+        return
+      }
+
+      const result = await deleteWorktreeOp({
+        worktreeId: worktree.id,
+        worktreePath: worktree.path,
+        branchName: worktree.branch_name,
+        projectPath: project.path,
+        archive: true
+      })
+
+      if (!result.success) {
+        await interaction.editReply(`Could not archive worktree: ${result.error}`)
+        return
+      }
+
+      await interaction.editReply('Worktree archived. Deleting channel...')
+      const channel = await interaction.client.channels.fetch(provisionedChannel.discord_id)
+      if (channel && 'delete' in channel && typeof channel.delete === 'function') {
+        await channel.delete()
+      }
+      db.deleteDiscordResource(provisionedChannel.id)
+    } catch (error) {
+      log.error(
+        'Failed to handle /archive',
+        error instanceof Error ? error : new Error(String(error)),
+        { channelId: interaction.channelId }
+      )
+      if (interaction.deferred || interaction.replied) {
+        await interaction.editReply('Failed to archive worktree.').catch(() => undefined)
+      } else {
+        await interaction.reply({ content: 'Failed to archive worktree.', ephemeral: true }).catch(() => undefined)
+      }
+    }
+  }
+
+  private async handleClearInteraction(interaction: ChatInputCommandInteraction): Promise<void> {
+    const config = this.getConfig()
+    if (!isConfigured(config) || interaction.guildId !== config.guildId) {
+      return
+    }
+
+    try {
+      const db = this.getDb()
+      const provisionedChannel = db
+        .getDiscordResourcesByGuild(config.guildId)
+        .find(
+          (resource) =>
+            resource.type === 'channel' && resource.discord_id === interaction.channelId
+        )
+
+      if (!provisionedChannel?.worktree_id) {
+        await interaction.reply({
+          content: 'This channel is not linked to a Hive worktree.',
+          ephemeral: true
+        })
+        return
+      }
+
+      const worktree = db.getWorktree(provisionedChannel.worktree_id)
+      if (!worktree) {
+        await interaction.reply({
+          content: 'This channel is not linked to a Hive worktree.',
+          ephemeral: true
+        })
+        return
+      }
+
+      await interaction.deferReply()
+      await this.sessionBridge.clearManagedSession({
+        worktreeId: worktree.id,
+        worktreePath: worktree.path
+      })
+      await interaction.editReply('Session cleared. Your next message will start a fresh session.')
+    } catch (error) {
+      const normalized = error instanceof Error ? error : new Error(String(error))
+      log.error('Failed to handle Discord /clear command', normalized, {
+        channelId: interaction.channelId ?? undefined
+      })
+
+      const content = 'Could not clear the session. Check the Hive logs for details.'
+      if (interaction.deferred || interaction.replied) {
+        await interaction.editReply(content).catch(() => undefined)
+      } else {
+        await interaction.reply({ content, ephemeral: true }).catch(() => undefined)
+      }
+    }
   }
 
   private async handleChannelCreate(channel: NonThreadGuildBasedChannel): Promise<void> {
