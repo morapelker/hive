@@ -99,12 +99,20 @@ class FakeDiscordDatabase {
     return this.activeWorktrees.get(projectId) ?? []
   }
 
+  getWorktree(id: string): Worktree | null {
+    for (const worktrees of this.activeWorktrees.values()) {
+      const worktree = worktrees.find((candidate) => candidate.id === id)
+      if (worktree) return worktree
+    }
+    return null
+  }
+
   getDiscordResourcesByGuild(guildId: string): DiscordResource[] {
     return this.resources.filter((resource) => resource.guild_id === guildId)
   }
 
   insertDiscordResource(resource: DiscordResource): void {
-    this.resources.push(resource)
+    this.resources.push({ ...resource, managed_session_id: resource.managed_session_id ?? null })
   }
 
   deleteDiscordResource(id: string): void {
@@ -205,10 +213,20 @@ const configure = (db: FakeDiscordDatabase): void => {
   )
 }
 
-const makeService = (db: FakeDiscordDatabase, gateway: ReturnType<typeof makeGateway>['gateway']) =>
+const makeService = (
+  db: FakeDiscordDatabase,
+  gateway: ReturnType<typeof makeGateway>['gateway'],
+  sessionBridge?: {
+    start: () => void
+    dispose: () => void
+    handleUserMessage: ReturnType<typeof vi.fn>
+    setBackendEventPublisher?: ReturnType<typeof vi.fn>
+  }
+) =>
   new DiscordService({
     db: db as never,
-    gatewayFactory: () => gateway
+    gatewayFactory: () => gateway,
+    sessionBridge: sessionBridge as never
   })
 
 const flushPromises = async (): Promise<void> => {
@@ -269,6 +287,7 @@ describe('DiscordService provisioning reconciliation', () => {
         discord_id: 'category-1',
         type: 'category',
         guild_id: 'guild-1',
+        managed_session_id: null,
         created_at: '2026-01-01T00:00:00.000Z'
       },
       {
@@ -278,6 +297,7 @@ describe('DiscordService provisioning reconciliation', () => {
         discord_id: 'channel-1',
         type: 'channel',
         guild_id: 'guild-1',
+        managed_session_id: null,
         created_at: '2026-01-01T00:00:00.000Z'
       }
     ]
@@ -325,6 +345,7 @@ describe('DiscordService provisioning reconciliation', () => {
         discord_id: 'category-1',
         type: 'category',
         guild_id: 'guild-1',
+        managed_session_id: null,
         created_at: '2026-01-01T00:00:00.000Z'
       },
       {
@@ -334,6 +355,7 @@ describe('DiscordService provisioning reconciliation', () => {
         discord_id: 'channel-1',
         type: 'channel',
         guild_id: 'guild-1',
+        managed_session_id: null,
         created_at: '2026-01-01T00:00:00.000Z'
       }
     ]
@@ -360,6 +382,7 @@ describe('DiscordService provisioning reconciliation', () => {
         discord_id: 'category-1',
         type: 'category',
         guild_id: 'guild-1',
+        managed_session_id: null,
         created_at: '2026-01-01T00:00:00.000Z'
       },
       {
@@ -369,6 +392,7 @@ describe('DiscordService provisioning reconciliation', () => {
         discord_id: 'channel-1',
         type: 'channel',
         guild_id: 'guild-1',
+        managed_session_id: null,
         created_at: '2026-01-01T00:00:00.000Z'
       },
       {
@@ -378,6 +402,7 @@ describe('DiscordService provisioning reconciliation', () => {
         discord_id: 'channel-archived',
         type: 'channel',
         guild_id: 'guild-1',
+        managed_session_id: null,
         created_at: '2026-01-01T00:00:00.000Z'
       }
     ]
@@ -510,6 +535,7 @@ describe('DiscordService message listener', () => {
         discord_id: 'category-1',
         type: 'category',
         guild_id: 'guild-1',
+        managed_session_id: null,
         created_at: '2026-01-01T00:00:00.000Z'
       }
     ]
@@ -556,7 +582,8 @@ describe('DiscordService message listener', () => {
           worktree_id: 'w-new',
           discord_id: 'channel-new',
           type: 'channel',
-          guild_id: 'guild-1'
+          guild_id: 'guild-1',
+          managed_session_id: null
         })
       ])
     )
@@ -584,6 +611,7 @@ describe('DiscordService message listener', () => {
         discord_id: 'category-1',
         type: 'category',
         guild_id: 'guild-1',
+        managed_session_id: null,
         created_at: '2026-01-01T00:00:00.000Z'
       }
     ]
@@ -646,6 +674,7 @@ describe('DiscordService message listener', () => {
         discord_id: 'category-1',
         type: 'category',
         guild_id: 'guild-1',
+        managed_session_id: null,
         created_at: '2026-01-01T00:00:00.000Z'
       }
     ]
@@ -690,6 +719,7 @@ describe('DiscordService message listener', () => {
         discord_id: 'category-1',
         type: 'category',
         guild_id: 'guild-1',
+        managed_session_id: null,
         created_at: '2026-01-01T00:00:00.000Z'
       }
     ]
@@ -764,6 +794,7 @@ describe('DiscordService message listener', () => {
       discord_id: 'channel-existing',
       type: 'channel',
       guild_id: 'guild-1',
+      managed_session_id: null,
       created_at: '2026-01-01T00:00:00.000Z'
     })
     discordJsMock.instances[0].emit('channelCreate', {
@@ -792,6 +823,7 @@ describe('DiscordService message listener', () => {
         discord_id: 'category-1',
         type: 'category',
         guild_id: 'guild-1',
+        managed_session_id: null,
         created_at: '2026-01-01T00:00:00.000Z'
       }
     ]
@@ -843,6 +875,7 @@ describe('DiscordService message listener', () => {
         discord_id: 'category-1',
         type: 'category',
         guild_id: 'guild-1',
+        managed_session_id: null,
         created_at: '2026-01-01T00:00:00.000Z'
       }
     ]
@@ -870,10 +903,10 @@ describe('DiscordService message listener', () => {
     expect(channel.send).toHaveBeenCalledWith('Could not create worktree: branch already exists')
   })
 
-  it('acknowledges non-bot messages in provisioned channels with typing and replies', async () => {
-    vi.useFakeTimers()
+  it('delegates non-bot messages in provisioned channels to the Discord session bridge', async () => {
     const db = new FakeDiscordDatabase()
     configure(db)
+    db.activeWorktrees.set('p1', [makeWorktree('w1', 'p1', 'main')])
     db.resources = [
       {
         id: 'r-channel',
@@ -882,11 +915,17 @@ describe('DiscordService message listener', () => {
         discord_id: 'channel-1',
         type: 'channel',
         guild_id: 'guild-1',
+        managed_session_id: null,
         created_at: '2026-01-01T00:00:00.000Z'
       }
     ]
     const { gateway } = makeGateway()
-    const service = makeService(db, gateway)
+    const sessionBridge = {
+      start: vi.fn(),
+      dispose: vi.fn(),
+      handleUserMessage: vi.fn(async () => undefined)
+    }
+    const service = makeService(db, gateway, sessionBridge)
     await service.startListening()
     const client = discordJsMock.instances[0]
     const channel = {
@@ -903,13 +942,19 @@ describe('DiscordService message listener', () => {
       guildId: 'guild-1'
     })
 
-    await vi.advanceTimersByTimeAsync(0)
-    expect(channel.sendTyping).toHaveBeenCalledTimes(1)
-    await vi.advanceTimersByTimeAsync(3000)
-    expect(channel.send).toHaveBeenNthCalledWith(1, 'Received prompt')
-    expect(channel.sendTyping).toHaveBeenCalledTimes(2)
-    await vi.advanceTimersByTimeAsync(3000)
-    expect(channel.send).toHaveBeenNthCalledWith(2, 'Prompt executed')
+    await flushPromises()
+
+    expect(sessionBridge.start).toHaveBeenCalledTimes(1)
+    expect(sessionBridge.handleUserMessage).toHaveBeenCalledWith({
+      channelId: 'channel-1',
+      worktreeId: 'w1',
+      projectId: 'p1',
+      worktreePath: '/repo/p1/main',
+      text: 'ship it',
+      channel
+    })
+    expect(channel.sendTyping).not.toHaveBeenCalled()
+    expect(channel.send).not.toHaveBeenCalled()
   })
 
   it('ignores bot messages and messages outside provisioned channels', async () => {
@@ -924,6 +969,7 @@ describe('DiscordService message listener', () => {
         discord_id: 'channel-1',
         type: 'channel',
         guild_id: 'guild-1',
+        managed_session_id: null,
         created_at: '2026-01-01T00:00:00.000Z'
       }
     ]
@@ -955,5 +1001,22 @@ describe('DiscordService message listener', () => {
     await vi.advanceTimersByTimeAsync(6000)
     expect(channel.sendTyping).not.toHaveBeenCalled()
     expect(channel.send).not.toHaveBeenCalled()
+  })
+
+  it('passes the backend event publisher to the Discord session bridge', () => {
+    const db = new FakeDiscordDatabase()
+    const { gateway } = makeGateway()
+    const sessionBridge = {
+      start: vi.fn(),
+      dispose: vi.fn(),
+      handleUserMessage: vi.fn(async () => undefined),
+      setBackendEventPublisher: vi.fn()
+    }
+    const service = makeService(db, gateway, sessionBridge)
+    const publishEvent = vi.fn()
+
+    service.setBackendEventPublisher(publishEvent)
+
+    expect(sessionBridge.setBackendEventPublisher).toHaveBeenCalledWith(publishEvent)
   })
 })

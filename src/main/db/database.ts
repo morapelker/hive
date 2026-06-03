@@ -621,6 +621,7 @@ export class DatabaseService {
         discord_id TEXT NOT NULL,
         type TEXT NOT NULL CHECK (type IN ('category','channel')),
         guild_id TEXT NOT NULL,
+        managed_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
         created_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_discord_resources_project ON discord_resources(project_id);
@@ -654,6 +655,11 @@ export class DatabaseService {
     this.safeAddColumn('kanban_tickets', 'goal_mode', 'INTEGER NOT NULL DEFAULT 0')
     this.safeAddColumn('kanban_tickets', 'goal_success_criteria', 'TEXT DEFAULT NULL')
     this.safeAddColumn('sessions', 'session_type', "TEXT NOT NULL DEFAULT 'default'")
+    this.safeAddColumn(
+      'discord_resources',
+      'managed_session_id',
+      'TEXT DEFAULT NULL REFERENCES sessions(id) ON DELETE SET NULL'
+    )
 
     db.exec(`
       CREATE INDEX IF NOT EXISTS idx_sessions_connection ON sessions(connection_id);
@@ -1148,6 +1154,16 @@ export class DatabaseService {
       .all(projectId) as DiscordResource[]
   }
 
+  getDiscordChannelResourceByWorktree(worktreeId: string): DiscordResource | null {
+    const db = this.getDb()
+    const row = db
+      .prepare(
+        "SELECT * FROM discord_resources WHERE worktree_id = ? AND type = 'channel' ORDER BY created_at ASC LIMIT 1"
+      )
+      .get(worktreeId) as DiscordResource | undefined
+    return row ?? null
+  }
+
   insertDiscordResource(data: DiscordResourceCreate): DiscordResource {
     const db = this.getDb()
     const resource: DiscordResource = {
@@ -1157,12 +1173,13 @@ export class DatabaseService {
       discord_id: data.discord_id,
       type: data.type,
       guild_id: data.guild_id,
+      managed_session_id: data.managed_session_id ?? null,
       created_at: data.created_at ?? new Date().toISOString()
     }
     db.prepare(
       `INSERT INTO discord_resources
-        (id, project_id, worktree_id, discord_id, type, guild_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
+        (id, project_id, worktree_id, discord_id, type, guild_id, managed_session_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       resource.id,
       resource.project_id,
@@ -1170,9 +1187,25 @@ export class DatabaseService {
       resource.discord_id,
       resource.type,
       resource.guild_id,
+      resource.managed_session_id,
       resource.created_at
     )
     return resource
+  }
+
+  setDiscordResourceManagedSession(
+    resourceId: string,
+    sessionId: string | null
+  ): DiscordResource | null {
+    const db = this.getDb()
+    db.prepare('UPDATE discord_resources SET managed_session_id = ? WHERE id = ?').run(
+      sessionId,
+      resourceId
+    )
+    const row = db.prepare('SELECT * FROM discord_resources WHERE id = ?').get(resourceId) as
+      | DiscordResource
+      | undefined
+    return row ?? null
   }
 
   deleteDiscordResource(id: string): boolean {

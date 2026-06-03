@@ -28,6 +28,7 @@ import type { DiscordResource, Project, Worktree } from '../db/types'
 import { createGitService } from './git-service'
 import { createLogger } from './logger'
 import { createWorktreeFromBranchOp } from './worktree-ops'
+import { discordSessionBridge, type DiscordSessionBridge } from './discord-session-bridge'
 
 const DISCORD_CONFIG_KEY = 'discord_config'
 const log = createLogger({ component: 'Discord' })
@@ -47,6 +48,7 @@ interface DiscordServiceDependencies {
   db?: DatabaseService
   gatewayFactory?: () => DiscordGateway
   publishEvent?: BackendEventPublisher
+  sessionBridge?: DiscordSessionBridge
 }
 
 class DiscordJsGateway implements DiscordGateway {
@@ -173,15 +175,18 @@ export class DiscordService {
   private activeGateway: DiscordGateway | null = null
   private listenerClient: Client | null = null
   private botCreatedChannelIds = new Set<string>()
+  private sessionBridge: DiscordSessionBridge
 
   constructor(dependencies: DiscordServiceDependencies = {}) {
     this.db = dependencies.db ?? null
     this.gatewayFactory = dependencies.gatewayFactory ?? (() => new DiscordJsGateway())
     this.publishEvent = dependencies.publishEvent ?? null
+    this.sessionBridge = dependencies.sessionBridge ?? discordSessionBridge
   }
 
   setBackendEventPublisher(publishEvent: BackendEventPublisher | null): void {
     this.publishEvent = publishEvent
+    this.sessionBridge.setBackendEventPublisher(publishEvent)
   }
 
   getConfig(): DiscordConfig | null {
@@ -401,6 +406,7 @@ export class DiscordService {
     try {
       await client.login(config.botToken)
       this.listenerClient = client
+      this.sessionBridge.start()
     } catch (error) {
       client.destroy()
       log.error(
@@ -413,6 +419,7 @@ export class DiscordService {
   async stopListening(): Promise<void> {
     this.listenerClient?.destroy()
     this.listenerClient = null
+    this.sessionBridge.dispose()
   }
 
   private async handleIncomingMessage(message: Message): Promise<void> {
@@ -421,9 +428,10 @@ export class DiscordService {
     const config = this.getConfig()
     if (!isConfigured(config) || message.guildId !== config.guildId) return
 
-    const provisionedChannel = this.getDb()
+    const db = this.getDb()
+    const provisionedChannel = db
       .getDiscordResourcesByGuild(config.guildId)
-      .some(
+      .find(
         (resource) =>
           resource.type === 'channel' && resource.discord_id === message.channelId
       )
@@ -447,15 +455,20 @@ export class DiscordService {
     }
 
     try {
-      await channel.sendTyping()
-      await this.wait(3000)
-      await channel.send('Received prompt')
-      await channel.sendTyping()
-      await this.wait(3000)
-      await channel.send('Prompt executed')
+      if (!provisionedChannel.worktree_id) return
+      const worktree = db.getWorktree(provisionedChannel.worktree_id)
+      if (!worktree) return
+      await this.sessionBridge.handleUserMessage({
+        channelId: message.channelId,
+        worktreeId: worktree.id,
+        projectId: provisionedChannel.project_id,
+        worktreePath: worktree.path,
+        text: message.content,
+        channel
+      })
     } catch (error) {
       log.error(
-        'Failed to acknowledge Discord message',
+        'Failed to handle Discord message',
         error instanceof Error ? error : new Error(String(error)),
         {
           channelId: message.channelId
@@ -576,10 +589,6 @@ export class DiscordService {
       return
     }
     await maybeSendable.send(message)
-  }
-
-  private async wait(ms: number): Promise<void> {
-    await new Promise((resolve) => setTimeout(resolve, ms))
   }
 
   private computeDeleteCandidates(
