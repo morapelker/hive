@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 32
+export const CURRENT_SCHEMA_VERSION = 33
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -146,6 +146,7 @@ CREATE TABLE IF NOT EXISTS discord_resources (
   discord_id TEXT NOT NULL,
   type TEXT NOT NULL CHECK (type IN ('category','channel')),
   guild_id TEXT NOT NULL,
+  managed_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_discord_resources_project ON discord_resources(project_id);
@@ -576,5 +577,11 @@ DROP TABLE IF EXISTS diff_comments;`
       DROP INDEX IF EXISTS idx_discord_resources_project;
       DROP TABLE IF EXISTS discord_resources;
     `
+  },
+  {
+    version: 33,
+    name: 'add_discord_managed_session_link',
+    up: `ALTER TABLE discord_resources ADD COLUMN managed_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
   }
 ]

@@ -38,8 +38,20 @@ import { ExitPlanModeToolView } from './tools/ExitPlanModeToolView'
 import { WebFetchToolView } from './tools/WebFetchToolView'
 import { FileChangeToolView } from './tools/FileChangeToolView'
 import { ToolCallContextMenu } from './ToolCallContextMenu'
-import { extractCommandText } from '@/lib/tool-input-utils'
+import {
+  extractCommandText,
+  getFigmaOperation,
+  getFigmaOperationColor,
+  getFigmaOperationLabel,
+  getToolLabel,
+  isFigmaTool,
+  isFileChangeTool,
+  isTodoWriteTool,
+  shortenPath
+} from '@shared/tool-label'
 import { useSessionStore } from '@/stores/useSessionStore'
+
+export { isTodoWriteTool } from '@shared/tool-label'
 
 export type ToolStatus = 'pending' | 'running' | 'success' | 'error'
 
@@ -55,72 +67,8 @@ export interface ToolUseInfo {
   subtasks?: SubtaskInfo[]
 }
 
-/** Check if a tool name refers to a checklist-style tool */
-export function isTodoWriteTool(name: string): boolean {
-  const lower = name.toLowerCase()
-  return lower.includes('todowrite') || lower.includes('todo_write') || lower === 'update_plan'
-}
-
 /** Figma brand color for consistent icon styling */
 const FIGMA_ICON_COLOR = 'text-[#a259ff]'
-
-/** Check if a tool name refers to a Figma MCP tool */
-function isFigmaTool(name: string): boolean {
-  return name.toLowerCase().startsWith('mcp__figma__')
-}
-
-/** Check if a tool name refers to a Codex file change tool */
-function isFileChangeTool(name: string): boolean {
-  const lower = name.toLowerCase()
-  return lower === 'filechange' || lower === 'file_change' || lower === 'apply_patch'
-}
-
-/** Extract the operation name from a Figma tool name */
-function getFigmaOperation(name: string): string {
-  return name.toLowerCase().replace('mcp__figma__', '')
-}
-
-const FIGMA_OPERATION_LABELS: Record<string, string> = {
-  get_screenshot: 'Screenshot',
-  create_design_system_rules: 'Design system rules',
-  get_design_context: 'Design context',
-  get_metadata: 'Metadata',
-  get_variable_defs: 'Variables',
-  get_figjam: 'FigJam',
-  generate_figma_design: 'Generate design',
-  generate_diagram: 'Generate diagram',
-  get_code_connect_map: 'Code connect map',
-  whoami: 'Who am I',
-  add_code_connect_map: 'Add code connect',
-  get_code_connect_suggestions: 'Code connect suggestions',
-  send_code_connect_mappings: 'Send mappings'
-}
-
-const FIGMA_OPERATION_COLORS: Record<string, string> = {
-  get_screenshot: 'bg-blue-500/15 text-blue-500 dark:text-blue-400',
-  get_design_context: 'bg-blue-500/15 text-blue-500 dark:text-blue-400',
-  get_metadata: 'bg-blue-500/15 text-blue-500 dark:text-blue-400',
-  get_variable_defs: 'bg-blue-500/15 text-blue-500 dark:text-blue-400',
-  get_figjam: 'bg-blue-500/15 text-blue-500 dark:text-blue-400',
-  generate_figma_design: 'bg-purple-500/15 text-purple-500 dark:text-purple-400',
-  generate_diagram: 'bg-purple-500/15 text-purple-500 dark:text-purple-400',
-  create_design_system_rules: 'bg-purple-500/15 text-purple-500 dark:text-purple-400',
-  get_code_connect_map: 'bg-teal-500/15 text-teal-500 dark:text-teal-400',
-  add_code_connect_map: 'bg-teal-500/15 text-teal-500 dark:text-teal-400',
-  get_code_connect_suggestions: 'bg-teal-500/15 text-teal-500 dark:text-teal-400',
-  send_code_connect_mappings: 'bg-teal-500/15 text-teal-500 dark:text-teal-400',
-  whoami: 'bg-zinc-500/15 text-zinc-500 dark:text-zinc-400'
-}
-
-/** Get human-readable label for a Figma operation */
-function getFigmaOperationLabel(operation: string): string {
-  return FIGMA_OPERATION_LABELS[operation] || operation.replace(/_/g, ' ')
-}
-
-/** Get badge color class for a Figma operation */
-function getFigmaOperationColor(operation: string): string {
-  return FIGMA_OPERATION_COLORS[operation] || 'bg-zinc-500/15 text-zinc-500 dark:text-zinc-400'
-}
 
 // Map tool names to icons
 function getToolIcon(name: string): React.JSX.Element {
@@ -171,92 +119,6 @@ function getToolIcon(name: string): React.JSX.Element {
   }
   // Default
   return <Terminal className={iconClass} />
-}
-
-// Get a display label for the tool
-function getToolLabel(name: string, input: Record<string, unknown>, cwd?: string | null): string {
-  const lowerName = name.toLowerCase()
-
-  // Show summary for todowrite (must be before 'write' check)
-  if (isTodoWriteTool(lowerName)) {
-    const todos = Array.isArray(input.todos) ? (input.todos as Array<{ status: string }>) : []
-    const completed = todos.filter((t) => t.status === 'completed').length
-    return `${completed}/${todos.length} completed`
-  }
-
-  // Show file path for fileChange (Codex) — must be before generic file ops check
-  if (isFileChangeTool(lowerName)) {
-    const changes = Array.isArray(input.changes) ? (input.changes as Array<{ path: string }>) : []
-    if (changes.length > 0) {
-      const firstPath = changes[0]?.path || ''
-      const label = shortenPath(firstPath, cwd)
-      return changes.length > 1 ? `${label} +${changes.length - 1} more` : label
-    }
-  }
-
-  // Show file path for file operations
-  if (lowerName.includes('read') || lowerName.includes('write') || lowerName.includes('edit')) {
-    const filePath = (input.filePath || input.file_path || input.path || '') as string
-    if (filePath) {
-      return shortenPath(filePath, cwd)
-    }
-  }
-
-  // Show command for bash
-  if (lowerName.includes('bash') || lowerName.includes('shell') || lowerName.includes('exec')) {
-    const command = extractCommandText(input)
-    if (command) {
-      // Truncate long commands
-      return command.length > 60 ? command.slice(0, 60) + '...' : command
-    }
-  }
-
-  // Show pattern for search
-  if (lowerName.includes('grep') || lowerName.includes('search')) {
-    const pattern = (input.pattern || input.query || input.regex || '') as string
-    if (pattern) {
-      return pattern.length > 40 ? pattern.slice(0, 40) + '...' : pattern
-    }
-  }
-
-  // Show pattern for glob
-  if (lowerName.includes('glob') || lowerName.includes('find')) {
-    const pattern = (input.pattern || input.glob || '') as string
-    if (pattern) {
-      return pattern
-    }
-  }
-
-  // Show description for task
-  if (lowerName === 'task') {
-    const description = ((input.description || input.prompt || '') as string).trim()
-    if (description) {
-      return description
-    }
-  }
-
-  // Show skill name — Skill tool uses `skill` param, not `name`
-  if (lowerName.includes('skill')) {
-    const skillName = (input.skill || input.name || '') as string
-    return skillName || 'unknown'
-  }
-
-  // Show URL for webfetch
-  if (lowerName === 'webfetch' || lowerName === 'web_fetch') {
-    const url = (input.url || '') as string
-    try {
-      return new URL(url).hostname
-    } catch {
-      return url
-    }
-  }
-
-  // Show operation for Figma tools
-  if (isFigmaTool(name)) {
-    return getFigmaOperationLabel(getFigmaOperation(name))
-  }
-
-  return ''
 }
 
 function StatusIndicator({ status }: { status: ToolStatus }): React.JSX.Element {
@@ -353,15 +215,6 @@ function getToolRenderer(name: string): React.FC<ToolViewProps> {
   if (isFigmaTool(name)) return FallbackToolView
   // Fallback
   return FallbackToolView
-}
-
-function shortenPath(filePath: string, cwd?: string | null): string {
-  if (cwd && filePath.startsWith(cwd)) {
-    const relative = filePath.slice(cwd.length).replace(/^\//, '')
-    if (relative) return relative
-  }
-  const parts = filePath.split('/')
-  return parts.length > 2 ? `.../${parts.slice(-2).join('/')}` : filePath
 }
 
 /** Renders tool-specific collapsed header content (icon + name + contextual info) */

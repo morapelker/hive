@@ -103,6 +103,7 @@ export interface DiscordResource {
   discord_id: string
   type: 'category' | 'channel'
   guild_id: string
+  managed_session_id: string | null
   created_at: string
 }
 
@@ -113,6 +114,7 @@ export interface DiscordResourceCreate {
   discord_id: string
   type: 'category' | 'channel'
   guild_id: string
+  managed_session_id?: string | null
   created_at?: string
 }
 

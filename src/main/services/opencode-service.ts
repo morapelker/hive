@@ -14,6 +14,7 @@ import { getRuntime } from '../effect/spawn/runtime'
 import { openCodeAgentFacade, type SubscriptionHandle } from '../effect/opencode/facade'
 import { SessionCreateResponseSchema } from '../effect/opencode/schemas'
 import { decodeWithZod } from '../effect/_shared/zod-adapter'
+import { resolveOpenCodeLaunchSpec } from './opencode-binary-resolver'
 import {
   WORKTREE_BRANCH_RENAMED_CHANNEL,
   type WorktreeBranchRenamedEvent
@@ -36,6 +37,13 @@ const OPENCODE_REASONING_VARIANTS: Record<string, Record<string, unknown>> = {
   high: {},
   medium: {},
   low: {}
+}
+
+export function resolveOpenCodeLaunchSpecIfNeeded(
+  current: OpenCodeLaunchSpec | null,
+  resolver: () => OpenCodeLaunchSpec | null = resolveOpenCodeLaunchSpec
+): OpenCodeLaunchSpec | null {
+  return current ?? resolver()
 }
 
 // Event types we care about for streaming
@@ -366,7 +374,10 @@ class OpenCodeService {
 
     this.pendingConnection = (async (): Promise<OpenCodeInstance> => {
       try {
-        if (!this.openCodeLaunchSpec) {
+        const launchSpec = resolveOpenCodeLaunchSpecIfNeeded(this.openCodeLaunchSpec)
+        this.openCodeLaunchSpec = launchSpec
+
+        if (!launchSpec) {
           throw new Error('OpenCode CLI not found. Install OpenCode and ensure it is on your PATH.')
         }
 
@@ -374,11 +385,11 @@ class OpenCodeService {
         const { createOpencodeClient } = await loadOpenCodeSDK()
 
         // Spawn opencode serve without --port so it auto-assigns an available port
-        const server = await spawnOpenCodeServer({ launchSpec: this.openCodeLaunchSpec })
+        const server = await spawnOpenCodeServer({ launchSpec })
         log.info('OpenCode server started', {
           url: server.url,
-          command: this.openCodeLaunchSpec.command,
-          shell: this.openCodeLaunchSpec.shell
+          command: launchSpec.command,
+          shell: launchSpec.shell
         })
 
         // Create the SDK client pointing at the auto-assigned URL
