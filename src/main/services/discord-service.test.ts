@@ -234,6 +234,9 @@ const makeService = (
     setWorktreeMode?: ReturnType<typeof vi.fn>
     clearManagedSession?: ReturnType<typeof vi.fn>
     setBackendEventPublisher?: ReturnType<typeof vi.fn>
+    handleComponentInteraction?: ReturnType<typeof vi.fn>
+    handleModalSubmit?: ReturnType<typeof vi.fn>
+    setChannelResolver?: ReturnType<typeof vi.fn>
   }
 ) =>
   new DiscordService({
@@ -589,6 +592,33 @@ describe('DiscordService message listener', () => {
       ],
       'guild-1'
     )
+  })
+
+  it('routes component interactions to the session bridge before slash command handling', async () => {
+    const db = new FakeDiscordDatabase()
+    configure(db)
+    const { gateway } = makeGateway()
+    const sessionBridge = {
+      start: vi.fn(),
+      dispose: vi.fn(),
+      handleUserMessage: vi.fn(),
+      handleComponentInteraction: vi.fn(async () => undefined),
+      handleModalSubmit: vi.fn(async () => undefined),
+      setChannelResolver: vi.fn(),
+      setBackendEventPublisher: vi.fn()
+    }
+    const service = makeService(db, gateway, sessionBridge)
+
+    await service.startListening()
+    discordJsMock.instances[0].emit('interactionCreate', {
+      isChatInputCommand: () => false,
+      isButton: () => true,
+      isStringSelectMenu: () => false,
+      isModalSubmit: () => false
+    })
+    await flushPromises()
+
+    expect(sessionBridge.handleComponentInteraction).toHaveBeenCalledTimes(1)
   })
 
   it('creates a worktree when a human creates a text channel under a managed project category', async () => {
