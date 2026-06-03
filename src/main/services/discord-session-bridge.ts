@@ -10,6 +10,7 @@ import {
 } from '@shared/model-resolution'
 import { APP_SETTINGS_DB_KEY } from '@shared/types/settings'
 import type { AgentSdk } from '@shared/types/agent-sdk'
+import type { DiscordEmissionMode } from '@shared/types/discord'
 import { getDiscordToolEmoji, getToolLabel, isFileChangeTool } from '@shared/tool-label'
 import type { DatabaseService } from '../db/database'
 import { getDatabase } from '../db'
@@ -31,6 +32,8 @@ import {
 } from './interactive-reply-router'
 
 const log = createLogger({ component: 'DiscordSessionBridge' })
+
+const DISCORD_EMISSION_MODE_KEY = 'discord_emission_mode'
 
 type PromptPart = { type: 'text'; text: string }
 type ModelOverride = { providerID: string; modelID: string; variant?: string }
@@ -220,6 +223,7 @@ export class DiscordSessionBridge {
   private unsubscribeCliBridge: (() => void) | null = null
   private runtimesBySessionId = new Map<string, ChannelRuntime>()
   private channelModeByWorktree = new Map<string, SessionMode>()
+  private emissionMode: DiscordEmissionMode = 'all'
   private discordPending = new Map<string, DiscordPendingInteraction>()
   private requestTokens = new Map<string, string>()
   private tokenRequestIds = new Map<string, string>()
@@ -312,10 +316,38 @@ export class DiscordSessionBridge {
 
   start(): void {
     if (this.unsubscribe) return
+    this.loadEmissionMode()
     this.unsubscribe = this.subscribeToAgentEvents((event) => this.onStreamEvent(event))
     this.unsubscribeCliBridge = claudeCliDiscordBridge.subscribe((event) =>
       this.onStreamEvent(event)
     )
+  }
+
+  getEmissionMode(): DiscordEmissionMode {
+    return this.emissionMode
+  }
+
+  setEmissionMode(mode: DiscordEmissionMode): void {
+    this.emissionMode = mode
+    try {
+      this.getDb().setSetting(DISCORD_EMISSION_MODE_KEY, mode)
+    } catch (error) {
+      log.warn('Failed to persist Discord emission mode', {
+        error: error instanceof Error ? error.message : String(error)
+      })
+    }
+  }
+
+  private loadEmissionMode(): void {
+    try {
+      const stored = this.getDb().getSetting(DISCORD_EMISSION_MODE_KEY)
+      this.emissionMode = stored === 'qa' ? 'qa' : 'all'
+    } catch (error) {
+      this.emissionMode = 'all'
+      log.warn('Failed to load Discord emission mode', {
+        error: error instanceof Error ? error.message : String(error)
+      })
+    }
   }
 
   dispose(): void {
@@ -665,6 +697,13 @@ export class DiscordSessionBridge {
     if (runtime.postedToolIds.has(toolId)) return
     runtime.postedToolIds.add(toolId)
 
+    if (this.emissionMode === 'qa') {
+      // QA mode: drop the tool line and discard any buffered intermediate text so
+      // only the final assistant message survives until idle.
+      void this.flushAssistantBuffer(runtime)
+      return
+    }
+
     const toolLine = this.formatToolLine(part, state, status)
     void this.flushAssistantBuffer(runtime).then(() => this.postDiscordMessage(runtime, toolLine))
   }
@@ -707,7 +746,7 @@ export class DiscordSessionBridge {
   }
 
   private async handleIdle(runtime: ChannelRuntime): Promise<void> {
-    await this.flushAssistantBuffer(runtime)
+    await this.flushAssistantBuffer(runtime, { final: true })
     runtime.pendingUserEchoText = null
     this.stopTyping(runtime)
     runtime.busy = false
@@ -717,11 +756,18 @@ export class DiscordSessionBridge {
     }
   }
 
-  private async flushAssistantBuffer(runtime: ChannelRuntime): Promise<void> {
+  private async flushAssistantBuffer(
+    runtime: ChannelRuntime,
+    opts?: { final?: boolean }
+  ): Promise<void> {
     const text = runtime.textBuffer.trim()
     runtime.textBuffer = ''
     runtime.currentAssistantMessageId = null
     if (!text) return
+    // In QA mode, suppress intermediate flushes (message boundaries, pre-tool) and
+    // only post the final message of a run. The buffer is still cleared above so
+    // boundaries reset correctly and only the latest segment reaches idle.
+    if (this.emissionMode === 'qa' && !opts?.final) return
     await this.postDiscordMessage(runtime, text)
   }
 

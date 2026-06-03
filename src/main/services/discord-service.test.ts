@@ -606,7 +606,12 @@ describe('DiscordService message listener', () => {
         { name: 'super-plan', description: 'Switch this worktree to super-plan mode' },
         { name: 'archive', description: 'Archive this worktree and delete its channel' },
         { name: 'stop', description: 'Abort the current running session' },
-        { name: 'clear', description: 'Clear the session attached to this worktree channel' }
+        { name: 'clear', description: 'Clear the session attached to this worktree channel' },
+        {
+          name: 'qa',
+          description: 'Only post questions, plan approvals, and final results to channels'
+        },
+        { name: 'all', description: 'Post all agent activity to channels (default)' }
       ],
       'guild-1'
     )
@@ -1386,7 +1391,12 @@ describe('/archive slash command', () => {
         { name: 'super-plan', description: 'Switch this worktree to super-plan mode' },
         { name: 'archive', description: 'Archive this worktree and delete its channel' },
         { name: 'stop', description: 'Abort the current running session' },
-        { name: 'clear', description: 'Clear the session attached to this worktree channel' }
+        { name: 'clear', description: 'Clear the session attached to this worktree channel' },
+        {
+          name: 'qa',
+          description: 'Only post questions, plan approvals, and final results to channels'
+        },
+        { name: 'all', description: 'Post all agent activity to channels (default)' }
       ],
       'guild-1'
     )

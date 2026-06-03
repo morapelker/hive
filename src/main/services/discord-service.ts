@@ -14,6 +14,7 @@ import {
 } from 'discord.js'
 import type {
   DiscordConfig,
+  DiscordEmissionMode,
   DiscordProvisionProgress,
   DiscordProvisionSummary,
   DiscordVerifyResult
@@ -41,7 +42,12 @@ const DISCORD_COMMANDS: Array<{ name: string; description: string }> = [
   { name: 'super-plan', description: 'Switch this worktree to super-plan mode' },
   { name: 'archive', description: 'Archive this worktree and delete its channel' },
   { name: 'stop', description: 'Abort the current running session' },
-  { name: 'clear', description: 'Clear the session attached to this worktree channel' }
+  { name: 'clear', description: 'Clear the session attached to this worktree channel' },
+  {
+    name: 'qa',
+    description: 'Only post questions, plan approvals, and final results to channels'
+  },
+  { name: 'all', description: 'Post all agent activity to channels (default)' }
 ]
 
 export interface DiscordGateway {
@@ -548,6 +554,11 @@ export class DiscordService {
       return
     }
 
+    if (interaction.commandName === 'qa' || interaction.commandName === 'all') {
+      await this.handleEmissionModeInteraction(interaction)
+      return
+    }
+
     if (interaction.commandName === 'archive') {
       await this.handleArchiveInteraction(interaction)
       return
@@ -637,6 +648,22 @@ export class DiscordService {
       return commandName
     }
     return null
+  }
+
+  private async handleEmissionModeInteraction(
+    interaction: ChatInputCommandInteraction
+  ): Promise<void> {
+    const config = this.getConfig()
+    if (!isConfigured(config) || interaction.guildId !== config.guildId) return
+
+    const mode: DiscordEmissionMode = interaction.commandName === 'qa' ? 'qa' : 'all'
+    this.sessionBridge.setEmissionMode(mode)
+
+    const content =
+      mode === 'qa'
+        ? "QA mode on — I'll only post questions, plan approvals, and the final result of each run."
+        : "Verbose mode on — I'll post all agent activity to channels."
+    await interaction.reply({ content, ephemeral: true })
   }
 
   private async handleArchiveInteraction(

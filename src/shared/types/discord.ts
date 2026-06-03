@@ -6,6 +6,14 @@ export interface DiscordConfig {
   selectedProjectIds: string[]
 }
 
+/**
+ * Bot-global verbosity mode for what the bot posts to Discord channels.
+ * - 'all': emit everything (intermediate messages + tool calls + interactive prompts).
+ * - 'qa': only emit attention-required messages (questions, plan approvals,
+ *   permission/command approvals) plus the final message of each run.
+ */
+export type DiscordEmissionMode = 'all' | 'qa'
+
 export interface DiscordGuild {
   id: string
   name: string
