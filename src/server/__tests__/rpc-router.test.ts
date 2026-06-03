@@ -39546,7 +39546,11 @@ describe('rpc router', () => {
       }
     })
 
-    const payload = { state: 'working' as const, sourceWorktreeId: 'worktree-1' }
+    const payload = {
+      state: 'working' as const,
+      sourceWorktreeId: 'worktree-1',
+      workingSessionCount: 1
+    }
     const response = await Effect.runPromise(
       router.handle({
         id: 'pet-ops-publish-status-1',
@@ -40017,7 +40021,11 @@ describe('rpc router', () => {
   })
 
   it('handles petOps.getCurrentStatus through the pet ops RPC domain', async () => {
-    const status = { state: 'working' as const, sourceWorktreeId: 'worktree-1' }
+    const status = {
+      state: 'working' as const,
+      sourceWorktreeId: 'worktree-1',
+      workingSessionCount: 1
+    }
     const router = makeRpcRouter({
       eventBus: makeEventBus(),
       petOps: {
@@ -40107,7 +40115,11 @@ describe('rpc router', () => {
             }
           }),
         getCurrentStatus: () =>
-          Effect.succeed({ state: 'working' as const, sourceWorktreeId: 'worktree-1' })
+          Effect.succeed({
+            state: 'working' as const,
+            sourceWorktreeId: 'worktree-1',
+            workingSessionCount: 1
+          })
       }
     })
 
@@ -40171,7 +40183,11 @@ describe('rpc router', () => {
             }
           }),
         getCurrentStatus: () =>
-          Effect.succeed({ state: 'working' as const, sourceWorktreeId: 'worktree-1' }),
+          Effect.succeed({
+            state: 'working' as const,
+            sourceWorktreeId: 'worktree-1',
+            workingSessionCount: 1
+          }),
         updateSettings: (partial) =>
           Effect.sync(() => {
             updatedSettings = partial
@@ -40234,7 +40250,11 @@ describe('rpc router', () => {
             }
           }),
         getCurrentStatus: () =>
-          Effect.succeed({ state: 'working' as const, sourceWorktreeId: 'worktree-1' }),
+          Effect.succeed({
+            state: 'working' as const,
+            sourceWorktreeId: 'worktree-1',
+            workingSessionCount: 1
+          }),
         updateSettings: () => Effect.succeed(undefined)
       }
     })
@@ -40299,7 +40319,11 @@ describe('rpc router', () => {
             }
           }),
         getCurrentStatus: () =>
-          Effect.succeed({ state: 'working' as const, sourceWorktreeId: 'worktree-1' }),
+          Effect.succeed({
+            state: 'working' as const,
+            sourceWorktreeId: 'worktree-1',
+            workingSessionCount: 1
+          }),
         updateSettings: () => Effect.succeed(undefined),
         markHatched: () =>
           Effect.sync(() => {
@@ -40363,7 +40387,11 @@ describe('rpc router', () => {
             }
           }),
         getCurrentStatus: () =>
-          Effect.succeed({ state: 'working' as const, sourceWorktreeId: 'worktree-1' }),
+          Effect.succeed({
+            state: 'working' as const,
+            sourceWorktreeId: 'worktree-1',
+            workingSessionCount: 1
+          }),
         updateSettings: () => Effect.succeed(undefined),
         markHatched: () => Effect.succeed(undefined)
       }
