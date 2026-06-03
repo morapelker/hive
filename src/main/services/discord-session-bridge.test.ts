@@ -148,8 +148,33 @@ const makeChannel = () => ({
   sendTyping: vi.fn(async () => undefined)
 })
 
+const makeInteractiveChannel = () => {
+  const messages: any[] = []
+  const channel = {
+    send: vi.fn(async (payload: unknown) => {
+      const message = {
+        id: `message-${messages.length + 1}`,
+        content: typeof payload === 'string' ? payload : (payload as { content?: string }).content,
+        components: typeof payload === 'string' ? undefined : (payload as { components?: unknown }).components,
+        edit: vi.fn(async (update: { content?: string; components?: unknown[] }) => {
+          if (update.content !== undefined) message.content = update.content
+          if (update.components !== undefined) message.components = update.components
+          return message
+        })
+      }
+      messages.push(message)
+      return message
+    }),
+    sendTyping: vi.fn(async () => undefined)
+  }
+  return { channel, messages }
+}
+
 const setupBridge = (
-  overrides: { publishEvent?: (channel: string, payload: unknown) => void } = {}
+  overrides: {
+    publishEvent?: (channel: string, payload: unknown) => void
+    replyRouter?: unknown
+  } = {}
 ) => {
   const db = new FakeBridgeDatabase()
   db.resources = [makeResource()]
@@ -175,6 +200,7 @@ const setupBridge = (
       listener = callback
       return vi.fn()
     },
+    replyRouter: overrides.replyRouter as never,
     publishEvent: overrides.publishEvent,
     typingIntervalMs: 50
   })
@@ -791,6 +817,202 @@ describe('DiscordSessionBridge stream delivery', () => {
 
     expect(channel.send).toHaveBeenCalledTimes(2)
     expect(channel.send.mock.calls.every(([content]) => content.length <= 2000)).toBe(true)
+  })
+
+  it('forwards AskUserQuestion as a select menu and submits the chosen answer', async () => {
+    const replyRouter = {
+      replyQuestion: vi.fn(async () => undefined)
+    }
+    const { bridge, emit } = setupBridge({ replyRouter })
+    const { channel, messages } = makeInteractiveChannel()
+    await bridge.handleUserMessage(userMessage(channel, 'ask'))
+
+    emit({
+      type: 'question.asked',
+      sessionId: 'hive-1',
+      data: {
+        requestId: 'question-1',
+        questions: [
+          {
+            header: 'Choice',
+            question: 'Pick one',
+            options: [{ label: 'A' }, { label: 'B' }],
+            multiple: false
+          }
+        ]
+      }
+    })
+    await flushPromises()
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0].content).toContain('Pick one')
+    expect(JSON.stringify(messages[0].components)).toContain('question:question-1:select:0')
+    expect(JSON.stringify(messages[0].components)).toContain('question:question-1:submit')
+
+    await bridge.handleComponentInteraction({
+      isStringSelectMenu: () => true,
+      isButton: () => false,
+      customId: 'question:question-1:select:0',
+      values: ['B'],
+      deferUpdate: vi.fn(async () => undefined),
+      reply: vi.fn(async () => undefined),
+      message: messages[0]
+    } as never)
+    await bridge.handleComponentInteraction({
+      isStringSelectMenu: () => false,
+      isButton: () => true,
+      customId: 'question:question-1:submit',
+      values: [],
+      deferUpdate: vi.fn(async () => undefined),
+      reply: vi.fn(async () => undefined),
+      message: messages[0]
+    } as never)
+
+    expect(replyRouter.replyQuestion).toHaveBeenCalledWith({
+      requestId: 'question-1',
+      answers: [['B']],
+      worktreePath: '/repo/project/worktree',
+      agentSdk: 'opencode'
+    })
+    expect(messages[0].edit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        components: [],
+        content: expect.stringContaining('Answered: B')
+      })
+    )
+  })
+
+  it('keeps AskUserQuestion pending when Submit is pressed before selecting required answers', async () => {
+    const replyRouter = {
+      replyQuestion: vi.fn(async () => undefined)
+    }
+    const { bridge, emit } = setupBridge({ replyRouter })
+    const { channel, messages } = makeInteractiveChannel()
+    await bridge.handleUserMessage(userMessage(channel, 'ask'))
+
+    emit({
+      type: 'question.asked',
+      sessionId: 'hive-1',
+      data: {
+        requestId: 'question-missing',
+        questions: [
+          {
+            header: 'Choice',
+            question: 'Pick one',
+            options: [{ label: 'A' }, { label: 'B' }],
+            multiple: false
+          }
+        ]
+      }
+    })
+    await flushPromises()
+
+    const reply = vi.fn(async () => undefined)
+    const deferUpdate = vi.fn(async () => undefined)
+    await bridge.handleComponentInteraction({
+      isStringSelectMenu: () => false,
+      isButton: () => true,
+      customId: 'question:question-missing:submit',
+      values: [],
+      deferUpdate,
+      reply,
+      message: messages[0]
+    } as never)
+
+    expect(reply).toHaveBeenCalledWith({
+      content: 'Select an answer for question 1',
+      ephemeral: true
+    })
+    expect(deferUpdate).not.toHaveBeenCalled()
+    expect(replyRouter.replyQuestion).not.toHaveBeenCalled()
+    expect(messages[0].edit).not.toHaveBeenCalled()
+  })
+
+  it('keeps the Discord answer outcome when the backend resolution event races the click handler', async () => {
+    let emitFromRouter: ((event: OpenCodeStreamEvent) => void) | null = null
+    const replyRouter = {
+      replyQuestion: vi.fn(async () => {
+        emitFromRouter?.({
+          type: 'question.replied',
+          sessionId: 'hive-1',
+          data: { requestId: 'question-race' }
+        })
+      })
+    }
+    const { bridge, emit } = setupBridge({ replyRouter })
+    emitFromRouter = emit
+    const { channel, messages } = makeInteractiveChannel()
+    await bridge.handleUserMessage(userMessage(channel, 'ask'))
+
+    emit({
+      type: 'question.asked',
+      sessionId: 'hive-1',
+      data: {
+        requestId: 'question-race',
+        questions: [
+          {
+            header: 'Choice',
+            question: 'Pick one',
+            options: [{ label: 'A' }, { label: 'B' }],
+            multiple: false
+          }
+        ]
+      }
+    })
+    await flushPromises()
+
+    await bridge.handleComponentInteraction({
+      isStringSelectMenu: () => true,
+      isButton: () => false,
+      customId: 'question:question-race:select:0',
+      values: ['B'],
+      deferUpdate: vi.fn(async () => undefined),
+      reply: vi.fn(async () => undefined),
+      message: messages[0]
+    } as never)
+    await bridge.handleComponentInteraction({
+      isStringSelectMenu: () => false,
+      isButton: () => true,
+      customId: 'question:question-race:submit',
+      values: [],
+      deferUpdate: vi.fn(async () => undefined),
+      reply: vi.fn(async () => undefined),
+      message: messages[0]
+    } as never)
+
+    expect(messages[0].edit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        components: [],
+        content: expect.stringContaining('Answered: B')
+      })
+    )
+  })
+
+  it('edits pending Discord controls when a desktop resolution event wins first', async () => {
+    const { bridge, emit } = setupBridge()
+    const { channel, messages } = makeInteractiveChannel()
+    await bridge.handleUserMessage(userMessage(channel, 'ask'))
+
+    emit({
+      type: 'plan.ready',
+      sessionId: 'hive-1',
+      data: { requestId: 'plan-1', id: 'plan-1', plan: 'Plan text' }
+    })
+    await flushPromises()
+
+    emit({
+      type: 'plan.resolved',
+      sessionId: 'hive-1',
+      data: { requestId: 'plan-1', id: 'plan-1', approved: true }
+    })
+    await flushPromises()
+
+    expect(messages[0].edit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        components: [],
+        content: expect.stringContaining('Resolved in Hive')
+      })
+    )
   })
 })
 

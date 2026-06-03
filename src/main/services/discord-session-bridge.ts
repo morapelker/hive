@@ -1,4 +1,5 @@
 import type { OpenCodeStreamEvent } from '@shared/types/opencode'
+import type { PermissionRequest } from '@shared/types/opencode'
 import { OPENCODE_STREAM_CHANNEL } from '@shared/opencode-events'
 import { applyModePrefix } from '@shared/agent-mode-prefixes'
 import {
@@ -23,6 +24,11 @@ import {
   promptOpenCodeSession,
   reconnectOpenCodeSession
 } from './opencode-session-commands'
+import { claudeCliDiscordBridge } from './claude-cli-discord-bridge'
+import {
+  createInteractiveReplyRouter,
+  type InteractiveReplyRouter
+} from './interactive-reply-router'
 
 const log = createLogger({ component: 'DiscordSessionBridge' })
 
@@ -31,8 +37,14 @@ type ModelOverride = { providerID: string; modelID: string; variant?: string }
 type BackendEventPublisher = (channel: string, payload: unknown) => void
 
 interface DiscordTextChannel {
-  send(content: string): Promise<unknown> | unknown
+  send(content: unknown): Promise<unknown> | unknown
   sendTyping(): Promise<unknown> | unknown
+}
+
+interface DiscordSentMessage {
+  id: string
+  content?: string
+  edit(update: { content?: string; components?: unknown[] }): Promise<unknown> | unknown
 }
 
 interface OpenCodeBridgeService {
@@ -60,6 +72,7 @@ interface ChannelRuntime {
   opencodeSessionId: string
   model: SharedSelectedModel
   mode: SessionMode
+  agentSdk: AgentSdk
   busy: boolean
   currentAssistantMessageId: string | null
   textBuffer: string
@@ -75,6 +88,8 @@ export interface DiscordSessionBridgeDependencies {
   openCodeService?: OpenCodeBridgeService
   subscribeToAgentEvents?: (listener: (event: OpenCodeStreamEvent) => void) => () => void
   publishEvent?: BackendEventPublisher
+  resolveChannel?: (channelId: string) => Promise<DiscordTextChannel | null>
+  replyRouter?: InteractiveReplyRouter
   typingIntervalMs?: number
 }
 
@@ -87,6 +102,51 @@ export interface DiscordUserMessageInput {
   channel: DiscordTextChannel
 }
 
+type DiscordPendingKind = 'question' | 'permission' | 'command' | 'plan'
+
+interface PendingQuestion {
+  header?: string
+  question: string
+  options: Array<{ label: string; description?: string }>
+  multiple: boolean
+}
+
+interface PendingDiscordMessage {
+  id: string
+  message: DiscordSentMessage
+  originalContent: string
+}
+
+interface DiscordPendingInteraction {
+  kind: DiscordPendingKind
+  requestId: string
+  channelId: string
+  sessionId: string
+  worktreePath?: string
+  agentSdk: AgentSdk
+  messages: PendingDiscordMessage[]
+  questions?: PendingQuestion[]
+  partialAnswers?: string[][]
+  optionValueLabels?: Map<string, string>
+  permissionRequest?: PermissionRequest
+  patternSuggestions?: string[]
+}
+
+interface ParsedCustomId {
+  kind: DiscordPendingKind
+  requestId: string
+  action: string
+  questionIndex?: number
+}
+
+interface InteractiveTarget {
+  channelId: string
+  channel: DiscordTextChannel
+  hiveSessionId: string
+  worktreePath?: string
+  agentSdk: AgentSdk
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -95,6 +155,10 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function asString(value: unknown): string | null {
   return typeof value === 'string' ? value : null
+}
+
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
 }
 
 function normalizeToolStatus(status: unknown): 'running' | 'success' | 'error' {
@@ -144,10 +208,17 @@ export class DiscordSessionBridge {
   ) => () => void
   private readonly typingIntervalMs: number
   private publishEvent: BackendEventPublisher | null
+  private resolveChannel: ((channelId: string) => Promise<DiscordTextChannel | null>) | null
+  private readonly replyRouter: InteractiveReplyRouter
   private sdkManager: AgentSdkManager | null = null
   private unsubscribe: (() => void) | null = null
+  private unsubscribeCliBridge: (() => void) | null = null
   private runtimesBySessionId = new Map<string, ChannelRuntime>()
   private channelModeByWorktree = new Map<string, SessionMode>()
+  private discordPending = new Map<string, DiscordPendingInteraction>()
+  private requestTokens = new Map<string, string>()
+  private tokenRequestIds = new Map<string, string>()
+  private localResolutionOutcomes = new Map<string, string>()
 
   constructor(dependencies: DiscordSessionBridgeDependencies = {}) {
     this.db = dependencies.db ?? null
@@ -156,6 +227,8 @@ export class DiscordSessionBridge {
       dependencies.subscribeToAgentEvents ?? ((listener) => agentEventBus.subscribe(listener))
     this.typingIntervalMs = dependencies.typingIntervalMs ?? 8000
     this.publishEvent = dependencies.publishEvent ?? null
+    this.resolveChannel = dependencies.resolveChannel ?? null
+    this.replyRouter = dependencies.replyRouter ?? createInteractiveReplyRouter()
   }
 
   setBackendEventPublisher(publishEvent: BackendEventPublisher | null): void {
@@ -164,6 +237,13 @@ export class DiscordSessionBridge {
 
   setAgentSdkManager(manager: AgentSdkManager | null): void {
     this.sdkManager = manager
+    this.replyRouter.setAgentSdkManager(manager)
+  }
+
+  setChannelResolver(
+    resolveChannel: ((channelId: string) => Promise<DiscordTextChannel | null>) | null
+  ): void {
+    this.resolveChannel = resolveChannel
   }
 
   private createSdkAwareOpenCodeBridge(): OpenCodeBridgeService {
@@ -228,15 +308,19 @@ export class DiscordSessionBridge {
   start(): void {
     if (this.unsubscribe) return
     this.unsubscribe = this.subscribeToAgentEvents((event) => this.onStreamEvent(event))
+    this.unsubscribeCliBridge = claudeCliDiscordBridge.subscribe((event) => this.onStreamEvent(event))
   }
 
   dispose(): void {
     this.unsubscribe?.()
     this.unsubscribe = null
+    this.unsubscribeCliBridge?.()
+    this.unsubscribeCliBridge = null
     for (const runtime of this.runtimesBySessionId.values()) {
       this.stopTyping(runtime)
     }
     this.runtimesBySessionId.clear()
+    this.discordPending.clear()
   }
 
   async handleUserMessage(input: DiscordUserMessageInput): Promise<void> {
@@ -289,6 +373,8 @@ export class DiscordSessionBridge {
       this.stopTyping(runtime)
       this.runtimesBySessionId.delete(runtime.hiveSessionId)
     }
+    this.clearPendingForSession(resource.managed_session_id, 'Session cleared')
+    claudeCliDiscordBridge.cancelSession(resource.managed_session_id)
 
     if (session?.opencode_session_id) {
       try {
@@ -383,6 +469,10 @@ export class DiscordSessionBridge {
       existing.opencodeSessionId = session.opencode_session_id ?? existing.opencodeSessionId
       existing.mode = session.mode
       existing.model = this.getSessionModel(session)
+      existing.agentSdk = session.agent_sdk
+      if (session.agent_sdk === 'claude-code-cli') {
+        claudeCliDiscordBridge.register(session.id)
+      }
       return existing
     }
 
@@ -398,6 +488,7 @@ export class DiscordSessionBridge {
       opencodeSessionId: session.opencode_session_id,
       model: this.getSessionModel(session),
       mode: session.mode,
+      agentSdk: session.agent_sdk,
       busy: false,
       currentAssistantMessageId: null,
       textBuffer: '',
@@ -408,6 +499,9 @@ export class DiscordSessionBridge {
       sendChain: Promise.resolve()
     }
     this.runtimesBySessionId.set(session.id, runtime)
+    if (session.agent_sdk === 'claude-code-cli') {
+      claudeCliDiscordBridge.register(session.id)
+    }
     return runtime
   }
 
@@ -442,6 +536,17 @@ export class DiscordSessionBridge {
 
   private onStreamEvent(event: OpenCodeStreamEvent): void {
     const runtime = this.runtimesBySessionId.get(event.sessionId)
+
+    if (this.isInteractiveResolutionEvent(event.type)) {
+      void this.resolveFromEvent(event)
+      return
+    }
+
+    if (this.isInteractiveAskEvent(event.type)) {
+      void this.forwardInteractiveEvent(event, runtime)
+      return
+    }
+
     if (!runtime) return
 
     this.publishEvent?.(OPENCODE_STREAM_CHANNEL, event)
@@ -450,6 +555,11 @@ export class DiscordSessionBridge {
 
     if (event.type === 'message.part.updated') {
       this.handlePartUpdated(runtime, event)
+      return
+    }
+
+    if (event.type === 'message.updated') {
+      this.handleMessageUpdated(runtime, event)
       return
     }
 
@@ -466,6 +576,15 @@ export class DiscordSessionBridge {
     if (event.type === 'session.idle') {
       void this.handleIdle(runtime)
     }
+  }
+
+  private handleMessageUpdated(runtime: ChannelRuntime, event: OpenCodeStreamEvent): void {
+    const data = asRecord(event.data)
+    const role = asString(data?.role)
+    if (role === 'user') return
+    const content = asString(data?.content)
+    if (!content) return
+    runtime.textBuffer += this.consumePotentialUserEcho(runtime, content)
   }
 
   private handlePartUpdated(runtime: ChannelRuntime, event: OpenCodeStreamEvent): void {
@@ -577,6 +696,623 @@ export class DiscordSessionBridge {
       }
     })
     return runtime.sendChain
+  }
+
+  async handleComponentInteraction(interaction: {
+    isButton(): boolean
+    isStringSelectMenu(): boolean
+    customId: string
+    values?: string[]
+    message?: DiscordSentMessage
+    deferUpdate?: () => Promise<unknown>
+    reply?: (payload: { content: string; ephemeral?: boolean }) => Promise<unknown>
+    showModal?: (payload: unknown) => Promise<unknown>
+  }): Promise<boolean> {
+    if (!interaction.isButton() && !interaction.isStringSelectMenu()) return false
+    const parsed = this.parseCustomId(interaction.customId)
+    if (!parsed) return false
+
+    const pending = this.discordPending.get(parsed.requestId)
+    if (!pending) {
+      await this.replyEphemeral(interaction, 'Already handled')
+      return true
+    }
+
+    if (interaction.isStringSelectMenu()) {
+      if (pending.kind !== 'question' || parsed.action !== 'select') {
+        await this.replyEphemeral(interaction, 'Already handled')
+        return true
+      }
+      const questionIndex = parsed.questionIndex ?? 0
+      const values = asStringArray(interaction.values)
+      pending.partialAnswers ??= []
+      pending.partialAnswers[questionIndex] = values.map(
+        (value) => pending.optionValueLabels?.get(`${questionIndex}:${value}`) ?? value
+      )
+      await interaction.deferUpdate?.()
+      return true
+    }
+
+    if (pending.kind === 'plan' && parsed.action === 'reject') {
+      await interaction.showModal?.(this.buildPlanRejectModal(parsed.requestId))
+      return true
+    }
+
+    try {
+      if (pending.kind === 'question') {
+        await this.handleQuestionButton(pending, parsed, interaction)
+      } else if (pending.kind === 'permission') {
+        await interaction.deferUpdate?.()
+        const outcome = parsed.action === 'allow' ? 'Allowed always' : 'Denied'
+        this.localResolutionOutcomes.set(pending.requestId, outcome)
+        await this.replyRouter.replyPermission({
+          requestId: pending.requestId,
+          decision: parsed.action === 'allow' ? 'always' : 'reject',
+          worktreePath: pending.worktreePath,
+          agentSdk: pending.agentSdk,
+          permissionRequest: pending.permissionRequest
+        })
+        await this.resolveDiscordMessage(pending.requestId, outcome)
+      } else if (pending.kind === 'command') {
+        await interaction.deferUpdate?.()
+        const outcome = parsed.action === 'allow' ? 'Allowed always' : 'Denied'
+        this.localResolutionOutcomes.set(pending.requestId, outcome)
+        await this.replyRouter.replyCommandApproval({
+          requestId: pending.requestId,
+          approved: parsed.action === 'allow',
+          patternSuggestions: pending.patternSuggestions
+        })
+        await this.resolveDiscordMessage(pending.requestId, outcome)
+      } else if (pending.kind === 'plan' && parsed.action === 'approve') {
+        await interaction.deferUpdate?.()
+        this.localResolutionOutcomes.set(pending.requestId, 'Approved')
+        await this.replyRouter.replyPlan({
+          requestId: pending.requestId,
+          sessionId: pending.sessionId,
+          worktreePath: pending.worktreePath,
+          approve: true
+        })
+        await this.resolveDiscordMessage(pending.requestId, 'Approved')
+      }
+    } catch (error) {
+      this.localResolutionOutcomes.delete(pending.requestId)
+      await this.resolveDiscordMessage(
+        pending.requestId,
+        `Failed: ${error instanceof Error ? error.message : String(error)}`
+      )
+    }
+    return true
+  }
+
+  async handleModalSubmit(interaction: {
+    isModalSubmit(): boolean
+    customId: string
+    fields?: { getTextInputValue?: (customId: string) => string }
+    deferUpdate?: () => Promise<unknown>
+    deferReply?: (payload?: { ephemeral?: boolean }) => Promise<unknown>
+    editReply?: (content: string) => Promise<unknown>
+    reply?: (payload: { content: string; ephemeral?: boolean }) => Promise<unknown>
+  }): Promise<boolean> {
+    if (!interaction.isModalSubmit()) return false
+    const parsed = this.parseCustomId(interaction.customId)
+    if (!parsed || parsed.kind !== 'plan' || parsed.action !== 'reject_modal') return false
+
+    const pending = this.discordPending.get(parsed.requestId)
+    if (!pending || pending.kind !== 'plan') {
+      await this.replyEphemeral(interaction, 'Already handled')
+      return true
+    }
+
+    await interaction.deferUpdate?.()
+    const feedback = interaction.fields?.getTextInputValue?.('feedback')?.trim() ?? ''
+    try {
+      this.localResolutionOutcomes.set(pending.requestId, 'Rejected with feedback')
+      await this.replyRouter.replyPlan({
+        requestId: pending.requestId,
+        sessionId: pending.sessionId,
+        worktreePath: pending.worktreePath,
+        approve: false,
+        feedback
+      })
+      await this.resolveDiscordMessage(pending.requestId, 'Rejected with feedback')
+    } catch (error) {
+      this.localResolutionOutcomes.delete(pending.requestId)
+      await this.resolveDiscordMessage(
+        pending.requestId,
+        `Failed: ${error instanceof Error ? error.message : String(error)}`
+      )
+    }
+    return true
+  }
+
+  private async handleQuestionButton(
+    pending: DiscordPendingInteraction,
+    parsed: ParsedCustomId,
+    interaction: {
+      deferUpdate?: () => Promise<unknown>
+      reply?: (payload: { content: string; ephemeral?: boolean }) => Promise<unknown>
+    }
+  ): Promise<void> {
+    if (parsed.action === 'cancel') {
+      await interaction.deferUpdate?.()
+      this.localResolutionOutcomes.set(pending.requestId, 'Cancelled')
+      await this.replyRouter.rejectQuestion({
+        requestId: pending.requestId,
+        worktreePath: pending.worktreePath,
+        agentSdk: pending.agentSdk
+      })
+      await this.resolveDiscordMessage(pending.requestId, 'Cancelled')
+      return
+    }
+    if (parsed.action !== 'submit') return
+
+    const answers = pending.partialAnswers ?? []
+    const questions = pending.questions ?? []
+    const missingIndex = questions.findIndex((_, index) => (answers[index] ?? []).length === 0)
+    if (missingIndex >= 0) {
+      await this.replyEphemeral(interaction, `Select an answer for question ${missingIndex + 1}`)
+      return
+    }
+
+    const flatAnswers = answers.flat().join(', ')
+    const outcome = flatAnswers ? `Answered: ${flatAnswers}` : 'Answered'
+    this.localResolutionOutcomes.set(pending.requestId, outcome)
+    await interaction.deferUpdate?.()
+    await this.replyRouter.replyQuestion({
+      requestId: pending.requestId,
+      answers,
+      worktreePath: pending.worktreePath,
+      agentSdk: pending.agentSdk
+    })
+    await this.resolveDiscordMessage(pending.requestId, outcome)
+  }
+
+  private isInteractiveAskEvent(type: string): boolean {
+    return (
+      type === 'question.asked' ||
+      type === 'permission.asked' ||
+      type === 'command.approval_needed' ||
+      type === 'plan.ready'
+    )
+  }
+
+  private isInteractiveResolutionEvent(type: string): boolean {
+    return (
+      type === 'question.replied' ||
+      type === 'question.rejected' ||
+      type === 'permission.replied' ||
+      type === 'command.approval_replied' ||
+      type === 'plan.resolved'
+    )
+  }
+
+  private async forwardInteractiveEvent(
+    event: OpenCodeStreamEvent,
+    runtime?: ChannelRuntime
+  ): Promise<void> {
+    const target = await this.resolveInteractiveTarget(event, runtime)
+    if (!target) return
+
+    if (event.type === 'question.asked') {
+      await this.forwardQuestion(event, target)
+    } else if (event.type === 'permission.asked') {
+      await this.forwardPermission(event, target)
+    } else if (event.type === 'command.approval_needed') {
+      await this.forwardCommandApproval(event, target)
+    } else if (event.type === 'plan.ready') {
+      await this.forwardPlan(event, target)
+    }
+  }
+
+  private async forwardQuestion(
+    event: OpenCodeStreamEvent,
+    target: InteractiveTarget
+  ): Promise<void> {
+    const data = asRecord(event.data)
+    const requestId = this.requestIdFromData(data)
+    if (!requestId || this.discordPending.has(requestId)) return
+
+    const questions = this.parseQuestions(data?.questions)
+    if (questions.length === 0) return
+
+    const pending: DiscordPendingInteraction = {
+      kind: 'question',
+      requestId,
+      channelId: target.channelId,
+      sessionId: target.hiveSessionId,
+      worktreePath: target.worktreePath,
+      agentSdk: target.agentSdk,
+      messages: [],
+      questions,
+      partialAnswers: [],
+      optionValueLabels: new Map()
+    }
+    this.discordPending.set(requestId, pending)
+
+    const chunks = this.chunkQuestions(questions)
+    for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
+      const chunk = chunks[chunkIndex]
+      const startIndex = chunkIndex * 4
+      const isLast = chunkIndex === chunks.length - 1
+      const content = this.formatQuestionContent(chunk, startIndex, questions.length)
+      const components = this.buildQuestionComponents(requestId, chunk, startIndex, isLast, pending)
+      const sent = await target.channel.send({ content, components })
+      this.trackSentMessage(pending, sent, content)
+    }
+  }
+
+  private async forwardPermission(
+    event: OpenCodeStreamEvent,
+    target: InteractiveTarget
+  ): Promise<void> {
+    const request = asRecord(event.data) as PermissionRequest
+    const requestId = this.requestIdFromData(request)
+    if (!requestId || this.discordPending.has(requestId)) return
+
+    const content = [
+      '**Permission requested**',
+      request.permission ? `Type: ${request.permission}` : '',
+      ...(Array.isArray(request.patterns) ? request.patterns.map((pattern) => `\`${pattern}\``) : [])
+    ]
+      .filter(Boolean)
+      .join('\n')
+    const pending: DiscordPendingInteraction = {
+      kind: 'permission',
+      requestId,
+      channelId: target.channelId,
+      sessionId: target.hiveSessionId,
+      worktreePath: target.worktreePath,
+      agentSdk: target.agentSdk,
+      messages: [],
+      permissionRequest: request
+    }
+    this.discordPending.set(requestId, pending)
+    const sent = await target.channel.send({
+      content,
+      components: [this.buttonRow(requestId, 'permission', ['allow', 'deny'])]
+    })
+    this.trackSentMessage(pending, sent, content)
+  }
+
+  private async forwardCommandApproval(
+    event: OpenCodeStreamEvent,
+    target: InteractiveTarget
+  ): Promise<void> {
+    const data = asRecord(event.data)
+    const requestId = this.requestIdFromData(data)
+    if (!requestId || this.discordPending.has(requestId)) return
+    const commandStr = asString(data?.commandStr) ?? asString(data?.toolName) ?? 'Command'
+    const patternSuggestions = [
+      ...asStringArray(data?.subCommandPatterns),
+      ...asStringArray(data?.patternSuggestions)
+    ]
+    const content = ['**Command approval requested**', `\`${this.truncate(commandStr, 1500)}\``].join('\n')
+    const pending: DiscordPendingInteraction = {
+      kind: 'command',
+      requestId,
+      channelId: target.channelId,
+      sessionId: target.hiveSessionId,
+      worktreePath: target.worktreePath,
+      agentSdk: target.agentSdk,
+      messages: [],
+      patternSuggestions
+    }
+    this.discordPending.set(requestId, pending)
+    const sent = await target.channel.send({
+      content,
+      components: [this.buttonRow(requestId, 'command', ['allow', 'deny'])]
+    })
+    this.trackSentMessage(pending, sent, content)
+  }
+
+  private async forwardPlan(event: OpenCodeStreamEvent, target: InteractiveTarget): Promise<void> {
+    const data = asRecord(event.data)
+    const requestId = this.requestIdFromData(data)
+    if (!requestId || this.discordPending.has(requestId)) return
+    const plan = asString(data?.plan) ?? ''
+    const content = ['**Plan ready**', this.truncate(plan, 1800)].filter(Boolean).join('\n\n')
+    const pending: DiscordPendingInteraction = {
+      kind: 'plan',
+      requestId,
+      channelId: target.channelId,
+      sessionId: target.hiveSessionId,
+      worktreePath: target.worktreePath,
+      agentSdk: target.agentSdk,
+      messages: []
+    }
+    this.discordPending.set(requestId, pending)
+    const sent = await target.channel.send({
+      content,
+      components: [this.buttonRow(requestId, 'plan', ['approve', 'reject'])]
+    })
+    this.trackSentMessage(pending, sent, content)
+  }
+
+  private async resolveFromEvent(event: OpenCodeStreamEvent): Promise<void> {
+    const data = asRecord(event.data)
+    const requestId = this.requestIdFromData(data)
+    const pending = requestId
+      ? this.discordPending.get(requestId)
+      : [...this.discordPending.values()].find(
+          (candidate) => candidate.sessionId === event.sessionId && candidate.kind === 'plan'
+        )
+    if (!pending) return
+    const outcome = this.localResolutionOutcomes.get(pending.requestId) ?? 'Resolved in Hive'
+    await this.resolveDiscordMessage(pending.requestId, outcome)
+  }
+
+  private async resolveDiscordMessage(requestId: string, outcome: string): Promise<void> {
+    const pending = this.discordPending.get(requestId)
+    if (!pending) return
+    this.discordPending.delete(requestId)
+    this.localResolutionOutcomes.delete(requestId)
+    for (const item of pending.messages) {
+      await Promise.resolve(
+        item.message.edit({
+          content: `${item.originalContent}\n\n${outcome}`,
+          components: []
+        })
+      ).catch((error) => {
+        log.warn('Failed to edit resolved Discord interaction message', {
+          requestId,
+          messageId: item.id,
+          error: error instanceof Error ? error.message : String(error)
+        })
+      })
+    }
+  }
+
+  private async resolveInteractiveTarget(
+    event: OpenCodeStreamEvent,
+    runtime?: ChannelRuntime
+  ): Promise<InteractiveTarget | null> {
+    if (runtime) {
+      return {
+        channelId: runtime.channelId,
+        channel: runtime.channel,
+        hiveSessionId: runtime.hiveSessionId,
+        worktreePath: runtime.worktreePath,
+        agentSdk: runtime.agentSdk
+      }
+    }
+
+    const session = this.getDb().getSession(event.sessionId)
+    if (!session?.worktree_id) return null
+    const resource = this.getDb().getDiscordChannelResourceByWorktree(session.worktree_id)
+    if (!resource || resource.managed_session_id !== session.id) return null
+    const channel = await this.resolveChannel?.(resource.discord_id)
+    if (!channel) return null
+    const worktree = this.getDb().getWorktree?.(session.worktree_id)
+    return {
+      channelId: resource.discord_id,
+      channel,
+      hiveSessionId: session.id,
+      worktreePath: worktree?.path,
+      agentSdk: session.agent_sdk
+    }
+  }
+
+  private requestIdFromData(data: Record<string, unknown> | null): string | null {
+    return (
+      asString(data?.requestId) ??
+      asString(data?.id) ??
+      asString(asRecord(data?.properties)?.requestId) ??
+      null
+    )
+  }
+
+  private parseQuestions(value: unknown): PendingQuestion[] {
+    if (!Array.isArray(value)) return []
+    return value
+      .map((raw): PendingQuestion | null => {
+        const question = asRecord(raw)
+        const text = asString(question?.question)
+        if (!text) return null
+        const rawOptions = Array.isArray(question?.options) ? question.options : []
+        const options = rawOptions
+          .slice(0, 25)
+          .map((option): { label: string; description?: string } | null => {
+            const record = asRecord(option)
+            const label = asString(record?.label) ?? (typeof option === 'string' ? option : null)
+            if (!label) return null
+            const description = asString(record?.description)
+            return { label, ...(description ? { description } : {}) }
+          })
+          .filter((option): option is { label: string; description?: string } => !!option)
+        return {
+          header: asString(question?.header) ?? undefined,
+          question: text,
+          options,
+          multiple: question?.multiple === true || question?.multiSelect === true
+        }
+      })
+      .filter((question): question is PendingQuestion => !!question)
+  }
+
+  private chunkQuestions(questions: PendingQuestion[]): PendingQuestion[][] {
+    const chunks: PendingQuestion[][] = []
+    for (let index = 0; index < questions.length; index += 4) {
+      chunks.push(questions.slice(index, index + 4))
+    }
+    return chunks
+  }
+
+  private formatQuestionContent(
+    questions: PendingQuestion[],
+    startIndex: number,
+    total: number
+  ): string {
+    return questions
+      .map((question, offset) => {
+        const index = startIndex + offset + 1
+        const title = total > 1 ? `${question.header ?? 'Question'} (${index}/${total})` : question.header
+        return [title, question.question].filter(Boolean).join('\n')
+      })
+      .join('\n\n')
+  }
+
+  private buildQuestionComponents(
+    requestId: string,
+    questions: PendingQuestion[],
+    startIndex: number,
+    includeSubmit: boolean,
+    pending: DiscordPendingInteraction
+  ): unknown[] {
+    const rows = questions.map((question, offset) => {
+      const questionIndex = startIndex + offset
+      const maxValues = question.multiple ? Math.max(1, question.options.length) : 1
+      return {
+        type: 1,
+        components: [
+          {
+            type: 3,
+            custom_id: this.buildCustomId('question', requestId, 'select', questionIndex),
+            placeholder: this.truncate(question.header ?? question.question, 100),
+            min_values: 1,
+            max_values: maxValues,
+            options: question.options.map((option, optionIndex) => {
+              const value = String(optionIndex)
+              pending.optionValueLabels?.set(`${questionIndex}:${value}`, option.label)
+              return {
+                label: this.truncate(option.label, 100),
+                value,
+                ...(option.description
+                  ? { description: this.truncate(option.description, 100) }
+                  : {})
+              }
+            })
+          }
+        ]
+      }
+    })
+
+    if (includeSubmit) {
+      rows.push({
+        type: 1,
+        components: [
+          this.button('Submit', this.buildCustomId('question', requestId, 'submit'), 3),
+          this.button('Cancel', this.buildCustomId('question', requestId, 'cancel'), 4)
+        ]
+      })
+    }
+    return rows
+  }
+
+  private buttonRow(
+    requestId: string,
+    kind: DiscordPendingKind,
+    actions: Array<'allow' | 'deny' | 'approve' | 'reject'>
+  ): unknown {
+    return {
+      type: 1,
+      components: actions.map((action) => {
+        const label =
+          action === 'allow'
+            ? 'Allow'
+            : action === 'deny'
+              ? 'Deny'
+              : action === 'approve'
+                ? 'Approve'
+                : 'Reject'
+        const style = action === 'allow' || action === 'approve' ? 3 : 4
+        return this.button(label, this.buildCustomId(kind, requestId, action), style)
+      })
+    }
+  }
+
+  private button(label: string, customId: string, style: number): unknown {
+    return { type: 2, label, custom_id: customId, style }
+  }
+
+  private buildPlanRejectModal(requestId: string): unknown {
+    return {
+      title: 'Reject plan',
+      custom_id: this.buildCustomId('plan', requestId, 'reject_modal'),
+      components: [
+        {
+          type: 1,
+          components: [
+            {
+              type: 4,
+              custom_id: 'feedback',
+              label: 'Feedback',
+              style: 2,
+              required: true,
+              max_length: 1800
+            }
+          ]
+        }
+      ]
+    }
+  }
+
+  private buildCustomId(
+    kind: DiscordPendingKind,
+    requestId: string,
+    action: string,
+    questionIndex?: number
+  ): string {
+    const suffix = questionIndex === undefined ? '' : `:${questionIndex}`
+    const direct = `${kind}:${requestId}:${action}${suffix}`
+    if (direct.length <= 100) return direct
+
+    let token = this.requestTokens.get(requestId)
+    if (!token) {
+      token = `t${this.requestTokens.size + 1}`
+      this.requestTokens.set(requestId, token)
+      this.tokenRequestIds.set(token, requestId)
+    }
+    return `${kind}:${token}:${action}${suffix}`
+  }
+
+  private parseCustomId(customId: string): ParsedCustomId | null {
+    const parts = customId.split(':')
+    if (parts.length < 3) return null
+    const kind = parts[0] as DiscordPendingKind
+    if (!['question', 'permission', 'command', 'plan'].includes(kind)) return null
+    const requestId = this.tokenRequestIds.get(parts[1]) ?? parts[1]
+    const questionIndex =
+      parts[3] === undefined || Number.isNaN(Number(parts[3])) ? undefined : Number(parts[3])
+    return { kind, requestId, action: parts[2], questionIndex }
+  }
+
+  private trackSentMessage(
+    pending: DiscordPendingInteraction,
+    sent: unknown,
+    originalContent: string
+  ): void {
+    const message = sent as DiscordSentMessage
+    if (!message || typeof message.id !== 'string' || typeof message.edit !== 'function') return
+    pending.messages.push({ id: message.id, message, originalContent })
+  }
+
+  private clearPendingForSession(sessionId: string | null | undefined, outcome: string): void {
+    if (!sessionId) return
+    const requestIds = [...this.discordPending.values()]
+      .filter((pending) => pending.sessionId === sessionId)
+      .map((pending) => pending.requestId)
+    for (const requestId of requestIds) {
+      void this.resolveDiscordMessage(requestId, outcome)
+    }
+  }
+
+  private async replyEphemeral(
+    interaction: {
+      reply?: (payload: { content: string; ephemeral?: boolean }) => Promise<unknown>
+      deferUpdate?: () => Promise<unknown>
+    },
+    content: string
+  ): Promise<void> {
+    if (interaction.reply) {
+      await interaction.reply({ content, ephemeral: true }).catch(() => undefined)
+      return
+    }
+    await interaction.deferUpdate?.().catch(() => undefined)
+  }
+
+  private truncate(value: string, max: number): string {
+    if (value.length <= max) return value
+    return `${value.slice(0, Math.max(0, max - 1))}…`
   }
 
   private startTyping(runtime: ChannelRuntime): void {

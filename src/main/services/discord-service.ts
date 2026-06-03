@@ -9,6 +9,7 @@ import {
   type Interaction,
   type Message,
   type NonThreadGuildBasedChannel,
+  type TextBasedChannel,
   type TextChannel
 } from 'discord.js'
 import type {
@@ -426,6 +427,27 @@ export class DiscordService {
     try {
       await client.login(config.botToken)
       this.listenerClient = client
+      const bridgeWithResolver = this.sessionBridge as DiscordSessionBridge & {
+        setChannelResolver?: DiscordSessionBridge['setChannelResolver']
+      }
+      bridgeWithResolver.setChannelResolver?.(async (channelId) => {
+        const channel = await client.channels.fetch(channelId)
+        if (
+          channel &&
+          'isTextBased' in channel &&
+          typeof channel.isTextBased === 'function' &&
+          channel.isTextBased() &&
+          'send' in channel &&
+          typeof channel.send === 'function' &&
+          'sendTyping' in channel &&
+          typeof channel.sendTyping === 'function'
+        ) {
+          return channel as TextBasedChannel & {
+            sendTyping: () => Promise<unknown>
+          }
+        }
+        return null
+      })
       this.sessionBridge.start()
       await this.registerSlashCommands(client, config.guildId)
     } catch (error) {
@@ -440,6 +462,9 @@ export class DiscordService {
   async stopListening(): Promise<void> {
     this.listenerClient?.destroy()
     this.listenerClient = null
+    ;(this.sessionBridge as DiscordSessionBridge & {
+      setChannelResolver?: DiscordSessionBridge['setChannelResolver']
+    }).setChannelResolver?.(null)
     this.sessionBridge.dispose()
   }
 
@@ -499,6 +524,21 @@ export class DiscordService {
   }
 
   private async handleInteraction(interaction: Interaction): Promise<void> {
+    const maybeComponent = interaction as Interaction & {
+      isButton?: () => boolean
+      isStringSelectMenu?: () => boolean
+      isModalSubmit?: () => boolean
+    }
+    if (maybeComponent.isButton?.() || maybeComponent.isStringSelectMenu?.()) {
+      await this.sessionBridge.handleComponentInteraction(interaction)
+      return
+    }
+
+    if (maybeComponent.isModalSubmit?.()) {
+      await this.sessionBridge.handleModalSubmit(interaction)
+      return
+    }
+
     if (!interaction.isChatInputCommand()) return
 
     const mode = this.modeFromCommand(interaction.commandName)

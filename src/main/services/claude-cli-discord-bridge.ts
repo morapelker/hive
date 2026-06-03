@@ -1,21 +1,21 @@
 import { EventEmitter } from 'node:events'
 import type { ServerResponse } from 'node:http'
 import type { OpenCodeStreamEvent } from '@shared/types/opencode'
-import { TELEGRAM_CLAUDE_CLI_EVENT_CHANNEL } from '@shared/telegram-events'
 import { agentEventBus } from './agent-event-bus'
-import { publishDesktopBackendEvent } from '../desktop/backend-event-publisher'
 import { CliHookHoldCore, type ClaudeHookBody } from './cli-hook-hold-core'
 
-export type { ClaudeHookBody } from './cli-hook-hold-core'
-
-class ClaudeCliTelegramBridge {
-  readonly name = 'telegram'
+class ClaudeCliDiscordBridge {
+  readonly name = 'discord'
   private readonly emitter = new EventEmitter()
   private readonly core = new CliHookHoldCore({
-    name: 'Telegram',
+    name: 'Discord',
     emitShared: (event) => agentEventBus.publish(event),
-    emitTransport: (event) => this.emitTelegram(event)
+    emitTransport: (event) => this.emitter.emit('event', event)
   })
+
+  constructor() {
+    this.emitter.setMaxListeners(0)
+  }
 
   register(sessionId: string): void {
     this.core.register(sessionId)
@@ -65,11 +65,6 @@ class ClaudeCliTelegramBridge {
   cancelAll(): void {
     this.core.cancelAll()
   }
-
-  private emitTelegram(event: OpenCodeStreamEvent): void {
-    this.emitter.emit('event', event)
-    void publishDesktopBackendEvent(TELEGRAM_CLAUDE_CLI_EVENT_CHANNEL, event)
-  }
 }
 
-export const claudeCliTelegramBridge = new ClaudeCliTelegramBridge()
+export const claudeCliDiscordBridge = new ClaudeCliDiscordBridge()
