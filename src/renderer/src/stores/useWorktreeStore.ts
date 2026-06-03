@@ -164,6 +164,7 @@ interface WorktreeState {
     sourceWorktreePath: string,
     nameHint?: string
   ) => Promise<{ success: boolean; worktree?: Worktree; error?: string }>
+  addWorktreeToProject: (projectId: string, worktree: Worktree) => void
   updateWorktreeBranch: (worktreeId: string, newBranch: string) => void
   updateWorktreeModel: (worktreeId: string, model: SelectedModel) => void
   reorderWorktrees: (projectId: string, fromIndex: number, toIndex: number) => void
@@ -791,6 +792,19 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
         error: error instanceof Error ? error.message : 'Failed to duplicate worktree'
       }
     }
+  },
+
+  // Add a backend-created worktree to the project list without duplicating replayed events.
+  addWorktreeToProject: (projectId: string, worktree: Worktree) => {
+    set((state) => {
+      const current = state.worktreesByProject.get(projectId) || []
+      if (current.some((existing) => existing.id === worktree.id)) {
+        return state
+      }
+      const newMap = new Map(state.worktreesByProject)
+      newMap.set(projectId, [worktree, ...current])
+      return { worktreesByProject: newMap }
+    })
   },
 
   // Update a worktree's branch name (and display name) in the store (after rename)

@@ -175,6 +175,23 @@ describe('useWorktreeStore worktree loading', () => {
     )
   })
 
+  it('prepends a live-created worktree idempotently', () => {
+    const projectId = 'live-project'
+    const existing = makeWorktree('existing', projectId)
+    const created = makeWorktree('created', projectId)
+    useWorktreeStore.setState({
+      worktreesByProject: new Map([[projectId, [existing]]])
+    })
+
+    useWorktreeStore.getState().addWorktreeToProject(projectId, created)
+    useWorktreeStore.getState().addWorktreeToProject(projectId, created)
+
+    expect(useWorktreeStore.getState().getWorktreesForProject(projectId)).toEqual([
+      created,
+      existing
+    ])
+  })
+
   it('always runs first-ever worktree load and sync calls', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(1_000)

@@ -6,6 +6,7 @@ import {
   type CategoryChannel,
   type Guild,
   type Message,
+  type NonThreadGuildBasedChannel,
   type TextChannel
 } from 'discord.js'
 import type {
@@ -19,10 +20,14 @@ import {
   DISCORD_PROVISION_PROGRESS_CHANNEL,
   DISCORD_STATUS_CHANGED_CHANNEL
 } from '@shared/discord-events'
+import { WORKTREE_CREATED_CHANNEL } from '@shared/worktree-events'
+import { canonicalizeTicketTitle } from '@shared/types/branch-utils'
 import type { DatabaseService } from '../db/database'
 import { getDatabase } from '../db'
 import type { DiscordResource, Project, Worktree } from '../db/types'
+import { createGitService } from './git-service'
 import { createLogger } from './logger'
+import { createWorktreeFromBranchOp } from './worktree-ops'
 
 const DISCORD_CONFIG_KEY = 'discord_config'
 const log = createLogger({ component: 'Discord' })
@@ -167,6 +172,7 @@ export class DiscordService {
   private publishEvent: BackendEventPublisher | null
   private activeGateway: DiscordGateway | null = null
   private listenerClient: Client | null = null
+  private botCreatedChannelIds = new Set<string>()
 
   constructor(dependencies: DiscordServiceDependencies = {}) {
     this.db = dependencies.db ?? null
@@ -303,6 +309,7 @@ export class DiscordService {
           throw new Error(`Missing Discord category for ${candidate.project.name}`)
         }
         const discordId = await gateway.createTextChannel(candidate.worktree.name, categoryId)
+        this.botCreatedChannelIds.add(discordId)
         db.insertDiscordResource({
           id: randomUUID(),
           project_id: candidate.project.id,
@@ -374,6 +381,9 @@ export class DiscordService {
 
     client.on('messageCreate', (message) => {
       void this.handleIncomingMessage(message)
+    })
+    client.on('channelCreate', (channel) => {
+      void this.handleChannelCreate(channel)
     })
     client.once('clientReady', (readyClient) => {
       log.info('Discord listener connected', {
@@ -452,6 +462,120 @@ export class DiscordService {
         }
       )
     }
+  }
+
+  private async handleChannelCreate(channel: NonThreadGuildBasedChannel): Promise<void> {
+    const config = this.getConfig()
+    if (!isConfigured(config) || config.enabled !== true || channel.guildId !== config.guildId) {
+      return
+    }
+
+    if (channel.type !== ChannelType.GuildText) {
+      return
+    }
+
+    if (this.botCreatedChannelIds.has(channel.id)) {
+      this.botCreatedChannelIds.delete(channel.id)
+      return
+    }
+
+    const db = this.getDb()
+    const resources = db.getDiscordResourcesByGuild(config.guildId)
+    if (resources.some((resource) => resource.discord_id === channel.id)) {
+      return
+    }
+
+    const categoryResource = resources.find(
+      (resource) =>
+        resource.type === 'category' && resource.discord_id === channel.parentId
+    )
+    if (!categoryResource) {
+      return
+    }
+
+    const projectId = categoryResource.project_id
+    const project = db.getProject(projectId)
+    if (!project) {
+      return
+    }
+
+    const nameHint = canonicalizeTicketTitle(channel.name)
+    if (!nameHint) {
+      await this.sendChannelMessage(
+        channel,
+        'Could not create worktree: channel name does not contain any branch-safe characters.'
+      )
+      return
+    }
+
+    try {
+      const defaultWorktree = db
+        .getActiveWorktreesByProject(projectId)
+        .find((worktree) => worktree.is_default)
+      const baseBranch =
+        defaultWorktree?.branch_name ??
+        (await createGitService(project.path).getDefaultBranch())
+
+      const result = await createWorktreeFromBranchOp({
+        projectId,
+        projectPath: project.path,
+        projectName: project.name,
+        branchName: baseBranch,
+        nameHint
+      })
+
+      if (!result.success || !result.worktree) {
+        throw new Error(result.error || 'Failed to create worktree')
+      }
+
+      db.insertDiscordResource({
+        id: randomUUID(),
+        project_id: projectId,
+        worktree_id: result.worktree.id,
+        discord_id: channel.id,
+        type: 'channel',
+        guild_id: config.guildId
+      })
+
+      this.publishEvent?.(WORKTREE_CREATED_CHANNEL, {
+        projectId,
+        worktree: result.worktree
+      })
+
+      await this.sendChannelMessage(
+        channel,
+        `Created worktree \`${result.worktree.branch_name}\``
+      )
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      log.error(
+        'Failed to create worktree for Discord channel',
+        error instanceof Error ? error : new Error(message),
+        {
+          channelId: channel.id,
+          channelName: channel.name,
+          projectId
+        }
+      )
+      await this.sendChannelMessage(channel, `Could not create worktree: ${message}`)
+    }
+  }
+
+  private async sendChannelMessage(
+    channel: NonThreadGuildBasedChannel,
+    message: string
+  ): Promise<void> {
+    const maybeSendable = channel as NonThreadGuildBasedChannel & {
+      send?: (content: string) => Promise<unknown> | unknown
+    }
+    if (
+      !channel.isTextBased() ||
+      !('send' in maybeSendable) ||
+      typeof maybeSendable.send !== 'function'
+    ) {
+      return
+    }
+    await maybeSendable.send(message)
   }
 
   private async wait(ms: number): Promise<void> {

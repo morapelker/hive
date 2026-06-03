@@ -291,12 +291,16 @@ export const syncWorktreesOpEffect = (
         normalizedPath: normalizeWorktreePath(worktree.path)
       }))
       const gitWorktreePaths = new Set(normalizedGitWorktrees.map((w) => w.normalizedPath))
+      const gitMainPathSet = new Set(
+        normalizedGitWorktrees.filter((w) => w.isMain).map((w) => w.normalizedPath)
+      )
 
       const dbWorktrees = yield* worktreeRepo.getActiveByProject(params.projectId)
       const dbWorktreePaths = new Set(dbWorktrees.map((w) => normalizeWorktreePath(w.path)))
 
       for (const gitWorktree of normalizedGitWorktrees) {
         if (
+          gitWorktree.isMain ||
           gitWorktree.normalizedPath === normalizedProjectPath ||
           dbWorktreePaths.has(gitWorktree.normalizedPath)
         ) {
@@ -341,6 +345,11 @@ export const syncWorktreesOpEffect = (
 
       for (const dbWorktree of dbWorktrees) {
         const normalizedDbWorktreePath = normalizeWorktreePath(dbWorktree.path)
+        if (!dbWorktree.is_default && gitMainPathSet.has(normalizedDbWorktreePath)) {
+          yield* worktreeRepo.archive(dbWorktree.id)
+          continue
+        }
+
         if (!gitWorktreePaths.has(normalizedDbWorktreePath) && !existsSync(dbWorktree.path)) {
           if (dbWorktree.is_default) continue
           yield* worktreeRepo.archive(dbWorktree.id)
