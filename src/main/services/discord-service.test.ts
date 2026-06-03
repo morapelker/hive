@@ -13,6 +13,11 @@ const discordJsMock = vi.hoisted(() => {
     readonly login = vi.fn(async () => 'logged-in')
     readonly destroy = vi.fn()
     readonly isReady = vi.fn(() => true)
+    readonly application = {
+      commands: {
+        create: vi.fn(async () => undefined)
+      }
+    }
     private readonly handlers = new Map<string, Array<(...args: unknown[]) => void>>()
     private readonly onceHandlers = new Map<string, Array<(...args: unknown[]) => void>>()
 
@@ -220,6 +225,7 @@ const makeService = (
     start: () => void
     dispose: () => void
     handleUserMessage: ReturnType<typeof vi.fn>
+    clearManagedSession?: ReturnType<typeof vi.fn>
     setBackendEventPublisher?: ReturnType<typeof vi.fn>
   }
 ) =>
@@ -518,6 +524,10 @@ describe('DiscordService message listener', () => {
     })
     expect(discordJsMock.instances).toHaveLength(1)
     expect(discordJsMock.instances[0].login).toHaveBeenCalledWith('token')
+    expect(discordJsMock.instances[0].application.commands.create).toHaveBeenCalledWith(
+      { name: 'clear', description: 'Clear the session attached to this worktree channel' },
+      'guild-1'
+    )
   })
 
   it('creates a worktree when a human creates a text channel under a managed project category', async () => {
@@ -955,6 +965,88 @@ describe('DiscordService message listener', () => {
     })
     expect(channel.sendTyping).not.toHaveBeenCalled()
     expect(channel.send).not.toHaveBeenCalled()
+  })
+
+  it('handles /clear in a provisioned worktree channel as a public deferred reply', async () => {
+    const db = new FakeDiscordDatabase()
+    configure(db)
+    db.activeWorktrees.set('p1', [makeWorktree('w1', 'p1', 'main')])
+    db.resources = [
+      {
+        id: 'r-channel',
+        project_id: 'p1',
+        worktree_id: 'w1',
+        discord_id: 'channel-1',
+        type: 'channel',
+        guild_id: 'guild-1',
+        managed_session_id: 'hive-existing',
+        created_at: '2026-01-01T00:00:00.000Z'
+      }
+    ]
+    const { gateway } = makeGateway()
+    const sessionBridge = {
+      start: vi.fn(),
+      dispose: vi.fn(),
+      handleUserMessage: vi.fn(async () => undefined),
+      clearManagedSession: vi.fn(async () => undefined)
+    }
+    const service = makeService(db, gateway, sessionBridge)
+    await service.startListening()
+    const interaction = {
+      isChatInputCommand: vi.fn(() => true),
+      commandName: 'clear',
+      guildId: 'guild-1',
+      channelId: 'channel-1',
+      deferReply: vi.fn(async () => undefined),
+      editReply: vi.fn(async () => undefined),
+      reply: vi.fn(async () => undefined)
+    }
+
+    discordJsMock.instances[0].emit('interactionCreate', interaction)
+    await flushPromises()
+
+    expect(interaction.deferReply).toHaveBeenCalledWith()
+    expect(sessionBridge.clearManagedSession).toHaveBeenCalledWith({
+      worktreeId: 'w1',
+      worktreePath: '/repo/p1/main'
+    })
+    expect(interaction.editReply).toHaveBeenCalledWith(
+      '🧹 Session cleared. Your next message will start a fresh session.'
+    )
+    expect(interaction.reply).not.toHaveBeenCalled()
+  })
+
+  it('replies ephemerally when /clear is used outside a provisioned worktree channel', async () => {
+    const db = new FakeDiscordDatabase()
+    configure(db)
+    const { gateway } = makeGateway()
+    const sessionBridge = {
+      start: vi.fn(),
+      dispose: vi.fn(),
+      handleUserMessage: vi.fn(async () => undefined),
+      clearManagedSession: vi.fn(async () => undefined)
+    }
+    const service = makeService(db, gateway, sessionBridge)
+    await service.startListening()
+    const interaction = {
+      isChatInputCommand: vi.fn(() => true),
+      commandName: 'clear',
+      guildId: 'guild-1',
+      channelId: 'unmapped-channel',
+      deferReply: vi.fn(async () => undefined),
+      editReply: vi.fn(async () => undefined),
+      reply: vi.fn(async () => undefined)
+    }
+
+    discordJsMock.instances[0].emit('interactionCreate', interaction)
+    await flushPromises()
+
+    expect(interaction.reply).toHaveBeenCalledWith({
+      content: 'This channel isn’t linked to a Hive worktree.',
+      ephemeral: true
+    })
+    expect(interaction.deferReply).not.toHaveBeenCalled()
+    expect(sessionBridge.clearManagedSession).not.toHaveBeenCalled()
   })
 
   it('ignores bot messages and messages outside provisioned channels', async () => {

@@ -5,13 +5,13 @@ import {
   GatewayIntentBits,
   type CategoryChannel,
   type Guild,
+  type Interaction,
   type Message,
   type NonThreadGuildBasedChannel,
   type TextChannel
 } from 'discord.js'
 import type {
   DiscordConfig,
-  DiscordGuild,
   DiscordProvisionProgress,
   DiscordProvisionSummary,
   DiscordVerifyResult
@@ -116,15 +116,7 @@ class DiscordJsGateway implements DiscordGateway {
   }
 }
 
-const emptyConfig: DiscordConfig = {
-  botToken: '',
-  guildId: '',
-  guildName: '',
-  enabled: false,
-  selectedProjectIds: []
-}
-
-const isConfigured = (config: DiscordConfig | null): boolean =>
+const isConfigured = (config: DiscordConfig | null): config is DiscordConfig =>
   !!config?.botToken.trim() && !!config.guildId.trim()
 
 const parseConfig = (raw: string | null): DiscordConfig | null => {
@@ -387,6 +379,9 @@ export class DiscordService {
     client.on('messageCreate', (message) => {
       void this.handleIncomingMessage(message)
     })
+    client.on('interactionCreate', (interaction) => {
+      void this.handleInteraction(interaction)
+    })
     client.on('channelCreate', (channel) => {
       void this.handleChannelCreate(channel)
     })
@@ -407,6 +402,21 @@ export class DiscordService {
       await client.login(config.botToken)
       this.listenerClient = client
       this.sessionBridge.start()
+      try {
+        await client.application?.commands.create(
+          {
+            name: 'clear',
+            description: 'Clear the session attached to this worktree channel'
+          },
+          config.guildId
+        )
+      } catch (error) {
+        log.error(
+          'Failed to register Discord /clear command. Re-invite the bot with the applications.commands OAuth scope if the command does not appear.',
+          error instanceof Error ? error : new Error(String(error)),
+          { guildId: config.guildId }
+        )
+      }
     } catch (error) {
       client.destroy()
       log.error(
@@ -474,6 +484,63 @@ export class DiscordService {
           channelId: message.channelId
         }
       )
+    }
+  }
+
+  private async handleInteraction(interaction: Interaction): Promise<void> {
+    if (!interaction.isChatInputCommand() || interaction.commandName !== 'clear') {
+      return
+    }
+
+    const config = this.getConfig()
+    if (!isConfigured(config) || interaction.guildId !== config.guildId) {
+      return
+    }
+
+    try {
+      const db = this.getDb()
+      const provisionedChannel = db
+        .getDiscordResourcesByGuild(config.guildId)
+        .find(
+          (resource) =>
+            resource.type === 'channel' && resource.discord_id === interaction.channelId
+        )
+
+      if (!provisionedChannel?.worktree_id) {
+        await interaction.reply({
+          content: 'This channel isn’t linked to a Hive worktree.',
+          ephemeral: true
+        })
+        return
+      }
+
+      const worktree = db.getWorktree(provisionedChannel.worktree_id)
+      if (!worktree) {
+        await interaction.reply({
+          content: 'This channel isn’t linked to a Hive worktree.',
+          ephemeral: true
+        })
+        return
+      }
+
+      await interaction.deferReply()
+      await this.sessionBridge.clearManagedSession({
+        worktreeId: worktree.id,
+        worktreePath: worktree.path
+      })
+      await interaction.editReply('🧹 Session cleared. Your next message will start a fresh session.')
+    } catch (error) {
+      const normalized = error instanceof Error ? error : new Error(String(error))
+      log.error('Failed to handle Discord /clear command', normalized, {
+        channelId: interaction.channelId ?? undefined
+      })
+
+      const content = 'Could not clear the session. Check the Hive logs for details.'
+      if (interaction.deferred || interaction.replied) {
+        await interaction.editReply(content).catch(() => undefined)
+      } else {
+        await interaction.reply({ content, ephemeral: true }).catch(() => undefined)
+      }
     }
   }
 
