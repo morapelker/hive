@@ -53,6 +53,7 @@ const provisionParamsSchema = z
     selectedProjectIds: z.array(z.string())
   })
   .strict()
+const bootedEventBuses = new WeakSet<EventBus>()
 
 const importDiscordService = async (eventBus?: EventBus) => {
   const { discordService } = await import('../../../main/services/discord-service')
@@ -64,74 +65,83 @@ const importDiscordService = async (eventBus?: EventBus) => {
   return discordService
 }
 
-export const makeLiveDiscordOpsRpcService = (eventBus?: EventBus): DiscordOpsRpcService => ({
-  getConfig: () =>
-    Effect.tryPromise({
-      try: async () => {
-        const discordService = await importDiscordService(eventBus)
-        return discordService.getConfig()
-      },
-      catch: (cause) => cause
-    }),
-  setConfig: (config) =>
-    Effect.tryPromise({
-      try: async () => {
-        const [discordService, { createLogger }, { toError }] = await Promise.all([
-          importDiscordService(eventBus),
-          import('../../../main/services/logger'),
-          import('../../../main/services/error-utils')
-        ])
-        try {
-          discordService.setConfig(config)
-          return { ok: true }
-        } catch (error) {
-          createLogger({ component: 'DiscordOpsRpc' }).error(
-            'discordOps.setConfig failed',
-            toError(error)
-          )
-          return { ok: false, error: error instanceof Error ? error.message : String(error) }
-        }
-      },
-      catch: (cause) => cause
-    }),
-  verifyToken: (botToken) =>
-    Effect.tryPromise({
-      try: async () => {
-        const discordService = await importDiscordService(eventBus)
-        return discordService.verify(botToken)
-      },
-      catch: (cause) => cause
-    }),
-  provision: (selectedProjectIds) =>
-    Effect.tryPromise({
-      try: async () => {
-        const discordService = await importDiscordService(eventBus)
-        return discordService.provision(selectedProjectIds)
-      },
-      catch: (cause) => cause
-    }),
-  disable: () =>
-    Effect.tryPromise({
-      try: async () => {
-        const [discordService, { createLogger }, { toError }] = await Promise.all([
-          importDiscordService(eventBus),
-          import('../../../main/services/logger'),
-          import('../../../main/services/error-utils')
-        ])
-        try {
-          await discordService.disable()
-          return { ok: true }
-        } catch (error) {
-          createLogger({ component: 'DiscordOpsRpc' }).error(
-            'discordOps.disable failed',
-            toError(error)
-          )
-          return { ok: false, error: error instanceof Error ? error.message : String(error) }
-        }
-      },
-      catch: (cause) => cause
-    })
-})
+export const makeLiveDiscordOpsRpcService = (eventBus?: EventBus): DiscordOpsRpcService => {
+  if (eventBus && !bootedEventBuses.has(eventBus)) {
+    bootedEventBuses.add(eventBus)
+    void importDiscordService(eventBus)
+      .then((service) => service.startListening())
+      .catch(() => undefined)
+  }
+
+  return {
+    getConfig: () =>
+      Effect.tryPromise({
+        try: async () => {
+          const discordService = await importDiscordService(eventBus)
+          return discordService.getConfig()
+        },
+        catch: (cause) => cause
+      }),
+    setConfig: (config) =>
+      Effect.tryPromise({
+        try: async () => {
+          const [discordService, { createLogger }, { toError }] = await Promise.all([
+            importDiscordService(eventBus),
+            import('../../../main/services/logger'),
+            import('../../../main/services/error-utils')
+          ])
+          try {
+            discordService.setConfig(config)
+            return { ok: true }
+          } catch (error) {
+            createLogger({ component: 'DiscordOpsRpc' }).error(
+              'discordOps.setConfig failed',
+              toError(error)
+            )
+            return { ok: false, error: error instanceof Error ? error.message : String(error) }
+          }
+        },
+        catch: (cause) => cause
+      }),
+    verifyToken: (botToken) =>
+      Effect.tryPromise({
+        try: async () => {
+          const discordService = await importDiscordService(eventBus)
+          return discordService.verify(botToken)
+        },
+        catch: (cause) => cause
+      }),
+    provision: (selectedProjectIds) =>
+      Effect.tryPromise({
+        try: async () => {
+          const discordService = await importDiscordService(eventBus)
+          return discordService.provision(selectedProjectIds)
+        },
+        catch: (cause) => cause
+      }),
+    disable: () =>
+      Effect.tryPromise({
+        try: async () => {
+          const [discordService, { createLogger }, { toError }] = await Promise.all([
+            importDiscordService(eventBus),
+            import('../../../main/services/logger'),
+            import('../../../main/services/error-utils')
+          ])
+          try {
+            await discordService.disable()
+            return { ok: true }
+          } catch (error) {
+            createLogger({ component: 'DiscordOpsRpc' }).error(
+              'discordOps.disable failed',
+              toError(error)
+            )
+            return { ok: false, error: error instanceof Error ? error.message : String(error) }
+          }
+        },
+        catch: (cause) => cause
+      })
+  }
+}
 
 export const makeDiscordOpsRpcHandlers = (
   service: DiscordOpsRpcService = makeLiveDiscordOpsRpcService()

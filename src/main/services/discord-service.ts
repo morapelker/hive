@@ -5,6 +5,7 @@ import {
   GatewayIntentBits,
   type CategoryChannel,
   type Guild,
+  type Message,
   type TextChannel
 } from 'discord.js'
 import type {
@@ -21,8 +22,10 @@ import {
 import type { DatabaseService } from '../db/database'
 import { getDatabase } from '../db'
 import type { DiscordResource, Project, Worktree } from '../db/types'
+import { createLogger } from './logger'
 
 const DISCORD_CONFIG_KEY = 'discord_config'
+const log = createLogger({ component: 'Discord' })
 
 export interface DiscordGateway {
   verify(botToken: string): Promise<DiscordVerifyResult>
@@ -163,6 +166,7 @@ export class DiscordService {
   private gatewayFactory: () => DiscordGateway
   private publishEvent: BackendEventPublisher | null
   private activeGateway: DiscordGateway | null = null
+  private listenerClient: Client | null = null
 
   constructor(dependencies: DiscordServiceDependencies = {}) {
     this.db = dependencies.db ?? null
@@ -318,6 +322,12 @@ export class DiscordService {
       }
 
       this.setConfig({ ...config, enabled: true, selectedProjectIds: uniqueSelectedProjectIds })
+      await this.startListening().catch((error) => {
+        log.error(
+          'Failed to start Discord listener after provisioning',
+          error instanceof Error ? error : new Error(String(error))
+        )
+      })
       return { created, deleted }
     } finally {
       await gateway.disconnect().catch(() => undefined)
@@ -336,6 +346,116 @@ export class DiscordService {
     }
     await this.activeGateway?.disconnect().catch(() => undefined)
     this.activeGateway = null
+    await this.stopListening()
+  }
+
+  async startListening(): Promise<void> {
+    const config = this.getConfig()
+    if (!isConfigured(config) || config.enabled !== true) {
+      await this.stopListening()
+      return
+    }
+
+    if (this.listenerClient?.isReady()) {
+      return
+    }
+
+    if (this.listenerClient) {
+      await this.stopListening()
+    }
+
+    const client = new Client({
+      intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent
+      ]
+    })
+
+    client.on('messageCreate', (message) => {
+      void this.handleIncomingMessage(message)
+    })
+    client.once('clientReady', (readyClient) => {
+      log.info('Discord listener connected', {
+        botUser: readyClient.user?.tag ?? readyClient.user?.username ?? undefined,
+        guildId: config.guildId
+      })
+    })
+    client.on('error', (error) => {
+      log.error(
+        'Discord listener error',
+        error instanceof Error ? error : new Error(String(error))
+      )
+    })
+
+    try {
+      await client.login(config.botToken)
+      this.listenerClient = client
+    } catch (error) {
+      client.destroy()
+      log.error(
+        'Failed to start Discord listener',
+        error instanceof Error ? error : new Error(String(error))
+      )
+    }
+  }
+
+  async stopListening(): Promise<void> {
+    this.listenerClient?.destroy()
+    this.listenerClient = null
+  }
+
+  private async handleIncomingMessage(message: Message): Promise<void> {
+    if (message.author.bot) return
+
+    const config = this.getConfig()
+    if (!isConfigured(config) || message.guildId !== config.guildId) return
+
+    const provisionedChannel = this.getDb()
+      .getDiscordResourcesByGuild(config.guildId)
+      .some(
+        (resource) =>
+          resource.type === 'channel' && resource.discord_id === message.channelId
+      )
+    if (!provisionedChannel) return
+
+    log.info('Discord message received', {
+      channelId: message.channelId,
+      author: message.author.tag,
+      content: message.content
+    })
+
+    const channel = message.channel
+    if (
+      !channel.isTextBased() ||
+      !('send' in channel) ||
+      typeof channel.send !== 'function' ||
+      !('sendTyping' in channel) ||
+      typeof channel.sendTyping !== 'function'
+    ) {
+      return
+    }
+
+    try {
+      await channel.sendTyping()
+      await this.wait(3000)
+      await channel.send('Received prompt')
+      await channel.sendTyping()
+      await this.wait(3000)
+      await channel.send('Prompt executed')
+    } catch (error) {
+      log.error(
+        'Failed to acknowledge Discord message',
+        error instanceof Error ? error : new Error(String(error)),
+        {
+          channelId: message.channelId
+        }
+      )
+    }
+  }
+
+  private async wait(ms: number): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, ms))
   }
 
   private computeDeleteCandidates(
