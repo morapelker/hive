@@ -415,6 +415,29 @@ export class DiscordSessionBridge {
     db.setDiscordResourceManagedSession(resource.id, null)
   }
 
+  async stopManagedSession(input: { worktreeId: string; worktreePath: string }): Promise<boolean> {
+    const db = this.getDb()
+    const resource = db.getDiscordChannelResourceByWorktree(input.worktreeId)
+    if (!resource?.managed_session_id) return false
+
+    const session = db.getSession(resource.managed_session_id)
+    if (!session?.opencode_session_id) return false
+
+    const runtime = this.runtimesBySessionId.get(session.id)
+    if (runtime) {
+      runtime.queue = []
+      runtime.textBuffer = ''
+      runtime.currentAssistantMessageId = null
+      runtime.pendingUserEchoText = null
+      runtime.busy = false
+      this.stopTyping(runtime)
+    }
+    this.clearPendingForSession(resource.managed_session_id, 'Session stopped')
+    claudeCliDiscordBridge.cancelSession(resource.managed_session_id)
+
+    return this.openCode.abort(input.worktreePath, session.opencode_session_id)
+  }
+
   private async resolveManagedSession(
     input: DiscordUserMessageInput,
     createMode?: SessionMode

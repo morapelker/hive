@@ -6,7 +6,23 @@ import { createGitService } from './git-service'
 import type { DiscordResource, Project, Worktree } from '../db/types'
 
 const discordJsMock = vi.hoisted(() => {
-  const instances: any[] = []
+  interface MockDiscordClientShape {
+    login: ReturnType<typeof vi.fn>
+    destroy: ReturnType<typeof vi.fn>
+    isReady: ReturnType<typeof vi.fn>
+    application: {
+      commands: {
+        set: ReturnType<typeof vi.fn>
+        create: ReturnType<typeof vi.fn>
+      }
+    }
+    channels: {
+      fetch: ReturnType<typeof vi.fn>
+    }
+    emit(event: string, ...args: unknown[]): void
+  }
+
+  const instances: MockDiscordClientShape[] = []
 
   class MockDiscordClient {
     readonly options: unknown
@@ -233,6 +249,7 @@ const makeService = (
     handleUserMessage: ReturnType<typeof vi.fn>
     setWorktreeMode?: ReturnType<typeof vi.fn>
     clearManagedSession?: ReturnType<typeof vi.fn>
+    stopManagedSession?: ReturnType<typeof vi.fn>
     setBackendEventPublisher?: ReturnType<typeof vi.fn>
     handleComponentInteraction?: ReturnType<typeof vi.fn>
     handleModalSubmit?: ReturnType<typeof vi.fn>
@@ -263,7 +280,7 @@ const makeResource = (overrides: Partial<DiscordResource> = {}): DiscordResource
 })
 
 const makeArchiveInteraction = (
-  client: any,
+  client: unknown,
   overrides: {
     commandName?: string
     guildId?: string
@@ -588,6 +605,7 @@ describe('DiscordService message listener', () => {
         { name: 'build', description: 'Switch this worktree to build mode' },
         { name: 'super-plan', description: 'Switch this worktree to super-plan mode' },
         { name: 'archive', description: 'Archive this worktree and delete its channel' },
+        { name: 'stop', description: 'Abort the current running session' },
         { name: 'clear', description: 'Clear the session attached to this worktree channel' }
       ],
       'guild-1'
@@ -1192,6 +1210,86 @@ describe('DiscordService message listener', () => {
     expect(interaction.reply).not.toHaveBeenCalled()
   })
 
+  it('handles /stop in a provisioned worktree channel as a public deferred reply', async () => {
+    const db = new FakeDiscordDatabase()
+    configure(db)
+    db.activeWorktrees.set('p1', [makeWorktree('w1', 'p1', 'main')])
+    db.resources = [
+      {
+        id: 'r-channel',
+        project_id: 'p1',
+        worktree_id: 'w1',
+        discord_id: 'channel-1',
+        type: 'channel',
+        guild_id: 'guild-1',
+        managed_session_id: 'hive-existing',
+        created_at: '2026-01-01T00:00:00.000Z'
+      }
+    ]
+    const { gateway } = makeGateway()
+    const sessionBridge = {
+      start: vi.fn(),
+      dispose: vi.fn(),
+      handleUserMessage: vi.fn(async () => undefined),
+      stopManagedSession: vi.fn(async () => true)
+    }
+    const service = makeService(db, gateway, sessionBridge)
+    await service.startListening()
+    const interaction = {
+      isChatInputCommand: vi.fn(() => true),
+      commandName: 'stop',
+      guildId: 'guild-1',
+      channelId: 'channel-1',
+      deferReply: vi.fn(async () => undefined),
+      editReply: vi.fn(async () => undefined),
+      reply: vi.fn(async () => undefined)
+    }
+
+    discordJsMock.instances[0].emit('interactionCreate', interaction)
+    await flushPromises()
+
+    expect(interaction.deferReply).toHaveBeenCalledWith()
+    expect(sessionBridge.stopManagedSession).toHaveBeenCalledWith({
+      worktreeId: 'w1',
+      worktreePath: '/repo/p1/main'
+    })
+    expect(interaction.editReply).toHaveBeenCalledWith('Session stopped.')
+    expect(interaction.reply).not.toHaveBeenCalled()
+  })
+
+  it('replies ephemerally when /stop is used outside a provisioned worktree channel', async () => {
+    const db = new FakeDiscordDatabase()
+    configure(db)
+    const { gateway } = makeGateway()
+    const sessionBridge = {
+      start: vi.fn(),
+      dispose: vi.fn(),
+      handleUserMessage: vi.fn(async () => undefined),
+      stopManagedSession: vi.fn(async () => true)
+    }
+    const service = makeService(db, gateway, sessionBridge)
+    await service.startListening()
+    const interaction = {
+      isChatInputCommand: vi.fn(() => true),
+      commandName: 'stop',
+      guildId: 'guild-1',
+      channelId: 'unmapped-channel',
+      deferReply: vi.fn(async () => undefined),
+      editReply: vi.fn(async () => undefined),
+      reply: vi.fn(async () => undefined)
+    }
+
+    discordJsMock.instances[0].emit('interactionCreate', interaction)
+    await flushPromises()
+
+    expect(interaction.reply).toHaveBeenCalledWith({
+      content: 'This channel is not linked to a Hive worktree.',
+      ephemeral: true
+    })
+    expect(interaction.deferReply).not.toHaveBeenCalled()
+    expect(sessionBridge.stopManagedSession).not.toHaveBeenCalled()
+  })
+
   it('replies ephemerally when /clear is used outside a provisioned worktree channel', async () => {
     const db = new FakeDiscordDatabase()
     configure(db)
@@ -1287,6 +1385,7 @@ describe('/archive slash command', () => {
         { name: 'build', description: 'Switch this worktree to build mode' },
         { name: 'super-plan', description: 'Switch this worktree to super-plan mode' },
         { name: 'archive', description: 'Archive this worktree and delete its channel' },
+        { name: 'stop', description: 'Abort the current running session' },
         { name: 'clear', description: 'Clear the session attached to this worktree channel' }
       ],
       'guild-1'

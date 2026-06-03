@@ -40,6 +40,7 @@ const DISCORD_COMMANDS: Array<{ name: string; description: string }> = [
   { name: 'build', description: 'Switch this worktree to build mode' },
   { name: 'super-plan', description: 'Switch this worktree to super-plan mode' },
   { name: 'archive', description: 'Archive this worktree and delete its channel' },
+  { name: 'stop', description: 'Abort the current running session' },
   { name: 'clear', description: 'Clear the session attached to this worktree channel' }
 ]
 
@@ -554,6 +555,11 @@ export class DiscordService {
 
     if (interaction.commandName === 'clear') {
       await this.handleClearInteraction(interaction)
+      return
+    }
+
+    if (interaction.commandName === 'stop') {
+      await this.handleStopInteraction(interaction)
     }
   }
 
@@ -755,6 +761,59 @@ export class DiscordService {
       })
 
       const content = 'Could not clear the session. Check the Hive logs for details.'
+      if (interaction.deferred || interaction.replied) {
+        await interaction.editReply(content).catch(() => undefined)
+      } else {
+        await interaction.reply({ content, ephemeral: true }).catch(() => undefined)
+      }
+    }
+  }
+
+  private async handleStopInteraction(interaction: ChatInputCommandInteraction): Promise<void> {
+    const config = this.getConfig()
+    if (!isConfigured(config) || interaction.guildId !== config.guildId) {
+      return
+    }
+
+    try {
+      const db = this.getDb()
+      const provisionedChannel = db
+        .getDiscordResourcesByGuild(config.guildId)
+        .find(
+          (resource) =>
+            resource.type === 'channel' && resource.discord_id === interaction.channelId
+        )
+
+      if (!provisionedChannel?.worktree_id) {
+        await interaction.reply({
+          content: 'This channel is not linked to a Hive worktree.',
+          ephemeral: true
+        })
+        return
+      }
+
+      const worktree = db.getWorktree(provisionedChannel.worktree_id)
+      if (!worktree) {
+        await interaction.reply({
+          content: 'This channel is not linked to a Hive worktree.',
+          ephemeral: true
+        })
+        return
+      }
+
+      await interaction.deferReply()
+      const stopped = await this.sessionBridge.stopManagedSession({
+        worktreeId: worktree.id,
+        worktreePath: worktree.path
+      })
+      await interaction.editReply(stopped ? 'Session stopped.' : 'No running session to stop.')
+    } catch (error) {
+      const normalized = error instanceof Error ? error : new Error(String(error))
+      log.error('Failed to handle Discord /stop command', normalized, {
+        channelId: interaction.channelId ?? undefined
+      })
+
+      const content = 'Could not stop the session. Check the Hive logs for details.'
       if (interaction.deferred || interaction.replied) {
         await interaction.editReply(content).catch(() => undefined)
       } else {

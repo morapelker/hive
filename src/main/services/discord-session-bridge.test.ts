@@ -688,6 +688,29 @@ describe('DiscordSessionBridge managed sessions', () => {
     expect(channel.send).not.toHaveBeenCalled()
   })
 
+  it('stops a managed session by aborting, clearing queued turns, and keeping the session linked', async () => {
+    const { db, bridge, openCode, emit } = setupBridge()
+    const channel = makeChannel()
+    await bridge.handleUserMessage(userMessage(channel, 'long task'))
+    await bridge.handleUserMessage(userMessage(channel, 'queued after stop'))
+    db.managedSessionUpdates = []
+
+    const stopped = await bridge.stopManagedSession({
+      worktreeId: 'worktree-1',
+      worktreePath: '/repo/project/worktree'
+    })
+    emit({ type: 'session.idle', sessionId: 'hive-1', data: {} })
+    await flushPromises()
+
+    expect(stopped).toBe(true)
+    expect(openCode.abort).toHaveBeenCalledWith('/repo/project/worktree', 'oc-1')
+    expect(openCode.disconnect).not.toHaveBeenCalled()
+    expect(db.managedSessionUpdates).toEqual([])
+    expect(db.resources[0].managed_session_id).toBe('hive-1')
+    expect(openCode.prompt).toHaveBeenCalledTimes(1)
+    expect(channel.sendTyping).toHaveBeenCalledTimes(1)
+  })
+
   it('treats clearing a provisioned channel without an attached session as a no-op', async () => {
     const { db, bridge, openCode } = setupBridge()
 
