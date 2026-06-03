@@ -64,7 +64,8 @@ describe('pet ops RPC mocked provider', () => {
         Effect.runPromise(
           service.publishStatus({
             state: 'working',
-            sourceWorktreeId: 'worktree-1'
+            sourceWorktreeId: 'worktree-1',
+            workingSessionCount: 1
           })
         )
       ).resolves.toBeUndefined()
@@ -199,6 +200,8 @@ describe('pet ops RPC mocked provider', () => {
           petId: 'bee',
           size: 'M',
           opacity: 1,
+          animationSpeedEnabled: false,
+          animationSpeed: 5,
           hasHatched: false
         },
         position: { x: 0, y: 0 },
@@ -245,7 +248,8 @@ describe('pet ops RPC mocked provider', () => {
       expect(service.getCurrentStatus).toBeDefined()
       await expect(Effect.runPromise(service.getCurrentStatus!())).resolves.toEqual({
         state: 'idle',
-        sourceWorktreeId: null
+        sourceWorktreeId: null,
+        workingSessionCount: 0
       })
     } finally {
       if (originalSendDescriptor) {
@@ -417,7 +421,8 @@ describe('pet ops RPC mocked provider', () => {
   it('routes petOps.publishStatus to the injected provider service and publishes status events', async () => {
     const payload = {
       state: 'working' as const,
-      sourceWorktreeId: 'worktree-1'
+      sourceWorktreeId: 'worktree-1',
+      workingSessionCount: 2
     }
     const events: Array<{ channel: string; payload: unknown }> = []
     const eventBus = makeEventBus()
@@ -843,7 +848,11 @@ describe('pet ops RPC mocked provider', () => {
   })
 
   it('routes petOps.getCurrentStatus to the injected provider service', async () => {
-    const status = { state: 'working' as const, sourceWorktreeId: 'worktree-1' }
+    const status = {
+      state: 'working' as const,
+      sourceWorktreeId: 'worktree-1',
+      workingSessionCount: 1
+    }
     const getCurrentStatus = vi.fn(() => Effect.succeed(status))
     const service = { getCurrentStatus } as unknown as PetOpsRpcService
     const router = makeRpcRouter({
@@ -869,7 +878,11 @@ describe('pet ops RPC mocked provider', () => {
 
   it('validates petOps.getCurrentStatus params before calling the provider service', async () => {
     const getCurrentStatus = vi.fn(() =>
-      Effect.succeed({ state: 'working' as const, sourceWorktreeId: 'worktree-1' })
+      Effect.succeed({
+        state: 'working' as const,
+        sourceWorktreeId: 'worktree-1',
+        workingSessionCount: 1
+      })
     )
     const service = { getCurrentStatus } as unknown as PetOpsRpcService
     const router = makeRpcRouter({

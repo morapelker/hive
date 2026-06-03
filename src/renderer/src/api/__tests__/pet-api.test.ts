@@ -86,7 +86,11 @@ describe('petApi', () => {
   it('routes publishStatus through the renderer RPC client', () => {
     const request = vi.fn().mockResolvedValue(undefined)
     const subscribe = vi.fn()
-    const payload = { state: 'permission' as const, sourceWorktreeId: 'worktree-1' }
+    const payload = {
+      state: 'permission' as const,
+      sourceWorktreeId: 'worktree-1',
+      workingSessionCount: 0
+    }
 
     setRendererRpcClient({ request, subscribe })
 
@@ -127,7 +131,11 @@ describe('petApi', () => {
   })
 
   it('routes getCurrentStatus through the renderer RPC client', async () => {
-    const status = { state: 'working' as const, sourceWorktreeId: 'worktree-1' }
+    const status = {
+      state: 'working' as const,
+      sourceWorktreeId: 'worktree-1',
+      workingSessionCount: 1
+    }
     const request = vi.fn().mockResolvedValue(status)
     const subscribe = vi.fn()
 
@@ -151,16 +159,24 @@ describe('petApi', () => {
     const listener = subscribe.mock.calls[0]?.[1]
     listener?.({
       channel: PET_STATUS_CHANNEL,
-      payload: { state: 'working', sourceWorktreeId: 'worktree-1' }
+      payload: { state: 'working', sourceWorktreeId: 'worktree-1', workingSessionCount: 2 }
     })
     listener?.({
       channel: PET_STATUS_CHANNEL,
-      payload: { state: 'sleeping', sourceWorktreeId: 'worktree-1' }
+      payload: { state: 'sleeping', sourceWorktreeId: 'worktree-1', workingSessionCount: 1 }
+    })
+    listener?.({
+      channel: PET_STATUS_CHANNEL,
+      payload: { state: 'working', sourceWorktreeId: 'worktree-1' }
     })
 
     expect(subscribe).toHaveBeenCalledWith(PET_STATUS_CHANNEL, expect.any(Function))
     expect(callback).toHaveBeenCalledOnce()
-    expect(callback).toHaveBeenCalledWith({ state: 'working', sourceWorktreeId: 'worktree-1' })
+    expect(callback).toHaveBeenCalledWith({
+      state: 'working',
+      sourceWorktreeId: 'worktree-1',
+      workingSessionCount: 2
+    })
     expect(returned).toBe(unsubscribe)
   })
 

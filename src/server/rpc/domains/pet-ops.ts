@@ -38,7 +38,8 @@ const emptyParamsSchema = z.union([z.object({}).strict(), z.undefined(), z.null(
 const petStatusParamsSchema = z
   .object({
     state: z.enum(['idle', 'working', 'question', 'permission', 'plan_ready']),
-    sourceWorktreeId: z.string().nullable()
+    sourceWorktreeId: z.string().nullable(),
+    workingSessionCount: z.number().int().nonnegative()
   })
   .strict()
 const setIgnoreMouseParamsSchema = z.object({ ignore: z.boolean() }).strict()
@@ -99,7 +100,8 @@ const makeDefaultPetConfigResult = (): GetPetConfigResult => ({
 
 const makeDefaultPetStatusResult = (): GetCurrentPetStatusResult => ({
   state: 'idle',
-  sourceWorktreeId: null
+  sourceWorktreeId: null,
+  workingSessionCount: 0
 })
 
 export const makeLivePetOpsRpcService = (): PetOpsRpcService => ({
