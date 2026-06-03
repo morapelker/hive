@@ -14,6 +14,8 @@ import type {
   Worktree,
   WorktreeCreate,
   WorktreeUpdate,
+  DiscordResource,
+  DiscordResourceCreate,
   Session,
   SessionCreate,
   SessionUpdate,
@@ -611,6 +613,20 @@ export class DatabaseService {
         ON saved_usage_accounts(provider, created_at);
     `)
 
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS discord_resources (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        worktree_id TEXT REFERENCES worktrees(id) ON DELETE CASCADE,
+        discord_id TEXT NOT NULL,
+        type TEXT NOT NULL CHECK (type IN ('category','channel')),
+        guild_id TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_discord_resources_project ON discord_resources(project_id);
+      CREATE INDEX IF NOT EXISTS idx_discord_resources_guild ON discord_resources(guild_id);
+    `)
+
     this.safeAddColumn(
       'sessions',
       'connection_id',
@@ -1116,6 +1132,53 @@ export class DatabaseService {
       )
       .all(projectId) as Record<string, unknown>[]
     return rows.map((row) => this.mapWorktreeRow(row))
+  }
+
+  getDiscordResourcesByGuild(guildId: string): DiscordResource[] {
+    const db = this.getDb()
+    return db
+      .prepare('SELECT * FROM discord_resources WHERE guild_id = ? ORDER BY created_at ASC')
+      .all(guildId) as DiscordResource[]
+  }
+
+  getDiscordResourcesByProject(projectId: string): DiscordResource[] {
+    const db = this.getDb()
+    return db
+      .prepare('SELECT * FROM discord_resources WHERE project_id = ? ORDER BY created_at ASC')
+      .all(projectId) as DiscordResource[]
+  }
+
+  insertDiscordResource(data: DiscordResourceCreate): DiscordResource {
+    const db = this.getDb()
+    const resource: DiscordResource = {
+      id: data.id ?? randomUUID(),
+      project_id: data.project_id,
+      worktree_id: data.worktree_id,
+      discord_id: data.discord_id,
+      type: data.type,
+      guild_id: data.guild_id,
+      created_at: data.created_at ?? new Date().toISOString()
+    }
+    db.prepare(
+      `INSERT INTO discord_resources
+        (id, project_id, worktree_id, discord_id, type, guild_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      resource.id,
+      resource.project_id,
+      resource.worktree_id,
+      resource.discord_id,
+      resource.type,
+      resource.guild_id,
+      resource.created_at
+    )
+    return resource
+  }
+
+  deleteDiscordResource(id: string): boolean {
+    const db = this.getDb()
+    const result = db.prepare('DELETE FROM discord_resources WHERE id = ?').run(id)
+    return result.changes > 0
   }
 
   getRecentlyActiveWorktrees(cutoffMs: number): Worktree[] {

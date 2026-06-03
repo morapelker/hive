@@ -57,6 +57,7 @@ import { Tip } from '@/components/ui/Tip'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { QuickActions } from './QuickActions'
 import { HeaderTelegramToggle } from './HeaderTelegramToggle'
+import { HeaderDiscordToggle } from './HeaderDiscordToggle'
 import { useLifecycleActions } from '@/hooks/useLifecycleActions'
 import { usePinAndActivateSession } from '@/hooks/usePinAndActivateSession'
 import { useConflictFixFlow } from '@/hooks/useConflictFixFlow'
@@ -739,6 +740,7 @@ export function Header(): React.JSX.Element {
           <History className="h-4 w-4" />
         </Button>
         <HeaderTelegramToggle />
+        <HeaderDiscordToggle />
         <Tip tipId={settingsTipId} enabled={settingsTipEnabled}>
           <Button
             variant="ghost"

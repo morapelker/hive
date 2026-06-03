@@ -15,7 +15,8 @@ import {
   Bug,
   Send,
   Zap,
-  Database
+  Database,
+  Hash
 } from 'lucide-react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { useSettingsStore } from '@/stores/useSettingsStore'
@@ -30,6 +31,7 @@ import { SettingsSecurity } from './SettingsSecurity'
 import { SettingsPrivacy } from './SettingsPrivacy'
 import { SettingsIntegrations } from './SettingsIntegrations'
 import { SettingsTelegram } from './SettingsTelegram'
+import { SettingsDiscord } from './SettingsDiscord'
 import { SettingsAdvanced } from './SettingsAdvanced'
 import { SettingsPet } from './SettingsPet'
 import { SettingsCustomCommands } from './SettingsCustomCommands'
@@ -46,6 +48,7 @@ const SECTIONS = [
   { id: 'terminal', label: 'Terminal', icon: Terminal },
   { id: 'integrations', label: 'Integrations', icon: Plug },
   { id: 'telegram', label: 'Telegram', icon: Send },
+  { id: 'discord', label: 'Discord', icon: Hash },
   { id: 'security', label: 'Security', icon: Shield },
   { id: 'privacy', label: 'Privacy', icon: Eye },
   { id: 'storage', label: 'Storage', icon: Database },
@@ -117,6 +120,7 @@ export function SettingsModal(): React.JSX.Element {
             {activeSection === 'terminal' && <SettingsTerminal />}
             {activeSection === 'integrations' && <SettingsIntegrations />}
             {activeSection === 'telegram' && <SettingsTelegram />}
+            {activeSection === 'discord' && <SettingsDiscord />}
             {activeSection === 'security' && <SettingsSecurity />}
             {activeSection === 'privacy' && <SettingsPrivacy />}
             {activeSection === 'storage' && <SettingsStorage />}
