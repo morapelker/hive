@@ -124,7 +124,9 @@ const setupBridge = (overrides: { publishEvent?: (channel: string, payload: unkn
   const openCode = {
     connect: vi.fn(async () => ({ sessionId: 'oc-1' })),
     reconnect: vi.fn(async () => ({ success: true, sessionStatus: 'idle' as const })),
-    prompt: vi.fn(async () => undefined)
+    prompt: vi.fn(async () => undefined),
+    abort: vi.fn(async () => true),
+    disconnect: vi.fn(async () => undefined)
   }
   const bridge = new DiscordSessionBridge({
     db: db as never,
@@ -242,6 +244,49 @@ describe('DiscordSessionBridge managed sessions', () => {
     expect(openCode.prompt).toHaveBeenCalledWith('/repo/project/worktree', 'oc-existing', [
       { type: 'text', text: 'after restart' }
     ])
+  })
+
+  it('clears a managed session by aborting, disconnecting, unlinking, and dropping later stream events', async () => {
+    const { db, bridge, openCode, emit } = setupBridge()
+    const channel = makeChannel()
+    await bridge.handleUserMessage(userMessage(channel, 'long task'))
+
+    await bridge.clearManagedSession({
+      worktreeId: 'worktree-1',
+      worktreePath: '/repo/project/worktree'
+    })
+    emit({
+      type: 'message.part.updated',
+      sessionId: 'hive-1',
+      data: {
+        role: 'assistant',
+        part: { type: 'text', text: 'late output', messageID: 'msg-1' }
+      }
+    })
+    emit({ type: 'session.idle', sessionId: 'hive-1', data: {} })
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(100)
+
+    expect(openCode.abort).toHaveBeenCalledWith('/repo/project/worktree', 'oc-1')
+    expect(openCode.disconnect).toHaveBeenCalledWith('/repo/project/worktree', 'oc-1')
+    expect(db.managedSessionUpdates).toContainEqual({ resourceId: 'resource-1', sessionId: null })
+    expect(db.resources[0].managed_session_id).toBeNull()
+    expect(db.getSession('hive-1')?.status).toBe('active')
+    expect(channel.sendTyping).toHaveBeenCalledTimes(1)
+    expect(channel.send).not.toHaveBeenCalled()
+  })
+
+  it('treats clearing a provisioned channel without an attached session as a no-op', async () => {
+    const { db, bridge, openCode } = setupBridge()
+
+    await bridge.clearManagedSession({
+      worktreeId: 'worktree-1',
+      worktreePath: '/repo/project/worktree'
+    })
+
+    expect(openCode.abort).not.toHaveBeenCalled()
+    expect(openCode.disconnect).not.toHaveBeenCalled()
+    expect(db.managedSessionUpdates).toEqual([])
   })
 })
 

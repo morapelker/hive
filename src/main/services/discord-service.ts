@@ -4,6 +4,7 @@ import {
   Client,
   GatewayIntentBits,
   type CategoryChannel,
+  type ChatInputCommandInteraction,
   type Guild,
   type Interaction,
   type Message,
@@ -12,7 +13,6 @@ import {
 } from 'discord.js'
 import type {
   DiscordConfig,
-  DiscordGuild,
   DiscordProvisionProgress,
   DiscordProvisionSummary,
   DiscordVerifyResult
@@ -117,15 +117,7 @@ class DiscordJsGateway implements DiscordGateway {
   }
 }
 
-const emptyConfig: DiscordConfig = {
-  botToken: '',
-  guildId: '',
-  guildName: '',
-  enabled: false,
-  selectedProjectIds: []
-}
-
-const isConfigured = (config: DiscordConfig | null): boolean =>
+const isConfigured = (config: DiscordConfig | null): config is DiscordConfig =>
   !!config?.botToken.trim() && !!config.guildId.trim()
 
 const parseConfig = (raw: string | null): DiscordConfig | null => {
@@ -388,28 +380,17 @@ export class DiscordService {
     client.on('messageCreate', (message) => {
       void this.handleIncomingMessage(message)
     })
-    client.on('channelCreate', (channel) => {
-      void this.handleChannelCreate(channel)
-    })
     client.on('interactionCreate', (interaction) => {
       void this.handleInteraction(interaction)
+    })
+    client.on('channelCreate', (channel) => {
+      void this.handleChannelCreate(channel)
     })
     client.once('clientReady', (readyClient) => {
       log.info('Discord listener connected', {
         botUser: readyClient.user?.tag ?? readyClient.user?.username ?? undefined,
         guildId: config.guildId
       })
-      void readyClient.application?.commands
-        .set(
-          [{ name: 'archive', description: 'Archive this worktree and delete its channel' }],
-          config.guildId
-        )
-        .catch((error) => {
-          log.error(
-            'Failed to register Discord commands',
-            error instanceof Error ? error : new Error(String(error))
-          )
-        })
     })
     client.on('error', (error) => {
       log.error(
@@ -422,6 +403,7 @@ export class DiscordService {
       await client.login(config.botToken)
       this.listenerClient = client
       this.sessionBridge.start()
+      await this.registerSlashCommands(client, config.guildId)
     } catch (error) {
       client.destroy()
       log.error(
@@ -493,8 +475,39 @@ export class DiscordService {
   }
 
   private async handleInteraction(interaction: Interaction): Promise<void> {
-    if (!interaction.isChatInputCommand() || interaction.commandName !== 'archive') return
+    if (!interaction.isChatInputCommand()) return
 
+    if (interaction.commandName === 'archive') {
+      await this.handleArchiveInteraction(interaction)
+      return
+    }
+
+    if (interaction.commandName === 'clear') {
+      await this.handleClearInteraction(interaction)
+    }
+  }
+
+  private async registerSlashCommands(client: Client, guildId: string): Promise<void> {
+    try {
+      await client.application?.commands.set(
+        [
+          { name: 'archive', description: 'Archive this worktree and delete its channel' },
+          { name: 'clear', description: 'Clear the session attached to this worktree channel' }
+        ],
+        guildId
+      )
+    } catch (error) {
+      log.error(
+        'Failed to register Discord commands. Re-invite the bot with the applications.commands OAuth scope if commands do not appear.',
+        error instanceof Error ? error : new Error(String(error)),
+        { guildId }
+      )
+    }
+  }
+
+  private async handleArchiveInteraction(
+    interaction: ChatInputCommandInteraction
+  ): Promise<void> {
     const config = this.getConfig()
     if (!isConfigured(config) || interaction.guildId !== config.guildId) return
 
@@ -563,6 +576,61 @@ export class DiscordService {
       )
       if (interaction.deferred || interaction.replied) {
         await interaction.editReply('Failed to archive worktree.').catch(() => undefined)
+      } else {
+        await interaction.reply({ content: 'Failed to archive worktree.', ephemeral: true }).catch(() => undefined)
+      }
+    }
+  }
+
+  private async handleClearInteraction(interaction: ChatInputCommandInteraction): Promise<void> {
+    const config = this.getConfig()
+    if (!isConfigured(config) || interaction.guildId !== config.guildId) {
+      return
+    }
+
+    try {
+      const db = this.getDb()
+      const provisionedChannel = db
+        .getDiscordResourcesByGuild(config.guildId)
+        .find(
+          (resource) =>
+            resource.type === 'channel' && resource.discord_id === interaction.channelId
+        )
+
+      if (!provisionedChannel?.worktree_id) {
+        await interaction.reply({
+          content: 'This channel isn’t linked to a Hive worktree.',
+          ephemeral: true
+        })
+        return
+      }
+
+      const worktree = db.getWorktree(provisionedChannel.worktree_id)
+      if (!worktree) {
+        await interaction.reply({
+          content: 'This channel isn’t linked to a Hive worktree.',
+          ephemeral: true
+        })
+        return
+      }
+
+      await interaction.deferReply()
+      await this.sessionBridge.clearManagedSession({
+        worktreeId: worktree.id,
+        worktreePath: worktree.path
+      })
+      await interaction.editReply('🧹 Session cleared. Your next message will start a fresh session.')
+    } catch (error) {
+      const normalized = error instanceof Error ? error : new Error(String(error))
+      log.error('Failed to handle Discord /clear command', normalized, {
+        channelId: interaction.channelId ?? undefined
+      })
+
+      const content = 'Could not clear the session. Check the Hive logs for details.'
+      if (interaction.deferred || interaction.replied) {
+        await interaction.editReply(content).catch(() => undefined)
+      } else {
+        await interaction.reply({ content, ephemeral: true }).catch(() => undefined)
       }
     }
   }

@@ -36,6 +36,8 @@ interface OpenCodeBridgeService {
     hiveSessionId: string
   ): Promise<{ success: boolean; sessionStatus?: 'idle' | 'busy' | 'retry' }>
   prompt(worktreePath: string, opencodeSessionId: string, parts: PromptPart[]): Promise<void>
+  abort(worktreePath: string, opencodeSessionId: string): Promise<boolean>
+  disconnect(worktreePath: string, opencodeSessionId: string): Promise<void>
 }
 
 interface ChannelRuntime {
@@ -162,6 +164,43 @@ export class DiscordSessionBridge {
     }
 
     await this.dispatch(runtime, input.text)
+  }
+
+  async clearManagedSession(input: { worktreeId: string; worktreePath: string }): Promise<void> {
+    const db = this.getDb()
+    const resource = db.getDiscordChannelResourceByWorktree(input.worktreeId)
+    if (!resource?.managed_session_id) return
+
+    const session = db.getSession(resource.managed_session_id)
+    const runtime = session ? this.runtimesBySessionId.get(session.id) : undefined
+    if (runtime) {
+      this.stopTyping(runtime)
+      this.runtimesBySessionId.delete(runtime.hiveSessionId)
+    }
+
+    if (session?.opencode_session_id) {
+      try {
+        await this.openCode.abort(input.worktreePath, session.opencode_session_id)
+      } catch (error) {
+        log.warn('Failed to abort cleared Discord managed session', {
+          worktreeId: input.worktreeId,
+          opencodeSessionId: session.opencode_session_id,
+          error: error instanceof Error ? error.message : String(error)
+        })
+      }
+
+      try {
+        await this.openCode.disconnect(input.worktreePath, session.opencode_session_id)
+      } catch (error) {
+        log.warn('Failed to disconnect cleared Discord managed session', {
+          worktreeId: input.worktreeId,
+          opencodeSessionId: session.opencode_session_id,
+          error: error instanceof Error ? error.message : String(error)
+        })
+      }
+    }
+
+    db.setDiscordResourceManagedSession(resource.id, null)
   }
 
   private async resolveManagedSession(input: DiscordUserMessageInput): Promise<{
@@ -412,9 +451,9 @@ export class DiscordSessionBridge {
 
   private startTyping(runtime: ChannelRuntime): void {
     if (runtime.typingInterval) return
-    void runtime.channel.sendTyping().catch(() => undefined)
+    void Promise.resolve(runtime.channel.sendTyping()).catch(() => undefined)
     runtime.typingInterval = setInterval(() => {
-      void runtime.channel.sendTyping().catch(() => undefined)
+      void Promise.resolve(runtime.channel.sendTyping()).catch(() => undefined)
     }, this.typingIntervalMs)
   }
 
