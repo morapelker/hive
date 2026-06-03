@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { OPENCODE_STREAM_CHANNEL } from '@shared/opencode-events'
+import { APP_SETTINGS_DB_KEY } from '@shared/types/settings'
 import { DiscordSessionBridge, splitDiscordMessage } from './discord-session-bridge'
 import type { DiscordResource, Session, Worktree } from '../db/types'
 import type { OpenCodeStreamEvent } from '@shared/types/opencode'
@@ -11,6 +12,18 @@ const SUPER_PLAN_MODE_PREFIX =
   'Interview me relentlessly about every aspect of this plan until we reach a shared understanding. Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer.\n\nIf a question can be answered by exploring the codebase, explore the codebase instead.\nAll questions should be asked using the AskUserQuestion tool if possible\n\n'
 
 type StreamListener = (event: OpenCodeStreamEvent) => void
+const BUILD_MODEL = { providerID: 'openai', modelID: 'gpt-5.5', variant: 'high' }
+const PLAN_MODEL = {
+  providerID: 'anthropic',
+  modelID: 'sonnet',
+  variant: 'high',
+  agentSdk: 'claude-code-cli'
+}
+const PLAN_PROMPT_MODEL = {
+  providerID: 'anthropic',
+  modelID: 'sonnet',
+  variant: 'high'
+}
 
 class FakeBridgeDatabase {
   settings = new Map<string, string>()
@@ -34,7 +47,10 @@ class FakeBridgeDatabase {
     )
   }
 
-  setDiscordResourceManagedSession(resourceId: string, sessionId: string | null): DiscordResource | null {
+  setDiscordResourceManagedSession(
+    resourceId: string,
+    sessionId: string | null
+  ): DiscordResource | null {
     this.managedSessionUpdates.push({ resourceId, sessionId })
     const resource = this.resources.find((candidate) => candidate.id === resourceId)
     if (!resource) return null
@@ -44,6 +60,13 @@ class FakeBridgeDatabase {
 
   getSession(id: string): Session | null {
     return this.sessions.find((session) => session.id === id) ?? null
+  }
+
+  getAgentSdkForSession(agentSessionId: string): string | null {
+    return (
+      this.sessions.find((session) => session.opencode_session_id === agentSessionId)?.agent_sdk ??
+      null
+    )
   }
 
   createSession(data: Partial<Session>): Session {
@@ -80,6 +103,10 @@ class FakeBridgeDatabase {
     Object.assign(session, data)
     return session
   }
+}
+
+const setAppSettings = (db: FakeBridgeDatabase, settings: Record<string, unknown>): void => {
+  db.settings.set(APP_SETTINGS_DB_KEY, JSON.stringify(settings))
 }
 
 const makeResource = (overrides: Partial<DiscordResource> = {}): DiscordResource => ({
@@ -121,13 +148,18 @@ const makeChannel = () => ({
   sendTyping: vi.fn(async () => undefined)
 })
 
-const setupBridge = (overrides: { publishEvent?: (channel: string, payload: unknown) => void } = {}) => {
+const setupBridge = (
+  overrides: { publishEvent?: (channel: string, payload: unknown) => void } = {}
+) => {
   const db = new FakeBridgeDatabase()
   db.resources = [makeResource()]
-  db.settings.set(
-    'selected_model',
-    JSON.stringify({ providerID: 'openai', modelID: 'gpt-5.5', variant: 'high' })
-  )
+  setAppSettings(db, {
+    defaultAgentSdk: 'opencode',
+    selectedModelByProvider: {
+      opencode: BUILD_MODEL
+    },
+    defaultModels: null
+  })
   let listener: StreamListener | null = null
   const openCode = {
     connect: vi.fn(async () => ({ sessionId: 'oc-1' })),
@@ -196,10 +228,44 @@ describe('DiscordSessionBridge managed sessions', () => {
     expect(openCode.connect).toHaveBeenCalledWith('/repo/project/worktree', 'hive-1')
     expect(db.getSession('hive-1')?.opencode_session_id).toBe('oc-1')
     expect(db.resources[0].managed_session_id).toBe('hive-1')
-    expect(openCode.prompt).toHaveBeenCalledWith('/repo/project/worktree', 'oc-1', [
-      { type: 'text', text: 'ship this' }
-    ])
+    expect(openCode.prompt).toHaveBeenCalledWith(
+      '/repo/project/worktree',
+      'oc-1',
+      [{ type: 'text', text: 'ship this' }],
+      BUILD_MODEL
+    )
     expect(channel.sendTyping).toHaveBeenCalledTimes(1)
+  })
+
+  it('ignores the stale selected_model key and creates a plain-message session from app_settings', async () => {
+    const { db, bridge, openCode } = setupBridge()
+    db.settings.set(
+      'selected_model',
+      JSON.stringify({ providerID: 'legacy', modelID: 'stale-model' })
+    )
+    setAppSettings(db, {
+      defaultAgentSdk: 'codex',
+      selectedModelByProvider: {
+        codex: { providerID: 'codex', modelID: 'gpt-5.5' }
+      }
+    })
+
+    await bridge.handleUserMessage(userMessage(makeChannel(), 'use app settings'))
+
+    expect(db.createdSessions[0]).toEqual(
+      expect.objectContaining({
+        agent_sdk: 'codex',
+        mode: 'build',
+        model_provider_id: 'codex',
+        model_id: 'gpt-5.5'
+      })
+    )
+    expect(openCode.prompt).toHaveBeenCalledWith(
+      '/repo/project/worktree',
+      'oc-1',
+      [{ type: 'text', text: 'use app settings' }],
+      { providerID: 'codex', modelID: 'gpt-5.5' }
+    )
   })
 
   it('reuses the same managed session for later messages without creating another one', async () => {
@@ -213,9 +279,12 @@ describe('DiscordSessionBridge managed sessions', () => {
     expect(db.createdSessions).toHaveLength(1)
     expect(openCode.connect).toHaveBeenCalledTimes(1)
     expect(openCode.prompt).toHaveBeenCalledTimes(2)
-    expect(openCode.prompt).toHaveBeenLastCalledWith('/repo/project/worktree', 'oc-1', [
-      { type: 'text', text: 'second' }
-    ])
+    expect(openCode.prompt).toHaveBeenLastCalledWith(
+      '/repo/project/worktree',
+      'oc-1',
+      [{ type: 'text', text: 'second' }],
+      BUILD_MODEL
+    )
   })
 
   it('queues a message received while busy and dispatches it as its own turn on idle', async () => {
@@ -230,9 +299,12 @@ describe('DiscordSessionBridge managed sessions', () => {
     await Promise.resolve()
 
     expect(openCode.prompt).toHaveBeenCalledTimes(2)
-    expect(openCode.prompt).toHaveBeenLastCalledWith('/repo/project/worktree', 'oc-1', [
-      { type: 'text', text: 'second' }
-    ])
+    expect(openCode.prompt).toHaveBeenLastCalledWith(
+      '/repo/project/worktree',
+      'oc-1',
+      [{ type: 'text', text: 'second' }],
+      BUILD_MODEL
+    )
   })
 
   it('reconnects a stored managed session after restart without creating a duplicate session', async () => {
@@ -249,9 +321,12 @@ describe('DiscordSessionBridge managed sessions', () => {
     )
     expect(db.createdSessions).toHaveLength(0)
     expect(openCode.connect).not.toHaveBeenCalled()
-    expect(openCode.prompt).toHaveBeenCalledWith('/repo/project/worktree', 'oc-existing', [
-      { type: 'text', text: 'after restart' }
-    ])
+    expect(openCode.prompt).toHaveBeenCalledWith(
+      '/repo/project/worktree',
+      'oc-existing',
+      [{ type: 'text', text: 'after restart' }],
+      { providerID: 'anthropic', modelID: 'claude-opus-4-5-20251101' }
+    )
   })
 
   it('prepends the plan prefix when the managed session is in plan mode', async () => {
@@ -261,9 +336,12 @@ describe('DiscordSessionBridge managed sessions', () => {
 
     await bridge.handleUserMessage(userMessage(makeChannel(), 'review the approach'))
 
-    expect(openCode.prompt).toHaveBeenCalledWith('/repo/project/worktree', 'oc-existing', [
-      { type: 'text', text: `${PLAN_MODE_PREFIX}review the approach` }
-    ])
+    expect(openCode.prompt).toHaveBeenCalledWith(
+      '/repo/project/worktree',
+      'oc-existing',
+      [{ type: 'text', text: `${PLAN_MODE_PREFIX}review the approach` }],
+      { providerID: 'anthropic', modelID: 'claude-opus-4-5-20251101' }
+    )
   })
 
   it('prepends the OpenCode super-plan prefix when the managed session is in super-plan mode', async () => {
@@ -273,9 +351,12 @@ describe('DiscordSessionBridge managed sessions', () => {
 
     await bridge.handleUserMessage(userMessage(makeChannel(), 'stress test this plan'))
 
-    expect(openCode.prompt).toHaveBeenCalledWith('/repo/project/worktree', 'oc-existing', [
-      { type: 'text', text: `${SUPER_PLAN_MODE_PREFIX}stress test this plan` }
-    ])
+    expect(openCode.prompt).toHaveBeenCalledWith(
+      '/repo/project/worktree',
+      'oc-existing',
+      [{ type: 'text', text: `${SUPER_PLAN_MODE_PREFIX}stress test this plan` }],
+      { providerID: 'anthropic', modelID: 'claude-opus-4-5-20251101' }
+    )
   })
 
   it('keeps build mode prompts raw', async () => {
@@ -285,9 +366,12 @@ describe('DiscordSessionBridge managed sessions', () => {
 
     await bridge.handleUserMessage(userMessage(makeChannel(), 'make the edit'))
 
-    expect(openCode.prompt).toHaveBeenCalledWith('/repo/project/worktree', 'oc-existing', [
-      { type: 'text', text: 'make the edit' }
-    ])
+    expect(openCode.prompt).toHaveBeenCalledWith(
+      '/repo/project/worktree',
+      'oc-existing',
+      [{ type: 'text', text: 'make the edit' }],
+      { providerID: 'anthropic', modelID: 'claude-opus-4-5-20251101' }
+    )
   })
 
   it('persists mode changes on the managed session and updates the active runtime', async () => {
@@ -310,9 +394,232 @@ describe('DiscordSessionBridge managed sessions', () => {
     expect(openCode.connect).toHaveBeenCalledTimes(1)
 
     await bridge.handleUserMessage(userMessage(channel, 'second'))
-    expect(openCode.prompt).toHaveBeenLastCalledWith('/repo/project/worktree', 'oc-1', [
-      { type: 'text', text: `${PLAN_MODE_PREFIX}second` }
-    ])
+    expect(openCode.prompt).toHaveBeenLastCalledWith(
+      '/repo/project/worktree',
+      'oc-1',
+      [{ type: 'text', text: `${PLAN_MODE_PREFIX}second` }],
+      BUILD_MODEL
+    )
+  })
+
+  it('creates an empty-channel /plan session with the configured plan model and SDK', async () => {
+    const { db, bridge, openCode } = setupBridge()
+    setAppSettings(db, {
+      defaultAgentSdk: 'opencode',
+      selectedModelByProvider: {
+        opencode: BUILD_MODEL
+      },
+      defaultModels: {
+        plan: PLAN_MODEL
+      }
+    })
+
+    await bridge.setWorktreeMode(
+      {
+        worktreeId: 'worktree-1',
+        projectId: 'project-1',
+        worktreePath: '/repo/project/worktree'
+      },
+      'plan'
+    )
+    await bridge.handleUserMessage(userMessage(makeChannel(), 'plan this'))
+
+    expect(db.createdSessions[0]).toEqual(
+      expect.objectContaining({
+        agent_sdk: 'claude-code-cli',
+        mode: 'plan',
+        model_provider_id: 'anthropic',
+        model_id: 'sonnet',
+        model_variant: 'high'
+      })
+    )
+    expect(openCode.prompt).toHaveBeenCalledWith(
+      '/repo/project/worktree',
+      'oc-1',
+      [{ type: 'text', text: `${PLAN_MODE_PREFIX}plan this` }],
+      PLAN_PROMPT_MODEL
+    )
+  })
+
+  it('changes only mode for an existing session and keeps the original prompt model override', async () => {
+    const { db, bridge, openCode, emit } = setupBridge()
+    setAppSettings(db, {
+      defaultAgentSdk: 'opencode',
+      selectedModelByProvider: {
+        opencode: BUILD_MODEL
+      },
+      defaultModels: {
+        plan: PLAN_MODEL
+      }
+    })
+    const channel = makeChannel()
+    await bridge.handleUserMessage(userMessage(channel, 'first'))
+    emit({ type: 'session.idle', sessionId: 'hive-1', data: {} })
+    db.updatedSessions = []
+
+    await bridge.setWorktreeMode(
+      {
+        worktreeId: 'worktree-1',
+        projectId: 'project-1',
+        worktreePath: '/repo/project/worktree'
+      },
+      'plan'
+    )
+    await bridge.handleUserMessage(userMessage(channel, 'second'))
+
+    expect(db.updatedSessions).toContainEqual({ id: 'hive-1', data: { mode: 'plan' } })
+    expect(db.updatedSessions).not.toContainEqual(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          model_provider_id: expect.any(String)
+        })
+      })
+    )
+    expect(db.getSession('hive-1')).toEqual(
+      expect.objectContaining({
+        agent_sdk: 'opencode',
+        model_provider_id: 'openai',
+        model_id: 'gpt-5.5',
+        model_variant: 'high'
+      })
+    )
+    expect(openCode.prompt).toHaveBeenLastCalledWith(
+      '/repo/project/worktree',
+      'oc-1',
+      [{ type: 'text', text: `${PLAN_MODE_PREFIX}second` }],
+      BUILD_MODEL
+    )
+  })
+
+  it('remembers channel mode across clear and recreates the next plain-message session with that mode default', async () => {
+    const { db, bridge, openCode } = setupBridge()
+    setAppSettings(db, {
+      defaultAgentSdk: 'opencode',
+      selectedModelByProvider: {
+        opencode: BUILD_MODEL
+      },
+      defaultModels: {
+        plan: PLAN_MODEL
+      }
+    })
+
+    await bridge.setWorktreeMode(
+      {
+        worktreeId: 'worktree-1',
+        projectId: 'project-1',
+        worktreePath: '/repo/project/worktree'
+      },
+      'plan'
+    )
+    await bridge.clearManagedSession({
+      worktreeId: 'worktree-1',
+      worktreePath: '/repo/project/worktree'
+    })
+    openCode.connect.mockResolvedValueOnce({ sessionId: 'oc-2' })
+    await bridge.handleUserMessage(userMessage(makeChannel(), 'after clear'))
+
+    expect(db.createdSessions).toHaveLength(2)
+    expect(db.createdSessions[1]).toEqual(
+      expect.objectContaining({
+        agent_sdk: 'claude-code-cli',
+        mode: 'plan',
+        model_provider_id: 'anthropic',
+        model_id: 'sonnet',
+        model_variant: 'high'
+      })
+    )
+    expect(openCode.prompt).toHaveBeenLastCalledWith(
+      '/repo/project/worktree',
+      'oc-2',
+      [{ type: 'text', text: `${PLAN_MODE_PREFIX}after clear` }],
+      PLAN_PROMPT_MODEL
+    )
+  })
+
+  it('treats claude-code-cli as registered when the Claude Code implementer is available', async () => {
+    const { db, bridge, openCode } = setupBridge()
+    const getImplementer = vi.fn((sdk: string) => {
+      if (sdk === 'claude-code') return {}
+      throw new Error(`Unknown agent SDK: "${sdk}"`)
+    })
+    bridge.setAgentSdkManager({ getImplementer } as never)
+    setAppSettings(db, {
+      defaultAgentSdk: 'opencode',
+      defaultModels: {
+        plan: PLAN_MODEL
+      }
+    })
+
+    await bridge.setWorktreeMode(
+      {
+        worktreeId: 'worktree-1',
+        projectId: 'project-1',
+        worktreePath: '/repo/project/worktree'
+      },
+      'plan'
+    )
+    await bridge.handleUserMessage(userMessage(makeChannel(), 'cli route'))
+
+    expect(getImplementer).toHaveBeenCalledWith('claude-code')
+    expect(db.createdSessions[0]).toEqual(
+      expect.objectContaining({
+        agent_sdk: 'claude-code-cli',
+        mode: 'plan',
+        model_provider_id: 'anthropic',
+        model_id: 'sonnet',
+        model_variant: 'high'
+      })
+    )
+    expect(openCode.prompt).toHaveBeenCalledWith(
+      '/repo/project/worktree',
+      'oc-1',
+      [{ type: 'text', text: `${PLAN_MODE_PREFIX}cli route` }],
+      PLAN_PROMPT_MODEL
+    )
+  })
+
+  it('falls back to opencode when the resolved SDK is not registered', async () => {
+    const { db, bridge, openCode } = setupBridge()
+    setAppSettings(db, {
+      defaultAgentSdk: 'opencode',
+      defaultModels: {
+        plan: {
+          providerID: 'codex',
+          modelID: 'gpt-5.5',
+          agentSdk: 'codex'
+        }
+      }
+    })
+    bridge.setAgentSdkManager({
+      getImplementer: vi.fn(() => {
+        throw new Error('Unknown agent SDK: "codex"')
+      })
+    } as never)
+
+    await bridge.setWorktreeMode(
+      {
+        worktreeId: 'worktree-1',
+        projectId: 'project-1',
+        worktreePath: '/repo/project/worktree'
+      },
+      'plan'
+    )
+    await bridge.handleUserMessage(userMessage(makeChannel(), 'fallback route'))
+
+    expect(db.createdSessions[0]).toEqual(
+      expect.objectContaining({
+        agent_sdk: 'opencode',
+        mode: 'plan',
+        model_provider_id: 'codex',
+        model_id: 'gpt-5.5'
+      })
+    )
+    expect(openCode.prompt).toHaveBeenCalledWith(
+      '/repo/project/worktree',
+      'oc-1',
+      [{ type: 'text', text: `${PLAN_MODE_PREFIX}fallback route` }],
+      { providerID: 'codex', modelID: 'gpt-5.5' }
+    )
   })
 
   it('clears a managed session by aborting, disconnecting, unlinking, and dropping later stream events', async () => {

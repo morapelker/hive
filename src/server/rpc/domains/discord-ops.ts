@@ -7,6 +7,7 @@ import type {
 } from '@shared/types/discord'
 import type { EventBus } from '../../events/event-bus'
 import type { RpcHandler } from '../router'
+import type { AgentSdkManager } from '../../../main/services/agent-sdk-manager'
 
 export interface DiscordOpsRpcService {
   readonly getConfig: () => Effect.Effect<DiscordConfig | null, unknown, never>
@@ -54,9 +55,22 @@ const provisionParamsSchema = z
   })
   .strict()
 const bootedEventBuses = new WeakSet<EventBus>()
+let backendSdkManager: AgentSdkManager | null = null
+
+const getBackendSdkManager = async (): Promise<AgentSdkManager> => {
+  if (backendSdkManager) return backendSdkManager
+
+  const [{ createAgentSdkManager }, { getDatabase }] = await Promise.all([
+    import('../../../main/services/agent-sdk-manager-factory'),
+    import('../../../main/db')
+  ])
+  backendSdkManager = createAgentSdkManager({ db: getDatabase() })
+  return backendSdkManager
+}
 
 const importDiscordService = async (eventBus?: EventBus) => {
   const { discordService } = await import('../../../main/services/discord-service')
+  discordService.setAgentSdkManager(await getBackendSdkManager())
   if (eventBus) {
     discordService.setBackendEventPublisher((channel, payload) => {
       void Effect.runPromise(eventBus.publish({ channel, payload }))

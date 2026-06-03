@@ -30,6 +30,7 @@ import { createGitService } from './git-service'
 import { createLogger } from './logger'
 import { createWorktreeFromBranchOp, deleteWorktreeOp } from './worktree-ops'
 import { discordSessionBridge, type DiscordSessionBridge } from './discord-session-bridge'
+import type { AgentSdkManager } from './agent-sdk-manager'
 
 const DISCORD_CONFIG_KEY = 'discord_config'
 const log = createLogger({ component: 'Discord' })
@@ -193,6 +194,10 @@ export class DiscordService {
   setBackendEventPublisher(publishEvent: BackendEventPublisher | null): void {
     this.publishEvent = publishEvent
     this.sessionBridge.setBackendEventPublisher(publishEvent)
+  }
+
+  setAgentSdkManager(manager: AgentSdkManager | null): void {
+    this.sessionBridge.setAgentSdkManager(manager)
   }
 
   getConfig(): DiscordConfig | null {

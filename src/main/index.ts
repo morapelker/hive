@@ -51,6 +51,7 @@ import {
 } from './services/text-generation-router'
 import type { AgentSdkImplementer } from './services/agent-sdk-types'
 import { telemetryService } from './services/telemetry-service'
+import { discordService } from './services/discord-service'
 import { perfDiagnostics } from './services/perf-diagnostics'
 import { configure as configureCodexDebugLogger } from './services/codex-debug-logger'
 import { ptyService } from './services/pty-service'
@@ -549,6 +550,7 @@ app
       codexImpl.setCodexBinaryPath(codexBinaryPath)
       setRouterCodexBinaryPath(codexBinaryPath)
       const sdkManager = new AgentSdkManager([openCodePlaceholder, claudeImpl, codexImpl])
+      discordService.setAgentSdkManager(sdkManager)
       getSpawnRuntime()
 
       const databaseService = getDatabase()

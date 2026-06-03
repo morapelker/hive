@@ -2,26 +2,32 @@ import type { OpenCodeStreamEvent } from '@shared/types/opencode'
 import { OPENCODE_STREAM_CHANNEL } from '@shared/opencode-events'
 import { applyModePrefix } from '@shared/agent-mode-prefixes'
 import {
-  getDiscordToolEmoji,
-  getToolLabel,
-  isFileChangeTool
-} from '@shared/tool-label'
+  normalizeAgentSdk,
+  resolveSessionCreation,
+  type ModelResolutionSettings,
+  type SharedSelectedModel
+} from '@shared/model-resolution'
+import { APP_SETTINGS_DB_KEY } from '@shared/types/settings'
+import type { AgentSdk } from '@shared/types/agent-sdk'
+import { getDiscordToolEmoji, getToolLabel, isFileChangeTool } from '@shared/tool-label'
 import type { DatabaseService } from '../db/database'
 import { getDatabase } from '../db'
 import type { DiscordResource, Session, SessionMode } from '../db/types'
 import { agentEventBus } from './agent-event-bus'
+import type { AgentSdkManager } from './agent-sdk-manager'
 import { createLogger } from './logger'
-import { openCodeService } from './opencode-service'
+import {
+  abortOpenCodeSession,
+  connectOpenCodeSession,
+  disconnectOpenCodeSession,
+  promptOpenCodeSession,
+  reconnectOpenCodeSession
+} from './opencode-session-commands'
 
 const log = createLogger({ component: 'DiscordSessionBridge' })
 
-const SELECTED_MODEL_DB_KEY = 'selected_model'
-const DEFAULT_MODEL = {
-  providerID: 'anthropic',
-  modelID: 'claude-opus-4-5-20251101'
-}
-
 type PromptPart = { type: 'text'; text: string }
+type ModelOverride = { providerID: string; modelID: string; variant?: string }
 type BackendEventPublisher = (channel: string, payload: unknown) => void
 
 interface DiscordTextChannel {
@@ -36,7 +42,12 @@ interface OpenCodeBridgeService {
     opencodeSessionId: string,
     hiveSessionId: string
   ): Promise<{ success: boolean; sessionStatus?: 'idle' | 'busy' | 'retry' }>
-  prompt(worktreePath: string, opencodeSessionId: string, parts: PromptPart[]): Promise<void>
+  prompt(
+    worktreePath: string,
+    opencodeSessionId: string,
+    parts: PromptPart[],
+    modelOverride?: ModelOverride
+  ): Promise<void>
   abort(worktreePath: string, opencodeSessionId: string): Promise<boolean>
   disconnect(worktreePath: string, opencodeSessionId: string): Promise<void>
 }
@@ -47,6 +58,7 @@ interface ChannelRuntime {
   hiveSessionId: string
   worktreePath: string
   opencodeSessionId: string
+  model: SharedSelectedModel
   mode: SessionMode
   busy: boolean
   currentAssistantMessageId: string | null
@@ -91,6 +103,10 @@ function normalizeToolStatus(status: unknown): 'running' | 'success' | 'error' {
   return 'running'
 }
 
+function getImplementerSdk(sdk: AgentSdk): AgentSdk {
+  return sdk === 'claude-code-cli' ? 'claude-code' : sdk
+}
+
 function displayToolName(name: string): string {
   const lower = name.toLowerCase()
   if (lower.includes('bash') || lower.includes('shell') || lower.includes('exec')) return 'Bash'
@@ -123,15 +139,19 @@ export function splitDiscordMessage(text: string, max = 2000): string[] {
 export class DiscordSessionBridge {
   private db: DatabaseService | null
   private readonly openCode: OpenCodeBridgeService
-  private readonly subscribeToAgentEvents: (listener: (event: OpenCodeStreamEvent) => void) => () => void
+  private readonly subscribeToAgentEvents: (
+    listener: (event: OpenCodeStreamEvent) => void
+  ) => () => void
   private readonly typingIntervalMs: number
   private publishEvent: BackendEventPublisher | null
+  private sdkManager: AgentSdkManager | null = null
   private unsubscribe: (() => void) | null = null
   private runtimesBySessionId = new Map<string, ChannelRuntime>()
+  private channelModeByWorktree = new Map<string, SessionMode>()
 
   constructor(dependencies: DiscordSessionBridgeDependencies = {}) {
     this.db = dependencies.db ?? null
-    this.openCode = dependencies.openCodeService ?? openCodeService
+    this.openCode = dependencies.openCodeService ?? this.createSdkAwareOpenCodeBridge()
     this.subscribeToAgentEvents =
       dependencies.subscribeToAgentEvents ?? ((listener) => agentEventBus.subscribe(listener))
     this.typingIntervalMs = dependencies.typingIntervalMs ?? 8000
@@ -140,6 +160,69 @@ export class DiscordSessionBridge {
 
   setBackendEventPublisher(publishEvent: BackendEventPublisher | null): void {
     this.publishEvent = publishEvent
+  }
+
+  setAgentSdkManager(manager: AgentSdkManager | null): void {
+    this.sdkManager = manager
+  }
+
+  private createSdkAwareOpenCodeBridge(): OpenCodeBridgeService {
+    return {
+      connect: async (worktreePath, hiveSessionId) => {
+        const result = await connectOpenCodeSession(
+          worktreePath,
+          hiveSessionId,
+          this.sdkManager ?? undefined,
+          this.getDb()
+        )
+        if (!result.success || !result.sessionId) {
+          throw new Error(result.error ?? 'Failed to connect session')
+        }
+        return { sessionId: result.sessionId }
+      },
+      reconnect: async (worktreePath, opencodeSessionId, hiveSessionId) =>
+        reconnectOpenCodeSession(
+          worktreePath,
+          opencodeSessionId,
+          hiveSessionId,
+          this.sdkManager ?? undefined,
+          this.getDb()
+        ),
+      prompt: async (worktreePath, opencodeSessionId, parts, modelOverride) => {
+        const result = await promptOpenCodeSession(
+          worktreePath,
+          opencodeSessionId,
+          parts,
+          modelOverride,
+          undefined,
+          this.sdkManager ?? undefined,
+          this.getDb()
+        )
+        if (!result.success) {
+          throw new Error(result.error ?? 'Failed to prompt session')
+        }
+      },
+      abort: async (worktreePath, opencodeSessionId) => {
+        const result = await abortOpenCodeSession(
+          worktreePath,
+          opencodeSessionId,
+          this.sdkManager ?? undefined,
+          this.getDb()
+        )
+        return result.success
+      },
+      disconnect: async (worktreePath, opencodeSessionId) => {
+        const result = await disconnectOpenCodeSession(
+          worktreePath,
+          opencodeSessionId,
+          this.sdkManager ?? undefined,
+          this.getDb()
+        )
+        if (!result.success) {
+          throw new Error(result.error ?? 'Failed to disconnect session')
+        }
+      }
+    }
   }
 
   start(): void {
@@ -172,23 +255,27 @@ export class DiscordSessionBridge {
     input: { worktreeId: string; projectId: string; worktreePath: string },
     mode: SessionMode
   ): Promise<void> {
-    const { session } = await this.resolveManagedSession({
-      channelId: '',
-      worktreeId: input.worktreeId,
-      projectId: input.projectId,
-      worktreePath: input.worktreePath,
-      text: '',
-      channel: {
-        send: async () => undefined,
-        sendTyping: async () => undefined
-      }
-    })
+    const { session } = await this.resolveManagedSession(
+      {
+        channelId: '',
+        worktreeId: input.worktreeId,
+        projectId: input.projectId,
+        worktreePath: input.worktreePath,
+        text: '',
+        channel: {
+          send: async () => undefined,
+          sendTyping: async () => undefined
+        }
+      },
+      mode
+    )
 
     this.getDb().updateSession(session.id, { mode })
     const runtime = this.runtimesBySessionId.get(session.id)
     if (runtime) {
       runtime.mode = mode
     }
+    this.channelModeByWorktree.set(input.worktreeId, mode)
   }
 
   async clearManagedSession(input: { worktreeId: string; worktreePath: string }): Promise<void> {
@@ -228,7 +315,10 @@ export class DiscordSessionBridge {
     db.setDiscordResourceManagedSession(resource.id, null)
   }
 
-  private async resolveManagedSession(input: DiscordUserMessageInput): Promise<{
+  private async resolveManagedSession(
+    input: DiscordUserMessageInput,
+    createMode?: SessionMode
+  ): Promise<{
     resource: DiscordResource
     session: Session
   }> {
@@ -243,6 +333,7 @@ export class DiscordSessionBridge {
       if (existing?.opencode_session_id) {
         const runtime = this.runtimesBySessionId.get(existing.id)
         if (runtime) {
+          runtime.model = this.getSessionModel(existing)
           return { resource, session: existing }
         }
 
@@ -257,16 +348,18 @@ export class DiscordSessionBridge {
       }
     }
 
-    const selectedModel = this.getSelectedModel()
+    const effectiveCreateMode =
+      createMode ?? this.channelModeByWorktree.get(input.worktreeId) ?? 'build'
+    const creation = this.resolveCreation(effectiveCreateMode)
     const session = db.createSession({
       worktree_id: input.worktreeId,
       project_id: input.projectId,
-      agent_sdk: 'opencode',
-      mode: 'build',
+      agent_sdk: creation.agentSdk,
+      mode: effectiveCreateMode,
       session_type: 'default',
-      model_provider_id: selectedModel.providerID,
-      model_id: selectedModel.modelID,
-      model_variant: selectedModel.variant ?? null
+      model_provider_id: creation.model.providerID,
+      model_id: creation.model.modelID,
+      model_variant: creation.model.variant ?? null
     })
     const connection = await this.openCode.connect(input.worktreePath, session.id)
     const updated = db.updateSession(session.id, { opencode_session_id: connection.sessionId }) ?? {
@@ -289,6 +382,7 @@ export class DiscordSessionBridge {
       existing.worktreePath = input.worktreePath
       existing.opencodeSessionId = session.opencode_session_id ?? existing.opencodeSessionId
       existing.mode = session.mode
+      existing.model = this.getSessionModel(session)
       return existing
     }
 
@@ -302,6 +396,7 @@ export class DiscordSessionBridge {
       hiveSessionId: session.id,
       worktreePath: input.worktreePath,
       opencodeSessionId: session.opencode_session_id,
+      model: this.getSessionModel(session),
       mode: session.mode,
       busy: false,
       currentAssistantMessageId: null,
@@ -322,19 +417,26 @@ export class DiscordSessionBridge {
     runtime.pendingUserEchoText = prompt
     this.startTyping(runtime)
     try {
-      await this.openCode.prompt(runtime.worktreePath, runtime.opencodeSessionId, [
-        { type: 'text', text: prompt }
-      ])
+      await this.openCode.prompt(
+        runtime.worktreePath,
+        runtime.opencodeSessionId,
+        [{ type: 'text', text: prompt }],
+        runtime.model
+      )
     } catch (error) {
       runtime.queue.unshift(text)
       runtime.busy = false
       this.stopTyping(runtime)
       const message = error instanceof Error ? error.message : String(error)
       await this.postDiscordMessage(runtime, `Could not send prompt to session: ${message}`)
-      log.error('Failed to dispatch Discord prompt to OpenCode', error instanceof Error ? error : new Error(message), {
-        channelId: runtime.channelId,
-        hiveSessionId: runtime.hiveSessionId
-      })
+      log.error(
+        'Failed to dispatch Discord prompt to OpenCode',
+        error instanceof Error ? error : new Error(message),
+        {
+          channelId: runtime.channelId,
+          hiveSessionId: runtime.hiveSessionId
+        }
+      )
     }
   }
 
@@ -491,29 +593,89 @@ export class DiscordSessionBridge {
     runtime.typingInterval = null
   }
 
-  private getSelectedModel(): { providerID: string; modelID: string; variant?: string } {
+  private getSessionModel(session: Session): SharedSelectedModel {
+    if (session.model_provider_id && session.model_id) {
+      return {
+        providerID: session.model_provider_id,
+        modelID: session.model_id,
+        ...(session.model_variant ? { variant: session.model_variant } : {})
+      }
+    }
+    return this.resolveCreation(session.mode).model
+  }
+
+  private resolveCreation(mode: SessionMode): { agentSdk: AgentSdk; model: SharedSelectedModel } {
+    const resolved = resolveSessionCreation({
+      settings: this.readModelSettings(),
+      mode
+    })
+    if (resolved.agentSdk === 'opencode' || !this.sdkManager) return resolved
+
     try {
-      const value = this.getDb().getSetting(SELECTED_MODEL_DB_KEY)
-      if (value) {
-        const parsed = JSON.parse(value) as {
-          providerID?: unknown
-          modelID?: unknown
-          variant?: unknown
-        }
-        if (typeof parsed.providerID === 'string' && typeof parsed.modelID === 'string') {
-          return {
-            providerID: parsed.providerID,
-            modelID: parsed.modelID,
-            ...(typeof parsed.variant === 'string' ? { variant: parsed.variant } : {})
-          }
-        }
+      this.sdkManager.getImplementer(getImplementerSdk(resolved.agentSdk))
+      return resolved
+    } catch (error) {
+      log.warn('Falling back to OpenCode for unregistered Discord agent SDK', {
+        requestedSdk: resolved.agentSdk,
+        error: error instanceof Error ? error.message : String(error)
+      })
+      return { agentSdk: 'opencode', model: resolved.model }
+    }
+  }
+
+  private readModelSettings(): ModelResolutionSettings {
+    try {
+      const value = this.getDb().getSetting(APP_SETTINGS_DB_KEY)
+      if (!value) return {}
+      const parsed = asRecord(JSON.parse(value))
+      if (!parsed) return {}
+
+      const selectedModel = this.parseSelectedModel(parsed.selectedModel)
+      const selectedModelByProvider = this.parseModelMap(parsed.selectedModelByProvider)
+      const defaultModels = this.parseModelMap(parsed.defaultModels)
+      return {
+        ...(typeof parsed.defaultAgentSdk === 'string'
+          ? { defaultAgentSdk: normalizeAgentSdk(parsed.defaultAgentSdk) }
+          : {}),
+        ...(selectedModel ? { selectedModel } : {}),
+        ...(selectedModelByProvider ? { selectedModelByProvider } : {}),
+        ...(defaultModels ? { defaultModels } : {})
       }
     } catch (error) {
-      log.warn('Failed to load selected model for Discord session', {
+      log.warn('Failed to load model settings for Discord session', {
         error: error instanceof Error ? error.message : String(error)
       })
     }
-    return DEFAULT_MODEL
+    return {}
+  }
+
+  private parseModelMap(value: unknown): Record<string, SharedSelectedModel> | null {
+    const record = asRecord(value)
+    if (!record) return null
+
+    const parsed: Record<string, SharedSelectedModel> = {}
+    for (const [key, rawModel] of Object.entries(record)) {
+      const model = this.parseSelectedModel(rawModel)
+      if (model) {
+        parsed[key] = model
+      }
+    }
+    return parsed
+  }
+
+  private parseSelectedModel(value: unknown): SharedSelectedModel | null {
+    const record = asRecord(value)
+    const providerID = asString(record?.providerID)
+    const modelID = asString(record?.modelID)
+    if (!providerID || !modelID) return null
+    const variant = asString(record?.variant)
+    const agentSdk = asString(record?.agentSdk)
+    return {
+      providerID,
+      modelID,
+      ...(variant ? { variant } : {}),
+      ...(agentSdk ? { agentSdk } : {})
+    }
   }
 
   private getDb(): DatabaseService {
