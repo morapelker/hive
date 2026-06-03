@@ -20,7 +20,9 @@ const isPetStatusPayload = (value: unknown): value is PetStatusPayload =>
   typeof value.state === 'string' &&
   ['idle', 'working', 'question', 'permission', 'plan_ready'].includes(value.state) &&
   'sourceWorktreeId' in value &&
-  (typeof value.sourceWorktreeId === 'string' || value.sourceWorktreeId === null)
+  (typeof value.sourceWorktreeId === 'string' || value.sourceWorktreeId === null) &&
+  'workingSessionCount' in value &&
+  typeof value.workingSessionCount === 'number'
 
 const isPetSettings = (value: unknown): value is PetSettings =>
   typeof value === 'object' &&
