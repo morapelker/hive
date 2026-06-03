@@ -2,8 +2,10 @@ import { EventEmitter } from 'node:events'
 import { randomUUID } from 'node:crypto'
 import type { ServerResponse } from 'node:http'
 import type { OpenCodeStreamEvent } from '@shared/types/opencode'
+import { TELEGRAM_CLAUDE_CLI_EVENT_CHANNEL } from '@shared/telegram-events'
 import { createLogger } from './logger'
 import { agentEventBus } from './agent-event-bus'
+import { publishDesktopBackendEvent } from '../desktop/backend-event-publisher'
 
 const log = createLogger({ component: 'ClaudeCliTelegramBridge' })
 
@@ -341,6 +343,7 @@ class ClaudeCliTelegramBridge {
   /** Telegram-only delivery (plan/status/assistant-text — kept off the renderer). */
   private emitTelegram(event: OpenCodeStreamEvent): void {
     this.emitter.emit('event', event)
+    void publishDesktopBackendEvent(TELEGRAM_CLAUDE_CLI_EVENT_CHANNEL, event)
   }
 
   /**

@@ -410,7 +410,7 @@ export const BashLive = Layer.effect(
 export const EventSinkLive = Layer.succeed(EventSink, {
   send: (event: BashStreamEvent) =>
     Effect.promise(async () => {
-      const { publishDesktopBackendEvent } = await import('../../desktop/backend-manager')
+      const { publishDesktopBackendEvent } = await import('../../desktop/backend-event-publisher')
       await publishDesktopBackendEvent(BASH_STREAM_CHANNEL, event)
     })
 })

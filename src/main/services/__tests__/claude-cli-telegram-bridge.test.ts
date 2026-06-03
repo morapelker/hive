@@ -1,15 +1,25 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ServerResponse } from 'node:http'
+import { TELEGRAM_CLAUDE_CLI_EVENT_CHANNEL } from '@shared/telegram-events'
 
 vi.mock('../logger', () => ({
   createLogger: () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() })
 }))
 
 // Question events flow through agentEventBus (renderer + telegram); capture them.
-const { publishedEvents } = vi.hoisted(() => ({ publishedEvents: [] as Array<{ type: string; sessionId: string; data: unknown }> }))
+const { backendEvents, publishedEvents } = vi.hoisted(() => ({
+  backendEvents: [] as Array<{ channel: string; payload: unknown }>,
+  publishedEvents: [] as Array<{ type: string; sessionId: string; data: unknown }>
+}))
 vi.mock('../agent-event-bus', () => ({
   agentEventBus: { publish: (event: { type: string; sessionId: string; data: unknown }) => publishedEvents.push(event) }
+}))
+vi.mock('../../desktop/backend-event-publisher', () => ({
+  publishDesktopBackendEvent: (channel: string, payload: unknown) => {
+    backendEvents.push({ channel, payload })
+    return Promise.resolve()
+  }
 }))
 
 import { claudeCliTelegramBridge, type ClaudeHookBody } from '../claude-cli-telegram-bridge'
@@ -38,6 +48,7 @@ const SESSION = 'cli-session-1'
 
 afterEach(() => {
   claudeCliTelegramBridge.cancelAll()
+  backendEvents.length = 0
   publishedEvents.length = 0
   vi.clearAllMocks()
   vi.useRealTimers()
@@ -152,6 +163,10 @@ describe('claudeCliTelegramBridge plans (telegram-only private channel)', () => 
     expect(owned).toBe(true)
     const ready = events.find((e) => e.type === 'plan.ready')!
     expect((ready.data as { plan: string }).plan).toContain('# Plan')
+    expect(backendEvents).toContainEqual({
+      channel: TELEGRAM_CLAUDE_CLI_EVENT_CHANNEL,
+      payload: ready
+    })
     // plan events must NOT reach the renderer (would collide with the CLI plan card)
     expect(publishedEvents.some((e) => e.type === 'plan.ready')).toBe(false)
 

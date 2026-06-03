@@ -4,7 +4,6 @@ import { app, BrowserWindow, clipboard, dialog, shell } from 'electron'
 import { join } from 'node:path'
 import {
   isDesktopCommandRequest,
-  makeDesktopBackendEventMessage,
   makeDesktopCommandResult,
   type OpenCodeAbortResult,
   type OpenCodeCapabilitiesResult,
@@ -58,6 +57,7 @@ import { ptyService } from '../services/pty-service'
 import { ghosttyService } from '../services/ghostty-service'
 import { startFileTreeWatcher, stopFileTreeWatcher } from '../services/file-tree-watcher'
 import { createClaudeCliTerminal, destroyNodePtyTerminal } from '../services/terminal-pty-bridge'
+import { claudeCliTelegramBridge } from '../services/claude-cli-telegram-bridge'
 import { openPathWithEditor, openPathWithTerminal } from '../services/settings-openers'
 import {
   beginPetPointerInteraction,
@@ -81,6 +81,7 @@ import {
   parseDesktopBackendPortEnv,
   type DesktopBackendSpawnConfig
 } from './backend-config'
+import { getCurrentBackend, setCurrentBackend } from './backend-event-publisher'
 
 export interface DesktopBackendBootstrap {
   readonly httpBaseUrl: string
@@ -94,10 +95,6 @@ export interface StartedDesktopBackend {
   readonly stop: () => Promise<void>
   /** Current server child process, or null if not connected (restart-aware). */
   readonly getChild: () => ChildProcess | null
-}
-
-interface DesktopBackendAuthSession {
-  readonly accessToken: string
 }
 
 export interface StartDesktopBackendInput {
@@ -130,8 +127,6 @@ const DEFAULT_READINESS_INTERVAL_MS = 100
 const DEFAULT_RESTART_LIMIT = 2
 const READINESS_PATH = '/.well-known/hive/environment'
 
-let currentBackend: StartedDesktopBackend | null = null
-let desktopBackendAuthSessionPromise: Promise<DesktopBackendAuthSession> | null = null
 let openCodeConnectHandler:
   | ((worktreePath: string, hiveSessionId: string) => Promise<OpenCodeConnectResult>)
   | null = null
@@ -272,7 +267,7 @@ let openCodeForkHandler:
 const defaultLog = createLogger({ component: 'DesktopBackendManager' })
 
 export const getDesktopBackendBootstrap = (): DesktopBackendBootstrap | null =>
-  currentBackend?.bootstrap ?? null
+  getCurrentBackend()?.bootstrap ?? null
 
 export const setDesktopBackendOpenCodeConnectHandler = (
   handler: ((worktreePath: string, hiveSessionId: string) => Promise<OpenCodeConnectResult>) | null
@@ -531,7 +526,8 @@ export const startDesktopBackend = async (
   input: StartDesktopBackendInput = {},
   deps: BackendManagerDeps = {}
 ): Promise<StartedDesktopBackend> => {
-  if (currentBackend) return currentBackend
+  const existingBackend = getCurrentBackend()
+  if (existingBackend) return existingBackend
 
   const log = deps.logger ?? defaultLog
   const baseDir = input.baseDir ?? join(app.getPath('home'), '.hive')
@@ -596,7 +592,7 @@ export const startDesktopBackend = async (
       restartCount += 1
       const delayMs = Math.min(500 * 2 ** (restartCount - 1), 5_000)
       ;(deps.setTimeout ?? setTimeout)(() => {
-        if (!stopping && currentBackend) {
+        if (!stopping && getCurrentBackend()) {
           processRef = spawnBackend()
         }
       }, delayMs)
@@ -643,7 +639,7 @@ export const startDesktopBackend = async (
     }
   }
 
-  currentBackend = started
+  setCurrentBackend(started)
   log.info('Desktop backend ready', {
     httpBaseUrl: config.httpBaseUrl,
     wsBaseUrl: config.wsBaseUrl
@@ -726,6 +722,69 @@ const handleDesktopBackendCommand = (
           log
         )
       })
+  }
+
+  if (message.command === 'telegramClaudeCliRegister') {
+    claudeCliTelegramBridge.register(message.payload.sessionId)
+    sendDesktopBackendCommandResult(
+      child,
+      makeDesktopCommandResult(message.id, { ok: true, value: { success: true } }),
+      log
+    )
+    return
+  }
+
+  if (message.command === 'telegramClaudeCliCancel') {
+    claudeCliTelegramBridge.cancelSession(message.payload.sessionId)
+    sendDesktopBackendCommandResult(
+      child,
+      makeDesktopCommandResult(message.id, { ok: true, value: { success: true } }),
+      log
+    )
+    return
+  }
+
+  if (message.command === 'telegramClaudeCliQuestionReply') {
+    const success = claudeCliTelegramBridge.hasPendingQuestion(message.payload.requestId)
+    if (success) {
+      claudeCliTelegramBridge.resolveQuestion(message.payload.requestId, message.payload.answers)
+    }
+    sendDesktopBackendCommandResult(
+      child,
+      makeDesktopCommandResult(message.id, { ok: true, value: { success } }),
+      log
+    )
+    return
+  }
+
+  if (message.command === 'telegramClaudeCliQuestionReject') {
+    const success = claudeCliTelegramBridge.hasPendingQuestion(message.payload.requestId)
+    if (success) {
+      claudeCliTelegramBridge.rejectQuestion(message.payload.requestId)
+    }
+    sendDesktopBackendCommandResult(
+      child,
+      makeDesktopCommandResult(message.id, { ok: true, value: { success } }),
+      log
+    )
+    return
+  }
+
+  if (message.command === 'telegramClaudeCliPlanReply') {
+    const success = claudeCliTelegramBridge.hasPendingPlan(message.payload.requestId)
+    if (success) {
+      claudeCliTelegramBridge.resolvePlan(
+        message.payload.requestId,
+        message.payload.approve,
+        message.payload.feedback
+      )
+    }
+    sendDesktopBackendCommandResult(
+      child,
+      makeDesktopCommandResult(message.id, { ok: true, value: { success } }),
+      log
+    )
+    return
   }
 
   if (message.command === 'projectShowInFolder') {
@@ -3152,73 +3211,9 @@ const sendDesktopBackendCommandResult = (
 }
 
 export const stopDesktopBackend = async (): Promise<void> => {
-  const backend = currentBackend
-  currentBackend = null
-  desktopBackendAuthSessionPromise = null
+  const backend = getCurrentBackend()
+  setCurrentBackend(null)
   await backend?.stop()
-}
-
-export const publishDesktopBackendEvent = async (
-  channel: string,
-  payload: unknown,
-  fetchImpl: typeof fetch = fetch
-): Promise<boolean> => {
-  const backend = currentBackend
-  if (!backend) return false
-
-  // Fast path: push the event over the existing Node IPC channel to the server
-  // child, which forwards it into its event bus. This avoids a loopback HTTP
-  // POST per flush — important for high-frequency channels like terminal output.
-  // High volume is already bounded upstream by setImmediate coalescing.
-  const child = backend.getChild()
-  if (child?.connected && typeof child.send === 'function') {
-    return new Promise<boolean>((resolve) => {
-      child.send(makeDesktopBackendEventMessage(channel, payload), (error) => {
-        resolve(!error)
-      })
-    })
-  }
-
-  // Fallback (e.g. a remote backend with no IPC channel): publish over HTTP.
-  try {
-    const session = await getDesktopBackendAuthSession(backend, fetchImpl)
-    const response = await fetchImpl(`${backend.bootstrap.httpBaseUrl}/api/events/publish`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${session.accessToken}`
-      },
-      body: JSON.stringify({ channel, payload })
-    })
-    if (response.status === 401) desktopBackendAuthSessionPromise = null
-    return response.ok
-  } catch {
-    return false
-  }
-}
-
-const getDesktopBackendAuthSession = (
-  backend: StartedDesktopBackend,
-  fetchImpl: typeof fetch
-): Promise<DesktopBackendAuthSession> => {
-  desktopBackendAuthSessionPromise ??= fetchImpl(`${backend.bootstrap.httpBaseUrl}/api/auth/bootstrap`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ bootstrapToken: backend.bootstrap.bootstrapToken })
-  }).then(async (response) => {
-    if (!response.ok) {
-      desktopBackendAuthSessionPromise = null
-      throw new Error('Failed to authenticate desktop backend session')
-    }
-
-    const body = (await response.json()) as { readonly session?: DesktopBackendAuthSession }
-    if (!body.session?.accessToken) {
-      desktopBackendAuthSessionPromise = null
-      throw new Error('Invalid desktop backend auth response')
-    }
-    return body.session
-  })
-  return desktopBackendAuthSessionPromise
 }
 
 export const __resetDesktopBackendForTests = async (): Promise<void> => {

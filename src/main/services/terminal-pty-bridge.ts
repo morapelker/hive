@@ -148,7 +148,7 @@ function attachNodePtyListeners(terminalId: string): void {
         const buffered = dataBuffers.get(terminalId)
         dataBuffers.delete(terminalId)
         if (buffered) {
-          void import('../desktop/backend-manager')
+          void import('../desktop/backend-event-publisher')
             .then(({ publishDesktopBackendEvent }) =>
               publishDesktopBackendEvent(`terminal:data:${terminalId}`, buffered)
             )
@@ -159,7 +159,7 @@ function attachNodePtyListeners(terminalId: string): void {
   })
 
   const removeExit = ptyService.onExit(terminalId, (code) => {
-    void import('../desktop/backend-manager')
+    void import('../desktop/backend-event-publisher')
       .then(({ publishDesktopBackendEvent }) =>
         publishDesktopBackendEvent(`terminal:exit:${terminalId}`, code)
       )
@@ -252,7 +252,7 @@ export async function createClaudeCliTerminal(
               error: error instanceof Error ? error.message : String(error)
             })
           }
-          void import('../desktop/backend-manager')
+          void import('../desktop/backend-event-publisher')
             .then(({ publishDesktopBackendEvent }) =>
               publishDesktopBackendEvent(`terminal:claude-session-id:${sessionId}`, claudeSessionId)
             )

@@ -11,7 +11,7 @@ import {
   type UpdaterNotAvailablePayload,
   type UpdaterProgressPayload
 } from '../../shared/updater-events'
-import { publishDesktopBackendEvent } from '../desktop/backend-manager'
+import { publishDesktopBackendEvent } from '../desktop/backend-event-publisher'
 
 export const emitUpdaterChecking = (): void => {
   void publishDesktopBackendEvent(UPDATER_CHECKING_CHANNEL, {})

@@ -15,7 +15,7 @@ const publishGitEvent = (channel: string, payload: unknown): void => {
     return
   }
 
-  void import('../desktop/backend-manager').then(({ publishDesktopBackendEvent }) =>
+  void import('../desktop/backend-event-publisher').then(({ publishDesktopBackendEvent }) =>
     publishDesktopBackendEvent(channel, payload)
   )
 }

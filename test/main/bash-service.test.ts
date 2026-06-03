@@ -20,7 +20,7 @@ const backendEvents = vi.hoisted(() => ({
   })
 }))
 
-vi.mock('../../src/main/desktop/backend-manager', () => ({
+vi.mock('../../src/main/desktop/backend-event-publisher', () => ({
   publishDesktopBackendEvent: backendEvents.publishDesktopBackendEvent
 }))
 

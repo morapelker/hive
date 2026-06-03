@@ -36,7 +36,7 @@ vi.mock('../../../src/main/services/logger', () => ({
   })
 }))
 
-vi.mock('../../../src/main/desktop/backend-manager', () => ({
+vi.mock('../../../src/main/desktop/backend-event-publisher', () => ({
   publishDesktopBackendEvent: vi.fn()
 }))
 

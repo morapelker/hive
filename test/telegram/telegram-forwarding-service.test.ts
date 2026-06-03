@@ -56,7 +56,7 @@ vi.mock('electron-updater', () => ({
   }
 }))
 
-vi.mock('../../src/main/desktop/backend-manager', () => ({
+vi.mock('../../src/main/desktop/backend-event-publisher', () => ({
   publishDesktopBackendEvent: vi.fn()
 }))
 

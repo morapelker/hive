@@ -4,7 +4,7 @@ import {
   PET_STATUS_CHANNEL
 } from '../../shared/pet-events'
 import type { PetSettings, PetStatusPayload } from '../../shared/types/pet'
-import { publishDesktopBackendEvent } from '../desktop/backend-manager'
+import { publishDesktopBackendEvent } from '../desktop/backend-event-publisher'
 
 export const emitPetStatus = (payload: PetStatusPayload): void => {
   void publishDesktopBackendEvent(PET_STATUS_CHANNEL, payload)

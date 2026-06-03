@@ -201,7 +201,6 @@ vi.mock('../services/pet-window', () => ({
 import {
   __resetDesktopBackendForTests,
   getDesktopBackendBootstrap,
-  publishDesktopBackendEvent,
   setDesktopBackendOpenCodeAbortHandler,
   setDesktopBackendOpenCodeCapabilitiesHandler,
   setDesktopBackendOpenCodeCommandHandler,
@@ -231,6 +230,7 @@ import {
   startDesktopBackend,
   waitForBackendReady
 } from './backend-manager'
+import { publishDesktopBackendEvent } from './backend-event-publisher'
 
 class FakeChildProcess extends EventEmitter {
   stdout = new PassThrough()

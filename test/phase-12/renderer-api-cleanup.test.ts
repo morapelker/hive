@@ -11215,6 +11215,7 @@ describe('renderer API cleanup', () => {
     expect(petWindowSource).toContain('emitPetSettingsUpdated(latestSettings)')
     expect(petWindowSource).toContain('emitPetJumpToWorktree(worktreeId)')
     expect(petWindowSource).not.toContain("import('../desktop/backend-manager')")
+    expect(petWindowSource).not.toContain("import('../desktop/backend-event-publisher')")
     expect(petWindowSource).not.toContain('publishDesktopBackendEvent(PET_STATUS_CHANNEL')
     expect(petWindowSource).not.toContain(
       'publishDesktopBackendEvent(PET_SETTINGS_UPDATED_CHANNEL'
@@ -21537,7 +21538,7 @@ describe('renderer API cleanup', () => {
     expect(gitEventsSource).toContain('emitGitStatusChanged = (payload: GitStatusChangedEvent)')
     expect(gitEventsSource).toContain('emitGitBranchChanged = (payload: GitBranchChangedEvent)')
     expect(gitEventsSource).toContain('setGitEventPublisher')
-    expect(gitEventsSource).toContain("import('../desktop/backend-manager')")
+    expect(gitEventsSource).toContain("import('../desktop/backend-event-publisher')")
     expect(serverSource).toContain("from '../main/services/worktree-watcher'")
     expect(serverSource).toContain("from '../main/services/branch-watcher'")
     expect(serverSource).toContain("from '../main/services/git-events'")

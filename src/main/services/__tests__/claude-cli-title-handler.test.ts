@@ -15,7 +15,7 @@ vi.mock('../git-service', () => ({
   autoRenameWorktreeBranch: mocks.autoRenameWorktreeBranch
 }))
 
-vi.mock('../../desktop/backend-manager', () => ({
+vi.mock('../../desktop/backend-event-publisher', () => ({
   publishDesktopBackendEvent: mocks.publishDesktopBackendEvent
 }))
 

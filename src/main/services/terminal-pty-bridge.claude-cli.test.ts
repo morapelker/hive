@@ -104,7 +104,7 @@ vi.mock('./claude-hook-server', () => ({
   subscribeClaudeCliStatus: mocks.subscribeClaudeCliStatus
 }))
 
-vi.mock('../desktop/backend-manager', () => ({
+vi.mock('../desktop/backend-event-publisher', () => ({
   publishDesktopBackendEvent: mocks.publishDesktopBackendEvent
 }))
 

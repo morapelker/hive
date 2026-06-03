@@ -2,7 +2,7 @@ import type { DatabaseService } from '../db/database'
 import { OPENCODE_STREAM_CHANNEL } from '../../shared/opencode-events'
 import { autoRenameWorktreeBranch } from './git-service'
 import { createLogger } from './logger'
-import { publishDesktopBackendEvent } from '../desktop/backend-manager'
+import { publishDesktopBackendEvent } from '../desktop/backend-event-publisher'
 import { emitWorktreeBranchRenamed } from './worktree-events'
 
 const log = createLogger({ component: 'ClaudeCliTitle' })

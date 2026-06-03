@@ -142,7 +142,7 @@ export class ScriptRunner {
       // Event publishing is best-effort; script execution should not depend on subscribers.
     }
 
-    void import('../desktop/backend-manager')
+    void import('../desktop/backend-event-publisher')
       .then(({ publishDesktopBackendEvent }) => publishDesktopBackendEvent(eventKey, event))
       .catch(() => undefined)
   }

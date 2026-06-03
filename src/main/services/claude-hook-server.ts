@@ -154,7 +154,7 @@ export function publishClaudeCliStatus(payload: ClaudeCliStatusPayload): void {
   for (const subscriber of statusSubscribers) {
     subscriber(payload)
   }
-  void import('../desktop/backend-manager')
+  void import('../desktop/backend-event-publisher')
     .then(({ publishDesktopBackendEvent }) =>
       publishDesktopBackendEvent('claude-cli:status', payload)
     )

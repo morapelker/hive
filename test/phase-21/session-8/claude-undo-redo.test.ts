@@ -61,7 +61,7 @@ vi.mock('../../../src/main/services/agent-event-bus', () => ({
   agentEventBus: { publish: vi.fn() }
 }))
 
-vi.mock('../../../src/main/desktop/backend-manager', () => ({
+vi.mock('../../../src/main/desktop/backend-event-publisher', () => ({
   publishDesktopBackendEvent: vi.fn()
 }))
 

@@ -10,6 +10,15 @@ import {
   TELEGRAM_STATUS_CHANGED_CHANNEL,
   type TelegramPlanImplementRequestedPayload
 } from '@shared/telegram-events'
+import {
+  isDesktopCommandResult,
+  makeDesktopCommandRequest,
+  type TelegramClaudeCliPlanReplyPayload,
+  type TelegramClaudeCliQuestionRejectPayload,
+  type TelegramClaudeCliQuestionReplyPayload,
+  type TelegramClaudeCliReplyResult,
+  type TelegramClaudeCliSessionPayload
+} from '@shared/desktop-command'
 import { isClaudeCli } from '@shared/types/agent-sdk'
 import { openCodeService } from './opencode-service'
 import { ClaudeCodeImplementer } from './claude-code-implementer'
@@ -28,6 +37,20 @@ const LONG_PLAN_THRESHOLD = 3500
 type CallbackKind = 'question' | 'permission' | 'command' | 'plan'
 type TrackedKind = 'question' | 'permission' | 'command' | 'plan'
 type BackendEventPublisher = (channel: string, payload: unknown) => void
+type TelegramClaudeCliCommandName =
+  | 'telegramClaudeCliRegister'
+  | 'telegramClaudeCliCancel'
+  | 'telegramClaudeCliQuestionReply'
+  | 'telegramClaudeCliQuestionReject'
+  | 'telegramClaudeCliPlanReply'
+type TelegramClaudeCliCommandPayload =
+  | TelegramClaudeCliSessionPayload
+  | TelegramClaudeCliQuestionReplyPayload
+  | TelegramClaudeCliQuestionRejectPayload
+  | TelegramClaudeCliPlanReplyPayload
+type ProcessWithIpc = NodeJS.Process & {
+  send?: (message: unknown, callback?: (error: Error | null) => void) => boolean
+}
 
 interface ForwardingState {
   sessionId: string
@@ -198,6 +221,31 @@ export function buildTelegramCallbackData(
   return data
 }
 
+function makeTelegramClaudeCliDesktopCommandRequest(
+  id: string,
+  command: TelegramClaudeCliCommandName,
+  payload: TelegramClaudeCliCommandPayload
+) {
+  if (command === 'telegramClaudeCliRegister' || command === 'telegramClaudeCliCancel') {
+    return makeDesktopCommandRequest(id, command, payload as TelegramClaudeCliSessionPayload)
+  }
+  if (command === 'telegramClaudeCliQuestionReply') {
+    return makeDesktopCommandRequest(
+      id,
+      command,
+      payload as TelegramClaudeCliQuestionReplyPayload
+    )
+  }
+  if (command === 'telegramClaudeCliQuestionReject') {
+    return makeDesktopCommandRequest(
+      id,
+      command,
+      payload as TelegramClaudeCliQuestionRejectPayload
+    )
+  }
+  return makeDesktopCommandRequest(id, command, payload as TelegramClaudeCliPlanReplyPayload)
+}
+
 export function isTrackedInteractionStale(
   tracked: Map<string, unknown>,
   requestId: string
@@ -216,9 +264,11 @@ export class TelegramForwardingService {
   private backendEventPublisher: BackendEventPublisher | null = null
   private unsubscribeBridge: (() => void) | null = null
 
-  initialize(opts: { db: DatabaseService; sdkManager: AgentSdkManager }): void {
+  initialize(opts: { db: DatabaseService; sdkManager?: AgentSdkManager | null }): void {
     this.db = opts.db
-    this.sdkManager = opts.sdkManager
+    if (opts.sdkManager !== undefined) {
+      this.sdkManager = opts.sdkManager
+    }
     if (!this.unsubscribeBus) {
       this.unsubscribeBus = agentEventBus.subscribe((event) => {
         void this.handleAgentEvent(event)
@@ -235,6 +285,12 @@ export class TelegramForwardingService {
 
   setBackendEventPublisher(publisher: BackendEventPublisher | null): void {
     this.backendEventPublisher = publisher
+  }
+
+  handleBackendAgentEvent(payload: unknown): void {
+    const event = asRecord(payload)
+    if (!event || typeof event.type !== 'string' || typeof event.sessionId !== 'string') return
+    void this.handleAgentEvent(payload as OpenCodeStreamEvent)
   }
 
   dispose(): void {
@@ -360,6 +416,9 @@ export class TelegramForwardingService {
     const session = this.db?.getSession(params.sessionId)
     if (session && isClaudeCli(session.agent_sdk)) {
       claudeCliTelegramBridge.register(params.sessionId)
+      await this.requestClaudeCliDesktopCommand('telegramClaudeCliRegister', {
+        sessionId: params.sessionId
+      })
     }
 
     const label = this.getSessionLabel(params.sessionId)
@@ -385,6 +444,9 @@ export class TelegramForwardingService {
     // terminal prompt) and stop intercepting this session. Covers manual stop,
     // move (handoff), replace, and session-ended.
     claudeCliTelegramBridge.cancelSession(state.sessionId)
+    await this.requestClaudeCliDesktopCommand('telegramClaudeCliCancel', {
+      sessionId: state.sessionId
+    })
 
     this.stopPolling()
     this.cancelAssistantFlush()
@@ -781,6 +843,14 @@ export class TelegramForwardingService {
       claudeCliTelegramBridge.resolveQuestion(requestId, answers)
       return
     }
+    if (this.isActiveClaudeCliSession()) {
+      const result = await this.requestClaudeCliDesktopCommand('telegramClaudeCliQuestionReply', {
+        requestId,
+        answers
+      })
+      if (result?.success) return
+      throw new Error('Claude CLI question is no longer pending')
+    }
     if (this.sdkManager) {
       const claudeImpl = this.sdkManager.getImplementer('claude-code') as ClaudeCodeImplementer
       if (claudeImpl.hasPendingQuestion(requestId)) {
@@ -879,6 +949,54 @@ export class TelegramForwardingService {
     }
   }
 
+  private isActiveClaudeCliSession(): boolean {
+    const sessionId = this.state?.sessionId
+    if (!sessionId) return false
+    const session = this.db?.getSession(sessionId)
+    return !!session && isClaudeCli(session.agent_sdk)
+  }
+
+  private async requestClaudeCliDesktopCommand(
+    command: TelegramClaudeCliCommandName,
+    payload: TelegramClaudeCliCommandPayload
+  ): Promise<TelegramClaudeCliReplyResult | null> {
+    if (process.env.HIVE_SERVER_MODE !== 'desktop' || !process.env.HIVE_DESKTOP_BOOTSTRAP_TOKEN) {
+      return null
+    }
+    const ipcProcess = process as ProcessWithIpc
+    const send = ipcProcess.send
+    if (typeof send !== 'function') return null
+
+    const id = `telegram-claude-cli-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    return await new Promise<TelegramClaudeCliReplyResult>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        cleanup()
+        reject(new Error(`${command} timed out`))
+      }, 5_000)
+      const cleanup = (): void => {
+        clearTimeout(timeout)
+        process.off('message', onMessage)
+      }
+      const onMessage = (message: unknown): void => {
+        if (!isDesktopCommandResult(message) || message.id !== id) return
+        cleanup()
+        if (!message.ok) {
+          reject(new Error(message.error))
+          return
+        }
+        resolve((message.value ?? { success: true }) as TelegramClaudeCliReplyResult)
+      }
+
+      process.on('message', onMessage)
+      const request = makeTelegramClaudeCliDesktopCommandRequest(id, command, payload)
+      send.call(process, request, (error) => {
+        if (!error) return
+        cleanup()
+        reject(error)
+      })
+    })
+  }
+
   private async replyPermission(
     requestId: string,
     reply: 'once' | 'always' | 'reject',
@@ -929,6 +1047,13 @@ export class TelegramForwardingService {
         false,
         'Plan handed off to a new session'
       )
+    } else if (this.isActiveClaudeCliSession()) {
+      const result = await this.requestClaudeCliDesktopCommand('telegramClaudeCliPlanReply', {
+        requestId: interaction.requestId,
+        approve: false,
+        feedback: 'Plan handed off to a new session'
+      })
+      if (!result?.success) throw new Error('Claude CLI plan is no longer pending')
     }
     const payload: TelegramPlanImplementRequestedPayload = {
       sessionId: this.state.sessionId,
@@ -944,6 +1069,15 @@ export class TelegramForwardingService {
     if (claudeCliTelegramBridge.hasPendingPlan(interaction.requestId)) {
       claudeCliTelegramBridge.resolvePlan(interaction.requestId, false, feedback)
       return
+    }
+    if (this.isActiveClaudeCliSession()) {
+      const result = await this.requestClaudeCliDesktopCommand('telegramClaudeCliPlanReply', {
+        requestId: interaction.requestId,
+        approve: false,
+        feedback
+      })
+      if (result?.success) return
+      throw new Error('Claude CLI plan is no longer pending')
     }
     const state = this.state
     const impl = this.sdkManager?.getImplementer('claude-code')
@@ -969,6 +1103,14 @@ export class TelegramForwardingService {
     if (claudeCliTelegramBridge.hasPendingPlan(interaction.requestId)) {
       claudeCliTelegramBridge.resolvePlan(interaction.requestId, true)
       return
+    }
+    if (this.isActiveClaudeCliSession()) {
+      const result = await this.requestClaudeCliDesktopCommand('telegramClaudeCliPlanReply', {
+        requestId: interaction.requestId,
+        approve: true
+      })
+      if (result?.success) return
+      throw new Error('Claude CLI plan is no longer pending')
     }
     const impl = this.sdkManager?.getImplementer('claude-code')
     if (

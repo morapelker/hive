@@ -42,7 +42,7 @@ vi.mock('../src/main/services/worktree-events', () => ({
   emitWorktreeBranchRenamed: (...args: any[]) => mockEmitWorktreeBranchRenamed(...args)
 }))
 
-vi.mock('../src/main/desktop/backend-manager', () => ({
+vi.mock('../src/main/desktop/backend-event-publisher', () => ({
   publishDesktopBackendEvent: vi.fn()
 }))
 

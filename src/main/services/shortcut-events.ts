@@ -5,7 +5,7 @@ import {
   QUIT_CONFIRMATION_HIDE_CHANNEL,
   QUIT_CONFIRMATION_SHOW_CHANNEL
 } from '../../shared/shortcut-events'
-import { publishDesktopBackendEvent } from '../desktop/backend-manager'
+import { publishDesktopBackendEvent } from '../desktop/backend-event-publisher'
 
 export const emitNewSessionShortcut = (): void => {
   void publishDesktopBackendEvent(NEW_SESSION_SHORTCUT_CHANNEL, {})

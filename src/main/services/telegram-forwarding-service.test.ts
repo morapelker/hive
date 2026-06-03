@@ -1,8 +1,13 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   TELEGRAM_PLAN_IMPLEMENT_REQUESTED_CHANNEL,
   TELEGRAM_STATUS_CHANGED_CHANNEL
 } from '../../shared/telegram-events'
+import {
+  DESKTOP_COMMAND_REQUEST_TYPE,
+  DESKTOP_COMMAND_RESULT_TYPE,
+  type DesktopCommandRequest
+} from '../../shared/desktop-command'
 import { TelegramForwardingService } from './telegram-forwarding-service'
 
 vi.mock('./logger', () => ({
@@ -34,6 +39,21 @@ vi.mock('./agent-event-bus', () => ({
     subscribe: vi.fn(() => vi.fn())
   }
 }))
+
+const originalProcessSend = (process as NodeJS.Process & { send?: unknown }).send
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.restoreAllMocks()
+  if (originalProcessSend === undefined) {
+    delete (process as NodeJS.Process & { send?: unknown }).send
+  } else {
+    Object.defineProperty(process, 'send', {
+      value: originalProcessSend,
+      configurable: true
+    })
+  }
+})
 
 const seedForwardingState = (
   service: TelegramForwardingService,
@@ -116,5 +136,86 @@ describe('TelegramForwardingService backend events', () => {
       requestId: 'codex-plan:thread-1',
       plan: 'Do the work.'
     })
+  })
+})
+
+describe('TelegramForwardingService Claude CLI forwarding bridge', () => {
+  it('registers and cancels Claude CLI hook interception through desktop IPC', async () => {
+    const service = new TelegramForwardingService()
+    const sentCommands: DesktopCommandRequest[] = []
+    const existingMessageListeners = new Set(process.listeners('message'))
+    vi.stubEnv('HIVE_SERVER_MODE', 'desktop')
+    vi.stubEnv('HIVE_DESKTOP_BOOTSTRAP_TOKEN', 'test-bootstrap-token')
+    const send = vi.fn((message: unknown, callback?: (error: Error | null) => void) => {
+      sentCommands.push(message as DesktopCommandRequest)
+      queueMicrotask(() => {
+        for (const listener of process.listeners('message')) {
+          if (existingMessageListeners.has(listener)) continue
+          listener({
+            type: DESKTOP_COMMAND_RESULT_TYPE,
+            id: (message as DesktopCommandRequest).id,
+            ok: true,
+            value: { success: true }
+          })
+        }
+      })
+      callback?.(null)
+      return true
+    })
+    Object.defineProperty(process, 'send', {
+      value: send,
+      configurable: true
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => ({
+        ok: true,
+        json: async () =>
+          url.includes('/sendMessage')
+            ? {
+                ok: true,
+                result: { message_id: 1, chat: { id: 123, type: 'private' }, text: 'ok' }
+              }
+            : { ok: true, result: [] }
+      }))
+    )
+    service.initialize({
+      db: {
+        getSetting: () =>
+          JSON.stringify({ botToken: 'token', chatId: 123, chatName: 'me', contextSize: 3 }),
+        getWorktree: () => ({ path: '/repo', branch_name: 'branch' }),
+        getSession: () => ({
+          project_id: 'p1',
+          agent_sdk: 'claude-code-cli',
+          opencode_session_id: null
+        }),
+        getProject: () => ({ name: 'Project' }),
+        setSetting: vi.fn(),
+        deleteSetting: vi.fn()
+      } as never
+    })
+
+    await service.startForwarding({
+      sessionId: 'cli-session-1',
+      worktreeId: 'w1',
+      connectionId: null,
+      mode: 'all'
+    })
+    await service.stopForwarding()
+
+    expect(sentCommands).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: DESKTOP_COMMAND_REQUEST_TYPE,
+          command: 'telegramClaudeCliRegister',
+          payload: { sessionId: 'cli-session-1' }
+        }),
+        expect.objectContaining({
+          type: DESKTOP_COMMAND_REQUEST_TYPE,
+          command: 'telegramClaudeCliCancel',
+          payload: { sessionId: 'cli-session-1' }
+        })
+      ])
+    )
   })
 })

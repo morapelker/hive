@@ -1,5 +1,6 @@
 export const TELEGRAM_STATUS_CHANGED_CHANNEL = 'telegram:statusChanged'
 export const TELEGRAM_PLAN_IMPLEMENT_REQUESTED_CHANNEL = 'telegram:planImplementRequested'
+export const TELEGRAM_CLAUDE_CLI_EVENT_CHANNEL = 'telegram:claudeCliEvent'
 
 export interface TelegramPlanImplementRequestedPayload {
   readonly sessionId: string

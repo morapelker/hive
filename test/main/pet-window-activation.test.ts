@@ -66,7 +66,7 @@ vi.mock('../../src/main/db', () => ({
   getDatabase: vi.fn()
 }))
 
-vi.mock('../../src/main/desktop/backend-manager', () => ({
+vi.mock('../../src/main/desktop/backend-event-publisher', () => ({
   publishDesktopBackendEvent: backendManagerMock.publishDesktopBackendEvent
 }))
 

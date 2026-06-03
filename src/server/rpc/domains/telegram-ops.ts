@@ -6,6 +6,8 @@ import type {
   TelegramForwardingStatus,
   TelegramStartForwardingRequest
 } from '@shared/types/telegram'
+import { OPENCODE_STREAM_CHANNEL } from '@shared/opencode-events'
+import { TELEGRAM_CLAUDE_CLI_EVENT_CHANNEL } from '@shared/telegram-events'
 import type { EventBus } from '../../events/event-bus'
 import type { RpcHandler } from '../router'
 
@@ -90,14 +92,31 @@ const startForwardingParamsSchema = z
     params: startForwardingRequestSchema
   })
   .strict()
+const subscribedEventBuses = new WeakSet<EventBus>()
 
 const importTelegramForwardingService = async (eventBus?: EventBus) => {
-  const { telegramForwardingService } =
-    await import('../../../main/services/telegram-forwarding-service')
+  const [{ telegramForwardingService }, { getDatabase }] = await Promise.all([
+    import('../../../main/services/telegram-forwarding-service'),
+    import('../../../main/db')
+  ])
+  telegramForwardingService.initialize({ db: getDatabase() })
   if (eventBus) {
     telegramForwardingService.setBackendEventPublisher((channel, payload) => {
       void Effect.runPromise(eventBus.publish({ channel, payload }))
     })
+    if (!subscribedEventBuses.has(eventBus)) {
+      subscribedEventBuses.add(eventBus)
+      Effect.runSync(
+        eventBus.subscribe(OPENCODE_STREAM_CHANNEL, ({ payload }) => {
+          telegramForwardingService.handleBackendAgentEvent(payload)
+        })
+      )
+      Effect.runSync(
+        eventBus.subscribe(TELEGRAM_CLAUDE_CLI_EVENT_CHANNEL, ({ payload }) => {
+          telegramForwardingService.handleBackendAgentEvent(payload)
+        })
+      )
+    }
   }
   return telegramForwardingService
 }

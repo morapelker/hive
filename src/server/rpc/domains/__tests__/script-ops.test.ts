@@ -16,7 +16,7 @@ vi.mock('../../../../main/db', () => ({
   })
 }))
 
-vi.mock('../../../../main/desktop/backend-manager', () => ({
+vi.mock('../../../../main/desktop/backend-event-publisher', () => ({
   publishDesktopBackendEvent: vi.fn()
 }))
 

@@ -108,7 +108,7 @@ function emitFileTreeChange(
     }))
 
     const payload = { worktreePath, events }
-    void import('../desktop/backend-manager').then(({ publishDesktopBackendEvent }) =>
+    void import('../desktop/backend-event-publisher').then(({ publishDesktopBackendEvent }) =>
       publishDesktopBackendEvent(FILE_TREE_CHANGE_CHANNEL, payload)
     )
   }, 100)

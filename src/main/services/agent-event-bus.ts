@@ -4,7 +4,7 @@ import type { OpenCodeStreamEvent } from '@shared/types/opencode'
 
 class AgentEventBus extends EventEmitter {
   publish(event: OpenCodeStreamEvent): void {
-    void import('../desktop/backend-manager')
+    void import('../desktop/backend-event-publisher')
       .then(({ publishDesktopBackendEvent }) =>
         publishDesktopBackendEvent(OPENCODE_STREAM_CHANNEL, event)
       )

@@ -1,7 +1,7 @@
 import { spawn, ChildProcess } from 'child_process'
 import { randomUUID } from 'crypto'
 import { BASH_STREAM_CHANNEL } from '../../shared/bash-events'
-import { publishDesktopBackendEvent } from '../desktop/backend-manager'
+import { publishDesktopBackendEvent } from '../desktop/backend-event-publisher'
 import { createLogger } from './logger'
 
 const log = createLogger({ component: 'BashService' })

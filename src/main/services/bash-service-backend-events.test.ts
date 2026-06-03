@@ -6,7 +6,7 @@ const mocks = vi.hoisted(() => ({
   publishDesktopBackendEvent: vi.fn().mockResolvedValue(true)
 }))
 
-vi.mock('../desktop/backend-manager', () => ({
+vi.mock('../desktop/backend-event-publisher', () => ({
   publishDesktopBackendEvent: mocks.publishDesktopBackendEvent
 }))
 

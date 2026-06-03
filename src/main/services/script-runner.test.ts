@@ -18,7 +18,7 @@ vi.mock('./logger', () => ({
   })
 }))
 
-vi.mock('../desktop/backend-manager', () => ({
+vi.mock('../desktop/backend-event-publisher', () => ({
   publishDesktopBackendEvent: mocks.publishDesktopBackendEvent
 }))
 
