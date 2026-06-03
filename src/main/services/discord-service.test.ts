@@ -133,6 +133,7 @@ const makeGateway = () => {
       connect: vi.fn(async () => undefined),
       disconnect: vi.fn(async () => undefined),
       verify: vi.fn(),
+      registerCommands: vi.fn(async () => undefined),
       createCategory: vi.fn(async (name: string) => {
         const id = `discord-${nextId++}`
         actions.push(`create-category:${name}:${id}`)
@@ -220,6 +221,7 @@ const makeService = (
     start: () => void
     dispose: () => void
     handleUserMessage: ReturnType<typeof vi.fn>
+    setWorktreeMode?: ReturnType<typeof vi.fn>
     setBackendEventPublisher?: ReturnType<typeof vi.fn>
   }
 ) =>
@@ -265,6 +267,7 @@ describe('DiscordService provisioning reconciliation', () => {
       'create-channel:main:discord-1:discord-2',
       'create-channel:feature-a:discord-1:discord-3'
     ])
+    expect(gateway.registerCommands).toHaveBeenCalledTimes(1)
     expect(db.resources).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ project_id: 'p1', worktree_id: null, type: 'category' }),
@@ -307,6 +310,7 @@ describe('DiscordService provisioning reconciliation', () => {
     const summary = await service.provision(['p1'])
 
     expect(summary).toEqual({ created: 0, deleted: 0 })
+    expect(gateway.registerCommands).toHaveBeenCalledTimes(1)
     expect(gateway.createCategory).not.toHaveBeenCalled()
     expect(gateway.createTextChannel).not.toHaveBeenCalled()
     expect(db.resources).toHaveLength(2)
@@ -923,7 +927,8 @@ describe('DiscordService message listener', () => {
     const sessionBridge = {
       start: vi.fn(),
       dispose: vi.fn(),
-      handleUserMessage: vi.fn(async () => undefined)
+      handleUserMessage: vi.fn(async () => undefined),
+      setWorktreeMode: vi.fn(async () => undefined)
     }
     const service = makeService(db, gateway, sessionBridge)
     await service.startListening()
@@ -955,6 +960,90 @@ describe('DiscordService message listener', () => {
     })
     expect(channel.sendTyping).not.toHaveBeenCalled()
     expect(channel.send).not.toHaveBeenCalled()
+  })
+
+  it('replies ephemerally when a mode command is used outside a worktree channel', async () => {
+    const db = new FakeDiscordDatabase()
+    configure(db)
+    const { gateway } = makeGateway()
+    const sessionBridge = {
+      start: vi.fn(),
+      dispose: vi.fn(),
+      handleUserMessage: vi.fn(async () => undefined),
+      setWorktreeMode: vi.fn(async () => undefined)
+    }
+    const service = makeService(db, gateway, sessionBridge)
+    await service.startListening()
+    const interaction = {
+      isChatInputCommand: () => true,
+      guildId: 'guild-1',
+      channelId: 'channel-unlinked',
+      commandName: 'plan',
+      reply: vi.fn(async () => undefined),
+      deferReply: vi.fn(async () => undefined),
+      editReply: vi.fn(async () => undefined)
+    }
+
+    discordJsMock.instances[0].emit('interactionCreate', interaction)
+    await flushPromises()
+
+    expect(interaction.reply).toHaveBeenCalledWith({
+      content: 'This channel is not linked to a worktree.',
+      ephemeral: true
+    })
+    expect(interaction.deferReply).not.toHaveBeenCalled()
+    expect(sessionBridge.setWorktreeMode).not.toHaveBeenCalled()
+  })
+
+  it('handles a valid mode command publicly and updates the worktree session mode', async () => {
+    const db = new FakeDiscordDatabase()
+    configure(db)
+    db.activeWorktrees.set('p1', [makeWorktree('w1', 'p1', 'main')])
+    db.resources = [
+      {
+        id: 'r-channel',
+        project_id: 'p1',
+        worktree_id: 'w1',
+        discord_id: 'channel-1',
+        type: 'channel',
+        guild_id: 'guild-1',
+        managed_session_id: null,
+        created_at: '2026-01-01T00:00:00.000Z'
+      }
+    ]
+    const { gateway } = makeGateway()
+    const sessionBridge = {
+      start: vi.fn(),
+      dispose: vi.fn(),
+      handleUserMessage: vi.fn(async () => undefined),
+      setWorktreeMode: vi.fn(async () => undefined)
+    }
+    const service = makeService(db, gateway, sessionBridge)
+    await service.startListening()
+    const interaction = {
+      isChatInputCommand: () => true,
+      guildId: 'guild-1',
+      channelId: 'channel-1',
+      commandName: 'super-plan',
+      reply: vi.fn(async () => undefined),
+      deferReply: vi.fn(async () => undefined),
+      editReply: vi.fn(async () => undefined)
+    }
+
+    discordJsMock.instances[0].emit('interactionCreate', interaction)
+    await flushPromises()
+
+    expect(interaction.reply).not.toHaveBeenCalled()
+    expect(interaction.deferReply).toHaveBeenCalledTimes(1)
+    expect(sessionBridge.setWorktreeMode).toHaveBeenCalledWith(
+      {
+        worktreeId: 'w1',
+        projectId: 'p1',
+        worktreePath: '/repo/p1/main'
+      },
+      'super-plan'
+    )
+    expect(interaction.editReply).toHaveBeenCalledWith('Changed to super-plan mode')
   })
 
   it('ignores bot messages and messages outside provisioned channels', async () => {

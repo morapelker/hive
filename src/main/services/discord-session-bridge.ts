@@ -1,5 +1,6 @@
 import type { OpenCodeStreamEvent } from '@shared/types/opencode'
 import { OPENCODE_STREAM_CHANNEL } from '@shared/opencode-events'
+import { applyModePrefix } from '@shared/agent-mode-prefixes'
 import {
   getDiscordToolEmoji,
   getToolLabel,
@@ -7,7 +8,7 @@ import {
 } from '@shared/tool-label'
 import type { DatabaseService } from '../db/database'
 import { getDatabase } from '../db'
-import type { DiscordResource, Session } from '../db/types'
+import type { DiscordResource, Session, SessionMode } from '../db/types'
 import { agentEventBus } from './agent-event-bus'
 import { createLogger } from './logger'
 import { openCodeService } from './opencode-service'
@@ -44,6 +45,7 @@ interface ChannelRuntime {
   hiveSessionId: string
   worktreePath: string
   opencodeSessionId: string
+  mode: SessionMode
   busy: boolean
   currentAssistantMessageId: string | null
   textBuffer: string
@@ -164,6 +166,29 @@ export class DiscordSessionBridge {
     await this.dispatch(runtime, input.text)
   }
 
+  async setWorktreeMode(
+    input: { worktreeId: string; projectId: string; worktreePath: string },
+    mode: SessionMode
+  ): Promise<void> {
+    const { session } = await this.resolveManagedSession({
+      channelId: '',
+      worktreeId: input.worktreeId,
+      projectId: input.projectId,
+      worktreePath: input.worktreePath,
+      text: '',
+      channel: {
+        send: async () => undefined,
+        sendTyping: async () => undefined
+      }
+    })
+
+    this.getDb().updateSession(session.id, { mode })
+    const runtime = this.runtimesBySessionId.get(session.id)
+    if (runtime) {
+      runtime.mode = mode
+    }
+  }
+
   private async resolveManagedSession(input: DiscordUserMessageInput): Promise<{
     resource: DiscordResource
     session: Session
@@ -224,6 +249,7 @@ export class DiscordSessionBridge {
       existing.channel = input.channel
       existing.worktreePath = input.worktreePath
       existing.opencodeSessionId = session.opencode_session_id ?? existing.opencodeSessionId
+      existing.mode = session.mode
       return existing
     }
 
@@ -237,6 +263,7 @@ export class DiscordSessionBridge {
       hiveSessionId: session.id,
       worktreePath: input.worktreePath,
       opencodeSessionId: session.opencode_session_id,
+      mode: session.mode,
       busy: false,
       currentAssistantMessageId: null,
       textBuffer: '',
@@ -252,11 +279,12 @@ export class DiscordSessionBridge {
 
   private async dispatch(runtime: ChannelRuntime, text: string): Promise<void> {
     runtime.busy = true
-    runtime.pendingUserEchoText = text
+    const prompt = applyModePrefix(text, runtime.mode)
+    runtime.pendingUserEchoText = prompt
     this.startTyping(runtime)
     try {
       await this.openCode.prompt(runtime.worktreePath, runtime.opencodeSessionId, [
-        { type: 'text', text }
+        { type: 'text', text: prompt }
       ])
     } catch (error) {
       runtime.queue.unshift(text)
@@ -412,9 +440,9 @@ export class DiscordSessionBridge {
 
   private startTyping(runtime: ChannelRuntime): void {
     if (runtime.typingInterval) return
-    void runtime.channel.sendTyping().catch(() => undefined)
+    void Promise.resolve(runtime.channel.sendTyping()).catch(() => undefined)
     runtime.typingInterval = setInterval(() => {
-      void runtime.channel.sendTyping().catch(() => undefined)
+      void Promise.resolve(runtime.channel.sendTyping()).catch(() => undefined)
     }, this.typingIntervalMs)
   }
 

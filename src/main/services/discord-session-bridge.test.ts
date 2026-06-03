@@ -4,6 +4,12 @@ import { DiscordSessionBridge, splitDiscordMessage } from './discord-session-bri
 import type { DiscordResource, Session, Worktree } from '../db/types'
 import type { OpenCodeStreamEvent } from '@shared/types/opencode'
 
+const PLAN_MODE_PREFIX =
+  '[Mode: Plan] You are in planning mode. Focus on designing, analyzing, and outlining an approach. Do NOT make code changes - instead describe what changes should be made and why.\n\n'
+
+const SUPER_PLAN_MODE_PREFIX =
+  'Interview me relentlessly about every aspect of this plan until we reach a shared understanding. Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer.\n\nIf a question can be answered by exploring the codebase, explore the codebase instead.\nAll questions should be asked using the AskUserQuestion tool if possible\n\n'
+
 type StreamListener = (event: OpenCodeStreamEvent) => void
 
 class FakeBridgeDatabase {
@@ -12,6 +18,7 @@ class FakeBridgeDatabase {
   sessions: Session[] = []
   worktrees: Worktree[] = []
   createdSessions: Array<Partial<Session>> = []
+  updatedSessions: Array<{ id: string; data: Partial<Session> }> = []
   managedSessionUpdates: Array<{ resourceId: string; sessionId: string | null }> = []
   nextSessionId = 1
 
@@ -67,6 +74,7 @@ class FakeBridgeDatabase {
   }
 
   updateSession(id: string, data: Partial<Session>): Session | null {
+    this.updatedSessions.push({ id, data })
     const session = this.getSession(id)
     if (!session) return null
     Object.assign(session, data)
@@ -241,6 +249,67 @@ describe('DiscordSessionBridge managed sessions', () => {
     expect(openCode.connect).not.toHaveBeenCalled()
     expect(openCode.prompt).toHaveBeenCalledWith('/repo/project/worktree', 'oc-existing', [
       { type: 'text', text: 'after restart' }
+    ])
+  })
+
+  it('prepends the plan prefix when the managed session is in plan mode', async () => {
+    const { db, bridge, openCode } = setupBridge()
+    db.sessions = [makeSession({ mode: 'plan' })]
+    db.resources = [makeResource({ managed_session_id: 'hive-existing' })]
+
+    await bridge.handleUserMessage(userMessage(makeChannel(), 'review the approach'))
+
+    expect(openCode.prompt).toHaveBeenCalledWith('/repo/project/worktree', 'oc-existing', [
+      { type: 'text', text: `${PLAN_MODE_PREFIX}review the approach` }
+    ])
+  })
+
+  it('prepends the OpenCode super-plan prefix when the managed session is in super-plan mode', async () => {
+    const { db, bridge, openCode } = setupBridge()
+    db.sessions = [makeSession({ mode: 'super-plan' })]
+    db.resources = [makeResource({ managed_session_id: 'hive-existing' })]
+
+    await bridge.handleUserMessage(userMessage(makeChannel(), 'stress test this plan'))
+
+    expect(openCode.prompt).toHaveBeenCalledWith('/repo/project/worktree', 'oc-existing', [
+      { type: 'text', text: `${SUPER_PLAN_MODE_PREFIX}stress test this plan` }
+    ])
+  })
+
+  it('keeps build mode prompts raw', async () => {
+    const { db, bridge, openCode } = setupBridge()
+    db.sessions = [makeSession({ mode: 'build' })]
+    db.resources = [makeResource({ managed_session_id: 'hive-existing' })]
+
+    await bridge.handleUserMessage(userMessage(makeChannel(), 'make the edit'))
+
+    expect(openCode.prompt).toHaveBeenCalledWith('/repo/project/worktree', 'oc-existing', [
+      { type: 'text', text: 'make the edit' }
+    ])
+  })
+
+  it('persists mode changes on the managed session and updates the active runtime', async () => {
+    const { db, bridge, openCode, emit } = setupBridge()
+    const channel = makeChannel()
+    await bridge.handleUserMessage(userMessage(channel, 'first'))
+    emit({ type: 'session.idle', sessionId: 'hive-1', data: {} })
+    db.updatedSessions = []
+
+    await bridge.setWorktreeMode(
+      {
+        worktreeId: 'worktree-1',
+        projectId: 'project-1',
+        worktreePath: '/repo/project/worktree'
+      },
+      'plan'
+    )
+
+    expect(db.updatedSessions).toContainEqual({ id: 'hive-1', data: { mode: 'plan' } })
+    expect(openCode.connect).toHaveBeenCalledTimes(1)
+
+    await bridge.handleUserMessage(userMessage(channel, 'second'))
+    expect(openCode.prompt).toHaveBeenLastCalledWith('/repo/project/worktree', 'oc-1', [
+      { type: 'text', text: `${PLAN_MODE_PREFIX}second` }
     ])
   })
 })

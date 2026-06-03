@@ -3,15 +3,16 @@ import {
   ChannelType,
   Client,
   GatewayIntentBits,
+  type ChatInputCommandInteraction,
   type CategoryChannel,
   type Guild,
+  type Interaction,
   type Message,
   type NonThreadGuildBasedChannel,
   type TextChannel
 } from 'discord.js'
 import type {
   DiscordConfig,
-  DiscordGuild,
   DiscordProvisionProgress,
   DiscordProvisionSummary,
   DiscordVerifyResult
@@ -24,7 +25,7 @@ import { WORKTREE_CREATED_CHANNEL } from '@shared/worktree-events'
 import { canonicalizeTicketTitle } from '@shared/types/branch-utils'
 import type { DatabaseService } from '../db/database'
 import { getDatabase } from '../db'
-import type { DiscordResource, Project, Worktree } from '../db/types'
+import type { DiscordResource, Project, SessionMode, Worktree } from '../db/types'
 import { createGitService } from './git-service'
 import { createLogger } from './logger'
 import { createWorktreeFromBranchOp } from './worktree-ops'
@@ -32,10 +33,16 @@ import { discordSessionBridge, type DiscordSessionBridge } from './discord-sessi
 
 const DISCORD_CONFIG_KEY = 'discord_config'
 const log = createLogger({ component: 'Discord' })
+const DISCORD_MODE_COMMANDS: Array<{ name: string; description: string }> = [
+  { name: 'plan', description: 'Switch this worktree to plan mode' },
+  { name: 'build', description: 'Switch this worktree to build mode' },
+  { name: 'super-plan', description: 'Switch this worktree to super-plan mode' }
+]
 
 export interface DiscordGateway {
   verify(botToken: string): Promise<DiscordVerifyResult>
   connect(botToken: string, guildId: string): Promise<void>
+  registerCommands(): Promise<void>
   createCategory(name: string): Promise<string>
   createTextChannel(name: string, parentId: string): Promise<string>
   deleteResource(discordId: string): Promise<void>
@@ -82,6 +89,11 @@ class DiscordJsGateway implements DiscordGateway {
     this.guild = await this.client.guilds.fetch(guildId)
   }
 
+  async registerCommands(): Promise<void> {
+    if (!this.guild) throw new Error('Discord guild is not connected')
+    await this.guild.commands.set(DISCORD_MODE_COMMANDS)
+  }
+
   async createCategory(name: string): Promise<string> {
     if (!this.guild) throw new Error('Discord guild is not connected')
     const channel = (await this.guild.channels.create({
@@ -116,15 +128,7 @@ class DiscordJsGateway implements DiscordGateway {
   }
 }
 
-const emptyConfig: DiscordConfig = {
-  botToken: '',
-  guildId: '',
-  guildName: '',
-  enabled: false,
-  selectedProjectIds: []
-}
-
-const isConfigured = (config: DiscordConfig | null): boolean =>
+const isConfigured = (config: DiscordConfig | null): config is DiscordConfig =>
   !!config?.botToken.trim() && !!config.guildId.trim()
 
 const parseConfig = (raw: string | null): DiscordConfig | null => {
@@ -259,6 +263,12 @@ export class DiscordService {
       } catch (error) {
         throw toGuildAccessError(config.guildId, error)
       }
+      await gateway.registerCommands().catch((error) => {
+        const message = error instanceof Error ? error.message : String(error)
+        log.error('Failed to register Discord slash commands', error instanceof Error ? error : new Error(message), {
+          guildId: config.guildId
+        })
+      })
 
       for (const resource of deleteCandidates) {
         await gateway.deleteResource(resource.discord_id)
@@ -387,6 +397,9 @@ export class DiscordService {
     client.on('messageCreate', (message) => {
       void this.handleIncomingMessage(message)
     })
+    client.on('interactionCreate', (interaction) => {
+      void this.handleInteraction(interaction)
+    })
     client.on('channelCreate', (channel) => {
       void this.handleChannelCreate(channel)
     })
@@ -475,6 +488,72 @@ export class DiscordService {
         }
       )
     }
+  }
+
+  private async handleInteraction(interaction: Interaction): Promise<void> {
+    if (!interaction.isChatInputCommand()) return
+
+    const config = this.getConfig()
+    if (!isConfigured(config) || interaction.guildId !== config.guildId) return
+
+    const mode = this.modeFromCommand(interaction.commandName)
+    if (!mode) return
+
+    const db = this.getDb()
+    const provisionedChannel = db
+      .getDiscordResourcesByGuild(config.guildId)
+      .find(
+        (resource) =>
+          resource.type === 'channel' && resource.discord_id === interaction.channelId
+      )
+
+    if (!provisionedChannel?.worktree_id) {
+      await interaction.reply({
+        content: 'This channel is not linked to a worktree.',
+        ephemeral: true
+      })
+      return
+    }
+
+    const worktree = db.getWorktree(provisionedChannel.worktree_id)
+    if (!worktree) {
+      await interaction.reply({
+        content: 'This channel is not linked to a worktree.',
+        ephemeral: true
+      })
+      return
+    }
+
+    await interaction.deferReply()
+    try {
+      await this.sessionBridge.setWorktreeMode(
+        {
+          worktreeId: worktree.id,
+          projectId: provisionedChannel.project_id,
+          worktreePath: worktree.path
+        },
+        mode
+      )
+      await interaction.editReply(`Changed to ${mode} mode`)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      log.error(
+        'Failed to handle Discord mode command',
+        error instanceof Error ? error : new Error(message),
+        {
+          channelId: interaction.channelId,
+          commandName: interaction.commandName
+        }
+      )
+      await interaction.editReply(`Could not change mode: ${message}`)
+    }
+  }
+
+  private modeFromCommand(commandName: ChatInputCommandInteraction['commandName']): SessionMode | null {
+    if (commandName === 'plan' || commandName === 'build' || commandName === 'super-plan') {
+      return commandName
+    }
+    return null
   }
 
   private async handleChannelCreate(channel: NonThreadGuildBasedChannel): Promise<void> {
