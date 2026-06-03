@@ -148,14 +148,24 @@ const makeChannel = () => ({
   sendTyping: vi.fn(async () => undefined)
 })
 
+interface TestDiscordMessage {
+  id: string
+  content?: string
+  components?: unknown
+  edit: ReturnType<typeof vi.fn>
+}
+
 const makeInteractiveChannel = () => {
-  const messages: any[] = []
+  const messages: TestDiscordMessage[] = []
   const channel = {
     send: vi.fn(async (payload: unknown) => {
-      const message = {
+      const message: TestDiscordMessage = {
         id: `message-${messages.length + 1}`,
         content: typeof payload === 'string' ? payload : (payload as { content?: string }).content,
-        components: typeof payload === 'string' ? undefined : (payload as { components?: unknown }).components,
+        components:
+          typeof payload === 'string'
+            ? undefined
+            : (payload as { components?: unknown }).components,
         edit: vi.fn(async (update: { content?: string; components?: unknown[] }) => {
           if (update.content !== undefined) message.content = update.content
           if (update.components !== undefined) message.components = update.components
@@ -1011,6 +1021,133 @@ describe('DiscordSessionBridge stream delivery', () => {
       expect.objectContaining({
         components: [],
         content: expect.stringContaining('Resolved in Hive')
+      })
+    )
+  })
+
+  it('renders Discord plan handoff actions using the build default and includes goal handoff for Codex', async () => {
+    const { db, bridge, emit } = setupBridge()
+    setAppSettings(db, {
+      defaultAgentSdk: 'codex',
+      selectedModelByProvider: {
+        codex: { providerID: 'codex', modelID: 'gpt-5.5' }
+      }
+    })
+    const { channel, messages } = makeInteractiveChannel()
+    await bridge.handleUserMessage(userMessage(channel, 'plan'))
+
+    emit({
+      type: 'plan.ready',
+      sessionId: 'hive-1',
+      data: { requestId: 'plan-codex', id: 'plan-codex', plan: '1. Build the feature' }
+    })
+    await flushPromises()
+
+    const components = JSON.stringify(messages[0].components)
+    expect(messages[0].content).toContain('**Plan ready**')
+    expect(components).toContain('Implement')
+    expect(components).toContain('Handoff')
+    expect(components).toContain('Handoff (goal)')
+    expect(components).toContain('Reject')
+    expect(components).toContain('plan:plan-codex:handoff_goal')
+  })
+
+  it('rejects a pending Discord plan with a plain followup message instead of queueing it', async () => {
+    const replyRouter = {
+      replyPlan: vi.fn(async () => undefined)
+    }
+    const { bridge, emit, openCode } = setupBridge({ replyRouter })
+    const { channel, messages } = makeInteractiveChannel()
+    await bridge.handleUserMessage(userMessage(channel, 'plan'))
+
+    emit({
+      type: 'plan.ready',
+      sessionId: 'hive-1',
+      data: { requestId: 'plan-feedback', id: 'plan-feedback', plan: '1. Build the feature' }
+    })
+    await flushPromises()
+
+    await bridge.handleUserMessage(userMessage(channel, 'Use a smaller change first'))
+    await flushPromises()
+
+    expect(replyRouter.replyPlan).toHaveBeenCalledWith({
+      requestId: 'plan-feedback',
+      sessionId: 'hive-1',
+      worktreePath: '/repo/project/worktree',
+      approve: false,
+      feedback: 'Use a smaller change first'
+    })
+    expect(openCode.prompt).toHaveBeenCalledTimes(1)
+    expect(messages[0].edit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        components: [],
+        content: expect.stringContaining('Feedback sent')
+      })
+    )
+  })
+
+  it('handoffs a pending Discord plan to a newly attached Codex goal session', async () => {
+    const replyRouter = {
+      replyPlan: vi.fn(async () => undefined)
+    }
+    const { db, bridge, emit, openCode } = setupBridge({ replyRouter })
+    setAppSettings(db, {
+      defaultAgentSdk: 'codex',
+      selectedModelByProvider: {
+        codex: { providerID: 'codex', modelID: 'gpt-5.5' }
+      }
+    })
+    openCode.connect
+      .mockResolvedValueOnce({ sessionId: 'oc-1' })
+      .mockResolvedValueOnce({ sessionId: 'oc-handoff' })
+    const { channel, messages } = makeInteractiveChannel()
+    await bridge.handleUserMessage(userMessage(channel, 'plan'))
+
+    emit({
+      type: 'plan.ready',
+      sessionId: 'hive-1',
+      data: { requestId: 'plan-handoff', id: 'plan-handoff', plan: '1. Build the feature' }
+    })
+    await flushPromises()
+
+    await bridge.handleComponentInteraction({
+      isStringSelectMenu: () => false,
+      isButton: () => true,
+      customId: 'plan:plan-handoff:handoff_goal',
+      values: [],
+      deferUpdate: vi.fn(async () => undefined),
+      reply: vi.fn(async () => undefined),
+      message: messages[0]
+    } as never)
+
+    expect(replyRouter.replyPlan).toHaveBeenCalledWith({
+      requestId: 'plan-handoff',
+      sessionId: 'hive-1',
+      worktreePath: '/repo/project/worktree',
+      approve: false,
+      feedback: 'Plan handed off to a new session'
+    })
+    expect(db.createdSessions).toHaveLength(2)
+    expect(db.createdSessions[1]).toEqual(
+      expect.objectContaining({
+        agent_sdk: 'codex',
+        mode: 'build',
+        model_provider_id: 'codex',
+        model_id: 'gpt-5.5'
+      })
+    )
+    expect(db.resources[0].managed_session_id).toBe('hive-2')
+    expect(openCode.connect).toHaveBeenLastCalledWith('/repo/project/worktree', 'hive-2')
+    expect(openCode.prompt).toHaveBeenLastCalledWith(
+      '/repo/project/worktree',
+      'oc-handoff',
+      [{ type: 'text', text: '/goal Implement the following plan\n1. Build the feature' }],
+      { providerID: 'codex', modelID: 'gpt-5.5' }
+    )
+    expect(messages[0].edit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        components: [],
+        content: expect.stringContaining('Handoff started')
       })
     )
   })

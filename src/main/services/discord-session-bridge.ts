@@ -130,6 +130,9 @@ interface DiscordPendingInteraction {
   optionValueLabels?: Map<string, string>
   permissionRequest?: PermissionRequest
   patternSuggestions?: string[]
+  plan?: string
+  handoffAgentSdk?: AgentSdk
+  handoffModel?: SharedSelectedModel
 }
 
 interface ParsedCustomId {
@@ -158,7 +161,9 @@ function asString(value: unknown): string | null {
 }
 
 function asStringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string')
+    : []
 }
 
 function normalizeToolStatus(status: unknown): 'running' | 'success' | 'error' {
@@ -308,7 +313,9 @@ export class DiscordSessionBridge {
   start(): void {
     if (this.unsubscribe) return
     this.unsubscribe = this.subscribeToAgentEvents((event) => this.onStreamEvent(event))
-    this.unsubscribeCliBridge = claudeCliDiscordBridge.subscribe((event) => this.onStreamEvent(event))
+    this.unsubscribeCliBridge = claudeCliDiscordBridge.subscribe((event) =>
+      this.onStreamEvent(event)
+    )
   }
 
   dispose(): void {
@@ -326,6 +333,13 @@ export class DiscordSessionBridge {
   async handleUserMessage(input: DiscordUserMessageInput): Promise<void> {
     const { resource, session } = await this.resolveManagedSession(input)
     const runtime = this.registerRuntime(input, session, resource)
+    const pendingPlan = this.getPendingPlanForRuntime(runtime)
+    const followup = input.text.trim()
+
+    if (pendingPlan && followup) {
+      await this.sendPlanFeedback(pendingPlan, followup)
+      return
+    }
 
     if (runtime.busy) {
       runtime.queue.push(input.text)
@@ -773,6 +787,12 @@ export class DiscordSessionBridge {
           approve: true
         })
         await this.resolveDiscordMessage(pending.requestId, 'Approved')
+      } else if (
+        pending.kind === 'plan' &&
+        (parsed.action === 'handoff' || parsed.action === 'handoff_goal')
+      ) {
+        await interaction.deferUpdate?.()
+        await this.handoffPlan(pending, parsed.action === 'handoff_goal')
       }
     } catch (error) {
       this.localResolutionOutcomes.delete(pending.requestId)
@@ -952,7 +972,9 @@ export class DiscordSessionBridge {
     const content = [
       '**Permission requested**',
       request.permission ? `Type: ${request.permission}` : '',
-      ...(Array.isArray(request.patterns) ? request.patterns.map((pattern) => `\`${pattern}\``) : [])
+      ...(Array.isArray(request.patterns)
+        ? request.patterns.map((pattern) => `\`${pattern}\``)
+        : [])
     ]
       .filter(Boolean)
       .join('\n')
@@ -986,7 +1008,10 @@ export class DiscordSessionBridge {
       ...asStringArray(data?.subCommandPatterns),
       ...asStringArray(data?.patternSuggestions)
     ]
-    const content = ['**Command approval requested**', `\`${this.truncate(commandStr, 1500)}\``].join('\n')
+    const content = [
+      '**Command approval requested**',
+      `\`${this.truncate(commandStr, 1500)}\``
+    ].join('\n')
     const pending: DiscordPendingInteraction = {
       kind: 'command',
       requestId,
@@ -1011,6 +1036,7 @@ export class DiscordSessionBridge {
     if (!requestId || this.discordPending.has(requestId)) return
     const plan = asString(data?.plan) ?? ''
     const content = ['**Plan ready**', this.truncate(plan, 1800)].filter(Boolean).join('\n\n')
+    const handoff = this.resolveCreation('build')
     const pending: DiscordPendingInteraction = {
       kind: 'plan',
       requestId,
@@ -1018,14 +1044,116 @@ export class DiscordSessionBridge {
       sessionId: target.hiveSessionId,
       worktreePath: target.worktreePath,
       agentSdk: target.agentSdk,
-      messages: []
+      messages: [],
+      plan,
+      handoffAgentSdk: handoff.agentSdk,
+      handoffModel: handoff.model
     }
     this.discordPending.set(requestId, pending)
     const sent = await target.channel.send({
       content,
-      components: [this.buttonRow(requestId, 'plan', ['approve', 'reject'])]
+      components: this.buildPlanComponents(requestId, handoff.agentSdk === 'codex')
     })
     this.trackSentMessage(pending, sent, content)
+  }
+
+  private async sendPlanFeedback(
+    pending: DiscordPendingInteraction,
+    feedback: string
+  ): Promise<void> {
+    this.localResolutionOutcomes.set(pending.requestId, 'Feedback sent')
+    try {
+      await this.replyRouter.replyPlan({
+        requestId: pending.requestId,
+        sessionId: pending.sessionId,
+        worktreePath: pending.worktreePath,
+        approve: false,
+        feedback
+      })
+      await this.resolveDiscordMessage(pending.requestId, 'Feedback sent')
+    } catch (error) {
+      this.localResolutionOutcomes.delete(pending.requestId)
+      await this.resolveDiscordMessage(
+        pending.requestId,
+        `Failed: ${error instanceof Error ? error.message : String(error)}`
+      )
+    }
+  }
+
+  private async handoffPlan(pending: DiscordPendingInteraction, goalMode: boolean): Promise<void> {
+    const feedback = 'Plan handed off to a new session'
+    this.localResolutionOutcomes.set(pending.requestId, 'Handoff started')
+    await this.replyRouter.replyPlan({
+      requestId: pending.requestId,
+      sessionId: pending.sessionId,
+      worktreePath: pending.worktreePath,
+      approve: false,
+      feedback
+    })
+
+    const oldRuntime = this.runtimesBySessionId.get(pending.sessionId)
+    if (oldRuntime) {
+      this.stopTyping(oldRuntime)
+      this.runtimesBySessionId.delete(pending.sessionId)
+    }
+
+    const db = this.getDb()
+    const sourceSession = db.getSession(pending.sessionId)
+    if (!sourceSession?.worktree_id) {
+      throw new Error('Plan session is not attached to a worktree')
+    }
+
+    const resource = db.getDiscordChannelResourceByWorktree(sourceSession.worktree_id)
+    if (!resource) {
+      throw new Error('Discord channel is no longer linked to this worktree')
+    }
+
+    const worktreePath = pending.worktreePath
+    if (!worktreePath) {
+      throw new Error('Missing worktree path for handoff')
+    }
+
+    const channel = oldRuntime?.channel ?? (await this.resolveChannel?.(pending.channelId))
+    if (!channel) {
+      throw new Error('Discord channel is unavailable')
+    }
+
+    const selection = pending.handoffModel
+      ? { agentSdk: pending.handoffAgentSdk ?? 'opencode', model: pending.handoffModel }
+      : this.resolveCreation('build')
+    const newSession = db.createSession({
+      worktree_id: sourceSession.worktree_id,
+      project_id: sourceSession.project_id ?? resource.project_id,
+      agent_sdk: selection.agentSdk,
+      mode: 'build',
+      session_type: 'default',
+      model_provider_id: selection.model.providerID,
+      model_id: selection.model.modelID,
+      model_variant: selection.model.variant ?? null
+    })
+    const connection = await this.openCode.connect(worktreePath, newSession.id)
+    const updated = db.updateSession(newSession.id, {
+      opencode_session_id: connection.sessionId
+    }) ?? {
+      ...newSession,
+      opencode_session_id: connection.sessionId
+    }
+    db.setDiscordResourceManagedSession(resource.id, updated.id)
+
+    const runtime = this.registerRuntime(
+      {
+        channelId: pending.channelId,
+        worktreeId: sourceSession.worktree_id,
+        projectId: sourceSession.project_id ?? resource.project_id,
+        worktreePath,
+        text: '',
+        channel
+      },
+      updated,
+      { ...resource, managed_session_id: updated.id }
+    )
+    await this.dispatch(runtime, this.buildHandoffPrompt(pending.plan ?? '', goalMode))
+    await this.resolveDiscordMessage(pending.requestId, 'Handoff started')
   }
 
   private async resolveFromEvent(event: OpenCodeStreamEvent): Promise<void> {
@@ -1145,7 +1273,8 @@ export class DiscordSessionBridge {
     return questions
       .map((question, offset) => {
         const index = startIndex + offset + 1
-        const title = total > 1 ? `${question.header ?? 'Question'} (${index}/${total})` : question.header
+        const title =
+          total > 1 ? `${question.header ?? 'Question'} (${index}/${total})` : question.header
         return [title, question.question].filter(Boolean).join('\n')
       })
       .join('\n\n')
@@ -1224,6 +1353,33 @@ export class DiscordSessionBridge {
     return { type: 2, label, custom_id: customId, style }
   }
 
+  private buildPlanComponents(requestId: string, includeGoalHandoff: boolean): unknown[] {
+    return [
+      {
+        type: 1,
+        components: [
+          this.button('Implement', this.buildCustomId('plan', requestId, 'approve'), 3),
+          this.button('Handoff', this.buildCustomId('plan', requestId, 'handoff'), 2),
+          ...(includeGoalHandoff
+            ? [
+                this.button(
+                  'Handoff (goal)',
+                  this.buildCustomId('plan', requestId, 'handoff_goal'),
+                  1
+                )
+              ]
+            : []),
+          this.button('Reject', this.buildCustomId('plan', requestId, 'reject'), 4)
+        ]
+      }
+    ]
+  }
+
+  private buildHandoffPrompt(plan: string, goalMode: boolean): string {
+    const prefix = goalMode ? '/goal ' : ''
+    return `${prefix}Implement the following plan\n${plan}`
+  }
+
   private buildPlanRejectModal(requestId: string): unknown {
     return {
       title: 'Reject plan',
@@ -1294,6 +1450,16 @@ export class DiscordSessionBridge {
     for (const requestId of requestIds) {
       void this.resolveDiscordMessage(requestId, outcome)
     }
+  }
+
+  private getPendingPlanForRuntime(runtime: ChannelRuntime): DiscordPendingInteraction | null {
+    return (
+      [...this.discordPending.values()].find(
+        (pending) =>
+          pending.kind === 'plan' &&
+          (pending.sessionId === runtime.hiveSessionId || pending.channelId === runtime.channelId)
+      ) ?? null
+    )
   }
 
   private async replyEphemeral(
