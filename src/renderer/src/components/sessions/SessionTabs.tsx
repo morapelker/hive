@@ -28,7 +28,8 @@ import {
   Upload,
   FileJson,
   FileSearch,
-  GitPullRequest
+  GitPullRequest,
+  RadioTower
 } from 'lucide-react'
 import { KanbanIcon } from '@/components/kanban/KanbanIcon'
 import { useSessionStore, BOARD_TAB_ID } from '@/stores/useSessionStore'
@@ -85,6 +86,8 @@ import { useTipStore } from '@/stores/useTipStore'
 import { opencodeApi } from '@/api/opencode-api'
 import { kanbanApi } from '@/api/kanban-api'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { getRendererRpcClient } from '@/api/rpc-client'
+import { systemApi } from '@/api/system-api'
 
 const TRANSCRIPT_CACHE_KEY_PREFIX = 'hive:session-transcript:'
 
@@ -115,6 +118,8 @@ interface SessionTabProps {
   onCloseOthers?: () => void
   onCloseToRight?: () => void
   onRefreshFromFile?: () => void
+  onTeleport?: () => void
+  canTeleport?: boolean
   hintCode?: string
 }
 
@@ -137,6 +142,8 @@ const SessionTab = memo(function SessionTab({
   onCloseOthers,
   onCloseToRight,
   onRefreshFromFile,
+  onTeleport,
+  canTeleport,
   hintCode
 }: SessionTabProps): React.JSX.Element {
   const [isEditing, setIsEditing] = useState(false)
@@ -301,6 +308,15 @@ const SessionTab = memo(function SessionTab({
             <ContextMenuItem disabled={isSessionBusy} onSelect={() => onRefreshFromFile?.()}>
               <FileSearch className="h-4 w-4 mr-2" />
               Refresh from file
+            </ContextMenuItem>
+          </>
+        )}
+        {canTeleport && (
+          <>
+            <ContextMenuSeparator />
+            <ContextMenuItem disabled={isSessionBusy} onSelect={() => onTeleport?.()}>
+              <RadioTower className="h-4 w-4 mr-2" />
+              Teleport session
             </ContextMenuItem>
           </>
         )}
@@ -874,9 +890,7 @@ export function SessionTabs(): React.JSX.Element | null {
   }
 
   // Handle creating a new session with a specific agent SDK (from context menu)
-  const handleCreateSessionWithSdk = async (
-    sdk: AgentSdk
-  ) => {
+  const handleCreateSessionWithSdk = async (sdk: AgentSdk) => {
     if (isConnectionMode && selectedConnectionId) {
       const result = await createConnectionSession(selectedConnectionId, sdk)
       if (!result.success) {
@@ -988,6 +1002,46 @@ export function SessionTabs(): React.JSX.Element | null {
       toast.success(`Refreshed transcript from file (${refreshed.count ?? 0} messages)`)
     } catch {
       toast.error('Refresh from file failed')
+    }
+  }
+
+  const handleTeleportSession = async (sessionId: string) => {
+    const toastId = toast.loading('Teleporting session...')
+    try {
+      const result = await getRendererRpcClient().request<{
+        success: boolean
+        step?: string
+        error?: string
+        channelUrl?: string
+      }>('teleportOps.start', { sessionId })
+      toast.dismiss(toastId)
+      if (!result.success) {
+        toast.error(
+          result.step
+            ? `Teleport failed at ${result.step}: ${result.error || 'Unknown error'}`
+            : result.error || 'Teleport failed'
+        )
+        return
+      }
+
+      toast.success('Session teleported', {
+        action: result.channelUrl
+          ? {
+              label: 'Open Discord',
+              onClick: () => {
+                if (result.channelUrl) void systemApi.openInChrome(result.channelUrl)
+              }
+            }
+          : undefined
+      })
+      if (selectedWorktree?.project_id) {
+        await useWorktreeStore
+          .getState()
+          .loadWorktrees(selectedWorktree.project_id, { force: true })
+      }
+    } catch (error) {
+      toast.dismiss(toastId)
+      toast.error(error instanceof Error ? error.message : 'Teleport failed')
     }
   }
 
@@ -1258,6 +1312,8 @@ export function SessionTabs(): React.JSX.Element | null {
             onRefreshFromFile={() =>
               setRefreshTarget({ sessionId: session.id, name: session.name || 'Untitled' })
             }
+            canTeleport={session.agent_sdk === 'claude-code-cli' && session.status !== 'active'}
+            onTeleport={() => void handleTeleportSession(session.id)}
             hintCode={sessionHints.sessionHintMap.get(session.id)}
           />
         )

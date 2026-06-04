@@ -252,6 +252,7 @@ const worktreeUpdateDataSchema = z.object({
   pinned: z.number().optional(),
   github_pr_number: z.number().nullable().optional(),
   github_pr_url: z.string().nullable().optional(),
+  teleported_to: z.string().nullable().optional(),
   last_accessed_at: z.string().optional()
 }) satisfies z.ZodType<WorktreeUpdate>
 const worktreeUpdateParamsSchema = z.object({
@@ -286,7 +287,9 @@ const worktreePrParamsSchema = z
   .object({ worktreeId: z.string(), prNumber: z.number(), prUrl: z.string() })
   .strict()
 const worktreeIdParamsSchema = z.object({ worktreeId: z.string() }).strict()
-const worktreePinnedParamsSchema = z.object({ worktreeId: z.string(), pinned: z.boolean() }).strict()
+const worktreePinnedParamsSchema = z
+  .object({ worktreeId: z.string(), pinned: z.boolean() })
+  .strict()
 const agentSdkSchema = z.enum(['opencode', 'claude-code', 'claude-code-cli', 'codex', 'terminal'])
 const sessionModeSchema = z.enum(['build', 'plan', 'super-plan'])
 const sessionTypeSchema = z.enum(['default', 'board-assistant'])
@@ -441,9 +444,8 @@ export const makeLiveDbRpcService = (): DbRpcService => ({
     Effect.tryPromise({
       try: async () => {
         const { getDatabase } = await import('../../../main/db')
-        const { createProjectWithDefaultWorktree } = await import(
-          '../../../main/services/project-ops'
-        )
+        const { createProjectWithDefaultWorktree } =
+          await import('../../../main/services/project-ops')
         const { telemetryService } = await import('../../../main/services/telemetry-service')
         const db = getDatabase()
         const project = createProjectWithDefaultWorktree(db, data)

@@ -135,6 +135,7 @@
     "remark-gfm": "^4.0.1",
     "simple-git": "^3.30.0",
     "sonner": "^1.7.1",
+    "ws": "^8.21.0",
     "zod": "^4.0.0",
     "zustand": "^5.0.2"
   },
@@ -153,6 +154,7 @@
     "@types/react": "^19.0.1",
     "@types/react-dom": "^19.0.2",
     "@types/react-syntax-highlighter": "^15.5.13",
+    "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^4.3.4",
     "@vitest/coverage-v8": "^3.2.4",
     "class-variance-authority": "^0.7.1",

@@ -12,6 +12,7 @@ import type { DatabaseService } from '../db/database'
 import { readClaudeTranscript, translateEntry } from './claude-transcript-reader'
 import { getUserEnvironmentVariables } from './env-vars'
 import { generateSessionTitle } from './claude-session-title'
+import { normalizeClaudeCliModel } from './claude-cli-spawner'
 import { autoRenameWorktreeBranch } from './git-service'
 import { Options, PermissionMode } from '@anthropic-ai/claude-agent-sdk'
 import { CommandFilterService, type CommandFilterSettings } from './command-filter-service'
@@ -489,7 +490,8 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       }
 
       // Resolve effort level from variant selection (default per model)
-      const resolvedModel = modelOverride?.modelID ?? this.selectedModel
+      const requestedModel = modelOverride?.modelID ?? this.selectedModel
+      const resolvedModel = normalizeClaudeCliModel(requestedModel) ?? requestedModel
       const modelDef = CLAUDE_MODELS.find((m) => m.id === resolvedModel)
       const effortLevel = (modelOverride?.variant ??
         this.selectedVariant ??

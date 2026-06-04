@@ -1,5 +1,5 @@
 import { createHash } from 'crypto'
-import { readFile, readdir } from 'fs/promises'
+import { readFile, readdir, realpath } from 'fs/promises'
 import { join } from 'path'
 import { homedir } from 'os'
 import { createLogger } from './logger'
@@ -29,6 +29,67 @@ export function resolveProjectsDir(): string {
   return join(configRoot.normalize('NFC'), 'projects')
 }
 
+export async function readClaudeTranscriptRaw(
+  worktreePath: string,
+  claudeSessionId: string
+): Promise<string | null> {
+  const projectsRoot = resolveProjectsDir()
+  const candidates = await getTranscriptCandidates(projectsRoot, worktreePath, claudeSessionId)
+
+  for (const candidate of candidates) {
+    try {
+      return await readFile(candidate.filePath, 'utf-8')
+    } catch (err) {
+      if (!isErrnoCode(err, 'ENOENT')) {
+        logTranscriptReadFailure(err, {
+          projectsRoot,
+          encoded: candidate.encoded,
+          primaryFilePath: candidate.filePath,
+          attemptedFilePaths: candidates.map((c) => c.filePath),
+          claudeSessionId
+        })
+        return null
+      }
+    }
+  }
+
+  const firstCandidate = candidates[0]
+  logTranscriptReadFailure({ code: 'ENOENT' }, {
+    projectsRoot,
+    encoded: firstCandidate?.encoded ?? encodePath(worktreePath),
+    primaryFilePath:
+      firstCandidate?.filePath ?? join(projectsRoot, encodePath(worktreePath), `${claudeSessionId}.jsonl`),
+    attemptedFilePaths: candidates.map((c) => c.filePath),
+    claudeSessionId
+  })
+  return null
+}
+
+async function getTranscriptCandidates(
+  projectsRoot: string,
+  worktreePath: string,
+  claudeSessionId: string
+): Promise<Array<{ encoded: string; filePath: string }>> {
+  const candidatePaths = [worktreePath]
+
+  try {
+    const resolvedPath = await realpath(worktreePath)
+    if (resolvedPath !== worktreePath) {
+      candidatePaths.push(resolvedPath)
+    }
+  } catch {
+    // If the worktree vanished, keep the original path so the caller gets the usual not-found result.
+  }
+
+  const seen = new Set<string>()
+  return candidatePaths.flatMap((candidatePath) => {
+    const encoded = encodePath(candidatePath)
+    if (seen.has(encoded)) return []
+    seen.add(encoded)
+    return [{ encoded, filePath: join(projectsRoot, encoded, `${claudeSessionId}.jsonl`) }]
+  })
+}
+
 function isErrnoCode(err: unknown, code: string): boolean {
   return (
     typeof err === 'object' &&
@@ -44,6 +105,7 @@ function logTranscriptReadFailure(
     projectsRoot: string
     encoded: string
     primaryFilePath: string
+    attemptedFilePaths?: string[]
     claudeSessionId: string
   }
 ): void {

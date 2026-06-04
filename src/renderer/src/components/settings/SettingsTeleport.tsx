@@ -1,0 +1,116 @@
+import { useState } from 'react'
+import { Check, Loader2, RadioTower, X } from 'lucide-react'
+import { toast } from 'sonner'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { useSettingsStore } from '@/stores/useSettingsStore'
+
+function normalizeUrl(value: string): string {
+  return value.trim().replace(/\/+$/, '')
+}
+
+export function SettingsTeleport(): React.JSX.Element {
+  const teleport = useSettingsStore((s) => s.teleport)
+  const updateSetting = useSettingsStore((s) => s.updateSetting)
+  const [url, setUrl] = useState(teleport?.url ?? '')
+  const [bootstrapToken, setBootstrapToken] = useState(teleport?.bootstrapToken ?? '')
+  const [testing, setTesting] = useState(false)
+  const [testOk, setTestOk] = useState<boolean | null>(null)
+
+  const save = (nextUrl = url, nextToken = bootstrapToken): void => {
+    const normalizedUrl = normalizeUrl(nextUrl)
+    const normalizedToken = nextToken.trim()
+    updateSetting(
+      'teleport',
+      normalizedUrl || normalizedToken
+        ? { url: normalizedUrl, bootstrapToken: normalizedToken }
+        : null
+    )
+  }
+
+  const testConnection = async (): Promise<void> => {
+    const baseUrl = normalizeUrl(url)
+    if (!baseUrl) return
+    setTesting(true)
+    setTestOk(null)
+    try {
+      const [health, environment] = await Promise.all([
+        fetch(`${baseUrl}/health`),
+        fetch(`${baseUrl}/.well-known/hive/environment`)
+      ])
+      if (!health.ok || !environment.ok) {
+        throw new Error(`Health ${health.status}, environment ${environment.status}`)
+      }
+      setTestOk(true)
+      toast.success('Teleport remote connected')
+    } catch (error) {
+      setTestOk(false)
+      toast.error(error instanceof Error ? error.message : 'Teleport remote connection failed')
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h3 className="text-sm font-medium mb-1">Teleport</h3>
+        <p className="text-xs text-muted-foreground">
+          Configure the headless Hive server that receives stopped Claude Code CLI sessions.
+        </p>
+      </div>
+
+      <div className="space-y-4 rounded-lg border p-4">
+        <div className="space-y-1">
+          <label className="text-xs font-medium text-muted-foreground">Remote URL</label>
+          <Input
+            value={url}
+            onChange={(event) => {
+              setUrl(event.target.value)
+              setTestOk(null)
+            }}
+            onBlur={() => save()}
+            placeholder="http://localhost:3773"
+            className="h-8 text-sm"
+            data-testid="teleport-url-input"
+          />
+        </div>
+
+        <div className="space-y-1">
+          <label className="text-xs font-medium text-muted-foreground">Bootstrap token</label>
+          <Input
+            type="password"
+            value={bootstrapToken}
+            onChange={(event) => {
+              setBootstrapToken(event.target.value)
+              setTestOk(null)
+            }}
+            onBlur={() => save()}
+            placeholder="Remote bootstrap token"
+            className="h-8 text-sm"
+            data-testid="teleport-token-input"
+          />
+        </div>
+
+        <div className="flex items-center justify-between text-xs text-muted-foreground">
+          <span>Status: {teleport?.url ? `configured for ${teleport.url}` : 'not configured'}</span>
+          <div className="flex items-center gap-2">
+            {testOk === true && <Check className="h-4 w-4 text-green-500" />}
+            {testOk === false && <X className="h-4 w-4 text-red-500" />}
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={testing || !url.trim()}
+              onClick={() => void testConnection()}
+              data-testid="teleport-test-button"
+            >
+              {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : null}
+              Test
+            </Button>
+            <RadioTower className="h-4 w-4" />
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}

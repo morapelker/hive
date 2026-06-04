@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Session } from '../../db/types'
-import { buildClaudeCliPtySpawn } from '../claude-cli-spawner'
+import { buildClaudeCliPtySpawn, normalizeClaudeCliModel } from '../claude-cli-spawner'
 
 function makeSession(overrides: Partial<Session> = {}): Session {
   return {
@@ -27,6 +27,12 @@ function makeSession(overrides: Partial<Session> = {}): Session {
 }
 
 describe('buildClaudeCliPtySpawn', () => {
+  it('normalizes current Claude marketing model ids to CLI aliases', () => {
+    expect(normalizeClaudeCliModel('claude-sonnet-4')).toBe('sonnet')
+    expect(normalizeClaudeCliModel('claude-opus-4-5-20251101')).toBe('opus')
+    expect(normalizeClaudeCliModel('claude-haiku-4-5-20251001')).toBe('haiku')
+  })
+
   it('builds build-mode argv with model, effort, resume id, and positional prompt', () => {
     const spawn = buildClaudeCliPtySpawn({
       session: makeSession({ claude_session_id: 'claude-uuid-1' }),

@@ -12,6 +12,7 @@ export interface Worktree {
   last_model_provider_id: string | null
   last_model_id: string | null
   last_model_variant: string | null
+  teleported_to?: string | null
   created_at: string
   last_accessed_at: string
 }

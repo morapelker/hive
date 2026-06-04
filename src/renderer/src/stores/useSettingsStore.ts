@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { APP_SETTINGS_DB_KEY } from '@shared/types/settings'
+import type { TeleportSettings } from '@shared/types/settings'
 import type { TelegramConfig } from '@shared/types/telegram'
 import type { UsageProvider } from '@shared/types/usage'
 import type { PetSettings } from '@shared/types/pet'
@@ -152,6 +153,9 @@ export interface AppSettings {
   // Telegram
   telegramConfig: TelegramConfig | null
 
+  // Teleport
+  teleport: TeleportSettings | null
+
   // Pet
   pet: PetSettings
 
@@ -230,6 +234,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   telemetryEnabled: true,
   tipsEnabled: true,
   telegramConfig: null,
+  teleport: null,
   pet: {
     enabled: false,
     petId: 'bee',
@@ -328,7 +333,8 @@ async function loadSettingsFromDatabase(): Promise<AppSettings | null> {
           pet: {
             ...DEFAULT_SETTINGS.pet,
             ...(parsed.pet || {})
-          }
+          },
+          teleport: parsed.teleport ?? null
         }
 
         // Migrate legacy showUsageIndicator boolean
@@ -359,7 +365,10 @@ async function loadSettingsFromDatabase(): Promise<AppSettings | null> {
             if (validation.valid) {
               validCommands.push(cmd as CustomProjectCommand)
             } else {
-              console.warn('Invalid custom command filtered during settings load:', validation.errors)
+              console.warn(
+                'Invalid custom command filtered during settings load:',
+                validation.errors
+              )
             }
           })
           result.customProjectCommands = validCommands
@@ -421,6 +430,7 @@ function extractSettings(state: SettingsState): AppSettings {
     telemetryEnabled: state.telemetryEnabled,
     tipsEnabled: state.tipsEnabled,
     telegramConfig: null,
+    teleport: state.teleport,
     pet: state.pet,
     environmentVariables: state.environmentVariables,
     customProjectCommands: state.customProjectCommands,
@@ -794,5 +804,4 @@ if (typeof window !== 'undefined') {
       useSettingsStore.setState({ customProjectCommands: validCommands })
     }
   })
-
 }

@@ -96,6 +96,7 @@ interface Worktree {
   last_accessed_at: string
   github_pr_number: number | null
   github_pr_url: string | null
+  teleported_to?: string | null
 }
 
 interface WorktreeSelectionOptions {

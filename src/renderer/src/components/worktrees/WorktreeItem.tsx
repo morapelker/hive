@@ -22,7 +22,8 @@ import {
   PinOff,
   Unlink,
   FileText,
-  Zap
+  Zap,
+  RadioTower
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -89,6 +90,7 @@ interface Worktree {
   created_at: string
   last_accessed_at: string
   attachments: string // JSON array
+  teleported_to?: string | null
 }
 
 interface WorktreeItemProps {
@@ -130,6 +132,7 @@ export const WorktreeItem = memo(function WorktreeItem({
   const isRunProcessAlive = useScriptStore((s) => s.scriptStates[worktree.id]?.runRunning ?? false)
   const liveBranch = useGitStore((s) => s.branchInfoByWorktree.get(worktree.path))
   const displayName = liveBranch?.name ?? worktree.name
+  const isTeleported = Boolean(worktree.teleported_to)
 
   // Connection mode state
   const connectionModeActive = useConnectionStore((s) => s.connectionModeActive)
@@ -528,6 +531,15 @@ export const WorktreeItem = memo(function WorktreeItem({
               <span className={cn('text-[11px]', statusClass)} data-testid="worktree-status-text">
                 {displayStatus}
               </span>
+              {isTeleported && (
+                <span
+                  className="ml-1.5 inline-flex items-center gap-0.5 rounded border border-sky-500/30 px-1 text-[10px] font-medium text-sky-500"
+                  data-testid="worktree-teleported-badge"
+                >
+                  <RadioTower className="h-2.5 w-2.5" />
+                  Teleported
+                </span>
+              )}
               <span className="flex-1" />
               {lastMessageTime && (
                 <span
@@ -668,6 +680,15 @@ export const WorktreeItem = memo(function WorktreeItem({
               <span className={cn('text-[11px]', statusClass)} data-testid="worktree-status-text">
                 {displayStatus}
               </span>
+              {isTeleported && (
+                <span
+                  className="ml-1.5 inline-flex items-center gap-0.5 rounded border border-sky-500/30 px-1 text-[10px] font-medium text-sky-500"
+                  data-testid="worktree-teleported-badge"
+                >
+                  <RadioTower className="h-2.5 w-2.5" />
+                  Teleported
+                </span>
+              )}
               <span className="flex-1" />
               {lastMessageTime && (
                 <span

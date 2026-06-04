@@ -284,6 +284,7 @@ export class DatabaseService {
       context: (row.context as string) ?? null,
       github_pr_number: (row.github_pr_number as number) ?? null,
       github_pr_url: (row.github_pr_url as string) ?? null,
+      teleported_to: (row.teleported_to as string) ?? null,
       base_branch: (row.base_branch as string) ?? null
     } as Worktree
   }
@@ -642,6 +643,7 @@ export class DatabaseService {
     this.safeAddColumn('worktrees', 'context', 'TEXT DEFAULT NULL')
     this.safeAddColumn('worktrees', 'github_pr_number', 'INTEGER DEFAULT NULL')
     this.safeAddColumn('worktrees', 'github_pr_url', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('worktrees', 'teleported_to', 'TEXT DEFAULT NULL')
     this.safeAddColumn('connections', 'pinned', 'INTEGER NOT NULL DEFAULT 0')
     this.safeAddColumn('projects', 'kanban_simple_mode', 'INTEGER NOT NULL DEFAULT 0')
     this.safeAddColumn('projects', 'custom_commands', 'TEXT DEFAULT NULL')
@@ -1083,6 +1085,7 @@ export class DatabaseService {
       context: null,
       github_pr_number: null,
       github_pr_url: null,
+      teleported_to: null,
       base_branch: data.base_branch ?? null,
       created_at: now,
       last_accessed_at: now
@@ -1297,6 +1300,10 @@ export class DatabaseService {
     if (data.last_accessed_at !== undefined) {
       updates.push('last_accessed_at = ?')
       values.push(data.last_accessed_at)
+    }
+    if (data.teleported_to !== undefined) {
+      updates.push('teleported_to = ?')
+      values.push(data.teleported_to)
     }
 
     if (updates.length === 0) return existing
@@ -1532,15 +1539,11 @@ export class DatabaseService {
     return row ? this.mapSessionRow(row) : null
   }
 
-  getAgentSdkForSession(
-    agentSessionId: string
-  ): AgentSdk | null {
+  getAgentSdkForSession(agentSessionId: string): AgentSdk | null {
     const db = this.getDb()
     const row = db
       .prepare('SELECT agent_sdk FROM sessions WHERE opencode_session_id = ? LIMIT 1')
-      .get(agentSessionId) as
-      | { agent_sdk: AgentSdk }
-      | undefined
+      .get(agentSessionId) as { agent_sdk: AgentSdk } | undefined
     return row?.agent_sdk ?? null
   }
 

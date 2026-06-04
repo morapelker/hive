@@ -12,6 +12,7 @@ import { isDesktopBackendEventMessage } from '../shared/desktop-command'
 import { cleanupBranchWatchers } from '../main/services/branch-watcher'
 import { setGitEventPublisher } from '../main/services/git-events'
 import { cleanupWorktreeWatchers } from '../main/services/worktree-watcher'
+import { getDatabase } from '../main/db'
 
 export interface StartedHiveServer {
   readonly config: ServerConfig
@@ -33,6 +34,7 @@ export const startHiveServer = (
 ): Effect.Effect<StartedHiveServer, Error> =>
   Effect.gen(function* () {
     const config = yield* resolveServerConfig(input)
+    getDatabase().init()
     const eventBus = makeEventBus()
 
     if (desktopBackendEventForwarder) {

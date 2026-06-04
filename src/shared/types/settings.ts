@@ -6,6 +6,11 @@ export interface Setting {
   value: string
 }
 
+export interface TeleportSettings {
+  url: string
+  bootstrapToken: string
+}
+
 export interface DetectedApp {
   id: string
   name: string

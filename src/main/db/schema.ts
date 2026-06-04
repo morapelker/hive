@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 33
+export const CURRENT_SCHEMA_VERSION = 34
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS worktrees (
   context TEXT DEFAULT NULL,
   github_pr_number INTEGER DEFAULT NULL,
   github_pr_url TEXT DEFAULT NULL,
+  teleported_to TEXT DEFAULT NULL,
   created_at TEXT NOT NULL,
   last_accessed_at TEXT NOT NULL
 );
@@ -582,6 +583,12 @@ DROP TABLE IF EXISTS diff_comments;`
     version: 33,
     name: 'add_discord_managed_session_link',
     up: `ALTER TABLE discord_resources ADD COLUMN managed_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
+  },
+  {
+    version: 34,
+    name: 'add_worktree_teleported_to',
+    up: `ALTER TABLE worktrees ADD COLUMN teleported_to TEXT DEFAULT NULL`,
     down: `-- SQLite cannot drop columns; this is a no-op for safety`
   }
 ]

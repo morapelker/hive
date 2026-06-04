@@ -116,6 +116,11 @@ import {
   type TelegramOpsRpcService
 } from './domains/telegram-ops'
 import {
+  makeLiveTeleportOpsRpcService,
+  makeTeleportOpsRpcHandlers,
+  type TeleportOpsRpcService
+} from './domains/teleport-ops'
+import {
   makeLiveUpdaterOpsRpcService,
   makeUpdaterOpsRpcHandlers,
   type UpdaterOpsRpcService
@@ -157,6 +162,7 @@ export interface RpcContext {
   readonly terminalOps?: TerminalOpsRpcService
   readonly ticketImport?: TicketImportRpcService
   readonly telegramOps?: TelegramOpsRpcService
+  readonly teleportOps?: TeleportOpsRpcService
   readonly updaterOps?: UpdaterOpsRpcService
   readonly usageOps?: UsageOpsRpcService
   readonly worktreeOps?: WorktreeOpsRpcService
@@ -221,6 +227,7 @@ const makeDefaultRpcHandlers = (context: RpcContext): ReadonlyMap<string, RpcHan
     ...makeTelegramOpsRpcHandlers(
       context.telegramOps ?? makeLiveTelegramOpsRpcService(context.eventBus)
     ),
+    ...makeTeleportOpsRpcHandlers(context.teleportOps ?? makeLiveTeleportOpsRpcService()),
     ...makeUpdaterOpsRpcHandlers(context.updaterOps ?? makeLiveUpdaterOpsRpcService()),
     ...makeUsageOpsRpcHandlers(context.usageOps ?? makeLiveUsageOpsRpcService()),
     ...makeWorktreeOpsRpcHandlers(context.worktreeOps ?? makeLiveWorktreeOpsRpcService())

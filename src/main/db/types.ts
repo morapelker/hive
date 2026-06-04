@@ -67,6 +67,7 @@ export interface Worktree {
   context: string | null
   github_pr_number: number | null
   github_pr_url: string | null
+  teleported_to?: string | null
   base_branch: string | null
   created_at: string
   last_accessed_at: string
@@ -93,6 +94,7 @@ export interface WorktreeUpdate {
   pinned?: number
   github_pr_number?: number | null
   github_pr_url?: string | null
+  teleported_to?: string | null
   last_accessed_at?: string
 }
 
