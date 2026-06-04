@@ -108,6 +108,7 @@ export interface StartDesktopBackendInput {
   readonly readinessTimeoutMs?: number
   readonly readinessIntervalMs?: number
   readonly restartLimit?: number
+  readonly headless?: boolean
 }
 
 interface BackendManagerDeps {
@@ -530,6 +531,7 @@ export const startDesktopBackend = async (
   if (existingBackend) return existingBackend
 
   const log = deps.logger ?? defaultLog
+  const headless = input.headless ?? false
   const baseDir = input.baseDir ?? join(app.getPath('home'), '.hive')
   // `dev:web` pins the backend to a known free port via HIVE_DESKTOP_BACKEND_PORT so
   // its Vite dev server can target it. When set, scan only that single port.
@@ -568,7 +570,7 @@ export const startDesktopBackend = async (
     })
 
     child.on('message', (message) => {
-      void handleDesktopBackendCommand(child, message, log)
+      void handleDesktopBackendCommand(child, message, log, { headless })
     })
     child.stdout?.on('data', (chunk) => {
       log.info('Backend stdout', { text: String(chunk) })
@@ -650,7 +652,8 @@ export const startDesktopBackend = async (
 const handleDesktopBackendCommand = (
   child: ChildProcess,
   message: unknown,
-  log: NonNullable<BackendManagerDeps['logger']>
+  log: NonNullable<BackendManagerDeps['logger']>,
+  options: { readonly headless?: boolean } = {}
 ): Promise<void> | void => {
   if (!isDesktopCommandRequest(message)) return
 
@@ -2345,7 +2348,11 @@ const handleDesktopBackendCommand = (
 
   if (message.command === 'showPet') {
     try {
-      createPetWindow(getDesktopBackendBootstrap())
+      if (options.headless) {
+        log.info('Ignoring showPet command in headless mode')
+      } else {
+        createPetWindow(getDesktopBackendBootstrap())
+      }
       sendDesktopBackendCommandResult(
         child,
         makeDesktopCommandResult(message.id, { ok: true }),
@@ -2547,7 +2554,11 @@ const handleDesktopBackendCommand = (
     try {
       updatePetSettings(message.payload)
       if (message.payload.enabled === true) {
-        createPetWindow(getDesktopBackendBootstrap())
+        if (options.headless) {
+          log.info('Skipping pet window creation in headless mode')
+        } else {
+          createPetWindow(getDesktopBackendBootstrap())
+        }
       } else if (message.payload.enabled === false) {
         destroyPetWindow()
       }

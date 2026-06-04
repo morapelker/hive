@@ -95,6 +95,7 @@ let latestStatus: PetStatusPayload = {
 let latestSettings: PetSettings = DEFAULT_PET_SETTINGS
 let petPointerInteractionActive = false
 let petPointerInteractionTimer: NodeJS.Timeout | null = null
+let headlessMode = false
 
 function ensureRegularMacAppActivation(): void {
   if (process.platform !== 'darwin') return
@@ -165,8 +166,12 @@ export function savePetPosition(position: PetPosition): void {
   }
 }
 
-export function configurePetWindow(options: { getMainWindow: () => BrowserWindow | null }): void {
+export function configurePetWindow(options: {
+  getMainWindow: () => BrowserWindow | null
+  headless?: boolean
+}): void {
   getMainWindow = options.getMainWindow
+  headlessMode = options.headless ?? false
 }
 
 export function getPetWindow(): BrowserWindow | null {
@@ -223,6 +228,7 @@ export function createPetWindow(
   bootstrap: LocalEnvironmentBootstrap | null = null
 ): BrowserWindow | null {
   if (process.platform !== 'darwin') return null
+  if (headlessMode) return null
   ensureRegularMacAppActivation()
   if (petWindow && !petWindow.isDestroyed()) return petWindow
 

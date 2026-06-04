@@ -1,5 +1,5 @@
 import { loadShellEnv } from './services/shell-env'
-import { app, shell, BrowserWindow, screen, webContents } from 'electron'
+import { app, shell, BrowserWindow, Menu, screen, webContents } from 'electron'
 import { join } from 'path'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { electronApp, is } from '@electron-toolkit/utils'
@@ -219,6 +219,7 @@ let lastQuitConfirmAt: number | null = null
 // Parse CLI flags
 const cliArgs = process.argv.slice(2)
 const isLogMode = cliArgs.includes('--log')
+const isHeadless = cliArgs.includes('--headless') || process.env.HIVE_HEADLESS === '1'
 
 interface WindowBounds {
   x: number
@@ -276,6 +277,8 @@ function saveWindowBounds(window: BrowserWindow): void {
 }
 
 let mainWindow: BrowserWindow | null = null
+const wiredWindows = new WeakSet<BrowserWindow>()
+let allowHeadlessDockActivation = false
 
 function ensureDockVisible(reason: string): void {
   if (process.platform !== 'darwin') return
@@ -438,6 +441,39 @@ function createWindow(backendBootstrap?: LocalEnvironmentBootstrap | null): void
   }
 }
 
+function wireWindow(window: BrowserWindow): void {
+  if (wiredWindows.has(window)) return
+  wiredWindows.add(window)
+
+  log.info('Building application menu')
+  buildMenu(window, is.dev)
+
+  log.info('Initializing Ghostty desktop integration')
+  ghosttyService.setMainWindow(window)
+
+  notificationService.setMainWindow(window)
+}
+
+function openMainWindow(backendBootstrap?: LocalEnvironmentBootstrap | null): void {
+  createWindow(backendBootstrap)
+  if (mainWindow) {
+    wireWindow(mainWindow)
+  }
+}
+
+function configureHeadlessDockMenu(backendBootstrap: LocalEnvironmentBootstrap): void {
+  if (process.platform !== 'darwin') return
+
+  app.dock?.setMenu(
+    Menu.buildFromTemplate([
+      {
+        label: 'Open Hive Window',
+        click: () => openMainWindow(backendBootstrap)
+      }
+    ])
+  )
+}
+
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
@@ -464,9 +500,12 @@ app
     if (isLogMode) {
       log.info('Response logging enabled via --log flag')
     }
+    if (isHeadless) {
+      log.info('Headless mode enabled')
+    }
 
     log.info('Starting local backend server')
-    const desktopBackend = await startDesktopBackend()
+    const desktopBackend = await startDesktopBackend({ headless: isHeadless })
     log.info('Local backend server ready', {
       httpBaseUrl: desktopBackend.bootstrap.httpBaseUrl,
       wsBaseUrl: desktopBackend.bootstrap.wsBaseUrl
@@ -489,260 +528,251 @@ app
 
     // Register desktop-side integrations that back server desktop commands.
     log.info('Registering desktop integrations')
-    configurePetWindow({ getMainWindow: () => mainWindow })
+    configurePetWindow({ getMainWindow: () => mainWindow, headless: isHeadless })
     initTicketProviderManager([new GitHubProvider(), new JiraProvider()])
 
-    log.info('Creating main window')
-    createWindow(desktopBackend.bootstrap)
-    log.info('Main window created, waiting for renderer to load')
+    // Create SDK manager for multi-provider dispatch.
+    // OpenCode sessions still route through openCodeService directly (fallback path in handlers).
+    // The placeholder just satisfies AgentSdkManager's constructor signature.
+    const claudeImpl = new ClaudeCodeImplementer()
+    claudeImpl.setDatabaseService(getDatabase())
+    claudeImpl.setClaudeBinaryPath(claudeBinaryPath)
+    setRouterClaudeBinaryPath(claudeBinaryPath)
+    openCodeService.setOpenCodeLaunchSpec(openCodeLaunchSpec)
+    setRouterOpenCodeLaunchSpec(openCodeLaunchSpec)
+    const openCodePlaceholder = {
+      id: 'opencode' as const,
+      capabilities: {
+        supportsUndo: true,
+        supportsRedo: true,
+        supportsCommands: true,
+        supportsPermissionRequests: true,
+        supportsQuestionPrompts: true,
+        supportsModelSelection: true,
+        supportsReconnect: true,
+        supportsPartialStreaming: true,
+        supportsSteer: false
+      },
+      connect: async () => ({ sessionId: '' }),
+      reconnect: async () => ({ success: false }),
+      disconnect: async () => {},
+      cleanup: async () => {},
+      prompt: async () => {},
+      abort: async () => false,
+      getMessages: async () => [],
+      getAvailableModels: async () => ({}),
+      getModelInfo: async () => null,
+      setSelectedModel: () => {},
+      getSessionInfo: async () => ({ revertMessageID: null, revertDiff: null }),
+      questionReply: async () => {},
+      questionReject: async () => {},
+      permissionReply: async () => {},
+      permissionList: async () => [],
+      undo: async () => ({}),
+      redo: async () => ({}),
+      listCommands: async () => [],
+      sendCommand: async () => {},
+      renameSession: async () => {}
+    } satisfies AgentSdkImplementer
+    const codexImpl = new CodexImplementer()
+    codexImpl.setDatabaseService(getDatabase())
+    codexImpl.setCodexBinaryPath(codexBinaryPath)
+    setRouterCodexBinaryPath(codexBinaryPath)
+    const sdkManager = new AgentSdkManager([openCodePlaceholder, claudeImpl, codexImpl])
+    discordService.setAgentSdkManager(sdkManager)
+    getSpawnRuntime()
 
-    // Register OpenCode handlers after window is created
-    if (mainWindow) {
-      // Build the full application menu (File, Edit, Session, Git, View, Window, Help)
-      log.info('Building application menu')
-      buildMenu(mainWindow, is.dev)
+    const databaseService = getDatabase()
+    telegramForwardingService.initialize({ db: databaseService, sdkManager })
 
-      // Create SDK manager for multi-provider dispatch
-      // OpenCode sessions still route through openCodeService directly (fallback path in handlers)
-      // The placeholder just satisfies AgentSdkManager's constructor signature
-      const claudeImpl = new ClaudeCodeImplementer()
-      claudeImpl.setDatabaseService(getDatabase())
-      claudeImpl.setClaudeBinaryPath(claudeBinaryPath)
-      setRouterClaudeBinaryPath(claudeBinaryPath)
-      openCodeService.setOpenCodeLaunchSpec(openCodeLaunchSpec)
-      setRouterOpenCodeLaunchSpec(openCodeLaunchSpec)
-      const openCodePlaceholder = {
-        id: 'opencode' as const,
-        capabilities: {
-          supportsUndo: true,
-          supportsRedo: true,
-          supportsCommands: true,
-          supportsPermissionRequests: true,
-          supportsQuestionPrompts: true,
-          supportsModelSelection: true,
-          supportsReconnect: true,
-          supportsPartialStreaming: true,
-          supportsSteer: false
-        },
-        connect: async () => ({ sessionId: '' }),
-        reconnect: async () => ({ success: false }),
-        disconnect: async () => {},
-        cleanup: async () => {},
-        prompt: async () => {},
-        abort: async () => false,
-        getMessages: async () => [],
-        getAvailableModels: async () => ({}),
-        getModelInfo: async () => null,
-        setSelectedModel: () => {},
-        getSessionInfo: async () => ({ revertMessageID: null, revertDiff: null }),
-        questionReply: async () => {},
-        questionReject: async () => {},
-        permissionReply: async () => {},
-        permissionList: async () => [],
-        undo: async () => ({}),
-        redo: async () => ({}),
-        listCommands: async () => [],
-        sendCommand: async () => {},
-        renameSession: async () => {}
-      } satisfies AgentSdkImplementer
-      const codexImpl = new CodexImplementer()
-      codexImpl.setDatabaseService(getDatabase())
-      codexImpl.setCodexBinaryPath(codexBinaryPath)
-      setRouterCodexBinaryPath(codexBinaryPath)
-      const sdkManager = new AgentSdkManager([openCodePlaceholder, claudeImpl, codexImpl])
-      discordService.setAgentSdkManager(sdkManager)
-      getSpawnRuntime()
-
-      const databaseService = getDatabase()
-      telegramForwardingService.initialize({ db: databaseService, sdkManager })
-
-      log.info('Initializing OpenCode desktop integration')
-      setDesktopBackendOpenCodeConnectHandler((worktreePath, hiveSessionId) =>
-        connectOpenCodeSession(worktreePath, hiveSessionId, sdkManager, databaseService)
+    log.info('Initializing OpenCode desktop integration')
+    setDesktopBackendOpenCodeConnectHandler((worktreePath, hiveSessionId) =>
+      connectOpenCodeSession(worktreePath, hiveSessionId, sdkManager, databaseService)
+    )
+    setDesktopBackendOpenCodeReconnectHandler((worktreePath, opencodeSessionId, hiveSessionId) =>
+      reconnectOpenCodeSession(
+        worktreePath,
+        opencodeSessionId,
+        hiveSessionId,
+        sdkManager,
+        databaseService
       )
-      setDesktopBackendOpenCodeReconnectHandler((worktreePath, opencodeSessionId, hiveSessionId) =>
-        reconnectOpenCodeSession(
+    )
+    setDesktopBackendOpenCodePromptHandler(
+      (worktreePath, opencodeSessionId, messageOrParts, model, options) =>
+        promptOpenCodeSession(
           worktreePath,
           opencodeSessionId,
-          hiveSessionId,
+          messageOrParts,
+          model,
+          options,
           sdkManager,
           databaseService
         )
-      )
-      setDesktopBackendOpenCodePromptHandler(
-        (worktreePath, opencodeSessionId, messageOrParts, model, options) =>
-          promptOpenCodeSession(
-            worktreePath,
-            opencodeSessionId,
-            messageOrParts,
-            model,
-            options,
-            sdkManager,
-            databaseService
-          )
-      )
-      setDesktopBackendOpenCodeAbortHandler((worktreePath, opencodeSessionId) =>
-        abortOpenCodeSession(worktreePath, opencodeSessionId, sdkManager, databaseService)
-      )
-      setDesktopBackendOpenCodeSteerHandler((worktreePath, opencodeSessionId, message) =>
-        steerOpenCodeSession(worktreePath, opencodeSessionId, message, sdkManager, databaseService)
-      )
-      setDesktopBackendOpenCodeDisconnectHandler((worktreePath, opencodeSessionId) =>
-        disconnectOpenCodeSession(worktreePath, opencodeSessionId, sdkManager, databaseService)
-      )
-      setDesktopBackendOpenCodeGetMessagesHandler((worktreePath, opencodeSessionId) =>
-        getOpenCodeSessionMessages(worktreePath, opencodeSessionId, sdkManager, databaseService)
-      )
-      setDesktopBackendOpenCodeRefreshFromThreadHandler((worktreePath, opencodeSessionId) =>
-        refreshOpenCodeSessionFromThread(
+    )
+    setDesktopBackendOpenCodeAbortHandler((worktreePath, opencodeSessionId) =>
+      abortOpenCodeSession(worktreePath, opencodeSessionId, sdkManager, databaseService)
+    )
+    setDesktopBackendOpenCodeSteerHandler((worktreePath, opencodeSessionId, message) =>
+      steerOpenCodeSession(worktreePath, opencodeSessionId, message, sdkManager, databaseService)
+    )
+    setDesktopBackendOpenCodeDisconnectHandler((worktreePath, opencodeSessionId) =>
+      disconnectOpenCodeSession(worktreePath, opencodeSessionId, sdkManager, databaseService)
+    )
+    setDesktopBackendOpenCodeGetMessagesHandler((worktreePath, opencodeSessionId) =>
+      getOpenCodeSessionMessages(worktreePath, opencodeSessionId, sdkManager, databaseService)
+    )
+    setDesktopBackendOpenCodeRefreshFromThreadHandler((worktreePath, opencodeSessionId) =>
+      refreshOpenCodeSessionFromThread(worktreePath, opencodeSessionId, sdkManager, databaseService)
+    )
+    setDesktopBackendOpenCodeListModelsHandler((opts) => listOpenCodeModels(opts, sdkManager))
+    setDesktopBackendOpenCodeSetModelHandler((model) => setOpenCodeSelectedModel(model, sdkManager))
+    setDesktopBackendOpenCodeModelInfoHandler((worktreePath, modelId, agentSdk) =>
+      getOpenCodeModelInfo(worktreePath, modelId, agentSdk, sdkManager)
+    )
+    setDesktopBackendOpenCodeQuestionReplyHandler((requestId, answers, worktreePath) =>
+      replyOpenCodeQuestion(requestId, answers, worktreePath, sdkManager)
+    )
+    setDesktopBackendOpenCodeQuestionRejectHandler((requestId, worktreePath) =>
+      rejectOpenCodeQuestion(requestId, worktreePath, sdkManager)
+    )
+    setDesktopBackendOpenCodePlanApproveHandler((worktreePath, hiveSessionId, requestId) =>
+      approveOpenCodePlan(worktreePath, hiveSessionId, requestId, sdkManager)
+    )
+    setDesktopBackendOpenCodePlanRejectHandler((worktreePath, hiveSessionId, feedback, requestId) =>
+      rejectOpenCodePlan(worktreePath, hiveSessionId, feedback, requestId, sdkManager)
+    )
+    setDesktopBackendOpenCodePermissionReplyHandler((requestId, reply, worktreePath, message) =>
+      replyOpenCodePermission(requestId, reply, worktreePath, message, sdkManager)
+    )
+    setDesktopBackendOpenCodePermissionListHandler((worktreePath) =>
+      listOpenCodePermissions(worktreePath, sdkManager)
+    )
+    setDesktopBackendOpenCodeCommandApprovalReplyHandler(
+      (requestId, approved, remember, pattern, worktreePath, patterns) =>
+        replyOpenCodeCommandApproval(
+          requestId,
+          approved,
+          remember,
+          pattern,
+          worktreePath,
+          patterns,
+          sdkManager
+        )
+    )
+    setDesktopBackendOpenCodeSessionInfoHandler((worktreePath, opencodeSessionId) =>
+      getOpenCodeSessionInfo(worktreePath, opencodeSessionId, sdkManager, databaseService)
+    )
+    setDesktopBackendOpenCodeUndoHandler((worktreePath, opencodeSessionId) =>
+      undoOpenCodeSession(worktreePath, opencodeSessionId, sdkManager, databaseService)
+    )
+    setDesktopBackendOpenCodeRedoHandler((worktreePath, opencodeSessionId) =>
+      redoOpenCodeSession(worktreePath, opencodeSessionId, sdkManager, databaseService)
+    )
+    setDesktopBackendOpenCodeCommandHandler(
+      (worktreePath, opencodeSessionId, command, args, model, options) =>
+        sendOpenCodeCommand(
           worktreePath,
           opencodeSessionId,
+          command,
+          args,
+          model,
+          options,
           sdkManager,
           databaseService
         )
-      )
-      setDesktopBackendOpenCodeListModelsHandler((opts) => listOpenCodeModels(opts, sdkManager))
-      setDesktopBackendOpenCodeSetModelHandler((model) =>
-        setOpenCodeSelectedModel(model, sdkManager)
-      )
-      setDesktopBackendOpenCodeModelInfoHandler((worktreePath, modelId, agentSdk) =>
-        getOpenCodeModelInfo(worktreePath, modelId, agentSdk, sdkManager)
-      )
-      setDesktopBackendOpenCodeQuestionReplyHandler((requestId, answers, worktreePath) =>
-        replyOpenCodeQuestion(requestId, answers, worktreePath, sdkManager)
-      )
-      setDesktopBackendOpenCodeQuestionRejectHandler((requestId, worktreePath) =>
-        rejectOpenCodeQuestion(requestId, worktreePath, sdkManager)
-      )
-      setDesktopBackendOpenCodePlanApproveHandler((worktreePath, hiveSessionId, requestId) =>
-        approveOpenCodePlan(worktreePath, hiveSessionId, requestId, sdkManager)
-      )
-      setDesktopBackendOpenCodePlanRejectHandler(
-        (worktreePath, hiveSessionId, feedback, requestId) =>
-          rejectOpenCodePlan(worktreePath, hiveSessionId, feedback, requestId, sdkManager)
-      )
-      setDesktopBackendOpenCodePermissionReplyHandler((requestId, reply, worktreePath, message) =>
-        replyOpenCodePermission(requestId, reply, worktreePath, message, sdkManager)
-      )
-      setDesktopBackendOpenCodePermissionListHandler((worktreePath) =>
-        listOpenCodePermissions(worktreePath, sdkManager)
-      )
-      setDesktopBackendOpenCodeCommandApprovalReplyHandler(
-        (requestId, approved, remember, pattern, worktreePath, patterns) =>
-          replyOpenCodeCommandApproval(
-            requestId,
-            approved,
-            remember,
-            pattern,
-            worktreePath,
-            patterns,
-            sdkManager
-          )
-      )
-      setDesktopBackendOpenCodeSessionInfoHandler((worktreePath, opencodeSessionId) =>
-        getOpenCodeSessionInfo(worktreePath, opencodeSessionId, sdkManager, databaseService)
-      )
-      setDesktopBackendOpenCodeUndoHandler((worktreePath, opencodeSessionId) =>
-        undoOpenCodeSession(worktreePath, opencodeSessionId, sdkManager, databaseService)
-      )
-      setDesktopBackendOpenCodeRedoHandler((worktreePath, opencodeSessionId) =>
-        redoOpenCodeSession(worktreePath, opencodeSessionId, sdkManager, databaseService)
-      )
-      setDesktopBackendOpenCodeCommandHandler(
-        (worktreePath, opencodeSessionId, command, args, model, options) =>
-          sendOpenCodeCommand(
-            worktreePath,
-            opencodeSessionId,
-            command,
-            args,
-            model,
-            options,
-            sdkManager,
-            databaseService
-          )
-      )
-      setDesktopBackendOpenCodeCommandsHandler((worktreePath, sessionId) =>
-        listOpenCodeCommands(worktreePath, sessionId, sdkManager, databaseService)
-      )
-      setDesktopBackendOpenCodeRenameSessionHandler((opencodeSessionId, title, worktreePath) =>
-        renameOpenCodeSession(opencodeSessionId, title, worktreePath, sdkManager, databaseService)
-      )
-      setDesktopBackendOpenCodeCapabilitiesHandler((sessionId) =>
-        getOpenCodeCapabilities(sessionId, sdkManager, databaseService)
-      )
-      setDesktopBackendOpenCodeForkHandler((worktreePath, opencodeSessionId, messageId) =>
-        forkOpenCodeSession(worktreePath, opencodeSessionId, messageId)
-      )
-      log.info('Initializing Ghostty desktop integration')
-      ghosttyService.setMainWindow(mainWindow)
+    )
+    setDesktopBackendOpenCodeCommandsHandler((worktreePath, sessionId) =>
+      listOpenCodeCommands(worktreePath, sessionId, sdkManager, databaseService)
+    )
+    setDesktopBackendOpenCodeRenameSessionHandler((opencodeSessionId, title, worktreePath) =>
+      renameOpenCodeSession(opencodeSessionId, title, worktreePath, sdkManager, databaseService)
+    )
+    setDesktopBackendOpenCodeCapabilitiesHandler((sessionId) =>
+      getOpenCodeCapabilities(sessionId, sdkManager, databaseService)
+    )
+    setDesktopBackendOpenCodeForkHandler((worktreePath, opencodeSessionId, messageId) =>
+      forkOpenCodeSession(worktreePath, opencodeSessionId, messageId)
+    )
 
-      // Set up notification service with main window reference
-      notificationService.setMainWindow(mainWindow)
+    // Wire up performance diagnostics collectors and auto-start if enabled.
+    perfDiagnostics.setCollectors({
+      getPtyCount: () => ptyService.getCount(),
+      getScriptStats: () => scriptRunner.getStats(),
+      getFileWatcherCount: () => getFileTreeWatcherCount(),
+      getWorktreeWatcherCount: () => -1,
+      getBranchWatcherCount: () => -1,
+      getActiveSessionCount: () => {
+        try {
+          return getDatabase().countActiveSessions()
+        } catch {
+          return -1
+        }
+      },
+      getElectronProcessCounts: () => ({
+        windows: BrowserWindow.getAllWindows().length,
+        webContents: webContents.getAllWebContents().length
+      })
+    })
 
+    // Auto-start perf diagnostics if setting is enabled.
+    try {
+      const raw = getDatabase().getSetting(APP_SETTINGS_DB_KEY)
+      if (raw) {
+        const settings = JSON.parse(raw) as { perfDiagnosticsEnabled?: boolean }
+        if (settings.perfDiagnosticsEnabled) {
+          log.info('Auto-starting performance diagnostics (setting enabled)')
+          perfDiagnostics.start()
+        }
+      }
+    } catch {
+      // ignore - setting may not exist yet
+    }
+
+    // Auto-enable codex JSONL logging if setting is enabled.
+    try {
+      const raw = getDatabase().getSetting(APP_SETTINGS_DB_KEY)
+      if (raw) {
+        const settings = JSON.parse(raw) as {
+          codexJsonlLoggingEnabled?: boolean
+          codexJsonlResetPerSession?: boolean
+        }
+        if (settings.codexJsonlLoggingEnabled) {
+          log.info('Auto-enabling codex JSONL logging (setting enabled)')
+          configureCodexDebugLogger({
+            enabled: true,
+            resetPerSession: settings.codexJsonlResetPerSession ?? true
+          })
+        }
+      }
+    } catch {
+      // ignore - setting may not exist yet
+    }
+
+    // Track app launch telemetry.
+    telemetryService.track('app_launched')
+    telemetryService.identify({
+      platform: process.platform,
+      app_version: app.getVersion(),
+      electron_version: process.versions.electron
+    })
+
+    if (isHeadless) {
+      configureHeadlessDockMenu(desktopBackend.bootstrap)
+      log.info('Running in HEADLESS mode - no native window. Discord bot active if configured.')
+      log.info(`Web UI available at ${desktopBackend.bootstrap.httpBaseUrl} (open in a browser)`)
+      setTimeout(() => {
+        allowHeadlessDockActivation = true
+      }, 5_000)
+    } else {
+      log.info('Creating main window')
+      openMainWindow(desktopBackend.bootstrap)
+      log.info('Main window created, waiting for renderer to load')
+    }
+
+    if (!isHeadless) {
       // Initialize auto-updater after backend event publishing is available.
       updaterService.init()
-
-      // Wire up performance diagnostics collectors and auto-start if enabled
-      perfDiagnostics.setCollectors({
-        getPtyCount: () => ptyService.getCount(),
-        getScriptStats: () => scriptRunner.getStats(),
-        getFileWatcherCount: () => getFileTreeWatcherCount(),
-        getWorktreeWatcherCount: () => -1,
-        getBranchWatcherCount: () => -1,
-        getActiveSessionCount: () => {
-          try {
-            return getDatabase().countActiveSessions()
-          } catch {
-            return -1
-          }
-        },
-        getElectronProcessCounts: () => ({
-          windows: BrowserWindow.getAllWindows().length,
-          webContents: webContents.getAllWebContents().length
-        })
-      })
-
-      // Auto-start perf diagnostics if setting is enabled
-      try {
-        const raw = getDatabase().getSetting(APP_SETTINGS_DB_KEY)
-        if (raw) {
-          const settings = JSON.parse(raw) as { perfDiagnosticsEnabled?: boolean }
-          if (settings.perfDiagnosticsEnabled) {
-            log.info('Auto-starting performance diagnostics (setting enabled)')
-            perfDiagnostics.start()
-          }
-        }
-      } catch {
-        // ignore — setting may not exist yet
-      }
-
-      // Auto-enable codex JSONL logging if setting is enabled
-      try {
-        const raw = getDatabase().getSetting(APP_SETTINGS_DB_KEY)
-        if (raw) {
-          const settings = JSON.parse(raw) as {
-            codexJsonlLoggingEnabled?: boolean
-            codexJsonlResetPerSession?: boolean
-          }
-          if (settings.codexJsonlLoggingEnabled) {
-            log.info('Auto-enabling codex JSONL logging (setting enabled)')
-            configureCodexDebugLogger({
-              enabled: true,
-              resetPerSession: settings.codexJsonlResetPerSession ?? true
-            })
-          }
-        }
-      } catch {
-        // ignore — setting may not exist yet
-      }
-
-      // Track app launch telemetry
-      telemetryService.track('app_launched')
-      telemetryService.identify({
-        platform: process.platform,
-        app_version: app.getVersion(),
-        electron_version: process.versions.electron
-      })
     }
 
     app.on('activate', function () {
@@ -760,7 +790,11 @@ app
       )
 
       if (!hasMainAppWindow) {
-        createWindow()
+        if (isHeadless && !allowHeadlessDockActivation) {
+          log.info('Ignoring early activate event in headless mode')
+          return
+        }
+        openMainWindow(desktopBackend.bootstrap)
         return
       }
 
@@ -787,7 +821,7 @@ app
 // for applications and their menu bar to stay active until the user quits
 // explicitly with Cmd + Q.
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
+  if (process.platform !== 'darwin' && !isHeadless) {
     app.quit()
   }
 })
