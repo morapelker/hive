@@ -10,6 +10,8 @@ import {
 import { join, basename, extname } from 'path'
 import { createLogger } from './logger'
 import { getDatabase } from '../db'
+import type { DatabaseService } from '../db/database'
+import type { Project, ProjectCreate } from '../db/types'
 import {
   getAbsoluteIconDataUrl as getAbsoluteProjectIconDataUrl,
   getProjectIconDataUrl,
@@ -24,7 +26,7 @@ export {
 } from './language-detector'
 export { detectSetupSuggestions } from './setup-script-suggester'
 export { loadLanguageIcons } from './language-icons'
-export { initRepository } from './git-repository'
+export { cloneRepository, deriveProjectNameFromGitUrl, initRepository } from './git-repository'
 
 const log = createLogger({ component: 'ProjectOps' })
 
@@ -102,6 +104,21 @@ export function validateProject(path: string): {
     path: path,
     name: basename(path)
   }
+}
+
+export function createProjectWithDefaultWorktree(
+  db: Pick<DatabaseService, 'createProject' | 'createWorktree'>,
+  data: ProjectCreate
+): Project {
+  const project = db.createProject(data)
+  db.createWorktree({
+    project_id: project.id,
+    name: '(no-worktree)',
+    branch_name: '',
+    path: project.path,
+    is_default: true
+  })
+  return project
 }
 
 /**

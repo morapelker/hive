@@ -117,6 +117,7 @@ function resolveSessionSelection(opts: {
   mode?: 'build' | 'plan' | 'super-plan'
   explicitSdk?: boolean
 }): EffectiveHandoffSelection {
+  // Discord mirrors the data-driven subset of this chain in src/shared/model-resolution.ts.
   const settings = useSettingsStore.getState()
   const requestedSdk = normalizeHandoffSdk(opts.agentSdk ?? settings.defaultAgentSdk ?? 'opencode')
   const configuredDefaultSdk = normalizeHandoffSdk(settings.defaultAgentSdk ?? 'opencode')

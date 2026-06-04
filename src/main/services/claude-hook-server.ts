@@ -1,7 +1,7 @@
 import http from 'http'
 import type { SessionStatusType } from '@shared/types/session-status'
 import { createLogger } from './logger'
-import { claudeCliTelegramBridge } from './claude-cli-telegram-bridge'
+import { cliHookTransportRouter } from './cli-hook-transport-router'
 
 export interface ParsedClaudeHook {
   hook_event_name?: string
@@ -241,9 +241,9 @@ async function handleHook(req: http.IncomingMessage, res: http.ServerResponse): 
           metadata: buildStatusMetadata(body, route.hookPath)
         })
       }
-      // For Telegram-forwarded CLI sessions the bridge may take ownership of the
+      // For forwarded CLI sessions a transport may take ownership of the
       // response (held open until answered). Otherwise behavior is unchanged.
-      owned = claudeCliTelegramBridge.onHook(route.sessionId, body, res)
+      owned = cliHookTransportRouter.routeHook(route.sessionId, body, res)
     }
   } catch (error) {
     log.warn('Failed to parse Claude hook payload', {
@@ -318,7 +318,7 @@ export async function getClaudeHookServer(): Promise<{ port: number }> {
 export async function closeClaudeHookServer(): Promise<void> {
   // Unblock any held hook responses first, otherwise their open sockets keep the
   // server alive and `close()` hangs at shutdown.
-  claudeCliTelegramBridge.cancelAll()
+  cliHookTransportRouter.cancelAll()
 
   if (!server) {
     boundPort = null

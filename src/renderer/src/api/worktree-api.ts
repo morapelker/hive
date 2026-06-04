@@ -1,6 +1,7 @@
 import type { ServerEvent } from '@shared/rpc/protocol'
 import {
   WORKTREE_BRANCH_RENAMED_CHANNEL,
+  WORKTREE_CREATED_CHANNEL,
   type WorktreeBranchRenamedEvent
 } from '@shared/worktree-events'
 import { getRendererRpcClient } from './rpc-client'
@@ -95,6 +96,11 @@ type WorktreeBranchesResult = {
   error?: string
 }
 
+type RendererWorktreeCreatedEvent = {
+  projectId: string
+  worktree: WorktreeRow
+}
+
 const isWorktreeBranchRenamedEvent = (payload: unknown): payload is WorktreeBranchRenamedEvent =>
   !!payload &&
   typeof payload === 'object' &&
@@ -102,6 +108,30 @@ const isWorktreeBranchRenamedEvent = (payload: unknown): payload is WorktreeBran
   typeof payload.worktreeId === 'string' &&
   'newBranch' in payload &&
   typeof payload.newBranch === 'string'
+
+const isWorktreeRow = (payload: unknown): payload is WorktreeRow =>
+  !!payload &&
+  typeof payload === 'object' &&
+  'id' in payload &&
+  typeof payload.id === 'string' &&
+  'project_id' in payload &&
+  typeof payload.project_id === 'string' &&
+  'name' in payload &&
+  typeof payload.name === 'string' &&
+  'branch_name' in payload &&
+  typeof payload.branch_name === 'string' &&
+  'path' in payload &&
+  typeof payload.path === 'string' &&
+  'status' in payload &&
+  (payload.status === 'active' || payload.status === 'archived')
+
+const isWorktreeCreatedEvent = (payload: unknown): payload is RendererWorktreeCreatedEvent =>
+  !!payload &&
+  typeof payload === 'object' &&
+  'projectId' in payload &&
+  typeof payload.projectId === 'string' &&
+  'worktree' in payload &&
+  isWorktreeRow(payload.worktree)
 
 export const worktreeApi = {
   hasCommits: async (projectPath: string): Promise<boolean> =>
@@ -159,6 +189,12 @@ export const worktreeApi = {
   onBranchRenamed: (callback: (event: WorktreeBranchRenamedEvent) => void): (() => void) =>
     getRendererRpcClient().subscribe(WORKTREE_BRANCH_RENAMED_CHANNEL, (event: ServerEvent) => {
       if (isWorktreeBranchRenamedEvent(event.payload)) {
+        callback(event.payload)
+      }
+    }),
+  onWorktreeCreated: (callback: (event: RendererWorktreeCreatedEvent) => void): (() => void) =>
+    getRendererRpcClient().subscribe(WORKTREE_CREATED_CHANNEL, (event: ServerEvent) => {
+      if (isWorktreeCreatedEvent(event.payload)) {
         callback(event.payload)
       }
     })

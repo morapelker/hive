@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 31
+export const CURRENT_SCHEMA_VERSION = 33
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -138,6 +138,19 @@ CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at);
 CREATE INDEX IF NOT EXISTS idx_projects_accessed ON projects(last_accessed_at);
 CREATE INDEX IF NOT EXISTS idx_project_spaces_space ON project_spaces(space_id);
 CREATE INDEX IF NOT EXISTS idx_project_spaces_project ON project_spaces(project_id);
+
+CREATE TABLE IF NOT EXISTS discord_resources (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  worktree_id TEXT REFERENCES worktrees(id) ON DELETE CASCADE,
+  discord_id TEXT NOT NULL,
+  type TEXT NOT NULL CHECK (type IN ('category','channel')),
+  guild_id TEXT NOT NULL,
+  managed_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_discord_resources_project ON discord_resources(project_id);
+CREATE INDEX IF NOT EXISTS idx_discord_resources_guild ON discord_resources(guild_id);
 `
 
 export interface Migration {
@@ -155,6 +168,9 @@ export const MIGRATIONS: Migration[] = [
     down: `
       DROP INDEX IF EXISTS idx_project_spaces_project;
       DROP INDEX IF EXISTS idx_project_spaces_space;
+      DROP INDEX IF EXISTS idx_discord_resources_guild;
+      DROP INDEX IF EXISTS idx_discord_resources_project;
+      DROP TABLE IF EXISTS discord_resources;
       DROP INDEX IF EXISTS idx_projects_accessed;
       DROP INDEX IF EXISTS idx_sessions_updated;
       DROP INDEX IF EXISTS idx_messages_session_opencode_unique;
@@ -539,5 +555,33 @@ DROP TABLE IF EXISTS diff_comments;`
       DROP INDEX IF EXISTS idx_saved_usage_accounts_provider_email;
       DROP TABLE IF EXISTS saved_usage_accounts;
     `
+  },
+  {
+    version: 32,
+    name: 'add_discord_resources',
+    up: `
+      CREATE TABLE IF NOT EXISTS discord_resources (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        worktree_id TEXT REFERENCES worktrees(id) ON DELETE CASCADE,
+        discord_id TEXT NOT NULL,
+        type TEXT NOT NULL CHECK (type IN ('category','channel')),
+        guild_id TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_discord_resources_project ON discord_resources(project_id);
+      CREATE INDEX IF NOT EXISTS idx_discord_resources_guild ON discord_resources(guild_id);
+    `,
+    down: `
+      DROP INDEX IF EXISTS idx_discord_resources_guild;
+      DROP INDEX IF EXISTS idx_discord_resources_project;
+      DROP TABLE IF EXISTS discord_resources;
+    `
+  },
+  {
+    version: 33,
+    name: 'add_discord_managed_session_link',
+    up: `ALTER TABLE discord_resources ADD COLUMN managed_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
   }
 ]

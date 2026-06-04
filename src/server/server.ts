@@ -227,6 +227,9 @@ export const startHiveServer = (
                 })
                 await cleanupWorktreeWatchers()
                 await cleanupBranchWatchers()
+                await import('../main/services/discord-service')
+                  .then(({ discordService }) => discordService.stopListening())
+                  .catch(() => undefined)
                 setGitEventPublisher(null)
                 if (desktopBackendEventForwarder) {
                   process.off('message', desktopBackendEventForwarder)

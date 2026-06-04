@@ -31,6 +31,11 @@ import {
 } from './domains/codex-debug-logger-ops'
 import { makeDbRpcHandlers, makeLiveDbRpcService, type DbRpcService } from './domains/db'
 import {
+  makeDiscordOpsRpcHandlers,
+  makeLiveDiscordOpsRpcService,
+  type DiscordOpsRpcService
+} from './domains/discord-ops'
+import {
   makeLivePetOpsRpcService,
   makePetOpsRpcHandlers,
   type PetOpsRpcService
@@ -135,6 +140,7 @@ export interface RpcContext {
   readonly codexDebugLoggerOps?: CodexDebugLoggerOpsRpcService
   readonly connectionOps?: ConnectionOpsRpcService
   readonly db?: DbRpcService
+  readonly discordOps?: DiscordOpsRpcService
   readonly fileOps?: FileOpsRpcService
   readonly fileTreeOps?: FileTreeOpsRpcService
   readonly gitOps?: GitOpsRpcService
@@ -188,6 +194,9 @@ const makeDefaultRpcHandlers = (context: RpcContext): ReadonlyMap<string, RpcHan
     ),
     ...makeConnectionOpsRpcHandlers(context.connectionOps ?? makeLiveConnectionOpsRpcService()),
     ...makeDbRpcHandlers(context.db ?? makeLiveDbRpcService()),
+    ...makeDiscordOpsRpcHandlers(
+      context.discordOps ?? makeLiveDiscordOpsRpcService(context.eventBus)
+    ),
     ...makeFileOpsRpcHandlers(context.fileOps ?? makeLiveFileOpsRpcService()),
     ...makeFileTreeOpsRpcHandlers(context.fileTreeOps ?? makeLiveFileTreeOpsRpcService()),
     ...makeGitOpsRpcHandlers(

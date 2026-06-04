@@ -3,7 +3,7 @@ import { createLogger } from './logger'
 import { telemetryService } from './telemetry-service'
 import type { DatabaseService } from '../db/database'
 import type { AgentSdkManager } from './agent-sdk-manager'
-import type { AgentSdkCapabilities, PromptOptions } from './agent-sdk-types'
+import type { AgentSdkCapabilities, AgentSdkId, PromptOptions } from './agent-sdk-types'
 import { ClaudeCodeImplementer } from './claude-code-implementer'
 import { CodexImplementer } from './codex-implementer'
 import { claudeCliTelegramBridge } from './claude-cli-telegram-bridge'
@@ -37,6 +37,10 @@ function resolveAgentSessionId(dbService: DatabaseService, sessionId: string): s
   return dbService.getSession(sessionId)?.opencode_session_id ?? sessionId
 }
 
+function toImplementerSdk(sdkId: AgentSdkId): AgentSdkId {
+  return sdkId === 'claude-code-cli' ? 'claude-code' : sdkId
+}
+
 export async function connectOpenCodeSession(
   worktreePath: string,
   hiveSessionId: string,
@@ -55,7 +59,7 @@ export async function connectOpenCodeSession(
         return { success: true, sessionId: hiveSessionId }
       }
       if (session?.agent_sdk && session.agent_sdk !== 'opencode') {
-        const impl = sdkManager.getImplementer(session.agent_sdk)
+        const impl = sdkManager.getImplementer(toImplementerSdk(session.agent_sdk))
         const result = await impl.connect(worktreePath, hiveSessionId)
         telemetryService.track('session_started', { agent_sdk: session.agent_sdk })
         return { success: true, ...result }
@@ -95,7 +99,7 @@ export async function reconnectOpenCodeSession(
         return { success: true, sessionStatus: 'idle' as const }
       }
       if (sdkId && sdkId !== 'opencode') {
-        const impl = sdkManager.getImplementer(sdkId)
+        const impl = sdkManager.getImplementer(toImplementerSdk(sdkId))
         const result = await impl.reconnect(worktreePath, opencodeSessionId, hiveSessionId)
         return result
       }
@@ -191,7 +195,7 @@ export async function promptOpenCodeSession(
         route: sdkId && sdkId !== 'opencode' && sdkId !== 'terminal' ? 'sdk' : 'opencode'
       })
       if (sdkId && sdkId !== 'opencode' && sdkId !== 'terminal') {
-        const impl = sdkManager.getImplementer(sdkId)
+        const impl = sdkManager.getImplementer(toImplementerSdk(sdkId))
         await impl.prompt(worktreePath, opencodeSessionId, promptMessage, model, options)
         telemetryService.track('prompt_sent', { agent_sdk: sdkId })
         return { success: true }
@@ -222,7 +226,7 @@ export async function abortOpenCodeSession(
     if (sdkManager && dbService) {
       const sdkId = dbService.getAgentSdkForSession(opencodeSessionId)
       if (sdkId && sdkId !== 'opencode' && sdkId !== 'terminal') {
-        const impl = sdkManager.getImplementer(sdkId)
+        const impl = sdkManager.getImplementer(toImplementerSdk(sdkId))
         const result = await impl.abort(worktreePath, opencodeSessionId)
         return { success: result }
       }
@@ -292,7 +296,7 @@ export async function disconnectOpenCodeSession(
     if (sdkManager && dbService) {
       const sdkId = dbService.getAgentSdkForSession(opencodeSessionId)
       if (sdkId && sdkId !== 'opencode' && sdkId !== 'terminal') {
-        const impl = sdkManager.getImplementer(sdkId)
+        const impl = sdkManager.getImplementer(toImplementerSdk(sdkId))
         await impl.disconnect(worktreePath, opencodeSessionId)
         return { success: true }
       }

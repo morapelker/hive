@@ -7,6 +7,8 @@ export type {
   Worktree,
   WorktreeCreate,
   WorktreeUpdate,
+  DiscordResource,
+  DiscordResourceCreate,
   Session,
   SessionCreate,
   SessionUpdate,

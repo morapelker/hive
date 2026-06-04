@@ -288,6 +288,24 @@ describe('Session 4: Auto-Rename Branch on First Title', () => {
       expect(content).toContain('updateWorktreeBranch')
     })
 
+    test('useOpenCodeGlobalListener subscribes to worktree:created', () => {
+      const hookPath = path.join(
+        __dirname,
+        '..',
+        '..',
+        '..',
+        'src',
+        'renderer',
+        'src',
+        'hooks',
+        'useOpenCodeGlobalListener.ts'
+      )
+      const content = fs.readFileSync(hookPath, 'utf-8')
+
+      expect(content).toContain('onWorktreeCreated')
+      expect(content).toContain('addWorktreeToProject')
+    })
+
     test('imports useWorktreeStore in global listener', () => {
       const hookPath = path.join(
         __dirname,

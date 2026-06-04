@@ -96,6 +96,28 @@ export interface WorktreeUpdate {
   last_accessed_at?: string
 }
 
+export interface DiscordResource {
+  id: string
+  project_id: string
+  worktree_id: string | null
+  discord_id: string
+  type: 'category' | 'channel'
+  guild_id: string
+  managed_session_id: string | null
+  created_at: string
+}
+
+export interface DiscordResourceCreate {
+  id?: string
+  project_id: string
+  worktree_id: string | null
+  discord_id: string
+  type: 'category' | 'channel'
+  guild_id: string
+  managed_session_id?: string | null
+  created_at?: string
+}
+
 export type SessionMode = 'build' | 'plan' | 'super-plan'
 export type SessionType = 'default' | 'board-assistant'
 

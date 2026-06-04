@@ -193,6 +193,15 @@ export function useOpenCodeGlobalListener(): void {
   }, [])
 
   useEffect(() => {
+    const unsubscribe = worktreeApi.onWorktreeCreated((data) => {
+      const { projectId, worktree } = data
+      useWorktreeStore.getState().addWorktreeToProject(projectId, worktree)
+    })
+
+    return unsubscribe
+  }, [])
+
+  useEffect(() => {
     const unsubscribe = opencodeApi.onStream((event) => {
       const sessionId = event.sessionId
       // When the kanban board is showing, SessionView isn't mounted —

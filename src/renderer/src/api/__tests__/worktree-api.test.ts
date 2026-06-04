@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { WORKTREE_BRANCH_RENAMED_CHANNEL } from '@shared/worktree-events'
+import {
+  WORKTREE_BRANCH_RENAMED_CHANNEL,
+  WORKTREE_CREATED_CHANNEL
+} from '@shared/worktree-events'
 import { resetRendererRpcClientForTests, setRendererRpcClient } from '../rpc-client'
 import { worktreeApi } from '../worktree-api'
 
@@ -261,5 +264,54 @@ describe('worktreeApi', () => {
       worktreeId: 'worktree-1',
       newBranch: 'feature-renamed'
     })
+  })
+
+  it('routes worktree-created events through the renderer RPC client', () => {
+    const request = vi.fn()
+    const unsubscribe = vi.fn()
+    let listener: ((event: { channel: string; payload: unknown }) => void) | undefined
+    const subscribe = vi.fn(
+      (_channel: string, next: (event: { channel: string; payload: unknown }) => void) => {
+        listener = next
+        return unsubscribe
+      }
+    )
+    const worktree = {
+      id: 'worktree-1',
+      project_id: 'project-1',
+      name: 'fix-login-bug',
+      branch_name: 'fix-login-bug',
+      path: '/repo/fix-login-bug',
+      status: 'active' as const,
+      is_default: false,
+      branch_renamed: 1,
+      last_message_at: null,
+      session_titles: '[]',
+      last_model_provider_id: null,
+      last_model_id: null,
+      last_model_variant: null,
+      created_at: '2026-01-01T00:00:00.000Z',
+      last_accessed_at: '2026-01-01T00:00:00.000Z'
+    }
+
+    setRendererRpcClient({ request, subscribe })
+
+    const callback = vi.fn()
+    const returned = worktreeApi.onWorktreeCreated(callback)
+
+    expect(returned).toBe(unsubscribe)
+    expect(subscribe).toHaveBeenCalledWith(WORKTREE_CREATED_CHANNEL, expect.any(Function))
+
+    listener?.({
+      channel: WORKTREE_CREATED_CHANNEL,
+      payload: { projectId: 'project-1', worktree }
+    })
+    listener?.({
+      channel: WORKTREE_CREATED_CHANNEL,
+      payload: { projectId: 'project-1', worktree: { id: 1 } }
+    })
+
+    expect(callback).toHaveBeenCalledTimes(1)
+    expect(callback).toHaveBeenCalledWith({ projectId: 'project-1', worktree })
   })
 })
