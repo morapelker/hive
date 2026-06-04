@@ -199,6 +199,46 @@ const parseConfig = (raw: string | null): DiscordConfig | null => {
   }
 }
 
+const parseEnvBoolean = (raw: string | undefined, fallback: boolean): boolean => {
+  if (raw === undefined) return fallback
+  const normalized = raw.trim().toLowerCase()
+  if (!normalized) return fallback
+  return !['0', 'false', 'no', 'off'].includes(normalized)
+}
+
+const parseEnvProjectIds = (raw: string | undefined): string[] => {
+  if (!raw?.trim()) return []
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    if (Array.isArray(parsed)) {
+      return Array.from(
+        new Set(parsed.filter((id): id is string => typeof id === 'string').map((id) => id.trim()))
+      ).filter((id) => id.length > 0)
+    }
+  } catch {
+    // Fall back to comma-separated values.
+  }
+  return Array.from(new Set(raw.split(',').map((id) => id.trim()))).filter(
+    (id) => id.length > 0
+  )
+}
+
+const getEnvConfig = (env: NodeJS.ProcessEnv = process.env): DiscordConfig | null => {
+  const botToken = env.HIVE_DISCORD_BOT_TOKEN?.trim() ?? ''
+  const guildId = env.HIVE_DISCORD_GUILD_ID?.trim() ?? ''
+  if (!botToken || !guildId) return null
+  return {
+    botToken,
+    guildId,
+    guildName: env.HIVE_DISCORD_GUILD_NAME?.trim() || guildId,
+    enabled: parseEnvBoolean(env.HIVE_DISCORD_ENABLED, true),
+    selectedProjectIds: parseEnvProjectIds(env.HIVE_DISCORD_SELECTED_PROJECT_IDS)
+  }
+}
+
+const isBlankConfig = (config: DiscordConfig | null): boolean =>
+  !config || (!config.botToken.trim() && !config.guildId.trim())
+
 const parseSessionTitles = (raw: string): string[] => {
   try {
     const parsed = JSON.parse(raw) as unknown
@@ -274,7 +314,8 @@ export class DiscordService {
   }
 
   getConfig(): DiscordConfig | null {
-    return parseConfig(this.getDb().getSetting(DISCORD_CONFIG_KEY))
+    const savedConfig = parseConfig(this.getDb().getSetting(DISCORD_CONFIG_KEY))
+    return isBlankConfig(savedConfig) ? getEnvConfig() : savedConfig
   }
 
   setConfig(config: DiscordConfig | null): void {

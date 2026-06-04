@@ -505,6 +505,70 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers()
+  vi.unstubAllEnvs()
+})
+
+describe('DiscordService configuration', () => {
+  it('uses Discord environment variables when no settings are saved', () => {
+    const db = new FakeDiscordDatabase()
+    vi.stubEnv('HIVE_DISCORD_BOT_TOKEN', ' env-token ')
+    vi.stubEnv('HIVE_DISCORD_GUILD_ID', ' guild-env ')
+    vi.stubEnv('HIVE_DISCORD_GUILD_NAME', ' Env Hive ')
+    vi.stubEnv('HIVE_DISCORD_SELECTED_PROJECT_IDS', 'p1, p2,,p1')
+    const { gateway } = makeGateway()
+    const service = makeService(db, gateway)
+
+    expect(service.getConfig()).toEqual({
+      botToken: 'env-token',
+      guildId: 'guild-env',
+      guildName: 'Env Hive',
+      enabled: true,
+      selectedProjectIds: ['p1', 'p2']
+    })
+  })
+
+  it('keeps saved Discord settings ahead of environment variables', () => {
+    const db = new FakeDiscordDatabase()
+    configureSelected(db, ['saved-project'])
+    vi.stubEnv('HIVE_DISCORD_BOT_TOKEN', 'env-token')
+    vi.stubEnv('HIVE_DISCORD_GUILD_ID', 'guild-env')
+    const { gateway } = makeGateway()
+    const service = makeService(db, gateway)
+
+    expect(service.getConfig()).toEqual({
+      botToken: 'token',
+      guildId: 'guild-1',
+      guildName: 'Hive',
+      enabled: true,
+      selectedProjectIds: ['saved-project']
+    })
+  })
+
+  it('falls back to Discord environment variables when saved settings are blank', () => {
+    const db = new FakeDiscordDatabase()
+    db.setSetting(
+      'discord_config',
+      JSON.stringify({
+        botToken: ' ',
+        guildId: '',
+        guildName: '',
+        enabled: false,
+        selectedProjectIds: []
+      })
+    )
+    vi.stubEnv('HIVE_DISCORD_BOT_TOKEN', 'env-token')
+    vi.stubEnv('HIVE_DISCORD_GUILD_ID', 'guild-env')
+    const { gateway } = makeGateway()
+    const service = makeService(db, gateway)
+
+    expect(service.getConfig()).toEqual({
+      botToken: 'env-token',
+      guildId: 'guild-env',
+      guildName: 'guild-env',
+      enabled: true,
+      selectedProjectIds: []
+    })
+  })
 })
 
 describe('DiscordService provisioning reconciliation', () => {
