@@ -3,7 +3,7 @@ import { PassThrough } from 'node:stream'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { app, BrowserWindow, clipboard, dialog, shell } from 'electron'
+import { app, clipboard, dialog, shell } from 'electron'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { makeDesktopCommandRequest, makeDesktopCommandResult } from '../../shared/desktop-command'
 
@@ -369,7 +369,11 @@ describe('desktop backend manager', () => {
     )
 
     await expect(
-      publishDesktopBackendEvent('test:channel', { message: 'hello' }, fetchImpl as unknown as typeof fetch)
+      publishDesktopBackendEvent(
+        'test:channel',
+        { message: 'hello' },
+        fetchImpl as unknown as typeof fetch
+      )
     ).resolves.toBe(true)
 
     expect(fetchImpl).toHaveBeenNthCalledWith(
@@ -662,9 +666,7 @@ describe('desktop backend manager', () => {
 
   it('forwards backend projectReadClipboardText commands to the native clipboard implementation', async () => {
     const child = new FakeChildProcess()
-    const readTextSpy = vi
-      .spyOn(clipboard, 'readText')
-      .mockReturnValue('/tmp/hive/package.json')
+    const readTextSpy = vi.spyOn(clipboard, 'readText').mockReturnValue('/tmp/hive/package.json')
 
     await startDesktopBackend(
       {
@@ -943,9 +945,13 @@ describe('desktop backend manager', () => {
 
     child.emit(
       'message',
-      makeDesktopCommandRequest('kanban-save-board-export-dialog-1', 'kanbanSaveBoardExportDialog', {
-        projectName: 'Hive'
-      })
+      makeDesktopCommandRequest(
+        'kanban-save-board-export-dialog-1',
+        'kanbanSaveBoardExportDialog',
+        {
+          projectName: 'Hive'
+        }
+      )
     )
     await new Promise((resolve) => setImmediate(resolve))
 
@@ -2582,6 +2588,35 @@ describe('desktop backend manager', () => {
     )
   })
 
+  it('acknowledges showPet without creating a pet window in headless mode', async () => {
+    const child = new FakeChildProcess()
+
+    await startDesktopBackend(
+      {
+        executablePath: '/electron',
+        entryPath: '/app/server.js',
+        cwd: '/app',
+        baseDir: mkdtempSync(join(tmpdir(), 'hive-backend-manager-')),
+        port: 0,
+        headless: true
+      },
+      {
+        spawnProcess: vi.fn(() => child as never),
+        fetch: vi.fn(async () => new Response('{}', { status: 200 })),
+        logger: makeLogger()
+      }
+    )
+
+    child.emit('message', makeDesktopCommandRequest('show-pet-headless-1', 'showPet'))
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(petWindowMocks.createPetWindow).not.toHaveBeenCalled()
+    expect(child.send).toHaveBeenCalledWith(
+      makeDesktopCommandResult('show-pet-headless-1', { ok: true }),
+      expect.any(Function)
+    )
+  })
+
   it('forwards backend hidePet commands to the pet window implementation', async () => {
     const child = new FakeChildProcess()
 
@@ -2919,6 +2954,48 @@ describe('desktop backend manager', () => {
     expect(petWindowMocks.destroyPetWindow).not.toHaveBeenCalled()
     expect(child.send).toHaveBeenCalledWith(
       makeDesktopCommandResult('update-pet-settings-1', { ok: true }),
+      expect.any(Function)
+    )
+  })
+
+  it('updates pet settings without creating a pet window in headless mode', async () => {
+    const child = new FakeChildProcess()
+
+    await startDesktopBackend(
+      {
+        executablePath: '/electron',
+        entryPath: '/app/server.js',
+        cwd: '/app',
+        baseDir: mkdtempSync(join(tmpdir(), 'hive-backend-manager-')),
+        port: 0,
+        headless: true
+      },
+      {
+        spawnProcess: vi.fn(() => child as never),
+        fetch: vi.fn(async () => new Response('{}', { status: 200 })),
+        logger: makeLogger()
+      }
+    )
+
+    child.emit(
+      'message',
+      makeDesktopCommandRequest('update-pet-settings-headless-1', 'updatePetSettings', {
+        enabled: true,
+        size: 'L',
+        opacity: 0.75
+      })
+    )
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(petWindowMocks.updatePetSettings).toHaveBeenCalledWith({
+      enabled: true,
+      size: 'L',
+      opacity: 0.75
+    })
+    expect(petWindowMocks.createPetWindow).not.toHaveBeenCalled()
+    expect(petWindowMocks.destroyPetWindow).not.toHaveBeenCalled()
+    expect(child.send).toHaveBeenCalledWith(
+      makeDesktopCommandResult('update-pet-settings-headless-1', { ok: true }),
       expect.any(Function)
     )
   })

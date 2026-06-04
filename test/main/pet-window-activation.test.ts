@@ -99,9 +99,12 @@ describe('pet window activation suppression', () => {
     endPetPointerInteraction()
     vi.runOnlyPendingTimers()
     vi.useRealTimers()
+    configurePetWindow({ getMainWindow: () => null })
     Object.defineProperty(process, 'platform', { value: originalPlatform })
     electronMock.windows.length = 0
     electronMock.BrowserWindow.mockClear()
+    electronMock.app.setActivationPolicy.mockClear()
+    electronMock.app.dock.show.mockClear()
     backendManagerMock.publishDesktopBackendEvent.mockReset()
   })
 
@@ -220,5 +223,17 @@ describe('pet window activation suppression', () => {
         skipTaskbar: true
       })
     )
+  })
+
+  it('does not create a pet window when configured for headless mode', () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' })
+    configurePetWindow({ getMainWindow: () => null, headless: true })
+
+    const window = createPetWindow()
+
+    expect(window).toBeNull()
+    expect(electronMock.BrowserWindow).not.toHaveBeenCalled()
+    expect(electronMock.app.setActivationPolicy).not.toHaveBeenCalled()
+    expect(electronMock.app.dock.show).not.toHaveBeenCalled()
   })
 })

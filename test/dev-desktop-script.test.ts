@@ -50,4 +50,14 @@ describe('dev desktop script', () => {
 
     expect(packageJson.scripts?.['dev:desktop']).toBe('node scripts/dev-desktop.mjs')
   })
+
+  test('dev:headless launches desktop dev with the headless environment flag', () => {
+    const packageJson = JSON.parse(readFileSync(resolve('package.json'), 'utf-8')) as {
+      scripts?: Record<string, string>
+    }
+
+    expect(packageJson.scripts?.['dev:headless']).toBe(
+      'HIVE_HEADLESS=1 node scripts/dev-desktop.mjs'
+    )
+  })
 })
