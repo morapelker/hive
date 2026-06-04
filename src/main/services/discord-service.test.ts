@@ -11,6 +11,7 @@ import {
 import { createWorktreeFromBranchOp, deleteWorktreeOp, syncWorktreesOp } from './worktree-ops'
 import { createGitService } from './git-service'
 import { createPrFromWorktree } from './discord-pr-creator'
+import { pushWorktree } from './discord-push'
 import type { DiscordResource, Project, Worktree } from '../db/types'
 
 const discordJsMock = vi.hoisted(() => {
@@ -151,6 +152,10 @@ vi.mock('./git-service', () => ({
 
 vi.mock('./discord-pr-creator', () => ({
   createPrFromWorktree: vi.fn()
+}))
+
+vi.mock('./discord-push', () => ({
+  pushWorktree: vi.fn()
 }))
 
 class FakeDiscordDatabase {
@@ -495,6 +500,7 @@ beforeEach(() => {
   vi.mocked(detectProjectFavicon).mockReturnValue(null)
   vi.mocked(createGitService).mockClear()
   vi.mocked(createPrFromWorktree).mockReset()
+  vi.mocked(pushWorktree).mockReset()
 })
 
 afterEach(() => {
@@ -827,6 +833,10 @@ describe('DiscordService message listener', () => {
         { name: 'archive', description: 'Archive this worktree and delete its channel' },
         { name: 'stop', description: 'Abort the current running session' },
         { name: 'pr', description: 'Create a pull request from this worktree branch' },
+        {
+          name: 'push',
+          description: 'Commit all changes and push this worktree branch to origin'
+        },
         { name: 'clear', description: 'Clear the session attached to this worktree channel' },
         {
           name: 'qa',
@@ -1834,6 +1844,101 @@ describe('DiscordService message listener', () => {
     expect(interaction.reply).not.toHaveBeenCalled()
   })
 
+  it('handles /push in a provisioned worktree channel', async () => {
+    const db = new FakeDiscordDatabase()
+    configure(db)
+    db.activeWorktrees.set('p1', [
+      makeWorktree('w1', 'p1', 'feature-push', {
+        path: '/repo/p1/feature-push',
+        session_titles: JSON.stringify(['Implement Discord push', 'Add handler tests'])
+      })
+    ])
+    db.resources = [makeResource()]
+    vi.mocked(pushWorktree).mockResolvedValue({
+      status: 'pushed',
+      branch: 'feature-push',
+      committed: true
+    })
+    const { gateway } = makeGateway()
+    const service = makeService(db, gateway)
+    await service.startListening()
+    const interaction = makeCommandInteraction('push')
+
+    discordJsMock.instances[0].emit('interactionCreate', interaction)
+    await flushPromises()
+
+    expect(interaction.deferReply).toHaveBeenCalledWith()
+    expect(pushWorktree).toHaveBeenCalledWith({
+      worktreePath: '/repo/p1/feature-push',
+      commitMessage: 'Implement Discord push\n\n- Implement Discord push\n- Add handler tests'
+    })
+    expect(interaction.editReply).toHaveBeenCalledWith(
+      'Committed changes and pushed `feature-push` to origin.'
+    )
+    expect(interaction.reply).not.toHaveBeenCalled()
+  })
+
+  it('reports /push success without the commit wording when nothing was committed', async () => {
+    const db = new FakeDiscordDatabase()
+    configure(db)
+    db.activeWorktrees.set('p1', [makeWorktree('w1', 'p1', 'feature-push')])
+    db.resources = [makeResource()]
+    vi.mocked(pushWorktree).mockResolvedValue({
+      status: 'pushed',
+      branch: 'feature-push',
+      committed: false
+    })
+    const { gateway } = makeGateway()
+    const service = makeService(db, gateway)
+    await service.startListening()
+    const interaction = makeCommandInteraction('push')
+
+    discordJsMock.instances[0].emit('interactionCreate', interaction)
+    await flushPromises()
+
+    expect(interaction.editReply).toHaveBeenCalledWith('Pushed `feature-push` to origin.')
+  })
+
+  it('replies ephemerally when /push is used outside a provisioned worktree channel', async () => {
+    const db = new FakeDiscordDatabase()
+    configure(db)
+    const { gateway } = makeGateway()
+    const service = makeService(db, gateway)
+    await service.startListening()
+    const interaction = makeCommandInteraction('push', { channelId: 'unmapped-channel' })
+
+    discordJsMock.instances[0].emit('interactionCreate', interaction)
+    await flushPromises()
+
+    expect(interaction.reply).toHaveBeenCalledWith({
+      content: 'This channel is not linked to a Hive worktree.',
+      ephemeral: true
+    })
+    expect(interaction.deferReply).not.toHaveBeenCalled()
+    expect(pushWorktree).not.toHaveBeenCalled()
+  })
+
+  it('uses the deferred /push fallback when push handling throws', async () => {
+    const db = new FakeDiscordDatabase()
+    configure(db)
+    db.activeWorktrees.set('p1', [makeWorktree('w1', 'p1', 'feature-push')])
+    db.resources = [makeResource()]
+    vi.mocked(pushWorktree).mockRejectedValue(new Error('boom'))
+    const { gateway } = makeGateway()
+    const service = makeService(db, gateway)
+    await service.startListening()
+    const interaction = makeCommandInteraction('push')
+
+    discordJsMock.instances[0].emit('interactionCreate', interaction)
+    await flushPromises()
+
+    expect(interaction.deferReply).toHaveBeenCalledWith()
+    expect(interaction.editReply).toHaveBeenCalledWith(
+      'Could not push. Check the Hive logs for details.'
+    )
+    expect(interaction.reply).not.toHaveBeenCalled()
+  })
+
   it('replies ephemerally when /clear is used outside a provisioned worktree channel', async () => {
     const db = new FakeDiscordDatabase()
     configure(db)
@@ -1931,6 +2036,10 @@ describe('/archive slash command', () => {
         { name: 'archive', description: 'Archive this worktree and delete its channel' },
         { name: 'stop', description: 'Abort the current running session' },
         { name: 'pr', description: 'Create a pull request from this worktree branch' },
+        {
+          name: 'push',
+          description: 'Commit all changes and push this worktree branch to origin'
+        },
         { name: 'clear', description: 'Clear the session attached to this worktree channel' },
         {
           name: 'qa',
