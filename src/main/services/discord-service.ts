@@ -47,6 +47,7 @@ import { cloneRepository, deriveProjectNameFromGitUrl } from './git-repository'
 import { discordSessionBridge, type DiscordSessionBridge } from './discord-session-bridge'
 import type { AgentSdkManager } from './agent-sdk-manager'
 import { createPrFromWorktree } from './discord-pr-creator'
+import { pushWorktree } from './discord-push'
 
 const DISCORD_CONFIG_KEY = 'discord_config'
 const log = createLogger({ component: 'Discord' })
@@ -67,6 +68,7 @@ const DISCORD_COMMANDS: DiscordCommand[] = [
   { name: 'archive', description: 'Archive this worktree and delete its channel' },
   { name: 'stop', description: 'Abort the current running session' },
   { name: 'pr', description: 'Create a pull request from this worktree branch' },
+  { name: 'push', description: 'Commit all changes and push this worktree branch to origin' },
   { name: 'clear', description: 'Clear the session attached to this worktree channel' },
   {
     name: 'qa',
@@ -650,6 +652,11 @@ export class DiscordService {
 
     if (interaction.commandName === 'pr') {
       await this.handlePrInteraction(interaction)
+      return
+    }
+
+    if (interaction.commandName === 'push') {
+      await this.handlePushInteraction(interaction)
     }
   }
 
@@ -1118,6 +1125,67 @@ export class DiscordService {
       })
 
       const content = 'Could not create the PR. Check the Hive logs for details.'
+      if (interaction.deferred || interaction.replied) {
+        await interaction.editReply(content).catch(() => undefined)
+      } else {
+        await interaction.reply({ content, ephemeral: true }).catch(() => undefined)
+      }
+    }
+  }
+
+  private async handlePushInteraction(interaction: ChatInputCommandInteraction): Promise<void> {
+    const config = this.getConfig()
+    if (!isConfigured(config) || interaction.guildId !== config.guildId) {
+      return
+    }
+
+    try {
+      const db = this.getDb()
+      const provisionedChannel = db
+        .getDiscordResourcesByGuild(config.guildId)
+        .find(
+          (resource) => resource.type === 'channel' && resource.discord_id === interaction.channelId
+        )
+
+      if (!provisionedChannel?.worktree_id) {
+        await interaction.reply({
+          content: 'This channel is not linked to a Hive worktree.',
+          ephemeral: true
+        })
+        return
+      }
+
+      const worktree = db.getWorktree(provisionedChannel.worktree_id)
+      if (!worktree) {
+        await interaction.reply({
+          content: 'This channel is not linked to a Hive worktree.',
+          ephemeral: true
+        })
+        return
+      }
+
+      const commitMessage = buildPrCommitMessage(worktree)
+
+      await interaction.deferReply()
+      const result = await pushWorktree({
+        worktreePath: worktree.path,
+        commitMessage
+      })
+
+      if (result.status === 'pushed') {
+        const action = result.committed ? 'Committed changes and pushed' : 'Pushed'
+        await interaction.editReply(`${action} \`${result.branch}\` to origin.`)
+        return
+      }
+
+      await interaction.editReply(`Could not push: ${result.message}`)
+    } catch (error) {
+      const normalized = error instanceof Error ? error : new Error(String(error))
+      log.error('Failed to handle Discord /push command', normalized, {
+        channelId: interaction.channelId ?? undefined
+      })
+
+      const content = 'Could not push. Check the Hive logs for details.'
       if (interaction.deferred || interaction.replied) {
         await interaction.editReply(content).catch(() => undefined)
       } else {
