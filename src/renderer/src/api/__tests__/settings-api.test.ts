@@ -85,6 +85,18 @@ describe('settingsApi', () => {
     expect(request).toHaveBeenCalledWith('settingsOps.loadCustomCommandsFile', {})
   })
 
+  it('routes saveCustomCommandsFile through the renderer RPC client', async () => {
+    const commands = [{ id: 'cmd-1', name: 'Run tests', prompt: 'Run {{project.name}} tests' }]
+    const result = { success: true, mtime: 123 }
+    const request = vi.fn().mockResolvedValue(result)
+    const subscribe = vi.fn()
+
+    setRendererRpcClient({ request, subscribe })
+
+    await expect(settingsApi.saveCustomCommandsFile(commands)).resolves.toBe(result)
+    expect(request).toHaveBeenCalledWith('settingsOps.saveCustomCommandsFile', { commands })
+  })
+
   it('routes reloadCustomCommands through the renderer RPC client', async () => {
     const result = { success: true, count: 1, mtime: 123 }
     const request = vi.fn().mockResolvedValue(result)

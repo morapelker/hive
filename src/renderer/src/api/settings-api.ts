@@ -22,6 +22,12 @@ export type ReloadCustomCommandsResult = {
   error?: string
 }
 
+export type SaveCustomCommandsFileResult = {
+  success: boolean
+  mtime?: number | null
+  error?: string
+}
+
 export const settingsApi = {
   detectEditors: async (): Promise<DetectedApp[]> =>
     getRendererRpcClient().request<DetectedApp[]>('settingsOps.detectEditors', {}),
@@ -35,6 +41,13 @@ export const settingsApi = {
     getRendererRpcClient().request<CustomCommandsFileResult>(
       'settingsOps.loadCustomCommandsFile',
       {}
+    ),
+  saveCustomCommandsFile: async (
+    commands: Array<{ id: string; name: string; prompt: string }>
+  ): Promise<SaveCustomCommandsFileResult> =>
+    getRendererRpcClient().request<SaveCustomCommandsFileResult>(
+      'settingsOps.saveCustomCommandsFile',
+      { commands }
     ),
   reloadCustomCommands: async (): Promise<ReloadCustomCommandsResult> =>
     getRendererRpcClient().request<ReloadCustomCommandsResult>(

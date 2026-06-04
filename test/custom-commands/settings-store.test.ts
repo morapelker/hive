@@ -5,24 +5,30 @@ import { useSettingsStore } from '@/stores/useSettingsStore'
 import type { CustomProjectCommand } from '@/lib/custom-commands'
 import { setRendererRpcClient } from '@/api/rpc-client'
 
-function installSettingsRpcMock(settingsValue: string | null = null): void {
+function installSettingsRpcMock(settingsValue: string | null = null): ReturnType<typeof vi.fn> {
+  const request = vi.fn(async (method: string) => {
+    switch (method) {
+      case 'db.setting.get':
+        return settingsValue
+      case 'db.setting.set':
+        return true
+      case 'settingsOps.loadCustomCommandsFile':
+        return { success: true, commands: [], mtime: null }
+      case 'settingsOps.saveCustomCommandsFile':
+        return { success: true, mtime: 123 }
+      case 'telegramOps.getConfig':
+        return null
+      default:
+        return undefined
+    }
+  })
+
   setRendererRpcClient({
-    request: vi.fn(async (method: string) => {
-      switch (method) {
-        case 'db.setting.get':
-          return settingsValue
-        case 'db.setting.set':
-          return true
-        case 'settingsOps.loadCustomCommandsFile':
-          return { success: true, commands: [], mtime: null }
-        case 'telegramOps.getConfig':
-          return null
-        default:
-          return undefined
-      }
-    }),
+    request,
     subscribe: vi.fn(() => () => {})
   })
+
+  return request
 }
 
 describe('Settings Store - Custom Project Commands', () => {
@@ -124,5 +130,27 @@ describe('Settings Store - Custom Project Commands', () => {
     } finally {
       consoleWarnSpy.mockRestore()
     }
+  })
+
+  it('persists an empty customProjectCommands array to the database and file', async () => {
+    const request = installSettingsRpcMock(
+      JSON.stringify({
+        customProjectCommands: [{ id: 'cmd-1', name: 'Test Command', prompt: 'Test prompt' }]
+      })
+    )
+
+    await useSettingsStore.getState().updateSetting('customProjectCommands', [])
+
+    expect(request).toHaveBeenCalledWith(
+      'settingsOps.saveCustomCommandsFile',
+      { commands: [] }
+    )
+    expect(request).toHaveBeenCalledWith(
+      'db.setting.set',
+      expect.objectContaining({
+        key: 'app_settings',
+        value: expect.stringContaining('"customProjectCommands":[]')
+      })
+    )
   })
 })

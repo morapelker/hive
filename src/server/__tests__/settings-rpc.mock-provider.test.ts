@@ -337,6 +337,32 @@ describe('settings ops RPC mocked provider', () => {
     })
   })
 
+  it('routes settingsOps.saveCustomCommandsFile to the injected provider service', async () => {
+    const commands = [{ id: 'cmd-1', name: 'Run tests', prompt: 'Run {{project.name}} tests' }]
+    const result = { success: true, mtime: 123 }
+    const saveCustomCommandsFile = vi.fn(() => Effect.succeed(result))
+    const service = { saveCustomCommandsFile } as unknown as SettingsOpsRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      settingsOps: service
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'settings-save-custom-commands-1',
+        method: 'settingsOps.saveCustomCommandsFile',
+        params: { commands }
+      })
+    )
+
+    expect(saveCustomCommandsFile).toHaveBeenCalledWith(commands)
+    expect(response).toEqual({
+      id: 'settings-save-custom-commands-1',
+      ok: true,
+      value: result
+    })
+  })
+
   it('routes settingsOps.reloadCustomCommands to the injected provider service', async () => {
     const result = { success: true, count: 1, mtime: 123 }
     const reloadCustomCommands = vi.fn(() => Effect.succeed(result))

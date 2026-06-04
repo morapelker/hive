@@ -6,11 +6,13 @@ import { getAllSettingsMap } from '../../../main/services/settings-openers'
 import {
   getCustomCommandsFilePath,
   loadCustomCommandsFromFile,
+  saveCustomCommandsToFile,
   type CustomCommandFileResult
 } from '../../../main/services/custom-commands-file-service'
 import { getDatabase } from '../../../main/db'
 import type { DetectedApp } from '../../../shared/types/settings'
 import { APP_SETTINGS_DB_KEY } from '../../../shared/types/settings'
+import type { CustomProjectCommand } from '../../../shared/lib/custom-commands'
 import type { RpcHandler } from '../router'
 
 export interface SettingsOperationResult {
@@ -25,12 +27,21 @@ export interface ReloadCustomCommandsResult {
   readonly error?: string
 }
 
+export interface SaveCustomCommandsFileResult {
+  readonly success: boolean
+  readonly mtime?: number | null
+  readonly error?: string
+}
+
 export interface SettingsOpsRpcService {
   readonly detectEditors: () => Effect.Effect<DetectedApp[], unknown, never>
   readonly detectTerminals: () => Effect.Effect<DetectedApp[], unknown, never>
   readonly getAll: () => Effect.Effect<Record<string, string>, unknown, never>
   readonly getCustomCommandsFilePath: () => Effect.Effect<string, unknown, never>
   readonly loadCustomCommandsFile: () => Effect.Effect<CustomCommandFileResult, unknown, never>
+  readonly saveCustomCommandsFile: (
+    commands: CustomProjectCommand[]
+  ) => Effect.Effect<SaveCustomCommandsFileResult, unknown, never>
   readonly reloadCustomCommands: () => Effect.Effect<ReloadCustomCommandsResult, unknown, never>
   readonly openWithEditor: (
     worktreePath: string,
@@ -45,6 +56,18 @@ export interface SettingsOpsRpcService {
 }
 
 const emptyParamsSchema = z.union([z.object({}).strict(), z.undefined(), z.null()])
+const customCommandSchema = z
+  .object({
+    id: z.string().min(1),
+    name: z.string(),
+    prompt: z.string()
+  })
+  .strict()
+const saveCustomCommandsFileParamsSchema = z
+  .object({
+    commands: z.array(customCommandSchema)
+  })
+  .strict()
 const openWithEditorParamsSchema = z
   .object({
     worktreePath: z.string().min(1),
@@ -90,6 +113,17 @@ export const makeLiveSettingsOpsRpcService = (): SettingsOpsRpcService => ({
         }
       }
     }),
+  saveCustomCommandsFile: (commands) =>
+    Effect.sync(() => {
+      try {
+        return saveCustomCommandsToFile(commands)
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+    }),
   reloadCustomCommands: () =>
     Effect.sync(() => {
       try {
@@ -99,7 +133,7 @@ export const makeLiveSettingsOpsRpcService = (): SettingsOpsRpcService => ({
           return fileResult
         }
 
-        if (fileResult.commands && fileResult.commands.length > 0) {
+        if (fileResult.commands) {
           const db = getDatabase()
           const existingSettings = db.getSetting(APP_SETTINGS_DB_KEY)
           const settings =
@@ -194,6 +228,17 @@ export const makeSettingsOpsRpcHandlers = (
             catch: (cause) => cause
           })
           return yield* service.loadCustomCommandsFile()
+        })
+    ],
+    [
+      'settingsOps.saveCustomCommandsFile',
+      (params) =>
+        Effect.gen(function* () {
+          const { commands } = yield* Effect.try({
+            try: () => saveCustomCommandsFileParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          return yield* service.saveCustomCommandsFile(commands)
         })
     ],
     [

@@ -29,14 +29,6 @@ export function CustomCommandsEditor({
   const editorRefs = useRef(new Map<string, PromptCodeEditorHandle>())
   const [activeCommandId, setActiveCommandId] = useState<string | null>(null)
 
-  useEffect(() => {
-    if (value.length === 0) {
-      const command = newCommand()
-      onChange([command])
-      setActiveCommandId(command.id)
-    }
-  }, [onChange, value.length])
-
   const commandIds = useMemo(() => new Set(value.map((command) => command.id)), [value])
 
   useEffect(() => {
@@ -65,16 +57,25 @@ export function CustomCommandsEditor({
 
   const deleteCommand = (id: string): void => {
     onChange(value.filter((command) => command.id !== id))
+    if (activeCommandId === id) {
+      setActiveCommandId(null)
+    }
   }
 
   const insertPlaceholder = (token: string): void => {
-    const targetId = activeCommandId ?? value[0]?.id ?? null
+    const targetId =
+      activeCommandId && value.some((command) => command.id === activeCommandId)
+        ? activeCommandId
+        : value[0]?.id ?? null
     if (!targetId) return
     editorRefs.current.get(targetId)?.insertToken(token)
   }
 
   const fillExample = (example: Pick<CustomProjectCommand, 'name' | 'prompt'>): void => {
-    const targetId = activeCommandId ?? value[0]?.id ?? null
+    const targetId =
+      activeCommandId && value.some((command) => command.id === activeCommandId)
+        ? activeCommandId
+        : value[0]?.id ?? null
 
     if (!targetId) {
       const command = {
@@ -199,7 +200,11 @@ export function CustomCommandsEditor({
         variant="outline"
         size="sm"
         className="h-8"
-        onClick={() => onChange([...value, newCommand()])}
+        onClick={() => {
+          const command = newCommand()
+          onChange([...value, command])
+          setActiveCommandId(command.id)
+        }}
       >
         <Plus className="h-4 w-4" />
         Add command
