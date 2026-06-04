@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { cpSync, existsSync, mkdirSync, rmSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -37,18 +37,108 @@ const spawnTracked = (command, args, options = {}) => {
   return child
 }
 
+const waitForExit = (child) =>
+  new Promise((resolve) => {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      resolve()
+      return
+    }
+    child.once('exit', resolve)
+  })
+
 const shutdown = (code = 0) => {
   if (shuttingDown) return
   shuttingDown = true
-  for (const child of children) {
+  const shutdownChildren = [...children]
+  const exits = shutdownChildren.map(waitForExit)
+
+  for (const child of shutdownChildren) {
     child.kill('SIGTERM')
   }
-  setTimeout(() => {
+
+  const forceKillTimer = setTimeout(() => {
     for (const child of children) {
       child.kill('SIGKILL')
     }
-  }, 2000).unref()
-  process.exit(code)
+  }, 2000)
+
+  void Promise.all(exits).finally(() => {
+    clearTimeout(forceKillTimer)
+    process.exit(code)
+  })
+}
+
+export const installInteractiveInterruptHandler = ({
+  stdin = process.stdin,
+  shutdownHandler = () => shutdown(0)
+} = {}) => {
+  if (!stdin?.isTTY || typeof stdin.on !== 'function') {
+    return () => {}
+  }
+
+  const wasRaw = Boolean(stdin.isRaw)
+  const canSetRawMode = typeof stdin.setRawMode === 'function'
+
+  const onData = (chunk) => {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk))
+    if (buffer.includes(0x03)) {
+      shutdownHandler()
+    }
+  }
+  const onError = () => {}
+
+  if (canSetRawMode) {
+    stdin.setRawMode(true)
+  }
+  stdin.resume?.()
+  stdin.on('data', onData)
+  stdin.on('error', onError)
+
+  return () => {
+    stdin.off?.('data', onData)
+    stdin.off?.('error', onError)
+    stdin.removeListener?.('data', onData)
+    stdin.removeListener?.('error', onError)
+    if (canSetRawMode) {
+      stdin.setRawMode(wasRaw)
+    }
+  }
+}
+
+export const reclaimForegroundProcessGroup = ({ spawnSyncImpl = spawnSync } = {}) => {
+  if (!process.stdin?.isTTY || process.platform === 'win32') {
+    return false
+  }
+
+  const script = [
+    'import os, signal',
+    'signal.signal(signal.SIGTTOU, signal.SIG_IGN)',
+    "fd = os.open('/dev/tty', os.O_RDONLY)",
+    'try:',
+    '    os.tcsetpgrp(fd, os.getpgrp())',
+    'finally:',
+    '    os.close(fd)'
+  ].join('\n')
+  const result = spawnSyncImpl('python3', ['-c', script], { stdio: 'ignore' })
+  return result.status === 0
+}
+
+export const installForegroundProcessGroupReclaimer = ({
+  setIntervalImpl = setInterval,
+  clearIntervalImpl = clearInterval,
+  reclaim = () => reclaimForegroundProcessGroup()
+} = {}) => {
+  if (!process.stdin?.isTTY || process.platform === 'win32') {
+    return () => {}
+  }
+
+  reclaim()
+  const interval = setIntervalImpl(reclaim, 500)
+  interval.unref?.()
+
+  return () => {
+    clearIntervalImpl(interval)
+  }
 }
 
 const run = (command, args, options = {}) =>
@@ -85,6 +175,10 @@ const copyDevServerBundle = (cwd = process.cwd()) => {
 }
 
 const runDevDesktop = async () => {
+  const disposeInteractiveInterruptHandler = installInteractiveInterruptHandler()
+  const disposeForegroundProcessGroupReclaimer = installForegroundProcessGroupReclaimer()
+  process.once('exit', disposeInteractiveInterruptHandler)
+  process.once('exit', disposeForegroundProcessGroupReclaimer)
   process.once('SIGINT', () => shutdown(0))
   process.once('SIGTERM', () => shutdown(0))
 

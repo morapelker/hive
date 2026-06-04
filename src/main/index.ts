@@ -35,6 +35,7 @@ import {
 } from './services/opencode-session-commands'
 import { buildMenu, shutdownMenu } from './menu'
 import { createLogger } from './services/logger'
+import { wireHeadlessSignalShutdown } from './services/headless-shutdown'
 import { emitWindowFocused } from './services/app-events'
 import { notificationService } from './services/notification-service'
 import { updaterService } from './services/updater'
@@ -220,6 +221,7 @@ let lastQuitConfirmAt: number | null = null
 const cliArgs = process.argv.slice(2)
 const isLogMode = cliArgs.includes('--log')
 const isHeadless = cliArgs.includes('--headless') || process.env.HIVE_HEADLESS === '1'
+wireHeadlessSignalShutdown({ app, isHeadless })
 
 interface WindowBounds {
   x: number

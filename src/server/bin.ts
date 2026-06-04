@@ -1,5 +1,47 @@
 import { Effect } from 'effect'
-import { startHiveServer } from './server'
+import { startHiveServer, type StartedHiveServer } from './server'
+
+const DEFAULT_SHUTDOWN_TIMEOUT_MS = 5_000
+
+interface ShutdownHandlerOptions {
+  readonly exit?: (code: number) => void
+  readonly setTimeout?: typeof setTimeout
+  readonly clearTimeout?: typeof clearTimeout
+  readonly timeoutMs?: number
+}
+
+export const createShutdownHandler = (
+  server: Pick<StartedHiveServer, 'close'>,
+  options: ShutdownHandlerOptions = {}
+): (() => void) => {
+  const exit = options.exit ?? ((code: number) => process.exit(code))
+  const setTimeoutFn = options.setTimeout ?? setTimeout
+  const clearTimeoutFn = options.clearTimeout ?? clearTimeout
+  const timeoutMs = options.timeoutMs ?? DEFAULT_SHUTDOWN_TIMEOUT_MS
+  let shuttingDown = false
+  let exited = false
+
+  const exitOnce = (): void => {
+    if (exited) return
+    exited = true
+    exit(0)
+  }
+
+  return (): void => {
+    if (shuttingDown) {
+      exitOnce()
+      return
+    }
+
+    shuttingDown = true
+    const timeout = setTimeoutFn(exitOnce, timeoutMs)
+
+    void server.close().finally(() => {
+      clearTimeoutFn(timeout)
+      exitOnce()
+    })
+  }
+}
 
 export const main = (): Promise<void> =>
   Effect.runPromise(startHiveServer()).then((server) => {
@@ -11,12 +53,10 @@ export const main = (): Promise<void> =>
       }) + '\n'
     )
 
-    const shutdown = (): void => {
-      void server.close().finally(() => process.exit(0))
-    }
+    const shutdown = createShutdownHandler(server)
 
-    process.once('SIGINT', shutdown)
-    process.once('SIGTERM', shutdown)
+    process.on('SIGINT', shutdown)
+    process.on('SIGTERM', shutdown)
   })
 
 const entryArg = process.argv[1] ?? ''
