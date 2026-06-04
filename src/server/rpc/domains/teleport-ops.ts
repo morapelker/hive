@@ -58,6 +58,8 @@ interface TeleportDb {
     model_variant?: string | null
   }) => Session
   updateWorktree: (id: string, data: { teleported_to?: string | null }) => Worktree | null
+  getSessionsByWorktree: (worktreeId: string) => Session[]
+  deleteSession: (id: string) => boolean
   getDiscordChannelResourceByWorktree: (
     worktreeId: string
   ) => { id: string; discord_id: string; guild_id: string } | null
@@ -103,6 +105,10 @@ export interface TeleportOpsDeps {
   readonly git: TeleportGit
   readonly discord: TeleportDiscord
   readonly remote: TeleportRemote
+  // Whether the CLI session is actively running (live status), not the DB
+  // lifecycle column. Keep the busy definition in sync with the renderer's
+  // `isSessionBusy` in SessionTabs.tsx ('working' | 'planning').
+  readonly isSessionBusy: (sessionId: string) => boolean
 }
 
 const modelSchema = z
@@ -175,7 +181,7 @@ async function startTeleport(
     if (session.agent_sdk !== 'claude-code-cli') {
       throw new Error('Teleport only supports Claude Code CLI sessions')
     }
-    if (session.status === 'active') {
+    if (deps.isSessionBusy(session.id)) {
       throw new Error('Stop the Claude Code CLI session before teleporting it')
     }
     if (!session.claude_session_id) {
@@ -273,11 +279,17 @@ async function receiveTeleport(
   }
 
   const project = await deps.git.ensureRemoteProject(params.gitUrl, params.projectName)
-  const remoteWorktree = await deps.git.ensureTeleportWorktree(
-    project,
-    params.branch,
-    params.headSha
-  )
+
+  // Idempotency: reuse an existing teleport worktree for this branch instead of
+  // creating a duplicate on retry. The target branch is either the pushed branch
+  // or teleport/<short-sha> (see resolveTeleportTargetBranch).
+  const short = params.headSha.slice(0, 8)
+  const candidateBranches = new Set([params.branch, `teleport/${short}`])
+  const remoteWorktree =
+    deps.db
+      .getWorktreesByProject(project.id)
+      .find((worktree) => candidateBranches.has(worktree.branch_name)) ??
+    (await deps.git.ensureTeleportWorktree(project, params.branch, params.headSha))
 
   const transcriptPath = join(
     resolveProjectsDir(),
@@ -287,29 +299,55 @@ async function receiveTeleport(
   mkdirSync(dirname(transcriptPath), { recursive: true })
   writeFileSync(transcriptPath, params.transcript, 'utf-8')
 
-  const session = deps.db.createSession({
-    worktree_id: remoteWorktree.id,
-    project_id: project.id,
-    agent_sdk: 'claude-code-cli',
-    mode: params.mode,
-    opencode_session_id: params.claudeSessionId,
-    claude_session_id: params.claudeSessionId,
-    model_provider_id: params.model.providerId,
-    model_id: params.model.id,
-    model_variant: params.model.variant
-  })
+  // Reuse an existing session for this transcript on retry, otherwise create one.
+  const existingSession = deps.db
+    .getSessionsByWorktree(remoteWorktree.id)
+    .find((candidate) => candidate.claude_session_id === params.claudeSessionId)
+  const session =
+    existingSession ??
+    deps.db.createSession({
+      worktree_id: remoteWorktree.id,
+      project_id: project.id,
+      agent_sdk: 'claude-code-cli',
+      mode: params.mode,
+      opencode_session_id: params.claudeSessionId,
+      claude_session_id: params.claudeSessionId,
+      model_provider_id: params.model.providerId,
+      model_id: params.model.id,
+      model_variant: params.model.variant
+    })
+  const createdSessionId = existingSession ? null : session.id
 
-  await deps.discord.provision([project.id])
-  const channel = deps.db.getDiscordChannelResourceByWorktree(remoteWorktree.id)
-  if (!channel) throw new Error('Discord channel was not provisioned for the teleported worktree')
-  deps.db.setDiscordResourceManagedSession(channel.id, session.id)
+  try {
+    // Merge with the already-selected projects: provision() treats any project
+    // NOT in the passed set as a delete candidate and overwrites selectedProjectIds,
+    // so passing only [project.id] would wipe every other project's Discord
+    // channels. Mirror the other call sites (discord-service.ts).
+    await deps.discord.provision([...config.selectedProjectIds, project.id])
+    const channel = deps.db.getDiscordChannelResourceByWorktree(remoteWorktree.id)
+    if (!channel) {
+      throw new Error('Discord channel was not provisioned for the teleported worktree')
+    }
+    deps.db.setDiscordResourceManagedSession(channel.id, session.id)
 
-  return {
-    success: true,
-    channelId: channel.discord_id,
-    channelUrl: discordChannelUrl(channel.guild_id, channel.discord_id),
-    remoteWorktreeId: remoteWorktree.id,
-    remoteSessionId: session.id
+    return {
+      success: true,
+      channelId: channel.discord_id,
+      channelUrl: discordChannelUrl(channel.guild_id, channel.discord_id),
+      remoteWorktreeId: remoteWorktree.id,
+      remoteSessionId: session.id
+    }
+  } catch (error) {
+    // Roll back the session we created this call so a failed provision/bind does
+    // not leave a dangling managed session. Best-effort; a reused session is kept.
+    if (createdSessionId) {
+      try {
+        deps.db.deleteSession(createdSessionId)
+      } catch {
+        // ignore cleanup failure; surface the original error
+      }
+    }
+    throw error
   }
 }
 
@@ -318,13 +356,16 @@ async function execGit(cwd: string, args: string[]): Promise<string> {
   return stdout.trim()
 }
 
-function slug(value: string): string {
-  return value
+export function slug(value: string): string {
+  const cleaned = value
     .toLowerCase()
     .replace(/[^a-z0-9._/-]+/g, '-')
     .replace(/-+/g, '-')
     .replace(/^[-/.]+|[-/.]+$/g, '')
     .slice(0, 64)
+  // A separator-only branch (e.g. '---' or '.') collapses to '', which would
+  // produce a degenerate worktree path; fall back to a stable default.
+  return cleaned || 'teleport'
 }
 
 function uniquePath(basePath: string): string {
@@ -341,13 +382,28 @@ async function isBranchCheckedOut(repoPath: string, branch: string): Promise<boo
   return output.split('\n').some((line) => line.trim() === `branch refs/heads/${branch}`)
 }
 
-async function branchExists(repoPath: string, branch: string): Promise<boolean> {
-  try {
-    await execGit(repoPath, ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`])
-    return true
-  } catch {
-    return false
-  }
+/**
+ * Fetch origin and force the branch we are about to check out to the exact
+ * pushed `headSha`, returning the branch name to add a worktree for.
+ *
+ * `git fetch` only updates refs/remotes/origin/*, never local refs/heads/*, so a
+ * pre-existing local branch must be force-moved or the worktree would check out
+ * a stale commit. If `branch` is already checked out in another worktree we use
+ * a fresh `teleport/<sha>` branch instead (you cannot add a second worktree for
+ * an already-checked-out branch). Both targets are safe to `branch -f`:
+ * `teleport/<sha>` is never checked out, and `branch` is only used when it is not.
+ */
+export async function resolveTeleportTargetBranch(
+  repoPath: string,
+  branch: string,
+  headSha: string
+): Promise<string> {
+  await execGit(repoPath, ['fetch', 'origin'])
+  const short = headSha.slice(0, 8)
+  const checkedOut = await isBranchCheckedOut(repoPath, branch)
+  const targetBranch = checkedOut ? `teleport/${short}` : branch
+  await execGit(repoPath, ['branch', '-f', targetBranch, headSha])
+  return targetBranch
 }
 
 async function createLiveDeps(): Promise<TeleportOpsDeps> {
@@ -359,7 +415,8 @@ async function createLiveDeps(): Promise<TeleportOpsDeps> {
     { syncWorktreesOp },
     { discordService },
     { sendTeleportReceive },
-    { getTeleportSettings }
+    { getTeleportSettings },
+    { getLastClaudeCliStatus }
   ] = await Promise.all([
     import('../../../main/db'),
     import('../../../main/effect/git/facade'),
@@ -368,7 +425,8 @@ async function createLiveDeps(): Promise<TeleportOpsDeps> {
     import('../../../main/services/worktree-ops'),
     import('../../../main/services/discord-service'),
     import('../../../main/services/teleport-remote-client'),
-    import('../../../main/services/teleport-remote-client')
+    import('../../../main/services/teleport-remote-client'),
+    import('../../../main/services/claude-hook-server')
   ])
   const db = getDatabase()
 
@@ -405,13 +463,7 @@ async function createLiveDeps(): Promise<TeleportOpsDeps> {
         return project
       },
       ensureTeleportWorktree: async (project, branch, headSha) => {
-        await execGit(project.path, ['fetch', 'origin'])
-        const short = headSha.slice(0, 8)
-        const checkedOut = await isBranchCheckedOut(project.path, branch)
-        const targetBranch = checkedOut ? `teleport/${short}` : branch
-        if (checkedOut || !(await branchExists(project.path, targetBranch))) {
-          await execGit(project.path, ['branch', '-f', targetBranch, headSha])
-        }
+        const targetBranch = await resolveTeleportTargetBranch(project.path, branch, headSha)
 
         const worktreePath = uniquePath(
           join(dirname(project.path), `${basename(project.path)}-${slug(targetBranch)}`)
@@ -435,6 +487,10 @@ async function createLiveDeps(): Promise<TeleportOpsDeps> {
         getTeleportSettings()
         return sendTeleportReceive(params)
       }
+    },
+    isSessionBusy: (sessionId) => {
+      const status = getLastClaudeCliStatus(sessionId)
+      return status === 'working' || status === 'planning'
     }
   }
 }

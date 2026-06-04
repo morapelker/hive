@@ -162,6 +162,15 @@ export function publishClaudeCliStatus(payload: ClaudeCliStatusPayload): void {
 }
 
 /**
+ * Read the most recently published live status for a Claude CLI session, or
+ * undefined if none has been published in this process. Used to gate actions
+ * (e.g. teleport) on whether the session is actively running vs idle/stopped.
+ */
+export function getLastClaudeCliStatus(sessionId: string): SessionStatusType | undefined {
+  return lastStatusBySession.get(sessionId)
+}
+
+/**
  * Drop a session's last-published status. Call from the PTY exit / destroy
  * teardown paths so the dedup map does not grow for the lifetime of the app and
  * a session re-created with the same id starts with fresh dedup state (otherwise

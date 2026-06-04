@@ -3,6 +3,8 @@ import type { TeleportSettings } from '@shared/types/settings'
 import { APP_SETTINGS_DB_KEY } from '@shared/types/settings'
 import { getDatabase } from '../db'
 
+const REQUEST_TIMEOUT_MS = 30_000
+
 export interface TeleportRemoteReceiveParams {
   gitUrl: string
   branch: string
@@ -37,12 +39,19 @@ interface RpcResponse<T> {
   }
 }
 
-function parseTeleportSettings(raw: string | null): TeleportSettings {
+export function parseTeleportSettings(raw: string | null): TeleportSettings {
   if (!raw) {
     throw new Error('Teleport remote is not configured')
   }
 
-  const parsed = JSON.parse(raw) as { teleport?: Partial<TeleportSettings> | null }
+  let parsed: { teleport?: Partial<TeleportSettings> | null }
+  try {
+    parsed = JSON.parse(raw) as { teleport?: Partial<TeleportSettings> | null }
+  } catch {
+    // Corrupted/non-JSON settings should surface as "not configured", not an
+    // opaque SyntaxError.
+    throw new Error('Teleport remote is not configured')
+  }
   const url = parsed.teleport?.url?.trim()
   const bootstrapToken = parsed.teleport?.bootstrapToken?.trim()
   if (!url || !bootstrapToken) {
@@ -52,7 +61,7 @@ function parseTeleportSettings(raw: string | null): TeleportSettings {
   return { url, bootstrapToken }
 }
 
-function targetFromSettings(settings: TeleportSettings): {
+export function targetFromSettings(settings: TeleportSettings): {
   httpBaseUrl: string
   wsBaseUrl: string
   bootstrapToken: string
@@ -65,7 +74,10 @@ function targetFromSettings(settings: TeleportSettings): {
 
   const wsUrl = new URL(httpBaseUrl)
   wsUrl.protocol = wsUrl.protocol === 'https:' ? 'wss:' : 'ws:'
-  wsUrl.pathname = '/ws'
+  // Append '/ws' to the configured base path rather than replacing it, so
+  // sub-path deployments (e.g. https://host/teleport) connect to the right
+  // endpoint. Root URLs (empty pathname) still resolve to '/ws'.
+  wsUrl.pathname = `${wsUrl.pathname.replace(/\/+$/, '')}/ws`
 
   return {
     httpBaseUrl,
@@ -96,10 +108,11 @@ async function issueWebSocketToken(target: ReturnType<typeof targetFromSettings>
   return wsToken.webSocketToken.token
 }
 
-async function requestRemote<T>(
+export async function requestRemote<T>(
   target: ReturnType<typeof targetFromSettings>,
   method: string,
-  params: unknown
+  params: unknown,
+  timeoutMs: number = REQUEST_TIMEOUT_MS
 ): Promise<T> {
   const token = await issueWebSocketToken(target)
   const url = new URL(target.wsBaseUrl)
@@ -108,26 +121,55 @@ async function requestRemote<T>(
 
   return new Promise<T>((resolve, reject) => {
     const socket = new WebSocket(url)
+    let settled = false
+    const finish = (action: () => void): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      try {
+        socket.close()
+      } catch {
+        // ignore close errors during teardown
+      }
+      action()
+    }
+    // Without this the promise would hang forever on a clean close or a stalled
+    // connection (the 'close' handler used to be a no-op and there was no timeout).
+    const timer = setTimeout(
+      () => finish(() => reject(new Error('Remote Hive RPC timed out'))),
+      timeoutMs
+    )
+
     socket.on('open', () => {
       socket.send(JSON.stringify({ id, method, params }))
     })
     socket.on('message', (data) => {
-      const response = JSON.parse(String(data)) as RpcResponse<T>
+      let response: RpcResponse<T>
+      try {
+        response = JSON.parse(String(data)) as RpcResponse<T>
+      } catch {
+        // Ignore non-JSON frames (heartbeats, proxy noise) instead of throwing
+        // inside the listener and leaving the promise unsettled.
+        return
+      }
       if (response.id !== id) return
-      socket.close()
       if (response.ok) {
-        resolve(response.value as T)
+        finish(() => resolve(response.value as T))
       } else {
-        const error = new Error(response.error?.message ?? 'Remote Hive RPC failed') as Error & {
-          details?: unknown
-        }
-        error.name = response.error?.code ?? 'RemoteHiveRpcError'
-        error.details = response.error?.details
-        reject(error)
+        finish(() => {
+          const error = new Error(response.error?.message ?? 'Remote Hive RPC failed') as Error & {
+            details?: unknown
+          }
+          error.name = response.error?.code ?? 'RemoteHiveRpcError'
+          error.details = response.error?.details
+          reject(error)
+        })
       }
     })
-    socket.on('error', (error) => reject(error))
-    socket.on('close', () => undefined)
+    socket.on('error', (error) => finish(() => reject(error)))
+    socket.on('close', () =>
+      finish(() => reject(new Error('Remote Hive connection closed before responding')))
+    )
   })
 }
 

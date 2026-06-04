@@ -121,6 +121,7 @@ describe('teleportOps.receive', () => {
     const provisionedChannel = channel()
 
     const createSession = vi.fn(() => createdSession)
+    const provision = vi.fn(async () => ({ created: 1, deleted: 0 }))
     const setDiscordResourceManagedSession = vi.fn(() => ({
       ...provisionedChannel,
       managed_session_id: createdSession.id
@@ -129,7 +130,9 @@ describe('teleportOps.receive', () => {
     const service = makeTeleportOpsRpcService({
       db: {
         getAllProjects: () => [remoteProject],
-        getWorktreesByProject: () => [remoteWorktree],
+        getWorktreesByProject: () => [],
+        getSessionsByWorktree: () => [],
+        deleteSession: vi.fn(),
         createSession,
         getDiscordChannelResourceByWorktree: () => provisionedChannel,
         setDiscordResourceManagedSession,
@@ -156,13 +159,14 @@ describe('teleportOps.receive', () => {
           guildId: 'guild-1',
           guildName: 'Hive',
           enabled: true,
-          selectedProjectIds: ['project-1']
+          selectedProjectIds: ['other-project']
         })),
-        provision: vi.fn(async () => ({ created: 1, deleted: 0 }))
+        provision
       },
       remote: {
         receive: vi.fn()
-      }
+      },
+      isSessionBusy: () => false
     })
 
     const result = await Effect.runPromise(
@@ -207,6 +211,9 @@ describe('teleportOps.receive', () => {
       provisionedChannel.id,
       createdSession.id
     )
+    // Must merge with the existing selection, not replace it — otherwise
+    // provisioning would delete every other project's Discord channels.
+    expect(provision).toHaveBeenCalledWith(['other-project', remoteProject.id])
     expect(result).toMatchObject({
       success: true,
       channelId: provisionedChannel.discord_id,
@@ -220,6 +227,8 @@ describe('teleportOps.receive', () => {
       db: {
         getAllProjects: () => [],
         getWorktreesByProject: () => [],
+        getSessionsByWorktree: () => [],
+        deleteSession: vi.fn(),
         createSession: vi.fn(),
         getDiscordChannelResourceByWorktree: () => null,
         setDiscordResourceManagedSession: vi.fn(),
@@ -246,7 +255,8 @@ describe('teleportOps.receive', () => {
       },
       remote: {
         receive: vi.fn()
-      }
+      },
+      isSessionBusy: () => false
     })
 
     await expect(
@@ -263,5 +273,221 @@ describe('teleportOps.receive', () => {
         })
       )
     ).rejects.toThrow('Remote has no Discord configured')
+  })
+
+  it('reuses an existing teleport worktree and session instead of duplicating them', async () => {
+    const baseDir = mkdtempSync(join(tmpdir(), 'hive-teleport-rpc-'))
+    tempDirs.push(baseDir)
+    vi.stubEnv('CLAUDE_CONFIG_DIR', join(baseDir, '.claude'))
+
+    const remoteProject = project({ path: join(baseDir, 'repo') })
+    const existingWorktree = worktree({
+      id: 'wt-existing',
+      branch_name: 'main',
+      path: join(baseDir, 'repo-existing')
+    })
+    const existingSession = session({ id: 'sess-existing', claude_session_id: 'claude-session-1' })
+    const provisionedChannel = channel({ worktree_id: 'wt-existing' })
+
+    const ensureTeleportWorktree = vi.fn()
+    const createSession = vi.fn()
+
+    const service = makeTeleportOpsRpcService({
+      db: {
+        getAllProjects: () => [remoteProject],
+        getWorktreesByProject: () => [existingWorktree],
+        getSessionsByWorktree: () => [existingSession],
+        deleteSession: vi.fn(),
+        createSession,
+        getDiscordChannelResourceByWorktree: () => provisionedChannel,
+        setDiscordResourceManagedSession: vi.fn(),
+        updateWorktree: vi.fn(),
+        getProject: () => remoteProject,
+        getWorktree: () => existingWorktree,
+        getSession: () => null
+      },
+      git: {
+        fetch: vi.fn(),
+        ensureRemoteProject: vi.fn(async () => remoteProject),
+        ensureTeleportWorktree,
+        stageAll: vi.fn(),
+        commit: vi.fn(),
+        push: vi.fn(),
+        getCurrentBranch: vi.fn(),
+        getRemoteUrl: vi.fn(),
+        hasUncommittedChanges: vi.fn(),
+        revParseHead: vi.fn()
+      },
+      discord: {
+        getConfig: vi.fn(() => ({
+          botToken: 'token',
+          guildId: 'guild-1',
+          guildName: 'Hive',
+          enabled: true,
+          selectedProjectIds: ['project-1']
+        })),
+        provision: vi.fn(async () => ({ created: 0, deleted: 0 }))
+      },
+      remote: { receive: vi.fn() },
+      isSessionBusy: () => false
+    })
+
+    const result = await Effect.runPromise(
+      service.receive({
+        gitUrl: 'git@github.com:org/repo.git',
+        branch: 'main',
+        headSha: 'abc123',
+        projectName: 'repo',
+        claudeSessionId: 'claude-session-1',
+        transcript: '{"type":"user"}\n',
+        model: { providerId: 'anthropic', id: 'claude-sonnet-4', variant: null },
+        mode: 'build'
+      })
+    )
+
+    expect(ensureTeleportWorktree).not.toHaveBeenCalled()
+    expect(createSession).not.toHaveBeenCalled()
+    expect(result).toMatchObject({
+      success: true,
+      remoteWorktreeId: 'wt-existing',
+      remoteSessionId: 'sess-existing'
+    })
+  })
+
+  it('rolls back the created session when provisioning fails', async () => {
+    const baseDir = mkdtempSync(join(tmpdir(), 'hive-teleport-rpc-'))
+    tempDirs.push(baseDir)
+    vi.stubEnv('CLAUDE_CONFIG_DIR', join(baseDir, '.claude'))
+
+    const remoteProject = project({ path: join(baseDir, 'repo') })
+    const remoteWorktree = worktree({ path: join(baseDir, 'repo-teleport') })
+    const createdSession = session({ id: 'sess-new' })
+
+    const deleteSession = vi.fn()
+
+    const service = makeTeleportOpsRpcService({
+      db: {
+        getAllProjects: () => [remoteProject],
+        getWorktreesByProject: () => [],
+        getSessionsByWorktree: () => [],
+        deleteSession,
+        createSession: vi.fn(() => createdSession),
+        getDiscordChannelResourceByWorktree: () => null,
+        setDiscordResourceManagedSession: vi.fn(),
+        updateWorktree: vi.fn(),
+        getProject: () => remoteProject,
+        getWorktree: () => remoteWorktree,
+        getSession: () => null
+      },
+      git: {
+        fetch: vi.fn(),
+        ensureRemoteProject: vi.fn(async () => remoteProject),
+        ensureTeleportWorktree: vi.fn(async () => remoteWorktree),
+        stageAll: vi.fn(),
+        commit: vi.fn(),
+        push: vi.fn(),
+        getCurrentBranch: vi.fn(),
+        getRemoteUrl: vi.fn(),
+        hasUncommittedChanges: vi.fn(),
+        revParseHead: vi.fn()
+      },
+      discord: {
+        getConfig: vi.fn(() => ({
+          botToken: 'token',
+          guildId: 'guild-1',
+          guildName: 'Hive',
+          enabled: true,
+          selectedProjectIds: ['project-1']
+        })),
+        provision: vi.fn(async () => {
+          throw new Error('discord boom')
+        })
+      },
+      remote: { receive: vi.fn() },
+      isSessionBusy: () => false
+    })
+
+    await expect(
+      Effect.runPromise(
+        service.receive({
+          gitUrl: 'git@github.com:org/repo.git',
+          branch: 'main',
+          headSha: 'abc123',
+          projectName: 'repo',
+          claudeSessionId: 'claude-session-1',
+          transcript: '{"type":"user"}\n',
+          model: { providerId: 'anthropic', id: 'claude-sonnet-4', variant: null },
+          mode: 'build'
+        })
+      )
+    ).rejects.toThrow('discord boom')
+
+    expect(deleteSession).toHaveBeenCalledWith('sess-new')
+  })
+})
+
+describe('teleportOps.start gating', () => {
+  function makeStartService(opts: {
+    isSessionBusy: boolean
+    session?: Session | null
+    getRemoteUrl?: () => Promise<{ success: boolean; url?: string; error?: string }>
+  }) {
+    const localSession = opts.session === undefined ? session() : opts.session
+    const localWorktree = worktree()
+    const localProject = project()
+    return makeTeleportOpsRpcService({
+      db: {
+        getAllProjects: () => [localProject],
+        getWorktreesByProject: () => [localWorktree],
+        getSessionsByWorktree: () => [],
+        deleteSession: vi.fn(),
+        createSession: vi.fn(),
+        getDiscordChannelResourceByWorktree: () => null,
+        setDiscordResourceManagedSession: vi.fn(),
+        updateWorktree: vi.fn(),
+        getProject: () => localProject,
+        getWorktree: () => localWorktree,
+        getSession: () => localSession
+      },
+      git: {
+        fetch: vi.fn(),
+        ensureRemoteProject: vi.fn(),
+        ensureTeleportWorktree: vi.fn(),
+        stageAll: vi.fn(),
+        commit: vi.fn(),
+        push: vi.fn(),
+        getCurrentBranch: vi.fn(async () => 'feature'),
+        getRemoteUrl:
+          opts.getRemoteUrl ?? vi.fn(async () => ({ success: false, error: 'no remote' })),
+        hasUncommittedChanges: vi.fn(),
+        revParseHead: vi.fn()
+      },
+      discord: {
+        getConfig: vi.fn(() => null),
+        provision: vi.fn()
+      },
+      remote: {
+        receive: vi.fn()
+      },
+      isSessionBusy: () => opts.isSessionBusy
+    })
+  }
+
+  it('rejects a busy session at the validate step', async () => {
+    const service = makeStartService({ isSessionBusy: true })
+    const result = await Effect.runPromise(service.start({ sessionId: 'session-remote' }))
+    expect(result.success).toBe(false)
+    expect(result.step).toBe('validate')
+    expect(result.error).toBe('Stop the Claude Code CLI session before teleporting it')
+  })
+
+  it('passes the busy gate for an idle session even when its DB status is active', async () => {
+    // The session has DB status 'active' (the default), which used to wrongly
+    // block teleport. With the live-status gate it now proceeds past validate
+    // and fails later at git-remote.
+    const service = makeStartService({ isSessionBusy: false })
+    const result = await Effect.runPromise(service.start({ sessionId: 'session-remote' }))
+    expect(result.success).toBe(false)
+    expect(result.step).toBe('git-remote')
   })
 })
