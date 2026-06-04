@@ -1006,6 +1006,10 @@ export class DatabaseService {
       updates.push('custom_icon = ?')
       values.push(data.custom_icon)
     }
+    if (data.detected_icon !== undefined) {
+      updates.push('detected_icon = ?')
+      values.push(data.detected_icon)
+    }
     if (data.setup_script !== undefined) {
       updates.push('setup_script = ?')
       values.push(data.setup_script)

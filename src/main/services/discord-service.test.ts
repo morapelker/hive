@@ -1,7 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { existsSync, mkdirSync } from 'fs'
 import { WORKTREE_CREATED_CHANNEL } from '@shared/worktree-events'
 import { DiscordService } from './discord-service'
-import { createWorktreeFromBranchOp, deleteWorktreeOp } from './worktree-ops'
+import { cloneRepository } from './git-repository'
+import {
+  createProjectWithDefaultWorktree,
+  detectProjectFavicon,
+  detectProjectLanguage
+} from './project-ops'
+import { createWorktreeFromBranchOp, deleteWorktreeOp, syncWorktreesOp } from './worktree-ops'
 import { createGitService } from './git-service'
 import type { DiscordResource, Project, Worktree } from '../db/types'
 
@@ -88,9 +95,51 @@ vi.mock('discord.js', () => ({
   }
 }))
 
+vi.mock('fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs')>()
+  return {
+    ...actual,
+    existsSync: vi.fn(() => false),
+    mkdirSync: vi.fn()
+  }
+})
+
+vi.mock('os', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('os')>()
+  return {
+    ...actual,
+    homedir: vi.fn(() => '/home/test')
+  }
+})
+
 vi.mock('./worktree-ops', () => ({
   createWorktreeFromBranchOp: vi.fn(),
-  deleteWorktreeOp: vi.fn()
+  deleteWorktreeOp: vi.fn(),
+  syncWorktreesOp: vi.fn()
+}))
+
+vi.mock('./git-repository', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./git-repository')>()
+  return {
+    ...actual,
+    cloneRepository: vi.fn()
+  }
+})
+
+vi.mock('./project-ops', () => ({
+  createProjectWithDefaultWorktree: vi.fn((db, data) => {
+    const project = db.createProject(data)
+    db.createWorktree({
+      project_id: project.id,
+      name: '(no-worktree)',
+      branch_name: '',
+      path: project.path,
+      is_default: true
+    })
+    return project
+  }),
+  detectProjectLanguage: vi.fn(async () => null),
+  detectProjectFavicon: vi.fn(() => null)
 }))
 
 vi.mock('./git-service', () => ({
@@ -119,6 +168,52 @@ class FakeDiscordDatabase {
 
   getProject(id: string): Project | null {
     return this.projects.find((project) => project.id === id) ?? null
+  }
+
+  getProjectByPath(path: string): Project | null {
+    return this.projects.find((project) => project.path === path) ?? null
+  }
+
+  createProject(data: { name: string; path: string }): Project {
+    const project = makeProject(`p${this.projects.length + 1}`, data.name)
+    project.path = data.path
+    this.projects.push(project)
+    return project
+  }
+
+  updateProject(id: string, data: Partial<Project>): Project | null {
+    const project = this.getProject(id)
+    if (!project) return null
+    Object.assign(project, data)
+    return project
+  }
+
+  createWorktree(data: {
+    project_id: string
+    name: string
+    branch_name: string
+    path: string
+    is_default?: boolean
+  }): Worktree {
+    const worktree = makeWorktree(
+      `w${(this.activeWorktrees.get(data.project_id) ?? []).length + 1}`,
+      data.project_id,
+      data.name,
+      {
+        branch_name: data.branch_name,
+        path: data.path,
+        is_default: data.is_default ?? false
+      }
+    )
+    this.activeWorktrees.set(data.project_id, [
+      ...(this.activeWorktrees.get(data.project_id) ?? []),
+      worktree
+    ])
+    return worktree
+  }
+
+  replaceActiveWorktrees(projectId: string, worktrees: Worktree[]): void {
+    this.activeWorktrees.set(projectId, worktrees)
   }
 
   getActiveWorktreesByProject(projectId: string): Worktree[] {
@@ -240,6 +335,19 @@ const configure = (db: FakeDiscordDatabase): void => {
   )
 }
 
+const configureSelected = (db: FakeDiscordDatabase, selectedProjectIds: string[]): void => {
+  db.setSetting(
+    'discord_config',
+    JSON.stringify({
+      botToken: 'token',
+      guildId: 'guild-1',
+      guildName: 'Hive',
+      enabled: true,
+      selectedProjectIds
+    })
+  )
+}
+
 const makeService = (
   db: FakeDiscordDatabase,
   gateway: ReturnType<typeof makeGateway>['gateway'],
@@ -312,11 +420,51 @@ const makeArchiveInteraction = (
   return interaction
 }
 
+const makeAddProjectInteraction = (client: unknown, gitUrl: string) => {
+  const interaction = {
+    commandName: 'add-project',
+    guildId: 'guild-1',
+    channelId: 'any-channel',
+    deferred: false,
+    replied: false,
+    client,
+    options: {
+      getString: vi.fn(() => gitUrl)
+    },
+    isChatInputCommand: () => true,
+    reply: vi.fn(async () => {
+      interaction.replied = true
+      return undefined
+    }),
+    deferReply: vi.fn(async () => {
+      interaction.deferred = true
+      return undefined
+    }),
+    editReply: vi.fn(async () => {
+      interaction.replied = true
+      return undefined
+    })
+  }
+  return interaction
+}
+
 beforeEach(() => {
   discordJsMock.Client.mockClear()
   discordJsMock.instances.length = 0
   vi.mocked(createWorktreeFromBranchOp).mockReset()
   vi.mocked(deleteWorktreeOp).mockReset()
+  vi.mocked(syncWorktreesOp).mockReset()
+  vi.mocked(syncWorktreesOp).mockResolvedValue({ success: true })
+  vi.mocked(cloneRepository).mockReset()
+  vi.mocked(cloneRepository).mockResolvedValue({ success: true })
+  vi.mocked(existsSync).mockReset()
+  vi.mocked(existsSync).mockReturnValue(false)
+  vi.mocked(mkdirSync).mockReset()
+  vi.mocked(createProjectWithDefaultWorktree).mockClear()
+  vi.mocked(detectProjectLanguage).mockReset()
+  vi.mocked(detectProjectLanguage).mockResolvedValue(null)
+  vi.mocked(detectProjectFavicon).mockReset()
+  vi.mocked(detectProjectFavicon).mockReturnValue(null)
   vi.mocked(createGitService).mockClear()
 })
 
@@ -567,6 +715,47 @@ describe('DiscordService provisioning reconciliation', () => {
     })
   })
 
+  it('removes stale channel mappings when Discord reports the channel is already gone', async () => {
+    const db = new FakeDiscordDatabase()
+    configure(db)
+    db.projects = [makeProject('p1', 'test-python')]
+    db.activeWorktrees.set('p1', [makeWorktree('w1', 'p1', 'main')])
+    db.resources = [
+      {
+        id: 'r-stale',
+        project_id: 'old-project',
+        worktree_id: 'old-worktree',
+        discord_id: 'missing-channel',
+        type: 'channel',
+        guild_id: 'guild-1',
+        managed_session_id: null,
+        created_at: '2026-01-01T00:00:00.000Z'
+      }
+    ]
+    const { gateway, actions } = makeGateway()
+    gateway.deleteResource.mockRejectedValueOnce(
+      Object.assign(new Error('Unknown Channel'), { code: 10003 })
+    )
+    const service = makeService(db, gateway)
+
+    const summary = await service.provision(['p1'])
+
+    expect(summary).toEqual({ created: 2, deleted: 1 })
+    expect(db.resources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ project_id: 'p1', worktree_id: null, type: 'category' }),
+        expect.objectContaining({ project_id: 'p1', worktree_id: 'w1', type: 'channel' })
+      ])
+    )
+    expect(db.resources).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: 'r-stale' })])
+    )
+    expect(actions).toEqual([
+      'create-category:test-python:discord-1',
+      'create-channel:main:discord-1:discord-2'
+    ])
+  })
+
   it('surfaces an actionable error when the bot cannot access the configured guild', async () => {
     const db = new FakeDiscordDatabase()
     configure(db)
@@ -611,9 +800,204 @@ describe('DiscordService message listener', () => {
           name: 'qa',
           description: 'Only post questions, plan approvals, and final results to channels'
         },
-        { name: 'all', description: 'Post all agent activity to channels (default)' }
+        { name: 'all', description: 'Post all agent activity to channels (default)' },
+        {
+          name: 'add-project',
+          description: 'Clone a git repo and add it to Hive',
+          options: [
+            {
+              type: 3,
+              name: 'git_url',
+              description: 'Git SSH URL (git@host:user/repo.git)',
+              required: true
+            }
+          ]
+        }
       ],
       'guild-1'
+    )
+  })
+
+  it('adds a project from a global slash command and provisions its default branch channel', async () => {
+    const db = new FakeDiscordDatabase()
+    configure(db)
+    const { gateway, actions } = makeGateway()
+    const service = makeService(db, gateway)
+
+    vi.mocked(syncWorktreesOp).mockImplementation(async (params) => {
+      db.replaceActiveWorktrees(params.projectId, [
+        makeWorktree('w-main', params.projectId, 'main', {
+          branch_name: 'main',
+          path: params.projectPath,
+          is_default: true
+        })
+      ])
+      return { success: true }
+    })
+
+    await service.startListening()
+    const interaction = makeAddProjectInteraction(
+      discordJsMock.instances[0],
+      'git@github.com:example/repo.git'
+    )
+
+    discordJsMock.instances[0].emit('interactionCreate', interaction)
+    await flushPromises()
+
+    expect(interaction.deferReply).toHaveBeenCalledTimes(1)
+    expect(cloneRepository).toHaveBeenCalledWith(
+      'git@github.com:example/repo.git',
+      '/home/test/hive-projects/repo'
+    )
+    expect(createProjectWithDefaultWorktree).toHaveBeenCalledWith(db, {
+      name: 'repo',
+      path: '/home/test/hive-projects/repo'
+    })
+    expect(syncWorktreesOp).toHaveBeenCalledWith({
+      projectId: 'p1',
+      projectPath: '/home/test/hive-projects/repo'
+    })
+    expect(actions).toEqual([
+      'create-category:repo:discord-1',
+      'create-channel:main:discord-1:discord-2'
+    ])
+    expect(interaction.editReply).toHaveBeenCalledWith(
+      'Added **repo** and provisioned its Discord channel.'
+    )
+    expect(JSON.parse(db.settings.get('discord_config') ?? '{}')).toMatchObject({
+      selectedProjectIds: ['p1']
+    })
+  })
+
+  it('reports when the project is already added to Hive and managed by Discord', async () => {
+    const db = new FakeDiscordDatabase()
+    configureSelected(db, ['p1'])
+    const project = makeProject('p1', 'repo')
+    project.path = '/home/test/hive-projects/repo'
+    db.projects = [project]
+    db.activeWorktrees.set('p1', [
+      makeWorktree('w-main', 'p1', 'main', {
+        path: '/home/test/hive-projects/repo',
+        is_default: true
+      })
+    ])
+    db.resources = [
+      makeResource({
+        id: 'r-category',
+        project_id: 'p1',
+        worktree_id: null,
+        discord_id: 'category-1',
+        type: 'category'
+      }),
+      makeResource({
+        id: 'r-main',
+        project_id: 'p1',
+        worktree_id: 'w-main',
+        discord_id: 'channel-main',
+        type: 'channel'
+      })
+    ]
+    const { gateway, actions } = makeGateway()
+    const service = makeService(db, gateway)
+
+    await service.startListening()
+    const interaction = makeAddProjectInteraction(
+      discordJsMock.instances[0],
+      'git@github.com:example/repo.git'
+    )
+
+    discordJsMock.instances[0].emit('interactionCreate', interaction)
+    await flushPromises()
+
+    expect(cloneRepository).not.toHaveBeenCalled()
+    expect(createProjectWithDefaultWorktree).not.toHaveBeenCalled()
+    expect(syncWorktreesOp).not.toHaveBeenCalled()
+    expect(actions).toEqual([])
+    expect(interaction.editReply).toHaveBeenCalledWith(
+      'Project **repo** is already added to Hive and managed by Discord.'
+    )
+  })
+
+  it('adds an existing Hive project to Discord management when it is not managed yet', async () => {
+    const db = new FakeDiscordDatabase()
+    configure(db)
+    const project = makeProject('p1', 'repo')
+    project.path = '/home/test/hive-projects/repo'
+    db.projects = [project]
+    db.activeWorktrees.set('p1', [
+      makeWorktree('w-main', 'p1', 'main', {
+        path: '/home/test/hive-projects/repo',
+        is_default: true
+      })
+    ])
+    const { gateway, actions } = makeGateway()
+    const service = makeService(db, gateway)
+
+    await service.startListening()
+    const interaction = makeAddProjectInteraction(
+      discordJsMock.instances[0],
+      'git@github.com:example/repo.git'
+    )
+
+    discordJsMock.instances[0].emit('interactionCreate', interaction)
+    await flushPromises()
+
+    expect(cloneRepository).not.toHaveBeenCalled()
+    expect(createProjectWithDefaultWorktree).not.toHaveBeenCalled()
+    expect(syncWorktreesOp).not.toHaveBeenCalled()
+    expect(actions).toEqual([
+      'create-category:repo:discord-1',
+      'create-channel:main:discord-1:discord-2'
+    ])
+    expect(interaction.editReply).toHaveBeenCalledWith(
+      'Project **repo** already exists in Hive; added it to Discord management.'
+    )
+    expect(JSON.parse(db.settings.get('discord_config') ?? '{}')).toMatchObject({
+      selectedProjectIds: ['p1']
+    })
+  })
+
+  it('adds an existing filesystem path to Hive and Discord without cloning over it', async () => {
+    const db = new FakeDiscordDatabase()
+    configure(db)
+    vi.mocked(existsSync).mockReturnValue(true)
+    vi.mocked(syncWorktreesOp).mockImplementation(async (params) => {
+      db.replaceActiveWorktrees(params.projectId, [
+        makeWorktree('w-main', params.projectId, 'main', {
+          branch_name: 'main',
+          path: params.projectPath,
+          is_default: true
+        })
+      ])
+      return { success: true }
+    })
+    const { gateway, actions } = makeGateway()
+    const service = makeService(db, gateway)
+
+    await service.startListening()
+    const interaction = makeAddProjectInteraction(
+      discordJsMock.instances[0],
+      'git@github.com:example/repo.git'
+    )
+
+    discordJsMock.instances[0].emit('interactionCreate', interaction)
+    await flushPromises()
+
+    expect(cloneRepository).not.toHaveBeenCalled()
+    expect(createProjectWithDefaultWorktree).toHaveBeenCalledWith(db, {
+      name: 'repo',
+      path: '/home/test/hive-projects/repo'
+    })
+    expect(syncWorktreesOp).toHaveBeenCalledWith({
+      projectId: 'p1',
+      projectPath: '/home/test/hive-projects/repo'
+    })
+    expect(actions).toEqual([
+      'create-category:repo:discord-1',
+      'create-channel:main:discord-1:discord-2'
+    ])
+    expect(interaction.editReply).toHaveBeenCalledWith(
+      'Added existing path **repo** to Hive and provisioned its Discord channel.'
     )
   })
 
@@ -1396,7 +1780,19 @@ describe('/archive slash command', () => {
           name: 'qa',
           description: 'Only post questions, plan approvals, and final results to channels'
         },
-        { name: 'all', description: 'Post all agent activity to channels (default)' }
+        { name: 'all', description: 'Post all agent activity to channels (default)' },
+        {
+          name: 'add-project',
+          description: 'Clone a git repo and add it to Hive',
+          options: [
+            {
+              type: 3,
+              name: 'git_url',
+              description: 'Git SSH URL (git@host:user/repo.git)',
+              required: true
+            }
+          ]
+        }
       ],
       'guild-1'
     )

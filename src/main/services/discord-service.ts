@@ -1,4 +1,7 @@
 import { randomUUID } from 'crypto'
+import { existsSync, mkdirSync, rmSync } from 'fs'
+import { homedir } from 'os'
+import { dirname, join } from 'path'
 import {
   ChannelType,
   Client,
@@ -30,13 +33,33 @@ import { getDatabase } from '../db'
 import type { DiscordResource, Project, SessionMode, Worktree } from '../db/types'
 import { createGitService } from './git-service'
 import { createLogger } from './logger'
-import { createWorktreeFromBranchOp, deleteWorktreeOp } from './worktree-ops'
+import {
+  createWorktreeFromBranchOp,
+  deleteWorktreeOp,
+  syncWorktreesOp
+} from './worktree-ops'
+import {
+  createProjectWithDefaultWorktree,
+  detectProjectFavicon,
+  detectProjectLanguage
+} from './project-ops'
+import { cloneRepository, deriveProjectNameFromGitUrl } from './git-repository'
 import { discordSessionBridge, type DiscordSessionBridge } from './discord-session-bridge'
 import type { AgentSdkManager } from './agent-sdk-manager'
 
 const DISCORD_CONFIG_KEY = 'discord_config'
 const log = createLogger({ component: 'Discord' })
-const DISCORD_COMMANDS: Array<{ name: string; description: string }> = [
+type DiscordCommand = {
+  name: string
+  description: string
+  options?: Array<{
+    type: 3
+    name: string
+    description: string
+    required: boolean
+  }>
+}
+const DISCORD_COMMANDS: DiscordCommand[] = [
   { name: 'plan', description: 'Switch this worktree to plan mode' },
   { name: 'build', description: 'Switch this worktree to build mode' },
   { name: 'super-plan', description: 'Switch this worktree to super-plan mode' },
@@ -47,7 +70,19 @@ const DISCORD_COMMANDS: Array<{ name: string; description: string }> = [
     name: 'qa',
     description: 'Only post questions, plan approvals, and final results to channels'
   },
-  { name: 'all', description: 'Post all agent activity to channels (default)' }
+  { name: 'all', description: 'Post all agent activity to channels (default)' },
+  {
+    name: 'add-project',
+    description: 'Clone a git repo and add it to Hive',
+    options: [
+      {
+        type: 3,
+        name: 'git_url',
+        description: 'Git SSH URL (git@host:user/repo.git)',
+        required: true
+      }
+    ]
+  }
 ]
 
 export interface DiscordGateway {
@@ -286,7 +321,19 @@ export class DiscordService {
       })
 
       for (const resource of deleteCandidates) {
-        await gateway.deleteResource(resource.discord_id)
+        try {
+          await gateway.deleteResource(resource.discord_id)
+        } catch (error) {
+          if (getDiscordErrorCode(error) !== 10003) {
+            throw error
+          }
+          log.warn('Discord resource was already deleted; removing stale mapping', {
+            discordId: resource.discord_id,
+            resourceId: resource.id,
+            resourceType: resource.type,
+            guildId: config.guildId
+          })
+        }
         db.deleteDiscordResource(resource.id)
         deleted += 1
         current += 1
@@ -564,6 +611,11 @@ export class DiscordService {
       return
     }
 
+    if (interaction.commandName === 'add-project') {
+      await this.handleAddProjectInteraction(interaction)
+      return
+    }
+
     if (interaction.commandName === 'clear') {
       await this.handleClearInteraction(interaction)
       return
@@ -648,6 +700,128 @@ export class DiscordService {
       return commandName
     }
     return null
+  }
+
+  private async handleAddProjectInteraction(
+    interaction: ChatInputCommandInteraction
+  ): Promise<void> {
+    const config = this.getConfig()
+    if (!isConfigured(config) || interaction.guildId !== config.guildId) return
+
+    await interaction.deferReply()
+
+    try {
+      const url = interaction.options.getString('git_url', true)
+      const name = deriveProjectNameFromGitUrl(url)
+      if (!name) {
+        await interaction.editReply('Could not derive a project name from that git URL.')
+        return
+      }
+
+      const destDir = join(homedir(), 'hive-projects', name)
+      const db = this.getDb()
+      const existingProject = db.getProjectByPath(destDir)
+      if (existingProject) {
+        if (this.isProjectManagedInDiscord(db, config.guildId, existingProject.id, config)) {
+          await interaction.editReply(
+            `Project **${existingProject.name}** is already added to Hive and managed by Discord.`
+          )
+          return
+        }
+
+        await this.provision([...config.selectedProjectIds, existingProject.id])
+        await interaction.editReply(
+          `Project **${existingProject.name}** already exists in Hive; added it to Discord management.`
+        )
+        return
+      }
+
+      const pathExists = existsSync(destDir)
+
+      if (!pathExists) {
+        mkdirSync(dirname(destDir), { recursive: true })
+        const cloneResult = await cloneRepository(url, destDir)
+        if (!cloneResult.success) {
+          rmSync(destDir, { recursive: true, force: true })
+          await interaction.editReply(
+            `Could not clone repository: ${cloneResult.error ?? 'unknown error'}`
+          )
+          return
+        }
+      }
+
+      const project = createProjectWithDefaultWorktree(db, { name, path: destDir })
+      const syncResult = await syncWorktreesOp({
+        projectId: project.id,
+        projectPath: destDir
+      })
+      if (!syncResult.success) {
+        throw new Error(syncResult.error || 'Failed to sync worktrees')
+      }
+
+      void detectProjectLanguage(destDir)
+        .then((language) => {
+          if (language) db.updateProject(project.id, { language })
+        })
+        .catch(() => undefined)
+
+      try {
+        const favicon = detectProjectFavicon(destDir)
+        if (favicon) db.updateProject(project.id, { detected_icon: favicon })
+      } catch {
+        // Best-effort metadata detection should not block onboarding.
+      }
+
+      await this.provision([...config.selectedProjectIds, project.id])
+      await interaction.editReply(
+        pathExists
+          ? `Added existing path **${name}** to Hive and provisioned its Discord channel.`
+          : `Added **${name}** and provisioned its Discord channel.`
+      )
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      log.error(
+        'Failed to handle /add-project',
+        error instanceof Error ? error : new Error(message),
+        {
+          guildId: interaction.guildId ?? undefined,
+          channelId: interaction.channelId ?? undefined
+        }
+      )
+
+      if (interaction.deferred || interaction.replied) {
+        await interaction.editReply(`Could not add project: ${message}`).catch(() => undefined)
+      } else {
+        await interaction
+          .reply({ content: `Could not add project: ${message}`, ephemeral: true })
+          .catch(() => undefined)
+      }
+    }
+  }
+
+  private isProjectManagedInDiscord(
+    db: DatabaseService,
+    guildId: string,
+    projectId: string,
+    config: DiscordConfig
+  ): boolean {
+    if (!config.selectedProjectIds.includes(projectId)) return false
+
+    const resources = db.getDiscordResourcesByGuild(guildId)
+    const hasCategory = resources.some(
+      (resource) => resource.project_id === projectId && resource.type === 'category'
+    )
+    if (!hasCategory) return false
+
+    const activeWorktrees = db.getActiveWorktreesByProject(projectId)
+    return activeWorktrees.every((worktree) =>
+      resources.some(
+        (resource) =>
+          resource.project_id === projectId &&
+          resource.worktree_id === worktree.id &&
+          resource.type === 'channel'
+      )
+    )
   }
 
   private async handleEmissionModeInteraction(
