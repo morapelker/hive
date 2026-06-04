@@ -242,6 +242,11 @@ const toGuildAccessError = (guildId: string, error: unknown): Error => {
   return error instanceof Error ? error : new Error(message)
 }
 
+const pendingBotChannelKey = (parentId: string | null, name: string): string => {
+  const normalizedName = canonicalizeTicketTitle(name) || name.trim().toLowerCase()
+  return `${parentId ?? ''}:${normalizedName}`
+}
+
 export class DiscordService {
   private db: DatabaseService | null
   private gatewayFactory: () => DiscordGateway
@@ -249,6 +254,7 @@ export class DiscordService {
   private activeGateway: DiscordGateway | null = null
   private listenerClient: Client | null = null
   private botCreatedChannelIds = new Set<string>()
+  private pendingBotCreatedChannels = new Map<string, number>()
   private sessionBridge: DiscordSessionBridge
 
   constructor(dependencies: DiscordServiceDependencies = {}) {
@@ -413,16 +419,21 @@ export class DiscordService {
         if (!categoryId) {
           throw new Error(`Missing Discord category for ${candidate.project.name}`)
         }
-        const discordId = await gateway.createTextChannel(candidate.worktree.name, categoryId)
-        this.botCreatedChannelIds.add(discordId)
-        db.insertDiscordResource({
-          id: randomUUID(),
-          project_id: candidate.project.id,
-          worktree_id: candidate.worktree.id,
-          discord_id: discordId,
-          type: 'channel',
-          guild_id: config.guildId
-        })
+        this.trackPendingBotChannel(categoryId, candidate.worktree.name)
+        try {
+          const discordId = await gateway.createTextChannel(candidate.worktree.name, categoryId)
+          this.botCreatedChannelIds.add(discordId)
+          db.insertDiscordResource({
+            id: randomUUID(),
+            project_id: candidate.project.id,
+            worktree_id: candidate.worktree.id,
+            discord_id: discordId,
+            type: 'channel',
+            guild_id: config.guildId
+          })
+        } finally {
+          this.untrackPendingBotChannel(categoryId, candidate.worktree.name)
+        }
         created += 1
         current += 1
         this.emitProgress({
@@ -1209,6 +1220,11 @@ export class DiscordService {
       return
     }
 
+    if (this.isPendingBotCreatedChannel(channel)) {
+      this.botCreatedChannelIds.add(channel.id)
+      return
+    }
+
     const db = this.getDb()
     const resources = db.getDiscordResourcesByGuild(config.guildId)
     if (resources.some((resource) => resource.discord_id === channel.id)) {
@@ -1284,6 +1300,29 @@ export class DiscordService {
       )
       await this.sendChannelMessage(channel, `Could not create worktree: ${message}`)
     }
+  }
+
+  private trackPendingBotChannel(parentId: string, name: string): void {
+    const key = pendingBotChannelKey(parentId, name)
+    this.pendingBotCreatedChannels.set(key, (this.pendingBotCreatedChannels.get(key) ?? 0) + 1)
+  }
+
+  private untrackPendingBotChannel(parentId: string, name: string): void {
+    const key = pendingBotChannelKey(parentId, name)
+    const count = this.pendingBotCreatedChannels.get(key) ?? 0
+    if (count <= 1) {
+      this.pendingBotCreatedChannels.delete(key)
+      return
+    }
+    this.pendingBotCreatedChannels.set(key, count - 1)
+  }
+
+  private isPendingBotCreatedChannel(channel: NonThreadGuildBasedChannel): boolean {
+    return (
+      channel.type === ChannelType.GuildText &&
+      (this.pendingBotCreatedChannels.get(pendingBotChannelKey(channel.parentId, channel.name)) ??
+        0) > 0
+    )
   }
 
   private async sendChannelMessage(

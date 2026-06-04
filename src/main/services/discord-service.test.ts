@@ -1361,6 +1361,47 @@ describe('DiscordService message listener', () => {
     expect(createWorktreeFromBranchOp).not.toHaveBeenCalled()
   })
 
+  it('ignores bot-created channelCreate events that arrive before Discord returns the channel id', async () => {
+    const db = new FakeDiscordDatabase()
+    configure(db)
+    db.projects = [makeProject('p1', 'test-python')]
+    db.activeWorktrees.set('p1', [makeWorktree('w1', 'p1', 'test')])
+    const { gateway } = makeGateway()
+    const service = makeService(db, gateway)
+
+    await service.startListening()
+    const client = discordJsMock.instances[0]
+    const createTextChannel = vi.mocked(gateway.createTextChannel)
+    createTextChannel.mockImplementationOnce(async (name: string, parentId: string) => {
+      client.emit('channelCreate', {
+        id: 'discord-race-channel',
+        guildId: 'guild-1',
+        type: 0,
+        parentId,
+        name,
+        isTextBased: () => true,
+        send: vi.fn(async () => undefined)
+      })
+      await flushPromises()
+      return 'discord-race-channel'
+    })
+
+    await service.provision(['p1'])
+    await flushPromises()
+
+    expect(createWorktreeFromBranchOp).not.toHaveBeenCalled()
+    expect(db.resources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          project_id: 'p1',
+          worktree_id: 'w1',
+          discord_id: 'discord-race-channel',
+          type: 'channel'
+        })
+      ])
+    )
+  })
+
   it('ignores channels outside managed categories and rejects empty normalized names', async () => {
     const db = new FakeDiscordDatabase()
     configure(db)
