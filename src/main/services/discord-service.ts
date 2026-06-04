@@ -46,6 +46,7 @@ import {
 import { cloneRepository, deriveProjectNameFromGitUrl } from './git-repository'
 import { discordSessionBridge, type DiscordSessionBridge } from './discord-session-bridge'
 import type { AgentSdkManager } from './agent-sdk-manager'
+import { createPrFromWorktree } from './discord-pr-creator'
 
 const DISCORD_CONFIG_KEY = 'discord_config'
 const log = createLogger({ component: 'Discord' })
@@ -65,6 +66,7 @@ const DISCORD_COMMANDS: DiscordCommand[] = [
   { name: 'super-plan', description: 'Switch this worktree to super-plan mode' },
   { name: 'archive', description: 'Archive this worktree and delete its channel' },
   { name: 'stop', description: 'Abort the current running session' },
+  { name: 'pr', description: 'Create a pull request from this worktree branch' },
   { name: 'clear', description: 'Clear the session attached to this worktree channel' },
   {
     name: 'qa',
@@ -195,6 +197,26 @@ const parseConfig = (raw: string | null): DiscordConfig | null => {
   }
 }
 
+const parseSessionTitles = (raw: string): string[] => {
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    return Array.isArray(parsed)
+      ? parsed.filter(
+          (title): title is string => typeof title === 'string' && title.trim().length > 0
+        )
+      : []
+  } catch {
+    return []
+  }
+}
+
+const buildPrCommitMessage = (worktree: Worktree): string => {
+  const titles = parseSessionTitles(worktree.session_titles)
+  const summary = titles[0]?.trim() || worktree.branch_name || worktree.name || 'Update worktree'
+  const description = titles.length > 1 ? titles.map((title) => `- ${title.trim()}`).join('\n') : ''
+  return description ? `${summary}\n\n${description}` : summary
+}
+
 const sortDeleteOrder = (resources: DiscordResource[]): DiscordResource[] =>
   [...resources].sort((left, right) => {
     if (left.type === right.type) return 0
@@ -315,9 +337,13 @@ export class DiscordService {
       }
       await gateway.registerCommands().catch((error) => {
         const message = error instanceof Error ? error.message : String(error)
-        log.error('Failed to register Discord slash commands', error instanceof Error ? error : new Error(message), {
-          guildId: config.guildId
-        })
+        log.error(
+          'Failed to register Discord slash commands',
+          error instanceof Error ? error : new Error(message),
+          {
+            guildId: config.guildId
+          }
+        )
       })
 
       for (const resource of deleteCandidates) {
@@ -472,10 +498,7 @@ export class DiscordService {
       })
     })
     client.on('error', (error) => {
-      log.error(
-        'Discord listener error',
-        error instanceof Error ? error : new Error(String(error))
-      )
+      log.error('Discord listener error', error instanceof Error ? error : new Error(String(error)))
     })
 
     try {
@@ -516,9 +539,11 @@ export class DiscordService {
   async stopListening(): Promise<void> {
     this.listenerClient?.destroy()
     this.listenerClient = null
-    ;(this.sessionBridge as DiscordSessionBridge & {
-      setChannelResolver?: DiscordSessionBridge['setChannelResolver']
-    }).setChannelResolver?.(null)
+    ;(
+      this.sessionBridge as DiscordSessionBridge & {
+        setChannelResolver?: DiscordSessionBridge['setChannelResolver']
+      }
+    ).setChannelResolver?.(null)
     this.sessionBridge.dispose()
   }
 
@@ -531,10 +556,7 @@ export class DiscordService {
     const db = this.getDb()
     const provisionedChannel = db
       .getDiscordResourcesByGuild(config.guildId)
-      .find(
-        (resource) =>
-          resource.type === 'channel' && resource.discord_id === message.channelId
-      )
+      .find((resource) => resource.type === 'channel' && resource.discord_id === message.channelId)
     if (!provisionedChannel) return
 
     log.info('Discord message received', {
@@ -623,6 +645,11 @@ export class DiscordService {
 
     if (interaction.commandName === 'stop') {
       await this.handleStopInteraction(interaction)
+      return
+    }
+
+    if (interaction.commandName === 'pr') {
+      await this.handlePrInteraction(interaction)
     }
   }
 
@@ -649,8 +676,7 @@ export class DiscordService {
     const provisionedChannel = db
       .getDiscordResourcesByGuild(config.guildId)
       .find(
-        (resource) =>
-          resource.type === 'channel' && resource.discord_id === interaction.channelId
+        (resource) => resource.type === 'channel' && resource.discord_id === interaction.channelId
       )
 
     if (!provisionedChannel?.worktree_id) {
@@ -695,7 +721,9 @@ export class DiscordService {
     }
   }
 
-  private modeFromCommand(commandName: ChatInputCommandInteraction['commandName']): SessionMode | null {
+  private modeFromCommand(
+    commandName: ChatInputCommandInteraction['commandName']
+  ): SessionMode | null {
     if (commandName === 'plan' || commandName === 'build' || commandName === 'super-plan') {
       return commandName
     }
@@ -840,9 +868,7 @@ export class DiscordService {
     await interaction.reply({ content, ephemeral: true })
   }
 
-  private async handleArchiveInteraction(
-    interaction: ChatInputCommandInteraction
-  ): Promise<void> {
+  private async handleArchiveInteraction(interaction: ChatInputCommandInteraction): Promise<void> {
     const config = this.getConfig()
     if (!isConfigured(config) || interaction.guildId !== config.guildId) return
 
@@ -850,8 +876,7 @@ export class DiscordService {
     const provisionedChannel = db
       .getDiscordResourcesByGuild(config.guildId)
       .find(
-        (resource) =>
-          resource.type === 'channel' && resource.discord_id === interaction.channelId
+        (resource) => resource.type === 'channel' && resource.discord_id === interaction.channelId
       )
 
     if (!provisionedChannel) {
@@ -912,7 +937,9 @@ export class DiscordService {
       if (interaction.deferred || interaction.replied) {
         await interaction.editReply('Failed to archive worktree.').catch(() => undefined)
       } else {
-        await interaction.reply({ content: 'Failed to archive worktree.', ephemeral: true }).catch(() => undefined)
+        await interaction
+          .reply({ content: 'Failed to archive worktree.', ephemeral: true })
+          .catch(() => undefined)
       }
     }
   }
@@ -928,8 +955,7 @@ export class DiscordService {
       const provisionedChannel = db
         .getDiscordResourcesByGuild(config.guildId)
         .find(
-          (resource) =>
-            resource.type === 'channel' && resource.discord_id === interaction.channelId
+          (resource) => resource.type === 'channel' && resource.discord_id === interaction.channelId
         )
 
       if (!provisionedChannel?.worktree_id) {
@@ -981,8 +1007,7 @@ export class DiscordService {
       const provisionedChannel = db
         .getDiscordResourcesByGuild(config.guildId)
         .find(
-          (resource) =>
-            resource.type === 'channel' && resource.discord_id === interaction.channelId
+          (resource) => resource.type === 'channel' && resource.discord_id === interaction.channelId
         )
 
       if (!provisionedChannel?.worktree_id) {
@@ -1023,6 +1048,84 @@ export class DiscordService {
     }
   }
 
+  private async handlePrInteraction(interaction: ChatInputCommandInteraction): Promise<void> {
+    const config = this.getConfig()
+    if (!isConfigured(config) || interaction.guildId !== config.guildId) {
+      return
+    }
+
+    try {
+      const db = this.getDb()
+      const provisionedChannel = db
+        .getDiscordResourcesByGuild(config.guildId)
+        .find(
+          (resource) => resource.type === 'channel' && resource.discord_id === interaction.channelId
+        )
+
+      if (!provisionedChannel?.worktree_id) {
+        await interaction.reply({
+          content: 'This channel is not linked to a Hive worktree.',
+          ephemeral: true
+        })
+        return
+      }
+
+      const worktree = db.getWorktree(provisionedChannel.worktree_id)
+      if (!worktree) {
+        await interaction.reply({
+          content: 'This channel is not linked to a Hive worktree.',
+          ephemeral: true
+        })
+        return
+      }
+
+      const commitMessage = buildPrCommitMessage(worktree)
+      const displayBase = worktree.base_branch?.trim() || 'main'
+
+      await interaction.deferReply()
+      const result = await createPrFromWorktree({
+        worktreePath: worktree.path,
+        baseBranch: worktree.base_branch,
+        commitMessage
+      })
+
+      if ((result.status === 'created' || result.status === 'exists') && result.number) {
+        db.attachPR(worktree.id, result.number, result.url)
+      }
+
+      if (result.status === 'created') {
+        await interaction.editReply(`Pull request created: ${result.url}`)
+        return
+      }
+
+      if (result.status === 'exists') {
+        await interaction.editReply(`A pull request already exists: ${result.url}`)
+        return
+      }
+
+      if (result.status === 'nothing') {
+        await interaction.editReply(
+          `Nothing to open a PR for — no commits ahead of ${displayBase}.`
+        )
+        return
+      }
+
+      await interaction.editReply(`Could not create the PR: ${result.message}`)
+    } catch (error) {
+      const normalized = error instanceof Error ? error : new Error(String(error))
+      log.error('Failed to handle Discord /pr command', normalized, {
+        channelId: interaction.channelId ?? undefined
+      })
+
+      const content = 'Could not create the PR. Check the Hive logs for details.'
+      if (interaction.deferred || interaction.replied) {
+        await interaction.editReply(content).catch(() => undefined)
+      } else {
+        await interaction.reply({ content, ephemeral: true }).catch(() => undefined)
+      }
+    }
+  }
+
   private async handleChannelCreate(channel: NonThreadGuildBasedChannel): Promise<void> {
     const config = this.getConfig()
     if (!isConfigured(config) || config.enabled !== true || channel.guildId !== config.guildId) {
@@ -1045,8 +1148,7 @@ export class DiscordService {
     }
 
     const categoryResource = resources.find(
-      (resource) =>
-        resource.type === 'category' && resource.discord_id === channel.parentId
+      (resource) => resource.type === 'category' && resource.discord_id === channel.parentId
     )
     if (!categoryResource) {
       return
@@ -1072,8 +1174,7 @@ export class DiscordService {
         .getActiveWorktreesByProject(projectId)
         .find((worktree) => worktree.is_default)
       const baseBranch =
-        defaultWorktree?.branch_name ??
-        (await createGitService(project.path).getDefaultBranch())
+        defaultWorktree?.branch_name ?? (await createGitService(project.path).getDefaultBranch())
 
       const result = await createWorktreeFromBranchOp({
         projectId,
@@ -1101,10 +1202,7 @@ export class DiscordService {
         worktree: result.worktree
       })
 
-      await this.sendChannelMessage(
-        channel,
-        `Created worktree \`${result.worktree.branch_name}\``
-      )
+      await this.sendChannelMessage(channel, `Created worktree \`${result.worktree.branch_name}\``)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       log.error(
