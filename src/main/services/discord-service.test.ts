@@ -3,6 +3,7 @@ import { WORKTREE_CREATED_CHANNEL } from '@shared/worktree-events'
 import { DiscordService } from './discord-service'
 import { createWorktreeFromBranchOp, deleteWorktreeOp } from './worktree-ops'
 import { createGitService } from './git-service'
+import { createPrFromWorktree } from './discord-pr-creator'
 import type { DiscordResource, Project, Worktree } from '../db/types'
 
 const discordJsMock = vi.hoisted(() => {
@@ -99,11 +100,16 @@ vi.mock('./git-service', () => ({
   }))
 }))
 
+vi.mock('./discord-pr-creator', () => ({
+  createPrFromWorktree: vi.fn()
+}))
+
 class FakeDiscordDatabase {
   settings = new Map<string, string>()
   resources: DiscordResource[] = []
   projects: Project[] = []
   activeWorktrees = new Map<string, Worktree[]>()
+  attachedPRs: Array<{ worktreeId: string; prNumber: number; prUrl: string }> = []
 
   getSetting(key: string): string | null {
     return this.settings.get(key) ?? null
@@ -147,6 +153,11 @@ class FakeDiscordDatabase {
 
   deleteSetting(key: string): void {
     this.settings.delete(key)
+  }
+
+  attachPR(worktreeId: string, prNumber: number, prUrl: string): { success: boolean } {
+    this.attachedPRs.push({ worktreeId, prNumber, prUrl })
+    return { success: true }
   }
 }
 
@@ -312,12 +323,43 @@ const makeArchiveInteraction = (
   return interaction
 }
 
+const makeCommandInteraction = (
+  commandName: string,
+  overrides: {
+    guildId?: string
+    channelId?: string
+  } = {}
+) => {
+  const interaction = {
+    isChatInputCommand: vi.fn(() => true),
+    commandName,
+    guildId: overrides.guildId ?? 'guild-1',
+    channelId: overrides.channelId ?? 'channel-1',
+    deferred: false,
+    replied: false,
+    deferReply: vi.fn(async () => {
+      interaction.deferred = true
+      return undefined
+    }),
+    editReply: vi.fn(async () => {
+      interaction.replied = true
+      return undefined
+    }),
+    reply: vi.fn(async () => {
+      interaction.replied = true
+      return undefined
+    })
+  }
+  return interaction
+}
+
 beforeEach(() => {
   discordJsMock.Client.mockClear()
   discordJsMock.instances.length = 0
   vi.mocked(createWorktreeFromBranchOp).mockReset()
   vi.mocked(deleteWorktreeOp).mockReset()
   vi.mocked(createGitService).mockClear()
+  vi.mocked(createPrFromWorktree).mockReset()
 })
 
 afterEach(() => {
@@ -572,7 +614,9 @@ describe('DiscordService provisioning reconciliation', () => {
     configure(db)
     db.projects = [makeProject('p1', 'test-python')]
     const { gateway } = makeGateway()
-    gateway.connect.mockRejectedValueOnce(Object.assign(new Error('Unknown Guild'), { code: 10004 }))
+    gateway.connect.mockRejectedValueOnce(
+      Object.assign(new Error('Unknown Guild'), { code: 10004 })
+    )
     const service = makeService(db, gateway)
 
     await expect(service.provision(['p1'])).rejects.toThrow(
@@ -606,6 +650,7 @@ describe('DiscordService message listener', () => {
         { name: 'super-plan', description: 'Switch this worktree to super-plan mode' },
         { name: 'archive', description: 'Archive this worktree and delete its channel' },
         { name: 'stop', description: 'Abort the current running session' },
+        { name: 'pr', description: 'Create a pull request from this worktree branch' },
         { name: 'clear', description: 'Clear the session attached to this worktree channel' },
         {
           name: 'qa',
@@ -1295,6 +1340,129 @@ describe('DiscordService message listener', () => {
     expect(sessionBridge.stopManagedSession).not.toHaveBeenCalled()
   })
 
+  it('handles /pr in a provisioned worktree channel and attaches the created PR', async () => {
+    const db = new FakeDiscordDatabase()
+    configure(db)
+    db.activeWorktrees.set('p1', [
+      makeWorktree('w1', 'p1', 'feature-pr', {
+        path: '/repo/p1/feature-pr',
+        base_branch: 'develop',
+        session_titles: JSON.stringify(['Implement Discord PR', 'Add handler tests'])
+      })
+    ])
+    db.resources = [makeResource()]
+    vi.mocked(createPrFromWorktree).mockResolvedValue({
+      status: 'created',
+      url: 'https://github.com/acme/repo/pull/42',
+      number: 42
+    })
+    const { gateway } = makeGateway()
+    const service = makeService(db, gateway)
+    await service.startListening()
+    const interaction = makeCommandInteraction('pr')
+
+    discordJsMock.instances[0].emit('interactionCreate', interaction)
+    await flushPromises()
+
+    expect(interaction.deferReply).toHaveBeenCalledWith()
+    expect(createPrFromWorktree).toHaveBeenCalledWith({
+      worktreePath: '/repo/p1/feature-pr',
+      baseBranch: 'develop',
+      commitMessage: 'Implement Discord PR\n\n- Implement Discord PR\n- Add handler tests'
+    })
+    expect(db.attachedPRs).toEqual([
+      {
+        worktreeId: 'w1',
+        prNumber: 42,
+        prUrl: 'https://github.com/acme/repo/pull/42'
+      }
+    ])
+    expect(interaction.editReply).toHaveBeenCalledWith(
+      'Pull request created: https://github.com/acme/repo/pull/42'
+    )
+    expect(interaction.reply).not.toHaveBeenCalled()
+  })
+
+  it('replies ephemerally when /pr is used outside a provisioned worktree channel', async () => {
+    const db = new FakeDiscordDatabase()
+    configure(db)
+    const { gateway } = makeGateway()
+    const service = makeService(db, gateway)
+    await service.startListening()
+    const interaction = makeCommandInteraction('pr', { channelId: 'unmapped-channel' })
+
+    discordJsMock.instances[0].emit('interactionCreate', interaction)
+    await flushPromises()
+
+    expect(interaction.reply).toHaveBeenCalledWith({
+      content: 'This channel is not linked to a Hive worktree.',
+      ephemeral: true
+    })
+    expect(interaction.deferReply).not.toHaveBeenCalled()
+    expect(createPrFromWorktree).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    [
+      { status: 'exists', url: 'https://github.com/acme/repo/pull/43', number: 43 } as const,
+      'A pull request already exists: https://github.com/acme/repo/pull/43',
+      [{ worktreeId: 'w1', prNumber: 43, prUrl: 'https://github.com/acme/repo/pull/43' }]
+    ],
+    [{ status: 'nothing' } as const, 'Nothing to open a PR for — no commits ahead of main.', []],
+    [
+      { status: 'error', message: 'GitHub CLI is not authenticated.' } as const,
+      'Could not create the PR: GitHub CLI is not authenticated.',
+      []
+    ]
+  ])('maps /pr result %s to the expected reply', async (result, expectedReply, expectedAttach) => {
+    const db = new FakeDiscordDatabase()
+    configure(db)
+    db.activeWorktrees.set('p1', [
+      makeWorktree('w1', 'p1', 'feature-pr', {
+        base_branch: null,
+        session_titles: 'not json'
+      })
+    ])
+    db.resources = [makeResource()]
+    vi.mocked(createPrFromWorktree).mockResolvedValue(result)
+    const { gateway } = makeGateway()
+    const service = makeService(db, gateway)
+    await service.startListening()
+    const interaction = makeCommandInteraction('pr')
+
+    discordJsMock.instances[0].emit('interactionCreate', interaction)
+    await flushPromises()
+
+    expect(createPrFromWorktree).toHaveBeenCalledWith({
+      worktreePath: '/repo/p1/feature-pr',
+      baseBranch: null,
+      commitMessage: 'feature-pr'
+    })
+    expect(db.attachedPRs).toEqual(expectedAttach)
+    expect(interaction.editReply).toHaveBeenCalledWith(expectedReply)
+  })
+
+  it('uses the deferred /pr fallback when PR handling throws', async () => {
+    const db = new FakeDiscordDatabase()
+    configure(db)
+    db.activeWorktrees.set('p1', [makeWorktree('w1', 'p1', 'feature-pr')])
+    db.resources = [makeResource()]
+    vi.mocked(createPrFromWorktree).mockRejectedValue(new Error('boom'))
+    const { gateway } = makeGateway()
+    const service = makeService(db, gateway)
+    await service.startListening()
+    const interaction = makeCommandInteraction('pr')
+
+    discordJsMock.instances[0].emit('interactionCreate', interaction)
+    await flushPromises()
+
+    expect(interaction.deferReply).toHaveBeenCalledWith()
+    expect(interaction.editReply).toHaveBeenCalledWith(
+      'Could not create the PR. Check the Hive logs for details.'
+    )
+    expect(interaction.reply).not.toHaveBeenCalled()
+  })
+
   it('replies ephemerally when /clear is used outside a provisioned worktree channel', async () => {
     const db = new FakeDiscordDatabase()
     configure(db)
@@ -1391,6 +1559,7 @@ describe('/archive slash command', () => {
         { name: 'super-plan', description: 'Switch this worktree to super-plan mode' },
         { name: 'archive', description: 'Archive this worktree and delete its channel' },
         { name: 'stop', description: 'Abort the current running session' },
+        { name: 'pr', description: 'Create a pull request from this worktree branch' },
         { name: 'clear', description: 'Clear the session attached to this worktree channel' },
         {
           name: 'qa',
