@@ -16,11 +16,19 @@ export function SettingsTeleport(): React.JSX.Element {
   const [bootstrapToken, setBootstrapToken] = useState(teleport?.bootstrapToken ?? '')
   const [testing, setTesting] = useState(false)
   const [testOk, setTestOk] = useState<boolean | null>(null)
+  const normalizedUrl = normalizeUrl(url)
+  const normalizedToken = bootstrapToken.trim()
+  const isComplete = Boolean(normalizedUrl && normalizedToken)
+  const statusText = !normalizedUrl
+    ? 'not configured'
+    : !normalizedToken
+      ? 'missing bootstrap token'
+      : `configured for ${normalizedUrl}`
 
-  const save = (nextUrl = url, nextToken = bootstrapToken): void => {
+  const save = async (nextUrl = url, nextToken = bootstrapToken): Promise<void> => {
     const normalizedUrl = normalizeUrl(nextUrl)
     const normalizedToken = nextToken.trim()
-    updateSetting(
+    await updateSetting(
       'teleport',
       normalizedUrl || normalizedToken
         ? { url: normalizedUrl, bootstrapToken: normalizedToken }
@@ -29,18 +37,35 @@ export function SettingsTeleport(): React.JSX.Element {
   }
 
   const testConnection = async (): Promise<void> => {
-    const baseUrl = normalizeUrl(url)
-    if (!baseUrl) return
+    if (!isComplete) return
     setTesting(true)
     setTestOk(null)
     try {
+      await save()
       const [health, environment] = await Promise.all([
-        fetch(`${baseUrl}/health`),
-        fetch(`${baseUrl}/.well-known/hive/environment`)
+        fetch(`${normalizedUrl}/health`),
+        fetch(`${normalizedUrl}/.well-known/hive/environment`)
       ])
       if (!health.ok || !environment.ok) {
         throw new Error(`Health ${health.status}, environment ${environment.status}`)
       }
+      const bootstrapResponse = await fetch(`${normalizedUrl}/api/auth/bootstrap`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bootstrapToken: normalizedToken })
+      })
+      if (!bootstrapResponse.ok) throw new Error('Bootstrap token was rejected')
+
+      const bootstrap = (await bootstrapResponse.json()) as { session?: { accessToken?: string } }
+      const accessToken = bootstrap.session?.accessToken
+      if (!accessToken) throw new Error('Bootstrap response did not include an access token')
+
+      const wsTokenResponse = await fetch(`${normalizedUrl}/api/auth/ws-token`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${accessToken}` }
+      })
+      if (!wsTokenResponse.ok) throw new Error('WebSocket token could not be issued')
+
       setTestOk(true)
       toast.success('Teleport remote connected')
     } catch (error) {
@@ -69,7 +94,7 @@ export function SettingsTeleport(): React.JSX.Element {
               setUrl(event.target.value)
               setTestOk(null)
             }}
-            onBlur={() => save()}
+            onBlur={() => void save()}
             placeholder="http://localhost:3773"
             className="h-8 text-sm"
             data-testid="teleport-url-input"
@@ -85,7 +110,7 @@ export function SettingsTeleport(): React.JSX.Element {
               setBootstrapToken(event.target.value)
               setTestOk(null)
             }}
-            onBlur={() => save()}
+            onBlur={() => void save()}
             placeholder="Remote bootstrap token"
             className="h-8 text-sm"
             data-testid="teleport-token-input"
@@ -93,14 +118,14 @@ export function SettingsTeleport(): React.JSX.Element {
         </div>
 
         <div className="flex items-center justify-between text-xs text-muted-foreground">
-          <span>Status: {teleport?.url ? `configured for ${teleport.url}` : 'not configured'}</span>
+          <span>Status: {statusText}</span>
           <div className="flex items-center gap-2">
             {testOk === true && <Check className="h-4 w-4 text-green-500" />}
             {testOk === false && <X className="h-4 w-4 text-red-500" />}
             <Button
               size="sm"
               variant="outline"
-              disabled={testing || !url.trim()}
+              disabled={testing || !isComplete}
               onClick={() => void testConnection()}
               data-testid="teleport-test-button"
             >

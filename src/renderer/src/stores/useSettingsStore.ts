@@ -266,7 +266,7 @@ interface SettingsState extends AppSettings {
   openSettings: (section?: string) => void
   closeSettings: () => void
   setActiveSection: (section: string) => void
-  updateSetting: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => void
+  updateSetting: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => Promise<void>
   setTelegramConfig: (config: TelegramConfig | null) => void
   setSelectedModel: (
     model: SelectedModel | null,
@@ -485,11 +485,14 @@ export const useSettingsStore = create<SettingsState>()(
         set({ activeSection: section })
       },
 
-      updateSetting: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
+      updateSetting: async <K extends keyof AppSettings>(
+        key: K,
+        value: AppSettings[K]
+      ): Promise<void> => {
         set({ [key]: value } as Partial<SettingsState>)
         // Persist to database
         const settings = extractSettings({ ...get(), [key]: value } as SettingsState)
-        saveToDatabase(settings)
+        const savePromise = saveToDatabase(settings)
         // Notify main process of channel change
         if (key === 'updateChannel') {
           updaterApi.setChannel(value as AppSettings['updateChannel']).catch(() => {})
@@ -537,6 +540,7 @@ export const useSettingsStore = create<SettingsState>()(
               .catch(console.error)
           }, 0)
         }
+        await savePromise
       },
 
       setTelegramConfig: (config) => {
