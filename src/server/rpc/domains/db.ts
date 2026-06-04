@@ -441,17 +441,12 @@ export const makeLiveDbRpcService = (): DbRpcService => ({
     Effect.tryPromise({
       try: async () => {
         const { getDatabase } = await import('../../../main/db')
+        const { createProjectWithDefaultWorktree } = await import(
+          '../../../main/services/project-ops'
+        )
         const { telemetryService } = await import('../../../main/services/telemetry-service')
         const db = getDatabase()
-        const project = db.createProject(data)
-
-        db.createWorktree({
-          project_id: project.id,
-          name: '(no-worktree)',
-          branch_name: '',
-          path: project.path,
-          is_default: true
-        })
+        const project = createProjectWithDefaultWorktree(db, data)
         telemetryService.track('project_added', {})
 
         return project
