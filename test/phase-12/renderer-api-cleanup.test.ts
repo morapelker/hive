@@ -1371,6 +1371,20 @@ describe('renderer API cleanup', () => {
     }
   })
 
+  it('allows the main renderer to test user-configured teleport remotes', () => {
+    const html = fs.readFileSync(
+      path.resolve(__dirname, '../../src/renderer/index.html'),
+      'utf-8'
+    )
+    const csp = html.match(/content="([^"]*connect-src[^"]*)"/)?.[1] ?? ''
+    const tokens = csp.split(/\s+/)
+
+    expect(tokens).toContain('http:')
+    expect(tokens).toContain('https:')
+    expect(tokens).toContain('ws:')
+    expect(tokens).toContain('wss:')
+  })
+
   it('routes ErrorBoundary clipboard fallback through projectApi', () => {
     const source = fs.readFileSync(
       path.resolve(__dirname, '../../src/renderer/src/components/error/ErrorBoundary.tsx'),
