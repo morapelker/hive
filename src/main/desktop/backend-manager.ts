@@ -536,6 +536,7 @@ export const startDesktopBackend = async (
   // `dev:web` pins the backend to a known free port via HIVE_DESKTOP_BACKEND_PORT so
   // its Vite dev server can target it. When set, scan only that single port.
   const pinnedPort = parseDesktopBackendPortEnv(process.env.HIVE_DESKTOP_BACKEND_PORT)
+  const envBootstrapToken = process.env.HIVE_DESKTOP_BOOTSTRAP_TOKEN?.trim() || undefined
   const config = await makeDesktopBackendSpawnConfig({
     executablePath: input.executablePath,
     entryPath: input.entryPath,
@@ -544,6 +545,7 @@ export const startDesktopBackend = async (
     host: input.host ?? DEFAULT_DESKTOP_BACKEND_HOST,
     port: input.port ?? pinnedPort ?? DEFAULT_DESKTOP_BACKEND_PORT,
     maxPort: input.maxPort ?? pinnedPort ?? DEFAULT_DESKTOP_BACKEND_MAX_PORT,
+    bootstrapToken: envBootstrapToken,
     // TESTING: point the backend at the legacy desktop database
     // (<baseDir>/hive.db) so it loads existing projects/sessions instead of a
     // fresh empty userdata/state.sqlite. Remove this env override to use the

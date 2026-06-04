@@ -307,6 +307,7 @@ describe('desktop backend manager', () => {
     petWindowMocks.setPetIgnoreMouseEvents.mockClear()
     petWindowMocks.updatePetSettings.mockClear()
     vi.restoreAllMocks()
+    vi.unstubAllEnvs()
   })
 
   it('spawns the backend and waits for readiness before resolving', async () => {
@@ -343,6 +344,38 @@ describe('desktop backend manager', () => {
       `${backend.config.httpBaseUrl}/.well-known/hive/environment`
     )
     expect(getDesktopBackendBootstrap()).toEqual(backend.bootstrap)
+  })
+
+  it('uses an explicit desktop bootstrap token from the environment', async () => {
+    vi.stubEnv('HIVE_DESKTOP_BOOTSTRAP_TOKEN', 'morapelker')
+    const child = new FakeChildProcess()
+    const spawnProcess = vi.fn(() => child as never)
+
+    const backend = await startDesktopBackend(
+      {
+        executablePath: '/electron',
+        entryPath: '/app/server.js',
+        cwd: '/app',
+        baseDir: mkdtempSync(join(tmpdir(), 'hive-backend-manager-')),
+        port: 0
+      },
+      {
+        spawnProcess,
+        fetch: vi.fn(async () => new Response('{}', { status: 200 })),
+        logger: makeLogger()
+      }
+    )
+
+    expect(backend.bootstrap.bootstrapToken).toBe('morapelker')
+    expect(spawnProcess).toHaveBeenCalledWith(
+      '/electron',
+      ['/app/server.js'],
+      expect.objectContaining({
+        env: expect.objectContaining({
+          HIVE_DESKTOP_BOOTSTRAP_TOKEN: 'morapelker'
+        })
+      })
+    )
   })
 
   it('authenticates before publishing desktop backend events over HTTP', async () => {
