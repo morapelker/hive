@@ -11,6 +11,36 @@ if (typeof window !== 'undefined') {
   }
   window.cancelAnimationFrame = vi.fn()
 
+  // jsdom lacks the layout/hit-testing APIs that ProseMirror/TipTap (used by the
+  // markdown composer) call on mount. Provide no-op stubs so any component that
+  // renders the editor doesn't throw in tests.
+  if (typeof document.elementFromPoint !== 'function') {
+    document.elementFromPoint = () => null
+  }
+  const emptyRectList = (): DOMRectList =>
+    ({ length: 0, item: () => null, [Symbol.iterator]: function* () {} }) as unknown as DOMRectList
+  const zeroRect = (): DOMRect =>
+    ({
+      x: 0,
+      y: 0,
+      width: 0,
+      height: 0,
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      toJSON: () => ({})
+    }) as DOMRect
+  if (typeof Range.prototype.getClientRects !== 'function') {
+    Range.prototype.getClientRects = emptyRectList
+  }
+  if (typeof Range.prototype.getBoundingClientRect !== 'function') {
+    Range.prototype.getBoundingClientRect = zeroRect
+  }
+  if (typeof Element.prototype.scrollIntoView !== 'function') {
+    Element.prototype.scrollIntoView = vi.fn()
+  }
+
   // Mock matchMedia for theme detection
   Object.defineProperty(window, 'matchMedia', {
     writable: true,

@@ -16,6 +16,9 @@ import { ModelSelector } from './ModelSelector'
 import { QuestionPrompt } from './QuestionPrompt'
 import { ClaudeCliEndedOverlay } from './ClaudeCliEndedOverlay'
 import { HandoffSplitButton } from './HandoffSplitButton'
+import { TipTapMessageInput, type TipTapMessageInputHandle } from './TipTapMessageInput'
+import { Button } from '@/components/ui/button'
+import { Send, Terminal as TerminalIcon, PenLine } from 'lucide-react'
 import { buildHandoffPrompt, type HandoffSelectionOverride } from '@/lib/handoffSelection'
 import { lastSendMode } from '@/lib/message-send-times'
 import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
@@ -527,6 +530,55 @@ export function ClaudeCliSessionView({
     [resolveQuestionPath]
   )
 
+  // ── Toggle between the raw CLI terminal and a markdown composer ───────────
+  // Both stay mounted (terminal keeps its PTY, composer keeps its text); only
+  // one is shown at a time. The composer injects into the terminal on send.
+  const composerRef = useRef<TipTapMessageInputHandle>(null)
+  const [composerValue, setComposerValue] = useState('')
+  const [composerSending, setComposerSending] = useState(false)
+  const [viewMode, setViewMode] = useState<'terminal' | 'markdown'>('terminal')
+  // Mount the editor only once markdown is first opened (so it mounts while
+  // visible, not inside a display:none box), then keep it mounted to retain text.
+  const [hasOpenedMarkdown, setHasOpenedMarkdown] = useState(false)
+
+  const showTerminal = useCallback(() => {
+    setViewMode('terminal')
+    requestAnimationFrame(() => terminalRef.current?.focus())
+  }, [])
+
+  const showMarkdown = useCallback(() => {
+    setHasOpenedMarkdown(true)
+    setViewMode('markdown')
+    requestAnimationFrame(() => composerRef.current?.focus())
+  }, [])
+
+  const handleComposerSend = useCallback(async () => {
+    const md = (composerRef.current?.getMarkdown() ?? '').trim()
+    if (!md || composerSending) return
+    setComposerSending(true)
+    try {
+      const result = unwrapEnvelope(await window.terminalOps.sendClaudeCliPrompt(sessionId, md))
+      if (result.delivered) {
+        setComposerValue('')
+        composerRef.current?.clear()
+        bumpWorktreeLastMessage(sessionId)
+        // Jump to the terminal so the user can watch Claude respond.
+        setViewMode('terminal')
+        requestAnimationFrame(() => terminalRef.current?.focus())
+      } else {
+        toast.error('Terminal is not ready — click into it and try again, or restart the session')
+      }
+    } catch (err) {
+      console.error('Failed to send prompt to Claude CLI:', err)
+      toast.error('Failed to send prompt to the terminal')
+    } finally {
+      setComposerSending(false)
+    }
+  }, [sessionId, composerSending])
+
+  const composerNoHistory = useCallback(() => false, [])
+  const composerNoop = useCallback(() => {}, [])
+
   return (
     <div
       className="flex-1 flex flex-col min-h-0 bg-background"
@@ -537,6 +589,41 @@ export function ClaudeCliSessionView({
         <div className="flex min-w-0 items-center gap-2">
           <ModeToggle sessionId={sessionId} />
           <SuperToggle sessionId={sessionId} />
+          {/* Terminal ↔ Markdown view switch */}
+          <div className="flex items-center rounded-md border border-border p-0.5" role="tablist">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={viewMode === 'terminal'}
+              onClick={showTerminal}
+              className={cn(
+                'flex items-center gap-1 rounded px-2 py-1 text-xs transition-colors',
+                viewMode === 'terminal'
+                  ? 'bg-accent text-accent-foreground'
+                  : 'text-muted-foreground hover:text-foreground'
+              )}
+              data-testid="cli-view-terminal"
+            >
+              <TerminalIcon className="h-3.5 w-3.5" />
+              Terminal
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={viewMode === 'markdown'}
+              onClick={showMarkdown}
+              className={cn(
+                'flex items-center gap-1 rounded px-2 py-1 text-xs transition-colors',
+                viewMode === 'markdown'
+                  ? 'bg-accent text-accent-foreground'
+                  : 'text-muted-foreground hover:text-foreground'
+              )}
+              data-testid="cli-view-markdown"
+            >
+              <PenLine className="h-3.5 w-3.5" />
+              Markdown
+            </button>
+          </div>
           {pendingMessage && (
             <span className="truncate text-xs text-muted-foreground">handoff prompt pending</span>
           )}
@@ -581,6 +668,55 @@ export function ClaudeCliSessionView({
           </div>
         )}
         {ended && <ClaudeCliEndedOverlay onRestart={handleRestart} />}
+
+        {/* Markdown composer overlay — shown instead of the terminal. Type here
+            and Alt+Enter injects the rendered text into the CLI, then jumps back
+            to the terminal to watch the response. The terminal stays mounted
+            underneath so its session/scrollback is preserved. */}
+        <div
+          className={cn(
+            'absolute inset-0 z-20 flex flex-col bg-background',
+            viewMode !== 'markdown' && 'hidden'
+          )}
+          data-testid="cli-markdown-view"
+        >
+          {hasOpenedMarkdown && (
+          <div className="flex min-h-0 flex-1 flex-col px-1 py-1">
+            <TipTapMessageInput
+              ref={composerRef}
+              value={composerValue}
+              onChange={setComposerValue}
+              onSend={handleComposerSend}
+              onHistoryPrev={composerNoHistory}
+              onHistoryNext={composerNoHistory}
+              onImagePaste={composerNoop}
+              onMentionStateChange={composerNoop}
+              disabled={ended}
+              placeholder={
+                ended ? 'Session ended — restart to continue' : 'Type markdown… Alt+Enter to send'
+              }
+              className="min-h-0 flex-1 text-sm"
+            />
+            <div className="flex items-center justify-between border-t border-border px-3 py-2">
+              <span className="hidden text-xs text-muted-foreground @min-[42rem]:inline">
+                Alt+Enter to send · Tab indents · Shift+Tab un-indents
+              </span>
+              <Button
+                onClick={handleComposerSend}
+                disabled={!composerValue.trim() || ended || composerSending}
+                size="sm"
+                className="h-7 gap-1.5 px-2.5"
+                aria-label="Send to terminal"
+                title="Send to terminal (Alt+Enter)"
+                data-testid="cli-composer-send"
+              >
+                <Send className="h-3.5 w-3.5" />
+                Send
+              </Button>
+            </div>
+          </div>
+          )}
+        </div>
       </div>
     </div>
   )

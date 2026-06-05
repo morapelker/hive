@@ -620,3 +620,116 @@ body::after {
     animation: none;
   }
 }
+
+/* ── TipTap markdown composer ───────────────────────────────────────────── */
+.tiptap-message-input {
+  padding: 0.5rem 0.75rem;
+  outline: none;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  min-height: 1.5rem;
+  /* Render literal tab characters (Tab to indent) as a sensible width instead
+     of collapsing them; pre-wrap above keeps them from being dropped. */
+  tab-size: 2;
+  -moz-tab-size: 2;
+}
+.tiptap-message-input pre {
+  tab-size: 2;
+  -moz-tab-size: 2;
+}
+.tiptap-message-input:focus {
+  outline: none;
+}
+.tiptap-message-input > :first-child {
+  margin-top: 0;
+}
+.tiptap-message-input > :last-child {
+  margin-bottom: 0;
+}
+.tiptap-message-input p {
+  margin: 0;
+}
+.tiptap-message-input p + p {
+  margin-top: 0.5rem;
+}
+.tiptap-message-input h1,
+.tiptap-message-input h2,
+.tiptap-message-input h3 {
+  font-weight: 600;
+  line-height: 1.3;
+  margin: 0.5rem 0 0.25rem;
+}
+.tiptap-message-input h1 {
+  font-size: 1.25rem;
+}
+.tiptap-message-input h2 {
+  font-size: 1.125rem;
+}
+.tiptap-message-input h3 {
+  font-size: 1rem;
+}
+.tiptap-message-input ul,
+.tiptap-message-input ol {
+  margin: 0.25rem 0;
+  padding-left: 1.25rem;
+}
+.tiptap-message-input ul {
+  list-style: disc;
+}
+.tiptap-message-input ol {
+  list-style: decimal;
+}
+.tiptap-message-input li {
+  margin: 0.125rem 0;
+}
+.tiptap-message-input li p {
+  margin: 0;
+}
+.tiptap-message-input blockquote {
+  margin: 0.25rem 0;
+  padding-left: 0.75rem;
+  border-left: 3px solid var(--border);
+  color: var(--muted-foreground);
+}
+.tiptap-message-input code {
+  padding: 0.1em 0.3em;
+  border-radius: 0.25rem;
+  background: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+}
+.tiptap-message-input pre {
+  margin: 0.5rem 0;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: #1c2128;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+}
+.tiptap-message-input pre code {
+  padding: 0;
+  background: transparent;
+  font-size: inherit;
+  color: #adbac7;
+}
+.tiptap-message-input a {
+  color: var(--primary);
+  text-decoration: underline;
+}
+.tiptap-message-input hr {
+  margin: 0.5rem 0;
+  border: none;
+  border-top: 1px solid var(--border);
+}
+/* Placeholder (shown by @tiptap/extension-placeholder on the empty doc) */
+.tiptap-message-input p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: var(--muted-foreground);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}

@@ -10,6 +10,7 @@ import {
   X,
   Github,
   Minimize2,
+  Maximize2,
   Terminal
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -41,6 +42,7 @@ import { TicketPickerModal } from '@/components/kanban/TicketPickerModal'
 import type { TicketAttachmentData } from '@/components/kanban/TicketPickerModal'
 import { SlashCommandPopover } from './SlashCommandPopover'
 import { FileMentionPopover } from './FileMentionPopover'
+import { TipTapMessageInput, type TipTapMessageInputHandle } from './TipTapMessageInput'
 import { ScrollToBottomFab } from './ScrollToBottomFab'
 import { PlanReadyImplementFab } from './PlanReadyImplementFab'
 import { IndeterminateProgressBar } from './IndeterminateProgressBar'
@@ -49,10 +51,10 @@ import { GoalStatusWidget } from './GoalStatusWidget'
 import { ClaudeCliSessionView } from './ClaudeCliSessionView'
 import { useLatestTodoList } from './useLatestTodoList'
 import { usePRStackTopOffset } from './usePRStackTopOffset'
-import { useFileMentions } from '@/hooks/useFileMentions'
 import { useSessionTimer } from '@/hooks/useSessionTimer'
 import { useBashRuns } from '@/hooks/useBashRuns'
-import type { FlatFile } from '@/lib/file-search-utils'
+import { scoreMatch, type FlatFile } from '@/lib/file-search-utils'
+import { hasFocusedEditableElement } from '@/lib/focus-utils'
 import { useSessionStore } from '@/stores/useSessionStore'
 import type { CodexThreadGoal } from '@/stores/useSessionStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
@@ -89,7 +91,6 @@ import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/mes
 import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
 import { snapshotTokenBaseline, computeTokenDelta } from '@/lib/token-baselines'
 import { notifyKanbanSessionSync } from '@/stores/store-coordination'
-import { isComposingKeyboardEvent } from '@/lib/message-composer-shortcuts'
 import { handleSessionIdleFollowUp } from '@/lib/session-follow-up-dispatch'
 import { buildSdkPlanImplementationPrompt, looksLikeCodexProposedPlan } from '@/lib/proposedPlan'
 import { buildHandoffPrompt, type HandoffSelectionOverride } from '@/lib/handoffSelection'
@@ -100,6 +101,32 @@ const db = unwrapEnvelopeApi(() => window.db)
 const EMPTY_FILE_INDEX: FlatFile[] = []
 const EMPTY_STRING_ARRAY: string[] = []
 const EMPTY_MESSAGE_ARRAY: OpenCodeMessage[] = []
+
+// Top 5 file suggestions for an '@' mention query (alphabetical when empty).
+function filterFileSuggestions(flatFiles: FlatFile[], query: string): FlatFile[] {
+  if (query === '') {
+    return [...flatFiles].sort((a, b) => a.relativePath.localeCompare(b.relativePath)).slice(0, 5)
+  }
+  return flatFiles
+    .map((file) => ({ file, score: scoreMatch(query, file) }))
+    .filter(({ score }) => score > 0)
+    .sort((a, b) =>
+      b.score !== a.score ? b.score - a.score : a.file.relativePath.localeCompare(b.file.relativePath)
+    )
+    .slice(0, 5)
+    .map(({ file }) => file)
+}
+
+// Strip the leading '@' from tokens that exactly match a known file path. This
+// preserves the old stripAtMentions semantics (only real mentions are stripped)
+// without tracking per-character mention indices.
+function stripFileMentions(text: string, flatFiles: FlatFile[]): string {
+  if (flatFiles.length === 0) return text
+  const known = new Set(flatFiles.map((f) => f.relativePath))
+  return text.replace(/(^|[\s(])@(\S+)/g, (match, pre: string, path: string) =>
+    known.has(path) ? `${pre}${path}` : match
+  )
+}
 import { QuestionPrompt } from './QuestionPrompt'
 import { PermissionPrompt } from './PermissionPrompt'
 import { CommandApprovalPrompt } from './CommandApprovalPrompt'
@@ -821,7 +848,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
 
   // Refs
   const virtualizedListRef = useRef<VirtualizedMessageListHandle>(null)
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const editorRef = useRef<TipTapMessageInputHandle>(null)
   const prevFileIndexWorktreeRef = useRef<string | null>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const [scrollElement, setScrollElement] = useState<HTMLDivElement | null>(null)
@@ -853,11 +880,8 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
   // Child session → subtask index mapping for subagent content routing
   const childToSubtaskIndexRef = useRef<Map<string, number>>(new Map())
 
-  // Cursor position tracking for file mentions
-  const cursorPositionRef = useRef(0)
-  const [cursorPosition, setCursorPosition] = useState(0)
-  const isPastingRef = useRef(false)
-  const isImeComposingRef = useRef(false)
+  // Full-height composer toggle (persists until a message is sent)
+  const [isFullHeight, setIsFullHeight] = useState(false)
 
   // Draft persistence refs
   const inputValueRef = useRef('')
@@ -906,8 +930,38 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
     }
   }, [])
 
-  // File mentions hook
-  const fileMentions = useFileMentions(inputValue, cursorPosition, fileIndex)
+  // File mention state — the '@' trigger query is reported by the editor; the
+  // suggestion list + selection are computed/managed here so the existing
+  // FileMentionPopover (with its capture-phase keyboard) can be reused as-is.
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null)
+  const [mentionSelectedIndex, setMentionSelectedIndex] = useState(0)
+  const mentionSuggestions = useMemo(
+    () => (mentionQuery === null ? [] : filterFileSuggestions(fileIndex, mentionQuery)),
+    [mentionQuery, fileIndex]
+  )
+  // Reset selection whenever the query changes.
+  useEffect(() => {
+    setMentionSelectedIndex(0)
+  }, [mentionQuery])
+  const handleMentionStateChange = useCallback(
+    (state: { query: string } | null) => {
+      setMentionQuery(state ? state.query : null)
+    },
+    []
+  )
+  const moveMentionSelection = useCallback(
+    (direction: 'up' | 'down') => {
+      setMentionSelectedIndex((prev) => {
+        const len = mentionSuggestions.length
+        if (len === 0) return 0
+        return direction === 'down' ? (prev + 1) % len : (prev - 1 + len) % len
+      })
+    },
+    [mentionSuggestions.length]
+  )
+  const dismissMention = useCallback(() => {
+    setMentionQuery(null)
+  }, [])
 
   // stripAtMentions setting
   const stripAtMentions = useSettingsStore((state) => state.stripAtMentions)
@@ -1202,16 +1256,14 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
     savedDraftRef.current = ''
   }, [sessionId])
 
-  // Auto-focus textarea whenever session changes or view becomes connected.
-  // The textarea only exists in the DOM when viewState is 'connected',
+  // Auto-focus the editor whenever session changes or view becomes connected.
+  // The editor only exists in the DOM when viewState is 'connected',
   // so we need to re-trigger focus when transitioning from 'connecting' → 'connected'.
   useEffect(() => {
     if (vimModeEnabled) return
-    if (textareaRef.current) {
-      requestAnimationFrame(() => {
-        textareaRef.current?.focus()
-      })
-    }
+    requestAnimationFrame(() => {
+      editorRef.current?.focus()
+    })
   }, [sessionId, viewState.status, vimModeEnabled])
 
   // Push per-session model to OpenCode on tab switch
@@ -1229,16 +1281,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
     sessionRecord?.model_variant
   ])
 
-  // Auto-resize textarea (depends on sessionId to handle pre-populated drafts)
-  // Uses useLayoutEffect to measure and set height synchronously before paint,
-  // ensuring correct height when drafts are loaded on worktree navigation.
-  useLayoutEffect(() => {
-    const textarea = textareaRef.current
-    if (textarea) {
-      textarea.style.height = 'auto'
-      textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`
-    }
-  }, [inputValue, sessionId])
+  // (The TipTap editor auto-grows with content; no manual resize needed.)
 
   // Set 'answering' status when a question is pending, revert when answered.
   // Guard: only mutate the store when the status actually needs to change,
@@ -4279,9 +4322,20 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
     [forkingMessageId, opencodeSessionId, sessionId, sessionRecord, worktreeId, worktreePath]
   )
 
+  // Clear the composer (input + draft) and collapse the full-height toggle.
+  const clearComposer = useCallback(() => {
+    setInputValue('')
+    inputValueRef.current = ''
+    setIsFullHeight(false)
+    if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
+    db.session.updateDraft(sessionId, null)
+  }, [sessionId])
+
   // Handle send message
   const handleSend = useCallback(
     async (overrideValue?: string) => {
+      // Sending always collapses the full-height composer.
+      setIsFullHeight(false)
       // === BASH MODE ===
       if (!overrideValue && inputValueRef.current.startsWith('!')) {
         const command = inputValueRef.current.slice(1).trim()
@@ -4297,7 +4351,11 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
 
       // Apply mention stripping when sending (unless overrideValue is provided,
       // e.g. for built-in commands like "Implement")
-      const rawValue = overrideValue ?? fileMentions.getTextForSend(stripAtMentions)
+      const rawValue =
+        overrideValue ??
+        (stripAtMentions
+          ? stripFileMentions(inputValueRef.current, fileIndex)
+          : inputValueRef.current)
       const trimmedValue = rawValue.trim()
       if (!trimmedValue) return
 
@@ -4415,7 +4473,6 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
           // Clear input and update UI state immediately
           setInputValue('')
           inputValueRef.current = ''
-          fileMentions.clearMentions()
           if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
           db.session.updateDraft(sessionId, null)
 
@@ -4525,14 +4582,12 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
         // Clear input but do NOT send — the idle handler will send when the agent finishes
         setInputValue('')
         inputValueRef.current = ''
-        fileMentions.clearMentions()
         if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
         db.session.updateDraft(sessionId, null)
         return
       }
       setInputValue('')
       inputValueRef.current = ''
-      fileMentions.clearMentions()
       if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
       db.session.updateDraft(sessionId, null)
 
@@ -4818,7 +4873,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
       codexPromptOptions,
       refreshMessagesFromOpenCode,
       getModelForRequests,
-      fileMentions,
+      fileIndex,
       resetAutoScrollState,
       stripAtMentions,
       isBashRunning,
@@ -5011,6 +5066,19 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
       handleSend
     ]
   )
+
+  // Single send entry point used by the composer (Alt+Enter and the send button).
+  // When a plan is pending, sending text rejects the plan with feedback instead.
+  const handleComposerSend = useCallback(() => {
+    const plan = useSessionStore.getState().pendingPlans.get(sessionId)
+    const feedback = inputValueRef.current.trim()
+    if (plan && feedback) {
+      void handlePlanReject(feedback)
+      clearComposer()
+      return
+    }
+    void handleSend()
+  }, [sessionId, handlePlanReject, handleSend, clearComposer])
 
   const handlePlanReadyHandoff = useCallback(
     async (override?: HandoffSelectionOverride) => {
@@ -5350,132 +5418,49 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
     unwrapEnvelope(await window.opencodeOps.abort(worktreePath, opencodeSessionId))
   }, [isBashRunning, abortBash, worktreePath, opencodeSessionId, sessionId])
 
-  // Handle keyboard shortcuts
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      // When file mention popover is open, let the popover's capture-phase
-      // listener handle ArrowUp/ArrowDown/Enter/Escape. Do NOT process them here.
-      if (fileMentions.isOpen) {
-        if (
-          e.key === 'ArrowUp' ||
-          e.key === 'ArrowDown' ||
-          e.key === 'Enter' ||
-          e.key === 'Escape'
-        ) {
-          return
-        }
-      }
+  // Prompt history navigation — only fired by the editor when it is empty
+  // (ArrowUp). Returns true when the key was consumed.
+  const handleHistoryPrev = useCallback((): boolean => {
+    const hKey = historyKey
+    if (!hKey) return false
+    const history = usePromptHistoryStore.getState().getHistory(hKey)
+    if (history.length === 0) return false
 
-      if (
-        e.key === 'Enter' &&
-        isComposingKeyboardEvent(
-          e.nativeEvent as KeyboardEvent & { keyCode?: number },
-          isImeComposingRef.current
-        )
-      ) {
-        return
-      }
+    let newIndex: number
+    if (historyIndex === null) {
+      newIndex = history.length - 1
+    } else if (historyIndex > 0) {
+      newIndex = historyIndex - 1
+    } else {
+      return true // already at oldest — consume the key but don't change
+    }
+    setHistoryIndex(newIndex)
+    setInputValue(history[newIndex])
+    inputValueRef.current = history[newIndex]
+    return true
+  }, [historyKey, historyIndex])
 
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault()
-        // When a plan is pending, sending text rejects the plan with feedback
-        const plan = useSessionStore.getState().pendingPlans.get(sessionId)
-        if (plan && inputValue.trim()) {
-          void handlePlanReject(inputValue.trim())
-          setInputValue('')
-          inputValueRef.current = ''
-          if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
-          db.session.updateDraft(sessionId, null)
-          return
-        }
-        handleSend()
-        return
-      }
+  // Prompt history navigation forward — only fired by the editor when empty
+  // (ArrowDown). Returns true when the key was consumed.
+  const handleHistoryNext = useCallback((): boolean => {
+    if (historyIndex === null) return false // not navigating
+    const hKey = historyKey
+    if (!hKey) return false
+    const history = usePromptHistoryStore.getState().getHistory(hKey)
 
-      // Prompt history navigation with Up/Down arrows
-      if (e.key === 'ArrowUp') {
-        const textarea = e.currentTarget
-        // Only activate at cursor position 0 (very beginning)
-        if (textarea.selectionStart !== 0 || textarea.selectionEnd !== 0) return
-
-        const hKey = historyKey
-        if (!hKey) return
-        const history = usePromptHistoryStore.getState().getHistory(hKey)
-        if (history.length === 0) return
-
-        e.preventDefault()
-
-        if (historyIndex === null) {
-          // Entering navigation: save current draft, go to most recent
-          savedDraftRef.current = inputValue
-          const newIndex = history.length - 1
-          setHistoryIndex(newIndex)
-          setInputValue(history[newIndex])
-          inputValueRef.current = history[newIndex]
-        } else if (historyIndex > 0) {
-          // Navigate backward
-          const newIndex = historyIndex - 1
-          setHistoryIndex(newIndex)
-          setInputValue(history[newIndex])
-          inputValueRef.current = history[newIndex]
-        }
-        // Place cursor at start so next Up arrow fires immediately
-        requestAnimationFrame(() => {
-          textareaRef.current?.setSelectionRange(0, 0)
-        })
-        // If historyIndex === 0, at oldest — do nothing
-        return
-      }
-
-      if (e.key === 'ArrowDown') {
-        const textarea = e.currentTarget
-        // Only activate at cursor end (very end of text)
-        if (
-          textarea.selectionStart !== textarea.value.length ||
-          textarea.selectionEnd !== textarea.value.length
-        ) {
-          return
-        }
-
-        if (historyIndex === null) return // Not navigating
-
-        const hKey = historyKey
-        if (!hKey) return
-        const history = usePromptHistoryStore.getState().getHistory(hKey)
-
-        e.preventDefault()
-
-        let newValue: string
-        if (historyIndex < history.length - 1) {
-          // Navigate forward
-          const newIndex = historyIndex + 1
-          setHistoryIndex(newIndex)
-          newValue = history[newIndex]
-        } else {
-          // At newest entry — exit navigation, restore draft
-          setHistoryIndex(null)
-          newValue = savedDraftRef.current
-          savedDraftRef.current = ''
-        }
-        setInputValue(newValue)
-        inputValueRef.current = newValue
-        // Place cursor at end so next Down arrow fires immediately
-        requestAnimationFrame(() => {
-          const len = textareaRef.current?.value.length ?? 0
-          textareaRef.current?.setSelectionRange(len, len)
-        })
-      }
-    },
-    [
-      handleSend,
-      handlePlanReject,
-      sessionId,
-      historyKey,
-      historyIndex,
-      inputValue,
-      fileMentions.isOpen
-    ]
-  )
+    let newValue: string
+    if (historyIndex < history.length - 1) {
+      const newIndex = historyIndex + 1
+      setHistoryIndex(newIndex)
+      newValue = history[newIndex]
+    } else {
+      setHistoryIndex(null)
+      newValue = ''
+    }
+    setInputValue(newValue)
+    inputValueRef.current = newValue
+    return true
+  }, [historyKey, historyIndex])
 
   // Attachment handlers
   const handleAttach = useCallback((file: AttachmentInput) => {
@@ -5511,31 +5496,12 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
     })
   }, [])
 
-  const fileMentionsOpen = fileMentions.isOpen
-  const fileMentionCount = fileMentions.mentions.length
-  const updateFileMentions = fileMentions.updateMentions
-
-  // Slash command handlers
+  // Editor change handler — `value` is the serialized markdown (source of truth).
   const handleInputChange = useCallback(
-    (value: string, newCursorPos?: number) => {
+    (value: string) => {
       const oldValue = inputValueRef.current
       setInputValue(value)
       inputValueRef.current = value
-
-      // Update mention indices for the text change (skip if pasting to avoid
-      // opening the popover for pasted '@' characters)
-      if (!isPastingRef.current && fileMentionCount > 0) {
-        updateFileMentions(oldValue, value)
-      }
-      isPastingRef.current = false
-
-      // Track cursor position in state only while it can affect the mention popover.
-      if (newCursorPos !== undefined) {
-        cursorPositionRef.current = newCursorPos
-        if (value[newCursorPos - 1] === '@' || fileMentionsOpen) {
-          setCursorPosition(newCursorPos)
-        }
-      }
 
       // Exit history navigation on manual typing
       setHistoryIndex((prev) => (prev !== null ? null : prev))
@@ -5550,7 +5516,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
         db.session.updateDraft(sessionId, value || null)
       }, 3000)
     },
-    [sessionId, slashDismissed, fileMentionsOpen, fileMentionCount, updateFileMentions]
+    [sessionId, slashDismissed]
   )
 
   const handleCommandSelect = useCallback((cmd: SlashCommandInfo) => {
@@ -5558,58 +5524,32 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
     setInputValue(template)
     inputValueRef.current = template
     setSlashDismissed(false)
-    textareaRef.current?.focus()
+    requestAnimationFrame(() => editorRef.current?.focus())
   }, [])
 
-  // File mention selection handler
-  const handleFileMentionSelect = useCallback(
-    (file: { name: string; path: string; relativePath: string; extension: string | null }) => {
-      const result = fileMentions.selectFile(file)
-      setInputValue(result.newValue)
-      inputValueRef.current = result.newValue
-      cursorPositionRef.current = result.newCursorPosition
-      setCursorPosition(result.newCursorPosition)
-
-      // Set cursor position on the textarea
-      requestAnimationFrame(() => {
-        if (textareaRef.current) {
-          textareaRef.current.setSelectionRange(result.newCursorPosition, result.newCursorPosition)
-          textareaRef.current.focus()
-        }
-      })
-    },
-    [fileMentions]
-  )
+  // File mention selection — insert `@path ` into the editor at the trigger.
+  const handleFileMentionSelect = useCallback((file: FlatFile) => {
+    editorRef.current?.insertMention(file)
+    setMentionQuery(null)
+  }, [])
 
   const handleSlashClose = useCallback(() => {
     setSlashDismissed(true)
   }, [])
 
-  const handlePaste = useCallback(
-    (e: React.ClipboardEvent) => {
-      // Flag paste so handleInputChange skips opening the file mention popover
-      // for any '@' characters introduced by paste
-      isPastingRef.current = true
-
-      const items = e.clipboardData?.items
-      if (!items) return
-      for (const item of Array.from(items)) {
-        if (item.type.startsWith('image/')) {
-          e.preventDefault()
-          const file = item.getAsFile()
-          if (!file) continue
-          const reader = new FileReader()
-          reader.onload = () => {
-            handleAttach({
-              kind: 'data',
-              name: file.name || 'pasted-image.png',
-              mime: file.type,
-              dataUrl: reader.result as string
-            })
-          }
-          reader.readAsDataURL(file)
-        }
+  // Pasted image file from the editor → attachment.
+  const handleImagePaste = useCallback(
+    (file: File) => {
+      const reader = new FileReader()
+      reader.onload = () => {
+        handleAttach({
+          kind: 'data',
+          name: file.name || 'pasted-image.png',
+          mime: file.type,
+          dataUrl: reader.result as string
+        })
       }
+      reader.readAsDataURL(file)
     },
     [handleAttach]
   )
@@ -5620,6 +5560,10 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
   useEffect(() => {
     const handler = (e: KeyboardEvent): void => {
       if (e.key !== 'Tab' || e.ctrlKey || e.metaKey || e.altKey) return
+
+      // Don't hijack Tab while an editable element (the markdown composer, an
+      // input, etc.) is focused — it indents there instead of toggling mode.
+      if (hasFocusedEditableElement()) return
 
       // Don't intercept plain Tab inside the ticket creation modal — it needs
       // natural tab navigation. Shift+Tab still toggles super-plan mode.
@@ -5923,7 +5867,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
     setInputValue('/redo')
     inputValueRef.current = '/redo'
     setSlashDismissed(true)
-    textareaRef.current?.focus()
+    requestAnimationFrame(() => editorRef.current?.focus())
   }, [])
 
   // The StreamingCursor (blinking cursor) only renders after text or tool_use parts.
@@ -6217,12 +6161,12 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
           />
           {/* File mention popover — only when slash commands are not showing */}
           <FileMentionPopover
-            suggestions={fileMentions.suggestions}
-            selectedIndex={fileMentions.selectedIndex}
-            visible={fileMentions.isOpen && !showSlashCommands}
+            suggestions={mentionSuggestions}
+            selectedIndex={mentionSelectedIndex}
+            visible={mentionQuery !== null && !showSlashCommands}
             onSelect={handleFileMentionSelect}
-            onClose={fileMentions.dismiss}
-            onNavigate={fileMentions.moveSelection}
+            onClose={dismissMention}
+            onNavigate={moveMentionSelection}
           />
           {/* PR review comment attachments — above the input container */}
           <PrCommentAttachments />
@@ -6257,35 +6201,21 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
               onRemove={handleRemoveAttachment}
             />
 
-            {/* Middle: textarea */}
-            <textarea
-              ref={textareaRef}
+            {/* Middle: markdown editor */}
+            <TipTapMessageInput
+              ref={editorRef}
               value={inputValue}
-              onChange={(e) => {
-                const pos = e.currentTarget.selectionStart ?? 0
-                handleInputChange(e.target.value, pos)
-              }}
-              onKeyUp={(e) => {
-                const pos = e.currentTarget.selectionStart ?? 0
-                cursorPositionRef.current = pos
-              }}
-              onClick={(e) => {
-                const pos = e.currentTarget.selectionStart ?? 0
-                cursorPositionRef.current = pos
-              }}
-              onKeyDown={handleKeyDown}
-              onCompositionStart={() => {
-                isImeComposingRef.current = true
-              }}
-              onCompositionEnd={() => {
-                isImeComposingRef.current = false
-              }}
-              onPaste={handlePaste}
+              onChange={handleInputChange}
+              onSend={handleComposerSend}
+              onHistoryPrev={handleHistoryPrev}
+              onHistoryNext={handleHistoryNext}
+              onImagePaste={handleImagePaste}
+              onMentionStateChange={handleMentionStateChange}
               disabled={!!activePermission || isOrphanedSession}
               placeholder={
                 isBashMode
                   ? inputValue.slice(1).trim()
-                    ? 'Press Enter to run'
+                    ? 'Press Alt+Enter to run'
                     : 'Type a command'
                   : isOrphanedSession
                     ? 'Read-only mode - cannot send messages'
@@ -6295,18 +6225,10 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
                         ? 'Send feedback to revise the plan...'
                         : 'Type your message...'
               }
-              aria-label="Message input"
-              aria-haspopup="listbox"
-              aria-expanded={fileMentions.isOpen && !showSlashCommands}
               className={cn(
-                'w-full resize-none bg-transparent px-3 py-2',
-                'text-sm placeholder:text-muted-foreground',
-                'focus:outline-none border-none',
-                'disabled:cursor-not-allowed disabled:opacity-50',
-                'min-h-[40px] max-h-[200px]'
+                'text-sm',
+                isFullHeight ? 'h-[60vh] max-h-[60vh]' : 'min-h-[96px] max-h-[360px]'
               )}
-              rows={1}
-              data-testid="message-input"
             />
 
             {/* Bottom row: model selector + context indicator + hint text + send/implement buttons */}
@@ -6350,13 +6272,29 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
                 >
                   {elapsedTimerText ??
                     (pendingPlan ? (
-                      'Enter to send feedback to revise the plan'
+                      'Alt+Enter to send feedback to revise the plan'
                     ) : (
-                      <span className="hidden @min-[42rem]:inline">{`${navigator.platform.includes('Mac') ? '⌃' : 'Ctrl+'}T to change variant, Shift+Enter for new line`}</span>
+                      <span className="hidden @min-[42rem]:inline">{`${navigator.platform.includes('Mac') ? '⌃' : 'Ctrl+'}T to change variant, Alt+Enter to send`}</span>
                     ))}
                 </span>
               </div>
               <div className="flex items-center gap-1.5">
+                <Button
+                  onClick={() => setIsFullHeight((prev) => !prev)}
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 w-7 p-0 text-muted-foreground"
+                  aria-label={isFullHeight ? 'Collapse input' : 'Expand input'}
+                  aria-pressed={isFullHeight}
+                  title={isFullHeight ? 'Collapse input' : 'Expand input to full height'}
+                  data-testid="full-height-toggle"
+                >
+                  {isFullHeight ? (
+                    <Minimize2 className="h-3.5 w-3.5" />
+                  ) : (
+                    <Maximize2 className="h-3.5 w-3.5" />
+                  )}
+                </Button>
                 {isStreaming && (
                   <IndeterminateProgressBar
                     mode={mode}
@@ -6378,17 +6316,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
                   </Button>
                 ) : (
                   <Button
-                    onClick={() => {
-                      if (pendingPlan && inputValue.trim()) {
-                        void handlePlanReject(inputValue.trim())
-                        setInputValue('')
-                        inputValueRef.current = ''
-                        if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
-                        db.session.updateDraft(sessionId, null)
-                        return
-                      }
-                      void handleSend()
-                    }}
+                    onClick={handleComposerSend}
                     disabled={
                       !inputValue.trim() ||
                       !!activePermission ||
