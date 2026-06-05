@@ -218,6 +218,16 @@ export const TipTapMessageInput = forwardRef<TipTapMessageInputHandle, TipTapMes
           'aria-label': 'Message input',
           'data-testid': 'message-input'
         },
+        // Keys the composer handles itself (Tab/Shift+Tab indentation, Alt+Enter
+        // send) must not bubble to app-wide shortcut handlers — otherwise Tab
+        // would also toggle build/plan mode. ProseMirror's own keymap still runs
+        // (we return false); we only stop the DOM event from propagating.
+        handleKeyDown: (_view, event) => {
+          const ownsKey =
+            event.key === 'Tab' || (event.altKey && event.key === 'Enter')
+          if (ownsKey) event.stopPropagation()
+          return false
+        },
         handlePaste: (_view, event) => {
           const items = event.clipboardData?.items
           if (!items) return false
