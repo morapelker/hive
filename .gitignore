@@ -1,6 +1,7 @@
 # Dependencies
 node_modules/
 
+run-headless.sh
 # Build output
 dist/
 out/

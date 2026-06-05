@@ -54,6 +54,43 @@ describe('dev desktop script', () => {
     expect(env.ELECTRON_RUN_AS_NODE).toBeUndefined()
   })
 
+  test('defaults headless server env for plain Node server mode', async () => {
+    const { createDevHeadlessEnv } = await import('../scripts/dev-desktop.mjs')
+
+    const env = createDevHeadlessEnv({
+      env: {
+        PATH: '/bin',
+        ELECTRON_RUN_AS_NODE: '1'
+      }
+    })
+
+    expect(env.HIVE_HEADLESS).toBe('1')
+    expect(env.HIVE_SERVER_MODE).toBe('browser')
+    expect(env.HIVE_SERVER_HOST).toBe('127.0.0.1')
+    expect(env.HIVE_SERVER_PORT).toBe('3773')
+    expect(env.HIVE_SERVER_REQUIRE_AUTH).toBe('true')
+    expect(env.ELECTRON_RUN_AS_NODE).toBeUndefined()
+  })
+
+  test('preserves explicit headless server env overrides', async () => {
+    const { createDevHeadlessEnv } = await import('../scripts/dev-desktop.mjs')
+
+    const env = createDevHeadlessEnv({
+      env: {
+        HIVE_SERVER_MODE: 'desktop',
+        HIVE_SERVER_HOST: '0.0.0.0',
+        HIVE_SERVER_PORT: '0',
+        HIVE_SERVER_REQUIRE_AUTH: 'false'
+      }
+    })
+
+    expect(env.HIVE_HEADLESS).toBe('1')
+    expect(env.HIVE_SERVER_MODE).toBe('desktop')
+    expect(env.HIVE_SERVER_HOST).toBe('0.0.0.0')
+    expect(env.HIVE_SERVER_PORT).toBe('0')
+    expect(env.HIVE_SERVER_REQUIRE_AUTH).toBe('false')
+  })
+
   test('routes interactive TTY Ctrl-C bytes through launcher shutdown', async () => {
     const { installInteractiveInterruptHandler } = await import('../scripts/dev-desktop.mjs')
     const stdin = new FakeTtyStdin()
@@ -78,7 +115,9 @@ describe('dev desktop script', () => {
 
     const dispose = installInteractiveInterruptHandler({ stdin, shutdownHandler: vi.fn() })
 
-    expect(() => stdin.emit('error', Object.assign(new Error('read EIO'), { code: 'EIO' }))).not.toThrow()
+    expect(() =>
+      stdin.emit('error', Object.assign(new Error('read EIO'), { code: 'EIO' }))
+    ).not.toThrow()
 
     dispose()
   })
@@ -93,10 +132,7 @@ describe('dev desktop script', () => {
 
     expect(spawnSyncImpl).toHaveBeenCalledWith(
       'python3',
-      [
-        '-c',
-        expect.stringContaining("os.tcsetpgrp(fd, os.getpgrp())")
-      ],
+      ['-c', expect.stringContaining('os.tcsetpgrp(fd, os.getpgrp())')],
       { stdio: 'ignore' }
     )
   })
@@ -198,6 +234,85 @@ process.exit(1)
     expect(exit).toEqual({ code: 0, signal: null })
     expect(existsSync(termFile)).toBe(true)
     expect(elapsedAfterSignalMs).toBeGreaterThanOrEqual(500)
+  }, 5_000)
+
+  test('headless mode starts the copied server bundle with plain Node', async () => {
+    const cwd = mkTempDir()
+    const binDir = resolve(cwd, 'bin')
+    const serverReadyFile = resolve(cwd, 'server-ready')
+    const serverTermFile = resolve(cwd, 'server-term')
+    const launcherPath = resolve('scripts/dev-desktop.mjs')
+
+    mkdirSync(resolve(cwd, 'out/main/server-chunks'), { recursive: true })
+    writeFileSync(
+      resolve(cwd, 'out/main/server.js'),
+      `const { writeFileSync } = require('node:fs')
+writeFileSync(process.env.FAKE_SERVER_READY, JSON.stringify({
+  argv: process.argv.slice(1),
+  env: {
+    ELECTRON_RUN_AS_NODE: process.env.ELECTRON_RUN_AS_NODE,
+    HIVE_HEADLESS: process.env.HIVE_HEADLESS,
+    HIVE_SERVER_MODE: process.env.HIVE_SERVER_MODE
+  }
+}))
+process.on('SIGTERM', () => {
+  writeFileSync(process.env.FAKE_SERVER_TERM, 'term')
+  setTimeout(() => process.exit(0), 300)
+})
+setInterval(() => {}, 100)
+`
+    )
+    mkdirSync(binDir, { recursive: true })
+    writeFileSync(
+      resolve(binDir, 'pnpm'),
+      `#!/usr/bin/env node
+if (process.argv[2] === 'run' && process.argv[3] === 'build:server') {
+  process.exit(0)
+}
+
+if (
+  process.argv[2] === 'rebuild' &&
+  process.argv[3] === 'better-sqlite3' &&
+  process.argv[4] === 'node-pty'
+) {
+  process.exit(0)
+}
+
+process.stderr.write('unexpected pnpm args: ' + process.argv.slice(2).join(' ') + '\\n')
+process.exit(1)
+`,
+      { mode: 0o755 }
+    )
+
+    const child = spawn(process.execPath, [launcherPath], {
+      cwd,
+      env: {
+        ...process.env,
+        PATH: `${binDir}:${process.env.PATH ?? ''}`,
+        FAKE_SERVER_READY: serverReadyFile,
+        FAKE_SERVER_TERM: serverTermFile,
+        HIVE_HEADLESS: '1',
+        ELECTRON_RUN_AS_NODE: '1'
+      },
+      stdio: 'ignore'
+    })
+
+    await waitFor(() => existsSync(serverReadyFile))
+    const ready = JSON.parse(readFileSync(serverReadyFile, 'utf-8')) as {
+      argv: string[]
+      env: Record<string, string | undefined>
+    }
+
+    expect(ready.argv[0]).toBe(resolve(cwd, '.dev-server/server.js'))
+    expect(ready.env.HIVE_HEADLESS).toBe('1')
+    expect(ready.env.HIVE_SERVER_MODE).toBe('browser')
+    expect(ready.env.ELECTRON_RUN_AS_NODE).toBeUndefined()
+
+    child.kill('SIGINT')
+    const exit = await waitForExit(child)
+
+    expect(exit).toEqual({ code: 0, signal: null })
+    expect(existsSync(serverTermFile)).toBe(true)
   }, 5_000)
 })
 

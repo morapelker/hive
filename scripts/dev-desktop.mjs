@@ -22,6 +22,22 @@ export const createDevDesktopEnv = ({ cwd = process.cwd(), env = process.env } =
   }
 }
 
+export const createDevHeadlessEnv = ({ env = process.env } = {}) => {
+  const childEnv = { ...env }
+  delete childEnv.ELECTRON_RUN_AS_NODE
+
+  return {
+    ...childEnv,
+    HIVE_HEADLESS: '1',
+    HIVE_SERVER_MODE: env.HIVE_SERVER_MODE ?? 'browser',
+    HIVE_SERVER_HOST: env.HIVE_SERVER_HOST ?? '127.0.0.1',
+    HIVE_SERVER_PORT: env.HIVE_SERVER_PORT ?? '3773',
+    HIVE_SERVER_REQUIRE_AUTH: env.HIVE_SERVER_REQUIRE_AUTH ?? 'true'
+  }
+}
+
+const isHeadlessEnv = (env = process.env) => env.HIVE_HEADLESS === '1'
+
 const children = new Set()
 let shuttingDown = false
 
@@ -174,6 +190,32 @@ const copyDevServerBundle = (cwd = process.cwd()) => {
   }
 }
 
+const runDevHeadless = async () => {
+  process.once('SIGINT', () => shutdown(0))
+  process.once('SIGTERM', () => shutdown(0))
+
+  await run('pnpm', ['run', 'build:server'])
+  copyDevServerBundle()
+
+  // Native modules are normally rebuilt for Electron by postinstall. Plain
+  // Node headless mode needs the Node ABI instead.
+  await run('pnpm', ['rebuild', 'better-sqlite3', 'node-pty'])
+
+  const child = spawnTracked(
+    process.execPath,
+    [resolve(process.cwd(), DEV_SERVER_DIR, SERVER_ENTRY)],
+    {
+      env: createDevHeadlessEnv()
+    }
+  )
+
+  child.once('exit', (code, signal) => {
+    if (shuttingDown) return
+    if (signal) shutdown(1)
+    else shutdown(code ?? 0)
+  })
+}
+
 const runDevDesktop = async () => {
   const disposeInteractiveInterruptHandler = installInteractiveInterruptHandler()
   const disposeForegroundProcessGroupReclaimer = installForegroundProcessGroupReclaimer()
@@ -201,7 +243,9 @@ const isDirectRun = process.argv[1]
   : false
 
 if (isDirectRun) {
-  runDevDesktop().catch((error) => {
+  const runDev = isHeadlessEnv() ? runDevHeadless : runDevDesktop
+
+  runDev().catch((error) => {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
     shutdown(1)
   })
