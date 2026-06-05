@@ -145,6 +145,8 @@ const makeDefaultRendererRpcClient = (): RendererRpcClient => ({
         return {} as T
       case 'settingsOps.loadCustomCommandsFile':
         return { success: true, commands: [], mtime: null } as T
+      case 'settingsOps.saveCustomCommandsFile':
+        return { success: true, mtime: null } as T
       case 'projectOps.loadLanguageIcons':
         return {} as T
       default:

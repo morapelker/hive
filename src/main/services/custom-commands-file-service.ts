@@ -62,6 +62,12 @@ export interface CustomCommandFileResult {
   mtime?: number | null
 }
 
+export interface SaveCustomCommandFileResult {
+  success: boolean
+  error?: string
+  mtime?: number | null
+}
+
 /**
  * Creates a template file with example commands
  * @returns Result object with success, created flags and optional error message
@@ -86,6 +92,44 @@ export function createTemplateFile(): { success: boolean; created: boolean; erro
       success: false,
       created: false,
       error: error instanceof Error ? error.message : 'Unknown error'
+    }
+  }
+}
+
+/**
+ * Saves custom commands to the file config path.
+ * Settings UI writes through this so later file-to-database sync does not
+ * restore stale commands after the user saved an empty list.
+ */
+export function saveCustomCommandsToFile(
+  commands: CustomProjectCommand[]
+): SaveCustomCommandFileResult {
+  const filePath = getCustomCommandsFilePath()
+
+  try {
+    const dir = dirname(filePath)
+    mkdirSync(dir, { recursive: true })
+
+    const validCommands: CustomProjectCommand[] = []
+    for (const command of commands) {
+      const validation = validateCustomCommand(command)
+      if (validation.valid) {
+        validCommands.push(command)
+      } else {
+        console.warn('Skipped invalid command while saving file:', validation.errors)
+      }
+    }
+
+    writeFileSync(filePath, JSON.stringify(validCommands, null, 2), 'utf-8')
+
+    return {
+      success: true,
+      mtime: getFileModTime()
+    }
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error writing file'
     }
   }
 }

@@ -493,6 +493,22 @@ export const useSettingsStore = create<SettingsState>()(
         // Persist to database
         const settings = extractSettings({ ...get(), [key]: value } as SettingsState)
         const savePromise = saveToDatabase(settings)
+        const fileSavePromise =
+          key === 'customProjectCommands'
+            ? settingsApi
+                .saveCustomCommandsFile(value as CustomProjectCommand[])
+                .then((result) => {
+                  if (!result.success) {
+                    console.error(
+                      'Failed to save custom commands file:',
+                      result.error || 'Unknown error'
+                    )
+                  }
+                })
+                .catch((error) => {
+                  console.error('Failed to save custom commands file:', error)
+                })
+            : Promise.resolve()
         // Notify main process of channel change
         if (key === 'updateChannel') {
           updaterApi.setChannel(value as AppSettings['updateChannel']).catch(() => {})
@@ -540,7 +556,7 @@ export const useSettingsStore = create<SettingsState>()(
               .catch(console.error)
           }, 0)
         }
-        await savePromise
+        await Promise.all([savePromise, fileSavePromise])
       },
 
       setTelegramConfig: (config) => {
@@ -658,6 +674,7 @@ export const useSettingsStore = create<SettingsState>()(
       resetToDefaults: () => {
         set({ ...DEFAULT_SETTINGS })
         saveToDatabase(DEFAULT_SETTINGS)
+        settingsApi.saveCustomCommandsFile(DEFAULT_SETTINGS.customProjectCommands).catch(() => {})
         petApi.updateSettings(DEFAULT_SETTINGS.pet)
         petApi.hide().catch(() => {})
       },

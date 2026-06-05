@@ -19,8 +19,8 @@ export function SettingsCustomCommands(): React.JSX.Element {
     setCommands(customProjectCommands)
   }, [customProjectCommands])
 
-  const handleSave = (): void => {
-    updateSetting('customProjectCommands', cleanCommands(commands))
+  const handleSave = async (): Promise<void> => {
+    await updateSetting('customProjectCommands', cleanCommands(commands))
     toast.success('Custom commands saved')
   }
 

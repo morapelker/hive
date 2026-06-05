@@ -1,12 +1,12 @@
 // @vitest-environment node
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { app } from 'electron'
-import { join } from 'path'
 import {
   getCustomCommandsFilePath,
   getFileModTime,
   loadCustomCommandsFromFile,
-  createTemplateFile
+  createTemplateFile,
+  saveCustomCommandsToFile
 } from '../../src/main/services/custom-commands-file-service'
 
 // Mock electron app
@@ -294,5 +294,35 @@ describe('loadCustomCommandsFromFile', () => {
     expect(result.success).toBe(true)
     expect(result.commands).toEqual([])
     expect(result.mtime).toBeNull()
+  })
+})
+
+describe('saveCustomCommandsToFile', () => {
+  it('overwrites existing commands with an empty array', async () => {
+    const fs = await import('fs/promises')
+    const os = await import('os')
+    const path = await import('path')
+
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'custom-commands-test-'))
+    const hiveDir = path.join(tempDir, '.hive')
+    await fs.mkdir(hiveDir, { recursive: true })
+    const testFile = path.join(hiveDir, 'custom-commands.json')
+
+    try {
+      await fs.writeFile(
+        testFile,
+        JSON.stringify([{ id: 'cmd-1', name: 'Old Command', prompt: 'Old prompt' }])
+      )
+
+      vi.mocked(app.getPath).mockReturnValue(tempDir)
+
+      const result = saveCustomCommandsToFile([])
+
+      expect(result.success).toBe(true)
+      expect(typeof result.mtime).toBe('number')
+      expect(JSON.parse(await fs.readFile(testFile, 'utf-8'))).toEqual([])
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true })
+    }
   })
 })
