@@ -52,9 +52,6 @@ const parseDesktopBackendBindIpEnv = (value: string | undefined): string | undef
   return bindIp ? bindIp : undefined
 }
 
-const isAuthExplicitlyDisabled = (value: string | undefined): boolean =>
-  value === 'false' || value === '0'
-
 export const isPortAvailable = (host: string, port: number): Promise<boolean> =>
   new Promise((resolvePortAvailable) => {
     const server = createServer()
@@ -116,12 +113,8 @@ export const makeDesktopBackendSpawnConfig = async (
     ...input.env
   }
   const bindIp = parseDesktopBackendBindIpEnv(env.BIND_IP)
-  if (bindIp && isAuthExplicitlyDisabled(env.HIVE_SERVER_REQUIRE_AUTH)) {
-    throw new Error('BIND_IP requires HIVE_SERVER_REQUIRE_AUTH=true')
-  }
 
   const host = input.host ?? bindIp ?? DEFAULT_DESKTOP_BACKEND_HOST
-  const requireAuth = bindIp ? 'true' : (env.HIVE_SERVER_REQUIRE_AUTH ?? 'false')
   const port = await selectDesktopBackendPort(
     host,
     input.port ?? DEFAULT_DESKTOP_BACKEND_PORT,
@@ -152,10 +145,10 @@ export const makeDesktopBackendSpawnConfig = async (
       HIVE_SERVER_PORT: String(port),
       HIVE_SERVER_BASE_DIR: input.baseDir,
       HIVE_DESKTOP_BOOTSTRAP_TOKEN: bootstrapToken,
-      // Keep loopback browser serving unauthenticated by default. Public BIND_IP
-      // overrides must authenticate so token-less WebSocket RPC is not exposed.
+      // Desktop RPC/WS always requires auth: the renderer uses the injected
+      // bootstrap token transparently, closing token-less CSWSH-to-RCE access.
       HIVE_SERVER_STATIC_DIR: staticDir,
-      HIVE_SERVER_REQUIRE_AUTH: requireAuth
+      HIVE_SERVER_REQUIRE_AUTH: 'true'
     }
   }
 }

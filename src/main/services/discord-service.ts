@@ -43,7 +43,7 @@ import {
   detectProjectFavicon,
   detectProjectLanguage
 } from './project-ops'
-import { cloneRepository, deriveProjectNameFromGitUrl } from './git-repository'
+import { cloneRepository, deriveProjectNameFromGitUrl, isSafeGitRemoteUrl } from './git-repository'
 import { discordSessionBridge, type DiscordSessionBridge } from './discord-session-bridge'
 import type { AgentSdkManager } from './agent-sdk-manager'
 import { createPrFromWorktree } from './discord-pr-creator'
@@ -799,6 +799,13 @@ export class DiscordService {
 
     try {
       const url = interaction.options.getString('git_url', true)
+      if (!isSafeGitRemoteUrl(url)) {
+        await interaction.editReply(
+          'Unsupported git URL. Use an HTTPS, SSH, git, or git@host:owner/repo.git remote URL.'
+        )
+        return
+      }
+
       const name = deriveProjectNameFromGitUrl(url)
       if (!name) {
         await interaction.editReply('Could not derive a project name from that git URL.')

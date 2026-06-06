@@ -414,29 +414,38 @@ describe('desktop backend manager', () => {
     )
   })
 
-  it('fails before spawning when BIND_IP disables backend auth', async () => {
+  it('forces auth before spawning when BIND_IP disables backend auth', async () => {
     vi.stubEnv('BIND_IP', '0.0.0.0')
     vi.stubEnv('HIVE_SERVER_REQUIRE_AUTH', 'false')
-    const spawnProcess = vi.fn()
+    const child = new FakeChildProcess()
+    const spawnProcess = vi.fn(() => child as never)
 
-    await expect(
-      startDesktopBackend(
-        {
-          executablePath: '/electron',
-          entryPath: '/app/server.js',
-          cwd: '/app',
-          baseDir: mkdtempSync(join(tmpdir(), 'hive-backend-manager-')),
-          port: 0
-        },
-        {
-          spawnProcess,
-          fetch: vi.fn(async () => new Response('{}', { status: 200 })),
-          logger: makeLogger()
-        }
-      )
-    ).rejects.toThrow('BIND_IP requires HIVE_SERVER_REQUIRE_AUTH=true')
+    const backend = await startDesktopBackend(
+      {
+        executablePath: '/electron',
+        entryPath: '/app/server.js',
+        cwd: '/app',
+        baseDir: mkdtempSync(join(tmpdir(), 'hive-backend-manager-')),
+        port: 0
+      },
+      {
+        spawnProcess,
+        fetch: vi.fn(async () => new Response('{}', { status: 200 })),
+        logger: makeLogger()
+      }
+    )
 
-    expect(spawnProcess).not.toHaveBeenCalled()
+    expect(backend.config.env.HIVE_SERVER_REQUIRE_AUTH).toBe('true')
+    expect(spawnProcess).toHaveBeenCalledWith(
+      '/electron',
+      ['/app/server.js'],
+      expect.objectContaining({
+        env: expect.objectContaining({
+          HIVE_SERVER_HOST: '0.0.0.0',
+          HIVE_SERVER_REQUIRE_AUTH: 'true'
+        })
+      })
+    )
   })
 
   it('authenticates before publishing desktop backend events over HTTP', async () => {

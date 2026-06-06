@@ -89,16 +89,15 @@ describe('desktop backend config', () => {
     expect(config.env.HIVE_SERVER_REQUIRE_AUTH).toBe('true')
   })
 
-  it('fails startup config when BIND_IP explicitly disables auth', async () => {
+  it('forces auth on even when the environment disables it', async () => {
     const baseDir = mkdtempSync(join(tmpdir(), 'hive-desktop-backend-'))
+    const config = await makeDesktopBackendSpawnConfig({
+      baseDir,
+      port: 0,
+      env: { HIVE_SERVER_REQUIRE_AUTH: 'false' }
+    })
 
-    await expect(
-      makeDesktopBackendSpawnConfig({
-        baseDir,
-        port: 0,
-        env: { BIND_IP: '0.0.0.0', HIVE_SERVER_REQUIRE_AUTH: 'false' }
-      })
-    ).rejects.toThrow('BIND_IP requires HIVE_SERVER_REQUIRE_AUTH=true')
+    expect(config.env.HIVE_SERVER_REQUIRE_AUTH).toBe('true')
   })
 
   it('prefers an explicit backend host over BIND_IP', async () => {
@@ -114,7 +113,7 @@ describe('desktop backend config', () => {
     expect(config.env.HIVE_SERVER_HOST).toBe('127.0.0.1')
   })
 
-  it('serves the web UI without auth on loopback', async () => {
+  it('serves static web UI while requiring backend auth on loopback', async () => {
     const baseDir = mkdtempSync(join(tmpdir(), 'hive-desktop-backend-'))
     const config = await makeDesktopBackendSpawnConfig({
       baseDir,
@@ -122,7 +121,7 @@ describe('desktop backend config', () => {
       staticDir: '/app/out/renderer-web'
     })
 
-    expect(config.env.HIVE_SERVER_REQUIRE_AUTH).toBe('false')
+    expect(config.env.HIVE_SERVER_REQUIRE_AUTH).toBe('true')
     expect(config.env.HIVE_SERVER_STATIC_DIR).toBe('/app/out/renderer-web')
   })
 

@@ -975,6 +975,31 @@ describe('DiscordService message listener', () => {
     })
   })
 
+  it('rejects unsupported git URLs before creating directories or cloning', async () => {
+    const db = new FakeDiscordDatabase()
+    configure(db)
+    const { gateway, actions } = makeGateway()
+    const service = makeService(db, gateway)
+
+    await service.startListening()
+    const interaction = makeAddProjectInteraction(
+      discordJsMock.instances[0],
+      "ext::sh -c 'touch /tmp/hive_pwned'"
+    )
+
+    discordJsMock.instances[0].emit('interactionCreate', interaction)
+    await flushPromises()
+
+    expect(interaction.deferReply).toHaveBeenCalledTimes(1)
+    expect(mkdirSync).not.toHaveBeenCalled()
+    expect(cloneRepository).not.toHaveBeenCalled()
+    expect(createProjectWithDefaultWorktree).not.toHaveBeenCalled()
+    expect(actions).toEqual([])
+    expect(interaction.editReply).toHaveBeenCalledWith(
+      'Unsupported git URL. Use an HTTPS, SSH, git, or git@host:owner/repo.git remote URL.'
+    )
+  })
+
   it('reports when the project is already added to Hive and managed by Discord', async () => {
     const db = new FakeDiscordDatabase()
     configureSelected(db, ['p1'])

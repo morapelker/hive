@@ -27,6 +27,19 @@ export function deriveProjectNameFromGitUrl(url: string): string | null {
   return name ? name : null
 }
 
+export function isSafeGitRemoteUrl(url: string): boolean {
+  if (!url || url.startsWith('-')) return false
+  if (/[\s\x00-\x1f\x7f]/.test(url)) return false
+  if (/^[A-Za-z0-9][A-Za-z0-9+.-]*::/.test(url)) return false
+
+  if (/^https?:\/\//i.test(url)) return true
+  if (/^ssh:\/\//i.test(url)) return true
+  if (/^git:\/\//i.test(url)) return true
+  if (/^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+:/.test(url)) return true
+
+  return false
+}
+
 /**
  * Initialize a new git repository with main as the default branch.
  */
@@ -53,9 +66,18 @@ export async function cloneRepository(
   sshUrl: string,
   destDir: string
 ): Promise<CloneRepositoryResult> {
+  if (!isSafeGitRemoteUrl(sshUrl)) {
+    return {
+      success: false,
+      error: 'Refusing to clone unsupported/unsafe git URL'
+    }
+  }
+
   try {
     log.info('Cloning git repository', { sshUrl, destDir })
-    await simpleGit().clone(sshUrl, destDir)
+    await simpleGit()
+      .env({ ...process.env, GIT_ALLOW_PROTOCOL: 'https:http:ssh:git' })
+      .clone(sshUrl, destDir, ['--'])
     log.info('Git repository cloned successfully', { sshUrl, destDir })
     return { success: true }
   } catch (error) {
