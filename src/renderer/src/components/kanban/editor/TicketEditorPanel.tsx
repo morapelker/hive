@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Maximize2, Minimize2, X } from 'lucide-react'
+import { Maximize2, Minimize2, Settings2, X } from 'lucide-react'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useSessionStore, BOARD_TAB_ID, TICKET_EDITOR_TAB_ID } from '@/stores/useSessionStore'
 import { cn } from '@/lib/utils'
@@ -29,6 +29,7 @@ export function TicketEditorPanel({
   const promoteEditorToTab = useKanbanStore((s) => s.promoteEditorToTab)
   const collapseEditorToDrawer = useKanbanStore((s) => s.collapseEditorToDrawer)
   const closeEditor = useKanbanStore((s) => s.closeEditor)
+  const setSelectedTicketId = useKanbanStore((s) => s.setSelectedTicketId)
 
   // Reactively track the ticket so the title stays in sync with external edits.
   const ticket = useKanbanStore((s) => {
@@ -106,6 +107,11 @@ export function TicketEditorPanel({
     useSessionStore.getState().setActiveSession(BOARD_TAB_ID)
   }, [collapseEditorToDrawer])
 
+  // Open the detailed ticket dialog (dependencies, attachments, goal, sessions…).
+  const openSettings = useCallback(() => {
+    setSelectedTicketId(ticketId)
+  }, [setSelectedTicketId, ticketId])
+
   const title = useMemo(() => ticket?.title?.trim() || 'Untitled ticket', [ticket?.title])
 
   if (!ticket) {
@@ -131,6 +137,16 @@ export function TicketEditorPanel({
         <span className="shrink-0 text-xs text-muted-foreground" aria-live="polite">
           {saving ? 'Saving…' : 'Saved'}
         </span>
+        <button
+          type="button"
+          onClick={openSettings}
+          title="Ticket settings (dependencies, attachments, goal…)"
+          aria-label="Ticket settings"
+          className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+          data-testid="ticket-editor-settings"
+        >
+          <Settings2 className="h-4 w-4" />
+        </button>
         {variant === 'drawer' ? (
           <button
             type="button"

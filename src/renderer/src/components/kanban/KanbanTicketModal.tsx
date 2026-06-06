@@ -20,8 +20,7 @@ import {
   Upload,
   Lock,
   Plus,
-  Map as MapIcon,
-  Maximize2
+  Map as MapIcon
 } from 'lucide-react'
 import {
   Dialog,
@@ -1390,24 +1389,7 @@ function EditModeContent({
 
         {/* Description — WYSIWYG markdown editor (toolbar + "/" command menu) */}
         <div className="space-y-1.5">
-          <div className="flex items-center justify-between">
-            <label className="text-sm font-medium text-foreground">Description</label>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-7 gap-1 text-xs text-muted-foreground"
-              onClick={() => {
-                const store = useKanbanStore.getState()
-                store.setSelectedTicketId(null)
-                store.openEditorDrawer(ticket.id)
-              }}
-              data-testid="ticket-edit-open-editor"
-              title="Open in full-height editor"
-            >
-              <Maximize2 className="h-3.5 w-3.5" /> Open editor
-            </Button>
-          </div>
+          <label className="text-sm font-medium text-foreground">Description</label>
           <div
             data-testid="ticket-edit-description-input"
             className="overflow-hidden rounded-md border border-input bg-background focus-within:ring-1 focus-within:ring-ring"

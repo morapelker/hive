@@ -119,6 +119,12 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorPro
           class: 'tiptap-rich-editor focus:outline-none',
           'aria-label': 'Rich text editor',
           'data-testid': 'rich-text-editor'
+        },
+        // Keep keys the editor handles (Tab/Shift+Tab indentation) from bubbling
+        // to app-wide shortcut handlers. ProseMirror's keymap still runs.
+        handleKeyDown: (_view, event) => {
+          if (event.key === 'Tab') event.stopPropagation()
+          return false
         }
       },
       onUpdate: ({ editor }) => {

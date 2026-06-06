@@ -1,6 +1,6 @@
 import { memo, useCallback, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { Paperclip, AlertCircle, AlertTriangle, Trash2, Archive, ArchiveRestore, GitBranch, ExternalLink, X, FileText, Pin, PinOff, RefreshCw, Link as LinkIcon, GitPullRequest, Loader2, Sparkles, Lock, Link2, Plus, StickyNote, Send, Check, Pause, Play, ChevronDown, Hammer, Map as MapIcon, Maximize2 } from 'lucide-react'
+import { Paperclip, AlertCircle, AlertTriangle, Trash2, Archive, ArchiveRestore, GitBranch, ExternalLink, X, FileText, Pin, PinOff, RefreshCw, Link as LinkIcon, GitPullRequest, Loader2, Sparkles, Lock, Link2, Plus, StickyNote, Send, Check, Pause, Play, ChevronDown, Hammer, Map as MapIcon } from 'lucide-react'
 import { CheckeredFlagIcon } from './CheckeredFlagIcon'
 import { UpdateStatusModal } from './UpdateStatusModal'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
@@ -548,7 +548,9 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
         return
       }
 
-      useKanbanStore.getState().setSelectedTicketId(ticket.id)
+      // Open the full-height editor by default (Settings inside it opens the
+      // detailed ticket dialog).
+      useKanbanStore.getState().openEditorDrawer(ticket.id)
     },
     [ticket.id, ticket.worktree_id, ticket.project_id, isArchived, isPinnedMode, recordBoardTelegramTarget]
   )
@@ -773,20 +775,6 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             <div className="flex items-start justify-between gap-2">
               <p className="text-sm font-medium leading-snug text-foreground min-w-0 flex-1 break-words">{ticket.title}</p>
               <div className="flex items-center gap-1.5 shrink-0">
-                {!isArchived && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      useKanbanStore.getState().openEditorDrawer(ticket.id)
-                    }}
-                    className="opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100 text-muted-foreground"
-                    title="Open description editor"
-                    aria-label="Open description editor"
-                    data-testid="ticket-card-open-editor"
-                  >
-                    <Maximize2 className="h-3.5 w-3.5" />
-                  </button>
-                )}
                 {tokenText && (
                   <span className="text-[11px] tabular-nums text-muted-foreground">
                     {tokenText}

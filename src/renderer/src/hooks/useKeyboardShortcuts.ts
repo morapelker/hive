@@ -202,11 +202,12 @@ export function useKeyboardShortcuts(): void {
       // but allow Ctrl+Tab through for terminal tab cycling.
       const isXtermFocused = target.closest?.('.xterm') !== null
 
-      // The TipTap markdown composer owns Tab/Shift+Tab for list indentation.
-      // Don't let the build/plan mode toggle (Tab) hijack them while it's
-      // focused. Plain inputs/textareas are excluded, so Tab still toggles mode
-      // in the legacy composer.
-      const isRichEditorFocused = target.closest?.('.tiptap-message-input') !== null
+      // Our TipTap editors (chat composer + kanban rich-text editor) own
+      // Tab/Shift+Tab for list indentation. Don't let the build/plan mode toggle
+      // (Tab) hijack them while one is focused. Plain inputs/textareas are
+      // excluded, so Tab still toggles mode in the legacy composer.
+      const isRichEditorFocused =
+        target.closest?.('.tiptap-message-input, .tiptap-rich-editor') != null
 
       for (const { binding, handler, allowInInput } of shortcuts) {
         if (!binding) continue
