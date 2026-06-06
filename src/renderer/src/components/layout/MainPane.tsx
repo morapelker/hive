@@ -27,6 +27,7 @@ import { usePinnedStore } from '@/stores/usePinnedStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useClaudeCliSessionPortal } from '@/contexts/ClaudeCliSessionPortalContext'
 import { KanbanBoard } from '@/components/kanban/KanbanBoard'
+import { KanbanTicketModal } from '@/components/kanban/KanbanTicketModal'
 import { TicketEditorPanel } from '@/components/kanban/editor/TicketEditorPanel'
 import { TicketEditorDrawer } from '@/components/kanban/editor/TicketEditorDrawer'
 import { KanbanIcon } from '@/components/kanban/KanbanIcon'
@@ -497,6 +498,9 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
       {terminalPosition === 'bottom' && <MainPaneTerminalPanel />}
       {/* Right-side ticket editor drawer (floats above the board) */}
       <TicketEditorDrawer />
+      {/* Ticket detail dialog — mounted here (not inside the board) so it is
+          available over the board, the drawer, and the full-screen editor tab. */}
+      <KanbanTicketModal />
     </main>
   )
 }

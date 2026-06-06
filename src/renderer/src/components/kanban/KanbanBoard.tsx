@@ -6,7 +6,6 @@ import { usePinnedStore } from '@/stores/usePinnedStore'
 import { useBoardChatStore } from '@/stores/useBoardChatStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { KanbanColumn } from '@/components/kanban/KanbanColumn'
-import { KanbanTicketModal } from '@/components/kanban/KanbanTicketModal'
 import { BoardChatLauncher } from '@/components/kanban/BoardChatLauncher'
 import { MergeOnDoneDialog } from './MergeOnDoneDialog'
 import { toast } from '@/lib/toast'
@@ -324,7 +323,6 @@ export function KanbanBoard({ projectId, projectPath, connectionId, isPinnedMode
                 />
               )
             })}
-            <KanbanTicketModal />
             <MergeOnDoneDialog />
             {/* SVG dependency lines */}
             {svgPaths.length > 0 && (
