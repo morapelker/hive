@@ -1,8 +1,6 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import {
-  Eye,
-  EyeOff,
   X,
   Trash2,
   ExternalLink,
@@ -24,8 +22,6 @@ import {
   Plus,
   Map as MapIcon
 } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
 import {
   Dialog,
   DialogContent,
@@ -42,7 +38,7 @@ import {
   DropdownMenuItem
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
+import { RichTextEditor } from './editor/RichTextEditor'
 import { MarkdownRenderer } from '../sessions/MarkdownRenderer'
 import { HandoffSplitButton } from '../sessions/HandoffSplitButton'
 import { IndeterminateProgressBar } from '@/components/sessions/IndeterminateProgressBar'
@@ -1231,7 +1227,6 @@ function EditModeContent({
 }) {
   const [title, setTitle] = useState(ticket.title)
   const [description, setDescription] = useState(ticket.description ?? '')
-  const [showPreview, setShowPreview] = useState(false)
   const [attachments, setAttachments] = useState<TicketAttachment[]>(
     () =>
       (ticket.attachments as Array<{ type: string; url: string; label: string }>).map((a) => ({
@@ -1392,57 +1387,20 @@ function EditModeContent({
           />
         </div>
 
-        {/* Description */}
+        {/* Description — WYSIWYG markdown editor (toolbar + "/" command menu) */}
         <div className="space-y-1.5">
-          <div className="flex items-center justify-between">
-            <label
-              htmlFor="ticket-edit-description"
-              className="text-sm font-medium text-foreground"
-            >
-              Description
-            </label>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              data-testid="ticket-edit-preview-toggle"
-              className="h-7 gap-1 text-xs text-muted-foreground"
-              onClick={() => setShowPreview((prev) => !prev)}
-            >
-              {showPreview ? (
-                <>
-                  <EyeOff className="h-3.5 w-3.5" /> Edit
-                </>
-              ) : (
-                <>
-                  <Eye className="h-3.5 w-3.5" /> Preview
-                </>
-              )}
-            </Button>
-          </div>
-
-          {showPreview ? (
-            <div
-              data-testid="ticket-edit-description-preview"
-              className="min-h-[120px] rounded-md border border-input bg-muted/30 px-3 py-2 text-sm prose prose-sm dark:prose-invert max-w-none"
-            >
-              {description.trim() ? (
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{description}</ReactMarkdown>
-              ) : (
-                <p className="text-muted-foreground/60 italic">No description</p>
-              )}
-            </div>
-          ) : (
-            <Textarea
-              id="ticket-edit-description"
-              data-testid="ticket-edit-description-input"
-              placeholder="Describe the ticket (supports markdown)..."
+          <label className="text-sm font-medium text-foreground">Description</label>
+          <div
+            data-testid="ticket-edit-description-input"
+            className="overflow-hidden rounded-md border border-input bg-background focus-within:ring-1 focus-within:ring-ring"
+          >
+            <RichTextEditor
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              rows={5}
-              className="resize-y"
+              onChange={setDescription}
+              placeholder="Describe the ticket… press '/' for commands"
+              className="max-h-[420px] min-h-[160px]"
             />
-          )}
+          </div>
         </div>
 
         <TicketGoalSection ticket={ticket} isEditMode />

@@ -733,3 +733,164 @@ body::after {
   height: 0;
   pointer-events: none;
 }
+
+/* ── TipTap rich document editor (kanban) ───────────────────────────────── */
+.tiptap-rich-editor {
+  padding: 0.75rem 1rem;
+  outline: none;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  tab-size: 2;
+  -moz-tab-size: 2;
+}
+.tiptap-rich-editor:focus {
+  outline: none;
+}
+.tiptap-rich-editor > :first-child {
+  margin-top: 0;
+}
+.tiptap-rich-editor > :last-child {
+  margin-bottom: 0;
+}
+.tiptap-rich-editor p {
+  margin: 0.4rem 0;
+}
+.tiptap-rich-editor h1,
+.tiptap-rich-editor h2,
+.tiptap-rich-editor h3 {
+  font-weight: 600;
+  line-height: 1.3;
+  margin: 1rem 0 0.4rem;
+}
+.tiptap-rich-editor h1 {
+  font-size: 1.5rem;
+}
+.tiptap-rich-editor h2 {
+  font-size: 1.25rem;
+}
+.tiptap-rich-editor h3 {
+  font-size: 1.0625rem;
+}
+.tiptap-rich-editor ul,
+.tiptap-rich-editor ol {
+  margin: 0.4rem 0;
+  padding-left: 1.5rem;
+}
+.tiptap-rich-editor ul {
+  list-style: disc;
+}
+.tiptap-rich-editor ol {
+  list-style: decimal;
+}
+.tiptap-rich-editor li {
+  margin: 0.15rem 0;
+}
+.tiptap-rich-editor li p {
+  margin: 0;
+}
+/* Task lists (checkboxes) */
+.tiptap-rich-editor ul[data-type='taskList'] {
+  list-style: none;
+  padding-left: 0.25rem;
+}
+.tiptap-rich-editor ul[data-type='taskList'] li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+.tiptap-rich-editor ul[data-type='taskList'] li > label {
+  margin-top: 0.2rem;
+  user-select: none;
+}
+.tiptap-rich-editor ul[data-type='taskList'] li > div {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.tiptap-rich-editor ul[data-type='taskList'] input[type='checkbox'] {
+  cursor: pointer;
+}
+.tiptap-rich-editor blockquote {
+  margin: 0.5rem 0;
+  padding-left: 0.85rem;
+  border-left: 3px solid var(--border);
+  color: var(--muted-foreground);
+}
+.tiptap-rich-editor code {
+  padding: 0.1em 0.3em;
+  border-radius: 0.25rem;
+  background: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+}
+.tiptap-rich-editor pre {
+  margin: 0.6rem 0;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: #1c2128;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  tab-size: 2;
+  -moz-tab-size: 2;
+}
+.tiptap-rich-editor pre code {
+  padding: 0;
+  background: transparent;
+  font-size: inherit;
+  color: #adbac7;
+}
+.tiptap-rich-editor a {
+  color: var(--primary);
+  text-decoration: underline;
+}
+.tiptap-rich-editor hr {
+  margin: 0.85rem 0;
+  border: none;
+  border-top: 1px solid var(--border);
+}
+/* Tables */
+.tiptap-rich-editor table {
+  border-collapse: collapse;
+  table-layout: fixed;
+  width: 100%;
+  margin: 0.6rem 0;
+  overflow: hidden;
+}
+.tiptap-rich-editor th,
+.tiptap-rich-editor td {
+  border: 1px solid var(--border);
+  padding: 0.35rem 0.5rem;
+  vertical-align: top;
+  text-align: left;
+  position: relative;
+}
+.tiptap-rich-editor th {
+  background: var(--muted);
+  font-weight: 600;
+}
+.tiptap-rich-editor .selectedCell::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--primary) 18%, transparent);
+  pointer-events: none;
+}
+.tiptap-rich-editor .column-resize-handle {
+  position: absolute;
+  right: -2px;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: var(--primary);
+  cursor: col-resize;
+}
+/* Placeholder */
+.tiptap-rich-editor p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: var(--muted-foreground);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
