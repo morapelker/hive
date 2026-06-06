@@ -100,6 +100,15 @@ interface KanbanState {
   simpleModeByProject: Record<string, boolean>
   /** Currently selected ticket ID for the detail modal (null = closed) */
   selectedTicketId: string | null
+  /**
+   * Ticket open in the focused full-height editor (drawer or full-screen tab).
+   * null = no editor open. Not persisted (transient UI state).
+   */
+  editorTicketId: string | null
+  /** Whether the right-side editor drawer overlay is visible. */
+  editorDrawerOpen: boolean
+  /** Whether the editor is promoted to a full-screen Hive tab (shows a chip). */
+  editorTabOpen: boolean
   /** Whether a ticket is currently being dragged (reactive, for column styling) */
   isDragging: boolean
   draggingTicketId: string | null
@@ -116,6 +125,16 @@ interface KanbanState {
 
   // ── Actions ────────────────────────────────────────────────────────
   setSelectedTicketId: (id: string | null) => void
+  /** Find a ticket by id across all loaded projects. */
+  getTicketById: (ticketId: string) => KanbanTicket | null
+  /** Open the focused editor as a right-side drawer for the given ticket. */
+  openEditorDrawer: (ticketId: string) => void
+  /** Promote the open drawer editor to a full-screen tab (keeps the ticket). */
+  promoteEditorToTab: () => void
+  /** Collapse the full-screen tab back to the right-side drawer. */
+  collapseEditorToDrawer: () => void
+  /** Close the editor entirely (drawer + tab). */
+  closeEditor: () => void
   setBoardTelegramTarget: (target: BoardTelegramTarget | null) => void
   clearBoardTelegramTarget: () => void
   loadTickets: (projectId: string) => Promise<void>
@@ -204,6 +223,9 @@ export const useKanbanStore = create<KanbanState>()(
       isPinnedBoardActive: false,
       simpleModeByProject: {} as Record<string, boolean>,
       selectedTicketId: null,
+      editorTicketId: null,
+      editorDrawerOpen: false,
+      editorTabOpen: false,
       isDragging: false,
       draggingTicketId: null,
       showArchivedByProject: {} as Record<string, boolean>,
@@ -216,6 +238,29 @@ export const useKanbanStore = create<KanbanState>()(
       // ── setSelectedTicketId ────────────────────────────────────────
       setSelectedTicketId: (id: string | null) => {
         set({ selectedTicketId: id })
+      },
+
+      // ── Focused full-height ticket editor (drawer ↔ full-screen tab) ──
+      getTicketById: (ticketId: string) => {
+        for (const tickets of get().tickets.values()) {
+          const found = tickets.find((t) => t.id === ticketId)
+          if (found) return found
+        }
+        return null
+      },
+      openEditorDrawer: (ticketId: string) => {
+        set({ editorTicketId: ticketId, editorDrawerOpen: true, editorTabOpen: false })
+      },
+      promoteEditorToTab: () => {
+        if (!get().editorTicketId) return
+        set({ editorDrawerOpen: false, editorTabOpen: true })
+      },
+      collapseEditorToDrawer: () => {
+        if (!get().editorTicketId) return
+        set({ editorDrawerOpen: true, editorTabOpen: false })
+      },
+      closeEditor: () => {
+        set({ editorTicketId: null, editorDrawerOpen: false, editorTabOpen: false })
       },
 
       setBoardTelegramTarget: (target: BoardTelegramTarget | null) => {

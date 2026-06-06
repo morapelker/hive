@@ -17,7 +17,7 @@ import { ImageDiffView } from '@/components/diff'
 import { isImageFile } from '@shared/types/file-utils'
 import { isTerminalBacked } from '@shared/types/agent-sdk'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
-import { useSessionStore, BOARD_TAB_ID } from '@/stores/useSessionStore'
+import { useSessionStore, BOARD_TAB_ID, TICKET_EDITOR_TAB_ID } from '@/stores/useSessionStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { useLayoutStore } from '@/stores/useLayoutStore'
@@ -27,6 +27,8 @@ import { usePinnedStore } from '@/stores/usePinnedStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useClaudeCliSessionPortal } from '@/contexts/ClaudeCliSessionPortalContext'
 import { KanbanBoard } from '@/components/kanban/KanbanBoard'
+import { TicketEditorPanel } from '@/components/kanban/editor/TicketEditorPanel'
+import { TicketEditorDrawer } from '@/components/kanban/editor/TicketEditorDrawer'
 import { KanbanIcon } from '@/components/kanban/KanbanIcon'
 import { BoardAssistantView } from '@/components/kanban/BoardAssistantView'
 import { PRNotificationStack } from '@/components/pr/PRNotificationStack'
@@ -110,6 +112,8 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
   const activeBoardAssistantProjectId = useSessionStore((state) => state.activeBoardAssistantProjectId)
   const isBoardViewActive = useKanbanStore((state) => state.isBoardViewActive)
   const isPinnedBoardActive = useKanbanStore((state) => state.isPinnedBoardActive)
+  const editorTicketId = useKanbanStore((state) => state.editorTicketId)
+  const editorTabOpen = useKanbanStore((state) => state.editorTabOpen)
   const connectionsLoaded = useConnectionStore((state) => state.loaded)
   const pinnedStoreLoaded = usePinnedStore((state) => state.loaded)
   const boardMode = useSettingsStore((s) => s.boardMode)
@@ -267,6 +271,18 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
   const renderContent = () => {
     if (children) {
       return children
+    }
+
+    // Full-screen ticket editor tab — covers the board entirely.
+    if (
+      activeSessionId === TICKET_EDITOR_TAB_ID &&
+      editorTabOpen &&
+      editorTicketId &&
+      !activeFilePath &&
+      !activeDiff &&
+      !contextEditorWorktreeId
+    ) {
+      return <TicketEditorPanel key={editorTicketId} ticketId={editorTicketId} variant="tab" />
     }
 
     // Board assistant tab is active — render BoardAssistantView in main pane
@@ -479,6 +495,8 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
         })}
       </div>
       {terminalPosition === 'bottom' && <MainPaneTerminalPanel />}
+      {/* Right-side ticket editor drawer (floats above the board) */}
+      <TicketEditorDrawer />
     </main>
   )
 }

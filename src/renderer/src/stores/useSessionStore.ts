@@ -29,6 +29,8 @@ const pushQueuedState = (sessionId: string, hasQueued: boolean): void => {
 }
 
 export const BOARD_TAB_ID = '__board__'
+/** Sentinel active-session id for the full-screen ticket editor tab. */
+export const TICKET_EDITOR_TAB_ID = '__ticket-editor__'
 export const BOARD_ASSISTANT_SESSION_NAME_PREFIX = '[Board Assistant]'
 
 export function isBoardAssistantSessionName(name: string | null | undefined): boolean {

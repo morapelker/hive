@@ -31,7 +31,7 @@ import {
   GitPullRequest
 } from 'lucide-react'
 import { KanbanIcon } from '@/components/kanban/KanbanIcon'
-import { useSessionStore, BOARD_TAB_ID } from '@/stores/useSessionStore'
+import { useSessionStore, BOARD_TAB_ID, TICKET_EDITOR_TAB_ID } from '@/stores/useSessionStore'
 import { useShallow } from 'zustand/react/shallow'
 import {
   useFileViewerStore,
@@ -643,6 +643,18 @@ export function SessionTabs(): React.JSX.Element | null {
   const selectedConnectionId = useConnectionStore((state) => state.selectedConnectionId)
   const connections = useConnectionStore((state) => state.connections)
   const isBoardViewActive = useKanbanStore((state) => state.isBoardViewActive)
+  // Full-screen ticket editor tab (chip shown whenever an editor is promoted).
+  const editorTabOpen = useKanbanStore((state) => state.editorTabOpen)
+  const editorTicketId = useKanbanStore((state) => state.editorTicketId)
+  const editorTicketTitle = useKanbanStore((state) => {
+    if (!state.editorTicketId) return null
+    for (const tickets of state.tickets.values()) {
+      const found = tickets.find((t) => t.id === state.editorTicketId)
+      if (found) return found.title
+    }
+    return null
+  })
+  const closeEditor = useKanbanStore((state) => state.closeEditor)
   const pinnedSessionIds = useSessionStore((state) => state.pinnedSessionIds)
   const activePinnedSessionId = useSessionStore((state) => state.activePinnedSessionId)
   const boardMode = useSettingsStore((s) => s.boardMode)
@@ -1519,6 +1531,57 @@ export function SessionTabs(): React.JSX.Element | null {
           </div>
         ) : (
           renderSessionTabs()
+        )}
+
+        {/* Ticket editor tab — shown when a ticket editor is opened full-screen */}
+        {editorTabOpen && editorTicketId && (
+          <div
+            data-testid="ticket-editor-tab"
+            role="tab"
+            tabIndex={0}
+            onClick={() => {
+              useFileViewerStore.getState().clearActiveViews()
+              clearInlineConnectionSession()
+              useSessionStore.getState().setActiveSession(TICKET_EDITOR_TAB_ID)
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                useFileViewerStore.getState().clearActiveViews()
+                clearInlineConnectionSession()
+                useSessionStore.getState().setActiveSession(TICKET_EDITOR_TAB_ID)
+              }
+            }}
+            className={cn(
+              'group relative flex items-center gap-1.5 px-3 py-1.5 text-sm cursor-pointer select-none',
+              'border-r border-border transition-colors min-w-[100px] max-w-[200px]',
+              activeSessionId === TICKET_EDITOR_TAB_ID && !isFileTabActive
+                ? 'bg-background text-foreground'
+                : 'bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground'
+            )}
+            title={editorTicketTitle || 'Ticket editor'}
+          >
+            <FileText className="h-3.5 w-3.5 shrink-0 text-violet-400" />
+            <span className="truncate flex-1">{editorTicketTitle || 'Ticket'}</span>
+            {activeSessionId === TICKET_EDITOR_TAB_ID && !isFileTabActive && (
+              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
+            )}
+            <span
+              className="ml-1 shrink-0 rounded-sm p-0.5 opacity-0 group-hover:opacity-100 hover:bg-accent transition-opacity"
+              onClick={(e) => {
+                e.stopPropagation()
+                const wasActive =
+                  useSessionStore.getState().activeSessionId === TICKET_EDITOR_TAB_ID
+                closeEditor()
+                if (wasActive) useSessionStore.getState().setActiveSession(BOARD_TAB_ID)
+              }}
+              role="button"
+              tabIndex={-1}
+              aria-label="Close ticket editor"
+            >
+              <X className="h-3 w-3" />
+            </span>
+          </div>
         )}
 
         {/* File viewer tabs — always rendered, shared across both modes */}
