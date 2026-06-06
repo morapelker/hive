@@ -88,6 +88,7 @@ import { TicketAttachmentEditor } from './TicketAttachmentEditor'
 import { TicketDiscardChangesDialog } from './TicketDiscardChangesDialog'
 import { useImagePaste } from '@/hooks/useImagePaste'
 import { buildHandoffPrompt, type HandoffSelectionOverride } from '@/lib/handoffSelection'
+import { registerHivePromptHandoff, startHivePromptTelemetry } from '@/lib/hive-enterprise-telemetry'
 import { canonicalizeTicketTitle, extractPlanTitle } from '@shared/types/branch-utils'
 import type { KanbanTicket, KanbanTicketUpdate, Session, Worktree } from '../../../../main/db/types'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
@@ -2048,6 +2049,7 @@ function PlanReviewModeContent({
 
           prepareTicketBuildSession(newSessionId, handoffGoalMode)
           if (newSession.agent_sdk === 'claude-code-cli') {
+            registerHivePromptHandoff(sessionId, newSessionId)
             sessionStore.setPendingMessage(newSessionId, handoffPrompt)
           }
 
@@ -2076,6 +2078,7 @@ function PlanReviewModeContent({
                 sessionStore.dequeuePendingMessage(newSessionId)
               }
             } else {
+              registerHivePromptHandoff(sessionId, newSessionId)
               await eagerHandoffStart(connectionPath, newSessionId, handoffPrompt, {
                 connectionId: sessionRecord.connection_id
               })
@@ -2136,6 +2139,7 @@ function PlanReviewModeContent({
 
         prepareTicketBuildSession(newSessionId, handoffGoalMode)
         if (newSession.agent_sdk === 'claude-code-cli') {
+          registerHivePromptHandoff(sessionId, newSessionId)
           sessionStore.setPendingMessage(newSessionId, handoffPrompt)
         }
 
@@ -2164,6 +2168,7 @@ function PlanReviewModeContent({
               sessionStore.dequeuePendingMessage(newSessionId)
             }
           } else {
+            registerHivePromptHandoff(sessionId, newSessionId)
             await eagerHandoffStart(localWorktreePath, newSessionId, handoffPrompt, { worktreeId })
           }
           toast.success('Handoff session started')
@@ -2298,6 +2303,15 @@ function PlanReviewModeContent({
       bumpWorktreeLastMessage(bumpTarget)
 
       const model = resolveSessionModel(newSessionId)
+      startHivePromptTelemetry({
+        sessionId: newSessionId,
+        prompt: handoffPrompt,
+        worktreeId: bumpTarget.worktreeId,
+        modelId: model?.modelID,
+        providerId: model?.providerID,
+        modelVariant: model?.variant,
+        mode: 'build'
+      })
       unwrapEnvelope(
         await opencodeApi.prompt(
           workingPath,

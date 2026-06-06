@@ -22,6 +22,7 @@ import { buildHandoffPrompt, type HandoffSelectionOverride } from '@/lib/handoff
 import { lastSendMode } from '@/lib/message-send-times'
 import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
 import { startBackgroundSessionPrompt } from '@/lib/backgroundSessionStart'
+import { registerHivePromptHandoff } from '@/lib/hive-enterprise-telemetry'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 import { extractPlanTitle } from '@shared/types/branch-utils'
@@ -387,6 +388,7 @@ export function ClaudeCliSessionView({
           result.session.agent_sdk === 'claude-code-cli' && mode === 'super-plan'
             ? Promise.resolve()
             : sessionStore.setSessionMode(result.session.id, 'build')
+        registerHivePromptHandoff(sessionId, result.session.id)
         sessionStore.setPendingMessage(result.session.id, handoffPrompt)
         await useKanbanStore
           .getState()
@@ -436,6 +438,7 @@ export function ClaudeCliSessionView({
         result.session.agent_sdk === 'claude-code-cli' && mode === 'super-plan'
           ? Promise.resolve()
           : sessionStore.setSessionMode(result.session.id, 'build')
+      registerHivePromptHandoff(sessionId, result.session.id)
       sessionStore.setPendingMessage(result.session.id, handoffPrompt)
       await useKanbanStore
         .getState()

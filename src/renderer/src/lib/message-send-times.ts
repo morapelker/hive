@@ -21,3 +21,9 @@ export const lastSendMode = new Map<string, 'plan' | 'build'>()
  * triggered by actual user action — used for the elapsed timer in the input area.
  */
 export const userExplicitSendTimes = new Map<string, number>()
+
+/**
+ * Tracks the Hive Enterprise prompt id for the currently active model dispatch in a session.
+ * Written at dispatch start and cleared after idle telemetry is sent.
+ */
+export const currentPromptIdBySession = new Map<string, string>()

@@ -91,6 +91,11 @@ import { snapshotTokenBaseline, computeTokenDelta } from '@/lib/token-baselines'
 import { notifyKanbanSessionSync } from '@/stores/store-coordination'
 import { isComposingKeyboardEvent } from '@/lib/message-composer-shortcuts'
 import { handleSessionIdleFollowUp } from '@/lib/session-follow-up-dispatch'
+import {
+  recordHivePromptIdleForSession,
+  registerHivePromptHandoff,
+  startHivePromptTelemetry
+} from '@/lib/hive-enterprise-telemetry'
 import { buildSdkPlanImplementationPrompt, looksLikeCodexProposedPlan } from '@/lib/proposedPlan'
 import { buildHandoffPrompt, type HandoffSelectionOverride } from '@/lib/handoffSelection'
 import { systemApi } from '@/api/system-api'
@@ -2956,6 +2961,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
             requeueFollowUp: (message) =>
               useSessionStore.getState().requeueFollowUpMessageFront(sessionId, message),
             onBeforeDispatch: (message) => {
+              recordHivePromptIdleForSession(sessionId)
               const optimisticMessage = createLocalMessage('user', message)
               optimisticMessageId = optimisticMessage.id
               setQueuedMessages((prev) => prev.slice(1))
@@ -2965,6 +2971,16 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
               setMessages((prev) => [...prev, optimisticMessage])
               newPromptPendingRef.current = true
               messageSendTimes.set(sessionId, Date.now())
+              snapshotTokenBaseline(sessionId)
+              startHivePromptTelemetry({
+                sessionId,
+                prompt: message,
+                worktreeId,
+                modelId: sessionRecord?.model_id,
+                providerId: sessionRecord?.model_provider_id,
+                modelVariant: sessionRecord?.model_variant,
+                mode: 'build'
+              })
               lastSendMode.set(sessionId, 'build')
               useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'working')
               lastSentPromptRef.current = message
@@ -3028,6 +3044,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
               const durationMs = sendTime ? Date.now() - sendTime : 0
               const word = COMPLETION_WORDS[Math.floor(Math.random() * COMPLETION_WORDS.length)]
               const tokenDelta = computeTokenDelta(sessionId)
+              recordHivePromptIdleForSession(sessionId)
               const statusStore = useWorktreeStatusStore.getState()
               statusStore.setSessionStatus(sessionId, 'completed', {
                 word,
@@ -3384,6 +3401,15 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
             snapshotTokenBaseline(sessionId)
             // Set worktree status based on session mode
             const currentMode = useSessionStore.getState().getSessionMode(sessionId)
+            startHivePromptTelemetry({
+              sessionId,
+              prompt: pendingMsg,
+              worktreeId,
+              modelId: sessionRecord?.model_id,
+              providerId: sessionRecord?.model_provider_id,
+              modelVariant: sessionRecord?.model_variant,
+              mode: currentMode
+            })
             lastSendMode.set(sessionId, currentMode)
             useWorktreeStatusStore
               .getState()
@@ -3487,6 +3513,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
                   const durationMs = sendTime ? Date.now() - sendTime : 0
                   const word = COMPLETION_WORDS[Math.floor(Math.random() * COMPLETION_WORDS.length)]
                   const tokenDelta = computeTokenDelta(sessionId)
+                  recordHivePromptIdleForSession(sessionId)
                   useWorktreeStatusStore
                     .getState()
                     .setSessionStatus(sessionId, 'completed', { word, durationMs, tokenDelta })
@@ -4467,6 +4494,15 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
           setAttachments([])
           usePRReviewStore.getState().clearAttachments()
           useDiffCommentStore.getState().clearAttached()
+          startHivePromptTelemetry({
+            sessionId,
+            prompt: prefixedQuestion,
+            worktreeId,
+            modelId: selectedModel?.modelID ?? sessionRecord?.model_id,
+            providerId: selectedModel?.providerID ?? sessionRecord?.model_provider_id,
+            modelVariant: selectedModel?.variant ?? sessionRecord?.model_variant,
+            mode: useSessionStore.getState().getSessionMode(sessionId)
+          })
 
           try {
             const result = unwrapEnvelope(
@@ -4630,6 +4666,15 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
         // Send to OpenCode if connected
         if (worktreePath && opencodeSessionId) {
           const requestModel = getModelForRequests()
+          startHivePromptTelemetry({
+            sessionId,
+            prompt: trimmedValue,
+            worktreeId,
+            modelId: requestModel?.modelID ?? sessionRecord?.model_id,
+            providerId: requestModel?.providerID ?? sessionRecord?.model_provider_id,
+            modelVariant: requestModel?.variant ?? sessionRecord?.model_variant,
+            mode: currentModeForStatus
+          })
 
           // Track which model is being used on this worktree
           if (requestModel && worktreeId) {
@@ -5037,6 +5082,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
           result.session.agent_sdk === 'claude-code-cli' && mode === 'super-plan'
             ? Promise.resolve()
             : sessionStore.setSessionMode(result.session.id, 'build')
+        registerHivePromptHandoff(sessionId, result.session.id)
         sessionStore.setPendingMessage(result.session.id, handoffPrompt)
         await useKanbanStore
           .getState()
@@ -5077,6 +5123,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
         result.session.agent_sdk === 'claude-code-cli' && mode === 'super-plan'
           ? Promise.resolve()
           : sessionStore.setSessionMode(result.session.id, 'build')
+      registerHivePromptHandoff(sessionId, result.session.id)
       sessionStore.setPendingMessage(result.session.id, handoffPrompt)
       await useKanbanStore
         .getState()

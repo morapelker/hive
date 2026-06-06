@@ -147,6 +147,13 @@ export interface AppSettings {
   // Privacy
   telemetryEnabled: boolean
 
+  // Hive Enterprise
+  hiveEnterpriseServerUrl: string
+  hiveAuthToken: string | null
+  hiveLoggedInEmail: string | null
+  hiveOrganizationId: string | null
+  hiveOrganizationName: string | null
+
   // Tips
   tipsEnabled: boolean
 
@@ -232,6 +239,11 @@ const DEFAULT_SETTINGS: AppSettings = {
     enterToApprove: false
   },
   telemetryEnabled: true,
+  hiveEnterpriseServerUrl: 'http://localhost:3000',
+  hiveAuthToken: null,
+  hiveLoggedInEmail: null,
+  hiveOrganizationId: null,
+  hiveOrganizationName: null,
   tipsEnabled: true,
   telegramConfig: null,
   teleport: null,
@@ -428,6 +440,11 @@ function extractSettings(state: SettingsState): AppSettings {
     initialSetupComplete: state.initialSetupComplete,
     commandFilter: state.commandFilter,
     telemetryEnabled: state.telemetryEnabled,
+    hiveEnterpriseServerUrl: state.hiveEnterpriseServerUrl,
+    hiveAuthToken: state.hiveAuthToken,
+    hiveLoggedInEmail: state.hiveLoggedInEmail,
+    hiveOrganizationId: state.hiveOrganizationId,
+    hiveOrganizationName: state.hiveOrganizationName,
     tipsEnabled: state.tipsEnabled,
     telegramConfig: null,
     teleport: state.teleport,
@@ -777,6 +794,11 @@ export const useSettingsStore = create<SettingsState>()(
         initialSetupComplete: state.initialSetupComplete,
         commandFilter: state.commandFilter,
         telemetryEnabled: state.telemetryEnabled,
+        hiveEnterpriseServerUrl: state.hiveEnterpriseServerUrl,
+        hiveAuthToken: state.hiveAuthToken,
+        hiveLoggedInEmail: state.hiveLoggedInEmail,
+        hiveOrganizationId: state.hiveOrganizationId,
+        hiveOrganizationName: state.hiveOrganizationName,
         tipsEnabled: state.tipsEnabled,
         pet: state.pet,
         environmentVariables: state.environmentVariables,

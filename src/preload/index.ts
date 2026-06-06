@@ -1,9 +1,11 @@
-import { contextBridge, webUtils, webFrame } from 'electron'
+import { contextBridge, ipcRenderer, webUtils, webFrame } from 'electron'
 import { decodeLocalEnvironmentBootstrapArg } from '../shared/desktop-bridge'
 
 const desktopBridge = {
   getLocalEnvironmentBootstrap: async () => decodeLocalEnvironmentBootstrapArg(process.argv),
-  getPathForFile: (file: File): string => webUtils.getPathForFile(file)
+  getPathForFile: (file: File): string => webUtils.getPathForFile(file),
+  startHiveEnterpriseLogin: (serverUrl: string): Promise<{ token: string }> =>
+    ipcRenderer.invoke('hive-enterprise:start-login', { serverUrl })
 }
 
 // Force 100% zoom — Ghostty's native NSView overlay requires 1:1 CSS-to-AppKit

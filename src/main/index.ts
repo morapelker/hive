@@ -95,7 +95,10 @@ import {
   startDesktopBackend,
   stopDesktopBackend
 } from './desktop/backend-manager'
-import { getDesktopPreloadBootstrapArguments } from './desktop/desktop-bridge-handlers'
+import {
+  getDesktopPreloadBootstrapArguments,
+  registerDesktopBridgeHandlers
+} from './desktop/desktop-bridge-handlers'
 import type { LocalEnvironmentBootstrap } from '@shared/desktop-bridge'
 import {
   initTicketProviderManager,
@@ -530,6 +533,7 @@ app
 
     // Register desktop-side integrations that back server desktop commands.
     log.info('Registering desktop integrations')
+    registerDesktopBridgeHandlers()
     configurePetWindow({ getMainWindow: () => mainWindow, headless: isHeadless })
     initTicketProviderManager([new GitHubProvider(), new JiraProvider()])
 
