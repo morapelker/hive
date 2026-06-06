@@ -64,24 +64,37 @@ const parseLogLevel = (value: string | undefined): ServerLogLevel =>
 const parseRequireAuth = (value: string | undefined): boolean =>
   value === 'false' || value === '0' ? false : true
 
+const parseBindIp = (value: string | undefined): string | undefined => {
+  const bindIp = value?.trim()
+  return bindIp ? bindIp : undefined
+}
+
 export const resolveServerConfig = (
   input: ServerConfigInput = {},
   env: NodeJS.ProcessEnv = process.env
-): Effect.Effect<ServerConfig> =>
-  Effect.sync(() => {
-    const baseDir = resolve(input.baseDir ?? env.HIVE_SERVER_BASE_DIR ?? join(homedir(), '.hive'))
-    return {
-      mode: input.mode ?? parseMode(env.HIVE_SERVER_MODE),
-      host: input.host ?? env.HIVE_SERVER_HOST ?? DEFAULT_HOST,
-      port: input.port ?? parsePort(env.HIVE_SERVER_PORT, DEFAULT_PORT),
-      baseDir,
-      devUrl: input.devUrl ?? env.HIVE_SERVER_DEV_URL ?? null,
-      staticDir: input.staticDir ?? env.HIVE_SERVER_STATIC_DIR ?? null,
-      desktopBootstrapToken:
-        input.desktopBootstrapToken ?? env.HIVE_DESKTOP_BOOTSTRAP_TOKEN ?? null,
-      requireAuth: input.requireAuth ?? parseRequireAuth(env.HIVE_SERVER_REQUIRE_AUTH),
-      logLevel: input.logLevel ?? parseLogLevel(env.HIVE_SERVER_LOG_LEVEL),
-      ...deriveServerPaths(baseDir)
-    }
-  })
+): Effect.Effect<ServerConfig, Error> =>
+  Effect.try({
+    try: () => {
+      const bindIp = parseBindIp(env.BIND_IP)
+      const requireAuth = input.requireAuth ?? parseRequireAuth(env.HIVE_SERVER_REQUIRE_AUTH)
+      if (bindIp && !requireAuth) {
+        throw new Error('BIND_IP requires HIVE_SERVER_REQUIRE_AUTH=true')
+      }
 
+      const baseDir = resolve(input.baseDir ?? env.HIVE_SERVER_BASE_DIR ?? join(homedir(), '.hive'))
+      return {
+        mode: input.mode ?? parseMode(env.HIVE_SERVER_MODE),
+        host: input.host ?? env.HIVE_SERVER_HOST ?? bindIp ?? DEFAULT_HOST,
+        port: input.port ?? parsePort(env.HIVE_SERVER_PORT, DEFAULT_PORT),
+        baseDir,
+        devUrl: input.devUrl ?? env.HIVE_SERVER_DEV_URL ?? null,
+        staticDir: input.staticDir ?? env.HIVE_SERVER_STATIC_DIR ?? null,
+        desktopBootstrapToken:
+          input.desktopBootstrapToken ?? env.HIVE_DESKTOP_BOOTSTRAP_TOKEN ?? null,
+        requireAuth,
+        logLevel: input.logLevel ?? parseLogLevel(env.HIVE_SERVER_LOG_LEVEL),
+        ...deriveServerPaths(baseDir)
+      }
+    },
+    catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause)))
+  })

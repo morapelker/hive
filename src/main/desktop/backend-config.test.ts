@@ -79,13 +79,26 @@ describe('desktop backend config', () => {
     const config = await makeDesktopBackendSpawnConfig({
       baseDir,
       port: 0,
-      env: { BIND_IP: '0.0.0.0' }
+      env: { BIND_IP: '0.0.0.0', HIVE_SERVER_REQUIRE_AUTH: 'true' }
     })
 
     expect(config.host).toBe('0.0.0.0')
     expect(config.httpBaseUrl).toBe(`http://0.0.0.0:${config.port}`)
     expect(config.wsBaseUrl).toBe(`ws://0.0.0.0:${config.port}/ws`)
     expect(config.env.HIVE_SERVER_HOST).toBe('0.0.0.0')
+    expect(config.env.HIVE_SERVER_REQUIRE_AUTH).toBe('true')
+  })
+
+  it('fails startup config when BIND_IP explicitly disables auth', async () => {
+    const baseDir = mkdtempSync(join(tmpdir(), 'hive-desktop-backend-'))
+
+    await expect(
+      makeDesktopBackendSpawnConfig({
+        baseDir,
+        port: 0,
+        env: { BIND_IP: '0.0.0.0', HIVE_SERVER_REQUIRE_AUTH: 'false' }
+      })
+    ).rejects.toThrow('BIND_IP requires HIVE_SERVER_REQUIRE_AUTH=true')
   })
 
   it('prefers an explicit backend host over BIND_IP', async () => {
@@ -94,7 +107,7 @@ describe('desktop backend config', () => {
       baseDir,
       host: '127.0.0.1',
       port: 0,
-      env: { BIND_IP: '0.0.0.0' }
+      env: { BIND_IP: '0.0.0.0', HIVE_SERVER_REQUIRE_AUTH: 'true' }
     })
 
     expect(config.host).toBe('127.0.0.1')

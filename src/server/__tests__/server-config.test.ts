@@ -77,6 +77,29 @@ describe('server config', () => {
     expect(config.requireAuth).toBe(false)
   })
 
+  it('uses BIND_IP as the server host override', async () => {
+    const config = await Effect.runPromise(
+      resolveServerConfig(
+        { baseDir: mkdtempSync(join(tmpdir(), 'hive-server-config-')) },
+        { BIND_IP: '0.0.0.0' }
+      )
+    )
+
+    expect(config.host).toBe('0.0.0.0')
+    expect(config.requireAuth).toBe(true)
+  })
+
+  it('rejects BIND_IP when auth is disabled', async () => {
+    await expect(
+      Effect.runPromise(
+        resolveServerConfig(
+          { baseDir: mkdtempSync(join(tmpdir(), 'hive-server-config-')) },
+          { BIND_IP: '0.0.0.0', HIVE_SERVER_REQUIRE_AUTH: 'false' }
+        )
+      )
+    ).rejects.toThrow('BIND_IP requires HIVE_SERVER_REQUIRE_AUTH=true')
+  })
+
   it('resolves the static directory from HIVE_SERVER_STATIC_DIR', async () => {
     const config = await Effect.runPromise(
       resolveServerConfig(
@@ -88,4 +111,3 @@ describe('server config', () => {
     expect(config.staticDir).toBe('/tmp/hive-web')
   })
 })
-

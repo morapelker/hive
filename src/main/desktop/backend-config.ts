@@ -52,6 +52,9 @@ const parseDesktopBackendBindIpEnv = (value: string | undefined): string | undef
   return bindIp ? bindIp : undefined
 }
 
+const isAuthExplicitlyDisabled = (value: string | undefined): boolean =>
+  value === 'false' || value === '0'
+
 export const isPortAvailable = (host: string, port: number): Promise<boolean> =>
   new Promise((resolvePortAvailable) => {
     const server = createServer()
@@ -112,7 +115,13 @@ export const makeDesktopBackendSpawnConfig = async (
     ...process.env,
     ...input.env
   }
-  const host = input.host ?? parseDesktopBackendBindIpEnv(env.BIND_IP) ?? DEFAULT_DESKTOP_BACKEND_HOST
+  const bindIp = parseDesktopBackendBindIpEnv(env.BIND_IP)
+  if (bindIp && isAuthExplicitlyDisabled(env.HIVE_SERVER_REQUIRE_AUTH)) {
+    throw new Error('BIND_IP requires HIVE_SERVER_REQUIRE_AUTH=true')
+  }
+
+  const host = input.host ?? bindIp ?? DEFAULT_DESKTOP_BACKEND_HOST
+  const requireAuth = bindIp ? 'true' : (env.HIVE_SERVER_REQUIRE_AUTH ?? 'false')
   const port = await selectDesktopBackendPort(
     host,
     input.port ?? DEFAULT_DESKTOP_BACKEND_PORT,
@@ -143,10 +152,10 @@ export const makeDesktopBackendSpawnConfig = async (
       HIVE_SERVER_PORT: String(port),
       HIVE_SERVER_BASE_DIR: input.baseDir,
       HIVE_DESKTOP_BOOTSTRAP_TOKEN: bootstrapToken,
-      // Also serve the built web UI from the same loopback origin, with auth
-      // disabled so a plain browser tab can connect without a bootstrap token.
+      // Keep loopback browser serving unauthenticated by default. Public BIND_IP
+      // overrides must authenticate so token-less WebSocket RPC is not exposed.
       HIVE_SERVER_STATIC_DIR: staticDir,
-      HIVE_SERVER_REQUIRE_AUTH: 'false'
+      HIVE_SERVER_REQUIRE_AUTH: requireAuth
     }
   }
 }
