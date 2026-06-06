@@ -10,6 +10,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { toast } from '@/lib/toast'
+import { copyTextToClipboard } from '@/lib/clipboard'
 import type { ToolUseInfo, ToolStatus } from './ToolCard'
 
 function statusColor(status: ToolStatus): string {
@@ -35,12 +36,11 @@ function CopyButton({ text, label }: { text: string; label: string }) {
   const [copied, setCopied] = useState(false)
 
   const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(text)
+    if (await copyTextToClipboard(text)) {
       setCopied(true)
       toast.success(`${label} copied to clipboard`)
       setTimeout(() => setCopied(false), 2000)
-    } catch {
+    } else {
       toast.error('Failed to copy')
     }
   }

@@ -59,6 +59,7 @@ import { useFileMentions } from '@/hooks/useFileMentions'
 import { scoreMatch, type FlatFile } from '@/lib/file-search-utils'
 import { isFocusedInRichTextEditor } from '@/lib/focus-utils'
 import { isComposingKeyboardEvent } from '@/lib/message-composer-shortcuts'
+import { copyTextToClipboard } from '@/lib/clipboard'
 import { useSessionStore } from '@/stores/useSessionStore'
 import type { CodexThreadGoal } from '@/stores/useSessionStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
@@ -5231,10 +5232,9 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
       return
     }
 
-    try {
-      await navigator.clipboard.writeText(planContent)
+    if (await copyTextToClipboard(planContent)) {
       toast.success('Plan copied to clipboard')
-    } catch {
+    } else {
       toast.error('Failed to copy')
     }
   }, [messages, pendingPlan?.planContent])

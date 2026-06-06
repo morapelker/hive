@@ -2,6 +2,7 @@ import { useState, memo } from 'react'
 import { Copy, Check } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { toast } from '@/lib/toast'
+import { copyTextToClipboard } from '@/lib/clipboard'
 
 interface CopyMessageButtonProps {
   content: string
@@ -13,12 +14,11 @@ export const CopyMessageButton = memo(function CopyMessageButton({ content }: Co
   if (!content.trim()) return null
 
   const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(content)
+    if (await copyTextToClipboard(content)) {
       setCopied(true)
       toast.success('Copied to clipboard')
       setTimeout(() => setCopied(false), 2000)
-    } catch {
+    } else {
       toast.error('Failed to copy')
     }
   }

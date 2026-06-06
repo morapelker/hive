@@ -5,6 +5,7 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import { SearchAddon } from '@xterm/addon-search'
 import type { TerminalBackend, TerminalOpts, TerminalBackendCallbacks } from './types'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { copyTextToClipboard } from '@/lib/clipboard'
 
 /** Default Catppuccin Mocha theme used when no Ghostty config is found */
 const DEFAULT_TERMINAL_THEME: ITheme = {
@@ -201,7 +202,7 @@ export class XtermBackend implements TerminalBackend {
       // Cmd+C — copy if selection, otherwise SIGINT
       if (e.metaKey && e.key === 'c' && !e.shiftKey && e.type === 'keydown') {
         if (terminal.hasSelection()) {
-          navigator.clipboard.writeText(terminal.getSelection())
+          void copyTextToClipboard(terminal.getSelection())
           terminal.clearSelection()
           return false
         }
@@ -211,7 +212,7 @@ export class XtermBackend implements TerminalBackend {
       // Cmd+Shift+C — always copy
       if (e.metaKey && e.shiftKey && e.key === 'C' && e.type === 'keydown') {
         if (terminal.hasSelection()) {
-          navigator.clipboard.writeText(terminal.getSelection())
+          void copyTextToClipboard(terminal.getSelection())
           terminal.clearSelection()
         }
         return false
