@@ -582,13 +582,15 @@ DROP TABLE IF EXISTS diff_comments;`
   {
     version: 33,
     name: 'add_discord_managed_session_link',
-    up: `ALTER TABLE discord_resources ADD COLUMN managed_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL`,
+    up: `-- NOTE: ALTER TABLE for managed_session_id is handled idempotently by
+         -- ensureConnectionTables() in database.ts to avoid "duplicate column" errors.`,
     down: `-- SQLite cannot drop columns; this is a no-op for safety`
   },
   {
     version: 34,
     name: 'add_worktree_teleported_to',
-    up: `ALTER TABLE worktrees ADD COLUMN teleported_to TEXT DEFAULT NULL`,
+    up: `-- NOTE: ALTER TABLE for teleported_to is handled idempotently by
+         -- ensureConnectionTables() in database.ts to avoid "duplicate column" errors.`,
     down: `-- SQLite cannot drop columns; this is a no-op for safety`
   }
 ]
