@@ -47,6 +47,11 @@ export const parseDesktopBackendPortEnv = (value: string | undefined): number | 
   return Number.isInteger(parsed) && parsed >= 0 && parsed <= 65535 ? parsed : undefined
 }
 
+const parseDesktopBackendBindIpEnv = (value: string | undefined): string | undefined => {
+  const bindIp = value?.trim()
+  return bindIp ? bindIp : undefined
+}
+
 export const isPortAvailable = (host: string, port: number): Promise<boolean> =>
   new Promise((resolvePortAvailable) => {
     const server = createServer()
@@ -103,7 +108,11 @@ export const resolveDesktopWebStaticDir = (serverEntryPath: string): string => {
 export const makeDesktopBackendSpawnConfig = async (
   input: DesktopBackendConfigInput
 ): Promise<DesktopBackendSpawnConfig> => {
-  const host = input.host ?? DEFAULT_DESKTOP_BACKEND_HOST
+  const env = {
+    ...process.env,
+    ...input.env
+  }
+  const host = input.host ?? parseDesktopBackendBindIpEnv(env.BIND_IP) ?? DEFAULT_DESKTOP_BACKEND_HOST
   const port = await selectDesktopBackendPort(
     host,
     input.port ?? DEFAULT_DESKTOP_BACKEND_PORT,
@@ -127,8 +136,7 @@ export const makeDesktopBackendSpawnConfig = async (
     baseDir: input.baseDir,
     bootstrapToken,
     env: {
-      ...process.env,
-      ...input.env,
+      ...env,
       ELECTRON_RUN_AS_NODE: '1',
       HIVE_SERVER_MODE: 'desktop',
       HIVE_SERVER_HOST: host,

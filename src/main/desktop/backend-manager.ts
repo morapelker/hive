@@ -74,7 +74,6 @@ import {
   updatePetSettings
 } from '../services/pet-window'
 import {
-  DEFAULT_DESKTOP_BACKEND_HOST,
   DEFAULT_DESKTOP_BACKEND_MAX_PORT,
   DEFAULT_DESKTOP_BACKEND_PORT,
   makeDesktopBackendSpawnConfig,
@@ -542,7 +541,7 @@ export const startDesktopBackend = async (
     entryPath: input.entryPath,
     cwd: input.cwd,
     baseDir,
-    host: input.host ?? DEFAULT_DESKTOP_BACKEND_HOST,
+    host: input.host,
     port: input.port ?? pinnedPort ?? DEFAULT_DESKTOP_BACKEND_PORT,
     maxPort: input.maxPort ?? pinnedPort ?? DEFAULT_DESKTOP_BACKEND_MAX_PORT,
     bootstrapToken: envBootstrapToken,

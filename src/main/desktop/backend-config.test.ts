@@ -74,6 +74,33 @@ describe('desktop backend config', () => {
     expect(config.env.KEEP_ME).toBe('yes')
   })
 
+  it('uses BIND_IP as the default backend host when set', async () => {
+    const baseDir = mkdtempSync(join(tmpdir(), 'hive-desktop-backend-'))
+    const config = await makeDesktopBackendSpawnConfig({
+      baseDir,
+      port: 0,
+      env: { BIND_IP: '0.0.0.0' }
+    })
+
+    expect(config.host).toBe('0.0.0.0')
+    expect(config.httpBaseUrl).toBe(`http://0.0.0.0:${config.port}`)
+    expect(config.wsBaseUrl).toBe(`ws://0.0.0.0:${config.port}/ws`)
+    expect(config.env.HIVE_SERVER_HOST).toBe('0.0.0.0')
+  })
+
+  it('prefers an explicit backend host over BIND_IP', async () => {
+    const baseDir = mkdtempSync(join(tmpdir(), 'hive-desktop-backend-'))
+    const config = await makeDesktopBackendSpawnConfig({
+      baseDir,
+      host: '127.0.0.1',
+      port: 0,
+      env: { BIND_IP: '0.0.0.0' }
+    })
+
+    expect(config.host).toBe('127.0.0.1')
+    expect(config.env.HIVE_SERVER_HOST).toBe('127.0.0.1')
+  })
+
   it('serves the web UI without auth on loopback', async () => {
     const baseDir = mkdtempSync(join(tmpdir(), 'hive-desktop-backend-'))
     const config = await makeDesktopBackendSpawnConfig({

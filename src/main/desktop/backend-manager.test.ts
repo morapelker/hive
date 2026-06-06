@@ -378,6 +378,40 @@ describe('desktop backend manager', () => {
     )
   })
 
+  it('uses BIND_IP as the desktop backend bind host', async () => {
+    vi.stubEnv('BIND_IP', '0.0.0.0')
+    const child = new FakeChildProcess()
+    const spawnProcess = vi.fn(() => child as never)
+
+    const backend = await startDesktopBackend(
+      {
+        executablePath: '/electron',
+        entryPath: '/app/server.js',
+        cwd: '/app',
+        baseDir: mkdtempSync(join(tmpdir(), 'hive-backend-manager-')),
+        port: 0
+      },
+      {
+        spawnProcess,
+        fetch: vi.fn(async () => new Response('{}', { status: 200 })),
+        logger: makeLogger()
+      }
+    )
+
+    expect(backend.config.host).toBe('0.0.0.0')
+    expect(backend.config.env.HIVE_SERVER_HOST).toBe('0.0.0.0')
+    expect(backend.config.httpBaseUrl).toBe(`http://0.0.0.0:${backend.config.port}`)
+    expect(spawnProcess).toHaveBeenCalledWith(
+      '/electron',
+      ['/app/server.js'],
+      expect.objectContaining({
+        env: expect.objectContaining({
+          HIVE_SERVER_HOST: '0.0.0.0'
+        })
+      })
+    )
+  })
+
   it('authenticates before publishing desktop backend events over HTTP', async () => {
     const child = new FakeChildProcess()
     const fetchImpl = vi
