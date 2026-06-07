@@ -279,6 +279,7 @@ interface SettingsState extends AppSettings {
   closeSettings: () => void
   setActiveSection: (section: string) => void
   updateSetting: <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => Promise<void>
+  updateSettings: (values: Partial<AppSettings>) => Promise<void>
   setTelegramConfig: (config: TelegramConfig | null) => void
   setSelectedModel: (
     model: SelectedModel | null,
@@ -574,6 +575,14 @@ export const useSettingsStore = create<SettingsState>()(
           }, 0)
         }
         await Promise.all([savePromise, fileSavePromise])
+      },
+
+      updateSettings: async (values) => {
+        // Apply all keys in a single state update and persist the full blob once.
+        // Writing each key via updateSetting concurrently races on saveToDatabase,
+        // which serializes the entire settings object and can persist a stale snapshot.
+        set(values as Partial<SettingsState>)
+        await saveToDatabase(extractSettings({ ...get(), ...values } as SettingsState))
       },
 
       setTelegramConfig: (config) => {

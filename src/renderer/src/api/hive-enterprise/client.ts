@@ -25,26 +25,36 @@ function endpointFromSettings(settings: AppSettings): string {
 
 async function requestWithRefresh<TData, TVariables extends Record<string, unknown>>(
   document: string,
-  variables?: TVariables
+  variables?: TVariables,
+  tokenOverride?: string
 ): Promise<TData> {
   const settings = useSettingsStore.getState()
-  if (!settings.hiveAuthToken) throw new Error('Hive Enterprise token is not set')
+  const authToken = tokenOverride ?? settings.hiveAuthToken
+  if (!authToken) throw new Error('Hive Enterprise token is not set')
 
   const client = new GraphQLClient(endpointFromSettings(settings), {
     headers: {
-      authorization: `Bearer ${settings.hiveAuthToken}`
+      authorization: `Bearer ${authToken}`
     }
   })
   const response = await client.rawRequest<TData, TVariables>(document, variables)
   const refreshedToken = response.headers.get('x-hive-refreshed-token')
-  if (refreshedToken && refreshedToken !== settings.hiveAuthToken) {
+  // Only persist a refresh when acting on the already-stored token; during initial
+  // login the caller is responsible for committing the token after verification.
+  if (!tokenOverride && refreshedToken && refreshedToken !== settings.hiveAuthToken) {
     await useSettingsStore.getState().updateSetting('hiveAuthToken', refreshedToken)
   }
   return response.data
 }
 
-export async function fetchHiveEnterpriseMe(): Promise<GqlHiveEnterpriseMeQuery['me']> {
-  const data = await requestWithRefresh<GqlHiveEnterpriseMeQuery, Record<string, never>>(MeDocument)
+export async function fetchHiveEnterpriseMe(
+  tokenOverride?: string
+): Promise<GqlHiveEnterpriseMeQuery['me']> {
+  const data = await requestWithRefresh<GqlHiveEnterpriseMeQuery, Record<string, never>>(
+    MeDocument,
+    undefined,
+    tokenOverride
+  )
   return data.me
 }
 
@@ -79,13 +89,13 @@ export async function recordHivePromptIdle(
 }
 
 export async function completeHiveEnterpriseLogin(token: string): Promise<void> {
-  await useSettingsStore.getState().updateSetting('hiveAuthToken', token)
-  const me = await fetchHiveEnterpriseMe()
-  await Promise.all([
-    useSettingsStore.getState().updateSetting('hiveLoggedInEmail', me?.email ?? null),
-    useSettingsStore.getState().updateSetting('hiveOrganizationId', me?.organization?.id ?? null),
-    useSettingsStore
-      .getState()
-      .updateSetting('hiveOrganizationName', me?.organization?.name ?? null)
-  ])
+  // Verify the token before persisting anything so a failed lookup can't leave a
+  // stored token without an associated identity. Commit token + identity atomically.
+  const me = await fetchHiveEnterpriseMe(token)
+  await useSettingsStore.getState().updateSettings({
+    hiveAuthToken: token,
+    hiveLoggedInEmail: me?.email ?? null,
+    hiveOrganizationId: me?.organization?.id ?? null,
+    hiveOrganizationName: me?.organization?.name ?? null
+  })
 }

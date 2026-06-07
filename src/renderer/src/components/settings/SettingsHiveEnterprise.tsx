@@ -10,7 +10,8 @@ export function SettingsHiveEnterprise(): React.JSX.Element {
     hiveLoggedInEmail,
     hiveOrganizationName,
     hiveOrganizationId,
-    updateSetting
+    updateSetting,
+    updateSettings
   } = useSettingsStore()
   const [isSigningIn, setIsSigningIn] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -19,11 +20,11 @@ export function SettingsHiveEnterprise(): React.JSX.Element {
     setIsRefreshing(true)
     try {
       const me = await fetchHiveEnterpriseMe()
-      await Promise.all([
-        updateSetting('hiveLoggedInEmail', me?.email ?? null),
-        updateSetting('hiveOrganizationId', me?.organization?.id ?? null),
-        updateSetting('hiveOrganizationName', me?.organization?.name ?? null)
-      ])
+      await updateSettings({
+        hiveLoggedInEmail: me?.email ?? null,
+        hiveOrganizationId: me?.organization?.id ?? null,
+        hiveOrganizationName: me?.organization?.name ?? null
+      })
       toast.success('Hive Enterprise account refreshed')
     } catch (error) {
       console.error('[HiveEnterprise] refresh failed:', error)
