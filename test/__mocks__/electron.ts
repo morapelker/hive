@@ -1,3 +1,5 @@
+import { vi } from 'vitest'
+
 // Mock electron module for Node.js test environment
 // Only the `app` export is needed by database.ts (for getPath)
 export const app = {
@@ -30,6 +32,13 @@ export const dialog = {
   showSaveDialog: async (): Promise<{ canceled: boolean; filePath?: string }> => ({
     canceled: true
   })
+}
+
+export const ipcMain = {
+  handle: vi.fn(),
+  on: vi.fn(),
+  removeHandler: vi.fn(),
+  removeAllListeners: vi.fn()
 }
 
 let browserWindows: unknown[] = []

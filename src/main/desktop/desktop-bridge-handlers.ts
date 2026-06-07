@@ -4,7 +4,7 @@ import {
 } from '@shared/desktop-bridge'
 import { getDesktopBackendBootstrap } from './backend-manager'
 import { ipcMain, shell } from 'electron'
-import { createServer } from 'node:http'
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { randomUUID } from 'node:crypto'
 
 export const getDesktopPreloadBootstrapArguments = (
@@ -27,12 +27,14 @@ export function registerDesktopBridgeHandlers(): void {
     const state = randomUUID()
 
     return new Promise<{ token: string }>((resolve, reject) => {
-      const server = createServer()
+      const servers = new Set<Server>()
       let settled = false
 
       const cleanup = (): void => {
         clearTimeout(timeout)
-        server.close()
+        for (const server of servers) {
+          if (server.listening) server.close()
+        }
       }
 
       const finish = (fn: () => void): void => {
@@ -46,7 +48,7 @@ export function registerDesktopBridgeHandlers(): void {
         finish(() => reject(new Error('Timed out waiting for Hive Enterprise login')))
       }, 5 * 60 * 1000)
 
-      server.on('request', (request, response) => {
+      const handleRequest = (request: IncomingMessage, response: ServerResponse): void => {
         const host = request.headers.host ?? '127.0.0.1'
         const url = new URL(request.url ?? '/', `http://${host}`)
 
@@ -73,25 +75,48 @@ export function registerDesktopBridgeHandlers(): void {
         } else {
           finish(() => reject(new Error('Hive Enterprise login did not return a token')))
         }
-      })
+      }
 
-      server.on('error', (error) => {
+      const openBrowser = (port: number): void => {
+        const redirect = `http://localhost:${port}/?state=${state}`
+        const startUrl = `${serverUrl}/api/auth/desktop/start?redirect=${encodeURIComponent(redirect)}`
+        shell.openExternal(startUrl).catch((error) => {
+          finish(() => reject(error))
+        })
+      }
+
+      const ipv4Server = createServer(handleRequest)
+      servers.add(ipv4Server)
+      ipv4Server.on('error', (error) => {
         finish(() => reject(error))
       })
 
-      server.listen(0, '127.0.0.1', () => {
-        const address = server.address()
+      ipv4Server.listen(0, '127.0.0.1', () => {
+        const address = ipv4Server.address()
         if (!address || typeof address === 'string') {
           finish(() => reject(new Error('Unable to allocate Hive Enterprise loopback port')))
           return
         }
-        // Use 127.0.0.1 (not "localhost") to match the bind address — on hosts that
-        // resolve localhost to ::1 first, the callback would otherwise hit IPv6 and
-        // be refused.
-        const redirect = `http://127.0.0.1:${address.port}/?state=${state}`
-        const startUrl = `${serverUrl}/api/auth/desktop/start?redirect=${encodeURIComponent(redirect)}`
-        shell.openExternal(startUrl).catch((error) => {
+
+        // Enterprise validates the redirect host as "localhost". Listen on both
+        // loopback families when possible so the browser callback works whether
+        // localhost resolves to 127.0.0.1 or ::1 first.
+        const ipv6Server = createServer(handleRequest)
+        servers.add(ipv6Server)
+        const handleIpv6Error = (error: NodeJS.ErrnoException): void => {
+          if (['EADDRNOTAVAIL', 'EAFNOSUPPORT', 'EADDRINUSE'].includes(error.code ?? '')) {
+            openBrowser(address.port)
+            return
+          }
           finish(() => reject(error))
+        }
+        ipv6Server.once('error', handleIpv6Error)
+        ipv6Server.listen({ port: address.port, host: '::1', ipv6Only: true }, () => {
+          ipv6Server.off('error', handleIpv6Error)
+          ipv6Server.on('error', (error) => {
+            finish(() => reject(error))
+          })
+          openBrowser(address.port)
         })
       })
     })
