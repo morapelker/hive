@@ -545,10 +545,12 @@ export const startDesktopBackend = async (
     port: input.port ?? pinnedPort ?? DEFAULT_DESKTOP_BACKEND_PORT,
     maxPort: input.maxPort ?? pinnedPort ?? DEFAULT_DESKTOP_BACKEND_MAX_PORT,
     bootstrapToken: envBootstrapToken,
-    // TESTING: point the backend at the legacy desktop database
-    // (<baseDir>/hive.db) so it loads existing projects/sessions instead of a
-    // fresh empty userdata/state.sqlite. Remove this env override to use the
-    // new server state database.
+    // The desktop backend canonically reads the existing desktop database at
+    // <baseDir>/hive.db (i.e. ~/.hive/hive.db). This is intentional and
+    // permanent: updating users must keep seeing their existing
+    // projects/worktrees/sessions. We deliberately do NOT use or create the
+    // server-mode userdata/state.sqlite for desktop, and we do NOT copy/migrate
+    // data between the two. Keep this override in place.
     env: { HIVE_SERVER_DB_PATH: join(baseDir, 'hive.db') }
   })
 

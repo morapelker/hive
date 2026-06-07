@@ -66,8 +66,9 @@ export function resolveDatabasePath(options?: {
   readonly homeDir?: string
 }): string {
   // Explicit full-path override (HIVE_SERVER_DB_PATH) wins over base-dir
-  // resolution. Used to point the server backend at the legacy desktop
-  // database (~/.hive/hive.db) instead of the fresh server state db.
+  // resolution. The desktop backend sets this to ~/.hive/hive.db so it reads
+  // the existing desktop database (preserving the user's projects/sessions on
+  // update) rather than the server-mode userdata/state.sqlite.
   const explicitPath = options?.explicitPath ?? process.env.HIVE_SERVER_DB_PATH
   if (explicitPath) {
     return explicitPath
