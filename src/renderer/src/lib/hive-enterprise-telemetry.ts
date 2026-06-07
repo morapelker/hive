@@ -1,5 +1,6 @@
 import { ulid } from 'ulidx'
 import { gitApi } from '@/api/git-api'
+import { encodeInteractId } from '@/lib/interact-id'
 import {
   isHiveTelemetryEnabled,
   recordHivePromptIdle,
@@ -125,7 +126,9 @@ export function startHivePromptTelemetry(input: StartHivePromptTelemetryInput): 
   const settings = useSettingsStore.getState()
   if (!isHiveTelemetryEnabled(settings)) return null
 
-  const promptId = `${ulid()}-P`
+  // Internally a prompt id is `{ulid}-prompt`; we send the public InteractId
+  // form (`{base58(ulid)}_prompt`) that the hive-enterprise scalar decodes back.
+  const promptId = encodeInteractId(`${ulid()}-prompt`)
   currentPromptIdBySession.set(input.sessionId, promptId)
 
   const sessionStore = useSessionStore.getState()

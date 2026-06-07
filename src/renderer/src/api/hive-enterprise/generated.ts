@@ -12,6 +12,7 @@ export type Scalars = {
   Boolean: { input: boolean; output: boolean; }
   Int: { input: number; output: number; }
   Float: { input: number; output: number; }
+  InteractId: { input: string; output: string; }
 };
 
 export type GqlInvite = {
@@ -19,7 +20,7 @@ export type GqlInvite = {
   acceptedAt?: Maybe<Scalars['String']['output']>;
   createdAt: Scalars['String']['output'];
   email: Scalars['String']['output'];
-  id: Scalars['ID']['output'];
+  id: Scalars['InteractId']['output'];
   role: GqlInviteRole;
 };
 
@@ -30,7 +31,7 @@ export type GqlInviteRole =
 export type GqlMember = {
   __typename?: 'Member';
   email: Scalars['String']['output'];
-  id: Scalars['ID']['output'];
+  id: Scalars['InteractId']['output'];
   name?: Maybe<Scalars['String']['output']>;
   picture?: Maybe<Scalars['String']['output']>;
   role: GqlUserRole;
@@ -68,12 +69,12 @@ export type GqlMutationRecordPromptStartArgs = {
 
 
 export type GqlMutationRemoveMemberArgs = {
-  userId: Scalars['ID']['input'];
+  userId: Scalars['InteractId']['input'];
 };
 
 export type GqlOrganization = {
   __typename?: 'Organization';
-  id: Scalars['ID']['output'];
+  id: Scalars['InteractId']['output'];
   name: Scalars['String']['output'];
 };
 
@@ -82,7 +83,7 @@ export type GqlPromptIdleInput = {
   cacheWriteTokens: Scalars['Int']['input'];
   inputTokens: Scalars['Int']['input'];
   outputTokens: Scalars['Int']['input'];
-  promptId: Scalars['ID']['input'];
+  promptId: Scalars['InteractId']['input'];
 };
 
 export type GqlPromptMutationResult = {
@@ -104,7 +105,7 @@ export type GqlPromptStartInput = {
   projectName?: InputMaybe<Scalars['String']['input']>;
   projectPath?: InputMaybe<Scalars['String']['input']>;
   prompt: Scalars['String']['input'];
-  promptId: Scalars['ID']['input'];
+  promptId: Scalars['InteractId']['input'];
   providerId?: InputMaybe<Scalars['String']['input']>;
   sessionId: Scalars['String']['input'];
   worktreeBranch?: InputMaybe<Scalars['String']['input']>;
@@ -123,18 +124,18 @@ export type GqlQuery = {
 
 
 export type GqlQueryListInvitesArgs = {
-  orgId?: InputMaybe<Scalars['ID']['input']>;
+  orgId?: InputMaybe<Scalars['InteractId']['input']>;
 };
 
 
 export type GqlQueryListMembersArgs = {
-  orgId?: InputMaybe<Scalars['ID']['input']>;
+  orgId?: InputMaybe<Scalars['InteractId']['input']>;
 };
 
 export type GqlUser = {
   __typename?: 'User';
   email: Scalars['String']['output'];
-  id: Scalars['ID']['output'];
+  id: Scalars['InteractId']['output'];
   name?: Maybe<Scalars['String']['output']>;
   organization?: Maybe<GqlOrganization>;
   picture?: Maybe<Scalars['String']['output']>;
