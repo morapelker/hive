@@ -7,6 +7,22 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { DatabaseService } from './database'
 
 const tempDirs: string[] = []
+let databaseLoadError: Error | null = null
+
+const canRunDatabaseTests = (): boolean => {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const Database = require('better-sqlite3')
+    const db = new Database(':memory:')
+    db.close()
+    return true
+  } catch (error) {
+    databaseLoadError = error as Error
+    return false
+  }
+}
+
+const describeIf = canRunDatabaseTests() ? describe : describe.skip
 
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
@@ -14,7 +30,13 @@ afterEach(() => {
   }
 })
 
-describe('worktree teleport annotation', () => {
+describeIf('worktree teleport annotation', () => {
+  if (databaseLoadError) {
+    it('skips when better-sqlite3 is not available for this Node runtime', () => {
+      expect(databaseLoadError?.message).toBeTruthy()
+    })
+  }
+
   it('persists teleported_to JSON on worktrees', () => {
     const dir = mkdtempSync(join(tmpdir(), 'hive-teleport-db-'))
     tempDirs.push(dir)

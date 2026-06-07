@@ -315,13 +315,14 @@ describe('desktop backend manager', () => {
     const spawnProcess = vi.fn(() => child as never)
     const fetchImpl = vi.fn(async () => new Response('{}', { status: 200 }))
     const logger = makeLogger()
+    const baseDir = mkdtempSync(join(tmpdir(), 'hive-backend-manager-'))
 
     const backend = await startDesktopBackend(
       {
         executablePath: '/electron',
         entryPath: '/app/server.js',
         cwd: '/app',
-        baseDir: mkdtempSync(join(tmpdir(), 'hive-backend-manager-')),
+        baseDir,
         port: 0
       },
       { spawnProcess, fetch: fetchImpl, logger }
@@ -336,7 +337,10 @@ describe('desktop backend manager', () => {
         env: expect.objectContaining({
           ELECTRON_RUN_AS_NODE: '1',
           HIVE_SERVER_MODE: 'desktop',
-          HIVE_DESKTOP_BOOTSTRAP_TOKEN: backend.config.bootstrapToken
+          HIVE_DESKTOP_BOOTSTRAP_TOKEN: backend.config.bootstrapToken,
+          // Updating desktop users must keep reading their existing
+          // ~/.hive/hive.db; never the fresh server-mode userdata/state.sqlite.
+          HIVE_SERVER_DB_PATH: join(baseDir, 'hive.db')
         })
       })
     )
