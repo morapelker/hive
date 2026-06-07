@@ -1,6 +1,4 @@
-import { ulid } from 'ulidx'
 import { gitApi } from '@/api/git-api'
-import { encodeInteractId } from '@/lib/interact-id'
 import {
   isHiveTelemetryEnabled,
   recordHivePromptIdle,
@@ -122,14 +120,9 @@ function getConnectionProjects(connectionId: string | null | undefined): HiveTel
   return Array.from(projectsByKey.values())
 }
 
-export function startHivePromptTelemetry(input: StartHivePromptTelemetryInput): string | null {
+export function startHivePromptTelemetry(input: StartHivePromptTelemetryInput): void {
   const settings = useSettingsStore.getState()
-  if (!isHiveTelemetryEnabled(settings)) return null
-
-  // Internally a prompt id is `{ulid}-prompt`; we send the public InteractId
-  // form (`{base58(ulid)}_prompt`) that the hive-enterprise scalar decodes back.
-  const promptId = encodeInteractId(`${ulid()}-prompt`)
-  currentPromptIdBySession.set(input.sessionId, promptId)
+  if (!isHiveTelemetryEnabled(settings)) return
 
   const sessionStore = useSessionStore.getState()
   const session = sessionStore.getSessionById(input.sessionId)
@@ -161,8 +154,9 @@ export function startHivePromptTelemetry(input: StartHivePromptTelemetryInput): 
       ? await gitApi.getRemoteUrl(worktree.path, 'origin').catch(() => null)
       : null
 
-    await recordHivePromptStart({
-      promptId,
+    // The server generates the prompt id and returns it; store it so the
+    // matching idle event can correlate. A null id means nothing was recorded.
+    const promptId = await recordHivePromptStart({
       prompt: input.prompt,
       sessionId: input.sessionId,
       worktreeId: worktree?.id ?? null,
@@ -174,9 +168,8 @@ export function startHivePromptTelemetry(input: StartHivePromptTelemetryInput): 
       contextLength,
       ...metadata
     })
+    if (promptId) currentPromptIdBySession.set(input.sessionId, promptId)
   })()
-
-  return promptId
 }
 
 export function recordHivePromptIdleForSession(sessionId: string): void {

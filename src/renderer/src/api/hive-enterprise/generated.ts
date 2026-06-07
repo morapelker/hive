@@ -42,7 +42,7 @@ export type GqlMutation = {
   createOrganization: GqlOrganization;
   inviteMember: GqlInvite;
   recordPromptIdle: GqlPromptMutationResult;
-  recordPromptStart: GqlPromptMutationResult;
+  recordPromptStart: GqlPromptStartResult;
   removeMember: Scalars['Boolean']['output'];
 };
 
@@ -105,12 +105,17 @@ export type GqlPromptStartInput = {
   projectName?: InputMaybe<Scalars['String']['input']>;
   projectPath?: InputMaybe<Scalars['String']['input']>;
   prompt: Scalars['String']['input'];
-  promptId: Scalars['InteractId']['input'];
   providerId?: InputMaybe<Scalars['String']['input']>;
   sessionId: Scalars['String']['input'];
   worktreeBranch?: InputMaybe<Scalars['String']['input']>;
   worktreeId?: InputMaybe<Scalars['String']['input']>;
   worktreePath?: InputMaybe<Scalars['String']['input']>;
+};
+
+export type GqlPromptStartResult = {
+  __typename?: 'PromptStartResult';
+  promptId?: Maybe<Scalars['InteractId']['output']>;
+  recorded: Scalars['Boolean']['output'];
 };
 
 export type GqlQuery = {
@@ -170,8 +175,8 @@ export type GqlHiveEnterpriseRecordPromptStartMutationVariables = Exact<{
 export type GqlHiveEnterpriseRecordPromptStartMutation = (
   { __typename?: 'Mutation' }
   & { recordPromptStart: (
-    { __typename?: 'PromptMutationResult' }
-    & Pick<GqlPromptMutationResult, 'recorded'>
+    { __typename?: 'PromptStartResult' }
+    & Pick<GqlPromptStartResult, 'recorded' | 'promptId'>
   ) }
 );
 

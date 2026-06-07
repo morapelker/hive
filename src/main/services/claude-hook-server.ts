@@ -2,11 +2,14 @@ import http from 'http'
 import type { SessionStatusType } from '@shared/types/session-status'
 import { createLogger } from './logger'
 import { cliHookTransportRouter } from './cli-hook-transport-router'
+import { handleClaudeCliHiveTelemetryHook } from './hive-enterprise-claude-cli-telemetry'
 
 export interface ParsedClaudeHook {
   hook_event_name?: string
   tool_name?: string
   permission_mode?: string
+  prompt?: unknown
+  transcript_path?: unknown
   tool_input?: {
     plan?: unknown
     questions?: unknown
@@ -250,6 +253,7 @@ async function handleHook(req: http.IncomingMessage, res: http.ServerResponse): 
           metadata: buildStatusMetadata(body, route.hookPath)
         })
       }
+      void handleClaudeCliHiveTelemetryHook(route.sessionId, body)
       // For forwarded CLI sessions a transport may take ownership of the
       // response (held open until answered). Otherwise behavior is unchanged.
       owned = cliHookTransportRouter.routeHook(route.sessionId, body, res)

@@ -16,6 +16,7 @@ export const RecordPromptStartDocument = /* GraphQL */ `
   mutation HiveEnterpriseRecordPromptStart($input: PromptStartInput!) {
     recordPromptStart(input: $input) {
       recorded
+      promptId
     }
   }
 `

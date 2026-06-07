@@ -60,16 +60,18 @@ export async function fetchHiveEnterpriseMe(
 
 export async function recordHivePromptStart(
   input: GqlHiveEnterpriseRecordPromptStartMutationVariables['input']
-): Promise<void> {
+): Promise<string | null> {
   const settings = useSettingsStore.getState()
-  if (!isHiveTelemetryEnabled(settings)) return
+  if (!isHiveTelemetryEnabled(settings)) return null
   try {
-    await requestWithRefresh<
+    const data = await requestWithRefresh<
       GqlHiveEnterpriseRecordPromptStartMutation,
       GqlHiveEnterpriseRecordPromptStartMutationVariables
     >(RecordPromptStartDocument, { input })
+    return data.recordPromptStart.promptId ?? null
   } catch (error) {
     console.warn('[HiveEnterprise] recordPromptStart failed:', error)
+    return null
   }
 }
 
