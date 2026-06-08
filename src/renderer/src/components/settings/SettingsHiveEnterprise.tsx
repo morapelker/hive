@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Building2, LogIn, RefreshCw } from 'lucide-react'
+import { DEFAULT_HIVE_ENTERPRISE_SERVER_URL } from '@shared/types/settings'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { completeHiveEnterpriseLogin, fetchHiveEnterpriseMe } from '@/api/hive-enterprise/client'
 import { toast } from '@/lib/toast'
@@ -65,7 +66,7 @@ export function SettingsHiveEnterprise(): React.JSX.Element {
           value={hiveEnterpriseServerUrl}
           onChange={(event) => updateSetting('hiveEnterpriseServerUrl', event.target.value)}
           className="w-full rounded-md border bg-background px-3 py-2 text-sm"
-          placeholder="http://localhost:3000"
+          placeholder={DEFAULT_HIVE_ENTERPRISE_SERVER_URL}
         />
       </div>
 

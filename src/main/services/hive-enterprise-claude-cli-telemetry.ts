@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs'
-import { APP_SETTINGS_DB_KEY } from '@shared/types/settings'
+import { APP_SETTINGS_DB_KEY, DEFAULT_HIVE_ENTERPRISE_SERVER_URL } from '@shared/types/settings'
 import type { DatabaseService } from '../db/database'
 import { getDatabase } from '../db'
 import type { Project } from '../db/types'
@@ -219,7 +219,7 @@ function resolveEndpoint(settings: HiveEnterpriseSettings): string | null {
   const serverUrl =
     typeof settings.hiveEnterpriseServerUrl === 'string' && settings.hiveEnterpriseServerUrl.trim()
       ? settings.hiveEnterpriseServerUrl.trim()
-      : 'http://localhost:3000'
+      : DEFAULT_HIVE_ENTERPRISE_SERVER_URL
   return `${serverUrl.replace(/\/+$/, '')}/api/graphql`
 }
 

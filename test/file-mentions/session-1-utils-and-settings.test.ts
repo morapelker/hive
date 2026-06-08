@@ -93,4 +93,16 @@ describe('Session 1: Shared Utils & Settings', () => {
       expect(state.stripAtMentions).toBe(true)
     })
   })
+
+  describe('Hive Enterprise settings', () => {
+    beforeEach(() => {
+      useSettingsStore.getState().resetToDefaults()
+    })
+
+    test('defaults the enterprise server URL to enterprise.hive-ai.dev', () => {
+      expect(useSettingsStore.getState().hiveEnterpriseServerUrl).toBe(
+        'https://enterprise.hive-ai.dev'
+      )
+    })
+  })
 })

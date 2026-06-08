@@ -246,6 +246,26 @@ describe('Claude CLI Hive Enterprise telemetry', () => {
     })
   })
 
+  it('uses the default Hive Enterprise server when settings omit the server URL', async () => {
+    const transcriptPath = makeTranscript('')
+    const db = makeDb({
+      hiveAuthToken: 'token-1',
+      hiveOrganizationId: 'org-1'
+    })
+
+    await handleClaudeCliHiveTelemetryHook(
+      'hive-session-1',
+      {
+        hook_event_name: 'UserPromptSubmit',
+        prompt: 'Use default endpoint',
+        transcript_path: transcriptPath
+      },
+      { db, requestGraphql }
+    )
+
+    expect(requestGraphql.mock.calls[0][0]).toBe('https://enterprise.hive-ai.dev/api/graphql')
+  })
+
   it('records idle token deltas on Stop for the active Claude CLI prompt', async () => {
     const transcriptPath = makeTranscript(
       `${assistantLine({ input: 100, output: 5, cacheRead: 20, cacheWrite: 7 })}\n`

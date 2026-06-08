@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
-import { APP_SETTINGS_DB_KEY } from '@shared/types/settings'
+import { APP_SETTINGS_DB_KEY, DEFAULT_HIVE_ENTERPRISE_SERVER_URL } from '@shared/types/settings'
 import type { TeleportSettings } from '@shared/types/settings'
 import type { TelegramConfig } from '@shared/types/telegram'
 import type { UsageProvider } from '@shared/types/usage'
@@ -239,7 +239,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     enterToApprove: false
   },
   telemetryEnabled: true,
-  hiveEnterpriseServerUrl: 'http://localhost:3000',
+  hiveEnterpriseServerUrl: DEFAULT_HIVE_ENTERPRISE_SERVER_URL,
   hiveAuthToken: null,
   hiveLoggedInEmail: null,
   hiveOrganizationId: null,
