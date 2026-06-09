@@ -76,6 +76,7 @@ export type GqlOrganization = {
   __typename?: 'Organization';
   id: Scalars['InteractId']['output'];
   name: Scalars['String']['output'];
+  storePrompts: Scalars['Boolean']['output'];
 };
 
 export type GqlPromptIdleInput = {
@@ -89,6 +90,7 @@ export type GqlPromptIdleInput = {
 export type GqlPromptMutationResult = {
   __typename?: 'PromptMutationResult';
   recorded: Scalars['Boolean']['output'];
+  storePrompts: Scalars['Boolean']['output'];
 };
 
 export type GqlPromptStartInput = {
@@ -116,6 +118,7 @@ export type GqlPromptStartResult = {
   __typename?: 'PromptStartResult';
   promptId?: Maybe<Scalars['InteractId']['output']>;
   recorded: Scalars['Boolean']['output'];
+  storePrompts: Scalars['Boolean']['output'];
 };
 
 export type GqlQuery = {
@@ -162,7 +165,7 @@ export type GqlHiveEnterpriseMeQuery = (
     & Pick<GqlUser, 'id' | 'email' | 'role'>
     & { organization?: Maybe<(
       { __typename?: 'Organization' }
-      & Pick<GqlOrganization, 'id' | 'name'>
+      & Pick<GqlOrganization, 'id' | 'name' | 'storePrompts'>
     )> }
   )> }
 );
@@ -176,7 +179,7 @@ export type GqlHiveEnterpriseRecordPromptStartMutation = (
   { __typename?: 'Mutation' }
   & { recordPromptStart: (
     { __typename?: 'PromptStartResult' }
-    & Pick<GqlPromptStartResult, 'recorded' | 'promptId'>
+    & Pick<GqlPromptStartResult, 'recorded' | 'promptId' | 'storePrompts'>
   ) }
 );
 
@@ -189,6 +192,6 @@ export type GqlHiveEnterpriseRecordPromptIdleMutation = (
   { __typename?: 'Mutation' }
   & { recordPromptIdle: (
     { __typename?: 'PromptMutationResult' }
-    & Pick<GqlPromptMutationResult, 'recorded'>
+    & Pick<GqlPromptMutationResult, 'recorded' | 'storePrompts'>
   ) }
 );

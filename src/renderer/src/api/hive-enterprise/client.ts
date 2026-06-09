@@ -63,11 +63,13 @@ export async function recordHivePromptStart(
 ): Promise<string | null> {
   const settings = useSettingsStore.getState()
   if (!isHiveTelemetryEnabled(settings)) return null
+  const payload = settings.hiveOrganizationStorePrompts === false ? { ...input, prompt: '' } : input
   try {
     const data = await requestWithRefresh<
       GqlHiveEnterpriseRecordPromptStartMutation,
       GqlHiveEnterpriseRecordPromptStartMutationVariables
-    >(RecordPromptStartDocument, { input })
+    >(RecordPromptStartDocument, { input: payload })
+    await reconcileStorePrompts(data.recordPromptStart.storePrompts)
     return data.recordPromptStart.promptId ?? null
   } catch (error) {
     console.warn('[HiveEnterprise] recordPromptStart failed:', error)
@@ -81,10 +83,11 @@ export async function recordHivePromptIdle(
   const settings = useSettingsStore.getState()
   if (!isHiveTelemetryEnabled(settings)) return
   try {
-    await requestWithRefresh<
+    const data = await requestWithRefresh<
       GqlHiveEnterpriseRecordPromptIdleMutation,
       GqlHiveEnterpriseRecordPromptIdleMutationVariables
     >(RecordPromptIdleDocument, { input })
+    await reconcileStorePrompts(data.recordPromptIdle.storePrompts)
   } catch (error) {
     console.warn('[HiveEnterprise] recordPromptIdle failed:', error)
   }
@@ -98,6 +101,29 @@ export async function completeHiveEnterpriseLogin(token: string): Promise<void> 
     hiveAuthToken: token,
     hiveLoggedInEmail: me?.email ?? null,
     hiveOrganizationId: me?.organization?.id ?? null,
-    hiveOrganizationName: me?.organization?.name ?? null
+    hiveOrganizationName: me?.organization?.name ?? null,
+    hiveOrganizationStorePrompts: me?.organization?.storePrompts ?? true
   })
+}
+
+async function reconcileStorePrompts(value: boolean | null | undefined): Promise<void> {
+  if (typeof value !== 'boolean') return
+  if (value === useSettingsStore.getState().hiveOrganizationStorePrompts) return
+  await useSettingsStore.getState().updateSetting('hiveOrganizationStorePrompts', value)
+}
+
+export async function refreshHiveEnterpriseOrg(): Promise<void> {
+  const settings = useSettingsStore.getState()
+  if (!isHiveTelemetryEnabled(settings)) return
+  try {
+    const me = await fetchHiveEnterpriseMe()
+    await useSettingsStore.getState().updateSettings({
+      hiveLoggedInEmail: me?.email ?? null,
+      hiveOrganizationId: me?.organization?.id ?? null,
+      hiveOrganizationName: me?.organization?.name ?? null,
+      hiveOrganizationStorePrompts: me?.organization?.storePrompts ?? true
+    })
+  } catch (error) {
+    console.warn('[HiveEnterprise] org refresh failed:', error)
+  }
 }

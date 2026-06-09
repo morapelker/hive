@@ -108,11 +108,16 @@ const project: Project = {
 }
 
 function makeDb(settings: Record<string, unknown>): DatabaseService {
+  let currentSettings = { ...settings }
   return {
     getSetting: vi.fn((key: string) =>
-      key === APP_SETTINGS_DB_KEY ? JSON.stringify(settings) : null
+      key === APP_SETTINGS_DB_KEY ? JSON.stringify(currentSettings) : null
     ),
-    setSetting: vi.fn(),
+    setSetting: vi.fn((key: string, value: string) => {
+      if (key === APP_SETTINGS_DB_KEY) {
+        currentSettings = JSON.parse(value) as Record<string, unknown>
+      }
+    }),
     getSession: vi.fn(() => session),
     getWorktree: vi.fn(() => worktree),
     getProject: vi.fn(() => project),
@@ -244,6 +249,83 @@ describe('Claude CLI Hive Enterprise telemetry', () => {
       prompt: 'Start from an empty context',
       contextLength: 0
     })
+  })
+
+  it('blanks prompt text when the organization disables prompt storage', async () => {
+    const transcriptPath = makeTranscript('')
+    const db = makeDb({
+      hiveEnterpriseServerUrl: 'https://enterprise.example.com/',
+      hiveAuthToken: 'token-1',
+      hiveOrganizationId: 'org-1',
+      hiveOrganizationStorePrompts: false
+    })
+
+    await handleClaudeCliHiveTelemetryHook(
+      'hive-session-1',
+      {
+        hook_event_name: 'UserPromptSubmit',
+        prompt: '/goal keep private prompt text local',
+        transcript_path: transcriptPath
+      },
+      { db, requestGraphql }
+    )
+
+    expect(requestGraphql).toHaveBeenCalledTimes(1)
+    expect(requestGraphql.mock.calls[0][3].input).toMatchObject({
+      prompt: '',
+      sessionId: 'hive-session-1',
+      providerId: 'claude-code-cli',
+      modelProviderId: 'anthropic',
+      modelId: 'sonnet',
+      modelVariant: 'high',
+      mode: 'plan',
+      isGoalPrompt: true
+    })
+  })
+
+  it('reconciles storePrompts changes from start and idle mutation responses', async () => {
+    const transcriptPath = makeTranscript('')
+    const db = makeDb({
+      hiveEnterpriseServerUrl: 'https://enterprise.example.com/',
+      hiveAuthToken: 'token-1',
+      hiveOrganizationId: 'org-1',
+      hiveOrganizationStorePrompts: true
+    })
+    requestGraphql
+      .mockResolvedValueOnce({
+        recordPromptStart: { recorded: true, promptId: SERVER_PROMPT_ID, storePrompts: false }
+      })
+      .mockResolvedValueOnce({
+        recordPromptIdle: { recorded: true, storePrompts: true }
+      })
+
+    await handleClaudeCliHiveTelemetryHook(
+      'hive-session-1',
+      {
+        hook_event_name: 'UserPromptSubmit',
+        prompt: 'Start private mode',
+        transcript_path: transcriptPath
+      },
+      { db, requestGraphql }
+    )
+
+    expect(db.setSetting).toHaveBeenLastCalledWith(
+      APP_SETTINGS_DB_KEY,
+      expect.stringContaining('"hiveOrganizationStorePrompts":false')
+    )
+
+    writeFileSync(transcriptPath, `${assistantLine({ input: 5, output: 7 })}\n`)
+
+    await handleClaudeCliHiveTelemetryHook(
+      'hive-session-1',
+      { hook_event_name: 'Stop', transcript_path: transcriptPath },
+      { db, requestGraphql }
+    )
+
+    expect(db.setSetting).toHaveBeenLastCalledWith(
+      APP_SETTINGS_DB_KEY,
+      expect.stringContaining('"hiveOrganizationStorePrompts":true')
+    )
   })
 
   it('uses the default Hive Enterprise server when settings omit the server URL', async () => {

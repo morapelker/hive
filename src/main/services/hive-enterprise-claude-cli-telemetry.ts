@@ -11,6 +11,7 @@ const RecordPromptStartDocument = /* GraphQL */ `
     recordPromptStart(input: $input) {
       recorded
       promptId
+      storePrompts
     }
   }
 `
@@ -19,6 +20,7 @@ const RecordPromptIdleDocument = /* GraphQL */ `
   mutation HiveEnterpriseRecordPromptIdle($input: PromptIdleInput!) {
     recordPromptIdle(input: $input) {
       recorded
+      storePrompts
     }
   }
 `
@@ -33,6 +35,7 @@ interface HiveEnterpriseSettings {
   hiveEnterpriseServerUrl?: unknown
   hiveAuthToken?: unknown
   hiveOrganizationId?: unknown
+  hiveOrganizationStorePrompts?: unknown
 }
 
 interface TokenCounters {
@@ -215,6 +218,16 @@ function parseSettings(db: DatabaseService): HiveEnterpriseSettings {
   }
 }
 
+function reconcileStorePrompts(db: DatabaseService, value: unknown): void {
+  if (typeof value !== 'boolean') return
+  const settings = parseSettings(db)
+  if (settings.hiveOrganizationStorePrompts === value) return
+  db.setSetting(
+    APP_SETTINGS_DB_KEY,
+    JSON.stringify({ ...settings, hiveOrganizationStorePrompts: value })
+  )
+}
+
 function resolveEndpoint(settings: HiveEnterpriseSettings): string | null {
   const serverUrl =
     typeof settings.hiveEnterpriseServerUrl === 'string' && settings.hiveEnterpriseServerUrl.trim()
@@ -268,6 +281,13 @@ function recordedPromptId(data: unknown): string | null {
   if (!result || typeof result !== 'object') return null
   const promptId = (result as { promptId?: unknown }).promptId
   return typeof promptId === 'string' && promptId.length > 0 ? promptId : null
+}
+
+function responseStorePrompts(data: unknown, field: 'recordPromptStart' | 'recordPromptIdle'): unknown {
+  if (!data || typeof data !== 'object') return undefined
+  const result = (data as Record<string, unknown>)[field]
+  if (!result || typeof result !== 'object') return undefined
+  return (result as { storePrompts?: unknown }).storePrompts
 }
 
 function connectionProjects(db: DatabaseService, connectionId: string | null): string | null {
@@ -355,9 +375,13 @@ async function recordStart(
     transcriptPath,
     deps.now()
   )
+  if (settings.hiveOrganizationStorePrompts === false) {
+    input.prompt = ''
+  }
   // The server owns the prompt id now: send the start, then track the id it
   // returns so the matching idle event updates the right row.
   const data = await deps.requestGraphql(endpoint, token, RecordPromptStartDocument, { input })
+  reconcileStorePrompts(deps.db, responseStorePrompts(data, 'recordPromptStart'))
   const promptId = recordedPromptId(data)
   if (!promptId) return
   activePromptBySession.set(sessionId, { promptId, transcriptPath, baseline })
@@ -389,7 +413,8 @@ async function recordIdle(
     cacheWriteTokens: delta.cacheWrite
   }
 
-  await deps.requestGraphql(endpoint, token, RecordPromptIdleDocument, { input })
+  const data = await deps.requestGraphql(endpoint, token, RecordPromptIdleDocument, { input })
+  reconcileStorePrompts(deps.db, responseStorePrompts(data, 'recordPromptIdle'))
 }
 
 export async function handleClaudeCliHiveTelemetryHook(

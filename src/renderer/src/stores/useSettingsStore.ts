@@ -153,6 +153,7 @@ export interface AppSettings {
   hiveLoggedInEmail: string | null
   hiveOrganizationId: string | null
   hiveOrganizationName: string | null
+  hiveOrganizationStorePrompts: boolean
 
   // Tips
   tipsEnabled: boolean
@@ -244,6 +245,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   hiveLoggedInEmail: null,
   hiveOrganizationId: null,
   hiveOrganizationName: null,
+  hiveOrganizationStorePrompts: true,
   tipsEnabled: true,
   telegramConfig: null,
   teleport: null,
@@ -446,6 +448,7 @@ function extractSettings(state: SettingsState): AppSettings {
     hiveLoggedInEmail: state.hiveLoggedInEmail,
     hiveOrganizationId: state.hiveOrganizationId,
     hiveOrganizationName: state.hiveOrganizationName,
+    hiveOrganizationStorePrompts: state.hiveOrganizationStorePrompts,
     tipsEnabled: state.tipsEnabled,
     telegramConfig: null,
     teleport: state.teleport,
@@ -808,6 +811,7 @@ export const useSettingsStore = create<SettingsState>()(
         hiveLoggedInEmail: state.hiveLoggedInEmail,
         hiveOrganizationId: state.hiveOrganizationId,
         hiveOrganizationName: state.hiveOrganizationName,
+        hiveOrganizationStorePrompts: state.hiveOrganizationStorePrompts,
         tipsEnabled: state.tipsEnabled,
         pet: state.pet,
         environmentVariables: state.environmentVariables,

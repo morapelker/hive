@@ -24,7 +24,8 @@ export function SettingsHiveEnterprise(): React.JSX.Element {
       await updateSettings({
         hiveLoggedInEmail: me?.email ?? null,
         hiveOrganizationId: me?.organization?.id ?? null,
-        hiveOrganizationName: me?.organization?.name ?? null
+        hiveOrganizationName: me?.organization?.name ?? null,
+        hiveOrganizationStorePrompts: me?.organization?.storePrompts ?? true
       })
       toast.success('Hive Enterprise account refreshed')
     } catch (error) {
