@@ -14,8 +14,12 @@ import { useUsageStore, resolveUsageProvider } from '@/stores'
 import { extractTokens, extractCost, extractModelRef, extractModelUsage } from '@/lib/token-utils'
 import { COMPLETION_WORDS } from '@/lib/format-utils'
 import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
-import { computeTokenDelta } from '@/lib/token-baselines'
+import { computeTokenDelta, snapshotTokenBaseline } from '@/lib/token-baselines'
 import { lastSendMode, messageSendTimes } from '@/lib/message-send-times'
+import {
+  recordHivePromptIdleForSession,
+  startHivePromptTelemetry
+} from '@/lib/hive-enterprise-telemetry'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { checkAutoApprove } from '@/lib/permissionUtils'
 import { isPlanLike } from '@/lib/constants'
@@ -32,6 +36,15 @@ import type { AnthropicRateLimitInfo } from '@shared/types/usage'
 interface PromptDispatchContext {
   worktreePath: string
   opencodeSessionId: string
+}
+
+interface BackgroundTelemetrySession {
+  id: string
+  worktree_id?: string | null
+  connection_id?: string | null
+  model_provider_id?: string | null
+  model_id?: string | null
+  model_variant?: string | null
 }
 
 type PromptDispatchDbSession = {
@@ -70,6 +83,36 @@ function resolvePromptDispatchContextFromStores(sessionId: string): PromptDispat
       return {
         worktreePath: connection.path,
         opencodeSessionId: session.opencode_session_id
+      }
+    }
+  }
+
+  return null
+}
+
+function findBackgroundTelemetrySession(sessionId: string): BackgroundTelemetrySession | null {
+  const sessionState = useSessionStore.getState()
+
+  for (const [worktreeId, sessions] of sessionState.sessionsByWorktree) {
+    const found = sessions.find((session) => session.id === sessionId) as
+      | BackgroundTelemetrySession
+      | undefined
+    if (found) {
+      return {
+        ...found,
+        worktree_id: found.worktree_id ?? worktreeId
+      }
+    }
+  }
+
+  for (const [connectionId, sessions] of sessionState.sessionsByConnection) {
+    const found = sessions.find((session) => session.id === sessionId) as
+      | BackgroundTelemetrySession
+      | undefined
+    if (found) {
+      return {
+        ...found,
+        connection_id: found.connection_id ?? connectionId
       }
     }
   }
@@ -125,6 +168,7 @@ function markBackgroundSessionCompleted(sessionId: string): void {
   const durationMs = sendTime ? Date.now() - sendTime : 0
   const word = COMPLETION_WORDS[Math.floor(Math.random() * COMPLETION_WORDS.length)]
   const tokenDelta = computeTokenDelta(sessionId)
+  recordHivePromptIdleForSession(sessionId)
   useWorktreeStatusStore
     .getState()
     .setSessionStatus(sessionId, 'completed', { word, durationMs, tokenDelta })
@@ -596,8 +640,22 @@ export function useOpenCodeGlobalListener(): void {
         dequeueFollowUp: () => useSessionStore.getState().dequeueFollowUpMessage(sessionId),
         requeueFollowUp: (message) =>
           useSessionStore.getState().requeueFollowUpMessageFront(sessionId, message),
-        onBeforeDispatch: () => {
+        onBeforeDispatch: (message) => {
+          recordHivePromptIdleForSession(sessionId)
+          messageSendTimes.set(sessionId, Date.now())
+          snapshotTokenBaseline(sessionId)
           const mode = useSessionStore.getState().getSessionMode(sessionId)
+          const session = findBackgroundTelemetrySession(sessionId)
+          startHivePromptTelemetry({
+            sessionId,
+            prompt: message,
+            worktreeId: session?.worktree_id,
+            modelId: session?.model_id,
+            providerId: session?.model_provider_id,
+            modelVariant: session?.model_variant,
+            mode
+          })
+          lastSendMode.set(sessionId, isPlanLike(mode) ? 'plan' : 'build')
           useWorktreeStatusStore
             .getState()
             .setSessionStatus(sessionId, isPlanLike(mode) ? 'planning' : 'working')

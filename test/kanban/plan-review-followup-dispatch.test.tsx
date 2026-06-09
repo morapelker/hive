@@ -128,6 +128,10 @@ const apiMocks = vi.hoisted(() => ({
   scriptApi: {
     onOutput: vi.fn(() => vi.fn()),
     runSetup: vi.fn().mockResolvedValue({ success: true })
+  },
+  hiveTelemetry: {
+    registerHivePromptHandoff: vi.fn(),
+    startHivePromptTelemetry: vi.fn()
   }
 }))
 
@@ -145,6 +149,7 @@ vi.mock('@/api/updater-api', () => ({ updaterApi: apiMocks.updaterApi }))
 vi.mock('@/api/file-api', () => ({ fileApi: apiMocks.fileApi }))
 vi.mock('@/api/terminal-api', () => ({ terminalApi: apiMocks.terminalApi }))
 vi.mock('@/api/script-api', () => ({ scriptApi: apiMocks.scriptApi }))
+vi.mock('@/lib/hive-enterprise-telemetry', () => apiMocks.hiveTelemetry)
 
 const mockKanban = apiMocks.kanbanApi
 const mockDbSession = apiMocks.dbApi.session
@@ -419,6 +424,15 @@ describe('Plan review followup dispatch', () => {
         [{ type: 'text', text: 'Please add error handling to step 2' }],
         undefined
       )
+    })
+    expect(apiMocks.hiveTelemetry.startHivePromptTelemetry).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      prompt: 'Please add error handling to step 2',
+      worktreeId: 'wt-1',
+      modelId: undefined,
+      providerId: undefined,
+      modelVariant: undefined,
+      mode: 'plan'
     })
   })
 

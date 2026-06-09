@@ -370,6 +370,15 @@ async function sendFollowupToSession(opts: {
 
   // Resolve model AFTER setSessionMode (which may have applied a mode-specific default)
   const model = resolveSessionModel(opts.sessionId, result.session)
+  startHivePromptTelemetry({
+    sessionId: opts.sessionId,
+    prompt: opts.prompt,
+    worktreeId: session.worktree_id,
+    modelId: model?.modelID,
+    providerId: model?.providerID,
+    modelVariant: model?.variant,
+    mode: opts.followUpMode
+  })
 
   // Ensure the session is loaded in the agent SDK implementer's in-memory map.
   // SessionView does this on mount via initializeSession(), but the kanban

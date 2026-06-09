@@ -24,9 +24,12 @@ const apiMocks = vi.hoisted(() => {
       }
     }),
     onBranchRenamed: vi.fn(() => () => {}),
+    onWorktreeCreated: vi.fn(() => () => {}),
     dbSessionGet: vi.fn(),
     dbWorktreeGet: vi.fn(),
-    connectionGet: vi.fn()
+    connectionGet: vi.fn(),
+    recordHivePromptIdleForSession: vi.fn(),
+    startHivePromptTelemetry: vi.fn()
   }
   return state
 })
@@ -48,7 +51,8 @@ vi.mock('@/api/opencode-api', () => ({
 
 vi.mock('@/api/worktree-api', () => ({
   worktreeApi: {
-    onBranchRenamed: apiMocks.onBranchRenamed
+    onBranchRenamed: apiMocks.onBranchRenamed,
+    onWorktreeCreated: apiMocks.onWorktreeCreated
   }
 }))
 
@@ -67,6 +71,11 @@ vi.mock('@/api/connection-api', () => ({
   connectionApi: {
     get: apiMocks.connectionGet
   }
+}))
+
+vi.mock('@/lib/hive-enterprise-telemetry', () => ({
+  recordHivePromptIdleForSession: apiMocks.recordHivePromptIdleForSession,
+  startHivePromptTelemetry: apiMocks.startHivePromptTelemetry
 }))
 
 const setSessionStatusSpy = vi.fn()
@@ -504,6 +513,7 @@ describe('Global listener background follow-up dispatcher', () => {
     await waitFor(() => {
       expect(hasCompletedStatus('session-B')).toBe(true)
     })
+    expect(apiMocks.recordHivePromptIdleForSession).toHaveBeenCalledWith('session-B')
   })
 
   test('active session idle is ignored by global listener even with queued follow-up', async () => {

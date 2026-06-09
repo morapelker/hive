@@ -14,6 +14,7 @@ import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { opencodeApi } from '@/api/opencode-api'
 import { dbApi } from '@/api/db-api'
 import { terminalApi } from '@/api/terminal-api'
+import { startHivePromptTelemetry } from '@/lib/hive-enterprise-telemetry'
 
 type AutoLaunchMode = 'build' | 'plan' | 'super-plan'
 
@@ -226,6 +227,15 @@ export async function autoLaunchTicket(ticket: AutoLaunchTicket): Promise<void> 
       }
 
       bumpWorktreeLastMessage({ worktreeId })
+      startHivePromptTelemetry({
+        sessionId,
+        prompt: outboundPrompt,
+        worktreeId,
+        modelId: effectiveModel?.modelID,
+        providerId: effectiveModel?.providerID,
+        modelVariant: effectiveModel?.variant,
+        mode: config.mode
+      })
       unwrapEnvelope(
         await opencodeApi.prompt(
           worktree.path,

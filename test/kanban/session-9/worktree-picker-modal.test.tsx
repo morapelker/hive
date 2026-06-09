@@ -124,6 +124,9 @@ const apiMocks = vi.hoisted(() => ({
     onStarted: vi.fn(() => vi.fn()),
     onOutput: vi.fn(() => vi.fn()),
     onFinished: vi.fn(() => vi.fn())
+  },
+  hiveTelemetry: {
+    startHivePromptTelemetry: vi.fn()
   }
 }))
 
@@ -142,6 +145,7 @@ vi.mock('@/api/updater-api', () => ({ updaterApi: apiMocks.updaterApi }))
 vi.mock('@/api/file-api', () => ({ fileApi: apiMocks.fileApi }))
 vi.mock('@/api/terminal-api', () => ({ terminalApi: apiMocks.terminalApi }))
 vi.mock('@/api/script-api', () => ({ scriptApi: apiMocks.scriptApi }))
+vi.mock('@/lib/hive-enterprise-telemetry', () => apiMocks.hiveTelemetry)
 
 const mockKanban = apiMocks.kanbanApi
 const mockDbSession = apiMocks.dbApi.session
@@ -959,6 +963,15 @@ describe('Session 9: Worktree Picker Modal', () => {
     expect(promptParts[0]?.text).toBe(
       '/goal Build auth. Goal success criteria: Login and signup work'
     )
+    expect(apiMocks.hiveTelemetry.startHivePromptTelemetry).toHaveBeenCalledWith({
+      sessionId: 'new-session-1',
+      prompt: '/goal Build auth. Goal success criteria: Login and signup work',
+      worktreeId: 'wt-1',
+      modelId: undefined,
+      providerId: undefined,
+      modelVariant: undefined,
+      mode: 'build'
+    })
     expect(mockKanban.ticket.update).toHaveBeenCalledWith(
       'ticket-1',
       expect.objectContaining({

@@ -33,6 +33,12 @@ vi.mock('@/api/opencode-api', () => ({
   }
 }))
 
+const hiveTelemetryMocks = vi.hoisted(() => ({
+  startHivePromptTelemetry: vi.fn()
+}))
+
+vi.mock('@/lib/hive-enterprise-telemetry', () => hiveTelemetryMocks)
+
 const initialSessionState = useSessionStore.getState()
 const initialWorktreeState = useWorktreeStore.getState()
 const initialKanbanState = useKanbanStore.getState()
@@ -287,6 +293,15 @@ describe('autoLaunchTicket Claude CLI', () => {
       undefined,
       undefined
     )
+    expect(hiveTelemetryMocks.startHivePromptTelemetry).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      prompt: 'Implement the ticket',
+      worktreeId: 'worktree-1',
+      modelId: undefined,
+      providerId: undefined,
+      modelVariant: undefined,
+      mode: 'build'
+    })
   })
 
   it('wraps goal-mode prompts before spawning Claude CLI', async () => {

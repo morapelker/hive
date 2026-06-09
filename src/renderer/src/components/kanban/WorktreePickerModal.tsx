@@ -34,6 +34,7 @@ import { opencodeApi } from '@/api/opencode-api'
 import { dbApi } from '@/api/db-api'
 import { terminalApi } from '@/api/terminal-api'
 import { gitApi } from '@/api/git-api'
+import { startHivePromptTelemetry } from '@/lib/hive-enterprise-telemetry'
 import type { KanbanTicket, Session } from '../../../../main/db/types'
 import { canonicalizeTicketTitle } from '@shared/types/branch-utils'
 
@@ -565,6 +566,15 @@ export function WorktreePickerModal({
           }
 
           bumpWorktreeLastMessage({ connectionId })
+          startHivePromptTelemetry({
+            sessionId,
+            prompt: outboundPrompt,
+            worktreeId: null,
+            modelId: effectiveModel?.modelID,
+            providerId: effectiveModel?.providerID,
+            modelVariant: effectiveModel?.variant,
+            mode
+          })
           unwrapEnvelope(
             await opencodeApi.prompt(
               connectionPath,
@@ -837,6 +847,15 @@ export function WorktreePickerModal({
         }
 
         bumpWorktreeLastMessage({ worktreeId })
+        startHivePromptTelemetry({
+          sessionId,
+          prompt: outboundPrompt,
+          worktreeId,
+          modelId: effectiveModel?.modelID,
+          providerId: effectiveModel?.providerID,
+          modelVariant: effectiveModel?.variant,
+          mode
+        })
         unwrapEnvelope(
           await opencodeApi.prompt(
             worktree.path,
