@@ -15,9 +15,31 @@ interface HiveEnterpriseLoginArgs {
   serverUrl?: string
 }
 
+const isLoopbackHostname = (hostname: string): boolean =>
+  hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname === '[::1]'
+
+const normalizeHiveEnterpriseDesktopAuthServerUrl = (value: string): string => {
+  const serverUrl = value.replace(/\/+$/, '')
+
+  try {
+    const url = new URL(serverUrl)
+    if (url.protocol === 'https:' && isLoopbackHostname(url.hostname)) {
+      url.protocol = 'http:'
+      return url.toString().replace(/\/+$/, '')
+    }
+  } catch {
+    // Preserve the existing behavior for non-URL strings.
+  }
+
+  return serverUrl
+}
+
 export function registerDesktopBridgeHandlers(): void {
   ipcMain.handle('hive-enterprise:start-login', async (_event, args: HiveEnterpriseLoginArgs) => {
-    const serverUrl = typeof args?.serverUrl === 'string' ? args.serverUrl.replace(/\/+$/, '') : ''
+    const serverUrl =
+      typeof args?.serverUrl === 'string'
+        ? normalizeHiveEnterpriseDesktopAuthServerUrl(args.serverUrl)
+        : ''
     if (!serverUrl) throw new Error('Hive Enterprise server URL is required')
 
     // Nonce that ties the loopback callback to this specific login attempt. The
@@ -44,9 +66,12 @@ export function registerDesktopBridgeHandlers(): void {
         fn()
       }
 
-      const timeout = setTimeout(() => {
-        finish(() => reject(new Error('Timed out waiting for Hive Enterprise login')))
-      }, 5 * 60 * 1000)
+      const timeout = setTimeout(
+        () => {
+          finish(() => reject(new Error('Timed out waiting for Hive Enterprise login')))
+        },
+        5 * 60 * 1000
+      )
 
       const handleRequest = (request: IncomingMessage, response: ServerResponse): void => {
         const host = request.headers.host ?? '127.0.0.1'
