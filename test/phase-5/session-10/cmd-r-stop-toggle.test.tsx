@@ -1,35 +1,67 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { act, fireEvent, render } from '@testing-library/react'
+
+vi.mock('@/api/settings-api', () => ({
+  settingsApi: {
+    onSettingsUpdated: vi.fn(() => vi.fn())
+  }
+}))
+
+vi.mock('@/api/db-api', () => ({
+  dbApi: {
+    setting: {
+      get: vi.fn().mockResolvedValue(null),
+      set: vi.fn().mockResolvedValue(undefined)
+    }
+  }
+}))
+
+vi.mock('@/api/pet-api', () => ({
+  petApi: {
+    updateSettings: vi.fn().mockResolvedValue(undefined)
+  }
+}))
+
+vi.mock('@/api/system-api', () => ({
+  systemApi: {
+    onNewSessionShortcut: vi.fn(() => vi.fn()),
+    onFileSearchShortcut: vi.fn(() => vi.fn()),
+    onCloseSessionShortcut: vi.fn(() => vi.fn()),
+    onMenuAction: vi.fn(() => vi.fn()),
+    updateMenuState: vi.fn().mockResolvedValue(undefined)
+  }
+}))
+
 import { useKeyboardShortcuts } from '../../../src/renderer/src/hooks/useKeyboardShortcuts'
 import { useProjectStore } from '../../../src/renderer/src/stores/useProjectStore'
 import { useScriptStore } from '../../../src/renderer/src/stores/useScriptStore'
 import { useShortcutStore } from '../../../src/renderer/src/stores/useShortcutStore'
 import { useWorktreeStore } from '../../../src/renderer/src/stores/useWorktreeStore'
+import {
+  resetRendererRpcClientForTests,
+  setRendererRpcClient
+} from '../../../src/renderer/src/api/rpc-client'
 
 function ShortcutHarness(): React.JSX.Element {
   useKeyboardShortcuts()
   return <div>shortcut-harness</div>
 }
 
-const mockScriptOps = {
-  runSetup: vi.fn().mockResolvedValue({ success: true }),
-  runProject: vi.fn().mockResolvedValue({ success: true, pid: 12345 }),
-  kill: vi.fn().mockResolvedValue({ success: true }),
-  runArchive: vi.fn().mockResolvedValue({ success: true, output: '' }),
-  onOutput: vi.fn().mockReturnValue(() => {}),
-  offOutput: vi.fn(),
-  getPort: vi.fn().mockResolvedValue({ port: null })
-}
+let request: ReturnType<typeof vi.fn>
 
 describe('Cmd/Ctrl+R run shortcut', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     vi.clearAllMocks()
-
-    Object.defineProperty(window, 'scriptOps', {
-      value: mockScriptOps,
-      writable: true,
-      configurable: true
+    request = vi.fn(async (method: string) => {
+      if (method === 'scriptOps.kill') return { success: true }
+      if (method === 'scriptOps.runProject') return { success: true, pid: 12345 }
+      if (method === 'scriptOps.getPort') return { port: null }
+      return null
+    })
+    setRendererRpcClient({
+      request,
+      subscribe: vi.fn().mockReturnValue(() => {})
     })
 
     useShortcutStore.setState({ customBindings: {} })
@@ -77,6 +109,7 @@ describe('Cmd/Ctrl+R run shortcut', () => {
   })
 
   afterEach(() => {
+    resetRendererRpcClientForTests()
     vi.useRealTimers()
   })
 
@@ -93,8 +126,7 @@ describe('Cmd/Ctrl+R run shortcut', () => {
       vi.advanceTimersByTime(250)
     })
 
-    expect(mockScriptOps.kill).toHaveBeenCalledTimes(1)
-    expect(mockScriptOps.kill).toHaveBeenCalledWith('worktree-1')
-    expect(mockScriptOps.runProject).not.toHaveBeenCalled()
+    expect(request).toHaveBeenCalledWith('scriptOps.kill', { worktreeId: 'worktree-1' })
+    expect(request).not.toHaveBeenCalledWith('scriptOps.runProject', expect.anything())
   })
 })

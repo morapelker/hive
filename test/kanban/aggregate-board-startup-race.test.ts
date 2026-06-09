@@ -1,47 +1,24 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { KanbanTicket } from '../../src/main/db/types'
+import { resetRendererRpcClientForTests, setRendererRpcClient } from '@/api/rpc-client'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { usePinnedStore } from '@/stores/usePinnedStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 
-const mockKanban = {
-  ticket: {
-    getByProject: vi.fn()
-  },
-  dependency: {
-    getForProject: vi.fn()
+vi.mock('@/api/settings-api', () => ({
+  settingsApi: {
+    onSettingsUpdated: vi.fn(() => vi.fn())
   }
-}
+}))
 
-const mockConnectionOps = {
-  getAll: vi.fn(),
-  getPinned: vi.fn()
-}
-
-const mockDb = {
-  worktree: {
-    getPinned: vi.fn()
+vi.mock('@/api/pet-api', () => ({
+  petApi: {
+    updateSettings: vi.fn()
   }
-}
+}))
 
-Object.defineProperty(window, 'kanban', {
-  writable: true,
-  configurable: true,
-  value: mockKanban
-})
-
-Object.defineProperty(window, 'connectionOps', {
-  writable: true,
-  configurable: true,
-  value: mockConnectionOps
-})
-
-Object.defineProperty(window, 'db', {
-  writable: true,
-  configurable: true,
-  value: mockDb
-})
+let request: ReturnType<typeof vi.fn>
 
 function makeTicket(overrides: Partial<KanbanTicket> = {}): KanbanTicket {
   return {
@@ -119,6 +96,16 @@ const pinnedWorktree = {
 describe('aggregate kanban board startup hydration', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    resetRendererRpcClientForTests()
+    request = vi.fn(async (method: string) => {
+      if (method === 'db.worktree.getPinned') return [pinnedWorktree]
+      if (method === 'connectionOps.getAll') return { success: true, connections: [connection] }
+      if (method === 'connectionOps.getPinned') return []
+      if (method === 'kanban.ticket.getByProject') return [makeTicket()]
+      if (method === 'kanban.dependency.getForProject') return []
+      return null
+    })
+    setRendererRpcClient({ request, subscribe: vi.fn() })
 
     useKanbanStore.setState({
       tickets: new Map(),
@@ -142,27 +129,32 @@ describe('aggregate kanban board startup hydration', () => {
     useWorktreeStore.setState({
       worktreesByProject: new Map([['proj-1', [pinnedWorktree]]])
     } as never)
+  })
 
-    mockKanban.ticket.getByProject.mockResolvedValue([makeTicket()])
-    mockKanban.dependency.getForProject.mockResolvedValue([])
-    mockConnectionOps.getAll.mockResolvedValue({ success: true, connections: [connection] })
-    mockConnectionOps.getPinned.mockResolvedValue([])
-    mockDb.worktree.getPinned.mockResolvedValue([pinnedWorktree])
+  afterEach(() => {
+    resetRendererRpcClientForTests()
   })
 
   test('loadTicketsForConnection hydrates connections and retries when called before connections load', async () => {
     await useKanbanStore.getState().loadTicketsForConnection('conn-1')
 
-    expect(mockConnectionOps.getAll).toHaveBeenCalledTimes(1)
-    expect(mockKanban.ticket.getByProject).toHaveBeenCalledWith('proj-1', false)
+    expect(request).toHaveBeenCalledWith('connectionOps.getAll', {})
+    expect(request).toHaveBeenCalledWith('kanban.ticket.getByProject', {
+      projectId: 'proj-1',
+      includeArchived: false
+    })
     expect(useKanbanStore.getState().tickets.get('proj-1')).toEqual([makeTicket()])
   })
 
   test('loadTicketsForPinnedProjects hydrates pinned state and retries when called before pinned projects load', async () => {
     await useKanbanStore.getState().loadTicketsForPinnedProjects()
 
-    expect(mockDb.worktree.getPinned).toHaveBeenCalledTimes(1)
-    expect(mockKanban.ticket.getByProject).toHaveBeenCalledWith('proj-1', false)
+    expect(request).toHaveBeenCalledWith('db.worktree.getPinned', {})
+    expect(request).toHaveBeenCalledWith('connectionOps.getPinned', {})
+    expect(request).toHaveBeenCalledWith('kanban.ticket.getByProject', {
+      projectId: 'proj-1',
+      includeArchived: false
+    })
     expect(useKanbanStore.getState().tickets.get('proj-1')).toEqual([makeTicket()])
   })
 })

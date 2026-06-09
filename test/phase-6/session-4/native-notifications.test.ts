@@ -1,23 +1,71 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest'
 import { cleanup, renderHook, act } from '@testing-library/react'
+import { NOTIFICATION_NAVIGATE_CHANNEL } from '../../../src/shared/notification-events'
+import type { ServerEvent } from '../../../src/shared/rpc/protocol'
+import {
+  resetRendererRpcClientForTests,
+  setRendererRpcClient
+} from '../../../src/renderer/src/api/rpc-client'
 import { useProjectStore } from '../../../src/renderer/src/stores/useProjectStore'
 import { useWorktreeStore } from '../../../src/renderer/src/stores/useWorktreeStore'
 import { useSessionStore } from '../../../src/renderer/src/stores/useSessionStore'
 
-// Track registered listeners for notification:navigate
-let notificationNavigateCallback: ((data: { projectId: string; worktreeId: string; sessionId: string }) => void) | null = null
+vi.mock('@/api/settings-api', () => ({
+  settingsApi: {
+    onSettingsUpdated: vi.fn(() => vi.fn())
+  }
+}))
 
-// Mock systemOps.onNotificationNavigate
-const mockOnNotificationNavigate = vi.fn((callback: (data: { projectId: string; worktreeId: string; sessionId: string }) => void) => {
-  notificationNavigateCallback = callback
-  return () => {
-    notificationNavigateCallback = null
+vi.mock('@/stores', async () => {
+  const projectStore =
+    await vi.importActual<typeof import('@/stores/useProjectStore')>('@/stores/useProjectStore')
+  const worktreeStore =
+    await vi.importActual<typeof import('@/stores/useWorktreeStore')>('@/stores/useWorktreeStore')
+  const sessionStore =
+    await vi.importActual<typeof import('@/stores/useSessionStore')>('@/stores/useSessionStore')
+
+  return {
+    useProjectStore: projectStore.useProjectStore,
+    useWorktreeStore: worktreeStore.useWorktreeStore,
+    useSessionStore: sessionStore.useSessionStore
   }
 })
 
+// Track registered listeners for notification:navigate
+let notificationNavigateListener: ((event: ServerEvent) => void) | null = null
+
+// Mock systemApi.onNotificationNavigate's WebSocket subscription path
+const mockSubscribe = vi.fn((channel: string, callback: (event: ServerEvent) => void) => {
+  if (channel === NOTIFICATION_NAVIGATE_CHANNEL) {
+    notificationNavigateListener = callback
+  }
+  return () => {
+    notificationNavigateListener = null
+  }
+})
+
+function emitNotificationNavigate(data: {
+  projectId: string
+  worktreeId: string
+  sessionId: string
+}): void {
+  notificationNavigateListener?.({
+    channel: NOTIFICATION_NAVIGATE_CHANNEL,
+    payload: data
+  })
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
-  notificationNavigateCallback = null
+  notificationNavigateListener = null
+  setRendererRpcClient({
+    request: vi.fn(async (method: string) => {
+      if (method === 'db.project.touch') return true
+      if (method === 'db.worktree.touch') return undefined
+      return undefined
+    }),
+    subscribe: mockSubscribe
+  })
 
   // Reset stores
   useProjectStore.setState({
@@ -35,58 +83,11 @@ beforeEach(() => {
     modeBySession: new Map(),
     activeSessionByWorktree: {}
   })
-
-  // Mock window.db (needed by selectProject/selectWorktree which call touch)
-  Object.defineProperty(window, 'db', {
-    value: {
-      project: {
-        touch: vi.fn().mockResolvedValue(true),
-        getAll: vi.fn().mockResolvedValue([]),
-        get: vi.fn().mockResolvedValue(null),
-        getByPath: vi.fn().mockResolvedValue(null),
-        create: vi.fn(),
-        update: vi.fn(),
-        delete: vi.fn()
-      },
-      worktree: {
-        touch: vi.fn().mockResolvedValue(true),
-        getActiveByProject: vi.fn().mockResolvedValue([]),
-        get: vi.fn().mockResolvedValue(null),
-        create: vi.fn(),
-        update: vi.fn(),
-        delete: vi.fn()
-      },
-      session: {
-        get: vi.fn().mockResolvedValue(null),
-        getByWorktree: vi.fn().mockResolvedValue([]),
-        getActiveByWorktree: vi.fn().mockResolvedValue([]),
-        create: vi.fn(),
-        update: vi.fn(),
-        delete: vi.fn(),
-        search: vi.fn().mockResolvedValue([])
-      }
-    },
-    writable: true,
-    configurable: true
-  })
-
-  // Mock window.systemOps
-  Object.defineProperty(window, 'systemOps', {
-    value: {
-      getLogDir: vi.fn(),
-      getAppVersion: vi.fn(),
-      getAppPaths: vi.fn(),
-      isLogMode: vi.fn(),
-      openInApp: vi.fn(),
-      onNotificationNavigate: mockOnNotificationNavigate
-    },
-    writable: true,
-    configurable: true
-  })
 })
 
 afterEach(() => {
   cleanup()
+  resetRendererRpcClientForTests()
   vi.clearAllMocks()
 })
 
@@ -116,41 +117,41 @@ describe('Session 4: Native Notifications', () => {
 
   describe('Navigation hook', () => {
     test('onNotificationNavigate is registered on mount', async () => {
-      const { useNotificationNavigation } = await import(
-        '../../../src/renderer/src/hooks/useNotificationNavigation'
-      )
+      const { useNotificationNavigation } =
+        await import('../../../src/renderer/src/hooks/useNotificationNavigation')
 
       renderHook(() => useNotificationNavigation())
 
-      expect(mockOnNotificationNavigate).toHaveBeenCalledTimes(1)
-      expect(typeof mockOnNotificationNavigate.mock.calls[0][0]).toBe('function')
+      expect(mockSubscribe).toHaveBeenCalledTimes(1)
+      expect(mockSubscribe).toHaveBeenCalledWith(
+        NOTIFICATION_NAVIGATE_CHANNEL,
+        expect.any(Function)
+      )
     })
 
     test('onNotificationNavigate cleanup called on unmount', async () => {
-      const { useNotificationNavigation } = await import(
-        '../../../src/renderer/src/hooks/useNotificationNavigation'
-      )
+      const { useNotificationNavigation } =
+        await import('../../../src/renderer/src/hooks/useNotificationNavigation')
 
       const { unmount } = renderHook(() => useNotificationNavigation())
 
       // Callback should be registered
-      expect(notificationNavigateCallback).not.toBeNull()
+      expect(notificationNavigateListener).not.toBeNull()
 
       // Unmount should clean up
       unmount()
-      expect(notificationNavigateCallback).toBeNull()
+      expect(notificationNavigateListener).toBeNull()
     })
 
     test('Navigation hook sets correct project', async () => {
-      const { useNotificationNavigation } = await import(
-        '../../../src/renderer/src/hooks/useNotificationNavigation'
-      )
+      const { useNotificationNavigation } =
+        await import('../../../src/renderer/src/hooks/useNotificationNavigation')
 
       renderHook(() => useNotificationNavigation())
 
       // Simulate notification click
       act(() => {
-        notificationNavigateCallback?.({
+        emitNotificationNavigate({
           projectId: 'project-123',
           worktreeId: 'worktree-456',
           sessionId: 'session-789'
@@ -161,14 +162,13 @@ describe('Session 4: Native Notifications', () => {
     })
 
     test('Navigation hook sets correct worktree', async () => {
-      const { useNotificationNavigation } = await import(
-        '../../../src/renderer/src/hooks/useNotificationNavigation'
-      )
+      const { useNotificationNavigation } =
+        await import('../../../src/renderer/src/hooks/useNotificationNavigation')
 
       renderHook(() => useNotificationNavigation())
 
       act(() => {
-        notificationNavigateCallback?.({
+        emitNotificationNavigate({
           projectId: 'project-123',
           worktreeId: 'worktree-456',
           sessionId: 'session-789'
@@ -179,14 +179,13 @@ describe('Session 4: Native Notifications', () => {
     })
 
     test('Navigation hook sets correct session', async () => {
-      const { useNotificationNavigation } = await import(
-        '../../../src/renderer/src/hooks/useNotificationNavigation'
-      )
+      const { useNotificationNavigation } =
+        await import('../../../src/renderer/src/hooks/useNotificationNavigation')
 
       renderHook(() => useNotificationNavigation())
 
       act(() => {
-        notificationNavigateCallback?.({
+        emitNotificationNavigate({
           projectId: 'project-123',
           worktreeId: 'worktree-456',
           sessionId: 'session-789'
@@ -197,16 +196,15 @@ describe('Session 4: Native Notifications', () => {
     })
 
     test('Navigation handles missing session gracefully', async () => {
-      const { useNotificationNavigation } = await import(
-        '../../../src/renderer/src/hooks/useNotificationNavigation'
-      )
+      const { useNotificationNavigation } =
+        await import('../../../src/renderer/src/hooks/useNotificationNavigation')
 
       renderHook(() => useNotificationNavigation())
 
       // Navigate to non-existent IDs — should not crash
       expect(() => {
         act(() => {
-          notificationNavigateCallback?.({
+          emitNotificationNavigate({
             projectId: 'non-existent-project',
             worktreeId: 'non-existent-worktree',
             sessionId: 'non-existent-session'
@@ -219,15 +217,14 @@ describe('Session 4: Native Notifications', () => {
     })
 
     test('Multiple navigate events update correctly', async () => {
-      const { useNotificationNavigation } = await import(
-        '../../../src/renderer/src/hooks/useNotificationNavigation'
-      )
+      const { useNotificationNavigation } =
+        await import('../../../src/renderer/src/hooks/useNotificationNavigation')
 
       renderHook(() => useNotificationNavigation())
 
       // First navigation
       act(() => {
-        notificationNavigateCallback?.({
+        emitNotificationNavigate({
           projectId: 'project-1',
           worktreeId: 'worktree-1',
           sessionId: 'session-1'
@@ -238,7 +235,7 @@ describe('Session 4: Native Notifications', () => {
 
       // Second navigation
       act(() => {
-        notificationNavigateCallback?.({
+        emitNotificationNavigate({
           projectId: 'project-2',
           worktreeId: 'worktree-2',
           sessionId: 'session-2'

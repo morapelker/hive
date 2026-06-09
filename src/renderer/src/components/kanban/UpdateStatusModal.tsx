@@ -5,6 +5,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { ticketImportApi } from '@/api/ticket-import-api'
 
 interface UpdateStatusModalProps {
   open: boolean
@@ -38,7 +39,7 @@ export function UpdateStatusModal({
     if (!repo) return
 
     setLoading(true)
-    window.ticketImport
+    ticketImportApi
       .getAvailableStatuses(externalProvider, repo, externalId, getProviderSettings())
       .then(unwrapEnvelope)
       .then(setStatuses)
@@ -56,7 +57,7 @@ export function UpdateStatusModal({
     setUpdating(true)
     try {
       const result = unwrapEnvelope(
-        await window.ticketImport.updateRemoteStatus(
+        await ticketImportApi.updateRemoteStatus(
           externalProvider,
           repo,
           externalId,

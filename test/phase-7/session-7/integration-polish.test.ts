@@ -6,6 +6,38 @@ import { useScriptStore } from '../../../src/renderer/src/stores/useScriptStore'
 import { useFileViewerStore } from '../../../src/renderer/src/stores/useFileViewerStore'
 import { deleteBuffer } from '../../../src/renderer/src/lib/output-ring-buffer'
 
+vi.mock('../../../src/renderer/src/api/settings-api', () => ({
+  settingsApi: {
+    detectEditors: vi.fn(),
+    detectTerminals: vi.fn(),
+    onSettingsUpdated: vi.fn(() => vi.fn()),
+    openWithTerminal: vi.fn()
+  }
+}))
+
+vi.mock('../../../src/renderer/src/api/db-api', () => ({
+  dbApi: {
+    setting: {
+      get: vi.fn().mockResolvedValue(null),
+      set: vi.fn().mockResolvedValue(undefined)
+    }
+  }
+}))
+
+vi.mock('../../../src/renderer/src/api/pet-api', () => ({
+  petApi: {
+    updateSettings: vi.fn().mockResolvedValue({
+      success: true,
+      value: {
+        enabled: true,
+        size: 'md',
+        position: { x: 0, y: 0 },
+        hatched: true
+      }
+    })
+  }
+}))
+
 // ---------------------------------------------------------------------------
 // Session 7: Integration & Polish
 // ---------------------------------------------------------------------------
@@ -13,47 +45,6 @@ describe('Session 7: Integration & Polish', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     cleanup()
-
-    Object.defineProperty(window, 'projectOps', {
-      value: {
-        showInFolder: vi.fn(),
-        copyToClipboard: vi.fn(),
-        getAll: vi.fn().mockResolvedValue([]),
-        add: vi.fn().mockResolvedValue({ success: true }),
-        remove: vi.fn().mockResolvedValue(true)
-      },
-      writable: true,
-      configurable: true
-    })
-
-    Object.defineProperty(window, 'worktreeOps', {
-      value: {
-        openInTerminal: vi.fn().mockResolvedValue({ success: true }),
-        openInEditor: vi.fn().mockResolvedValue({ success: true }),
-        duplicate: vi.fn().mockResolvedValue({
-          success: true,
-          worktree: {
-            id: 'wt-dup',
-            name: 'feature-auth-v2',
-            branch_name: 'feature-auth-v2',
-            path: '/test/feature-auth-v2'
-          }
-        })
-      },
-      writable: true,
-      configurable: true
-    })
-
-    Object.defineProperty(window, 'scriptOps', {
-      value: {
-        onOutput: vi.fn().mockReturnValue(() => {}),
-        runProject: vi.fn().mockResolvedValue({ success: true, pid: 123 }),
-        kill: vi.fn().mockResolvedValue({ success: true }),
-        getPort: vi.fn().mockResolvedValue({ port: null })
-      },
-      writable: true,
-      configurable: true
-    })
 
     // Reset stores
     useScriptStore.setState({ scriptStates: {} })
@@ -212,7 +203,7 @@ describe('Session 7: Integration & Polish', () => {
       )
 
       // Initially has pulse
-      expect(container.querySelector('animateTransform')).toBeTruthy()
+      expect(container.querySelector('g.pulse-wave')).toBeTruthy()
 
       // Stop the run
       await act(async () => {
@@ -238,7 +229,7 @@ describe('Session 7: Integration & Polish', () => {
       )
 
       // Pulse should be gone
-      expect(container.querySelector('animateTransform')).toBeNull()
+      expect(container.querySelector('g.pulse-wave')).toBeNull()
     })
   })
 
@@ -358,10 +349,9 @@ describe('Session 7: Integration & Polish', () => {
       expect(path).toBeTruthy()
       expect(path?.getAttribute('stroke')).toBe('currentColor')
 
-      const animate = container.querySelector('animateTransform')
-      expect(animate).toBeTruthy()
-      expect(animate?.getAttribute('dur')).toBe('2s')
-      expect(animate?.getAttribute('repeatCount')).toBe('indefinite')
+      const wave = container.querySelector('g.pulse-wave')
+      expect(wave).toBeTruthy()
+      expect(container.querySelector('animateTransform')).toBeNull()
     })
   })
 

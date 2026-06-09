@@ -2,7 +2,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
-  autoRenameWorktreeBranch: vi.fn()
+  autoRenameWorktreeBranch: vi.fn(),
+  emitWorktreeBranchRenamed: vi.fn(),
+  publishDesktopBackendEvent: vi.fn()
 }))
 
 vi.mock('../logger', () => ({
@@ -11,6 +13,14 @@ vi.mock('../logger', () => ({
 
 vi.mock('../git-service', () => ({
   autoRenameWorktreeBranch: mocks.autoRenameWorktreeBranch
+}))
+
+vi.mock('../../desktop/backend-manager', () => ({
+  publishDesktopBackendEvent: mocks.publishDesktopBackendEvent
+}))
+
+vi.mock('../worktree-events', () => ({
+  emitWorktreeBranchRenamed: mocks.emitWorktreeBranchRenamed
 }))
 
 import {
@@ -146,17 +156,12 @@ describe('processClaudeCliPtyData — one-shot guard', () => {
 
 describe('applyClaudeCliTitle', () => {
   let db: any
-  let mainWindow: any
-  let webContentsSend: any
 
   beforeEach(() => {
     resetAllClaudeCliTitleState()
     mocks.autoRenameWorktreeBranch.mockReset()
-    webContentsSend = vi.fn()
-    mainWindow = {
-      isDestroyed: vi.fn(() => false),
-      webContents: { send: webContentsSend }
-    }
+    mocks.emitWorktreeBranchRenamed.mockReset()
+    mocks.publishDesktopBackendEvent.mockReset()
     db = {
       getSession: vi.fn(),
       updateSession: vi.fn(),
@@ -194,23 +199,23 @@ describe('applyClaudeCliTitle', () => {
 
   it('bails when the session is missing', async () => {
     db.getSession.mockReturnValue(null)
-    await applyClaudeCliTitle({ sessionId: 'hive-1', title: 'Title', db, mainWindow })
+    await applyClaudeCliTitle({ sessionId: 'hive-1', title: 'Title', db })
     expect(db.updateSession).not.toHaveBeenCalled()
-    expect(webContentsSend).not.toHaveBeenCalled()
+    expect(mocks.publishDesktopBackendEvent).not.toHaveBeenCalled()
   })
 
   it('bails when the session is not a claude-code-cli session', async () => {
     db.getSession.mockReturnValue(makeSession({ agent_sdk: 'codex' }))
-    await applyClaudeCliTitle({ sessionId: 'hive-1', title: 'Title', db, mainWindow })
+    await applyClaudeCliTitle({ sessionId: 'hive-1', title: 'Title', db })
     expect(db.updateSession).not.toHaveBeenCalled()
   })
 
   it('updates the session name and emits opencode:stream session.updated', async () => {
     db.getSession.mockReturnValue(makeSession())
     db.getWorktreeBySessionId.mockReturnValue(null)
-    await applyClaudeCliTitle({ sessionId: 'hive-1', title: 'New title', db, mainWindow })
+    await applyClaudeCliTitle({ sessionId: 'hive-1', title: 'New title', db })
     expect(db.updateSession).toHaveBeenCalledWith('hive-1', { name: 'New title' })
-    expect(webContentsSend).toHaveBeenCalledWith('opencode:stream', {
+    expect(mocks.publishDesktopBackendEvent).toHaveBeenCalledWith('opencode:stream', {
       type: 'session.updated',
       sessionId: 'hive-1',
       data: { title: 'New title', info: { title: 'New title' } }
@@ -222,7 +227,7 @@ describe('applyClaudeCliTitle', () => {
     db.getWorktreeBySessionId.mockReturnValue(makeWorktree())
     mocks.autoRenameWorktreeBranch.mockResolvedValue({ renamed: true, newBranch: 'new-title' })
 
-    await applyClaudeCliTitle({ sessionId: 'hive-1', title: 'New title', db, mainWindow })
+    await applyClaudeCliTitle({ sessionId: 'hive-1', title: 'New title', db })
 
     expect(mocks.autoRenameWorktreeBranch).toHaveBeenCalledWith({
       worktreeId: 'wt-1',
@@ -231,7 +236,7 @@ describe('applyClaudeCliTitle', () => {
       sessionTitle: 'New title',
       db
     })
-    expect(webContentsSend).toHaveBeenCalledWith('worktree:branchRenamed', {
+    expect(mocks.emitWorktreeBranchRenamed).toHaveBeenCalledWith({
       worktreeId: 'wt-1',
       newBranch: 'new-title'
     })
@@ -240,7 +245,7 @@ describe('applyClaudeCliTitle', () => {
   it('skips branch rename when branch_renamed=1', async () => {
     db.getSession.mockReturnValue(makeSession())
     db.getWorktreeBySessionId.mockReturnValue(makeWorktree({ branch_renamed: 1 }))
-    await applyClaudeCliTitle({ sessionId: 'hive-1', title: 'New title', db, mainWindow })
+    await applyClaudeCliTitle({ sessionId: 'hive-1', title: 'New title', db })
     expect(mocks.autoRenameWorktreeBranch).not.toHaveBeenCalled()
   })
 
@@ -262,7 +267,7 @@ describe('applyClaudeCliTitle', () => {
     })
     mocks.autoRenameWorktreeBranch.mockResolvedValue({ renamed: true, newBranch: 'new-title' })
 
-    await applyClaudeCliTitle({ sessionId: 'hive-1', title: 'New title', db, mainWindow })
+    await applyClaudeCliTitle({ sessionId: 'hive-1', title: 'New title', db })
 
     const calls = mocks.autoRenameWorktreeBranch.mock.calls
     const worktreeIds = calls.map((c) => c[0].worktreeId)
@@ -275,7 +280,7 @@ describe('applyClaudeCliTitle', () => {
     mocks.autoRenameWorktreeBranch.mockRejectedValue(new Error('git boom'))
 
     await expect(
-      applyClaudeCliTitle({ sessionId: 'hive-1', title: 'New title', db, mainWindow })
+      applyClaudeCliTitle({ sessionId: 'hive-1', title: 'New title', db })
     ).resolves.toBeUndefined()
     expect(db.updateWorktree).toHaveBeenCalledWith('wt-1', { branch_renamed: 1 })
   })

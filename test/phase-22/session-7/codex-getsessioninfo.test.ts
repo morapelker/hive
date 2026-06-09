@@ -1,6 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
+const eventBusMocks = vi.hoisted(() => ({
+  publish: vi.fn()
+}))
+
 // Mock logger
 vi.mock('../../../src/main/services/logger', () => ({
   createLogger: () => ({
@@ -9,6 +13,26 @@ vi.mock('../../../src/main/services/logger', () => ({
     error: vi.fn(),
     debug: vi.fn()
   })
+}))
+
+vi.mock('../../../src/main/services/agent-event-bus', () => ({
+  agentEventBus: eventBusMocks
+}))
+
+vi.mock('../../../src/main/services/notification-service', () => ({
+  notificationService: { shouldNotifyWhenWindowUnfocused: vi.fn(() => false) }
+}))
+
+vi.mock('../../../src/main/services/codex-session-title', () => ({
+  generateCodexSessionTitle: vi.fn()
+}))
+
+vi.mock('../../../src/main/services/git-service', () => ({
+  autoRenameWorktreeBranch: vi.fn()
+}))
+
+vi.mock('../../../src/main/services/worktree-events', () => ({
+  emitWorktreeBranchRenamed: vi.fn()
 }))
 
 // Mock child_process
@@ -96,11 +120,6 @@ describe('Codex getSessionInfo & renameSession', () => {
       )
       const impl = new CodexImplementer()
       const internalManager = impl.getManager() as any
-      const mockWindow = {
-        isDestroyed: () => false,
-        webContents: { send: vi.fn() }
-      }
-      impl.setMainWindow(mockWindow as any)
 
       impl.getSessions().set('/test::thread-1', {
         threadId: 'thread-1',

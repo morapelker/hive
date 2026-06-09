@@ -316,30 +316,28 @@ If `libghostty` is not available, Hive still builds and runs -- the Ghostty term
 
 ### Architecture
 
-Hive uses Electron's three-process model with strict sandboxing:
+Hive starts a local Effect backend on a free localhost port, then points the
+desktop renderer at that server. Core application operations use HTTP/RPC and
+WebSocket events; Electron IPC is reserved for desktop shell integration only.
+The backend entrypoints, RPC router, and WebSocket event plumbing live under
+`src/server/`.
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│                    Main Process                      │
-│               (Node.js + SQLite)                     │
+│                 Effect Backend Server                │
+│         localhost:{freePort} + Node.js + SQLite      │
 │                                                      │
-│  ┌──────────┐ ┌──────────┐ ┌───────────────────┐   │
-│  │ Database  │ │   Git    │ │  Agent SDK Mgr    │   │
-│  │ Service   │ │ Service  │ │  (AI Sessions)    │   │
-│  └──────────┘ └──────────┘ └───────────────────┘   │
+│  ┌──────────┐ ┌──────────┐ ┌───────────────────┐    │
+│  │ Database │ │   Git    │ │  Agent SDK Mgr    │    │
+│  │ Service  │ │ Service  │ │  (AI Sessions)    │    │
+│  └──────────┘ └──────────┘ └───────────────────┘    │
 │                      │                               │
 │              ┌───────┴───────┐                       │
-│              │  IPC Handlers │                       │
+│              │  RPC Domains  │                       │
+│              │ + Event Bus   │                       │
 │              └───────┬───────┘                       │
 └──────────────────────┼──────────────────────────────┘
-                       │ Typed IPC
-┌──────────────────────┼──────────────────────────────┐
-│              ┌───────┴───────┐                       │
-│              │    Preload    │                       │
-│              │   (Bridge)    │                       │
-│              └───────┬───────┘                       │
-└──────────────────────┼──────────────────────────────┘
-                       │ window.* APIs
+                       │ HTTP/RPC + WebSocket
 ┌──────────────────────┼──────────────────────────────┐
 │                 Renderer Process                     │
 │              (React + Tailwind)                      │
@@ -349,18 +347,27 @@ Hive uses Electron's three-process model with strict sandboxing:
 │  │ Stores    │ │ ui       │ │  (14 domains)     │   │
 │  └──────────┘ └──────────┘ └───────────────────┘   │
 └─────────────────────────────────────────────────────┘
+                       │ desktopBridge only
+┌──────────────────────┼──────────────────────────────┐
+│              Electron Desktop Shell                  │
+│      BrowserWindow, menus, dialogs, notifications    │
+└─────────────────────────────────────────────────────┘
 ```
 
 ### Project Structure
 
 ```
 src/
-├── main/                  # Electron main process (Node.js)
+├── main/                  # Electron desktop shell and shared services
 │   ├── db/                # SQLite database + schema + migrations
-│   ├── ipc/               # IPC handler modules
+│   ├── desktop/           # BrowserWindow and desktop bridge handlers
 │   └── services/          # Git, AI agents, logger, file services
-├── preload/               # Bridge layer (typed window.* APIs)
+├── server/                # Effect HTTP/RPC server and WebSocket events
+│   ├── events/            # Backend event bus
+│   └── rpc/               # Typed RPC router and domain handlers
+├── preload/               # Minimal desktopBridge exposure
 └── renderer/src/          # React SPA
+    ├── api/               # HTTP/RPC client modules
     ├── components/        # UI organized by domain
     ├── hooks/             # Custom React hooks
     ├── lib/               # Utilities, themes, helpers

@@ -5,6 +5,38 @@ import React from 'react'
 import { useScriptStore } from '../../../src/renderer/src/stores/useScriptStore'
 import { deleteBuffer } from '../../../src/renderer/src/lib/output-ring-buffer'
 
+vi.mock('../../../src/renderer/src/api/settings-api', () => ({
+  settingsApi: {
+    detectEditors: vi.fn(),
+    detectTerminals: vi.fn(),
+    onSettingsUpdated: vi.fn(() => vi.fn()),
+    openWithTerminal: vi.fn()
+  }
+}))
+
+vi.mock('../../../src/renderer/src/api/db-api', () => ({
+  dbApi: {
+    setting: {
+      get: vi.fn().mockResolvedValue(null),
+      set: vi.fn().mockResolvedValue(undefined)
+    }
+  }
+}))
+
+vi.mock('../../../src/renderer/src/api/pet-api', () => ({
+  petApi: {
+    updateSettings: vi.fn().mockResolvedValue({
+      success: true,
+      value: {
+        enabled: true,
+        size: 'md',
+        position: { x: 0, y: 0 },
+        hatched: true
+      }
+    })
+  }
+}))
+
 // ---------------------------------------------------------------------------
 // PulseAnimation tests
 // ---------------------------------------------------------------------------
@@ -54,28 +86,7 @@ describe('Session 1: Quick Wins', () => {
   // Clear Button tests
   // ---------------------------------------------------------------------------
   describe('Clear Button', () => {
-    // Mock window APIs needed by RunTab
     beforeEach(() => {
-      Object.defineProperty(window, 'scriptOps', {
-        value: {
-          onOutput: vi.fn().mockReturnValue(() => {}),
-          runProject: vi.fn().mockResolvedValue({ success: true, pid: 123 }),
-          kill: vi.fn().mockResolvedValue({ success: true }),
-          getPort: vi.fn().mockResolvedValue({ port: null })
-        },
-        writable: true,
-        configurable: true
-      })
-
-      Object.defineProperty(window, 'projectOps', {
-        value: {
-          showInFolder: vi.fn(),
-          copyToClipboard: vi.fn()
-        },
-        writable: true,
-        configurable: true
-      })
-
       // Reset script store
       useScriptStore.setState({ scriptStates: {} })
       deleteBuffer('wt-1')
@@ -174,25 +185,6 @@ describe('Session 1: Quick Wins', () => {
     }
 
     beforeEach(() => {
-      // Mock window APIs needed by WorktreeItem
-      Object.defineProperty(window, 'worktreeOps', {
-        value: {
-          openInTerminal: vi.fn().mockResolvedValue({ success: true }),
-          openInEditor: vi.fn().mockResolvedValue({ success: true })
-        },
-        writable: true,
-        configurable: true
-      })
-
-      Object.defineProperty(window, 'projectOps', {
-        value: {
-          showInFolder: vi.fn(),
-          copyToClipboard: vi.fn()
-        },
-        writable: true,
-        configurable: true
-      })
-
       useScriptStore.setState({ scriptStates: {} })
     })
 

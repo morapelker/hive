@@ -4,7 +4,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
 import { AttachmentButton } from '@/components/sessions/AttachmentButton'
 import { AttachmentPreview } from '@/components/sessions/AttachmentPreview'
-import type { Attachment } from '@/components/sessions/AttachmentPreview'
+import type { Attachment, AttachmentInput } from '@/components/sessions/AttachmentPreview'
 import { cn } from '@/lib/utils'
 import { MAX_ATTACHMENTS } from '@/lib/file-attachment-utils'
 import { toast } from '@/lib/toast'
@@ -16,7 +16,7 @@ interface FollowupInputProps {
   text: string
   onTextChange: (text: string) => void
   attachments: Attachment[]
-  onAttach: (file: Omit<Attachment, 'id'>) => void
+  onAttach: (file: AttachmentInput) => void
   onRemoveAttachment: (id: string) => void
   followUpMode: FollowUpMode
   onToggleMode: () => void
@@ -87,7 +87,7 @@ export function FollowupInput({
   )
 
   const handleAttachWithLimit = useCallback(
-    (file: Omit<Attachment, 'id'>) => {
+    (file: AttachmentInput) => {
       if (attachments.length >= MAX_ATTACHMENTS) {
         toast.warning(`Maximum ${MAX_ATTACHMENTS} attachments reached`)
         return
@@ -98,7 +98,8 @@ export function FollowupInput({
   )
 
   const ModeIcon = followUpMode === 'build' ? Hammer : followUpMode === 'plan' ? Map : Sparkles
-  const modeLabel = followUpMode === 'build' ? 'Build' : followUpMode === 'plan' ? 'Plan' : 'Super Plan'
+  const modeLabel =
+    followUpMode === 'build' ? 'Build' : followUpMode === 'plan' ? 'Plan' : 'Super Plan'
 
   return (
     <div className="space-y-1.5 flex-shrink-0">
@@ -148,10 +149,7 @@ export function FollowupInput({
           />
           {/* Paperclip button positioned inside the textarea area */}
           <div className="absolute right-1 bottom-1">
-            <AttachmentButton
-              onAttach={handleAttachWithLimit}
-              disabled={isSending}
-            />
+            <AttachmentButton onAttach={handleAttachWithLimit} disabled={isSending} />
           </div>
         </div>
         {showInlineSendButton && (

@@ -1,24 +1,30 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { KanbanTicket } from '../../src/main/db/types'
+
+const apiMocks = vi.hoisted(() => ({
+  kanbanApi: {
+    ticket: {
+      getBySession: vi.fn(),
+      update: vi.fn()
+    }
+  },
+  settingsApi: {
+    onSettingsUpdated: vi.fn(() => vi.fn())
+  }
+}))
+
+vi.mock('@/api/kanban-api', () => ({
+  kanbanApi: apiMocks.kanbanApi
+}))
+
+vi.mock('@/api/settings-api', () => ({
+  settingsApi: apiMocks.settingsApi
+}))
+
+import { kanbanApi } from '@/api/kanban-api'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 
-const getBySession = vi.fn()
-const updateTicket = vi.fn()
-
-Object.defineProperty(window, 'kanban', {
-  writable: true,
-  configurable: true,
-  value: {
-    ticket: {
-      getBySession,
-      update: updateTicket
-    }
-  }
-})
-
-function makeEnvelope<T>(value: T): { success: true; value: T } {
-  return { success: true, value }
-}
+const mockKanbanTicketApi = vi.mocked(kanbanApi.ticket)
 
 function makeTicket(overrides: Partial<KanbanTicket> = {}): KanbanTicket {
   return {
@@ -58,7 +64,7 @@ describe('relinkTicketsForHandoff goal mode', () => {
       tickets: new Map(),
       boardTelegramTarget: null
     })
-    updateTicket.mockResolvedValue(makeEnvelope(undefined))
+    mockKanbanTicketApi.update.mockResolvedValue(null)
   })
 
   test('writes goal mode true and keeps existing criteria when requested', async () => {
@@ -69,11 +75,11 @@ describe('relinkTicketsForHandoff goal mode', () => {
     useKanbanStore.setState({
       tickets: new Map([['proj-1', [ticket]]])
     })
-    getBySession.mockResolvedValue(makeEnvelope([ticket]))
+    mockKanbanTicketApi.getBySession.mockResolvedValue([ticket])
 
     await useKanbanStore.getState().relinkTicketsForHandoff('session-old', 'session-new', true)
 
-    expect(updateTicket).toHaveBeenCalledWith('ticket-1', {
+    expect(mockKanbanTicketApi.update).toHaveBeenCalledWith('ticket-1', {
       current_session_id: 'session-new',
       plan_ready: false,
       mode: 'build',
@@ -97,11 +103,11 @@ describe('relinkTicketsForHandoff goal mode', () => {
     useKanbanStore.setState({
       tickets: new Map([['proj-1', [ticket]]])
     })
-    getBySession.mockResolvedValue(makeEnvelope([ticket]))
+    mockKanbanTicketApi.getBySession.mockResolvedValue([ticket])
 
     await useKanbanStore.getState().relinkTicketsForHandoff('session-old', 'session-new')
 
-    expect(updateTicket).toHaveBeenCalledWith('ticket-1', {
+    expect(mockKanbanTicketApi.update).toHaveBeenCalledWith('ticket-1', {
       current_session_id: 'session-new',
       plan_ready: false,
       mode: 'build',

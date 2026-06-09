@@ -1,121 +1,156 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest'
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
 
-// ── Mock window APIs BEFORE importing stores ────────────────────────
-const mockKanban = {
-  ticket: {
-    create: vi.fn(),
-    get: vi.fn(),
-    getByProject: vi.fn().mockResolvedValue([]),
-    update: vi.fn().mockResolvedValue(undefined),
-    delete: vi.fn().mockResolvedValue(undefined),
-    move: vi.fn().mockResolvedValue(undefined),
-    reorder: vi.fn(),
-    getBySession: vi.fn()
+const apiMocks = vi.hoisted(() => ({
+  connectionApi: {
+    get: vi.fn().mockResolvedValue({
+      success: true,
+      connection: {
+        id: 'conn-1',
+        path: '/test/conn-1',
+        members: [{ project_id: 'proj-1', worktree_id: 'wt-1' }]
+      }
+    }),
+    getAll: vi.fn().mockResolvedValue({ success: true, connections: [] })
   },
-  simpleMode: { toggle: vi.fn() }
-}
-
-const mockDbSession = {
-  create: vi.fn().mockResolvedValue({
-    id: 'new-session-1',
-    worktree_id: 'wt-1',
-    project_id: 'proj-1',
-    connection_id: null,
-    name: 'Session 1',
-    status: 'active',
-    opencode_session_id: null,
-    agent_sdk: 'claude-code',
-    mode: 'plan',
-    model_provider_id: null,
-    model_id: null,
-    model_variant: null,
-    created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
-    completed_at: null
-  }),
-  getActiveByWorktree: vi.fn().mockResolvedValue([]),
-  update: vi.fn().mockResolvedValue(undefined),
-  get: vi.fn().mockResolvedValue(null)
-}
-
-const mockDbWorktree = {
-  getActiveByProject: vi.fn().mockResolvedValue([]),
-  update: vi.fn().mockResolvedValue(undefined),
-  get: vi.fn().mockResolvedValue(null)
-}
-
-const mockOpencodeOps = {
-  connect: vi.fn().mockResolvedValue({ success: true, sessionId: 'opc-session-1' }),
-  prompt: vi.fn().mockResolvedValue({ success: true }),
-  reconnect: vi.fn().mockResolvedValue({ success: true }),
-  getMessages: vi.fn().mockResolvedValue({ success: true, messages: [] }),
-  planApprove: vi.fn().mockResolvedValue({ success: true }),
-  abort: vi.fn().mockResolvedValue({ success: true }),
-  commands: vi.fn().mockResolvedValue({
-    success: true,
-    commands: [{ name: 'using-superpowers' }]
-  })
-}
-
-const mockWorktreeOps = {
-  create: vi.fn().mockResolvedValue({ success: true }),
-  duplicate: vi.fn().mockResolvedValue({ success: true })
-}
-
-const mockGitOps = {
-  listBranchesWithStatus: vi.fn().mockResolvedValue({ success: true, branches: [] })
-}
-
-const mockConnectionOps = {
-  get: vi.fn().mockResolvedValue({
-    success: true,
-    connection: {
-      id: 'conn-1',
-      path: '/test/conn-1',
-      members: [{ project_id: 'proj-1', worktree_id: 'wt-1' }]
+  kanbanApi: {
+    ticket: {
+      create: vi.fn(),
+      getByProject: vi.fn().mockResolvedValue([]),
+      update: vi.fn().mockResolvedValue(undefined),
+      delete: vi.fn().mockResolvedValue(undefined),
+      move: vi.fn().mockResolvedValue(undefined),
+      reorder: vi.fn(),
+      getBySession: vi.fn(),
+      addTokens: vi.fn()
+    },
+    dependency: {
+      removeAll: vi.fn(),
+      getForProject: vi.fn().mockResolvedValue([]),
+      add: vi.fn(),
+      remove: vi.fn()
+    },
+    simpleMode: { toggle: vi.fn() }
+  },
+  dbApi: {
+    session: {
+      create: vi.fn().mockResolvedValue({
+        id: 'new-session-1',
+        worktree_id: 'wt-1',
+        project_id: 'proj-1',
+        connection_id: null,
+        name: 'Session 1',
+        status: 'active',
+        opencode_session_id: null,
+        agent_sdk: 'claude-code',
+        mode: 'plan',
+        model_provider_id: null,
+        model_id: null,
+        model_variant: null,
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-01T00:00:00Z',
+        completed_at: null
+      }),
+      getActiveByWorktree: vi.fn().mockResolvedValue([]),
+      getActiveByConnection: vi.fn().mockResolvedValue([]),
+      update: vi.fn().mockResolvedValue(undefined),
+      get: vi.fn().mockResolvedValue(null)
+    },
+    worktree: {
+      getActiveByProject: vi.fn().mockResolvedValue([]),
+      update: vi.fn().mockResolvedValue(undefined),
+      touch: vi.fn().mockResolvedValue(undefined),
+      get: vi.fn().mockResolvedValue(null)
+    },
+    project: {
+      touch: vi.fn().mockResolvedValue(true),
+      getAll: vi.fn().mockResolvedValue([])
+    },
+    setting: {
+      get: vi.fn().mockResolvedValue(null),
+      set: vi.fn().mockResolvedValue(true),
+      getAll: vi.fn().mockResolvedValue([])
     }
-  })
-}
-
-Object.defineProperty(window, 'connectionOps', {
-  writable: true,
-  configurable: true,
-  value: mockConnectionOps
-})
-
-Object.defineProperty(window, 'kanban', {
-  writable: true,
-  configurable: true,
-  value: mockKanban
-})
-
-Object.defineProperty(window, 'db', {
-  writable: true,
-  configurable: true,
-  value: {
-    session: mockDbSession,
-    worktree: mockDbWorktree
+  },
+  opencodeApi: {
+    connect: vi.fn().mockResolvedValue({ success: true, sessionId: 'opc-session-1' }),
+    prompt: vi.fn().mockResolvedValue({ success: true }),
+    reconnect: vi.fn().mockResolvedValue({ success: true }),
+    getMessages: vi.fn().mockResolvedValue({ success: true, messages: [] }),
+    listModels: vi.fn().mockResolvedValue({ success: true, providers: [] }),
+    planApprove: vi.fn().mockResolvedValue({ success: true }),
+    abort: vi.fn().mockResolvedValue({ success: true }),
+    commands: vi.fn().mockResolvedValue({
+      success: true,
+      commands: [{ name: 'using-superpowers' }]
+    }),
+    onStream: vi.fn(() => vi.fn())
+  },
+  worktreeApi: {
+    create: vi.fn().mockResolvedValue({ success: true }),
+    duplicate: vi.fn().mockResolvedValue({ success: true }),
+    onBranchRenamed: vi.fn(() => vi.fn())
+  },
+  gitApi: {
+    listBranchesWithStatus: vi.fn().mockResolvedValue({ success: true, branches: [] }),
+    onStatusChanged: vi.fn(() => vi.fn()),
+    onBranchChanged: vi.fn(() => vi.fn())
+  },
+  settingsApi: {
+    onSettingsUpdated: vi.fn(() => vi.fn())
+  },
+  systemApi: {
+    detectAgentSdks: vi.fn().mockResolvedValue({ opencode: true, claude: true, codex: true }),
+    setSessionQueuedState: vi.fn().mockResolvedValue(undefined)
+  },
+  petApi: {
+    updateSettings: vi.fn().mockResolvedValue(undefined),
+    show: vi.fn().mockResolvedValue(undefined),
+    hide: vi.fn().mockResolvedValue(undefined)
+  },
+  telegramApi: {
+    getConfig: vi.fn().mockResolvedValue(null),
+    getStatus: vi.fn().mockResolvedValue({ active: false }),
+    onStatusChanged: vi.fn(() => vi.fn()),
+    onMessageReceived: vi.fn(() => vi.fn()),
+    onPlanImplementRequested: vi.fn(() => vi.fn())
+  },
+  updaterApi: {
+    onUpdateStatus: vi.fn(() => vi.fn())
+  },
+  fileApi: {
+    selectAttachmentFiles: vi.fn().mockResolvedValue([])
+  },
+  terminalApi: {
+    create: vi.fn(),
+    createClaudeCli: vi.fn()
+  },
+  scriptApi: {
+    onOutput: vi.fn(() => vi.fn()),
+    runSetup: vi.fn().mockResolvedValue({ success: true })
   }
-})
+}))
 
-Object.defineProperty(window, 'opencodeOps', {
-  writable: true,
-  configurable: true,
-  value: mockOpencodeOps
-})
+vi.mock('@/api/connection-api', () => ({ connectionApi: apiMocks.connectionApi }))
+vi.mock('@/api/kanban-api', () => ({ kanbanApi: apiMocks.kanbanApi }))
+vi.mock('@/api/db-api', () => ({ dbApi: apiMocks.dbApi }))
+vi.mock('@/api/opencode-api', () => ({ opencodeApi: apiMocks.opencodeApi }))
+vi.mock('@/api/worktree-api', () => ({ worktreeApi: apiMocks.worktreeApi }))
+vi.mock('@/api/git-api', () => ({ gitApi: apiMocks.gitApi }))
+vi.mock('@/api/settings-api', () => ({ settingsApi: apiMocks.settingsApi }))
+vi.mock('@/api/system-api', () => ({ systemApi: apiMocks.systemApi }))
+vi.mock('@/api/pet-api', () => ({ petApi: apiMocks.petApi }))
+vi.mock('@/api/telegram-api', () => ({ telegramApi: apiMocks.telegramApi }))
+vi.mock('@/api/updater-api', () => ({ updaterApi: apiMocks.updaterApi }))
+vi.mock('@/api/file-api', () => ({ fileApi: apiMocks.fileApi }))
+vi.mock('@/api/terminal-api', () => ({ terminalApi: apiMocks.terminalApi }))
+vi.mock('@/api/script-api', () => ({ scriptApi: apiMocks.scriptApi }))
 
-Object.defineProperty(window, 'worktreeOps', {
-  writable: true,
-  configurable: true,
-  value: mockWorktreeOps
-})
-
-Object.defineProperty(window, 'gitOps', {
-  writable: true,
-  configurable: true,
-  value: mockGitOps
-})
+const mockKanban = apiMocks.kanbanApi
+const mockDbSession = apiMocks.dbApi.session
+const mockOpencodeOps = apiMocks.opencodeApi
+const mockWorktreeOps = apiMocks.worktreeApi
+const mockConnectionOps = apiMocks.connectionApi
 
 // ── Mock toast ──────────────────────────────────────────────────────
 vi.mock('@/lib/toast', () => ({
@@ -304,8 +339,58 @@ describe('Plan review followup dispatch', () => {
       useProjectStore.setState({
         projects: [makeProject()]
       })
+      useSettingsStore.setState({
+        availableAgentSdks: null,
+        defaultAgentSdk: 'opencode',
+        defaultModels: null,
+        lastHandoffOverride: null
+      })
     })
     vi.clearAllMocks()
+    mockOpencodeOps.connect.mockResolvedValue({ success: true, sessionId: 'opc-session-1' })
+    mockOpencodeOps.prompt.mockResolvedValue({ success: true })
+    mockOpencodeOps.reconnect.mockResolvedValue({ success: true })
+    mockOpencodeOps.getMessages.mockResolvedValue({ success: true, messages: [] })
+    mockOpencodeOps.listModels.mockResolvedValue({ success: true, providers: [] })
+    mockOpencodeOps.planApprove.mockResolvedValue({ success: true })
+    mockOpencodeOps.abort.mockResolvedValue({ success: true })
+    mockOpencodeOps.commands.mockResolvedValue({
+      success: true,
+      commands: [{ name: 'using-superpowers' }]
+    })
+    mockWorktreeOps.create.mockResolvedValue({ success: true })
+    mockWorktreeOps.duplicate.mockResolvedValue({ success: true })
+    mockConnectionOps.get.mockResolvedValue({
+      success: true,
+      connection: {
+        id: 'conn-1',
+        path: '/test/conn-1',
+        members: [{ project_id: 'proj-1', worktree_id: 'wt-1' }]
+      }
+    })
+    mockDbSession.create.mockResolvedValue({
+      id: 'new-session-1',
+      worktree_id: 'wt-1',
+      project_id: 'proj-1',
+      connection_id: null,
+      name: 'Session 1',
+      status: 'active',
+      opencode_session_id: null,
+      agent_sdk: 'claude-code',
+      mode: 'plan',
+      model_provider_id: null,
+      model_id: null,
+      model_variant: null,
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-01T00:00:00Z',
+      completed_at: null
+    })
+    mockDbSession.getActiveByWorktree.mockResolvedValue([])
+    mockDbSession.getActiveByConnection.mockResolvedValue([])
+    mockDbSession.update.mockResolvedValue(undefined)
+    mockDbSession.get.mockResolvedValue(null)
+    mockKanban.ticket.update.mockResolvedValue(undefined)
+    mockKanban.ticket.move.mockResolvedValue(undefined)
     mockKanban.ticket.getBySession.mockImplementation(async (sessionId: string) => {
       const tickets = [...useKanbanStore.getState().tickets.values()].flat()
       return tickets.filter((ticket) => ticket.current_session_id === sessionId)

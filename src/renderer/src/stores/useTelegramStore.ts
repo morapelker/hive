@@ -6,9 +6,10 @@ import type {
   TelegramForwardingStatus,
   TelegramMode
 } from '@shared/types/telegram'
-import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
-
-const db = unwrapEnvelopeApi(() => window.db)
+import { dbApi } from '@/api/db-api'
+import { opencodeApi } from '@/api/opencode-api'
+import { connectionApi } from '@/api/connection-api'
+import { telegramApi } from '@/api/telegram-api'
 
 interface TelegramStore {
   connectionStatus: TelegramConnectionStatus
@@ -24,6 +25,11 @@ interface TelegramStore {
   refreshStatus: () => Promise<void>
   setDiscoveredChats: (chats: TelegramDiscoveredChat[]) => void
   setRefreshing: (refreshing: boolean) => void
+}
+
+type TelegramHandoffSession = {
+  project_id: string | null
+  opencode_session_id: string | null
 }
 
 export const useTelegramStore = create<TelegramStore>((set) => ({
@@ -51,7 +57,7 @@ export const useTelegramStore = create<TelegramStore>((set) => ({
 
   refreshStatus: async () => {
     try {
-      const status = unwrapEnvelope(await window.telegramOps.getStatus())
+      const status = await telegramApi.getStatus()
       useTelegramStore.getState().setStatus(status)
     } catch (error) {
       set({
@@ -65,7 +71,7 @@ export const useTelegramStore = create<TelegramStore>((set) => ({
   setRefreshing: (refreshing) => set({ refreshing })
 }))
 
-if (typeof window !== 'undefined' && window.telegramOps) {
+if (typeof window !== 'undefined') {
   setTimeout(() => {
     useTelegramStore
       .getState()
@@ -73,7 +79,7 @@ if (typeof window !== 'undefined' && window.telegramOps) {
       .catch(() => {})
   }, 200)
 
-  window.telegramOps.onStatusChanged((status) => {
+  telegramApi.onStatusChanged((status) => {
     const previous = useTelegramStore.getState()
     useTelegramStore.getState().setStatus(status)
     if (status.health === 'error' && previous.health !== 'error' && status.lastError) {
@@ -81,7 +87,7 @@ if (typeof window !== 'undefined' && window.telegramOps) {
     }
   })
 
-  window.telegramOps.onPlanImplementRequested((payload) => {
+  telegramApi.onPlanImplementRequested((payload) => {
     void (async () => {
       try {
         const [
@@ -95,16 +101,14 @@ if (typeof window !== 'undefined' && window.telegramOps) {
           import('./useKanbanStore'),
           import('@/lib/backgroundSessionStart')
         ])
-        const session = await db.session.get(payload.sessionId)
+        const session = await dbApi.session.get<TelegramHandoffSession>(payload.sessionId)
         if (!session) {
           toast.error('Could not start Telegram plan handoff')
           return
         }
 
         if (payload.connectionId) {
-          const connectionResult = unwrapEnvelope(
-            await window.connectionOps.get(payload.connectionId)
-          )
+          const connectionResult = await connectionApi.get(payload.connectionId)
           const connection = connectionResult.connection
           if (!connectionResult.success || !connection?.path) {
             toast.error('Could not start Telegram plan handoff')
@@ -113,9 +117,7 @@ if (typeof window !== 'undefined' && window.telegramOps) {
           const sessionStore = useSessionStore.getState()
           sessionStore.setActiveConnection(payload.connectionId)
           if (session.opencode_session_id) {
-            await window.opencodeOps
-              .abort(connection.path, session.opencode_session_id)
-              .catch(() => {})
+            await opencodeApi.abort(connection.path, session.opencode_session_id).catch(() => {})
           }
           const selection = getEffectiveHandoffSelection({})
           const result = await sessionStore.createConnectionSession(
@@ -137,14 +139,12 @@ if (typeof window !== 'undefined' && window.telegramOps) {
             .relinkTicketsForHandoff(payload.sessionId, result.session.id)
             .catch(() => {})
           const mode = useTelegramStore.getState().activeForwardingMode ?? 'questions'
-          const forwarding = unwrapEnvelope(
-            await window.telegramOps.startForwarding({
-              sessionId: result.session.id,
-              worktreeId: null,
-              connectionId: payload.connectionId,
-              mode
-            })
-          )
+          const forwarding = await telegramApi.startForwarding({
+            sessionId: result.session.id,
+            worktreeId: null,
+            connectionId: payload.connectionId,
+            mode
+          })
           const forwardingMoved = forwarding.ok
           if (forwarding.ok) {
             useTelegramStore.getState().setStatus(forwarding.status)
@@ -171,14 +171,14 @@ if (typeof window !== 'undefined' && window.telegramOps) {
           toast.error('Could not start Telegram plan handoff')
           return
         }
-        const worktree = await db.worktree.get(payload.worktreeId)
+        const worktree = await dbApi.worktree.get(payload.worktreeId)
         if (!worktree?.path) {
           toast.error('Could not start Telegram plan handoff')
           return
         }
         useSessionStore.getState().setActiveWorktree(payload.worktreeId)
         if (session.opencode_session_id) {
-          await window.opencodeOps.abort(worktree.path, session.opencode_session_id).catch(() => {})
+          await opencodeApi.abort(worktree.path, session.opencode_session_id).catch(() => {})
         }
         const selection = getEffectiveHandoffSelection({ worktreeId: payload.worktreeId })
         const result = await useSessionStore
@@ -197,14 +197,12 @@ if (typeof window !== 'undefined' && window.telegramOps) {
           .relinkTicketsForHandoff(payload.sessionId, result.session.id)
           .catch(() => {})
         const mode = useTelegramStore.getState().activeForwardingMode ?? 'questions'
-        const forwarding = unwrapEnvelope(
-          await window.telegramOps.startForwarding({
-            sessionId: result.session.id,
-            worktreeId: payload.worktreeId,
-            connectionId: null,
-            mode
-          })
-        )
+        const forwarding = await telegramApi.startForwarding({
+          sessionId: result.session.id,
+          worktreeId: payload.worktreeId,
+          connectionId: null,
+          mode
+        })
         const forwardingMoved = forwarding.ok
         if (forwarding.ok) {
           useTelegramStore.getState().setStatus(forwarding.status)

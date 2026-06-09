@@ -1,9 +1,10 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import userEvent from '@testing-library/user-event'
 import { fireEvent, render, screen, waitFor } from '../utils/render'
 import { KanbanTicketCard } from '@/components/kanban/KanbanTicketCard'
 import { KanbanTicketModal } from '@/components/kanban/KanbanTicketModal'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { resetRendererRpcClientForTests, setRendererRpcClient } from '@/api/rpc-client'
 import { useConflictFixFlow } from '@/hooks/useConflictFixFlow'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useGitStore } from '@/stores/useGitStore'
@@ -17,6 +18,48 @@ import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import type { KanbanTicket } from '../../src/main/db/types'
+
+vi.mock('@/api/settings-api', () => ({
+  settingsApi: {
+    onSettingsUpdated: vi.fn(() => vi.fn())
+  }
+}))
+
+vi.mock('@/api/pet-api', () => ({
+  petApi: {
+    updateSettings: vi.fn().mockResolvedValue(undefined)
+  }
+}))
+
+vi.mock('@/api/telegram-api', () => ({
+  telegramApi: {
+    getConfig: vi.fn().mockResolvedValue(null),
+    getStatus: vi.fn().mockResolvedValue({
+      active: false,
+      sessionId: null,
+      worktreeId: null,
+      connectionId: null,
+      mode: null,
+      health: 'ok',
+      lastError: null
+    }),
+    startForwarding: vi.fn().mockResolvedValue({
+      ok: true,
+      status: {
+        active: false,
+        sessionId: null,
+        worktreeId: null,
+        connectionId: null,
+        mode: null,
+        health: 'ok',
+        lastError: null
+      }
+    }),
+    onStatusChanged: vi.fn(() => vi.fn()),
+    onMessageReceived: vi.fn(() => vi.fn()),
+    onPlanImplementRequested: vi.fn(() => vi.fn())
+  }
+}))
 
 vi.mock('@/components/kanban/WorktreePickerModal', () => ({
   WorktreePickerModal: () => null
@@ -70,19 +113,7 @@ const mockSetPendingMessage = vi.fn()
 const mockSetActiveSession = vi.fn()
 const mockSetActiveWorktree = vi.fn()
 const mockRefreshStatuses = vi.fn()
-
-const mockDb = {
-  project: {
-    touch: vi.fn().mockResolvedValue(undefined)
-  },
-  worktree: {
-    touch: vi.fn().mockResolvedValue(undefined),
-    get: vi.fn().mockResolvedValue(null)
-  },
-  session: {
-    get: vi.fn().mockResolvedValue(null)
-  }
-}
+let request: ReturnType<typeof vi.fn>
 
 function makeTicket(overrides: Partial<KanbanTicket> = {}): KanbanTicket {
   return {
@@ -271,6 +302,22 @@ function ConflictFlowHarness({ worktreeId }: { worktreeId: string | null }) {
 describe('merge conflicts ticket button', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    resetRendererRpcClientForTests()
+    request = vi.fn(async (method: string) => {
+      if (method === 'db.project.touch') return true
+      if (method === 'db.worktree.touch') return undefined
+      if (method === 'db.worktree.get') return null
+      if (method === 'db.session.get') return null
+      if (method === 'systemOps.openInChrome') return { success: true }
+      if (method === 'gitOps.listBranchesWithStatus') return { success: true, branches: [] }
+      if (method === 'gitOps.getChangedFiles') return { success: true, files: [] }
+      return null
+    })
+    setRendererRpcClient({
+      request,
+      subscribe: vi.fn(() => vi.fn())
+    })
+
     mockCreateSession.mockResolvedValue({
       success: true,
       session: { id: 'conflict-session-1' }
@@ -292,33 +339,11 @@ describe('merge conflicts ticket button', () => {
       })
     }
 
-    Object.defineProperty(window, 'db', {
-      writable: true,
-      configurable: true,
-      value: mockDb
-    })
-
-    Object.defineProperty(window, 'systemOps', {
-      writable: true,
-      configurable: true,
-      value: {
-        openInChrome: vi.fn()
-      }
-    })
-
-    Object.defineProperty(window, 'gitOps', {
-      writable: true,
-      configurable: true,
-      value: {
-        listBranchesWithStatus: vi.fn().mockResolvedValue({
-          success: true,
-          value: { success: true, branches: [] }
-        }),
-        getChangedFiles: vi.fn().mockResolvedValue({ success: true, files: [] })
-      }
-    })
-
     seedStores()
+  })
+
+  afterEach(() => {
+    resetRendererRpcClientForTests()
   })
 
   test('renders Fix conflicts button when the ticket worktree has conflicts', () => {

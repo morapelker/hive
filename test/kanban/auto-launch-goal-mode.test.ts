@@ -1,6 +1,45 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest'
 import { act } from '@testing-library/react'
 
+const apiMocks = vi.hoisted(() => ({
+  kanbanApi: {
+    ticket: {
+      update: vi.fn().mockResolvedValue(null)
+    }
+  },
+  dbApi: {
+    session: {
+      create: vi.fn(),
+      update: vi.fn().mockResolvedValue(null)
+    },
+    worktree: {
+      update: vi.fn().mockResolvedValue(null)
+    }
+  },
+  opencodeApi: {
+    connect: vi.fn().mockResolvedValue({
+      success: true,
+      value: { success: true, sessionId: 'oc-session-1' }
+    }),
+    prompt: vi.fn().mockResolvedValue({ success: true, value: { success: true } })
+  },
+  usageApi: {
+    fetch: vi.fn().mockResolvedValue({ success: true, data: null }),
+    fetchOpenai: vi.fn().mockResolvedValue({ success: true, data: null })
+  },
+  accountApi: {
+    listSaved: vi.fn().mockResolvedValue([])
+  },
+  settingsApi: {
+    onSettingsUpdated: vi.fn(() => vi.fn())
+  },
+  petApi: {
+    updateSettings: vi.fn().mockResolvedValue(undefined),
+    hide: vi.fn().mockResolvedValue(undefined),
+    show: vi.fn().mockResolvedValue(undefined)
+  }
+}))
+
 vi.mock('@/lib/toast', () => ({
   toast: {
     success: vi.fn(),
@@ -9,73 +48,37 @@ vi.mock('@/lib/toast', () => ({
   }
 }))
 
-const mockKanban = {
-  ticket: {
-    update: vi.fn().mockResolvedValue({ success: true, value: undefined })
-  }
-}
+vi.mock('@/api/kanban-api', () => ({
+  kanbanApi: apiMocks.kanbanApi
+}))
 
-const mockDbSession = {
-  create: vi.fn().mockImplementation(async (input: Record<string, unknown>) => ({
-    success: true,
-    value: {
-      id: 'session-1',
-      worktree_id: input.worktree_id,
-      project_id: input.project_id,
-      connection_id: null,
-      name: 'Session 1',
-      status: 'active',
-      opencode_session_id: null,
-      agent_sdk: input.agent_sdk,
-      mode: input.mode,
-      session_type: 'default',
-      model_provider_id: null,
-      model_id: null,
-      model_variant: null,
-      created_at: '2026-01-01T00:00:00Z',
-      updated_at: '2026-01-01T00:00:00Z',
-      completed_at: null
-    }
-  })),
-  update: vi.fn().mockResolvedValue({ success: true, value: undefined })
-}
+vi.mock('@/api/db-api', () => ({
+  dbApi: apiMocks.dbApi
+}))
 
-const mockOpencodeOps = {
-  connect: vi
-    .fn()
-    .mockResolvedValue({ success: true, value: { success: true, sessionId: 'oc-session-1' } }),
-  prompt: vi.fn().mockResolvedValue({ success: true, value: { success: true } })
-}
+vi.mock('@/api/opencode-api', () => ({
+  opencodeApi: apiMocks.opencodeApi
+}))
 
-Object.defineProperty(window, 'kanban', {
-  writable: true,
-  configurable: true,
-  value: mockKanban
-})
+vi.mock('@/api/usage-api', () => ({
+  usageApi: apiMocks.usageApi
+}))
 
-Object.defineProperty(window, 'db', {
-  writable: true,
-  configurable: true,
-  value: {
-    session: mockDbSession
-  }
-})
+vi.mock('@/api/account-api', () => ({
+  accountApi: apiMocks.accountApi
+}))
 
-Object.defineProperty(window, 'opencodeOps', {
-  writable: true,
-  configurable: true,
-  value: mockOpencodeOps
-})
+vi.mock('@/api/settings-api', () => ({
+  settingsApi: apiMocks.settingsApi
+}))
 
-Object.defineProperty(window, 'usageOps', {
-  writable: true,
-  configurable: true,
-  value: {
-    fetch: vi.fn().mockResolvedValue({ success: true, value: { success: true, data: null } }),
-    fetchOpenai: vi.fn().mockResolvedValue({ success: true, value: { success: true, data: null } })
-  }
-})
+vi.mock('@/api/pet-api', () => ({
+  petApi: apiMocks.petApi
+}))
 
+import { dbApi } from '@/api/db-api'
+import { kanbanApi } from '@/api/kanban-api'
+import { opencodeApi } from '@/api/opencode-api'
 import { autoLaunchTicket } from '@/lib/auto-launch'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useProjectStore } from '@/stores/useProjectStore'
@@ -83,6 +86,10 @@ import { useSessionStore } from '@/stores/useSessionStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import type { KanbanTicket } from '../../src/main/db/types'
+
+const mockKanbanTicketApi = vi.mocked(kanbanApi.ticket)
+const mockDbSession = vi.mocked(dbApi.session)
+const mockOpencodeApi = vi.mocked(opencodeApi)
 
 function makeTicket(overrides: Partial<KanbanTicket> = {}): KanbanTicket {
   return {
@@ -118,6 +125,31 @@ function makeTicket(overrides: Partial<KanbanTicket> = {}): KanbanTicket {
 describe('autoLaunchTicket goal mode', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockKanbanTicketApi.update.mockResolvedValue(null)
+    mockDbSession.create.mockImplementation(async (input) => ({
+      id: 'session-1',
+      worktree_id: input.worktree_id,
+      project_id: input.project_id,
+      connection_id: null,
+      name: 'Session 1',
+      status: 'active',
+      opencode_session_id: null,
+      agent_sdk: input.agent_sdk,
+      mode: input.mode,
+      session_type: 'default',
+      model_provider_id: null,
+      model_id: null,
+      model_variant: null,
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-01T00:00:00Z',
+      completed_at: null
+    }))
+    mockDbSession.update.mockResolvedValue(null)
+    mockOpencodeApi.connect.mockResolvedValue({
+      success: true,
+      value: { success: true, sessionId: 'oc-session-1' }
+    })
+    mockOpencodeApi.prompt.mockResolvedValue({ success: true, value: { success: true } })
     act(() => {
       useProjectStore.setState({
         projects: [
@@ -198,7 +230,7 @@ describe('autoLaunchTicket goal mode', () => {
 
     await autoLaunchTicket(ticket)
 
-    expect(mockKanban.ticket.update).toHaveBeenCalledWith(
+    expect(mockKanbanTicketApi.update).toHaveBeenCalledWith(
       'ticket-1',
       expect.objectContaining({
         pending_launch_config: null,
@@ -209,8 +241,8 @@ describe('autoLaunchTicket goal mode', () => {
         goal_success_criteria: 'Auth works end to end'
       })
     )
-    expect(mockOpencodeOps.prompt).toHaveBeenCalled()
-    const promptParts = mockOpencodeOps.prompt.mock.calls.at(-1)?.[2] as Array<{
+    expect(mockOpencodeApi.prompt).toHaveBeenCalled()
+    const promptParts = mockOpencodeApi.prompt.mock.calls.at(-1)?.[2] as Array<{
       type: string
       text: string
     }>

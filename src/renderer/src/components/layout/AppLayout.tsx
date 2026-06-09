@@ -39,8 +39,9 @@ import { useDropZone } from '@/hooks/useDropZone'
 import { DropOverlay } from './DropOverlay'
 import { toast } from '@/lib/toast'
 import { useDropAttachmentStore } from '@/stores'
+import { fileApi } from '@/api/file-api'
 import { MAX_ATTACHMENTS, isImageMime } from '@/lib/file-attachment-utils'
-import type { Attachment } from '@/components/sessions/AttachmentPreview'
+import type { AttachmentInput } from '@/components/sessions/AttachmentPreview'
 import { QuitConfirmationOverlay } from './QuitConfirmationOverlay'
 
 function GlobalProjectSettings(): React.JSX.Element | null {
@@ -95,9 +96,12 @@ function TerminalManagerPortal(): React.JSX.Element {
   }, [selectedWorktreeId, worktreesByProject, isConnectionMode, selectedConnection?.path])
 
   // Compute visibility based on position
-  const isVisible = terminalPosition === 'bottom'
-    ? bottomTerminalExpanded
-    : !rightSidebarCollapsed && effectiveBottomPanelTab === 'terminal' && collapsedPanel !== 'bottom'
+  const isVisible =
+    terminalPosition === 'bottom'
+      ? bottomTerminalExpanded
+      : !rightSidebarCollapsed &&
+        effectiveBottomPanelTab === 'terminal' &&
+        collapsedPanel !== 'bottom'
 
   const target = getTarget(terminalPosition)
   const portalReady = target !== null
@@ -182,7 +186,7 @@ export function AppLayout({ children }: AppLayoutProps): React.JSX.Element {
     // Process files
     const promises = filesToProcess.map((file) => {
       if (isImageMime(file.type)) {
-        return new Promise<Omit<Attachment, 'id'>>((resolve, reject) => {
+        return new Promise<AttachmentInput>((resolve, reject) => {
           const reader = new FileReader()
           reader.onload = () => {
             resolve({
@@ -202,8 +206,8 @@ export function AppLayout({ children }: AppLayoutProps): React.JSX.Element {
         kind: 'path' as const,
         name: file.name,
         mime: file.type || 'application/octet-stream',
-        filePath: window.fileOps.getPathForFile(file)
-      } as Omit<Attachment, 'id'>)
+        filePath: fileApi.getPathForFile(file)
+      } satisfies AttachmentInput)
     })
 
     Promise.all(promises)

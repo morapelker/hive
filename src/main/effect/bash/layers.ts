@@ -1,9 +1,9 @@
 import type { ChildProcess } from 'child_process'
 import { randomUUID } from 'crypto'
-import type { BrowserWindow } from 'electron'
 import { Cause, Chunk, Deferred, Effect, Fiber, Layer, Ref, Stream } from 'effect'
 
-import { BashAlreadyRunning, BashSpawnFailed, BashWindowMissing } from './errors'
+import { BASH_STREAM_CHANNEL } from '../../../shared/bash-events'
+import { BashAlreadyRunning, BashSpawnFailed } from './errors'
 import { Bash, EventSink, Spawner } from './service'
 import type { BashRunSnapshot, BashRunStatus, BashStreamEvent } from './types'
 import { LowLevelSpawn } from '../spawn/service'
@@ -31,7 +31,7 @@ type SpawnerApi = {
   readonly signalTree: (proc: ChildProcess, signal: NodeJS.Signals) => Effect.Effect<void>
 }
 
-type SendEvent = (event: BashStreamEvent) => Effect.Effect<void, BashWindowMissing>
+type SendEvent = (event: BashStreamEvent) => Effect.Effect<void>
 type SendEventBestEffort = (event: BashStreamEvent) => Effect.Effect<void>
 
 function getColorEnv(): NodeJS.ProcessEnv {
@@ -407,22 +407,13 @@ export const BashLive = Layer.effect(
   })
 )
 
-export const EventSinkLive = (windowRef: { current: BrowserWindow | null }) =>
-  Layer.succeed(EventSink, {
-    send: (event: BashStreamEvent) =>
-      Effect.gen(function* () {
-        const win = windowRef.current
-        if (!win) {
-          return yield* Effect.fail(new BashWindowMissing({ reason: 'not-set' }))
-        }
-        if (win.isDestroyed()) {
-          return yield* Effect.fail(new BashWindowMissing({ reason: 'destroyed' }))
-        }
-        yield* Effect.sync(() => {
-          win.webContents.send('bash:stream', event)
-        })
-      })
-  })
+export const EventSinkLive = Layer.succeed(EventSink, {
+  send: (event: BashStreamEvent) =>
+    Effect.promise(async () => {
+      const { publishDesktopBackendEvent } = await import('../../desktop/backend-manager')
+      await publishDesktopBackendEvent(BASH_STREAM_CHANNEL, event)
+    })
+})
 
 export const SpawnerLive = Layer.effect(
   Spawner,
@@ -444,8 +435,8 @@ export const SpawnerLive = Layer.effect(
                 proc.stdin?.end()
               })
             ),
-            Effect.mapError((error) =>
-              new BashSpawnFailed({ sessionId, command, cause: error.cause })
+            Effect.mapError(
+              (error) => new BashSpawnFailed({ sessionId, command, cause: error.cause })
             )
           ),
       signalTree: lowLevel.signalTree
@@ -453,5 +444,4 @@ export const SpawnerLive = Layer.effect(
   })
 )
 
-export const AppLive = (windowRef: { current: BrowserWindow | null }) =>
-  Layer.provide(BashLive, Layer.mergeAll(EventSinkLive(windowRef), SpawnerLive))
+export const AppLive = Layer.provide(BashLive, Layer.mergeAll(EventSinkLive, SpawnerLive))

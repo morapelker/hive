@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button'
 import { useProjectStore } from '@/stores'
 import { projectToast, toast } from '@/lib/toast'
 import { GitInitDialog } from './GitInitDialog'
-import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { projectApi } from '@/api/project-api'
 
 export function AddProjectButton(): React.JSX.Element {
   const [isAdding, setIsAdding] = useState(false)
@@ -17,7 +17,7 @@ export function AddProjectButton(): React.JSX.Element {
     setIsAdding(true)
     try {
       // Open folder picker dialog
-      const selectedPath = unwrapEnvelope(await window.projectOps.openDirectoryDialog())
+      const selectedPath = await projectApi.openDirectoryDialog()
 
       if (!selectedPath) {
         // User cancelled the dialog
@@ -61,7 +61,7 @@ export function AddProjectButton(): React.JSX.Element {
   const handleInitRepository = useCallback(async (): Promise<void> => {
     if (!gitInitPath) return
 
-    const initResult = unwrapEnvelope(await window.projectOps.initRepository(gitInitPath))
+    const initResult = await projectApi.initRepository(gitInitPath)
     if (!initResult.success) {
       toast.error(initResult.error || 'Failed to initialize repository')
       setGitInitPath(null)

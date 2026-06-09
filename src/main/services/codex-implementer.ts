@@ -1,7 +1,10 @@
-import type { BrowserWindow } from 'electron'
 import { randomUUID } from 'node:crypto'
 
-import type { AgentSdkCapabilities, AgentSdkImplementer, PromptOptions } from './agent-sdk-types'
+import type {
+  AgentSdkCapabilities,
+  AgentSdkImplementer,
+  PromptOptions
+} from './agent-sdk-types'
 import { CODEX_CAPABILITIES } from './agent-sdk-types'
 import {
   getAvailableCodexModels,
@@ -25,15 +28,9 @@ import {
   normalizeCodexToolName,
   normalizeCommandExecutionTool
 } from '@shared/codex-tool-normalizer'
-import type { UserInput } from '@shared/codex-schemas/v2/UserInput'
-import type { TurnStartParams } from '@shared/codex-schemas/v2/TurnStartParams'
 import type { ThreadNameUpdatedNotification } from '@shared/codex-schemas/v2/ThreadNameUpdatedNotification'
 import type { TurnCompletedNotification } from '@shared/codex-schemas/v2/TurnCompletedNotification'
-import type { TurnStartedNotification } from '@shared/codex-schemas/v2/TurnStartedNotification'
 import type { ToolRequestUserInputParams } from '@shared/codex-schemas/v2/ToolRequestUserInputParams'
-import type { ToolRequestUserInputAnswer } from '@shared/codex-schemas/v2/ToolRequestUserInputAnswer'
-import type { CommandExecutionRequestApprovalParams } from '@shared/codex-schemas/v2/CommandExecutionRequestApprovalParams'
-import type { ThreadItem } from '@shared/codex-schemas/v2/ThreadItem'
 import type { Thread } from '@shared/codex-schemas/v2/Thread'
 import type { ThreadGoal } from '@shared/codex-schemas/v2/ThreadGoal'
 import type { ThreadGoalStatus } from '@shared/codex-schemas/v2/ThreadGoalStatus'
@@ -41,6 +38,11 @@ import type { SkillMetadata } from '@shared/codex-schemas/v2/SkillMetadata'
 import type { SkillsListResponse } from '@shared/codex-schemas/v2/SkillsListResponse'
 import type { SkillScope } from '@shared/codex-schemas/v2/SkillScope'
 import type { OpenCodeStreamEvent } from '@shared/types/opencode'
+import {
+  WORKTREE_BRANCH_RENAMED_CHANNEL,
+  type WorktreeBranchRenamedEvent
+} from '../../shared/worktree-events'
+import { emitWorktreeBranchRenamed } from './worktree-events'
 
 const log = createLogger({ component: 'CodexImplementer' })
 // Balances write coalescing during rapid streaming against data freshness for crash recovery.
@@ -323,7 +325,6 @@ export class CodexImplementer implements AgentSdkImplementer {
   readonly id = 'codex' as const
   readonly capabilities: AgentSdkCapabilities = CODEX_CAPABILITIES
 
-  private mainWindow: BrowserWindow | null = null
   private dbService: DatabaseService | null = null
   private codexBinaryPath: string | null = null
   private selectedModel: string = CODEX_DEFAULT_MODEL
@@ -334,13 +335,6 @@ export class CodexImplementer implements AgentSdkImplementer {
   private pendingApprovalSessions = new Map<string, PendingHitlEntry>()
   private promptHandledThreadIds = new Set<string>()
   private skillCommandsBySessionKey = new Map<string, CodexSkillCommand[]>()
-
-  // ── Window binding ───────────────────────────────────────────────
-
-  setMainWindow(window: BrowserWindow): void {
-    this.mainWindow = window
-    agentEventBus.setMainWindow(window)
-  }
 
   setDatabaseService(db: DatabaseService): void {
     this.dbService = db
@@ -485,11 +479,6 @@ export class CodexImplementer implements AgentSdkImplementer {
         turnId: event.turnId
       })
 
-      // Typed payload available for known methods
-      const _typedApproval =
-        event.method === 'item/commandExecution/requestApproval'
-          ? (event.payload as CommandExecutionRequestApprovalParams)
-          : undefined
       const payload = asObject(event.payload)
       this.sendToRenderer('opencode:stream', {
         type: 'permission.asked',
@@ -545,7 +534,7 @@ export class CodexImplementer implements AgentSdkImplementer {
     if (!title) {
       log.warn('handleProviderTitleUpdate: missing threadName in provider update', {
         threadId: event.threadId,
-        payload: toJsonSnapshot(event.payload)
+        payload: toJsonSnapshot(event.payload, 500)
       })
       return
     }
@@ -750,7 +739,6 @@ export class CodexImplementer implements AgentSdkImplementer {
     this.pendingQuestions.clear()
     this.pendingApprovalSessions.clear()
     this.managerListenerAttached = false
-    this.mainWindow = null
     this.codexBinaryPath = null
     this.selectedModel = CODEX_DEFAULT_MODEL
     this.selectedVariant = undefined
@@ -929,10 +917,7 @@ export class CodexImplementer implements AgentSdkImplementer {
       ) {
         const payload = asObject(event.payload)
         const deltaText =
-          event.textDelta ??
-          asString(payload?.delta) ??
-          asString(payload?.text) ??
-          ''
+          event.textDelta ?? asString(payload?.delta) ?? asString(payload?.text) ?? ''
         log.info('[CODEX_STREAM_DEBUG] prompt listener mapped event', {
           method: event.method,
           eventId: event.id,
@@ -963,14 +948,14 @@ export class CodexImplementer implements AgentSdkImplementer {
           childSessionId: streamEvent.childSessionId ?? null,
           partType: asString(part?.type) ?? null,
           tool: asString(part?.tool) ?? null,
-          status: streamEvent.statusPayload?.type ?? asString(asObject(streamData?.status)?.type) ?? null,
-          deltaLength:
-            (
-              asString(streamData?.delta) ??
-              asString(part?.text) ??
-              asString(state?.outputDelta) ??
-              ''
-            ).length
+          status:
+            streamEvent.statusPayload?.type ?? asString(asObject(streamData?.status)?.type) ?? null,
+          deltaLength: (
+            asString(streamData?.delta) ??
+            asString(part?.text) ??
+            asString(state?.outputDelta) ??
+            ''
+          ).length
         })
         this.sendToRenderer('opencode:stream', streamEvent)
         this.updateLiveAssistantDraftFromStreamEvent(session, streamEvent)
@@ -1204,18 +1189,30 @@ export class CodexImplementer implements AgentSdkImplementer {
     }
 
     if (session.status !== 'running') {
-      log.warn('Steer: session not running', { worktreePath, agentSessionId, status: session.status })
+      log.warn('Steer: session not running', {
+        worktreePath,
+        agentSessionId,
+        status: session.status
+      })
       return { steered: false, error: 'session_not_running' }
     }
 
     const activeTurnId = this.manager.getSession(session.threadId)?.activeTurnId
     if (!activeTurnId) {
-      log.warn('Steer: no active turn', { worktreePath, agentSessionId, threadId: session.threadId })
+      log.warn('Steer: no active turn', {
+        worktreePath,
+        agentSessionId,
+        threadId: session.threadId
+      })
       return { steered: false, error: 'no_active_turn' }
     }
 
     try {
-      const steerResult = await this.manager.steerTurn(session.threadId, { text: message }, activeTurnId)
+      const steerResult = await this.manager.steerTurn(
+        session.threadId,
+        { text: message },
+        activeTurnId
+      )
       const turnId = steerResult.turnId || activeTurnId
       const insertedMessageId = this.getNextCanonicalMessageId(session, turnId, 'user')
       const nextAssistantMessageId = this.getNextCanonicalMessageId(session, turnId, 'assistant')
@@ -1793,7 +1790,10 @@ export class CodexImplementer implements AgentSdkImplementer {
 
     const trimmedArgs = (args ?? '').trim()
     let summary: string
-    this.persistCommandUserMessage(session, `/${normalizedCommand}${trimmedArgs ? ` ${trimmedArgs}` : ''}`)
+    this.persistCommandUserMessage(
+      session,
+      `/${normalizedCommand}${trimmedArgs ? ` ${trimmedArgs}` : ''}`
+    )
 
     if (!trimmedArgs) {
       const response = await this.manager.getThreadGoal(session.threadId)
@@ -1938,11 +1938,6 @@ export class CodexImplementer implements AgentSdkImplementer {
   /** @internal */
   getSelectedVariant(): string | undefined {
     return this.selectedVariant
-  }
-
-  /** @internal */
-  getMainWindow(): BrowserWindow | null {
-    return this.mainWindow
   }
 
   /** @internal */
@@ -2135,10 +2130,9 @@ export class CodexImplementer implements AgentSdkImplementer {
       agentEventBus.publish(data as OpenCodeStreamEvent)
       return
     }
-    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-      this.mainWindow.webContents.send(channel, data)
-    } else {
-      log.debug('sendToRenderer: no window')
+    if (channel === WORKTREE_BRANCH_RENAMED_CHANNEL) {
+      emitWorktreeBranchRenamed(data as WorktreeBranchRenamedEvent)
+      return
     }
   }
 
@@ -2223,7 +2217,7 @@ export class CodexImplementer implements AgentSdkImplementer {
     kind: 'question' | 'permission'
   ): void {
     try {
-      if (!this.mainWindow || this.mainWindow.isDestroyed() || this.mainWindow.isFocused()) {
+      if (!notificationService.shouldNotifyWhenWindowUnfocused()) {
         return
       }
 
@@ -2341,35 +2335,35 @@ export class CodexImplementer implements AgentSdkImplementer {
     try {
       const rows: Array<SessionMessageCreate & { created_at: string }> = session.messages.flatMap(
         (message) => {
-        const record = asObject(message)
-        if (!record) return []
+          const record = asObject(message)
+          if (!record) return []
 
-        const role = asString(record.role)
-        const timestamp = asString(record.timestamp) ?? new Date().toISOString()
-        if (role !== 'user' && role !== 'assistant' && role !== 'system') return []
+          const role = asString(record.role)
+          const timestamp = asString(record.timestamp) ?? new Date().toISOString()
+          if (role !== 'user' && role !== 'assistant' && role !== 'system') return []
 
-        const parts = Array.isArray(record.parts) ? record.parts : []
-        const textContent = extractMessageText(parts)
-        const canonicalMessage = {
-          ...record,
-          id: asString(record.id) ?? `${role}-${randomUUID()}`,
-          role,
-          parts,
-          timestamp
-        }
-
-        return [
-          {
-            session_id: session.hiveSessionId,
+          const parts = Array.isArray(record.parts) ? record.parts : []
+          const textContent = extractMessageText(parts)
+          const canonicalMessage = {
+            ...record,
+            id: asString(record.id) ?? `${role}-${randomUUID()}`,
             role,
-            content: textContent,
-            opencode_message_id: canonicalMessage.id,
-            opencode_message_json: JSON.stringify(canonicalMessage),
-            opencode_parts_json: JSON.stringify(parts),
-            opencode_timeline_json: JSON.stringify(canonicalMessage),
-            created_at: timestamp
+            parts,
+            timestamp
           }
-        ]
+
+          return [
+            {
+              session_id: session.hiveSessionId,
+              role,
+              content: textContent,
+              opencode_message_id: canonicalMessage.id,
+              opencode_message_json: JSON.stringify(canonicalMessage),
+              opencode_parts_json: JSON.stringify(parts),
+              opencode_timeline_json: JSON.stringify(canonicalMessage),
+              created_at: timestamp
+            }
+          ]
         }
       )
 
@@ -2443,11 +2437,7 @@ export class CodexImplementer implements AgentSdkImplementer {
       event.method.startsWith('item/')
     ) {
       const payload = asObject(event.payload)
-      const deltaText =
-        event.textDelta ??
-        asString(payload?.delta) ??
-        asString(payload?.text) ??
-        ''
+      const deltaText = event.textDelta ?? asString(payload?.delta) ?? asString(payload?.text) ?? ''
       log.info('[CODEX_STREAM_DEBUG] global listener mapped autonomous event', {
         method: event.method,
         eventId: event.id,
@@ -2472,14 +2462,14 @@ export class CodexImplementer implements AgentSdkImplementer {
         childSessionId: streamEvent.childSessionId ?? null,
         partType: asString(part?.type) ?? null,
         tool: asString(part?.tool) ?? null,
-        status: streamEvent.statusPayload?.type ?? asString(asObject(streamData?.status)?.type) ?? null,
-        deltaLength:
-          (
-            asString(streamData?.delta) ??
-            asString(part?.text) ??
-            asString(state?.outputDelta) ??
-            ''
-          ).length
+        status:
+          streamEvent.statusPayload?.type ?? asString(asObject(streamData?.status)?.type) ?? null,
+        deltaLength: (
+          asString(streamData?.delta) ??
+          asString(part?.text) ??
+          asString(state?.outputDelta) ??
+          ''
+        ).length
       })
       this.sendToRenderer('opencode:stream', streamEvent)
       this.updateLiveAssistantDraftFromStreamEvent(session, streamEvent)
@@ -2701,9 +2691,9 @@ export class CodexImplementer implements AgentSdkImplementer {
           ...nextToolUse,
           name:
             (outputDelta !== undefined &&
-              nextToolUse.name === 'Bash' &&
-              typeof existingToolUse?.name === 'string' &&
-              existingToolUse.name !== 'Bash'
+            nextToolUse.name === 'Bash' &&
+            typeof existingToolUse?.name === 'string' &&
+            existingToolUse.name !== 'Bash'
               ? existingToolUse.name
               : nextToolUse.name) ?? 'unknown',
           ...(accumulatedOutput !== undefined ? { output: accumulatedOutput } : {}),
@@ -2820,7 +2810,7 @@ export class CodexImplementer implements AgentSdkImplementer {
     tool: {
       callID: string
       tool: string
-        state: CodexLiveToolStateUpdate
+      state: CodexLiveToolStateUpdate
     }
   ): void {
     if (!tool.callID) return
@@ -2961,7 +2951,7 @@ export class CodexImplementer implements AgentSdkImplementer {
     tool: {
       callID: string
       tool: string
-        state: CodexLiveToolStateUpdate
+      state: CodexLiveToolStateUpdate
     },
     turnId?: string
   ): void {
@@ -3114,7 +3104,7 @@ export class CodexImplementer implements AgentSdkImplementer {
             ...(state?.output !== undefined ? { output: state.output } : {}),
             ...(state?.error !== undefined ? { error: state.error } : {}),
             ...(state?.outputDelta !== undefined ? { outputDelta: state.outputDelta } : {})
-            }
+          }
         },
         targetTurnId
       )
@@ -3166,9 +3156,9 @@ export class CodexImplementer implements AgentSdkImplementer {
     const existingIndex = draft.toolIndexById.get(tool.callID)
 
     if (existingIndex !== undefined) {
-        const existing = draft.parts[existingIndex]
-        if (existing && existing.type === 'tool') {
-          existing.tool =
+      const existing = draft.parts[existingIndex]
+      if (existing && existing.type === 'tool') {
+        existing.tool =
           tool.state.outputDelta !== undefined &&
           tool.tool === 'Bash' &&
           existing.tool &&
@@ -3671,7 +3661,7 @@ export class CodexImplementer implements AgentSdkImplementer {
           db: this.dbService
         })
         if (result.renamed) {
-          this.sendToRenderer('worktree:branchRenamed', {
+          this.sendToRenderer(WORKTREE_BRANCH_RENAMED_CHANNEL, {
             worktreeId: worktree.id,
             newBranch: result.newBranch
           })
@@ -3708,7 +3698,7 @@ export class CodexImplementer implements AgentSdkImplementer {
           db: this.dbService
         })
         if (result.renamed) {
-          this.sendToRenderer('worktree:branchRenamed', {
+          this.sendToRenderer(WORKTREE_BRANCH_RENAMED_CHANNEL, {
             worktreeId: memberWorktree.id,
             newBranch: result.newBranch
           })
@@ -3739,8 +3729,8 @@ export class CodexImplementer implements AgentSdkImplementer {
     const obj = asObject(snapshot)
     if (!obj) return []
 
-    // Typed overlay for generated Thread shape
-    const _typedSnapshot = snapshot as { thread?: Thread } | undefined
+    const typedSnapshot = snapshot as { thread?: Thread } | undefined
+    void typedSnapshot
     const threadObj = asObject(obj.thread) ?? obj
     const turns = threadObj.turns as unknown[] | undefined
     if (!Array.isArray(turns)) return []
@@ -3792,9 +3782,6 @@ export class CodexImplementer implements AgentSdkImplementer {
         for (const item of items) {
           const itemObj = asObject(item)
           if (!itemObj) continue
-          // Typed reference for ThreadItem discriminated union
-          const _typedItem = item as ThreadItem
-
           const itemType = asString(itemObj.type)
           const itemId = asString(itemObj.id)
           const itemTimestamp = turnTimestamp ?? new Date().toISOString()

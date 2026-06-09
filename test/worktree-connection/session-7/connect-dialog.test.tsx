@@ -7,6 +7,76 @@ import { useProjectStore } from '../../../src/renderer/src/stores/useProjectStor
 import { useWorktreeStore } from '../../../src/renderer/src/stores/useWorktreeStore'
 import { useConnectionStore } from '../../../src/renderer/src/stores/useConnectionStore'
 
+const apiMocks = vi.hoisted(() => ({
+  connectionApi: {
+    create: vi.fn(),
+    delete: vi.fn(),
+    addMember: vi.fn(),
+    removeMember: vi.fn(),
+    rename: vi.fn(),
+    getAll: vi.fn().mockResolvedValue({ success: true, connections: [] }),
+    get: vi.fn(),
+    openInTerminal: vi.fn(),
+    openInEditor: vi.fn(),
+    removeWorktreeFromAll: vi.fn()
+  },
+  dbApi: {
+    worktree: {
+      touch: vi.fn().mockResolvedValue(undefined),
+      getActiveByProject: vi.fn().mockResolvedValue([])
+    },
+    project: {
+      getAll: vi.fn().mockResolvedValue([]),
+      touch: vi.fn().mockResolvedValue(true)
+    },
+    setting: {
+      get: vi.fn().mockResolvedValue(null),
+      set: vi.fn().mockResolvedValue(true),
+      delete: vi.fn().mockResolvedValue(true),
+      getAll: vi.fn().mockResolvedValue([])
+    }
+  },
+  settingsApi: {
+    onSettingsUpdated: vi.fn(() => vi.fn())
+  },
+  petApi: {
+    updateSettings: vi.fn().mockResolvedValue(undefined)
+  }
+}))
+
+vi.mock('@/stores', async () => {
+  const projectStore =
+    await vi.importActual<typeof import('@/stores/useProjectStore')>('@/stores/useProjectStore')
+  const worktreeStore =
+    await vi.importActual<typeof import('@/stores/useWorktreeStore')>('@/stores/useWorktreeStore')
+  const connectionStore =
+    await vi.importActual<typeof import('@/stores/useConnectionStore')>(
+      '@/stores/useConnectionStore'
+    )
+
+  return {
+    useProjectStore: projectStore.useProjectStore,
+    useWorktreeStore: worktreeStore.useWorktreeStore,
+    useConnectionStore: connectionStore.useConnectionStore
+  }
+})
+
+vi.mock('@/api/connection-api', () => ({
+  connectionApi: apiMocks.connectionApi
+}))
+
+vi.mock('@/api/db-api', () => ({
+  dbApi: apiMocks.dbApi
+}))
+
+vi.mock('@/api/settings-api', () => ({
+  settingsApi: apiMocks.settingsApi
+}))
+
+vi.mock('@/api/pet-api', () => ({
+  petApi: apiMocks.petApi
+}))
+
 // ---------- Mock toast ----------
 vi.mock('@/lib/toast', () => ({
   toast: {
@@ -17,50 +87,7 @@ vi.mock('@/lib/toast', () => ({
   }
 }))
 
-// ---------- Mock window APIs ----------
-const mockConnectionOps = {
-  create: vi.fn(),
-  delete: vi.fn(),
-  addMember: vi.fn(),
-  removeMember: vi.fn(),
-  rename: vi.fn(),
-  getAll: vi.fn().mockResolvedValue([]),
-  get: vi.fn(),
-  openInTerminal: vi.fn(),
-  openInEditor: vi.fn(),
-  removeWorktreeFromAll: vi.fn()
-}
-
-const mockDb = {
-  worktree: {
-    touch: vi.fn().mockResolvedValue(undefined),
-    getActiveByProject: vi.fn().mockResolvedValue([])
-  },
-  project: {
-    getAll: vi.fn().mockResolvedValue([]),
-    touch: vi.fn().mockResolvedValue(undefined)
-  }
-}
-
-Object.defineProperty(window, 'connectionOps', {
-  writable: true,
-  configurable: true,
-  value: mockConnectionOps
-})
-
-/* eslint-disable @typescript-eslint/no-explicit-any */
-if (!(window as any).db) {
-  Object.defineProperty(window, 'db', {
-    writable: true,
-    configurable: true,
-    value: mockDb
-  })
-} else {
-  const existing = (window as any).db
-  if (!existing.worktree) existing.worktree = mockDb.worktree
-  if (!existing.project) existing.project = mockDb.project
-}
-/* eslint-enable @typescript-eslint/no-explicit-any */
+const mockConnectionApi = apiMocks.connectionApi
 
 // ---------- Test data factories ----------
 function makeProject(id: string, name: string) {
@@ -331,7 +358,7 @@ describe('Session 7: Connect Dialog', () => {
       setupStores({ projects, worktreesByProject })
 
       const newConn = makeConnection()
-      mockConnectionOps.create.mockResolvedValueOnce(newConn)
+      mockConnectionApi.create.mockResolvedValueOnce({ success: true, connection: newConn })
 
       render(<ConnectDialog sourceWorktreeId="wt-1" open={true} onOpenChange={onOpenChange} />)
 
@@ -349,7 +376,7 @@ describe('Session 7: Connect Dialog', () => {
       })
 
       // Should have been called with [sourceId, selectedId]
-      expect(mockConnectionOps.create).toHaveBeenCalledWith(['wt-1', 'wt-2'])
+      expect(mockConnectionApi.create).toHaveBeenCalledWith(['wt-1', 'wt-2'])
 
       // Should close the dialog
       expect(onOpenChange).toHaveBeenCalledWith(false)
@@ -372,7 +399,7 @@ describe('Session 7: Connect Dialog', () => {
       setupStores({ projects, worktreesByProject })
 
       const newConn = makeConnection()
-      mockConnectionOps.create.mockResolvedValueOnce(newConn)
+      mockConnectionApi.create.mockResolvedValueOnce({ success: true, connection: newConn })
 
       render(<ConnectDialog sourceWorktreeId="wt-1" open={true} onOpenChange={onOpenChange} />)
 
@@ -391,7 +418,7 @@ describe('Session 7: Connect Dialog', () => {
       })
 
       // Should include source + both selected
-      const callArgs = mockConnectionOps.create.mock.calls[0][0] as string[]
+      const callArgs = mockConnectionApi.create.mock.calls[0][0] as string[]
       expect(callArgs).toHaveLength(3)
       expect(callArgs[0]).toBe('wt-1')
       expect(callArgs).toContain('wt-2')

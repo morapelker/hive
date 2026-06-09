@@ -7,6 +7,20 @@ import { useSettingsStore } from '../../src/renderer/src/stores/useSettingsStore
 const xtermMount = vi.fn()
 const xtermSetShiftEnterAsNewline = vi.fn()
 
+const terminalApiMocks = vi.hoisted(() => ({
+  getConfig: vi.fn().mockResolvedValue({ success: true, value: {} }),
+  create: vi.fn().mockResolvedValue({ success: true }),
+  destroy: vi.fn().mockResolvedValue({ success: true, value: undefined }),
+  write: vi.fn(),
+  resize: vi.fn().mockResolvedValue({ success: true, value: undefined }),
+  onData: vi.fn(() => vi.fn()),
+  onExit: vi.fn(() => vi.fn())
+}))
+
+vi.mock('@/api/terminal-api', () => ({
+  terminalApi: terminalApiMocks
+}))
+
 vi.mock('@/components/terminal/backends/GhosttyBackend', () => ({
   GhosttyBackend: class MockGhosttyBackend {
     readonly type = 'ghostty' as const
@@ -48,14 +62,11 @@ describe('TerminalView Shift+Enter configuration', () => {
       useSettingsStore.setState({ embeddedTerminalBackend: 'xterm' })
       useLayoutStore.setState({ ghosttyOverlaySuppressed: false })
     })
-
-    Object.defineProperty(window, 'terminalOps', {
-      writable: true,
-      configurable: true,
-      value: {
-        getConfig: vi.fn().mockResolvedValue({ success: true, value: {} })
-      }
-    })
+    terminalApiMocks.getConfig.mockResolvedValue({ success: true, value: {} })
+    terminalApiMocks.create.mockResolvedValue({ success: true })
+    terminalApiMocks.resize.mockResolvedValue({ success: true, value: undefined })
+    terminalApiMocks.onData.mockReturnValue(vi.fn())
+    terminalApiMocks.onExit.mockReturnValue(vi.fn())
   })
 
   test('updates the mounted xterm backend when Shift+Enter newline mode changes', async () => {

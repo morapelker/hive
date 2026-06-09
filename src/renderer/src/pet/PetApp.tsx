@@ -6,7 +6,7 @@ import { HatchCeremony } from './HatchCeremony'
 import { PetSprite } from './PetSprite'
 import { usePetDrag } from './usePetDrag'
 import { usePetHover } from './usePetHover'
-import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { petApi } from '@/api/pet-api'
 
 const DEFAULT_STATUS: PetStatusPayload = {
   state: 'idle',
@@ -30,8 +30,8 @@ export function PetApp(): React.JSX.Element {
 
     async function loadInitialState(): Promise<void> {
       const [config, currentStatus] = await Promise.all([
-        window.petOps.getConfig().then(unwrapEnvelope),
-        window.petOps.getCurrentStatus().then(unwrapEnvelope)
+        petApi.getConfig(),
+        petApi.getCurrentStatus()
       ])
       if (cancelled) return
       setSettings(config.settings)
@@ -42,11 +42,11 @@ export function PetApp(): React.JSX.Element {
     }
 
     loadInitialState().catch(console.error)
-    const cleanupStatus = window.petOps.onStatus((payload) => {
+    const cleanupStatus = petApi.onStatus((payload) => {
       latestStatusRef.current = payload
       setStatus(payload)
     })
-    const cleanupSettings = window.petOps.onSettingsUpdated((nextSettings) => {
+    const cleanupSettings = petApi.onSettingsUpdated((nextSettings) => {
       setSettings(nextSettings)
     })
 
@@ -60,7 +60,7 @@ export function PetApp(): React.JSX.Element {
   const handleHatchComplete = useCallback(() => {
     setHatching(false)
     setSettings((current) => (current ? { ...current, hasHatched: true } : current))
-    window.petOps.markHatched()
+    petApi.markHatched()
   }, [])
 
   const handleClick = useCallback(
@@ -71,9 +71,8 @@ export function PetApp(): React.JSX.Element {
         wasDraggedRef.current = false
         return
       }
-      window.petOps
+      petApi
         .focusMain({ worktreeId: latestStatusRef.current.sourceWorktreeId })
-        .then(unwrapEnvelope)
         .catch(console.error)
     },
     [wasDraggedRef]
@@ -81,7 +80,7 @@ export function PetApp(): React.JSX.Element {
 
   const handleContextMenu = useCallback((event: React.MouseEvent<HTMLElement>) => {
     event.preventDefault()
-    window.petOps.hide().then(unwrapEnvelope).catch(console.error)
+    petApi.hide().catch(console.error)
   }, [])
 
   if (!settings) return <div className="pet-root" />

@@ -2,6 +2,50 @@ import { describe, test, expect, beforeEach, vi } from 'vitest'
 import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react'
 import React from 'react'
 import { useLayoutStore } from '../../../src/renderer/src/stores/useLayoutStore'
+import { dbApi } from '../../../src/renderer/src/api/db-api'
+import { worktreeApi } from '../../../src/renderer/src/api/worktree-api'
+
+vi.mock('@/api/worktree-api', () => ({
+  worktreeApi: {
+    create: vi.fn(),
+    delete: vi.fn(),
+    sync: vi.fn(),
+    exists: vi.fn(),
+    openInTerminal: vi.fn().mockResolvedValue({ success: true }),
+    openInEditor: vi.fn().mockResolvedValue({ success: true }),
+    getBranches: vi.fn(),
+    branchExists: vi.fn(),
+    duplicate: vi.fn(),
+    renameBranch: vi.fn()
+  }
+}))
+
+vi.mock('@/api/db-api', () => ({
+  dbApi: {
+    worktree: {
+      getActiveByProject: vi.fn(),
+      touch: vi.fn()
+    },
+    setting: {
+      get: vi.fn(),
+      set: vi.fn()
+    }
+  }
+}))
+
+vi.mock('@/api/settings-api', () => ({
+  settingsApi: {
+    onSettingsUpdated: vi.fn(() => () => {})
+  }
+}))
+
+vi.mock('@/api/pet-api', () => ({
+  petApi: {
+    hide: vi.fn(() => Promise.resolve(undefined)),
+    show: vi.fn(() => Promise.resolve(undefined)),
+    updateSettings: vi.fn(() => Promise.resolve({ success: true }))
+  }
+}))
 
 // ---------------------------------------------------------------------------
 // Version naming logic tests (unit tests for the naming algorithm)
@@ -92,79 +136,6 @@ describe('Session 3: Branch Duplication', () => {
   // UI tests for WorktreeItem Duplicate menu
   // ---------------------------------------------------------------------------
   describe('UI', () => {
-    const mockWorktreeOps = {
-      create: vi.fn(),
-      delete: vi.fn(),
-      sync: vi.fn(),
-      exists: vi.fn(),
-      openInTerminal: vi.fn().mockResolvedValue({ success: true }),
-      openInEditor: vi.fn().mockResolvedValue({ success: true }),
-      getBranches: vi.fn(),
-      branchExists: vi.fn(),
-      duplicate: vi.fn().mockResolvedValue({
-        success: true,
-        worktree: {
-          id: 'new-wt-id',
-          project_id: 'proj-1',
-          name: 'feature-auth-v2',
-          branch_name: 'feature-auth-v2',
-          path: '/path/to/worktree',
-          status: 'active',
-          is_default: false,
-          created_at: new Date().toISOString(),
-          last_accessed_at: new Date().toISOString()
-        }
-      })
-    }
-
-    const mockProjectOps = {
-      openDirectoryDialog: vi.fn(),
-      isGitRepository: vi.fn(),
-      validateProject: vi.fn(),
-      showInFolder: vi.fn(),
-      openPath: vi.fn(),
-      copyToClipboard: vi.fn().mockResolvedValue(undefined),
-      readFromClipboard: vi.fn(),
-      detectLanguage: vi.fn(),
-      loadLanguageIcons: vi.fn()
-    }
-
-    const mockDb = {
-      worktree: {
-        getActiveByProject: vi.fn().mockResolvedValue([]),
-        touch: vi.fn().mockResolvedValue(true),
-        create: vi.fn(),
-        get: vi.fn(),
-        getByProject: vi.fn(),
-        update: vi.fn(),
-        delete: vi.fn(),
-        archive: vi.fn()
-      },
-      setting: { get: vi.fn(), set: vi.fn(), delete: vi.fn(), getAll: vi.fn() },
-      project: {
-        create: vi.fn(),
-        get: vi.fn(),
-        getByPath: vi.fn(),
-        getAll: vi.fn().mockResolvedValue([]),
-        update: vi.fn(),
-        delete: vi.fn(),
-        touch: vi.fn()
-      },
-      session: {
-        create: vi.fn(),
-        get: vi.fn(),
-        getByWorktree: vi.fn(),
-        getByProject: vi.fn(),
-        getActiveByWorktree: vi.fn(),
-        update: vi.fn(),
-        delete: vi.fn(),
-        search: vi.fn()
-      },
-      schemaVersion: vi.fn(),
-      tableExists: vi.fn(),
-      getIndexes: vi.fn()
-    }
-
     beforeEach(() => {
       vi.stubGlobal(
         'requestAnimationFrame',
@@ -175,18 +146,10 @@ describe('Session 3: Branch Duplication', () => {
         ((id: number) => clearTimeout(id)) as typeof cancelAnimationFrame
       )
 
-      Object.defineProperty(window, 'worktreeOps', {
-        writable: true,
-        value: mockWorktreeOps
-      })
-      Object.defineProperty(window, 'projectOps', {
-        writable: true,
-        value: mockProjectOps
-      })
-      Object.defineProperty(window, 'db', {
-        writable: true,
-        value: mockDb
-      })
+      vi.mocked(dbApi.worktree.getActiveByProject).mockResolvedValue([])
+      vi.mocked(dbApi.worktree.touch).mockResolvedValue(true)
+      vi.mocked(dbApi.setting.get).mockResolvedValue(null)
+      vi.mocked(dbApi.setting.set).mockResolvedValue(true)
 
       useLayoutStore.setState({ ghosttyOverlaySuppressed: false })
     })
@@ -344,8 +307,15 @@ describe('Session 3: Branch Duplication', () => {
   // Store action tests
   // ---------------------------------------------------------------------------
   describe('Worktree store action', () => {
-    test('duplicateWorktree calls window.worktreeOps.duplicate', async () => {
-      const mockDuplicate = vi.fn().mockResolvedValue({
+    beforeEach(() => {
+      vi.mocked(dbApi.worktree.getActiveByProject).mockResolvedValue([])
+      vi.mocked(dbApi.worktree.touch).mockResolvedValue(true)
+      vi.mocked(dbApi.setting.get).mockResolvedValue(null)
+      vi.mocked(dbApi.setting.set).mockResolvedValue(true)
+    })
+
+    test('duplicateWorktree calls worktreeApi.duplicate', async () => {
+      vi.mocked(worktreeApi.duplicate).mockResolvedValue({
         success: true,
         worktree: {
           id: 'new-id',
@@ -360,38 +330,13 @@ describe('Session 3: Branch Duplication', () => {
         }
       })
 
-      Object.defineProperty(window, 'worktreeOps', {
-        writable: true,
-        value: {
-          create: vi.fn(),
-          delete: vi.fn(),
-          sync: vi.fn(),
-          exists: vi.fn(),
-          openInTerminal: vi.fn(),
-          openInEditor: vi.fn(),
-          getBranches: vi.fn(),
-          branchExists: vi.fn(),
-          duplicate: mockDuplicate
-        }
-      })
-
-      Object.defineProperty(window, 'db', {
-        writable: true,
-        value: {
-          worktree: {
-            getActiveByProject: vi.fn().mockResolvedValue([]),
-            touch: vi.fn()
-          }
-        }
-      })
-
       const { useWorktreeStore } = await import('../../../src/renderer/src/stores/useWorktreeStore')
 
       const result = await useWorktreeStore
         .getState()
         .duplicateWorktree('proj-1', '/project/path', 'my-project', 'feature', '/worktree/path')
 
-      expect(mockDuplicate).toHaveBeenCalledWith({
+      expect(worktreeApi.duplicate).toHaveBeenCalledWith({
         projectId: 'proj-1',
         projectPath: '/project/path',
         projectName: 'my-project',
@@ -403,7 +348,7 @@ describe('Session 3: Branch Duplication', () => {
     })
 
     test('duplicateWorktree forwards nameHint when provided', async () => {
-      const mockDuplicate = vi.fn().mockResolvedValue({
+      vi.mocked(worktreeApi.duplicate).mockResolvedValue({
         success: true,
         worktree: {
           id: 'new-id',
@@ -415,31 +360,6 @@ describe('Session 3: Branch Duplication', () => {
           is_default: false,
           created_at: new Date().toISOString(),
           last_accessed_at: new Date().toISOString()
-        }
-      })
-
-      Object.defineProperty(window, 'worktreeOps', {
-        writable: true,
-        value: {
-          create: vi.fn(),
-          delete: vi.fn(),
-          sync: vi.fn(),
-          exists: vi.fn(),
-          openInTerminal: vi.fn(),
-          openInEditor: vi.fn(),
-          getBranches: vi.fn(),
-          branchExists: vi.fn(),
-          duplicate: mockDuplicate
-        }
-      })
-
-      Object.defineProperty(window, 'db', {
-        writable: true,
-        value: {
-          worktree: {
-            getActiveByProject: vi.fn().mockResolvedValue([]),
-            touch: vi.fn()
-          }
         }
       })
 
@@ -456,7 +376,7 @@ describe('Session 3: Branch Duplication', () => {
           'add-user-authentication'
         )
 
-      expect(mockDuplicate).toHaveBeenCalledWith({
+      expect(worktreeApi.duplicate).toHaveBeenCalledWith({
         projectId: 'proj-1',
         projectPath: '/project/path',
         projectName: 'my-project',

@@ -2,66 +2,50 @@ import { describe, test, expect, vi, beforeEach } from 'vitest'
 import * as fs from 'fs'
 import * as path from 'path'
 
+const apiMocks = vi.hoisted(() => ({
+  dbApi: {
+    session: {
+      update: vi.fn()
+    }
+  },
+  settingsApi: {
+    onSettingsUpdated: vi.fn(() => vi.fn())
+  }
+}))
+
+vi.mock('@/api/db-api', () => ({
+  dbApi: apiMocks.dbApi
+}))
+
+vi.mock('@/api/settings-api', () => ({
+  settingsApi: apiMocks.settingsApi
+}))
+
+import { dbApi } from '@/api/db-api'
+
+const mockSessionDb = vi.mocked(dbApi.session)
+
 describe('Session 2: Server Title Events', () => {
   describe('session.updated event handling in renderer', () => {
     beforeEach(() => {
-      Object.defineProperty(window, 'db', {
-        writable: true,
-        configurable: true,
-        value: {
-          session: {
-            create: vi.fn(),
-            get: vi.fn(),
-            getByWorktree: vi.fn().mockResolvedValue([]),
-            getByProject: vi.fn().mockResolvedValue([]),
-            getActiveByWorktree: vi.fn().mockResolvedValue([]),
-            update: vi.fn(),
-            delete: vi.fn(),
-            search: vi.fn(),
-            getDraft: vi.fn().mockResolvedValue(null),
-            updateDraft: vi.fn()
-          },
-          project: {
-            create: vi.fn(),
-            get: vi.fn(),
-            getByPath: vi.fn(),
-            getAll: vi.fn(),
-            update: vi.fn(),
-            delete: vi.fn(),
-            touch: vi.fn()
-          },
-          worktree: {
-            create: vi.fn(),
-            get: vi.fn(),
-            getByProject: vi.fn(),
-            getActiveByProject: vi.fn(),
-            update: vi.fn(),
-            delete: vi.fn(),
-            archive: vi.fn(),
-            touch: vi.fn()
-          },
-          message: {
-            create: vi.fn(),
-            getBySession: vi.fn().mockResolvedValue([]),
-            delete: vi.fn()
-          },
-          setting: {
-            get: vi.fn(),
-            set: vi.fn(),
-            delete: vi.fn(),
-            getAll: vi.fn()
-          },
-          schemaVersion: vi.fn(),
-          tableExists: vi.fn(),
-          getIndexes: vi.fn()
-        }
-      })
+      vi.clearAllMocks()
+      mockSessionDb.update.mockResolvedValue({ id: 'session-1', name: 'New title' })
     })
 
     test('updateSessionName is available on session store', async () => {
       const { useSessionStore } = await import('../../../src/renderer/src/stores/useSessionStore')
       const store = useSessionStore.getState()
       expect(typeof store.updateSessionName).toBe('function')
+    })
+
+    test('updateSessionName persists through dbApi.session.update', async () => {
+      const { useSessionStore } = await import('../../../src/renderer/src/stores/useSessionStore')
+
+      await expect(useSessionStore.getState().updateSessionName('session-1', 'New title')).resolves.toBe(
+        true
+      )
+
+      expect(mockSessionDb.update).toHaveBeenCalledWith('session-1', { name: 'New title' })
     })
   })
 
@@ -125,7 +109,7 @@ describe('Session 2: Server Title Events', () => {
     })
   })
 
-  describe('renameSession IPC chain', () => {
+  describe('renameSession RPC chain', () => {
     test('renameSession method exists in opencode-service', () => {
       const servicePath = path.join(
         __dirname,
@@ -142,37 +126,47 @@ describe('Session 2: Server Title Events', () => {
       expect(content).toContain('client.session.patch')
     })
 
-    test('opencode:renameSession IPC handler registered', () => {
-      const handlersPath = path.join(
+    test('renameSession command helper is available for RPC routing', () => {
+      const commandsPath = path.join(
         __dirname,
         '..',
         '..',
         '..',
         'src',
         'main',
-        'ipc',
-        'opencode-handlers.ts'
+        'services',
+        'opencode-session-commands.ts'
       )
-      const content = fs.readFileSync(handlersPath, 'utf-8')
-      expect(content).toContain("'opencode:renameSession'")
+      const content = fs.readFileSync(commandsPath, 'utf-8')
+      expect(content).toContain('export async function renameOpenCodeSession')
       expect(content).toContain('openCodeService.renameSession')
     })
 
-    test('preload exposes renameSession on opencodeOps', () => {
-      const preloadPath = path.join(__dirname, '..', '..', '..', 'src', 'preload', 'index.ts')
-      const content = fs.readFileSync(preloadPath, 'utf-8')
+    test('opencodeApi.renameSession routes through the RPC client', () => {
+      const opencodeApiPath = path.join(
+        __dirname,
+        '..',
+        '..',
+        '..',
+        'src',
+        'renderer',
+        'src',
+        'api',
+        'opencode-api.ts'
+      )
+      const content = fs.readFileSync(opencodeApiPath, 'utf-8')
       expect(content).toContain('renameSession:')
-      expect(content).toContain("ipcRenderer.invoke('opencode:renameSession'")
+      expect(content).toContain(
+        "getRendererRpcClient().request<OpenCodeRenameSessionResult>(\n      'opencodeOps.renameSession'"
+      )
     })
 
-    test('preload type declarations include renameSession', () => {
+    test('preload type declarations do not expose the old renameSession bridge', () => {
       const dtsPath = path.join(__dirname, '..', '..', '..', 'src', 'preload', 'index.d.ts')
       const content = fs.readFileSync(dtsPath, 'utf-8')
-      expect(content).toContain('renameSession')
-      // Verify the full signature shape
-      expect(content).toContain('opencodeSessionId: string')
-      expect(content).toContain('title: string')
-      expect(content).toContain('worktreePath?: string')
+      expect(content).not.toContain('renameSession')
+      expect(content).not.toContain('opencodeSessionId: string')
+      expect(content).not.toContain('worktreePath?: string')
     })
   })
 })

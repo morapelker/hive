@@ -1,6 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 
+const apiMocks = vi.hoisted(() => ({
+  systemApi: {
+    detectAgentSdks: vi.fn(),
+    quitApp: vi.fn()
+  },
+  analyticsApi: {
+    track: vi.fn()
+  }
+}))
+
 // Mutable store state for settings
 let mockSettingsState: {
   initialSetupComplete: boolean
@@ -18,6 +28,14 @@ vi.mock('@/stores/useSettingsStore', () => ({
       getState: () => mockSettingsState
     }
   )
+}))
+
+vi.mock('@/api/system-api', () => ({
+  systemApi: apiMocks.systemApi
+}))
+
+vi.mock('@/api/analytics-api', () => ({
+  analyticsApi: apiMocks.analyticsApi
 }))
 
 // Mock AgentNotFoundDialog
@@ -54,9 +72,8 @@ vi.mock('@/components/setup/AgentPickerDialog', () => ({
   )
 }))
 
-// Mock window APIs
-const mockDetectAgentSdks = vi.fn()
-const mockTrack = vi.fn()
+const mockDetectAgentSdks = apiMocks.systemApi.detectAgentSdks
+const mockTrack = apiMocks.analyticsApi.track
 
 describe('AgentSetupGuard with Codex support', () => {
   beforeEach(() => {
@@ -67,23 +84,6 @@ describe('AgentSetupGuard with Codex support', () => {
       isLoading: false,
       updateSetting: vi.fn()
     }
-
-    Object.defineProperty(window, 'systemOps', {
-      writable: true,
-      configurable: true,
-      value: {
-        detectAgentSdks: mockDetectAgentSdks,
-        quitApp: vi.fn()
-      }
-    })
-
-    Object.defineProperty(window, 'analyticsOps', {
-      writable: true,
-      configurable: true,
-      value: {
-        track: mockTrack
-      }
-    })
   })
 
   it('auto-selects codex when it is the only installed provider', async () => {

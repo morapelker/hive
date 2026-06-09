@@ -6,23 +6,28 @@ import {
   SearchHighlight
 } from '../../src/renderer/src/components/layout/RunOutputLine'
 import { useSettingsStore } from '../../src/renderer/src/stores/useSettingsStore'
+import { systemApi } from '@/api/system-api'
 
 // Mock ansi-to-react so we can verify the raw text is passed through
 vi.mock('ansi-to-react', () => ({
   default: ({ children }: { children: string }) => <code data-testid="ansi">{children}</code>
 }))
 
+vi.mock('@/api/system-api', () => ({
+  systemApi: {
+    openInChrome: vi.fn().mockResolvedValue({ success: true })
+  }
+}))
+
 describe('RunOutputLine', () => {
   afterEach(() => {
     vi.restoreAllMocks()
-    vi.mocked(window.systemOps.openInChrome).mockClear()
+    vi.mocked(systemApi.openInChrome).mockClear()
   })
 
   describe('marker lines', () => {
     test('renders truncation marker with \x00TRUNC: prefix', () => {
-      const { container } = render(
-        <RunOutputLine line={'\x00TRUNC:[older output truncated]'} />
-      )
+      const { container } = render(<RunOutputLine line={'\x00TRUNC:[older output truncated]'} />)
       const div = container.firstChild as HTMLElement
       expect(div.textContent).toBe('[older output truncated]')
       expect(div.className).toContain('text-center')
@@ -31,16 +36,12 @@ describe('RunOutputLine', () => {
     })
 
     test('renders custom truncation message', () => {
-      const { container } = render(
-        <RunOutputLine line={'\x00TRUNC:500 lines omitted'} />
-      )
+      const { container } = render(<RunOutputLine line={'\x00TRUNC:500 lines omitted'} />)
       expect(container.textContent).toBe('500 lines omitted')
     })
 
     test('renders CMD marker with $ prefix', () => {
-      const { container } = render(
-        <RunOutputLine line={'\x00CMD:npm run dev'} />
-      )
+      const { container } = render(<RunOutputLine line={'\x00CMD:npm run dev'} />)
       const div = container.firstChild as HTMLElement
       expect(div.textContent).toBe('$ npm run dev')
       expect(div.className).toContain('font-semibold')
@@ -87,9 +88,7 @@ describe('RunOutputLine', () => {
         matchEnd: 11,
         isCurrent: false
       }
-      const { container } = render(
-        <RunOutputLine line="hello world foo" highlight={highlight} />
-      )
+      const { container } = render(<RunOutputLine line="hello world foo" highlight={highlight} />)
       const marks = container.querySelectorAll('mark')
       expect(marks).toHaveLength(1)
       expect(marks[0].textContent).toBe('world')
@@ -101,9 +100,7 @@ describe('RunOutputLine', () => {
         matchEnd: 5,
         isCurrent: true
       }
-      const { container } = render(
-        <RunOutputLine line="hello world" highlight={highlight} />
-      )
+      const { container } = render(<RunOutputLine line="hello world" highlight={highlight} />)
       const mark = container.querySelector('mark')!
       expect(mark.className).toContain('bg-yellow-400/80')
     })
@@ -114,9 +111,7 @@ describe('RunOutputLine', () => {
         matchEnd: 5,
         isCurrent: false
       }
-      const { container } = render(
-        <RunOutputLine line="hello world" highlight={highlight} />
-      )
+      const { container } = render(<RunOutputLine line="hello world" highlight={highlight} />)
       const mark = container.querySelector('mark')!
       expect(mark.className).toContain('bg-yellow-400/40')
     })
@@ -127,9 +122,7 @@ describe('RunOutputLine', () => {
         matchEnd: 11,
         isCurrent: false
       }
-      const { container } = render(
-        <RunOutputLine line="hello world" highlight={highlight} />
-      )
+      const { container } = render(<RunOutputLine line="hello world" highlight={highlight} />)
       const mark = container.querySelector('mark')!
       expect(mark.textContent).toBe('hello world')
       // No text outside the mark
@@ -143,9 +136,7 @@ describe('RunOutputLine', () => {
         matchEnd: 5,
         isCurrent: false
       }
-      const { container } = render(
-        <RunOutputLine line="hello world" highlight={highlight} />
-      )
+      const { container } = render(<RunOutputLine line="hello world" highlight={highlight} />)
       const mark = container.querySelector('mark')!
       expect(mark.textContent).toBe('hello')
       // The rest should be in a span
@@ -160,9 +151,7 @@ describe('RunOutputLine', () => {
         matchEnd: 11,
         isCurrent: false
       }
-      const { container } = render(
-        <RunOutputLine line="hello world" highlight={highlight} />
-      )
+      const { container } = render(<RunOutputLine line="hello world" highlight={highlight} />)
       const mark = container.querySelector('mark')!
       expect(mark.textContent).toBe('world')
       const spans = container.querySelectorAll('span')
@@ -178,9 +167,7 @@ describe('RunOutputLine', () => {
         matchEnd: 3,
         isCurrent: false
       }
-      const { container } = render(
-        <RunOutputLine line={line} highlight={highlight} />
-      )
+      const { container } = render(<RunOutputLine line={line} highlight={highlight} />)
       const mark = container.querySelector('mark')!
       expect(mark.textContent).toBe('red')
       // "red" is highlighted, " text" is not
@@ -194,9 +181,7 @@ describe('RunOutputLine', () => {
         matchEnd: 5,
         isCurrent: false
       }
-      render(
-        <RunOutputLine line="hello world" highlight={highlight} />
-      )
+      render(<RunOutputLine line="hello world" highlight={highlight} />)
       expect(screen.queryByTestId('ansi')).toBeNull()
     })
   })
@@ -225,7 +210,7 @@ describe('RunOutputLine', () => {
 
       fireEvent.click(span, { metaKey: true, button: 0 })
 
-      expect(window.systemOps.openInChrome).toHaveBeenCalledWith(
+      expect(systemApi.openInChrome).toHaveBeenCalledWith(
         'http://localhost:5173/',
         'open -a Firefox {url}'
       )
@@ -237,7 +222,7 @@ describe('RunOutputLine', () => {
 
       fireEvent.click(span, { button: 0 })
 
-      expect(window.systemOps.openInChrome).not.toHaveBeenCalled()
+      expect(systemApi.openInChrome).not.toHaveBeenCalled()
     })
 
     test('right-click context menu is suppressed without opening URL', () => {
@@ -252,7 +237,7 @@ describe('RunOutputLine', () => {
       span.dispatchEvent(event)
 
       expect(event.defaultPrevented).toBe(true)
-      expect(window.systemOps.openInChrome).not.toHaveBeenCalled()
+      expect(systemApi.openInChrome).not.toHaveBeenCalled()
     })
 
     test('empty custom Chrome command is passed as undefined', () => {
@@ -265,10 +250,7 @@ describe('RunOutputLine', () => {
 
       fireEvent.click(span, { metaKey: true, button: 0 })
 
-      expect(window.systemOps.openInChrome).toHaveBeenCalledWith(
-        'http://localhost:5173/',
-        undefined
-      )
+      expect(systemApi.openInChrome).toHaveBeenCalledWith('http://localhost:5173/', undefined)
     })
 
     test('highlighted URL line is not linkified', () => {
@@ -299,9 +281,7 @@ describe('RunOutputLine', () => {
     })
 
     test('re-renders when line changes', () => {
-      const { container, rerender } = render(
-        <RunOutputLine line="first" />
-      )
+      const { container, rerender } = render(<RunOutputLine line="first" />)
       expect(container.textContent).toBe('first')
 
       rerender(<RunOutputLine line="second" />)
@@ -320,9 +300,7 @@ describe('RunOutputLine', () => {
         isCurrent: true
       }
 
-      const { container, rerender } = render(
-        <RunOutputLine line="hello" highlight={hl1} />
-      )
+      const { container, rerender } = render(<RunOutputLine line="hello" highlight={hl1} />)
       const mark1 = container.querySelector('mark')!
       expect(mark1.className).toContain('bg-yellow-400/40')
 

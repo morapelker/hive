@@ -8,10 +8,23 @@ const mocks = vi.hoisted(() => ({
   updateProject: vi.fn()
 }))
 
+const projectApiMocks = vi.hoisted(() => ({
+  detectSetupSuggestions: vi.fn().mockResolvedValue([]),
+  loadLanguageIcons: vi.fn().mockResolvedValue({}),
+  getProjectIconPath: vi.fn().mockResolvedValue(null),
+  getAbsoluteIconDataUrl: vi.fn().mockResolvedValue(null),
+  pickProjectIcon: vi.fn(),
+  removeProjectIcon: vi.fn()
+}))
+
 vi.mock('@/stores/useProjectStore', () => ({
   useProjectStore: () => ({
     updateProject: mocks.updateProject
   })
+}))
+
+vi.mock('@/api/project-api', () => ({
+  projectApi: projectApiMocks
 }))
 
 type Project = ComponentProps<typeof ProjectSettingsDialog>['project']
@@ -45,25 +58,16 @@ describe('ProjectSettingsDialog', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.updateProject.mockResolvedValue(true)
-
-    Object.defineProperty(window, 'projectOps', {
-      writable: true,
-      configurable: true,
-      value: {
-        detectSetupSuggestions: vi.fn().mockResolvedValue({ success: true, value: [] }),
-        loadLanguageIcons: vi.fn().mockResolvedValue({ success: true, value: {} }),
-        getProjectIconPath: vi.fn().mockResolvedValue({ success: true, value: null }),
-        getAbsoluteIconDataUrl: vi.fn().mockResolvedValue({ success: true, value: null }),
-        pickProjectIcon: vi.fn(),
-        removeProjectIcon: vi.fn()
-      }
-    })
+    projectApiMocks.detectSetupSuggestions.mockResolvedValue([])
+    projectApiMocks.loadLanguageIcons.mockResolvedValue({})
+    projectApiMocks.getProjectIconPath.mockResolvedValue(null)
+    projectApiMocks.getAbsoluteIconDataUrl.mockResolvedValue(null)
   })
 
   it('collapses the worktree create script section by default when no script is configured', async () => {
     renderDialog({ worktree_create_script: null })
 
-    await waitFor(() => expect(window.projectOps.detectSetupSuggestions).toHaveBeenCalled())
+    await waitFor(() => expect(projectApiMocks.detectSetupSuggestions).toHaveBeenCalled())
 
     expect(
       screen.getByRole('button', { name: /worktree create script/i })
@@ -75,7 +79,7 @@ describe('ProjectSettingsDialog', () => {
   it('expands the worktree create script section by default when a script is configured', async () => {
     renderDialog({ worktree_create_script: 'echo custom-create' })
 
-    await waitFor(() => expect(window.projectOps.detectSetupSuggestions).toHaveBeenCalled())
+    await waitFor(() => expect(projectApiMocks.detectSetupSuggestions).toHaveBeenCalled())
 
     expect(
       screen.getByRole('button', { name: /worktree create script/i })
@@ -87,7 +91,7 @@ describe('ProjectSettingsDialog', () => {
     const user = userEvent.setup()
     renderDialog({ worktree_create_script: null })
 
-    await waitFor(() => expect(window.projectOps.detectSetupSuggestions).toHaveBeenCalled())
+    await waitFor(() => expect(projectApiMocks.detectSetupSuggestions).toHaveBeenCalled())
 
     await user.click(screen.getByRole('button', { name: /worktree create script/i }))
 

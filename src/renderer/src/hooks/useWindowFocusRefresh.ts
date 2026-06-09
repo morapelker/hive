@@ -2,6 +2,8 @@ import { useEffect, useRef } from 'react'
 import { useGitStore } from '@/stores/useGitStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
+import { systemApi } from '@/api/system-api'
+import { gitApi } from '@/api/git-api'
 
 const THROTTLE_MS = 2000
 
@@ -49,14 +51,14 @@ export function useWindowFocusRefresh(): void {
     // Track incoming git status events so we can skip idle polls when the watcher is working.
     // Only reset the timer for events from active worktree paths — otherwise a healthy
     // watcher on path B would suppress the safety-net poll for a broken watcher on path A.
-    const unsubscribeStatus = window.gitOps.onStatusChanged((event) => {
+    const unsubscribeStatus = gitApi.onStatusChanged((event) => {
       const paths = getActiveWorktreePaths()
       if (paths.includes(event.worktreePath)) {
         lastEventRef.current = Date.now()
       }
     })
 
-    const unsubscribeFocus = window.systemOps.onWindowFocused(() => {
+    const unsubscribeFocus = systemApi.onWindowFocused(() => {
       const now = Date.now()
       if (now - lastRefreshTime < THROTTLE_MS) return
       lastRefreshTime = now

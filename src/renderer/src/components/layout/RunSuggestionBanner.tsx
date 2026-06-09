@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { AlertTriangle, X } from 'lucide-react'
 
+import { scriptApi } from '@/api/script-api'
 import { Button } from '@/components/ui/button'
-import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { useScriptStore } from '@/stores/useScriptStore'
 
 interface RunSuggestionBannerProps {
@@ -45,7 +45,7 @@ export function RunSuggestionBanner({
     setPending(true)
     setError(null)
     try {
-      const result = unwrapEnvelope(await window.scriptOps.killPid(suggestion.action.pid))
+      const result = await scriptApi.killPid(suggestion.action.pid)
       if (result.killed) {
         dismissSuggestion(worktreeId)
       } else {

@@ -1,8 +1,32 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+vi.mock('../useKanbanStore', () => ({
+  useKanbanStore: {
+    getState: vi.fn(() => ({
+      detachWorktreeTickets: vi.fn()
+    }))
+  }
+}))
+
+vi.mock('../useSessionStore', () => ({
+  useSessionStore: {
+    getState: vi.fn(() => ({
+      sessionsByWorktree: new Map()
+    }))
+  }
+}))
+
+vi.mock('../../api/worktree-api', () => ({
+  worktreeApi: {
+    sync: vi.fn().mockResolvedValue({ success: true })
+  }
+}))
+
+import { resetRendererRpcClientForTests, setRendererRpcClient } from '../../api/rpc-client'
+import { worktreeApi } from '../../api/worktree-api'
 import { useWorktreeStore } from '../useWorktreeStore'
 
-const envelope = <T>(value: T) => ({ success: true as const, value })
+let request: ReturnType<typeof vi.fn>
 
 const makeWorktree = (id: string, projectId: string) => ({
   id,
@@ -29,6 +53,8 @@ describe('useWorktreeStore worktree loading', () => {
   beforeEach(() => {
     vi.useRealTimers()
     vi.clearAllMocks()
+    request = vi.fn().mockResolvedValue([])
+    setRendererRpcClient({ request, subscribe: vi.fn() })
     useWorktreeStore.setState({
       worktreesByProject: new Map(),
       worktreeOrderByProject: new Map(),
@@ -39,43 +65,39 @@ describe('useWorktreeStore worktree loading', () => {
       archivingWorktreeIds: new Set()
     })
 
-    Object.defineProperty(window, 'db', {
-      writable: true,
-      configurable: true,
-      value: {
-        worktree: {
-          getActiveByProject: vi.fn().mockResolvedValue(envelope([])),
-          touch: vi.fn().mockResolvedValue(envelope(undefined))
-        }
-      }
-    })
-
-    Object.defineProperty(window, 'worktreeOps', {
-      writable: true,
-      configurable: true,
-      value: {
-        ...window.worktreeOps,
-        sync: vi.fn().mockResolvedValue(envelope({ success: true }))
-      }
-    })
+    vi.mocked(worktreeApi.sync).mockResolvedValue({ success: true })
   })
+
+  afterEach(() => {
+    resetRendererRpcClientForTests()
+  })
+
+  const expectGetActiveByProjectCalls = (count: number) => {
+    expect(
+      request.mock.calls.filter(([method]) => method === 'db.worktree.getActiveByProject')
+    ).toHaveLength(count)
+  }
 
   it('coalesces concurrent worktree loads for the same project', async () => {
     const projectId = 'load-concurrent-project'
     const worktrees = [makeWorktree('a', projectId)]
-    let resolveLoad: (value: { success: true; value: typeof worktrees }) => void
-    const loadPromise = new Promise<{ success: true; value: typeof worktrees }>((resolve) => {
+    let resolveLoad: (value: typeof worktrees) => void
+    const loadPromise = new Promise<typeof worktrees>((resolve) => {
       resolveLoad = resolve
     })
 
-    vi.mocked(window.db.worktree.getActiveByProject).mockReturnValue(loadPromise)
+    request.mockImplementation((method) => {
+      if (method === 'db.worktree.getActiveByProject') return loadPromise
+      return Promise.resolve([])
+    })
 
     const firstLoad = useWorktreeStore.getState().loadWorktrees(projectId)
     const secondLoad = useWorktreeStore.getState().loadWorktrees(projectId)
 
-    expect(window.db.worktree.getActiveByProject).toHaveBeenCalledTimes(1)
+    expect(request).toHaveBeenCalledWith('db.worktree.getActiveByProject', { projectId })
+    expectGetActiveByProjectCalls(1)
 
-    resolveLoad!(envelope(worktrees))
+    resolveLoad!(worktrees)
     await Promise.all([firstLoad, secondLoad])
 
     expect(useWorktreeStore.getState().getWorktreesForProject(projectId)).toEqual(worktrees)
@@ -84,22 +106,23 @@ describe('useWorktreeStore worktree loading', () => {
   it('coalesces concurrent worktree syncs for the same project', async () => {
     const projectId = 'sync-concurrent-project'
     const projectPath = '/repo/project'
-    let resolveSync: (value: { success: true; value: { success: true } }) => void
-    const syncPromise = new Promise<{ success: true; value: { success: true } }>((resolve) => {
+    let resolveSync: (value: { success: true }) => void
+    const syncPromise = new Promise<{ success: true }>((resolve) => {
       resolveSync = resolve
     })
 
-    vi.mocked(window.worktreeOps.sync).mockReturnValue(syncPromise)
+    vi.mocked(worktreeApi.sync).mockReturnValue(syncPromise)
 
     const firstSync = useWorktreeStore.getState().syncWorktrees(projectId, projectPath)
     const secondSync = useWorktreeStore.getState().syncWorktrees(projectId, projectPath)
 
-    expect(window.worktreeOps.sync).toHaveBeenCalledTimes(1)
+    expect(worktreeApi.sync).toHaveBeenCalledTimes(1)
 
-    resolveSync!(envelope({ success: true }))
+    resolveSync!({ success: true })
     await Promise.all([firstSync, secondSync])
 
-    expect(window.db.worktree.getActiveByProject).toHaveBeenCalledTimes(1)
+    expect(request).toHaveBeenCalledWith('db.worktree.getActiveByProject', { projectId })
+    expectGetActiveByProjectCalls(1)
   })
 
   it('skips worktree load and sync refetches inside their TTLs', async () => {
@@ -114,8 +137,8 @@ describe('useWorktreeStore worktree loading', () => {
     await useWorktreeStore.getState().syncWorktrees(projectId, projectPath)
     await useWorktreeStore.getState().syncWorktrees(projectId, projectPath)
 
-    expect(window.db.worktree.getActiveByProject).toHaveBeenCalledTimes(2)
-    expect(window.worktreeOps.sync).toHaveBeenCalledTimes(1)
+    expectGetActiveByProjectCalls(2)
+    expect(worktreeApi.sync).toHaveBeenCalledTimes(1)
   })
 
   it('allows force worktree load and sync calls to bypass their TTLs', async () => {
@@ -130,8 +153,26 @@ describe('useWorktreeStore worktree loading', () => {
     await useWorktreeStore.getState().syncWorktrees(projectId, projectPath)
     await useWorktreeStore.getState().syncWorktrees(projectId, projectPath, { force: true })
 
-    expect(window.db.worktree.getActiveByProject).toHaveBeenCalledTimes(4)
-    expect(window.worktreeOps.sync).toHaveBeenCalledTimes(2)
+    expectGetActiveByProjectCalls(4)
+    expect(worktreeApi.sync).toHaveBeenCalledTimes(2)
+  })
+
+  it('appends a session title locally and persists through dbApi', () => {
+    const projectId = 'append-title-project'
+    const worktree = makeWorktree('append-title-worktree', projectId)
+    useWorktreeStore.setState({
+      worktreesByProject: new Map([[projectId, [worktree]]])
+    })
+
+    useWorktreeStore.getState().appendSessionTitle(worktree.id, 'Implement RPC migration')
+
+    expect(request).toHaveBeenCalledWith('db.worktree.appendSessionTitle', {
+      worktreeId: worktree.id,
+      title: 'Implement RPC migration'
+    })
+    expect(useWorktreeStore.getState().getWorktreesForProject(projectId)[0].session_titles).toBe(
+      JSON.stringify(['Implement RPC migration'])
+    )
   })
 
   it('always runs first-ever worktree load and sync calls', async () => {
@@ -143,7 +184,7 @@ describe('useWorktreeStore worktree loading', () => {
     await useWorktreeStore.getState().loadWorktrees(projectId)
     await useWorktreeStore.getState().syncWorktrees(projectId, projectPath)
 
-    expect(window.db.worktree.getActiveByProject).toHaveBeenCalledTimes(2)
-    expect(window.worktreeOps.sync).toHaveBeenCalledTimes(1)
+    expectGetActiveByProjectCalls(2)
+    expect(worktreeApi.sync).toHaveBeenCalledTimes(1)
   })
 })

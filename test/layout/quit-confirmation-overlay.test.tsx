@@ -1,5 +1,11 @@
 import { act, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  QUIT_CONFIRMATION_HIDE_CHANNEL,
+  QUIT_CONFIRMATION_SHOW_CHANNEL
+} from '@shared/shortcut-events'
+import type { ServerEvent } from '@shared/rpc/protocol'
+import { resetRendererRpcClientForTests, setRendererRpcClient } from '@/api/rpc-client'
 
 describe('QuitConfirmationOverlay', () => {
   let showHandler: (() => void) | null
@@ -14,31 +20,41 @@ describe('QuitConfirmationOverlay', () => {
     unsubscribeShow = vi.fn()
     unsubscribeHide = vi.fn()
 
-    Object.defineProperty(window, 'systemOps', {
-      writable: true,
-      configurable: true,
-      value: {
-        ...window.systemOps,
-        onQuitConfirmationShow: vi.fn((callback: () => void) => {
-          showHandler = callback
-          return unsubscribeShow
-        }),
-        onQuitConfirmationHide: vi.fn((callback: () => void) => {
-          hideHandler = callback
-          return unsubscribeHide
-        })
+    const request = vi.fn()
+    const subscribe = vi.fn((channel: string, callback: (event: ServerEvent) => void) => {
+      if (channel === QUIT_CONFIRMATION_SHOW_CHANNEL) {
+        showHandler = () => {
+          callback({
+            channel,
+            payload: undefined
+          })
+        }
+        return unsubscribeShow
       }
+
+      if (channel === QUIT_CONFIRMATION_HIDE_CHANNEL) {
+        hideHandler = () => {
+          callback({
+            channel,
+            payload: undefined
+          })
+        }
+        return unsubscribeHide
+      }
+
+      return unsubscribeShow
     })
+
+    setRendererRpcClient({ request, subscribe })
   })
 
   afterEach(() => {
+    resetRendererRpcClientForTests()
     vi.useRealTimers()
   })
 
-  it('shows on IPC and hides itself after two seconds', async () => {
-    const { QuitConfirmationOverlay } = await import(
-      '@/components/layout/QuitConfirmationOverlay'
-    )
+  it('shows on the renderer subscription and hides itself after two seconds', async () => {
+    const { QuitConfirmationOverlay } = await import('@/components/layout/QuitConfirmationOverlay')
 
     render(<QuitConfirmationOverlay />)
     expect(screen.queryByText(/again to Quit Hive/)).not.toBeInTheDocument()
@@ -56,10 +72,8 @@ describe('QuitConfirmationOverlay', () => {
     expect(screen.queryByText(/again to Quit Hive/)).not.toBeInTheDocument()
   })
 
-  it('hides immediately when the hide IPC event arrives', async () => {
-    const { QuitConfirmationOverlay } = await import(
-      '@/components/layout/QuitConfirmationOverlay'
-    )
+  it('hides immediately when the hide subscription event arrives', async () => {
+    const { QuitConfirmationOverlay } = await import('@/components/layout/QuitConfirmationOverlay')
 
     render(<QuitConfirmationOverlay />)
 
@@ -75,10 +89,8 @@ describe('QuitConfirmationOverlay', () => {
     expect(screen.queryByText(/again to Quit Hive/)).not.toBeInTheDocument()
   })
 
-  it('unsubscribes from IPC events on unmount', async () => {
-    const { QuitConfirmationOverlay } = await import(
-      '@/components/layout/QuitConfirmationOverlay'
-    )
+  it('unsubscribes from subscription events on unmount', async () => {
+    const { QuitConfirmationOverlay } = await import('@/components/layout/QuitConfirmationOverlay')
 
     const { unmount } = render(<QuitConfirmationOverlay />)
     unmount()

@@ -1,7 +1,7 @@
 # Custom Commands File-Based Configuration
 
-**Date:** 2026-05-25  
-**Status:** Design Approved  
+**Date:** 2026-05-25
+**Status:** Design Approved
 **Feature:** File-based configuration for custom project commands
 
 ## Overview
@@ -266,15 +266,15 @@ async function loadSettingsFromDatabase(): Promise<AppSettings | null> {
   try {
     // Step 1: Check if custom commands file exists and load it
     const fileResult = await window.electron.ipcRenderer.invoke('load-custom-commands-file')
-    
+
     if (fileResult.success && fileResult.commands) {
       // Save file commands to database (file is source of truth)
       await window.electron.ipcRenderer.invoke('save-custom-commands', fileResult.commands)
     }
-    
+
     // Step 2: Load all settings from database (now has latest file data)
     const result = await window.electron.ipcRenderer.invoke('load-settings')
-    
+
     // ... existing validation and parsing logic
   } catch (error) {
     console.error('Failed to load settings:', error)
@@ -309,13 +309,13 @@ Add app lifecycle hooks:
 // On app ready
 app.whenReady().then(() => {
   // ... existing initialization
-  
+
   // Create template file if this is first launch
   const templateResult = createTemplateFile()
   if (templateResult.created) {
     console.log('Created custom commands template file')
   }
-  
+
   // Store initial file mtime
   lastKnownMtime = getFileModTime()
 })
@@ -325,12 +325,12 @@ let lastKnownMtime: number | null = null
 
 app.on('activate', () => {
   // ... existing activation logic
-  
+
   // Check if custom commands file changed
   const currentMtime = getFileModTime()
   if (currentMtime !== null && currentMtime !== lastKnownMtime) {
     lastKnownMtime = currentMtime
-    
+
     // Notify all windows to reload custom commands
     BrowserWindow.getAllWindows().forEach(win => {
       win.webContents.send('custom-commands-file-changed')
@@ -349,9 +349,9 @@ useEffect(() => {
     // Reload settings which will trigger re-render
     await useSettingsStore.getState().loadSettings()
   }
-  
+
   window.electron.ipcRenderer.on('custom-commands-file-changed', handleFileChange)
-  
+
   return () => {
     window.electron.ipcRenderer.off('custom-commands-file-changed', handleFileChange)
   }
@@ -439,12 +439,12 @@ ProjectItem menu shows updated commands
 
 ## Success Criteria
 
-✅ User can edit `~/.hive/custom-commands.json` with any text editor  
-✅ File changes automatically detected when user returns to Hive  
-✅ Template file with examples created on first launch  
-✅ Invalid JSON shows helpful error without breaking app  
-✅ Backward compatible: database-only workflow still works  
-✅ No performance impact on app startup or activation  
+✅ User can edit `~/.hive/custom-commands.json` with any text editor
+✅ File changes automatically detected when user returns to Hive
+✅ Template file with examples created on first launch
+✅ Invalid JSON shows helpful error without breaking app
+✅ Backward compatible: database-only workflow still works
+✅ No performance impact on app startup or activation
 ✅ All existing custom command features continue working
 
 ## Future Enhancements (Out of Scope)

@@ -114,6 +114,53 @@ const initialWorktreeStatusState = useWorktreeStatusStore.getState()
 
 const now = '2026-01-01T00:00:00.000Z'
 
+const terminalApiMocks = vi.hoisted(() => ({
+  createClaudeCli: vi.fn().mockResolvedValue({ success: true, value: { success: true } }),
+  onClaudeSessionId: vi.fn().mockReturnValue(() => {})
+}))
+
+vi.mock('@/api/terminal-api', () => ({
+  terminalApi: terminalApiMocks
+}))
+
+const opencodeApiMocks = vi.hoisted(() => ({
+  abort: vi.fn().mockResolvedValue({ success: true, value: { success: true } }),
+  commands: vi.fn().mockResolvedValue({ success: true, value: { success: true, commands: [] } }),
+  listModels: vi.fn().mockResolvedValue({ success: true, value: { success: true, providers: [] } })
+}))
+
+vi.mock('@/api/opencode-api', () => ({
+  opencodeApi: opencodeApiMocks
+}))
+
+const dbApiMocks = vi.hoisted(() => ({
+  session: {
+    get: vi.fn().mockResolvedValue(null),
+    update: vi.fn().mockResolvedValue({ success: true, value: undefined })
+  },
+  worktree: {
+    get: vi.fn().mockResolvedValue(null),
+    getActiveByProject: vi.fn().mockResolvedValue([]),
+    update: vi.fn().mockResolvedValue({ success: true, value: undefined })
+  },
+  setting: {
+    get: vi.fn().mockResolvedValue(null),
+    set: vi.fn().mockResolvedValue(undefined)
+  }
+}))
+
+vi.mock('@/api/db-api', () => ({
+  dbApi: dbApiMocks
+}))
+
+const gitApiMocks = vi.hoisted(() => ({
+  listBranchesWithStatus: vi.fn().mockResolvedValue({ success: true, branches: [] })
+}))
+
+vi.mock('@/api/git-api', () => ({
+  gitApi: gitApiMocks
+}))
+
 const sourceSession: Session = {
   id: 'source-session',
   worktree_id: 'worktree-1',
@@ -195,38 +242,26 @@ const worktree: Worktree = {
 }
 
 function setupWindowApis(): void {
-  Object.defineProperty(window, 'terminalOps', {
-    configurable: true,
-    writable: true,
-    value: {
-      createClaudeCli: vi.fn().mockResolvedValue({ success: true, value: { success: true } }),
-      onClaudeSessionId: vi.fn().mockReturnValue(() => {})
-    }
-  })
+  terminalApiMocks.createClaudeCli.mockResolvedValue({ success: true, value: { success: true } })
+  terminalApiMocks.onClaudeSessionId.mockReturnValue(() => {})
 
-  Object.defineProperty(window, 'opencodeOps', {
-    configurable: true,
-    writable: true,
-    value: {
-      abort: vi.fn().mockResolvedValue({ success: true, value: { success: true } }),
-      commands: vi.fn().mockResolvedValue({ success: true, value: { success: true, commands: [] } }),
-      listModels: vi.fn().mockResolvedValue({ success: true, value: { success: true, providers: [] } })
-    }
+  opencodeApiMocks.abort.mockResolvedValue({ success: true, value: { success: true } })
+  opencodeApiMocks.commands.mockResolvedValue({
+    success: true,
+    value: { success: true, commands: [] }
   })
-
-  Object.defineProperty(window, 'db', {
-    configurable: true,
-    writable: true,
-    value: {
-      session: {
-        get: vi.fn().mockResolvedValue(null),
-        update: vi.fn().mockResolvedValue({ success: true, value: undefined })
-      },
-      worktree: {
-        get: vi.fn().mockResolvedValue(worktree)
-      }
-    }
+  opencodeApiMocks.listModels.mockResolvedValue({
+    success: true,
+    value: { success: true, providers: [] }
   })
+  dbApiMocks.session.get.mockResolvedValue(null)
+  dbApiMocks.session.update.mockResolvedValue({ success: true, value: undefined })
+  dbApiMocks.worktree.get.mockResolvedValue(worktree)
+  dbApiMocks.worktree.getActiveByProject.mockResolvedValue([])
+  dbApiMocks.worktree.update.mockResolvedValue({ success: true, value: undefined })
+  dbApiMocks.setting.get.mockResolvedValue(null)
+  dbApiMocks.setting.set.mockResolvedValue(undefined)
+  gitApiMocks.listBranchesWithStatus.mockResolvedValue({ success: true, branches: [] })
 }
 
 function setupStores(): {
@@ -354,9 +389,6 @@ describe('KanbanTicketModal handoff from Claude CLI plan review', () => {
     useKanbanStore.setState(initialKanbanState, true)
     useProjectStore.setState(initialProjectState, true)
     useWorktreeStatusStore.setState(initialWorktreeStatusState, true)
-    delete (window as { terminalOps?: unknown }).terminalOps
-    delete (window as { opencodeOps?: unknown }).opencodeOps
-    delete (window as { db?: unknown }).db
   })
 
   it('starts the Claude CLI handoff without focusing the new session', async () => {
@@ -376,8 +408,8 @@ describe('KanbanTicketModal handoff from Claude CLI plan review', () => {
       autoFocus: false,
       modelOverride: undefined
     })
-    await waitFor(() => expect(window.terminalOps.createClaudeCli).toHaveBeenCalledTimes(1))
-    expect(window.terminalOps.createClaudeCli).toHaveBeenCalledWith('handoff-session', {
+    await waitFor(() => expect(terminalApiMocks.createClaudeCli).toHaveBeenCalledTimes(1))
+    expect(terminalApiMocks.createClaudeCli).toHaveBeenCalledWith('handoff-session', {
       pendingPrompt: expect.stringContaining('Implement the plan.')
     })
     expect(setActiveSession).not.toHaveBeenCalledWith('handoff-session')
@@ -418,7 +450,7 @@ describe('KanbanTicketModal handoff from Claude CLI plan review', () => {
       autoFocus: false,
       modelOverride: undefined
     })
-    await waitFor(() => expect(window.terminalOps.createClaudeCli).toHaveBeenCalledWith(
+    await waitFor(() => expect(terminalApiMocks.createClaudeCli).toHaveBeenCalledWith(
       'handoff-session',
       { pendingPrompt: expect.stringContaining('Implement the plan.') }
     ))
@@ -499,17 +531,8 @@ describe('KanbanTicketModal handoff from Claude CLI plan review', () => {
       resolveDbSession = resolve
     })
     const dbSessionGet = vi.fn().mockReturnValue(dbSessionPromise)
-    Object.defineProperty(window, 'db', {
-      configurable: true,
-      writable: true,
-      value: {
-        session: {
-          get: dbSessionGet,
-          update: vi.fn().mockResolvedValue({ success: true, value: undefined })
-        },
-        worktree: { get: vi.fn().mockResolvedValue(worktree) }
-      }
-    })
+    dbApiMocks.session.get.mockImplementation(dbSessionGet)
+    dbApiMocks.worktree.get.mockResolvedValue(worktree)
 
     render(
       <ClaudeCliSessionPortalProvider>

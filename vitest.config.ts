@@ -20,6 +20,7 @@ export default defineConfig({
       include: [
         'src/main/**/*.{ts,tsx}',
         'src/preload/**/*.{ts,tsx}',
+        'src/server/**/*.{ts,tsx}',
         'src/renderer/src/**/*.{ts,tsx}',
         'src/shared/**/*.{ts,tsx}'
       ],

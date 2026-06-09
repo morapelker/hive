@@ -1,5 +1,6 @@
 import { describe, test, expect } from 'vitest'
 import { CURRENT_SCHEMA_VERSION, MIGRATIONS } from '../../../src/main/db/schema'
+import type { dbApi } from '../../../src/renderer/src/api/db-api'
 
 /**
  * Session 8: Per-Session Model — Schema & Backend Tests
@@ -91,8 +92,8 @@ describe('Session 8: Per-Session Model Schema', () => {
 
   describe('Session create/update type compatibility', () => {
     test('session create data accepts model fields', () => {
-      // Validates the type accepted by window.db.session.create()
-      const createData: Parameters<Window['db']['session']['create']>[0] = {
+      // Validates the type accepted by dbApi.session.create().
+      const createData: Parameters<typeof dbApi.session.create>[0] = {
         worktree_id: 'wt-1',
         project_id: 'proj-1',
         name: 'Test',
@@ -106,7 +107,7 @@ describe('Session 8: Per-Session Model Schema', () => {
     })
 
     test('session create data works without model fields (backward compat)', () => {
-      const createData: Parameters<Window['db']['session']['create']>[0] = {
+      const createData: Parameters<typeof dbApi.session.create>[0] = {
         worktree_id: 'wt-1',
         project_id: 'proj-1'
       }
@@ -116,8 +117,8 @@ describe('Session 8: Per-Session Model Schema', () => {
     })
 
     test('session update data accepts model fields', () => {
-      // Validates the type accepted by window.db.session.update()
-      const updateData: Parameters<Window['db']['session']['update']>[1] = {
+      // Validates the type accepted by dbApi.session.update().
+      const updateData: Parameters<typeof dbApi.session.update>[1] = {
         model_provider_id: 'openai',
         model_id: 'gpt-4o',
         model_variant: null
@@ -128,7 +129,7 @@ describe('Session 8: Per-Session Model Schema', () => {
     })
 
     test('session update data works without model fields (backward compat)', () => {
-      const updateData: Parameters<Window['db']['session']['update']>[1] = {
+      const updateData: Parameters<typeof dbApi.session.update>[1] = {
         name: 'Updated name'
       }
       expect(updateData.model_provider_id).toBeUndefined()

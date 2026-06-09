@@ -3,7 +3,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { ProjectItem } from '../../src/renderer/src/components/projects/ProjectItem'
+import { WorktreeItem } from '../../src/renderer/src/components/worktrees/WorktreeItem'
 import { useProjectStore } from '../../src/renderer/src/stores/useProjectStore'
 import { useWorktreeStore } from '../../src/renderer/src/stores/useWorktreeStore'
 import { useSpaceStore } from '../../src/renderer/src/stores/useSpaceStore'
@@ -55,9 +55,31 @@ describe('Custom Commands E2E Integration', () => {
     last_accessed_at: '2024-01-02'
   }
 
+  const mockWorktree = {
+    id: 'test-worktree-123',
+    project_id: mockProject.id,
+    name: 'main',
+    branch_name: 'main',
+    path: mockProject.path,
+    status: 'active' as const,
+    is_default: true,
+    branch_renamed: 0,
+    last_message_at: null,
+    session_titles: '[]',
+    last_model_provider_id: null,
+    last_model_id: null,
+    last_model_variant: null,
+    attachments: '[]',
+    created_at: '2024-01-01',
+    last_accessed_at: '2024-01-02',
+    github_pr_number: null,
+    github_pr_url: null
+  }
+
   beforeEach(() => {
     // Reset all stores
     useProjectStore.setState({
+      projects: [mockProject],
       selectedProjectId: null,
       expandedProjectIds: new Set(),
       editingProjectId: null,
@@ -129,11 +151,11 @@ describe('Custom Commands E2E Integration', () => {
     window.addEventListener('hive:execute-custom-command', eventListener)
 
     // Render component
-    render(<ProjectItem project={mockProject} />)
+    render(<WorktreeItem worktree={mockWorktree} projectPath={mockProject.path} />)
 
     // Open context menu
-    const projectItem = screen.getByTestId('project-item-test-project-123')
-    await user.pointer({ keys: '[MouseRight]', target: projectItem })
+    const worktreeItem = screen.getByTestId('worktree-item-test-worktree-123')
+    await user.pointer({ keys: '[MouseRight]', target: worktreeItem })
 
     // Click custom command
     const analyzeCommand = await screen.findByText('Analyze Architecture')
@@ -145,6 +167,7 @@ describe('Custom Commands E2E Integration', () => {
         expect.objectContaining({
           detail: expect.objectContaining({
             projectId: 'test-project-123',
+            worktreeId: 'test-worktree-123',
             commandName: 'Analyze Architecture',
             renderedPrompt: 'Analyze the architecture of MyApp located at /Users/test/myapp. Language: TypeScript.'
           })
@@ -180,11 +203,11 @@ describe('Custom Commands E2E Integration', () => {
       customProjectCommands: commands
     } as any)
 
-    render(<ProjectItem project={mockProject} />)
+    render(<WorktreeItem worktree={mockWorktree} projectPath={mockProject.path} />)
 
     // Open context menu
-    const projectItem = screen.getByTestId('project-item-test-project-123')
-    await user.pointer({ keys: '[MouseRight]', target: projectItem })
+    const worktreeItem = screen.getByTestId('worktree-item-test-worktree-123')
+    await user.pointer({ keys: '[MouseRight]', target: worktreeItem })
 
     // All three commands should be visible
     expect(await screen.findByText('Command One')).toBeInTheDocument()

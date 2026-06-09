@@ -1,9 +1,7 @@
 import { create } from 'zustand'
 import { useWorktreeStore } from './useWorktreeStore'
 import { useSessionStore } from './useSessionStore'
-import { unwrapEnvelopeApi } from '@/lib/ipc-envelope'
-
-const db = unwrapEnvelopeApi(() => window.db)
+import { dbApi } from '@/api/db-api'
 
 const ONE_HOUR_MS = 60 * 60 * 1000
 const STORAGE_KEY = 'hive-recent-visible'
@@ -62,7 +60,7 @@ export const useRecentStore = create<RecentState>()((set, get) => ({
     // Query DB for ALL worktrees with recent AI activity (not just expanded ones)
     const worktreeIds = new Set<string>()
     try {
-      const recentWorktrees = await db.worktree.getRecentlyActive(cutoff)
+      const recentWorktrees = await dbApi.worktree.getRecentlyActive(cutoff)
 
       // Ensure parent projects have their worktrees loaded in the store
       // so RecentList can look them up (collapsed projects aren't loaded yet)

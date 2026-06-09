@@ -22,47 +22,116 @@ vi.mock('sonner', () => ({
   })
 }))
 
-// Mock window.db for session store
-const mockSessionCreate = vi.fn()
-const mockSessionUpdate = vi.fn()
-const mockSessionGet = vi.fn()
-const mockSessionGetActiveByWorktree = vi.fn().mockResolvedValue([])
+const dbApiMocks = vi.hoisted(() => ({
+  session: {
+    create: vi.fn(),
+    update: vi.fn(),
+    get: vi.fn(),
+    getActiveByWorktree: vi.fn().mockResolvedValue([]),
+    updateDraft: vi.fn()
+  },
+  sessionMessage: {
+    list: vi.fn().mockResolvedValue([])
+  },
+  sessionActivity: {
+    list: vi.fn().mockResolvedValue([])
+  },
+  worktree: {
+    get: vi.fn(),
+    updateModel: vi.fn().mockResolvedValue({ success: true })
+  },
+  setting: {
+    get: vi.fn().mockResolvedValue(null),
+    set: vi.fn().mockResolvedValue(true)
+  }
+}))
 
-Object.defineProperty(window, 'db', {
-  writable: true,
-  value: {
-    session: {
-      create: mockSessionCreate,
-      update: mockSessionUpdate,
-      get: mockSessionGet,
-      getActiveByWorktree: mockSessionGetActiveByWorktree,
-      updateDraft: vi.fn()
+const opencodeApiMocks = vi.hoisted(() => ({
+  setModel: vi.fn().mockResolvedValue({ success: true }),
+  abort: vi.fn().mockResolvedValue({ success: true }),
+  disconnect: vi.fn().mockResolvedValue({ success: true }),
+  undo: vi.fn().mockResolvedValue({ success: true }),
+  redo: vi.fn().mockResolvedValue({ success: true }),
+  onStream: vi.fn().mockReturnValue(() => {})
+}))
+
+vi.mock('@/api/db-api', () => ({
+  dbApi: dbApiMocks
+}))
+
+vi.mock('@/api/opencode-api', () => ({
+  opencodeApi: opencodeApiMocks
+}))
+
+const settingsStoreMocks = vi.hoisted(() => {
+  const state = {
+    availableAgentSdks: {
+      opencode: true,
+      claude: true,
+      codex: true
     },
-    worktree: {
-      get: vi.fn()
-    },
-    settings: {
-      get: vi.fn()
-    }
+    defaultAgentSdk: 'opencode',
+    selectedModel: null,
+    selectedModelByProvider: {},
+    getModelForMode: vi.fn(() => null),
+    goalStatusCollapsed: false,
+    stripAtMentions: false,
+    codexFastMode: false,
+    codexFastModeAccepted: false,
+    vimModeEnabled: false,
+    updateSetting: vi.fn()
+  }
+
+  return {
+    state,
+    useSettingsStore: Object.assign(
+      (selector?: (state: typeof state) => unknown) => (selector ? selector(state) : state),
+      {
+        getState: () => state
+      }
+    ),
+    resolveModelForSdk: vi.fn(() => null)
   }
 })
 
-Object.defineProperty(window, 'opencodeOps', {
-  writable: true,
-  value: {
-    setModel: vi.fn().mockResolvedValue({ success: true }),
-    abort: vi.fn().mockResolvedValue({ success: true }),
-    undo: vi.fn().mockResolvedValue({ success: true }),
-    redo: vi.fn().mockResolvedValue({ success: true })
-  }
-})
+vi.mock('../../../src/renderer/src/stores/useSettingsStore', () => ({
+  useSettingsStore: settingsStoreMocks.useSettingsStore,
+  resolveModelForSdk: settingsStoreMocks.resolveModelForSdk
+}))
+
+vi.mock('@/stores/useSettingsStore', () => ({
+  useSettingsStore: settingsStoreMocks.useSettingsStore,
+  resolveModelForSdk: settingsStoreMocks.resolveModelForSdk
+}))
 
 import { BUILT_IN_SLASH_COMMANDS } from '../../../src/renderer/src/components/sessions/SessionView'
 import { useSessionStore } from '../../../src/renderer/src/stores/useSessionStore'
 
+const mockSessionCreate = dbApiMocks.session.create
+const mockSessionUpdate = dbApiMocks.session.update
+
 describe('Session 2: /clear Command', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    dbApiMocks.session.create.mockReset()
+    dbApiMocks.session.update.mockReset()
+    dbApiMocks.session.get.mockReset()
+    dbApiMocks.session.getActiveByWorktree.mockReset()
+    dbApiMocks.session.updateDraft.mockReset()
+    dbApiMocks.sessionMessage.list.mockResolvedValue([])
+    dbApiMocks.sessionActivity.list.mockResolvedValue([])
+    dbApiMocks.worktree.get.mockReset()
+    dbApiMocks.worktree.updateModel.mockResolvedValue({ success: true })
+    dbApiMocks.setting.get.mockResolvedValue(null)
+    dbApiMocks.setting.set.mockResolvedValue(true)
+    dbApiMocks.session.getActiveByWorktree.mockResolvedValue([])
+    opencodeApiMocks.setModel.mockResolvedValue({ success: true })
+    opencodeApiMocks.abort.mockResolvedValue({ success: true })
+    opencodeApiMocks.disconnect.mockResolvedValue({ success: true })
+    opencodeApiMocks.undo.mockResolvedValue({ success: true })
+    opencodeApiMocks.redo.mockResolvedValue({ success: true })
+    opencodeApiMocks.onStream.mockReturnValue(() => {})
+
     // Reset the store between tests
     useSessionStore.setState({
       sessionsByWorktree: new Map(),

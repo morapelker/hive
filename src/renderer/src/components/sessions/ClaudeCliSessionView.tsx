@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { terminalApi } from '@/api/terminal-api'
 import { TerminalView, type TerminalViewHandle } from '@/components/terminal/TerminalView'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { opencodeApi } from '@/api/opencode-api'
 import { useSessionStore, BOARD_TAB_ID } from '@/stores/useSessionStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
@@ -80,7 +82,7 @@ async function startTicketModalHandoffSession(opts: {
       connectionId: opts.connectionId
     })
     const result = unwrapEnvelope(
-      await window.terminalOps.createClaudeCli(opts.sessionId, {
+      await terminalApi.createClaudeCli(opts.sessionId, {
         pendingPrompt: opts.handoffPrompt
       })
     )
@@ -311,7 +313,7 @@ export function ClaudeCliSessionView({
   const createClaudeTerminal = useCallback(async () => {
     const pendingPrompt = useSessionStore.getState().dequeuePendingMessage(sessionId)
     try {
-      const envelope = await window.terminalOps.createClaudeCli(sessionId, {
+      const envelope = await terminalApi.createClaudeCli(sessionId, {
         pendingPrompt
       })
       const result = unwrapEnvelope(envelope)
@@ -328,21 +330,18 @@ export function ClaudeCliSessionView({
   }, [sessionId])
 
   useEffect(() => {
-    return window.terminalOps.onClaudeSessionId(sessionId, (claudeSessionId) => {
+    return terminalApi.onClaudeSessionId(sessionId, (claudeSessionId) => {
       useSessionStore.getState().setClaudeSessionId(sessionId, claudeSessionId)
     })
   }, [sessionId])
 
-  const handleStatusChange = useCallback(
-    (status: 'creating' | 'running' | 'exited') => {
-      if (status === 'running') {
-        setEnded(false)
-      } else if (status === 'exited') {
-        setEnded(true)
-      }
-    },
-    []
-  )
+  const handleStatusChange = useCallback((status: 'creating' | 'running' | 'exited') => {
+    if (status === 'running') {
+      setEnded(false)
+    } else if (status === 'exited') {
+      setEnded(true)
+    }
+  }, [])
 
   const handleRestart = useCallback(() => {
     setEnded(false)
@@ -506,7 +505,7 @@ export function ClaudeCliSessionView({
   const handleQuestionReply = useCallback(
     async (requestId: string, answers: string[][]) => {
       try {
-        unwrapEnvelope(await window.opencodeOps.questionReply(requestId, answers, resolveQuestionPath()))
+        unwrapEnvelope(await opencodeApi.questionReply(requestId, answers, resolveQuestionPath()))
       } catch (err) {
         console.error('Failed to reply to question:', err)
         toast.error('Failed to send answer')
@@ -518,7 +517,7 @@ export function ClaudeCliSessionView({
   const handleQuestionReject = useCallback(
     async (requestId: string) => {
       try {
-        unwrapEnvelope(await window.opencodeOps.questionReject(requestId, resolveQuestionPath()))
+        unwrapEnvelope(await opencodeApi.questionReject(requestId, resolveQuestionPath()))
       } catch (err) {
         console.error('Failed to dismiss question:', err)
         toast.error('Failed to dismiss question')

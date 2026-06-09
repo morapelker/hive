@@ -1,6 +1,33 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { useBoardChatStore, type TicketDraft } from '../../src/renderer/src/stores/useBoardChatStore'
+import {
+  useBoardChatStore,
+  type TicketDraft
+} from '../../src/renderer/src/stores/useBoardChatStore'
 import { useSessionStore } from '../../src/renderer/src/stores/useSessionStore'
+import { dbApi } from '../../src/renderer/src/api/db-api'
+import { opencodeApi } from '../../src/renderer/src/api/opencode-api'
+
+vi.mock('../../src/renderer/src/api/db-api', () => ({
+  dbApi: {
+    session: {
+      update: vi.fn(),
+      delete: vi.fn()
+    }
+  }
+}))
+
+vi.mock('../../src/renderer/src/api/opencode-api', () => ({
+  opencodeApi: {
+    abort: vi.fn(),
+    disconnect: vi.fn()
+  }
+}))
+
+vi.mock('../../src/renderer/src/api/settings-api', () => ({
+  settingsApi: {
+    onSettingsUpdated: vi.fn(() => () => {})
+  }
+}))
 
 const projectScope = {
   kind: 'project' as const,
@@ -32,6 +59,11 @@ const boardDraft: TicketDraft = {
 }
 
 describe('board assistant persistence', () => {
+  const mockSessionUpdate = vi.mocked(dbApi.session.update)
+  const mockSessionDelete = vi.mocked(dbApi.session.delete)
+  const mockAbort = vi.mocked(opencodeApi.abort)
+  const mockDisconnect = vi.mocked(opencodeApi.disconnect)
+
   beforeEach(() => {
     vi.clearAllMocks()
     useBoardChatStore.setState(useBoardChatStore.getInitialState())
@@ -41,24 +73,10 @@ describe('board assistant persistence', () => {
       modeBySession: new Map()
     })
 
-    Object.defineProperty(window, 'db', {
-      writable: true,
-      configurable: true,
-      value: {
-        session: {
-          update: vi.fn().mockResolvedValue({ success: true })
-        }
-      }
-    })
-
-    Object.defineProperty(window, 'opencodeOps', {
-      writable: true,
-      configurable: true,
-      value: {
-        abort: vi.fn().mockResolvedValue(undefined),
-        disconnect: vi.fn().mockResolvedValue(undefined)
-      }
-    })
+    mockSessionUpdate.mockResolvedValue({ success: true })
+    mockSessionDelete.mockResolvedValue(true)
+    mockAbort.mockResolvedValue({ success: true, value: { success: true } })
+    mockDisconnect.mockResolvedValue({ success: true, value: { success: true } })
   })
 
   test('restores the existing project snapshot after switching away and back', () => {
@@ -84,7 +102,9 @@ describe('board assistant persistence', () => {
     expect(restored.opencodeSessionId).toBe('opc-1')
     expect(restored.status).toBe('awaiting_confirmation')
     expect(restored.drafts).toHaveLength(1)
-    expect(restored.messages.some((message) => message.content === 'Break this into tickets')).toBe(true)
+    expect(restored.messages.some((message) => message.content === 'Break this into tickets')).toBe(
+      true
+    )
     expect(restored.messages.some((message) => message.content === 'Different board')).toBe(false)
   })
 
@@ -104,6 +124,23 @@ describe('board assistant persistence', () => {
     expect(inactive).not.toBeNull()
     expect(inactive?.key).toBe('project:proj-1')
     expect(inactive?.snapshot.runtimePath).toBe('/tmp/proj-1')
+  })
+
+  test('closing an active board assistant deletes the runtime session', async () => {
+    const boardChat = useBoardChatStore.getState()
+
+    boardChat.activateScope(projectScope, { scope: projectScope })
+    boardChat.setRuntimeSession({
+      sessionId: 'board-session-1',
+      opencodeSessionId: 'opc-1',
+      runtimePath: '/tmp/proj-1'
+    })
+
+    await boardChat.close()
+
+    expect(mockDisconnect).toHaveBeenCalledWith('/tmp/proj-1', 'opc-1')
+    expect(mockSessionDelete).toHaveBeenCalledWith('board-session-1')
+    expect(useBoardChatStore.getState().sessionId).toBeNull()
   })
 
   test('closing an unfocused board assistant clears the correct project snapshot', async () => {
@@ -155,8 +192,12 @@ describe('board assistant persistence', () => {
     expect(result.success).toBe(true)
     expect(useBoardChatStore.getState().getProjectSnapshot('proj-1')).toBeNull()
     expect(useBoardChatStore.getState().getProjectSnapshot('proj-2')).not.toBeNull()
-    expect(window.opencodeOps.abort).toHaveBeenCalledWith('/tmp/proj-1', 'opc-1')
-    expect(window.opencodeOps.disconnect).toHaveBeenCalledWith('/tmp/proj-1', 'opc-1')
+    expect(mockAbort).toHaveBeenCalledWith('/tmp/proj-1', 'opc-1')
+    expect(mockDisconnect).toHaveBeenCalledWith('/tmp/proj-1', 'opc-1')
+    expect(mockSessionUpdate).toHaveBeenCalledWith('board-session-1', {
+      status: 'completed',
+      completed_at: expect.any(String)
+    })
     expect(useSessionStore.getState().boardAssistantByProject.has('proj-1')).toBe(false)
   })
 
@@ -189,8 +230,8 @@ describe('board assistant persistence', () => {
 
     useSessionStore.getState().setOpenCodeSessionId('board-session-1', 'materialized-1')
 
-    expect(useSessionStore.getState().boardAssistantByProject.get('proj-1')?.opencode_session_id).toBe(
-      'materialized-1'
-    )
+    expect(
+      useSessionStore.getState().boardAssistantByProject.get('proj-1')?.opencode_session_id
+    ).toBe('materialized-1')
   })
 })

@@ -1,35 +1,31 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-require-imports */
-import { describe, test, expect, beforeEach, vi } from 'vitest'
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, act } from '@testing-library/react'
+import {
+  resetRendererRpcClientForTests,
+  setRendererRpcClient
+} from '@/api/rpc-client'
 
-// ── Mock window APIs BEFORE importing stores ────────────────────────
-const mockKanban = {
-  ticket: {
-    create: vi.fn(),
-    get: vi.fn(),
-    getByProject: vi.fn().mockResolvedValue([]),
-    update: vi.fn().mockResolvedValue(undefined),
-    delete: vi.fn().mockResolvedValue(undefined),
-    move: vi.fn().mockResolvedValue(undefined),
-    reorder: vi.fn(),
-    getBySession: vi.fn()
-  },
-  simpleMode: { toggle: vi.fn() }
-}
-
-Object.defineProperty(window, 'kanban', {
-  writable: true,
-  configurable: true,
-  value: mockKanban
-})
-
-Object.defineProperty(window, 'fileOps', {
-  writable: true,
-  configurable: true,
-  value: {
-    getPathForFile: vi.fn().mockReturnValue('/mock/path/file.txt')
+vi.mock('@/api/settings-api', () => ({
+  settingsApi: {
+    onSettingsUpdated: vi.fn(() => vi.fn())
   }
-})
+}))
+
+vi.mock('@/api/db-api', () => ({
+  dbApi: {
+    setting: {
+      get: vi.fn().mockResolvedValue(null),
+      set: vi.fn().mockResolvedValue(undefined)
+    }
+  }
+}))
+
+vi.mock('@/api/pet-api', () => ({
+  petApi: {
+    updateSettings: vi.fn().mockResolvedValue(undefined)
+  }
+}))
 
 // ── Mock toast ──────────────────────────────────────────────────────
 vi.mock('@/lib/toast', () => ({
@@ -170,6 +166,8 @@ import { buildMessageParts, MAX_ATTACHMENTS } from '@/lib/file-attachment-utils'
 
 import type { KanbanTicket } from '../../../src/main/db/types'
 
+let request: ReturnType<typeof vi.fn>
+
 // ── Helpers ─────────────────────────────────────────────────────────
 function makeTicket(overrides: Partial<KanbanTicket> = {}): KanbanTicket {
   return {
@@ -193,6 +191,16 @@ function makeTicket(overrides: Partial<KanbanTicket> = {}): KanbanTicket {
 // ── Setup ───────────────────────────────────────────────────────────
 beforeEach(() => {
   vi.clearAllMocks()
+  resetRendererRpcClientForTests()
+  request = vi.fn(async (method: string) => {
+    if (method === 'kanban.ticket.getByProject') return []
+    if (method === 'kanban.dependency.getForProject') return []
+    return null
+  })
+  setRendererRpcClient({
+    request,
+    subscribe: vi.fn(() => vi.fn())
+  })
 
   // Reset kanban store tickets
   act(() => {
@@ -206,6 +214,10 @@ beforeEach(() => {
       selectedProjectId: null
     })
   })
+})
+
+afterEach(() => {
+  resetRendererRpcClientForTests()
 })
 
 // ── Tests ───────────────────────────────────────────────────────────
@@ -590,9 +602,9 @@ describe('Session 13: Ticket Attachment', () => {
     expect(ticketAfter.current_session_id).toBe(sessionBefore)
     expect(ticketAfter.mode).toBe(modeBefore)
 
-    // Verify no kanban mutation APIs were called
-    expect(mockKanban.ticket.update).not.toHaveBeenCalled()
-    expect(mockKanban.ticket.move).not.toHaveBeenCalled()
-    expect(mockKanban.ticket.delete).not.toHaveBeenCalled()
+    // Verify no kanban mutation RPCs were requested.
+    expect(request).not.toHaveBeenCalledWith('kanban.ticket.update', expect.anything())
+    expect(request).not.toHaveBeenCalledWith('kanban.ticket.move', expect.anything())
+    expect(request).not.toHaveBeenCalledWith('kanban.ticket.delete', expect.anything())
   })
 })

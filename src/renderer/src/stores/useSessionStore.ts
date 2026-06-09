@@ -6,26 +6,24 @@ import { notifyKanbanSessionSync, notifyKanbanNewSession } from './store-coordin
 import { useSettingsStore } from './useSettingsStore'
 import { getUnavailableAgentSdkMessage } from '@/lib/agent-sdk-availability'
 import { resolveSessionCreationSelection } from '@/lib/handoffSelection'
-import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
+import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { systemApi } from '@/api/system-api'
+import { dbApi } from '@/api/db-api'
+import { connectionApi } from '@/api/connection-api'
+import { terminalApi } from '@/api/terminal-api'
+import { opencodeApi } from '@/api/opencode-api'
 import { type AgentSdk, isTerminalBacked } from '@shared/types/agent-sdk'
 
-const db = unwrapEnvelopeApi(() => window.db)
-
 /**
- * Push the follow-up-message queue state for a session into the main process
- * via IPC. Main uses this to suppress session-complete notifications while
+ * Push the follow-up-message queue state for a session into the backend.
+ * Main uses this to suppress session-complete notifications while
  * more queued messages are about to be auto-sent.
  *
- * Fire-and-forget: swallows errors because the IPC surface may be absent in
- * test harnesses and a failure here must not block queue mutations.
+ * Fire-and-forget: swallows errors because a failure here must not block queue
+ * mutations. The safer fallback is to show the notification.
  */
 const pushQueuedState = (sessionId: string, hasQueued: boolean): void => {
-  // Optional chaining short-circuits to `undefined` if `window.systemOps` or the
-  // method are missing (test harness), and `?.catch` short-circuits in turn — so
-  // this single expression covers both the "IPC surface absent" and "IPC rejects"
-  // cases. An IPC failure just falls back to the default (show notification),
-  // which is the safer behavior.
-  window.systemOps?.setSessionQueuedState?.(sessionId, hasQueued)?.catch?.(() => {})
+  systemApi.setSessionQueuedState(sessionId, hasQueued).catch(() => {})
 }
 
 export const BOARD_TAB_ID = '__board__'
@@ -276,9 +274,6 @@ function findSessionInState(state: SessionState, sessionId: string): Session | n
   return state.orphanedSessions.get(sessionId) ?? null
 }
 
-// Shift+Tab — Claude Code's "cycle permission mode" key.
-const CLAUDE_CLI_SHIFT_TAB = '\u001b[Z'
-
 // Claude Code cycles permission modes with Shift+Tab in the order
 // normal → accept-edits → plan → normal. Reaching plan from a non-plan mode
 // therefore takes two presses, while returning from plan takes one. The
@@ -298,7 +293,7 @@ export function syncClaudeCliPermissionModeIfNeeded(
 
   const presses = isPlanLike ? 2 : 1
   for (let i = 0; i < presses; i++) {
-    window.terminalOps.write(sessionId, CLAUDE_CLI_SHIFT_TAB)
+    terminalApi.write(sessionId, '\x1b[Z')
   }
 }
 
@@ -380,10 +375,10 @@ export const useSessionStore = create<SessionState>()(
         set({ isLoading: !hasCached, error: null })
         try {
           // Only load active sessions - completed sessions appear in history only
-          const sessions = await db.session.getActiveByWorktree(worktreeId)
+          const sessions = await dbApi.session.getActiveByWorktree<Session>(worktreeId)
 
           // Also load pinned sessions for this worktree
-          const pinnedSessions = await db.session.getPinnedSessions(worktreeId)
+          const pinnedSessions = await dbApi.session.getPinnedSessions<Session>(worktreeId)
           const pinnedIds = new Set(pinnedSessions.map((s: { id: string }) => s.id))
 
           // Sort by updated_at descending (most recent first)
@@ -510,7 +505,7 @@ export const useSessionStore = create<SessionState>()(
           const existingSessions = get().sessionsByWorktree.get(worktreeId) || []
           const sessionNumber = existingSessions.length + 1
 
-          const session = await db.session.create({
+          const session = await dbApi.session.create<Session>({
             worktree_id: worktreeId,
             project_id: projectId,
             name: isTerminal ? `Terminal ${sessionNumber}` : `Session ${sessionNumber}`,
@@ -633,7 +628,7 @@ export const useSessionStore = create<SessionState>()(
 
           // Mark session as completed instead of deleting
           // This preserves it in session history
-          await db.session.update(sessionId, {
+          await dbApi.session.update<Session>(sessionId, {
             status: 'completed',
             completed_at: new Date().toISOString()
           })
@@ -641,7 +636,7 @@ export const useSessionStore = create<SessionState>()(
           // Destroy PTY for terminal sessions
           if (isTerminalSession) {
             try {
-              unwrapEnvelope(await window.terminalOps.destroy(sessionId))
+              unwrapEnvelope(await terminalApi.destroy(sessionId))
             } catch {
               // Best-effort cleanup — PTY may already be gone
             }
@@ -662,7 +657,7 @@ export const useSessionStore = create<SessionState>()(
                 }
               }
               if (worktreePath) {
-                unwrapEnvelope(await window.opencodeOps.disconnect(worktreePath, opencodeSessionId))
+                unwrapEnvelope(await opencodeApi.disconnect(worktreePath, opencodeSessionId))
               }
             } catch {
               // Best-effort cleanup — session may already be disconnected
@@ -812,7 +807,7 @@ export const useSessionStore = create<SessionState>()(
       reopenSession: async (sessionId: string, worktreeId: string) => {
         try {
           // 1. Update database status first - this ensures persistence
-          const updatedSession = await db.session.update(sessionId, {
+          const updatedSession = await dbApi.session.update<Session>(sessionId, {
             status: 'active',
             completed_at: null
           })
@@ -889,7 +884,7 @@ export const useSessionStore = create<SessionState>()(
       reopenConnectionSession: async (sessionId: string, connectionId: string) => {
         try {
           // 1. Update database status first - this ensures persistence
-          const updatedSession = await db.session.update(sessionId, {
+          const updatedSession = await dbApi.session.update<Session>(sessionId, {
             status: 'active',
             completed_at: null
           })
@@ -1057,7 +1052,7 @@ export const useSessionStore = create<SessionState>()(
       // Update session name (scope-agnostic)
       updateSessionName: async (sessionId: string, name: string) => {
         try {
-          const updatedSession = await db.session.update(sessionId, { name })
+          const updatedSession = await dbApi.session.update<Session>(sessionId, { name })
           if (updatedSession) {
             const scope = findSessionScope(get(), sessionId)
 
@@ -1227,7 +1222,7 @@ export const useSessionStore = create<SessionState>()(
 
         // Persist to database
         try {
-          await db.session.update(sessionId, { mode: newMode })
+          await dbApi.session.update<Session>(sessionId, { mode: newMode })
         } catch (error) {
           console.error('Failed to persist session mode:', error)
         }
@@ -1269,7 +1264,7 @@ export const useSessionStore = create<SessionState>()(
 
         // Persist to database
         try {
-          await db.session.update(sessionId, { mode: newMode })
+          await dbApi.session.update<Session>(sessionId, { mode: newMode })
         } catch (error) {
           console.error('Failed to persist session mode:', error)
         }
@@ -1294,7 +1289,7 @@ export const useSessionStore = create<SessionState>()(
         })
 
         try {
-          await db.session.update(sessionId, { mode: newMode })
+          await dbApi.session.update<Session>(sessionId, { mode: newMode })
         } catch (error) {
           console.error('Failed to persist session mode:', error)
         }
@@ -1315,7 +1310,7 @@ export const useSessionStore = create<SessionState>()(
         })
 
         try {
-          await db.session.update(sessionId, { mode })
+          await dbApi.session.update<Session>(sessionId, { mode })
         } catch (error) {
           console.error('Failed to persist session mode:', error)
         }
@@ -1377,7 +1372,7 @@ export const useSessionStore = create<SessionState>()(
 
         // Persist to database
         try {
-          await db.session.update(sessionId, {
+          await dbApi.session.update<Session>(sessionId, {
             model_provider_id: model.providerID,
             model_id: model.modelID,
             model_variant: model.variant ?? null
@@ -1416,7 +1411,7 @@ export const useSessionStore = create<SessionState>()(
         // Push to agent backend (SDK-aware) — skip for terminal sessions
         try {
           if (!isTerminalBacked(agentSdk)) {
-            unwrapEnvelope(await window.opencodeOps.setModel({ ...model, agentSdk }))
+            unwrapEnvelope(await opencodeApi.setModel({ ...model, agentSdk }))
           }
         } catch (error) {
           console.error('Failed to push model to agent backend:', error)
@@ -1439,7 +1434,7 @@ export const useSessionStore = create<SessionState>()(
         const scope = findSessionScope(get(), sessionId)
         if (scope?.type === 'worktree') {
           try {
-            await db.worktree.updateModel({
+            await dbApi.worktree.updateModel({
               worktreeId: scope.scopeId,
               modelProviderId: model.providerID,
               modelId: model.modelID,
@@ -1705,7 +1700,7 @@ export const useSessionStore = create<SessionState>()(
 
       loadBoardAssistantSession: async (projectId: string) => {
         try {
-          const session = await db.session.getActiveBoardAssistant(projectId)
+          const session = await dbApi.session.getActiveBoardAssistant<Session>(projectId)
           set((state) => {
             const map = new Map(state.boardAssistantByProject)
             const newModeMap = new Map(state.modeBySession)
@@ -1731,7 +1726,7 @@ export const useSessionStore = create<SessionState>()(
             return { success: true, session: existing }
           }
 
-          const session = await db.session.create({
+          const session = await dbApi.session.create<Session>({
             worktree_id: null,
             project_id: projectId,
             name: 'Board Assistant',
@@ -1801,7 +1796,7 @@ export const useSessionStore = create<SessionState>()(
             if (chatSession.snapshot.runtimePath && chatSession.snapshot.opencodeSessionId) {
               try {
                 unwrapEnvelope(
-                  await window.opencodeOps.abort(
+                  await opencodeApi.abort(
                     chatSession.snapshot.runtimePath,
                     chatSession.snapshot.opencodeSessionId
                   )
@@ -1811,7 +1806,7 @@ export const useSessionStore = create<SessionState>()(
               }
               try {
                 unwrapEnvelope(
-                  await window.opencodeOps.disconnect(
+                  await opencodeApi.disconnect(
                     chatSession.snapshot.runtimePath,
                     chatSession.snapshot.opencodeSessionId
                   )
@@ -1823,7 +1818,7 @@ export const useSessionStore = create<SessionState>()(
           }
           useBoardChatStore.getState().clearProjectSnapshot(projectId)
 
-          await db.session.update(session.id, {
+          await dbApi.session.update<Session>(session.id, {
             status: 'completed',
             completed_at: new Date().toISOString()
           })
@@ -1894,7 +1889,7 @@ export const useSessionStore = create<SessionState>()(
       // Used by sticky tabs in worktree mode to pre-load connection sessions.
       loadConnectionSessionsBackground: async (connectionId: string) => {
         try {
-          const sessions = await db.session.getActiveByConnection(connectionId)
+          const sessions = await dbApi.session.getActiveByConnection<Session>(connectionId)
           const sortedSessions = sessions
             .filter(isVisibleSession)
             .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
@@ -1946,7 +1941,7 @@ export const useSessionStore = create<SessionState>()(
       loadConnectionSessions: async (connectionId: string) => {
         set({ isLoading: true, error: null })
         try {
-          const sessions = await db.session.getActiveByConnection(connectionId)
+          const sessions = await dbApi.session.getActiveByConnection<Session>(connectionId)
           const sortedSessions = sessions
             .filter(isVisibleSession)
             .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
@@ -2036,7 +2031,7 @@ export const useSessionStore = create<SessionState>()(
         try {
           const autoFocus = opts?.autoFocus ?? true
           // Look up the connection to get the first member's project_id
-          const result = unwrapEnvelope(await window.connectionOps.get(connectionId))
+          const result = await connectionApi.get(connectionId)
           if (!result.success || !result.connection || result.connection.members.length === 0) {
             return { success: false, error: result.error || 'Connection has no members' }
           }
@@ -2058,7 +2053,7 @@ export const useSessionStore = create<SessionState>()(
           const existingSessions = get().sessionsByConnection.get(connectionId) || []
           const sessionNumber = existingSessions.length + 1
 
-          const session = await db.session.create({
+          const session = await dbApi.session.create<Session>({
             worktree_id: null,
             project_id: projectId,
             connection_id: connectionId,
@@ -2292,7 +2287,7 @@ export const useSessionStore = create<SessionState>()(
           return { pinnedSessionIds: newPinnedIds }
         })
         try {
-          await db.session.setPinnedToBoard(sessionId, true)
+          await dbApi.session.setPinnedToBoard<Session>(sessionId, true)
         } catch {
           // Rollback on failure
           set((state) => {
@@ -2318,7 +2313,7 @@ export const useSessionStore = create<SessionState>()(
           }
         })
         // Fire-and-forget DB update
-        db.session.setPinnedToBoard(sessionId, false).catch(() => {})
+        dbApi.session.setPinnedToBoard<Session>(sessionId, false).catch(() => {})
       },
 
       setActivePinnedSession: (sessionId: string | null) => {
@@ -2327,7 +2322,7 @@ export const useSessionStore = create<SessionState>()(
 
       loadPinnedSessions: async (worktreeId: string) => {
         try {
-          const pinnedSessions = await db.session.getPinnedSessions(worktreeId)
+          const pinnedSessions = await dbApi.session.getPinnedSessions<Session>(worktreeId)
           set({
             pinnedSessionIds: new Set(pinnedSessions.map((s) => s.id))
           })

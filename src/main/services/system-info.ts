@@ -1,6 +1,6 @@
-import { app } from 'electron'
 import { execFileSync } from 'child_process'
 import { existsSync } from 'fs'
+import { homedir } from 'os'
 import { getLogDir } from './logger'
 import { resolveCodexBinaryPath, supportsCodexAppServer } from './codex-binary-resolver'
 import { resolveOpenCodeLaunchSpec } from './opencode-binary-resolver'
@@ -44,13 +44,14 @@ export function detectAgentSdks(openCodeLaunchSpec: OpenCodeLaunchSpec | null): 
 }
 
 export function getAppPaths(): AppPaths {
+  const home = homedir()
   return {
-    userData: app.getPath('userData'),
-    home: app.getPath('home'),
+    userData: process.env.HIVE_SERVER_BASE_DIR ?? home,
+    home,
     logs: getLogDir()
   }
 }
 
 export function getAppVersion(): string {
-  return app.getVersion()
+  return process.env.npm_package_version ?? ''
 }

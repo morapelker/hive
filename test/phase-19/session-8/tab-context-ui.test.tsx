@@ -1,6 +1,26 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import '@testing-library/jest-dom'
+
+const dbApiMocks = vi.hoisted(() => ({
+  session: {
+    getActiveByWorktree: vi.fn().mockResolvedValue([]),
+    create: vi.fn().mockResolvedValue({ id: 'new', name: 'New', status: 'active' }),
+    update: vi.fn().mockResolvedValue({ id: 'test', status: 'completed' })
+  },
+  worktree: {
+    updateModel: vi.fn().mockResolvedValue({ success: true })
+  },
+  setting: {
+    get: vi.fn().mockResolvedValue(null),
+    set: vi.fn().mockResolvedValue(true)
+  }
+}))
+
+vi.mock('@/api/db-api', () => ({
+  dbApi: dbApiMocks
+}))
+
 import { useSessionStore } from '../../../src/renderer/src/stores/useSessionStore'
 import { useFileViewerStore } from '../../../src/renderer/src/stores/useFileViewerStore'
 import { useWorktreeStore } from '../../../src/renderer/src/stores/useWorktreeStore'
@@ -18,22 +38,6 @@ import { SessionTabs } from '../../../src/renderer/src/components/sessions/Sessi
  * 4. Context menu actions call the correct store methods
  * 5. Copy path actions write to clipboard
  */
-
-// Mock window.db for session store
-Object.defineProperty(window, 'db', {
-  writable: true,
-  configurable: true,
-  value: {
-    session: {
-      getActiveByWorktree: vi.fn().mockResolvedValue([]),
-      create: vi.fn().mockResolvedValue({ id: 'new', name: 'New', status: 'active' }),
-      update: vi.fn().mockResolvedValue({ id: 'test', status: 'completed' })
-    },
-    worktree: {
-      updateModel: vi.fn().mockResolvedValue({ success: true })
-    }
-  }
-})
 
 // Mock navigator.clipboard
 Object.defineProperty(navigator, 'clipboard', {
@@ -193,6 +197,12 @@ function setupStores({
 describe('Session 8: Tab Context Menus UI', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    dbApiMocks.session.getActiveByWorktree.mockResolvedValue([])
+    dbApiMocks.session.create.mockResolvedValue({ id: 'new', name: 'New', status: 'active' })
+    dbApiMocks.session.update.mockResolvedValue({ id: 'test', status: 'completed' })
+    dbApiMocks.worktree.updateModel.mockResolvedValue({ success: true })
+    dbApiMocks.setting.get.mockResolvedValue(null)
+    dbApiMocks.setting.set.mockResolvedValue(true)
     setupStores()
   })
 
@@ -272,7 +282,7 @@ describe('Session 8: Tab Context Menus UI', () => {
       fireEvent.click(screen.getByTestId('session-tab-s1'))
 
       expect(useFileViewerStore.getState().activeFilePath).toBeNull()
-      expect(useWorktreeStatusStore.getState().sessionStatuses.s1).toBeNull()
+      expect(useWorktreeStatusStore.getState().sessionStatuses.s1?.status).toBe('working')
     })
   })
 

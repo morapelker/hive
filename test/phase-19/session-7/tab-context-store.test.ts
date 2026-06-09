@@ -1,4 +1,43 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest'
+
+const dbApiMocks = vi.hoisted(() => ({
+  session: {
+    getActiveByWorktree: vi.fn().mockResolvedValue([]),
+    create: vi.fn().mockResolvedValue({ id: 'new', name: 'New', status: 'active' }),
+    update: vi.fn().mockResolvedValue({ id: 'test', status: 'completed' })
+  }
+}))
+
+vi.mock('@/api/db-api', () => ({
+  dbApi: dbApiMocks
+}))
+
+vi.mock('../../../src/renderer/src/stores/useSettingsStore', () => ({
+  useSettingsStore: Object.assign(
+    (selector: (state: Record<string, unknown>) => unknown) =>
+      selector({
+        availableAgentSdks: {
+          opencode: true,
+          claude: true,
+          codex: true
+        },
+        defaultAgentSdk: 'opencode',
+        selectedModel: null
+      }),
+    {
+      getState: () => ({
+        availableAgentSdks: {
+          opencode: true,
+          claude: true,
+          codex: true
+        },
+        defaultAgentSdk: 'opencode',
+        selectedModel: null
+      })
+    }
+  )
+}))
+
 import { useFileViewerStore } from '../../../src/renderer/src/stores/useFileViewerStore'
 import { useSessionStore } from '../../../src/renderer/src/stores/useSessionStore'
 
@@ -13,24 +52,16 @@ import { useSessionStore } from '../../../src/renderer/src/stores/useSessionStor
  * 5. Edge cases: single tab, last tab, active tab among closed ones
  */
 
-// Mock window.db.session for useSessionStore
-Object.defineProperty(window, 'db', {
-  writable: true,
-  configurable: true,
-  value: {
-    session: {
-      getActiveByWorktree: vi.fn().mockResolvedValue([]),
-      create: vi.fn().mockResolvedValue({ id: 'new', name: 'New', status: 'active' }),
-      update: vi.fn().mockResolvedValue({ id: 'test', status: 'completed' })
-    }
-  }
-})
-
 describe('Session 7: Tab Context Store Actions', () => {
   describe('useSessionStore', () => {
     const worktreeId = 'wt-1'
 
     beforeEach(() => {
+      vi.clearAllMocks()
+      dbApiMocks.session.getActiveByWorktree.mockResolvedValue([])
+      dbApiMocks.session.create.mockResolvedValue({ id: 'new', name: 'New', status: 'active' })
+      dbApiMocks.session.update.mockResolvedValue({ id: 'test', status: 'completed' })
+
       // Reset store with 3 sessions in tab order
       useSessionStore.setState({
         sessionsByWorktree: new Map([

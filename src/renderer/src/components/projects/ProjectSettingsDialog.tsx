@@ -18,7 +18,7 @@ import { CustomCommandsEditor } from '@/components/custom-commands/CustomCommand
 import { useProjectStore } from '@/stores/useProjectStore'
 import { LanguageIcon } from './LanguageIcon'
 import { SetupScriptSuggestionsDialog } from './SetupScriptSuggestionsDialog'
-import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { projectApi } from '@/api/project-api'
 import type { CustomProjectCommand } from '@/lib/custom-commands'
 
 interface Project {
@@ -83,11 +83,11 @@ export function ProjectSettingsDialog({
       }
 
       let cancelled = false
-      window.projectOps
+      projectApi
         .detectSetupSuggestions(project.path)
-        .then((envelope) => {
+        .then((nextSuggestions) => {
           if (!cancelled) {
-            setSuggestions(unwrapEnvelope(envelope))
+            setSuggestions(nextSuggestions)
           }
         })
         .catch(() => {
@@ -119,7 +119,7 @@ export function ProjectSettingsDialog({
   const handlePickIcon = async (): Promise<void> => {
     setPickingIcon(true)
     try {
-      const result = unwrapEnvelope(await window.projectOps.pickProjectIcon(project.id))
+      const result = await projectApi.pickProjectIcon(project.id)
       if (result.success && result.filename) {
         setCustomIcon(result.filename)
       }
@@ -133,7 +133,7 @@ export function ProjectSettingsDialog({
 
   const handleClearIcon = async (): Promise<void> => {
     try {
-      unwrapEnvelope(await window.projectOps.removeProjectIcon(project.id))
+      await projectApi.removeProjectIcon(project.id)
       setCustomIcon(null)
     } catch {
       toast.error('Failed to remove icon')

@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState, useRef } from 'react'
 import { revealLabel } from '@/lib/platform'
-import { unwrapEnvelope, unwrapEnvelopeApi } from '@/lib/ipc-envelope'
 import {
   AlertCircle,
   Archive,
@@ -73,10 +72,15 @@ import { AddAttachmentDialog } from '@/components/worktrees/AddAttachmentDialog'
 import { ManageConnectionWorktreesDialog } from '@/components/connections/ManageConnectionWorktreesDialog'
 import { useSiblingAggregate, type SiblingBucket } from '@/hooks/useSiblingAggregate'
 import { useGhosttySuppression } from '@/hooks'
-
-const db = unwrapEnvelopeApi(() => window.db)
+import { systemApi } from '@/api/system-api'
+import { dbApi } from '@/api/db-api'
+import { worktreeApi } from '@/api/worktree-api'
+import { projectApi } from '@/api/project-api'
+import { connectionApi } from '@/api/connection-api'
+import { gitApi } from '@/api/git-api'
 
 type PinnedItem = { kind: 'worktree'; id: string } | { kind: 'connection'; id: string }
+type WorktreeAttachmentRow = { attachments?: string | null }
 
 export function PinnedList(): React.JSX.Element | null {
   const pinnedWorktreeIds = usePinnedStore((s) => s.pinnedWorktreeIds)
@@ -251,12 +255,12 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
   }, [])
 
   const handleOpenAttachment = useCallback(async (url: string): Promise<void> => {
-    await window.systemOps.openInChrome(url)
+    await systemApi.openInChrome(url)
   }, [])
 
   const handleDetachAttachment = useCallback(
     async (attachmentId: string): Promise<void> => {
-      const result = await db.worktree.removeAttachment(worktreeId, attachmentId)
+      const result = await dbApi.worktree.removeAttachment(worktreeId, attachmentId)
       if (result.success) {
         setAttachments((prev) => prev.filter((a) => a.id !== attachmentId))
         toast.success('Attachment removed')
@@ -268,7 +272,7 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
   )
 
   const handleAttachmentAdded = useCallback((): void => {
-    db.worktree.get(worktreeId).then((w) => {
+    dbApi.worktree.get<WorktreeAttachmentRow>(worktreeId).then((w) => {
       if (w) {
         try {
           setAttachments(JSON.parse(w.attachments || '[]'))
@@ -318,14 +322,12 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
       return
     }
 
-    const result = unwrapEnvelope(
-      await window.worktreeOps.renameBranch(
-        worktree.id,
-        worktree.path,
-        worktree.branch_name,
-        newBranch
-      )
-    )
+    const result = await worktreeApi.renameBranch({
+      worktreeId: worktree.id,
+      worktreePath: worktree.path,
+      oldBranch: worktree.branch_name,
+      newBranch
+    })
 
     if (result.success) {
       useWorktreeStore.getState().updateWorktreeBranch(worktree.id, newBranch)
@@ -377,7 +379,7 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
   const handleArchive = useCallback(async (): Promise<void> => {
     if (!worktree) return
     try {
-      const result = unwrapEnvelope(await window.gitOps.getDiffStat(worktree.path))
+      const result = await gitApi.getDiffStat(worktree.path)
       if (result.success && result.files && result.files.length > 0) {
         setArchiveConfirmFiles(result.files)
         setArchiveConfirmOpen(true)
@@ -451,7 +453,7 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
   }
 
   const handleOpenInTerminal = async (): Promise<void> => {
-    const result = unwrapEnvelope(await window.worktreeOps.openInTerminal(worktree.path))
+    const result = await worktreeApi.openInTerminal(worktree.path)
     if (result.success) {
       toast.success('Opened in Terminal')
     } else {
@@ -462,7 +464,7 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
   }
 
   const handleOpenInEditor = async (): Promise<void> => {
-    const result = unwrapEnvelope(await window.worktreeOps.openInEditor(worktree.path))
+    const result = await worktreeApi.openInEditor(worktree.path)
     if (result.success) {
       toast.success('Opened in Editor')
     } else {
@@ -473,11 +475,11 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
   }
 
   const handleOpenInFinder = async (): Promise<void> => {
-    unwrapEnvelope(await window.projectOps.showInFolder(worktree.path))
+    await projectApi.showInFolder(worktree.path)
   }
 
   const handleCopyPath = async (): Promise<void> => {
-    unwrapEnvelope(await window.projectOps.copyToClipboard(worktree.path))
+    await projectApi.copyToClipboard(worktree.path)
     clipboardToast.copied('Path')
   }
 
@@ -946,7 +948,7 @@ function PinnedConnectionItem({
 
   const handleOpenInTerminal = useCallback(async (): Promise<void> => {
     if (!connection) return
-    const result = unwrapEnvelope(await window.connectionOps.openInTerminal(connection.path))
+    const result = await connectionApi.openInTerminal(connection.path)
     if (result.success) {
       toast.success('Opened in Terminal')
     } else {
@@ -956,7 +958,7 @@ function PinnedConnectionItem({
 
   const handleOpenInEditor = useCallback(async (): Promise<void> => {
     if (!connection) return
-    const result = unwrapEnvelope(await window.connectionOps.openInEditor(connection.path))
+    const result = await connectionApi.openInEditor(connection.path)
     if (result.success) {
       toast.success('Opened in Editor')
     } else {
@@ -966,12 +968,12 @@ function PinnedConnectionItem({
 
   const handleOpenInFinder = useCallback(async (): Promise<void> => {
     if (!connection) return
-    unwrapEnvelope(await window.projectOps.showInFolder(connection.path))
+    await projectApi.showInFolder(connection.path)
   }, [connection])
 
   const handleCopyPath = useCallback(async (): Promise<void> => {
     if (!connection) return
-    unwrapEnvelope(await window.projectOps.copyToClipboard(connection.path))
+    await projectApi.copyToClipboard(connection.path)
     clipboardToast.copied('Path')
   }, [connection])
 

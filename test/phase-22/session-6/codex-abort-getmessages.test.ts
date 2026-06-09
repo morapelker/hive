@@ -3,6 +3,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
 
+const eventBusMocks = vi.hoisted(() => ({
+  publish: vi.fn()
+}))
+
 // Mock logger
 vi.mock('../../../src/main/services/logger', () => ({
   createLogger: () => ({
@@ -11,6 +15,26 @@ vi.mock('../../../src/main/services/logger', () => ({
     error: vi.fn(),
     debug: vi.fn()
   })
+}))
+
+vi.mock('../../../src/main/services/agent-event-bus', () => ({
+  agentEventBus: eventBusMocks
+}))
+
+vi.mock('../../../src/main/services/notification-service', () => ({
+  notificationService: { shouldNotifyWhenWindowUnfocused: vi.fn(() => false) }
+}))
+
+vi.mock('../../../src/main/services/codex-session-title', () => ({
+  generateCodexSessionTitle: vi.fn()
+}))
+
+vi.mock('../../../src/main/services/git-service', () => ({
+  autoRenameWorktreeBranch: vi.fn()
+}))
+
+vi.mock('../../../src/main/services/worktree-events', () => ({
+  emitWorktreeBranchRenamed: vi.fn()
 }))
 
 // Mock child_process
@@ -275,11 +299,6 @@ describe('Codex Abort & getMessages', () => {
       const { CodexImplementer } = await import('../../../src/main/services/codex-implementer')
       const impl = new CodexImplementer()
       const internalManager = impl.getManager() as any
-      const mockWindow = {
-        isDestroyed: () => false,
-        webContents: { send: vi.fn() }
-      }
-      impl.setMainWindow(mockWindow as any)
 
       const session = {
         threadId: 'thread-abort-1',
@@ -303,15 +322,10 @@ describe('Codex Abort & getMessages', () => {
       expect(session.status).toBe('ready')
     })
 
-    it('emits idle status to renderer', async () => {
+    it('publishes idle status through the agent event bus', async () => {
       const { CodexImplementer } = await import('../../../src/main/services/codex-implementer')
       const impl = new CodexImplementer()
       const internalManager = impl.getManager() as any
-      const mockWindow = {
-        isDestroyed: () => false,
-        webContents: { send: vi.fn() }
-      }
-      impl.setMainWindow(mockWindow as any)
 
       impl.getSessions().set('/test::thread-abort-1', {
         threadId: 'thread-abort-1',
@@ -329,12 +343,9 @@ describe('Codex Abort & getMessages', () => {
 
       await impl.abort('/test', 'thread-abort-1')
 
-      const sendCalls = mockWindow.webContents.send.mock.calls
-      const streamCalls = sendCalls
-        .filter((c: any[]) => c[0] === 'opencode:stream')
-        .map((c: any[]) => c[1])
-
-      const statusEvent = streamCalls.find((e: any) => e.type === 'session.status')
+      const statusEvent = eventBusMocks.publish.mock.calls
+        .map((call) => call[0])
+        .find((event: any) => event.type === 'session.status')
       expect(statusEvent).toBeDefined()
       expect(statusEvent.statusPayload.type).toBe('idle')
     })
@@ -351,11 +362,6 @@ describe('Codex Abort & getMessages', () => {
       const { CodexImplementer } = await import('../../../src/main/services/codex-implementer')
       const impl = new CodexImplementer()
       const internalManager = impl.getManager() as any
-      const mockWindow = {
-        isDestroyed: () => false,
-        webContents: { send: vi.fn() }
-      }
-      impl.setMainWindow(mockWindow as any)
 
       impl.getSessions().set('/test::thread-abort-1', {
         threadId: 'thread-abort-1',

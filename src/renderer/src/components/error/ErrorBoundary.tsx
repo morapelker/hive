@@ -1,7 +1,7 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
 import { AlertTriangle, RefreshCw, Bug, Copy, Check } from 'lucide-react'
 import { Button } from '../ui/button'
-import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { projectApi } from '@/api/project-api'
 
 interface Props {
   children: ReactNode
@@ -70,9 +70,9 @@ ${errorInfo?.componentStack || 'No component stack'}
       this.setState({ copied: true })
       setTimeout(() => this.setState({ copied: false }), 2000)
     } catch {
-      // Fallback to window.projectOps if available
+      // Fallback to the backend clipboard API if the browser clipboard API is unavailable.
       try {
-        unwrapEnvelope(await window.projectOps.copyToClipboard(errorText))
+        await projectApi.copyToClipboard(errorText)
         this.setState({ copied: true })
         setTimeout(() => this.setState({ copied: false }), 2000)
       } catch {

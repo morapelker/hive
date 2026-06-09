@@ -11,6 +11,7 @@ import type {
   PetSize,
   PetStatusPayload
 } from '../../shared/types/pet'
+import { emitPetJumpToWorktree, emitPetSettingsUpdated, emitPetStatus } from './pet-events'
 
 const PET_POSITION_FILE = join(app.getPath('userData'), 'pet-position.json')
 const PET_PADDING = 48
@@ -160,20 +161,6 @@ export function savePetPosition(position: PetPosition): void {
   }
 }
 
-function sendToPet(channel: string, payload: unknown): void {
-  if (petWindow && !petWindow.isDestroyed()) {
-    petWindow.webContents.send(channel, payload)
-  }
-}
-
-function broadcast(channel: string, payload: unknown): void {
-  for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) {
-      window.webContents.send(channel, payload)
-    }
-  }
-}
-
 export function configurePetWindow(options: { getMainWindow: () => BrowserWindow | null }): void {
   getMainWindow = options.getMainWindow
 }
@@ -308,7 +295,7 @@ export function setPetIgnoreMouseEvents(ignore: boolean): void {
 
 export function forwardStatusToPet(payload: PetStatusPayload): void {
   latestStatus = payload
-  sendToPet('pet:status', payload)
+  emitPetStatus(payload)
 }
 
 export function updatePetSettings(partial: Partial<PetSettings>): void {
@@ -322,7 +309,7 @@ export function updatePetSettings(partial: Partial<PetSettings>): void {
     petWindow.setIgnoreMouseEvents(true, { forward: true })
   }
 
-  broadcast('pet:settings-updated', latestSettings)
+  emitPetSettingsUpdated(latestSettings)
 }
 
 export function persistPetSettings(partial: Partial<PetSettings>): void {
@@ -361,6 +348,6 @@ export function focusMainWindowFromPet(worktreeId: string | null): void {
   mainWindow.focus()
 
   if (worktreeId) {
-    mainWindow.webContents.send('pet:jump-to-worktree', { worktreeId })
+    emitPetJumpToWorktree(worktreeId)
   }
 }

@@ -1,16 +1,27 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-const handlers = new Map<string, (...args: any[]) => any>()
-
 vi.mock('electron', () => ({
-  ipcMain: {
-    handle: vi.fn((channel: string, handler: (...args: any[]) => any) => {
-      handlers.set(channel, async (...args: any[]) => {
-        const result = await handler(...args)
-        return result?.success === true && 'value' in result ? result.value : result
-      })
-    })
+  app: {
+    getPath: vi.fn(() => '/tmp'),
+    getVersion: vi.fn(() => '0.0.0'),
+    isPackaged: false
+  },
+  BrowserWindow: vi.fn(),
+  screen: {
+    getPrimaryDisplay: vi.fn(() => ({ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }))
+  }
+}))
+
+vi.mock('electron-updater', () => ({
+  autoUpdater: {
+    autoDownload: false,
+    autoInstallOnAppQuit: true,
+    logger: null,
+    on: vi.fn(),
+    checkForUpdates: vi.fn(),
+    downloadUpdate: vi.fn(),
+    quitAndInstall: vi.fn()
   }
 }))
 
@@ -25,7 +36,6 @@ vi.mock('../../../src/main/services/logger', () => ({
 
 vi.mock('../../../src/main/services/opencode-service', () => ({
   openCodeService: {
-    setMainWindow: vi.fn(),
     prompt: vi.fn().mockResolvedValue(undefined)
   }
 }))
@@ -38,7 +48,7 @@ vi.mock('../../../src/main/services/codex-implementer', () => ({
   CodexImplementer: vi.fn()
 }))
 
-import { registerOpenCodeHandlers } from '../../../src/main/ipc/opencode-handlers'
+import { promptOpenCodeSession } from '../../../src/main/services/opencode-session-commands'
 import { openCodeService } from '../../../src/main/services/opencode-service'
 import type { AgentSdkManager } from '../../../src/main/services/agent-sdk-manager'
 import type { AgentSdkImplementer } from '../../../src/main/services/agent-sdk-types'
@@ -75,8 +85,7 @@ function createMockCodexImpl(): AgentSdkImplementer {
     redo: vi.fn(),
     listCommands: vi.fn().mockResolvedValue([]),
     sendCommand: vi.fn(),
-    renameSession: vi.fn(),
-    setMainWindow: vi.fn()
+    renameSession: vi.fn()
   }
 }
 
@@ -91,13 +100,10 @@ function createMockSdkManager(codexImpl: AgentSdkImplementer): AgentSdkManager {
   } as unknown as AgentSdkManager
 }
 
-const mockEvent = {} as any
-
-describe('IPC opencode:prompt options routing', () => {
+describe('OpenCode prompt options routing', () => {
   let codexImpl: AgentSdkImplementer
 
   beforeEach(() => {
-    handlers.clear()
     vi.clearAllMocks()
     codexImpl = createMockCodexImpl()
   })
@@ -107,18 +113,15 @@ describe('IPC opencode:prompt options routing', () => {
     const dbService = {
       getAgentSdkForSession: vi.fn().mockReturnValue('codex')
     } as any
-    const mainWindow = { isDestroyed: () => false, webContents: { send: vi.fn() } } as any
-
-    registerOpenCodeHandlers(mainWindow, sdkManager, dbService)
-
-    const handler = handlers.get('opencode:prompt')!
-    const result = await handler(mockEvent, {
-      worktreePath: '/project',
-      sessionId: 'session-1',
-      parts: [{ type: 'text', text: 'hello' }],
-      model: { providerID: 'codex', modelID: 'gpt-5.3-codex' },
-      options: { codexFastMode: true }
-    })
+    const result = await promptOpenCodeSession(
+      '/project',
+      'session-1',
+      [{ type: 'text', text: 'hello' }],
+      { providerID: 'codex', modelID: 'gpt-5.3-codex', variant: undefined },
+      { codexFastMode: true },
+      sdkManager,
+      dbService
+    )
 
     expect(result).toEqual({ success: true })
     expect(codexImpl.prompt).toHaveBeenCalledWith(

@@ -1,10 +1,21 @@
 import * as chokidar from 'chokidar'
 import { join } from 'path'
 import { existsSync, statSync, readFileSync } from 'fs'
-import { BrowserWindow } from 'electron'
 import { createLogger } from './logger'
+import { emitGitStatusChanged } from './git-events'
+import { GIT_STATUS_CHANGED_CHANNEL } from '../../shared/git-events'
+import type { GitStatusChangedEvent } from '../../shared/types/git'
 
 const log = createLogger({ component: 'WorktreeWatcher' })
+
+type GitStatusChangedPublisher = (
+  channel: typeof GIT_STATUS_CHANGED_CHANNEL,
+  payload: GitStatusChangedEvent
+) => void | Promise<void>
+
+export interface WatchWorktreeOptions {
+  readonly publishGitEvent?: GitStatusChangedPublisher
+}
 
 /**
  * WorktreeWatcherService
@@ -13,7 +24,7 @@ const log = createLogger({ component: 'WorktreeWatcher' })
  * external changes (from AI agents, terminals, other editors, etc.).
  *
  * This runs in the main process, independent of any React component lifecycle.
- * It emits 'git:statusChanged' events to the renderer whenever changes are detected.
+ * It emits 'git:statusChanged' backend events whenever changes are detected.
  *
  * Watched paths:
  * - .git/index       -> stage/unstage/commit/stash/reset/checkout
@@ -34,13 +45,11 @@ interface WatcherEntry {
   gitDebounceTimer: ReturnType<typeof setTimeout> | null
   worktreeDebounceTimer: ReturnType<typeof setTimeout> | null
   refCount: number
+  publishGitEvent?: GitStatusChangedPublisher
 }
 
 // Active watchers keyed by worktree path
 const watchers = new Map<string, WatcherEntry>()
-
-// Main window reference
-let mainWindow: BrowserWindow | null = null
 
 /**
  * Resolve the .git directory for a worktree path.
@@ -86,18 +95,13 @@ function resolveCommonGitDir(gitDir: string): string {
   return gitDir
 }
 
-function emitGitStatusChanged(worktreePath: string): void {
-  if (!mainWindow || mainWindow.isDestroyed()) return
-  mainWindow.webContents.send('git:statusChanged', { worktreePath })
-}
-
 function scheduleGitRefresh(entry: WatcherEntry, worktreePath: string): void {
   if (entry.gitDebounceTimer) {
     clearTimeout(entry.gitDebounceTimer)
   }
   entry.gitDebounceTimer = setTimeout(() => {
     entry.gitDebounceTimer = null
-    emitGitStatusChanged(worktreePath)
+    publishGitStatusChanged(entry, { worktreePath })
   }, GIT_DEBOUNCE_MS)
 }
 
@@ -107,11 +111,28 @@ function scheduleWorktreeRefresh(entry: WatcherEntry, worktreePath: string): voi
   }
   entry.worktreeDebounceTimer = setTimeout(() => {
     entry.worktreeDebounceTimer = null
-    emitGitStatusChanged(worktreePath)
+    publishGitStatusChanged(entry, { worktreePath })
   }, WORKTREE_DEBOUNCE_MS)
 }
 
-// Ignore patterns for working tree watcher (same as file-tree-handlers)
+function publishGitStatusChanged(entry: WatcherEntry, payload: GitStatusChangedEvent): void {
+  if (entry.publishGitEvent) {
+    void Promise.resolve(entry.publishGitEvent(GIT_STATUS_CHANGED_CHANNEL, payload)).catch(
+      (error) => {
+        log.error(
+          'Failed to publish git status changed event',
+          error instanceof Error ? error : new Error(String(error)),
+          payload
+        )
+      }
+    )
+    return
+  }
+
+  emitGitStatusChanged(payload)
+}
+
+// Ignore patterns for working tree watcher (same as file-tree-watcher)
 const WORKTREE_IGNORE_PATTERNS = [
   '**/node_modules/**',
   '**/.git/**',
@@ -127,16 +148,17 @@ const WORKTREE_IGNORE_PATTERNS = [
   '**/*.log'
 ]
 
-export function initWorktreeWatcher(window: BrowserWindow): void {
-  mainWindow = window
-  log.info('WorktreeWatcher initialized')
-}
-
-export async function watchWorktree(worktreePath: string): Promise<void> {
+export async function watchWorktree(
+  worktreePath: string,
+  options: WatchWorktreeOptions = {}
+): Promise<void> {
   // If already watching, just bump the reference count
   const existing = watchers.get(worktreePath)
   if (existing) {
     existing.refCount++
+    if (options.publishGitEvent) {
+      existing.publishGitEvent = options.publishGitEvent
+    }
     log.info('Incremented watcher refCount', { worktreePath, refCount: existing.refCount })
     return
   }
@@ -201,7 +223,8 @@ export async function watchWorktree(worktreePath: string): Promise<void> {
     worktreeWatcher,
     gitDebounceTimer: null,
     worktreeDebounceTimer: null,
-    refCount: 1
+    refCount: 1,
+    publishGitEvent: options.publishGitEvent
   }
 
   // Attach git watcher handlers after entry is initialized

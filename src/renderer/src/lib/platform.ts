@@ -1,10 +1,12 @@
+import { systemApi } from '@/api/system-api'
+
 // Synchronous best-guess so callers before initPlatform() get a reasonable default
 const nav = typeof navigator !== 'undefined' ? navigator.platform.toLowerCase() : ''
 let _platform: string = nav.includes('win') ? 'win32' : nav.includes('linux') ? 'linux' : 'darwin'
 
 export async function initPlatform(): Promise<void> {
   try {
-    _platform = await window.systemOps.getPlatform()
+    _platform = await systemApi.getPlatform()
   } catch {
     // Keep the synchronous best-guess already set above
   }

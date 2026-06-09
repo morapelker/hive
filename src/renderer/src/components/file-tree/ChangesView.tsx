@@ -179,7 +179,10 @@ export function ChangesView({
     if (!worktreePath) return
     setIsRefreshing(true)
     try {
-      await Promise.all([loadFileStatuses(worktreePath), loadBranchInfo(worktreePath)])
+      await Promise.all([
+        loadFileStatuses(worktreePath, { force: true }),
+        loadBranchInfo(worktreePath, { force: true })
+      ])
     } finally {
       setIsRefreshing(false)
     }

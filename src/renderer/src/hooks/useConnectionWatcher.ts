@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useGitStore } from '@/stores/useGitStore'
+import { gitApi } from '@/api/git-api'
 
 /**
  * Watches all member worktree paths when a connection is selected.
@@ -38,7 +39,7 @@ export function useConnectionWatcher(): void {
 
     // Stop watching previous paths
     for (const path of prevPaths) {
-      window.gitOps.unwatchWorktree(path).catch(() => {
+      gitApi.unwatchWorktree(path).catch(() => {
         // Non-critical - watcher may already be stopped
       })
     }
@@ -46,7 +47,7 @@ export function useConnectionWatcher(): void {
     // Start watching new paths and load initial statuses
     if (memberPaths.length > 0) {
       for (const path of memberPaths) {
-        window.gitOps.watchWorktree(path).catch(() => {
+        gitApi.watchWorktree(path).catch(() => {
           // Non-critical - watcher setup failed
         })
       }
@@ -64,7 +65,7 @@ export function useConnectionWatcher(): void {
   useEffect(() => {
     if (!isConnectionMode) return
 
-    const unsubscribe = window.gitOps.onStatusChanged((event) => {
+    const unsubscribe = gitApi.onStatusChanged((event) => {
       const currentPaths = previousPathsRef.current
       if (currentPaths.includes(event.worktreePath)) {
         useGitStore.getState().refreshStatuses(event.worktreePath)
@@ -80,7 +81,7 @@ export function useConnectionWatcher(): void {
   useEffect(() => {
     return () => {
       for (const path of previousPathsRef.current) {
-        window.gitOps.unwatchWorktree(path).catch(() => {
+        gitApi.unwatchWorktree(path).catch(() => {
           // Non-critical
         })
       }

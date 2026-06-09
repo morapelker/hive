@@ -37,6 +37,42 @@ export function buildAgentsMdMembers(
   }))
 }
 
+export function getAllConnectionsOp(db: DatabaseService): {
+  success: boolean
+  connections?: ConnectionWithMembers[]
+  error?: string
+} {
+  try {
+    const connections = db.getAllConnections()
+    return { success: true, connections }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    log.error('Get all connections failed', error instanceof Error ? error : new Error(message))
+    return { success: false, error: message }
+  }
+}
+
+export function getConnectionOp(
+  db: DatabaseService,
+  connectionId: string
+): { success: boolean; connection?: ConnectionWithMembers; error?: string } {
+  try {
+    const connection = db.getConnection(connectionId)
+    if (!connection) {
+      return { success: false, error: 'Connection not found' }
+    }
+    return { success: true, connection }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    log.error('Get connection failed', error instanceof Error ? error : new Error(message))
+    return { success: false, error: message }
+  }
+}
+
+export function getPinnedConnectionsOp(db: DatabaseService): ConnectionWithMembers[] {
+  return db.getPinnedConnections()
+}
+
 /**
  * Create a new connection from a set of worktree IDs.
  * Creates the filesystem directory, DB record, symlinks, members, derives the name,
@@ -160,6 +196,24 @@ export async function renameConnectionOp(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     log.error('Connection rename failed', error instanceof Error ? error : new Error(message))
+    return { success: false, error: message }
+  }
+}
+
+/**
+ * Pin or unpin a connection.
+ */
+export function setConnectionPinnedOp(
+  db: DatabaseService,
+  connectionId: string,
+  pinned: boolean
+): { success: boolean; error?: string } {
+  try {
+    db.updateConnection(connectionId, { pinned: pinned ? 1 : 0 })
+    return { success: true }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    log.error('Set connection pinned failed', error instanceof Error ? error : new Error(message))
     return { success: false, error: message }
   }
 }
