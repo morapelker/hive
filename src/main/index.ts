@@ -62,6 +62,7 @@ import { scriptRunner } from './services/script-runner'
 import { cleanupScripts } from './services/script-cleanup'
 import { cleanupFileTreeWatchers, getFileTreeWatcherCount } from './services/file-tree-watcher'
 import { cleanupTerminals } from './services/terminal-pty-bridge'
+import { wireQuitCleanup } from './services/quit-cleanup'
 import { bashService } from './effect/bash/facade'
 import { disposeAllRuntimes } from './effect/_shared/runtime'
 import { getRuntime as getSpawnRuntime } from './effect/spawn/runtime'
@@ -868,39 +869,42 @@ app.on('before-quit', (event) => {
   }, QUIT_CONFIRM_WINDOW_MS + 50)
 })
 
-// Cleanup when app is about to quit
-app.on('will-quit', async () => {
-  // Prevent further menu mutations — must be first to avoid native WeakPtr errors
-  shutdownMenu()
-  // Destroy ambient pet overlay before tearing down app services
-  destroyPetWindow()
-  // Cleanup performance diagnostics
-  perfDiagnostics.cleanup()
-  // Cleanup updater timers
-  updaterService.cleanup()
-  // Cleanup terminal PTYs
-  cleanupTerminals()
-  // Cleanup Claude CLI hook server
-  await closeClaudeHookServer()
-  // Cleanup running scripts
-  cleanupScripts()
-  // Cleanup running bash runs (best-effort, no await)
-  bashService.killAll()
-  await disposeAllRuntimes()
-  // Stop local backend server
-  await stopDesktopBackend()
-  // Release any held power save blocker so the display can sleep again
-  cleanupPowerSaveBlocker()
-  // Cleanup file tree watchers
-  await cleanupFileTreeWatchers()
-  // Cleanup OpenCode connections
-  await cleanupOpenCode()
-  telegramForwardingService.dispose()
-  // Flush telemetry before closing database
-  telemetryService.track('app_session_ended', {
-    session_duration_ms: Date.now() - appStartTime
-  })
-  await telemetryService.shutdown()
-  // Close database
-  closeDatabase()
+// Cleanup when app is about to quit. Electron does not await async event
+// handlers, so quit is always prevented while the cleanup chain runs and the
+// app exits explicitly afterwards — otherwise teardown races the cleanup and
+// live native watcher instances can deadlock the main thread (fsevents).
+wireQuitCleanup({
+  app,
+  steps: [
+    // Prevent further menu mutations — must be first to avoid native WeakPtr errors
+    { name: 'shutdownMenu', run: () => shutdownMenu() },
+    // Destroy ambient pet overlay before tearing down app services
+    { name: 'destroyPetWindow', run: () => destroyPetWindow() },
+    { name: 'perfDiagnostics', run: () => perfDiagnostics.cleanup() },
+    { name: 'updaterService', run: () => updaterService.cleanup() },
+    // Terminal PTYs and Ghostty runtime
+    { name: 'cleanupTerminals', run: () => cleanupTerminals() },
+    { name: 'closeClaudeHookServer', run: () => closeClaudeHookServer() },
+    { name: 'cleanupScripts', run: () => cleanupScripts() },
+    { name: 'bashKillAll', run: () => bashService.killAll() },
+    { name: 'disposeAllRuntimes', run: () => disposeAllRuntimes() },
+    { name: 'stopDesktopBackend', run: () => stopDesktopBackend() },
+    // Release any held power save blocker so the display can sleep again
+    { name: 'cleanupPowerSaveBlocker', run: () => cleanupPowerSaveBlocker() },
+    // Close chokidar watchers before exit so no live native watcher instances
+    // remain when the Node environment is torn down
+    { name: 'cleanupFileTreeWatchers', run: () => cleanupFileTreeWatchers() },
+    { name: 'cleanupOpenCode', run: () => cleanupOpenCode() },
+    { name: 'telegramForwarding', run: () => telegramForwardingService.dispose() },
+    {
+      name: 'telemetryShutdown',
+      run: () => {
+        telemetryService.track('app_session_ended', {
+          session_duration_ms: Date.now() - appStartTime
+        })
+        return telemetryService.shutdown()
+      }
+    },
+    { name: 'closeDatabase', run: () => closeDatabase() }
+  ]
 })

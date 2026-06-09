@@ -74,8 +74,11 @@ export class LoggerService {
   }
 
   private formatEntry(entry: LogEntry): string {
+    // Multiple Hive processes (app, dev builds, desktop backend) append to the
+    // same log file — the pid is what makes lines attributable to a process
     const parts = [
       `[${entry.timestamp}]`,
+      `[pid:${process.pid}]`,
       `[${entry.level}]`,
       `[${entry.component}]`,
       entry.message

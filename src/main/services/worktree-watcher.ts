@@ -205,7 +205,9 @@ export async function watchWorktree(
         persistent: true,
         ignoreInitial: true,
         // Don't use awaitWriteFinish for .git files - they're written atomically
-        depth: 3 // refs/heads/*, refs/tags/*, refs/remotes/*/*
+        depth: 3, // refs/heads/*, refs/tags/*, refs/remotes/*/*
+        // The native fsevents backend deadlocks during process teardown — never use it
+        useFsEvents: false
       })
     }
   }
@@ -215,7 +217,9 @@ export async function watchWorktree(
     ignored: WORKTREE_IGNORE_PATTERNS,
     persistent: true,
     ignoreInitial: true,
-    depth: 10
+    depth: 10,
+    // The native fsevents backend deadlocks during process teardown — never use it
+    useFsEvents: false
   })
 
   const entry: WatcherEntry = {

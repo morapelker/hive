@@ -127,7 +127,10 @@ export function startFileTreeWatcher(worktreePath: string): { success: boolean }
     persistent: true,
     ignoreInitial: true,
     depth: 10,
-    followSymlinks: false
+    followSymlinks: false,
+    // The native fsevents backend deadlocks the main thread during app quit
+    // (fse_instance_destroy → uv_mutex_lock) — never use it
+    useFsEvents: false
   })
 
   watcher.on('add', (path) => {

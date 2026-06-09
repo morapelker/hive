@@ -95,7 +95,9 @@ export async function watchBranch(worktreePath: string): Promise<void> {
   if (!sharedWatcher) {
     sharedWatcher = chokidar.watch([], {
       persistent: true,
-      ignoreInitial: true
+      ignoreInitial: true,
+      // The native fsevents backend deadlocks during process teardown — never use it
+      useFsEvents: false
     })
 
     sharedWatcher.on('change', (changedPath) => {
