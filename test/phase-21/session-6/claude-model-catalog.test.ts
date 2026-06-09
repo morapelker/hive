@@ -37,9 +37,11 @@ describe('ClaudeCodeImplementer model catalog', () => {
     expect(providers[0].name).toBe('Claude Code')
   })
 
-  it('getAvailableModels() includes opus, sonnet, haiku models', async () => {
+  it('getAvailableModels() includes fable above opus, plus sonnet and haiku models', async () => {
     const providers = (await impl.getAvailableModels()) as any[]
     const models = providers[0].models
+    expect(Object.keys(models).slice(0, 2)).toEqual(['fable', 'opus'])
+    expect(models).toHaveProperty('fable')
     expect(models).toHaveProperty('opus')
     expect(models).toHaveProperty('sonnet')
     expect(models).toHaveProperty('haiku')
@@ -49,7 +51,7 @@ describe('ClaudeCodeImplementer model catalog', () => {
     const providers = (await impl.getAvailableModels()) as any[]
     const models = providers[0].models
 
-    for (const key of ['opus', 'sonnet', 'haiku']) {
+    for (const key of ['fable', 'opus', 'sonnet', 'haiku']) {
       const model = models[key]
       expect(model).toHaveProperty('id')
       expect(model).toHaveProperty('name')
@@ -64,6 +66,15 @@ describe('ClaudeCodeImplementer model catalog', () => {
     expect(info).toEqual({
       id: 'opus',
       name: 'Opus 4.8',
+      limit: { context: 1000000, output: 32000 }
+    })
+  })
+
+  it('getModelInfo returns correct metadata for Fable 5', async () => {
+    const info = await impl.getModelInfo('any', 'fable')
+    expect(info).toEqual({
+      id: 'fable',
+      name: 'Fable 5',
       limit: { context: 1000000, output: 32000 }
     })
   })

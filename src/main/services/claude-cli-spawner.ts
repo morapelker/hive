@@ -22,13 +22,14 @@ export interface ClaudeCliPtySpawn {
   env: Record<string, string>
 }
 
-const VALID_MODELS = new Set(['opus', 'sonnet', 'haiku'])
+const VALID_MODELS = new Set(['fable', 'opus', 'sonnet', 'haiku'])
 const VALID_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max'])
 
 export function normalizeClaudeCliModel(modelId: string | null | undefined): string | null {
   if (!modelId) return null
   const lower = modelId.toLowerCase()
   if (VALID_MODELS.has(lower)) return lower
+  if (lower.includes('fable')) return 'fable'
   if (lower.includes('opus')) return 'opus'
   if (lower.includes('sonnet')) return 'sonnet'
   if (lower.includes('haiku')) return 'haiku'

@@ -28,6 +28,8 @@ function makeSession(overrides: Partial<Session> = {}): Session {
 
 describe('buildClaudeCliPtySpawn', () => {
   it('normalizes current Claude marketing model ids to CLI aliases', () => {
+    expect(normalizeClaudeCliModel('fable')).toBe('fable')
+    expect(normalizeClaudeCliModel('claude-fable-5')).toBe('fable')
     expect(normalizeClaudeCliModel('claude-sonnet-4')).toBe('sonnet')
     expect(normalizeClaudeCliModel('claude-opus-4-5-20251101')).toBe('opus')
     expect(normalizeClaudeCliModel('claude-haiku-4-5-20251001')).toBe('haiku')
@@ -52,6 +54,26 @@ describe('buildClaudeCliPtySpawn', () => {
       '--resume',
       'claude-uuid-1',
       'Implement this plan'
+    ])
+  })
+
+  it('passes the Fable model category through to Claude CLI', () => {
+    const spawn = buildClaudeCliPtySpawn({
+      session: makeSession({
+        model_id: 'claude-fable-5',
+        model_variant: 'max'
+      }),
+      worktreePath: '/repo/worktree',
+      pendingPrompt: null,
+      claudeBinary: 'claude'
+    })
+
+    expect(spawn.args).toEqual([
+      '--dangerously-skip-permissions',
+      '--model',
+      'fable',
+      '--effort',
+      'max'
     ])
   })
 
