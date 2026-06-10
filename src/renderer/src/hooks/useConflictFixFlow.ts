@@ -70,7 +70,6 @@ export function useConflictFixFlow(worktreeId: string | null): {
   const mergeConflictMode = useSettingsStore((state) => state.mergeConflictMode)
   const createSession = useSessionStore((state) => state.createSession)
   const updateSessionName = useSessionStore((state) => state.updateSessionName)
-  const setPendingMessage = useSessionStore((state) => state.setPendingMessage)
   const setActiveSession = useSessionStore((state) => state.setActiveSession)
   const flow = useWorktreeStatusStore((state) =>
     worktreeId ? state.mergeConflictFlowByWorktree[worktreeId] : undefined
@@ -109,11 +108,15 @@ export function useConflictFixFlow(worktreeId: string | null): {
       const statusStore = useWorktreeStatusStore.getState()
       statusStore.setMergeConflictFlow(worktreeId, { phase: 'starting' })
 
+      // Queue the prompt atomically with session creation: queuing it after
+      // the updateSessionName roundtrip loses the race against
+      // ClaudeCliSessionView mounting and spawning a promptless PTY.
       const { success, session } = await createSession(
         worktreeId,
         currentWorktree.projectId,
         undefined,
-        resolvedMode
+        resolvedMode,
+        { pendingMessage: 'Fix merge conflicts' }
       )
       if (!success || !session) {
         statusStore.setMergeConflictFlow(worktreeId, null)
@@ -124,7 +127,6 @@ export function useConflictFixFlow(worktreeId: string | null): {
       useWorktreeStore.getState().selectWorktree(worktreeId)
       useSessionStore.getState().setActiveWorktree(worktreeId)
       await updateSessionName(session.id, `Merge Conflicts — ${currentWorktree.branchName}`)
-      setPendingMessage(session.id, 'Fix merge conflicts')
       setActiveSession(session.id)
       statusStore.setMergeConflictSession(worktreeId, session.id)
       statusStore.setMergeConflictFlow(worktreeId, {
@@ -133,14 +135,7 @@ export function useConflictFixFlow(worktreeId: string | null): {
         seenBusy: false
       })
     },
-    [
-      createSession,
-      mergeConflictMode,
-      setActiveSession,
-      setPendingMessage,
-      updateSessionName,
-      worktreeId
-    ]
+    [createSession, mergeConflictMode, setActiveSession, updateSessionName, worktreeId]
   )
 
   useEffect(() => {

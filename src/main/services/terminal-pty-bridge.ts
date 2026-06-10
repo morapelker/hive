@@ -9,6 +9,7 @@ import {
 } from './claude-hook-server'
 import { logClaudeBinaryVersion, resolveClaudeBinaryPath } from './claude-binary-resolver'
 import { buildClaudeCliPtySpawn } from './claude-cli-spawner'
+import { writeClaudeCliPrompt } from './claude-cli-pty-prompt'
 import { watchForClaudeSessionId, type ClaudeSessionWatchHandle } from './claude-session-watcher'
 import {
   watchForClaudePlanFollowup,
@@ -277,6 +278,16 @@ export async function createClaudeCliTerminal(
       args: spawn.args,
       env: spawn.env
     })
+    if (alreadyExists && pendingPrompt) {
+      // ptyService.create reused the live PTY, so the spawn args (and the
+      // prompt riding on them) never reached claude. Inject it as a paste so
+      // a racing promptless create call can't strand the prompt.
+      const { delivered } = writeClaudeCliPrompt(sessionId, pendingPrompt)
+      log.info('Claude CLI PTY already exists; injecting pending prompt', {
+        sessionId,
+        delivered
+      })
+    }
     claudeCliSessions.add(sessionId)
     claudeCliWorktreeBasenames.set(sessionId, path.basename(worktreePath))
     if (!pendingPrompt) {
