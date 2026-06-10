@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react'
 import { MessageSquare, Copy } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from '@/lib/toast'
+import { copyTextToClipboard } from '@/lib/clipboard'
 import {
   ContextMenu,
   ContextMenuContent,
@@ -58,8 +59,9 @@ export function PrCommentCard({
   const line = comment.line ?? comment.originalLine ?? '?'
 
   const handleCopyRaw = useCallback(() => {
-    navigator.clipboard.writeText(comment.bodyHTML || comment.body).then(() => {
-      toast.success('Raw comment HTML copied')
+    void copyTextToClipboard(comment.bodyHTML || comment.body).then((ok) => {
+      if (ok) toast.success('Raw comment HTML copied')
+      else toast.error('Failed to copy')
     })
   }, [comment.bodyHTML, comment.body])
 

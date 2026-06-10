@@ -8,6 +8,7 @@ import {
   ContextMenuItem
 } from '@/components/ui/context-menu'
 import { useSessionStore } from '@/stores/useSessionStore'
+import { copyTextToClipboard } from '@/lib/clipboard'
 import { ToolCallDebugModal } from './ToolCallDebugModal'
 import type { ToolUseInfo } from './ToolCard'
 
@@ -44,10 +45,9 @@ export function ToolCallContextMenu({ children, toolUse }: ToolCallContextMenuPr
       return
     }
 
-    try {
-      await navigator.clipboard.writeText(planContent)
+    if (await copyTextToClipboard(planContent)) {
       toast.success('Plan copied to clipboard')
-    } catch {
+    } else {
       toast.error('Failed to copy')
     }
   }
@@ -88,10 +88,9 @@ export function ToolCallContextMenu({ children, toolUse }: ToolCallContextMenuPr
       return
     }
 
-    try {
-      await navigator.clipboard.writeText(textToCopy)
+    if (await copyTextToClipboard(textToCopy)) {
       toast.success('Copied to clipboard')
-    } catch {
+    } else {
       toast.error('Failed to copy')
     }
   }

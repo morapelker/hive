@@ -1,7 +1,7 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
 import { AlertTriangle, RefreshCw, Bug, Copy, Check } from 'lucide-react'
 import { Button } from '../ui/button'
-import { projectApi } from '@/api/project-api'
+import { copyTextToClipboard } from '@/lib/clipboard'
 
 interface Props {
   children: ReactNode
@@ -65,19 +65,11 @@ Component Stack:
 ${errorInfo?.componentStack || 'No component stack'}
     `.trim()
 
-    try {
-      await navigator.clipboard.writeText(errorText)
+    if (await copyTextToClipboard(errorText)) {
       this.setState({ copied: true })
       setTimeout(() => this.setState({ copied: false }), 2000)
-    } catch {
-      // Fallback to the backend clipboard API if the browser clipboard API is unavailable.
-      try {
-        await projectApi.copyToClipboard(errorText)
-        this.setState({ copied: true })
-        setTimeout(() => this.setState({ copied: false }), 2000)
-      } catch {
-        console.error('Failed to copy error to clipboard')
-      }
+    } else {
+      console.error('Failed to copy error to clipboard')
     }
   }
 

@@ -8,6 +8,7 @@ import { DEFAULT_XTERM_FONT_STACK } from './terminal-fonts'
 import { projectApi } from '@/api/project-api'
 import { terminalApi } from '@/api/terminal-api'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { copyTextToClipboard } from '@/lib/clipboard'
 import type { GhosttyTerminalConfig } from '@shared/types/terminal'
 
 /** Default Catppuccin Mocha theme used when no Ghostty config is found */
@@ -211,7 +212,7 @@ export class XtermBackend implements TerminalBackend {
       // Cmd+C — copy if selection, otherwise SIGINT
       if (e.metaKey && e.key === 'c' && !e.shiftKey && e.type === 'keydown') {
         if (terminal.hasSelection()) {
-          navigator.clipboard.writeText(terminal.getSelection())
+          void copyTextToClipboard(terminal.getSelection())
           terminal.clearSelection()
           return false
         }
@@ -221,7 +222,7 @@ export class XtermBackend implements TerminalBackend {
       // Cmd+Shift+C — always copy
       if (e.metaKey && e.shiftKey && e.key === 'C' && e.type === 'keydown') {
         if (terminal.hasSelection()) {
-          navigator.clipboard.writeText(terminal.getSelection())
+          void copyTextToClipboard(terminal.getSelection())
           terminal.clearSelection()
         }
         return false

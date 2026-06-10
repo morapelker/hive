@@ -91,6 +91,7 @@ import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
 import { snapshotTokenBaseline, computeTokenDelta } from '@/lib/token-baselines'
 import { notifyKanbanSessionSync } from '@/stores/store-coordination'
 import { isComposingKeyboardEvent } from '@/lib/message-composer-shortcuts'
+import { copyTextToClipboard } from '@/lib/clipboard'
 import { handleSessionIdleFollowUp } from '@/lib/session-follow-up-dispatch'
 import {
   recordHivePromptIdleForSession,
@@ -5165,10 +5166,9 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
       return
     }
 
-    try {
-      await navigator.clipboard.writeText(planContent)
+    if (await copyTextToClipboard(planContent)) {
       toast.success('Plan copied to clipboard')
-    } catch {
+    } else {
       toast.error('Failed to copy')
     }
   }, [messages, pendingPlan?.planContent])

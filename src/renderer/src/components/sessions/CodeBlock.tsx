@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { toast } from '@/lib/toast'
 import Ansi from 'ansi-to-react'
 import { containsAnsi, stripAnsi } from '@/lib/ansi-utils'
+import { copyTextToClipboard } from '@/lib/clipboard'
 
 interface CodeBlockProps {
   code: string
@@ -14,12 +15,11 @@ export const CodeBlock = memo(function CodeBlock({ code, language = 'typescript'
   const [copied, setCopied] = useState(false)
 
   const handleCopy = async (): Promise<void> => {
-    try {
-      await navigator.clipboard.writeText(stripAnsi(code))
+    if (await copyTextToClipboard(stripAnsi(code))) {
       setCopied(true)
       toast.success('Code copied to clipboard')
       setTimeout(() => setCopied(false), 2000)
-    } catch {
+    } else {
       toast.error('Failed to copy code')
     }
   }

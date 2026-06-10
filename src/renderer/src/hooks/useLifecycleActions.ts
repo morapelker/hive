@@ -5,6 +5,7 @@ import { useSessionStore } from '@/stores/useSessionStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { toast } from '@/lib/toast'
+import { copyTextToClipboard } from '@/lib/clipboard'
 import { REVIEW_PROMPTS, DEFAULT_REVIEW_PROMPT_TYPE } from '@/constants/reviewPrompts'
 import { resolveSessionCreationSelection } from '@/lib/handoffSelection'
 import { useSettingsStore, resolveModelForSdk } from '@/stores/useSettingsStore'
@@ -395,8 +396,10 @@ export function useLifecycleActions(worktreeId: string | null): LifecycleActions
 
   const copyPRUrl = useCallback(() => {
     if (!storeAttachedPR?.url) return
-    navigator.clipboard.writeText(storeAttachedPR.url)
-    toast.success('PR URL copied')
+    void copyTextToClipboard(storeAttachedPR.url).then((ok) => {
+      if (ok) toast.success('PR URL copied')
+      else toast.error('Failed to copy')
+    })
   }, [storeAttachedPR?.url])
 
   const loadPRList = useCallback(async (): Promise<PRListItem[]> => {
