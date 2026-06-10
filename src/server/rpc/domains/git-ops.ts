@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { Effect } from 'effect'
-import simpleGit from 'simple-git'
+import simpleGit, { GitResponseError, type MergeResult } from 'simple-git'
 import { z } from 'zod'
 import { isDesktopCommandResult, makeDesktopCommandRequest } from '@shared/desktop-command'
 import { GIT_STATUS_CHANGED_CHANNEL } from '@shared/git-events'
@@ -924,10 +924,26 @@ export const makeLiveGitOpsRpcService = (
             await simpleGit(worktreePath).merge([sourceBranch])
             return { success: true }
           } catch (error) {
-            return {
-              success: false,
-              error: error instanceof Error ? error.message : String(error)
+            const message = error instanceof Error ? error.message : String(error)
+            if (error instanceof GitResponseError) {
+              const summary = error.git as MergeResult | undefined
+              const conflicts = (summary?.conflicts ?? [])
+                .map((conflict) => conflict.file)
+                .filter((file): file is string => typeof file === 'string' && file.length > 0)
+              if (conflicts.length > 0) {
+                return { success: false, error: message, conflicts }
+              }
             }
+            // Fallback: conflict entries without parseable file names
+            try {
+              const status = await simpleGit(worktreePath).status()
+              if (status.conflicted.length > 0) {
+                return { success: false, error: message, conflicts: status.conflicted }
+              }
+            } catch {
+              // Status check is best-effort — fall through to the plain error
+            }
+            return { success: false, error: message }
           }
         },
         catch: (cause) => cause

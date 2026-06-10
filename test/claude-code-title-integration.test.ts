@@ -162,7 +162,8 @@ describe('handleTitleGeneration', () => {
     })
     expect(mockEmitWorktreeBranchRenamed).toHaveBeenCalledWith({
       worktreeId: 'wt-1',
-      newBranch: 'fix-auth-refresh'
+      newBranch: 'fix-auth-refresh',
+      worktreePath: '/path/to/worktree'
     })
   })
 
@@ -246,7 +247,8 @@ describe('handleTitleGeneration', () => {
     expect(mockAutoRenameWorktreeBranch).toHaveBeenCalled()
     expect(mockEmitWorktreeBranchRenamed).toHaveBeenCalledWith({
       worktreeId: 'wt-1',
-      newBranch: 'fix-auth-refresh-2'
+      newBranch: 'fix-auth-refresh-2',
+      worktreePath: '/path/to/worktree'
     })
   })
 

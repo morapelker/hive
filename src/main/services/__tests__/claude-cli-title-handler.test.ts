@@ -238,7 +238,8 @@ describe('applyClaudeCliTitle', () => {
     })
     expect(mocks.emitWorktreeBranchRenamed).toHaveBeenCalledWith({
       worktreeId: 'wt-1',
-      newBranch: 'new-title'
+      newBranch: 'new-title',
+      worktreePath: '/repo/wt'
     })
   })
 

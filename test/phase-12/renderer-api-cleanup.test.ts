@@ -12563,9 +12563,8 @@ describe('renderer API cleanup', () => {
     expect(effectSource).toContain('const unsubscribe = gitApi.onBranchChanged((event) => {')
     expect(effectSource).toContain('const currentPaths = previousPathsRef.current')
     expect(effectSource).toContain('currentPaths.includes(event.worktreePath)')
-    expect(effectSource).toContain(
-      'useGitStore.getState().loadBranchInfo(event.worktreePath, { force: true })'
-    )
+    expect(effectSource).toContain('useGitStore')
+    expect(effectSource).toContain('.loadBranchInfo(event.worktreePath, { force: true })')
     expect(effectSource).toContain('unsubscribe()')
     expect(effectSource).not.toContain('window.gitOps.onBranchChanged')
   })
@@ -19860,7 +19859,7 @@ describe('renderer API cleanup', () => {
     expect(effectStart).toBeGreaterThan(-1)
     expect(effectEnd).toBeGreaterThan(effectStart)
     expect(source).toContain("import { worktreeApi } from '@/api/worktree-api'")
-    expect(subscriptionSource).toContain('const { worktreeId, newBranch } = data')
+    expect(subscriptionSource).toContain('const { worktreeId, newBranch, worktreePath } = data')
     expect(subscriptionSource).toContain(
       'useWorktreeStore.getState().updateWorktreeBranch(worktreeId, newBranch)'
     )
@@ -19881,8 +19880,9 @@ describe('renderer API cleanup', () => {
     expect(preloadSource).not.toContain("ipcRenderer.removeListener('worktree:branchRenamed'")
     expect(worktreeEventsSource).not.toContain('webContents.send(WORKTREE_BRANCH_RENAMED_CHANNEL')
     expect(worktreeEventsSource).toContain(
-      'publishDesktopBackendEvent(WORKTREE_BRANCH_RENAMED_CHANNEL, payload)'
+      'publishWorktreeEvent(WORKTREE_BRANCH_RENAMED_CHANNEL, payload)'
     )
+    expect(worktreeEventsSource).toContain('publishDesktopBackendEvent(channel, payload)')
   })
 
   it('removes the old empty worktreeOps preload global exposure', () => {

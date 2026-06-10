@@ -151,7 +151,8 @@ describe('Codex title integration', () => {
     )
     expect(mockEmitWorktreeBranchRenamed).toHaveBeenCalledWith({
       worktreeId: 'wt-1',
-      newBranch: 'fix-auth-refresh'
+      newBranch: 'fix-auth-refresh',
+      worktreePath: '/path/to/worktree'
     })
   })
 

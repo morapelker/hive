@@ -45,9 +45,23 @@ vi.mock('../../src/main/services/git-service', () => ({
   isAutoNamedBranch: vi.fn(() => false)
 }))
 
+const eventMocks = vi.hoisted(() => ({
+  emitWorktreeBranchRenamed: vi.fn(),
+  emitGitBranchChanged: vi.fn()
+}))
+
+vi.mock('../../src/main/services/worktree-events', () => ({
+  emitWorktreeBranchRenamed: eventMocks.emitWorktreeBranchRenamed
+}))
+
+vi.mock('../../src/main/services/git-events', () => ({
+  emitGitBranchChanged: eventMocks.emitGitBranchChanged
+}))
+
 import {
   createWorktreeOpEffect,
   deleteWorktreeOpEffect,
+  renameWorktreeBranchOpEffect,
   syncWorktreesOpEffect
 } from '../../src/main/services/worktree-ops'
 
@@ -103,6 +117,64 @@ describeIf('Session 7: worktree-ops Effect orchestrators', () => {
     expect(result.success).toBe(true)
     const after = testDb.db.getWorktree(wt.id)
     expect(after?.status).toBe('archived')
+  })
+
+  test('renameWorktreeBranchOpEffect emits rename + branch-changed events on success', async () => {
+    const wt = testDb.db.createWorktree({
+      project_id: projectId,
+      name: 'feature-old',
+      branch_name: 'feature-old',
+      path: '/tmp/feature-old'
+    })
+
+    const result = expectExitSuccess(
+      await run(
+        renameWorktreeBranchOpEffect({
+          worktreeId: wt.id,
+          worktreePath: wt.path,
+          oldBranch: 'feature-old',
+          newBranch: 'feature-new'
+        })
+      )
+    )
+
+    expect(result.success).toBe(true)
+    expect(testDb.db.getWorktree(wt.id)?.branch_name).toBe('feature-new')
+    expect(eventMocks.emitWorktreeBranchRenamed).toHaveBeenCalledWith({
+      worktreeId: wt.id,
+      newBranch: 'feature-new',
+      worktreePath: wt.path
+    })
+    expect(eventMocks.emitGitBranchChanged).toHaveBeenCalledWith({ worktreePath: wt.path })
+  })
+
+  test('renameWorktreeBranchOpEffect emits no events when the git rename fails', async () => {
+    const wt = testDb.db.createWorktree({
+      project_id: projectId,
+      name: 'feature-old',
+      branch_name: 'feature-old',
+      path: '/tmp/feature-old'
+    })
+    gitServiceMocks.renameBranch.mockResolvedValueOnce({
+      success: false,
+      error: 'branch exists'
+    } as never)
+
+    const result = expectExitSuccess(
+      await run(
+        renameWorktreeBranchOpEffect({
+          worktreeId: wt.id,
+          worktreePath: wt.path,
+          oldBranch: 'feature-old',
+          newBranch: 'feature-new'
+        })
+      )
+    )
+
+    expect(result.success).toBe(false)
+    expect(testDb.db.getWorktree(wt.id)?.branch_name).toBe('feature-old')
+    expect(eventMocks.emitWorktreeBranchRenamed).not.toHaveBeenCalled()
+    expect(eventMocks.emitGitBranchChanged).not.toHaveBeenCalled()
   })
 
   test('syncWorktreesOpEffect does not import the main checkout as an app worktree', async () => {

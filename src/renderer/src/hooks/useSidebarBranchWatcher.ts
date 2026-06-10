@@ -1,6 +1,12 @@
 import { useEffect, useRef } from 'react'
 import { useGitStore } from '@/stores/useGitStore'
+import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { gitApi } from '@/api/git-api'
+
+interface SidebarBranchWatcherProject {
+  readonly projectId: string
+  readonly projectPath: string
+}
 
 /**
  * Watches .git/HEAD for all provided worktree paths to keep sidebar
@@ -11,10 +17,14 @@ import { gitApi } from '@/api/git-api'
  *
  * Lifecycle:
  * - On mount / path change: starts watchers + loads initial branch info
- * - On git:branchChanged event: refreshes branch info for matching path
+ * - On git:branchChanged event: refreshes branch info for matching path,
+ *   and reconciles the DB record when the branch was renamed externally
  * - On unmount / path removal: stops watchers
  */
-export function useSidebarBranchWatcher(worktreePaths: string[]): void {
+export function useSidebarBranchWatcher(
+  worktreePaths: string[],
+  project?: SidebarBranchWatcherProject
+): void {
   const previousPathsRef = useRef<string[]>([])
 
   // Stable key for change detection
@@ -69,16 +79,36 @@ export function useSidebarBranchWatcher(worktreePaths: string[]): void {
 
     const unsubscribe = gitApi.onBranchChanged((event) => {
       const currentPaths = previousPathsRef.current
-      if (currentPaths.includes(event.worktreePath)) {
-        useGitStore.getState().loadBranchInfo(event.worktreePath, { force: true })
-      }
+      if (!currentPaths.includes(event.worktreePath)) return
+
+      void useGitStore
+        .getState()
+        .loadBranchInfo(event.worktreePath, { force: true })
+        ?.then(() => {
+          // If the branch was renamed externally (terminal), the DB record still
+          // holds the old name — flows like merge-on-done and PR creation read it.
+          // syncWorktrees reuses the existing external-rename reconciliation in
+          // syncWorktreesOpEffect and reloads the worktree store afterward.
+          if (!project) return
+          const liveBranch = useGitStore.getState().branchInfoByWorktree.get(event.worktreePath)
+          // 'HEAD' means detached (mid-rebase etc.) — not a rename, skip
+          if (!liveBranch || liveBranch.name === 'HEAD') return
+          const worktreeStore = useWorktreeStore.getState()
+          const worktrees = worktreeStore.worktreesByProject.get(project.projectId) ?? []
+          const worktree = worktrees.find((w) => w.path === event.worktreePath)
+          if (worktree && worktree.branch_name !== liveBranch.name) {
+            void worktreeStore.syncWorktrees(project.projectId, project.projectPath, {
+              force: true
+            })
+          }
+        })
     })
 
     return () => {
       unsubscribe()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pathsKey])
+  }, [pathsKey, project?.projectId, project?.projectPath])
 
   // Cleanup all watchers on unmount
   useEffect(() => {

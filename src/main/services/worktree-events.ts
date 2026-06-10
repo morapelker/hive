@@ -2,8 +2,26 @@ import {
   WORKTREE_BRANCH_RENAMED_CHANNEL,
   type WorktreeBranchRenamedEvent
 } from '../../shared/worktree-events'
-import { publishDesktopBackendEvent } from '../desktop/backend-event-publisher'
+
+type WorktreeEventPublisher = (channel: string, payload: unknown) => void | Promise<void>
+
+let worktreeEventPublisher: WorktreeEventPublisher | null = null
+
+export const setWorktreeEventPublisher = (publisher: WorktreeEventPublisher | null): void => {
+  worktreeEventPublisher = publisher
+}
+
+const publishWorktreeEvent = (channel: string, payload: unknown): void => {
+  if (worktreeEventPublisher) {
+    void Promise.resolve(worktreeEventPublisher(channel, payload))
+    return
+  }
+
+  void import('../desktop/backend-event-publisher').then(({ publishDesktopBackendEvent }) =>
+    publishDesktopBackendEvent(channel, payload)
+  )
+}
 
 export const emitWorktreeBranchRenamed = (payload: WorktreeBranchRenamedEvent): void => {
-  void publishDesktopBackendEvent(WORKTREE_BRANCH_RENAMED_CHANNEL, payload)
+  publishWorktreeEvent(WORKTREE_BRANCH_RENAMED_CHANNEL, payload)
 }

@@ -25,6 +25,7 @@ const DEBOUNCE_MS = 300
 
 interface PathEntry {
   worktreePath: string
+  gitDir: string
   debounceTimer: ReturnType<typeof setTimeout> | null
   refCount: number
 }
@@ -96,11 +97,18 @@ export async function watchBranch(worktreePath: string): Promise<void> {
     sharedWatcher = chokidar.watch([], {
       persistent: true,
       ignoreInitial: true,
+      // Every path added to this watcher is a gitdir directory; only its direct
+      // children matter (we filter to HEAD below).
+      depth: 0,
       // The native fsevents backend deadlocks during process teardown — never use it
       useFsEvents: false
     })
 
-    sharedWatcher.on('change', (changedPath) => {
+    // Git rewrites HEAD via lockfile-rename (HEAD.lock → rename over HEAD). A watch
+    // on the HEAD file itself goes permanently stale on macOS once the inode is
+    // replaced, so we watch the gitdir directory instead and filter events down to
+    // HEAD. The rename can surface as change OR unlink+add — handle all three.
+    const handleEvent = (changedPath: string): void => {
       const entry = watchedPaths.get(changedPath)
       if (!entry) return
 
@@ -109,7 +117,11 @@ export async function watchBranch(worktreePath: string): Promise<void> {
         entry.debounceTimer = null
         emitBranchChanged(entry.worktreePath)
       }, DEBOUNCE_MS)
-    })
+    }
+
+    sharedWatcher.on('change', handleEvent)
+    sharedWatcher.on('add', handleEvent)
+    sharedWatcher.on('unlink', handleEvent)
 
     sharedWatcher.on('error', (error) => {
       log.error('Branch watcher error', error)
@@ -118,9 +130,9 @@ export async function watchBranch(worktreePath: string): Promise<void> {
     log.info('Shared branch watcher created')
   }
 
-  // Add this HEAD path to the shared watcher
-  sharedWatcher.add(headPath)
-  watchedPaths.set(headPath, { worktreePath, debounceTimer: null, refCount: 1 })
+  // Watch the gitdir directory; events are filtered to HEAD via watchedPaths
+  sharedWatcher.add(gitDir)
+  watchedPaths.set(headPath, { worktreePath, gitDir, debounceTimer: null, refCount: 1 })
   worktreeToHead.set(worktreePath, headPath)
 
   log.info('Branch watcher started', { worktreePath, headPath, totalPaths: watchedPaths.size })
@@ -146,7 +158,7 @@ export async function unwatchBranch(worktreePath: string): Promise<void> {
 
   // Remove path from shared watcher
   if (sharedWatcher) {
-    sharedWatcher.unwatch(headPath)
+    sharedWatcher.unwatch(entry.gitDir)
   }
 
   watchedPaths.delete(headPath)
