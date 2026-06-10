@@ -252,7 +252,11 @@ describe('worktreeApi', () => {
 
     listener?.({
       channel: WORKTREE_BRANCH_RENAMED_CHANNEL,
-      payload: { worktreeId: 'worktree-1', newBranch: 'feature-renamed' }
+      payload: {
+        worktreeId: 'worktree-1',
+        newBranch: 'feature-renamed',
+        worktreePath: '/tmp/worktree-1'
+      }
     })
     listener?.({
       channel: WORKTREE_BRANCH_RENAMED_CHANNEL,
@@ -262,7 +266,8 @@ describe('worktreeApi', () => {
     expect(callback).toHaveBeenCalledTimes(1)
     expect(callback).toHaveBeenCalledWith({
       worktreeId: 'worktree-1',
-      newBranch: 'feature-renamed'
+      newBranch: 'feature-renamed',
+      worktreePath: '/tmp/worktree-1'
     })
   })
 

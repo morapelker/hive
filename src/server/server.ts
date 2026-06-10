@@ -11,6 +11,7 @@ import { resolveStaticFile, serveStaticFile } from './static'
 import { isDesktopBackendEventMessage } from '../shared/desktop-command'
 import { cleanupBranchWatchers } from '../main/services/branch-watcher'
 import { setGitEventPublisher } from '../main/services/git-events'
+import { setWorktreeEventPublisher } from '../main/services/worktree-events'
 import { cleanupWorktreeWatchers } from '../main/services/worktree-watcher'
 import { getDatabase } from '../main/db'
 
@@ -49,6 +50,14 @@ export const startHiveServer = (
     process.on('message', desktopBackendEventForwarder)
 
     setGitEventPublisher((channel, payload) =>
+      Effect.runPromise(
+        eventBus.publish({
+          channel,
+          payload
+        })
+      )
+    )
+    setWorktreeEventPublisher((channel, payload) =>
       Effect.runPromise(
         eventBus.publish({
           channel,
@@ -233,6 +242,7 @@ export const startHiveServer = (
                   .then(({ discordService }) => discordService.stopListening())
                   .catch(() => undefined)
                 setGitEventPublisher(null)
+                setWorktreeEventPublisher(null)
                 if (desktopBackendEventForwarder) {
                   process.off('message', desktopBackendEventForwarder)
                   desktopBackendEventForwarder = null

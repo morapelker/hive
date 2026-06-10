@@ -303,7 +303,16 @@ export function GitPushPull({
         // Re-check if the merged branch is now up-to-date
         setMergedCheckVersion((v) => v + 1)
       } else {
-        toast.error('Merge failed', { description: result.error })
+        if (result.conflicts && result.conflicts.length > 0) {
+          toast.error(
+            `Merge has ${result.conflicts.length} conflict${result.conflicts.length === 1 ? '' : 's'}`,
+            { description: 'Resolve conflicts, then commit' }
+          )
+        } else {
+          toast.error('Merge failed', { description: result.error })
+        }
+        // A failed merge can leave conflicts or a dirty tree — show it immediately
+        await refreshStatuses(worktreePath)
       }
     } finally {
       setIsMerging(false)

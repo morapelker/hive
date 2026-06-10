@@ -6,6 +6,7 @@ export const WORKTREE_CREATED_CHANNEL = 'worktree:created'
 export interface WorktreeBranchRenamedEvent {
   readonly worktreeId: string
   readonly newBranch: string
+  readonly worktreePath: string
 }
 
 export interface WorktreeCreatedEvent {

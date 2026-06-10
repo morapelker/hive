@@ -192,12 +192,12 @@ export async function watchWorktree(
       gitPaths.push(refsPath)
     }
 
-    // Optionally watch MERGE_HEAD, REBASE_HEAD (in worktree gitdir)
+    // Watch MERGE_HEAD, REBASE_HEAD, CHERRY_PICK_HEAD (in worktree gitdir).
+    // These rarely exist when the watcher starts — chokidar watches the
+    // not-yet-existing path via the gitdir and emits 'add' when a merge/rebase
+    // begins and 'unlink' when it ends, so in-progress states reflect live.
     for (const specialFile of ['MERGE_HEAD', 'REBASE_HEAD', 'CHERRY_PICK_HEAD']) {
-      const path = join(gitDir, specialFile)
-      if (existsSync(path)) {
-        gitPaths.push(path)
-      }
+      gitPaths.push(join(gitDir, specialFile))
     }
 
     if (gitPaths.length > 0) {

@@ -107,7 +107,9 @@ const isWorktreeBranchRenamedEvent = (payload: unknown): payload is WorktreeBran
   'worktreeId' in payload &&
   typeof payload.worktreeId === 'string' &&
   'newBranch' in payload &&
-  typeof payload.newBranch === 'string'
+  typeof payload.newBranch === 'string' &&
+  'worktreePath' in payload &&
+  typeof payload.worktreePath === 'string'
 
 const isWorktreeRow = (payload: unknown): payload is WorktreeRow =>
   !!payload &&

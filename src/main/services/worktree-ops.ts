@@ -10,11 +10,13 @@ import { makeDbService } from '../effect/db/layers'
 import { getRuntime as getDbRuntime } from '../effect/db/runtime'
 import { Db } from '../effect/db/service'
 import { type BreedType } from './breed-names'
+import { emitGitBranchChanged } from './git-events'
 import { createGitService, isAutoNamedBranch } from './git-service'
 import { createLogger } from './logger'
 import { normalizeWorktreePath } from './path-utils'
 import { assignPort, releasePort } from './port-registry'
 import { scriptRunner } from './script-runner'
+import { emitWorktreeBranchRenamed } from './worktree-events'
 
 const log = createLogger({ component: 'WorktreeOps' })
 
@@ -488,6 +490,13 @@ export const renameWorktreeBranchOpEffect = (
           ? { name: getImportedWorktreeName(params.newBranch, params.worktreePath) }
           : {})
       })
+
+      emitWorktreeBranchRenamed({
+        worktreeId: params.worktreeId,
+        newBranch: params.newBranch,
+        worktreePath: params.worktreePath
+      })
+      emitGitBranchChanged({ worktreePath: params.worktreePath })
     }),
     'renameWorktreeBranchOp'
   )

@@ -1275,7 +1275,8 @@ class OpenCodeService {
               if (result.renamed) {
                 this.sendToRenderer(WORKTREE_BRANCH_RENAMED_CHANNEL, {
                   worktreeId: worktree.id,
-                  newBranch: result.newBranch
+                  newBranch: result.newBranch,
+                  worktreePath: worktree.path
                 })
                 log.info('Auto-renamed branch from session title', {
                   worktreeId: worktree.id,
@@ -1317,7 +1318,8 @@ class OpenCodeService {
                     if (result.renamed) {
                       this.sendToRenderer(WORKTREE_BRANCH_RENAMED_CHANNEL, {
                         worktreeId: memberWorktree.id,
-                        newBranch: result.newBranch
+                        newBranch: result.newBranch,
+                        worktreePath: memberWorktree.path
                       })
                       log.info('Auto-renamed connection member branch', {
                         connectionId: session.connection_id,

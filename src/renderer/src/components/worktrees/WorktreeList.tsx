@@ -42,7 +42,11 @@ export function WorktreeList({ project }: WorktreeListProps): React.JSX.Element 
 
   // Watch all worktree paths for branch changes (lightweight HEAD-only watchers)
   const worktreePaths = useMemo(() => worktrees.map((w) => w.path), [worktrees])
-  useSidebarBranchWatcher(worktreePaths)
+  const watcherProject = useMemo(
+    () => ({ projectId: project.id, projectPath: project.path }),
+    [project.id, project.path]
+  )
+  useSidebarBranchWatcher(worktreePaths, watcherProject)
 
   // Drag state
   const [draggedWorktreeId, setDraggedWorktreeId] = useState<string | null>(null)

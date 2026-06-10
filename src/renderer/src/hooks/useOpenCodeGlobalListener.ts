@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { useSessionStore } from '@/stores/useSessionStore'
 import type { CodexThreadGoal } from '@/stores/useSessionStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
+import { useGitStore } from '@/stores/useGitStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useQuestionStore } from '@/stores/useQuestionStore'
@@ -229,8 +230,13 @@ export function useOpenCodeGlobalListener(): void {
   // Listen for branch auto-rename events from the main process
   useEffect(() => {
     const unsubscribe = worktreeApi.onBranchRenamed((data) => {
-      const { worktreeId, newBranch } = data
+      const { worktreeId, newBranch, worktreePath } = data
       useWorktreeStore.getState().updateWorktreeBranch(worktreeId, newBranch)
+      // The displayed name prefers the live branch info from the git store —
+      // refresh it so the rename shows without waiting for a watcher event.
+      if (worktreePath) {
+        void useGitStore.getState().loadBranchInfo(worktreePath, { force: true })
+      }
     })
 
     return unsubscribe
