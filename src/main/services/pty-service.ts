@@ -33,6 +33,37 @@ export interface PtyCreateOpts {
   backend?: TerminalBackend
 }
 
+/** Env vars that influence terminal/TUI rendering — logged at every spawn. */
+const ENV_SNAPSHOT_KEYS = [
+  'TERM',
+  'COLORTERM',
+  'LANG',
+  'LC_ALL',
+  'COLUMNS',
+  'LINES',
+  'NO_COLOR',
+  'FORCE_COLOR',
+  'CI'
+] as const
+
+/**
+ * Diagnostic snapshot of the rendering-relevant spawn env. CLAUDE_CODE_*
+ * variables are logged by name only — their values may embed secrets.
+ */
+function buildEnvSnapshot(env: Record<string, string>): Record<string, string | undefined> {
+  const snapshot: Record<string, string | undefined> = {}
+  for (const key of ENV_SNAPSHOT_KEYS) {
+    snapshot[key] = env[key]
+  }
+  const claudeCodeKeys = Object.keys(env)
+    .filter((key) => key.startsWith('CLAUDE_CODE_'))
+    .sort()
+  if (claudeCodeKeys.length > 0) {
+    snapshot.claudeCodeKeys = claudeCodeKeys.join(',')
+  }
+  return snapshot
+}
+
 class PtyService {
   private ptys: Map<string, PtyInstance> = new Map()
 
@@ -70,9 +101,15 @@ class PtyService {
     const env: Record<string, string> = {
       ...process.env,
       TERM: 'xterm-256color',
-      COLORTERM: 'truecolor',
-      ...opts.env
+      COLORTERM: 'truecolor'
     } as Record<string, string>
+    // COLUMNS/LINES leak in from the interactive login shell that
+    // loadShellEnv() captures at startup. TUI programs prefer them over the
+    // PTY's actual size, pinning width detection to the wrong dimensions and
+    // fighting SIGWINCH-driven resizes. The PTY size is authoritative here.
+    delete env.COLUMNS
+    delete env.LINES
+    Object.assign(env, opts.env ?? {})
 
     log.info('Creating PTY', {
       id,
@@ -80,7 +117,8 @@ class PtyService {
       args: args.length,
       cwd: opts.cwd,
       cols,
-      rows
+      rows,
+      env: buildEnvSnapshot(env)
     })
 
     const ptyProcess = pty.spawn(command, args, {

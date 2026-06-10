@@ -2,6 +2,7 @@ import { Effect } from 'effect'
 import { z } from 'zod'
 import type { EventBus } from '../../events/event-bus'
 import { parseGhosttyConfig } from '../../../main/services/ghostty-config'
+import { createLogger } from '../../../main/services/logger'
 import { ptyService } from '../../../main/services/pty-service'
 import {
   isDesktopCommandResult,
@@ -19,6 +20,10 @@ import type { RpcHandler } from '../router'
 
 export interface TerminalOpsRpcService {
   readonly getConfig: () => Effect.Effect<GhosttyTerminalConfig, unknown, never>
+  readonly logDiagnostics?: (
+    event: string,
+    data: Record<string, unknown>
+  ) => Effect.Effect<void, unknown>
   readonly create: (
     terminalId: string,
     cwd: string,
@@ -80,6 +85,12 @@ export interface TerminalOpsRpcService {
 }
 
 const emptyParamsSchema = z.union([z.object({}).strict(), z.undefined(), z.null()])
+const logDiagnosticsParamsSchema = z
+  .object({
+    event: z.string().min(1),
+    data: z.record(z.string(), z.unknown()).optional()
+  })
+  .strict()
 const terminalIdParamsSchema = z
   .object({
     terminalId: z.string().min(1)
@@ -1277,6 +1288,13 @@ const requestDesktopTerminalWrite = (
   })
 }
 
+/**
+ * Persists renderer-side terminal diagnostics (font resolution, renderer
+ * fallback, fitted dimensions) into the on-disk log so reports from affected
+ * machines include them. See terminal-fonts.ts in the renderer.
+ */
+const clientDiagnosticsLog = createLogger({ component: 'TerminalClientDiagnostics' })
+
 export const makeLiveTerminalOpsRpcService = (eventBus?: EventBus): TerminalOpsRpcService => ({
   getConfig: () =>
     Effect.sync(() => {
@@ -1285,6 +1303,10 @@ export const makeLiveTerminalOpsRpcService = (eventBus?: EventBus): TerminalOpsR
       } catch {
         return {}
       }
+    }),
+  logDiagnostics: (event, data) =>
+    Effect.sync(() => {
+      clientDiagnosticsLog.info(event, data)
     }),
   create: (terminalId, cwd, shell) =>
     Effect.sync(() => {
@@ -1434,6 +1456,18 @@ export const makeTerminalOpsRpcHandlers = (
             catch: (cause) => cause
           })
           return yield* service.getConfig()
+        })
+    ],
+    [
+      'terminalOps.logDiagnostics',
+      (params) =>
+        Effect.gen(function* () {
+          const parsed = yield* Effect.try({
+            try: () => logDiagnosticsParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          return yield* (service.logDiagnostics?.(parsed.event, parsed.data ?? {}) ??
+            Effect.succeed(undefined))
         })
     ],
     [

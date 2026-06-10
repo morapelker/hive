@@ -154,6 +154,16 @@ export const terminalApi = {
     )
     return { success: true, value: config }
   },
+  /**
+   * Fire-and-forget: persist renderer-side terminal diagnostics (font
+   * resolution, renderer fallback, fitted dimensions) into the main-process
+   * log so support reports from affected machines include them.
+   */
+  logClientDiagnostics: (event: string, data: Record<string, unknown>): void => {
+    void getRendererRpcClient()
+      .request<void>('terminalOps.logDiagnostics', { event, data })
+      .catch(() => {})
+  },
   ghosttyIsAvailable: async (): Promise<TerminalGhosttyAvailabilityResult> => {
     return getRendererRpcClient().request<TerminalGhosttyAvailabilityResult>(
       'terminalOps.ghosttyIsAvailable',

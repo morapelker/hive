@@ -7,7 +7,7 @@ import {
   subscribeClaudeCliStatus,
   type ClaudeCliStatusPayload
 } from './claude-hook-server'
-import { resolveClaudeBinaryPath } from './claude-binary-resolver'
+import { logClaudeBinaryVersion, resolveClaudeBinaryPath } from './claude-binary-resolver'
 import { buildClaudeCliPtySpawn } from './claude-cli-spawner'
 import { watchForClaudeSessionId, type ClaudeSessionWatchHandle } from './claude-session-watcher'
 import {
@@ -217,6 +217,7 @@ export async function createClaudeCliTerminal(
     if (!claudeBinary) {
       return { success: false, error: 'Claude binary not found on PATH' }
     }
+    logClaudeBinaryVersion(claudeBinary)
 
     const alreadyExists = ptyService.has(sessionId)
     const { port } = await getClaudeHookServer()
