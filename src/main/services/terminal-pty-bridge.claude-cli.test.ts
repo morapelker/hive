@@ -85,7 +85,8 @@ vi.mock('../db', () => ({
 }))
 
 vi.mock('./claude-binary-resolver', () => ({
-  resolveClaudeBinaryPath: vi.fn(() => '/usr/local/bin/claude')
+  resolveClaudeBinaryPath: vi.fn(() => '/usr/local/bin/claude'),
+  logClaudeBinaryVersion: vi.fn()
 }))
 
 vi.mock('./claude-session-watcher', () => ({
