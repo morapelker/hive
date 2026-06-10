@@ -99,9 +99,9 @@ describe('Session 1: Shared Utils & Settings', () => {
       useSettingsStore.getState().resetToDefaults()
     })
 
-    test('defaults the enterprise server URL to enterprise.hive-ai.dev', () => {
+    test('defaults the enterprise server URL to hive.tedooo.com', () => {
       expect(useSettingsStore.getState().hiveEnterpriseServerUrl).toBe(
-        'https://enterprise.hive-ai.dev'
+        'https://hive.tedooo.com'
       )
     })
   })

@@ -345,7 +345,7 @@ describe('Claude CLI Hive Enterprise telemetry', () => {
       { db, requestGraphql }
     )
 
-    expect(requestGraphql.mock.calls[0][0]).toBe('https://enterprise.hive-ai.dev/api/graphql')
+    expect(requestGraphql.mock.calls[0][0]).toBe('https://hive.tedooo.com/api/graphql')
   })
 
   it('records idle token deltas on Stop for the active Claude CLI prompt', async () => {
