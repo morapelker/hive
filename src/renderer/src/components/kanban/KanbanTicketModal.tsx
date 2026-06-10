@@ -57,6 +57,7 @@ import { useCommandApprovalStore } from '@/stores/useCommandApprovalStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useSettingsStore, resolveModelForSdk } from '@/stores/useSettingsStore'
 import { isBlockerSatisfied } from '@/lib/blocker-utils'
+import { autoPinBaseWorktree } from '@/lib/auto-pin'
 import { useGitStore } from '@/stores/useGitStore'
 import { notifyKanbanSessionSync } from '@/stores/store-coordination'
 import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
@@ -88,7 +89,10 @@ import { TicketAttachmentEditor } from './TicketAttachmentEditor'
 import { TicketDiscardChangesDialog } from './TicketDiscardChangesDialog'
 import { useImagePaste } from '@/hooks/useImagePaste'
 import { buildHandoffPrompt, type HandoffSelectionOverride } from '@/lib/handoffSelection'
-import { registerHivePromptHandoff, startHivePromptTelemetry } from '@/lib/hive-enterprise-telemetry'
+import {
+  registerHivePromptHandoff,
+  startHivePromptTelemetry
+} from '@/lib/hive-enterprise-telemetry'
 import { canonicalizeTicketTitle, extractPlanTitle } from '@shared/types/branch-utils'
 import { supportsGoalMode } from '@shared/types/agent-sdk'
 import type { KanbanTicket, KanbanTicketUpdate, Session, Worktree } from '../../../../main/db/types'
@@ -311,8 +315,10 @@ async function sendFollowupToSession(opts: {
   prompt: string
   followUpMode: FollowUpMode
   ticketId: string
+  projectId: string
   attachments?: Attachment[]
 }): Promise<void> {
+  void autoPinBaseWorktree(opts.projectId)
   const result = await findSessionById(opts.sessionId)
   if (!result) {
     console.error(
@@ -1587,7 +1593,10 @@ function EditModeContent({
               variant="outline"
               className="gap-1.5"
               disabled={lifecycleLoading}
-              onClick={() => pinAndActivateSession(() => lifecycle.createCodeReview())}
+              onClick={() => {
+                void autoPinBaseWorktree(ticket.project_id)
+                pinAndActivateSession(() => lifecycle.createCodeReview())
+              }}
             >
               <FileSearch className="h-3.5 w-3.5" />
               Review
@@ -1853,6 +1862,7 @@ function PlanReviewModeContent({
             prompt: feedback,
             followUpMode,
             ticketId: ticket.id,
+            projectId: ticket.project_id,
             attachments
           }).catch((err) => {
             console.error('[KanbanTicketModal] sendFollowupToSession failed:', err)
@@ -1886,6 +1896,7 @@ function PlanReviewModeContent({
         prompt: feedback,
         followUpMode,
         ticketId: ticket.id,
+        projectId: ticket.project_id,
         attachments
       }).catch((err) => {
         console.error('[KanbanTicketModal] sendFollowupToSession failed:', err)
@@ -1948,7 +1959,8 @@ function PlanReviewModeContent({
             pendingBeforeAction.planContent
           ),
           followUpMode: 'build',
-          ticketId: ticket.id
+          ticketId: ticket.id,
+          projectId: ticket.project_id
         }).catch((err) => {
           const reason = err instanceof Error ? err.message : String(err)
           console.error('[KanbanTicketModal] background implement send failed:', err)
@@ -2208,6 +2220,7 @@ function PlanReviewModeContent({
   // in_progress so the kanban board reflects the new work before the modal closes.
   const prepareTicketBuildSession = useCallback(
     (newSessionId: string, goalMode: boolean): void => {
+      void autoPinBaseWorktree(ticket.project_id)
       useKanbanStore
         .getState()
         .updateTicket(ticket.id, ticket.project_id, {
@@ -2966,6 +2979,7 @@ function ReviewModeContent({
         prompt,
         followUpMode: mode,
         ticketId,
+        projectId,
         attachments: currentAttachments
       }).catch((err) => {
         console.error('[KanbanTicketModal] sendFollowupToSession failed:', err)
@@ -3119,7 +3133,10 @@ function ReviewModeContent({
             variant="outline"
             className="gap-1.5"
             disabled={lifecycleLoading}
-            onClick={() => pinAndActivateSession(() => lifecycle.createCodeReview())}
+            onClick={() => {
+              void autoPinBaseWorktree(ticket.project_id)
+              pinAndActivateSession(() => lifecycle.createCodeReview())
+            }}
           >
             <FileSearch className="h-3.5 w-3.5" />
             Review
@@ -3327,6 +3344,7 @@ function ErrorModeContent({
         prompt: followUpText.trim(),
         followUpMode,
         ticketId: ticket.id,
+        projectId: ticket.project_id,
         attachments
       })
 

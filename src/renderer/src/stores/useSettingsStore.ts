@@ -80,6 +80,7 @@ export interface AppSettings {
   mergeConflictMode: MergeConflictMode
   boardMode: 'toggle' | 'sticky-tab'
   followUpTriggerColumn: FollowUpTriggerColumn
+  autoPinBaseWorktreeOnBoardPrompt: boolean
 
   // Editor
   defaultEditor: EditorOption
@@ -196,6 +197,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   mergeConflictMode: 'always-ask',
   boardMode: 'sticky-tab',
   followUpTriggerColumn: 'done',
+  autoPinBaseWorktreeOnBoardPrompt: false,
   defaultEditor: 'vscode',
   customEditorCommand: '',
   defaultTerminal: 'terminal',
@@ -416,6 +418,7 @@ function extractSettings(state: SettingsState): AppSettings {
     mergeConflictMode: state.mergeConflictMode,
     boardMode: state.boardMode,
     followUpTriggerColumn: state.followUpTriggerColumn,
+    autoPinBaseWorktreeOnBoardPrompt: state.autoPinBaseWorktreeOnBoardPrompt,
     defaultEditor: state.defaultEditor,
     customEditorCommand: state.customEditorCommand,
     defaultTerminal: state.defaultTerminal,
@@ -779,6 +782,7 @@ export const useSettingsStore = create<SettingsState>()(
         mergeConflictMode: state.mergeConflictMode,
         boardMode: state.boardMode,
         followUpTriggerColumn: state.followUpTriggerColumn,
+        autoPinBaseWorktreeOnBoardPrompt: state.autoPinBaseWorktreeOnBoardPrompt,
         defaultEditor: state.defaultEditor,
         customEditorCommand: state.customEditorCommand,
         defaultTerminal: state.defaultTerminal,

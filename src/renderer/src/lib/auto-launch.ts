@@ -15,6 +15,7 @@ import { opencodeApi } from '@/api/opencode-api'
 import { dbApi } from '@/api/db-api'
 import { terminalApi } from '@/api/terminal-api'
 import { startHivePromptTelemetry } from '@/lib/hive-enterprise-telemetry'
+import { autoPinBaseWorktree } from '@/lib/auto-pin'
 
 type AutoLaunchMode = 'build' | 'plan' | 'super-plan'
 
@@ -87,6 +88,8 @@ export async function autoLaunchTicket(ticket: AutoLaunchTicket): Promise<void> 
     console.error('Project not found for auto-launch:', ticket.project_id)
     return
   }
+
+  void autoPinBaseWorktree(ticket.project_id)
 
   try {
     // 1. Resolve worktree
