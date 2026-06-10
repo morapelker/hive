@@ -37,6 +37,7 @@ import { gitApi } from '@/api/git-api'
 import { startHivePromptTelemetry } from '@/lib/hive-enterprise-telemetry'
 import type { KanbanTicket, Session } from '../../../../main/db/types'
 import { canonicalizeTicketTitle } from '@shared/types/branch-utils'
+import { supportsGoalMode } from '@shared/types/agent-sdk'
 
 // Stable empty array to avoid referential-inequality loops in Zustand selectors
 const EMPTY_ARRAY: readonly never[] = []
@@ -233,7 +234,7 @@ export function WorktreePickerModal({
   }, [mode, baseAgentSdk, selectedSdk])
 
   const agentSdk = selectedSdk ?? selectedModel?.agentSdk ?? autoResolvedModel?.agentSdk ?? baseAgentSdk
-  const goalAvailable = agentSdk === 'codex' && mode === 'build' && !preAssignOnly
+  const goalAvailable = supportsGoalMode(agentSdk) && mode === 'build' && !preAssignOnly
   const availableSdkButtonCount = availableAgentSdks
     ? [
         availableAgentSdks.opencode,
@@ -318,7 +319,7 @@ export function WorktreePickerModal({
   const handleSdkChange = useCallback((sdk: PickerAgentSdk) => {
     setSelectedSdk(sdk)
     setSelectedModel(null) // reset model — new SDK has different models
-    if (sdk !== 'codex') {
+    if (!supportsGoalMode(sdk)) {
       setGoalMode(false)
       setGoalCriteria('')
     }

@@ -33,28 +33,38 @@ vi.mock('../sessions/HandoffSplitButton', () => ({
     let goalMode = false
 
     return (
-      <button
-        type="button"
-        data-testid={`${testIdPrefix}-handoff-btn`}
-        disabled={disabled}
-        onContextMenu={(event) => {
-          event.preventDefault()
-          goalMode = true
-        }}
-        onClick={() =>
-          onHandoff(
-            goalMode
-              ? {
-                  agentSdk: 'codex',
-                  model: { providerID: 'codex', modelID: 'gpt-5.5' },
-                  goalMode: true
-                }
-              : { agentSdk: 'claude-code-cli' }
-          )
-        }
-      >
-        Handoff
-      </button>
+      <>
+        <button
+          type="button"
+          data-testid={`${testIdPrefix}-handoff-btn`}
+          disabled={disabled}
+          onContextMenu={(event) => {
+            event.preventDefault()
+            goalMode = true
+          }}
+          onClick={() =>
+            onHandoff(
+              goalMode
+                ? {
+                    agentSdk: 'codex',
+                    model: { providerID: 'codex', modelID: 'gpt-5.5' },
+                    goalMode: true
+                  }
+                : { agentSdk: 'claude-code-cli' }
+            )
+          }
+        >
+          Handoff
+        </button>
+        <button
+          type="button"
+          data-testid={`${testIdPrefix}-handoff-cli-goal-btn`}
+          disabled={disabled}
+          onClick={() => onHandoff({ agentSdk: 'claude-code-cli', goalMode: true })}
+        >
+          Handoff CLI goal
+        </button>
+      </>
     )
   }
 }))
@@ -477,6 +487,30 @@ describe('KanbanTicketModal handoff from Claude CLI plan review', () => {
     expect(createSession).toHaveBeenCalledWith('worktree-1', 'project-1', 'codex', undefined, {
       autoFocus: true,
       modelOverride: { providerID: 'codex', modelID: 'gpt-5.5' }
+    })
+    expect(setPendingMessage).toHaveBeenCalledWith(
+      'handoff-session',
+      '/goal Implement the following plan\nImplement the plan.'
+    )
+    expect(relinkTicketsForHandoff).toHaveBeenCalledWith(sourceSession.id, 'handoff-session', true)
+  })
+
+  it('marks the relinked ticket as goal mode when the Claude CLI plan card hands off to Claude CLI goal mode', async () => {
+    const { createSession, relinkTicketsForHandoff, setPendingMessage } = setupStores()
+    const user = userEvent.setup()
+
+    render(
+      <ClaudeCliSessionPortalProvider>
+        <ClaudeCliSessionView sessionId={sourceSession.id} />
+      </ClaudeCliSessionPortalProvider>
+    )
+
+    await user.click(screen.getByTestId('claude-cli-plan-ready-handoff-cli-goal-btn'))
+
+    await waitFor(() => expect(createSession).toHaveBeenCalledTimes(1))
+    expect(createSession).toHaveBeenCalledWith('worktree-1', 'project-1', 'claude-code-cli', undefined, {
+      autoFocus: true,
+      modelOverride: undefined
     })
     expect(setPendingMessage).toHaveBeenCalledWith(
       'handoff-session',

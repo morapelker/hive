@@ -59,6 +59,7 @@ import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useContextStore } from '@/stores/useContextStore'
 import { maybeExtractJsonTitle } from '@shared/title-utils'
 import { canonicalizeTicketTitle, extractPlanTitle } from '@shared/types/branch-utils'
+import { supportsGoalMode } from '@shared/types/agent-sdk'
 import type { TokenInfo, SessionModelRef } from '@/stores/useContextStore'
 import {
   extractTokens,
@@ -5052,7 +5053,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
       useSessionStore.getState().clearPendingPlan(sessionId)
       useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
       lastSendMode.delete(sessionId)
-      const handoffGoalMode = override?.goalMode === true && override?.agentSdk === 'codex'
+      const handoffGoalMode = override?.goalMode === true && supportsGoalMode(override?.agentSdk)
 
       // Abort the original backend session so it stops spinning
       if (worktreePath && opencodeSessionId) {

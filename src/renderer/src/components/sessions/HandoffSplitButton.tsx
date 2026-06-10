@@ -7,6 +7,7 @@ import {
   type HandoffSelectionOverride
 } from '@/lib/handoffSelection'
 import { cn } from '@/lib/utils'
+import { supportsGoalMode } from '@shared/types/agent-sdk'
 import { HandoffModelPicker } from './HandoffModelPicker'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 
@@ -59,7 +60,7 @@ export function HandoffSplitButton({
   void selectedModelByProvider
   void catalogVersion
   const effective = getEffectiveHandoffSelection({ worktreeId })
-  const isGoalModeActive = goalMode && effective.agentSdk === 'codex'
+  const isGoalModeActive = goalMode && supportsGoalMode(effective.agentSdk)
 
   useEffect(() => {
     let active = true
@@ -75,13 +76,13 @@ export function HandoffSplitButton({
   }, [effective.agentSdk])
 
   useEffect(() => {
-    if (effective.agentSdk !== 'codex') {
+    if (!supportsGoalMode(effective.agentSdk)) {
       setGoalMode(false)
     }
   }, [effective.agentSdk])
 
   const withGoalMode = (override: HandoffSelectionOverride): HandoffSelectionOverride => {
-    const finalGoalMode = override.agentSdk === 'codex' ? isGoalModeActive : false
+    const finalGoalMode = supportsGoalMode(override.agentSdk) ? isGoalModeActive : false
     return { ...override, goalMode: finalGoalMode }
   }
 
@@ -102,7 +103,7 @@ export function HandoffSplitButton({
       onContextMenu={(e) => {
         e.preventDefault()
         if (disabled) return
-        if (effective.agentSdk !== 'codex') return
+        if (!supportsGoalMode(effective.agentSdk)) return
         setGoalMode((current) => !current)
       }}
     >

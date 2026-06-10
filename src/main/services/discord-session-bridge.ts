@@ -9,7 +9,7 @@ import {
   type SharedSelectedModel
 } from '@shared/model-resolution'
 import { APP_SETTINGS_DB_KEY } from '@shared/types/settings'
-import type { AgentSdk } from '@shared/types/agent-sdk'
+import { supportsGoalMode, type AgentSdk } from '@shared/types/agent-sdk'
 import type { DiscordEmissionMode } from '@shared/types/discord'
 import { getDiscordToolEmoji, getToolLabel, isFileChangeTool } from '@shared/tool-label'
 import type { DatabaseService } from '../db/database'
@@ -1121,7 +1121,7 @@ export class DiscordSessionBridge {
     this.discordPending.set(requestId, pending)
     const sent = await target.channel.send({
       content,
-      components: this.buildPlanComponents(requestId, handoff.agentSdk === 'codex')
+      components: this.buildPlanComponents(requestId, supportsGoalMode(handoff.agentSdk))
     })
     this.trackSentMessage(pending, sent, content)
   }

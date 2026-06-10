@@ -90,6 +90,7 @@ import { useImagePaste } from '@/hooks/useImagePaste'
 import { buildHandoffPrompt, type HandoffSelectionOverride } from '@/lib/handoffSelection'
 import { registerHivePromptHandoff, startHivePromptTelemetry } from '@/lib/hive-enterprise-telemetry'
 import { canonicalizeTicketTitle, extractPlanTitle } from '@shared/types/branch-utils'
+import { supportsGoalMode } from '@shared/types/agent-sdk'
 import type { KanbanTicket, KanbanTicketUpdate, Session, Worktree } from '../../../../main/db/types'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { systemApi } from '@/api/system-api'
@@ -2008,7 +2009,7 @@ function PlanReviewModeContent({
 
       try {
         const sessionId = ticket.current_session_id
-        const handoffGoalMode = override?.goalMode === true && override?.agentSdk === 'codex'
+        const handoffGoalMode = override?.goalMode === true && supportsGoalMode(override?.agentSdk)
         useSessionStore.getState().clearPendingPlan(sessionId)
         useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
         lastSendMode.delete(sessionId)
