@@ -18,7 +18,8 @@ vi.mock('@/api/terminal-api', () => ({
     create: mocks.create,
     onData: mocks.onData,
     onExit: mocks.onExit,
-    resize: mocks.resize
+    resize: mocks.resize,
+    logClientDiagnostics: vi.fn()
   }
 }))
 

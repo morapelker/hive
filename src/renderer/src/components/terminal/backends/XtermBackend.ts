@@ -4,9 +4,11 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { SearchAddon } from '@xterm/addon-search'
 import type { TerminalBackend, TerminalOpts, TerminalBackendCallbacks } from './types'
+import { DEFAULT_XTERM_FONT_STACK } from './terminal-fonts'
 import { projectApi } from '@/api/project-api'
 import { terminalApi } from '@/api/terminal-api'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import type { GhosttyTerminalConfig } from '@shared/types/terminal'
 
 /** Default Catppuccin Mocha theme used when no Ghostty config is found */
 const DEFAULT_TERMINAL_THEME: ITheme = {
@@ -141,6 +143,7 @@ export class XtermBackend implements TerminalBackend {
   private resizeDebounceTimer: ReturnType<typeof setTimeout> | null = null
   private lastSyncedCols = 0
   private lastSyncedRows = 0
+  private rendererKind: 'webgl' | 'dom' = 'dom'
   private terminalId: string = ''
   private shiftEnterAsNewline = false
   private ghosttyConfig: GhosttyTerminalConfig = {}
@@ -166,7 +169,7 @@ export class XtermBackend implements TerminalBackend {
     }
 
     const terminal = new Terminal({
-      fontFamily: opts.fontFamily || 'JetBrains Mono, Menlo, Monaco, Consolas, monospace',
+      fontFamily: opts.fontFamily || DEFAULT_XTERM_FONT_STACK,
       fontSize: opts.fontSize || 13,
       lineHeight: 1.2,
       cursorStyle: opts.cursorStyle || 'block',
@@ -253,15 +256,29 @@ export class XtermBackend implements TerminalBackend {
 
     terminal.open(container)
 
-    // Try WebGL renderer, fall back to canvas
+    // Try WebGL renderer, fall back to xterm's DOM renderer
     try {
       const webglAddon = new WebglAddon()
       webglAddon.onContextLoss(() => {
         webglAddon.dispose()
+        this.rendererKind = 'dom'
+        console.warn('[terminal-font] WebGL context lost, falling back to DOM renderer')
+        terminalApi.logClientDiagnostics('xterm-renderer-fallback', {
+          terminalId: this.terminalId,
+          reason: 'context-loss'
+        })
       })
       terminal.loadAddon(webglAddon)
-    } catch {
-      // WebGL not available, canvas renderer is the default
+      this.rendererKind = 'webgl'
+    } catch (err) {
+      // WebGL not available (GPU blocklist, VM, remote session) — xterm falls
+      // back to its DOM renderer, which renders fonts noticeably differently.
+      console.warn('[terminal-font] WebGL addon failed, falling back to DOM renderer', err)
+      terminalApi.logClientDiagnostics('xterm-renderer-fallback', {
+        terminalId: this.terminalId,
+        reason: 'load-failed',
+        error: err instanceof Error ? err.message : String(err)
+      })
     }
 
     try {
@@ -307,6 +324,15 @@ export class XtermBackend implements TerminalBackend {
           // (e.g. auto-suggest redraws writing text at wrong positions).
           // Must run immediately (not debounced) so the initial size is correct.
           this.syncSizeToPty()
+
+          terminalApi.logClientDiagnostics('xterm-terminal-created', {
+            terminalId: this.terminalId,
+            renderer: this.rendererKind,
+            cols: this.lastSyncedCols,
+            rows: this.lastSyncedRows,
+            fontFamily: terminal.options.fontFamily,
+            fontSize: terminal.options.fontSize
+          })
         } else {
           terminal.write(`\x1b[31mFailed to create terminal: ${result.error}\x1b[0m\r\n`)
           callbacks.onStatusChange('exited')

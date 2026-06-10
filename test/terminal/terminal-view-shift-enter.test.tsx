@@ -14,7 +14,8 @@ const terminalApiMocks = vi.hoisted(() => ({
   write: vi.fn(),
   resize: vi.fn().mockResolvedValue({ success: true, value: undefined }),
   onData: vi.fn(() => vi.fn()),
-  onExit: vi.fn(() => vi.fn())
+  onExit: vi.fn(() => vi.fn()),
+  logClientDiagnostics: vi.fn()
 }))
 
 vi.mock('@/api/terminal-api', () => ({

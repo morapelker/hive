@@ -8,7 +8,13 @@ import { hasFocusedEditableElement } from '@/lib/focus-utils'
 import { TerminalToolbar } from './TerminalToolbar'
 import { XtermBackend } from './backends/XtermBackend'
 import { GhosttyBackend } from './backends/GhosttyBackend'
+import {
+  clampTerminalFontSize,
+  ensureTerminalFontsLoaded,
+  resolveTerminalFontFamily
+} from './backends/terminal-fonts'
 import type { TerminalBackend as ITerminalBackend, TerminalBackendType } from './backends/types'
+import type { GhosttyTerminalConfig } from '@shared/types/terminal'
 import '@xterm/xterm/css/xterm.css'
 import '@/styles/xterm.css'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
@@ -279,6 +285,36 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
         // Failed to fetch config, use defaults
       }
 
+      // For the xterm backend, load the bundled fonts BEFORE the Terminal is
+      // constructed (xterm.js measures cell size once and cannot be forced to
+      // re-measure with unchanged options), then validate the Ghostty font
+      // families against the browser. An unresolvable family would otherwise
+      // silently drop the terminal onto a proportional fallback font and
+      // break cell metrics ("weird font" rendering).
+      let resolvedFontFamily: string | undefined
+      if (backendType === 'xterm') {
+        await ensureTerminalFontsLoaded()
+        const ghosttyFamilies =
+          config.fontFamilies ?? (config.fontFamily ? [config.fontFamily] : undefined)
+        const resolved = resolveTerminalFontFamily(ghosttyFamilies)
+        resolvedFontFamily = resolved.fontFamily
+        if (resolved.dropped.length > 0) {
+          console.warn(
+            '[terminal-font] Dropped Ghostty font families the browser cannot resolve:',
+            resolved.dropped.join(', ')
+          )
+        }
+        terminalApi.logClientDiagnostics('xterm-font-resolution', {
+          terminalId,
+          ghosttyFamilies: ghosttyFamilies ?? null,
+          ghosttyFontSize: config.fontSize ?? null,
+          resolvedFontFamily: resolved.fontFamily,
+          primary: resolved.primary,
+          primaryResolved: resolved.primaryResolved,
+          dropped: resolved.dropped
+        })
+      }
+
       // CRITICAL: bail out if a newer setupTerminal (StrictMode double-mount,
       // backend swap, cwd change, or our useEffect cleanup) has superseded
       // us. Without this guard, React StrictMode races two parallel
@@ -301,8 +337,8 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
         {
           terminalId,
           cwd,
-          fontFamily: config.fontFamily,
-          fontSize: config.fontSize,
+          fontFamily: resolvedFontFamily ?? config.fontFamily,
+          fontSize: clampTerminalFontSize(config.fontSize),
           cursorStyle: config.cursorStyle,
           scrollback: config.scrollbackLimit,
           shell: config.shell,

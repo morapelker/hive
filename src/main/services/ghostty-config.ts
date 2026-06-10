@@ -6,7 +6,10 @@ import { createLogger } from './logger'
 const log = createLogger({ component: 'GhosttyConfig' })
 
 export interface GhosttyConfig {
+  /** Primary font family (first `font-family` line in the config) */
   fontFamily?: string
+  /** All `font-family` lines in order: primary first, then Ghostty fallback fonts */
+  fontFamilies?: string[]
   fontSize?: number
   background?: string
   foreground?: string
@@ -85,6 +88,18 @@ function normalizeColor(value: string): string | undefined {
 }
 
 /**
+ * Strip one pair of matching surrounding double quotes from a config value.
+ * Ghostty allows quoted values like `font-family = "JetBrains Mono"`.
+ */
+function stripQuotes(value: string): string {
+  const trimmed = value.trim()
+  if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    return trimmed.slice(1, -1).trim()
+  }
+  return trimmed
+}
+
+/**
  * Parse the content of a Ghostty config file.
  * Handles comments, key=value pairs, config-file includes (with cycle detection).
  */
@@ -109,13 +124,29 @@ export function parseGhosttyConfigContent(
     const key = line.slice(0, eqIndex).trim()
     const value = line.slice(eqIndex + 1).trim()
 
-    if (!key || value === '') continue
+    if (!key) continue
+
+    // Ghostty allows repeated font-family lines (the first is the primary
+    // font, later lines are fallbacks) and an empty value resets the list.
+    // Handled before the generic empty-value skip so the reset works.
+    if (key === 'font-family') {
+      if (value === '') {
+        config.fontFamilies = []
+        delete config.fontFamily
+      } else {
+        const family = stripQuotes(value)
+        if (family) {
+          if (!config.fontFamilies) config.fontFamilies = []
+          if (!config.fontFamilies.includes(family)) config.fontFamilies.push(family)
+          config.fontFamily = config.fontFamilies[0]
+        }
+      }
+      continue
+    }
+
+    if (value === '') continue
 
     switch (key) {
-      case 'font-family':
-        config.fontFamily = value
-        break
-
       case 'font-size':
         {
           const size = parseFloat(value)
@@ -277,6 +308,7 @@ export function parseGhosttyConfig(): GhosttyConfig {
 
     log.info('Parsed Ghostty config', {
       fontFamily: config.fontFamily,
+      fontFamilies: config.fontFamilies,
       fontSize: config.fontSize,
       shell: config.shell,
       hasPalette: config.palette ? Object.keys(config.palette).length : 0

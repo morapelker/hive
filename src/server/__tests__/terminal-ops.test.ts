@@ -18,6 +18,17 @@ vi.mock('../../main/services/ghostty-config', () => ({
   parseGhosttyConfig: vi.fn(() => ({}))
 }))
 
+const loggerMocks = vi.hoisted(() => ({
+  debug: vi.fn(),
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn()
+}))
+
+vi.mock('../../main/services/logger', () => ({
+  createLogger: vi.fn(() => loggerMocks)
+}))
+
 vi.mock('../../main/services/pty-service', () => ({
   ptyService: ptyServiceMocks
 }))
@@ -72,6 +83,14 @@ describe('terminal ops RPC live service', () => {
     ])
     expect(removeData).toHaveBeenCalledTimes(1)
     expect(removeExit).toHaveBeenCalledTimes(1)
+  })
+
+  it('persists client diagnostics through the logDiagnostics RPC', async () => {
+    const service = makeLiveTerminalOpsRpcService()
+
+    await Effect.runPromise(service.logDiagnostics!('terminal-font', { dropped: ['Bad Font'] }))
+
+    expect(loggerMocks.info).toHaveBeenCalledWith('terminal-font', { dropped: ['Bad Font'] })
   })
 
   it('writes to backend-owned PTYs without using the desktop command fallback', async () => {
