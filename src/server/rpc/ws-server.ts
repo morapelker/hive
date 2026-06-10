@@ -11,6 +11,7 @@ import type { RpcRouter } from './router'
 import type { EventBus } from '../events/event-bus'
 
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
+const MAX_MESSAGE_BYTES = 64 * 1024 * 1024
 
 interface WebSocketRpcServer {
   readonly closeAll: () => void
@@ -76,6 +77,9 @@ export const attachWebSocketRpcServer = (
 
     sockets.set(socket, cleanupSocket)
     let buffered: Buffer<ArrayBufferLike> = Buffer.alloc(0)
+    let fragmentOpcode: number | null = null
+    let fragmentParts: Buffer[] = []
+    let fragmentBytes = 0
 
     socket.on('data', (chunk) => {
       buffered = Buffer.concat([buffered, chunk])
@@ -91,11 +95,39 @@ export const attachWebSocketRpcServer = (
           socket.write(createFrame(frame.payload, 0xa))
           continue
         }
-        if (frame.opcode !== 0x1) continue
+        if (frame.opcode === 0xa) continue
+
+        // Reassemble fragmented messages (RFC 6455): a data frame with FIN=0
+        // starts a message, continuation frames (opcode 0x0) extend it, and a
+        // continuation frame with FIN=1 completes it.
+        let opcode = frame.opcode
+        let payload = frame.payload
+        if (frame.opcode === 0x0) {
+          if (fragmentOpcode === null) continue
+          fragmentParts.push(frame.payload)
+          fragmentBytes += frame.payload.length
+          if (fragmentBytes > MAX_MESSAGE_BYTES) {
+            socket.destroy()
+            return
+          }
+          if (!frame.fin) continue
+          opcode = fragmentOpcode
+          payload = Buffer.concat(fragmentParts)
+          fragmentOpcode = null
+          fragmentParts = []
+          fragmentBytes = 0
+        } else if (!frame.fin) {
+          fragmentOpcode = frame.opcode
+          fragmentParts = [frame.payload]
+          fragmentBytes = frame.payload.length
+          continue
+        }
+
+        if (opcode !== 0x1) continue
 
         let request: unknown
         try {
-          request = JSON.parse(frame.payload.toString('utf8'))
+          request = JSON.parse(payload.toString('utf8'))
         } catch (error) {
           request = {
             id: '',
@@ -193,6 +225,7 @@ const createAcceptKey = (key: string): string =>
   createHash('sha1').update(`${key}${WS_GUID}`).digest('base64')
 
 interface ParsedFrame {
+  readonly fin: boolean
   readonly opcode: number
   readonly payload: Buffer
 }
@@ -204,6 +237,7 @@ const parseFrames = (buffer: Buffer): { frames: ParsedFrame[]; remaining: Buffer
   while (offset + 2 <= buffer.length) {
     const first = buffer[offset]
     const second = buffer[offset + 1]
+    const fin = (first & 0x80) !== 0
     const opcode = first & 0x0f
     const masked = (second & 0x80) !== 0
     let length = second & 0x7f
@@ -235,7 +269,7 @@ const parseFrames = (buffer: Buffer): { frames: ParsedFrame[]; remaining: Buffer
       }
     }
 
-    frames.push({ opcode, payload })
+    frames.push({ fin, opcode, payload })
     offset = frameEnd
   }
 
