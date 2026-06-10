@@ -28,6 +28,7 @@ import { CodexFastToggle } from '@/components/sessions/CodexFastToggle'
 import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
 import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
 import { snapshotTokenBaseline } from '@/lib/token-baselines'
+import { autoPinBaseWorktree } from '@/lib/auto-pin'
 import { PLAN_MODE_PREFIX, getSuperPlanModePrefix, isPlanLike } from '@/lib/constants'
 import { toast } from '@/lib/toast'
 import { opencodeApi } from '@/api/opencode-api'
@@ -233,7 +234,8 @@ export function WorktreePickerModal({
     return resolveModelForSdk(baseAgentSdk) ?? null
   }, [mode, baseAgentSdk, selectedSdk])
 
-  const agentSdk = selectedSdk ?? selectedModel?.agentSdk ?? autoResolvedModel?.agentSdk ?? baseAgentSdk
+  const agentSdk =
+    selectedSdk ?? selectedModel?.agentSdk ?? autoResolvedModel?.agentSdk ?? baseAgentSdk
   const goalAvailable = supportsGoalMode(agentSdk) && mode === 'build' && !preAssignOnly
   const availableSdkButtonCount = availableAgentSdks
     ? [
@@ -497,6 +499,8 @@ export function WorktreePickerModal({
           goal_success_criteria: goalMode ? goalCriteria.trim() : null
         })
 
+        void autoPinBaseWorktree(ticket.project_id)
+
         // Trigger usage refresh so the board shows up-to-date usage (debounced in store)
         useUsageStore.getState().fetchUsageForProvider(resolveDefaultUsageProvider(agentSdk))
 
@@ -682,6 +686,8 @@ export function WorktreePickerModal({
         toast.success('Worktree assigned')
         return
       }
+
+      void autoPinBaseWorktree(projectId)
 
       // Create new worktree if needed
       if (isNewWorktree && project) {
