@@ -2,7 +2,8 @@ import { gitApi } from '@/api/git-api'
 import {
   isHiveTelemetryEnabled,
   recordHivePromptIdle,
-  recordHivePromptStart
+  recordHivePromptStart,
+  recordHiveQuestionsAnswered
 } from '@/api/hive-enterprise/client'
 import { currentPromptIdBySession } from '@/lib/message-send-times'
 import { computeTokenFieldDelta } from '@/lib/token-baselines'
@@ -170,6 +171,40 @@ export function startHivePromptTelemetry(input: StartHivePromptTelemetryInput): 
     })
     if (promptId) currentPromptIdBySession.set(input.sessionId, promptId)
   })()
+}
+
+/**
+ * Resolve how many questions were bundled in an answered AskUserQuestion
+ * request. Falls back to the submitted answer count when the request has
+ * already been removed from the store.
+ */
+export function resolveQuestionCount(
+  requests: Array<{ id: string; questions: ReadonlyArray<unknown> }>,
+  requestId: string,
+  answers: ReadonlyArray<unknown>
+): number {
+  return requests.find((request) => request.id === requestId)?.questions.length ?? answers.length
+}
+
+export function recordHiveQuestionAnswerTelemetry(input: {
+  sessionId: string
+  questionCount: number
+}): void {
+  const settings = useSettingsStore.getState()
+  if (!isHiveTelemetryEnabled(settings)) return
+
+  const worktreeId = resolveHiveTelemetryWorktreeId(input.sessionId, null)
+  const worktree = getWorktree(worktreeId)
+  const project = worktree
+    ? useProjectStore.getState().projects.find((candidate) => candidate.id === worktree.project_id)
+    : undefined
+
+  void recordHiveQuestionsAnswered({
+    sessionId: input.sessionId,
+    projectName: project?.name ?? null,
+    questionCount: input.questionCount,
+    loggedAt: new Date().toISOString()
+  })
 }
 
 export function recordHivePromptIdleForSession(sessionId: string): void {

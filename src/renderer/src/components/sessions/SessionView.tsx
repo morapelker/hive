@@ -94,7 +94,9 @@ import { isComposingKeyboardEvent } from '@/lib/message-composer-shortcuts'
 import { handleSessionIdleFollowUp } from '@/lib/session-follow-up-dispatch'
 import {
   recordHivePromptIdleForSession,
+  recordHiveQuestionAnswerTelemetry,
   registerHivePromptHandoff,
+  resolveQuestionCount,
   startHivePromptTelemetry
 } from '@/lib/hive-enterprise-telemetry'
 import { buildSdkPlanImplementationPrompt, looksLikeCodexProposedPlan } from '@/lib/proposedPlan'
@@ -3725,16 +3727,24 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
   // Handle question reply
   const handleQuestionReply = useCallback(
     async (requestId: string, answers: string[][]) => {
+      // Capture before the reply resolves: the store entry is removed by the
+      // async question.removed event handler.
+      const questionCount = resolveQuestionCount(
+        useQuestionStore.getState().getQuestions(sessionId),
+        requestId,
+        answers
+      )
       try {
         unwrapEnvelope(
           await opencodeApi.questionReply(requestId, answers, worktreePath || undefined)
         )
+        recordHiveQuestionAnswerTelemetry({ sessionId, questionCount })
       } catch (err) {
         console.error('Failed to reply to question:', err)
         toast.error('Failed to send answer')
       }
     },
-    [worktreePath]
+    [worktreePath, sessionId]
   )
 
   // Handle question reject/dismiss

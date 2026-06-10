@@ -22,7 +22,11 @@ import { buildHandoffPrompt, type HandoffSelectionOverride } from '@/lib/handoff
 import { lastSendMode } from '@/lib/message-send-times'
 import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
 import { startBackgroundSessionPrompt } from '@/lib/backgroundSessionStart'
-import { registerHivePromptHandoff } from '@/lib/hive-enterprise-telemetry'
+import {
+  recordHiveQuestionAnswerTelemetry,
+  registerHivePromptHandoff,
+  resolveQuestionCount
+} from '@/lib/hive-enterprise-telemetry'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 import { extractPlanTitle } from '@shared/types/branch-utils'
@@ -508,14 +512,22 @@ export function ClaudeCliSessionView({
 
   const handleQuestionReply = useCallback(
     async (requestId: string, answers: string[][]) => {
+      // Capture before the reply resolves: the store entry is removed by the
+      // async question.removed event handler.
+      const questionCount = resolveQuestionCount(
+        useQuestionStore.getState().getQuestions(sessionId),
+        requestId,
+        answers
+      )
       try {
         unwrapEnvelope(await opencodeApi.questionReply(requestId, answers, resolveQuestionPath()))
+        recordHiveQuestionAnswerTelemetry({ sessionId, questionCount })
       } catch (err) {
         console.error('Failed to reply to question:', err)
         toast.error('Failed to send answer')
       }
     },
-    [resolveQuestionPath]
+    [resolveQuestionPath, sessionId]
   )
 
   const handleQuestionReject = useCallback(

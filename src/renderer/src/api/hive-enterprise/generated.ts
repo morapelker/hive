@@ -43,6 +43,7 @@ export type GqlMutation = {
   inviteMember: GqlInvite;
   recordPromptIdle: GqlPromptMutationResult;
   recordPromptStart: GqlPromptStartResult;
+  recordQuestionsAnswered: GqlQuestionAnsweredResult;
   removeMember: Scalars['Boolean']['output'];
 };
 
@@ -68,6 +69,11 @@ export type GqlMutationRecordPromptStartArgs = {
 };
 
 
+export type GqlMutationRecordQuestionsAnsweredArgs = {
+  input: GqlQuestionAnsweredInput;
+};
+
+
 export type GqlMutationRemoveMemberArgs = {
   userId: Scalars['InteractId']['input'];
 };
@@ -76,6 +82,7 @@ export type GqlOrganization = {
   __typename?: 'Organization';
   id: Scalars['InteractId']['output'];
   name: Scalars['String']['output'];
+  recordQuestions: Scalars['Boolean']['output'];
   storePrompts: Scalars['Boolean']['output'];
 };
 
@@ -89,6 +96,7 @@ export type GqlPromptIdleInput = {
 
 export type GqlPromptMutationResult = {
   __typename?: 'PromptMutationResult';
+  recordQuestions: Scalars['Boolean']['output'];
   recorded: Scalars['Boolean']['output'];
   storePrompts: Scalars['Boolean']['output'];
 };
@@ -117,6 +125,7 @@ export type GqlPromptStartInput = {
 export type GqlPromptStartResult = {
   __typename?: 'PromptStartResult';
   promptId?: Maybe<Scalars['InteractId']['output']>;
+  recordQuestions: Scalars['Boolean']['output'];
   recorded: Scalars['Boolean']['output'];
   storePrompts: Scalars['Boolean']['output'];
 };
@@ -138,6 +147,20 @@ export type GqlQueryListInvitesArgs = {
 
 export type GqlQueryListMembersArgs = {
   orgId?: InputMaybe<Scalars['InteractId']['input']>;
+};
+
+export type GqlQuestionAnsweredInput = {
+  loggedAt?: InputMaybe<Scalars['String']['input']>;
+  projectName?: InputMaybe<Scalars['String']['input']>;
+  questionCount: Scalars['Int']['input'];
+  sessionId: Scalars['String']['input'];
+};
+
+export type GqlQuestionAnsweredResult = {
+  __typename?: 'QuestionAnsweredResult';
+  recordQuestions: Scalars['Boolean']['output'];
+  recorded: Scalars['Boolean']['output'];
+  storePrompts: Scalars['Boolean']['output'];
 };
 
 export type GqlUser = {
@@ -165,7 +188,13 @@ export type GqlHiveEnterpriseMeQuery = (
     & Pick<GqlUser, 'id' | 'email' | 'role'>
     & { organization?: Maybe<(
       { __typename?: 'Organization' }
-      & Pick<GqlOrganization, 'id' | 'name' | 'storePrompts'>
+      & Pick<
+        GqlOrganization,
+        | 'id'
+        | 'name'
+        | 'storePrompts'
+        | 'recordQuestions'
+      >
     )> }
   )> }
 );
@@ -179,7 +208,13 @@ export type GqlHiveEnterpriseRecordPromptStartMutation = (
   { __typename?: 'Mutation' }
   & { recordPromptStart: (
     { __typename?: 'PromptStartResult' }
-    & Pick<GqlPromptStartResult, 'recorded' | 'promptId' | 'storePrompts'>
+    & Pick<
+      GqlPromptStartResult,
+      | 'recorded'
+      | 'promptId'
+      | 'storePrompts'
+      | 'recordQuestions'
+    >
   ) }
 );
 
@@ -192,6 +227,19 @@ export type GqlHiveEnterpriseRecordPromptIdleMutation = (
   { __typename?: 'Mutation' }
   & { recordPromptIdle: (
     { __typename?: 'PromptMutationResult' }
-    & Pick<GqlPromptMutationResult, 'recorded' | 'storePrompts'>
+    & Pick<GqlPromptMutationResult, 'recorded' | 'storePrompts' | 'recordQuestions'>
+  ) }
+);
+
+export type GqlHiveEnterpriseRecordQuestionsAnsweredMutationVariables = Exact<{
+  input: GqlQuestionAnsweredInput;
+}>;
+
+
+export type GqlHiveEnterpriseRecordQuestionsAnsweredMutation = (
+  { __typename?: 'Mutation' }
+  & { recordQuestionsAnswered: (
+    { __typename?: 'QuestionAnsweredResult' }
+    & Pick<GqlQuestionAnsweredResult, 'recorded' | 'storePrompts' | 'recordQuestions'>
   ) }
 );

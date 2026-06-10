@@ -8,6 +8,7 @@ export const MeDocument = /* GraphQL */ `
         id
         name
         storePrompts
+        recordQuestions
       }
     }
   }
@@ -19,6 +20,7 @@ export const RecordPromptStartDocument = /* GraphQL */ `
       recorded
       promptId
       storePrompts
+      recordQuestions
     }
   }
 `
@@ -28,6 +30,17 @@ export const RecordPromptIdleDocument = /* GraphQL */ `
     recordPromptIdle(input: $input) {
       recorded
       storePrompts
+      recordQuestions
+    }
+  }
+`
+
+export const RecordQuestionsAnsweredDocument = /* GraphQL */ `
+  mutation HiveEnterpriseRecordQuestionsAnswered($input: QuestionAnsweredInput!) {
+    recordQuestionsAnswered(input: $input) {
+      recorded
+      storePrompts
+      recordQuestions
     }
   }
 `

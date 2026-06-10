@@ -3,14 +3,17 @@ import { useSettingsStore, type AppSettings } from '@/stores/useSettingsStore'
 import {
   MeDocument,
   RecordPromptIdleDocument,
-  RecordPromptStartDocument
+  RecordPromptStartDocument,
+  RecordQuestionsAnsweredDocument
 } from './operations'
 import type {
   GqlHiveEnterpriseMeQuery,
   GqlHiveEnterpriseRecordPromptIdleMutation,
   GqlHiveEnterpriseRecordPromptIdleMutationVariables,
   GqlHiveEnterpriseRecordPromptStartMutation,
-  GqlHiveEnterpriseRecordPromptStartMutationVariables
+  GqlHiveEnterpriseRecordPromptStartMutationVariables,
+  GqlHiveEnterpriseRecordQuestionsAnsweredMutation,
+  GqlHiveEnterpriseRecordQuestionsAnsweredMutationVariables
 } from './generated'
 
 type TelemetryGateSettings = Pick<AppSettings, 'hiveAuthToken' | 'hiveOrganizationId'>
@@ -69,7 +72,7 @@ export async function recordHivePromptStart(
       GqlHiveEnterpriseRecordPromptStartMutation,
       GqlHiveEnterpriseRecordPromptStartMutationVariables
     >(RecordPromptStartDocument, { input: payload })
-    await reconcileStorePrompts(data.recordPromptStart.storePrompts)
+    await reconcileOrgSettings(data.recordPromptStart)
     return data.recordPromptStart.promptId ?? null
   } catch (error) {
     console.warn('[HiveEnterprise] recordPromptStart failed:', error)
@@ -87,9 +90,26 @@ export async function recordHivePromptIdle(
       GqlHiveEnterpriseRecordPromptIdleMutation,
       GqlHiveEnterpriseRecordPromptIdleMutationVariables
     >(RecordPromptIdleDocument, { input })
-    await reconcileStorePrompts(data.recordPromptIdle.storePrompts)
+    await reconcileOrgSettings(data.recordPromptIdle)
   } catch (error) {
     console.warn('[HiveEnterprise] recordPromptIdle failed:', error)
+  }
+}
+
+export async function recordHiveQuestionsAnswered(
+  input: GqlHiveEnterpriseRecordQuestionsAnsweredMutationVariables['input']
+): Promise<void> {
+  const settings = useSettingsStore.getState()
+  if (!isHiveTelemetryEnabled(settings)) return
+  if (settings.hiveOrganizationRecordQuestions === false) return
+  try {
+    const data = await requestWithRefresh<
+      GqlHiveEnterpriseRecordQuestionsAnsweredMutation,
+      GqlHiveEnterpriseRecordQuestionsAnsweredMutationVariables
+    >(RecordQuestionsAnsweredDocument, { input })
+    await reconcileOrgSettings(data.recordQuestionsAnswered)
+  } catch (error) {
+    console.warn('[HiveEnterprise] recordQuestionsAnswered failed:', error)
   }
 }
 
@@ -102,14 +122,34 @@ export async function completeHiveEnterpriseLogin(token: string): Promise<void> 
     hiveLoggedInEmail: me?.email ?? null,
     hiveOrganizationId: me?.organization?.id ?? null,
     hiveOrganizationName: me?.organization?.name ?? null,
-    hiveOrganizationStorePrompts: me?.organization?.storePrompts ?? true
+    hiveOrganizationStorePrompts: me?.organization?.storePrompts ?? true,
+    hiveOrganizationRecordQuestions: me?.organization?.recordQuestions ?? true
   })
 }
 
-async function reconcileStorePrompts(value: boolean | null | undefined): Promise<void> {
-  if (typeof value !== 'boolean') return
-  if (value === useSettingsStore.getState().hiveOrganizationStorePrompts) return
-  await useSettingsStore.getState().updateSetting('hiveOrganizationStorePrompts', value)
+// Every telemetry mutation echoes the org settings back, so each response is a
+// chance to converge the local cache without an extra round-trip.
+async function reconcileOrgSettings(result: {
+  storePrompts?: boolean | null
+  recordQuestions?: boolean | null
+}): Promise<void> {
+  const state = useSettingsStore.getState()
+  const updates: Partial<AppSettings> = {}
+  if (
+    typeof result.storePrompts === 'boolean' &&
+    result.storePrompts !== state.hiveOrganizationStorePrompts
+  ) {
+    updates.hiveOrganizationStorePrompts = result.storePrompts
+  }
+  if (
+    typeof result.recordQuestions === 'boolean' &&
+    result.recordQuestions !== state.hiveOrganizationRecordQuestions
+  ) {
+    updates.hiveOrganizationRecordQuestions = result.recordQuestions
+  }
+  if (Object.keys(updates).length > 0) {
+    await useSettingsStore.getState().updateSettings(updates)
+  }
 }
 
 export async function refreshHiveEnterpriseOrg(): Promise<void> {
@@ -121,7 +161,8 @@ export async function refreshHiveEnterpriseOrg(): Promise<void> {
       hiveLoggedInEmail: me?.email ?? null,
       hiveOrganizationId: me?.organization?.id ?? null,
       hiveOrganizationName: me?.organization?.name ?? null,
-      hiveOrganizationStorePrompts: me?.organization?.storePrompts ?? true
+      hiveOrganizationStorePrompts: me?.organization?.storePrompts ?? true,
+      hiveOrganizationRecordQuestions: me?.organization?.recordQuestions ?? true
     })
   } catch (error) {
     console.warn('[HiveEnterprise] org refresh failed:', error)

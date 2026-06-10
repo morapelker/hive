@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { isHiveTelemetryEnabled } from './client'
-import { resolveHiveTelemetryWorktreeId } from '@/lib/hive-enterprise-telemetry'
+import { resolveHiveTelemetryWorktreeId, resolveQuestionCount } from '@/lib/hive-enterprise-telemetry'
 import { useSessionStore } from '@/stores/useSessionStore'
 
 describe('Hive Enterprise telemetry gate', () => {
@@ -43,5 +43,22 @@ describe('Hive Enterprise telemetry gate', () => {
 
     expect(resolveHiveTelemetryWorktreeId('session_1', null)).toBe('wt_1')
     expect(resolveHiveTelemetryWorktreeId('session_1', 'explicit_wt')).toBe('explicit_wt')
+  })
+})
+
+describe('resolveQuestionCount', () => {
+  const requests = [
+    { id: 'req_1', questions: [{}, {}, {}] },
+    { id: 'req_2', questions: [{}] }
+  ]
+
+  it('counts the questions bundled in the matching request', () => {
+    expect(resolveQuestionCount(requests, 'req_1', [['a']])).toBe(3)
+    expect(resolveQuestionCount(requests, 'req_2', [['a'], ['b']])).toBe(1)
+  })
+
+  it('falls back to the answer count when the request is no longer in the store', () => {
+    expect(resolveQuestionCount(requests, 'req_gone', [['a'], ['b']])).toBe(2)
+    expect(resolveQuestionCount([], 'req_1', [['a']])).toBe(1)
   })
 })
