@@ -1,5 +1,5 @@
 import { isAgentSdkAvailable, type AvailableAgentSdks } from './agent-sdk-availability'
-import { type AgentSdk, toModelCatalogSdk } from '@shared/types/agent-sdk'
+import { type AgentSdk, supportsGoalMode, toModelCatalogSdk } from '@shared/types/agent-sdk'
 import {
   findModelInfo,
   getFirstModelInfo,
@@ -40,7 +40,7 @@ export function buildHandoffPrompt(
   planContent: string,
   override?: HandoffSelectionOverride
 ): string {
-  const goalPrefix = override?.goalMode && override.agentSdk === 'codex' ? '/goal ' : ''
+  const goalPrefix = override?.goalMode && supportsGoalMode(override.agentSdk) ? '/goal ' : ''
   const superPrefix =
     override?.superPlan && override.agentSdk === 'claude-code-cli' ? SUPER_PLAN_MODE_PREFIX : ''
   return `${superPrefix}${goalPrefix}Implement the following plan\n${planContent}`

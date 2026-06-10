@@ -55,6 +55,11 @@ export function isClaudeFamily(sdk: MaybeSdk): boolean {
   return sdk === 'claude-code' || sdk === 'claude-code-cli'
 }
 
+/** SDKs whose CLI understands the `/goal` prompt prefix (persistent goal mode). */
+export function supportsGoalMode(sdk: MaybeSdk): boolean {
+  return sdk === 'codex' || sdk === 'claude-code-cli'
+}
+
 /**
  * Map an SDK to the one whose model catalog it uses. `claude-code-cli` has no
  * catalog of its own — it shares `claude-code`'s — so model-listing/selection

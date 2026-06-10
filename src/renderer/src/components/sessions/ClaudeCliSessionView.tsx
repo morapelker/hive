@@ -26,6 +26,7 @@ import { registerHivePromptHandoff } from '@/lib/hive-enterprise-telemetry'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 import { extractPlanTitle } from '@shared/types/branch-utils'
+import { supportsGoalMode } from '@shared/types/agent-sdk'
 import '@xterm/xterm/css/xterm.css'
 import '@/styles/xterm.css'
 
@@ -362,7 +363,7 @@ export function ClaudeCliSessionView({
       useSessionStore.getState().clearPendingPlan(sessionId)
       useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
       lastSendMode.delete(sessionId)
-      const handoffGoalMode = override.goalMode === true && override.agentSdk === 'codex'
+      const handoffGoalMode = override.goalMode === true && supportsGoalMode(override.agentSdk)
 
       const handoffPrompt = buildHandoffPrompt(planContent, {
         ...override,

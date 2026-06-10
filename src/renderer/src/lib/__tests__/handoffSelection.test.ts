@@ -17,7 +17,7 @@ afterEach(() => {
 })
 
 describe('buildHandoffPrompt', () => {
-  it('prefixes goal mode only for codex handoffs', () => {
+  it('prefixes goal mode only for codex and Claude CLI handoffs', () => {
     const planContent = '1. Build the thing'
     const codexGoal: HandoffSelectionOverride = {
       agentSdk: 'codex',
@@ -28,6 +28,11 @@ describe('buildHandoffPrompt', () => {
       agentSdk: 'codex',
       model,
       goalMode: false
+    }
+    const claudeCliGoal: HandoffSelectionOverride = {
+      agentSdk: 'claude-code-cli',
+      model,
+      goalMode: true
     }
     const claudeGoal: HandoffSelectionOverride = {
       agentSdk: 'claude-code',
@@ -40,6 +45,9 @@ describe('buildHandoffPrompt', () => {
     )
     expect(buildHandoffPrompt(planContent, codexPlain)).toBe(
       'Implement the following plan\n1. Build the thing'
+    )
+    expect(buildHandoffPrompt(planContent, claudeCliGoal)).toBe(
+      '/goal Implement the following plan\n1. Build the thing'
     )
     expect(buildHandoffPrompt(planContent, claudeGoal)).toBe(
       'Implement the following plan\n1. Build the thing'
