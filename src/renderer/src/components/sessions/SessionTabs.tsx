@@ -54,6 +54,7 @@ import { useVimModeStore } from '@/stores/useVimModeStore'
 import { useHintStore } from '@/stores/useHintStore'
 import { cn, parseColorQuad } from '@/lib/utils'
 import { toast } from '@/lib/toast'
+import { copyTextToClipboard } from '@/lib/clipboard'
 import { assignSessionHints } from '@/lib/hint-utils'
 import { HintBadge } from '@/components/ui/HintBadge'
 import {
@@ -420,8 +421,10 @@ function FileTab({
 }
 
 function copyToClipboard(text: string) {
-  navigator.clipboard.writeText(text)
-  toast.success('Copied to clipboard')
+  void copyTextToClipboard(text).then((ok) => {
+    if (ok) toast.success('Copied to clipboard')
+    else toast.error('Failed to copy')
+  })
 }
 
 interface DiffTabItemProps {
