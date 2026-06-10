@@ -421,15 +421,18 @@ export function GitStatusPanel({
       const branchName = branchInfo?.name || 'unknown'
 
       const sessionStore = useSessionStore.getState()
-      const result = await sessionStore.createSession(selectedWorktreeId, projectId, undefined, resolvedMode)
+      // Queue the prompt atomically with session creation: queuing it after
+      // the updateSessionName roundtrip loses the race against
+      // ClaudeCliSessionView mounting and spawning a promptless PTY.
+      const result = await sessionStore.createSession(selectedWorktreeId, projectId, undefined, resolvedMode, {
+        pendingMessage: 'Fix merge conflicts'
+      })
       if (!result.success || !result.session) {
         toast.error('Failed to create session')
         return
       }
 
       await sessionStore.updateSessionName(result.session.id, `Merge Conflicts — ${branchName}`)
-
-      sessionStore.setPendingMessage(result.session.id, 'Fix merge conflicts')
     } catch (error) {
       console.error('Failed to start conflict resolution:', error)
       toast.error('Failed to start conflict resolution')

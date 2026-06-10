@@ -163,6 +163,7 @@ describe('Claude CLI terminal hook status wiring', () => {
     __resetRuntimeRegistryForTests()
 
     setupDb()
+    mocks.ptyService.has.mockReturnValue(false)
     mocks.getClaudeHookServer.mockResolvedValue({ port: 45678 })
     mocks.buildClaudeCliHookSettings.mockReturnValue('{"hooks":{"mock":true}}')
     mocks.publishDesktopBackendEvent.mockResolvedValue(true)
@@ -206,6 +207,37 @@ describe('Claude CLI terminal hook status wiring', () => {
       'Implement the plan'
     ])
     expect(mocks.publishClaudeCliStatus).not.toHaveBeenCalled()
+  })
+
+  it('injects the pending prompt into an already-running PTY instead of dropping it', async () => {
+    mocks.ptyService.has.mockReturnValue(true)
+
+    const result = await createClaudeCliTerminal('hive-session-1', {
+      pendingPrompt: 'Review the diff'
+    })
+
+    expect(result).toEqual({
+      success: true,
+      cols: 120,
+      rows: 40
+    })
+    expect(mocks.ptyService.write).toHaveBeenCalledWith(
+      'hive-session-1',
+      '\x1b[200~Review the diff\x1b[201~\r'
+    )
+  })
+
+  it('does not write to an already-running PTY when no prompt is pending', async () => {
+    mocks.ptyService.has.mockReturnValue(true)
+
+    const result = await createClaudeCliTerminal('hive-session-1', {})
+
+    expect(result).toEqual({
+      success: true,
+      cols: 120,
+      rows: 40
+    })
+    expect(mocks.ptyService.write).not.toHaveBeenCalled()
   })
 
   it('does not register the old terminal:create IPC handler', () => {
