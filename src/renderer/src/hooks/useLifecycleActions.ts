@@ -6,6 +6,7 @@ import { useProjectStore } from '@/stores/useProjectStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { toast } from '@/lib/toast'
 import { REVIEW_PROMPTS, DEFAULT_REVIEW_PROMPT_TYPE } from '@/constants/reviewPrompts'
+import { resolveSessionCreationSelection } from '@/lib/handoffSelection'
 import { useSettingsStore, resolveModelForSdk } from '@/stores/useSettingsStore'
 import { messageSendTimes, userExplicitSendTimes, lastSendMode } from '@/lib/message-send-times'
 import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
@@ -213,6 +214,15 @@ export function useLifecycleActions(worktreeId: string | null): LifecycleActions
       ].join('\n')
 
       const sessionStore = useSessionStore.getState()
+      // Resolve the effective SDK the same way createSession will, so the
+      // prompt is queued atomically with session insertion even when no
+      // review default model is configured. Queuing it later loses the race
+      // against ClaudeCliSessionView mounting and spawning a promptless PTY.
+      const effectiveSelection = resolveSessionCreationSelection({
+        worktreeId,
+        agentSdkOverride: reviewDefaultModel?.agentSdk,
+        modelOverride: reviewDefaultModel
+      })
       const result = await sessionStore.createSession(
         worktreeId,
         projectId,
@@ -221,7 +231,7 @@ export function useLifecycleActions(worktreeId: string | null): LifecycleActions
         {
           autoFocus: false,
           modelOverride: reviewDefaultModel,
-          ...(reviewDefaultModel?.agentSdk === 'claude-code-cli' ? { pendingMessage: prompt } : {})
+          ...(effectiveSelection.agentSdk === 'claude-code-cli' ? { pendingMessage: prompt } : {})
         }
       )
       if (!result.success || !result.session) {
@@ -241,9 +251,6 @@ export function useLifecycleActions(worktreeId: string | null): LifecycleActions
       const sessionId = result.session.id
       const worktreePath = worktree.path
       const agentSdk = result.session.agent_sdk
-      if (agentSdk === 'claude-code-cli') {
-        sessionStore.setPendingMessage(sessionId, prompt)
-      }
       const sessionModel =
         result.session.model_provider_id && result.session.model_id
           ? {
@@ -263,15 +270,23 @@ export function useLifecycleActions(worktreeId: string | null): LifecycleActions
             useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'working')
             bumpWorktreeLastMessage({ worktreeId })
 
-            const cliResult = unwrapEnvelope(
-              await terminalApi.createClaudeCli(sessionId, {
-                pendingPrompt: prompt
-              })
-            )
-            if (!cliResult.success) {
-              sessionStore.setPendingMessage(sessionId, prompt)
-            } else {
-              sessionStore.dequeuePendingMessage(sessionId)
+            // The pending-message queue is the single source of truth for the
+            // prompt: ClaudeCliSessionView dequeues it when its terminal
+            // mounts, so exactly one of the two racing createClaudeCli calls
+            // carries it. Sending `prompt` directly here would let the backend
+            // drop it when the view's promptless call won the PTY spawn.
+            const pendingPrompt = sessionStore.dequeuePendingMessage(sessionId)
+            try {
+              const cliResult = unwrapEnvelope(
+                await terminalApi.createClaudeCli(sessionId, { pendingPrompt })
+              )
+              if (!cliResult.success && pendingPrompt) {
+                sessionStore.requeuePendingMessage(sessionId, pendingPrompt)
+              }
+            } catch {
+              if (pendingPrompt) {
+                sessionStore.requeuePendingMessage(sessionId, pendingPrompt)
+              }
             }
             return
           }
