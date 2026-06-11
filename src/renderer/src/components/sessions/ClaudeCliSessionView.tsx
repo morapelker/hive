@@ -12,9 +12,6 @@ import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useQuestionStore } from '@/stores/useQuestionStore'
 import { useTelegramStore } from '@/stores/useTelegramStore'
 import { useClaudeCliSessionPortal } from '@/contexts/ClaudeCliSessionPortalContext'
-import { ModeToggle } from './ModeToggle'
-import { SuperToggle } from './SuperToggle'
-import { ModelSelector } from './ModelSelector'
 import { QuestionPrompt } from './QuestionPrompt'
 import { ClaudeCliEndedOverlay } from './ClaudeCliEndedOverlay'
 import { HandoffSplitButton } from './HandoffSplitButton'
@@ -289,7 +286,6 @@ export function ClaudeCliSessionView({
   const [terminalKey, setTerminalKey] = useState(0)
   const [ended, setEnded] = useState(false)
   const [planSavedAsTicket, setPlanSavedAsTicket] = useState(false)
-  const pendingMessage = useSessionStore((state) => state.pendingMessages.get(sessionId) ?? null)
   const pendingPlan = useSessionStore((state) => state.pendingPlans.get(sessionId) ?? null)
   const mode = useSessionStore((state) => state.modeBySession.get(sessionId) ?? 'build')
   const { getTarget, revision: portalRevision } = useClaudeCliSessionPortal()
@@ -548,17 +544,6 @@ export function ClaudeCliSessionView({
       data-testid="claude-cli-session-view"
       data-session-id={sessionId}
     >
-      <div className="flex items-center justify-between gap-3 border-b border-border bg-background px-3 py-2">
-        <div className="flex min-w-0 items-center gap-2">
-          <ModeToggle sessionId={sessionId} />
-          <SuperToggle sessionId={sessionId} />
-          {pendingMessage && (
-            <span className="truncate text-xs text-muted-foreground">handoff prompt pending</span>
-          )}
-        </div>
-        <ModelSelector sessionId={sessionId} />
-      </div>
-
       <div className="relative min-h-0 flex-1">
         <TerminalView
           ref={terminalRef}

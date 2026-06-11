@@ -1084,6 +1084,7 @@ function KanbanTicketModalContent({
           moveTicket={moveTicket}
           updateTicket={updateTicket}
           dualPane={wantsDualPane}
+          isClaudeCli={isClaudeCli}
           runScriptState={runScriptState}
         />
       )
@@ -1094,6 +1095,7 @@ function KanbanTicketModalContent({
           ticket={ticket}
           onClose={forceClose}
           dualPane={wantsDualPane}
+          isClaudeCli={isClaudeCli}
           runScriptState={runScriptState}
         />
       )
@@ -2717,6 +2719,7 @@ function ReviewModeContent({
   moveTicket,
   updateTicket,
   dualPane = false,
+  isClaudeCli = false,
   runScriptState
 }: {
   ticket: KanbanTicket
@@ -2729,6 +2732,7 @@ function ReviewModeContent({
   ) => Promise<void>
   updateTicket: (ticketId: string, projectId: string, data: KanbanTicketUpdate) => Promise<void>
   dualPane?: boolean
+  isClaudeCli?: boolean
   runScriptState: TicketRunScriptState
 }) {
   const worktree = useMemo(
@@ -2931,8 +2935,10 @@ function ReviewModeContent({
     setFollowUpMode((prev) => (prev === 'super-plan' ? 'plan' : 'super-plan'))
   }, [])
 
-  // Tab key toggles mode, Shift+Tab toggles super-plan
+  // Tab key toggles mode, Shift+Tab toggles super-plan.
+  // Claude CLI sessions handle Tab/Shift+Tab inside the terminal instead.
   useEffect(() => {
+    if (isClaudeCli) return
     const handler = (e: KeyboardEvent): void => {
       if (e.key === 'Tab' && !e.ctrlKey && !e.metaKey && !e.altKey) {
         // Only intercept when the modal is focused
@@ -2950,7 +2956,7 @@ function ReviewModeContent({
     }
     window.addEventListener('keydown', handler, true)
     return () => window.removeEventListener('keydown', handler, true)
-  }, [toggleMode, toggleSuperMode])
+  }, [isClaudeCli, toggleMode, toggleSuperMode])
 
   // ── Send followup ─────────────────────────────────────────────────
   const handleSendFollowup = useCallback(async () => {
@@ -3130,6 +3136,7 @@ function ReviewModeContent({
         isSending={isSending}
         placeholder="Provide followup instructions... (Enter to send)"
         testIdPrefix="review"
+        hideModeToggle={isClaudeCli}
         textareaRef={textareaRef}
       />
 
@@ -3249,11 +3256,13 @@ function ErrorModeContent({
   ticket,
   onClose,
   dualPane = false,
+  isClaudeCli = false,
   runScriptState
 }: {
   ticket: KanbanTicket
   onClose: () => void
   dualPane?: boolean
+  isClaudeCli?: boolean
   runScriptState: TicketRunScriptState
 }) {
   const [followUpText, setFollowUpText] = useState('')
@@ -3329,8 +3338,10 @@ function ErrorModeContent({
     setFollowUpMode((prev) => (prev === 'super-plan' ? 'plan' : 'super-plan'))
   }, [])
 
-  // Tab key toggles mode, Shift+Tab toggles super-plan
+  // Tab key toggles mode, Shift+Tab toggles super-plan.
+  // Claude CLI sessions handle Tab/Shift+Tab inside the terminal instead.
   useEffect(() => {
+    if (isClaudeCli) return
     const handler = (e: KeyboardEvent): void => {
       if (e.key === 'Tab' && !e.ctrlKey && !e.metaKey && !e.altKey) {
         const modal = document.querySelector('[data-testid="kanban-ticket-modal"]')
@@ -3347,7 +3358,7 @@ function ErrorModeContent({
     }
     window.addEventListener('keydown', handler, true)
     return () => window.removeEventListener('keydown', handler, true)
-  }, [toggleMode, toggleSuperMode])
+  }, [isClaudeCli, toggleMode, toggleSuperMode])
 
   // ── Send followup for error retry ─────────────────────────────────
   const handleSendFollowup = useCallback(async () => {
@@ -3438,6 +3449,7 @@ function ErrorModeContent({
         isSending={isSending}
         placeholder="Describe the fix or retry instructions... (Enter to send)"
         testIdPrefix="error"
+        hideModeToggle={isClaudeCli}
       />
 
       {/* Drag-and-drop overlay */}
