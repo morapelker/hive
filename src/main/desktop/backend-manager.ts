@@ -56,7 +56,11 @@ import { scriptRunner } from '../services/script-runner'
 import { ptyService } from '../services/pty-service'
 import { ghosttyService } from '../services/ghostty-service'
 import { startFileTreeWatcher, stopFileTreeWatcher } from '../services/file-tree-watcher'
-import { createClaudeCliTerminal, destroyNodePtyTerminal } from '../services/terminal-pty-bridge'
+import {
+  createClaudeCliTerminal,
+  destroyNodePtyTerminal,
+  handleClaudeCliTerminalInput
+} from '../services/terminal-pty-bridge'
 import { claudeCliTelegramBridge } from '../services/claude-cli-telegram-bridge'
 import { openPathWithEditor, openPathWithTerminal } from '../services/settings-openers'
 import {
@@ -2845,6 +2849,7 @@ const handleDesktopBackendCommand = (
       if (!ptyService.has(message.payload.terminalId)) {
         throw new Error('Terminal not found')
       }
+      handleClaudeCliTerminalInput(message.payload.terminalId, message.payload.data)
       ptyService.write(message.payload.terminalId, message.payload.data)
       sendDesktopBackendCommandResult(
         child,

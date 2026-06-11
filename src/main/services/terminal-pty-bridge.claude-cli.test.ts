@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => {
     getDatabase: vi.fn(),
     getClaudeHookServer: vi.fn(),
     buildClaudeCliHookSettings: vi.fn(),
+    getLastClaudeCliStatus: vi.fn(),
     publishClaudeCliStatus: vi.fn(),
     subscribeClaudeCliStatus: vi.fn(() => vi.fn()),
     ptyService: {
@@ -101,6 +102,7 @@ vi.mock('./claude-session-watcher', () => ({
 vi.mock('./claude-hook-server', () => ({
   getClaudeHookServer: mocks.getClaudeHookServer,
   buildClaudeCliHookSettings: mocks.buildClaudeCliHookSettings,
+  getLastClaudeCliStatus: mocks.getLastClaudeCliStatus,
   publishClaudeCliStatus: mocks.publishClaudeCliStatus,
   subscribeClaudeCliStatus: mocks.subscribeClaudeCliStatus
 }))
@@ -113,7 +115,8 @@ import type { Session } from '../db/types'
 import {
   cleanupTerminals,
   destroyNodePtyTerminal,
-  createClaudeCliTerminal
+  createClaudeCliTerminal,
+  handleClaudeCliTerminalInput
 } from './terminal-pty-bridge'
 import { __resetRuntimeRegistryForTests } from '../effect/_shared/runtime'
 
@@ -406,6 +409,76 @@ describe('Claude CLI terminal hook status wiring', () => {
       status: 'completed',
       metadata: { reason: 'pty_start' }
     })
+  })
+
+  describe('handleClaudeCliTerminalInput', () => {
+    it.each(['\x1b', '\x03'])(
+      'publishes completed with user_interrupt when %j is typed while working',
+      async (key) => {
+        await createClaudeCliTerminal('hive-session-1', {})
+        mocks.getLastClaudeCliStatus.mockReturnValue('working')
+        mocks.publishClaudeCliStatus.mockClear()
+
+        handleClaudeCliTerminalInput('hive-session-1', key)
+
+        expect(mocks.publishClaudeCliStatus).toHaveBeenCalledWith({
+          sessionId: 'hive-session-1',
+          status: 'completed',
+          metadata: { reason: 'user_interrupt' }
+        })
+      }
+    )
+
+    it.each(['planning', 'permission'])(
+      'publishes completed when Escape is typed while %s',
+      async (status) => {
+        await createClaudeCliTerminal('hive-session-1', {})
+        mocks.getLastClaudeCliStatus.mockReturnValue(status)
+        mocks.publishClaudeCliStatus.mockClear()
+
+        handleClaudeCliTerminalInput('hive-session-1', '\x1b')
+
+        expect(mocks.publishClaudeCliStatus).toHaveBeenCalledWith({
+          sessionId: 'hive-session-1',
+          status: 'completed',
+          metadata: { reason: 'user_interrupt' }
+        })
+      }
+    )
+
+    it('ignores terminals that are not Claude CLI sessions', () => {
+      mocks.getLastClaudeCliStatus.mockReturnValue('working')
+
+      handleClaudeCliTerminalInput('plain-terminal', '\x1b')
+
+      expect(mocks.publishClaudeCliStatus).not.toHaveBeenCalled()
+    })
+
+    it.each(['a', '\r', '\x1b[A', '\x1b[200~paste\x1b[201~'])(
+      'ignores non-interrupt input %j',
+      async (data) => {
+        await createClaudeCliTerminal('hive-session-1', {})
+        mocks.getLastClaudeCliStatus.mockReturnValue('working')
+        mocks.publishClaudeCliStatus.mockClear()
+
+        handleClaudeCliTerminalInput('hive-session-1', data)
+
+        expect(mocks.publishClaudeCliStatus).not.toHaveBeenCalled()
+      }
+    )
+
+    it.each(['completed', 'plan_ready', 'answering', undefined])(
+      'ignores Escape when the last published status is %s',
+      async (status) => {
+        await createClaudeCliTerminal('hive-session-1', {})
+        mocks.getLastClaudeCliStatus.mockReturnValue(status)
+        mocks.publishClaudeCliStatus.mockClear()
+
+        handleClaudeCliTerminalInput('hive-session-1', '\x1b')
+
+        expect(mocks.publishClaudeCliStatus).not.toHaveBeenCalled()
+      }
+    )
   })
 
   it('removes the Claude CLI PTY-exit safety net when the terminal is destroyed', async () => {
