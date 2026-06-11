@@ -8,6 +8,7 @@ import { ClaudeCodeImplementer } from './claude-code-implementer'
 import { CodexImplementer } from './codex-implementer'
 import { claudeCliTelegramBridge } from './claude-cli-telegram-bridge'
 import { toError } from './error-utils'
+import { isClaudeCli, isTerminalBacked } from '@shared/types/agent-sdk'
 
 const log = createLogger({ component: 'OpenCodeSessionCommands' })
 type PromptMessage =
@@ -192,9 +193,18 @@ export async function promptOpenCodeSession(
         worktreePath,
         requestedSessionId: opencodeSessionId,
         sdkId,
-        route: sdkId && sdkId !== 'opencode' && sdkId !== 'terminal' ? 'sdk' : 'opencode'
+        route: sdkId && sdkId !== 'opencode' && !isTerminalBacked(sdkId) ? 'sdk' : 'opencode'
       })
-      if (sdkId && sdkId !== 'opencode' && sdkId !== 'terminal') {
+      if (isClaudeCli(sdkId)) {
+        // Terminal-backed Claude: prompts go through the PTY (bracketed paste /
+        // pending-prompt spawn), never the SDK implementer. Routing it there
+        // would corrupt the claude-code implementer's session state.
+        return {
+          success: false,
+          error: 'claude-code-cli sessions receive prompts via the terminal, not the prompt API'
+        }
+      }
+      if (sdkId && sdkId !== 'opencode' && !isTerminalBacked(sdkId)) {
         const impl = sdkManager.getImplementer(toImplementerSdk(sdkId))
         await impl.prompt(worktreePath, opencodeSessionId, promptMessage, model, options)
         telemetryService.track('prompt_sent', { agent_sdk: sdkId })

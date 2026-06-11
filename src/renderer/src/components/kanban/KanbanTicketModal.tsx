@@ -94,7 +94,7 @@ import {
   startHivePromptTelemetry
 } from '@/lib/hive-enterprise-telemetry'
 import { canonicalizeTicketTitle, extractPlanTitle } from '@shared/types/branch-utils'
-import { supportsGoalMode } from '@shared/types/agent-sdk'
+import { isClaudeCli, supportsGoalMode } from '@shared/types/agent-sdk'
 import type { KanbanTicket, KanbanTicketUpdate, Session, Worktree } from '../../../../main/db/types'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { systemApi } from '@/api/system-api'
@@ -336,13 +336,6 @@ async function sendFollowupToSession(opts: {
     throw new Error(`Working path not found for session: ${opts.sessionId}`)
   }
 
-  if (!session.opencode_session_id) {
-    console.error(
-      `[KanbanTicketModal] sendFollowupToSession: opencode_session_id is null — sessionId=${opts.sessionId}`
-    )
-    throw new Error(`No opencode session ID for session: ${opts.sessionId}`)
-  }
-
   // Set session mode so the agent SDK knows we're in plan mode (matches Tab toggle in SessionView).
   // This updates modeBySession, persists to DB, and applies mode-specific default model.
   await useSessionStore.getState().setSessionMode(opts.sessionId, opts.followUpMode)
@@ -386,6 +379,34 @@ async function sendFollowupToSession(opts: {
     modelVariant: model?.variant,
     mode: opts.followUpMode
   })
+
+  if (isClaudeCli(session.agent_sdk)) {
+    // Terminal-backed session: deliver to the live TUI via bracketed paste.
+    // If no terminal is running (app restart, claude exited), respawn it
+    // headlessly — createClaudeCli resumes via --resume <claude_session_id>
+    // and submits the pending prompt.
+    const { delivered } = unwrapEnvelope(
+      await terminalApi.sendClaudeCliPrompt(opts.sessionId, fullPrompt)
+    )
+    if (!delivered) {
+      const result = unwrapEnvelope(
+        await terminalApi.createClaudeCli(opts.sessionId, { pendingPrompt: fullPrompt })
+      )
+      if (!result.success) {
+        throw new Error(result.error ?? 'Failed to start Claude CLI terminal for followup')
+      }
+    }
+    return
+  }
+
+  // claude-code-cli sessions are terminal-backed and have no opencode_session_id,
+  // so this guard only applies after the terminal branch above.
+  if (!session.opencode_session_id) {
+    console.error(
+      `[KanbanTicketModal] sendFollowupToSession: opencode_session_id is null — sessionId=${opts.sessionId}`
+    )
+    throw new Error(`No opencode session ID for session: ${opts.sessionId}`)
+  }
 
   // Ensure the session is loaded in the agent SDK implementer's in-memory map.
   // SessionView does this on mount via initializeSession(), but the kanban
