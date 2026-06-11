@@ -3,6 +3,7 @@ import { getDatabase } from '../db'
 import {
   buildClaudeCliHookSettings,
   getClaudeHookServer,
+  getLastClaudeCliStatus,
   publishClaudeCliStatus,
   subscribeClaudeCliStatus,
   type ClaudeCliStatusPayload
@@ -92,6 +93,31 @@ function ensureClaudeCliStatusSubscription(): void {
     ) {
       closeClaudePlanFollowupWatcher(payload.sessionId)
     }
+  })
+}
+
+// Lone Escape / Ctrl+C. A bare Escape keypress arrives as exactly '\x1b';
+// multi-byte sequences (arrow keys, bracketed pastes) never match exactly.
+const INTERRUPT_KEYS = new Set(['\x1b', '\x03'])
+const INTERRUPTIBLE_STATUSES = new Set(['working', 'planning', 'permission'])
+
+/**
+ * Claude Code never fires its Stop hook when the user interrupts a running
+ * turn with Escape/Ctrl+C, and the CLI keeps running so the pty_exit fallback
+ * never fires either — the session would stay stuck on 'working'. Mirror the
+ * keypress itself into a status update instead. plan_ready/answering are
+ * excluded: escaping those dialogs fires PostToolUseFailure hooks that the
+ * existing pipeline already handles.
+ */
+export function handleClaudeCliTerminalInput(terminalId: string, data: string): void {
+  if (!claudeCliSessions.has(terminalId)) return
+  if (!INTERRUPT_KEYS.has(data)) return
+  const last = getLastClaudeCliStatus(terminalId)
+  if (!last || !INTERRUPTIBLE_STATUSES.has(last)) return
+  publishClaudeCliStatus({
+    sessionId: terminalId,
+    status: 'completed',
+    metadata: { reason: 'user_interrupt' }
   })
 }
 

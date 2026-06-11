@@ -54,7 +54,8 @@ const fileTreeHandlerMocks = vi.hoisted(() => ({
 
 const terminalHandlerMocks = vi.hoisted(() => ({
   createClaudeCliTerminal: vi.fn(),
-  destroyNodePtyTerminal: vi.fn()
+  destroyNodePtyTerminal: vi.fn(),
+  handleClaudeCliTerminalInput: vi.fn()
 }))
 
 const settingsHandlerMocks = vi.hoisted(() => ({
@@ -157,7 +158,8 @@ vi.mock('../services/file-tree-watcher', () => ({
 
 vi.mock('../services/terminal-pty-bridge', () => ({
   createClaudeCliTerminal: terminalHandlerMocks.createClaudeCliTerminal,
-  destroyNodePtyTerminal: terminalHandlerMocks.destroyNodePtyTerminal
+  destroyNodePtyTerminal: terminalHandlerMocks.destroyNodePtyTerminal,
+  handleClaudeCliTerminalInput: terminalHandlerMocks.handleClaudeCliTerminalInput
 }))
 
 vi.mock('../services/settings-openers', () => ({
@@ -275,6 +277,7 @@ describe('desktop backend manager', () => {
     fileTreeHandlerMocks.stopFileTreeWatcher.mockClear()
     terminalHandlerMocks.createClaudeCliTerminal.mockClear()
     terminalHandlerMocks.destroyNodePtyTerminal.mockClear()
+    terminalHandlerMocks.handleClaudeCliTerminalInput.mockClear()
     settingsHandlerMocks.openPathWithEditor.mockClear()
     settingsHandlerMocks.openPathWithTerminal.mockClear()
     scriptRunnerMocks.killProcess.mockClear()
@@ -3595,6 +3598,41 @@ describe('desktop backend manager', () => {
       }),
       expect.any(Function)
     )
+  })
+
+  it('routes backend terminalWrite data through the Claude CLI interrupt detector', async () => {
+    const child = new FakeChildProcess()
+    ptyServiceMocks.has.mockReturnValue(true)
+
+    await startDesktopBackend(
+      {
+        executablePath: '/electron',
+        entryPath: '/app/server.js',
+        cwd: '/app',
+        baseDir: mkdtempSync(join(tmpdir(), 'hive-backend-manager-')),
+        port: 0
+      },
+      {
+        spawnProcess: vi.fn(() => child as never),
+        fetch: vi.fn(async () => new Response('{}', { status: 200 })),
+        logger: makeLogger()
+      }
+    )
+
+    child.emit(
+      'message',
+      makeDesktopCommandRequest('terminal-write-2', 'terminalWrite', {
+        terminalId: 'terminal-1',
+        data: '\x1b'
+      })
+    )
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(terminalHandlerMocks.handleClaudeCliTerminalInput).toHaveBeenCalledWith(
+      'terminal-1',
+      '\x1b'
+    )
+    expect(ptyServiceMocks.write).toHaveBeenCalledWith('terminal-1', '\x1b')
   })
 
   it('forwards backend terminalCreateClaudeCli commands to the legacy terminal handler', async () => {
