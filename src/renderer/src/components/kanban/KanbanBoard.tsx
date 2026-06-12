@@ -11,6 +11,7 @@ import { BoardChatLauncher } from '@/components/kanban/BoardChatLauncher'
 import { MergeOnDoneDialog } from './MergeOnDoneDialog'
 import { toast } from '@/lib/toast'
 import { useMarkdownKanbanWatcher } from '@/hooks/useMarkdownKanbanWatcher'
+import { cardOccurrenceKeys } from '@/components/kanban/kanban-card-identity'
 import type { KanbanTicketColumn } from '../../../../main/db/types'
 
 const COLUMNS: KanbanTicketColumn[] = ['todo', 'in_progress', 'review', 'done']
@@ -51,6 +52,7 @@ export function KanbanBoard({ projectId, connectionId, isPinnedMode }: KanbanBoa
   const removeDependency = useKanbanStore((state) => state.removeDependency)
   const dependencyMap = useKanbanStore((state) => state.dependencyMap)
   const hoveredBlockedTicketKey = useKanbanStore((state) => state.hoveredBlockedTicketKey)
+  const markdownDiagnostics = useKanbanStore((state) => state.markdownDiagnostics)
 
   // Subscribe to the multi-project archive toggle ('' key used by pinned/connection boards)
   const showArchivedAll = useKanbanStore(
@@ -332,37 +334,51 @@ export function KanbanBoard({ projectId, connectionId, isPinnedMode }: KanbanBoa
             className="flex flex-1 min-h-0 gap-3 overflow-x-auto p-3"
             onClick={handleBoardClick}
           >
-            {COLUMNS.map((column) => {
-              const tickets = isPinnedMode
-                ? getTicketsByColumnForPinned(column)
-                : isConnectionMode
-                  ? getTicketsByColumnForConnection(connectionId, column)
-                  : projectId
-                    ? getTicketsByColumn(projectId, column)
-                    : []
-
-              const archivedTickets = column === 'done'
-                ? isPinnedMode
-                  ? pinnedArchivedDoneTickets
+            {(() => {
+              const occurrenceCounts = new Map<string, number>()
+              return COLUMNS.map((column) => {
+                const tickets = isPinnedMode
+                  ? getTicketsByColumnForPinned(column)
                   : isConnectionMode
-                    ? connectionArchivedDoneTickets
+                    ? getTicketsByColumnForConnection(connectionId, column)
                     : projectId
-                      ? getArchivedTicketsByColumn(projectId, 'done')
-                      : undefined
-                : undefined
+                      ? getTicketsByColumn(projectId, column)
+                      : []
 
-              return (
-                <KanbanColumn
-                  key={column}
-                  column={column}
-                  tickets={tickets}
-                  archivedTickets={archivedTickets}
-                  projectId={projectId ?? ''}
-                  connectionId={connectionId}
-                  isPinnedMode={isPinnedMode}
-                />
-              )
-            })}
+                const archivedTickets = column === 'done'
+                  ? isPinnedMode
+                    ? pinnedArchivedDoneTickets
+                    : isConnectionMode
+                      ? connectionArchivedDoneTickets
+                      : projectId
+                        ? getArchivedTicketsByColumn(projectId, 'done')
+                        : undefined
+                  : undefined
+
+                const activeCardIdentityKeys = cardOccurrenceKeys(
+                  tickets,
+                  markdownDiagnostics,
+                  occurrenceCounts
+                )
+                const archivedCardIdentityKeys = archivedTickets
+                  ? cardOccurrenceKeys(archivedTickets, markdownDiagnostics, occurrenceCounts)
+                  : undefined
+
+                return (
+                  <KanbanColumn
+                    key={column}
+                    column={column}
+                    tickets={tickets}
+                    archivedTickets={archivedTickets}
+                    activeCardIdentityKeys={activeCardIdentityKeys}
+                    archivedCardIdentityKeys={archivedCardIdentityKeys}
+                    projectId={projectId ?? ''}
+                    connectionId={connectionId}
+                    isPinnedMode={isPinnedMode}
+                  />
+                )
+              })
+            })()}
             <KanbanTicketModal />
             <MergeOnDoneDialog />
             {/* SVG dependency lines */}

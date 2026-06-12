@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { PropsWithChildren } from 'react'
 import { fireEvent, render, waitFor } from '../utils/render'
+import { KanbanBoard } from '@/components/kanban/KanbanBoard'
 import { KanbanColumn } from '@/components/kanban/KanbanColumn'
 import { cardOccurrenceKeys } from '@/components/kanban/kanban-card-identity'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -9,6 +10,18 @@ import type { KanbanTicket } from '../../src/main/db/types'
 
 vi.mock('@/components/kanban/WorktreePickerModal', () => ({
   WorktreePickerModal: () => null
+}))
+
+vi.mock('@/components/kanban/KanbanTicketModal', () => ({
+  KanbanTicketModal: () => null
+}))
+
+vi.mock('@/components/kanban/BoardChatLauncher', () => ({
+  BoardChatLauncher: () => null
+}))
+
+vi.mock('@/components/kanban/MergeOnDoneDialog', () => ({
+  MergeOnDoneDialog: () => null
 }))
 
 vi.mock('@/components/kanban/TicketCreateModal', () => ({
@@ -50,6 +63,10 @@ vi.mock('@/components/sessions/IndeterminateProgressBar', () => ({
   IndeterminateProgressBar: () => null
 }))
 
+vi.mock('@/hooks/useMarkdownKanbanWatcher', () => ({
+  useMarkdownKanbanWatcher: vi.fn()
+}))
+
 vi.mock('@/hooks/useSessionTimer', () => ({
   useSessionTimer: () => null
 }))
@@ -67,6 +84,7 @@ vi.mock('@/lib/toast', () => ({
 }))
 
 vi.mock('motion/react', () => ({
+  LayoutGroup: ({ children }: PropsWithChildren) => <>{children}</>,
   motion: {
     div: ({
       children,
@@ -240,6 +258,41 @@ describe('duplicate markdown card renderer identity', () => {
       `${ticketKey('proj-1', 'shared')}:duplicate:${encodeURIComponent('/tmp/project/cards/a.md')}`,
       `${ticketKey('proj-1', 'shared')}:duplicate:${encodeURIComponent('/tmp/project/cards/b.md')}`
     ])
+  })
+
+  test('KanbanBoard shares duplicate occurrence identities across rendered columns', () => {
+    useKanbanStore.setState({
+      tickets: new Map([
+        [
+          'proj-1',
+          [
+            makeTicket({ title: 'Duplicate A', column: 'todo', sort_order: 0 }),
+            makeTicket({ title: 'Duplicate B', column: 'review', sort_order: 1 })
+          ]
+        ]
+      ]),
+      loadTickets: vi.fn().mockResolvedValue(undefined)
+    })
+
+    const { container } = render(
+      <TooltipProvider>
+        <KanbanBoard projectId="proj-1" />
+      </TooltipProvider>
+    )
+
+    const cards = [...container.querySelectorAll<HTMLElement>('[data-testid="kanban-ticket-card"]')]
+    const ticketKeys = cards.map((card) => card.getAttribute('data-ticket-key'))
+    const layoutIds = [...container.querySelectorAll<HTMLElement>('[data-layout-id]')].map((node) =>
+      node.getAttribute('data-layout-id')
+    )
+
+    expect(cards).toHaveLength(2)
+    expect(ticketKeys).toEqual([
+      `${ticketKey('proj-1', 'shared')}:duplicate:${encodeURIComponent('/tmp/project/cards/a.md')}`,
+      `${ticketKey('proj-1', 'shared')}:duplicate:${encodeURIComponent('/tmp/project/cards/b.md')}`
+    ])
+    expect(new Set(ticketKeys).size).toBe(2)
+    expect(new Set(layoutIds).size).toBe(2)
   })
 
   test('cross-column drops compute sort order from the dragged project only', async () => {
