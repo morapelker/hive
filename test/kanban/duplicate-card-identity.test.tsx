@@ -295,6 +295,38 @@ describe('duplicate markdown card renderer identity', () => {
     expect(new Set(layoutIds).size).toBe(2)
   })
 
+  test('KanbanBoard passes invalid markdown placeholders into the todo column', () => {
+    useKanbanStore.setState({
+      tickets: new Map([['proj-1', []]]),
+      markdownPlaceholders: new Map([
+        [
+          'proj-1',
+          [
+            {
+              projectId: 'proj-1',
+              filePath: '/tmp/project/cards/broken.md',
+              kind: 'invalid_frontmatter',
+              message: 'Invalid markdown frontmatter',
+              blocking: true
+            }
+          ]
+        ]
+      ]),
+      loadTickets: vi.fn().mockResolvedValue(undefined)
+    })
+
+    const { getByTestId } = render(
+      <TooltipProvider>
+        <KanbanBoard projectId="proj-1" />
+      </TooltipProvider>
+    )
+
+    expect(getByTestId('kanban-invalid-card-placeholder')).toHaveTextContent('broken.md')
+    expect(getByTestId('kanban-invalid-card-placeholder')).toHaveTextContent(
+      'Invalid markdown frontmatter'
+    )
+  })
+
   test('cross-column drops compute sort order from the dragged project only', async () => {
     const tickets = [
       makeTicket({

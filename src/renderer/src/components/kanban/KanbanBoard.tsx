@@ -32,6 +32,9 @@ export function KanbanBoard({ projectId, connectionId, isPinnedMode }: KanbanBoa
   const getTicketsByColumnForConnection = useKanbanStore((state) => state.getTicketsByColumnForConnection)
   const getTicketsByColumnForPinned = useKanbanStore((state) => state.getTicketsByColumnForPinned)
   const getArchivedTicketsByColumn = useKanbanStore((state) => state.getArchivedTicketsByColumn)
+  const getInvalidPlaceholdersForProject = useKanbanStore((state) => state.getInvalidPlaceholdersForProject)
+  const getInvalidPlaceholdersForConnection = useKanbanStore((state) => state.getInvalidPlaceholdersForConnection)
+  const getInvalidPlaceholdersForPinned = useKanbanStore((state) => state.getInvalidPlaceholdersForPinned)
   const getConnectionProjectIds = useKanbanStore((state) => state.getConnectionProjectIds)
   const getPinnedProjectIdsArray = useKanbanStore((state) => state.getPinnedProjectIdsArray)
   const pinnedProjectIds = usePinnedStore((state) => state.pinnedProjectIds)
@@ -282,6 +285,13 @@ export function KanbanBoard({ projectId, connectionId, isPinnedMode }: KanbanBoa
   const pinnedArchivedDoneTickets = isPinnedMode
     ? pinnedProjectIdsArray.flatMap((pid) => getArchivedTicketsByColumn(pid, 'done'))
     : undefined
+  const invalidPlaceholders = isPinnedMode
+    ? getInvalidPlaceholdersForPinned()
+    : isConnectionMode && connectionId
+      ? getInvalidPlaceholdersForConnection(connectionId)
+      : projectId
+        ? getInvalidPlaceholdersForProject(projectId)
+        : []
 
   return (
     <LayoutGroup>
@@ -372,6 +382,7 @@ export function KanbanBoard({ projectId, connectionId, isPinnedMode }: KanbanBoa
                     archivedTickets={archivedTickets}
                     activeCardIdentityKeys={activeCardIdentityKeys}
                     archivedCardIdentityKeys={archivedCardIdentityKeys}
+                    invalidPlaceholders={column === 'todo' ? invalidPlaceholders : undefined}
                     projectId={projectId ?? ''}
                     connectionId={connectionId}
                     isPinnedMode={isPinnedMode}
