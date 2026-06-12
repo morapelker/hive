@@ -10,6 +10,7 @@ import { KanbanTicketModal } from '@/components/kanban/KanbanTicketModal'
 import { BoardChatLauncher } from '@/components/kanban/BoardChatLauncher'
 import { MergeOnDoneDialog } from './MergeOnDoneDialog'
 import { toast } from '@/lib/toast'
+import { useMarkdownKanbanWatcher } from '@/hooks/useMarkdownKanbanWatcher'
 import type { KanbanTicketColumn } from '../../../../main/db/types'
 
 const COLUMNS: KanbanTicketColumn[] = ['todo', 'in_progress', 'review', 'done']
@@ -23,6 +24,7 @@ interface KanbanBoardProps {
 
 export function KanbanBoard({ projectId, connectionId, isPinnedMode }: KanbanBoardProps) {
   const loadTickets = useKanbanStore((state) => state.loadTickets)
+  const loadTicketsForProjectInAggregate = useKanbanStore((state) => state.loadTicketsForProjectInAggregate)
   const loadTicketsForConnection = useKanbanStore((state) => state.loadTicketsForConnection)
   const loadTicketsForPinnedProjects = useKanbanStore((state) => state.loadTicketsForPinnedProjects)
   const getTicketsByColumn = useKanbanStore((state) => state.getTicketsByColumn)
@@ -80,6 +82,26 @@ export function KanbanBoard({ projectId, connectionId, isPinnedMode }: KanbanBoa
   useKanbanStore((state) => state.tickets)
 
   const isConnectionMode = !!connectionId
+  const connectionProjectIds = isConnectionMode && connectionId ? getConnectionProjectIds(connectionId) : []
+  const pinnedProjectIdsArray = isPinnedMode ? getPinnedProjectIdsArray() : []
+  const watchedProjectIds = isPinnedMode
+    ? pinnedProjectIdsArray
+    : isConnectionMode
+      ? connectionProjectIds
+      : projectId
+        ? [projectId]
+        : []
+  const reloadWatchedProject = useCallback(
+    (changedProjectId: string) => {
+      if (isPinnedMode || isConnectionMode) {
+        return loadTicketsForProjectInAggregate(changedProjectId)
+      }
+      return loadTickets(changedProjectId)
+    },
+    [isPinnedMode, isConnectionMode, loadTickets, loadTicketsForProjectInAggregate]
+  )
+
+  useMarkdownKanbanWatcher(watchedProjectIds, reloadWatchedProject)
 
   useEffect(() => {
     if (isPinnedMode) {
@@ -252,10 +274,8 @@ export function KanbanBoard({ projectId, connectionId, isPinnedMode }: KanbanBoa
 
   // Aggregate archived tickets across all connection member projects for the done column
   const connectionArchivedDoneTickets = isConnectionMode
-    ? getConnectionProjectIds(connectionId!).flatMap((pid) => getArchivedTicketsByColumn(pid, 'done'))
+    ? connectionProjectIds.flatMap((pid) => getArchivedTicketsByColumn(pid, 'done'))
     : undefined
-
-  const pinnedProjectIdsArray = isPinnedMode ? getPinnedProjectIdsArray() : []
 
   const pinnedArchivedDoneTickets = isPinnedMode
     ? pinnedProjectIdsArray.flatMap((pid) => getArchivedTicketsByColumn(pid, 'done'))
