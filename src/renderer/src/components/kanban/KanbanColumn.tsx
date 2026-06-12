@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useLayoutEffect } from 'react'
 import { motion } from 'motion/react'
-import { ChevronRight, ChevronDown, Plus, Zap, Archive } from 'lucide-react'
+import { AlertTriangle, ChevronRight, ChevronDown, FileText, Plus, Zap, Archive } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from '@/lib/toast'
 import { lastSendMode } from '@/lib/message-send-times'
@@ -9,6 +9,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip
 import { KanbanTicketCard } from '@/components/kanban/KanbanTicketCard'
 import { TicketCreateModal } from '@/components/kanban/TicketCreateModal'
 import { WorktreePickerModal } from '@/components/kanban/WorktreePickerModal'
+import { cardOccurrenceKeys } from '@/components/kanban/kanban-card-identity'
 import {
   AlertDialog,
   AlertDialogContent,
@@ -30,8 +31,11 @@ import {
   getKanbanDragData,
   setKanbanDragData,
   suppressLayoutAnimation,
-  isLayoutAnimationSuppressed
+  isLayoutAnimationSuppressed,
+  parseTicketKey,
+  ticketKey
 } from '@/stores/useKanbanStore'
+import type { MarkdownCardPlaceholder } from '@/stores/useKanbanStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useUsageStore, resolveDefaultUsageProvider } from '@/stores/useUsageStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
@@ -43,9 +47,9 @@ import type {
   Worktree
 } from '../../../../main/db/types'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
-import { opencodeApi } from '@/api/opencode-api'
 import { dbApi } from '@/api/db-api'
 import { gitApi } from '@/api/git-api'
+import { opencodeApi } from '@/api/opencode-api'
 
 // ── Layout animation spring ─────────────────────────────────────────
 const CARD_LAYOUT_SPRING = {
@@ -63,10 +67,39 @@ const COLUMN_TITLES: Record<ColumnType, string> = {
   done: 'Done'
 }
 
+function fileNameFromPath(filePath: string): string {
+  return filePath.split(/[\\/]/).filter(Boolean).pop() ?? filePath
+}
+
+function MarkdownInvalidCardPlaceholder({ placeholder }: { placeholder: MarkdownCardPlaceholder }) {
+  return (
+    <div
+      data-testid="kanban-invalid-card-placeholder"
+      className="rounded-md border border-destructive/35 bg-destructive/5 p-2 text-sm shadow-sm"
+      title={`${placeholder.filePath}\n${placeholder.message}`}
+    >
+      <div className="flex items-start gap-2">
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-1.5 font-medium text-destructive">
+            <FileText className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate">{fileNameFromPath(placeholder.filePath)}</span>
+          </div>
+          <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{placeholder.message}</p>
+          <p className="mt-1 truncate text-[10px] text-muted-foreground/70">{placeholder.filePath}</p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 interface KanbanColumnProps {
   column: ColumnType
   tickets: KanbanTicket[]
   archivedTickets?: KanbanTicket[]
+  activeCardIdentityKeys?: string[]
+  archivedCardIdentityKeys?: string[]
+  invalidPlaceholders?: MarkdownCardPlaceholder[]
   projectId: string
   connectionId?: string
   isPinnedMode?: boolean
@@ -76,6 +109,9 @@ export function KanbanColumn({
   column,
   tickets,
   archivedTickets,
+  activeCardIdentityKeys,
+  archivedCardIdentityKeys,
+  invalidPlaceholders = [],
   projectId,
   connectionId,
   isPinnedMode
@@ -89,6 +125,7 @@ export function KanbanColumn({
   const [saveConfigTicket, setSaveConfigTicket] = useState<KanbanTicket | null>(null)
   const [pendingBackwardDrag, setPendingBackwardDrag] = useState<{
     ticketId: string
+    projectId: string
     targetIndex: number
   } | null>(null)
   const [showArchiveAllConfirm, setShowArchiveAllConfirm] = useState(false)
@@ -116,7 +153,10 @@ export function KanbanColumn({
   // the column-level prop.
 
   const findTicket = useCallback(
-    (ticketId: string): KanbanTicket | undefined => {
+    (ticketId: string, ticketProjectId?: string): KanbanTicket | undefined => {
+      if (ticketProjectId) {
+        return useKanbanStore.getState().tickets.get(ticketProjectId)?.find((t) => t.id === ticketId)
+      }
       if (isMultiProjectMode) {
         // In multi-project mode (connection or pinned), search across ALL tickets
         // (the dragged ticket may come from a different column/project)
@@ -134,7 +174,8 @@ export function KanbanColumn({
   )
 
   const findTicketProjectId = useCallback(
-    (ticketId: string): string => {
+    (ticketId: string, ticketProjectId?: string): string => {
+      if (ticketProjectId) return ticketProjectId
       if (isMultiProjectMode) {
         const ticket = findTicket(ticketId)
         if (ticket) return ticket.project_id
@@ -144,9 +185,29 @@ export function KanbanColumn({
     [isMultiProjectMode, projectId, findTicket]
   )
 
+  const projectTicketsForColumn = useCallback(
+    (ticketProjectId: string): KanbanTicket[] =>
+      tickets.filter((ticket) => ticket.project_id === ticketProjectId),
+    [tickets]
+  )
+
+  const projectLocalDropIndex = useCallback(
+    (ticketProjectId: string, mergedDropIndex: number): number =>
+      tickets
+        .slice(0, Math.max(0, mergedDropIndex))
+        .filter((ticket) => ticket.project_id === ticketProjectId).length,
+    [tickets]
+  )
+
   // Global drag state — true when ANY ticket is being dragged
   const isDragging = useKanbanStore((state) => state.isDragging)
-  const draggingTicketId = useKanbanStore((state) => state.draggingTicketId)
+  const draggingTicketKey = useKanbanStore((state) => state.draggingTicketKey)
+  const markdownDiagnostics = useKanbanStore((state) => state.markdownDiagnostics)
+  const fallbackActiveCardIdentityKeys = activeCardIdentityKeys ?? cardOccurrenceKeys(tickets, markdownDiagnostics)
+  const fallbackArchivedCardIdentityKeys =
+    archivedTickets && !archivedCardIdentityKeys
+      ? cardOccurrenceKeys(archivedTickets, markdownDiagnostics)
+      : archivedCardIdentityKeys
 
   // ── Simple mode toggle (In Progress column only) ───────────────
   // In connection mode, projectId is '' — acts as a single toggle for the connection board
@@ -326,7 +387,7 @@ export function KanbanColumn({
       const dragData = getKanbanDragData()
       if (!dragData) return
 
-      const { ticketId, sourceColumn, sourceIndex } = dragData
+      const { ticketId, sourceColumn, projectId: draggedProjectId } = dragData
       setKanbanDragData(null) // Clear after reading
 
       const targetIndex = dropIndexRef.current ?? tickets.length
@@ -336,30 +397,32 @@ export function KanbanColumn({
 
       if (sourceColumn !== column) {
         // ── Cross-column move ─────────────────────────────────
-        const ticketProjectId = findTicketProjectId(ticketId)
-        const isSimpleMode = store.simpleModeByProject[projectId] ?? false
+        const ticketProjectId = findTicketProjectId(ticketId, draggedProjectId)
+        const simpleModeKey = isMultiProjectMode ? projectId : ticketProjectId
+        const isSimpleMode =
+          store.simpleModeByProject[simpleModeKey] ??
+          store.simpleModeByProject[ticketProjectId] ??
+          false
 
         // S9: when dropping on In Progress and simple mode is off,
         //   open the worktree picker modal instead of moving directly.
         if (isInProgressColumn && !isSimpleMode) {
-          const draggedTicket = findTicket(ticketId)
+          const draggedTicket = findTicket(ticketId, ticketProjectId)
           if (draggedTicket) {
             // Check if ticket has unresolved blockers
-            const blockerIds = store.dependencyMap.get(ticketId)
+            const blockerIds = store.dependencyMap.get(ticketKey(ticketProjectId ?? draggedProjectId, ticketId))
             const triggerColumn = useSettingsStore.getState().followUpTriggerColumn
             let isBlocked = false
             if (blockerIds?.size) {
-              for (const [, projTickets] of store.tickets) {
-                for (const t of projTickets) {
-                  if (
-                    blockerIds.has(t.id) &&
-                    !isBlockerSatisfied(t.column, t.mode, triggerColumn)
-                  ) {
-                    isBlocked = true
-                    break
-                  }
+              for (const blockerKey of blockerIds) {
+                const blockerRef = parseTicketKey(blockerKey)
+                const blockerTicket = store.tickets
+                  .get(blockerRef.projectId)
+                  ?.find((t) => t.id === blockerRef.ticketId)
+                if (blockerTicket && !isBlockerSatisfied(blockerTicket.column, blockerTicket.mode, triggerColumn)) {
+                  isBlocked = true
+                  break
                 }
-                if (isBlocked) break
               }
             }
 
@@ -376,17 +439,21 @@ export function KanbanColumn({
 
         // S11: backward drag from In Progress to To Do — confirm if ticket has active session
         if (isTodoColumn && sourceColumn === 'in_progress') {
-          const draggedTicket = findTicket(ticketId)
+          const draggedTicket = findTicket(ticketId, ticketProjectId)
           if (draggedTicket?.current_session_id) {
             // Show confirmation dialog
-            setPendingBackwardDrag({ ticketId, targetIndex })
+            setPendingBackwardDrag({
+              ticketId,
+              projectId: ticketProjectId,
+              targetIndex: projectLocalDropIndex(ticketProjectId, targetIndex)
+            })
             return
           }
         }
 
         // Merge-on-done: intercept drops to Done for feature-branch worktrees
         if (column === 'done') {
-          const draggedTicket = findTicket(ticketId)
+          const draggedTicket = findTicket(ticketId, ticketProjectId)
           if (draggedTicket?.worktree_id) {
             try {
               const worktree = await dbApi.worktree.get<Worktree>(draggedTicket.worktree_id)
@@ -422,7 +489,10 @@ export function KanbanColumn({
                     }
 
                     if (hasUncommitted || commitsAhead > 0) {
-                      const sortOrder = store.computeSortOrder(tickets, targetIndex)
+                      const sortOrder = store.computeSortOrder(
+                        projectTicketsForColumn(ticketProjectId),
+                        projectLocalDropIndex(ticketProjectId, targetIndex)
+                      )
                       store.setPendingDoneMove({ ticketId, projectId: ticketProjectId, sortOrder })
                       return
                     }
@@ -440,7 +510,10 @@ export function KanbanColumn({
         }
 
         // Default: move directly
-        const sortOrder = store.computeSortOrder(tickets, targetIndex)
+        const sortOrder = store.computeSortOrder(
+          projectTicketsForColumn(ticketProjectId),
+          projectLocalDropIndex(ticketProjectId, targetIndex)
+        )
         store.moveTicket(ticketId, ticketProjectId, column, sortOrder)
 
         // Trigger usage refresh when simple-mode drops a ticket into In Progress
@@ -450,14 +523,36 @@ export function KanbanColumn({
         }
       } else {
         // ── Same-column reorder ───────────────────────────────
-        const ticketProjectId = findTicketProjectId(ticketId)
-        const filteredTickets = tickets.filter((t) => t.id !== ticketId)
-        const adjustedIndex = targetIndex > sourceIndex ? targetIndex - 1 : targetIndex
+        const ticketProjectId = findTicketProjectId(ticketId, draggedProjectId)
+        const draggedKey = ticketKey(ticketProjectId, ticketId)
+        const projectTickets = projectTicketsForColumn(ticketProjectId)
+        const sourceProjectIndex = projectTickets.findIndex(
+          (ticket) => ticketKey(ticket.project_id, ticket.id) === draggedKey
+        )
+        const filteredTickets = projectTickets.filter(
+          (ticket) => ticketKey(ticket.project_id, ticket.id) !== draggedKey
+        )
+        const targetProjectIndex = projectLocalDropIndex(ticketProjectId, targetIndex)
+        const adjustedIndex =
+          sourceProjectIndex >= 0 && targetProjectIndex > sourceProjectIndex
+            ? targetProjectIndex - 1
+            : targetProjectIndex
         const sortOrder = store.computeSortOrder(filteredTickets, adjustedIndex)
         store.reorderTicket(ticketId, ticketProjectId, sortOrder)
       }
     },
-    [column, projectId, tickets, isInProgressColumn, isTodoColumn, findTicketProjectId, findTicket]
+    [
+      column,
+      tickets.length,
+      isInProgressColumn,
+      isTodoColumn,
+      isMultiProjectMode,
+      projectId,
+      findTicketProjectId,
+      findTicket,
+      projectTicketsForColumn,
+      projectLocalDropIndex
+    ]
   )
 
   // ── Backward drag confirmation handler ───────────────────────────
@@ -465,14 +560,13 @@ export function KanbanColumn({
     if (!pendingBackwardDrag) return
     // Suppress layout animation for drag-and-drop (instant placement across all columns)
     suppressLayoutAnimation()
-    const { ticketId, targetIndex } = pendingBackwardDrag
+    const { ticketId, projectId: ticketProjectId, targetIndex } = pendingBackwardDrag
 
     const store = useKanbanStore.getState()
-    const ticketProjectId = findTicketProjectId(ticketId)
 
     try {
       // Stop the actual session
-      const draggedTicket = findTicket(ticketId)
+      const draggedTicket = findTicket(ticketId, ticketProjectId)
       if (draggedTicket?.current_session_id) {
         // Abort the running agent process (not just the DB status)
         const session = await dbApi.session.get<Session>(draggedTicket.current_session_id)
@@ -480,14 +574,16 @@ export function KanbanColumn({
           const worktree = await dbApi.worktree.get<Worktree>(session.worktree_id)
           if (worktree?.path) {
             try {
-              unwrapEnvelope(await opencodeApi.abort(worktree.path, session.opencode_session_id))
+              unwrapEnvelope(
+                await opencodeApi.abort(worktree.path, session.opencode_session_id)
+              )
             } catch {
               // Non-critical — session may already be idle
             }
           }
         }
 
-        await dbApi.session.update<Session>(draggedTicket.current_session_id, {
+        await dbApi.session.update(draggedTicket.current_session_id, {
           status: 'completed',
           completed_at: new Date().toISOString()
         })
@@ -516,7 +612,7 @@ export function KanbanColumn({
     }
 
     setPendingBackwardDrag(null)
-  }, [pendingBackwardDrag, findTicketProjectId, findTicket])
+  }, [pendingBackwardDrag, findTicket])
 
   // ── Drop indicator element ────────────────────────────────────────
   const dropIndicator = (
@@ -690,6 +786,7 @@ export function KanbanColumn({
           className="flex flex-1 flex-col gap-2 overflow-y-auto px-1 pb-2 rounded-md min-h-[60px]"
         >
           {tickets.length === 0 &&
+          invalidPlaceholders.length === 0 &&
           !(isDoneColumn && showArchived && archivedTickets && archivedTickets.length > 0) ? (
             isDragOver ? (
               dropIndicator
@@ -708,30 +805,43 @@ export function KanbanColumn({
             )
           ) : (
             <>
-              {tickets.map((ticket, index) => (
-                <motion.div
-                  key={ticket.id}
-                  data-card-index={index}
-                  layoutId={ticket.id}
-                  layout
-                  transition={isLayoutAnimationSuppressed() ? { duration: 0 } : CARD_LAYOUT_SPRING}
-                >
-                  {isDragOver && dropIndex === index && dropIndicator}
-                  <div
-                    data-card-index={index}
-                    className={
-                      draggingTicketId === ticket.id ? 'h-0 min-h-0 overflow-hidden' : undefined
-                    }
-                  >
-                    <KanbanTicketCard
-                      ticket={ticket}
-                      index={index}
-                      connectionId={connectionId}
-                      isPinnedMode={isPinnedMode}
-                    />
-                  </div>
-                </motion.div>
+              {isTodoColumn && invalidPlaceholders.map((placeholder) => (
+                <MarkdownInvalidCardPlaceholder
+                  key={`${placeholder.projectId}:${placeholder.filePath}`}
+                  placeholder={placeholder}
+                />
               ))}
+
+              {tickets.map((ticket, index) => {
+                const occurrenceKey = fallbackActiveCardIdentityKeys[index] ?? ticketKey(ticket.project_id, ticket.id)
+                return (
+                  <motion.div
+                    key={occurrenceKey}
+                    data-card-index={index}
+                    layoutId={occurrenceKey}
+                    layout
+                    transition={isLayoutAnimationSuppressed() ? { duration: 0 } : CARD_LAYOUT_SPRING}
+                  >
+                    {isDragOver && dropIndex === index && dropIndicator}
+                    <div
+                      data-card-index={index}
+                      className={
+                        draggingTicketKey === ticketKey(ticket.project_id, ticket.id)
+                          ? 'h-0 min-h-0 overflow-hidden'
+                          : undefined
+                      }
+                    >
+                      <KanbanTicketCard
+                        ticket={ticket}
+                        index={index}
+                        connectionId={connectionId}
+                        isPinnedMode={isPinnedMode}
+                        cardIdentityKey={occurrenceKey}
+                      />
+                    </div>
+                  </motion.div>
+                )
+              })}
               {isDragOver && dropIndex === tickets.length && dropIndicator}
 
               {/* Archived tickets (Done column, toggle ON) */}
@@ -744,17 +854,21 @@ export function KanbanColumn({
                     </span>
                     <div className="flex-1 border-t border-border/40" />
                   </div>
-                  {archivedTickets.map((ticket) => (
-                    <div key={ticket.id}>
-                      <KanbanTicketCard
-                        ticket={ticket}
-                        index={-1}
-                        isArchived
-                        connectionId={connectionId}
-                        isPinnedMode={isPinnedMode}
-                      />
-                    </div>
-                  ))}
+                  {archivedTickets.map((ticket, index) => {
+                    const occurrenceKey = fallbackArchivedCardIdentityKeys?.[index] ?? ticketKey(ticket.project_id, ticket.id)
+                    return (
+                      <div key={occurrenceKey}>
+                        <KanbanTicketCard
+                          ticket={ticket}
+                          index={-1}
+                          isArchived
+                          connectionId={connectionId}
+                          isPinnedMode={isPinnedMode}
+                          cardIdentityKey={occurrenceKey}
+                        />
+                      </div>
+                    )
+                  })}
                 </>
               )}
 

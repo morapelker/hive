@@ -51,7 +51,7 @@ describe('kanban RPC mocked provider', () => {
       })
     )
 
-    expect(createTicket).toHaveBeenCalledWith(payload)
+    expect(createTicket).toHaveBeenCalledWith('project-1', payload)
     expect(response).toEqual({
       id: 'kanban-ticket-create-1',
       ok: true,
@@ -175,11 +175,11 @@ describe('kanban RPC mocked provider', () => {
       router.handle({
         id: 'kanban-ticket-create-batch-1',
         method: 'kanban.ticket.createBatch',
-        params: payload
+        params: { projectId: 'project-1', data: payload }
       })
     )
 
-    expect(createTicketBatch).toHaveBeenCalledWith(payload)
+    expect(createTicketBatch).toHaveBeenCalledWith('project-1', payload)
     expect(response).toEqual({
       id: 'kanban-ticket-create-batch-1',
       ok: true,
@@ -258,11 +258,11 @@ describe('kanban RPC mocked provider', () => {
       router.handle({
         id: 'kanban-ticket-get-1',
         method: 'kanban.ticket.get',
-        params: { id: 'ticket-1' }
+        params: { projectId: 'project-1', id: 'ticket-1' }
       })
     )
 
-    expect(getTicket).toHaveBeenCalledWith('ticket-1')
+    expect(getTicket).toHaveBeenCalledWith('project-1', 'ticket-1')
     expect(response).toEqual({
       id: 'kanban-ticket-get-1',
       ok: true,
@@ -282,11 +282,11 @@ describe('kanban RPC mocked provider', () => {
       router.handle({
         id: 'kanban-ticket-get-missing',
         method: 'kanban.ticket.get',
-        params: { id: 'missing-ticket' }
+        params: { projectId: 'project-1', id: 'missing-ticket' }
       })
     )
 
-    expect(getTicket).toHaveBeenCalledWith('missing-ticket')
+    expect(getTicket).toHaveBeenCalledWith('project-1', 'missing-ticket')
     expect(response).toEqual({
       id: 'kanban-ticket-get-missing',
       ok: true,
@@ -459,11 +459,11 @@ describe('kanban RPC mocked provider', () => {
       router.handle({
         id: 'kanban-ticket-update-1',
         method: 'kanban.ticket.update',
-        params: { id: 'ticket-1', data }
+        params: { projectId: 'project-1', id: 'ticket-1', data }
       })
     )
 
-    expect(updateTicket).toHaveBeenCalledWith('ticket-1', data)
+    expect(updateTicket).toHaveBeenCalledWith('project-1', 'ticket-1', data)
     expect(response).toEqual({
       id: 'kanban-ticket-update-1',
       ok: true,
@@ -484,11 +484,11 @@ describe('kanban RPC mocked provider', () => {
       router.handle({
         id: 'kanban-ticket-update-missing',
         method: 'kanban.ticket.update',
-        params: { id: 'missing-ticket', data }
+        params: { projectId: 'project-1', id: 'missing-ticket', data }
       })
     )
 
-    expect(updateTicket).toHaveBeenCalledWith('missing-ticket', data)
+    expect(updateTicket).toHaveBeenCalledWith('project-1', 'missing-ticket', data)
     expect(response).toEqual({
       id: 'kanban-ticket-update-missing',
       ok: true,
@@ -532,11 +532,11 @@ describe('kanban RPC mocked provider', () => {
       router.handle({
         id: 'kanban-ticket-delete-1',
         method: 'kanban.ticket.delete',
-        params: { id: 'ticket-1' }
+        params: { projectId: 'project-1', id: 'ticket-1' }
       })
     )
 
-    expect(deleteTicket).toHaveBeenCalledWith('ticket-1')
+    expect(deleteTicket).toHaveBeenCalledWith('project-1', 'ticket-1')
     expect(response).toEqual({
       id: 'kanban-ticket-delete-1',
       ok: true,
@@ -556,11 +556,11 @@ describe('kanban RPC mocked provider', () => {
       router.handle({
         id: 'kanban-ticket-delete-missing',
         method: 'kanban.ticket.delete',
-        params: { id: 'missing-ticket' }
+        params: { projectId: 'project-1', id: 'missing-ticket' }
       })
     )
 
-    expect(deleteTicket).toHaveBeenCalledWith('missing-ticket')
+    expect(deleteTicket).toHaveBeenCalledWith('project-1', 'missing-ticket')
     expect(response).toEqual({
       id: 'kanban-ticket-delete-missing',
       ok: true,
@@ -631,11 +631,11 @@ describe('kanban RPC mocked provider', () => {
       router.handle({
         id: 'kanban-ticket-archive-1',
         method: 'kanban.ticket.archive',
-        params: { id: 'ticket-1' }
+        params: { projectId: 'project-1', id: 'ticket-1' }
       })
     )
 
-    expect(archiveTicket).toHaveBeenCalledWith('ticket-1')
+    expect(archiveTicket).toHaveBeenCalledWith('project-1', 'ticket-1')
     expect(response).toEqual({
       id: 'kanban-ticket-archive-1',
       ok: true,
@@ -655,11 +655,11 @@ describe('kanban RPC mocked provider', () => {
       router.handle({
         id: 'kanban-ticket-archive-missing',
         method: 'kanban.ticket.archive',
-        params: { id: 'missing-ticket' }
+        params: { projectId: 'project-1', id: 'missing-ticket' }
       })
     )
 
-    expect(archiveTicket).toHaveBeenCalledWith('missing-ticket')
+    expect(archiveTicket).toHaveBeenCalledWith('project-1', 'missing-ticket')
     expect(response).toEqual({
       id: 'kanban-ticket-archive-missing',
       ok: true,
@@ -802,11 +802,11 @@ describe('kanban RPC mocked provider', () => {
       router.handle({
         id: 'kanban-ticket-unarchive-1',
         method: 'kanban.ticket.unarchive',
-        params: { id: 'ticket-1' }
+        params: { projectId: 'project-1', id: 'ticket-1' }
       })
     )
 
-    expect(unarchiveTicket).toHaveBeenCalledWith('ticket-1')
+    expect(unarchiveTicket).toHaveBeenCalledWith('project-1', 'ticket-1')
     expect(response).toEqual({
       id: 'kanban-ticket-unarchive-1',
       ok: true,
@@ -826,11 +826,11 @@ describe('kanban RPC mocked provider', () => {
       router.handle({
         id: 'kanban-ticket-unarchive-missing',
         method: 'kanban.ticket.unarchive',
-        params: { id: 'missing-ticket' }
+        params: { projectId: 'project-1', id: 'missing-ticket' }
       })
     )
 
-    expect(unarchiveTicket).toHaveBeenCalledWith('missing-ticket')
+    expect(unarchiveTicket).toHaveBeenCalledWith('project-1', 'missing-ticket')
     expect(response).toEqual({
       id: 'kanban-ticket-unarchive-missing',
       ok: true,
@@ -901,11 +901,11 @@ describe('kanban RPC mocked provider', () => {
       router.handle({
         id: 'kanban-ticket-move-1',
         method: 'kanban.ticket.move',
-        params: { id: 'ticket-1', column: 'review', sortOrder: 12 }
+        params: { projectId: 'project-1', id: 'ticket-1', column: 'review', sortOrder: 12 }
       })
     )
 
-    expect(moveTicket).toHaveBeenCalledWith('ticket-1', 'review', 12)
+    expect(moveTicket).toHaveBeenCalledWith('project-1', 'ticket-1', 'review', 12)
     expect(response).toEqual({
       id: 'kanban-ticket-move-1',
       ok: true,
@@ -925,11 +925,11 @@ describe('kanban RPC mocked provider', () => {
       router.handle({
         id: 'kanban-ticket-move-missing',
         method: 'kanban.ticket.move',
-        params: { id: 'missing-ticket', column: 'done', sortOrder: 99 }
+        params: { projectId: 'project-1', id: 'missing-ticket', column: 'done', sortOrder: 99 }
       })
     )
 
-    expect(moveTicket).toHaveBeenCalledWith('missing-ticket', 'done', 99)
+    expect(moveTicket).toHaveBeenCalledWith('project-1', 'missing-ticket', 'done', 99)
     expect(response).toEqual({
       id: 'kanban-ticket-move-missing',
       ok: true,
@@ -973,11 +973,11 @@ describe('kanban RPC mocked provider', () => {
       router.handle({
         id: 'kanban-ticket-reorder-1',
         method: 'kanban.ticket.reorder',
-        params: { id: 'ticket-1', sortOrder: 42 }
+        params: { projectId: 'project-1', id: 'ticket-1', sortOrder: 42 }
       })
     )
 
-    expect(reorderTicket).toHaveBeenCalledWith('ticket-1', 42)
+    expect(reorderTicket).toHaveBeenCalledWith('project-1', 'ticket-1', 42)
     expect(response).toEqual({
       id: 'kanban-ticket-reorder-1',
       ok: true,
@@ -1147,11 +1147,11 @@ describe('kanban RPC mocked provider', () => {
       router.handle({
         id: 'kanban-ticket-add-tokens-1',
         method: 'kanban.ticket.addTokens',
-        params: { id: 'ticket-1', tokens: 128 }
+        params: { projectId: 'project-1', id: 'ticket-1', tokens: 128 }
       })
     )
 
-    expect(addTicketTokens).toHaveBeenCalledWith('ticket-1', 128)
+    expect(addTicketTokens).toHaveBeenCalledWith('project-1', 'ticket-1', 128)
     expect(response).toEqual({
       id: 'kanban-ticket-add-tokens-1',
       ok: true,
@@ -1171,11 +1171,11 @@ describe('kanban RPC mocked provider', () => {
       router.handle({
         id: 'kanban-ticket-add-tokens-missing',
         method: 'kanban.ticket.addTokens',
-        params: { id: 'missing-ticket', tokens: 128 }
+        params: { projectId: 'project-1', id: 'missing-ticket', tokens: 128 }
       })
     )
 
-    expect(addTicketTokens).toHaveBeenCalledWith('missing-ticket', 128)
+    expect(addTicketTokens).toHaveBeenCalledWith('project-1', 'missing-ticket', 128)
     expect(response).toEqual({
       id: 'kanban-ticket-add-tokens-missing',
       ok: true,
@@ -1552,13 +1552,14 @@ describe('kanban RPC mocked provider', () => {
         id: 'kanban-dependency-add-1',
         method: 'kanban.dependency.add',
         params: {
+          projectId: 'project-1',
           dependentId: 'ticket-1',
           blockerId: 'ticket-2'
         }
       })
     )
 
-    expect(addTicketDependency).toHaveBeenCalledWith('ticket-1', 'ticket-2')
+    expect(addTicketDependency).toHaveBeenCalledWith('project-1', 'ticket-1', 'ticket-2')
     expect(response).toEqual({
       id: 'kanban-dependency-add-1',
       ok: true,
@@ -1606,13 +1607,14 @@ describe('kanban RPC mocked provider', () => {
         id: 'kanban-dependency-remove-1',
         method: 'kanban.dependency.remove',
         params: {
+          projectId: 'project-1',
           dependentId: 'ticket-1',
           blockerId: 'ticket-2'
         }
       })
     )
 
-    expect(removeTicketDependency).toHaveBeenCalledWith('ticket-1', 'ticket-2')
+    expect(removeTicketDependency).toHaveBeenCalledWith('project-1', 'ticket-1', 'ticket-2')
     expect(response).toEqual({
       id: 'kanban-dependency-remove-1',
       ok: true,
@@ -1687,12 +1689,13 @@ describe('kanban RPC mocked provider', () => {
         id: 'kanban-dependency-get-blockers-1',
         method: 'kanban.dependency.getBlockers',
         params: {
+          projectId: 'project-1',
           id: 'ticket-1'
         }
       })
     )
 
-    expect(getBlockersForTicket).toHaveBeenCalledWith('ticket-1')
+    expect(getBlockersForTicket).toHaveBeenCalledWith('project-1', 'ticket-1')
     expect(response).toEqual({
       id: 'kanban-dependency-get-blockers-1',
       ok: true,
@@ -1766,12 +1769,13 @@ describe('kanban RPC mocked provider', () => {
         id: 'kanban-dependency-get-dependents-1',
         method: 'kanban.dependency.getDependents',
         params: {
+          projectId: 'project-1',
           id: 'ticket-2'
         }
       })
     )
 
-    expect(getDependentsOfTicket).toHaveBeenCalledWith('ticket-2')
+    expect(getDependentsOfTicket).toHaveBeenCalledWith('project-1', 'ticket-2')
     expect(response).toEqual({
       id: 'kanban-dependency-get-dependents-1',
       ok: true,
@@ -1875,12 +1879,13 @@ describe('kanban RPC mocked provider', () => {
         id: 'kanban-dependency-remove-all-1',
         method: 'kanban.dependency.removeAll',
         params: {
+          projectId: 'project-1',
           id: 'ticket-1'
         }
       })
     )
 
-    expect(removeAllDependenciesForTicket).toHaveBeenCalledWith('ticket-1')
+    expect(removeAllDependenciesForTicket).toHaveBeenCalledWith('project-1', 'ticket-1')
     expect(response).toEqual({
       id: 'kanban-dependency-remove-all-1',
       ok: true,

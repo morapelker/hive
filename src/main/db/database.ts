@@ -47,6 +47,7 @@ import type {
   KanbanTicketBatchCreateResult,
   KanbanTicketUpdate,
   KanbanTicketColumn,
+  KanbanStorageMode,
   TicketMark,
   TicketFollowupMessage,
   TicketFollowupMessageCreate,
@@ -647,6 +648,8 @@ export class DatabaseService {
     this.safeAddColumn('worktrees', 'teleported_to', 'TEXT DEFAULT NULL')
     this.safeAddColumn('connections', 'pinned', 'INTEGER NOT NULL DEFAULT 0')
     this.safeAddColumn('projects', 'kanban_simple_mode', 'INTEGER NOT NULL DEFAULT 0')
+    this.safeAddColumn('projects', 'kanban_storage_mode', "TEXT NOT NULL DEFAULT 'internal'")
+    this.safeAddColumn('projects', 'kanban_markdown_config', 'TEXT DEFAULT NULL')
     this.safeAddColumn('projects', 'custom_commands', 'TEXT DEFAULT NULL')
     this.safeAddColumn('projects', 'worktree_create_script', 'TEXT DEFAULT NULL')
     this.safeAddColumn('kanban_tickets', 'archived_at', 'TEXT DEFAULT NULL')
@@ -731,6 +734,39 @@ export class DatabaseService {
         ON ticket_followup_messages(ticket_id, created_at);
     `)
     this.safeAddColumn('ticket_followup_messages', 'role', "TEXT NOT NULL DEFAULT 'user'")
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS markdown_kanban_card_state (
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        card_id TEXT NOT NULL,
+        current_session_id TEXT DEFAULT NULL REFERENCES sessions(id) ON DELETE SET NULL,
+        worktree_id TEXT DEFAULT NULL REFERENCES worktrees(id) ON DELETE SET NULL,
+        note TEXT DEFAULT NULL,
+        attachments TEXT NOT NULL DEFAULT '[]',
+        plan_ready INTEGER NOT NULL DEFAULT 0,
+        total_tokens INTEGER NOT NULL DEFAULT 0,
+        pending_launch_config TEXT DEFAULT NULL,
+        last_seen_path TEXT DEFAULT NULL,
+        orphaned_at TEXT DEFAULT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (project_id, card_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_markdown_kanban_card_state_session
+        ON markdown_kanban_card_state(current_session_id);
+      CREATE INDEX IF NOT EXISTS idx_markdown_kanban_card_state_worktree
+        ON markdown_kanban_card_state(worktree_id);
+      CREATE INDEX IF NOT EXISTS idx_markdown_kanban_card_state_project_card
+        ON markdown_kanban_card_state(project_id, card_id);
+    `)
+    this.safeAddColumn('markdown_kanban_card_state', 'note', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('markdown_kanban_card_state', 'attachments', "TEXT NOT NULL DEFAULT '[]'")
+    this.safeAddColumn('markdown_kanban_card_state', 'plan_ready', 'INTEGER NOT NULL DEFAULT 0')
+    this.safeAddColumn('markdown_kanban_card_state', 'total_tokens', 'INTEGER NOT NULL DEFAULT 0')
+    this.safeAddColumn('markdown_kanban_card_state', 'pending_launch_config', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('markdown_kanban_card_state', 'last_seen_path', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('markdown_kanban_card_state', 'orphaned_at', 'TEXT DEFAULT NULL')
   }
 
   // Settings operations
@@ -1047,6 +1083,20 @@ export class DatabaseService {
     values.push(id)
     db.prepare(`UPDATE projects SET ${updates.join(', ')} WHERE id = ?`).run(...values)
 
+    return this.getProject(id)
+  }
+
+  updateProjectKanbanStorageMode(id: string, mode: KanbanStorageMode): Project | null {
+    const db = this.getDb()
+    if (!this.getProject(id)) return null
+    db.prepare('UPDATE projects SET kanban_storage_mode = ? WHERE id = ?').run(mode, id)
+    return this.getProject(id)
+  }
+
+  updateProjectKanbanMarkdownConfig(id: string, config: string | null): Project | null {
+    const db = this.getDb()
+    if (!this.getProject(id)) return null
+    db.prepare('UPDATE projects SET kanban_markdown_config = ? WHERE id = ?').run(config, id)
     return this.getProject(id)
   }
 

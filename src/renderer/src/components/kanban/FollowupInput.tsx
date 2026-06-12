@@ -27,7 +27,7 @@ interface FollowupInputProps {
   showInlineSendButton?: boolean
   // Claude CLI sessions manage plan/build inside the terminal — the toggle has no effect there.
   hideModeToggle?: boolean
-  textareaRef?: React.RefObject<HTMLTextAreaElement>
+  textareaRef?: React.RefObject<HTMLTextAreaElement | null>
 }
 
 export function FollowupInput({

@@ -16,6 +16,13 @@ import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import type { KanbanTicket, Session, Worktree } from '../../../../main/db/types'
 
+vi.mock('@/api/hive-enterprise/client', () => ({
+  isHiveTelemetryEnabled: vi.fn(() => false),
+  recordHivePromptStart: vi.fn(),
+  recordHivePromptIdle: vi.fn(),
+  recordHiveQuestionsAnswered: vi.fn()
+}))
+
 vi.mock('../sessions/HandoffSplitButton', () => ({
   HandoffSplitButton: ({
     onHandoff,
@@ -324,6 +331,8 @@ function setupStores(): {
         setup_script: null,
         run_script: null,
         archive_script: null,
+        worktree_create_script: null,
+        custom_commands: null,
         auto_assign_port: false,
         sort_order: 0,
         created_at: now,
@@ -338,6 +347,7 @@ function setupStores(): {
   })
   useKanbanStore.setState({
     selectedTicketId: ticket.id,
+    selectedTicketRef: { projectId: ticket.project_id, ticketId: ticket.id },
     isBoardViewActive: true,
     tickets: new Map([['project-1', [ticket]]]),
     updateTicket: vi.fn(async () => undefined),
@@ -403,6 +413,7 @@ describe('KanbanTicketModal handoff from Claude CLI plan review', () => {
 
   it('starts the Claude CLI handoff without focusing the new session', async () => {
     const { createSession, setActiveSession } = setupStores()
+    useSettingsStore.setState({ boardMode: 'sticky-tab' })
     const user = userEvent.setup()
 
     render(
@@ -532,7 +543,7 @@ describe('KanbanTicketModal handoff from Claude CLI plan review', () => {
       </ClaudeCliSessionPortalProvider>
     )
 
-    expect(screen.getByTestId('kanban-ticket-modal')).toBeInTheDocument()
+    expect(screen.getByTestId('kanban-ticket-modal')).toBeTruthy()
 
     act(() => {
       useWorktreeStatusStore.getState().setSessionStatus(sourceSession.id, 'working')
@@ -574,7 +585,7 @@ describe('KanbanTicketModal handoff from Claude CLI plan review', () => {
       </ClaudeCliSessionPortalProvider>
     )
 
-    expect(screen.getByTestId('kanban-ticket-modal')).toBeInTheDocument()
+    expect(screen.getByTestId('kanban-ticket-modal')).toBeTruthy()
 
     // Flip to working while the DB lookup (and thus isClaudeCli) is still pending.
     act(() => {
