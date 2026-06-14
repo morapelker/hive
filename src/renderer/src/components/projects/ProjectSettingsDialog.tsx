@@ -1,6 +1,6 @@
 import { useState, useEffect, useId } from 'react'
 import { toast } from '@/lib/toast'
-import { Brain, ChevronDown, ImageIcon, X } from 'lucide-react'
+import { Brain, ChevronDown, Folder, FolderKanban, FolderPlus, ImageIcon, X } from 'lucide-react'
 import type { SuggestionItem } from '@shared/types/setup-suggestions'
 import {
   Dialog,
@@ -12,14 +12,18 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
+import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { CustomCommandsEditor } from '@/components/custom-commands/CustomCommandsEditor'
 import { useProjectStore } from '@/stores/useProjectStore'
+import { useKanbanStore } from '@/stores/useKanbanStore'
 import { LanguageIcon } from './LanguageIcon'
 import { SetupScriptSuggestionsDialog } from './SetupScriptSuggestionsDialog'
+import { kanbanApi } from '@/api/kanban-api'
 import { projectApi } from '@/api/project-api'
 import type { CustomProjectCommand } from '@/lib/custom-commands'
+import { formatSelectedKanbanFolder } from './kanban-folder-paths'
 
 interface Project {
   id: string
@@ -34,8 +38,23 @@ interface Project {
   worktree_create_script: string | null
   custom_commands: CustomProjectCommand[] | null
   auto_assign_port: boolean
+  kanban_storage_mode?: 'internal' | 'markdown'
+  kanban_markdown_config?: string | null
   is_remote?: boolean
 }
+
+type MarkdownLayout = 'single-folder' | 'status-folders'
+type MarkdownConfig =
+  | {
+      layout: 'single-folder'
+      singleFolder: string
+      statusFolders?: { todo: string; in_progress: string; done: string }
+    }
+  | {
+      layout: 'status-folders'
+      singleFolder?: string
+      statusFolders: { todo: string; in_progress: string; done: string }
+    }
 
 interface ProjectSettingsDialogProps {
   project: Project
@@ -48,7 +67,7 @@ export function ProjectSettingsDialog({
   open,
   onOpenChange
 }: ProjectSettingsDialogProps): React.JSX.Element {
-  const { updateProject } = useProjectStore()
+  const { updateProject, loadProjects } = useProjectStore()
   const worktreeCreateScriptContentId = useId()
 
   const [setupScript, setSetupScript] = useState('')
@@ -59,6 +78,14 @@ export function ProjectSettingsDialog({
   const [customIcon, setCustomIcon] = useState<string | null>(null)
   const [customCommands, setCustomCommands] = useState<CustomProjectCommand[]>([])
   const [autoAssignPort, setAutoAssignPort] = useState(false)
+  const [kanbanMode, setKanbanMode] = useState<'internal' | 'markdown'>('internal')
+  const [kanbanLayout, setKanbanLayout] = useState<MarkdownLayout>('single-folder')
+  const [singleFolder, setSingleFolder] = useState('docs/kanban')
+  const [todoFolder, setTodoFolder] = useState('docs/kanban/todo')
+  const [inProgressFolder, setInProgressFolder] = useState('docs/kanban/in-progress')
+  const [doneFolder, setDoneFolder] = useState('docs/kanban/done')
+  const [kanbanConfigError, setKanbanConfigError] = useState<string | null>(null)
+  const [canCreateKanbanFolders, setCanCreateKanbanFolders] = useState(false)
   const [saving, setSaving] = useState(false)
   const [pickingIcon, setPickingIcon] = useState(false)
   const [suggestions, setSuggestions] = useState<SuggestionItem[]>([])
@@ -75,7 +102,33 @@ export function ProjectSettingsDialog({
       setCustomIcon(project.custom_icon ?? null)
       setCustomCommands(project.custom_commands ?? [])
       setAutoAssignPort(project.auto_assign_port ?? false)
+      setKanbanMode(project.kanban_storage_mode ?? 'internal')
+      setKanbanConfigError(null)
+      setCanCreateKanbanFolders(false)
       setSuggestionsOpen(false)
+
+      kanbanApi.config
+        .get<{ mode: 'internal' | 'markdown'; markdown: MarkdownConfig }>(project.id)
+        .then((config) => {
+          setKanbanMode(config.mode)
+          setKanbanLayout(config.markdown.layout)
+          setSingleFolder(
+            config.markdown.layout === 'single-folder'
+              ? config.markdown.singleFolder
+              : 'docs/kanban'
+          )
+          const statusFolders = config.markdown.statusFolders ?? {
+            todo: 'docs/kanban/todo',
+            in_progress: 'docs/kanban/in-progress',
+            done: 'docs/kanban/done'
+          }
+          setTodoFolder(statusFolders.todo)
+          setInProgressFolder(statusFolders.in_progress)
+          setDoneFolder(statusFolders.done)
+        })
+        .catch(() => {
+          setKanbanConfigError('Failed to load Kanban storage settings')
+        })
 
       if (project.is_remote === true) {
         setSuggestions([])
@@ -85,9 +138,9 @@ export function ProjectSettingsDialog({
       let cancelled = false
       projectApi
         .detectSetupSuggestions(project.path)
-        .then((nextSuggestions) => {
+        .then((items) => {
           if (!cancelled) {
-            setSuggestions(nextSuggestions)
+            setSuggestions(items)
           }
         })
         .catch(() => {
@@ -105,6 +158,7 @@ export function ProjectSettingsDialog({
     return undefined
   }, [
     open,
+    project.id,
     project.path,
     project.is_remote,
     project.setup_script,
@@ -113,7 +167,8 @@ export function ProjectSettingsDialog({
     project.worktree_create_script,
     project.custom_icon,
     project.custom_commands,
-    project.auto_assign_port
+    project.auto_assign_port,
+    project.kanban_storage_mode
   ])
 
   const handlePickIcon = async (): Promise<void> => {
@@ -140,26 +195,140 @@ export function ProjectSettingsDialog({
     }
   }
 
+  const handlePickKanbanFolder = async (setFolder: (value: string) => void): Promise<void> => {
+    try {
+      const selectedPath = await kanbanApi.config.pickMarkdownFolder()
+      if (!selectedPath) return
+      setFolder(formatSelectedKanbanFolder(project.path, selectedPath))
+    } catch {
+      toast.error('Failed to choose Kanban folder')
+    }
+  }
+
+  const renderKanbanFolderInput = (
+    label: string,
+    value: string,
+    setValue: (value: string) => void,
+    pickerLabel: string
+  ): React.JSX.Element => (
+    <div className="space-y-1.5">
+      <label className="text-xs font-medium text-muted-foreground">{label}</label>
+      <div className="flex gap-2">
+        <Input
+          value={value}
+          onChange={(event) => setValue(event.target.value)}
+          className="h-8 min-w-0 flex-1 text-xs"
+        />
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          className="h-8 w-8 shrink-0"
+          aria-label={pickerLabel}
+          title={pickerLabel}
+          onClick={() => void handlePickKanbanFolder(setValue)}
+        >
+          <Folder className="h-4 w-4" />
+        </Button>
+      </div>
+    </div>
+  )
+
+  const buildMarkdownConfig = (): MarkdownConfig =>
+    kanbanLayout === 'single-folder'
+      ? {
+          layout: 'single-folder' as const,
+          singleFolder: singleFolder.trim() || 'docs/kanban',
+          statusFolders: {
+            todo: todoFolder.trim() || 'docs/kanban/todo',
+            in_progress: inProgressFolder.trim() || 'docs/kanban/in-progress',
+            done: doneFolder.trim() || 'docs/kanban/done'
+          }
+        }
+      : {
+          layout: 'status-folders' as const,
+          singleFolder: singleFolder.trim() || 'docs/kanban',
+          statusFolders: {
+            todo: todoFolder.trim() || 'docs/kanban/todo',
+            in_progress: inProgressFolder.trim() || 'docs/kanban/in-progress',
+            done: doneFolder.trim() || 'docs/kanban/done'
+          }
+        }
+
+  const isMissingFolderError = (message: string): boolean =>
+    /ENOENT|no such file|cannot find|not found/i.test(message)
+
+  const extractMissingFolderPath = (message: string): string => {
+    const quotedPath = message.match(/'([^']+)'/)?.[1]
+    const path =
+      quotedPath ?? (kanbanLayout === 'single-folder' ? singleFolder : 'configured folders')
+    const projectPrefix = project.path.endsWith('/') ? project.path : `${project.path}/`
+    return path.startsWith(projectPrefix) ? path.slice(projectPrefix.length) : path
+  }
+
   const handleSave = async (): Promise<void> => {
     setSaving(true)
+    setKanbanConfigError(null)
+    setCanCreateKanbanFolders(false)
     try {
-      const success = await updateProject(project.id, {
-        setup_script: setupScript.trim() || null,
-        run_script: runScript.trim() || null,
-        archive_script: archiveScript.trim() || null,
-        worktree_create_script: worktreeCreateScript.trim() || null,
-        custom_commands: customCommands.filter(
-          (command) => command.name.trim() !== '' && command.prompt.trim() !== ''
-        ),
-        custom_icon: customIcon,
-        auto_assign_port: autoAssignPort
-      })
-      if (success) {
-        toast.success('Project settings saved')
-        onOpenChange(false)
-      } else {
+      try {
+        const success = await updateProject(project.id, {
+          setup_script: setupScript.trim() || null,
+          run_script: runScript.trim() || null,
+          archive_script: archiveScript.trim() || null,
+          worktree_create_script: worktreeCreateScript.trim() || null,
+          custom_commands: customCommands.filter(
+            (command) => command.name.trim() !== '' && command.prompt.trim() !== ''
+          ),
+          custom_icon: customIcon,
+          auto_assign_port: autoAssignPort
+        })
+        if (!success) {
+          toast.error('Failed to save project settings')
+          return
+        }
+
+        await loadProjects()
+      } catch {
         toast.error('Failed to save project settings')
+        return
       }
+
+      if (kanbanMode === 'markdown') {
+        await kanbanApi.config.update(project.id, buildMarkdownConfig())
+      }
+      const modeResult = await kanbanApi.config.setMode(project.id, kanbanMode)
+      if (!modeResult.success) {
+        setKanbanConfigError(modeResult.error ?? 'Kanban storage mode could not be changed')
+        return
+      }
+
+      await useKanbanStore.getState().loadTickets(project.id)
+      toast.success('Project settings saved')
+      onOpenChange(false)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to save Kanban settings'
+      setKanbanConfigError(message)
+      setCanCreateKanbanFolders(kanbanMode === 'markdown' && isMissingFolderError(message))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleCreateKanbanFolders = async (): Promise<void> => {
+    setSaving(true)
+    setKanbanConfigError(null)
+    setCanCreateKanbanFolders(false)
+    try {
+      const result = await kanbanApi.config.createFolders(project.id, buildMarkdownConfig())
+      if (!result.success) {
+        throw new Error(result.error ?? 'Failed to create Kanban folders')
+      }
+      await handleSave()
+    } catch (error) {
+      setKanbanConfigError(
+        error instanceof Error ? error.message : 'Failed to create Kanban folders'
+      )
     } finally {
       setSaving(false)
     }
@@ -242,6 +411,124 @@ export function ProjectSettingsDialog({
                   </div>
                   <Switch checked={autoAssignPort} onCheckedChange={setAutoAssignPort} />
                 </div>
+              </div>
+
+              <div className="space-y-3 rounded-md border border-border/60 p-3">
+                <div className="flex items-center gap-2">
+                  <FolderKanban className="h-4 w-4 text-muted-foreground" />
+                  <label className="text-sm font-medium">Kanban Storage</label>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <Button
+                    type="button"
+                    variant={kanbanMode === 'internal' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setKanbanMode('internal')}
+                  >
+                    Internal
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={kanbanMode === 'markdown' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setKanbanMode('markdown')}
+                  >
+                    Markdown
+                  </Button>
+                </div>
+
+                {kanbanMode === 'markdown' && (
+                  <>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Button
+                        type="button"
+                        variant={kanbanLayout === 'single-folder' ? 'secondary' : 'outline'}
+                        size="sm"
+                        onClick={() => setKanbanLayout('single-folder')}
+                      >
+                        One folder
+                      </Button>
+                      <Button
+                        type="button"
+                        variant={kanbanLayout === 'status-folders' ? 'secondary' : 'outline'}
+                        size="sm"
+                        onClick={() => setKanbanLayout('status-folders')}
+                      >
+                        Status folders
+                      </Button>
+                    </div>
+
+                    {kanbanLayout === 'single-folder' ? (
+                      renderKanbanFolderInput(
+                        'Folder',
+                        singleFolder,
+                        setSingleFolder,
+                        'Choose Kanban folder'
+                      )
+                    ) : (
+                      <div className="grid gap-2">
+                        {renderKanbanFolderInput(
+                          'To Do',
+                          todoFolder,
+                          setTodoFolder,
+                          'Choose To Do Kanban folder'
+                        )}
+                        {renderKanbanFolderInput(
+                          'In Progress / Review',
+                          inProgressFolder,
+                          setInProgressFolder,
+                          'Choose In Progress / Review Kanban folder'
+                        )}
+                        {renderKanbanFolderInput(
+                          'Done',
+                          doneFolder,
+                          setDoneFolder,
+                          'Choose Done Kanban folder'
+                        )}
+                      </div>
+                    )}
+
+                    {kanbanConfigError && canCreateKanbanFolders ? (
+                      <div
+                        data-testid="kanban-missing-folders-state"
+                        className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100"
+                      >
+                        <div className="flex items-start gap-2">
+                          <FolderPlus className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
+                          <div className="min-w-0 flex-1 space-y-1">
+                            <p className="font-medium text-amber-100">
+                              Kanban folder needs to be created
+                            </p>
+                            <p className="text-amber-100/75">
+                              Hive could not find{' '}
+                              <code className="rounded bg-background/40 px-1 py-0.5 font-mono text-[11px] text-amber-100">
+                                {extractMissingFolderPath(kanbanConfigError)}
+                              </code>
+                              . Create it to enable Markdown Kanban for this project.
+                            </p>
+                          </div>
+                        </div>
+                        <div className="mt-2 flex justify-end">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-7 border-amber-400/40 bg-amber-400/10 text-xs text-amber-100 hover:bg-amber-400/15 hover:text-amber-50"
+                            disabled={saving}
+                            onClick={handleCreateKanbanFolders}
+                          >
+                            Create folder and enable
+                          </Button>
+                        </div>
+                      </div>
+                    ) : kanbanConfigError ? (
+                      <div className="rounded border border-destructive/30 bg-destructive/10 px-2 py-1.5 text-xs text-destructive">
+                        <p>{kanbanConfigError}</p>
+                      </div>
+                    ) : null}
+                  </>
+                )}
               </div>
 
               {/* Setup Script */}
@@ -339,30 +626,27 @@ export function ProjectSettingsDialog({
                       <code className="font-mono text-[0.7rem]">git worktree add</code> call. Use
                       for repos that need special handling (e.g. git-crypt, sparse-checkout). The
                       script must create a worktree at{' '}
-                      <code className="font-mono text-[0.7rem]">$HIVE_WORKTREE_PATH</code> on
-                      branch <code className="font-mono text-[0.7rem]">$HIVE_BRANCH_NAME</code>.
-                      Available env vars:{' '}
-                      <code className="font-mono text-[0.7rem]">HIVE_WORKTREE_PATH</code>,{' '}
+                      <code className="font-mono text-[0.7rem]">$HIVE_WORKTREE_PATH</code> on branch{' '}
+                      <code className="font-mono text-[0.7rem]">$HIVE_BRANCH_NAME</code>. Available
+                      env vars: <code className="font-mono text-[0.7rem]">HIVE_WORKTREE_PATH</code>,{' '}
                       <code className="font-mono text-[0.7rem]">HIVE_BRANCH_NAME</code>,{' '}
                       <code className="font-mono text-[0.7rem]">HIVE_BASE_BRANCH</code>{' '}
                       (human-readable base branch name),{' '}
-                      <code className="font-mono text-[0.7rem]">HIVE_BASE_REF</code> (git ref to
-                      use with <code className="font-mono text-[0.7rem]">git worktree add</code>;
-                      equals <code className="font-mono text-[0.7rem]">HIVE_BASE_BRANCH</code> in
-                      most flows, but is{' '}
-                      <code className="font-mono text-[0.7rem]">FETCH_HEAD</code> when checking out
-                      a pull-request ref),{' '}
+                      <code className="font-mono text-[0.7rem]">HIVE_BASE_REF</code> (git ref to use
+                      with <code className="font-mono text-[0.7rem]">git worktree add</code>; equals{' '}
+                      <code className="font-mono text-[0.7rem]">HIVE_BASE_BRANCH</code> in most
+                      flows, but is <code className="font-mono text-[0.7rem]">FETCH_HEAD</code> when
+                      checking out a pull-request ref),{' '}
                       <code className="font-mono text-[0.7rem]">HIVE_PROJECT_PATH</code>,{' '}
                       <code className="font-mono text-[0.7rem]">HIVE_WORKTREE_MODE</code> (
                       <code className="font-mono text-[0.7rem]">new</code> |{' '}
                       <code className="font-mono text-[0.7rem]">existing</code> |{' '}
                       <code className="font-mono text-[0.7rem]">duplicate</code>). In{' '}
-                      <code className="font-mono text-[0.7rem]">duplicate</code> mode, also
-                      receives{' '}
-                      <code className="font-mono text-[0.7rem]">HIVE_SOURCE_WORKTREE_PATH</code>{' '}
-                      and <code className="font-mono text-[0.7rem]">HIVE_SOURCE_BRANCH</code>.
-                      Scripts run via <code className="font-mono text-[0.7rem]">/bin/sh -c</code>{' '}
-                      by default; a{' '}
+                      <code className="font-mono text-[0.7rem]">duplicate</code> mode, also receives{' '}
+                      <code className="font-mono text-[0.7rem]">HIVE_SOURCE_WORKTREE_PATH</code> and{' '}
+                      <code className="font-mono text-[0.7rem]">HIVE_SOURCE_BRANCH</code>. Scripts
+                      run via <code className="font-mono text-[0.7rem]">/bin/sh -c</code> by
+                      default; a{' '}
                       <code className="font-mono text-[0.7rem]">#!/usr/bin/env bash</code> or{' '}
                       <code className="font-mono text-[0.7rem]">#!/bin/bash</code> shebang on the
                       first line switches to{' '}

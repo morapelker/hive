@@ -2,11 +2,15 @@ import { Effect } from 'effect'
 import { z } from 'zod'
 import { isDesktopCommandResult, makeDesktopCommandRequest } from '../../../shared/desktop-command'
 import type {
+  KanbanMarkdownConfig,
+  KanbanStorageConfig,
+  KanbanStorageMode,
   KanbanTicket,
   KanbanTicketBatchCreate,
   KanbanTicketBatchCreateResult,
   KanbanTicketCreate,
   KanbanTicketUpdate,
+  MarkdownCardDiagnostic,
   TicketDependency
 } from '../../../main/db'
 import type { RpcHandler } from '../router'
@@ -45,33 +49,53 @@ interface KanbanBoardImportResult {
 }
 
 export interface KanbanRpcService {
-  readonly createTicket: (data: KanbanTicketCreate) => Effect.Effect<KanbanTicket, unknown, never>
+  readonly createTicket: (
+    projectId: string,
+    data: KanbanTicketCreate
+  ) => Effect.Effect<KanbanTicket, unknown, never>
   readonly createTicketBatch: (
+    projectId: string,
     data: KanbanTicketBatchCreate
   ) => Effect.Effect<KanbanTicketBatchCreateResult, unknown, never>
-  readonly getTicket: (id: string) => Effect.Effect<KanbanTicket | null, unknown, never>
+  readonly getTicket: (
+    projectId: string,
+    id: string
+  ) => Effect.Effect<KanbanTicket | null, unknown, never>
   readonly getTicketsByProject: (
     projectId: string,
     includeArchived?: boolean
   ) => Effect.Effect<KanbanTicket[], unknown, never>
   readonly updateTicket: (
+    projectId: string,
     id: string,
     data: KanbanTicketUpdate
   ) => Effect.Effect<KanbanTicket | null, unknown, never>
-  readonly deleteTicket: (id: string) => Effect.Effect<boolean, unknown, never>
-  readonly archiveTicket: (id: string) => Effect.Effect<KanbanTicket | null, unknown, never>
+  readonly deleteTicket: (projectId: string, id: string) => Effect.Effect<boolean, unknown, never>
+  readonly archiveTicket: (
+    projectId: string,
+    id: string
+  ) => Effect.Effect<KanbanTicket | null, unknown, never>
   readonly archiveAllDoneTickets: (projectId: string) => Effect.Effect<number, unknown, never>
-  readonly unarchiveTicket: (id: string) => Effect.Effect<KanbanTicket | null, unknown, never>
+  readonly unarchiveTicket: (
+    projectId: string,
+    id: string
+  ) => Effect.Effect<KanbanTicket | null, unknown, never>
   readonly moveTicket: (
+    projectId: string,
     id: string,
     column: KanbanTicket['column'],
     sortOrder: number
   ) => Effect.Effect<KanbanTicket | null, unknown, never>
-  readonly reorderTicket?: (id: string, sortOrder: number) => Effect.Effect<void, unknown, never>
+  readonly reorderTicket?: (
+    projectId: string,
+    id: string,
+    sortOrder: number
+  ) => Effect.Effect<void, unknown, never>
   readonly getTicketsBySession?: (
     sessionId: string
   ) => Effect.Effect<KanbanTicket[], unknown, never>
   readonly addTicketTokens?: (
+    projectId: string,
     id: string,
     tokens: number
   ) => Effect.Effect<KanbanTicket | null, unknown, never>
@@ -97,23 +121,28 @@ export interface KanbanRpcService {
     enabled: boolean
   ) => Effect.Effect<void, unknown, never>
   readonly addTicketDependency?: (
+    projectId: string,
     dependentId: string,
     blockerId: string
   ) => Effect.Effect<{ success: boolean; error?: string }, unknown, never>
   readonly removeTicketDependency?: (
+    projectId: string,
     dependentId: string,
     blockerId: string
   ) => Effect.Effect<boolean, unknown, never>
   readonly getBlockersForTicket?: (
+    projectId: string,
     ticketId: string
   ) => Effect.Effect<KanbanTicket[], unknown, never>
   readonly getDependentsOfTicket?: (
+    projectId: string,
     ticketId: string
   ) => Effect.Effect<KanbanTicket[], unknown, never>
   readonly getDependenciesForProject?: (
     projectId: string
   ) => Effect.Effect<TicketDependency[], unknown, never>
   readonly removeAllDependenciesForTicket?: (
+    projectId: string,
     ticketId: string
   ) => Effect.Effect<number, unknown, never>
   readonly openBoardImportFile?: () => Effect.Effect<
@@ -130,6 +159,29 @@ export interface KanbanRpcService {
     tickets: KanbanBoardImportTicket[],
     dependencies?: KanbanBoardImportDependency[]
   ) => Effect.Effect<KanbanBoardImportResult, unknown, never>
+  readonly getConfig?: (projectId: string) => Effect.Effect<KanbanStorageConfig, unknown, never>
+  readonly updateConfig?: (
+    projectId: string,
+    config: KanbanMarkdownConfig
+  ) => Effect.Effect<KanbanStorageConfig, unknown, never>
+  readonly setMode?: (
+    projectId: string,
+    mode: KanbanStorageMode
+  ) => Effect.Effect<{ success: boolean; error?: string }, unknown, never>
+  readonly createFolders?: (
+    projectId: string,
+    config?: KanbanMarkdownConfig
+  ) => Effect.Effect<{ success: boolean; error?: string }, unknown, never>
+  readonly pickMarkdownFolder?: () => Effect.Effect<string | null, unknown, never>
+  readonly getDiagnostics?: (
+    projectId: string
+  ) => Effect.Effect<MarkdownCardDiagnostic[], unknown, never>
+  readonly startWatch?: (
+    projectId: string
+  ) => Effect.Effect<{ success: boolean; error?: string }, unknown, never>
+  readonly stopWatch?: (
+    projectId: string
+  ) => Effect.Effect<{ success: boolean; error?: string }, unknown, never>
 }
 
 const ticketColumnSchema = z.enum(['todo', 'in_progress', 'review', 'done'])
@@ -172,6 +224,12 @@ const kanbanTicketBatchCreateSchema = z
     drafts: z.array(kanbanTicketBatchCreateItemSchema)
   })
   .strict() satisfies z.ZodType<KanbanTicketBatchCreate>
+const kanbanTicketBatchCreateParamsSchema = z
+  .object({
+    projectId: z.string(),
+    data: kanbanTicketBatchCreateSchema
+  })
+  .strict()
 const kanbanTicketUpdateSchema = z
   .object({
     title: z.string().optional(),
@@ -189,10 +247,16 @@ const kanbanTicketUpdateSchema = z
     pending_launch_config: z.string().nullable().optional(),
     goal_mode: z.boolean().optional(),
     goal_success_criteria: z.string().nullable().optional(),
-    note: z.string().nullable().optional()
+    note: z.string().nullable().optional(),
+    archived_at: z.string().nullable().optional()
   })
   .strict() satisfies z.ZodType<KanbanTicketUpdate>
-const stringArgParamsSchema = z.object({ id: z.string() }).strict()
+const ticketIdProjectParamsSchema = z
+  .object({
+    projectId: z.string(),
+    id: z.string()
+  })
+  .strict()
 const getTicketsByProjectParamsSchema = z
   .object({
     projectId: z.string(),
@@ -202,12 +266,14 @@ const getTicketsByProjectParamsSchema = z
 const projectIdParamsSchema = z.object({ projectId: z.string() }).strict()
 const updateTicketParamsSchema = z
   .object({
+    projectId: z.string(),
     id: z.string(),
     data: kanbanTicketUpdateSchema
   })
   .strict()
 const moveTicketParamsSchema = z
   .object({
+    projectId: z.string(),
     id: z.string(),
     column: ticketColumnSchema,
     sortOrder: z.number()
@@ -215,6 +281,7 @@ const moveTicketParamsSchema = z
   .strict()
 const reorderTicketParamsSchema = z
   .object({
+    projectId: z.string(),
     id: z.string(),
     sortOrder: z.number()
   })
@@ -222,6 +289,7 @@ const reorderTicketParamsSchema = z
 const sessionIdParamsSchema = z.object({ sessionId: z.string() }).strict()
 const addTicketTokensParamsSchema = z
   .object({
+    projectId: z.string(),
     id: z.string(),
     tokens: z.number()
   })
@@ -256,8 +324,15 @@ const simpleModeToggleParamsSchema = z
   .strict()
 const ticketDependencyPairParamsSchema = z
   .object({
+    projectId: z.string(),
     dependentId: z.string(),
     blockerId: z.string()
+  })
+  .strict()
+const ticketDependencyLookupParamsSchema = z
+  .object({
+    projectId: z.string(),
+    id: z.string()
   })
   .strict()
 const exportBoardParamsSchema = z
@@ -287,6 +362,39 @@ const importBoardTicketsParamsSchema = z
     projectId: z.string(),
     tickets: z.array(importTicketSchema),
     dependencies: z.array(importDependencySchema).optional()
+  })
+  .strict()
+const kanbanStorageModeSchema = z.enum(['internal', 'markdown'])
+const kanbanMarkdownLayoutSchema = z.enum(['single-folder', 'status-folders'])
+const kanbanMarkdownConfigSchema = z
+  .object({
+    layout: kanbanMarkdownLayoutSchema,
+    singleFolder: z.string(),
+    statusFolders: z
+      .object({
+        todo: z.string(),
+        in_progress: z.string(),
+        done: z.string()
+      })
+      .strict()
+  })
+  .strict() satisfies z.ZodType<KanbanMarkdownConfig>
+const updateKanbanConfigParamsSchema = z
+  .object({
+    projectId: z.string(),
+    config: kanbanMarkdownConfigSchema
+  })
+  .strict()
+const setKanbanModeParamsSchema = z
+  .object({
+    projectId: z.string(),
+    mode: kanbanStorageModeSchema
+  })
+  .strict()
+const createKanbanFoldersParamsSchema = z
+  .object({
+    projectId: z.string(),
+    config: kanbanMarkdownConfigSchema.optional()
   })
   .strict()
 
@@ -332,149 +440,151 @@ const errorMessage = (error: unknown): string => {
 }
 
 export const makeLiveKanbanRpcService = (): KanbanRpcService => ({
-  createTicket: (data) =>
+  createTicket: (projectId, data) =>
     Effect.tryPromise({
       try: async () => {
-        const { getDatabase } = await import('../../../main/db')
-        return getDatabase().createKanbanTicket(data)
+        const { getKanbanBackendForProject } = await import('../../../main/services/kanban-backend')
+        return getKanbanBackendForProject(projectId).create(projectId, data)
       },
       catch: (cause) => cause
     }),
-  createTicketBatch: (data) =>
+  createTicketBatch: (projectId, data) =>
     Effect.tryPromise({
       try: async () => {
-        const { getDatabase } = await import('../../../main/db')
-        return getDatabase().createKanbanTicketBatch(data)
+        const { getKanbanBackendForProject } = await import('../../../main/services/kanban-backend')
+        return getKanbanBackendForProject(projectId).createBatch(projectId, data)
       },
       catch: (cause) => cause
     }),
-  getTicket: (id) =>
+  getTicket: (projectId, id) =>
     Effect.tryPromise({
       try: async () => {
-        const { getDatabase } = await import('../../../main/db')
-        return getDatabase().getKanbanTicket(id)
+        const { getKanbanBackendForProject } = await import('../../../main/services/kanban-backend')
+        return getKanbanBackendForProject(projectId).get(projectId, id)
       },
       catch: (cause) => cause
     }),
   getTicketsByProject: (projectId, includeArchived) =>
     Effect.tryPromise({
       try: async () => {
-        const { getDatabase } = await import('../../../main/db')
-        return getDatabase().getKanbanTicketsByProject(projectId, includeArchived ?? false)
+        const { getKanbanBackendForProject } = await import('../../../main/services/kanban-backend')
+        return getKanbanBackendForProject(projectId).list(projectId, includeArchived ?? false)
       },
       catch: (cause) => cause
     }),
-  updateTicket: (id, data) =>
+  updateTicket: (projectId, id, data) =>
     Effect.tryPromise({
       try: async () => {
-        const { getDatabase } = await import('../../../main/db')
-        return getDatabase().updateKanbanTicket(id, data)
+        const { getKanbanBackendForProject } = await import('../../../main/services/kanban-backend')
+        return getKanbanBackendForProject(projectId).update(projectId, id, data)
       },
       catch: (cause) => cause
     }),
-  deleteTicket: (id) =>
+  deleteTicket: (projectId, id) =>
     Effect.tryPromise({
       try: async () => {
-        const { getDatabase } = await import('../../../main/db')
-        return getDatabase().deleteKanbanTicket(id)
+        const { getKanbanBackendForProject } = await import('../../../main/services/kanban-backend')
+        return getKanbanBackendForProject(projectId).delete(projectId, id)
       },
       catch: (cause) => cause
     }),
-  archiveTicket: (id) =>
+  archiveTicket: (projectId, id) =>
     Effect.tryPromise({
       try: async () => {
-        const { getDatabase } = await import('../../../main/db')
-        return getDatabase().archiveKanbanTicket(id)
+        const { getKanbanBackendForProject } = await import('../../../main/services/kanban-backend')
+        return getKanbanBackendForProject(projectId).archive(projectId, id)
       },
       catch: (cause) => cause
     }),
   archiveAllDoneTickets: (projectId) =>
     Effect.tryPromise({
       try: async () => {
-        const { getDatabase } = await import('../../../main/db')
-        return getDatabase().archiveAllDoneKanbanTickets(projectId)
+        const { getKanbanBackendForProject } = await import('../../../main/services/kanban-backend')
+        return getKanbanBackendForProject(projectId).archiveAllDone(projectId)
       },
       catch: (cause) => cause
     }),
-  unarchiveTicket: (id) =>
+  unarchiveTicket: (projectId, id) =>
     Effect.tryPromise({
       try: async () => {
-        const { getDatabase } = await import('../../../main/db')
-        return getDatabase().unarchiveKanbanTicket(id)
+        const { getKanbanBackendForProject } = await import('../../../main/services/kanban-backend')
+        return getKanbanBackendForProject(projectId).unarchive(projectId, id)
       },
       catch: (cause) => cause
     }),
-  moveTicket: (id, column, sortOrder) =>
+  moveTicket: (projectId, id, column, sortOrder) =>
     Effect.tryPromise({
       try: async () => {
-        const { getDatabase } = await import('../../../main/db')
-        return getDatabase().moveKanbanTicket(id, column, sortOrder)
+        const { getKanbanBackendForProject } = await import('../../../main/services/kanban-backend')
+        return getKanbanBackendForProject(projectId).move(projectId, id, column, sortOrder)
       },
       catch: (cause) => cause
     }),
-  reorderTicket: (id, sortOrder) =>
+  reorderTicket: (projectId, id, sortOrder) =>
     Effect.tryPromise({
       try: async () => {
-        const { getDatabase } = await import('../../../main/db')
-        return getDatabase().reorderKanbanTicket(id, sortOrder)
+        const { getKanbanBackendForProject } = await import('../../../main/services/kanban-backend')
+        return getKanbanBackendForProject(projectId).reorder(projectId, id, sortOrder)
       },
       catch: (cause) => cause
     }),
   getTicketsBySession: (sessionId) =>
     Effect.tryPromise({
       try: async () => {
-        const { getDatabase } = await import('../../../main/db')
-        return getDatabase().getKanbanTicketsBySession(sessionId)
+        const { getAllKanbanTicketsBySession } = await import(
+          '../../../main/services/kanban-backend'
+        )
+        return getAllKanbanTicketsBySession(sessionId)
       },
       catch: (cause) => cause
     }),
-  addTicketTokens: (id, tokens) =>
+  addTicketTokens: (projectId, id, tokens) =>
     Effect.tryPromise({
       try: async () => {
-        const { getDatabase } = await import('../../../main/db')
-        const db = getDatabase()
-        db.addTicketTokens(id, tokens)
-        return db.getKanbanTicket(id)
+        const { getKanbanBackendForProject } = await import('../../../main/services/kanban-backend')
+        return getKanbanBackendForProject(projectId).addTokens(projectId, id, tokens)
       },
       catch: (cause) => cause
     }),
   syncPrToTickets: (worktreeId, prNumber, prUrl) =>
     Effect.tryPromise({
       try: async () => {
-        const { getDatabase } = await import('../../../main/db')
-        return getDatabase().syncPRToTickets(worktreeId, prNumber, prUrl)
+        const { syncPRToAllKanbanBackends } = await import('../../../main/services/kanban-backend')
+        return syncPRToAllKanbanBackends(worktreeId, prNumber, prUrl)
       },
       catch: (cause) => cause
     }),
   clearPrFromTickets: (worktreeId) =>
     Effect.tryPromise({
       try: async () => {
-        const { getDatabase } = await import('../../../main/db')
-        return getDatabase().clearPRFromTickets(worktreeId)
+        const { clearPRFromAllKanbanBackends } = await import('../../../main/services/kanban-backend')
+        return clearPRFromAllKanbanBackends(worktreeId)
       },
       catch: (cause) => cause
     }),
   attachPrToTicket: (ticketId, projectId, prNumber, prUrl) =>
     Effect.tryPromise({
       try: async () => {
-        const { getDatabase } = await import('../../../main/db')
-        return getDatabase().attachPRToTicket(ticketId, projectId, prNumber, prUrl)
+        const { getKanbanBackendForProject } = await import('../../../main/services/kanban-backend')
+        return getKanbanBackendForProject(projectId).attachPR(projectId, ticketId, prNumber, prUrl)
       },
       catch: (cause) => cause
     }),
   detachPrFromTicket: (ticketId, projectId) =>
     Effect.tryPromise({
       try: async () => {
-        const { getDatabase } = await import('../../../main/db')
-        return getDatabase().detachPRFromTicket(ticketId, projectId)
+        const { getKanbanBackendForProject } = await import('../../../main/services/kanban-backend')
+        return getKanbanBackendForProject(projectId).detachPR(projectId, ticketId)
       },
       catch: (cause) => cause
     }),
   detachWorktreeFromTickets: (worktreeId) =>
     Effect.tryPromise({
       try: async () => {
-        const { getDatabase } = await import('../../../main/db')
-        return getDatabase().detachWorktreeFromTickets(worktreeId)
+        const { detachWorktreeFromAllKanbanBackends } = await import(
+          '../../../main/services/kanban-backend'
+        )
+        return detachWorktreeFromAllKanbanBackends(worktreeId)
       },
       catch: (cause) => cause
     }),
@@ -486,51 +596,55 @@ export const makeLiveKanbanRpcService = (): KanbanRpcService => ({
       },
       catch: (cause) => cause
     }),
-  addTicketDependency: (dependentId, blockerId) =>
+  addTicketDependency: (projectId, dependentId, blockerId) =>
     Effect.tryPromise({
       try: async () => {
-        const { getDatabase } = await import('../../../main/db')
-        return getDatabase().addTicketDependency(dependentId, blockerId)
+        const { getKanbanBackendForProject } = await import('../../../main/services/kanban-backend')
+        return getKanbanBackendForProject(projectId).addDependency(projectId, dependentId, blockerId)
       },
       catch: (cause) => cause
     }),
-  removeTicketDependency: (dependentId, blockerId) =>
+  removeTicketDependency: (projectId, dependentId, blockerId) =>
     Effect.tryPromise({
       try: async () => {
-        const { getDatabase } = await import('../../../main/db')
-        return getDatabase().removeTicketDependency(dependentId, blockerId)
+        const { getKanbanBackendForProject } = await import('../../../main/services/kanban-backend')
+        return getKanbanBackendForProject(projectId).removeDependency(
+          projectId,
+          dependentId,
+          blockerId
+        )
       },
       catch: (cause) => cause
     }),
-  getBlockersForTicket: (ticketId) =>
+  getBlockersForTicket: (projectId, ticketId) =>
     Effect.tryPromise({
       try: async () => {
-        const { getDatabase } = await import('../../../main/db')
-        return getDatabase().getBlockersForTicket(ticketId)
+        const { getKanbanBackendForProject } = await import('../../../main/services/kanban-backend')
+        return getKanbanBackendForProject(projectId).getBlockers(projectId, ticketId)
       },
       catch: (cause) => cause
     }),
-  getDependentsOfTicket: (ticketId) =>
+  getDependentsOfTicket: (projectId, ticketId) =>
     Effect.tryPromise({
       try: async () => {
-        const { getDatabase } = await import('../../../main/db')
-        return getDatabase().getDependentsOfTicket(ticketId)
+        const { getKanbanBackendForProject } = await import('../../../main/services/kanban-backend')
+        return getKanbanBackendForProject(projectId).getDependents(projectId, ticketId)
       },
       catch: (cause) => cause
     }),
   getDependenciesForProject: (projectId) =>
     Effect.tryPromise({
       try: async () => {
-        const { getDatabase } = await import('../../../main/db')
-        return getDatabase().getDependenciesForProject(projectId)
+        const { getKanbanBackendForProject } = await import('../../../main/services/kanban-backend')
+        return getKanbanBackendForProject(projectId).getDependenciesForProject(projectId)
       },
       catch: (cause) => cause
     }),
-  removeAllDependenciesForTicket: (ticketId) =>
+  removeAllDependenciesForTicket: (projectId, ticketId) =>
     Effect.tryPromise({
       try: async () => {
-        const { getDatabase } = await import('../../../main/db')
-        return getDatabase().removeAllDependenciesForTicket(ticketId)
+        const { getKanbanBackendForProject } = await import('../../../main/services/kanban-backend')
+        return getKanbanBackendForProject(projectId).removeAllDependencies(projectId, ticketId)
       },
       catch: (cause) => cause
     }),
@@ -562,10 +676,11 @@ export const makeLiveKanbanRpcService = (): KanbanRpcService => ({
     Effect.gen(function* () {
       const { exportData, ticketCount } = yield* Effect.tryPromise({
         try: async () => {
-          const { getDatabase } = await import('../../../main/db')
-          const db = getDatabase()
-          const tickets = db.getKanbanTicketsByProject(projectId, false)
-          const dependencies = db.getDependenciesForProject(projectId)
+          const { getKanbanBackendForProject } = await import(
+            '../../../main/services/kanban-backend'
+          )
+          const { tickets, dependencies } =
+            await getKanbanBackendForProject(projectId).exportBoard(projectId)
 
           return {
             ticketCount: tickets.length,
@@ -615,78 +730,86 @@ export const makeLiveKanbanRpcService = (): KanbanRpcService => ({
   importBoardTickets: (projectId, tickets, dependencies) =>
     Effect.tryPromise({
       try: async () => {
-        const { getDatabase } = await import('../../../main/db')
-        const db = getDatabase()
-        let created = 0
-        let updated = 0
-        let dependencyCount = 0
-        let ignoredDependencyCount = 0
-        const selectedIds = new Set(tickets.map((ticket) => ticket.id))
-
-        for (const ticket of tickets) {
-          const existing = db.getKanbanTicket(ticket.id)
-
-          if (existing && existing.project_id === projectId) {
-            db.updateKanbanTicket(ticket.id, {
-              title: ticket.title,
-              description: ticket.description ?? null,
-              attachments: ticket.attachments ?? [],
-              column: (ticket.column as KanbanTicket['column']) ?? 'todo'
-            })
-            updated++
-          } else if (existing) {
-            db.createKanbanTicket({
-              project_id: projectId,
-              title: ticket.title,
-              description: ticket.description ?? null,
-              attachments: ticket.attachments ?? [],
-              column: (ticket.column as KanbanTicket['column']) ?? 'todo'
-            })
-            created++
-          } else {
-            db.createKanbanTicket({
-              id: ticket.id,
-              project_id: projectId,
-              title: ticket.title,
-              description: ticket.description ?? null,
-              attachments: ticket.attachments ?? [],
-              column: (ticket.column as KanbanTicket['column']) ?? 'todo'
-            })
-            created++
-          }
-        }
-
-        for (const ticketId of selectedIds) {
-          const blockers = db.getBlockersForTicket(ticketId)
-          for (const blocker of blockers) {
-            if (selectedIds.has(blocker.id)) {
-              db.removeTicketDependency(ticketId, blocker.id)
-            }
-          }
-        }
-
-        for (const dependency of dependencies ?? []) {
-          const dependentId = dependency.dependentId.trim()
-          const blockerId = dependency.blockerId.trim()
-          if (
-            !dependentId ||
-            !blockerId ||
-            !selectedIds.has(dependentId) ||
-            !selectedIds.has(blockerId)
-          ) {
-            ignoredDependencyCount++
-            continue
-          }
-
-          const result = db.addTicketDependency(dependentId, blockerId)
-          if (result.success) {
-            dependencyCount++
-          } else {
-            ignoredDependencyCount++
-          }
-        }
-
-        return { created, updated, dependencyCount, ignoredDependencyCount }
+        const { getKanbanBackendForProject } = await import('../../../main/services/kanban-backend')
+        return getKanbanBackendForProject(projectId).importTickets(projectId, tickets, dependencies)
+      },
+      catch: (cause) => cause
+    }),
+  getConfig: (projectId) =>
+    Effect.tryPromise({
+      try: async () => {
+        const { getKanbanStorageConfig } = await import('../../../main/services/kanban-backend')
+        return getKanbanStorageConfig(projectId)
+      },
+      catch: (cause) => cause
+    }),
+  updateConfig: (projectId, config) =>
+    Effect.tryPromise({
+      try: async () => {
+        const { updateKanbanMarkdownConfig } = await import('../../../main/services/kanban-backend')
+        return updateKanbanMarkdownConfig(projectId, config)
+      },
+      catch: (cause) => cause
+    }),
+  setMode: (projectId, mode) =>
+    Effect.tryPromise({
+      try: async () => {
+        const { setKanbanStorageMode } = await import('../../../main/services/kanban-backend')
+        return setKanbanStorageMode(projectId, mode)
+      },
+      catch: (cause) => cause
+    }),
+  createFolders: (projectId, config) =>
+    Effect.tryPromise({
+      try: async () => {
+        const { createConfiguredMarkdownFolders } = await import(
+          '../../../main/services/kanban-backend'
+        )
+        await createConfiguredMarkdownFolders(projectId, config)
+        return { success: true }
+      },
+      catch: (cause) => cause
+    }).pipe(
+      Effect.catchAll((cause) =>
+        Effect.succeed({
+          success: false,
+          error: cause instanceof Error ? cause.message : String(cause)
+        })
+      )
+    ),
+  pickMarkdownFolder: () =>
+    Effect.tryPromise({
+      try: () => requestKanbanPickMarkdownFolderDialog(),
+      catch: (cause) => cause
+    }),
+  getDiagnostics: (projectId) =>
+    Effect.tryPromise({
+      try: async () => {
+        const { getKanbanStorageConfig, getMarkdownKanbanBackend } = await import(
+          '../../../main/services/kanban-backend'
+        )
+        if (getKanbanStorageConfig(projectId).mode !== 'markdown') return []
+        return getMarkdownKanbanBackend().getDiagnostics(projectId)
+      },
+      catch: (cause) => cause
+    }),
+  startWatch: (projectId) =>
+    Effect.tryPromise({
+      try: async () => {
+        const { startMarkdownKanbanProjectWatch } = await import(
+          '../../../main/services/markdown-kanban-watcher'
+        )
+        return startMarkdownKanbanProjectWatch(projectId)
+      },
+      catch: (cause) => cause
+    }),
+  stopWatch: (projectId) =>
+    Effect.tryPromise({
+      try: async () => {
+        const { stopMarkdownKanbanProjectWatch } = await import(
+          '../../../main/services/markdown-kanban-watcher'
+        )
+        return stopMarkdownKanbanProjectWatch(projectId)
       },
       catch: (cause) => cause
     })
@@ -808,6 +931,56 @@ const isKanbanSaveBoardExportDialogResult = (
   return result.filePath === null || typeof result.filePath === 'string'
 }
 
+const requestKanbanPickMarkdownFolderDialog = (): Promise<string | null> => {
+  const send = process.send
+  if (typeof send !== 'function') {
+    return Promise.resolve(null)
+  }
+
+  const id = `kanban-pick-markdown-folder-dialog-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  const command = 'projectOpenDirectoryDialog'
+
+  return new Promise<string | null>((resolve, reject) => {
+    let settled = false
+    const cleanup = (): void => {
+      clearTimeout(timeout)
+      process.off('message', onMessage)
+    }
+    const finish = (value?: string | null, error?: Error): void => {
+      if (settled) return
+      settled = true
+      cleanup()
+      if (error) {
+        reject(error)
+        return
+      }
+      resolve(value ?? null)
+    }
+    const timeout = setTimeout(() => {
+      finish(null, new Error(`Timed out waiting for desktop command response: ${command}`))
+    }, 5_000)
+
+    const onMessage = (message: unknown): void => {
+      if (!isDesktopCommandResult(message) || message.id !== id) return
+      if (!message.ok) {
+        finish(null, new Error(message.error ?? `Desktop command failed: ${command}`))
+        return
+      }
+      if (message.value !== null && typeof message.value !== 'string') {
+        finish(null, new Error(`Desktop command returned invalid response: ${command}`))
+        return
+      }
+      finish(message.value)
+    }
+
+    process.on('message', onMessage)
+    send.call(process, makeDesktopCommandRequest(id, command), (error) => {
+      if (!error) return
+      finish(null, error)
+    })
+  })
+}
+
 export const makeKanbanRpcHandlers = (
   service: KanbanRpcService = makeLiveKanbanRpcService()
 ): ReadonlyMap<string, RpcHandler> =>
@@ -820,29 +993,29 @@ export const makeKanbanRpcHandlers = (
             try: () => kanbanTicketCreateSchema.parse(params),
             catch: (cause) => cause
           })
-          return yield* service.createTicket(data)
+          return yield* service.createTicket(data.project_id, data)
         })
     ],
     [
       'kanban.ticket.createBatch',
       (params) =>
         Effect.gen(function* () {
-          const data = yield* Effect.try({
-            try: () => kanbanTicketBatchCreateSchema.parse(params),
+          const { projectId, data } = yield* Effect.try({
+            try: () => kanbanTicketBatchCreateParamsSchema.parse(params),
             catch: (cause) => cause
           })
-          return yield* service.createTicketBatch(data)
+          return yield* service.createTicketBatch(projectId, data)
         })
     ],
     [
       'kanban.ticket.get',
       (params) =>
         Effect.gen(function* () {
-          const { id } = yield* Effect.try({
-            try: () => stringArgParamsSchema.parse(params),
+          const { projectId, id } = yield* Effect.try({
+            try: () => ticketIdProjectParamsSchema.parse(params),
             catch: (cause) => cause
           })
-          return yield* service.getTicket(id)
+          return yield* service.getTicket(projectId, id)
         })
     ],
     [
@@ -860,33 +1033,33 @@ export const makeKanbanRpcHandlers = (
       'kanban.ticket.update',
       (params) =>
         Effect.gen(function* () {
-          const { id, data } = yield* Effect.try({
+          const { projectId, id, data } = yield* Effect.try({
             try: () => updateTicketParamsSchema.parse(params),
             catch: (cause) => cause
           })
-          return yield* service.updateTicket(id, data)
+          return yield* service.updateTicket(projectId, id, data)
         })
     ],
     [
       'kanban.ticket.delete',
       (params) =>
         Effect.gen(function* () {
-          const { id } = yield* Effect.try({
-            try: () => stringArgParamsSchema.parse(params),
+          const { projectId, id } = yield* Effect.try({
+            try: () => ticketIdProjectParamsSchema.parse(params),
             catch: (cause) => cause
           })
-          return yield* service.deleteTicket(id)
+          return yield* service.deleteTicket(projectId, id)
         })
     ],
     [
       'kanban.ticket.archive',
       (params) =>
         Effect.gen(function* () {
-          const { id } = yield* Effect.try({
-            try: () => stringArgParamsSchema.parse(params),
+          const { projectId, id } = yield* Effect.try({
+            try: () => ticketIdProjectParamsSchema.parse(params),
             catch: (cause) => cause
           })
-          return yield* service.archiveTicket(id)
+          return yield* service.archiveTicket(projectId, id)
         })
     ],
     [
@@ -904,36 +1077,36 @@ export const makeKanbanRpcHandlers = (
       'kanban.ticket.unarchive',
       (params) =>
         Effect.gen(function* () {
-          const { id } = yield* Effect.try({
-            try: () => stringArgParamsSchema.parse(params),
+          const { projectId, id } = yield* Effect.try({
+            try: () => ticketIdProjectParamsSchema.parse(params),
             catch: (cause) => cause
           })
-          return yield* service.unarchiveTicket(id)
+          return yield* service.unarchiveTicket(projectId, id)
         })
     ],
     [
       'kanban.ticket.move',
       (params) =>
         Effect.gen(function* () {
-          const { id, column, sortOrder } = yield* Effect.try({
+          const { projectId, id, column, sortOrder } = yield* Effect.try({
             try: () => moveTicketParamsSchema.parse(params),
             catch: (cause) => cause
           })
-          return yield* service.moveTicket(id, column, sortOrder)
+          return yield* service.moveTicket(projectId, id, column, sortOrder)
         })
     ],
     [
       'kanban.ticket.reorder',
       (params) =>
         Effect.gen(function* () {
-          const { id, sortOrder } = yield* Effect.try({
+          const { projectId, id, sortOrder } = yield* Effect.try({
             try: () => reorderTicketParamsSchema.parse(params),
             catch: (cause) => cause
           })
           if (!service.reorderTicket) {
             return yield* Effect.die(new Error('kanban.ticket.reorder service is not implemented'))
           }
-          return yield* service.reorderTicket(id, sortOrder)
+          return yield* service.reorderTicket(projectId, id, sortOrder)
         })
     ],
     [
@@ -956,7 +1129,7 @@ export const makeKanbanRpcHandlers = (
       'kanban.ticket.addTokens',
       (params) =>
         Effect.gen(function* () {
-          const { id, tokens } = yield* Effect.try({
+          const { projectId, id, tokens } = yield* Effect.try({
             try: () => addTicketTokensParamsSchema.parse(params),
             catch: (cause) => cause
           })
@@ -965,7 +1138,7 @@ export const makeKanbanRpcHandlers = (
               new Error('kanban.ticket.addTokens service is not implemented')
             )
           }
-          return yield* service.addTicketTokens(id, tokens)
+          return yield* service.addTicketTokens(projectId, id, tokens)
         })
     ],
     [
@@ -1060,21 +1233,21 @@ export const makeKanbanRpcHandlers = (
       'kanban.dependency.add',
       (params) =>
         Effect.gen(function* () {
-          const { dependentId, blockerId } = yield* Effect.try({
+          const { projectId, dependentId, blockerId } = yield* Effect.try({
             try: () => ticketDependencyPairParamsSchema.parse(params),
             catch: (cause) => cause
           })
           if (!service.addTicketDependency) {
             return yield* Effect.die(new Error('kanban.dependency.add service is not implemented'))
           }
-          return yield* service.addTicketDependency(dependentId, blockerId)
+          return yield* service.addTicketDependency(projectId, dependentId, blockerId)
         })
     ],
     [
       'kanban.dependency.remove',
       (params) =>
         Effect.gen(function* () {
-          const { dependentId, blockerId } = yield* Effect.try({
+          const { projectId, dependentId, blockerId } = yield* Effect.try({
             try: () => ticketDependencyPairParamsSchema.parse(params),
             catch: (cause) => cause
           })
@@ -1083,15 +1256,15 @@ export const makeKanbanRpcHandlers = (
               new Error('kanban.dependency.remove service is not implemented')
             )
           }
-          return yield* service.removeTicketDependency(dependentId, blockerId)
+          return yield* service.removeTicketDependency(projectId, dependentId, blockerId)
         })
     ],
     [
       'kanban.dependency.getBlockers',
       (params) =>
         Effect.gen(function* () {
-          const { id } = yield* Effect.try({
-            try: () => stringArgParamsSchema.parse(params),
+          const { projectId, id } = yield* Effect.try({
+            try: () => ticketDependencyLookupParamsSchema.parse(params),
             catch: (cause) => cause
           })
           if (!service.getBlockersForTicket) {
@@ -1099,15 +1272,15 @@ export const makeKanbanRpcHandlers = (
               new Error('kanban.dependency.getBlockers service is not implemented')
             )
           }
-          return yield* service.getBlockersForTicket(id)
+          return yield* service.getBlockersForTicket(projectId, id)
         })
     ],
     [
       'kanban.dependency.getDependents',
       (params) =>
         Effect.gen(function* () {
-          const { id } = yield* Effect.try({
-            try: () => stringArgParamsSchema.parse(params),
+          const { projectId, id } = yield* Effect.try({
+            try: () => ticketDependencyLookupParamsSchema.parse(params),
             catch: (cause) => cause
           })
           if (!service.getDependentsOfTicket) {
@@ -1115,7 +1288,7 @@ export const makeKanbanRpcHandlers = (
               new Error('kanban.dependency.getDependents service is not implemented')
             )
           }
-          return yield* service.getDependentsOfTicket(id)
+          return yield* service.getDependentsOfTicket(projectId, id)
         })
     ],
     [
@@ -1138,8 +1311,8 @@ export const makeKanbanRpcHandlers = (
       'kanban.dependency.removeAll',
       (params) =>
         Effect.gen(function* () {
-          const { id } = yield* Effect.try({
-            try: () => stringArgParamsSchema.parse(params),
+          const { projectId, id } = yield* Effect.try({
+            try: () => ticketDependencyLookupParamsSchema.parse(params),
             catch: (cause) => cause
           })
           if (!service.removeAllDependenciesForTicket) {
@@ -1147,7 +1320,125 @@ export const makeKanbanRpcHandlers = (
               new Error('kanban.dependency.removeAll service is not implemented')
             )
           }
-          return yield* service.removeAllDependenciesForTicket(id)
+          return yield* service.removeAllDependenciesForTicket(projectId, id)
+        })
+    ],
+    [
+      'kanban.config.get',
+      (params) =>
+        Effect.gen(function* () {
+          const { projectId } = yield* Effect.try({
+            try: () => projectIdParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          if (!service.getConfig) {
+            return yield* Effect.die(new Error('kanban.config.get service is not implemented'))
+          }
+          return yield* service.getConfig(projectId)
+        })
+    ],
+    [
+      'kanban.config.update',
+      (params) =>
+        Effect.gen(function* () {
+          const { projectId, config } = yield* Effect.try({
+            try: () => updateKanbanConfigParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          if (!service.updateConfig) {
+            return yield* Effect.die(new Error('kanban.config.update service is not implemented'))
+          }
+          return yield* service.updateConfig(projectId, config)
+        })
+    ],
+    [
+      'kanban.config.setMode',
+      (params) =>
+        Effect.gen(function* () {
+          const { projectId, mode } = yield* Effect.try({
+            try: () => setKanbanModeParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          if (!service.setMode) {
+            return yield* Effect.die(new Error('kanban.config.setMode service is not implemented'))
+          }
+          return yield* service.setMode(projectId, mode)
+        })
+    ],
+    [
+      'kanban.config.createFolders',
+      (params) =>
+        Effect.gen(function* () {
+          const { projectId, config } = yield* Effect.try({
+            try: () => createKanbanFoldersParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          if (!service.createFolders) {
+            return yield* Effect.die(
+              new Error('kanban.config.createFolders service is not implemented')
+            )
+          }
+          return yield* service.createFolders(projectId, config)
+        })
+    ],
+    [
+      'kanban.config.pickMarkdownFolder',
+      (params) =>
+        Effect.gen(function* () {
+          yield* Effect.try({
+            try: () => emptyParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          if (!service.pickMarkdownFolder) {
+            return yield* Effect.die(
+              new Error('kanban.config.pickMarkdownFolder service is not implemented')
+            )
+          }
+          return yield* service.pickMarkdownFolder()
+        })
+    ],
+    [
+      'kanban.diagnostics.get',
+      (params) =>
+        Effect.gen(function* () {
+          const { projectId } = yield* Effect.try({
+            try: () => projectIdParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          if (!service.getDiagnostics) {
+            return yield* Effect.die(
+              new Error('kanban.diagnostics.get service is not implemented')
+            )
+          }
+          return yield* service.getDiagnostics(projectId)
+        })
+    ],
+    [
+      'kanban.watch.start',
+      (params) =>
+        Effect.gen(function* () {
+          const { projectId } = yield* Effect.try({
+            try: () => projectIdParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          if (!service.startWatch) {
+            return yield* Effect.die(new Error('kanban.watch.start service is not implemented'))
+          }
+          return yield* service.startWatch(projectId)
+        })
+    ],
+    [
+      'kanban.watch.stop',
+      (params) =>
+        Effect.gen(function* () {
+          const { projectId } = yield* Effect.try({
+            try: () => projectIdParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          if (!service.stopWatch) {
+            return yield* Effect.die(new Error('kanban.watch.stop service is not implemented'))
+          }
+          return yield* service.stopWatch(projectId)
         })
     ],
     [

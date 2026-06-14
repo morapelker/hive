@@ -4,7 +4,9 @@ import type {
   KanbanTicket,
   KanbanTicketColumn,
   KanbanTicketCreate,
-  KanbanTicketUpdate
+  KanbanTicketUpdate,
+  MarkdownCardDiagnostic,
+  TicketDependency
 } from '../../../main/db/types'
 import {
   registerKanbanSessionSync,
@@ -15,7 +17,7 @@ import { isPlanLike } from '../lib/constants'
 import { useConnectionStore } from './useConnectionStore'
 import { usePinnedStore } from './usePinnedStore'
 import { useWorktreeStatusStore } from './useWorktreeStatusStore'
-import { kanbanApi } from '@/api/kanban-api'
+import { kanbanApi as kanban } from '@/api/kanban-api'
 
 export interface BoardTelegramTarget {
   ticketId: string
@@ -24,38 +26,71 @@ export interface BoardTelegramTarget {
   sessionId: string
 }
 
+export interface TicketRef {
+  projectId: string
+  ticketId: string
+}
+
+export type TicketKey = string
+
+export interface MarkdownCardPlaceholder {
+  projectId: string
+  filePath: string
+  kind: MarkdownCardDiagnostic['kind']
+  message: string
+  blocking: true
+}
+
+export function ticketKey(projectId: string, ticketId: string): TicketKey {
+  return `${encodeURIComponent(projectId)}:${encodeURIComponent(ticketId)}`
+}
+
+export function ticketRefKey(ref: TicketRef): TicketKey {
+  return ticketKey(ref.projectId, ref.ticketId)
+}
+
+export function parseTicketKey(key: TicketKey): TicketRef {
+  const separator = key.indexOf(':')
+  if (separator === -1) return { projectId: '', ticketId: decodeURIComponent(key) }
+  return {
+    projectId: decodeURIComponent(key.slice(0, separator)),
+    ticketId: decodeURIComponent(key.slice(separator + 1))
+  }
+}
+
 // ── Shared drag state (module-level, avoids DataTransfer issues in Electron) ──
 export interface KanbanDragData {
+  projectId: string
   ticketId: string
   sourceColumn: string
   sourceIndex: number
 }
 
 let _kanbanDragData: KanbanDragData | null = null
-let _pendingDragTicketIdFrame: number | undefined
+let _pendingDragTicketKeyFrame: number | undefined
 
 export function setKanbanDragData(data: KanbanDragData | null): void {
   _kanbanDragData = data
 
-  // Cancel any pending delayed draggingTicketId update
-  if (_pendingDragTicketIdFrame !== undefined) {
-    cancelAnimationFrame(_pendingDragTicketIdFrame)
-    _pendingDragTicketIdFrame = undefined
+  // Cancel any pending delayed draggingTicketKey update
+  if (_pendingDragTicketKeyFrame !== undefined) {
+    cancelAnimationFrame(_pendingDragTicketKeyFrame)
+    _pendingDragTicketKeyFrame = undefined
   }
 
   if (data) {
     // isDragging set immediately so columns show drag affordance
     useKanbanStore.setState({ isDragging: true })
-    // Delay draggingTicketId to next frame — the wrapper collapse must happen
+    // Delay draggingTicketKey to next frame — the wrapper collapse must happen
     // AFTER the browser has committed the drag (captured the drag image and
     // started tracking the pointer). Collapsing during dragstart aborts the drag.
-    _pendingDragTicketIdFrame = requestAnimationFrame(() => {
-      _pendingDragTicketIdFrame = undefined
-      useKanbanStore.setState({ draggingTicketId: data.ticketId })
+    _pendingDragTicketKeyFrame = requestAnimationFrame(() => {
+      _pendingDragTicketKeyFrame = undefined
+      useKanbanStore.setState({ draggingTicketKey: ticketKey(data.projectId, data.ticketId) })
     })
   } else {
     // Clear everything immediately on drag end / drop
-    useKanbanStore.setState({ isDragging: false, draggingTicketId: null })
+    useKanbanStore.setState({ isDragging: false, draggingTicketKey: null })
   }
 }
 
@@ -87,6 +122,47 @@ const COLUMN_ORDER: Record<KanbanTicketColumn, number> = {
   done: 3
 }
 
+function findTicketByRef(
+  ticketsByProject: Map<string, KanbanTicket[]>,
+  ref: TicketRef
+): KanbanTicket | null {
+  return ticketsByProject.get(ref.projectId)?.find((ticket) => ticket.id === ref.ticketId) ?? null
+}
+
+function removeDependencyLinksForTicket(
+  dependencyMap: Map<TicketKey, Set<TicketKey>>,
+  removedKey: TicketKey
+): Map<TicketKey, Set<TicketKey>> {
+  const newMap = new Map(dependencyMap)
+  newMap.delete(removedKey)
+  for (const [depKey, blockers] of newMap) {
+    if (!blockers.has(removedKey)) continue
+    const newSet = new Set(blockers)
+    newSet.delete(removedKey)
+    if (newSet.size === 0) {
+      newMap.delete(depKey)
+    } else {
+      newMap.set(depKey, newSet)
+    }
+  }
+  return newMap
+}
+
+function placeholdersFromDiagnostics(
+  projectId: string,
+  diagnostics: MarkdownCardDiagnostic[]
+): MarkdownCardPlaceholder[] {
+  return diagnostics
+    .filter((diagnostic) => diagnostic.ticketId === null)
+    .map((diagnostic) => ({
+      projectId,
+      filePath: diagnostic.filePath,
+      kind: diagnostic.kind,
+      message: diagnostic.message,
+      blocking: diagnostic.blocking
+    }))
+}
+
 // ── State interface ────────────────────────────────────────────────────
 interface KanbanState {
   /** Tickets keyed by project ID */
@@ -98,11 +174,14 @@ interface KanbanState {
   simpleModeByProject: Record<string, boolean>
   /** Currently selected ticket ID for the detail modal (null = closed) */
   selectedTicketId: string | null
+  selectedTicketRef: TicketRef | null
   /** Whether a ticket is currently being dragged (reactive, for column styling) */
   isDragging: boolean
-  draggingTicketId: string | null
+  draggingTicketKey: TicketKey | null
   /** Per-project archive visibility toggle — NOT persisted to localStorage */
   showArchivedByProject: Record<string, boolean>
+  markdownDiagnostics: Map<string, MarkdownCardDiagnostic[]>
+  markdownPlaceholders: Map<string, MarkdownCardPlaceholder[]>
   /** Pending "move to done" data — set when a feature-branch ticket is dropped on Done, triggering the merge dialog */
   pendingDoneMove: {
     ticketId: string
@@ -113,7 +192,8 @@ interface KanbanState {
   boardTelegramTarget: BoardTelegramTarget | null
 
   // ── Actions ────────────────────────────────────────────────────────
-  setSelectedTicketId: (id: string | null) => void
+  setSelectedTicketId: (id: null) => void
+  setSelectedTicketRef: (ref: TicketRef | null) => void
   setBoardTelegramTarget: (target: BoardTelegramTarget | null) => void
   clearBoardTelegramTarget: () => void
   loadTickets: (projectId: string) => Promise<void>
@@ -150,6 +230,9 @@ interface KanbanState {
   getTicketsForProject: (projectId: string) => KanbanTicket[]
   getTicketsByColumn: (projectId: string, column: KanbanTicketColumn) => KanbanTicket[]
   getArchivedTicketsByColumn: (projectId: string, column: KanbanTicketColumn) => KanbanTicket[]
+  getDiagnosticsForTicket: (projectId: string, ticketId: string) => MarkdownCardDiagnostic[]
+  getInvalidPlaceholdersForProject: (projectId: string) => MarkdownCardPlaceholder[]
+  loadTicketsForProjectInAggregate: (projectId: string) => Promise<void>
 
   // ── Connection-level accessors ──────────────────────────────────────
   getConnectionProjectIds: (connectionId: string) => string[]
@@ -158,12 +241,14 @@ interface KanbanState {
     connectionId: string,
     column: KanbanTicketColumn
   ) => KanbanTicket[]
+  getInvalidPlaceholdersForConnection: (connectionId: string) => MarkdownCardPlaceholder[]
 
   // ── Pinned board accessors ──────────────────────────────────────────
   isPinnedBoardActive: boolean
   togglePinnedBoard: () => void
   loadTicketsForPinnedProjects: () => Promise<void>
   getTicketsByColumnForPinned: (column: KanbanTicketColumn) => KanbanTicket[]
+  getInvalidPlaceholdersForPinned: () => MarkdownCardPlaceholder[]
   getPinnedProjectIdsArray: () => string[]
 
   // ── PR data sync ───────────────────────────────────────────────────
@@ -176,20 +261,17 @@ interface KanbanState {
   computeSortOrder: (tickets: KanbanTicket[], targetIndex: number) => number
 
   // ── Dependency tracking ────────────────────────────────────────────
-  dependencyMap: Map<string, Set<string>> // Map<dependent_id, Set<blocker_id>>
-  dependencyMode: { active: boolean; sourceTicketId: string | null } | null
-  hoveredBlockedTicketId: string | null
+  dependencyMap: Map<TicketKey, Set<TicketKey>> // Map<dependent_ticket_key, Set<blocker_ticket_key>>
+  dependencyMode: { active: boolean; sourceTicketId: string | null; sourceProjectId?: string | null } | null
+  hoveredBlockedTicketKey: TicketKey | null
 
   // ── Dependency actions ─────────────────────────────────────────────
   loadDependencies: (projectId: string) => Promise<void>
-  addDependency: (
-    dependentId: string,
-    blockerId: string
-  ) => Promise<{ success: boolean; error?: string }>
-  removeDependency: (dependentId: string, blockerId: string) => Promise<void>
-  enterDependencyMode: (sourceTicketId: string) => void
+  addDependency: (dependent: TicketRef, blocker: TicketRef) => Promise<{ success: boolean; error?: string }>
+  removeDependency: (dependent: TicketRef, blocker: TicketRef) => Promise<void>
+  enterDependencyMode: (sourceTicketId: string, sourceProjectId?: string) => void
   exitDependencyMode: () => void
-  setHoveredBlockedTicketId: (ticketId: string | null) => void
+  setHoveredBlockedTicketRef: (ref: TicketRef | null) => void
 }
 
 // ── Store ──────────────────────────────────────────────────────────────
@@ -202,18 +284,25 @@ export const useKanbanStore = create<KanbanState>()(
       isPinnedBoardActive: false,
       simpleModeByProject: {} as Record<string, boolean>,
       selectedTicketId: null,
+      selectedTicketRef: null,
       isDragging: false,
-      draggingTicketId: null,
+      draggingTicketKey: null,
       showArchivedByProject: {} as Record<string, boolean>,
+      markdownDiagnostics: new Map(),
+      markdownPlaceholders: new Map(),
       pendingDoneMove: null,
       boardTelegramTarget: null,
       dependencyMap: new Map(),
       dependencyMode: null,
-      hoveredBlockedTicketId: null,
+      hoveredBlockedTicketKey: null,
 
       // ── setSelectedTicketId ────────────────────────────────────────
-      setSelectedTicketId: (id: string | null) => {
-        set({ selectedTicketId: id })
+      setSelectedTicketId: (_id: null) => {
+        set({ selectedTicketId: null, selectedTicketRef: null })
+      },
+
+      setSelectedTicketRef: (ref: TicketRef | null) => {
+        set({ selectedTicketId: ref?.ticketId ?? null, selectedTicketRef: ref })
       },
 
       setBoardTelegramTarget: (target: BoardTelegramTarget | null) => {
@@ -229,14 +318,26 @@ export const useKanbanStore = create<KanbanState>()(
         set({ isLoading: true })
         try {
           const includeArchived = get().showArchivedByProject[projectId] ?? false
-          const tickets = await kanbanApi.ticket.getByProject<KanbanTicket>(
+          const tickets = await kanban.ticket.getByProject<KanbanTicket>(
             projectId,
             includeArchived
           )
+          const diagnostics = await kanban.diagnostics
+            .get<MarkdownCardDiagnostic>(projectId)
+            .catch(() => [])
           set((state) => {
             const next = new Map(state.tickets)
+            const nextDiagnostics = new Map(state.markdownDiagnostics)
+            const nextPlaceholders = new Map(state.markdownPlaceholders)
             next.set(projectId, tickets)
-            return { tickets: next, isLoading: false }
+            nextDiagnostics.set(projectId, diagnostics)
+            nextPlaceholders.set(projectId, placeholdersFromDiagnostics(projectId, diagnostics))
+            return {
+              tickets: next,
+              markdownDiagnostics: nextDiagnostics,
+              markdownPlaceholders: nextPlaceholders,
+              isLoading: false
+            }
           })
           // Load dependencies for this project
           get().loadDependencies(projectId)
@@ -245,9 +346,43 @@ export const useKanbanStore = create<KanbanState>()(
         }
       },
 
+      loadTicketsForProjectInAggregate: async (projectId: string) => {
+        set({ isLoading: true })
+        try {
+          const includeArchived = get().showArchivedByProject[projectId] ?? get().showArchivedByProject[''] ?? false
+          const tickets = await kanban.ticket.getByProject<KanbanTicket>(
+            projectId,
+            includeArchived
+          )
+          const diagnostics = await kanban.diagnostics
+            .get<MarkdownCardDiagnostic>(projectId)
+            .catch(() => [])
+          set((state) => {
+            const next = new Map(state.tickets)
+            const nextDiagnostics = new Map(state.markdownDiagnostics)
+            const nextPlaceholders = new Map(state.markdownPlaceholders)
+            next.set(projectId, tickets)
+            nextDiagnostics.set(projectId, diagnostics)
+            nextPlaceholders.set(projectId, placeholdersFromDiagnostics(projectId, diagnostics))
+            return {
+              tickets: next,
+              markdownDiagnostics: nextDiagnostics,
+              markdownPlaceholders: nextPlaceholders,
+              isLoading: false
+            }
+          })
+          get().loadDependencies(projectId)
+        } catch {
+          set({ isLoading: false })
+        }
+      },
+
       // ── createTicket ─────────────────────────────────────────────
       createTicket: async (projectId: string, data: KanbanTicketCreate) => {
-        const ticket = await kanbanApi.ticket.create<KanbanTicket, KanbanTicketCreate>(data)
+        const ticket = await kanban.ticket.create<KanbanTicket, KanbanTicketCreate>(
+          projectId,
+          data
+        )
         set((state) => {
           const next = new Map(state.tickets)
           const existing = next.get(projectId) ?? []
@@ -273,7 +408,7 @@ export const useKanbanStore = create<KanbanState>()(
         })
 
         try {
-          await kanbanApi.ticket.update<KanbanTicket | null, KanbanTicketUpdate>(ticketId, data)
+          await kanban.ticket.update(projectId, ticketId, data)
         } catch (err) {
           // Revert on failure
           set((state) => {
@@ -299,26 +434,13 @@ export const useKanbanStore = create<KanbanState>()(
         })
 
         try {
-          await kanbanApi.ticket.delete(ticketId)
+          await kanban.ticket.delete(projectId, ticketId)
 
           // Remove all dependency links for deleted ticket
-          kanbanApi.dependency.removeAll(ticketId).catch(() => {})
+          kanban.dependency.removeAll(projectId, ticketId).catch(() => {})
           // Update local dependency map
           set((state) => {
-            const newMap = new Map(state.dependencyMap)
-            newMap.delete(ticketId)
-            for (const [depId, blockers] of newMap) {
-              if (blockers.has(ticketId)) {
-                const newSet = new Set(blockers)
-                newSet.delete(ticketId)
-                if (newSet.size === 0) {
-                  newMap.delete(depId)
-                } else {
-                  newMap.set(depId, newSet)
-                }
-              }
-            }
-            return { dependencyMap: newMap }
+            return { dependencyMap: removeDependencyLinksForTicket(state.dependencyMap, ticketKey(projectId, ticketId)) }
           })
         } catch (err) {
           // Revert on failure
@@ -348,28 +470,13 @@ export const useKanbanStore = create<KanbanState>()(
         })
 
         try {
-          await kanbanApi.ticket.archive<KanbanTicket | null>(ticketId)
+          await kanban.ticket.archive(projectId, ticketId)
 
           // Remove all dependency links for archived ticket
-          await kanbanApi.dependency.removeAll(ticketId)
+          await kanban.dependency.removeAll(projectId, ticketId)
           // Update local dependency map
           set((state) => {
-            const newMap = new Map(state.dependencyMap)
-            // Remove as dependent
-            newMap.delete(ticketId)
-            // Remove from blockers of other tickets
-            for (const [depId, blockers] of newMap) {
-              if (blockers.has(ticketId)) {
-                const newSet = new Set(blockers)
-                newSet.delete(ticketId)
-                if (newSet.size === 0) {
-                  newMap.delete(depId)
-                } else {
-                  newMap.set(depId, newSet)
-                }
-              }
-            }
-            return { dependencyMap: newMap }
+            return { dependencyMap: removeDependencyLinksForTicket(state.dependencyMap, ticketKey(projectId, ticketId)) }
           })
         } catch (err) {
           // Revert on failure
@@ -404,7 +511,7 @@ export const useKanbanStore = create<KanbanState>()(
         })
 
         try {
-          await kanbanApi.ticket.archiveAllDone(projectId)
+          await kanban.ticket.archiveAllDone(projectId)
           return count
         } catch (err) {
           // Revert on failure
@@ -434,7 +541,7 @@ export const useKanbanStore = create<KanbanState>()(
         })
 
         try {
-          await kanbanApi.ticket.unarchive<KanbanTicket | null>(ticketId)
+          await kanban.ticket.unarchive(projectId, ticketId)
         } catch (err) {
           // Revert on failure
           set((state) => {
@@ -481,7 +588,7 @@ export const useKanbanStore = create<KanbanState>()(
         })
 
         try {
-          await kanbanApi.ticket.detachWorktree(worktreeId)
+          await kanban.ticket.detachWorktree(worktreeId)
         } catch (err) {
           if (snapshot.size > 0) {
             set((state) => {
@@ -535,7 +642,7 @@ export const useKanbanStore = create<KanbanState>()(
         }
 
         try {
-          await kanbanApi.ticket.move<KanbanTicket | null>(ticketId, column, sortOrder)
+          await kanban.ticket.move(projectId, ticketId, column, sortOrder)
 
           // When a ticket moves to done (or review, if that's the trigger), check if any dependents can be auto-launched
           const { useSettingsStore } = await import('./useSettingsStore')
@@ -546,37 +653,31 @@ export const useKanbanStore = create<KanbanState>()(
             (triggerColumn === 'review' && column === 'review' && movedTicket?.mode === 'build')
           ) {
             const { dependencyMap, tickets: allTickets } = get()
+            const movedKey = ticketKey(projectId, ticketId)
             // Find tickets that list this ticket as a blocker
-            for (const [depId, blockers] of dependencyMap) {
-              if (!blockers.has(ticketId)) continue
+            for (const [depKey, blockers] of dependencyMap) {
+              if (!blockers.has(movedKey)) continue
               // Check if ALL blockers of this dependent are now satisfied
               let allSatisfied = true
-              for (const bid of blockers) {
-                // Find the blocker ticket across all projects
-                for (const [, projTickets] of allTickets) {
-                  const bt = projTickets.find((t) => t.id === bid)
-                  if (bt && !isBlockerSatisfied(bt.column, bt.mode, triggerColumn)) {
-                    allSatisfied = false
-                    break
-                  }
+              for (const blockerKey of blockers) {
+                const blockerRef = parseTicketKey(blockerKey)
+                const blockerTicket = findTicketByRef(allTickets, blockerRef)
+                if (blockerTicket && !isBlockerSatisfied(blockerTicket.column, blockerTicket.mode, triggerColumn)) {
+                  allSatisfied = false
+                  break
                 }
-                if (!allSatisfied) break
               }
               if (allSatisfied) {
-                // Find the dependent ticket and auto-launch if it has pending config
-                for (const [, projTickets] of allTickets) {
-                  const depTicket = projTickets.find((t) => t.id === depId)
-                  if (depTicket?.pending_launch_config) {
-                    // Auto-launch will be handled by the auto-launch module (Task 5)
-                    import('../lib/auto-launch')
-                      .then(({ autoLaunchTicket }) => {
-                        autoLaunchTicket(depTicket).catch((err) => {
-                          console.error('Auto-launch failed for ticket:', depTicket.id, err)
-                        })
+                const depTicket = findTicketByRef(allTickets, parseTicketKey(depKey))
+                if (depTicket?.pending_launch_config) {
+                  // Auto-launch will be handled by the auto-launch module (Task 5)
+                  import('../lib/auto-launch')
+                    .then(({ autoLaunchTicket }) => {
+                      autoLaunchTicket(depTicket).catch((err) => {
+                        console.error('Auto-launch failed for ticket:', depTicket.id, err)
                       })
-                      .catch(() => {})
-                    break
-                  }
+                    })
+                    .catch(() => {})
                 }
               }
             }
@@ -608,7 +709,7 @@ export const useKanbanStore = create<KanbanState>()(
         })
 
         try {
-          await kanbanApi.ticket.reorder(ticketId, newSortOrder)
+          await kanban.ticket.reorder(projectId, ticketId, newSortOrder)
         } catch (err) {
           // Revert on failure
           set((state) => {
@@ -630,7 +731,7 @@ export const useKanbanStore = create<KanbanState>()(
         set((state) => ({
           simpleModeByProject: { ...state.simpleModeByProject, [projectId]: enabled }
         }))
-        await kanbanApi.simpleMode.toggle(projectId, enabled)
+        await kanban.simpleMode.toggle(projectId, enabled)
       },
 
       // ── syncTicketWithSession (called via store-coordination) ────
@@ -661,8 +762,8 @@ export const useKanbanStore = create<KanbanState>()(
                 }
                 // Accumulate token delta to ticket's persistent total
                 if (event.tokenDelta && event.tokenDelta > 0) {
-                  kanbanApi.ticket
-                    .addTokens<KanbanTicket | null>(ticket.id, event.tokenDelta)
+                  kanban.ticket
+                    .addTokens<KanbanTicket | null>(projectId, ticket.id, event.tokenDelta)
                     .then((updated) => {
                       if (updated) {
                         set((state) => {
@@ -765,11 +866,6 @@ export const useKanbanStore = create<KanbanState>()(
               case 'session_working': {
                 // Session became active — move ticket to in_progress if it's in
                 // todo (pre-assigned, first activity) or review (returning to work).
-                if (ticket.plan_ready) {
-                  get()
-                    .updateTicket(ticket.id, projectId, { plan_ready: false })
-                    .catch(() => {})
-                }
                 if (ticket.column === 'todo' || ticket.column === 'review') {
                   get()
                     .moveTicket(ticket.id, projectId, 'in_progress', ticket.sort_order)
@@ -787,11 +883,11 @@ export const useKanbanStore = create<KanbanState>()(
         newSessionId: string,
         goalMode?: boolean
       ) => {
-        const linkedTickets = await kanbanApi.ticket.getBySession<KanbanTicket>(oldSessionId)
+        const linkedTickets = await kanban.ticket.getBySession<KanbanTicket>(oldSessionId)
         if (!linkedTickets || linkedTickets.length === 0) return
 
         const nextGoalMode = goalMode === true
-        const relinkedById = new Map<string, KanbanTicket>()
+        const relinkedByKey = new Map<TicketKey, KanbanTicket>()
 
         for (const ticket of linkedTickets) {
           const nextGoalSuccessCriteria = nextGoalMode
@@ -805,7 +901,7 @@ export const useKanbanStore = create<KanbanState>()(
             ticket.goal_success_criteria === nextGoalSuccessCriteria
 
           if (!alreadyRelinked) {
-            await kanbanApi.ticket.update<KanbanTicket | null, KanbanTicketUpdate>(ticket.id, {
+            await kanban.ticket.update(ticket.project_id, ticket.id, {
               current_session_id: newSessionId,
               plan_ready: false,
               mode: 'build',
@@ -814,7 +910,7 @@ export const useKanbanStore = create<KanbanState>()(
             })
           }
 
-          relinkedById.set(ticket.id, {
+          relinkedByKey.set(ticketKey(ticket.project_id, ticket.id), {
             ...ticket,
             current_session_id: newSessionId,
             plan_ready: false,
@@ -832,10 +928,10 @@ export const useKanbanStore = create<KanbanState>()(
           for (const [projectId, projectTickets] of next.entries()) {
             let projectChanged = false
             const updatedTickets = projectTickets.map((ticket) => {
-              const relinked = relinkedById.get(ticket.id)
+              const relinked = relinkedByKey.get(ticketKey(projectId, ticket.id))
               if (!relinked) return ticket
               projectChanged = true
-              if (boardTelegramTarget?.ticketId === ticket.id) {
+              if (boardTelegramTarget?.projectId === projectId && boardTelegramTarget.ticketId === ticket.id) {
                 boardTelegramTarget = {
                   ...boardTelegramTarget,
                   sessionId: newSessionId,
@@ -907,6 +1003,16 @@ export const useKanbanStore = create<KanbanState>()(
           .sort((a, b) => (b.archived_at ?? '').localeCompare(a.archived_at ?? ''))
       },
 
+      getDiagnosticsForTicket: (projectId: string, ticketId: string): MarkdownCardDiagnostic[] => {
+        return (get().markdownDiagnostics.get(projectId) ?? []).filter(
+          (diagnostic) => diagnostic.ticketId === ticketId
+        )
+      },
+
+      getInvalidPlaceholdersForProject: (projectId: string): MarkdownCardPlaceholder[] => {
+        return get().markdownPlaceholders.get(projectId) ?? []
+      },
+
       // ── getConnectionProjectIds ─────────────────────────────────
       getConnectionProjectIds: (connectionId: string): string[] => {
         const connection = useConnectionStore
@@ -933,18 +1039,37 @@ export const useKanbanStore = create<KanbanState>()(
           const includeArchived = (pid: string) =>
             get().showArchivedByProject[pid] ?? get().showArchivedByProject[''] ?? false
           const results = await Promise.all(
-            projectIds.map((pid) =>
-              kanbanApi.ticket.getByProject<KanbanTicket>(pid, includeArchived(pid))
-            )
+            projectIds.map(async (pid) => ({
+              projectId: pid,
+              tickets: await kanban.ticket.getByProject<KanbanTicket>(pid, includeArchived(pid))
+            }))
           )
+          const diagnosticsByProject = await Promise.all(
+            results.map(async (result) => ({
+              projectId: result.projectId,
+              diagnostics: await kanban.diagnostics
+                .get<MarkdownCardDiagnostic>(result.projectId)
+                .catch(() => [])
+            }))
+          )
+          const diagnosticsMap = new Map(diagnosticsByProject.map((result) => [result.projectId, result.diagnostics]))
 
           // Batch update all projects at once
           set((state) => {
             const newTickets = new Map(state.tickets)
-            projectIds.forEach((pid, i) => {
-              newTickets.set(pid, results[i])
+            const newDiagnostics = new Map(state.markdownDiagnostics)
+            const newPlaceholders = new Map(state.markdownPlaceholders)
+            results.forEach((result) => {
+              const diagnostics = diagnosticsMap.get(result.projectId) ?? []
+              newTickets.set(result.projectId, result.tickets)
+              newDiagnostics.set(result.projectId, diagnostics)
+              newPlaceholders.set(result.projectId, placeholdersFromDiagnostics(result.projectId, diagnostics))
             })
-            return { tickets: newTickets }
+            return {
+              tickets: newTickets,
+              markdownDiagnostics: newDiagnostics,
+              markdownPlaceholders: newPlaceholders
+            }
           })
           // Load dependencies for each project
           for (const pid of projectIds) {
@@ -966,6 +1091,11 @@ export const useKanbanStore = create<KanbanState>()(
         const merged = projectIds.flatMap((pid) => get().getTicketsByColumn(pid, column))
         merged.sort((a, b) => a.sort_order - b.sort_order)
         return merged
+      },
+
+      getInvalidPlaceholdersForConnection: (connectionId: string): MarkdownCardPlaceholder[] => {
+        const projectIds = get().getConnectionProjectIds(connectionId)
+        return projectIds.flatMap((pid) => get().getInvalidPlaceholdersForProject(pid))
       },
 
       // ── togglePinnedBoard ────────────────────────────────────────
@@ -990,18 +1120,37 @@ export const useKanbanStore = create<KanbanState>()(
           const includeArchived = (pid: string) =>
             get().showArchivedByProject[pid] ?? get().showArchivedByProject[''] ?? false
           const results = await Promise.all(
-            projectIds.map((pid) =>
-              kanbanApi.ticket.getByProject<KanbanTicket>(pid, includeArchived(pid))
-            )
+            projectIds.map(async (pid) => ({
+              projectId: pid,
+              tickets: await kanban.ticket.getByProject<KanbanTicket>(pid, includeArchived(pid))
+            }))
           )
+          const diagnosticsByProject = await Promise.all(
+            results.map(async (result) => ({
+              projectId: result.projectId,
+              diagnostics: await kanban.diagnostics
+                .get<MarkdownCardDiagnostic>(result.projectId)
+                .catch(() => [])
+            }))
+          )
+          const diagnosticsMap = new Map(diagnosticsByProject.map((result) => [result.projectId, result.diagnostics]))
 
           // Batch update all projects at once
           set((state) => {
             const newTickets = new Map(state.tickets)
-            projectIds.forEach((pid, i) => {
-              newTickets.set(pid, results[i])
+            const newDiagnostics = new Map(state.markdownDiagnostics)
+            const newPlaceholders = new Map(state.markdownPlaceholders)
+            results.forEach((result) => {
+              const diagnostics = diagnosticsMap.get(result.projectId) ?? []
+              newTickets.set(result.projectId, result.tickets)
+              newDiagnostics.set(result.projectId, diagnostics)
+              newPlaceholders.set(result.projectId, placeholdersFromDiagnostics(result.projectId, diagnostics))
             })
-            return { tickets: newTickets }
+            return {
+              tickets: newTickets,
+              markdownDiagnostics: newDiagnostics,
+              markdownPlaceholders: newPlaceholders
+            }
           })
           // Load dependencies for each project
           for (const pid of projectIds) {
@@ -1020,6 +1169,11 @@ export const useKanbanStore = create<KanbanState>()(
         const merged = projectIds.flatMap((pid) => get().getTicketsByColumn(pid, column))
         merged.sort((a, b) => a.sort_order - b.sort_order)
         return merged
+      },
+
+      getInvalidPlaceholdersForPinned: (): MarkdownCardPlaceholder[] => {
+        const projectIds = [...usePinnedStore.getState().pinnedProjectIds]
+        return projectIds.flatMap((pid) => get().getInvalidPlaceholdersForProject(pid))
       },
 
       // ── getPinnedProjectIdsArray ─────────────────────────────────
@@ -1124,23 +1278,19 @@ export const useKanbanStore = create<KanbanState>()(
       // ── loadDependencies ────────────────────────────────────────────
       loadDependencies: async (projectId: string) => {
         try {
-          const deps = await kanbanApi.dependency.getForProject<{
-            dependent_id: string
-            blocker_id: string
-          }>(projectId)
+          const deps = await kanban.dependency.getForProject<TicketDependency>(projectId)
           set((state) => {
             const newMap = new Map(state.dependencyMap)
-            // Clear existing entries for this project's tickets
-            const projectTickets = state.tickets.get(projectId) ?? []
-            const projectTicketIds = new Set(projectTickets.map((t) => t.id))
-            for (const [depId] of newMap) {
-              if (projectTicketIds.has(depId)) newMap.delete(depId)
+            for (const [depKey] of newMap) {
+              if (parseTicketKey(depKey).projectId === projectId) newMap.delete(depKey)
             }
             // Populate from fetched data
             for (const dep of deps) {
-              const existing = newMap.get(dep.dependent_id) ?? new Set()
-              existing.add(dep.blocker_id)
-              newMap.set(dep.dependent_id, existing)
+              const dependentKey = ticketKey(projectId, dep.dependent_id)
+              const blockerKey = ticketKey(projectId, dep.blocker_id)
+              const existing = newMap.get(dependentKey) ?? new Set<TicketKey>()
+              existing.add(blockerKey)
+              newMap.set(dependentKey, existing)
             }
             return { dependencyMap: newMap }
           })
@@ -1150,15 +1300,27 @@ export const useKanbanStore = create<KanbanState>()(
       },
 
       // ── addDependency ───────────────────────────────────────────────
-      addDependency: async (dependentId: string, blockerId: string) => {
-        const result = await kanbanApi.dependency.add(dependentId, blockerId)
+      addDependency: async (dependent: TicketRef, blocker: TicketRef) => {
+        if (dependent.projectId !== blocker.projectId) {
+          return { success: false, error: 'Dependencies can only be created within the same project' }
+        }
+        const dependentTicket = findTicketByRef(get().tickets, dependent)
+        if (!dependentTicket) return { success: false, error: 'Dependent ticket not found' }
+        const blockerTicket = findTicketByRef(get().tickets, blocker)
+        if (!blockerTicket) return { success: false, error: 'Blocker ticket not found' }
+        const result = await kanban.dependency.add(
+          dependentTicket.project_id,
+          dependent.ticketId,
+          blocker.ticketId
+        )
         if (result.success) {
           set((state) => {
             const newMap = new Map(state.dependencyMap)
-            const existing = newMap.get(dependentId) ?? new Set()
+            const dependentKey = ticketRefKey(dependent)
+            const existing = newMap.get(dependentKey) ?? new Set<TicketKey>()
             const newSet = new Set(existing)
-            newSet.add(blockerId)
-            newMap.set(dependentId, newSet)
+            newSet.add(ticketRefKey(blocker))
+            newMap.set(dependentKey, newSet)
             return { dependencyMap: newMap }
           })
         }
@@ -1166,18 +1328,22 @@ export const useKanbanStore = create<KanbanState>()(
       },
 
       // ── removeDependency ────────────────────────────────────────────
-      removeDependency: async (dependentId: string, blockerId: string) => {
-        await kanbanApi.dependency.remove(dependentId, blockerId)
+      removeDependency: async (dependent: TicketRef, blocker: TicketRef) => {
+        const dependentTicket = findTicketByRef(get().tickets, dependent)
+        if (!dependentTicket) return
+        if (dependent.projectId !== blocker.projectId) return
+        await kanban.dependency.remove(dependentTicket.project_id, dependent.ticketId, blocker.ticketId)
         set((state) => {
           const newMap = new Map(state.dependencyMap)
-          const existing = newMap.get(dependentId)
+          const dependentKey = ticketRefKey(dependent)
+          const existing = newMap.get(dependentKey)
           if (existing) {
             const newSet = new Set(existing)
-            newSet.delete(blockerId)
+            newSet.delete(ticketRefKey(blocker))
             if (newSet.size === 0) {
-              newMap.delete(dependentId)
+              newMap.delete(dependentKey)
             } else {
-              newMap.set(dependentId, newSet)
+              newMap.set(dependentKey, newSet)
             }
           }
           return { dependencyMap: newMap }
@@ -1185,8 +1351,8 @@ export const useKanbanStore = create<KanbanState>()(
       },
 
       // ── enterDependencyMode ─────────────────────────────────────────
-      enterDependencyMode: (sourceTicketId: string) => {
-        set({ dependencyMode: { active: true, sourceTicketId } })
+      enterDependencyMode: (sourceTicketId: string, sourceProjectId?: string) => {
+        set({ dependencyMode: { active: true, sourceTicketId, sourceProjectId: sourceProjectId ?? null } })
       },
 
       // ── exitDependencyMode ──────────────────────────────────────────
@@ -1194,9 +1360,9 @@ export const useKanbanStore = create<KanbanState>()(
         set({ dependencyMode: null })
       },
 
-      // ── setHoveredBlockedTicketId ───────────────────────────────────
-      setHoveredBlockedTicketId: (ticketId: string | null) => {
-        set({ hoveredBlockedTicketId: ticketId })
+      // ── setHoveredBlockedTicketRef ──────────────────────────────────
+      setHoveredBlockedTicketRef: (ref: TicketRef | null) => {
+        set({ hoveredBlockedTicketKey: ref ? ticketRefKey(ref) : null })
       }
     }),
     {

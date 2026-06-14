@@ -206,6 +206,9 @@ importers:
       ws:
         specifier: ^8.21.0
         version: 8.21.0
+      yaml:
+        specifier: ^2.8.2
+        version: 2.8.2
       zod:
         specifier: ^4.0.0
         version: 4.4.3

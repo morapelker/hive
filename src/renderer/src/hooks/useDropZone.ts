@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 interface UseDropZoneProps {
   onDrop: (files: FileList) => void
   /** When provided, listen on this element instead of `window` (scoped drop zone). */
-  containerRef?: React.RefObject<HTMLElement>
+  containerRef?: React.RefObject<HTMLElement | null>
 }
 
 export function useDropZone({ onDrop, containerRef }: UseDropZoneProps) {

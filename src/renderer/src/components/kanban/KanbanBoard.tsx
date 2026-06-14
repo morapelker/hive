@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { LayoutGroup, motion } from 'motion/react'
 import { Pin } from 'lucide-react'
-import { useKanbanStore } from '@/stores/useKanbanStore'
+import { parseTicketKey, ticketKey, useKanbanStore } from '@/stores/useKanbanStore'
 import { usePinnedStore } from '@/stores/usePinnedStore'
 import { useBoardChatStore } from '@/stores/useBoardChatStore'
 import { useSessionStore } from '@/stores/useSessionStore'
@@ -10,6 +10,8 @@ import { KanbanTicketModal } from '@/components/kanban/KanbanTicketModal'
 import { BoardChatLauncher } from '@/components/kanban/BoardChatLauncher'
 import { MergeOnDoneDialog } from './MergeOnDoneDialog'
 import { toast } from '@/lib/toast'
+import { useMarkdownKanbanWatcher } from '@/hooks/useMarkdownKanbanWatcher'
+import { cardOccurrenceKeys } from '@/components/kanban/kanban-card-identity'
 import type { KanbanTicketColumn } from '../../../../main/db/types'
 
 const COLUMNS: KanbanTicketColumn[] = ['todo', 'in_progress', 'review', 'done']
@@ -21,14 +23,18 @@ interface KanbanBoardProps {
   isPinnedMode?: boolean
 }
 
-export function KanbanBoard({ projectId, projectPath, connectionId, isPinnedMode }: KanbanBoardProps) {
+export function KanbanBoard({ projectId, connectionId, isPinnedMode }: KanbanBoardProps) {
   const loadTickets = useKanbanStore((state) => state.loadTickets)
+  const loadTicketsForProjectInAggregate = useKanbanStore((state) => state.loadTicketsForProjectInAggregate)
   const loadTicketsForConnection = useKanbanStore((state) => state.loadTicketsForConnection)
   const loadTicketsForPinnedProjects = useKanbanStore((state) => state.loadTicketsForPinnedProjects)
   const getTicketsByColumn = useKanbanStore((state) => state.getTicketsByColumn)
   const getTicketsByColumnForConnection = useKanbanStore((state) => state.getTicketsByColumnForConnection)
   const getTicketsByColumnForPinned = useKanbanStore((state) => state.getTicketsByColumnForPinned)
   const getArchivedTicketsByColumn = useKanbanStore((state) => state.getArchivedTicketsByColumn)
+  const getInvalidPlaceholdersForProject = useKanbanStore((state) => state.getInvalidPlaceholdersForProject)
+  const getInvalidPlaceholdersForConnection = useKanbanStore((state) => state.getInvalidPlaceholdersForConnection)
+  const getInvalidPlaceholdersForPinned = useKanbanStore((state) => state.getInvalidPlaceholdersForPinned)
   const getConnectionProjectIds = useKanbanStore((state) => state.getConnectionProjectIds)
   const getPinnedProjectIdsArray = useKanbanStore((state) => state.getPinnedProjectIdsArray)
   const pinnedProjectIds = usePinnedStore((state) => state.pinnedProjectIds)
@@ -48,7 +54,8 @@ export function KanbanBoard({ projectId, projectPath, connectionId, isPinnedMode
   const addDependency = useKanbanStore((state) => state.addDependency)
   const removeDependency = useKanbanStore((state) => state.removeDependency)
   const dependencyMap = useKanbanStore((state) => state.dependencyMap)
-  const hoveredBlockedTicketId = useKanbanStore((state) => state.hoveredBlockedTicketId)
+  const hoveredBlockedTicketKey = useKanbanStore((state) => state.hoveredBlockedTicketKey)
+  const markdownDiagnostics = useKanbanStore((state) => state.markdownDiagnostics)
 
   // Subscribe to the multi-project archive toggle ('' key used by pinned/connection boards)
   const showArchivedAll = useKanbanStore(
@@ -59,12 +66,15 @@ export function KanbanBoard({ projectId, projectPath, connectionId, isPinnedMode
   const sourceTicketTitle = useKanbanStore(
     useCallback((state) => {
       if (!dependencyMode?.sourceTicketId) return ''
+      const sourceProjectId = dependencyMode.sourceProjectId ?? projectId ?? ''
       for (const [, projectTickets] of state.tickets) {
-        const found = projectTickets.find(t => t.id === dependencyMode.sourceTicketId)
+        const found = projectTickets.find(
+          (t) => t.id === dependencyMode.sourceTicketId && t.project_id === sourceProjectId
+        )
         if (found) return found.title
       }
       return ''
-    }, [dependencyMode?.sourceTicketId])
+    }, [dependencyMode?.sourceProjectId, dependencyMode?.sourceTicketId, projectId])
   )
 
   // Ref for board container (SVG line rendering)
@@ -77,6 +87,26 @@ export function KanbanBoard({ projectId, projectPath, connectionId, isPinnedMode
   useKanbanStore((state) => state.tickets)
 
   const isConnectionMode = !!connectionId
+  const connectionProjectIds = isConnectionMode && connectionId ? getConnectionProjectIds(connectionId) : []
+  const pinnedProjectIdsArray = isPinnedMode ? getPinnedProjectIdsArray() : []
+  const watchedProjectIds = isPinnedMode
+    ? pinnedProjectIdsArray
+    : isConnectionMode
+      ? connectionProjectIds
+      : projectId
+        ? [projectId]
+        : []
+  const reloadWatchedProject = useCallback(
+    (changedProjectId: string) => {
+      if (isPinnedMode || isConnectionMode) {
+        return loadTicketsForProjectInAggregate(changedProjectId)
+      }
+      return loadTickets(changedProjectId)
+    },
+    [isPinnedMode, isConnectionMode, loadTickets, loadTicketsForProjectInAggregate]
+  )
+
+  useMarkdownKanbanWatcher(watchedProjectIds, reloadWatchedProject)
 
   useEffect(() => {
     if (isPinnedMode) {
@@ -101,29 +131,40 @@ export function KanbanBoard({ projectId, projectPath, connectionId, isPinnedMode
   // Click handler for toggling dependencies during dependency mode
   const handleBoardClick = useCallback((e: React.MouseEvent) => {
     if (!dependencyMode?.active || !dependencyMode.sourceTicketId) return
+    const sourceProjectId = dependencyMode.sourceProjectId ?? projectId
+    if (!sourceProjectId) return
+    const sourceKey = ticketKey(sourceProjectId, dependencyMode.sourceTicketId)
 
     // Find the closest ticket card element
     const ticketEl = (e.target as HTMLElement).closest('[data-ticket-id]')
     if (!ticketEl) return
 
-    const targetTicketId = ticketEl.getAttribute('data-ticket-id')
-    if (!targetTicketId || targetTicketId === dependencyMode.sourceTicketId) return
+    const targetTicketKey =
+      ticketEl.getAttribute('data-ticket-key') ??
+      (ticketEl.getAttribute('data-ticket-id')
+        ? ticketKey(sourceProjectId, ticketEl.getAttribute('data-ticket-id')!)
+        : null)
+    if (!targetTicketKey || targetTicketKey === sourceKey) return
+    const targetRef = parseTicketKey(targetTicketKey)
+    const sourceRef = { projectId: sourceProjectId, ticketId: dependencyMode.sourceTicketId }
 
     // Same-project check: only allow dependencies within the same project
     const sourceTicket = (() => {
-      for (const [, projectTickets] of useKanbanStore.getState().tickets) {
-        const found = projectTickets.find(t => t.id === dependencyMode.sourceTicketId)
-        if (found) return found
-      }
-      return null
+      return (
+        useKanbanStore
+          .getState()
+          .tickets.get(sourceProjectId)
+          ?.find((t) => t.id === dependencyMode.sourceTicketId) ?? null
+      )
     })()
 
     const targetTicket = (() => {
-      for (const [, projectTickets] of useKanbanStore.getState().tickets) {
-        const found = projectTickets.find(t => t.id === targetTicketId)
-        if (found) return found
-      }
-      return null
+      return (
+        useKanbanStore
+          .getState()
+          .tickets.get(targetRef.projectId)
+          ?.find((t) => t.id === targetRef.ticketId) ?? null
+      )
     })()
 
     if (!sourceTicket || !targetTicket || sourceTicket.project_id !== targetTicket.project_id) {
@@ -134,24 +175,29 @@ export function KanbanBoard({ projectId, projectPath, connectionId, isPinnedMode
     e.preventDefault()
 
     // Toggle: if already a dep, remove; otherwise add
-    const existingBlockers = dependencyMap.get(dependencyMode.sourceTicketId)
-    if (existingBlockers?.has(targetTicketId)) {
-      removeDependency(dependencyMode.sourceTicketId, targetTicketId)
+    const existingBlockers = dependencyMap.get(sourceKey)
+    if (existingBlockers?.has(targetTicketKey)) {
+      removeDependency(sourceRef, targetRef)
     } else {
-      addDependency(dependencyMode.sourceTicketId, targetTicketId).then(result => {
+      addDependency(sourceRef, targetRef).then(result => {
         if (!result.success && result.error) {
           toast.error(result.error)
         }
       })
     }
-  }, [dependencyMode, dependencyMap, addDependency, removeDependency])
+  }, [dependencyMode, dependencyMap, addDependency, removeDependency, projectId])
 
   // Compute SVG bezier paths between dependent tickets
   const computePaths = useCallback(() => {
     if (!boardRef.current) return
 
-    const activeTicketId = hoveredBlockedTicketId || (dependencyMode?.active ? dependencyMode.sourceTicketId : null)
-    if (!activeTicketId) {
+    const sourceProjectId = dependencyMode?.sourceProjectId ?? projectId
+    const activeTicketKey =
+      hoveredBlockedTicketKey ||
+      (dependencyMode?.active && dependencyMode.sourceTicketId && sourceProjectId
+        ? ticketKey(sourceProjectId, dependencyMode.sourceTicketId)
+        : null)
+    if (!activeTicketKey) {
       setSvgPaths([])
       return
     }
@@ -160,13 +206,13 @@ export function KanbanBoard({ projectId, projectPath, connectionId, isPinnedMode
     setSvgSize({ width: boardRect.width, height: boardRect.height })
 
     // Get blocker IDs for this ticket
-    const blockerIds = dependencyMap.get(activeTicketId)
-    if (!blockerIds?.size) {
+    const blockerKeys = dependencyMap.get(activeTicketKey)
+    if (!blockerKeys?.size) {
       setSvgPaths([])
       return
     }
 
-    const sourceEl = boardRef.current.querySelector(`[data-ticket-id="${activeTicketId}"]`)
+    const sourceEl = boardRef.current.querySelector(`[data-ticket-key="${activeTicketKey}"]`)
     if (!sourceEl) {
       setSvgPaths([])
       return
@@ -178,8 +224,8 @@ export function KanbanBoard({ projectId, projectPath, connectionId, isPinnedMode
 
     const paths: Array<{ key: string; d: string }> = []
 
-    for (const blockerId of blockerIds) {
-      const targetEl = boardRef.current.querySelector(`[data-ticket-id="${blockerId}"]`)
+    for (const blockerKey of blockerKeys) {
+      const targetEl = boardRef.current.querySelector(`[data-ticket-key="${blockerKey}"]`)
       if (!targetEl) continue
 
       const targetRect = targetEl.getBoundingClientRect()
@@ -211,11 +257,11 @@ export function KanbanBoard({ projectId, projectPath, connectionId, isPinnedMode
         d = `M ${sx},${sy} C ${cx},${sy} ${cx},${ty} ${tx},${ty}`
       }
 
-      paths.push({ key: `${activeTicketId}-${blockerId}`, d })
+      paths.push({ key: `${activeTicketKey}-${blockerKey}`, d })
     }
 
     setSvgPaths(paths)
-  }, [hoveredBlockedTicketId, dependencyMode, dependencyMap])
+  }, [hoveredBlockedTicketKey, dependencyMode, dependencyMap, projectId])
 
   // Recompute paths when relevant state changes
   useEffect(() => {
@@ -233,14 +279,19 @@ export function KanbanBoard({ projectId, projectPath, connectionId, isPinnedMode
 
   // Aggregate archived tickets across all connection member projects for the done column
   const connectionArchivedDoneTickets = isConnectionMode
-    ? getConnectionProjectIds(connectionId!).flatMap((pid) => getArchivedTicketsByColumn(pid, 'done'))
+    ? connectionProjectIds.flatMap((pid) => getArchivedTicketsByColumn(pid, 'done'))
     : undefined
-
-  const pinnedProjectIdsArray = isPinnedMode ? getPinnedProjectIdsArray() : []
 
   const pinnedArchivedDoneTickets = isPinnedMode
     ? pinnedProjectIdsArray.flatMap((pid) => getArchivedTicketsByColumn(pid, 'done'))
     : undefined
+  const invalidPlaceholders = isPinnedMode
+    ? getInvalidPlaceholdersForPinned()
+    : isConnectionMode && connectionId
+      ? getInvalidPlaceholdersForConnection(connectionId)
+      : projectId
+        ? getInvalidPlaceholdersForProject(projectId)
+        : []
 
   return (
     <LayoutGroup>
@@ -293,37 +344,52 @@ export function KanbanBoard({ projectId, projectPath, connectionId, isPinnedMode
             className="flex flex-1 min-h-0 gap-3 overflow-x-auto p-3"
             onClick={handleBoardClick}
           >
-            {COLUMNS.map((column) => {
-              const tickets = isPinnedMode
-                ? getTicketsByColumnForPinned(column)
-                : isConnectionMode
-                  ? getTicketsByColumnForConnection(connectionId, column)
-                  : projectId
-                    ? getTicketsByColumn(projectId, column)
-                    : []
-
-              const archivedTickets = column === 'done'
-                ? isPinnedMode
-                  ? pinnedArchivedDoneTickets
+            {(() => {
+              const occurrenceCounts = new Map<string, number>()
+              return COLUMNS.map((column) => {
+                const tickets = isPinnedMode
+                  ? getTicketsByColumnForPinned(column)
                   : isConnectionMode
-                    ? connectionArchivedDoneTickets
+                    ? getTicketsByColumnForConnection(connectionId, column)
                     : projectId
-                      ? getArchivedTicketsByColumn(projectId, 'done')
-                      : undefined
-                : undefined
+                      ? getTicketsByColumn(projectId, column)
+                      : []
 
-              return (
-                <KanbanColumn
-                  key={column}
-                  column={column}
-                  tickets={tickets}
-                  archivedTickets={archivedTickets}
-                  projectId={projectId ?? ''}
-                  connectionId={connectionId}
-                  isPinnedMode={isPinnedMode}
-                />
-              )
-            })}
+                const archivedTickets = column === 'done'
+                  ? isPinnedMode
+                    ? pinnedArchivedDoneTickets
+                    : isConnectionMode
+                      ? connectionArchivedDoneTickets
+                      : projectId
+                        ? getArchivedTicketsByColumn(projectId, 'done')
+                        : undefined
+                  : undefined
+
+                const activeCardIdentityKeys = cardOccurrenceKeys(
+                  tickets,
+                  markdownDiagnostics,
+                  occurrenceCounts
+                )
+                const archivedCardIdentityKeys = archivedTickets
+                  ? cardOccurrenceKeys(archivedTickets, markdownDiagnostics, occurrenceCounts)
+                  : undefined
+
+                return (
+                  <KanbanColumn
+                    key={column}
+                    column={column}
+                    tickets={tickets}
+                    archivedTickets={archivedTickets}
+                    activeCardIdentityKeys={activeCardIdentityKeys}
+                    archivedCardIdentityKeys={archivedCardIdentityKeys}
+                    invalidPlaceholders={column === 'todo' ? invalidPlaceholders : undefined}
+                    projectId={projectId ?? ''}
+                    connectionId={connectionId}
+                    isPinnedMode={isPinnedMode}
+                  />
+                )
+              })
+            })()}
             <KanbanTicketModal />
             <MergeOnDoneDialog />
             {/* SVG dependency lines */}

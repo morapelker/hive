@@ -47,7 +47,7 @@ import { MarkdownRenderer } from '../sessions/MarkdownRenderer'
 import { HandoffSplitButton } from '../sessions/HandoffSplitButton'
 import { IndeterminateProgressBar } from '@/components/sessions/IndeterminateProgressBar'
 import { cn } from '@/lib/utils'
-import { useKanbanStore } from '@/stores/useKanbanStore'
+import { parseTicketKey, ticketKey, useKanbanStore } from '@/stores/useKanbanStore'
 import { BOARD_TAB_ID, useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
@@ -57,7 +57,6 @@ import { useCommandApprovalStore } from '@/stores/useCommandApprovalStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useSettingsStore, resolveModelForSdk } from '@/stores/useSettingsStore'
 import { isBlockerSatisfied } from '@/lib/blocker-utils'
-import { autoPinBaseWorktree } from '@/lib/auto-pin'
 import { useGitStore } from '@/stores/useGitStore'
 import { notifyKanbanSessionSync } from '@/stores/store-coordination'
 import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
@@ -79,7 +78,6 @@ import type { Attachment, AttachmentInput } from '@/components/sessions/Attachme
 import { buildMessageParts, isImageMime, MAX_ATTACHMENTS } from '@/lib/file-attachment-utils'
 import { useDropZone } from '@/hooks/useDropZone'
 import { SessionStreamPanel } from './SessionStreamPanel'
-import { opencodeApi } from '@/api/opencode-api'
 import { ReviewTicketDiffSummary, type ReviewTicketDiffFile } from './ReviewTicketDiffSummary'
 import { ProviderIcon, getProviderLabel } from '@/components/ui/provider-icon'
 import { useLifecycleActions } from '@/hooks/useLifecycleActions'
@@ -89,23 +87,25 @@ import { TicketAttachmentEditor } from './TicketAttachmentEditor'
 import { TicketDiscardChangesDialog } from './TicketDiscardChangesDialog'
 import { useImagePaste } from '@/hooks/useImagePaste'
 import { buildHandoffPrompt, type HandoffSelectionOverride } from '@/lib/handoffSelection'
-import {
-  registerHivePromptHandoff,
-  startHivePromptTelemetry
-} from '@/lib/hive-enterprise-telemetry'
 import { canonicalizeTicketTitle, extractPlanTitle } from '@shared/types/branch-utils'
-import { isClaudeCli, supportsGoalMode } from '@shared/types/agent-sdk'
 import type { KanbanTicket, KanbanTicketUpdate, Session, Worktree } from '../../../../main/db/types'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
-import { systemApi } from '@/api/system-api'
 import { dbApi } from '@/api/db-api'
-import { gitApi } from '@/api/git-api'
 import { fileApi } from '@/api/file-api'
+import { gitApi } from '@/api/git-api'
+import { opencodeApi } from '@/api/opencode-api'
+import { systemApi } from '@/api/system-api'
 import { terminalApi } from '@/api/terminal-api'
 
 // ── Types ───────────────────────────────────────────────────────────
 type ModalMode = 'edit' | 'plan_review' | 'review' | 'error' | 'question'
 type FollowUpMode = 'build' | 'plan' | 'super-plan'
+type ResolvedModalWorktree = Pick<Worktree, 'id' | 'path' | 'branch_name' | 'project_id'> &
+  Partial<Pick<Worktree, 'base_branch'>>
+
+function completionSendMode(mode: FollowUpMode): 'build' | 'plan' {
+  return isPlanLike(mode) ? 'plan' : 'build'
+}
 
 /** Standard (non-dual-pane) DialogContent className per modal mode */
 const MODE_DIALOG_CLASS: Record<ModalMode, string> = {
@@ -175,9 +175,7 @@ function normalizeTicketAttachments(attachments: unknown[]): string {
 // ── Helpers ─────────────────────────────────────────────────────────
 
 /** Find a worktree by its ID across all projects */
-function findWorktreeById(
-  worktreeId: string
-): { id: string; path: string; branch_name: string; project_id: string } | null {
+function findWorktreeById(worktreeId: string): ResolvedModalWorktree | null {
   for (const worktrees of useWorktreeStore.getState().worktreesByProject.values()) {
     const wt = worktrees.find((w) => w.id === worktreeId)
     if (wt) return wt
@@ -216,7 +214,7 @@ async function findSessionById(sessionId: string): Promise<{
       let worktreePath = found.worktree_id ? findWorktreePathById(found.worktree_id) : null
       // Worktree not in the in-memory store (project not loaded in sidebar) — try DB
       if (!worktreePath && found.worktree_id) {
-        worktreePath = (await dbApi.worktree.get(found.worktree_id))?.path ?? null
+        worktreePath = (await dbApi.worktree.get<Worktree>(found.worktree_id))?.path ?? null
       }
       return { session: found, worktreePath, connectionId: null, workingPath: worktreePath }
     }
@@ -315,10 +313,8 @@ async function sendFollowupToSession(opts: {
   prompt: string
   followUpMode: FollowUpMode
   ticketId: string
-  projectId: string
   attachments?: Attachment[]
 }): Promise<void> {
-  void autoPinBaseWorktree(opts.projectId)
   const result = await findSessionById(opts.sessionId)
   if (!result) {
     console.error(
@@ -334,6 +330,13 @@ async function sendFollowupToSession(opts: {
       `[KanbanTicketModal] sendFollowupToSession: workingPath is null — sessionId=${opts.sessionId}, worktree_id=${session.worktree_id}, connection_id=${session.connection_id}`
     )
     throw new Error(`Working path not found for session: ${opts.sessionId}`)
+  }
+
+  if (!session.opencode_session_id) {
+    console.error(
+      `[KanbanTicketModal] sendFollowupToSession: opencode_session_id is null — sessionId=${opts.sessionId}`
+    )
+    throw new Error(`No opencode session ID for session: ${opts.sessionId}`)
   }
 
   // Set session mode so the agent SDK knows we're in plan mode (matches Tab toggle in SessionView).
@@ -359,7 +362,7 @@ async function sendFollowupToSession(opts: {
   messageSendTimes.set(opts.sessionId, Date.now())
   userExplicitSendTimes.set(opts.sessionId, Date.now())
   snapshotTokenBaseline(opts.sessionId)
-  lastSendMode.set(opts.sessionId, opts.followUpMode)
+  lastSendMode.set(opts.sessionId, completionSendMode(opts.followUpMode))
   useWorktreeStatusStore
     .getState()
     .setSessionStatus(opts.sessionId, isPlanLike(opts.followUpMode) ? 'planning' : 'working')
@@ -370,43 +373,6 @@ async function sendFollowupToSession(opts: {
 
   // Resolve model AFTER setSessionMode (which may have applied a mode-specific default)
   const model = resolveSessionModel(opts.sessionId, result.session)
-  startHivePromptTelemetry({
-    sessionId: opts.sessionId,
-    prompt: opts.prompt,
-    worktreeId: session.worktree_id,
-    modelId: model?.modelID,
-    providerId: model?.providerID,
-    modelVariant: model?.variant,
-    mode: opts.followUpMode
-  })
-
-  if (isClaudeCli(session.agent_sdk)) {
-    // Terminal-backed session: deliver to the live TUI via bracketed paste.
-    // If no terminal is running (app restart, claude exited), respawn it
-    // headlessly — createClaudeCli resumes via --resume <claude_session_id>
-    // and submits the pending prompt.
-    const { delivered } = unwrapEnvelope(
-      await terminalApi.sendClaudeCliPrompt(opts.sessionId, fullPrompt)
-    )
-    if (!delivered) {
-      const result = unwrapEnvelope(
-        await terminalApi.createClaudeCli(opts.sessionId, { pendingPrompt: fullPrompt })
-      )
-      if (!result.success) {
-        throw new Error(result.error ?? 'Failed to start Claude CLI terminal for followup')
-      }
-    }
-    return
-  }
-
-  // claude-code-cli sessions are terminal-backed and have no opencode_session_id,
-  // so this guard only applies after the terminal branch above.
-  if (!session.opencode_session_id) {
-    console.error(
-      `[KanbanTicketModal] sendFollowupToSession: opencode_session_id is null — sessionId=${opts.sessionId}`
-    )
-    throw new Error(`No opencode session ID for session: ${opts.sessionId}`)
-  }
 
   // Ensure the session is loaded in the agent SDK implementer's in-memory map.
   // SessionView does this on mount via initializeSession(), but the kanban
@@ -481,19 +447,19 @@ function TicketGoalSection({
 
 // ── Component ───────────────────────────────────────────────────────
 export function KanbanTicketModal() {
-  const selectedTicketId = useKanbanStore((s) => s.selectedTicketId)
+  const selectedTicketRef = useKanbanStore((s) => s.selectedTicketRef)
   const setSelectedTicketId = useKanbanStore((s) => s.setSelectedTicketId)
   const tickets = useKanbanStore((s) => s.tickets)
 
-  // Find the ticket across all projects
+  // Ticket IDs are project-local in markdown mode, so modal selection must be project-scoped.
   const ticket = useMemo<KanbanTicket | null>(() => {
-    if (!selectedTicketId) return null
-    for (const projectTickets of tickets.values()) {
-      const found = projectTickets.find((t) => t.id === selectedTicketId)
-      if (found) return found
-    }
-    return null
-  }, [selectedTicketId, tickets])
+    if (!selectedTicketRef) return null
+    return (
+      tickets
+        .get(selectedTicketRef.projectId)
+        ?.find((t) => t.id === selectedTicketRef.ticketId) ?? null
+    )
+  }, [selectedTicketRef, tickets])
 
   if (!ticket) return null
 
@@ -505,9 +471,9 @@ function MergeConflictBanner({ ticket }: { ticket: KanbanTicket }) {
     useCallback(
       (state) =>
         ticket.worktree_id
-          ? (state.mergeConflictWorktreeByTicket[ticket.id] ?? ticket.worktree_id)
+          ? (state.mergeConflictWorktreeByTicket[ticketKey(ticket.project_id, ticket.id)] ?? ticket.worktree_id)
           : null,
-      [ticket.id, ticket.worktree_id]
+      [ticket.id, ticket.project_id, ticket.worktree_id]
     )
   )
   const worktreePath = useWorktreeStore(
@@ -576,7 +542,11 @@ function MergeConflictBanner({ ticket }: { ticket: KanbanTicket }) {
       ) : mergeConflictMode === 'always-ask' ? (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button size="sm" variant="destructive" className="h-7 text-xs font-semibold">
+            <Button
+              size="sm"
+              variant="destructive"
+              className="h-7 text-xs font-semibold"
+            >
               <AlertTriangle className="h-3.5 w-3.5 mr-1" />
               Fix conflicts
               <ChevronDown className="h-3 w-3 ml-1" />
@@ -937,7 +907,7 @@ function KanbanTicketModalContent({
     }
     let cancelled = false
     dbApi.session
-      .get<{ opencode_session_id?: string | null }>(ticket.current_session_id)
+      .get<Pick<Session, 'opencode_session_id'>>(ticket.current_session_id)
       .then((dbSess: { opencode_session_id?: string | null } | null) => {
         if (cancelled) return
         const dbId = dbSess?.opencode_session_id ?? null
@@ -1009,8 +979,10 @@ function KanbanTicketModalContent({
     )
     ;(async () => {
       try {
+        const sessionId = ticket.current_session_id
+        if (!sessionId) return
         const reconnResult = unwrapEnvelope(
-          await opencodeApi.reconnect(worktreePath, opcSessionId, ticket.current_session_id)
+          await opencodeApi.reconnect(worktreePath, opcSessionId, sessionId)
         )
         console.info('[KanbanModal:sessionReady] reconnect result:', reconnResult)
       } catch (err) {
@@ -1021,7 +993,9 @@ function KanbanTicketModalContent({
       // Pre-warm: load messages into the backend cache so the next
       // getMessages() call from useSessionStream finds them immediately.
       try {
-        const warmResult = unwrapEnvelope(await opencodeApi.getMessages(worktreePath, opcSessionId))
+        const warmResult = unwrapEnvelope(
+          await opencodeApi.getMessages(worktreePath, opcSessionId)
+        )
         console.info(
           '[KanbanModal:sessionReady] pre-warm getMessages — success=%s, messageCount=%d',
           warmResult.success,
@@ -1084,7 +1058,6 @@ function KanbanTicketModalContent({
           moveTicket={moveTicket}
           updateTicket={updateTicket}
           dualPane={wantsDualPane}
-          isClaudeCli={isClaudeCli}
           runScriptState={runScriptState}
         />
       )
@@ -1095,7 +1068,6 @@ function KanbanTicketModalContent({
           ticket={ticket}
           onClose={forceClose}
           dualPane={wantsDualPane}
-          isClaudeCli={isClaudeCli}
           runScriptState={runScriptState}
         />
       )
@@ -1299,13 +1271,15 @@ function EditModeContent({
   // comparison on the returned array instead of Object.is reference check.
   const blockerTickets = useKanbanStore(
     useShallow((state) => {
-      const blockerIds = state.dependencyMap.get(ticket.id)
-      if (!blockerIds?.size) return [] as KanbanTicket[]
+      const blockerKeys = state.dependencyMap.get(ticketKey(ticket.project_id, ticket.id))
+      if (!blockerKeys?.size) return [] as KanbanTicket[]
       const result: KanbanTicket[] = []
-      for (const [, projectTickets] of state.tickets) {
-        for (const t of projectTickets) {
-          if (blockerIds.has(t.id)) result.push(t)
-        }
+      for (const blockerKey of blockerKeys) {
+        const blockerRef = parseTicketKey(blockerKey)
+        const blocker = state.tickets
+          .get(blockerRef.projectId)
+          ?.find((t) => t.id === blockerRef.ticketId)
+        if (blocker) result.push(blocker)
       }
       return result
     })
@@ -1313,14 +1287,15 @@ function EditModeContent({
 
   const dependentTickets = useKanbanStore(
     useShallow((state) => {
+      const currentTicketKey = ticketKey(ticket.project_id, ticket.id)
       const result: KanbanTicket[] = []
-      for (const [depId, blockerIds] of state.dependencyMap) {
-        if (blockerIds.has(ticket.id)) {
-          for (const [, projectTickets] of state.tickets) {
-            const t = projectTickets.find((pt) => pt.id === depId)
-            if (t) result.push(t)
-          }
-        }
+      for (const [depKey, blockerKeys] of state.dependencyMap) {
+        if (!blockerKeys.has(currentTicketKey)) continue
+        const depRef = parseTicketKey(depKey)
+        const dependent = state.tickets
+          .get(depRef.projectId)
+          ?.find((t) => t.id === depRef.ticketId)
+        if (dependent) result.push(dependent)
       }
       return result
     })
@@ -1402,7 +1377,7 @@ function EditModeContent({
             <DialogTitle>Edit Ticket</DialogTitle>
             {ticket.external_provider && ticket.external_url && (
               <button
-                onClick={() => void systemApi.openInChrome(ticket.external_url!)}
+                onClick={() => systemApi.openInChrome(ticket.external_url!)}
                 className="transition-opacity hover:opacity-80"
                 title={`Open ${getProviderLabel(ticket.external_provider)} #${ticket.external_id}`}
               >
@@ -1502,7 +1477,7 @@ function EditModeContent({
                 <span className="text-xs text-muted-foreground">Blocked by:</span>
                 {blockerTickets.map((blocker) => (
                   <div
-                    key={blocker.id}
+                    key={`${blocker.project_id}:${blocker.id}`}
                     className="flex items-center justify-between gap-2 px-2 py-1 rounded-md bg-muted/30"
                   >
                     <div className="flex items-center gap-2 min-w-0">
@@ -1515,7 +1490,10 @@ function EditModeContent({
                     </div>
                     <button
                       onClick={() =>
-                        useKanbanStore.getState().removeDependency(ticket.id, blocker.id)
+                        useKanbanStore.getState().removeDependency(
+                          { projectId: ticket.project_id, ticketId: ticket.id },
+                          { projectId: blocker.project_id, ticketId: blocker.id }
+                        )
                       }
                       className="text-muted-foreground hover:text-foreground shrink-0"
                     >
@@ -1532,7 +1510,7 @@ function EditModeContent({
                 <span className="text-xs text-muted-foreground">Depended on by:</span>
                 {dependentTickets.map((dep) => (
                   <div
-                    key={dep.id}
+                    key={`${dep.project_id}:${dep.id}`}
                     className="flex items-center gap-2 px-2 py-1 rounded-md bg-muted/30"
                   >
                     <span className="text-sm truncate">{dep.title}</span>
@@ -1545,7 +1523,7 @@ function EditModeContent({
             <button
               type="button"
               onClick={() => {
-                useKanbanStore.getState().enterDependencyMode(ticket.id)
+                useKanbanStore.getState().enterDependencyMode(ticket.id, ticket.project_id)
                 onClose() // Close modal
               }}
               className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
@@ -1616,10 +1594,7 @@ function EditModeContent({
               variant="outline"
               className="gap-1.5"
               disabled={lifecycleLoading}
-              onClick={() => {
-                void autoPinBaseWorktree(ticket.project_id)
-                pinAndActivateSession(() => lifecycle.createCodeReview())
-              }}
+              onClick={() => pinAndActivateSession(() => lifecycle.createCodeReview())}
             >
               <FileSearch className="h-3.5 w-3.5" />
               Review
@@ -1885,7 +1860,6 @@ function PlanReviewModeContent({
             prompt: feedback,
             followUpMode,
             ticketId: ticket.id,
-            projectId: ticket.project_id,
             attachments
           }).catch((err) => {
             console.error('[KanbanTicketModal] sendFollowupToSession failed:', err)
@@ -1905,7 +1879,7 @@ function PlanReviewModeContent({
       messageSendTimes.set(sessionId, Date.now())
       userExplicitSendTimes.set(sessionId, Date.now())
       snapshotTokenBaseline(sessionId)
-      lastSendMode.set(sessionId, followUpMode)
+      lastSendMode.set(sessionId, completionSendMode(followUpMode))
       useWorktreeStatusStore
         .getState()
         .setSessionStatus(sessionId, isPlanLike(followUpMode) ? 'planning' : 'working')
@@ -1919,7 +1893,6 @@ function PlanReviewModeContent({
         prompt: feedback,
         followUpMode,
         ticketId: ticket.id,
-        projectId: ticket.project_id,
         attachments
       }).catch((err) => {
         console.error('[KanbanTicketModal] sendFollowupToSession failed:', err)
@@ -1982,8 +1955,7 @@ function PlanReviewModeContent({
             pendingBeforeAction.planContent
           ),
           followUpMode: 'build',
-          ticketId: ticket.id,
-          projectId: ticket.project_id
+          ticketId: ticket.id
         }).catch((err) => {
           const reason = err instanceof Error ? err.message : String(err)
           console.error('[KanbanTicketModal] background implement send failed:', err)
@@ -2012,7 +1984,11 @@ function PlanReviewModeContent({
           return
         }
         unwrapEnvelope(
-          await opencodeApi.planApprove(approvePath, sessionId, pendingBeforeAction.requestId)
+          await opencodeApi.planApprove(
+            approvePath,
+            sessionId,
+            pendingBeforeAction.requestId
+          )
         )
       }
 
@@ -2044,7 +2020,7 @@ function PlanReviewModeContent({
 
       try {
         const sessionId = ticket.current_session_id
-        const handoffGoalMode = override?.goalMode === true && supportsGoalMode(override?.agentSdk)
+        const handoffGoalMode = override?.goalMode === true && override?.agentSdk === 'codex'
         useSessionStore.getState().clearPendingPlan(sessionId)
         useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
         lastSendMode.delete(sessionId)
@@ -2094,14 +2070,14 @@ function PlanReviewModeContent({
 
           prepareTicketBuildSession(newSessionId, handoffGoalMode)
           if (newSession.agent_sdk === 'claude-code-cli') {
-            registerHivePromptHandoff(sessionId, newSessionId)
             sessionStore.setPendingMessage(newSessionId, handoffPrompt)
           }
 
-          const boardMode = useSettingsStore.getState().boardMode
-          if (boardMode === 'sticky-tab') {
+          // Sticky-tab mode keeps the board tab active; toggle mode navigates to
+          // the newly created handoff session.
+          if (useSettingsStore.getState().boardMode === 'sticky-tab') {
             sessionStore.setActiveSession(BOARD_TAB_ID)
-          } else if (newSession.agent_sdk !== 'claude-code-cli') {
+          } else {
             sessionStore.setActiveConnection(sessionRecord.connection_id)
             sessionStore.setActiveConnectionSession(newSessionId)
           }
@@ -2123,7 +2099,6 @@ function PlanReviewModeContent({
                 sessionStore.dequeuePendingMessage(newSessionId)
               }
             } else {
-              registerHivePromptHandoff(sessionId, newSessionId)
               await eagerHandoffStart(connectionPath, newSessionId, handoffPrompt, {
                 connectionId: sessionRecord.connection_id
               })
@@ -2184,14 +2159,14 @@ function PlanReviewModeContent({
 
         prepareTicketBuildSession(newSessionId, handoffGoalMode)
         if (newSession.agent_sdk === 'claude-code-cli') {
-          registerHivePromptHandoff(sessionId, newSessionId)
           sessionStore.setPendingMessage(newSessionId, handoffPrompt)
         }
 
-        const boardMode = useSettingsStore.getState().boardMode
-        if (boardMode === 'sticky-tab') {
+        // Sticky-tab mode keeps the board tab active; toggle mode navigates to
+        // the newly created handoff session.
+        if (useSettingsStore.getState().boardMode === 'sticky-tab') {
           sessionStore.setActiveSession(BOARD_TAB_ID)
-        } else if (newSession.agent_sdk !== 'claude-code-cli') {
+        } else {
           sessionStore.setActiveWorktree(worktreeId)
           sessionStore.setActiveSession(newSessionId)
         }
@@ -2213,7 +2188,6 @@ function PlanReviewModeContent({
               sessionStore.dequeuePendingMessage(newSessionId)
             }
           } else {
-            registerHivePromptHandoff(sessionId, newSessionId)
             await eagerHandoffStart(localWorktreePath, newSessionId, handoffPrompt, { worktreeId })
           }
           toast.success('Handoff session started')
@@ -2243,7 +2217,6 @@ function PlanReviewModeContent({
   // in_progress so the kanban board reflects the new work before the modal closes.
   const prepareTicketBuildSession = useCallback(
     (newSessionId: string, goalMode: boolean): void => {
-      void autoPinBaseWorktree(ticket.project_id)
       useKanbanStore
         .getState()
         .updateTicket(ticket.id, ticket.project_id, {
@@ -2283,14 +2256,16 @@ function PlanReviewModeContent({
     ) => {
       // Connect to OpenCode. Surface failure so the caller can alert the user — staying silent
       // here would leave optimistic UI state with no work running and no error feedback.
-      const connectResult = unwrapEnvelope(await opencodeApi.connect(worktreePath, newSessionId))
+      const connectResult = unwrapEnvelope(
+        await opencodeApi.connect(worktreePath, newSessionId)
+      )
       if (!connectResult.success || !connectResult.sessionId) {
         throw new Error('Failed to connect to supercharge session')
       }
 
       // Persist the opencode session ID to Zustand + DB
       useSessionStore.getState().setOpenCodeSessionId(newSessionId, connectResult.sessionId)
-      await dbApi.session.update<Session>(newSessionId, {
+      await dbApi.session.update(newSessionId, {
         opencode_session_id: connectResult.sessionId
       })
 
@@ -2331,13 +2306,15 @@ function PlanReviewModeContent({
       handoffPrompt: string,
       bumpTarget: { worktreeId?: string | null; connectionId?: string | null }
     ) => {
-      const connectResult = unwrapEnvelope(await opencodeApi.connect(workingPath, newSessionId))
+      const connectResult = unwrapEnvelope(
+        await opencodeApi.connect(workingPath, newSessionId)
+      )
       if (!connectResult.success || !connectResult.sessionId) {
         throw new Error('Failed to connect to handoff session')
       }
 
       useSessionStore.getState().setOpenCodeSessionId(newSessionId, connectResult.sessionId)
-      await dbApi.session.update<Session>(newSessionId, {
+      await dbApi.session.update(newSessionId, {
         opencode_session_id: connectResult.sessionId
       })
 
@@ -2349,15 +2326,6 @@ function PlanReviewModeContent({
       bumpWorktreeLastMessage(bumpTarget)
 
       const model = resolveSessionModel(newSessionId)
-      startHivePromptTelemetry({
-        sessionId: newSessionId,
-        prompt: handoffPrompt,
-        worktreeId: bumpTarget.worktreeId,
-        modelId: model?.modelID,
-        providerId: model?.providerID,
-        modelVariant: model?.variant,
-        mode: 'build'
-      })
       unwrapEnvelope(
         await opencodeApi.prompt(
           workingPath,
@@ -2719,7 +2687,6 @@ function ReviewModeContent({
   moveTicket,
   updateTicket,
   dualPane = false,
-  isClaudeCli = false,
   runScriptState
 }: {
   ticket: KanbanTicket
@@ -2732,7 +2699,6 @@ function ReviewModeContent({
   ) => Promise<void>
   updateTicket: (ticketId: string, projectId: string, data: KanbanTicketUpdate) => Promise<void>
   dualPane?: boolean
-  isClaudeCli?: boolean
   runScriptState: TicketRunScriptState
 }) {
   const worktree = useMemo(
@@ -2743,7 +2709,7 @@ function ReviewModeContent({
   const [followUpMode, setFollowUpMode] = useState<FollowUpMode>('build')
   const [isSending, setIsSending] = useState(false)
   const [attachments, setAttachments] = useState<Attachment[]>([])
-  const [resolvedWorktree, setResolvedWorktree] = useState<Worktree | null>(worktree)
+  const [resolvedWorktree, setResolvedWorktree] = useState<ResolvedModalWorktree | null>(worktree)
   const [resolvedBaseBranch, setResolvedBaseBranch] = useState<string | null>(null)
   const [diffSummary, setDiffSummary] = useState<ReviewTicketDiffFile[]>([])
   const [diffSummaryLoading, setDiffSummaryLoading] = useState(false)
@@ -2935,10 +2901,8 @@ function ReviewModeContent({
     setFollowUpMode((prev) => (prev === 'super-plan' ? 'plan' : 'super-plan'))
   }, [])
 
-  // Tab key toggles mode, Shift+Tab toggles super-plan.
-  // Claude CLI sessions handle Tab/Shift+Tab inside the terminal instead.
+  // Tab key toggles mode, Shift+Tab toggles super-plan
   useEffect(() => {
-    if (isClaudeCli) return
     const handler = (e: KeyboardEvent): void => {
       if (e.key === 'Tab' && !e.ctrlKey && !e.metaKey && !e.altKey) {
         // Only intercept when the modal is focused
@@ -2956,7 +2920,7 @@ function ReviewModeContent({
     }
     window.addEventListener('keydown', handler, true)
     return () => window.removeEventListener('keydown', handler, true)
-  }, [isClaudeCli, toggleMode, toggleSuperMode])
+  }, [toggleMode, toggleSuperMode])
 
   // ── Send followup ─────────────────────────────────────────────────
   const handleSendFollowup = useCallback(async () => {
@@ -2989,7 +2953,7 @@ function ReviewModeContent({
       messageSendTimes.set(sessionId, Date.now())
       userExplicitSendTimes.set(sessionId, Date.now())
       snapshotTokenBaseline(sessionId)
-      lastSendMode.set(sessionId, mode)
+      lastSendMode.set(sessionId, completionSendMode(mode))
       useWorktreeStatusStore
         .getState()
         .setSessionStatus(sessionId, isPlanLike(mode) ? 'planning' : 'working')
@@ -3006,7 +2970,6 @@ function ReviewModeContent({
         prompt,
         followUpMode: mode,
         ticketId,
-        projectId,
         attachments: currentAttachments
       }).catch((err) => {
         console.error('[KanbanTicketModal] sendFollowupToSession failed:', err)
@@ -3136,7 +3099,6 @@ function ReviewModeContent({
         isSending={isSending}
         placeholder="Provide followup instructions... (Enter to send)"
         testIdPrefix="review"
-        hideModeToggle={isClaudeCli}
         textareaRef={textareaRef}
       />
 
@@ -3161,10 +3123,7 @@ function ReviewModeContent({
             variant="outline"
             className="gap-1.5"
             disabled={lifecycleLoading}
-            onClick={() => {
-              void autoPinBaseWorktree(ticket.project_id)
-              pinAndActivateSession(() => lifecycle.createCodeReview())
-            }}
+            onClick={() => pinAndActivateSession(() => lifecycle.createCodeReview())}
           >
             <FileSearch className="h-3.5 w-3.5" />
             Review
@@ -3256,13 +3215,11 @@ function ErrorModeContent({
   ticket,
   onClose,
   dualPane = false,
-  isClaudeCli = false,
   runScriptState
 }: {
   ticket: KanbanTicket
   onClose: () => void
   dualPane?: boolean
-  isClaudeCli?: boolean
   runScriptState: TicketRunScriptState
 }) {
   const [followUpText, setFollowUpText] = useState('')
@@ -3338,10 +3295,8 @@ function ErrorModeContent({
     setFollowUpMode((prev) => (prev === 'super-plan' ? 'plan' : 'super-plan'))
   }, [])
 
-  // Tab key toggles mode, Shift+Tab toggles super-plan.
-  // Claude CLI sessions handle Tab/Shift+Tab inside the terminal instead.
+  // Tab key toggles mode, Shift+Tab toggles super-plan
   useEffect(() => {
-    if (isClaudeCli) return
     const handler = (e: KeyboardEvent): void => {
       if (e.key === 'Tab' && !e.ctrlKey && !e.metaKey && !e.altKey) {
         const modal = document.querySelector('[data-testid="kanban-ticket-modal"]')
@@ -3358,7 +3313,7 @@ function ErrorModeContent({
     }
     window.addEventListener('keydown', handler, true)
     return () => window.removeEventListener('keydown', handler, true)
-  }, [isClaudeCli, toggleMode, toggleSuperMode])
+  }, [toggleMode, toggleSuperMode])
 
   // ── Send followup for error retry ─────────────────────────────────
   const handleSendFollowup = useCallback(async () => {
@@ -3376,7 +3331,6 @@ function ErrorModeContent({
         prompt: followUpText.trim(),
         followUpMode,
         ticketId: ticket.id,
-        projectId: ticket.project_id,
         attachments
       })
 
@@ -3449,7 +3403,6 @@ function ErrorModeContent({
         isSending={isSending}
         placeholder="Describe the fix or retry instructions... (Enter to send)"
         testIdPrefix="error"
-        hideModeToggle={isClaudeCli}
       />
 
       {/* Drag-and-drop overlay */}
@@ -3543,7 +3496,9 @@ function QuestionModeContent({
         } else if (ticket.current_session_id) {
           questionPath = (await findSessionById(ticket.current_session_id))?.workingPath ?? null
         }
-        unwrapEnvelope(await opencodeApi.questionReject(requestId, questionPath || undefined))
+        unwrapEnvelope(
+          await opencodeApi.questionReject(requestId, questionPath || undefined)
+        )
         // Optimistically set session back to working so the progress bar resumes immediately
         if (ticket.current_session_id) {
           useWorktreeStatusStore

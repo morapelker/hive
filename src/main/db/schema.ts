@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 34
+export const CURRENT_SCHEMA_VERSION = 35
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -592,5 +592,42 @@ DROP TABLE IF EXISTS diff_comments;`
     up: `-- NOTE: ALTER TABLE for teleported_to is handled idempotently by
          -- ensureConnectionTables() in database.ts to avoid "duplicate column" errors.`,
     down: `-- SQLite cannot drop columns; this is a no-op for safety`
+  },
+  {
+    version: 35,
+    name: 'add_markdown_kanban_mode',
+    up: `
+      ALTER TABLE projects ADD COLUMN kanban_storage_mode TEXT NOT NULL DEFAULT 'internal';
+      ALTER TABLE projects ADD COLUMN kanban_markdown_config TEXT DEFAULT NULL;
+      CREATE TABLE IF NOT EXISTS markdown_kanban_card_state (
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        card_id TEXT NOT NULL,
+        current_session_id TEXT DEFAULT NULL REFERENCES sessions(id) ON DELETE SET NULL,
+        worktree_id TEXT DEFAULT NULL REFERENCES worktrees(id) ON DELETE SET NULL,
+        note TEXT DEFAULT NULL,
+        attachments TEXT NOT NULL DEFAULT '[]',
+        plan_ready INTEGER NOT NULL DEFAULT 0,
+        total_tokens INTEGER NOT NULL DEFAULT 0,
+        pending_launch_config TEXT DEFAULT NULL,
+        last_seen_path TEXT DEFAULT NULL,
+        orphaned_at TEXT DEFAULT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (project_id, card_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_markdown_kanban_card_state_session
+        ON markdown_kanban_card_state(current_session_id);
+      CREATE INDEX IF NOT EXISTS idx_markdown_kanban_card_state_worktree
+        ON markdown_kanban_card_state(worktree_id);
+      CREATE INDEX IF NOT EXISTS idx_markdown_kanban_card_state_project_card
+        ON markdown_kanban_card_state(project_id, card_id);
+    `,
+    down: `
+      DROP INDEX IF EXISTS idx_markdown_kanban_card_state_project_card;
+      DROP INDEX IF EXISTS idx_markdown_kanban_card_state_worktree;
+      DROP INDEX IF EXISTS idx_markdown_kanban_card_state_session;
+      DROP TABLE IF EXISTS markdown_kanban_card_state;
+      -- SQLite cannot drop project columns safely; no-op for those columns.
+    `
   }
 ]
