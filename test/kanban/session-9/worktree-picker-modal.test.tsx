@@ -147,6 +147,15 @@ vi.mock('@/api/terminal-api', () => ({ terminalApi: apiMocks.terminalApi }))
 vi.mock('@/api/script-api', () => ({ scriptApi: apiMocks.scriptApi }))
 vi.mock('@/lib/hive-enterprise-telemetry', () => apiMocks.hiveTelemetry)
 
+const toastMocks = vi.hoisted(() => ({
+  success: vi.fn(),
+  error: vi.fn(),
+  info: vi.fn(),
+  warning: vi.fn(),
+  message: vi.fn()
+}))
+vi.mock('sonner', () => ({ toast: toastMocks }))
+
 const mockKanban = apiMocks.kanbanApi
 const mockDbSession = apiMocks.dbApi.session
 const mockDbWorktree = apiMocks.dbApi.worktree
@@ -1226,6 +1235,111 @@ describe('Session 9: Worktree Picker Modal', () => {
       undefined,
       { codexFastMode: true }
     )
+  })
+
+  test('sends a clean model (no agentSdk) to opencodeApi.prompt for a Codex session', async () => {
+    // The configured model carries an `agentSdk` field, but the prompt RPC model
+    // schema is .strict() and rejects it ("RPC parameters failed validation").
+    // The modal must strip it before sending, like SessionView's getModelForRequests.
+    act(() => {
+      useSettingsStore.setState({
+        codexFastMode: true,
+        codexFastModeAccepted: true,
+        selectedModelByProvider: {
+          codex: { agentSdk: 'codex', providerID: 'codex', modelID: 'gpt-5.5', variant: 'high' }
+        }
+      })
+    })
+
+    render(
+      <WorktreePickerModal
+        ticket={defaultTicket}
+        projectId="proj-1"
+        open={true}
+        onOpenChange={() => {}}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('sdk-toggle-codex'))
+    fireEvent.click(screen.getByTestId('worktree-item-wt-1'))
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('wt-picker-send-btn'))
+    })
+
+    await waitFor(() => {
+      expect(mockOpencodeOps.prompt).toHaveBeenCalled()
+    })
+
+    const modelArg = mockOpencodeOps.prompt.mock.calls.at(-1)?.[3]
+    expect(modelArg).toEqual({ providerID: 'codex', modelID: 'gpt-5.5', variant: 'high' })
+    expect(modelArg).not.toHaveProperty('agentSdk')
+  })
+
+  test('surfaces the real error when a Codex connect throws (e.g. desktop command timeout)', async () => {
+    // Simulate the transport-level failure (10s desktop-command timeout) that
+    // unwrapEnvelope re-throws into handleSend. Previously the bare `catch {}`
+    // hid this behind a generic "Failed to start session".
+    mockOpencodeOps.connect.mockRejectedValueOnce(
+      new Error('Timed out waiting for desktop command response: opencodeConnect')
+    )
+
+    render(
+      <WorktreePickerModal
+        ticket={defaultTicket}
+        projectId="proj-1"
+        open={true}
+        onOpenChange={() => {}}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('sdk-toggle-codex'))
+    fireEvent.click(screen.getByTestId('worktree-item-wt-1'))
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('wt-picker-send-btn'))
+    })
+
+    await waitFor(() => {
+      expect(toastMocks.error).toHaveBeenCalledWith(
+        'Timed out waiting for desktop command response: opencodeConnect',
+        expect.anything()
+      )
+    })
+    expect(mockOpencodeOps.prompt).not.toHaveBeenCalled()
+  })
+
+  test('surfaces the connect error when a Codex connect returns success:false', async () => {
+    // A failed connect (success:false) must not be silently swallowed — the
+    // user should see why, instead of a session that never starts.
+    mockOpencodeOps.connect.mockResolvedValueOnce({
+      success: false,
+      error: 'Installed Codex CLI does not support app-server'
+    })
+
+    render(
+      <WorktreePickerModal
+        ticket={defaultTicket}
+        projectId="proj-1"
+        open={true}
+        onOpenChange={() => {}}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('sdk-toggle-codex'))
+    fireEvent.click(screen.getByTestId('worktree-item-wt-1'))
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('wt-picker-send-btn'))
+    })
+
+    await waitFor(() => {
+      expect(toastMocks.error).toHaveBeenCalledWith(
+        'Installed Codex CLI does not support app-server',
+        expect.anything()
+      )
+    })
+    expect(mockOpencodeOps.prompt).not.toHaveBeenCalled()
   })
 
   test('super-plan prompts use request_user_input wording for Codex sessions', async () => {

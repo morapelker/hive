@@ -206,7 +206,10 @@ export async function autoLaunchTicket(ticket: AutoLaunchTicket): Promise<void> 
     if (!worktree?.path) return
 
     const connectResult = unwrapEnvelope(await opencodeApi.connect(worktree.path, sessionId))
-    if (!connectResult.success || !connectResult.sessionId) return
+    if (!connectResult.success || !connectResult.sessionId) {
+      toast.error(`Auto-launch failed: ${connectResult.error || 'Could not start session'}`)
+      return
+    }
 
     useSessionStore.getState().setOpenCodeSessionId(sessionId, connectResult.sessionId)
     await dbApi.session.update(sessionId, { opencode_session_id: connectResult.sessionId })
@@ -244,13 +247,22 @@ export async function autoLaunchTicket(ticket: AutoLaunchTicket): Promise<void> 
           worktree.path,
           connectResult.sessionId,
           [{ type: 'text', text: outboundPrompt }],
-          effectiveModel,
+          // Strip `agentSdk` — the prompt RPC model schema is .strict() and
+          // rejects it ("RPC parameters failed validation").
+          effectiveModel
+            ? {
+                providerID: effectiveModel.providerID,
+                modelID: effectiveModel.modelID,
+                variant: effectiveModel.variant
+              }
+            : undefined,
           promptOptions
         )
       )
     }
   } catch (err) {
     console.error('Auto-launch failed for ticket:', ticket.id, err)
-    toast.error(`Auto-launch failed for: ${ticket.title}`)
+    const detail = err instanceof Error ? err.message : null
+    toast.error(`Auto-launch failed for: ${ticket.title}${detail ? ` — ${detail}` : ''}`)
   }
 }
