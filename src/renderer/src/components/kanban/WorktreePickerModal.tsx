@@ -155,6 +155,17 @@ function composePromptForSdk(
     : fullPrompt
 }
 
+// Strip a SelectedModel down to the shape the prompt RPC accepts. The renderer's
+// model objects carry an extra `agentSdk` field used for SDK routing, but the
+// `opencodeOps.prompt` model schema is .strict() and rejects unknown keys — so
+// passing the raw model fails with "RPC parameters failed validation".
+function toRequestModel(
+  model: { providerID: string; modelID: string; variant?: string } | undefined
+): { providerID: string; modelID: string; variant?: string } | undefined {
+  if (!model) return undefined
+  return { providerID: model.providerID, modelID: model.modelID, variant: model.variant }
+}
+
 // ── Component ───────────────────────────────────────────────────────
 export function WorktreePickerModal({
   ticket,
@@ -547,7 +558,10 @@ export function WorktreePickerModal({
         if (!connectionPath) return
 
         const connectResult = unwrapEnvelope(await opencodeApi.connect(connectionPath, sessionId))
-        if (!connectResult.success || !connectResult.sessionId) return
+        if (!connectResult.success || !connectResult.sessionId) {
+          toast.error(connectResult.error || 'Failed to start session')
+          return
+        }
 
         useSessionStore.getState().setOpenCodeSessionId(sessionId, connectResult.sessionId)
         await dbApi.session.update<Session>(sessionId, {
@@ -585,14 +599,14 @@ export function WorktreePickerModal({
               connectionPath,
               connectResult.sessionId,
               [{ type: 'text', text: outboundPrompt }],
-              effectiveModel,
+              toRequestModel(effectiveModel),
               promptOptions
             )
           )
         }
         return // Done with connection path
-      } catch {
-        toast.error('Failed to start session')
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Failed to start session')
       } finally {
         setIsSending(false)
       }
@@ -827,7 +841,10 @@ export function WorktreePickerModal({
 
       // Connect to OpenCode to create the AI session
       const connectResult = unwrapEnvelope(await opencodeApi.connect(worktree.path, sessionId))
-      if (!connectResult.success || !connectResult.sessionId) return
+      if (!connectResult.success || !connectResult.sessionId) {
+        toast.error(connectResult.error || 'Failed to start session')
+        return
+      }
 
       // Persist the opencodeSessionId to Zustand + DB
       useSessionStore.getState().setOpenCodeSessionId(sessionId, connectResult.sessionId)
@@ -868,13 +885,13 @@ export function WorktreePickerModal({
             worktree.path,
             connectResult.sessionId,
             [{ type: 'text', text: outboundPrompt }],
-            effectiveModel,
+            toRequestModel(effectiveModel),
             promptOptions
           )
         )
       }
-    } catch {
-      toast.error('Failed to start session')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to start session')
     } finally {
       setIsSending(false)
     }
