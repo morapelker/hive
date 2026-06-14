@@ -13,7 +13,10 @@ import { cleanupBranchWatchers } from '../main/services/branch-watcher'
 import { setGitEventPublisher } from '../main/services/git-events'
 import { setWorktreeEventPublisher } from '../main/services/worktree-events'
 import { cleanupWorktreeWatchers } from '../main/services/worktree-watcher'
-import { setMarkdownKanbanEventPublisher } from '../main/services/markdown-kanban-watcher'
+import {
+  cleanupMarkdownKanbanWatchers,
+  setMarkdownKanbanEventPublisher
+} from '../main/services/markdown-kanban-watcher'
 import { getDatabase } from '../main/db'
 
 export interface StartedHiveServer {
@@ -247,6 +250,7 @@ export const startHiveServer = (
                 })
                 await cleanupWorktreeWatchers()
                 await cleanupBranchWatchers()
+                await cleanupMarkdownKanbanWatchers()
                 await import('../main/services/discord-service')
                   .then(({ discordService }) => discordService.stopListening())
                   .catch(() => undefined)

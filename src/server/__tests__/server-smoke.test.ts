@@ -4,9 +4,24 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomBytes, createHash } from 'node:crypto'
 import { Effect } from 'effect'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { startHiveServer, type StartedHiveServer } from '../server'
 import { OPENCODE_STREAM_CHANNEL } from '../../shared/opencode-events'
+
+const markdownWatcherMocks = vi.hoisted(() => ({
+  cleanupMarkdownKanbanWatchers: vi.fn(async () => undefined),
+  setMarkdownKanbanEventPublisher: vi.fn()
+}))
+
+vi.mock('../../main/services/markdown-kanban-watcher', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../../main/services/markdown-kanban-watcher')>()
+  return {
+    ...actual,
+    cleanupMarkdownKanbanWatchers: markdownWatcherMocks.cleanupMarkdownKanbanWatchers,
+    setMarkdownKanbanEventPublisher: markdownWatcherMocks.setMarkdownKanbanEventPublisher
+  }
+})
 
 describe('hive server smoke', () => {
   let started: StartedHiveServer | null = null
@@ -171,6 +186,21 @@ describe('hive server smoke', () => {
       channel: OPENCODE_STREAM_CHANNEL,
       payload: { type: 'message.delta', sessionId: 'session-1', data: { text: 'hello' } }
     })
+  })
+
+  it('cleans up markdown kanban watchers when closing', async () => {
+    markdownWatcherMocks.cleanupMarkdownKanbanWatchers.mockClear()
+    markdownWatcherMocks.setMarkdownKanbanEventPublisher.mockClear()
+
+    started = await Effect.runPromise(
+      startHiveServer({ port: 0, baseDir: mkdtempSync(join(tmpdir(), 'hive-server-')) })
+    )
+
+    await started.close()
+    started = null
+
+    expect(markdownWatcherMocks.cleanupMarkdownKanbanWatchers).toHaveBeenCalledTimes(1)
+    expect(markdownWatcherMocks.setMarkdownKanbanEventPublisher).toHaveBeenLastCalledWith(null)
   })
 })
 

@@ -332,13 +332,6 @@ async function sendFollowupToSession(opts: {
     throw new Error(`Working path not found for session: ${opts.sessionId}`)
   }
 
-  if (!session.opencode_session_id) {
-    console.error(
-      `[KanbanTicketModal] sendFollowupToSession: opencode_session_id is null — sessionId=${opts.sessionId}`
-    )
-    throw new Error(`No opencode session ID for session: ${opts.sessionId}`)
-  }
-
   // Set session mode so the agent SDK knows we're in plan mode (matches Tab toggle in SessionView).
   // This updates modeBySession, persists to DB, and applies mode-specific default model.
   await useSessionStore.getState().setSessionMode(opts.sessionId, opts.followUpMode)
@@ -370,6 +363,28 @@ async function sendFollowupToSession(opts: {
     worktreeId: session.worktree_id,
     connectionId: session.connection_id ?? connectionId
   })
+
+  if (session.agent_sdk === 'claude-code-cli') {
+    const delivery = unwrapEnvelope(
+      await terminalApi.sendClaudeCliPrompt(opts.sessionId, fullPrompt)
+    )
+    if (!delivery.delivered) {
+      const createResult = unwrapEnvelope(
+        await terminalApi.createClaudeCli(opts.sessionId, { pendingPrompt: fullPrompt })
+      )
+      if (!createResult.success) {
+        throw new Error(createResult.error ?? 'Failed to start Claude CLI session')
+      }
+    }
+    return
+  }
+
+  if (!session.opencode_session_id) {
+    console.error(
+      `[KanbanTicketModal] sendFollowupToSession: opencode_session_id is null — sessionId=${opts.sessionId}`
+    )
+    throw new Error(`No opencode session ID for session: ${opts.sessionId}`)
+  }
 
   // Resolve model AFTER setSessionMode (which may have applied a mode-specific default)
   const model = resolveSessionModel(opts.sessionId, result.session)
@@ -2588,23 +2603,21 @@ function PlanReviewModeContent({
       <TicketGoalSection ticket={ticket} />
 
       {/* Followup input — iterate on the plan */}
-      {!isClaudeCliPlanSession && (
-        <FollowupInput
-          text={followUpText}
-          onTextChange={setFollowUpText}
-          attachments={attachments}
-          onAttach={handleAttach}
-          onRemoveAttachment={handleRemoveAttachment}
-          followUpMode={followUpMode}
-          onToggleMode={toggleMode}
-          onSend={handleSendFollowup}
-          isSending={isSending}
-          placeholder="Iterate on the plan... (Enter to send)"
-          testIdPrefix="plan-review"
-          showInlineSendButton
-          textareaRef={textareaRef}
-        />
-      )}
+      <FollowupInput
+        text={followUpText}
+        onTextChange={setFollowUpText}
+        attachments={attachments}
+        onAttach={handleAttach}
+        onRemoveAttachment={handleRemoveAttachment}
+        followUpMode={followUpMode}
+        onToggleMode={toggleMode}
+        onSend={handleSendFollowup}
+        isSending={isSending}
+        placeholder="Iterate on the plan... (Enter to send)"
+        testIdPrefix="plan-review"
+        showInlineSendButton
+        textareaRef={textareaRef}
+      />
 
       {/* Drag-and-drop overlay */}
       {!isClaudeCliPlanSession && isDragging && (
@@ -2659,18 +2672,16 @@ function PlanReviewModeContent({
               Supercharge
             </Button>
           )}
-          {!isClaudeCliPlanSession && (
-            <Button
-              type="button"
-              data-testid="plan-review-implement-btn"
-              disabled={isActioning}
-              onClick={handleImplement}
-              className="gap-1.5 bg-blue-600 hover:bg-blue-700 text-white"
-            >
-              <Hammer className="h-3.5 w-3.5" />
-              Implement
-            </Button>
-          )}
+          <Button
+            type="button"
+            data-testid="plan-review-implement-btn"
+            disabled={isActioning}
+            onClick={handleImplement}
+            className="gap-1.5 bg-blue-600 hover:bg-blue-700 text-white"
+          >
+            <Hammer className="h-3.5 w-3.5" />
+            Implement
+          </Button>
         </DialogFooter>
       )}
     </div>

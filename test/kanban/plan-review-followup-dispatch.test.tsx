@@ -123,7 +123,9 @@ const apiMocks = vi.hoisted(() => ({
   },
   terminalApi: {
     create: vi.fn(),
-    createClaudeCli: vi.fn()
+    createClaudeCli: vi.fn(),
+    sendClaudeCliPrompt: vi.fn(),
+    write: vi.fn()
   },
   scriptApi: {
     onOutput: vi.fn(() => vi.fn()),
@@ -132,6 +134,9 @@ const apiMocks = vi.hoisted(() => ({
   hiveTelemetry: {
     registerHivePromptHandoff: vi.fn(),
     startHivePromptTelemetry: vi.fn()
+  },
+  claudeCliPortal: {
+    registerTarget: vi.fn(() => vi.fn())
   }
 }))
 
@@ -150,6 +155,11 @@ vi.mock('@/api/file-api', () => ({ fileApi: apiMocks.fileApi }))
 vi.mock('@/api/terminal-api', () => ({ terminalApi: apiMocks.terminalApi }))
 vi.mock('@/api/script-api', () => ({ scriptApi: apiMocks.scriptApi }))
 vi.mock('@/lib/hive-enterprise-telemetry', () => apiMocks.hiveTelemetry)
+vi.mock('@/contexts/ClaudeCliSessionPortalContext', () => ({
+  useClaudeCliSessionPortal: () => ({
+    registerTarget: apiMocks.claudeCliPortal.registerTarget
+  })
+}))
 
 const mockKanban = apiMocks.kanbanApi
 const mockDbSession = apiMocks.dbApi.session
@@ -310,7 +320,8 @@ describe('Plan review followup dispatch', () => {
         isLoading: false,
         isBoardViewActive: true,
         simpleModeByProject: {},
-        selectedTicketId: 'ticket-plan'
+        selectedTicketId: 'ticket-plan',
+        selectedTicketRef: { projectId: 'proj-1', ticketId: 'ticket-plan' }
       })
       useWorktreeStore.setState({
         selectedWorktreeId: null,
@@ -363,6 +374,15 @@ describe('Plan review followup dispatch', () => {
       success: true,
       commands: [{ name: 'using-superpowers' }]
     })
+    apiMocks.terminalApi.createClaudeCli.mockResolvedValue({
+      success: true,
+      value: { success: true }
+    })
+    apiMocks.terminalApi.sendClaudeCliPrompt.mockResolvedValue({
+      success: true,
+      value: { delivered: true }
+    })
+    apiMocks.terminalApi.write.mockResolvedValue({ success: true })
     mockWorktreeOps.create.mockResolvedValue({ success: true })
     mockWorktreeOps.duplicate.mockResolvedValue({ success: true })
     mockConnectionOps.get.mockResolvedValue({
@@ -425,15 +445,118 @@ describe('Plan review followup dispatch', () => {
         undefined
       )
     })
-    expect(apiMocks.hiveTelemetry.startHivePromptTelemetry).toHaveBeenCalledWith({
-      sessionId: 'session-1',
-      prompt: 'Please add error handling to step 2',
-      worktreeId: 'wt-1',
-      modelId: undefined,
-      providerId: undefined,
-      modelVariant: undefined,
-      mode: 'plan'
+  })
+
+  test('routes Claude CLI plan followup through the terminal prompt path', async () => {
+    act(() => {
+      useSessionStore.setState({
+        sessionsByWorktree: new Map([
+          [
+            'wt-1',
+            [
+              makeSession({
+                id: 'session-1',
+                agent_sdk: 'claude-code-cli',
+                opencode_session_id: null
+              })
+            ]
+          ]
+        ])
+      })
     })
+
+    render(<KanbanTicketModal />)
+
+    const input = screen.getByTestId('plan-review-followup-input') as HTMLTextAreaElement
+    fireEvent.change(input, { target: { value: 'Please revise the CLI plan' } })
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('plan-review-send-followup-btn'))
+    })
+
+    await waitFor(() => {
+      expect(apiMocks.terminalApi.sendClaudeCliPrompt).toHaveBeenCalledWith(
+        'session-1',
+        expect.stringContaining('Please revise the CLI plan')
+      )
+    })
+    expect(apiMocks.terminalApi.createClaudeCli).not.toHaveBeenCalled()
+    expect(mockOpencodeOps.reconnect).not.toHaveBeenCalled()
+    expect(mockOpencodeOps.prompt).not.toHaveBeenCalled()
+  })
+
+  test('starts Claude CLI with pending prompt when terminal followup is not delivered', async () => {
+    apiMocks.terminalApi.sendClaudeCliPrompt.mockResolvedValueOnce({
+      success: true,
+      value: { delivered: false }
+    })
+    act(() => {
+      useSessionStore.setState({
+        sessionsByWorktree: new Map([
+          [
+            'wt-1',
+            [
+              makeSession({
+                id: 'session-1',
+                agent_sdk: 'claude-code-cli',
+                opencode_session_id: null
+              })
+            ]
+          ]
+        ])
+      })
+    })
+
+    render(<KanbanTicketModal />)
+
+    const input = screen.getByTestId('plan-review-followup-input') as HTMLTextAreaElement
+    fireEvent.change(input, { target: { value: 'Resume this CLI session' } })
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('plan-review-send-followup-btn'))
+    })
+
+    await waitFor(() => {
+      expect(apiMocks.terminalApi.createClaudeCli).toHaveBeenCalledWith('session-1', {
+        pendingPrompt: expect.stringContaining('Resume this CLI session')
+      })
+    })
+    expect(mockOpencodeOps.reconnect).not.toHaveBeenCalled()
+    expect(mockOpencodeOps.prompt).not.toHaveBeenCalled()
+  })
+
+  test('routes Claude CLI implement-from-plan through the terminal prompt path', async () => {
+    act(() => {
+      useSessionStore.setState({
+        sessionsByWorktree: new Map([
+          [
+            'wt-1',
+            [
+              makeSession({
+                id: 'session-1',
+                agent_sdk: 'claude-code-cli',
+                opencode_session_id: null
+              })
+            ]
+          ]
+        ])
+      })
+    })
+
+    render(<KanbanTicketModal />)
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('plan-review-implement-btn'))
+    })
+
+    await waitFor(() => {
+      expect(apiMocks.terminalApi.sendClaudeCliPrompt).toHaveBeenCalledWith(
+        'session-1',
+        'PLEASE IMPLEMENT THIS PLAN:\n## Detailed Plan\n\nStep 1: Setup routes\nStep 2: Add auth'
+      )
+    })
+    expect(mockOpencodeOps.reconnect).not.toHaveBeenCalled()
+    expect(mockOpencodeOps.prompt).not.toHaveBeenCalled()
   })
 
   test('clears pending plan before sending followup', async () => {
@@ -610,7 +733,8 @@ describe('Plan review followup dispatch', () => {
       useKanbanStore.setState({
         tickets: new Map([['proj-1', [codexPlanTicket]]]),
         isBoardViewActive: true,
-        selectedTicketId: 'ticket-codex'
+        selectedTicketId: 'ticket-codex',
+        selectedTicketRef: { projectId: 'proj-1', ticketId: 'ticket-codex' }
       })
       useSessionStore.setState({
         activeSessionId: null,
@@ -717,7 +841,8 @@ describe('Plan review followup dispatch', () => {
       useKanbanStore.setState({
         tickets: new Map([['proj-1', [codexPlanTicket]]]),
         isBoardViewActive: true,
-        selectedTicketId: 'ticket-codex'
+        selectedTicketId: 'ticket-codex',
+        selectedTicketRef: { projectId: 'proj-1', ticketId: 'ticket-codex' }
       })
       useSessionStore.setState({
         activeSessionId: null,
@@ -798,7 +923,8 @@ describe('Plan review followup dispatch', () => {
       useKanbanStore.setState({
         tickets: new Map([['proj-1', [codexPlanTicket]]]),
         isBoardViewActive: true,
-        selectedTicketId: 'ticket-codex'
+        selectedTicketId: 'ticket-codex',
+        selectedTicketRef: { projectId: 'proj-1', ticketId: 'ticket-codex' }
       })
       useSessionStore.setState({
         activeSessionId: null,
@@ -892,7 +1018,8 @@ describe('Plan review followup dispatch', () => {
       useKanbanStore.setState({
         tickets: new Map([['proj-1', [codexPlanTicket]]]),
         isBoardViewActive: true,
-        selectedTicketId: 'ticket-codex'
+        selectedTicketId: 'ticket-codex',
+        selectedTicketRef: { projectId: 'proj-1', ticketId: 'ticket-codex' }
       })
       useSessionStore.setState({
         activeSessionId: null,
@@ -983,7 +1110,8 @@ describe('Plan review followup dispatch', () => {
       useKanbanStore.setState({
         tickets: new Map([['proj-1', [connTicket]]]),
         isBoardViewActive: true,
-        selectedTicketId: 'ticket-conn'
+        selectedTicketId: 'ticket-conn',
+        selectedTicketRef: { projectId: 'proj-1', ticketId: 'ticket-conn' }
       })
       useSessionStore.setState({
         activeSessionId: null,
@@ -1107,7 +1235,8 @@ describe('Plan review followup dispatch', () => {
       useKanbanStore.setState({
         tickets: new Map([['proj-1', [planTicket]]]),
         isBoardViewActive: true,
-        selectedTicketId: 'ticket-plan'
+        selectedTicketId: 'ticket-plan',
+        selectedTicketRef: { projectId: 'proj-1', ticketId: 'ticket-plan' }
       })
       useSessionStore.setState({
         activeSessionId: null,
