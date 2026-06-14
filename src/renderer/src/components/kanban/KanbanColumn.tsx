@@ -9,7 +9,6 @@ import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip
 import { KanbanTicketCard } from '@/components/kanban/KanbanTicketCard'
 import { TicketCreateModal } from '@/components/kanban/TicketCreateModal'
 import { WorktreePickerModal } from '@/components/kanban/WorktreePickerModal'
-import { cardOccurrenceKeys } from '@/components/kanban/kanban-card-identity'
 import {
   AlertDialog,
   AlertDialogContent,
@@ -43,6 +42,7 @@ import { isBlockerSatisfied } from '@/lib/blocker-utils'
 import type {
   KanbanTicket,
   KanbanTicketColumn as ColumnType,
+  MarkdownCardDiagnostic,
   Session,
   Worktree
 } from '../../../../main/db/types'
@@ -91,6 +91,26 @@ function MarkdownInvalidCardPlaceholder({ placeholder }: { placeholder: Markdown
       </div>
     </div>
   )
+}
+
+function fallbackCardIdentityKeys(
+  tickets: KanbanTicket[],
+  diagnosticsByProject: Map<string, MarkdownCardDiagnostic[]>,
+  column: ColumnType,
+  listKind: 'active' | 'archived'
+): string[] {
+  const occurrenceCounts = new Map<string, number>()
+  return tickets.map((ticket) => {
+    const logicalKey = ticketKey(ticket.project_id, ticket.id)
+    const hasDuplicateDiagnostic = (diagnosticsByProject.get(ticket.project_id) ?? []).some(
+      (diagnostic) => diagnostic.kind === 'duplicate_id' && diagnostic.ticketId === ticket.id
+    )
+    if (!hasDuplicateDiagnostic) return logicalKey
+
+    const occurrenceIndex = occurrenceCounts.get(logicalKey) ?? 0
+    occurrenceCounts.set(logicalKey, occurrenceIndex + 1)
+    return `${logicalKey}:duplicate:${listKind}:${column}:local-${occurrenceIndex}`
+  })
 }
 
 interface KanbanColumnProps {
@@ -203,10 +223,11 @@ export function KanbanColumn({
   const isDragging = useKanbanStore((state) => state.isDragging)
   const draggingTicketKey = useKanbanStore((state) => state.draggingTicketKey)
   const markdownDiagnostics = useKanbanStore((state) => state.markdownDiagnostics)
-  const fallbackActiveCardIdentityKeys = activeCardIdentityKeys ?? cardOccurrenceKeys(tickets, markdownDiagnostics)
+  const fallbackActiveCardIdentityKeys =
+    activeCardIdentityKeys ?? fallbackCardIdentityKeys(tickets, markdownDiagnostics, column, 'active')
   const fallbackArchivedCardIdentityKeys =
     archivedTickets && !archivedCardIdentityKeys
-      ? cardOccurrenceKeys(archivedTickets, markdownDiagnostics)
+      ? fallbackCardIdentityKeys(archivedTickets, markdownDiagnostics, column, 'archived')
       : archivedCardIdentityKeys
 
   // ── Simple mode toggle (In Progress column only) ───────────────

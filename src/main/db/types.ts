@@ -32,6 +32,7 @@ export type KanbanMarkdownConfig =
       statusFolders?: {
         todo: string
         in_progress: string
+        review: string
         done: string
       }
     }
@@ -41,6 +42,7 @@ export type KanbanMarkdownConfig =
       statusFolders: {
         todo: string
         in_progress: string
+        review: string
         done: string
       }
     }

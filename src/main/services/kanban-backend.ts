@@ -450,7 +450,6 @@ class MarkdownKanbanBackend implements KanbanBackend {
   private indexes = new Map<string, MarkdownIndex>()
 
   invalidate(projectId: string): void {
-    suppressMarkdownKanbanWatch(projectId)
     this.indexes.delete(projectId)
   }
 
@@ -495,6 +494,7 @@ class MarkdownKanbanBackend implements KanbanBackend {
     const filename = `${slugify(data.title) || 'ticket'}-${id.slice(-4)}.md`
     const filePath = await uniquePath(folder, filename)
     await writeMarkdownFile(filePath, frontmatter, data.description ?? '')
+    suppressMarkdownWrites(projectId, filePath)
     await this.writeRuntime(
       projectId,
       id,
@@ -585,10 +585,13 @@ class MarkdownKanbanBackend implements KanbanBackend {
     }
 
     try {
+      const createdPaths: string[] = []
       for (const plan of plans) {
         await writeMarkdownFile(plan.filePath, plan.frontmatter, plan.body)
+        createdPaths.push(plan.filePath)
         await this.writeRuntime(projectId, plan.id, plan.runtime, false)
       }
+      suppressMarkdownWrites(projectId, createdPaths)
 
       this.invalidate(projectId)
       const tickets: KanbanTicket[] = []
@@ -622,10 +625,13 @@ class MarkdownKanbanBackend implements KanbanBackend {
       }
       return { tickets, dependencies }
     } catch (error) {
+      const removedPaths: string[] = []
       for (const plan of [...plans].reverse()) {
         await rm(plan.filePath, { force: true }).catch(() => {})
+        removedPaths.push(plan.filePath)
         this.deleteRuntime(projectId, plan.id)
       }
+      suppressMarkdownWrites(projectId, removedPaths)
       this.invalidate(projectId)
       throw error
     }
@@ -667,13 +673,21 @@ class MarkdownKanbanBackend implements KanbanBackend {
     if (data.note !== undefined) runtimeUpdates.note = data.note
 
     if (Object.keys(publicUpdates).length > 0 || body !== undefined) {
+      let touchedPaths: string[]
       if (data.column !== undefined) {
         const project = requireProject(projectId)
         const config = parseMarkdownConfig(project)
-        await rewriteOrRelocateCard(project, config, card.filePath, publicUpdates, body)
+        touchedPaths = await rewriteOrRelocateCard(
+          project,
+          config,
+          card.filePath,
+          publicUpdates,
+          body
+        )
       } else {
-        await rewriteCard(card.filePath, publicUpdates, body)
+        touchedPaths = [await rewriteCard(card.filePath, publicUpdates, body)]
       }
+      suppressMarkdownWrites(projectId, touchedPaths)
     }
     if (Object.keys(runtimeUpdates).length > 0) {
       await this.writeRuntime(projectId, ticketId, runtimeUpdates, false)
@@ -691,7 +705,11 @@ class MarkdownKanbanBackend implements KanbanBackend {
     const card = await this.requireMutableCard(projectId, ticketId)
     const project = requireProject(projectId)
     const config = parseMarkdownConfig(project)
-    await rewriteOrRelocateCard(project, config, card.filePath, { column, sort_order: sortOrder })
+    const touchedPaths = await rewriteOrRelocateCard(project, config, card.filePath, {
+      column,
+      sort_order: sortOrder
+    })
+    suppressMarkdownWrites(projectId, touchedPaths)
     this.invalidate(projectId)
     return this.get(projectId, ticketId)
   }
@@ -704,6 +722,7 @@ class MarkdownKanbanBackend implements KanbanBackend {
     const card = await this.requireMutableCard(projectId, ticketId)
     await this.removeAllDependencies(projectId, ticketId)
     await unlink(card.filePath)
+    suppressMarkdownWrites(projectId, card.filePath)
     this.deleteRuntime(projectId, ticketId)
     this.invalidate(projectId)
     return true
@@ -727,6 +746,7 @@ class MarkdownKanbanBackend implements KanbanBackend {
     if (archivedIds.size === 0) return 0
 
     const archivedAt = new Date().toISOString()
+    const touchedPaths: string[] = []
     for (const ticket of index.tickets) {
       const card = index.cardsById.get(ticket.id)
       if (!card) continue
@@ -734,21 +754,23 @@ class MarkdownKanbanBackend implements KanbanBackend {
       const archiveCard = archivedIds.has(ticket.id)
       const next = archiveCard ? [] : deps.filter((dep) => !archivedIds.has(dep.blocker_id))
       if (!archiveCard && next.length === deps.length) continue
-      await rewriteCard(card.filePath, {
+      touchedPaths.push(await rewriteCard(card.filePath, {
         ...(archiveCard ? { archived_at: archivedAt } : {}),
         dependencies: next.map((dep) => ({
           blocker_id: dep.blocker_id,
           created_at: dep.created_at
         }))
-      })
+      }))
     }
+    suppressMarkdownWrites(projectId, touchedPaths)
     this.invalidate(projectId)
     return archivedIds.size
   }
 
   async unarchive(projectId: string, ticketId: string): Promise<KanbanTicket | null> {
     const card = await this.requireMutableCard(projectId, ticketId)
-    await rewriteCard(card.filePath, { archived_at: null })
+    const touchedPath = await rewriteCard(card.filePath, { archived_at: null })
+    suppressMarkdownWrites(projectId, touchedPath)
     this.invalidate(projectId)
     return this.get(projectId, ticketId)
   }
@@ -860,7 +882,7 @@ class MarkdownKanbanBackend implements KanbanBackend {
         blocker_id: blockerId,
         created_at: new Date().toISOString()
       })
-      await rewriteCard(
+      const touchedPath = await rewriteCard(
         dependent.filePath,
         {
           dependencies: current.map((dep) => ({
@@ -871,6 +893,7 @@ class MarkdownKanbanBackend implements KanbanBackend {
         undefined,
         ['depends_on']
       )
+      suppressMarkdownWrites(projectId, touchedPath)
       this.invalidate(projectId)
     }
     return { success: true }
@@ -885,7 +908,7 @@ class MarkdownKanbanBackend implements KanbanBackend {
     const current = readDependencies(dependent.frontmatter, dependent.ticket.created_at)
     const next = current.filter((dep) => dep.blocker_id !== blockerId)
     if (next.length === current.length) return false
-    await rewriteCard(
+    const touchedPath = await rewriteCard(
       dependent.filePath,
       {
         dependencies: next.map((dep) => ({
@@ -896,6 +919,7 @@ class MarkdownKanbanBackend implements KanbanBackend {
       undefined,
       ['depends_on']
     )
+    suppressMarkdownWrites(projectId, touchedPath)
     this.invalidate(projectId)
     return true
   }
@@ -939,6 +963,7 @@ class MarkdownKanbanBackend implements KanbanBackend {
   ): Promise<number> {
     const index = await this.reloadIndex(projectId)
     let removed = 0
+    const touchedPaths: string[] = []
     for (const ticketId of selectedIds) {
       const card = index.cardsById.get(ticketId)
       if (!card) continue
@@ -946,7 +971,7 @@ class MarkdownKanbanBackend implements KanbanBackend {
       const next = deps.filter((dep) => !selectedIds.has(dep.blocker_id))
       if (next.length === deps.length) continue
       removed += deps.length - next.length
-      await rewriteCard(
+      touchedPaths.push(await rewriteCard(
         card.filePath,
         {
           dependencies: next.map((dep) => ({
@@ -956,8 +981,9 @@ class MarkdownKanbanBackend implements KanbanBackend {
         },
         undefined,
         ['depends_on']
-      )
+      ))
     }
+    suppressMarkdownWrites(projectId, touchedPaths)
     this.invalidate(projectId)
     return removed
   }
@@ -965,6 +991,7 @@ class MarkdownKanbanBackend implements KanbanBackend {
   async removeAllDependencies(projectId: string, ticketId: string): Promise<number> {
     const index = await this.reloadIndex(projectId)
     let removed = 0
+    const touchedPaths: string[] = []
     for (const ticket of index.tickets) {
       const card = index.cardsById.get(ticket.id)
       if (!card) continue
@@ -973,13 +1000,14 @@ class MarkdownKanbanBackend implements KanbanBackend {
       const removeDependent = ticket.id === ticketId
       if (removeDependent || next.length !== deps.length) {
         removed += removeDependent ? deps.length : deps.length - next.length
-        await rewriteCard(card.filePath, {
+        touchedPaths.push(await rewriteCard(card.filePath, {
           dependencies: removeDependent
             ? []
             : next.map((dep) => ({ blocker_id: dep.blocker_id, created_at: dep.created_at }))
-        })
+        }))
       }
     }
+    suppressMarkdownWrites(projectId, touchedPaths)
     this.invalidate(projectId)
     return removed
   }
@@ -1167,6 +1195,7 @@ class MarkdownKanbanBackend implements KanbanBackend {
       maxSortByColumn.set(draft.column, Math.max(current, draft.existingSortOrder))
     }
 
+    const touchedPaths: string[] = []
     for (const draft of safeDrafts) {
       if (draft.needsSortOrder) {
         const nextSortOrder = (maxSortByColumn.get(draft.column) ?? -1) + 1
@@ -1175,12 +1204,13 @@ class MarkdownKanbanBackend implements KanbanBackend {
       }
       if (Object.keys(draft.updates).length === 0) continue
       try {
-        await rewriteCard(draft.filePath, draft.updates)
+        touchedPaths.push(await rewriteCard(draft.filePath, draft.updates))
       } catch {
         continue
       }
     }
 
+    suppressMarkdownWrites(projectId, touchedPaths)
     this.invalidate(projectId)
   }
 
@@ -1291,8 +1321,7 @@ class MarkdownKanbanBackend implements KanbanBackend {
     if (!id) {
       id = generateTicketId(asString(frontmatter.title) ?? basename(filePath, extname(filePath)))
       frontmatter = { ...frontmatter, id }
-      suppressMarkdownKanbanWatch(projectId)
-      await rewriteCard(filePath, { id })
+      suppressMarkdownWrites(projectId, await rewriteCard(filePath, { id }))
     }
 
     const title =
@@ -1626,12 +1655,14 @@ async function migrateMarkdownLayout(
   await preflightMarkdownLayoutMoves(moves)
   for (const move of moves) {
     if (move.source === move.target) continue
-    suppressMarkdownKanbanWatch(projectId)
     await copyFile(move.source, move.target)
+    suppressMarkdownWrites(projectId, move.target)
     try {
       await unlink(move.source)
+      suppressMarkdownWrites(projectId, move.source)
     } catch (error) {
       await rm(move.target, { force: true }).catch(() => {})
+      suppressMarkdownWrites(projectId, move.target)
       throw error
     }
   }
@@ -1661,12 +1692,7 @@ async function planSingleFolderToStatusFolders(
       const id = asString(parsed.frontmatter.id)
       validateKnownFrontmatter(parsed.frontmatter, id)
       const column = asColumn(parsed.frontmatter.column) ?? 'todo'
-      const targetFolder =
-        column === 'done'
-          ? nextConfig.statusFolders.done
-          : column === 'todo'
-            ? nextConfig.statusFolders.todo
-            : nextConfig.statusFolders.in_progress
+      const targetFolder = nextConfig.statusFolders[column]
       moves.push({
         source,
         target: join(resolveProjectPath(project.path, targetFolder), entry.name)
@@ -1883,12 +1909,13 @@ async function rewriteCard(
   updates: Frontmatter,
   bodyOverride?: string,
   removeFields: string[] = []
-): Promise<void> {
+): Promise<string> {
   const raw = await readFile(filePath, 'utf-8')
   const parsed = parseMarkdown(raw)
   const nextFrontmatter = mergeFrontmatter(parsed.frontmatter, updates, removeFields)
   const body = bodyOverride ?? parsed.body
   await writeMarkdownFile(filePath, nextFrontmatter, body)
+  return filePath
 }
 
 async function rewriteOrRelocateCard(
@@ -1898,7 +1925,7 @@ async function rewriteOrRelocateCard(
   updates: Frontmatter,
   bodyOverride?: string,
   removeFields: string[] = []
-): Promise<string> {
+): Promise<string[]> {
   const raw = await readFile(filePath, 'utf-8')
   const parsed = parseMarkdown(raw)
   const nextFrontmatter = mergeFrontmatter(parsed.frontmatter, updates, removeFields)
@@ -1907,13 +1934,13 @@ async function rewriteOrRelocateCard(
 
   if (config.layout !== 'status-folders') {
     await writeMarkdownFile(filePath, nextFrontmatter, body)
-    return filePath
+    return [filePath]
   }
 
   const folder = await ensureFolder(project, config, column)
   if (dirname(filePath) === folder) {
     await writeMarkdownFile(filePath, nextFrontmatter, body)
-    return filePath
+    return [filePath]
   }
 
   const target = await uniquePath(folder, basename(filePath))
@@ -1924,7 +1951,13 @@ async function rewriteOrRelocateCard(
     await rm(target, { force: true }).catch(() => {})
     throw error
   }
-  return target
+  return [target, filePath]
+}
+
+function suppressMarkdownWrites(projectId: string, paths: string | string[]): void {
+  const pathList = Array.isArray(paths) ? paths : [paths]
+  if (pathList.length === 0) return
+  suppressMarkdownKanbanWatch(projectId, pathList)
 }
 
 function mergeFrontmatter(

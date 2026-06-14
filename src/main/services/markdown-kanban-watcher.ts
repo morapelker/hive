@@ -1,5 +1,5 @@
 import * as chokidar from 'chokidar'
-import { basename } from 'node:path'
+import { basename, normalize } from 'node:path'
 
 import { MARKDOWN_KANBAN_CHANGED_CHANNEL } from '../../shared/kanban-events'
 import { getDatabase } from '../db'
@@ -15,9 +15,18 @@ const log = {
 }
 
 const DEBOUNCE_MS = 300
-const SELF_WRITE_SUPPRESSION_MS = 750
+const SELF_WRITE_SUPPRESSION_MS = 2_000
 
 type MarkdownKanbanWatchEventType = 'add' | 'change' | 'unlink'
+type MarkdownKanbanEventPublisher = (channel: string, payload: unknown) => void | Promise<void>
+
+let markdownKanbanEventPublisher: MarkdownKanbanEventPublisher | null = null
+
+export const setMarkdownKanbanEventPublisher = (
+  publisher: MarkdownKanbanEventPublisher | null
+): void => {
+  markdownKanbanEventPublisher = publisher
+}
 
 export interface MarkdownKanbanChangedEvent {
   projectId: string
@@ -34,7 +43,7 @@ interface WatchEntry {
 
 const watchers = new Map<string, WatchEntry>()
 const interestedProjectRefCounts = new Map<string, number>()
-const suppressUntilByProject = new Map<string, number>()
+const suppressedPathsByProject = new Map<string, Map<string, number>>()
 const projectWatchOperations = new Map<string, Promise<void>>()
 
 export function initMarkdownKanbanWatcher(): void {
@@ -43,9 +52,19 @@ export function initMarkdownKanbanWatcher(): void {
 
 export function suppressMarkdownKanbanWatch(
   projectId: string,
+  paths: string | string[],
   durationMs: number = SELF_WRITE_SUPPRESSION_MS
 ): void {
-  suppressUntilByProject.set(projectId, Date.now() + durationMs)
+  const pathList = Array.isArray(paths) ? paths : [paths]
+  const normalizedPaths = pathList.map(normalizeWatchPath).filter(Boolean)
+  if (normalizedPaths.length === 0) return
+
+  const suppressedPaths = suppressedPathsByProject.get(projectId) ?? new Map<string, number>()
+  const suppressUntil = Date.now() + durationMs
+  for (const path of normalizedPaths) {
+    suppressedPaths.set(path, suppressUntil)
+  }
+  suppressedPathsByProject.set(projectId, suppressedPaths)
 }
 
 export async function startMarkdownKanbanProjectWatch(
@@ -170,7 +189,7 @@ export async function cleanupMarkdownKanbanWatchers(): Promise<void> {
     await closeEntry(projectId, entry)
   }
   interestedProjectRefCounts.clear()
-  suppressUntilByProject.clear()
+  suppressedPathsByProject.clear()
   projectWatchOperations.clear()
 }
 
@@ -239,7 +258,7 @@ function enqueueChange(
   changedPath: string
 ): void {
   if (!isMarkdownCandidate(basename(changedPath))) return
-  if (isSuppressed(projectId)) return
+  if (isSuppressed(projectId, changedPath)) return
 
   entry.pendingPaths.add(changedPath)
   entry.pendingEventTypes.add(eventType)
@@ -252,6 +271,7 @@ function enqueueChange(
 }
 
 function flushChange(projectId: string, entry: WatchEntry): void {
+  if (watchers.get(projectId) !== entry) return
   if (entry.pendingPaths.size === 0) return
   const paths = [...entry.pendingPaths]
   const eventTypes = [...entry.pendingEventTypes]
@@ -259,17 +279,45 @@ function flushChange(projectId: string, entry: WatchEntry): void {
   entry.pendingEventTypes.clear()
 
   const payload: MarkdownKanbanChangedEvent = { projectId, paths, eventTypes }
-  void import('../desktop/backend-event-publisher').then(({ publishDesktopBackendEvent }) =>
-    publishDesktopBackendEvent(MARKDOWN_KANBAN_CHANGED_CHANNEL, payload)
-  )
+  void publishMarkdownKanbanChange(projectId, entry, payload)
 }
 
-function isSuppressed(projectId: string): boolean {
-  const suppressUntil = suppressUntilByProject.get(projectId)
-  if (!suppressUntil) return false
-  if (Date.now() <= suppressUntil) return true
-  suppressUntilByProject.delete(projectId)
-  return false
+async function publishMarkdownKanbanChange(
+  projectId: string,
+  entry: WatchEntry,
+  payload: MarkdownKanbanChangedEvent
+): Promise<void> {
+  if (watchers.get(projectId) !== entry) return
+  if (markdownKanbanEventPublisher) {
+    await Promise.resolve(markdownKanbanEventPublisher(MARKDOWN_KANBAN_CHANGED_CHANNEL, payload))
+    return
+  }
+
+  const { publishDesktopBackendEvent } = await import('../desktop/backend-event-publisher')
+  if (watchers.get(projectId) !== entry) return
+  await publishDesktopBackendEvent(MARKDOWN_KANBAN_CHANGED_CHANNEL, payload)
+}
+
+function isSuppressed(projectId: string, changedPath: string): boolean {
+  const suppressedPaths = suppressedPathsByProject.get(projectId)
+  if (!suppressedPaths) return false
+
+  const now = Date.now()
+  for (const [path, suppressUntil] of suppressedPaths) {
+    if (now > suppressUntil) suppressedPaths.delete(path)
+  }
+  if (suppressedPaths.size === 0) {
+    suppressedPathsByProject.delete(projectId)
+    return false
+  }
+
+  const path = normalizeWatchPath(changedPath)
+  const suppressUntil = suppressedPaths.get(path)
+  return suppressUntil !== undefined && now <= suppressUntil
+}
+
+function normalizeWatchPath(path: string): string {
+  return normalize(path)
 }
 
 async function closeEntry(projectId: string, entry: WatchEntry): Promise<void> {

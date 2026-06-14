@@ -85,12 +85,14 @@ describe('MarkdownKanbanWatcher', () => {
     }
     const watcher = await import('../../src/main/services/markdown-kanban-watcher')
     await watcher.cleanupMarkdownKanbanWatchers()
+    watcher.setMarkdownKanbanEventPublisher(null)
     watcher.initMarkdownKanbanWatcher()
   })
 
   afterEach(async () => {
     const watcher = await import('../../src/main/services/markdown-kanban-watcher')
     await watcher.cleanupMarkdownKanbanWatchers()
+    watcher.setMarkdownKanbanEventPublisher(null)
     vi.useRealTimers()
   })
 
@@ -138,6 +140,7 @@ describe('MarkdownKanbanWatcher', () => {
         statusFolders: {
           todo: 'cards/todo',
           in_progress: 'cards/in-progress',
+          review: 'cards/review',
           done: 'cards/done'
         }
       })
@@ -150,6 +153,7 @@ describe('MarkdownKanbanWatcher', () => {
     expect(fakeWatchers[0].paths).toEqual([
       '/repo/cards/todo',
       '/repo/cards/in-progress',
+      '/repo/cards/review',
       '/repo/cards/done'
     ])
     expect(fakeWatchers[0].options).toMatchObject({ depth: 0, ignoreInitial: true })
@@ -175,6 +179,36 @@ describe('MarkdownKanbanWatcher', () => {
       paths: ['/repo/cards/first.md', '/repo/cards/second.markdown'],
       eventTypes: ['change', 'unlink']
     })
+  })
+
+  test('publishes debounced changes through an injected server event publisher', async () => {
+    const watcher = await import('../../src/main/services/markdown-kanban-watcher')
+    const publisher = vi.fn()
+    watcher.setMarkdownKanbanEventPublisher(publisher)
+    await watcher.startMarkdownKanbanProjectWatch('project-1')
+
+    emit(0, 'change', '/repo/cards/first.md')
+    vi.advanceTimersByTime(300)
+    await vi.dynamicImportSettled()
+
+    expect(publisher).toHaveBeenCalledWith('kanban:markdown:changed', {
+      projectId: 'project-1',
+      paths: ['/repo/cards/first.md'],
+      eventTypes: ['change']
+    })
+    expect(publishDesktopBackendEvent).not.toHaveBeenCalled()
+  })
+
+  test('does not publish a debounced event after its watcher has stopped', async () => {
+    const watcher = await import('../../src/main/services/markdown-kanban-watcher')
+    await watcher.startMarkdownKanbanProjectWatch('project-1')
+
+    emit(0, 'change', '/repo/cards/first.md')
+    vi.advanceTimersByTime(300)
+    await watcher.stopMarkdownKanbanProjectWatch('project-1')
+    await vi.dynamicImportSettled()
+
+    expect(publishDesktopBackendEvent).not.toHaveBeenCalled()
   })
 
   test('refcounting prevents premature watcher close', async () => {
@@ -229,22 +263,63 @@ describe('MarkdownKanbanWatcher', () => {
     expect(watchMock).toHaveBeenCalledTimes(1)
   })
 
-  test('suppresses Hive-write events briefly and allows later external changes', async () => {
+  test('suppresses Hive-write events only for the written path', async () => {
     const watcher = await import('../../src/main/services/markdown-kanban-watcher')
     watcher.initMarkdownKanbanWatcher()
     await watcher.startMarkdownKanbanProjectWatch('project-1')
 
-    watcher.suppressMarkdownKanbanWatch('project-1', 1_000)
+    watcher.suppressMarkdownKanbanWatch('project-1', '/repo/cards/first.md', 1_000)
+    emit(0, 'change', '/repo/cards/first.md')
+    emit(0, 'change', '/repo/cards/second.md')
+    vi.advanceTimersByTime(300)
+    await vi.dynamicImportSettled()
+
+    expect(publishDesktopBackendEvent).toHaveBeenCalledWith('kanban:markdown:changed', {
+      projectId: 'project-1',
+      paths: ['/repo/cards/second.md'],
+      eventTypes: ['change']
+    })
+  })
+
+  test('allows path changes again after self-write suppression expires', async () => {
+    const watcher = await import('../../src/main/services/markdown-kanban-watcher')
+    watcher.initMarkdownKanbanWatcher()
+    await watcher.startMarkdownKanbanProjectWatch('project-1')
+
+    watcher.suppressMarkdownKanbanWatch('project-1', '/repo/cards/first.md', 1_000)
     emit(0, 'change', '/repo/cards/first.md')
     vi.advanceTimersByTime(500)
     expect(publishDesktopBackendEvent).not.toHaveBeenCalled()
-
     vi.advanceTimersByTime(501)
+
     emit(0, 'change', '/repo/cards/first.md')
     vi.advanceTimersByTime(300)
     await vi.dynamicImportSettled()
 
     expect(publishDesktopBackendEvent).toHaveBeenCalledTimes(1)
+  })
+
+  test('suppresses multiple Hive-written paths independently', async () => {
+    const watcher = await import('../../src/main/services/markdown-kanban-watcher')
+    watcher.initMarkdownKanbanWatcher()
+    await watcher.startMarkdownKanbanProjectWatch('project-1')
+
+    watcher.suppressMarkdownKanbanWatch(
+      'project-1',
+      ['/repo/cards/first.md', '/repo/cards/second.md'],
+      1_000
+    )
+    emit(0, 'change', '/repo/cards/first.md')
+    emit(0, 'unlink', '/repo/cards/second.md')
+    emit(0, 'add', '/repo/cards/third.md')
+    vi.advanceTimersByTime(300)
+    await vi.dynamicImportSettled()
+
+    expect(publishDesktopBackendEvent).toHaveBeenCalledWith('kanban:markdown:changed', {
+      projectId: 'project-1',
+      paths: ['/repo/cards/third.md'],
+      eventTypes: ['add']
+    })
   })
 
   test('restarts active watchers after config changes', async () => {
@@ -257,6 +332,7 @@ describe('MarkdownKanbanWatcher', () => {
         statusFolders: {
           todo: 'new/todo',
           in_progress: 'new/in-progress',
+          review: 'new/review',
           done: 'new/done'
         }
       })
@@ -265,7 +341,12 @@ describe('MarkdownKanbanWatcher', () => {
     await watcher.restartMarkdownKanbanProjectWatch('project-1')
 
     expect(fakeWatchers[0].close).toHaveBeenCalledTimes(1)
-    expect(fakeWatchers[1].paths).toEqual(['/repo/new/todo', '/repo/new/in-progress', '/repo/new/done'])
+    expect(fakeWatchers[1].paths).toEqual([
+      '/repo/new/todo',
+      '/repo/new/in-progress',
+      '/repo/new/review',
+      '/repo/new/done'
+    ])
   })
 
   test('deactivating for markdown-to-internal mode switch preserves visible-board interest', async () => {

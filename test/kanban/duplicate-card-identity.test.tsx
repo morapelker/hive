@@ -260,6 +260,34 @@ describe('duplicate markdown card renderer identity', () => {
     ])
   })
 
+  test('standalone column fallback namespaces duplicate identities across columns', () => {
+    const todoTickets = [makeTicket({ title: 'Duplicate A', column: 'todo', sort_order: 0 })]
+    const reviewTickets = [makeTicket({ title: 'Duplicate B', column: 'review', sort_order: 1 })]
+
+    const { container } = render(
+      <TooltipProvider>
+        <div>
+          <KanbanColumn column="todo" projectId="proj-1" tickets={todoTickets} />
+          <KanbanColumn column="review" projectId="proj-1" tickets={reviewTickets} />
+        </div>
+      </TooltipProvider>
+    )
+
+    const cards = [...container.querySelectorAll<HTMLElement>('[data-testid="kanban-ticket-card"]')]
+    const ticketKeys = cards.map((card) => card.getAttribute('data-ticket-key'))
+    const layoutIds = [...container.querySelectorAll<HTMLElement>('[data-layout-id]')].map((node) =>
+      node.getAttribute('data-layout-id')
+    )
+
+    expect(cards).toHaveLength(2)
+    expect(ticketKeys).toEqual([
+      `${ticketKey('proj-1', 'shared')}:duplicate:active:todo:local-0`,
+      `${ticketKey('proj-1', 'shared')}:duplicate:active:review:local-0`
+    ])
+    expect(new Set(ticketKeys).size).toBe(2)
+    expect(new Set(layoutIds).size).toBe(2)
+  })
+
   test('KanbanBoard shares duplicate occurrence identities across rendered columns', () => {
     useKanbanStore.setState({
       tickets: new Map([

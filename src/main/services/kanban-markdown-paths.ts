@@ -9,6 +9,7 @@ const DEFAULT_MARKDOWN_CONFIG: KanbanMarkdownConfig = {
   statusFolders: {
     todo: 'docs/kanban/todo',
     in_progress: 'docs/kanban/in-progress',
+    review: 'docs/kanban/review',
     done: 'docs/kanban/done'
   }
 }
@@ -49,9 +50,10 @@ export function validateMarkdownConfigShape(config: KanbanMarkdownConfig): void 
     if (
       !config.statusFolders?.todo ||
       !config.statusFolders.in_progress ||
+      !config.statusFolders.review ||
       !config.statusFolders.done
     ) {
-      throw new Error('Todo, in-progress, and done folders are required')
+      throw new Error('Todo, in-progress, review, and done folders are required')
     }
     return
   }
@@ -90,7 +92,12 @@ export async function configuredFolders(
   const paths =
     config.layout === 'single-folder'
       ? [config.singleFolder]
-      : [config.statusFolders.todo, config.statusFolders.in_progress, config.statusFolders.done]
+      : [
+          config.statusFolders.todo,
+          config.statusFolders.in_progress,
+          config.statusFolders.review,
+          config.statusFolders.done
+        ]
   const folders = paths.map((folder) => resolveProjectPath(project.path, folder))
   if (createMissing) {
     for (const folder of folders) await mkdir(folder, { recursive: true })
@@ -106,11 +113,7 @@ export async function ensureFolder(
   const folder =
     config.layout === 'single-folder'
       ? config.singleFolder
-      : column === 'done'
-        ? config.statusFolders.done
-        : column === 'todo'
-          ? config.statusFolders.todo
-          : config.statusFolders.in_progress
+      : config.statusFolders[column]
   const resolved = resolveProjectPath(project.path, folder)
   await mkdir(resolved, { recursive: true })
   return resolved

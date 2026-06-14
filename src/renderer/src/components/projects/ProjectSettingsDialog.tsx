@@ -48,12 +48,12 @@ type MarkdownConfig =
   | {
       layout: 'single-folder'
       singleFolder: string
-      statusFolders?: { todo: string; in_progress: string; done: string }
+      statusFolders?: { todo: string; in_progress: string; review: string; done: string }
     }
   | {
       layout: 'status-folders'
       singleFolder?: string
-      statusFolders: { todo: string; in_progress: string; done: string }
+      statusFolders: { todo: string; in_progress: string; review: string; done: string }
     }
 
 interface ProjectSettingsDialogProps {
@@ -83,6 +83,7 @@ export function ProjectSettingsDialog({
   const [singleFolder, setSingleFolder] = useState('docs/kanban')
   const [todoFolder, setTodoFolder] = useState('docs/kanban/todo')
   const [inProgressFolder, setInProgressFolder] = useState('docs/kanban/in-progress')
+  const [reviewFolder, setReviewFolder] = useState('docs/kanban/review')
   const [doneFolder, setDoneFolder] = useState('docs/kanban/done')
   const [kanbanConfigError, setKanbanConfigError] = useState<string | null>(null)
   const [canCreateKanbanFolders, setCanCreateKanbanFolders] = useState(false)
@@ -120,10 +121,12 @@ export function ProjectSettingsDialog({
           const statusFolders = config.markdown.statusFolders ?? {
             todo: 'docs/kanban/todo',
             in_progress: 'docs/kanban/in-progress',
+            review: 'docs/kanban/review',
             done: 'docs/kanban/done'
           }
           setTodoFolder(statusFolders.todo)
           setInProgressFolder(statusFolders.in_progress)
+          setReviewFolder(statusFolders.review)
           setDoneFolder(statusFolders.done)
         })
         .catch(() => {
@@ -242,6 +245,7 @@ export function ProjectSettingsDialog({
           statusFolders: {
             todo: todoFolder.trim() || 'docs/kanban/todo',
             in_progress: inProgressFolder.trim() || 'docs/kanban/in-progress',
+            review: reviewFolder.trim() || 'docs/kanban/review',
             done: doneFolder.trim() || 'docs/kanban/done'
           }
         }
@@ -251,6 +255,7 @@ export function ProjectSettingsDialog({
           statusFolders: {
             todo: todoFolder.trim() || 'docs/kanban/todo',
             in_progress: inProgressFolder.trim() || 'docs/kanban/in-progress',
+            review: reviewFolder.trim() || 'docs/kanban/review',
             done: doneFolder.trim() || 'docs/kanban/done'
           }
         }
@@ -475,10 +480,16 @@ export function ProjectSettingsDialog({
                           'Choose To Do Kanban folder'
                         )}
                         {renderKanbanFolderInput(
-                          'In Progress / Review',
+                          'In Progress',
                           inProgressFolder,
                           setInProgressFolder,
-                          'Choose In Progress / Review Kanban folder'
+                          'Choose In Progress Kanban folder'
+                        )}
+                        {renderKanbanFolderInput(
+                          'Review',
+                          reviewFolder,
+                          setReviewFolder,
+                          'Choose Review Kanban folder'
                         )}
                         {renderKanbanFolderInput(
                           'Done',

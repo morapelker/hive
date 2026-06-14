@@ -491,6 +491,7 @@ describe('kanbanApi', () => {
         statusFolders: {
           todo: 'docs/kanban/todo',
           in_progress: 'docs/kanban/in-progress',
+          review: 'docs/kanban/review',
           done: 'docs/kanban/done'
         }
       }

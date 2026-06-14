@@ -374,6 +374,7 @@ const kanbanMarkdownConfigSchema = z
       .object({
         todo: z.string(),
         in_progress: z.string(),
+        review: z.string(),
         done: z.string()
       })
       .strict()

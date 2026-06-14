@@ -866,6 +866,11 @@ export const useKanbanStore = create<KanbanState>()(
               case 'session_working': {
                 // Session became active — move ticket to in_progress if it's in
                 // todo (pre-assigned, first activity) or review (returning to work).
+                if (ticket.plan_ready) {
+                  get()
+                    .updateTicket(ticket.id, projectId, { plan_ready: false })
+                    .catch(() => {})
+                }
                 if (ticket.column === 'todo' || ticket.column === 'review') {
                   get()
                     .moveTicket(ticket.id, projectId, 'in_progress', ticket.sort_order)
@@ -1304,12 +1309,8 @@ export const useKanbanStore = create<KanbanState>()(
         if (dependent.projectId !== blocker.projectId) {
           return { success: false, error: 'Dependencies can only be created within the same project' }
         }
-        const dependentTicket = findTicketByRef(get().tickets, dependent)
-        if (!dependentTicket) return { success: false, error: 'Dependent ticket not found' }
-        const blockerTicket = findTicketByRef(get().tickets, blocker)
-        if (!blockerTicket) return { success: false, error: 'Blocker ticket not found' }
         const result = await kanban.dependency.add(
-          dependentTicket.project_id,
+          dependent.projectId,
           dependent.ticketId,
           blocker.ticketId
         )

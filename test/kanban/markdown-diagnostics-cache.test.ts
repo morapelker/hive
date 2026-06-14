@@ -551,6 +551,7 @@ describe('markdown diagnostics cache', () => {
       await import('../../src/main/services/kanban-backend')
     const todo = join(tempRoot!, 'new-board', 'todo')
     const inProgress = join(tempRoot!, 'new-board', 'in-progress')
+    const review = join(tempRoot!, 'new-board', 'review')
     const done = join(tempRoot!, 'new-board', 'done')
 
     await createConfiguredMarkdownFolders('proj-cache', {
@@ -558,12 +559,14 @@ describe('markdown diagnostics cache', () => {
       statusFolders: {
         todo: 'new-board/todo',
         in_progress: 'new-board/in-progress',
+        review: 'new-board/review',
         done: 'new-board/done'
       }
     })
 
     await expect(access(todo)).resolves.toBeUndefined()
     await expect(access(inProgress)).resolves.toBeUndefined()
+    await expect(access(review)).resolves.toBeUndefined()
     await expect(access(done)).resolves.toBeUndefined()
     expect(mockDatabase.updateProjectKanbanMarkdownConfig).not.toHaveBeenCalled()
   })
@@ -572,9 +575,11 @@ describe('markdown diagnostics cache', () => {
     const { updateKanbanMarkdownConfig } = await import('../../src/main/services/kanban-backend')
     const todoFolder = join(tempRoot!, 'cards', 'todo')
     const inProgressFolder = join(tempRoot!, 'cards', 'in-progress')
+    const reviewFolder = join(tempRoot!, 'cards', 'review')
     const doneFolder = join(tempRoot!, 'cards', 'done')
     await mkdir(todoFolder, { recursive: true })
     await mkdir(inProgressFolder, { recursive: true })
+    await mkdir(reviewFolder, { recursive: true })
     await mkdir(doneFolder, { recursive: true })
     const todoCard = [
       '---',
@@ -610,6 +615,7 @@ describe('markdown diagnostics cache', () => {
       statusFolders: {
         todo: 'cards/todo',
         in_progress: 'cards/in-progress',
+        review: 'cards/review',
         done: 'cards/done'
       }
     })
@@ -618,7 +624,7 @@ describe('markdown diagnostics cache', () => {
     await expect(access(join(tempRoot!, 'cards', 'review-card.md'))).rejects.toThrow()
     await expect(access(join(tempRoot!, 'cards', 'done-card.md'))).rejects.toThrow()
     expect(await readFile(join(todoFolder, 'todo-card.md'), 'utf-8')).toBe(todoCard)
-    expect(await readFile(join(inProgressFolder, 'review-card.md'), 'utf-8')).toBe(reviewCard)
+    expect(await readFile(join(reviewFolder, 'review-card.md'), 'utf-8')).toBe(reviewCard)
     expect(await readFile(join(doneFolder, 'done-card.md'), 'utf-8')).toBe(doneCard)
     expect(mockState.project?.kanban_markdown_config).toBe(
       JSON.stringify({
@@ -627,6 +633,7 @@ describe('markdown diagnostics cache', () => {
         statusFolders: {
           todo: 'cards/todo',
           in_progress: 'cards/in-progress',
+          review: 'cards/review',
           done: 'cards/done'
         }
       })
@@ -643,12 +650,14 @@ describe('markdown diagnostics cache', () => {
         statusFolders: {
           todo: 'cards/todo',
           in_progress: 'cards/in-progress',
+          review: 'cards/review',
           done: 'cards/done'
         }
       })
     }
     await mkdir(join(tempRoot!, 'cards', 'todo'), { recursive: true })
     await mkdir(join(tempRoot!, 'cards', 'in-progress'), { recursive: true })
+    await mkdir(join(tempRoot!, 'cards', 'review'), { recursive: true })
     await mkdir(join(tempRoot!, 'cards', 'done'), { recursive: true })
     await mkdir(join(tempRoot!, 'flat-cards'), { recursive: true })
     const todoCard = [
@@ -676,7 +685,7 @@ describe('markdown diagnostics cache', () => {
       'Done body'
     ].join('\n')
     await writeFile(join(tempRoot!, 'cards', 'todo', 'todo-card.md'), todoCard, 'utf-8')
-    await writeFile(join(tempRoot!, 'cards', 'in-progress', 'review-card.md'), reviewCard, 'utf-8')
+    await writeFile(join(tempRoot!, 'cards', 'review', 'review-card.md'), reviewCard, 'utf-8')
     await writeFile(join(tempRoot!, 'cards', 'done', 'done-card.md'), doneCard, 'utf-8')
 
     await updateKanbanMarkdownConfig('proj-cache', {
@@ -685,13 +694,14 @@ describe('markdown diagnostics cache', () => {
       statusFolders: {
         todo: 'cards/todo',
         in_progress: 'cards/in-progress',
+        review: 'cards/review',
         done: 'cards/done'
       }
     })
 
     await expect(access(join(tempRoot!, 'cards', 'todo', 'todo-card.md'))).rejects.toThrow()
     await expect(
-      access(join(tempRoot!, 'cards', 'in-progress', 'review-card.md'))
+      access(join(tempRoot!, 'cards', 'review', 'review-card.md'))
     ).rejects.toThrow()
     await expect(access(join(tempRoot!, 'cards', 'done', 'done-card.md'))).rejects.toThrow()
     expect(await readFile(join(tempRoot!, 'flat-cards', 'todo-card.md'), 'utf-8')).toBe(todoCard)
@@ -705,9 +715,11 @@ describe('markdown diagnostics cache', () => {
     const { updateKanbanMarkdownConfig } = await import('../../src/main/services/kanban-backend')
     const todoFolder = join(tempRoot!, 'cards', 'todo')
     const inProgressFolder = join(tempRoot!, 'cards', 'in-progress')
+    const reviewFolder = join(tempRoot!, 'cards', 'review')
     const doneFolder = join(tempRoot!, 'cards', 'done')
     await mkdir(todoFolder, { recursive: true })
     await mkdir(inProgressFolder, { recursive: true })
+    await mkdir(reviewFolder, { recursive: true })
     await mkdir(doneFolder, { recursive: true })
     const sourceCard = [
       '---',
@@ -735,6 +747,7 @@ describe('markdown diagnostics cache', () => {
         statusFolders: {
           todo: 'cards/todo',
           in_progress: 'cards/in-progress',
+          review: 'cards/review',
           done: 'cards/done'
         }
       })
@@ -756,12 +769,14 @@ describe('markdown diagnostics cache', () => {
         statusFolders: {
           todo: 'cards/todo',
           in_progress: 'cards/in-progress',
+          review: 'cards/review',
           done: 'cards/done'
         }
       })
     }
     await mkdir(join(tempRoot!, 'cards', 'todo'), { recursive: true })
     await writeFile(join(tempRoot!, 'cards', 'in-progress'), 'not a directory', 'utf-8')
+    await mkdir(join(tempRoot!, 'cards', 'review'), { recursive: true })
     await mkdir(join(tempRoot!, 'cards', 'done'), { recursive: true })
     const sourcePath = join(tempRoot!, 'cards', 'todo', 'card.md')
     const original = [
@@ -792,6 +807,7 @@ describe('markdown diagnostics cache', () => {
         statusFolders: {
           todo: 'cards/todo',
           in_progress: 'cards/in-progress',
+          review: 'cards/review',
           done: 'cards/done'
         }
       })
@@ -800,6 +816,7 @@ describe('markdown diagnostics cache', () => {
     const inProgressPath = join(tempRoot!, 'cards', 'in-progress')
     await mkdir(todoPath, { recursive: true })
     await mkdir(inProgressPath, { recursive: true })
+    await mkdir(join(tempRoot!, 'cards', 'review'), { recursive: true })
     await mkdir(join(tempRoot!, 'cards', 'done'), { recursive: true })
     const sourcePath = join(todoPath, 'card.md')
     await writeFile(
@@ -829,6 +846,7 @@ describe('markdown diagnostics cache', () => {
         statusFolders: {
           todo: 'cards/todo',
           in_progress: 'cards/in-progress',
+          review: 'cards/review',
           done: 'cards/done'
         }
       })
@@ -837,6 +855,7 @@ describe('markdown diagnostics cache', () => {
     const donePath = join(tempRoot!, 'cards', 'done')
     await mkdir(todoPath, { recursive: true })
     await mkdir(join(tempRoot!, 'cards', 'in-progress'), { recursive: true })
+    await mkdir(join(tempRoot!, 'cards', 'review'), { recursive: true })
     await mkdir(donePath, { recursive: true })
     const sourcePath = join(todoPath, 'card.md')
     const targetPath = join(donePath, 'card.md')

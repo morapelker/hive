@@ -101,6 +101,7 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
     act(() => {
       useKanbanStore.setState({
         tickets: new Map(),
+        dependencyMap: new Map(),
         isLoading: false,
         isBoardViewActive: false,
         simpleModeByProject: {}
@@ -111,6 +112,7 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
     vi.clearAllMocks()
     mockKanbanApi.ticket.update.mockResolvedValue(undefined)
     mockKanbanApi.ticket.move.mockResolvedValue(undefined)
+    mockKanbanApi.dependency.add.mockResolvedValue({ success: true })
   })
 
   // ────────────────────────────────────────────────────────────────────
@@ -142,7 +144,7 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
     const tickets = useKanbanStore.getState().tickets.get('proj-1')
     const moved = tickets!.find((t) => t.id === 't1')
     expect(moved!.column).toBe('review')
-    expect(mockKanbanApi.ticket.move).toHaveBeenCalledWith('t1', 'review', 0)
+    expect(mockKanbanApi.ticket.move).toHaveBeenCalledWith('proj-1', 't1', 'review', 0)
   })
 
   // ────────────────────────────────────────────────────────────────────
@@ -174,8 +176,8 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
     const updated = tickets!.find((t) => t.id === 't1')
     expect(updated!.plan_ready).toBe(true)
     expect(updated!.column).toBe('review')
-    expect(mockKanbanApi.ticket.update).toHaveBeenCalledWith('t1', { plan_ready: true })
-    expect(mockKanbanApi.ticket.move).toHaveBeenCalledWith('t1', 'review', 0)
+    expect(mockKanbanApi.ticket.update).toHaveBeenCalledWith('proj-1', 't1', { plan_ready: true })
+    expect(mockKanbanApi.ticket.move).toHaveBeenCalledWith('proj-1', 't1', 'review', 0)
   })
 
   // ────────────────────────────────────────────────────────────────────
@@ -206,7 +208,7 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
     const tickets = useKanbanStore.getState().tickets.get('proj-1')
     const updated = tickets!.find((t) => t.id === 't1')
     expect(updated!.column).toBe('review')
-    expect(mockKanbanApi.ticket.move).toHaveBeenCalledWith('t1', 'review', 0)
+    expect(mockKanbanApi.ticket.move).toHaveBeenCalledWith('proj-1', 't1', 'review', 0)
   })
 
   // ────────────────────────────────────────────────────────────────────
@@ -236,7 +238,7 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
     const tickets = useKanbanStore.getState().tickets.get('proj-1')
     const moved = tickets!.find((t) => t.id === 't1')
     expect(moved!.column).toBe('review')
-    expect(mockKanbanApi.ticket.move).toHaveBeenCalledWith('t1', 'review', 0)
+    expect(mockKanbanApi.ticket.move).toHaveBeenCalledWith('proj-1', 't1', 'review', 0)
     expect(mockKanbanApi.ticket.update).not.toHaveBeenCalled()
   })
 
@@ -269,7 +271,7 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
     const tickets = useKanbanStore.getState().tickets.get('proj-1')
     const updated = tickets!.find((t) => t.id === 't1')
     expect(updated!.current_session_id).toBe('session-new')
-    expect(mockKanbanApi.ticket.update).toHaveBeenCalledWith('t1', {
+    expect(mockKanbanApi.ticket.update).toHaveBeenCalledWith('proj-1', 't1', {
       current_session_id: 'session-new',
       plan_ready: false,
       mode: 'build'
@@ -334,7 +336,7 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
     })
 
     // The move action calls kanbanApi.ticket.move which persists through RPC.
-    expect(mockKanbanApi.ticket.move).toHaveBeenCalledWith('t1', 'review', 3)
+    expect(mockKanbanApi.ticket.move).toHaveBeenCalledWith('proj-1', 't1', 'review', 3)
   })
 
   // ────────────────────────────────────────────────────────────────────
@@ -362,8 +364,8 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
       await new Promise((r) => setTimeout(r, 0))
     })
 
-    expect(mockKanbanApi.ticket.update).toHaveBeenCalledWith('t1', { plan_ready: true })
-    expect(mockKanbanApi.ticket.move).toHaveBeenCalledWith('t1', 'review', 0)
+    expect(mockKanbanApi.ticket.update).toHaveBeenCalledWith('proj-1', 't1', { plan_ready: true })
+    expect(mockKanbanApi.ticket.move).toHaveBeenCalledWith('proj-1', 't1', 'review', 0)
   })
 
   // ────────────────────────────────────────────────────────────────────
@@ -502,7 +504,7 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
     const updated = tickets!.find((t) => t.id === 't1')
     expect(updated!.plan_ready).toBe(true)
     expect(updated!.column).toBe('review')
-    expect(mockKanbanApi.ticket.move).toHaveBeenCalledWith('t1', 'review', 0)
+    expect(mockKanbanApi.ticket.move).toHaveBeenCalledWith('proj-1', 't1', 'review', 0)
   })
 
   test('plan_followup event clears plan_ready and moves ticket back to in_progress', async () => {
@@ -531,8 +533,8 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
     const updated = tickets!.find((t) => t.id === 't1')
     expect(updated!.plan_ready).toBe(false)
     expect(updated!.column).toBe('in_progress')
-    expect(mockKanbanApi.ticket.update).toHaveBeenCalledWith('t1', { plan_ready: false })
-    expect(mockKanbanApi.ticket.move).toHaveBeenCalledWith('t1', 'in_progress', 0)
+    expect(mockKanbanApi.ticket.update).toHaveBeenCalledWith('proj-1', 't1', { plan_ready: false })
+    expect(mockKanbanApi.ticket.move).toHaveBeenCalledWith('proj-1', 't1', 'in_progress', 0)
   })
 
   test('session_working clears plan_ready when a ready plan resumes work', async () => {
@@ -561,8 +563,8 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
     const updated = tickets!.find((t) => t.id === 't1')
     expect(updated!.plan_ready).toBe(false)
     expect(updated!.column).toBe('in_progress')
-    expect(mockKanbanApi.ticket.update).toHaveBeenCalledWith('t1', { plan_ready: false })
-    expect(mockKanbanApi.ticket.move).toHaveBeenCalledWith('t1', 'in_progress', 0)
+    expect(mockKanbanApi.ticket.update).toHaveBeenCalledWith('proj-1', 't1', { plan_ready: false })
+    expect(mockKanbanApi.ticket.move).toHaveBeenCalledWith('proj-1', 't1', 'in_progress', 0)
   })
 
   // ────────────────────────────────────────────────────────────────────
@@ -736,7 +738,7 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
     const updated = tickets!.find((t) => t.id === 't1')
     expect(updated!.mode).toBe('build')
     expect(updated!.plan_ready).toBe(false)
-    expect(mockKanbanApi.ticket.update).toHaveBeenCalledWith('t1', {
+    expect(mockKanbanApi.ticket.update).toHaveBeenCalledWith('proj-1', 't1', {
       mode: 'build',
       plan_ready: false
     })
@@ -772,7 +774,7 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
     const updated = tickets!.find((t) => t.id === 't1')
     expect(updated!.mode).toBe('plan')
     expect(updated!.plan_ready).toBe(false) // preserved from original
-    expect(mockKanbanApi.ticket.update).toHaveBeenCalledWith('t1', {
+    expect(mockKanbanApi.ticket.update).toHaveBeenCalledWith('proj-1', 't1', {
       mode: 'plan',
       plan_ready: false
     })
@@ -840,5 +842,34 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
     expect(unchanged!.mode).toBe('plan')
     expect(unchanged!.plan_ready).toBe(true)
     expect(mockKanbanApi.ticket.update).not.toHaveBeenCalled()
+  })
+
+  test('addDependency delegates existence validation to the backend for unloaded tickets', async () => {
+    let result: { success: boolean; error?: string } | undefined
+
+    await act(async () => {
+      result = await useKanbanStore.getState().addDependency(
+        { projectId: 'proj-1', ticketId: 'dependent' },
+        { projectId: 'proj-1', ticketId: 'blocker' }
+      )
+    })
+
+    expect(result).toEqual({ success: true })
+    expect(mockKanbanApi.dependency.add).toHaveBeenCalledWith('proj-1', 'dependent', 'blocker')
+    const dependencyMap = useKanbanStore.getState().dependencyMap
+    expect(dependencyMap.get('proj-1:dependent')).toEqual(new Set(['proj-1:blocker']))
+  })
+
+  test('addDependency still rejects cross-project dependencies before calling the backend', async () => {
+    const result = await useKanbanStore.getState().addDependency(
+      { projectId: 'proj-1', ticketId: 'dependent' },
+      { projectId: 'proj-2', ticketId: 'blocker' }
+    )
+
+    expect(result).toEqual({
+      success: false,
+      error: 'Dependencies can only be created within the same project'
+    })
+    expect(mockKanbanApi.dependency.add).not.toHaveBeenCalled()
   })
 })
