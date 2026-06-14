@@ -10,6 +10,7 @@ import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { opencodeApi } from '@/api/opencode-api'
 import { dbApi } from '@/api/db-api'
 import { terminalApi } from '@/api/terminal-api'
+import { startHivePromptTelemetry } from '@/lib/hive-enterprise-telemetry'
 
 type SessionModelSource = {
   id: string
@@ -88,6 +89,15 @@ export async function startBackgroundSessionPrompt(opts: {
   bumpWorktreeLastMessage(opts.bumpTarget)
 
   const model = resolveBackgroundSessionModel(opts.sessionId)
+  startHivePromptTelemetry({
+    sessionId: opts.sessionId,
+    prompt: opts.prompt,
+    worktreeId: opts.bumpTarget.worktreeId,
+    modelId: model?.modelID,
+    providerId: model?.providerID,
+    modelVariant: model?.variant,
+    mode: 'build'
+  })
   const result = unwrapEnvelope(
     await opencodeApi.prompt(
       opts.worktreePath,
@@ -99,4 +109,6 @@ export async function startBackgroundSessionPrompt(opts: {
   if (!result.success) {
     throw new Error(result.error ?? 'Failed to start background session prompt')
   }
+
+  useSessionStore.getState().dequeuePendingMessage(opts.sessionId)
 }

@@ -3,11 +3,16 @@ import { useSessionStore } from '@/stores/useSessionStore'
 import { startBackgroundSessionPrompt } from './backgroundSessionStart'
 
 const terminalApiMocks = vi.hoisted(() => ({
-  sendClaudeCliPrompt: vi.fn()
+  sendClaudeCliPrompt: vi.fn(),
+  startHivePromptTelemetry: vi.fn()
 }))
 
 vi.mock('@/api/terminal-api', () => ({
   terminalApi: terminalApiMocks
+}))
+
+vi.mock('@/lib/hive-enterprise-telemetry', () => ({
+  startHivePromptTelemetry: terminalApiMocks.startHivePromptTelemetry
 }))
 
 // Seed the store with a single claude-code-cli session so findSessionModelSource
@@ -40,6 +45,7 @@ function mockSendClaudeCliPrompt(delivered: boolean): ReturnType<typeof vi.fn> {
 
 describe('startBackgroundSessionPrompt — claude-code-cli follow-up delivery', () => {
   beforeEach(() => {
+    vi.clearAllMocks()
     seedClaudeCliSession()
   })
 
@@ -55,6 +61,7 @@ describe('startBackgroundSessionPrompt — claude-code-cli follow-up delivery', 
 
     expect(sendClaudeCliPrompt).toHaveBeenCalledWith('s1', 'follow-up question')
     expect(useSessionStore.getState().pendingMessages.get('s1')).toBeUndefined()
+    expect(terminalApiMocks.startHivePromptTelemetry).not.toHaveBeenCalled()
   })
 
   it('queues the prompt for the next spawn when no live PTY exists', async () => {
@@ -69,5 +76,6 @@ describe('startBackgroundSessionPrompt — claude-code-cli follow-up delivery', 
 
     expect(sendClaudeCliPrompt).toHaveBeenCalledWith('s1', 'follow-up question')
     expect(useSessionStore.getState().pendingMessages.get('s1')).toBe('follow-up question')
+    expect(terminalApiMocks.startHivePromptTelemetry).not.toHaveBeenCalled()
   })
 })

@@ -9,7 +9,8 @@ const mocks = vi.hoisted(() => {
     sessionsByWorktree: new Map(),
     sessionsByConnection: new Map(),
     setOpenCodeSessionId: vi.fn(),
-    setPendingMessage: vi.fn()
+    setPendingMessage: vi.fn(),
+    dequeuePendingMessage: vi.fn()
   }
 
   return {
@@ -17,7 +18,8 @@ const mocks = vi.hoisted(() => {
     setSessionStatus: vi.fn(),
     resolveModelForSdk: vi.fn(),
     bumpWorktreeLastMessage: vi.fn(),
-    snapshotTokenBaseline: vi.fn()
+    snapshotTokenBaseline: vi.fn(),
+    startHivePromptTelemetry: vi.fn()
   }
 })
 
@@ -45,6 +47,10 @@ vi.mock('@/lib/last-message-utils', () => ({
 
 vi.mock('@/lib/token-baselines', () => ({
   snapshotTokenBaseline: mocks.snapshotTokenBaseline
+}))
+
+vi.mock('@/lib/hive-enterprise-telemetry', () => ({
+  startHivePromptTelemetry: mocks.startHivePromptTelemetry
 }))
 
 vi.mock('@/api/opencode-api', () => ({
@@ -114,6 +120,16 @@ describe('startBackgroundSessionPrompt', () => {
       'session-1',
       'opencode-session-1'
     )
+    expect(mocks.startHivePromptTelemetry).toHaveBeenCalledTimes(1)
+    expect(mocks.startHivePromptTelemetry).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      prompt: 'continue implementation',
+      worktreeId: 'worktree-1',
+      modelId: 'claude-opus',
+      providerId: 'anthropic',
+      modelVariant: undefined,
+      mode: 'build'
+    })
     expect(opencodeApi.prompt).toHaveBeenCalledWith(
       '/repo/hive',
       'opencode-session-1',
@@ -124,5 +140,6 @@ describe('startBackgroundSessionPrompt', () => {
         variant: undefined
       }
     )
+    expect(mocks.sessionState.dequeuePendingMessage).toHaveBeenCalledWith('session-1')
   })
 })
