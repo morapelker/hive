@@ -25,7 +25,12 @@ interface MockProject {
 const { mockDatabase, mockState } = vi.hoisted(() => {
   const mockState: {
     project: MockProject | null
-    runtimeRows: Array<{ card_id: string; orphaned_at: string | null }>
+    runtimeRows: Array<{
+      project_id?: string
+      card_id: string
+      worktree_id?: string | null
+      orphaned_at: string | null
+    }>
     orphanMarkCount: number
     orphanDeleteCount: number
   } = {
@@ -52,7 +57,22 @@ const { mockDatabase, mockState } = vi.hoisted(() => {
     getRawDb: vi.fn(() => ({
       prepare: vi.fn((sql: string) => ({
         get: vi.fn(() => undefined),
-        all: vi.fn(() => mockState.runtimeRows),
+        all: vi.fn((...values: unknown[]) => {
+          if (
+            sql.startsWith(
+              'SELECT project_id, card_id FROM markdown_kanban_card_state WHERE worktree_id = ?'
+            )
+          ) {
+            const worktreeId = values[0]
+            return mockState.runtimeRows
+              .filter((row) => row.worktree_id === worktreeId)
+              .map((row) => ({
+                project_id: row.project_id ?? mockState.project?.id ?? 'proj-cache',
+                card_id: row.card_id
+              }))
+          }
+          return mockState.runtimeRows
+        }),
         run: vi.fn((...values: unknown[]) => {
           if (sql.startsWith('INSERT OR IGNORE INTO markdown_kanban_card_state')) {
             const cardId = String(values[1])
@@ -1092,6 +1112,82 @@ describe('markdown diagnostics cache', () => {
       'duplicate-a.md',
       'duplicate-b.md'
     ])
+  })
+
+  test('PR sync skips orphaned markdown runtime rows and updates remaining cards', async () => {
+    const backend = (
+      await import('../../src/main/services/kanban-backend')
+    ).getMarkdownKanbanBackend()
+    const cardPath = join(tempRoot!, 'cards', 'linked-card.md')
+    await writeFile(
+      cardPath,
+      ['---', 'id: linked-card', 'title: Linked Card', '---', 'Body'].join('\n'),
+      'utf-8'
+    )
+    mockState.runtimeRows = [
+      {
+        project_id: 'proj-cache',
+        card_id: 'missing-card',
+        worktree_id: 'wt-1',
+        orphaned_at: null
+      },
+      {
+        project_id: 'proj-cache',
+        card_id: 'linked-card',
+        worktree_id: 'wt-1',
+        orphaned_at: null
+      }
+    ]
+    backend.invalidate('proj-cache')
+
+    await expect(
+      backend.syncPR('wt-1', 42, 'https://github.com/acme/hive/pull/42')
+    ).resolves.toBeUndefined()
+
+    const frontmatter = frontmatterOf(await readFile(cardPath, 'utf-8'))
+    expect(frontmatter.github_pr_number).toBe(42)
+    expect(frontmatter.github_pr_url).toBe('https://github.com/acme/hive/pull/42')
+  })
+
+  test('PR clear skips orphaned markdown runtime rows and updates remaining cards', async () => {
+    const backend = (
+      await import('../../src/main/services/kanban-backend')
+    ).getMarkdownKanbanBackend()
+    const cardPath = join(tempRoot!, 'cards', 'linked-card.md')
+    await writeFile(
+      cardPath,
+      [
+        '---',
+        'id: linked-card',
+        'title: Linked Card',
+        'github_pr_number: 42',
+        'github_pr_url: https://github.com/acme/hive/pull/42',
+        '---',
+        'Body'
+      ].join('\n'),
+      'utf-8'
+    )
+    mockState.runtimeRows = [
+      {
+        project_id: 'proj-cache',
+        card_id: 'missing-card',
+        worktree_id: 'wt-1',
+        orphaned_at: null
+      },
+      {
+        project_id: 'proj-cache',
+        card_id: 'linked-card',
+        worktree_id: 'wt-1',
+        orphaned_at: null
+      }
+    ]
+    backend.invalidate('proj-cache')
+
+    await expect(backend.clearPR('wt-1')).resolves.toBeUndefined()
+
+    const frontmatter = frontmatterOf(await readFile(cardPath, 'utf-8'))
+    expect(frontmatter.github_pr_number).toBeNull()
+    expect(frontmatter.github_pr_url).toBeNull()
   })
 
   test('diagnostics reads do not consume the orphan runtime-state grace scan', async () => {

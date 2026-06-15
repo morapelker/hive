@@ -365,21 +365,30 @@ const importBoardTicketsParamsSchema = z
   })
   .strict()
 const kanbanStorageModeSchema = z.enum(['internal', 'markdown'])
-const kanbanMarkdownLayoutSchema = z.enum(['single-folder', 'status-folders'])
-const kanbanMarkdownConfigSchema = z
+const kanbanMarkdownStatusFoldersSchema = z
   .object({
-    layout: kanbanMarkdownLayoutSchema,
-    singleFolder: z.string(),
-    statusFolders: z
-      .object({
-        todo: z.string(),
-        in_progress: z.string(),
-        review: z.string(),
-        done: z.string()
-      })
-      .strict()
+    todo: z.string(),
+    in_progress: z.string(),
+    review: z.string(),
+    done: z.string()
   })
-  .strict() satisfies z.ZodType<KanbanMarkdownConfig>
+  .strict()
+const kanbanMarkdownConfigSchema = z.discriminatedUnion('layout', [
+  z
+    .object({
+      layout: z.literal('single-folder'),
+      singleFolder: z.string(),
+      statusFolders: kanbanMarkdownStatusFoldersSchema.optional()
+    })
+    .strict(),
+  z
+    .object({
+      layout: z.literal('status-folders'),
+      singleFolder: z.string().optional(),
+      statusFolders: kanbanMarkdownStatusFoldersSchema
+    })
+    .strict()
+]) satisfies z.ZodType<KanbanMarkdownConfig>
 const updateKanbanConfigParamsSchema = z
   .object({
     projectId: z.string(),

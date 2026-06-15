@@ -2187,4 +2187,80 @@ describe('kanban RPC mocked provider', () => {
       error: { code: 'VALIDATION_FAILED' }
     })
   })
+
+  it('accepts single-folder markdown configs without statusFolders for kanban.config.update', async () => {
+    const result = {
+      mode: 'markdown' as const,
+      markdown: {
+        layout: 'single-folder' as const,
+        singleFolder: 'docs/kanban'
+      }
+    }
+    const updateConfig = vi.fn(() => Effect.succeed(result))
+    const service = { updateConfig } as unknown as KanbanRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      kanban: service
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'kanban-config-update-single-folder',
+        method: 'kanban.config.update',
+        params: {
+          projectId: 'project-1',
+          config: {
+            layout: 'single-folder',
+            singleFolder: 'docs/kanban'
+          }
+        }
+      })
+    )
+
+    expect(updateConfig).toHaveBeenCalledWith('project-1', {
+      layout: 'single-folder',
+      singleFolder: 'docs/kanban'
+    })
+    expect(response).toEqual({
+      id: 'kanban-config-update-single-folder',
+      ok: true,
+      value: result
+    })
+  })
+
+  it('accepts status-folder markdown configs without singleFolder for kanban.config.createFolders', async () => {
+    const createFolders = vi.fn(() => Effect.succeed({ success: true }))
+    const service = { createFolders } as unknown as KanbanRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      kanban: service
+    })
+    const config = {
+      layout: 'status-folders' as const,
+      statusFolders: {
+        todo: 'docs/kanban/todo',
+        in_progress: 'docs/kanban/in-progress',
+        review: 'docs/kanban/review',
+        done: 'docs/kanban/done'
+      }
+    }
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'kanban-config-create-folders-status',
+        method: 'kanban.config.createFolders',
+        params: {
+          projectId: 'project-1',
+          config
+        }
+      })
+    )
+
+    expect(createFolders).toHaveBeenCalledWith('project-1', config)
+    expect(response).toEqual({
+      id: 'kanban-config-create-folders-status',
+      ok: true,
+      value: { success: true }
+    })
+  })
 })

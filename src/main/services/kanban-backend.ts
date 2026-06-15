@@ -827,10 +827,15 @@ class MarkdownKanbanBackend implements KanbanBackend {
       .prepare('SELECT project_id, card_id FROM markdown_kanban_card_state WHERE worktree_id = ?')
       .all(worktreeId) as Array<{ project_id: string; card_id: string }>
     for (const row of rows) {
-      await this.update(row.project_id, row.card_id, {
-        github_pr_number: prNumber,
-        github_pr_url: prUrl
-      })
+      try {
+        await this.update(row.project_id, row.card_id, {
+          github_pr_number: prNumber,
+          github_pr_url: prUrl
+        })
+      } catch (error) {
+        if (isMissingMarkdownCardError(error)) continue
+        throw error
+      }
     }
   }
 
@@ -840,10 +845,15 @@ class MarkdownKanbanBackend implements KanbanBackend {
       .prepare('SELECT project_id, card_id FROM markdown_kanban_card_state WHERE worktree_id = ?')
       .all(worktreeId) as Array<{ project_id: string; card_id: string }>
     for (const row of rows) {
-      await this.update(row.project_id, row.card_id, {
-        github_pr_number: null,
-        github_pr_url: null
-      })
+      try {
+        await this.update(row.project_id, row.card_id, {
+          github_pr_number: null,
+          github_pr_url: null
+        })
+      } catch (error) {
+        if (isMissingMarkdownCardError(error)) continue
+        throw error
+      }
     }
   }
 
@@ -1553,6 +1563,10 @@ class MarkdownKanbanBackend implements KanbanBackend {
     )
     return max + 1
   }
+}
+
+function isMissingMarkdownCardError(error: unknown): boolean {
+  return error instanceof Error && error.message === 'Ticket does not exist'
 }
 
 const internalBackend = new InternalKanbanBackend()
