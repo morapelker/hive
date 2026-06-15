@@ -2735,6 +2735,39 @@ export class DatabaseService {
     return this.getKanbanTicket(id)
   }
 
+  moveKanbanTicketToProject(id: string, targetProjectId: string): KanbanTicket | null {
+    const db = this.getDb()
+    const existing = this.getKanbanTicket(id)
+    if (!existing) return null
+
+    const targetProject = this.getProject(targetProjectId)
+    if (!targetProject) {
+      throw new Error(`Target project not found: ${targetProjectId}`)
+    }
+
+    // No-op if already in the target project
+    if (existing.project_id === targetProjectId) return existing
+
+    // Place at the bottom of the same column in the target project
+    const maxRow = db
+      .prepare(
+        'SELECT MAX(sort_order) as max_sort FROM kanban_tickets WHERE project_id = ? AND "column" = ? AND archived_at IS NULL'
+      )
+      .get(targetProjectId, existing.column) as { max_sort: number | null } | undefined
+    const sortOrder = (maxRow?.max_sort ?? -1) + 1
+
+    const now = new Date().toISOString()
+    // Detach worktree/session/PR references that belong to the source project
+    db.prepare(
+      `UPDATE kanban_tickets
+       SET project_id = ?, worktree_id = NULL, current_session_id = NULL,
+           github_pr_number = NULL, github_pr_url = NULL, sort_order = ?, updated_at = ?
+       WHERE id = ?`
+    ).run(targetProjectId, sortOrder, now, id)
+
+    return this.getKanbanTicket(id)
+  }
+
   reorderKanbanTicket(id: string, sortOrder: number): void {
     const db = this.getDb()
     const now = new Date().toISOString()
