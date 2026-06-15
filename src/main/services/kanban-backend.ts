@@ -1340,7 +1340,7 @@ class MarkdownKanbanBackend implements KanbanBackend {
       basename(filePath, extname(filePath))
     const column = asColumn(frontmatter.column) ?? 'todo'
     const sortOrder = asNumber(frontmatter.sort_order) ?? 0
-    const mode = asMode(frontmatter.mode) ?? 'build'
+    const mode = hasOwnFrontmatter(frontmatter, 'mode') ? asMode(frontmatter.mode) : 'build'
     const createdAt = asString(frontmatter.created_at) ?? fileStat.birthtime.toISOString()
     const runtime = emptyRuntimeState()
     const updatedAt = laterIso(fileStat.mtime.toISOString(), createdAt)
@@ -2073,7 +2073,7 @@ function publicFieldsFromCreate(data: KanbanTicketCreate, now: string): Frontmat
     id: data.id,
     title: data.title,
     column: data.column ?? 'todo',
-    mode: data.mode ?? 'build',
+    mode: data.mode === undefined ? 'build' : data.mode,
     sort_order: data.sort_order ?? 0,
     archived_at: null,
     created_at: now,

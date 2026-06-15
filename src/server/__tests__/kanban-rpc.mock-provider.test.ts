@@ -1,10 +1,31 @@
 import { Effect } from 'effect'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { makeEventBus } from '../events/event-bus'
 import type { KanbanRpcService } from '../rpc/domains/kanban'
 import { makeRpcRouter } from '../rpc/router'
 
 describe('kanban RPC mocked provider', () => {
+  it('does not time out native Kanban dialog desktop commands', () => {
+    const source = readFileSync(resolve(__dirname, '../rpc/domains/kanban.ts'), 'utf-8')
+    const dialogHelpers = [
+      'requestKanbanOpenBoardImportFileDialog',
+      'requestKanbanSaveBoardExportDialog',
+      'requestKanbanPickMarkdownFolderDialog'
+    ]
+
+    for (const helper of dialogHelpers) {
+      const start = source.indexOf(`const ${helper}`)
+      const end = source.indexOf('\n}\n\n', start) + 3
+      const helperSource = source.slice(start, end)
+      expect(start).toBeGreaterThan(-1)
+      expect(end).toBeGreaterThan(start)
+      expect(helperSource).not.toContain('setTimeout')
+      expect(helperSource).not.toContain('Timed out waiting for desktop command response')
+    }
+  })
+
   it('routes kanban.ticket.create to the injected provider service', async () => {
     const payload = {
       project_id: 'project-1',

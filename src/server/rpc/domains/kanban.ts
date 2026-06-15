@@ -859,7 +859,6 @@ const requestKanbanOpenBoardImportFileDialog = (): Promise<string | null> => {
   return new Promise<string | null>((resolve, reject) => {
     let settled = false
     const cleanup = (): void => {
-      clearTimeout(timeout)
       process.off('message', onMessage)
     }
     const finish = (value?: string | null, error?: Error): void => {
@@ -872,9 +871,6 @@ const requestKanbanOpenBoardImportFileDialog = (): Promise<string | null> => {
       }
       resolve(value ?? null)
     }
-    const timeout = setTimeout(() => {
-      finish(null, new Error(`Timed out waiting for desktop command response: ${command}`))
-    }, 5_000)
 
     const onMessage = (message: unknown): void => {
       if (!isDesktopCommandResult(message) || message.id !== id) return
@@ -917,7 +913,6 @@ const requestKanbanSaveBoardExportDialog = (projectName: string): Promise<string
   return new Promise<string | null>((resolve, reject) => {
     let settled = false
     const cleanup = (): void => {
-      clearTimeout(timeout)
       process.off('message', onMessage)
     }
     const finish = (value?: string | null, error?: Error): void => {
@@ -930,9 +925,6 @@ const requestKanbanSaveBoardExportDialog = (projectName: string): Promise<string
       }
       resolve(value ?? null)
     }
-    const timeout = setTimeout(() => {
-      finish(null, new Error(`Timed out waiting for desktop command response: ${command}`))
-    }, 5_000)
 
     const onMessage = (message: unknown): void => {
       if (!isDesktopCommandResult(message) || message.id !== id) return
@@ -975,7 +967,6 @@ const requestKanbanPickMarkdownFolderDialog = (): Promise<string | null> => {
   return new Promise<string | null>((resolve, reject) => {
     let settled = false
     const cleanup = (): void => {
-      clearTimeout(timeout)
       process.off('message', onMessage)
     }
     const finish = (value?: string | null, error?: Error): void => {
@@ -988,9 +979,6 @@ const requestKanbanPickMarkdownFolderDialog = (): Promise<string | null> => {
       }
       resolve(value ?? null)
     }
-    const timeout = setTimeout(() => {
-      finish(null, new Error(`Timed out waiting for desktop command response: ${command}`))
-    }, 5_000)
 
     const onMessage = (message: unknown): void => {
       if (!isDesktopCommandResult(message) || message.id !== id) return

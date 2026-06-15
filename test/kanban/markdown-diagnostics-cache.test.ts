@@ -388,6 +388,45 @@ describe('markdown diagnostics cache', () => {
     expect(mockState.runtimeRows.some((row) => row.card_id === 'new-card')).toBe(true)
   })
 
+  test('loading preserves an explicit null markdown ticket mode', async () => {
+    const backend = (
+      await import('../../src/main/services/kanban-backend')
+    ).getMarkdownKanbanBackend()
+    const cardsPath = join(tempRoot!, 'cards')
+    await writeFile(
+      join(cardsPath, 'stopped.md'),
+      ['---', 'id: stopped-card', 'title: Stopped Card', 'mode: null', '---', 'Stopped body'].join(
+        '\n'
+      ),
+      'utf-8'
+    )
+    backend.invalidate('proj-cache')
+
+    const tickets = await backend.list('proj-cache', true)
+
+    expect(tickets).toHaveLength(1)
+    expect(tickets[0].mode).toBeNull()
+  })
+
+  test('create preserves an explicit null markdown ticket mode', async () => {
+    const backend = (
+      await import('../../src/main/services/kanban-backend')
+    ).getMarkdownKanbanBackend()
+    mockState.runtimeRows = []
+
+    const ticket = await backend.create('proj-cache', {
+      id: 'null-mode-card',
+      project_id: 'proj-cache',
+      title: 'Null Mode Card',
+      mode: null
+    })
+    const cardPath = join(tempRoot!, 'cards', 'null-mode-card-card.md')
+    const frontmatter = frontmatterOf(await readFile(cardPath, 'utf-8'))
+
+    expect(ticket.mode).toBeNull()
+    expect(frontmatter.mode).toBeNull()
+  })
+
   test.each([
     [
       'duplicate draft keys',
