@@ -90,6 +90,17 @@ vi.mock('./claude-binary-resolver', () => ({
   logClaudeBinaryVersion: vi.fn()
 }))
 
+vi.mock('./claude-cli-plan-handoff', () => ({
+  externalizeGoalHandoffPlan: vi.fn((prompt: string) => prompt)
+}))
+
+// Keep the real writeClaudeCliPrompt (bracketed paste) but stub the timer-based
+// submit re-assert with a spy so no real setTimeout leaks across tests.
+vi.mock('./claude-cli-pty-prompt', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./claude-cli-pty-prompt')>()),
+  reassertClaudeCliPromptSubmit: vi.fn()
+}))
+
 vi.mock('./claude-session-watcher', () => ({
   watchForClaudeSessionId: vi.fn(
     (worktreePath: string, callback: (claudeSessionId: string) => void) => {
@@ -118,6 +129,8 @@ import {
   createClaudeCliTerminal,
   handleClaudeCliTerminalInput
 } from './terminal-pty-bridge'
+import { externalizeGoalHandoffPlan } from './claude-cli-plan-handoff'
+import { reassertClaudeCliPromptSubmit } from './claude-cli-pty-prompt'
 import { __resetRuntimeRegistryForTests } from '../effect/_shared/runtime'
 
 function makeSession(overrides: Partial<Session> = {}): Session {
@@ -227,6 +240,48 @@ describe('Claude CLI terminal hook status wiring', () => {
     expect(mocks.ptyService.write).toHaveBeenCalledWith(
       'hive-session-1',
       '\x1b[200~Review the diff\x1b[201~\r'
+    )
+    // The paste can land before claude is input-ready (dropping the CR), so the
+    // submit must be re-asserted across the boot window.
+    expect(reassertClaudeCliPromptSubmit).toHaveBeenCalledWith('hive-session-1')
+  })
+
+  it('does not re-assert submit when there is no pending prompt to paste', async () => {
+    mocks.ptyService.has.mockReturnValue(true)
+
+    await createClaudeCliTerminal('hive-session-1', {})
+
+    expect(reassertClaudeCliPromptSubmit).not.toHaveBeenCalled()
+  })
+
+  it('externalizes the pending prompt (with the worktree path) before placing it on the argv', async () => {
+    const rawPrompt = '/goal Implement the following plan\nbig plan body'
+    const shortPrompt = "/goal implement PLAN_abc.md. the goal's success criteria is written there"
+    vi.mocked(externalizeGoalHandoffPlan).mockReturnValueOnce(shortPrompt)
+
+    await createClaudeCliTerminal('hive-session-1', { pendingPrompt: rawPrompt })
+
+    expect(externalizeGoalHandoffPlan).toHaveBeenCalledWith(rawPrompt, '/repo/worktree')
+
+    const [, options] = mocks.ptyService.create.mock.calls.at(-1)! as unknown as [
+      string,
+      { args: string[] }
+    ]
+    expect(options.args.at(-1)).toBe(shortPrompt)
+  })
+
+  it('injects the externalized prompt (not the raw plan) into an already-running PTY', async () => {
+    mocks.ptyService.has.mockReturnValue(true)
+    const shortPrompt = "/goal implement PLAN_abc.md. the goal's success criteria is written there"
+    vi.mocked(externalizeGoalHandoffPlan).mockReturnValueOnce(shortPrompt)
+
+    await createClaudeCliTerminal('hive-session-1', {
+      pendingPrompt: '/goal Implement the following plan\nbig plan body'
+    })
+
+    expect(mocks.ptyService.write).toHaveBeenCalledWith(
+      'hive-session-1',
+      `\x1b[200~${shortPrompt}\x1b[201~\r`
     )
   })
 
