@@ -36,6 +36,11 @@ export const kanbanApi = {
       getRendererRpcClient().request<number>('kanban.ticket.detachWorktree', { worktreeId }),
     move: async <TResult>(id: string, column: string, sortOrder: number): Promise<TResult> =>
       getRendererRpcClient().request<TResult>('kanban.ticket.move', { id, column, sortOrder }),
+    moveToProject: async <TResult>(id: string, targetProjectId: string): Promise<TResult> =>
+      getRendererRpcClient().request<TResult>('kanban.ticket.moveToProject', {
+        id,
+        targetProjectId
+      }),
     reorder: async (id: string, sortOrder: number): Promise<void> =>
       getRendererRpcClient().request<void>('kanban.ticket.reorder', { id, sortOrder }),
     addTokens: async <TResult>(id: string, tokens: number): Promise<TResult> =>

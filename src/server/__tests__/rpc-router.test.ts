@@ -1107,6 +1107,106 @@ describe('rpc router', () => {
     })
   })
 
+  it('handles kanban.ticket.moveToProject through the kanban RPC domain', async () => {
+    const ticket = {
+      id: 'ticket-1',
+      project_id: 'project-2',
+      title: 'Relocated migration',
+      description: null,
+      attachments: [],
+      column: 'todo' as const,
+      sort_order: 0,
+      current_session_id: null,
+      worktree_id: null,
+      mode: null,
+      plan_ready: false,
+      created_at: '2026-05-26T00:05:00.000Z',
+      updated_at: '2026-05-26T00:08:00.000Z',
+      archived_at: null,
+      external_provider: null,
+      external_id: null,
+      external_url: null,
+      github_pr_number: null,
+      github_pr_url: null,
+      mark: null,
+      total_tokens: 0,
+      pending_launch_config: null,
+      goal_mode: false,
+      goal_success_criteria: null,
+      note: null
+    }
+    const calls: Array<{ id: string; targetProjectId: string }> = []
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      kanban: {
+        createTicket: () => Effect.die(new Error('createTicket should not run')),
+        createTicketBatch: () => Effect.die(new Error('createTicketBatch should not run')),
+        getTicket: () => Effect.die(new Error('getTicket should not run')),
+        getTicketsByProject: () => Effect.die(new Error('getTicketsByProject should not run')),
+        updateTicket: () => Effect.die(new Error('updateTicket should not run')),
+        deleteTicket: () => Effect.die(new Error('deleteTicket should not run')),
+        archiveTicket: () => Effect.die(new Error('archiveTicket should not run')),
+        archiveAllDoneTickets: () => Effect.die(new Error('archiveAllDoneTickets should not run')),
+        unarchiveTicket: () => Effect.die(new Error('unarchiveTicket should not run')),
+        moveTicket: () => Effect.die(new Error('moveTicket should not run')),
+        moveTicketToProject: (id, targetProjectId) =>
+          Effect.sync(() => {
+            calls.push({ id, targetProjectId })
+            return ticket
+          })
+      }
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'kanban-ticket-move-to-project-1',
+        method: 'kanban.ticket.moveToProject',
+        params: { id: 'ticket-1', targetProjectId: 'project-2' }
+      })
+    )
+
+    expect(response).toEqual({
+      id: 'kanban-ticket-move-to-project-1',
+      ok: true,
+      value: ticket
+    })
+    expect(calls).toEqual([{ id: 'ticket-1', targetProjectId: 'project-2' }])
+  })
+
+  it('validates kanban.ticket.moveToProject params', async () => {
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      kanban: {
+        createTicket: () => Effect.die(new Error('createTicket should not run')),
+        createTicketBatch: () => Effect.die(new Error('createTicketBatch should not run')),
+        getTicket: () => Effect.die(new Error('getTicket should not run')),
+        getTicketsByProject: () => Effect.die(new Error('getTicketsByProject should not run')),
+        updateTicket: () => Effect.die(new Error('updateTicket should not run')),
+        deleteTicket: () => Effect.die(new Error('deleteTicket should not run')),
+        archiveTicket: () => Effect.die(new Error('archiveTicket should not run')),
+        archiveAllDoneTickets: () => Effect.die(new Error('archiveAllDoneTickets should not run')),
+        unarchiveTicket: () => Effect.die(new Error('unarchiveTicket should not run')),
+        moveTicket: () => Effect.die(new Error('moveTicket should not run')),
+        moveTicketToProject: () =>
+          Effect.die(new Error('moveTicketToProject should not run for invalid params'))
+      }
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'kanban-ticket-move-to-project-2',
+        method: 'kanban.ticket.moveToProject',
+        params: { id: 'ticket-1' }
+      })
+    )
+
+    expect(response).toMatchObject({
+      id: 'kanban-ticket-move-to-project-2',
+      ok: false,
+      error: { code: 'VALIDATION_FAILED' }
+    })
+  })
+
   it('handles kanban.ticket.reorder through the kanban RPC domain', async () => {
     const calls: Array<{ id: string; sortOrder: number }> = []
     const router = makeRpcRouter({

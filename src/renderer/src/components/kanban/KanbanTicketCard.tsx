@@ -28,13 +28,15 @@ import {
   Play,
   ChevronDown,
   Hammer,
-  Map as MapIcon
+  Map as MapIcon,
+  FolderInput
 } from 'lucide-react'
 import { CheckeredFlagIcon } from './CheckeredFlagIcon'
 import { UpdateStatusModal } from './UpdateStatusModal'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
 import { NoteEditorModal } from './NoteEditorModal'
+import { MoveToProjectModal } from './MoveToProjectModal'
 import { cn } from '@/lib/utils'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { ProviderIcon, getProviderLabel } from '@/components/ui/provider-icon'
@@ -143,6 +145,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   const [showStatusUpdate, setShowStatusUpdate] = useState(false)
   const [showPRPicker, setShowPRPicker] = useState(false)
   const [showNoteEditor, setShowNoteEditor] = useState(false)
+  const [showMoveToProject, setShowMoveToProject] = useState(false)
   const hasNote = !!ticket.note && ticket.note.trim().length > 0
   const isExternalTicket = !!ticket.external_provider
   const dragCloneRef = useRef<HTMLElement | null>(null)
@@ -654,6 +657,32 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
       toast.error('Failed to archive ticket')
     }
   }, [ticket.id, ticket.project_id])
+
+  const handleMoveToProject = useCallback(
+    async (project: { id: string; name: string }) => {
+      setShowMoveToProject(false)
+      const sourceProjectId = ticket.project_id
+      try {
+        await useKanbanStore
+          .getState()
+          .moveTicketToProject(ticket.id, sourceProjectId, project.id)
+        toast.success(`Moved to ${project.name}`, {
+          action: {
+            label: 'Undo',
+            onClick: () => {
+              useKanbanStore
+                .getState()
+                .moveTicketToProject(ticket.id, project.id, sourceProjectId)
+                .catch(() => toast.error('Failed to undo move'))
+            }
+          }
+        })
+      } catch {
+        toast.error('Failed to move ticket')
+      }
+    },
+    [ticket.id, ticket.project_id]
+  )
 
   const handleUnarchive = useCallback(async () => {
     try {
@@ -1391,6 +1420,17 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
               </ContextMenuSubContent>
             </ContextMenuSub>
 
+            {!isExternalTicket && (
+              <ContextMenuItem
+                data-testid="ctx-move-to-project"
+                onClick={() => setShowMoveToProject(true)}
+                className="gap-2"
+              >
+                <FolderInput className="h-3.5 w-3.5" />
+                Move to project…
+              </ContextMenuItem>
+            )}
+
             <ContextMenuSeparator />
 
             {/* Archive/Unarchive (done tickets) or Delete (all others) */}
@@ -1489,6 +1529,16 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
         initialNote={ticket.note}
         onSave={handleSaveNote}
       />
+
+      {!isExternalTicket && (
+        <MoveToProjectModal
+          currentProjectId={ticket.project_id}
+          ticketTitle={ticket.title}
+          open={showMoveToProject}
+          onOpenChange={setShowMoveToProject}
+          onSelect={handleMoveToProject}
+        />
+      )}
     </>
   )
 })

@@ -120,6 +120,11 @@ interface KanbanState {
   createTicket: (projectId: string, data: KanbanTicketCreate) => Promise<KanbanTicket>
   updateTicket: (ticketId: string, projectId: string, data: KanbanTicketUpdate) => Promise<void>
   deleteTicket: (ticketId: string, projectId: string) => Promise<void>
+  moveTicketToProject: (
+    ticketId: string,
+    sourceProjectId: string,
+    targetProjectId: string
+  ) => Promise<KanbanTicket | null>
   moveTicket: (
     ticketId: string,
     projectId: string,
@@ -325,6 +330,81 @@ export const useKanbanStore = create<KanbanState>()(
           set((state) => {
             const next = new Map(state.tickets)
             next.set(projectId, snapshot)
+            return { tickets: next }
+          })
+          throw err
+        }
+      },
+
+      // ── moveTicketToProject (optimistic) ─────────────────────────
+      moveTicketToProject: async (
+        ticketId: string,
+        sourceProjectId: string,
+        targetProjectId: string
+      ) => {
+        if (sourceProjectId === targetProjectId) return null
+
+        const prevSource = get().tickets.get(sourceProjectId) ?? []
+        const moved = prevSource.find((t) => t.id === ticketId)
+        if (!moved) return null
+        const sourceSnapshot = prevSource.map((t) => ({ ...t }))
+
+        // Optimistic: remove from the source project's list
+        set((state) => {
+          const next = new Map(state.tickets)
+          next.set(
+            sourceProjectId,
+            (next.get(sourceProjectId) ?? []).filter((t) => t.id !== ticketId)
+          )
+          const update: Partial<KanbanState> = { tickets: next }
+          // Selection lives under the source board; clear it if this ticket was selected
+          if (state.selectedTicketId === ticketId) update.selectedTicketId = null
+          return update
+        })
+
+        try {
+          const updated = await kanbanApi.ticket.moveToProject<KanbanTicket | null>(
+            ticketId,
+            targetProjectId
+          )
+
+          // If the target board is already loaded, surface the moved ticket there
+          if (updated) {
+            set((state) => {
+              if (!state.tickets.has(targetProjectId)) return {}
+              const next = new Map(state.tickets)
+              const targetTickets = next.get(targetProjectId) ?? []
+              if (targetTickets.some((t) => t.id === ticketId)) return {}
+              next.set(targetProjectId, [...targetTickets, updated])
+              return { tickets: next }
+            })
+          }
+
+          // Detach dependency links (they reference the source project's board)
+          kanbanApi.dependency.removeAll(ticketId).catch(() => {})
+          set((state) => {
+            const newMap = new Map(state.dependencyMap)
+            newMap.delete(ticketId)
+            for (const [depId, blockers] of newMap) {
+              if (blockers.has(ticketId)) {
+                const newSet = new Set(blockers)
+                newSet.delete(ticketId)
+                if (newSet.size === 0) {
+                  newMap.delete(depId)
+                } else {
+                  newMap.set(depId, newSet)
+                }
+              }
+            }
+            return { dependencyMap: newMap }
+          })
+
+          return updated
+        } catch (err) {
+          // Revert on failure
+          set((state) => {
+            const next = new Map(state.tickets)
+            next.set(sourceProjectId, sourceSnapshot)
             return { tickets: next }
           })
           throw err
