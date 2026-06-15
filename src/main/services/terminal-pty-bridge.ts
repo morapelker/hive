@@ -10,7 +10,8 @@ import {
 } from './claude-hook-server'
 import { logClaudeBinaryVersion, resolveClaudeBinaryPath } from './claude-binary-resolver'
 import { buildClaudeCliPtySpawn } from './claude-cli-spawner'
-import { writeClaudeCliPrompt } from './claude-cli-pty-prompt'
+import { externalizeGoalHandoffPlan } from './claude-cli-plan-handoff'
+import { reassertClaudeCliPromptSubmit, writeClaudeCliPrompt } from './claude-cli-pty-prompt'
 import { watchForClaudeSessionId, type ClaudeSessionWatchHandle } from './claude-session-watcher'
 import {
   watchForClaudePlanFollowup,
@@ -218,7 +219,7 @@ export async function createClaudeCliTerminal(
   sessionId: string,
   opts?: { pendingPrompt?: string | null }
 ): Promise<{ success: boolean; cols?: number; rows?: number; error?: string }> {
-  const pendingPrompt = opts?.pendingPrompt ?? null
+  let pendingPrompt = opts?.pendingPrompt ?? null
   log.info('RPC: terminalOps.createClaudeCli', { sessionId, hasPrompt: !!pendingPrompt })
   try {
     const db = getDatabase()
@@ -238,6 +239,13 @@ export async function createClaudeCliTerminal(
     }
     if (!worktreePath) {
       return { success: false, error: 'Could not resolve session working directory' }
+    }
+
+    // Oversized claude-cli goal-mode handoffs are rejected (>~4k chars). Externalize the
+    // plan to PLAN_{uuid}.md in the worktree and send a short reference instead. Runs before
+    // both delivery paths below (spawn args and paste injection).
+    if (pendingPrompt) {
+      pendingPrompt = externalizeGoalHandoffPlan(pendingPrompt, worktreePath)
     }
 
     const claudeBinary = resolveClaudeBinaryPath()
@@ -309,6 +317,12 @@ export async function createClaudeCliTerminal(
       // prompt riding on them) never reached claude. Inject it as a paste so
       // a racing promptless create call can't strand the prompt.
       const { delivered } = writeClaudeCliPrompt(sessionId, pendingPrompt)
+      if (delivered) {
+        // The paste can land before claude's TUI is input-ready, which buffers
+        // the text but drops the submitting CR — leaving the prompt sitting
+        // unsent. Re-assert Enter across the boot window so it actually submits.
+        reassertClaudeCliPromptSubmit(sessionId)
+      }
       log.info('Claude CLI PTY already exists; injecting pending prompt', {
         sessionId,
         delivered

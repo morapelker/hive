@@ -86,6 +86,11 @@ export interface KanbanRpcService {
     column: KanbanTicket['column'],
     sortOrder: number
   ) => Effect.Effect<KanbanTicket | null, unknown, never>
+  readonly moveTicketToProject?: (
+    projectId: string,
+    id: string,
+    targetProjectId: string
+  ) => Effect.Effect<KanbanTicket | null, unknown, never>
   readonly reorderTicket?: (
     projectId: string,
     id: string,
@@ -277,6 +282,13 @@ const moveTicketParamsSchema = z
     id: z.string(),
     column: ticketColumnSchema,
     sortOrder: z.number()
+  })
+  .strict()
+const moveTicketToProjectParamsSchema = z
+  .object({
+    projectId: z.string(),
+    id: z.string(),
+    targetProjectId: z.string()
   })
   .strict()
 const reorderTicketParamsSchema = z
@@ -527,6 +539,16 @@ export const makeLiveKanbanRpcService = (): KanbanRpcService => ({
       try: async () => {
         const { getKanbanBackendForProject } = await import('../../../main/services/kanban-backend')
         return getKanbanBackendForProject(projectId).move(projectId, id, column, sortOrder)
+      },
+      catch: (cause) => cause
+    }),
+  moveTicketToProject: (projectId, id, targetProjectId) =>
+    Effect.tryPromise({
+      try: async () => {
+        const { moveKanbanTicketToProject } = await import(
+          '../../../main/services/kanban-backend'
+        )
+        return moveKanbanTicketToProject(projectId, id, targetProjectId)
       },
       catch: (cause) => cause
     }),
@@ -1103,6 +1125,22 @@ export const makeKanbanRpcHandlers = (
             catch: (cause) => cause
           })
           return yield* service.moveTicket(projectId, id, column, sortOrder)
+        })
+    ],
+    [
+      'kanban.ticket.moveToProject',
+      (params) =>
+        Effect.gen(function* () {
+          const { projectId, id, targetProjectId } = yield* Effect.try({
+            try: () => moveTicketToProjectParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          if (!service.moveTicketToProject) {
+            return yield* Effect.die(
+              new Error('kanban.ticket.moveToProject service is not implemented')
+            )
+          }
+          return yield* service.moveTicketToProject(projectId, id, targetProjectId)
         })
     ],
     [

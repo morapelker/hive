@@ -272,6 +272,29 @@ describe('kanbanApi', () => {
     })
   })
 
+  it('routes ticket.moveToProject through the renderer RPC client', async () => {
+    const ticket = {
+      id: 'ticket-1',
+      project_id: 'project-2',
+      title: 'Relocated board fix',
+      column: 'todo',
+      worktree_id: null
+    }
+    const request = vi.fn().mockResolvedValue(ticket)
+    const subscribe = vi.fn()
+
+    setRendererRpcClient({ request, subscribe })
+
+    await expect(
+      kanbanApi.ticket.moveToProject<typeof ticket>('project-1', 'ticket-1', 'project-2')
+    ).resolves.toEqual(ticket)
+    expect(request).toHaveBeenCalledWith('kanban.ticket.moveToProject', {
+      projectId: 'project-1',
+      id: 'ticket-1',
+      targetProjectId: 'project-2'
+    })
+  })
+
   it('routes ticket.reorder through the renderer RPC client', async () => {
     const request = vi.fn().mockResolvedValue(undefined)
     const subscribe = vi.fn()

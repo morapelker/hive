@@ -165,9 +165,9 @@ describe('rpc router', () => {
     const router = makeRpcRouter({
       eventBus: makeEventBus(),
       kanban: {
-        createTicket: (data) =>
+        createTicket: (projectId, data) =>
           Effect.sync(() => {
-            calls.push(data)
+            calls.push({ projectId, data })
             return ticket
           }),
         createTicketBatch: () => Effect.die(new Error('createTicketBatch should not run')),
@@ -203,7 +203,7 @@ describe('rpc router', () => {
       ok: true,
       value: ticket
     })
-    expect(calls).toEqual([params])
+    expect(calls).toEqual([{ projectId: project.id, data: params }])
   })
 
   it('validates kanban.ticket.create params', async () => {
@@ -295,9 +295,9 @@ describe('rpc router', () => {
         archiveAllDoneTickets: () => Effect.die(new Error('archiveAllDoneTickets should not run')),
         unarchiveTicket: () => Effect.die(new Error('unarchiveTicket should not run')),
         moveTicket: () => Effect.die(new Error('moveTicket should not run')),
-        createTicketBatch: (data) =>
+        createTicketBatch: (projectId, data) =>
           Effect.sync(() => {
-            calls.push(data)
+            calls.push({ projectId, data })
             return result
           })
       }
@@ -323,7 +323,7 @@ describe('rpc router', () => {
       router.handle({
         id: 'kanban-ticket-create-batch-1',
         method: 'kanban.ticket.createBatch',
-        params
+        params: { projectId: project.id, data: params }
       })
     )
 
@@ -332,7 +332,7 @@ describe('rpc router', () => {
       ok: true,
       value: result
     })
-    expect(calls).toEqual([params])
+    expect(calls).toEqual([{ projectId: project.id, data: params }])
   })
 
   it('validates kanban.ticket.createBatch params', async () => {
@@ -396,7 +396,7 @@ describe('rpc router', () => {
       goal_success_criteria: null,
       note: null
     }
-    const calls: string[] = []
+    const calls: Array<{ projectId: string; id: string }> = []
     const router = makeRpcRouter({
       eventBus: makeEventBus(),
       kanban: {
@@ -409,9 +409,9 @@ describe('rpc router', () => {
         archiveAllDoneTickets: () => Effect.die(new Error('archiveAllDoneTickets should not run')),
         unarchiveTicket: () => Effect.die(new Error('unarchiveTicket should not run')),
         moveTicket: () => Effect.die(new Error('moveTicket should not run')),
-        getTicket: (id) =>
+        getTicket: (projectId, id) =>
           Effect.sync(() => {
-            calls.push(id)
+            calls.push({ projectId, id })
             return ticket
           })
       }
@@ -421,7 +421,7 @@ describe('rpc router', () => {
       router.handle({
         id: 'kanban-ticket-get-1',
         method: 'kanban.ticket.get',
-        params: { id: 'ticket-1' }
+        params: { projectId: project.id, id: 'ticket-1' }
       })
     )
 
@@ -430,7 +430,7 @@ describe('rpc router', () => {
       ok: true,
       value: ticket
     })
-    expect(calls).toEqual(['ticket-1'])
+    expect(calls).toEqual([{ projectId: project.id, id: 'ticket-1' }])
   })
 
   it('validates kanban.ticket.get params', async () => {
@@ -591,7 +591,7 @@ describe('rpc router', () => {
       goal_success_criteria: 'Build passes',
       note: 'Keep private'
     }
-    const calls: Array<{ id: string; data: unknown }> = []
+    const calls: Array<{ projectId: string; id: string; data: unknown }> = []
     const router = makeRpcRouter({
       eventBus: makeEventBus(),
       kanban: {
@@ -604,9 +604,9 @@ describe('rpc router', () => {
         archiveAllDoneTickets: () => Effect.die(new Error('archiveAllDoneTickets should not run')),
         unarchiveTicket: () => Effect.die(new Error('unarchiveTicket should not run')),
         moveTicket: () => Effect.die(new Error('moveTicket should not run')),
-        updateTicket: (id, data) =>
+        updateTicket: (projectId, id, data) =>
           Effect.sync(() => {
-            calls.push({ id, data })
+            calls.push({ projectId, id, data })
             return ticket
           })
       }
@@ -629,7 +629,7 @@ describe('rpc router', () => {
       router.handle({
         id: 'kanban-ticket-update-1',
         method: 'kanban.ticket.update',
-        params: { id: 'ticket-1', data }
+        params: { projectId: project.id, id: 'ticket-1', data }
       })
     )
 
@@ -638,7 +638,7 @@ describe('rpc router', () => {
       ok: true,
       value: ticket
     })
-    expect(calls).toEqual([{ id: 'ticket-1', data }])
+    expect(calls).toEqual([{ projectId: project.id, id: 'ticket-1', data }])
   })
 
   it('validates kanban.ticket.update params', async () => {
@@ -674,7 +674,7 @@ describe('rpc router', () => {
   })
 
   it('handles kanban.ticket.delete through the kanban RPC domain', async () => {
-    const calls: string[] = []
+    const calls: Array<{ projectId: string; id: string }> = []
     const router = makeRpcRouter({
       eventBus: makeEventBus(),
       kanban: {
@@ -683,9 +683,9 @@ describe('rpc router', () => {
         getTicket: () => Effect.die(new Error('getTicket should not run')),
         getTicketsByProject: () => Effect.die(new Error('getTicketsByProject should not run')),
         updateTicket: () => Effect.die(new Error('updateTicket should not run')),
-        deleteTicket: (id) =>
+        deleteTicket: (projectId, id) =>
           Effect.sync(() => {
-            calls.push(id)
+            calls.push({ projectId, id })
             return true
           }),
         archiveTicket: () => Effect.die(new Error('archiveTicket should not run')),
@@ -699,7 +699,7 @@ describe('rpc router', () => {
       router.handle({
         id: 'kanban-ticket-delete-1',
         method: 'kanban.ticket.delete',
-        params: { id: 'ticket-1' }
+        params: { projectId: project.id, id: 'ticket-1' }
       })
     )
 
@@ -708,7 +708,7 @@ describe('rpc router', () => {
       ok: true,
       value: true
     })
-    expect(calls).toEqual(['ticket-1'])
+    expect(calls).toEqual([{ projectId: project.id, id: 'ticket-1' }])
   })
 
   it('validates kanban.ticket.delete params', async () => {
@@ -771,7 +771,7 @@ describe('rpc router', () => {
       goal_success_criteria: null,
       note: null
     }
-    const calls: string[] = []
+    const calls: Array<{ projectId: string; id: string }> = []
     const router = makeRpcRouter({
       eventBus: makeEventBus(),
       kanban: {
@@ -781,9 +781,9 @@ describe('rpc router', () => {
         getTicketsByProject: () => Effect.die(new Error('getTicketsByProject should not run')),
         updateTicket: () => Effect.die(new Error('updateTicket should not run')),
         deleteTicket: () => Effect.die(new Error('deleteTicket should not run')),
-        archiveTicket: (id) =>
+        archiveTicket: (projectId, id) =>
           Effect.sync(() => {
-            calls.push(id)
+            calls.push({ projectId, id })
             return ticket
           }),
         archiveAllDoneTickets: () => Effect.die(new Error('archiveAllDoneTickets should not run')),
@@ -796,7 +796,7 @@ describe('rpc router', () => {
       router.handle({
         id: 'kanban-ticket-archive-1',
         method: 'kanban.ticket.archive',
-        params: { id: 'ticket-1' }
+        params: { projectId: project.id, id: 'ticket-1' }
       })
     )
 
@@ -805,7 +805,7 @@ describe('rpc router', () => {
       ok: true,
       value: ticket
     })
-    expect(calls).toEqual(['ticket-1'])
+    expect(calls).toEqual([{ projectId: project.id, id: 'ticket-1' }])
   })
 
   it('validates kanban.ticket.archive params', async () => {
@@ -842,7 +842,7 @@ describe('rpc router', () => {
   })
 
   it('handles kanban.ticket.archiveAllDone through the kanban RPC domain', async () => {
-    const calls: string[] = []
+    const calls: Array<{ projectId: string; id: string }> = []
     const router = makeRpcRouter({
       eventBus: makeEventBus(),
       kanban: {
@@ -940,7 +940,7 @@ describe('rpc router', () => {
       goal_success_criteria: null,
       note: null
     }
-    const calls: string[] = []
+    const calls: Array<{ projectId: string; ticketId: string }> = []
     const router = makeRpcRouter({
       eventBus: makeEventBus(),
       kanban: {
@@ -952,9 +952,9 @@ describe('rpc router', () => {
         deleteTicket: () => Effect.die(new Error('deleteTicket should not run')),
         archiveTicket: () => Effect.die(new Error('archiveTicket should not run')),
         archiveAllDoneTickets: () => Effect.die(new Error('archiveAllDoneTickets should not run')),
-        unarchiveTicket: (id) =>
+        unarchiveTicket: (projectId, id) =>
           Effect.sync(() => {
-            calls.push(id)
+            calls.push({ projectId, id })
             return ticket
           }),
         moveTicket: () => Effect.die(new Error('moveTicket should not run'))
@@ -965,7 +965,7 @@ describe('rpc router', () => {
       router.handle({
         id: 'kanban-ticket-unarchive-1',
         method: 'kanban.ticket.unarchive',
-        params: { id: 'ticket-1' }
+        params: { projectId: project.id, id: 'ticket-1' }
       })
     )
 
@@ -974,7 +974,7 @@ describe('rpc router', () => {
       ok: true,
       value: ticket
     })
-    expect(calls).toEqual(['ticket-1'])
+    expect(calls).toEqual([{ projectId: project.id, id: 'ticket-1' }])
   })
 
   it('validates kanban.ticket.unarchive params', async () => {
@@ -1038,7 +1038,7 @@ describe('rpc router', () => {
       goal_success_criteria: null,
       note: null
     }
-    const calls: Array<{ id: string; column: string; sortOrder: number }> = []
+    const calls: Array<{ projectId: string; id: string; column: string; sortOrder: number }> = []
     const router = makeRpcRouter({
       eventBus: makeEventBus(),
       kanban: {
@@ -1051,9 +1051,9 @@ describe('rpc router', () => {
         archiveTicket: () => Effect.die(new Error('archiveTicket should not run')),
         archiveAllDoneTickets: () => Effect.die(new Error('archiveAllDoneTickets should not run')),
         unarchiveTicket: () => Effect.die(new Error('unarchiveTicket should not run')),
-        moveTicket: (id, column, sortOrder) =>
+        moveTicket: (projectId, id, column, sortOrder) =>
           Effect.sync(() => {
-            calls.push({ id, column, sortOrder })
+            calls.push({ projectId, id, column, sortOrder })
             return ticket
           })
       }
@@ -1063,7 +1063,7 @@ describe('rpc router', () => {
       router.handle({
         id: 'kanban-ticket-move-1',
         method: 'kanban.ticket.move',
-        params: { id: 'ticket-1', column: 'review', sortOrder: 42 }
+        params: { projectId: project.id, id: 'ticket-1', column: 'review', sortOrder: 42 }
       })
     )
 
@@ -1072,7 +1072,9 @@ describe('rpc router', () => {
       ok: true,
       value: ticket
     })
-    expect(calls).toEqual([{ id: 'ticket-1', column: 'review', sortOrder: 42 }])
+    expect(calls).toEqual([
+      { projectId: project.id, id: 'ticket-1', column: 'review', sortOrder: 42 }
+    ])
   })
 
   it('validates kanban.ticket.move params', async () => {
@@ -1107,8 +1109,35 @@ describe('rpc router', () => {
     })
   })
 
-  it('handles kanban.ticket.reorder through the kanban RPC domain', async () => {
-    const calls: Array<{ id: string; sortOrder: number }> = []
+  it('handles kanban.ticket.moveToProject through the kanban RPC domain', async () => {
+    const ticket = {
+      id: 'ticket-1',
+      project_id: 'project-2',
+      title: 'Relocated migration',
+      description: null,
+      attachments: [],
+      column: 'todo' as const,
+      sort_order: 0,
+      current_session_id: null,
+      worktree_id: null,
+      mode: null,
+      plan_ready: false,
+      created_at: '2026-05-26T00:05:00.000Z',
+      updated_at: '2026-05-26T00:08:00.000Z',
+      archived_at: null,
+      external_provider: null,
+      external_id: null,
+      external_url: null,
+      github_pr_number: null,
+      github_pr_url: null,
+      mark: null,
+      total_tokens: 0,
+      pending_launch_config: null,
+      goal_mode: false,
+      goal_success_criteria: null,
+      note: null
+    }
+    const calls: Array<{ projectId: string; id: string; targetProjectId: string }> = []
     const router = makeRpcRouter({
       eventBus: makeEventBus(),
       kanban: {
@@ -1122,9 +1151,84 @@ describe('rpc router', () => {
         archiveAllDoneTickets: () => Effect.die(new Error('archiveAllDoneTickets should not run')),
         unarchiveTicket: () => Effect.die(new Error('unarchiveTicket should not run')),
         moveTicket: () => Effect.die(new Error('moveTicket should not run')),
-        reorderTicket: (id, sortOrder) =>
+        moveTicketToProject: (projectId, id, targetProjectId) =>
           Effect.sync(() => {
-            calls.push({ id, sortOrder })
+            calls.push({ projectId, id, targetProjectId })
+            return ticket
+          })
+      }
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'kanban-ticket-move-to-project-1',
+        method: 'kanban.ticket.moveToProject',
+        params: { projectId: 'project-1', id: 'ticket-1', targetProjectId: 'project-2' }
+      })
+    )
+
+    expect(response).toEqual({
+      id: 'kanban-ticket-move-to-project-1',
+      ok: true,
+      value: ticket
+    })
+    expect(calls).toEqual([
+      { projectId: 'project-1', id: 'ticket-1', targetProjectId: 'project-2' }
+    ])
+  })
+
+  it('validates kanban.ticket.moveToProject params', async () => {
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      kanban: {
+        createTicket: () => Effect.die(new Error('createTicket should not run')),
+        createTicketBatch: () => Effect.die(new Error('createTicketBatch should not run')),
+        getTicket: () => Effect.die(new Error('getTicket should not run')),
+        getTicketsByProject: () => Effect.die(new Error('getTicketsByProject should not run')),
+        updateTicket: () => Effect.die(new Error('updateTicket should not run')),
+        deleteTicket: () => Effect.die(new Error('deleteTicket should not run')),
+        archiveTicket: () => Effect.die(new Error('archiveTicket should not run')),
+        archiveAllDoneTickets: () => Effect.die(new Error('archiveAllDoneTickets should not run')),
+        unarchiveTicket: () => Effect.die(new Error('unarchiveTicket should not run')),
+        moveTicket: () => Effect.die(new Error('moveTicket should not run')),
+        moveTicketToProject: () =>
+          Effect.die(new Error('moveTicketToProject should not run for invalid params'))
+      }
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'kanban-ticket-move-to-project-2',
+        method: 'kanban.ticket.moveToProject',
+        params: { id: 'ticket-1' }
+      })
+    )
+
+    expect(response).toMatchObject({
+      id: 'kanban-ticket-move-to-project-2',
+      ok: false,
+      error: { code: 'VALIDATION_FAILED' }
+    })
+  })
+
+  it('handles kanban.ticket.reorder through the kanban RPC domain', async () => {
+    const calls: Array<{ projectId: string; id: string; sortOrder: number }> = []
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      kanban: {
+        createTicket: () => Effect.die(new Error('createTicket should not run')),
+        createTicketBatch: () => Effect.die(new Error('createTicketBatch should not run')),
+        getTicket: () => Effect.die(new Error('getTicket should not run')),
+        getTicketsByProject: () => Effect.die(new Error('getTicketsByProject should not run')),
+        updateTicket: () => Effect.die(new Error('updateTicket should not run')),
+        deleteTicket: () => Effect.die(new Error('deleteTicket should not run')),
+        archiveTicket: () => Effect.die(new Error('archiveTicket should not run')),
+        archiveAllDoneTickets: () => Effect.die(new Error('archiveAllDoneTickets should not run')),
+        unarchiveTicket: () => Effect.die(new Error('unarchiveTicket should not run')),
+        moveTicket: () => Effect.die(new Error('moveTicket should not run')),
+        reorderTicket: (projectId, id, sortOrder) =>
+          Effect.sync(() => {
+            calls.push({ projectId, id, sortOrder })
           })
       }
     })
@@ -1133,7 +1237,7 @@ describe('rpc router', () => {
       router.handle({
         id: 'kanban-ticket-reorder-1',
         method: 'kanban.ticket.reorder',
-        params: { id: 'ticket-1', sortOrder: 42 }
+        params: { projectId: project.id, id: 'ticket-1', sortOrder: 42 }
       })
     )
 
@@ -1142,7 +1246,7 @@ describe('rpc router', () => {
       ok: true,
       value: undefined
     })
-    expect(calls).toEqual([{ id: 'ticket-1', sortOrder: 42 }])
+    expect(calls).toEqual([{ projectId: project.id, id: 'ticket-1', sortOrder: 42 }])
   })
 
   it('validates kanban.ticket.reorder params', async () => {
@@ -1307,7 +1411,7 @@ describe('rpc router', () => {
       goal_success_criteria: null,
       note: null
     }
-    const calls: Array<{ id: string; tokens: number }> = []
+    const calls: Array<{ projectId: string; id: string; tokens: number }> = []
     const router = makeRpcRouter({
       eventBus: makeEventBus(),
       kanban: {
@@ -1321,9 +1425,9 @@ describe('rpc router', () => {
         archiveAllDoneTickets: () => Effect.die(new Error('archiveAllDoneTickets should not run')),
         unarchiveTicket: () => Effect.die(new Error('unarchiveTicket should not run')),
         moveTicket: () => Effect.die(new Error('moveTicket should not run')),
-        addTicketTokens: (id, tokens) =>
+        addTicketTokens: (projectId, id, tokens) =>
           Effect.sync(() => {
-            calls.push({ id, tokens })
+            calls.push({ projectId, id, tokens })
             return ticket
           })
       }
@@ -1333,7 +1437,7 @@ describe('rpc router', () => {
       router.handle({
         id: 'kanban-ticket-add-tokens-1',
         method: 'kanban.ticket.addTokens',
-        params: { id: 'ticket-1', tokens: 128 }
+        params: { projectId: project.id, id: 'ticket-1', tokens: 128 }
       })
     )
 
@@ -1342,7 +1446,7 @@ describe('rpc router', () => {
       ok: true,
       value: ticket
     })
-    expect(calls).toEqual([{ id: 'ticket-1', tokens: 128 }])
+    expect(calls).toEqual([{ projectId: project.id, id: 'ticket-1', tokens: 128 }])
   })
 
   it('validates kanban.ticket.addTokens params', async () => {
@@ -1869,7 +1973,7 @@ describe('rpc router', () => {
   })
 
   it('handles kanban.dependency.add through the kanban RPC domain', async () => {
-    const calls: Array<{ dependentId: string; blockerId: string }> = []
+    const calls: Array<{ projectId: string; dependentId: string; blockerId: string }> = []
     const router = makeRpcRouter({
       eventBus: makeEventBus(),
       kanban: {
@@ -1883,9 +1987,9 @@ describe('rpc router', () => {
         archiveAllDoneTickets: () => Effect.die(new Error('archiveAllDoneTickets should not run')),
         unarchiveTicket: () => Effect.die(new Error('unarchiveTicket should not run')),
         moveTicket: () => Effect.die(new Error('moveTicket should not run')),
-        addTicketDependency: (dependentId, blockerId) =>
+        addTicketDependency: (projectId, dependentId, blockerId) =>
           Effect.sync(() => {
-            calls.push({ dependentId, blockerId })
+            calls.push({ projectId, dependentId, blockerId })
             return { success: true }
           })
       }
@@ -1896,6 +2000,7 @@ describe('rpc router', () => {
         id: 'kanban-dependency-add-1',
         method: 'kanban.dependency.add',
         params: {
+          projectId: project.id,
           dependentId: 'ticket-1',
           blockerId: 'ticket-2'
         }
@@ -1907,11 +2012,13 @@ describe('rpc router', () => {
       ok: true,
       value: { success: true }
     })
-    expect(calls).toEqual([{ dependentId: 'ticket-1', blockerId: 'ticket-2' }])
+    expect(calls).toEqual([
+      { projectId: project.id, dependentId: 'ticket-1', blockerId: 'ticket-2' }
+    ])
   })
 
   it('validates kanban.dependency.add params', async () => {
-    const calls: Array<{ dependentId: string; blockerId: string }> = []
+    const calls: Array<{ projectId: string; dependentId: string; blockerId: string }> = []
     const router = makeRpcRouter({
       eventBus: makeEventBus(),
       kanban: {
@@ -1925,9 +2032,9 @@ describe('rpc router', () => {
         archiveAllDoneTickets: () => Effect.die(new Error('archiveAllDoneTickets should not run')),
         unarchiveTicket: () => Effect.die(new Error('unarchiveTicket should not run')),
         moveTicket: () => Effect.die(new Error('moveTicket should not run')),
-        addTicketDependency: (dependentId, blockerId) =>
+        addTicketDependency: (projectId, dependentId, blockerId) =>
           Effect.sync(() => {
-            calls.push({ dependentId, blockerId })
+            calls.push({ projectId, dependentId, blockerId })
             return { success: true }
           })
       }
@@ -1938,6 +2045,7 @@ describe('rpc router', () => {
         id: 'kanban-dependency-add-2',
         method: 'kanban.dependency.add',
         params: {
+          projectId: project.id,
           dependentId: 'ticket-1',
           blockerId: 123
         }
@@ -1953,7 +2061,7 @@ describe('rpc router', () => {
   })
 
   it('handles kanban.dependency.remove through the kanban RPC domain', async () => {
-    const calls: Array<{ dependentId: string; blockerId: string }> = []
+    const calls: Array<{ projectId: string; dependentId: string; blockerId: string }> = []
     const router = makeRpcRouter({
       eventBus: makeEventBus(),
       kanban: {
@@ -1967,9 +2075,9 @@ describe('rpc router', () => {
         archiveAllDoneTickets: () => Effect.die(new Error('archiveAllDoneTickets should not run')),
         unarchiveTicket: () => Effect.die(new Error('unarchiveTicket should not run')),
         moveTicket: () => Effect.die(new Error('moveTicket should not run')),
-        removeTicketDependency: (dependentId, blockerId) =>
+        removeTicketDependency: (projectId, dependentId, blockerId) =>
           Effect.sync(() => {
-            calls.push({ dependentId, blockerId })
+            calls.push({ projectId, dependentId, blockerId })
             return true
           })
       }
@@ -1980,6 +2088,7 @@ describe('rpc router', () => {
         id: 'kanban-dependency-remove-1',
         method: 'kanban.dependency.remove',
         params: {
+          projectId: project.id,
           dependentId: 'ticket-1',
           blockerId: 'ticket-2'
         }
@@ -1991,11 +2100,13 @@ describe('rpc router', () => {
       ok: true,
       value: true
     })
-    expect(calls).toEqual([{ dependentId: 'ticket-1', blockerId: 'ticket-2' }])
+    expect(calls).toEqual([
+      { projectId: project.id, dependentId: 'ticket-1', blockerId: 'ticket-2' }
+    ])
   })
 
   it('validates kanban.dependency.remove params', async () => {
-    const calls: Array<{ dependentId: string; blockerId: string }> = []
+    const calls: Array<{ projectId: string; dependentId: string; blockerId: string }> = []
     const router = makeRpcRouter({
       eventBus: makeEventBus(),
       kanban: {
@@ -2009,9 +2120,9 @@ describe('rpc router', () => {
         archiveAllDoneTickets: () => Effect.die(new Error('archiveAllDoneTickets should not run')),
         unarchiveTicket: () => Effect.die(new Error('unarchiveTicket should not run')),
         moveTicket: () => Effect.die(new Error('moveTicket should not run')),
-        removeTicketDependency: (dependentId, blockerId) =>
+        removeTicketDependency: (projectId, dependentId, blockerId) =>
           Effect.sync(() => {
-            calls.push({ dependentId, blockerId })
+            calls.push({ projectId, dependentId, blockerId })
             return true
           })
       }
@@ -2022,6 +2133,7 @@ describe('rpc router', () => {
         id: 'kanban-dependency-remove-2',
         method: 'kanban.dependency.remove',
         params: {
+          projectId: project.id,
           dependentId: 123,
           blockerId: 'ticket-2'
         }
@@ -2078,9 +2190,9 @@ describe('rpc router', () => {
         archiveAllDoneTickets: () => Effect.die(new Error('archiveAllDoneTickets should not run')),
         unarchiveTicket: () => Effect.die(new Error('unarchiveTicket should not run')),
         moveTicket: () => Effect.die(new Error('moveTicket should not run')),
-        getBlockersForTicket: (ticketId) =>
+        getBlockersForTicket: (projectId, ticketId) =>
           Effect.sync(() => {
-            calls.push(ticketId)
+            calls.push({ projectId, ticketId })
             return [blockerTicket]
           })
       }
@@ -2091,6 +2203,7 @@ describe('rpc router', () => {
         id: 'kanban-dependency-get-blockers-1',
         method: 'kanban.dependency.getBlockers',
         params: {
+          projectId: project.id,
           id: 'ticket-1'
         }
       })
@@ -2101,11 +2214,11 @@ describe('rpc router', () => {
       ok: true,
       value: [blockerTicket]
     })
-    expect(calls).toEqual(['ticket-1'])
+    expect(calls).toEqual([{ projectId: project.id, ticketId: 'ticket-1' }])
   })
 
   it('validates kanban.dependency.getBlockers params', async () => {
-    const calls: string[] = []
+    const calls: Array<{ projectId: string; ticketId: string }> = []
     const router = makeRpcRouter({
       eventBus: makeEventBus(),
       kanban: {
@@ -2119,9 +2232,9 @@ describe('rpc router', () => {
         archiveAllDoneTickets: () => Effect.die(new Error('archiveAllDoneTickets should not run')),
         unarchiveTicket: () => Effect.die(new Error('unarchiveTicket should not run')),
         moveTicket: () => Effect.die(new Error('moveTicket should not run')),
-        getBlockersForTicket: (ticketId) =>
+        getBlockersForTicket: (projectId, ticketId) =>
           Effect.sync(() => {
-            calls.push(ticketId)
+            calls.push({ projectId, ticketId })
             return []
           })
       }
@@ -2132,6 +2245,7 @@ describe('rpc router', () => {
         id: 'kanban-dependency-get-blockers-2',
         method: 'kanban.dependency.getBlockers',
         params: {
+          projectId: project.id,
           id: 123
         }
       })
@@ -2173,7 +2287,7 @@ describe('rpc router', () => {
       goal_success_criteria: null,
       note: null
     }
-    const calls: string[] = []
+    const calls: Array<{ projectId: string; ticketId: string }> = []
     const router = makeRpcRouter({
       eventBus: makeEventBus(),
       kanban: {
@@ -2187,9 +2301,9 @@ describe('rpc router', () => {
         archiveAllDoneTickets: () => Effect.die(new Error('archiveAllDoneTickets should not run')),
         unarchiveTicket: () => Effect.die(new Error('unarchiveTicket should not run')),
         moveTicket: () => Effect.die(new Error('moveTicket should not run')),
-        getDependentsOfTicket: (ticketId) =>
+        getDependentsOfTicket: (projectId, ticketId) =>
           Effect.sync(() => {
-            calls.push(ticketId)
+            calls.push({ projectId, ticketId })
             return [dependentTicket]
           })
       }
@@ -2200,6 +2314,7 @@ describe('rpc router', () => {
         id: 'kanban-dependency-get-dependents-1',
         method: 'kanban.dependency.getDependents',
         params: {
+          projectId: project.id,
           id: 'ticket-2'
         }
       })
@@ -2210,11 +2325,11 @@ describe('rpc router', () => {
       ok: true,
       value: [dependentTicket]
     })
-    expect(calls).toEqual(['ticket-2'])
+    expect(calls).toEqual([{ projectId: project.id, ticketId: 'ticket-2' }])
   })
 
   it('validates kanban.dependency.getDependents params', async () => {
-    const calls: string[] = []
+    const calls: Array<{ projectId: string; ticketId: string }> = []
     const router = makeRpcRouter({
       eventBus: makeEventBus(),
       kanban: {
@@ -2228,9 +2343,9 @@ describe('rpc router', () => {
         archiveAllDoneTickets: () => Effect.die(new Error('archiveAllDoneTickets should not run')),
         unarchiveTicket: () => Effect.die(new Error('unarchiveTicket should not run')),
         moveTicket: () => Effect.die(new Error('moveTicket should not run')),
-        getDependentsOfTicket: (ticketId) =>
+        getDependentsOfTicket: (projectId, ticketId) =>
           Effect.sync(() => {
-            calls.push(ticketId)
+            calls.push({ projectId, ticketId })
             return []
           })
       }
@@ -2241,6 +2356,7 @@ describe('rpc router', () => {
         id: 'kanban-dependency-get-dependents-2',
         method: 'kanban.dependency.getDependents',
         params: {
+          projectId: project.id,
           id: 123
         }
       })
@@ -2260,7 +2376,7 @@ describe('rpc router', () => {
       blocker_id: 'ticket-2',
       created_at: '2026-05-26T00:09:00.000Z'
     }
-    const calls: string[] = []
+    const calls: Array<{ projectId: string; ticketId: string }> = []
     const router = makeRpcRouter({
       eventBus: makeEventBus(),
       kanban: {
@@ -2356,9 +2472,9 @@ describe('rpc router', () => {
         archiveAllDoneTickets: () => Effect.die(new Error('archiveAllDoneTickets should not run')),
         unarchiveTicket: () => Effect.die(new Error('unarchiveTicket should not run')),
         moveTicket: () => Effect.die(new Error('moveTicket should not run')),
-        removeAllDependenciesForTicket: (ticketId) =>
+        removeAllDependenciesForTicket: (projectId, ticketId) =>
           Effect.sync(() => {
-            calls.push(ticketId)
+            calls.push({ projectId, ticketId })
             return 2
           })
       }
@@ -2369,6 +2485,7 @@ describe('rpc router', () => {
         id: 'kanban-dependency-remove-all-1',
         method: 'kanban.dependency.removeAll',
         params: {
+          projectId: project.id,
           id: 'ticket-1'
         }
       })
@@ -2379,7 +2496,7 @@ describe('rpc router', () => {
       ok: true,
       value: 2
     })
-    expect(calls).toEqual(['ticket-1'])
+    expect(calls).toEqual([{ projectId: project.id, ticketId: 'ticket-1' }])
   })
 
   it('validates kanban.dependency.removeAll params', async () => {

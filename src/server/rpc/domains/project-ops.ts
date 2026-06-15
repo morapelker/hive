@@ -227,10 +227,12 @@ const requestProjectOpenDirectoryDialog = (): Promise<string | null> => {
   const id = `project-open-directory-dialog-${Date.now()}-${Math.random().toString(36).slice(2)}`
   const command = 'projectOpenDirectoryDialog'
 
+  // No timeout: this opens a native folder picker that blocks on the user. The main
+  // process always replies once the dialog closes (path, or null on cancel), so the
+  // promise still settles — it just waits as long as the user needs.
   return new Promise<string | null>((resolve, reject) => {
     let settled = false
     const cleanup = (): void => {
-      clearTimeout(timeout)
       process.off('message', onMessage)
     }
     const finish = (value?: string | null, error?: Error): void => {
@@ -243,9 +245,6 @@ const requestProjectOpenDirectoryDialog = (): Promise<string | null> => {
       }
       resolve(value ?? null)
     }
-    const timeout = setTimeout(() => {
-      finish(null, new Error(`Timed out waiting for desktop command response: ${command}`))
-    }, 5_000)
 
     const onMessage = (message: unknown): void => {
       if (!isDesktopCommandResult(message) || message.id !== id) return
@@ -469,10 +468,12 @@ const requestProjectPickProjectIcon = (projectId: string): Promise<PickProjectIc
   const id = `project-pick-project-icon-${Date.now()}-${Math.random().toString(36).slice(2)}`
   const command = 'projectPickProjectIcon'
 
+  // No timeout: this opens a native image picker that blocks on the user. The main
+  // process always replies once the dialog closes, so the promise still settles — it
+  // just waits as long as the user needs.
   return new Promise<PickProjectIconResult>((resolve, reject) => {
     let settled = false
     const cleanup = (): void => {
-      clearTimeout(timeout)
       process.off('message', onMessage)
     }
     const finish = (value?: PickProjectIconResult, error?: Error): void => {
@@ -485,12 +486,6 @@ const requestProjectPickProjectIcon = (projectId: string): Promise<PickProjectIc
       }
       resolve(value ?? { success: false, error: 'cancelled' })
     }
-    const timeout = setTimeout(() => {
-      finish(
-        undefined,
-        new Error(`Timed out waiting for desktop command response: ${command}`)
-      )
-    }, 5_000)
 
     const onMessage = (message: unknown): void => {
       if (!isDesktopCommandResult(message) || message.id !== id) return

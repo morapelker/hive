@@ -1580,6 +1580,74 @@ export function getMarkdownKanbanBackend(): MarkdownKanbanBackend {
   return markdownBackend
 }
 
+export async function moveKanbanTicketToProject(
+  sourceProjectId: string,
+  ticketId: string,
+  targetProjectId: string
+): Promise<KanbanTicket | null> {
+  const sourceBackend = getKanbanBackendForProject(sourceProjectId)
+  const sourceTicket = await sourceBackend.get(sourceProjectId, ticketId)
+  if (!sourceTicket) return null
+  requireProject(targetProjectId)
+  if (sourceProjectId === targetProjectId) return sourceTicket
+
+  const sourceMode = getProjectStorageMode(sourceProjectId)
+  const targetMode = getProjectStorageMode(targetProjectId)
+
+  if (sourceMode === 'internal' && targetMode === 'internal') {
+    await internalBackend.removeAllDependencies(sourceProjectId, ticketId)
+    const moved = getDatabase().moveKanbanTicketToProject(ticketId, targetProjectId)
+    if (!moved) return null
+    return internalBackend.update(targetProjectId, ticketId, {
+      plan_ready: false,
+      pending_launch_config: null
+    })
+  }
+
+  const targetBackend = getKanbanBackendForProject(targetProjectId)
+  let created: KanbanTicket | null = null
+  try {
+    created = await targetBackend.create(targetProjectId, {
+      id: sourceTicket.id,
+      project_id: targetProjectId,
+      title: sourceTicket.title,
+      description: sourceTicket.description,
+      attachments: sourceTicket.attachments,
+      column: sourceTicket.column,
+      mode: sourceTicket.mode,
+      plan_ready: false,
+      current_session_id: null,
+      worktree_id: null,
+      external_provider: sourceTicket.external_provider,
+      external_id: sourceTicket.external_id,
+      external_url: sourceTicket.external_url,
+      github_pr_number: null,
+      github_pr_url: null,
+      mark: sourceTicket.mark
+    })
+    const updated =
+      (await targetBackend.update(targetProjectId, ticketId, {
+        archived_at: sourceTicket.archived_at,
+        goal_mode: sourceTicket.goal_mode,
+        goal_success_criteria: sourceTicket.goal_success_criteria,
+        note: sourceTicket.note,
+        pending_launch_config: null
+      })) ?? created
+
+    const deleted = await sourceBackend.delete(sourceProjectId, ticketId)
+    if (!deleted) {
+      await targetBackend.delete(targetProjectId, ticketId).catch(() => {})
+      throw new Error('Failed to delete source ticket after moving it to another project')
+    }
+    return updated
+  } catch (error) {
+    if (created) {
+      await targetBackend.delete(targetProjectId, ticketId).catch(() => {})
+    }
+    throw error
+  }
+}
+
 export function getKanbanStorageConfig(projectId: string): KanbanStorageConfig {
   const project = requireProject(projectId)
   const parsed = parseMarkdownConfigResult(project)

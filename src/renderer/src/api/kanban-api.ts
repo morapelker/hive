@@ -78,6 +78,16 @@ export const kanbanApi = {
         column,
         sortOrder
       }),
+    moveToProject: async <TResult>(
+      projectId: string,
+      id: string,
+      targetProjectId: string
+    ): Promise<TResult> =>
+      getRendererRpcClient().request<TResult>('kanban.ticket.moveToProject', {
+        projectId,
+        id,
+        targetProjectId
+      }),
     reorder: async (projectId: string, id: string, sortOrder: number): Promise<void> =>
       getRendererRpcClient().request<void>('kanban.ticket.reorder', { projectId, id, sortOrder }),
     addTokens: async <TResult>(projectId: string, id: string, tokens: number): Promise<TResult> =>

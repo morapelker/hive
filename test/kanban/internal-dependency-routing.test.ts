@@ -29,6 +29,29 @@ const { mockDatabase, mockState } = vi.hoisted(() => {
       )
       return before - mockState.dependencies.length
     }),
+    moveKanbanTicketToProject: vi.fn((ticketId: string, targetProjectId: string) => {
+      const ticket = mockState.tickets.get(ticketId)
+      if (!ticket) return null
+      const targetProject = mockState.projects.get(targetProjectId)
+      if (!targetProject) throw new Error(`Target project not found: ${targetProjectId}`)
+      const moved = {
+        ...ticket,
+        project_id: targetProjectId,
+        current_session_id: null,
+        worktree_id: null,
+        github_pr_number: null,
+        github_pr_url: null
+      }
+      mockState.tickets.set(ticketId, moved)
+      return moved
+    }),
+    updateKanbanTicket: vi.fn((ticketId: string, data: Partial<KanbanTicket>) => {
+      const ticket = mockState.tickets.get(ticketId)
+      if (!ticket) return null
+      const updated = { ...ticket, ...data }
+      mockState.tickets.set(ticketId, updated)
+      return updated
+    }),
     deleteKanbanTicket: vi.fn((ticketId: string) => {
       const existed = mockState.tickets.delete(ticketId)
       return existed
@@ -153,5 +176,29 @@ describe('internal kanban dependency routing', () => {
     expect(mockDatabase.deleteKanbanTicket).not.toHaveBeenCalled()
     expect(mockState.dependencies).toHaveLength(1)
     expect(mockState.tickets.has('dependent-a')).toBe(true)
+  })
+
+  test('moveKanbanTicketToProject clears dependencies before internal project move', async () => {
+    const { moveKanbanTicketToProject } = await import('../../src/main/services/kanban-backend')
+
+    const moved = await moveKanbanTicketToProject('project-a', 'dependent-a', 'project-b')
+
+    expect(moved).toMatchObject({
+      id: 'dependent-a',
+      project_id: 'project-b',
+      current_session_id: null,
+      worktree_id: null,
+      github_pr_number: null,
+      github_pr_url: null,
+      plan_ready: false,
+      pending_launch_config: null
+    })
+    expect(mockDatabase.removeAllDependenciesForTicket).toHaveBeenCalledWith('dependent-a')
+    expect(mockDatabase.moveKanbanTicketToProject).toHaveBeenCalledWith('dependent-a', 'project-b')
+    expect(mockDatabase.removeAllDependenciesForTicket.mock.invocationCallOrder[0]).toBeLessThan(
+      mockDatabase.moveKanbanTicketToProject.mock.invocationCallOrder[0]
+    )
+    expect(mockState.dependencies).toHaveLength(0)
+    expect(mockState.tickets.get('dependent-a')?.project_id).toBe('project-b')
   })
 })
