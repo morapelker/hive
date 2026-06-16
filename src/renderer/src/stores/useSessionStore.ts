@@ -2,7 +2,11 @@ import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import type { SelectedModel } from './useSettingsStore'
 import { useWorktreeStore } from './useWorktreeStore'
-import { notifyKanbanSessionSync, notifyKanbanNewSession } from './store-coordination'
+import {
+  notifyKanbanSessionSync,
+  notifyKanbanNewSession,
+  notifyKanbanRenameSync
+} from './store-coordination'
 import { useSettingsStore } from './useSettingsStore'
 import { getUnavailableAgentSdkMessage } from '@/lib/agent-sdk-availability'
 import { resolveSessionCreationSelection } from '@/lib/handoffSelection'
@@ -1086,6 +1090,10 @@ export const useSessionStore = create<SessionState>()(
             if (!isDefault && scope?.type === 'worktree') {
               useWorktreeStore.getState().appendSessionTitle(scope.scopeId, name)
             }
+
+            // Keep an auto-created ticket's title in sync with the session name
+            // (covers both manual renames and LLM auto-titles, which also route here).
+            notifyKanbanRenameSync(sessionId, name)
 
             return true
           }

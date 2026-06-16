@@ -102,6 +102,7 @@ const baseTicket: KanbanTicket = {
   goal_mode: false,
   goal_success_criteria: null,
   pending_launch_config: null,
+  created_from_session: false,
   attachments: [],
   created_at: '2026-01-01T00:00:00.000Z',
   updated_at: '2026-01-01T00:00:00.000Z'

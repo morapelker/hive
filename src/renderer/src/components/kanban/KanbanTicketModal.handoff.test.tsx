@@ -224,7 +224,8 @@ const ticket: KanbanTicket = {
   pending_launch_config: null,
   goal_mode: false,
   goal_success_criteria: null,
-  note: null
+  note: null,
+  created_from_session: false
 }
 
 const worktree: Worktree = {

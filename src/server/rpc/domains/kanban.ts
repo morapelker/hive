@@ -154,7 +154,8 @@ const kanbanTicketCreateSchema = z
     external_url: z.string().nullable().optional(),
     github_pr_number: z.number().nullable().optional(),
     github_pr_url: z.string().nullable().optional(),
-    mark: ticketMarkSchema.nullable().optional()
+    mark: ticketMarkSchema.nullable().optional(),
+    created_from_session: z.boolean().optional()
   })
   .strict() satisfies z.ZodType<KanbanTicketCreate>
 
