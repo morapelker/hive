@@ -81,6 +81,8 @@ export interface AppSettings {
   boardMode: 'toggle' | 'sticky-tab'
   followUpTriggerColumn: FollowUpTriggerColumn
   autoPinBaseWorktreeOnBoardPrompt: boolean
+  /** Auto-create a kanban ticket on the first message of a manually-created session. */
+  automaticallyCreateTicket: boolean
 
   // Editor
   defaultEditor: EditorOption
@@ -198,6 +200,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   boardMode: 'sticky-tab',
   followUpTriggerColumn: 'done',
   autoPinBaseWorktreeOnBoardPrompt: false,
+  automaticallyCreateTicket: false,
   defaultEditor: 'vscode',
   customEditorCommand: '',
   defaultTerminal: 'terminal',
@@ -419,6 +422,7 @@ function extractSettings(state: SettingsState): AppSettings {
     boardMode: state.boardMode,
     followUpTriggerColumn: state.followUpTriggerColumn,
     autoPinBaseWorktreeOnBoardPrompt: state.autoPinBaseWorktreeOnBoardPrompt,
+    automaticallyCreateTicket: state.automaticallyCreateTicket,
     defaultEditor: state.defaultEditor,
     customEditorCommand: state.customEditorCommand,
     defaultTerminal: state.defaultTerminal,
@@ -783,6 +787,7 @@ export const useSettingsStore = create<SettingsState>()(
         boardMode: state.boardMode,
         followUpTriggerColumn: state.followUpTriggerColumn,
         autoPinBaseWorktreeOnBoardPrompt: state.autoPinBaseWorktreeOnBoardPrompt,
+        automaticallyCreateTicket: state.automaticallyCreateTicket,
         defaultEditor: state.defaultEditor,
         customEditorCommand: state.customEditorCommand,
         defaultTerminal: state.defaultTerminal,

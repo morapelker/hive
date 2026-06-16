@@ -359,7 +359,8 @@ export class DatabaseService {
       pending_launch_config: (row.pending_launch_config as string) ?? null,
       goal_mode: row.goal_mode === 1,
       goal_success_criteria: (row.goal_success_criteria as string) ?? null,
-      note: (row.note as string) ?? null
+      note: (row.note as string) ?? null,
+      created_from_session: row.created_from_session === 1
     }
   }
 
@@ -657,6 +658,7 @@ export class DatabaseService {
     this.safeAddColumn('kanban_tickets', 'note', 'TEXT DEFAULT NULL')
     this.safeAddColumn('kanban_tickets', 'goal_mode', 'INTEGER NOT NULL DEFAULT 0')
     this.safeAddColumn('kanban_tickets', 'goal_success_criteria', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('kanban_tickets', 'created_from_session', 'INTEGER NOT NULL DEFAULT 0')
     this.safeAddColumn('sessions', 'session_type', "TEXT NOT NULL DEFAULT 'default'")
     this.safeAddColumn(
       'discord_resources',
@@ -2448,10 +2450,11 @@ export class DatabaseService {
     const githubPrNumber = data.github_pr_number ?? null
     const githubPrUrl = data.github_pr_url ?? null
     const mark = data.mark ?? null
+    const createdFromSession = data.created_from_session ? 1 : 0
 
     db.prepare(
-      `INSERT INTO kanban_tickets (id, project_id, title, description, attachments, "column", sort_order, current_session_id, worktree_id, mode, plan_ready, external_provider, external_id, external_url, github_pr_number, github_pr_url, mark, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO kanban_tickets (id, project_id, title, description, attachments, "column", sort_order, current_session_id, worktree_id, mode, plan_ready, external_provider, external_id, external_url, github_pr_number, github_pr_url, mark, created_from_session, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       id,
       data.project_id,
@@ -2470,6 +2473,7 @@ export class DatabaseService {
       githubPrNumber,
       githubPrUrl,
       mark,
+      createdFromSession,
       now,
       now
     )
@@ -2492,6 +2496,7 @@ export class DatabaseService {
       github_pr_number: githubPrNumber,
       github_pr_url: githubPrUrl,
       mark,
+      created_from_session: createdFromSession,
       total_tokens: 0,
       created_at: now,
       updated_at: now

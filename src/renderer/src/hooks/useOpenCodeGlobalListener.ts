@@ -26,7 +26,10 @@ import { checkAutoApprove } from '@/lib/permissionUtils'
 import { isPlanLike } from '@/lib/constants'
 import { handleSessionIdleFollowUp } from '@/lib/session-follow-up-dispatch'
 import { useKanbanStore } from '@/stores/useKanbanStore'
-import { notifyKanbanSessionSync } from '@/stores/store-coordination'
+import {
+  notifyKanbanSessionSync,
+  notifyKanbanAutoCreateTicket
+} from '@/stores/store-coordination'
 import { dbApi } from '@/api/db-api'
 import { opencodeApi } from '@/api/opencode-api'
 import { connectionApi } from '@/api/connection-api'
@@ -271,6 +274,19 @@ export function useOpenCodeGlobalListener(): void {
           | undefined
         if (newId) {
           useSessionStore.getState().setOpenCodeSessionId(sessionId, newId)
+        }
+        return
+      }
+
+      // First user prompt in a terminal-backed Claude CLI session — captured in
+      // the main process by the UserPromptSubmit hook (covers prompts typed
+      // straight into the terminal as well as composer/handoff prompts). The
+      // renderer creation helper applies the setting gate, exclusions and the
+      // idempotency check (so a ticket-originated CLI session is skipped).
+      if (event.type === 'claude-cli.first-prompt-detected') {
+        const promptText = (event.data as { promptText?: unknown } | undefined)?.promptText
+        if (typeof promptText === 'string') {
+          notifyKanbanAutoCreateTicket({ sessionId, rawPrompt: promptText })
         }
         return
       }

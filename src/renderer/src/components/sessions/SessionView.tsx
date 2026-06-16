@@ -89,7 +89,10 @@ import { COMPLETION_WORDS } from '@/lib/format-utils'
 import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
 import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
 import { snapshotTokenBaseline, computeTokenDelta } from '@/lib/token-baselines'
-import { notifyKanbanSessionSync } from '@/stores/store-coordination'
+import {
+  notifyKanbanSessionSync,
+  notifyKanbanAutoCreateTicket
+} from '@/stores/store-coordination'
 import { isComposingKeyboardEvent } from '@/lib/message-composer-shortcuts'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { handleSessionIdleFollowUp } from '@/lib/session-follow-up-dispatch'
@@ -4632,6 +4635,18 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
           optimisticPrContext + optimisticModePrefix + trimmedValue,
           diffComments
         )
+
+        // First genuine message in this session (not a bash/slash command, which
+        // returned earlier) → optionally auto-create a kanban ticket. Detect before
+        // the optimistic append; messagesRef still reflects the pre-send state, and
+        // is non-empty for resumed sessions, so this only fires on a true first send.
+        if (messagesRef.current.length === 0) {
+          try {
+            notifyKanbanAutoCreateTicket({ sessionId, rawPrompt: trimmedValue })
+          } catch {
+            // Best-effort — never block the send.
+          }
+        }
 
         setMessages((prev) => {
           let base = prev
