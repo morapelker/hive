@@ -820,6 +820,75 @@ describe('markdown diagnostics cache', () => {
     expect(await readFile(join(tempRoot!, 'flat-cards', 'done-card.md'), 'utf-8')).toBe(doneCard)
   })
 
+  test('layout migration rolls back already moved cards when a later move fails', async () => {
+    const { updateKanbanMarkdownConfig } = await import('../../src/main/services/kanban-backend')
+    mockState.project = {
+      ...mockState.project!,
+      kanban_markdown_config: JSON.stringify({
+        layout: 'status-folders',
+        singleFolder: 'cards',
+        statusFolders: {
+          todo: 'cards/todo',
+          in_progress: 'cards/in-progress',
+          review: 'cards/review',
+          done: 'cards/done'
+        }
+      })
+    }
+    const todoFolder = join(tempRoot!, 'cards', 'todo')
+    const reviewFolder = join(tempRoot!, 'cards', 'review')
+    const flatFolder = join(tempRoot!, 'flat-cards')
+    await mkdir(todoFolder, { recursive: true })
+    await mkdir(reviewFolder, { recursive: true })
+    await mkdir(flatFolder, { recursive: true })
+    const todoCard = [
+      '---',
+      'id: todo-card',
+      'title: Todo',
+      'column: todo',
+      '---',
+      'Todo body'
+    ].join('\n')
+    const reviewCard = [
+      '---',
+      'id: review-card',
+      'title: Review',
+      'column: review',
+      '---',
+      'Review body'
+    ].join('\n')
+    const todoSource = join(todoFolder, 'todo-card.md')
+    const reviewSource = join(reviewFolder, 'review-card.md')
+    const todoTarget = join(flatFolder, 'todo-card.md')
+    const reviewTarget = join(flatFolder, 'review-card.md')
+    await writeFile(todoSource, todoCard, 'utf-8')
+    await writeFile(reviewSource, reviewCard, 'utf-8')
+    await chmod(reviewFolder, 0o555)
+
+    try {
+      await expect(
+        updateKanbanMarkdownConfig('proj-cache', {
+          layout: 'single-folder',
+          singleFolder: 'flat-cards',
+          statusFolders: {
+            todo: 'cards/todo',
+            in_progress: 'cards/in-progress',
+            review: 'cards/review',
+            done: 'cards/done'
+          }
+        })
+      ).rejects.toThrow()
+    } finally {
+      await chmod(reviewFolder, 0o755)
+    }
+
+    expect(await readFile(todoSource, 'utf-8')).toBe(todoCard)
+    expect(await readFile(reviewSource, 'utf-8')).toBe(reviewCard)
+    await expect(access(todoTarget)).rejects.toThrow()
+    await expect(access(reviewTarget)).rejects.toThrow()
+    expect(mockDatabase.updateProjectKanbanMarkdownConfig).not.toHaveBeenCalled()
+  })
+
   test('layout migration rejects target filename collisions before saving config or moving files', async () => {
     const { updateKanbanMarkdownConfig } = await import('../../src/main/services/kanban-backend')
     const todoFolder = join(tempRoot!, 'cards', 'todo')
@@ -1071,6 +1140,9 @@ describe('markdown diagnostics cache', () => {
         '    created_at: "2026-06-01T00:00:00.000Z"',
         '  - blocker_id: other',
         '    created_at: "2026-06-01T00:00:00.000Z"',
+        'depends_on:',
+        '  - done-a',
+        '  - other',
         '---',
         'Todo body'
       ].join('\n'),
@@ -1087,6 +1159,8 @@ describe('markdown diagnostics cache', () => {
         'dependencies:',
         '  - blocker_id: todo',
         '    created_at: "2026-06-01T00:00:00.000Z"',
+        'depends_on:',
+        '  - todo',
         '---',
         'Done A body'
       ].join('\n'),
@@ -1127,6 +1201,8 @@ describe('markdown diagnostics cache', () => {
     const doneB = frontmatterOf(await readFile(join(cardsPath, 'done-b.md'), 'utf-8'))
     expect(dependencyBlockersOf(todo)).toEqual(['other'])
     expect(dependencyBlockersOf(doneA)).toEqual([])
+    expect(todo).not.toHaveProperty('depends_on')
+    expect(doneA).not.toHaveProperty('depends_on')
     expect(typeof doneA.archived_at).toBe('string')
     expect(typeof doneB.archived_at).toBe('string')
   })
@@ -1148,6 +1224,8 @@ describe('markdown diagnostics cache', () => {
         'dependencies:',
         '  - blocker_id: b',
         '    created_at: "2026-06-01T00:00:00.000Z"',
+        'depends_on:',
+        '  - b',
         '---',
         'A body'
       ].join('\n'),
@@ -1168,6 +1246,7 @@ describe('markdown diagnostics cache', () => {
     await expect(access(blockerPath)).rejects.toThrow()
     const dependent = frontmatterOf(await readFile(dependentPath, 'utf-8'))
     expect(dependencyBlockersOf(dependent)).toEqual([])
+    expect(dependent).not.toHaveProperty('depends_on')
     expect(mockState.runtimeRows.some((row) => row.card_id === 'b')).toBe(false)
   })
 

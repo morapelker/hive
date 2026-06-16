@@ -437,7 +437,7 @@ describe('KanbanTicketModal handoff from Claude CLI plan review', () => {
     expect(useKanbanStore.getState().isBoardViewActive).toBe(true)
   })
 
-  it('hides left-side followup and implement controls for Claude CLI plan review', async () => {
+  it('shows terminal-backed followup and implement controls for Claude CLI plan review', async () => {
     setupStores()
 
     render(
@@ -446,8 +446,8 @@ describe('KanbanTicketModal handoff from Claude CLI plan review', () => {
       </ClaudeCliSessionPortalProvider>
     )
 
-    expect(screen.queryByTestId('followup-input')).toBeNull()
-    expect(screen.queryByTestId('plan-review-implement-btn')).toBeNull()
+    expect(screen.queryByTestId('followup-input')).not.toBeNull()
+    expect(screen.queryByTestId('plan-review-implement-btn')).not.toBeNull()
     expect(screen.queryByTestId('plan-review-supercharge-btn')).toBeNull()
     expect(screen.queryByTestId('plan-review-supercharge-local-btn')).toBeNull()
     expect(screen.queryByTestId('plan-review-handoff-btn')).not.toBeNull()

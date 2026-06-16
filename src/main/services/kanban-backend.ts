@@ -761,13 +761,18 @@ class MarkdownKanbanBackend implements KanbanBackend {
       const next = archiveCard ? [] : deps.filter((dep) => !archivedIds.has(dep.blocker_id))
       if (!archiveCard && next.length === deps.length) continue
       touchedPaths.push(
-        await rewriteCard(card.filePath, {
-          ...(archiveCard ? { archived_at: archivedAt } : {}),
-          dependencies: next.map((dep) => ({
-            blocker_id: dep.blocker_id,
-            created_at: dep.created_at
-          }))
-        })
+        await rewriteCard(
+          card.filePath,
+          {
+            ...(archiveCard ? { archived_at: archivedAt } : {}),
+            dependencies: next.map((dep) => ({
+              blocker_id: dep.blocker_id,
+              created_at: dep.created_at
+            }))
+          },
+          undefined,
+          ['depends_on']
+        )
       )
     }
     suppressMarkdownWrites(projectId, touchedPaths)
@@ -1026,11 +1031,16 @@ class MarkdownKanbanBackend implements KanbanBackend {
       if (removeDependent || next.length !== deps.length) {
         removed += removeDependent ? deps.length : deps.length - next.length
         touchedPaths.push(
-          await rewriteCard(card.filePath, {
-            dependencies: removeDependent
-              ? []
-              : next.map((dep) => ({ blocker_id: dep.blocker_id, created_at: dep.created_at }))
-          })
+          await rewriteCard(
+            card.filePath,
+            {
+              dependencies: removeDependent
+                ? []
+                : next.map((dep) => ({ blocker_id: dep.blocker_id, created_at: dep.created_at }))
+            },
+            undefined,
+            ['depends_on']
+          )
         )
       }
     }
@@ -1762,19 +1772,54 @@ async function migrateMarkdownLayout(
       : await planStatusFoldersToSingleFolder(project, previousConfig, nextConfig)
 
   await preflightMarkdownLayoutMoves(moves)
-  for (const move of moves) {
-    if (move.source === move.target) continue
-    await copyFile(move.source, move.target)
-    suppressMarkdownWrites(projectId, move.target)
+  const committedMoves: MarkdownLayoutMove[] = []
+  try {
+    for (const move of moves) {
+      if (move.source === move.target) continue
+      let copiedTarget: string | null = null
+      try {
+        await copyFile(move.source, move.target)
+        copiedTarget = move.target
+        suppressMarkdownWrites(projectId, move.target)
+        await unlink(move.source)
+        suppressMarkdownWrites(projectId, move.source)
+        committedMoves.push(move)
+        copiedTarget = null
+      } catch (error) {
+        if (copiedTarget) {
+          await rm(copiedTarget, { force: true }).catch(() => {})
+          suppressMarkdownWrites(projectId, copiedTarget)
+        }
+        throw error
+      }
+    }
+  } catch (error) {
+    const rollbackErrors = await rollbackMarkdownLayoutMoves(projectId, committedMoves)
+    if (rollbackErrors.length > 0) {
+      throw new Error(
+        `Cannot change Kanban folder layout because migration failed: ${errorMessage(error)}; rollback failed: ${rollbackErrors.map(errorMessage).join('; ')}`
+      )
+    }
+    throw error
+  }
+}
+
+async function rollbackMarkdownLayoutMoves(
+  projectId: string,
+  committedMoves: MarkdownLayoutMove[]
+): Promise<unknown[]> {
+  const errors: unknown[] = []
+  for (const move of [...committedMoves].reverse()) {
     try {
-      await unlink(move.source)
-      suppressMarkdownWrites(projectId, move.source)
-    } catch (error) {
-      await rm(move.target, { force: true }).catch(() => {})
+      await copyFile(move.target, move.source)
+      suppressMarkdownWrites(projectId, [move.source, move.target])
+      await unlink(move.target)
       suppressMarkdownWrites(projectId, move.target)
-      throw error
+    } catch (error) {
+      errors.push(error)
     }
   }
+  return errors
 }
 
 async function planSingleFolderToStatusFolders(
