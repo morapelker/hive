@@ -2066,9 +2066,7 @@ function PlanReviewModeContent({
           const result = await sessionStore.createConnectionSession(
             sessionRecord.connection_id,
             override?.agentSdk,
-            override?.agentSdk === 'claude-code-cli' && sessionRecord?.mode === 'super-plan'
-              ? 'super-plan'
-              : undefined,
+            undefined,
             { autoFocus: false, modelOverride: override?.model }
           )
           if (!result.success || !result.session) {
@@ -2076,21 +2074,10 @@ function PlanReviewModeContent({
             return
           }
 
-          const handoffPrompt = buildHandoffPrompt(
-            planContent,
-            override
-              ? {
-                  ...override,
-                  superPlan: sessionRecord?.mode === 'super-plan'
-                }
-              : undefined
-          )
+          const handoffPrompt = buildHandoffPrompt(planContent, override)
           const newSession = result.session
           const newSessionId = newSession.id
-          const setModePromise =
-            newSession.agent_sdk === 'claude-code-cli' && sessionRecord?.mode === 'super-plan'
-              ? Promise.resolve()
-              : sessionStore.setSessionMode(newSessionId, 'build')
+          const setModePromise = sessionStore.setSessionMode(newSessionId, 'build')
 
           prepareTicketBuildSession(newSessionId, handoffGoalMode)
           if (newSession.agent_sdk === 'claude-code-cli') {
@@ -2151,9 +2138,7 @@ function PlanReviewModeContent({
           worktreeId,
           ticket.project_id,
           override?.agentSdk,
-          override?.agentSdk === 'claude-code-cli' && sessionRecord?.mode === 'super-plan'
-            ? 'super-plan'
-            : undefined,
+          undefined,
           { autoFocus: false, modelOverride: override?.model }
         )
         if (!result.success || !result.session) {
@@ -2161,21 +2146,10 @@ function PlanReviewModeContent({
           return
         }
 
-        const handoffPrompt = buildHandoffPrompt(
-          planContent,
-          override
-            ? {
-                ...override,
-                superPlan: sessionRecord?.mode === 'super-plan'
-              }
-            : undefined
-        )
+        const handoffPrompt = buildHandoffPrompt(planContent, override)
         const newSession = result.session
         const newSessionId = newSession.id
-        const setModePromise =
-          newSession.agent_sdk === 'claude-code-cli' && sessionRecord?.mode === 'super-plan'
-            ? Promise.resolve()
-            : sessionStore.setSessionMode(newSessionId, 'build')
+        const setModePromise = sessionStore.setSessionMode(newSessionId, 'build')
         const localWorktreePath = findWorktreePathById(worktreeId)
         if (!localWorktreePath) {
           toast.error('Could not find worktree path')
