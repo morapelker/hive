@@ -135,6 +135,9 @@ const apiMocks = vi.hoisted(() => ({
     registerHivePromptHandoff: vi.fn(),
     startHivePromptTelemetry: vi.fn()
   },
+  autoPin: {
+    autoPinBaseWorktree: vi.fn().mockResolvedValue(undefined)
+  },
   claudeCliPortal: {
     registerTarget: vi.fn(() => vi.fn())
   }
@@ -155,6 +158,7 @@ vi.mock('@/api/file-api', () => ({ fileApi: apiMocks.fileApi }))
 vi.mock('@/api/terminal-api', () => ({ terminalApi: apiMocks.terminalApi }))
 vi.mock('@/api/script-api', () => ({ scriptApi: apiMocks.scriptApi }))
 vi.mock('@/lib/hive-enterprise-telemetry', () => apiMocks.hiveTelemetry)
+vi.mock('@/lib/auto-pin', () => apiMocks.autoPin)
 vi.mock('@/contexts/ClaudeCliSessionPortalContext', () => ({
   useClaudeCliSessionPortal: () => ({
     registerTarget: apiMocks.claudeCliPortal.registerTarget
@@ -445,6 +449,124 @@ describe('Plan review followup dispatch', () => {
         undefined
       )
     })
+    expect(apiMocks.autoPin.autoPinBaseWorktree).toHaveBeenCalledWith('proj-1')
+    expect(apiMocks.hiveTelemetry.startHivePromptTelemetry).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      prompt: 'Please add error handling to step 2',
+      worktreeId: 'wt-1',
+      modelId: undefined,
+      providerId: undefined,
+      modelVariant: undefined,
+      mode: 'plan'
+    })
+  })
+
+  test('auto-pins project for connection-backed session followups', async () => {
+    const connTicket = makeTicket({
+      id: 'ticket-conn-followup',
+      column: 'in_progress',
+      plan_ready: true,
+      current_session_id: 'session-conn-old',
+      worktree_id: null,
+      mode: 'plan',
+      description: '## Plan\n\nStep 1: Use connection'
+    })
+
+    act(() => {
+      useKanbanStore.setState({
+        tickets: new Map([['proj-1', [connTicket]]]),
+        isBoardViewActive: true,
+        selectedTicketId: 'ticket-conn-followup',
+        selectedTicketRef: { projectId: 'proj-1', ticketId: 'ticket-conn-followup' }
+      })
+      useSessionStore.setState({
+        activeSessionId: null,
+        activeConnectionId: null,
+        activeWorktreeId: null,
+        sessionsByWorktree: new Map(),
+        sessionsByConnection: new Map([
+          [
+            'conn-1',
+            [
+              makeSession({
+                id: 'session-conn-old',
+                worktree_id: null,
+                connection_id: 'conn-1',
+                agent_sdk: 'claude-code',
+                opencode_session_id: 'opc-session-conn'
+              })
+            ]
+          ]
+        ]),
+        pendingPlans: new Map([
+          [
+            'session-conn-old',
+            {
+              requestId: 'req-conn-followup',
+              planContent: '## Detailed Plan\n\nStep 1: Use connection',
+              toolUseID: 'tool-conn-followup'
+            }
+          ]
+        ]),
+        pendingMessages: new Map(),
+        pendingFollowUpMessages: new Map()
+      })
+      useConnectionStore.setState({
+        connections: [
+          {
+            id: 'conn-1',
+            name: 'Test Conn',
+            custom_name: null,
+            status: 'active',
+            path: '/test/conn-1',
+            color: null,
+            created_at: '2026-01-01T00:00:00Z',
+            updated_at: '2026-01-01T00:00:00Z',
+            members: [
+              {
+                id: 'mem-1',
+                connection_id: 'conn-1',
+                worktree_id: 'wt-1',
+                project_id: 'proj-1',
+                symlink_name: 'wt-1',
+                added_at: '2026-01-01T00:00:00Z',
+                worktree_name: 'feature-auth',
+                worktree_branch: 'feature-auth',
+                worktree_path: '/test/feature-auth',
+                project_name: 'My Project'
+              }
+            ]
+          }
+        ]
+      })
+    })
+
+    render(<KanbanTicketModal />)
+
+    const input = screen.getByTestId('plan-review-followup-input') as HTMLTextAreaElement
+    fireEvent.change(input, { target: { value: 'Please revise from the connection' } })
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('plan-review-send-followup-btn'))
+    })
+
+    await waitFor(() => {
+      expect(mockOpencodeOps.prompt).toHaveBeenCalledWith(
+        '/test/conn-1',
+        'opc-session-conn',
+        [{ type: 'text', text: 'Please revise from the connection' }],
+        undefined
+      )
+    })
+    expect(apiMocks.autoPin.autoPinBaseWorktree).toHaveBeenCalledWith('proj-1')
+    expect(apiMocks.hiveTelemetry.startHivePromptTelemetry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'session-conn-old',
+        prompt: 'Please revise from the connection',
+        worktreeId: null,
+        mode: 'plan'
+      })
+    )
   })
 
   test('routes Claude CLI plan followup through the terminal prompt path', async () => {
@@ -483,6 +605,15 @@ describe('Plan review followup dispatch', () => {
     expect(apiMocks.terminalApi.createClaudeCli).not.toHaveBeenCalled()
     expect(mockOpencodeOps.reconnect).not.toHaveBeenCalled()
     expect(mockOpencodeOps.prompt).not.toHaveBeenCalled()
+    expect(apiMocks.autoPin.autoPinBaseWorktree).toHaveBeenCalledWith('proj-1')
+    expect(apiMocks.hiveTelemetry.startHivePromptTelemetry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'session-1',
+        prompt: expect.stringContaining('Please revise the CLI plan'),
+        worktreeId: 'wt-1',
+        mode: 'plan'
+      })
+    )
   })
 
   test('starts Claude CLI with pending prompt when terminal followup is not delivered', async () => {
@@ -523,6 +654,14 @@ describe('Plan review followup dispatch', () => {
     })
     expect(mockOpencodeOps.reconnect).not.toHaveBeenCalled()
     expect(mockOpencodeOps.prompt).not.toHaveBeenCalled()
+    expect(apiMocks.hiveTelemetry.startHivePromptTelemetry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'session-1',
+        prompt: expect.stringContaining('Resume this CLI session'),
+        worktreeId: 'wt-1',
+        mode: 'plan'
+      })
+    )
   })
 
   test('routes Claude CLI implement-from-plan through the terminal prompt path', async () => {
@@ -557,6 +696,56 @@ describe('Plan review followup dispatch', () => {
     })
     expect(mockOpencodeOps.reconnect).not.toHaveBeenCalled()
     expect(mockOpencodeOps.prompt).not.toHaveBeenCalled()
+  })
+
+  test('records telemetry and auto-pins for SDK implement-from-plan followup', async () => {
+    act(() => {
+      useSessionStore.setState({
+        sessionsByWorktree: new Map([
+          [
+            'wt-1',
+            [
+              makeSession({
+                id: 'session-1',
+                agent_sdk: 'opencode',
+                opencode_session_id: 'opc-session-1'
+              })
+            ]
+          ]
+        ])
+      })
+    })
+
+    render(<KanbanTicketModal />)
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('plan-review-implement-btn'))
+    })
+
+    await waitFor(() => {
+      expect(mockOpencodeOps.prompt).toHaveBeenCalledWith(
+        '/test/feature-auth',
+        'opc-session-1',
+        [
+          {
+            type: 'text',
+            text: expect.stringContaining('PLEASE IMPLEMENT THIS PLAN')
+          }
+        ],
+        undefined
+      )
+    })
+
+    const outboundPrompt = mockOpencodeOps.prompt.mock.calls.at(-1)?.[2]?.[0]?.text
+    expect(apiMocks.autoPin.autoPinBaseWorktree).toHaveBeenCalledWith('proj-1')
+    expect(apiMocks.hiveTelemetry.startHivePromptTelemetry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'session-1',
+        prompt: outboundPrompt,
+        worktreeId: 'wt-1',
+        mode: 'build'
+      })
+    )
   })
 
   test('clears pending plan before sending followup', async () => {
@@ -664,9 +853,7 @@ describe('Plan review followup dispatch', () => {
     })
 
     await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith(
-        expect.stringContaining('Connection lost')
-      )
+      expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('Connection lost'))
     })
 
     // Session status should be cleared on failure
@@ -697,11 +884,12 @@ describe('Plan review followup dispatch', () => {
       await new Promise((r) => setTimeout(r, 100))
     })
 
-    await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith(
-        expect.stringContaining('Failed to send followup')
-      )
-    }, { timeout: 3000 })
+    await waitFor(
+      () => {
+        expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('Failed to send followup'))
+      },
+      { timeout: 3000 }
+    )
 
     // prompt should never have been called
     expect(mockOpencodeOps.prompt).not.toHaveBeenCalled()
@@ -742,7 +930,13 @@ describe('Plan review followup dispatch', () => {
         sessionsByWorktree: new Map([
           [
             'wt-1',
-            [makeSession({ id: 'session-codex-old', agent_sdk: 'codex', opencode_session_id: 'opc-session-1' })]
+            [
+              makeSession({
+                id: 'session-codex-old',
+                agent_sdk: 'codex',
+                opencode_session_id: 'opc-session-1'
+              })
+            ]
           ]
         ]),
         pendingPlans: new Map([
@@ -775,7 +969,10 @@ describe('Plan review followup dispatch', () => {
     })
 
     await waitFor(() => {
-      expect(mockOpencodeOps.connect).toHaveBeenCalledWith('/test/feature-auth', 'session-codex-new')
+      expect(mockOpencodeOps.connect).toHaveBeenCalledWith(
+        '/test/feature-auth',
+        'session-codex-new'
+      )
     })
 
     await waitFor(() => {
@@ -787,7 +984,10 @@ describe('Plan review followup dispatch', () => {
     expect(promptCall?.[1]).toBe('opc-session-1')
     expect(promptCall?.[2]).toEqual([{ type: 'text', text: '/using-superpowers' }])
 
-    const updatedTicket = useKanbanStore.getState().tickets.get('proj-1')?.find((t) => t.id === 'ticket-codex')
+    const updatedTicket = useKanbanStore
+      .getState()
+      .tickets.get('proj-1')
+      ?.find((t) => t.id === 'ticket-codex')
     expect(updatedTicket?.current_session_id).toBe('session-codex-new')
     expect(updatedTicket?.plan_ready).toBe(false)
     expect(updatedTicket?.mode).toBe('build')
@@ -798,10 +998,10 @@ describe('Plan review followup dispatch', () => {
     expect(useWorktreeStore.getState().selectedWorktreeId).toBeNull()
     expect(useSessionStore.getState().activeSessionId).toBeNull()
 
-    expect(useWorktreeStatusStore.getState().sessionStatuses['session-codex-new']?.status).toBe('working')
-    expect(
-      useSessionStore.getState().pendingFollowUpMessages.get('session-codex-new')
-    ).toEqual([
+    expect(useWorktreeStatusStore.getState().sessionStatuses['session-codex-new']?.status).toBe(
+      'working'
+    )
+    expect(useSessionStore.getState().pendingFollowUpMessages.get('session-codex-new')).toEqual([
       'use the subagent development skill to implement the following plan:\n## Detailed Plan\n\nStep 1: Implement auth flow'
     ])
   })
@@ -850,7 +1050,13 @@ describe('Plan review followup dispatch', () => {
         sessionsByWorktree: new Map([
           [
             'wt-1',
-            [makeSession({ id: 'session-codex-old', agent_sdk: 'codex', opencode_session_id: 'opc-session-1' })]
+            [
+              makeSession({
+                id: 'session-codex-old',
+                agent_sdk: 'codex',
+                opencode_session_id: 'opc-session-1'
+              })
+            ]
           ]
         ]),
         pendingPlans: new Map([
@@ -932,7 +1138,13 @@ describe('Plan review followup dispatch', () => {
         sessionsByWorktree: new Map([
           [
             'wt-1',
-            [makeSession({ id: 'session-codex-old', agent_sdk: 'codex', opencode_session_id: 'opc-session-1' })]
+            [
+              makeSession({
+                id: 'session-codex-old',
+                agent_sdk: 'codex',
+                opencode_session_id: 'opc-session-1'
+              })
+            ]
           ]
         ]),
         pendingPlans: new Map([
@@ -964,7 +1176,10 @@ describe('Plan review followup dispatch', () => {
 
     // Wait for the background IIFE to reach connect (which we've forced to fail).
     await waitFor(() => {
-      expect(mockOpencodeOps.connect).toHaveBeenCalledWith('/test/feature-auth', 'session-codex-new')
+      expect(mockOpencodeOps.connect).toHaveBeenCalledWith(
+        '/test/feature-auth',
+        'session-codex-new'
+      )
     })
 
     // Let the failing background chain settle.
@@ -976,9 +1191,9 @@ describe('Plan review followup dispatch', () => {
     expect(mockOpencodeOps.prompt).not.toHaveBeenCalled()
 
     // Regression guard: connect failure must not leave the new session stuck in 'working'.
-    expect(
-      useWorktreeStatusStore.getState().sessionStatuses['session-codex-new']?.status
-    ).not.toBe('working')
+    expect(useWorktreeStatusStore.getState().sessionStatuses['session-codex-new']?.status).not.toBe(
+      'working'
+    )
 
     // User is told the supercharge failed, not falsely told it started.
     expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('upercharge'))
@@ -1027,7 +1242,13 @@ describe('Plan review followup dispatch', () => {
         sessionsByWorktree: new Map([
           [
             'wt-1',
-            [makeSession({ id: 'session-codex-old', agent_sdk: 'codex', opencode_session_id: 'opc-session-1' })]
+            [
+              makeSession({
+                id: 'session-codex-old',
+                agent_sdk: 'codex',
+                opencode_session_id: 'opc-session-1'
+              })
+            ]
           ]
         ]),
         pendingPlans: new Map([
@@ -1190,6 +1411,18 @@ describe('Plan review followup dispatch', () => {
     await waitFor(() => {
       expect(mockDbSession.create).toHaveBeenCalled()
     })
+    expect(apiMocks.hiveTelemetry.registerHivePromptHandoff).toHaveBeenCalledWith(
+      'session-conn-old',
+      'session-conn-new'
+    )
+    expect(apiMocks.hiveTelemetry.startHivePromptTelemetry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'session-conn-new',
+        prompt: 'Implement the following plan\n## Detailed Plan\n\nStep 1: Implement auth',
+        worktreeId: undefined,
+        mode: 'build'
+      })
+    )
 
     // In non-sticky-tab mode, the user should be navigated to the new
     // connection session — which requires activeConnectionId to be set so
@@ -1203,7 +1436,12 @@ describe('Plan review followup dispatch', () => {
     expect(mockOpencodeOps.prompt).toHaveBeenCalledWith(
       '/test/conn-1',
       'opc-session-1',
-      [{ type: 'text', text: 'Implement the following plan\n## Detailed Plan\n\nStep 1: Implement auth' }],
+      [
+        {
+          type: 'text',
+          text: 'Implement the following plan\n## Detailed Plan\n\nStep 1: Implement auth'
+        }
+      ],
       undefined
     )
 
@@ -1216,7 +1454,9 @@ describe('Plan review followup dispatch', () => {
     expect(updatedTicket?.plan_ready).toBe(false)
     expect(updatedTicket?.mode).toBe('build')
     expect(updatedTicket?.column).toBe('in_progress')
-    expect(useWorktreeStatusStore.getState().sessionStatuses['session-conn-new']?.status).toBe('working')
+    expect(useWorktreeStatusStore.getState().sessionStatuses['session-conn-new']?.status).toBe(
+      'working'
+    )
   })
 
   test('handoff on worktree ticket relinks the ticket to the new session', async () => {
@@ -1280,11 +1520,32 @@ describe('Plan review followup dispatch', () => {
     await waitFor(() => {
       expect(useSessionStore.getState().activeSessionId).toBe('session-worktree-new')
     })
-    expect(mockOpencodeOps.connect).toHaveBeenCalledWith('/test/feature-auth', 'session-worktree-new')
+    expect(apiMocks.hiveTelemetry.registerHivePromptHandoff).toHaveBeenCalledWith(
+      'session-1',
+      'session-worktree-new'
+    )
+    expect(apiMocks.hiveTelemetry.startHivePromptTelemetry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'session-worktree-new',
+        prompt:
+          'Implement the following plan\n## Detailed Plan\n\nStep 1: Setup routes\nStep 2: Add auth',
+        worktreeId: 'wt-1',
+        mode: 'build'
+      })
+    )
+    expect(mockOpencodeOps.connect).toHaveBeenCalledWith(
+      '/test/feature-auth',
+      'session-worktree-new'
+    )
     expect(mockOpencodeOps.prompt).toHaveBeenCalledWith(
       '/test/feature-auth',
       'opc-session-1',
-      [{ type: 'text', text: 'Implement the following plan\n## Detailed Plan\n\nStep 1: Setup routes\nStep 2: Add auth' }],
+      [
+        {
+          type: 'text',
+          text: 'Implement the following plan\n## Detailed Plan\n\nStep 1: Setup routes\nStep 2: Add auth'
+        }
+      ],
       undefined
     )
 
@@ -1296,6 +1557,8 @@ describe('Plan review followup dispatch', () => {
     expect(updatedTicket?.plan_ready).toBe(false)
     expect(updatedTicket?.mode).toBe('build')
     expect(updatedTicket?.column).toBe('in_progress')
-    expect(useWorktreeStatusStore.getState().sessionStatuses['session-worktree-new']?.status).toBe('working')
+    expect(useWorktreeStatusStore.getState().sessionStatuses['session-worktree-new']?.status).toBe(
+      'working'
+    )
   })
 })

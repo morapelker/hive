@@ -8,40 +8,44 @@ interface FakeWatcher {
   close: ReturnType<typeof vi.fn>
 }
 
-const { fakeWatchers, watchMock, mockDatabase, mockState, publishDesktopBackendEvent } = vi.hoisted(() => {
-  const fakeWatchers: FakeWatcher[] = []
-  const watchMock = vi.fn((paths: string[], options: Record<string, unknown>) => {
-    const watcher: FakeWatcher = {
-      paths,
-      options,
-      handlers: new Map(),
-      on: vi.fn((event: string, callback: (path: string) => void) => {
-        watcher.handlers.set(event, callback)
-        return watcher
-      }),
-      close: vi.fn(async () => undefined)
+const { fakeWatchers, watchMock, mockDatabase, mockState, publishDesktopBackendEvent } = vi.hoisted(
+  () => {
+    const fakeWatchers: FakeWatcher[] = []
+    const watchMock = vi.fn((paths: string[], options: Record<string, unknown>) => {
+      const watcher: FakeWatcher = {
+        paths,
+        options,
+        handlers: new Map(),
+        on: vi.fn((event: string, callback: (path: string) => void) => {
+          watcher.handlers.set(event, callback)
+          return watcher
+        }),
+        close: vi.fn(async () => undefined)
+      }
+      fakeWatchers.push(watcher)
+      return watcher
+    })
+    const mockState = {
+      project: {
+        id: 'project-1',
+        name: 'Project 1',
+        path: '/repo',
+        kanban_storage_mode: 'markdown',
+        kanban_markdown_config: JSON.stringify({
+          layout: 'single-folder',
+          singleFolder: 'cards'
+        })
+      }
     }
-    fakeWatchers.push(watcher)
-    return watcher
-  })
-  const mockState = {
-    project: {
-      id: 'project-1',
-      name: 'Project 1',
-      path: '/repo',
-      kanban_storage_mode: 'markdown',
-      kanban_markdown_config: JSON.stringify({
-        layout: 'single-folder',
-        singleFolder: 'cards'
-      })
+    const mockDatabase = {
+      getProject: vi.fn((projectId: string) =>
+        projectId === mockState.project.id ? mockState.project : null
+      )
     }
+    const publishDesktopBackendEvent = vi.fn(async () => undefined)
+    return { fakeWatchers, watchMock, mockDatabase, mockState, publishDesktopBackendEvent }
   }
-  const mockDatabase = {
-    getProject: vi.fn((projectId: string) => (projectId === mockState.project.id ? mockState.project : null))
-  }
-  const publishDesktopBackendEvent = vi.fn(async () => undefined)
-  return { fakeWatchers, watchMock, mockDatabase, mockState, publishDesktopBackendEvent }
-})
+)
 
 vi.mock('chokidar', () => ({
   watch: watchMock
@@ -98,7 +102,8 @@ describe('MarkdownKanbanWatcher', () => {
 
   test('watch.start no-ops for internal-mode projects', async () => {
     mockState.project = { ...mockState.project, kanban_storage_mode: 'internal' }
-    const { startMarkdownKanbanProjectWatch } = await import('../../src/main/services/markdown-kanban-watcher')
+    const { startMarkdownKanbanProjectWatch } =
+      await import('../../src/main/services/markdown-kanban-watcher')
 
     const result = await startMarkdownKanbanProjectWatch('project-1')
 
@@ -145,7 +150,8 @@ describe('MarkdownKanbanWatcher', () => {
         }
       })
     }
-    const { startMarkdownKanbanProjectWatch } = await import('../../src/main/services/markdown-kanban-watcher')
+    const { startMarkdownKanbanProjectWatch } =
+      await import('../../src/main/services/markdown-kanban-watcher')
 
     await startMarkdownKanbanProjectWatch('project-1')
 
@@ -156,7 +162,11 @@ describe('MarkdownKanbanWatcher', () => {
       '/repo/cards/review',
       '/repo/cards/done'
     ])
-    expect(fakeWatchers[0].options).toMatchObject({ depth: 0, ignoreInitial: true })
+    expect(fakeWatchers[0].options).toMatchObject({
+      depth: 0,
+      ignoreInitial: true,
+      useFsEvents: false
+    })
   })
 
   test('debounces markdown candidate file changes into one project event', async () => {
@@ -212,9 +222,8 @@ describe('MarkdownKanbanWatcher', () => {
   })
 
   test('refcounting prevents premature watcher close', async () => {
-    const { startMarkdownKanbanProjectWatch, stopMarkdownKanbanProjectWatch } = await import(
-      '../../src/main/services/markdown-kanban-watcher'
-    )
+    const { startMarkdownKanbanProjectWatch, stopMarkdownKanbanProjectWatch } =
+      await import('../../src/main/services/markdown-kanban-watcher')
 
     await startMarkdownKanbanProjectWatch('project-1')
     await startMarkdownKanbanProjectWatch('project-1')

@@ -1411,10 +1411,8 @@ export const useKanbanStore = create<KanbanState>()(
 
       // ── removeDependency ────────────────────────────────────────────
       removeDependency: async (dependent: TicketRef, blocker: TicketRef) => {
-        const dependentTicket = findTicketByRef(get().tickets, dependent)
-        if (!dependentTicket) return
         if (dependent.projectId !== blocker.projectId) return
-        await kanban.dependency.remove(dependentTicket.project_id, dependent.ticketId, blocker.ticketId)
+        await kanban.dependency.remove(dependent.projectId, dependent.ticketId, blocker.ticketId)
         set((state) => {
           const newMap = new Map(state.dependencyMap)
           const dependentKey = ticketRefKey(dependent)

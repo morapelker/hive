@@ -112,6 +112,12 @@ interface MarkdownRuntimeState {
   updated_at: string | null
 }
 
+interface MarkdownRuntimeCleanupRow {
+  card_id: string
+  last_seen_path: string | null
+  orphaned_at: string | null
+}
+
 function emptyRuntimeState(): MarkdownRuntimeState {
   return {
     current_session_id: null,
@@ -754,13 +760,15 @@ class MarkdownKanbanBackend implements KanbanBackend {
       const archiveCard = archivedIds.has(ticket.id)
       const next = archiveCard ? [] : deps.filter((dep) => !archivedIds.has(dep.blocker_id))
       if (!archiveCard && next.length === deps.length) continue
-      touchedPaths.push(await rewriteCard(card.filePath, {
-        ...(archiveCard ? { archived_at: archivedAt } : {}),
-        dependencies: next.map((dep) => ({
-          blocker_id: dep.blocker_id,
-          created_at: dep.created_at
-        }))
-      }))
+      touchedPaths.push(
+        await rewriteCard(card.filePath, {
+          ...(archiveCard ? { archived_at: archivedAt } : {}),
+          dependencies: next.map((dep) => ({
+            blocker_id: dep.blocker_id,
+            created_at: dep.created_at
+          }))
+        })
+      )
     }
     suppressMarkdownWrites(projectId, touchedPaths)
     this.invalidate(projectId)
@@ -878,9 +886,14 @@ class MarkdownKanbanBackend implements KanbanBackend {
     if (dependentId === blockerId)
       return { success: false, error: 'A ticket cannot depend on itself' }
     const index = await this.reloadIndex(projectId)
-    const dependent = this.requireMutableCardFromIndex(index, dependentId)
-    const blocker = this.requireMutableCardFromIndex(index, blockerId)
-    if (!dependent || !blocker) return { success: false, error: 'One or both tickets do not exist' }
+    let dependent: ParsedMarkdownCard
+    let blocker: ParsedMarkdownCard
+    try {
+      dependent = this.requireMutableCardFromIndex(index, dependentId)
+      blocker = this.requireMutableCardFromIndex(index, blockerId)
+    } catch (error) {
+      return { success: false, error: errorMessage(error) }
+    }
     const deps = this.getDependenciesFromIndex(index)
     if (wouldCreateDependencyCycle(deps, dependentId, blockerId)) {
       return { success: false, error: 'Adding this dependency would create a circular dependency' }
@@ -981,17 +994,19 @@ class MarkdownKanbanBackend implements KanbanBackend {
       const next = deps.filter((dep) => !selectedIds.has(dep.blocker_id))
       if (next.length === deps.length) continue
       removed += deps.length - next.length
-      touchedPaths.push(await rewriteCard(
-        card.filePath,
-        {
-          dependencies: next.map((dep) => ({
-            blocker_id: dep.blocker_id,
-            created_at: dep.created_at
-          }))
-        },
-        undefined,
-        ['depends_on']
-      ))
+      touchedPaths.push(
+        await rewriteCard(
+          card.filePath,
+          {
+            dependencies: next.map((dep) => ({
+              blocker_id: dep.blocker_id,
+              created_at: dep.created_at
+            }))
+          },
+          undefined,
+          ['depends_on']
+        )
+      )
     }
     suppressMarkdownWrites(projectId, touchedPaths)
     this.invalidate(projectId)
@@ -1010,11 +1025,13 @@ class MarkdownKanbanBackend implements KanbanBackend {
       const removeDependent = ticket.id === ticketId
       if (removeDependent || next.length !== deps.length) {
         removed += removeDependent ? deps.length : deps.length - next.length
-        touchedPaths.push(await rewriteCard(card.filePath, {
-          dependencies: removeDependent
-            ? []
-            : next.map((dep) => ({ blocker_id: dep.blocker_id, created_at: dep.created_at }))
-        }))
+        touchedPaths.push(
+          await rewriteCard(card.filePath, {
+            dependencies: removeDependent
+              ? []
+              : next.map((dep) => ({ blocker_id: dep.blocker_id, created_at: dep.created_at }))
+          })
+        )
       }
     }
     suppressMarkdownWrites(projectId, touchedPaths)
@@ -1279,6 +1296,7 @@ class MarkdownKanbanBackend implements KanbanBackend {
 
     const cardsById = new Map<string, ParsedMarkdownCard>()
     const blockedSeenIds = new Set<string>()
+    const blockedSeenPaths = new Set<string>()
     const tickets: KanbanTicket[] = []
     for (const card of cards) {
       const paths = pathsById.get(card.ticket.id) ?? []
@@ -1302,9 +1320,12 @@ class MarkdownKanbanBackend implements KanbanBackend {
 
     for (const diagnostic of diagnostics) {
       if (diagnostic.ticketId) blockedSeenIds.add(diagnostic.ticketId)
+      if (diagnostic.blocking && !diagnostic.ticketId) {
+        blockedSeenPaths.add(diagnostic.filePath)
+      }
     }
 
-    this.cleanupRuntimeRows(projectId, cardsById, blockedSeenIds)
+    this.cleanupRuntimeRows(projectId, cardsById, blockedSeenIds, blockedSeenPaths)
     const index: MarkdownIndex = {
       projectId,
       tickets,
@@ -1325,13 +1346,15 @@ class MarkdownKanbanBackend implements KanbanBackend {
 
     const raw = await readFile(filePath, 'utf-8')
     const parsed = parseMarkdown(raw)
-    let frontmatter = parsed.frontmatter
-    let id = asString(frontmatter.id)
+    const frontmatter = parsed.frontmatter
+    const id = asString(frontmatter.id)
     validateKnownFrontmatter(frontmatter, id)
     if (!id) {
-      id = generateTicketId(asString(frontmatter.title) ?? basename(filePath, extname(filePath)))
-      frontmatter = { ...frontmatter, id }
-      suppressMarkdownWrites(projectId, await rewriteCard(filePath, { id }))
+      throw new MarkdownCardError(
+        'invalid_frontmatter',
+        null,
+        'Markdown card is missing required frontmatter field "id". Run adoption repair before using this card.'
+      )
     }
 
     const title =
@@ -1526,16 +1549,20 @@ class MarkdownKanbanBackend implements KanbanBackend {
   private cleanupRuntimeRows(
     projectId: string,
     cardsById: Map<string, ParsedMarkdownCard>,
-    blockedSeenIds: Set<string> = new Set()
+    blockedSeenIds: Set<string> = new Set(),
+    blockedSeenPaths: Set<string> = new Set()
   ): void {
     const db = getDatabase().getRawDb()
     const now = new Date().toISOString()
     const rows = db
-      .prepare('SELECT card_id, orphaned_at FROM markdown_kanban_card_state WHERE project_id = ?')
-      .all(projectId) as Array<{ card_id: string; orphaned_at: string | null }>
+      .prepare(
+        'SELECT card_id, last_seen_path, orphaned_at FROM markdown_kanban_card_state WHERE project_id = ?'
+      )
+      .all(projectId) as MarkdownRuntimeCleanupRow[]
     for (const row of rows) {
       if (cardsById.has(row.card_id)) continue
       if (blockedSeenIds.has(row.card_id)) continue
+      if (row.last_seen_path && blockedSeenPaths.has(row.last_seen_path)) continue
       if (row.orphaned_at) {
         db.prepare(
           'DELETE FROM markdown_kanban_card_state WHERE project_id = ? AND card_id = ?'

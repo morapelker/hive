@@ -90,6 +90,11 @@ import { buildHandoffPrompt, type HandoffSelectionOverride } from '@/lib/handoff
 import { canonicalizeTicketTitle, extractPlanTitle } from '@shared/types/branch-utils'
 import type { KanbanTicket, KanbanTicketUpdate, Session, Worktree } from '../../../../main/db/types'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { autoPinBaseWorktree } from '@/lib/auto-pin'
+import {
+  registerHivePromptHandoff,
+  startHivePromptTelemetry
+} from '@/lib/hive-enterprise-telemetry'
 import { dbApi } from '@/api/db-api'
 import { fileApi } from '@/api/file-api'
 import { gitApi } from '@/api/git-api'
@@ -105,6 +110,25 @@ type ResolvedModalWorktree = Pick<Worktree, 'id' | 'path' | 'branch_name' | 'pro
 
 function completionSendMode(mode: FollowUpMode): 'build' | 'plan' {
   return isPlanLike(mode) ? 'plan' : 'build'
+}
+
+function recordSuccessfulFollowupSideEffects(
+  session: { project_id: string; worktree_id: string | null },
+  sessionId: string,
+  prompt: string,
+  followUpMode: FollowUpMode,
+  model?: ReturnType<typeof resolveSessionModel>
+): void {
+  void autoPinBaseWorktree(session.project_id)
+  startHivePromptTelemetry({
+    sessionId,
+    prompt,
+    worktreeId: session.worktree_id,
+    modelId: model?.modelID,
+    providerId: model?.providerID,
+    modelVariant: model?.variant,
+    mode: followUpMode
+  })
 }
 
 /** Standard (non-dual-pane) DialogContent className per modal mode */
@@ -192,6 +216,7 @@ function findWorktreePathById(worktreeId: string): string | null {
 async function findSessionById(sessionId: string): Promise<{
   session: {
     id: string
+    project_id: string
     worktree_id: string | null
     connection_id: string | null
     opencode_session_id: string | null
@@ -250,6 +275,7 @@ async function findSessionById(sessionId: string): Promise<{
   return {
     session: {
       id: dbSession.id,
+      project_id: dbSession.project_id,
       worktree_id: dbSession.worktree_id,
       connection_id: dbSession.connection_id,
       opencode_session_id: dbSession.opencode_session_id,
@@ -364,6 +390,9 @@ async function sendFollowupToSession(opts: {
     connectionId: session.connection_id ?? connectionId
   })
 
+  // Resolve model AFTER setSessionMode (which may have applied a mode-specific default)
+  const model = resolveSessionModel(opts.sessionId, result.session)
+
   if (session.agent_sdk === 'claude-code-cli') {
     const delivery = unwrapEnvelope(
       await terminalApi.sendClaudeCliPrompt(opts.sessionId, fullPrompt)
@@ -376,6 +405,13 @@ async function sendFollowupToSession(opts: {
         throw new Error(createResult.error ?? 'Failed to start Claude CLI session')
       }
     }
+    recordSuccessfulFollowupSideEffects(
+      session,
+      opts.sessionId,
+      fullPrompt,
+      opts.followUpMode,
+      model
+    )
     return
   }
 
@@ -385,9 +421,6 @@ async function sendFollowupToSession(opts: {
     )
     throw new Error(`No opencode session ID for session: ${opts.sessionId}`)
   }
-
-  // Resolve model AFTER setSessionMode (which may have applied a mode-specific default)
-  const model = resolveSessionModel(opts.sessionId, result.session)
 
   // Ensure the session is loaded in the agent SDK implementer's in-memory map.
   // SessionView does this on mount via initializeSession(), but the kanban
@@ -414,6 +447,7 @@ async function sendFollowupToSession(opts: {
     )
     throw new Error(promptResult.error || 'Failed to send prompt to session')
   }
+  recordSuccessfulFollowupSideEffects(session, opts.sessionId, fullPrompt, opts.followUpMode, model)
 }
 
 /** Determine what mode the modal should operate in */
@@ -470,9 +504,8 @@ export function KanbanTicketModal() {
   const ticket = useMemo<KanbanTicket | null>(() => {
     if (!selectedTicketRef) return null
     return (
-      tickets
-        .get(selectedTicketRef.projectId)
-        ?.find((t) => t.id === selectedTicketRef.ticketId) ?? null
+      tickets.get(selectedTicketRef.projectId)?.find((t) => t.id === selectedTicketRef.ticketId) ??
+      null
     )
   }, [selectedTicketRef, tickets])
 
@@ -486,7 +519,8 @@ function MergeConflictBanner({ ticket }: { ticket: KanbanTicket }) {
     useCallback(
       (state) =>
         ticket.worktree_id
-          ? (state.mergeConflictWorktreeByTicket[ticketKey(ticket.project_id, ticket.id)] ?? ticket.worktree_id)
+          ? (state.mergeConflictWorktreeByTicket[ticketKey(ticket.project_id, ticket.id)] ??
+            ticket.worktree_id)
           : null,
       [ticket.id, ticket.project_id, ticket.worktree_id]
     )
@@ -557,11 +591,7 @@ function MergeConflictBanner({ ticket }: { ticket: KanbanTicket }) {
       ) : mergeConflictMode === 'always-ask' ? (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button
-              size="sm"
-              variant="destructive"
-              className="h-7 text-xs font-semibold"
-            >
+            <Button size="sm" variant="destructive" className="h-7 text-xs font-semibold">
               <AlertTriangle className="h-3.5 w-3.5 mr-1" />
               Fix conflicts
               <ChevronDown className="h-3 w-3 ml-1" />
@@ -1008,9 +1038,7 @@ function KanbanTicketModalContent({
       // Pre-warm: load messages into the backend cache so the next
       // getMessages() call from useSessionStream finds them immediately.
       try {
-        const warmResult = unwrapEnvelope(
-          await opencodeApi.getMessages(worktreePath, opcSessionId)
-        )
+        const warmResult = unwrapEnvelope(await opencodeApi.getMessages(worktreePath, opcSessionId))
         console.info(
           '[KanbanModal:sessionReady] pre-warm getMessages — success=%s, messageCount=%d',
           warmResult.success,
@@ -1307,9 +1335,7 @@ function EditModeContent({
       for (const [depKey, blockerKeys] of state.dependencyMap) {
         if (!blockerKeys.has(currentTicketKey)) continue
         const depRef = parseTicketKey(depKey)
-        const dependent = state.tickets
-          .get(depRef.projectId)
-          ?.find((t) => t.id === depRef.ticketId)
+        const dependent = state.tickets.get(depRef.projectId)?.find((t) => t.id === depRef.ticketId)
         if (dependent) result.push(dependent)
       }
       return result
@@ -1505,10 +1531,12 @@ function EditModeContent({
                     </div>
                     <button
                       onClick={() =>
-                        useKanbanStore.getState().removeDependency(
-                          { projectId: ticket.project_id, ticketId: ticket.id },
-                          { projectId: blocker.project_id, ticketId: blocker.id }
-                        )
+                        useKanbanStore
+                          .getState()
+                          .removeDependency(
+                            { projectId: ticket.project_id, ticketId: ticket.id },
+                            { projectId: blocker.project_id, ticketId: blocker.id }
+                          )
                       }
                       className="text-muted-foreground hover:text-foreground shrink-0"
                     >
@@ -1999,11 +2027,7 @@ function PlanReviewModeContent({
           return
         }
         unwrapEnvelope(
-          await opencodeApi.planApprove(
-            approvePath,
-            sessionId,
-            pendingBeforeAction.requestId
-          )
+          await opencodeApi.planApprove(approvePath, sessionId, pendingBeforeAction.requestId)
         )
       }
 
@@ -2078,6 +2102,7 @@ function PlanReviewModeContent({
           )
           const newSession = result.session
           const newSessionId = newSession.id
+          registerHivePromptHandoff(sessionId, newSessionId)
           const setModePromise =
             newSession.agent_sdk === 'claude-code-cli' && sessionRecord?.mode === 'super-plan'
               ? Promise.resolve()
@@ -2113,6 +2138,12 @@ function PlanReviewModeContent({
               if (handoffPrompt) {
                 sessionStore.dequeuePendingMessage(newSessionId)
               }
+              startHivePromptTelemetry({
+                sessionId: newSessionId,
+                prompt: handoffPrompt,
+                worktreeId: null,
+                mode: 'build'
+              })
             } else {
               await eagerHandoffStart(connectionPath, newSessionId, handoffPrompt, {
                 connectionId: sessionRecord.connection_id
@@ -2162,6 +2193,7 @@ function PlanReviewModeContent({
         )
         const newSession = result.session
         const newSessionId = newSession.id
+        registerHivePromptHandoff(sessionId, newSessionId)
         const setModePromise =
           newSession.agent_sdk === 'claude-code-cli' && sessionRecord?.mode === 'super-plan'
             ? Promise.resolve()
@@ -2202,6 +2234,12 @@ function PlanReviewModeContent({
             if (handoffPrompt) {
               sessionStore.dequeuePendingMessage(newSessionId)
             }
+            startHivePromptTelemetry({
+              sessionId: newSessionId,
+              prompt: handoffPrompt,
+              worktreeId,
+              mode: 'build'
+            })
           } else {
             await eagerHandoffStart(localWorktreePath, newSessionId, handoffPrompt, { worktreeId })
           }
@@ -2271,9 +2309,7 @@ function PlanReviewModeContent({
     ) => {
       // Connect to OpenCode. Surface failure so the caller can alert the user — staying silent
       // here would leave optimistic UI state with no work running and no error feedback.
-      const connectResult = unwrapEnvelope(
-        await opencodeApi.connect(worktreePath, newSessionId)
-      )
+      const connectResult = unwrapEnvelope(await opencodeApi.connect(worktreePath, newSessionId))
       if (!connectResult.success || !connectResult.sessionId) {
         throw new Error('Failed to connect to supercharge session')
       }
@@ -2321,9 +2357,7 @@ function PlanReviewModeContent({
       handoffPrompt: string,
       bumpTarget: { worktreeId?: string | null; connectionId?: string | null }
     ) => {
-      const connectResult = unwrapEnvelope(
-        await opencodeApi.connect(workingPath, newSessionId)
-      )
+      const connectResult = unwrapEnvelope(await opencodeApi.connect(workingPath, newSessionId))
       if (!connectResult.success || !connectResult.sessionId) {
         throw new Error('Failed to connect to handoff session')
       }
@@ -2349,6 +2383,15 @@ function PlanReviewModeContent({
           model
         )
       )
+      startHivePromptTelemetry({
+        sessionId: newSessionId,
+        prompt: handoffPrompt,
+        worktreeId: bumpTarget.worktreeId,
+        modelId: model?.modelID,
+        providerId: model?.providerID,
+        modelVariant: model?.variant,
+        mode: 'build'
+      })
     },
     []
   )
@@ -3507,9 +3550,7 @@ function QuestionModeContent({
         } else if (ticket.current_session_id) {
           questionPath = (await findSessionById(ticket.current_session_id))?.workingPath ?? null
         }
-        unwrapEnvelope(
-          await opencodeApi.questionReject(requestId, questionPath || undefined)
-        )
+        unwrapEnvelope(await opencodeApi.questionReject(requestId, questionPath || undefined))
         // Optimistically set session back to working so the progress bar resumes immediately
         if (ticket.current_session_id) {
           useWorktreeStatusStore

@@ -29,6 +29,7 @@ const { mockDatabase, mockState } = vi.hoisted(() => {
       project_id?: string
       card_id: string
       worktree_id?: string | null
+      last_seen_path?: string | null
       orphaned_at: string | null
     }>
     orphanMarkCount: number
@@ -85,6 +86,15 @@ const { mockDatabase, mockState } = vi.hoisted(() => {
             const cardId = values[3]
             const row = mockState.runtimeRows.find((candidate) => candidate.card_id === cardId)
             if (row) row.orphaned_at = String(values[0])
+          }
+          if (sql.startsWith('UPDATE markdown_kanban_card_state SET last_seen_path')) {
+            const filePath = String(values[0])
+            const cardId = String(values[2])
+            const row = mockState.runtimeRows.find((candidate) => candidate.card_id === cardId)
+            if (row) {
+              row.last_seen_path = filePath
+              row.orphaned_at = null
+            }
           }
           if (sql.startsWith('DELETE FROM markdown_kanban_card_state')) {
             mockState.orphanDeleteCount++
@@ -427,6 +437,31 @@ describe('markdown diagnostics cache', () => {
     expect(frontmatter.mode).toBeNull()
   })
 
+  test('loading an id-less markdown card reports diagnostics without rewriting it', async () => {
+    const backend = (
+      await import('../../src/main/services/kanban-backend')
+    ).getMarkdownKanbanBackend()
+    const cardPath = join(tempRoot!, 'cards', 'no-id.md')
+    const original = ['---', 'title: No ID Card', '---', 'Body'].join('\n')
+    mockState.runtimeRows = []
+    await writeFile(cardPath, original, 'utf-8')
+    backend.invalidate('proj-cache')
+
+    const tickets = await backend.list('proj-cache', true)
+    const diagnostics = await backend.getDiagnostics('proj-cache')
+
+    expect(tickets).toEqual([])
+    expect(await readFile(cardPath, 'utf-8')).toBe(original)
+    expect(diagnostics).toContainEqual({
+      projectId: 'proj-cache',
+      ticketId: null,
+      filePath: cardPath,
+      kind: 'invalid_frontmatter',
+      message: expect.stringContaining('missing required frontmatter field "id"'),
+      blocking: true
+    })
+  })
+
   test.each([
     [
       'duplicate draft keys',
@@ -573,6 +608,23 @@ describe('markdown diagnostics cache', () => {
 
     expect(await markdownFiles(join(tempRoot!, 'cards'))).toEqual([])
     expect(mockState.runtimeRows).toEqual([])
+  })
+
+  test('addDependency returns a failure when a markdown card is missing', async () => {
+    const backend = (
+      await import('../../src/main/services/kanban-backend')
+    ).getMarkdownKanbanBackend()
+    await writeFile(
+      join(tempRoot!, 'cards', 'existing.md'),
+      ['---', 'id: existing', 'title: Existing', '---', 'Body'].join('\n'),
+      'utf-8'
+    )
+    backend.invalidate('proj-cache')
+
+    await expect(backend.addDependency('proj-cache', 'missing', 'existing')).resolves.toEqual({
+      success: false,
+      error: 'Ticket does not exist'
+    })
   })
 
   test('saving markdown config does not create missing folders', async () => {
@@ -759,9 +811,7 @@ describe('markdown diagnostics cache', () => {
     })
 
     await expect(access(join(tempRoot!, 'cards', 'todo', 'todo-card.md'))).rejects.toThrow()
-    await expect(
-      access(join(tempRoot!, 'cards', 'review', 'review-card.md'))
-    ).rejects.toThrow()
+    await expect(access(join(tempRoot!, 'cards', 'review', 'review-card.md'))).rejects.toThrow()
     await expect(access(join(tempRoot!, 'cards', 'done', 'done-card.md'))).rejects.toThrow()
     expect(await readFile(join(tempRoot!, 'flat-cards', 'todo-card.md'), 'utf-8')).toBe(todoCard)
     expect(await readFile(join(tempRoot!, 'flat-cards', 'review-card.md'), 'utf-8')).toBe(
@@ -1315,6 +1365,68 @@ describe('markdown diagnostics cache', () => {
 
     await backend.list('proj-cache', true)
     expect(mockState.runtimeRows).toEqual([{ card_id: 'invalid-card', orphaned_at: null }])
+    expect(mockState.orphanDeleteCount).toBe(1)
+  })
+
+  test('parse-error runtime rows are preserved by last seen path', async () => {
+    const backend = (
+      await import('../../src/main/services/kanban-backend')
+    ).getMarkdownKanbanBackend()
+    const brokenPath = join(tempRoot!, 'cards', 'broken.md')
+    await writeFile(
+      brokenPath,
+      ['---', 'id: broken-card', 'title: [unterminated', '---', 'Body'].join('\n'),
+      'utf-8'
+    )
+    mockState.runtimeRows = [
+      { card_id: 'broken-card', last_seen_path: brokenPath, orphaned_at: null },
+      { card_id: 'missing-card', orphaned_at: null }
+    ]
+    backend.invalidate('proj-cache')
+
+    await backend.list('proj-cache', true)
+    expect(mockState.runtimeRows).toEqual([
+      { card_id: 'broken-card', last_seen_path: brokenPath, orphaned_at: null },
+      expect.objectContaining({ card_id: 'missing-card', orphaned_at: expect.any(String) })
+    ])
+    expect(mockState.orphanMarkCount).toBe(1)
+    expect(mockState.orphanDeleteCount).toBe(0)
+
+    await backend.list('proj-cache', true)
+    expect(mockState.runtimeRows).toEqual([
+      { card_id: 'broken-card', last_seen_path: brokenPath, orphaned_at: null }
+    ])
+    expect(mockState.orphanDeleteCount).toBe(1)
+  })
+
+  test('id-less runtime rows are preserved by last seen path', async () => {
+    const backend = (
+      await import('../../src/main/services/kanban-backend')
+    ).getMarkdownKanbanBackend()
+    const idlessPath = join(tempRoot!, 'cards', 'temporarily-idless.md')
+    await writeFile(
+      idlessPath,
+      ['---', 'title: Temporarily ID-less', 'column: todo', '---', 'Body'].join('\n'),
+      'utf-8'
+    )
+    mockState.runtimeRows = [
+      { card_id: 'known-card', last_seen_path: idlessPath, orphaned_at: null },
+      { card_id: 'missing-card', orphaned_at: null }
+    ]
+    backend.invalidate('proj-cache')
+
+    await backend.list('proj-cache', true)
+    expect(mockState.runtimeRows).toEqual([
+      { card_id: 'known-card', last_seen_path: idlessPath, orphaned_at: null },
+      expect.objectContaining({ card_id: 'missing-card', orphaned_at: expect.any(String) })
+    ])
+    expect(mockState.orphanMarkCount).toBe(1)
+    expect(mockState.orphanDeleteCount).toBe(0)
+
+    await backend.list('proj-cache', true)
+    expect(mockState.runtimeRows).toEqual([
+      { card_id: 'known-card', last_seen_path: idlessPath, orphaned_at: null }
+    ])
     expect(mockState.orphanDeleteCount).toBe(1)
   })
 })

@@ -211,13 +211,11 @@ describe('MergeOnDoneDialog', () => {
     useWorktreeStore.setState({ archiveWorktree: originalArchiveWorktree })
   })
   test('keeps ticket in review when merge returns conflicts', async () => {
-    merge.mockResolvedValue(
-      {
-        success: false,
-        error: 'Merge conflicts in 1 file(s). Resolve conflicts before continuing.',
-        conflicts: ['src/file.ts']
-      }
-    )
+    merge.mockResolvedValue({
+      success: false,
+      error: 'Merge conflicts in 1 file(s). Resolve conflicts before continuing.',
+      conflicts: ['src/file.ts']
+    })
 
     render(<MergeOnDoneDialog />)
 
@@ -232,18 +230,16 @@ describe('MergeOnDoneDialog', () => {
     expect(useKanbanStore.getState().tickets.get('project-1')?.[0]?.column).toBe('review')
     expect(useKanbanStore.getState().pendingDoneMove).toBeNull()
     expect(useGitStore.getState().conflictsByWorktree['/repo/main']).toBe(true)
-    expect(useWorktreeStatusStore.getState().mergeConflictWorktreeByTicket['ticket-1']).toBe(
-      'base-wt'
-    )
+    expect(
+      useWorktreeStatusStore.getState().mergeConflictWorktreeByTicket['project-1:ticket-1']
+    ).toBe('base-wt')
   })
 
   test('keeps ticket in review when merge fails without conflicts', async () => {
-    merge.mockResolvedValue(
-      {
-        success: false,
-        error: 'merge failed'
-      }
-    )
+    merge.mockResolvedValue({
+      success: false,
+      error: 'merge failed'
+    })
 
     render(<MergeOnDoneDialog />)
 
@@ -272,7 +268,7 @@ describe('MergeOnDoneDialog', () => {
     fireEvent.click(keepButton)
 
     await waitFor(() => {
-      expect(ticketMove).toHaveBeenCalledWith('ticket-1', 'done', 100)
+      expect(ticketMove).toHaveBeenCalledWith('project-1', 'ticket-1', 'done', 100)
     })
     expect(useKanbanStore.getState().tickets.get('project-1')?.[0]?.column).toBe('done')
     expect(useKanbanStore.getState().pendingDoneMove).toBeNull()
@@ -296,7 +292,7 @@ describe('MergeOnDoneDialog', () => {
     fireEvent.click(await screen.findByRole('button', { name: /^archive$/i }))
 
     await waitFor(() => {
-      expect(ticketMove).toHaveBeenCalledWith('ticket-1', 'done', 100)
+      expect(ticketMove).toHaveBeenCalledWith('project-1', 'ticket-1', 'done', 100)
     })
 
     expect(useKanbanStore.getState().pendingDoneMove).toBeNull()
@@ -353,7 +349,7 @@ describe('MergeOnDoneDialog', () => {
     fireEvent.click(await screen.findByRole('button', { name: /^archive$/i }))
 
     await waitFor(() => {
-      expect(ticketMove).toHaveBeenCalledWith('ticket-1', 'done', 100)
+      expect(ticketMove).toHaveBeenCalledWith('project-1', 'ticket-1', 'done', 100)
     })
     expect(useKanbanStore.getState().pendingDoneMove).toBeNull()
 

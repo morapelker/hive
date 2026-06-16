@@ -848,10 +848,12 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
     let result: { success: boolean; error?: string } | undefined
 
     await act(async () => {
-      result = await useKanbanStore.getState().addDependency(
-        { projectId: 'proj-1', ticketId: 'dependent' },
-        { projectId: 'proj-1', ticketId: 'blocker' }
-      )
+      result = await useKanbanStore
+        .getState()
+        .addDependency(
+          { projectId: 'proj-1', ticketId: 'dependent' },
+          { projectId: 'proj-1', ticketId: 'blocker' }
+        )
     })
 
     expect(result).toEqual({ success: true })
@@ -861,15 +863,57 @@ describe('Session 10: Session ↔ Kanban Store Coordination', () => {
   })
 
   test('addDependency still rejects cross-project dependencies before calling the backend', async () => {
-    const result = await useKanbanStore.getState().addDependency(
-      { projectId: 'proj-1', ticketId: 'dependent' },
-      { projectId: 'proj-2', ticketId: 'blocker' }
-    )
+    const result = await useKanbanStore
+      .getState()
+      .addDependency(
+        { projectId: 'proj-1', ticketId: 'dependent' },
+        { projectId: 'proj-2', ticketId: 'blocker' }
+      )
 
     expect(result).toEqual({
       success: false,
       error: 'Dependencies can only be created within the same project'
     })
     expect(mockKanbanApi.dependency.add).not.toHaveBeenCalled()
+  })
+
+  test('removeDependency delegates to the backend for unloaded tickets', async () => {
+    act(() => {
+      useKanbanStore.setState({
+        dependencyMap: new Map([['proj-1:dependent', new Set(['proj-1:blocker'])]])
+      })
+    })
+
+    await act(async () => {
+      await useKanbanStore
+        .getState()
+        .removeDependency(
+          { projectId: 'proj-1', ticketId: 'dependent' },
+          { projectId: 'proj-1', ticketId: 'blocker' }
+        )
+    })
+
+    expect(mockKanbanApi.dependency.remove).toHaveBeenCalledWith('proj-1', 'dependent', 'blocker')
+    expect(useKanbanStore.getState().dependencyMap.has('proj-1:dependent')).toBe(false)
+  })
+
+  test('removeDependency still rejects cross-project dependencies before calling the backend', async () => {
+    act(() => {
+      useKanbanStore.setState({
+        dependencyMap: new Map([['proj-1:dependent', new Set(['proj-2:blocker'])]])
+      })
+    })
+
+    await useKanbanStore
+      .getState()
+      .removeDependency(
+        { projectId: 'proj-1', ticketId: 'dependent' },
+        { projectId: 'proj-2', ticketId: 'blocker' }
+      )
+
+    expect(mockKanbanApi.dependency.remove).not.toHaveBeenCalled()
+    expect(useKanbanStore.getState().dependencyMap.get('proj-1:dependent')).toEqual(
+      new Set(['proj-2:blocker'])
+    )
   })
 })

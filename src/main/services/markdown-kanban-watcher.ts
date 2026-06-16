@@ -8,11 +8,9 @@ import {
   isMarkdownCandidate,
   parseMarkdownConfig
 } from './kanban-markdown-paths'
+import { createLogger } from './logger'
 
-const log = {
-  info: (_message: string, _meta?: Record<string, unknown>) => undefined,
-  error: (_message: string, _error?: Error, _meta?: Record<string, unknown>) => undefined
-}
+const log = createLogger({ component: 'MarkdownKanbanWatcher' })
 
 const DEBOUNCE_MS = 300
 const SELF_WRITE_SUPPRESSION_MS = 2_000
@@ -204,6 +202,7 @@ async function replaceProjectWatch(projectId: string): Promise<void> {
     ignoreInitial: true,
     depth: 0,
     followSymlinks: false,
+    useFsEvents: false,
     awaitWriteFinish: {
       stabilityThreshold: 150,
       pollInterval: 50
