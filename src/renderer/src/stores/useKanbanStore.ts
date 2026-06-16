@@ -150,16 +150,21 @@ function removeDependencyLinksForTicket(
 
 function placeholdersFromDiagnostics(
   projectId: string,
-  diagnostics: MarkdownCardDiagnostic[]
+  diagnostics: MarkdownCardDiagnostic[],
+  tickets: KanbanTicket[] = []
 ): MarkdownCardPlaceholder[] {
+  const renderedTicketIds = new Set(tickets.map((ticket) => ticket.id))
   return diagnostics
-    .filter((diagnostic) => diagnostic.ticketId === null)
+    .filter(
+      (diagnostic) =>
+        diagnostic.blocking && (!diagnostic.ticketId || !renderedTicketIds.has(diagnostic.ticketId))
+    )
     .map((diagnostic) => ({
       projectId,
       filePath: diagnostic.filePath,
       kind: diagnostic.kind,
       message: diagnostic.message,
-      blocking: diagnostic.blocking
+      blocking: true
     }))
 }
 
@@ -336,7 +341,10 @@ export const useKanbanStore = create<KanbanState>()(
             const nextPlaceholders = new Map(state.markdownPlaceholders)
             next.set(projectId, tickets)
             nextDiagnostics.set(projectId, diagnostics)
-            nextPlaceholders.set(projectId, placeholdersFromDiagnostics(projectId, diagnostics))
+            nextPlaceholders.set(
+              projectId,
+              placeholdersFromDiagnostics(projectId, diagnostics, tickets)
+            )
             return {
               tickets: next,
               markdownDiagnostics: nextDiagnostics,
@@ -368,7 +376,10 @@ export const useKanbanStore = create<KanbanState>()(
             const nextPlaceholders = new Map(state.markdownPlaceholders)
             next.set(projectId, tickets)
             nextDiagnostics.set(projectId, diagnostics)
-            nextPlaceholders.set(projectId, placeholdersFromDiagnostics(projectId, diagnostics))
+            nextPlaceholders.set(
+              projectId,
+              placeholdersFromDiagnostics(projectId, diagnostics, tickets)
+            )
             return {
               tickets: next,
               markdownDiagnostics: nextDiagnostics,
@@ -1149,7 +1160,10 @@ export const useKanbanStore = create<KanbanState>()(
               const diagnostics = diagnosticsMap.get(result.projectId) ?? []
               newTickets.set(result.projectId, result.tickets)
               newDiagnostics.set(result.projectId, diagnostics)
-              newPlaceholders.set(result.projectId, placeholdersFromDiagnostics(result.projectId, diagnostics))
+              newPlaceholders.set(
+                result.projectId,
+                placeholdersFromDiagnostics(result.projectId, diagnostics, result.tickets)
+              )
             })
             return {
               tickets: newTickets,
@@ -1230,7 +1244,10 @@ export const useKanbanStore = create<KanbanState>()(
               const diagnostics = diagnosticsMap.get(result.projectId) ?? []
               newTickets.set(result.projectId, result.tickets)
               newDiagnostics.set(result.projectId, diagnostics)
-              newPlaceholders.set(result.projectId, placeholdersFromDiagnostics(result.projectId, diagnostics))
+              newPlaceholders.set(
+                result.projectId,
+                placeholdersFromDiagnostics(result.projectId, diagnostics, result.tickets)
+              )
             })
             return {
               tickets: newTickets,

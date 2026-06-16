@@ -2693,6 +2693,10 @@ export class DatabaseService {
       updates.push('mark = ?')
       values.push(data.mark)
     }
+    if (data.archived_at !== undefined) {
+      updates.push('archived_at = ?')
+      values.push(data.archived_at)
+    }
     if (data.pending_launch_config !== undefined) {
       updates.push('pending_launch_config = ?')
       values.push(data.pending_launch_config)

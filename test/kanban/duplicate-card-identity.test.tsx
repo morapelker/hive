@@ -8,6 +8,22 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { setKanbanDragData, ticketKey, useKanbanStore } from '@/stores/useKanbanStore'
 import type { KanbanTicket } from '../../src/main/db/types'
 
+const kanbanApiMock = vi.hoisted(() => ({
+  ticket: {
+    getByProject: vi.fn()
+  },
+  diagnostics: {
+    get: vi.fn()
+  },
+  dependency: {
+    getForProject: vi.fn()
+  }
+}))
+
+vi.mock('@/api/kanban-api', () => ({
+  kanbanApi: kanbanApiMock
+}))
+
 vi.mock('@/components/kanban/WorktreePickerModal', () => ({
   WorktreePickerModal: () => null
 }))
@@ -145,6 +161,10 @@ describe('duplicate markdown card renderer identity', () => {
   beforeEach(() => {
     moveTicket.mockReset()
     reorderTicket.mockReset()
+    kanbanApiMock.ticket.getByProject.mockReset()
+    kanbanApiMock.diagnostics.get.mockReset()
+    kanbanApiMock.dependency.getForProject.mockReset()
+    kanbanApiMock.dependency.getForProject.mockResolvedValue([])
     vi.stubGlobal(
       'ResizeObserver',
       class {
@@ -353,6 +373,33 @@ describe('duplicate markdown card renderer identity', () => {
     expect(getByTestId('kanban-invalid-card-placeholder')).toHaveTextContent(
       'Invalid markdown frontmatter'
     )
+  })
+
+  test('loadTickets creates placeholders for id-bearing invalid markdown diagnostics', async () => {
+    kanbanApiMock.ticket.getByProject.mockResolvedValueOnce([])
+    kanbanApiMock.diagnostics.get.mockResolvedValueOnce([
+      {
+        projectId: 'proj-1',
+        ticketId: 'bad-card',
+        filePath: '/tmp/project/cards/bad-card.md',
+        kind: 'invalid_frontmatter',
+        message: 'Invalid column; expected todo, in_progress, review, or done',
+        blocking: true
+      }
+    ])
+    useKanbanStore.setState({ loadTickets: useKanbanStore.getInitialState().loadTickets })
+
+    await useKanbanStore.getState().loadTickets('proj-1')
+
+    expect(useKanbanStore.getState().markdownPlaceholders.get('proj-1')).toEqual([
+      {
+        projectId: 'proj-1',
+        filePath: '/tmp/project/cards/bad-card.md',
+        kind: 'invalid_frontmatter',
+        message: 'Invalid column; expected todo, in_progress, review, or done',
+        blocking: true
+      }
+    ])
   })
 
   test('cross-column drops compute sort order from the dragged project only', async () => {
