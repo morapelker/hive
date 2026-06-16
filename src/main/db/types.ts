@@ -471,6 +471,8 @@ export interface KanbanTicket {
   goal_success_criteria: string | null
   /** Personal annotation. MUST NOT be included in any LLM prompt. */
   note: string | null
+  /** True when auto-created by the "automatically create ticket" setting on a session's first message. */
+  created_from_session: boolean
 }
 
 export interface KanbanTicketCreate {
@@ -491,6 +493,7 @@ export interface KanbanTicketCreate {
   github_pr_number?: number | null
   github_pr_url?: string | null
   mark?: TicketMark | null
+  created_from_session?: boolean
 }
 
 export interface KanbanTicketUpdate {

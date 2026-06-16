@@ -1,8 +1,10 @@
 import http from 'http'
 import type { SessionStatusType } from '@shared/types/session-status'
+import { OPENCODE_STREAM_CHANNEL } from '@shared/opencode-events'
 import { createLogger } from './logger'
 import { cliHookTransportRouter } from './cli-hook-transport-router'
 import { handleClaudeCliHiveTelemetryHook } from './hive-enterprise-claude-cli-telemetry'
+import { publishDesktopBackendEvent } from '../desktop/backend-event-publisher'
 
 export interface ParsedClaudeHook {
   hook_event_name?: string
@@ -38,6 +40,11 @@ let boundPort: number | null = null
 let startingPromise: Promise<{ port: number }> | null = null
 const lastStatusBySession = new Map<string, SessionStatusType>()
 const statusSubscribers = new Set<(payload: ClaudeCliStatusPayload) => void>()
+// Sessions whose first UserPromptSubmit we've already announced (so the
+// "automatically create ticket" feature fires at most once per session). The
+// renderer's getBySession idempotency check is the real guard; this just keeps
+// us from re-emitting on every prompt.
+const firstPromptAnnounced = new Set<string>()
 
 function hookUrl(port: number, hiveSessionId: string, path: string): string {
   return `http://${host}:${port}/hook/${encodeURIComponent(hiveSessionId)}/${path}`
@@ -254,6 +261,22 @@ async function handleHook(req: http.IncomingMessage, res: http.ServerResponse): 
         })
       }
       void handleClaudeCliHiveTelemetryHook(route.sessionId, body)
+      // First user prompt of this CLI session → tell the renderer so it can
+      // auto-create a kanban ticket (if the setting is on). Fires for prompts
+      // typed straight into the terminal as well as composer/handoff prompts.
+      if (
+        body.hook_event_name === 'UserPromptSubmit' &&
+        typeof body.prompt === 'string' &&
+        body.prompt.trim().length > 0 &&
+        !firstPromptAnnounced.has(route.sessionId)
+      ) {
+        firstPromptAnnounced.add(route.sessionId)
+        void publishDesktopBackendEvent(OPENCODE_STREAM_CHANNEL, {
+          type: 'claude-cli.first-prompt-detected',
+          sessionId: route.sessionId,
+          data: { promptText: body.prompt }
+        })
+      }
       // For forwarded CLI sessions a transport may take ownership of the
       // response (held open until answered). Otherwise behavior is unchanged.
       owned = cliHookTransportRouter.routeHook(route.sessionId, body, res)

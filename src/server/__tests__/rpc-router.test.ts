@@ -159,7 +159,8 @@ describe('rpc router', () => {
       pending_launch_config: null,
       goal_mode: false,
       goal_success_criteria: null,
-      note: null
+      note: null,
+      created_from_session: false
     }
     const calls: unknown[] = []
     const router = makeRpcRouter({
@@ -264,7 +265,8 @@ describe('rpc router', () => {
       pending_launch_config: null,
       goal_mode: false,
       goal_success_criteria: null,
-      note: null
+      note: null,
+      created_from_session: false
     }
     const secondTicket = {
       ...firstTicket,
@@ -394,7 +396,8 @@ describe('rpc router', () => {
       pending_launch_config: null,
       goal_mode: false,
       goal_success_criteria: null,
-      note: null
+      note: null,
+      created_from_session: false
     }
     const calls: string[] = []
     const router = makeRpcRouter({
@@ -491,7 +494,8 @@ describe('rpc router', () => {
       pending_launch_config: null,
       goal_mode: false,
       goal_success_criteria: null,
-      note: null
+      note: null,
+      created_from_session: false
     }
     const calls: Array<{ projectId: string; includeArchived: boolean | undefined }> = []
     const router = makeRpcRouter({
@@ -589,7 +593,8 @@ describe('rpc router', () => {
       pending_launch_config: null,
       goal_mode: true,
       goal_success_criteria: 'Build passes',
-      note: 'Keep private'
+      note: 'Keep private',
+      created_from_session: false
     }
     const calls: Array<{ id: string; data: unknown }> = []
     const router = makeRpcRouter({
@@ -623,7 +628,8 @@ describe('rpc router', () => {
       mark: 'rare' as const,
       goal_mode: true,
       goal_success_criteria: 'Build passes',
-      note: 'Keep private'
+      note: 'Keep private',
+      created_from_session: false
     }
     const response = await Effect.runPromise(
       router.handle({
@@ -769,7 +775,8 @@ describe('rpc router', () => {
       pending_launch_config: null,
       goal_mode: false,
       goal_success_criteria: null,
-      note: null
+      note: null,
+      created_from_session: false
     }
     const calls: string[] = []
     const router = makeRpcRouter({
@@ -938,7 +945,8 @@ describe('rpc router', () => {
       pending_launch_config: null,
       goal_mode: false,
       goal_success_criteria: null,
-      note: null
+      note: null,
+      created_from_session: false
     }
     const calls: string[] = []
     const router = makeRpcRouter({
@@ -1036,7 +1044,8 @@ describe('rpc router', () => {
       pending_launch_config: null,
       goal_mode: false,
       goal_success_criteria: null,
-      note: null
+      note: null,
+      created_from_session: false
     }
     const calls: Array<{ id: string; column: string; sortOrder: number }> = []
     const router = makeRpcRouter({
@@ -1305,7 +1314,8 @@ describe('rpc router', () => {
       pending_launch_config: null,
       goal_mode: false,
       goal_success_criteria: null,
-      note: null
+      note: null,
+      created_from_session: false
     }
     const calls: string[] = []
     const router = makeRpcRouter({
@@ -1405,7 +1415,8 @@ describe('rpc router', () => {
       pending_launch_config: null,
       goal_mode: false,
       goal_success_criteria: null,
-      note: null
+      note: null,
+      created_from_session: false
     }
     const calls: Array<{ id: string; tokens: number }> = []
     const router = makeRpcRouter({
@@ -2162,7 +2173,8 @@ describe('rpc router', () => {
       pending_launch_config: null,
       goal_mode: false,
       goal_success_criteria: null,
-      note: null
+      note: null,
+      created_from_session: false
     }
     const calls: string[] = []
     const router = makeRpcRouter({
@@ -2271,7 +2283,8 @@ describe('rpc router', () => {
       pending_launch_config: null,
       goal_mode: false,
       goal_success_criteria: null,
-      note: null
+      note: null,
+      created_from_session: false
     }
     const calls: string[] = []
     const router = makeRpcRouter({

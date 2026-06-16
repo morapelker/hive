@@ -9,6 +9,8 @@ import type {
 import {
   registerKanbanSessionSync,
   registerKanbanNewSession,
+  registerKanbanAutoCreateTicket,
+  registerKanbanRenameSync,
   type KanbanSessionEvent
 } from './store-coordination'
 import { isPlanLike } from '../lib/constants'
@@ -1327,4 +1329,93 @@ registerKanbanNewSession((sessionId, worktreeId, projectId, sessionMode) => {
       sessionId
     })
   }
+})
+
+// ── Register auto-create-ticket callback (first message of a session) ──
+// Creates a kanban ticket in the session's project on the first user message,
+// when the "automatically create ticket" setting is on. Idempotent: skips if a
+// ticket is already linked to the session (e.g. auto-attach above already ran).
+registerKanbanAutoCreateTicket(({ sessionId, rawPrompt }) => {
+  void (async () => {
+    try {
+      const [{ useSettingsStore }, { useSessionStore }] = await Promise.all([
+        import('./useSettingsStore'),
+        import('./useSessionStore')
+      ])
+      if (!useSettingsStore.getState().automaticallyCreateTicket) return
+
+      const session = useSessionStore.getState().getSessionById(sessionId)
+      if (!session) return
+      // Raw terminals and the board assistant have no real "prompt" to capture.
+      if (session.session_type === 'board-assistant' || session.agent_sdk === 'terminal') return
+
+      // Idempotency gate (authoritative — immune to the auto-attach timing and a
+      // stale in-memory tickets map): skip if any non-archived ticket is linked.
+      const existing = await kanbanApi.ticket.getBySession<KanbanTicket>(sessionId)
+      if (existing.some((t) => !t.archived_at)) return
+
+      const trimmed = rawPrompt.trim()
+      const hasText = trimmed.length > 0
+      const title = hasText ? trimmed.split(/\s+/).slice(0, 10).join(' ') : 'Untitled session'
+
+      const store = useKanbanStore.getState()
+      const sortOrder = store.computeSortOrder(
+        store.getTicketsByColumn(session.project_id, 'in_progress'),
+        0
+      )
+      await store.createTicket(session.project_id, {
+        project_id: session.project_id,
+        title,
+        description: hasText ? rawPrompt : null,
+        column: 'in_progress',
+        sort_order: sortOrder,
+        current_session_id: sessionId,
+        worktree_id: session.worktree_id,
+        mode: session.mode,
+        created_from_session: true
+      })
+    } catch {
+      // Best-effort — never disrupt the user's send/prompt flow.
+    }
+  })()
+})
+
+// ── Register rename-sync callback (session renamed → ticket title) ────
+// Keeps an auto-created ticket's title in sync with its session's name, for
+// both manual renames and LLM auto-titles. Gated on the setting so disabling it
+// freezes existing auto-created tickets too. Only touches created_from_session
+// tickets, so a session started FROM a hand-written ticket is never clobbered.
+registerKanbanRenameSync((sessionId, name) => {
+  void (async () => {
+    try {
+      const { useSettingsStore } = await import('./useSettingsStore')
+      if (!useSettingsStore.getState().automaticallyCreateTicket) return
+      if (/^Session \d+$/.test(name.trim())) return // never sync a placeholder over a real title
+
+      const store = useKanbanStore.getState()
+      for (const [projectId, tickets] of store.tickets.entries()) {
+        for (const ticket of tickets) {
+          if (
+            ticket.current_session_id === sessionId &&
+            ticket.created_from_session &&
+            !ticket.archived_at
+          ) {
+            if (ticket.title !== name) {
+              store.updateTicket(ticket.id, projectId, { title: name }).catch(() => {})
+            }
+            return
+          }
+        }
+      }
+
+      // Fallback: the ticket's board may not be loaded into the map yet.
+      const linked = await kanbanApi.ticket.getBySession<KanbanTicket>(sessionId)
+      const target = linked.find((t) => t.created_from_session && !t.archived_at)
+      if (target && target.title !== name) {
+        store.updateTicket(target.id, target.project_id, { title: name }).catch(() => {})
+      }
+    } catch {
+      // Best-effort.
+    }
+  })()
 })

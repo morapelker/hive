@@ -78,3 +78,41 @@ export function notifyKanbanNewSession(
 ): void {
   _kanbanNewSession?.(sessionId, worktreeId, projectId, sessionMode)
 }
+
+// ── Kanban ↔ Session: auto-create a ticket from a session's first message ──
+// Fired when the user sends the first message in a manually-created session.
+// The kanban store decides (setting gate, exclusions, idempotency) whether to
+// create a ticket; the renderer resolves project/worktree/mode from the
+// session record, so only the prompt text needs to travel here.
+export interface KanbanAutoCreateTicketParams {
+  sessionId: string
+  /** The raw text the user typed (NOT the augmented / mode-prefixed payload). */
+  rawPrompt: string
+}
+
+type KanbanAutoCreateTicketFn = (params: KanbanAutoCreateTicketParams) => void
+
+let _kanbanAutoCreateTicket: KanbanAutoCreateTicketFn | null = null
+
+export function registerKanbanAutoCreateTicket(fn: KanbanAutoCreateTicketFn): void {
+  _kanbanAutoCreateTicket = fn
+}
+
+export function notifyKanbanAutoCreateTicket(params: KanbanAutoCreateTicketParams): void {
+  _kanbanAutoCreateTicket?.(params)
+}
+
+// ── Kanban ↔ Session: session renamed (manual or LLM auto-title) ──────────
+// Fired after a session's name is persisted. The kanban store syncs the title
+// of the auto-created ticket linked to this session (if the setting is on).
+type KanbanRenameSyncFn = (sessionId: string, name: string) => void
+
+let _kanbanRenameSync: KanbanRenameSyncFn | null = null
+
+export function registerKanbanRenameSync(fn: KanbanRenameSyncFn): void {
+  _kanbanRenameSync = fn
+}
+
+export function notifyKanbanRenameSync(sessionId: string, name: string): void {
+  _kanbanRenameSync?.(sessionId, name)
+}

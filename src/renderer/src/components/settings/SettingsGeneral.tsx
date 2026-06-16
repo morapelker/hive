@@ -121,6 +121,7 @@ export function SettingsGeneral(): React.JSX.Element {
     boardMode,
     followUpTriggerColumn,
     autoPinBaseWorktreeOnBoardPrompt,
+    automaticallyCreateTicket,
     vimModeEnabled,
     keepAwakeEnabled,
     mergeConflictMode,
@@ -337,6 +338,35 @@ export function SettingsGeneral(): React.JSX.Element {
             className={cn(
               'pointer-events-none block h-4 w-4 rounded-full bg-background shadow-lg ring-0 transition-transform',
               autoPinBaseWorktreeOnBoardPrompt ? 'translate-x-4' : 'translate-x-0'
+            )}
+          />
+        </button>
+      </div>
+
+      {/* Automatically create ticket */}
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <label className="text-sm font-medium">Automatically create ticket</label>
+          <p className="text-xs text-muted-foreground">
+            When you send the first message in a session you started yourself, create a ticket in
+            that project (using the first words of your prompt as the title) and keep its title in
+            sync as the session is renamed.
+          </p>
+        </div>
+        <button
+          role="switch"
+          aria-checked={automaticallyCreateTicket}
+          onClick={() => updateSetting('automaticallyCreateTicket', !automaticallyCreateTicket)}
+          className={cn(
+            'relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors',
+            automaticallyCreateTicket ? 'bg-primary' : 'bg-muted'
+          )}
+          data-testid="automatically-create-ticket-toggle"
+        >
+          <span
+            className={cn(
+              'pointer-events-none block h-4 w-4 rounded-full bg-background shadow-lg ring-0 transition-transform',
+              automaticallyCreateTicket ? 'translate-x-4' : 'translate-x-0'
             )}
           />
         </button>
