@@ -17,7 +17,6 @@ import {
 } from '@/stores/useSettingsStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
-import { SUPER_PLAN_MODE_PREFIX } from '@/lib/constants'
 import { opencodeApi } from '@/api/opencode-api'
 
 export interface EffectiveHandoffSelection {
@@ -34,17 +33,17 @@ export interface HandoffSelectionOverride {
   agentSdk: HandoffAgentSdk
   model: SelectedModel
   goalMode?: boolean
-  superPlan?: boolean
 }
 
 export function buildHandoffPrompt(
   planContent: string,
   override?: HandoffSelectionOverride
 ): string {
+  // A handoff always means "implement this plan", so the prompt is sent as-is.
+  // Goal mode is the only decoration; the source session's planning mode (plan /
+  // super-plan) must never leak into the implementor's prompt.
   const goalPrefix = override?.goalMode && supportsGoalMode(override.agentSdk) ? '/goal ' : ''
-  const superPrefix =
-    override?.superPlan && override.agentSdk === 'claude-code-cli' ? SUPER_PLAN_MODE_PREFIX : ''
-  return `${superPrefix}${goalPrefix}${HANDOFF_PLAN_PROMPT_HEADER}${planContent}`
+  return `${goalPrefix}${HANDOFF_PLAN_PROMPT_HEADER}${planContent}`
 }
 
 const SDK_DISPLAY_NAMES: Record<HandoffAgentSdk, string> = {

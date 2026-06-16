@@ -6,7 +6,6 @@ import {
   resolveSessionCreationSelection,
   type HandoffSelectionOverride
 } from '../handoffSelection'
-import { SUPER_PLAN_MODE_PREFIX } from '../constants'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 
 const model = { providerID: 'codex', modelID: 'gpt-5.5' }
@@ -55,24 +54,28 @@ describe('buildHandoffPrompt', () => {
     expect(buildHandoffPrompt(planContent)).toBe('Implement the following plan\n1. Build the thing')
   })
 
-  it('prefixes super-plan instructions for Claude CLI handoffs only', () => {
+  it('never prepends the super-plan prefix on handoff, even from a super-plan source', () => {
     const planContent = '1. Build the thing'
-    const cliSuper: HandoffSelectionOverride = {
+    // A handoff means "implement this plan", so the prompt must stay clean regardless
+    // of the source session's mode. Force a stale superPlan flag through to prove it is
+    // ignored (the field no longer exists on HandoffSelectionOverride).
+    const cliSuper = {
       agentSdk: 'claude-code-cli',
       model,
       superPlan: true
-    }
-    const legacySuper: HandoffSelectionOverride = {
-      agentSdk: 'claude-code',
+    } as unknown as HandoffSelectionOverride
+    const cliSuperGoal = {
+      agentSdk: 'claude-code-cli',
       model,
+      goalMode: true,
       superPlan: true
-    }
+    } as unknown as HandoffSelectionOverride
 
     expect(buildHandoffPrompt(planContent, cliSuper)).toBe(
-      `${SUPER_PLAN_MODE_PREFIX}Implement the following plan\n1. Build the thing`
-    )
-    expect(buildHandoffPrompt(planContent, legacySuper)).toBe(
       'Implement the following plan\n1. Build the thing'
+    )
+    expect(buildHandoffPrompt(planContent, cliSuperGoal)).toBe(
+      '/goal Implement the following plan\n1. Build the thing'
     )
   })
 })

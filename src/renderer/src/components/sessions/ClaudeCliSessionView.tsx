@@ -287,7 +287,6 @@ export function ClaudeCliSessionView({
   const [ended, setEnded] = useState(false)
   const [planSavedAsTicket, setPlanSavedAsTicket] = useState(false)
   const pendingPlan = useSessionStore((state) => state.pendingPlans.get(sessionId) ?? null)
-  const mode = useSessionStore((state) => state.modeBySession.get(sessionId) ?? 'build')
   const { getTarget, revision: portalRevision } = useClaudeCliSessionPortal()
   void portalRevision
   const isMountedInTicketModal = !!getTarget(sessionId)
@@ -365,19 +364,14 @@ export function ClaudeCliSessionView({
       lastSendMode.delete(sessionId)
       const handoffGoalMode = override.goalMode === true && supportsGoalMode(override.agentSdk)
 
-      const handoffPrompt = buildHandoffPrompt(planContent, {
-        ...override,
-        superPlan: mode === 'super-plan'
-      })
+      const handoffPrompt = buildHandoffPrompt(planContent, override)
       const sessionStore = useSessionStore.getState()
 
       if (sessionRecord?.connection_id) {
         const result = await sessionStore.createConnectionSession(
           sessionRecord.connection_id,
           override.agentSdk,
-          override.agentSdk === 'claude-code-cli' && mode === 'super-plan'
-            ? 'super-plan'
-            : undefined,
+          undefined,
           { autoFocus: !isMountedInTicketModal, modelOverride: override.model }
         )
         if (!result.success || !result.session) {
@@ -385,10 +379,7 @@ export function ClaudeCliSessionView({
           return
         }
 
-        const setModePromise =
-          result.session.agent_sdk === 'claude-code-cli' && mode === 'super-plan'
-            ? Promise.resolve()
-            : sessionStore.setSessionMode(result.session.id, 'build')
+        const setModePromise = sessionStore.setSessionMode(result.session.id, 'build')
         registerHivePromptHandoff(sessionId, result.session.id)
         sessionStore.setPendingMessage(result.session.id, handoffPrompt)
         await useKanbanStore
@@ -425,9 +416,7 @@ export function ClaudeCliSessionView({
         sessionRecord.worktree_id,
         sessionRecord.project_id,
         override.agentSdk,
-        override.agentSdk === 'claude-code-cli' && mode === 'super-plan'
-          ? 'super-plan'
-          : undefined,
+        undefined,
         { autoFocus: !isMountedInTicketModal, modelOverride: override.model }
       )
       if (!result.success || !result.session) {
@@ -435,10 +424,7 @@ export function ClaudeCliSessionView({
         return
       }
 
-      const setModePromise =
-        result.session.agent_sdk === 'claude-code-cli' && mode === 'super-plan'
-          ? Promise.resolve()
-          : sessionStore.setSessionMode(result.session.id, 'build')
+      const setModePromise = sessionStore.setSessionMode(result.session.id, 'build')
       registerHivePromptHandoff(sessionId, result.session.id)
       sessionStore.setPendingMessage(result.session.id, handoffPrompt)
       await useKanbanStore
@@ -464,7 +450,7 @@ export function ClaudeCliSessionView({
       sessionStore.setActiveSession(result.session.id)
       await setModePromise
     },
-    [isMountedInTicketModal, mode, pendingPlan?.planContent, sessionId, sessionRecord]
+    [isMountedInTicketModal, pendingPlan?.planContent, sessionId, sessionRecord]
   )
 
   const handlePlanReadySaveAsTicket = useCallback(async () => {

@@ -5088,27 +5088,19 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
       }
 
       if (connectionId) {
-        const handoffPrompt = buildHandoffPrompt(planContent, {
-          ...override,
-          superPlan: mode === 'super-plan'
-        })
+        const handoffPrompt = buildHandoffPrompt(planContent, override)
         const sessionStore = useSessionStore.getState()
         const result = await sessionStore.createConnectionSession(
           connectionId,
           override?.agentSdk,
-          override?.agentSdk === 'claude-code-cli' && mode === 'super-plan'
-            ? 'super-plan'
-            : undefined,
+          undefined,
           { modelOverride: override?.model }
         )
         if (!result.success || !result.session) {
           toast.error(result.error ?? 'Failed to create handoff session')
           return
         }
-        const setModePromise =
-          result.session.agent_sdk === 'claude-code-cli' && mode === 'super-plan'
-            ? Promise.resolve()
-            : sessionStore.setSessionMode(result.session.id, 'build')
+        const setModePromise = sessionStore.setSessionMode(result.session.id, 'build')
         registerHivePromptHandoff(sessionId, result.session.id)
         sessionStore.setPendingMessage(result.session.id, handoffPrompt)
         await useKanbanStore
@@ -5126,19 +5118,14 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
         return
       }
 
-      const handoffPrompt = buildHandoffPrompt(planContent, {
-        ...override,
-        superPlan: mode === 'super-plan'
-      })
+      const handoffPrompt = buildHandoffPrompt(planContent, override)
 
       const sessionStore = useSessionStore.getState()
       const result = await sessionStore.createSession(
         currentWorktreeId,
         currentProjectId,
         override?.agentSdk,
-        override?.agentSdk === 'claude-code-cli' && mode === 'super-plan'
-          ? 'super-plan'
-          : undefined,
+        undefined,
         { modelOverride: override?.model }
       )
       if (!result.success || !result.session) {
@@ -5146,10 +5133,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
         return
       }
 
-      const setModePromise =
-        result.session.agent_sdk === 'claude-code-cli' && mode === 'super-plan'
-          ? Promise.resolve()
-          : sessionStore.setSessionMode(result.session.id, 'build')
+      const setModePromise = sessionStore.setSessionMode(result.session.id, 'build')
       registerHivePromptHandoff(sessionId, result.session.id)
       sessionStore.setPendingMessage(result.session.id, handoffPrompt)
       await useKanbanStore
@@ -5166,8 +5150,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
       sessionId,
       worktreePath,
       opencodeSessionId,
-      pendingPlan,
-      mode
+      pendingPlan
     ]
   )
 
