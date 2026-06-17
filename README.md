@@ -29,13 +29,14 @@
 - [Features](#features)
 - [Why Hive?](#why-hive)
 - [Quick Start](#quick-start)
-- [Connections - The Game Changer](#-connections---the-game-changer)
-- [Screenshots](#screenshots)
+- [Worktree Connections - The Game Changer](#-worktree-connections---the-game-changer)
+- [See It In Action](#see-it-in-action)
 - [Community & Support](#community--support)
 - [Roadmap](#roadmap)
 - [Development](#development)
   - [Prerequisites](#prerequisites)
   - [Setup](#setup)
+  - [Ghostty Terminal (Optional)](#ghostty-terminal-optional)
   - [Commands](#commands)
   - [Architecture](#architecture)
   - [Project Structure](#project-structure)
@@ -254,6 +255,8 @@ Connect any two worktrees to:
 Want to influence the roadmap? [Join the discussion](https://github.com/morapelker/hive/discussions/categories/ideas) or [contribute](CONTRIBUTING.md)!
 
 ---
+
+<a id="development"></a>
 
 <details>
 <summary><strong>Development</strong></summary>
