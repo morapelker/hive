@@ -19,8 +19,15 @@ vi.mock('../../src/renderer/src/api/settings-api', () => ({
   settingsApi: {
     detectEditors: vi.fn().mockResolvedValue([]),
     detectTerminals: vi.fn().mockResolvedValue([]),
+    loadCustomCommandsFile: vi.fn().mockResolvedValue({ success: true, commands: [] }),
     openWithTerminal: vi.fn().mockResolvedValue({ success: true }),
     onSettingsUpdated: vi.fn(() => () => {})
+  }
+}))
+
+vi.mock('../../src/renderer/src/api/hive-enterprise/client', () => ({
+  hiveEnterpriseClient: {
+    query: vi.fn()
   }
 }))
 
@@ -249,16 +256,19 @@ describe('board assistant create navigation', () => {
       expect(useSessionStore.getState().activeSessionId).toBe(BOARD_TAB_ID)
     })
     expect(request).toHaveBeenCalledWith('kanban.ticket.createBatch', {
-      drafts: [
-        {
-          draft_key: 'draft-1',
-          project_id: projectId,
-          title: boardDraft.title,
-          description: boardDraft.description,
-          column: 'todo',
-          depends_on: []
-        }
-      ]
+      projectId,
+      data: {
+        drafts: [
+          {
+            draft_key: 'draft-1',
+            project_id: projectId,
+            title: boardDraft.title,
+            description: boardDraft.description,
+            column: 'todo',
+            depends_on: []
+          }
+        ]
+      }
     })
     expect(useSessionStore.getState().activeBoardAssistantProjectId).toBeNull()
   })
@@ -273,5 +283,67 @@ describe('board assistant create navigation', () => {
       expect(useKanbanStore.getState().isBoardViewActive).toBe(true)
     })
     expect(useSessionStore.getState().activeBoardAssistantProjectId).toBeNull()
+  })
+
+  test('marks successful project draft batches before surfacing partial failures', async () => {
+    seedStores('sticky-tab')
+    const failedProjectId = 'proj-2'
+    const failedDraft: TicketDraft = {
+      ...boardDraft,
+      id: `${assistantMessageId}:draft-2:${failedProjectId}`,
+      draftKey: 'draft-2',
+      title: 'Create markdown ticket',
+      description: 'Write the markdown-backed draft',
+      projectId: failedProjectId,
+      projectName: 'Project Two',
+      createdAt: null
+    }
+    const drafts = [boardDraft, failedDraft]
+    useBoardChatStore.setState((state) => ({
+      drafts,
+      snapshots: {
+        ...state.snapshots,
+        [`project:${projectId}`]: {
+          ...state.snapshots[`project:${projectId}`],
+          drafts
+        }
+      }
+    }))
+
+    request = vi.fn((method: string, payload?: { projectId?: string }) => {
+      if (method === 'kanban.ticket.createBatch') {
+        if (payload?.projectId === failedProjectId) {
+          return Promise.reject(new Error('Kanban folder is missing'))
+        }
+        return Promise.resolve({
+          tickets: [{ id: 'ticket-1' }],
+          dependencies: []
+        })
+      }
+      if (method === 'opencodeOps.listModels') {
+        return Promise.resolve({ success: true, providers: [] })
+      }
+      return Promise.resolve(undefined)
+    })
+    setRendererRpcClient({ request, subscribe: vi.fn() })
+
+    await useBoardChatStore.getState().createSelected()
+
+    const state = useBoardChatStore.getState()
+    expect(state.drafts.find((draft) => draft.id === boardDraft.id)?.createdAt).toEqual(
+      expect.any(String)
+    )
+    expect(state.drafts.find((draft) => draft.id === failedDraft.id)?.createdAt).toBeNull()
+    expect(state.drafts.find((draft) => draft.id === failedDraft.id)?.selected).toBe(true)
+    expect(useKanbanStore.getState().loadTickets).toHaveBeenCalledWith(projectId)
+    expect(useKanbanStore.getState().loadTickets).not.toHaveBeenCalledWith(failedProjectId)
+
+    expect(request).toHaveBeenCalledTimes(2)
+    await useBoardChatStore.getState().createSelected()
+    expect(request).toHaveBeenCalledTimes(3)
+    expect(request).toHaveBeenLastCalledWith(
+      'kanban.ticket.createBatch',
+      expect.objectContaining({ projectId: failedProjectId })
+    )
   })
 })

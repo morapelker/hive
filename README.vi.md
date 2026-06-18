@@ -110,7 +110,7 @@ Xem cách Hive biến đổi quy trình git của bạn:
 | **Xem thay đổi file** | `git status` → `git diff file.ts` | Cây trực quan với diff inline |
 | **So sánh nhánh** | Nhiều tab terminal, copy/paste qua lại | Kết nối worktree để chia sẻ ngữ cảnh |
 | **Tìm worktree** | `cd ~/projects/...` → nhớ tên thư mục | Tất cả worktree trong một thanh bên |
-| **Dọn d���p worktree** | `git worktree remove` → `rm -rf directory` | Click "Lưu trữ" → Xử lý mọi thứ |
+| **Dọn dẹp worktree** | `git worktree remove` → `rm -rf directory` | Click "Lưu trữ" → Xử lý mọi thứ |
 
 ## Khởi động nhanh
 
@@ -240,7 +240,7 @@ Kết nối bất kỳ hai worktree nào để:
 - **Phát triển từ xa** — Phát triển dựa trên SSH và container
 - **Kết nối ba chiều** — Kết nối và merge nhiều nhánh trực quan
 - **Tích hợp CI/CD** — Giám sát GitHub Actions, GitLab CI, Jenkins
-- **Tự động kết n��i** — Tự động kết nối nhánh liên quan theo mẫu
+- **Tự động kết nối** — Tự động kết nối nhánh liên quan theo mẫu
 - **Chế độ review code** — Loại kết nối đặc biệt tối ưu cho review
 - **Theo dõi thời gian** — Phân tích hoạt động cho từng worktree và kết nối
 
@@ -396,7 +396,7 @@ Chúng tôi yêu thích đóng góp! Hive được xây dựng bởi developer, 
 - 📝 **Cải thiện tài liệu** để giúp người khác bắt đầu
 - 🎨 **Gửi cải tiến UI/UX** cho khả năng sử dụng tốt hơn
 - 🔧 **Sửa lỗi** từ issue tracker của chúng tôi
-- ⚡ **T���i ưu hiệu năng** ở các đường dẫn quan trọng
+- ⚡ **Tối ưu hiệu năng** ở các đường dẫn quan trọng
 - 🧪 **Thêm test** để cải thiện coverage
 - 🌐 **Dịch** ứng dụng sang ngôn ngữ của bạn
 

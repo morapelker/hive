@@ -114,6 +114,23 @@ describeIf('Session 1: Kanban Ticket Note', () => {
     expect(fetched.title).toBe('new title')
     expect(fetched.note).toBe('keep me')
   })
+
+  test('updateKanbanTicket persists archived_at values', () => {
+    const project = db.createProject({ name: 'Archive Update Test', path: '/archive-update' })
+    const ticket = db.createKanbanTicket({ project_id: project.id, title: 'Archive me' })
+    const archivedAt = '2026-06-16T12:00:00.000Z'
+
+    const archived = db.updateKanbanTicket(ticket.id, { archived_at: archivedAt })
+    expect(archived).toBeTruthy()
+    expect(archived.archived_at).toBe(archivedAt)
+
+    const fetchedArchived = db.getKanbanTicket(ticket.id)
+    expect(fetchedArchived.archived_at).toBe(archivedAt)
+
+    const unarchived = db.updateKanbanTicket(ticket.id, { archived_at: null })
+    expect(unarchived).toBeTruthy()
+    expect(unarchived.archived_at).toBeNull()
+  })
 })
 
 // Show information when tests are skipped

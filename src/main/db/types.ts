@@ -16,9 +16,40 @@ export interface Project {
   worktree_create_script: string | null
   custom_commands: CustomProjectCommand[] | null
   auto_assign_port: boolean
+  kanban_storage_mode?: KanbanStorageMode
+  kanban_markdown_config?: string | null
   sort_order: number
   created_at: string
   last_accessed_at: string
+}
+
+export type KanbanStorageMode = 'internal' | 'markdown'
+
+export type KanbanMarkdownConfig =
+  | {
+      layout: 'single-folder'
+      singleFolder: string
+      statusFolders?: {
+        todo: string
+        in_progress: string
+        review: string
+        done: string
+      }
+    }
+  | {
+      layout: 'status-folders'
+      singleFolder?: string
+      statusFolders: {
+        todo: string
+        in_progress: string
+        review: string
+        done: string
+      }
+    }
+
+export interface KanbanStorageConfig {
+  mode: KanbanStorageMode
+  markdown: KanbanMarkdownConfig
 }
 
 export interface ProjectCreate {
@@ -509,6 +540,7 @@ export interface KanbanTicketUpdate {
   github_pr_number?: number | null
   github_pr_url?: string | null
   mark?: TicketMark | null
+  archived_at?: string | null
   pending_launch_config?: string | null
   goal_mode?: boolean
   goal_success_criteria?: string | null
@@ -593,6 +625,17 @@ export interface KanbanTicketBatchCreateResponse {
 export interface KanbanTicketBatchCreateResult {
   tickets: KanbanTicket[]
   dependencies: TicketDependency[]
+}
+
+export type MarkdownCardDiagnosticKind = 'parse_error' | 'invalid_frontmatter' | 'duplicate_id'
+
+export interface MarkdownCardDiagnostic {
+  projectId: string
+  ticketId: string | null
+  filePath: string
+  kind: MarkdownCardDiagnosticKind
+  message: string
+  blocking: true
 }
 
 export interface PendingLaunchConfig {

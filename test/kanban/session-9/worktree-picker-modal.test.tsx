@@ -627,7 +627,9 @@ describe('Session 9: Worktree Picker Modal', () => {
       expect(screen.getByTestId('sdk-toggle-claude-code')).toHaveClass('bg-primary')
     })
     expect(screen.getByTestId('sdk-toggle-opencode')).not.toHaveClass('bg-primary')
-    expect(screen.getByTestId('model-selector')).toHaveTextContent('opus-4.5')
+    await waitFor(() => {
+      expect(screen.getByTestId('model-selector')).toHaveTextContent('opus-4.5')
+    })
   })
 
   test('Tab still toggles mode when prompt textarea is already focused', () => {
@@ -982,6 +984,7 @@ describe('Session 9: Worktree Picker Modal', () => {
       mode: 'build'
     })
     expect(mockKanban.ticket.update).toHaveBeenCalledWith(
+      'proj-1',
       'ticket-1',
       expect.objectContaining({
         column: 'in_progress',
@@ -1053,7 +1056,7 @@ describe('Session 9: Worktree Picker Modal', () => {
       expect(mockKanban.ticket.update).toHaveBeenCalled()
     })
 
-    const updatePayload = mockKanban.ticket.update.mock.calls.at(-1)?.[1] as {
+    const updatePayload = mockKanban.ticket.update.mock.calls.at(-1)?.[2] as {
       pending_launch_config: string
       goal_mode: boolean
       goal_success_criteria: string | null
@@ -1163,6 +1166,7 @@ describe('Session 9: Worktree Picker Modal', () => {
 
     await waitFor(() => {
       expect(mockKanban.ticket.update).toHaveBeenCalledWith(
+        'proj-1',
         'ticket-1',
         expect.objectContaining({
           worktree_id: 'wt-1',

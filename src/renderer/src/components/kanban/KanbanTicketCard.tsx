@@ -39,6 +39,8 @@ import { NoteEditorModal } from './NoteEditorModal'
 import { MoveToProjectModal } from './MoveToProjectModal'
 import { cn } from '@/lib/utils'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { opencodeApi } from '@/api/opencode-api'
+import { systemApi } from '@/api/system-api'
 import { ProviderIcon, getProviderLabel } from '@/components/ui/provider-icon'
 import { toast } from '@/lib/toast'
 import {
@@ -77,7 +79,8 @@ import { IndeterminateProgressBar } from '@/components/sessions/IndeterminatePro
 import { PulseAnimation } from '@/components/worktrees/PulseAnimation'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
-import { setKanbanDragData, useKanbanStore } from '@/stores/useKanbanStore'
+import { parseTicketKey, setKanbanDragData, ticketKey, useKanbanStore } from '@/stores/useKanbanStore'
+import type { TicketKey } from '@/stores/useKanbanStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { isBlockerSatisfied } from '@/lib/blocker-utils'
 import { useConnectionStore } from '@/stores/useConnectionStore'
@@ -93,8 +96,6 @@ import { useSessionTokenDelta } from '@/hooks/useSessionTokenDelta'
 import { useConflictFixFlow } from '@/hooks/useConflictFixFlow'
 import { formatTokenCount } from '@/lib/format-utils'
 import type { KanbanTicket, TicketMark } from '../../../../main/db/types'
-import { systemApi } from '@/api/system-api'
-import { opencodeApi } from '@/api/opencode-api'
 
 // ── Project tag color palette ──────────────────────────────────────
 const PROJECT_TAG_COLORS = [
@@ -105,7 +106,7 @@ const PROJECT_TAG_COLORS = [
   '#10b981', // emerald
   '#06b6d4', // cyan
   '#f97316', // orange
-  '#6366f1' // indigo
+  '#6366f1', // indigo
 ]
 
 /** Deterministic color for a project within a connection's project list. */
@@ -127,6 +128,8 @@ interface KanbanTicketCardProps {
   connectionId?: string
   /** When viewing the pinned board (multi-project), show project tags */
   isPinnedMode?: boolean
+  /** Renderer-only identity for duplicate markdown card occurrences. */
+  cardIdentityKey?: TicketKey
 }
 
 export const KanbanTicketCard = memo(function KanbanTicketCard({
@@ -134,7 +137,8 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   index = 0,
   isArchived = false,
   connectionId,
-  isPinnedMode
+  isPinnedMode,
+  cardIdentityKey
 }: KanbanTicketCardProps) {
   const isMultiProjectMode = !!connectionId || !!isPinnedMode
 
@@ -149,62 +153,67 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   const hasNote = !!ticket.note && ticket.note.trim().length > 0
   const isExternalTicket = !!ticket.external_provider
   const dragCloneRef = useRef<HTMLElement | null>(null)
+  const currentTicketKey = ticketKey(ticket.project_id, ticket.id)
+  const domTicketKey = cardIdentityKey ?? currentTicketKey
 
   // ── Dependency selectors ────────────────────────────────────────
   // useShallow prevents infinite re-render loops by doing shallow equality
   // comparison on the returned array instead of Object.is reference check.
   const blockerTickets = useKanbanStore(
     useShallow((state) => {
-      const blockerIds = state.dependencyMap.get(ticket.id)
-      if (!blockerIds?.size) return EMPTY_ARRAY as unknown as KanbanTicket[]
+      const blockerKeys = state.dependencyMap.get(currentTicketKey)
+      if (!blockerKeys?.size) return EMPTY_ARRAY as unknown as KanbanTicket[]
       const result: KanbanTicket[] = []
-      for (const [, projectTickets] of state.tickets) {
-        for (const t of projectTickets) {
-          if (blockerIds.has(t.id)) result.push(t)
-        }
+      for (const blockerKey of blockerKeys) {
+        const blockerRef = parseTicketKey(blockerKey)
+        const blocker = state.tickets
+          .get(blockerRef.projectId)
+          ?.find((t) => t.id === blockerRef.ticketId)
+        if (blocker) result.push(blocker)
       }
       return result
     })
   )
 
-  const followUpTriggerColumn = useSettingsStore((s) => s.followUpTriggerColumn)
+  const followUpTriggerColumn = useSettingsStore(s => s.followUpTriggerColumn)
 
   const unresolvedBlockerCount = useKanbanStore(
-    useCallback(
-      (state) => {
-        const blockers = state.dependencyMap.get(ticket.id)
-        if (!blockers?.size) return 0
-        let count = 0
-        for (const [, projectTickets] of state.tickets) {
-          for (const t of projectTickets) {
-            if (blockers.has(t.id) && !isBlockerSatisfied(t.column, t.mode, followUpTriggerColumn))
-              count++
-          }
-        }
-        return count
-      },
-      [ticket.id, followUpTriggerColumn]
-    )
+    useCallback((state) => {
+      const blockers = state.dependencyMap.get(currentTicketKey)
+      if (!blockers?.size) return 0
+      let count = 0
+      for (const blockerKey of blockers) {
+        const blockerRef = parseTicketKey(blockerKey)
+        const blocker = state.tickets
+          .get(blockerRef.projectId)
+          ?.find((t) => t.id === blockerRef.ticketId)
+        if (blocker && !isBlockerSatisfied(blocker.column, blocker.mode, followUpTriggerColumn)) count++
+      }
+      return count
+    }, [currentTicketKey, followUpTriggerColumn])
   )
 
   const isSimpleMode = useKanbanStore(
+    useCallback((state) => state.simpleModeByProject[ticket.project_id] ?? false, [ticket.project_id])
+  )
+  const blockingDiagnostic = useKanbanStore(
     useCallback(
-      (state) => state.simpleModeByProject[ticket.project_id] ?? false,
-      [ticket.project_id]
+      (state) =>
+        (state.markdownDiagnostics.get(ticket.project_id) ?? []).find(
+          (diagnostic) => diagnostic.ticketId === ticket.id && diagnostic.blocking
+        ) ?? null,
+      [ticket.project_id, ticket.id]
     )
   )
 
   // True when another blocked ticket is hovered and THIS ticket is one of its blockers
   const isHighlightedAsBlocker = useKanbanStore(
-    useCallback(
-      (state) => {
-        const hoveredId = state.hoveredBlockedTicketId
-        if (!hoveredId) return false
-        const blockers = state.dependencyMap.get(hoveredId)
-        return blockers?.has(ticket.id) ?? false
-      },
-      [ticket.id]
-    )
+    useCallback((state) => {
+      const hoveredKey = state.hoveredBlockedTicketKey
+      if (!hoveredKey) return false
+      const blockers = state.dependencyMap.get(hoveredKey)
+      return blockers?.has(currentTicketKey) ?? false
+    }, [currentTicketKey])
   )
 
   const isBlocked = !isSimpleMode && unresolvedBlockerCount > 0
@@ -228,9 +237,9 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     useCallback(
       (state) =>
         ticket.worktree_id
-          ? (state.mergeConflictWorktreeByTicket[ticket.id] ?? ticket.worktree_id)
+          ? (state.mergeConflictWorktreeByTicket[ticketKey(ticket.project_id, ticket.id)] ?? ticket.worktree_id)
           : null,
-      [ticket.id, ticket.worktree_id]
+      [ticket.id, ticket.project_id, ticket.worktree_id]
     )
   )
 
@@ -317,7 +326,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   )
 
   const connectionSession = useMemo(
-    () => (connectionSessionId ? { connectionId: connectionSessionId } : null),
+    () => connectionSessionId ? { connectionId: connectionSessionId } : null,
     [connectionSessionId]
   )
 
@@ -443,10 +452,9 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   )
 
   // Accumulated total for done column
-  const doneTokenText =
-    ticket.column === 'done' && ticket.total_tokens > 0
-      ? formatTokenCount(ticket.total_tokens)
-      : null
+  const doneTokenText = ticket.column === 'done' && ticket.total_tokens > 0
+    ? formatTokenCount(ticket.total_tokens)
+    : null
 
   // Per-turn delta for active columns (unchanged)
   const turnTokenText = useSessionTokenDelta(
@@ -493,8 +501,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
 
   const isCreatingPR = useGitStore(
     useCallback(
-      (s) =>
-        ticket.worktree_id ? s.creatingPRByWorktreeId.get(ticket.worktree_id) === true : false,
+      (s) => ticket.worktree_id ? s.creatingPRByWorktreeId.get(ticket.worktree_id) === true : false,
       [ticket.worktree_id]
     )
   )
@@ -503,9 +510,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   const hasAttachments = ticket.attachments.length > 0
   const isForwardedToTelegram = useTelegramStore(
     useCallback(
-      (state) =>
-        !!ticket.current_session_id &&
-        state.activeForwardingSessionId === ticket.current_session_id,
+      (state) => !!ticket.current_session_id && state.activeForwardingSessionId === ticket.current_session_id,
       [ticket.current_session_id]
     )
   )
@@ -524,7 +529,12 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   const handleDragStart = useCallback(
     (e: React.DragEvent) => {
       // Store drag data
-      setKanbanDragData({ ticketId: ticket.id, sourceColumn: ticket.column, sourceIndex: index })
+      setKanbanDragData({
+        projectId: ticket.project_id,
+        ticketId: ticket.id,
+        sourceColumn: ticket.column,
+        sourceIndex: index
+      })
       e.dataTransfer.setData('text/plain', ticket.id)
       e.dataTransfer.effectAllowed = 'move'
 
@@ -555,7 +565,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
 
       setIsDragging(true)
     },
-    [ticket.id, ticket.column, index]
+    [ticket.project_id, ticket.id, ticket.column, index]
   )
 
   const handleDragEnd = useCallback(() => {
@@ -585,6 +595,12 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
       // to the board's handleBoardClick which toggles the dependency
       if (useKanbanStore.getState().dependencyMode?.active) return
 
+      if (blockingDiagnostic) {
+        e.preventDefault()
+        e.stopPropagation()
+        return
+      }
+
       // Cmd+click (Mac) / Ctrl+click (Win/Linux) — select attached worktree
       if ((e.metaKey || e.ctrlKey) && ticket.worktree_id && !isArchived) {
         e.preventDefault()
@@ -596,25 +612,21 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
         return
       }
 
-      useKanbanStore.getState().setSelectedTicketId(ticket.id)
+      useKanbanStore.getState().setSelectedTicketRef({
+        projectId: ticket.project_id,
+        ticketId: ticket.id
+      })
     },
-    [
-      ticket.id,
-      ticket.worktree_id,
-      ticket.project_id,
-      isArchived,
-      isPinnedMode,
-      recordBoardTelegramTarget
-    ]
+    [ticket.id, ticket.worktree_id, ticket.project_id, isArchived, isPinnedMode, recordBoardTelegramTarget, blockingDiagnostic]
   )
 
   // ── Middle-click — select attached worktree (same as sidebar) ─
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
-      if (e.button !== 1) return // only middle-click
-      if (!ticket.worktree_id) return // no-op for unassigned tickets
-      if (isArchived) return // no-op for archived tickets
-      e.preventDefault() // suppress browser auto-scroll
+      if (e.button !== 1) return            // only middle-click
+      if (!ticket.worktree_id) return        // no-op for unassigned tickets
+      if (isArchived) return                 // no-op for archived tickets
+      e.preventDefault()                     // suppress browser auto-scroll
 
       // Select worktree — same as sidebar's WorktreeItem.handleClick
       recordBoardTelegramTarget()
@@ -628,12 +640,15 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
 
   const handleMouseEnter = useCallback(() => {
     if (isBlocked) {
-      useKanbanStore.getState().setHoveredBlockedTicketId(ticket.id)
+      useKanbanStore.getState().setHoveredBlockedTicketRef({
+        projectId: ticket.project_id,
+        ticketId: ticket.id
+      })
     }
-  }, [isBlocked, ticket.id])
+  }, [isBlocked, ticket.id, ticket.project_id])
 
   const handleMouseLeave = useCallback(() => {
-    useKanbanStore.getState().setHoveredBlockedTicketId(null)
+    useKanbanStore.getState().setHoveredBlockedTicketRef(null)
   }, [])
 
   const isDone = ticket.column === 'done'
@@ -723,14 +738,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
         useSessionStore.getState().setActiveSession(ticket.current_session_id)
       }
     }
-  }, [
-    ticket.current_session_id,
-    ticket.worktree_id,
-    ticket.project_id,
-    connectionId,
-    connectionSession,
-    isPinnedMode
-  ])
+  }, [ticket.current_session_id, ticket.worktree_id, ticket.project_id, connectionId, connectionSession, isPinnedMode])
 
   const handleGoToReview = useCallback(() => {
     if (!completedReviewSessionId) return
@@ -789,7 +797,12 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
 
     try {
       const result = unwrapEnvelope(
-        await opencodeApi.command(worktree.path, ticket.current_session_id, 'goal', 'resume')
+        await opencodeApi.command(
+          worktree.path,
+          ticket.current_session_id,
+          'goal',
+          'resume'
+        )
       )
       if (!result.success) {
         toast.error(result.error ?? 'Failed to resume goal')
@@ -800,29 +813,23 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     }
   }, [ticket.current_session_id, ticket.worktree_id])
 
-  const handleMarkChange = useCallback(
-    async (value: string) => {
-      try {
-        await useKanbanStore.getState().updateTicket(ticket.id, ticket.project_id, {
-          mark: value === 'none' ? null : (value as TicketMark)
-        })
-      } catch {
-        toast.error('Failed to update ticket mark')
-      }
-    },
-    [ticket.id, ticket.project_id]
-  )
+  const handleMarkChange = useCallback(async (value: string) => {
+    try {
+      await useKanbanStore.getState().updateTicket(ticket.id, ticket.project_id, {
+        mark: value === 'none' ? null : value as TicketMark
+      })
+    } catch {
+      toast.error('Failed to update ticket mark')
+    }
+  }, [ticket.id, ticket.project_id])
 
-  const handleSaveNote = useCallback(
-    async (note: string | null) => {
-      try {
-        await useKanbanStore.getState().updateTicket(ticket.id, ticket.project_id, { note })
-      } catch (err) {
-        toast.error(`Failed to save note: ${err instanceof Error ? err.message : String(err)}`)
-      }
-    },
-    [ticket.id, ticket.project_id]
-  )
+  const handleSaveNote = useCallback(async (note: string | null) => {
+    try {
+      await useKanbanStore.getState().updateTicket(ticket.id, ticket.project_id, { note })
+    } catch (err) {
+      toast.error(`Failed to save note: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }, [ticket.id, ticket.project_id])
 
   return (
     <>
@@ -833,7 +840,9 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
               <div
                 data-testid={`kanban-ticket-${ticket.id}`}
                 data-ticket-id={ticket.id}
-                draggable={!isArchived}
+                data-project-id={ticket.project_id}
+                data-ticket-key={domTicketKey}
+                draggable={!isArchived && !blockingDiagnostic}
                 onDragStart={handleDragStart}
                 onDragEnd={handleDragEnd}
                 onClick={handleClick}
@@ -845,10 +854,9 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                   'hover:bg-muted/40',
                   isDragging && 'invisible',
                   isArchived && 'opacity-50 cursor-default',
-                  isBlocked && 'opacity-60',
+                  (isBlocked || blockingDiagnostic) && 'opacity-60',
                   // Highlighted as a blocker of the currently hovered ticket
-                  isHighlightedAsBlocker &&
-                    'border-dashed !border-amber-500/70 ring-1 ring-amber-500/30',
+                  isHighlightedAsBlocker && 'border-dashed !border-amber-500/70 ring-1 ring-amber-500/30',
                   !isHighlightedAsBlocker && borderState === 'default' && 'border-border/60',
                   !isHighlightedAsBlocker && borderState === 'blue' && 'border-blue-500/60',
                   !isHighlightedAsBlocker && borderState === 'violet' && 'border-violet-500/60',
@@ -859,611 +867,633 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                   ticket.mark === 'legendary' && 'border-l-4 !border-l-orange-500'
                 )}
               >
-                {/* Title + top-right indicators */}
-                <div className="flex items-start justify-between gap-2">
-                  <p className="text-sm font-medium leading-snug text-foreground min-w-0 flex-1 break-words">
-                    {ticket.title}
-                  </p>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    {tokenText && (
-                      <span className="text-[11px] tabular-nums text-muted-foreground">
-                        {tokenText}
-                      </span>
-                    )}
-                    {ticket.external_provider && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          if (ticket.external_url) {
-                            void systemApi.openInChrome(ticket.external_url)
-                          }
-                        }}
-                        className="transition-opacity hover:opacity-80"
-                        title={`${getProviderLabel(ticket.external_provider)} #${ticket.external_id}`}
-                      >
-                        <ProviderIcon provider={ticket.external_provider} />
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                {/* Badges + progress row */}
-                {(hasAttachments ||
-                  hasNote ||
-                  worktreeName ||
-                  projectTag ||
-                  connectionName ||
-                  ticket.plan_ready ||
-                  isError ||
-                  rightAlignedSlot ||
-                  isArchived ||
-                  isBlocked ||
-                  isRunProcessAlive ||
-                  ticket.github_pr_number ||
-                  isCreatingPR ||
-                  isForwardedToTelegram ||
-                  ticket.goal_mode) && (
-                  <div className="mt-1.5 flex flex-wrap items-center gap-1">
-                    {/* Archived badge */}
-                    {isArchived && (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
-                        <Archive className="h-3 w-3" />
-                        Archived
-                      </span>
-                    )}
-                    {isForwardedToTelegram && (
-                      <span
-                        title="Forwarding to Telegram"
-                        className="inline-flex items-center rounded-full bg-[#229ED9]/10 border border-[#229ED9]/30 px-1.5 py-0.5 text-[#229ED9]"
-                      >
-                        <Send className="h-3 w-3" />
-                      </span>
-                    )}
-                    {/* Blocked badge */}
-                    {isBlocked && (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 text-[11px] font-medium text-amber-500">
-                        <Lock className="h-3 w-3" />
-                        {unresolvedBlockerCount}
-                      </span>
-                    )}
-                    {/* Attachment badge */}
-                    {hasAttachments && (
-                      <span
-                        data-testid="kanban-ticket-attachments"
-                        className="inline-flex items-center gap-1 rounded-full bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
-                      >
-                        <Paperclip className="h-3 w-3" />
-                        {ticket.attachments.length}
-                      </span>
-                    )}
-                    {/* Note badge */}
-                    {hasNote && (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <span
-                            data-testid="kanban-ticket-note"
-                            className="inline-flex items-center gap-1 rounded-full bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground cursor-help"
-                          >
-                            <StickyNote className="h-3 w-3" />
-                          </span>
-                        </TooltipTrigger>
-                        <TooltipContent className="max-w-xs whitespace-pre-wrap break-words">
-                          {ticket.note}
-                        </TooltipContent>
-                      </Tooltip>
-                    )}
-
-                    {/* Project tag (connection mode) or worktree name badge */}
-                    {projectTag ? (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
-                        <span
-                          className="h-2 w-2 rounded-full shrink-0"
-                          style={{ backgroundColor: projectTag.color }}
-                        />
-                        {projectTag.name}
-                      </span>
-                    ) : worktreeName ? (
-                      <span className="inline-flex items-center rounded-full bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
-                        {worktreeName}
-                      </span>
-                    ) : null}
-
-                    {/* Connection badge — shown on project board when ticket has connection session */}
-                    {!connectionId && connectionName && (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
-                        <LinkIcon className="h-3 w-3" />
-                        {connectionName}
-                      </span>
-                    )}
-
-                    {/* PR badge */}
-                    {ticket.github_pr_number && ticket.github_pr_url && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          void systemApi.openInChrome(ticket.github_pr_url!)
-                        }}
-                        title={`Open PR #${ticket.github_pr_number} in browser`}
-                        className="inline-flex items-center gap-1 rounded-full bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground hover:bg-muted/60 transition-colors"
-                      >
-                        <GitPullRequest className="h-3 w-3" />#{ticket.github_pr_number}
-                      </button>
-                    )}
-
-                    {/* Creating PR indicator */}
-                    {isCreatingPR && (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                        Creating PR...
-                      </span>
-                    )}
-
-                    {/* Run process alive indicator */}
-                    {isRunProcessAlive && (
-                      <PulseAnimation className="h-3 w-3 text-green-500 shrink-0" />
-                    )}
-
-                    {/* Plan ready badge */}
-                    {ticket.plan_ready && (
-                      <span className="inline-flex items-center rounded-full bg-violet-500/10 border border-violet-500/30 px-2 py-0.5 text-[11px] font-medium text-violet-500">
-                        Plan ready
-                      </span>
-                    )}
-
-                    {/* Error badge */}
-                    {isError && (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-red-500/10 border border-red-500/30 px-2 py-0.5 text-[11px] font-medium text-red-500">
-                        <AlertCircle className="h-3 w-3" />
-                        Error
-                      </span>
-                    )}
-
-                    {(() => {
-                      switch (rightAlignedSlot) {
-                        case 'conflicts': {
-                          const isConflictFlowActive =
-                            conflictFlow?.phase === 'starting' ||
-                            conflictFlow?.phase === 'running' ||
-                            conflictFlow?.phase === 'refreshing'
-                          if (isConflictFlowActive) {
-                            return (
-                              <span
-                                data-testid="kanban-ticket-conflict-progress"
-                                className="ml-auto flex items-center gap-1.5"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  if (conflictFlow?.phase !== 'starting') openAttachedSession()
-                                }}
-                              >
-                                <IndeterminateProgressBar
-                                  mode={ticket.mode || 'build'}
-                                  isFixingConflicts
-                                  className="w-20"
-                                />
-                              </span>
-                            )
-                          }
-
-                          if (mergeConflictMode === 'always-ask') {
-                            return (
-                              <span className="ml-auto" onClick={(e) => e.stopPropagation()}>
-                                <DropdownMenu>
-                                  <DropdownMenuTrigger asChild>
-                                    <Button
-                                      size="sm"
-                                      variant="destructive"
-                                      className="h-6 px-2 text-xs font-semibold"
-                                      data-testid="kanban-ticket-fix-conflicts"
-                                    >
-                                      <AlertTriangle className="h-3.5 w-3.5 mr-1" />
-                                      Fix conflicts
-                                      <ChevronDown className="h-3 w-3 ml-1" />
-                                    </Button>
-                                  </DropdownMenuTrigger>
-                                  <DropdownMenuContent align="end">
-                                    <DropdownMenuItem
-                                      onClick={(e) => {
-                                        e.stopPropagation()
-                                        void startFixFlow('build')
-                                      }}
-                                    >
-                                      <Hammer className="h-4 w-4 mr-2" />
-                                      Fix in Build mode
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem
-                                      onClick={(e) => {
-                                        e.stopPropagation()
-                                        void startFixFlow('plan')
-                                      }}
-                                    >
-                                      <MapIcon className="h-4 w-4 mr-2" />
-                                      Fix in Plan mode
-                                    </DropdownMenuItem>
-                                  </DropdownMenuContent>
-                                </DropdownMenu>
-                              </span>
-                            )
-                          }
-
-                          return (
-                            <Button
-                              size="sm"
-                              variant="destructive"
-                              className="ml-auto h-6 px-2 text-xs font-semibold"
-                              data-testid="kanban-ticket-fix-conflicts"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                void startFixFlow()
-                              }}
-                            >
-                              <AlertTriangle className="h-3.5 w-3.5 mr-1" />
-                              Fix conflicts
-                            </Button>
-                          )
-                        }
-                        case 'busy':
-                          return (
-                            <span
-                              data-testid="kanban-ticket-progress"
-                              className="ml-auto flex items-center gap-1.5"
-                            >
-                              {timerText && (
-                                <span
-                                  className={cn(
-                                    'text-[11px] tabular-nums font-semibold',
-                                    isAsking
-                                      ? 'text-amber-500'
-                                      : ticket.mode === 'build'
-                                        ? 'text-blue-500'
-                                        : 'text-violet-500'
-                                  )}
-                                >
-                                  {timerText}
-                                </span>
-                              )}
-                              <IndeterminateProgressBar
-                                mode={ticket.mode!}
-                                isAsking={isAsking}
-                                className="w-20"
-                              />
-                              {isAsking && (
-                                <span className="text-[11px] font-semibold text-amber-500">
-                                  Question
-                                </span>
-                              )}
-                            </span>
-                          )
-                        case 'reviewing':
-                          return (
-                            <span
-                              data-testid="kanban-ticket-reviewing"
-                              className="ml-auto flex items-center gap-1.5"
-                            >
-                              <IndeterminateProgressBar
-                                mode={ticket.mode || 'build'}
-                                isReviewing
-                                className="w-20"
-                              />
-                            </span>
-                          )
-                        case 'completed-review':
-                          return (
-                            <button
-                              data-testid="kanban-ticket-go-to-review"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                handleGoToReview()
-                              }}
-                              className="ml-auto text-green-500 hover:text-green-400 text-xs cursor-pointer"
-                            >
-                              Go to review
-                            </button>
-                          )
-                        default:
-                          return null
-                      }
-                    })()}
-
-                    {/* Goal mode badge */}
-                    {ticket.goal_mode &&
-                      (() => {
-                        const isComplete = goalStatus === 'complete'
-                        const isPaused = goalStatus === 'paused' || goalStatus === 'budgetLimited'
-                        const tooltipText = isComplete
-                          ? 'Goal complete'
-                          : isPaused
-                            ? 'Goal paused'
-                            : 'Goal mode'
-
-                        const badge = (
-                          <span
-                            data-testid="kanban-ticket-goal"
-                            onContextMenu={isPaused ? (e) => e.stopPropagation() : undefined}
-                            className={cn(
-                              'inline-flex items-center rounded-full border border-black/20 bg-white px-1.5 py-0.5 text-black shadow-sm',
-                              isPaused ? 'cursor-context-menu' : 'cursor-help',
-                              !hasRightAlignedStatus && 'ml-auto'
-                            )}
-                          >
-                            <span className="relative inline-flex h-3 w-3 items-center justify-center">
-                              <CheckeredFlagIcon className="h-3 w-3" />
-                              {isComplete && (
-                                <span className="absolute -right-1 -top-1 inline-flex h-2.5 w-2.5 items-center justify-center rounded-full bg-emerald-500 text-white ring-1 ring-white">
-                                  <Check className="h-2 w-2 stroke-[3]" />
-                                </span>
-                              )}
-                              {isPaused && (
-                                <span className="absolute -right-1 -top-1 inline-flex h-2.5 w-2.5 items-center justify-center rounded-full bg-amber-500 text-white ring-1 ring-white">
-                                  <Pause className="h-1.5 w-1.5 fill-current stroke-[3]" />
-                                </span>
-                              )}
-                            </span>
-                          </span>
-                        )
-
-                        return isPaused ? (
-                          <ContextMenu>
-                            <Tooltip>
-                              <ContextMenuTrigger asChild>
-                                <TooltipTrigger asChild>{badge}</TooltipTrigger>
-                              </ContextMenuTrigger>
-                              <TooltipContent>{tooltipText}</TooltipContent>
-                            </Tooltip>
-                            <ContextMenuContent>
-                              <ContextMenuItem
-                                data-testid="ctx-resume-goal"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  void handleResumeGoal()
-                                }}
-                                className="gap-2"
-                              >
-                                <Play className="h-3.5 w-3.5" />
-                                Resume goal
-                              </ContextMenuItem>
-                            </ContextMenuContent>
-                          </ContextMenu>
-                        ) : (
-                          <Tooltip>
-                            <TooltipTrigger asChild>{badge}</TooltipTrigger>
-                            <TooltipContent>{tooltipText}</TooltipContent>
-                          </Tooltip>
-                        )
-                      })()}
-                  </div>
+            {/* Title + top-right indicators */}
+            <div className="flex items-start justify-between gap-2">
+              <p className="text-sm font-medium leading-snug text-foreground min-w-0 flex-1 break-words">{ticket.title}</p>
+              <div className="flex items-center gap-1.5 shrink-0">
+                {tokenText && (
+                  <span className="text-[11px] tabular-nums text-muted-foreground">
+                    {tokenText}
+                  </span>
                 )}
+                {blockingDiagnostic && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="inline-flex text-destructive">
+                        <AlertTriangle className="h-3.5 w-3.5" />
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" sideOffset={8}>
+                      {blockingDiagnostic.message}
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+                {ticket.external_provider && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      if (ticket.external_url) {
+                        systemApi.openInChrome(ticket.external_url)
+                      }
+                    }}
+                    className="transition-opacity hover:opacity-80"
+                    title={`${getProviderLabel(ticket.external_provider)} #${ticket.external_id}`}
+                  >
+                    <ProviderIcon provider={ticket.external_provider} />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Badges + progress row */}
+            {(hasAttachments || hasNote || worktreeName || projectTag || connectionName || ticket.plan_ready || isError || rightAlignedSlot || isArchived || isBlocked || blockingDiagnostic || isRunProcessAlive || ticket.github_pr_number || isCreatingPR || isForwardedToTelegram || ticket.goal_mode) && (
+              <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                {/* Archived badge */}
+                {isArchived && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                    <Archive className="h-3 w-3" />
+                    Archived
+                  </span>
+                )}
+                {isForwardedToTelegram && (
+                  <span
+                    title="Forwarding to Telegram"
+                    className="inline-flex items-center rounded-full bg-[#229ED9]/10 border border-[#229ED9]/30 px-1.5 py-0.5 text-[#229ED9]"
+                  >
+                    <Send className="h-3 w-3" />
+                  </span>
+                )}
+                {blockingDiagnostic && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-destructive/10 border border-destructive/30 px-2 py-0.5 text-[11px] font-medium text-destructive">
+                    <AlertTriangle className="h-3 w-3" />
+                    Markdown
+                  </span>
+                )}
+                {/* Blocked badge */}
+                {isBlocked && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 text-[11px] font-medium text-amber-500">
+                    <Lock className="h-3 w-3" />
+                    {unresolvedBlockerCount}
+                  </span>
+                )}
+                {/* Attachment badge */}
+                {hasAttachments && (
+                  <span
+                    data-testid="kanban-ticket-attachments"
+                    className="inline-flex items-center gap-1 rounded-full bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
+                  >
+                    <Paperclip className="h-3 w-3" />
+                    {ticket.attachments.length}
+                  </span>
+                )}
+                {/* Note badge */}
+                {hasNote && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span
+                        data-testid="kanban-ticket-note"
+                        className="inline-flex items-center gap-1 rounded-full bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground cursor-help"
+                      >
+                        <StickyNote className="h-3 w-3" />
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-xs whitespace-pre-wrap break-words">
+                      {ticket.note}
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+
+                {/* Project tag (connection mode) or worktree name badge */}
+                {projectTag ? (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                    <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: projectTag.color }} />
+                    {projectTag.name}
+                  </span>
+                ) : worktreeName ? (
+                  <span className="inline-flex items-center rounded-full bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                    {worktreeName}
+                  </span>
+                ) : null}
+
+                {/* Connection badge — shown on project board when ticket has connection session */}
+                {!connectionId && connectionName && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                    <LinkIcon className="h-3 w-3" />
+                    {connectionName}
+                  </span>
+                )}
+
+                {/* PR badge */}
+                {ticket.github_pr_number && ticket.github_pr_url && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      systemApi.openInChrome(ticket.github_pr_url!)
+                    }}
+                    title={`Open PR #${ticket.github_pr_number} in browser`}
+                    className="inline-flex items-center gap-1 rounded-full bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground hover:bg-muted/60 transition-colors"
+                  >
+                    <GitPullRequest className="h-3 w-3" />
+                    #{ticket.github_pr_number}
+                  </button>
+                )}
+
+                {/* Creating PR indicator */}
+                {isCreatingPR && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Creating PR...
+                  </span>
+                )}
+
+                {/* Run process alive indicator */}
+                {isRunProcessAlive && (
+                  <PulseAnimation className="h-3 w-3 text-green-500 shrink-0" />
+                )}
+
+                {/* Plan ready badge */}
+                {ticket.plan_ready && (
+                  <span className="inline-flex items-center rounded-full bg-violet-500/10 border border-violet-500/30 px-2 py-0.5 text-[11px] font-medium text-violet-500">
+                    Plan ready
+                  </span>
+                )}
+
+                {/* Error badge */}
+                {isError && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-red-500/10 border border-red-500/30 px-2 py-0.5 text-[11px] font-medium text-red-500">
+                    <AlertCircle className="h-3 w-3" />
+                    Error
+                  </span>
+                )}
+
+                {(() => {
+                  switch (rightAlignedSlot) {
+                    case 'conflicts': {
+                      const isConflictFlowActive =
+                        conflictFlow?.phase === 'starting' ||
+                        conflictFlow?.phase === 'running' ||
+                        conflictFlow?.phase === 'refreshing'
+                      if (isConflictFlowActive) {
+                        return (
+                          <span
+                            data-testid="kanban-ticket-conflict-progress"
+                            className="ml-auto flex items-center gap-1.5"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              if (conflictFlow?.phase !== 'starting') openAttachedSession()
+                            }}
+                          >
+                            <IndeterminateProgressBar
+                              mode={ticket.mode || 'build'}
+                              isFixingConflicts
+                              className="w-20"
+                            />
+                          </span>
+                        )
+                      }
+
+                      if (mergeConflictMode === 'always-ask') {
+                        return (
+                          <span className="ml-auto" onClick={(e) => e.stopPropagation()}>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  size="sm"
+                                  variant="destructive"
+                                  className="h-6 px-2 text-xs font-semibold"
+                                  data-testid="kanban-ticket-fix-conflicts"
+                                >
+                                  <AlertTriangle className="h-3.5 w-3.5 mr-1" />
+                                  Fix conflicts
+                                  <ChevronDown className="h-3 w-3 ml-1" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    void startFixFlow('build')
+                                  }}
+                                >
+                                  <Hammer className="h-4 w-4 mr-2" />
+                                  Fix in Build mode
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    void startFixFlow('plan')
+                                  }}
+                                >
+                                  <MapIcon className="h-4 w-4 mr-2" />
+                                  Fix in Plan mode
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </span>
+                        )
+                      }
+
+                      return (
+                        <Button
+                          size="sm"
+                          variant="destructive"
+                          className="ml-auto h-6 px-2 text-xs font-semibold"
+                          data-testid="kanban-ticket-fix-conflicts"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            void startFixFlow()
+                          }}
+                        >
+                          <AlertTriangle className="h-3.5 w-3.5 mr-1" />
+                          Fix conflicts
+                        </Button>
+                      )
+                    }
+                    case 'busy':
+                      return (
+                        <span data-testid="kanban-ticket-progress" className="ml-auto flex items-center gap-1.5">
+                          {timerText && (
+                            <span className={cn(
+                              'text-[11px] tabular-nums font-semibold',
+                              isAsking
+                                ? 'text-amber-500'
+                                : ticket.mode === 'build'
+                                  ? 'text-blue-500'
+                                  : 'text-violet-500'
+                            )}>
+                              {timerText}
+                            </span>
+                          )}
+                          <IndeterminateProgressBar mode={ticket.mode!} isAsking={isAsking} className="w-20" />
+                          {isAsking && (
+                            <span className="text-[11px] font-semibold text-amber-500">
+                              Question
+                            </span>
+                          )}
+                        </span>
+                      )
+                    case 'reviewing':
+                      return (
+                        <span data-testid="kanban-ticket-reviewing" className="ml-auto flex items-center gap-1.5">
+                          <IndeterminateProgressBar mode={ticket.mode || 'build'} isReviewing className="w-20" />
+                        </span>
+                      )
+                    case 'completed-review':
+                      return (
+                        <button
+                          data-testid="kanban-ticket-go-to-review"
+                          onClick={(e) => { e.stopPropagation(); handleGoToReview() }}
+                          className="ml-auto text-green-500 hover:text-green-400 text-xs cursor-pointer"
+                        >
+                          Go to review
+                        </button>
+                      )
+                    default:
+                      return null
+                  }
+                })()}
+
+                {/* Goal mode badge */}
+                {ticket.goal_mode && (() => {
+                  const isComplete = goalStatus === 'complete'
+                  const isPaused = goalStatus === 'paused' || goalStatus === 'budgetLimited'
+                  const tooltipText = isComplete ? 'Goal complete' : isPaused ? 'Goal paused' : 'Goal mode'
+
+                  const badge = (
+                    <span
+                      data-testid="kanban-ticket-goal"
+                      onContextMenu={isPaused ? (e) => e.stopPropagation() : undefined}
+                      className={cn(
+                        'inline-flex items-center rounded-full border border-black/20 bg-white px-1.5 py-0.5 text-black shadow-sm',
+                        isPaused ? 'cursor-context-menu' : 'cursor-help',
+                        !hasRightAlignedStatus && 'ml-auto'
+                      )}
+                    >
+                      <span className="relative inline-flex h-3 w-3 items-center justify-center">
+                        <CheckeredFlagIcon className="h-3 w-3" />
+                        {isComplete && (
+                          <span className="absolute -right-1 -top-1 inline-flex h-2.5 w-2.5 items-center justify-center rounded-full bg-emerald-500 text-white ring-1 ring-white">
+                            <Check className="h-2 w-2 stroke-[3]" />
+                          </span>
+                        )}
+                        {isPaused && (
+                          <span className="absolute -right-1 -top-1 inline-flex h-2.5 w-2.5 items-center justify-center rounded-full bg-amber-500 text-white ring-1 ring-white">
+                            <Pause className="h-1.5 w-1.5 fill-current stroke-[3]" />
+                          </span>
+                        )}
+                      </span>
+                    </span>
+                  )
+
+                  return isPaused && !blockingDiagnostic ? (
+                    <ContextMenu>
+                      <Tooltip>
+                        <ContextMenuTrigger asChild>
+                          <TooltipTrigger asChild>{badge}</TooltipTrigger>
+                        </ContextMenuTrigger>
+                        <TooltipContent>{tooltipText}</TooltipContent>
+                      </Tooltip>
+                      <ContextMenuContent>
+                        <ContextMenuItem
+                          data-testid="ctx-resume-goal"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            void handleResumeGoal()
+                          }}
+                          className="gap-2"
+                        >
+                          <Play className="h-3.5 w-3.5" />
+                          Resume goal
+                        </ContextMenuItem>
+                      </ContextMenuContent>
+                    </ContextMenu>
+                  ) : (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        {badge}
+                      </TooltipTrigger>
+                      <TooltipContent>{tooltipText}</TooltipContent>
+                    </Tooltip>
+                  )
+                })()}
+              </div>
+            )}
               </div>
             </PopoverAnchor>
           </ContextMenuTrigger>
 
           <ContextMenuContent>
-            {/* Todo tickets without worktree: pre-assign */}
-            {isSimpleTicket && isTodo && !ticket.worktree_id && (
+          {blockingDiagnostic ? (
+            <>
+              {isFlowTicket && !(connectionSession && !connectionName) && (
+                <ContextMenuItem
+                  data-testid="ctx-jump-to-session"
+                  onClick={handleJumpToSession}
+                  className="gap-2"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  Jump to session
+                </ContextMenuItem>
+              )}
+
+              {ticket.worktree_id && (
+                <>
+                  <ContextMenuItem
+                    data-testid="ctx-edit-context"
+                    onClick={handleEditContext}
+                    className="gap-2"
+                  >
+                    <FileText className="h-3.5 w-3.5" />
+                    Edit Context
+                  </ContextMenuItem>
+                  <ContextMenuItem
+                    data-testid="ctx-toggle-pin"
+                    onClick={handleTogglePin}
+                    className="gap-2"
+                  >
+                    {isPinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
+                    {isPinned ? 'Unpin worktree' : 'Pin worktree'}
+                  </ContextMenuItem>
+                </>
+              )}
+
+              {!isFlowTicket && !ticket.worktree_id && (
+                <ContextMenuItem disabled className="text-muted-foreground text-xs">
+                  Resolve markdown diagnostic before editing
+                </ContextMenuItem>
+              )}
+            </>
+          ) : (
+            <>
+          {/* Todo tickets without worktree: pre-assign */}
+          {isSimpleTicket && isTodo && !ticket.worktree_id && (
+            <ContextMenuItem
+              data-testid="ctx-assign-worktree"
+              onClick={() => setShowPreAssignPicker(true)}
+              className="gap-2"
+            >
+              <GitBranch className="h-3.5 w-3.5" />
+              Assign worktree
+            </ContextMenuItem>
+          )}
+
+          {/* Todo tickets WITH pre-assigned worktree: change or unassign */}
+          {isSimpleTicket && isTodo && ticket.worktree_id && (
+            <>
               <ContextMenuItem
-                data-testid="ctx-assign-worktree"
+                data-testid="ctx-change-worktree"
                 onClick={() => setShowPreAssignPicker(true)}
                 className="gap-2"
               >
                 <GitBranch className="h-3.5 w-3.5" />
-                Assign worktree
+                Change worktree
               </ContextMenuItem>
-            )}
-
-            {/* Todo tickets WITH pre-assigned worktree: change or unassign */}
-            {isSimpleTicket && isTodo && ticket.worktree_id && (
-              <>
-                <ContextMenuItem
-                  data-testid="ctx-change-worktree"
-                  onClick={() => setShowPreAssignPicker(true)}
-                  className="gap-2"
-                >
-                  <GitBranch className="h-3.5 w-3.5" />
-                  Change worktree
-                </ContextMenuItem>
-                <ContextMenuItem
-                  data-testid="ctx-unassign-worktree"
-                  onClick={handleUnassignWorktree}
-                  className="gap-2"
-                >
-                  <X className="h-3.5 w-3.5" />
-                  Unassign worktree
-                </ContextMenuItem>
-              </>
-            )}
-
-            {/* Non-todo simple tickets: full assign flow (existing behavior) */}
-            {isSimpleTicket && !isTodo && (
               <ContextMenuItem
-                data-testid="ctx-assign-worktree"
-                onClick={() => setShowWorktreePicker(true)}
+                data-testid="ctx-unassign-worktree"
+                onClick={handleUnassignWorktree}
                 className="gap-2"
               >
-                <GitBranch className="h-3.5 w-3.5" />
-                Assign to worktree
-              </ContextMenuItem>
-            )}
-
-            {/* Jump to session — only for flow tickets with reachable session */}
-            {isFlowTicket && !(connectionSession && !connectionName) && (
-              <ContextMenuItem
-                data-testid="ctx-jump-to-session"
-                onClick={handleJumpToSession}
-                className="gap-2"
-              >
-                <ExternalLink className="h-3.5 w-3.5" />
-                Jump to session
-              </ContextMenuItem>
-            )}
-
-            {/* Worktree actions: edit context & pin/unpin (when worktree assigned) */}
-            {ticket.worktree_id && (
-              <>
-                <ContextMenuItem
-                  data-testid="ctx-edit-context"
-                  onClick={handleEditContext}
-                  className="gap-2"
-                >
-                  <FileText className="h-3.5 w-3.5" />
-                  Edit Context
-                </ContextMenuItem>
-                <ContextMenuItem
-                  data-testid="ctx-toggle-pin"
-                  onClick={handleTogglePin}
-                  className="gap-2"
-                >
-                  {isPinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
-                  {isPinned ? 'Unpin worktree' : 'Pin worktree'}
-                </ContextMenuItem>
-              </>
-            )}
-
-            {/* Update status on remote platform */}
-            {isExternalTicket && (
-              <ContextMenuItem
-                data-testid="ctx-update-remote-status"
-                onClick={() => setShowStatusUpdate(true)}
-                className="gap-2"
-              >
-                <RefreshCw className="h-3.5 w-3.5" />
-                Update on {getProviderLabel(ticket.external_provider!)}
-              </ContextMenuItem>
-            )}
-
-            {/* Attach PR */}
-            {hasGitRemote && (
-              <ContextMenuItem
-                data-testid="ctx-attach-pr"
-                onClick={() => setShowPRPicker(true)}
-                className="gap-2"
-              >
-                <GitPullRequest className="h-3.5 w-3.5" />
-                Attach PR
-              </ContextMenuItem>
-            )}
-
-            <ContextMenuItem onClick={() => setShowNoteEditor(true)} className="gap-2">
-              <StickyNote className="h-3.5 w-3.5" />
-              {hasNote ? 'Edit note' : 'Add note'}
-            </ContextMenuItem>
-            {hasNote && (
-              <ContextMenuItem onClick={() => handleSaveNote(null)} className="gap-2">
                 <X className="h-3.5 w-3.5" />
-                Remove note
+                Unassign worktree
               </ContextMenuItem>
-            )}
+            </>
+          )}
 
-            <ContextMenuSeparator />
-            <ContextMenuSub>
-              <ContextMenuSubTrigger data-testid="ctx-mark-submenu" className="gap-2">
-                <Sparkles className="h-3.5 w-3.5" />
-                Mark
-              </ContextMenuSubTrigger>
-              <ContextMenuSubContent>
-                <ContextMenuRadioGroup
-                  value={ticket.mark ?? 'none'}
-                  onValueChange={handleMarkChange}
-                >
-                  <ContextMenuRadioItem value="none">No Mark</ContextMenuRadioItem>
-                  <ContextMenuRadioItem value="common">
-                    <span className="h-2 w-2 rounded-full bg-green-500 inline-block mr-2" />
-                    Common
-                  </ContextMenuRadioItem>
-                  <ContextMenuRadioItem value="rare">
-                    <span className="h-2 w-2 rounded-full bg-blue-500 inline-block mr-2" />
-                    Rare
-                  </ContextMenuRadioItem>
-                  <ContextMenuRadioItem value="epic">
-                    <span className="h-2 w-2 rounded-full bg-purple-500 inline-block mr-2" />
-                    Epic
-                  </ContextMenuRadioItem>
-                  <ContextMenuRadioItem value="legendary">
-                    <span className="h-2 w-2 rounded-full bg-orange-500 inline-block mr-2" />
-                    Legendary
-                  </ContextMenuRadioItem>
-                </ContextMenuRadioGroup>
-              </ContextMenuSubContent>
-            </ContextMenuSub>
+          {/* Non-todo simple tickets: full assign flow (existing behavior) */}
+          {isSimpleTicket && !isTodo && (
+            <ContextMenuItem
+              data-testid="ctx-assign-worktree"
+              onClick={() => setShowWorktreePicker(true)}
+              className="gap-2"
+            >
+              <GitBranch className="h-3.5 w-3.5" />
+              Assign to worktree
+            </ContextMenuItem>
+          )}
 
-            <ContextMenuSub>
-              <ContextMenuSubTrigger data-testid="ctx-dependencies-submenu" className="gap-2">
-                <Link2 className="h-3.5 w-3.5" />
-                Dependencies
-              </ContextMenuSubTrigger>
-              <ContextMenuSubContent>
-                <ContextMenuItem
-                  data-testid="ctx-add-dependency"
-                  onClick={() => useKanbanStore.getState().enterDependencyMode(ticket.id)}
-                  className="gap-2"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  Add dependency...
-                </ContextMenuItem>
-                {blockerTickets.length > 0 && <ContextMenuSeparator />}
-                {blockerTickets.map((blocker) => (
-                  <ContextMenuItem
-                    key={blocker.id}
-                    className="gap-2 justify-between"
-                    onSelect={(e) => {
-                      e.preventDefault()
-                      useKanbanStore.getState().removeDependency(ticket.id, blocker.id)
-                    }}
-                  >
-                    <span className="truncate max-w-[180px]">{blocker.title}</span>
-                    <X className="h-3 w-3 shrink-0 text-muted-foreground hover:text-foreground" />
-                  </ContextMenuItem>
-                ))}
-                {blockerTickets.length === 0 && (
-                  <ContextMenuItem disabled className="text-muted-foreground text-xs">
-                    (No dependencies)
-                  </ContextMenuItem>
-                )}
-              </ContextMenuSubContent>
-            </ContextMenuSub>
+          {/* Jump to session — only for flow tickets with reachable session */}
+          {isFlowTicket && !(connectionSession && !connectionName) && (
+            <ContextMenuItem
+              data-testid="ctx-jump-to-session"
+              onClick={handleJumpToSession}
+              className="gap-2"
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+              Jump to session
+            </ContextMenuItem>
+          )}
 
-            {!isExternalTicket && (
+          {/* Worktree actions: edit context & pin/unpin (when worktree assigned) */}
+          {ticket.worktree_id && (
+            <>
               <ContextMenuItem
-                data-testid="ctx-move-to-project"
-                onClick={() => setShowMoveToProject(true)}
+                data-testid="ctx-edit-context"
+                onClick={handleEditContext}
                 className="gap-2"
               >
-                <FolderInput className="h-3.5 w-3.5" />
-                Move to project…
+                <FileText className="h-3.5 w-3.5" />
+                Edit Context
               </ContextMenuItem>
-            )}
+              <ContextMenuItem
+                data-testid="ctx-toggle-pin"
+                onClick={handleTogglePin}
+                className="gap-2"
+              >
+                {isPinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
+                {isPinned ? 'Unpin worktree' : 'Pin worktree'}
+              </ContextMenuItem>
+            </>
+          )}
 
-            <ContextMenuSeparator />
+          {/* Update status on remote platform */}
+          {isExternalTicket && (
+            <ContextMenuItem
+              data-testid="ctx-update-remote-status"
+              onClick={() => setShowStatusUpdate(true)}
+              className="gap-2"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              Update on {getProviderLabel(ticket.external_provider!)}
+            </ContextMenuItem>
+          )}
 
-            {/* Archive/Unarchive (done tickets) or Delete (all others) */}
-            {isDone ? (
-              isArchived ? (
+          {/* Attach PR */}
+          {hasGitRemote && (
+            <ContextMenuItem
+              data-testid="ctx-attach-pr"
+              onClick={() => setShowPRPicker(true)}
+              className="gap-2"
+            >
+              <GitPullRequest className="h-3.5 w-3.5" />
+              Attach PR
+            </ContextMenuItem>
+          )}
+
+          <ContextMenuItem onClick={() => setShowNoteEditor(true)} className="gap-2">
+            <StickyNote className="h-3.5 w-3.5" />
+            {hasNote ? 'Edit note' : 'Add note'}
+          </ContextMenuItem>
+          {hasNote && (
+            <ContextMenuItem onClick={() => handleSaveNote(null)} className="gap-2">
+              <X className="h-3.5 w-3.5" />
+              Remove note
+            </ContextMenuItem>
+          )}
+
+          <ContextMenuSeparator />
+          <ContextMenuSub>
+            <ContextMenuSubTrigger data-testid="ctx-mark-submenu" className="gap-2">
+              <Sparkles className="h-3.5 w-3.5" />
+              Mark
+            </ContextMenuSubTrigger>
+            <ContextMenuSubContent>
+              <ContextMenuRadioGroup value={ticket.mark ?? 'none'} onValueChange={handleMarkChange}>
+                <ContextMenuRadioItem value="none">No Mark</ContextMenuRadioItem>
+                <ContextMenuRadioItem value="common">
+                  <span className="h-2 w-2 rounded-full bg-green-500 inline-block mr-2" />
+                  Common
+                </ContextMenuRadioItem>
+                <ContextMenuRadioItem value="rare">
+                  <span className="h-2 w-2 rounded-full bg-blue-500 inline-block mr-2" />
+                  Rare
+                </ContextMenuRadioItem>
+                <ContextMenuRadioItem value="epic">
+                  <span className="h-2 w-2 rounded-full bg-purple-500 inline-block mr-2" />
+                  Epic
+                </ContextMenuRadioItem>
+                <ContextMenuRadioItem value="legendary">
+                  <span className="h-2 w-2 rounded-full bg-orange-500 inline-block mr-2" />
+                  Legendary
+                </ContextMenuRadioItem>
+              </ContextMenuRadioGroup>
+            </ContextMenuSubContent>
+          </ContextMenuSub>
+
+          <ContextMenuSub>
+            <ContextMenuSubTrigger data-testid="ctx-dependencies-submenu" className="gap-2">
+              <Link2 className="h-3.5 w-3.5" />
+              Dependencies
+            </ContextMenuSubTrigger>
+            <ContextMenuSubContent>
+              <ContextMenuItem
+                data-testid="ctx-add-dependency"
+                onClick={() => useKanbanStore.getState().enterDependencyMode(ticket.id, ticket.project_id)}
+                className="gap-2"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Add dependency...
+              </ContextMenuItem>
+              {blockerTickets.length > 0 && <ContextMenuSeparator />}
+              {blockerTickets.map(blocker => (
                 <ContextMenuItem
-                  data-testid="ctx-unarchive-ticket"
-                  onClick={handleUnarchive}
-                  className="gap-2"
+                  key={`${blocker.project_id}:${blocker.id}`}
+                  className="gap-2 justify-between"
+                  onSelect={(e) => {
+                    e.preventDefault()
+                    useKanbanStore.getState().removeDependency(
+                      { projectId: ticket.project_id, ticketId: ticket.id },
+                      { projectId: blocker.project_id, ticketId: blocker.id }
+                    )
+                  }}
                 >
-                  <ArchiveRestore className="h-3.5 w-3.5" />
-                  Unarchive
+                  <span className="truncate max-w-[180px]">{blocker.title}</span>
+                  <X className="h-3 w-3 shrink-0 text-muted-foreground hover:text-foreground" />
                 </ContextMenuItem>
-              ) : (
-                <ContextMenuItem
-                  data-testid="ctx-archive-ticket"
-                  onClick={handleArchive}
-                  className="gap-2"
-                >
-                  <Archive className="h-3.5 w-3.5" />
-                  Archive
+              ))}
+              {blockerTickets.length === 0 && (
+                <ContextMenuItem disabled className="text-muted-foreground text-xs">
+                  (No dependencies)
                 </ContextMenuItem>
-              )
+              )}
+            </ContextMenuSubContent>
+          </ContextMenuSub>
+
+          {!isExternalTicket && (
+            <ContextMenuItem
+              data-testid="ctx-move-to-project"
+              onClick={() => setShowMoveToProject(true)}
+              className="gap-2"
+            >
+              <FolderInput className="h-3.5 w-3.5" />
+              Move to project…
+            </ContextMenuItem>
+          )}
+
+          <ContextMenuSeparator />
+
+          {/* Archive/Unarchive (done tickets) or Delete (all others) */}
+          {isDone ? (
+            isArchived ? (
+              <ContextMenuItem
+                data-testid="ctx-unarchive-ticket"
+                onClick={handleUnarchive}
+                className="gap-2"
+              >
+                <ArchiveRestore className="h-3.5 w-3.5" />
+                Unarchive
+              </ContextMenuItem>
             ) : (
               <ContextMenuItem
-                data-testid="ctx-delete-ticket"
-                onClick={() => setShowDeleteConfirm(true)}
-                className="gap-2 text-red-500 focus:text-red-500"
+                data-testid="ctx-archive-ticket"
+                onClick={handleArchive}
+                className="gap-2"
               >
-                <Trash2 className="h-3.5 w-3.5" />
-                Delete
+                <Archive className="h-3.5 w-3.5" />
+                Archive
               </ContextMenuItem>
-            )}
+            )
+          ) : (
+            <ContextMenuItem
+              data-testid="ctx-delete-ticket"
+              onClick={() => setShowDeleteConfirm(true)}
+              className="gap-2 text-red-500 focus:text-red-500"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Delete
+            </ContextMenuItem>
+          )}
+            </>
+          )}
           </ContextMenuContent>
         </ContextMenu>
         <AttachPRPopover ticket={ticket} open={showPRPicker} onOpenChange={setShowPRPicker} />

@@ -104,7 +104,9 @@ describe('kanbanApi', () => {
       title: 'Fix the board',
       description: null
     }
-    await expect(kanbanApi.ticket.create<typeof ticket, typeof data>(data)).resolves.toEqual(ticket)
+    await expect(
+      kanbanApi.ticket.create<typeof ticket, typeof data>('project-1', data)
+    ).resolves.toEqual(ticket)
     expect(request).toHaveBeenCalledWith('kanban.ticket.create', data)
   })
 
@@ -130,10 +132,13 @@ describe('kanbanApi', () => {
         }
       ]
     }
-    await expect(kanbanApi.ticket.createBatch<typeof result, typeof data>(data)).resolves.toEqual(
-      result
-    )
-    expect(request).toHaveBeenCalledWith('kanban.ticket.createBatch', data)
+    await expect(
+      kanbanApi.ticket.createBatch<typeof result, typeof data>('project-1', data)
+    ).resolves.toEqual(result)
+    expect(request).toHaveBeenCalledWith('kanban.ticket.createBatch', {
+      projectId: 'project-1',
+      data
+    })
   })
 
   it('routes ticket.update through the renderer RPC client', async () => {
@@ -153,9 +158,10 @@ describe('kanbanApi', () => {
       column: 'in_progress'
     }
     await expect(
-      kanbanApi.ticket.update<typeof ticket, typeof data>('ticket-1', data)
+      kanbanApi.ticket.update<typeof ticket, typeof data>('project-1', 'ticket-1', data)
     ).resolves.toEqual(ticket)
     expect(request).toHaveBeenCalledWith('kanban.ticket.update', {
+      projectId: 'project-1',
       id: 'ticket-1',
       data
     })
@@ -167,8 +173,11 @@ describe('kanbanApi', () => {
 
     setRendererRpcClient({ request, subscribe })
 
-    await expect(kanbanApi.ticket.delete('ticket-1')).resolves.toBe(true)
-    expect(request).toHaveBeenCalledWith('kanban.ticket.delete', { id: 'ticket-1' })
+    await expect(kanbanApi.ticket.delete('project-1', 'ticket-1')).resolves.toBe(true)
+    expect(request).toHaveBeenCalledWith('kanban.ticket.delete', {
+      projectId: 'project-1',
+      id: 'ticket-1'
+    })
   })
 
   it('routes ticket.archive through the renderer RPC client', async () => {
@@ -184,8 +193,13 @@ describe('kanbanApi', () => {
 
     setRendererRpcClient({ request, subscribe })
 
-    await expect(kanbanApi.ticket.archive<typeof ticket>('ticket-1')).resolves.toEqual(ticket)
-    expect(request).toHaveBeenCalledWith('kanban.ticket.archive', { id: 'ticket-1' })
+    await expect(
+      kanbanApi.ticket.archive<typeof ticket>('project-1', 'ticket-1')
+    ).resolves.toEqual(ticket)
+    expect(request).toHaveBeenCalledWith('kanban.ticket.archive', {
+      projectId: 'project-1',
+      id: 'ticket-1'
+    })
   })
 
   it('routes ticket.archiveAllDone through the renderer RPC client', async () => {
@@ -213,8 +227,13 @@ describe('kanbanApi', () => {
 
     setRendererRpcClient({ request, subscribe })
 
-    await expect(kanbanApi.ticket.unarchive<typeof ticket>('ticket-1')).resolves.toEqual(ticket)
-    expect(request).toHaveBeenCalledWith('kanban.ticket.unarchive', { id: 'ticket-1' })
+    await expect(
+      kanbanApi.ticket.unarchive<typeof ticket>('project-1', 'ticket-1')
+    ).resolves.toEqual(ticket)
+    expect(request).toHaveBeenCalledWith('kanban.ticket.unarchive', {
+      projectId: 'project-1',
+      id: 'ticket-1'
+    })
   })
 
   it('routes ticket.detachWorktree through the renderer RPC client', async () => {
@@ -242,10 +261,11 @@ describe('kanbanApi', () => {
 
     setRendererRpcClient({ request, subscribe })
 
-    await expect(kanbanApi.ticket.move<typeof ticket>('ticket-1', 'review', 42)).resolves.toEqual(
-      ticket
-    )
+    await expect(
+      kanbanApi.ticket.move<typeof ticket>('project-1', 'ticket-1', 'review', 42)
+    ).resolves.toEqual(ticket)
     expect(request).toHaveBeenCalledWith('kanban.ticket.move', {
+      projectId: 'project-1',
       id: 'ticket-1',
       column: 'review',
       sortOrder: 42
@@ -266,9 +286,10 @@ describe('kanbanApi', () => {
     setRendererRpcClient({ request, subscribe })
 
     await expect(
-      kanbanApi.ticket.moveToProject<typeof ticket>('ticket-1', 'project-2')
+      kanbanApi.ticket.moveToProject<typeof ticket>('project-1', 'ticket-1', 'project-2')
     ).resolves.toEqual(ticket)
     expect(request).toHaveBeenCalledWith('kanban.ticket.moveToProject', {
+      projectId: 'project-1',
       id: 'ticket-1',
       targetProjectId: 'project-2'
     })
@@ -280,8 +301,9 @@ describe('kanbanApi', () => {
 
     setRendererRpcClient({ request, subscribe })
 
-    await expect(kanbanApi.ticket.reorder('ticket-1', 42)).resolves.toBeUndefined()
+    await expect(kanbanApi.ticket.reorder('project-1', 'ticket-1', 42)).resolves.toBeUndefined()
     expect(request).toHaveBeenCalledWith('kanban.ticket.reorder', {
+      projectId: 'project-1',
       id: 'ticket-1',
       sortOrder: 42
     })
@@ -299,10 +321,11 @@ describe('kanbanApi', () => {
 
     setRendererRpcClient({ request, subscribe })
 
-    await expect(kanbanApi.ticket.addTokens<typeof ticket>('ticket-1', 128)).resolves.toEqual(
-      ticket
-    )
+    await expect(
+      kanbanApi.ticket.addTokens<typeof ticket>('project-1', 'ticket-1', 128)
+    ).resolves.toEqual(ticket)
     expect(request).toHaveBeenCalledWith('kanban.ticket.addTokens', {
+      projectId: 'project-1',
       id: 'ticket-1',
       tokens: 128
     })
@@ -314,8 +337,11 @@ describe('kanbanApi', () => {
 
     setRendererRpcClient({ request, subscribe })
 
-    await expect(kanbanApi.dependency.removeAll('ticket-1')).resolves.toBe(2)
-    expect(request).toHaveBeenCalledWith('kanban.dependency.removeAll', { id: 'ticket-1' })
+    await expect(kanbanApi.dependency.removeAll('project-1', 'ticket-1')).resolves.toBe(2)
+    expect(request).toHaveBeenCalledWith('kanban.dependency.removeAll', {
+      projectId: 'project-1',
+      id: 'ticket-1'
+    })
   })
 
   it('routes dependency.add through the renderer RPC client', async () => {
@@ -325,8 +351,11 @@ describe('kanbanApi', () => {
 
     setRendererRpcClient({ request, subscribe })
 
-    await expect(kanbanApi.dependency.add('ticket-1', 'ticket-2')).resolves.toEqual(result)
+    await expect(kanbanApi.dependency.add('project-1', 'ticket-1', 'ticket-2')).resolves.toEqual(
+      result
+    )
     expect(request).toHaveBeenCalledWith('kanban.dependency.add', {
+      projectId: 'project-1',
       dependentId: 'ticket-1',
       blockerId: 'ticket-2'
     })
@@ -338,8 +367,9 @@ describe('kanbanApi', () => {
 
     setRendererRpcClient({ request, subscribe })
 
-    await expect(kanbanApi.dependency.remove('ticket-1', 'ticket-2')).resolves.toBe(true)
+    await expect(kanbanApi.dependency.remove('project-1', 'ticket-1', 'ticket-2')).resolves.toBe(true)
     expect(request).toHaveBeenCalledWith('kanban.dependency.remove', {
+      projectId: 'project-1',
       dependentId: 'ticket-1',
       blockerId: 'ticket-2'
     })
@@ -473,5 +503,101 @@ describe('kanbanApi', () => {
       ticketId: 'ticket-1',
       projectId: 'project-1'
     })
+  })
+
+  it('routes config operations through the renderer RPC client', async () => {
+    const config = {
+      mode: 'markdown',
+      markdown: {
+        layout: 'single-folder',
+        singleFolder: 'docs/kanban',
+        statusFolders: {
+          todo: 'docs/kanban/todo',
+          in_progress: 'docs/kanban/in-progress',
+          review: 'docs/kanban/review',
+          done: 'docs/kanban/done'
+        }
+      }
+    }
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce(config)
+      .mockResolvedValueOnce(config)
+      .mockResolvedValueOnce({ success: true })
+      .mockResolvedValueOnce({ success: true })
+      .mockResolvedValueOnce('/tmp/kanban')
+    const subscribe = vi.fn()
+
+    setRendererRpcClient({ request, subscribe })
+
+    await expect(kanbanApi.config.get<typeof config>('project-1')).resolves.toEqual(config)
+    await expect(kanbanApi.config.update('project-1', config.markdown)).resolves.toEqual(config)
+    await expect(kanbanApi.config.setMode('project-1', 'markdown')).resolves.toEqual({
+      success: true
+    })
+    await expect(kanbanApi.config.createFolders('project-1', config.markdown)).resolves.toEqual({
+      success: true
+    })
+    await expect(kanbanApi.config.pickMarkdownFolder()).resolves.toBe('/tmp/kanban')
+
+    expect(request).toHaveBeenNthCalledWith(1, 'kanban.config.get', { projectId: 'project-1' })
+    expect(request).toHaveBeenNthCalledWith(2, 'kanban.config.update', {
+      projectId: 'project-1',
+      config: config.markdown
+    })
+    expect(request).toHaveBeenNthCalledWith(3, 'kanban.config.setMode', {
+      projectId: 'project-1',
+      mode: 'markdown'
+    })
+    expect(request).toHaveBeenNthCalledWith(4, 'kanban.config.createFolders', {
+      projectId: 'project-1',
+      config: config.markdown
+    })
+    expect(request).toHaveBeenNthCalledWith(5, 'kanban.config.pickMarkdownFolder', {})
+  })
+
+  it('routes diagnostics and watch operations through the renderer RPC client', async () => {
+    const diagnostics = [
+      {
+        projectId: 'project-1',
+        ticketId: 'ticket-1',
+        filePath: '/tmp/ticket.md',
+        kind: 'invalid_frontmatter',
+        message: 'Invalid frontmatter',
+        blocking: true
+      }
+    ]
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce(diagnostics)
+      .mockResolvedValueOnce({ success: true })
+      .mockResolvedValueOnce({ success: true })
+    const unsubscribe = vi.fn()
+    const subscribe = vi.fn().mockReturnValue(unsubscribe)
+
+    setRendererRpcClient({ request, subscribe })
+
+    await expect(kanbanApi.diagnostics.get('project-1')).resolves.toEqual(diagnostics)
+    await expect(kanbanApi.watch.start('project-1')).resolves.toEqual({ success: true })
+    await expect(kanbanApi.watch.stop('project-1')).resolves.toEqual({ success: true })
+
+    const callback = vi.fn()
+    expect(kanbanApi.watch.onChanged(callback)).toBe(unsubscribe)
+    const listener = subscribe.mock.calls[0]?.[1]
+    listener?.({
+      channel: 'kanban:markdown:changed',
+      payload: { projectId: 'project-1', paths: ['/tmp/ticket.md'], eventTypes: ['change'] }
+    })
+    expect(callback).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      paths: ['/tmp/ticket.md'],
+      eventTypes: ['change']
+    })
+
+    expect(request).toHaveBeenNthCalledWith(1, 'kanban.diagnostics.get', {
+      projectId: 'project-1'
+    })
+    expect(request).toHaveBeenNthCalledWith(2, 'kanban.watch.start', { projectId: 'project-1' })
+    expect(request).toHaveBeenNthCalledWith(3, 'kanban.watch.stop', { projectId: 'project-1' })
   })
 })

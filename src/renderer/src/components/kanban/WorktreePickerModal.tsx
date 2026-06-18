@@ -47,6 +47,10 @@ const EMPTY_ARRAY: readonly never[] = []
 type PickerMode = 'build' | 'plan' | 'super-plan'
 type PickerAgentSdk = 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex'
 
+function completionSendMode(mode: PickerMode): 'build' | 'plan' {
+  return isPlanLike(mode) ? 'plan' : 'build'
+}
+
 interface BranchInfo {
   name: string
   isRemote: boolean
@@ -343,10 +347,8 @@ export function WorktreePickerModal({
     setMode((prev) => {
       const next: PickerMode = prev === 'build' ? (superArmed ? 'super-plan' : 'plan') : 'build'
       setPromptText((current) => swapModePrefix(current, prev, next))
-      if (next !== 'build') {
-        setGoalMode(false)
-        setGoalCriteria('')
-      }
+      setGoalMode(false)
+      setGoalCriteria('')
       return next
     })
   }, [superArmed])
@@ -369,10 +371,8 @@ export function WorktreePickerModal({
     setMode((prev) => {
       const next: PickerMode = prev === 'super-plan' ? 'plan' : 'super-plan'
       setPromptText((current) => swapModePrefix(current, prev, next))
-      if (next !== 'build') {
-        setGoalMode(false)
-        setGoalCriteria('')
-      }
+      setGoalMode(false)
+      setGoalCriteria('')
       return next
     })
   }, [])
@@ -481,7 +481,7 @@ export function WorktreePickerModal({
         messageSendTimes.set(sessionId, Date.now())
         userExplicitSendTimes.set(sessionId, Date.now())
         snapshotTokenBaseline(sessionId)
-        lastSendMode.set(sessionId, mode)
+        lastSendMode.set(sessionId, completionSendMode(mode))
         useWorktreeStatusStore
           .getState()
           .setSessionStatus(sessionId, isPlanLike(mode) ? 'planning' : 'working')
@@ -578,10 +578,14 @@ export function WorktreePickerModal({
             goalCriteria,
             { claudeCli: false }
           )
+          if (!outboundPrompt) return
           const promptOptions = sessionAgentSdk === 'codex' ? { codexFastMode } : undefined
 
           if (mode === 'super-plan') {
             useSessionStore.getState().setSessionMode(sessionId, 'plan')
+          }
+          if (!connectResult.sessionId) {
+            throw new Error('Missing opencode session id')
           }
 
           bumpWorktreeLastMessage({ connectionId })
@@ -766,7 +770,7 @@ export function WorktreePickerModal({
       messageSendTimes.set(sessionId, Date.now())
       userExplicitSendTimes.set(sessionId, Date.now())
       snapshotTokenBaseline(sessionId)
-      lastSendMode.set(sessionId, mode)
+      lastSendMode.set(sessionId, completionSendMode(mode))
       useWorktreeStatusStore
         .getState()
         .setSessionStatus(sessionId, isPlanLike(mode) ? 'planning' : 'working')
@@ -862,15 +866,19 @@ export function WorktreePickerModal({
           goalCriteria,
           { claudeCli: false }
         )
+        if (!outboundPrompt) return
         const promptOptions = sessionAgentSdk === 'codex' ? { codexFastMode } : undefined
 
         // Auto-revert super-plan → plan immediately (one-shot mode).
         // The prefix is already captured in fullPrompt above.
-        if (mode === 'super-plan') {
-          useSessionStore.getState().setSessionMode(sessionId, 'plan')
-        }
+          if (mode === 'super-plan') {
+            useSessionStore.getState().setSessionMode(sessionId, 'plan')
+          }
+          if (!connectResult.sessionId) {
+            throw new Error('Missing opencode session id')
+          }
 
-        bumpWorktreeLastMessage({ worktreeId })
+          bumpWorktreeLastMessage({ worktreeId })
         startHivePromptTelemetry({
           sessionId,
           prompt: outboundPrompt,

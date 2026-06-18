@@ -3,6 +3,7 @@
   "include": [
     "src/renderer/src/**/*",
     "src/renderer/src/**/*.tsx",
+    "src/main/db/types.ts",
     "src/preload/*.d.ts",
     "src/shared/**/*"
   ],
