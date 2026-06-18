@@ -1,5 +1,4 @@
 import { join } from 'path'
-import { homedir } from 'os'
 import {
   existsSync,
   mkdirSync,
@@ -11,14 +10,12 @@ import {
   writeFileSync
 } from 'fs'
 import { createLogger } from './logger'
+import { getHiveConnectionsDir } from './hive-paths'
 
 const log = createLogger({ component: 'ConnectionService' })
 
-const CONNECTIONS_DIR_NAME = 'connections'
-
 export function getConnectionsBaseDir(): string {
-  const homeDir = homedir()
-  return join(homeDir, '.hive', CONNECTIONS_DIR_NAME)
+  return getHiveConnectionsDir()
 }
 
 export function ensureConnectionsDir(): void {

@@ -4,30 +4,58 @@ import { cpSync, existsSync, mkdirSync, rmSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import process from 'node:process'
+import { DEV_DATA_DIR, DEV_WORKTREES_DIR, ensureDevDataReady } from './dev-data-setup.mjs'
 
 const DEV_SERVER_DIR = '.dev-server'
 const SERVER_ENTRY = 'server.js'
 const SERVER_CHUNKS = 'server-chunks'
 
+const nonEmpty = (value) => (value && value.length > 0 ? value : undefined)
+
+// Isolate dev data from the installed/official ("daily") app. Without this,
+// `pnpm dev` and /Applications/Hive.app both open ~/.hive/hive.db (and share
+// logs, icons, attachments, worktrees) — running both at once races the same
+// SQLite file. Pin HIVE_DATA_DIR/HIVE_WORKTREES_DIR to the fixed dev dirs
+// (defined in dev-data-setup.mjs); getHiveDataDir()/getHiveWorktreesDir() in
+// src/main/services/hive-paths.ts read those env vars and relocate the whole
+// data tree accordingly. External overrides are ignored — dev is always
+// isolated. First-run cloning of ~/.hive into the dev dirs lives in
+// dev-data-setup.mjs (ensureDevDataReady, called from runDevDesktop below).
 export const createDevDesktopEnv = ({ cwd = process.cwd(), env = process.env } = {}) => {
   const childEnv = { ...env }
   delete childEnv.ELECTRON_RUN_AS_NODE
+  // Strip inherited DB-location overrides. resolveDatabasePath() honors these
+  // BEFORE the HIVE_DATA_DIR-derived fallback, so a parent shell that exported
+  // either one would make dev open the official ~/.hive database even though we
+  // pin HIVE_DATA_DIR below — silently defeating the isolation guarantee. The
+  // server child re-derives its own HIVE_SERVER_DB_PATH from the dev base dir.
+  delete childEnv.HIVE_SERVER_DB_PATH
+  delete childEnv.HIVE_SERVER_BASE_DIR
 
   return {
     ...childEnv,
+    HIVE_DATA_DIR: DEV_DATA_DIR,
+    HIVE_WORKTREES_DIR: DEV_WORKTREES_DIR,
     HIVE_SERVER_ENTRY_PATH:
-      env.HIVE_SERVER_ENTRY_PATH && env.HIVE_SERVER_ENTRY_PATH.length > 0
-        ? env.HIVE_SERVER_ENTRY_PATH
-        : resolve(cwd, DEV_SERVER_DIR, SERVER_ENTRY)
+      nonEmpty(env.HIVE_SERVER_ENTRY_PATH) ?? resolve(cwd, DEV_SERVER_DIR, SERVER_ENTRY)
   }
 }
 
 export const createDevHeadlessEnv = ({ env = process.env } = {}) => {
   const childEnv = { ...env }
   delete childEnv.ELECTRON_RUN_AS_NODE
+  // Headless dev must be isolated from the official ~/.hive too: without the
+  // pins below the plain-Node server resolves the DB via getHiveDbPath() and
+  // would read/write the official database while the installed app is open. The
+  // DB-location overrides are stripped for the same reason as the desktop env —
+  // resolveDatabasePath() honors them ahead of the HIVE_DATA_DIR fallback.
+  delete childEnv.HIVE_SERVER_DB_PATH
+  delete childEnv.HIVE_SERVER_BASE_DIR
 
   return {
     ...childEnv,
+    HIVE_DATA_DIR: DEV_DATA_DIR,
+    HIVE_WORKTREES_DIR: DEV_WORKTREES_DIR,
     HIVE_HEADLESS: '1',
     HIVE_SERVER_MODE: env.HIVE_SERVER_MODE ?? 'browser',
     HIVE_SERVER_HOST: env.HIVE_SERVER_HOST ?? '127.0.0.1',
@@ -194,6 +222,11 @@ const runDevHeadless = async () => {
   process.once('SIGINT', () => shutdown(0))
   process.once('SIGTERM', () => shutdown(0))
 
+  // Same first-run isolation as desktop: clone/seed ~/.hive-dev before the
+  // server opens its DB, so headless dev never touches the official ~/.hive.
+  // Non-interactive runs (CI / piped) start fresh without prompting.
+  await ensureDevDataReady()
+
   await run('pnpm', ['run', 'build:server'])
   copyDevServerBundle()
 
@@ -217,12 +250,18 @@ const runDevHeadless = async () => {
 }
 
 const runDevDesktop = async () => {
+  process.once('SIGINT', () => shutdown(0))
+  process.once('SIGTERM', () => shutdown(0))
+
+  // Prompt for first-run data setup BEFORE installing the raw-mode TTY handler
+  // (readline needs cooked-mode stdin) and BEFORE the long build, so the dev
+  // answers up front instead of waiting behind build:server.
+  await ensureDevDataReady()
+
   const disposeInteractiveInterruptHandler = installInteractiveInterruptHandler()
   const disposeForegroundProcessGroupReclaimer = installForegroundProcessGroupReclaimer()
   process.once('exit', disposeInteractiveInterruptHandler)
   process.once('exit', disposeForegroundProcessGroupReclaimer)
-  process.once('SIGINT', () => shutdown(0))
-  process.once('SIGTERM', () => shutdown(0))
 
   await run('pnpm', ['run', 'build:server'])
   copyDevServerBundle()

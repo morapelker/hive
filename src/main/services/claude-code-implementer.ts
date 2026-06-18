@@ -1,8 +1,8 @@
-import { app } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 
 import { createLogger } from './logger'
+import { getHiveLogsDir } from './hive-paths'
 import { agentEventBus } from './agent-event-bus'
 import { notificationService } from './notification-service'
 import { loadClaudeSDK } from './claude-sdk-loader'
@@ -517,7 +517,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         extraArgs: { 'replay-user-messages': null },
         thinking: { type: 'adaptive' },
         effort: effortLevel,
-        debugFile: join(app.getPath('home'), '.hive', 'logs', 'claude-debug.log'),
+        debugFile: join(getHiveLogsDir(), 'claude-debug.log'),
         env: {
           ...process.env,
           ...getUserEnvironmentVariables(this.dbService),

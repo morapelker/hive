@@ -1,7 +1,7 @@
 import { execFile, spawn } from 'child_process'
 import { existsSync, mkdirSync, rmSync, cpSync, writeFileSync, unlinkSync, readdirSync, readFileSync, appendFileSync, mkdtempSync } from 'fs'
 import { readFile as readFileAsync } from 'fs/promises'
-import { homedir, tmpdir } from 'os'
+import { tmpdir } from 'os'
 import { basename, dirname, join } from 'path'
 import { promisify } from 'util'
 import { Effect, Either, Layer, Ref } from 'effect'
@@ -9,6 +9,7 @@ import simpleGit, { type SimpleGit, type BranchSummary } from 'simple-git'
 
 import { getImageMimeType } from '@shared/types/file-utils'
 import { selectUniqueBreedName } from '../../services/breed-names'
+import { getHiveWorktreesDir } from '../../services/hive-paths'
 import { normalizeWorktreePath } from '../../services/path-utils'
 import { classifyGitError } from './classifier'
 import { GitUnknown, type GitError } from './errors'
@@ -23,8 +24,13 @@ const normalizeBranchDisplayName = (branchName: string): string =>
 
 export const resolveGitWorktreesDir = (
   projectName: string,
-  homeDir: string = homedir()
-): string => join(homeDir, '.hive-worktrees', projectName)
+  // Explicit homeDir keeps the historical layout (used in tests); otherwise route
+  // through the shared worktrees dir so HIVE_WORKTREES_DIR (`pnpm dev`) is honored.
+  homeDir?: string
+): string =>
+  homeDir !== undefined
+    ? join(homeDir, '.hive-worktrees', projectName)
+    : join(getHiveWorktreesDir(), projectName)
 
 const ensureWorktreesDir = (projectName: string): string => {
   const projectWorktreesDir = resolveGitWorktreesDir(projectName)

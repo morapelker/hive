@@ -1,8 +1,8 @@
 import { join, resolve } from 'path'
 import { mkdir, writeFile, unlink, access } from 'fs/promises'
-import { homedir } from 'os'
 import { randomUUID } from 'crypto'
 import { createLogger } from './logger'
+import { getHiveAttachmentsDir } from './hive-paths'
 
 const log = createLogger({ component: 'AttachmentStorage' })
 
@@ -10,7 +10,7 @@ const MAX_IMAGE_SIZE = 10 * 1024 * 1024 // 10MB
 const ALLOWED_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'])
 
 async function getAttachmentsDir(): Promise<string> {
-  const dir = join(homedir(), '.hive', 'attachments')
+  const dir = getHiveAttachmentsDir()
   await mkdir(dir, { recursive: true })
   return dir
 }

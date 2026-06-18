@@ -276,6 +276,37 @@ pnpm install
 pnpm dev
 ```
 
+### Data Isolation in Development
+
+`pnpm dev` keeps its data fully separate from an installed (official/daily) Hive app, so you can develop safely without touching — or racing — your real data:
+
+| Data                 | Installed app       | `pnpm dev`              |
+| -------------------- | ------------------- | ----------------------- |
+| Database & resources | `~/.hive`           | `~/.hive-dev`           |
+| Git worktrees        | `~/.hive-worktrees` | `~/.hive-dev-worktrees` |
+
+Because of this, the official app and a dev build can run at the same time without fighting over the same SQLite database.
+
+**First run, you choose: clone everything, or start fresh.** The first time you start dev with no `~/.hive-dev` yet, the launcher prompts you (on a TTY):
+
+1. **Sync (default)** clones _everything_ from the official app into the isolated dev location — the full database, `logs/`, `attachments/`, `project-icons/`, `connections/`, `custom-commands.json`, **and** all of your git worktrees (a complete clone, including uncommitted and gitignored files). This covers worktrees you created at a custom location outside `~/.hive-worktrees` too — they're cloned into the dev tree rather than left pointing at the shared original. **Start fresh** gives you an empty database instead.
+2. If you chose Sync, a second prompt asks to **quit the official Hive app** (default **No** → cancel, nothing copied). A consistent DB + worktree snapshot requires the official app closed; the launcher quits it for you, then clones.
+
+Your official data is treated as strictly **read-only — never modified, moved, or deleted.** Sync only reads `~/.hive` and writes a separate `~/.hive-dev` copy.
+
+**Worktrees and the `hive-dev_` branch prefix.** A git branch can be checked out in only one worktree at a time, so each cloned worktree gets a new branch off the same commit, prefixed `hive-dev_` (e.g. `golden-retriever` → `hive-dev_golden-retriever`). The clone registers these `hive-dev_*` branches in your real repos — that is the _only_ change made to them. Remove them anytime with `git branch -D hive-dev_<name>` / `git worktree remove`. Every cloned worktree lands under `~/.hive-dev-worktrees`: ones from `~/.hive-worktrees` keep their `<project>/<leaf>` sub-path, and custom-location worktrees are consolidated under `~/.hive-dev-worktrees/<project>/<dir-name>`, so the whole dev tree resets with a single `rm -rf`.
+
+> **Known limitation:** dev and the official app share the underlying project repos, so `git worktree list` in a repo shows both installs' worktrees. The clone gives dev its _own_ copy of every worktree (`hive-dev_*`, fully independent — no dev row points at an official working dir), but on a later project refresh dev may still _import_ the official app's worktree rows (and vice-versa); avoid operating from dev on any worktree whose path isn't under `~/.hive-dev-worktrees`. In particular, a project's default `(no-worktree)` entry points at your real repo checkout (not a `~/.hive-dev-worktrees` copy), so a dev session on it runs agents in — and can modify — your actual repository; add a worktree for isolated dev work instead. True per-worktree isolation isn't possible without cloning the repos themselves; this is inherent to separating the databases and is strictly better than the old shared-everything setup.
+
+To reset and be prompted again on the next run:
+
+```bash
+rm -rf ~/.hive-dev ~/.hive-dev-worktrees
+# optionally clean up the dev branches/worktrees registered in your real repos:
+#   git -C <repo> worktree remove <path>   # for each ~/.hive-dev-worktrees/... entry
+#   git -C <repo> branch -D hive-dev_<name>
+```
+
 ### Ghostty Terminal (Optional)
 
 Hive includes an optional native terminal powered by [Ghostty](https://ghostty.org/)'s `libghostty`. This is only needed if you want to work on the embedded terminal feature.
