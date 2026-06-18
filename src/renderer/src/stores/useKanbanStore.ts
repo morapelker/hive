@@ -1534,7 +1534,7 @@ registerKanbanAutoCreateTicket(({ sessionId, rawPrompt }) => {
 
       // Idempotency gate (authoritative — immune to the auto-attach timing and a
       // stale in-memory tickets map): skip if any non-archived ticket is linked.
-      const existing = await kanbanApi.ticket.getBySession<KanbanTicket>(sessionId)
+      const existing = await kanban.ticket.getBySession<KanbanTicket>(sessionId)
       if (existing.some((t) => !t.archived_at)) return
 
       const trimmed = rawPrompt.trim()
@@ -1557,6 +1557,12 @@ registerKanbanAutoCreateTicket(({ sessionId, rawPrompt }) => {
         mode: session.mode,
         created_from_session: true
       })
+
+      // Mirror the manual-open behavior: when auto-pin is enabled, pin the
+      // project's root/base worktree so the auto-created ticket shows on the
+      // pinned board. No-op unless `autoPinBaseWorktreeOnBoardPrompt` is on.
+      const { autoPinBaseWorktree } = await import('@/lib/auto-pin')
+      void autoPinBaseWorktree(session.project_id)
     } catch {
       // Best-effort — never disrupt the user's send/prompt flow.
     }
@@ -1592,7 +1598,7 @@ registerKanbanRenameSync((sessionId, name) => {
       }
 
       // Fallback: the ticket's board may not be loaded into the map yet.
-      const linked = await kanbanApi.ticket.getBySession<KanbanTicket>(sessionId)
+      const linked = await kanban.ticket.getBySession<KanbanTicket>(sessionId)
       const target = linked.find((t) => t.created_from_session && !t.archived_at)
       if (target && target.title !== name) {
         store.updateTicket(target.id, target.project_id, { title: name }).catch(() => {})
