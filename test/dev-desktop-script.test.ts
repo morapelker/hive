@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { EventEmitter } from 'node:events'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
@@ -317,7 +325,7 @@ process.exit(1)
 })
 
 const mkTempDir = (): string => {
-  const dir = mkdtempSync(resolve(tmpdir(), 'hive-dev-desktop-script-'))
+  const dir = realpathSync(mkdtempSync(resolve(tmpdir(), 'hive-dev-desktop-script-')))
   tempDirs.push(dir)
   return dir
 }
