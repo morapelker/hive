@@ -373,7 +373,7 @@ describe('merge conflicts ticket button', () => {
       }
     })
     useWorktreeStatusStore.setState({
-      mergeConflictWorktreeByTicket: { 'ticket-1': 'base-wt' }
+      mergeConflictWorktreeByTicket: { 'proj-1:ticket-1': 'base-wt' }
     })
 
     renderCard()
@@ -381,7 +381,9 @@ describe('merge conflicts ticket button', () => {
     await user.click(screen.getByTestId('kanban-ticket-fix-conflicts'))
 
     await waitFor(() => {
-      expect(mockCreateSession).toHaveBeenCalledWith('base-wt', 'proj-1', undefined, 'build')
+      expect(mockCreateSession).toHaveBeenCalledWith('base-wt', 'proj-1', undefined, 'build', {
+        pendingMessage: 'Fix merge conflicts'
+      })
     })
   })
 
@@ -399,7 +401,9 @@ describe('merge conflicts ticket button', () => {
     await user.click(await screen.findByText('Fix in Plan mode'))
 
     await waitFor(() => {
-      expect(mockCreateSession).toHaveBeenCalledWith('wt-1', 'proj-1', undefined, 'plan')
+      expect(mockCreateSession).toHaveBeenCalledWith('wt-1', 'proj-1', undefined, 'plan', {
+        pendingMessage: 'Fix merge conflicts'
+      })
     })
 
     mockCreateSession.mockClear()
@@ -418,7 +422,9 @@ describe('merge conflicts ticket button', () => {
     await user.click(await screen.findByText('Fix in Build mode'))
 
     await waitFor(() => {
-      expect(mockCreateSession).toHaveBeenCalledWith('wt-1', 'proj-1', undefined, 'build')
+      expect(mockCreateSession).toHaveBeenCalledWith('wt-1', 'proj-1', undefined, 'build', {
+        pendingMessage: 'Fix merge conflicts'
+      })
     })
   })
 
@@ -430,7 +436,9 @@ describe('merge conflicts ticket button', () => {
     await user.click(screen.getByTestId('kanban-ticket-fix-conflicts'))
 
     await waitFor(() => {
-      expect(mockCreateSession).toHaveBeenCalledWith('wt-1', 'proj-1', undefined, 'build')
+      expect(mockCreateSession).toHaveBeenCalledWith('wt-1', 'proj-1', undefined, 'build', {
+        pendingMessage: 'Fix merge conflicts'
+      })
     })
   })
 
@@ -540,7 +548,8 @@ describe('merge conflicts ticket button', () => {
 
   test('renders a conflict banner at the top of the ticket modal', () => {
     useKanbanStore.setState({
-      selectedTicketId: 'ticket-1',
+      selectedTicketId: null,
+      selectedTicketRef: { projectId: 'proj-1', ticketId: 'ticket-1' },
       tickets: new Map([['proj-1', [makeTicket()]]])
     })
 

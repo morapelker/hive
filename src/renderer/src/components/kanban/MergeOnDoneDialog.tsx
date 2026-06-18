@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { useKanbanStore } from '@/stores/useKanbanStore'
+import { ticketKey, useKanbanStore } from '@/stores/useKanbanStore'
 import { useGitStore } from '@/stores/useGitStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
@@ -348,7 +348,10 @@ export function MergeOnDoneDialog() {
           useGitStore.getState().setHasConflicts(resolved.baseWorktreePath, true)
           useWorktreeStatusStore
             .getState()
-            .setMergeConflictWorktreeForTicket(pendingDoneMove.ticketId, resolved.baseWorktreeId)
+            .setMergeConflictWorktreeForTicket(
+              ticketKey(pendingDoneMove.projectId, pendingDoneMove.ticketId),
+              resolved.baseWorktreeId
+            )
           void useGitStore.getState().refreshStatuses(resolved.baseWorktreePath)
           toast.error(
             `Merge conflicts in ${mergeResult.conflicts.length} file${mergeResult.conflicts.length !== 1 ? 's' : ''} — merge manually`

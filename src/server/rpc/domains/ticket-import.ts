@@ -7,7 +7,6 @@ import {
   type SettingsField,
   type TicketProviderId
 } from '../../../main/services/ticket-providers'
-import { getDatabase } from '../../../main/db'
 import type { RpcHandler } from '../router'
 
 export interface TicketImportProviderSummary {
@@ -197,15 +196,26 @@ export const makeLiveTicketImportRpcService = (): TicketImportRpcService => ({
       catch: (cause) => cause
     }),
   importIssues: (providerId, projectId, _repo, issues) =>
-    Effect.try({
-      try: () => {
-        const db = getDatabase()
+    Effect.tryPromise({
+      try: async () => {
+        const { getKanbanBackendForProject } = await import(
+          '../../../main/services/kanban-backend'
+        )
+        const backend = getKanbanBackendForProject(projectId)
+        const existingTickets = await backend.list(projectId, true)
+        const importedExternalIds = new Set(
+          existingTickets
+            .filter(
+              (ticket) =>
+                ticket.external_provider === providerId && typeof ticket.external_id === 'string'
+            )
+            .map((ticket) => ticket.external_id as string)
+        )
         const imported: string[] = []
         const skipped: string[] = []
 
         for (const issue of issues) {
-          const existing = db.getKanbanTicketByExternalId(providerId, issue.externalId, projectId)
-          if (existing) {
+          if (importedExternalIds.has(issue.externalId)) {
             skipped.push(issue.externalId)
             continue
           }
@@ -216,7 +226,7 @@ export const makeLiveTicketImportRpcService = (): TicketImportRpcService => ({
               : issue.state === 'in_progress'
                 ? 'in_progress'
                 : 'todo'
-          db.createKanbanTicket({
+          await backend.create(projectId, {
             project_id: projectId,
             title: issue.title,
             description: issue.body,
@@ -225,6 +235,7 @@ export const makeLiveTicketImportRpcService = (): TicketImportRpcService => ({
             external_id: issue.externalId,
             external_url: issue.url
           })
+          importedExternalIds.add(issue.externalId)
           imported.push(issue.externalId)
         }
 

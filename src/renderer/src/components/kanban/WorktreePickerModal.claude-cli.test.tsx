@@ -14,6 +14,13 @@ import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import type { KanbanTicket, Session } from '../../../../main/db/types'
 
+vi.mock('@/api/hive-enterprise/client', () => ({
+  isHiveTelemetryEnabled: vi.fn(() => false),
+  recordHivePromptStart: vi.fn(),
+  recordHivePromptIdle: vi.fn(),
+  recordHiveQuestionsAnswered: vi.fn()
+}))
+
 vi.mock('@/components/sessions/ModelSelector', () => ({
   ModelSelector: ({
     onChange
@@ -57,6 +64,7 @@ vi.mock('@/api/settings-api', () => ({
   settingsApi: {
     detectEditors: vi.fn(),
     detectTerminals: vi.fn(),
+    loadCustomCommandsFile: vi.fn().mockResolvedValue({ commands: [] }),
     onSettingsUpdated: vi.fn(() => vi.fn()),
     openWithTerminal: vi.fn()
   }
@@ -104,6 +112,15 @@ const baseTicket: KanbanTicket = {
   pending_launch_config: null,
   created_from_session: false,
   attachments: [],
+  archived_at: null,
+  external_provider: null,
+  external_id: null,
+  external_url: null,
+  github_pr_number: null,
+  github_pr_url: null,
+  mark: null,
+  note: null,
+  total_tokens: 0,
   created_at: '2026-01-01T00:00:00.000Z',
   updated_at: '2026-01-01T00:00:00.000Z'
 }
@@ -202,6 +219,8 @@ function setupStores(): {
         setup_script: null,
         run_script: null,
         archive_script: null,
+        worktree_create_script: null,
+        custom_commands: null,
         auto_assign_port: false,
         sort_order: 0,
         created_at: '2026-01-01T00:00:00.000Z',

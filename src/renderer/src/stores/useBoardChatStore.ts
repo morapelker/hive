@@ -133,7 +133,9 @@ export function resolveBoardChatAgentSdk(
     | undefined
 ): 'opencode' | 'claude-code' | 'codex' {
   const sdk = defaultAgentSdk ?? 'opencode'
-  return sdk === 'terminal' ? 'opencode' : sdk
+  if (sdk === 'terminal') return 'opencode'
+  if (sdk === 'claude-code-cli') return 'claude-code'
+  return sdk
 }
 
 export function resolveBoardChatDefaultModel(
@@ -332,7 +334,10 @@ function createBaseState(): Omit<
   | 'sendMessage'
   | 'createSelected'
   | 'toggleDraftSelected'
+  | 'markDraftsCreated'
   | 'setSelectedTargetProjectId'
+  | 'setSelectedAgentSdkOverride'
+  | 'setSelectedModelOverride'
   | 'openDrawer'
   | 'minimizeDrawer'
   | 'restoreDrawer'
@@ -855,29 +860,76 @@ export const useBoardChatStore = create<BoardChatState>((set, get) => ({
         throw new Error('Fix draft validation issues before creating tickets.')
       }
 
-      const draftKeysInBatch = new Set(selectedDrafts.map((draft) => draft.draftKey))
-      const result = await kanbanApi.ticket.createBatch<
-        KanbanTicketBatchCreateResult,
-        KanbanTicketBatchCreate
-      >({
-        drafts: selectedDrafts.map((draft) => ({
-          draft_key: draft.draftKey,
-          project_id: draft.projectId,
-          title: draft.title,
-          description: draft.description ?? null,
-          column: 'todo',
-          depends_on: draft.dependsOn.filter((key) => draftKeysInBatch.has(key))
-        }))
+      const draftsByProject = new Map<string, typeof selectedDrafts>()
+      for (const draft of selectedDrafts) {
+        draftsByProject.set(draft.projectId, [
+          ...(draftsByProject.get(draft.projectId) ?? []),
+          draft
+        ])
+      }
+
+      const batches = [...draftsByProject.entries()].map(([projectId, projectDrafts]) => {
+        const projectDraftKeys = new Set(projectDrafts.map((draft) => draft.draftKey))
+        return {
+          projectId,
+          projectName: projectDrafts[0]?.projectName ?? projectId,
+          projectDrafts,
+          request: kanbanApi.ticket.createBatch<
+            KanbanTicketBatchCreateResult,
+            KanbanTicketBatchCreate
+          >(projectId, {
+            drafts: projectDrafts.map((draft) => ({
+              draft_key: draft.draftKey,
+              project_id: draft.projectId,
+              title: draft.title,
+              description: draft.description ?? null,
+              column: 'todo',
+              depends_on: draft.dependsOn.filter((key) => projectDraftKeys.has(key))
+            }))
+          })
+        }
       })
 
-      for (const projectId of new Set(selectedDrafts.map((draft) => draft.projectId))) {
+      const settled = await Promise.allSettled(batches.map((batch) => batch.request))
+      let ticketCount = 0
+      let dependencyCount = 0
+      const createdDraftIds: string[] = []
+      const successfulProjectIds: string[] = []
+      const failures: string[] = []
+
+      settled.forEach((result, index) => {
+        const batch = batches[index]
+        if (result.status === 'fulfilled') {
+          ticketCount += result.value.tickets.length
+          dependencyCount += result.value.dependencies.length
+          createdDraftIds.push(...batch.projectDrafts.map((draft) => draft.id))
+          successfulProjectIds.push(batch.projectId)
+          return
+        }
+        const message = result.reason instanceof Error ? result.reason.message : String(result.reason)
+        failures.push(`${batch.projectName}: ${message}`)
+      })
+
+      for (const projectId of successfulProjectIds) {
         await useKanbanStore.getState().loadTickets(projectId)
         await useKanbanStore.getState().loadDependencies(projectId)
       }
 
-      get().markDraftsCreated(selectedDrafts.map((draft) => draft.id))
+      if (createdDraftIds.length > 0) {
+        get().markDraftsCreated(createdDraftIds)
+      }
+
+      if (failures.length > 0) {
+        const message =
+          createdDraftIds.length > 0
+            ? `Created ${ticketCount} ticket${ticketCount === 1 ? '' : 's'} with ${dependencyCount} dependenc${dependencyCount === 1 ? 'y' : 'ies'}, but some projects failed: ${failures.join('; ')}`
+            : `Failed to create selected tickets: ${failures.join('; ')}`
+        get().addLocalSystemMessage(message)
+        throw new Error(message)
+      }
+
       get().addLocalSystemMessage(
-        `Created ${result.tickets.length} ticket${result.tickets.length === 1 ? '' : 's'} with ${result.dependencies.length} dependenc${result.dependencies.length === 1 ? 'y' : 'ies'}.`
+        `Created ${ticketCount} ticket${ticketCount === 1 ? '' : 's'} with ${dependencyCount} dependenc${dependencyCount === 1 ? 'y' : 'ies'}.`
       )
       set((state) => patchActiveSnapshot(state, { status: 'idle' }))
     } catch (error) {
