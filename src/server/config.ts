@@ -81,7 +81,11 @@ export const resolveServerConfig = (
         throw new Error('BIND_IP requires HIVE_SERVER_REQUIRE_AUTH=true')
       }
 
-      const baseDir = resolve(input.baseDir ?? env.HIVE_SERVER_BASE_DIR ?? join(homedir(), '.hive'))
+      // Precedence mirrors @main/services/hive-paths getHiveDataDir():
+      // HIVE_DATA_DIR (dev override) > HIVE_SERVER_BASE_DIR (desktop child) > ~/.hive.
+      const baseDir = resolve(
+        input.baseDir ?? env.HIVE_DATA_DIR ?? env.HIVE_SERVER_BASE_DIR ?? join(homedir(), '.hive')
+      )
       return {
         mode: input.mode ?? parseMode(env.HIVE_SERVER_MODE),
         host: input.host ?? env.HIVE_SERVER_HOST ?? bindIp ?? DEFAULT_HOST,

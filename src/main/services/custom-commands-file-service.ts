@@ -1,20 +1,19 @@
 // src/main/services/custom-commands-file-service.ts
 
-import { app } from 'electron'
-import { join, dirname } from 'path'
+import { dirname } from 'path'
 import { existsSync, statSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import {
   validateCustomCommand,
   type CustomProjectCommand
 } from '@shared/lib/custom-commands'
+import { getHiveCustomCommandsFile } from './hive-paths'
 
 /**
  * Gets the full path to custom commands file
  * @returns Path to ~/.hive/custom-commands.json
  */
 export function getCustomCommandsFilePath(): string {
-  const homeDir = app.getPath('home')
-  return join(homeDir, '.hive', 'custom-commands.json')
+  return getHiveCustomCommandsFile()
 }
 
 /**

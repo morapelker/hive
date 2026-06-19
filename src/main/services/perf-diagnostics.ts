@@ -1,8 +1,8 @@
 import { join } from 'path'
 import { existsSync, mkdirSync, appendFileSync, statSync, renameSync } from 'fs'
-import { homedir } from 'os'
 import * as v8 from 'v8'
 import { createLogger } from './logger'
+import { getHiveLogsDir } from './hive-paths'
 
 const log = createLogger({ component: 'PerfDiagnostics' })
 
@@ -81,8 +81,7 @@ class PerfDiagnosticsService {
   private running = false
 
   constructor() {
-    const homeDir = homedir()
-    this.logDir = join(homeDir, '.hive', 'logs')
+    this.logDir = getHiveLogsDir()
     this.logFile = join(this.logDir, 'perf-diagnostics.jsonl')
   }
 

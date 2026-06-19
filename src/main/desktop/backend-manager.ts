@@ -40,6 +40,7 @@ import {
 import { openInApp } from '../services/open-in-app'
 import { openInChrome } from '../services/open-in-chrome'
 import { createLogger } from '../services/logger'
+import { getHiveDataDir, getHiveProjectIconsDir } from '../services/hive-paths'
 import { updateMenuState } from '../menu'
 import { setKeepAwake } from '../services/power-save-blocker'
 import { sleepNow } from '../services/sleep-now'
@@ -535,7 +536,7 @@ export const startDesktopBackend = async (
 
   const log = deps.logger ?? defaultLog
   const headless = input.headless ?? false
-  const baseDir = input.baseDir ?? join(app.getPath('home'), '.hive')
+  const baseDir = input.baseDir ?? getHiveDataDir()
   // `dev:web` pins the backend to a known free port via HIVE_DESKTOP_BACKEND_PORT so
   // its Vite dev server can target it. When set, scan only that single port.
   const pinnedPort = parseDesktopBackendPortEnv(process.env.HIVE_DESKTOP_BACKEND_PORT)
@@ -903,7 +904,7 @@ const handleDesktopBackendCommand = (
           return
         }
 
-        const iconDir = join(app.getPath('home'), '.hive', 'project-icons')
+        const iconDir = getHiveProjectIconsDir()
         const value = saveProjectIcon(message.payload.projectId, result.filePaths[0], iconDir)
         sendDesktopBackendCommandResult(
           child,
@@ -925,7 +926,7 @@ const handleDesktopBackendCommand = (
 
   if (message.command === 'projectRemoveProjectIcon') {
     try {
-      const iconDir = join(app.getPath('home'), '.hive', 'project-icons')
+      const iconDir = getHiveProjectIconsDir()
       const value = removeProjectIcon(message.payload.projectId, iconDir)
       sendDesktopBackendCommandResult(
         child,
@@ -947,7 +948,7 @@ const handleDesktopBackendCommand = (
 
   if (message.command === 'projectGetProjectIconPath') {
     try {
-      const iconDir = join(app.getPath('home'), '.hive', 'project-icons')
+      const iconDir = getHiveProjectIconsDir()
       const value = getProjectIconDataUrl(message.payload.filename, iconDir)
       sendDesktopBackendCommandResult(
         child,
