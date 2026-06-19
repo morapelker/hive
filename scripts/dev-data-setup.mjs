@@ -52,6 +52,16 @@ export const DEV_WORKTREES_DIR = devDataOverride
   ? resolve(`${devDataOverride}-worktrees`)
   : join(homedir(), '.hive-dev-worktrees')
 
+// True when this is an isolated worktree (HIVE_DEV_DATA_DIR set), as opposed to
+// the shared dev sandbox (~/.hive-dev). An isolated worktree seeds itself from
+// the SHARED DEV data, not production — see ensureDevDataReady's clone source.
+export const IS_ISOLATED_WORKTREE = Boolean(devDataOverride)
+// The shared dev sandbox data dir — always the fixed ~/.hive-dev, even when
+// DEV_DATA_DIR has been relocated into a worktree. It's the clone SOURCE for an
+// isolated worktree (copy your working dev data, never production). Only the
+// data is copied, not the worktrees, so there's no shared-worktrees-dir const.
+export const SHARED_DEV_DATA_DIR = join(homedir(), '.hive-dev')
+
 const sleep = (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms))
 
 const tildify = (p) => {
@@ -77,6 +87,20 @@ export const parseQuitAnswer = (input) => {
     .trim()
     .toLowerCase()
   return value === 'y' || value === 'yes'
+}
+
+// Pure: parse HIVE_DEV_DATA_SYNC — an explicit, non-interactive clone-vs-fresh
+// choice set by scripts/worktree-sync so the first `pnpm dev` never blocks on a
+// prompt. Unset or unrecognized -> null = fall back to the interactive prompt
+// (or the no-TTY default). Unlike parseSyncAnswer, "yes"-cloning isn't the
+// catch-all default here: an explicit env value is required to skip the prompt.
+export const parseSyncMode = (input) => {
+  const value = String(input ?? '')
+    .trim()
+    .toLowerCase()
+  if (['clone', 'sync', 's', 'y', 'yes'].includes(value)) return 'clone'
+  if (['fresh', 'f', 'n', 'no', 'scratch'].includes(value)) return 'fresh'
+  return null
 }
 
 // Pure: sanitize a project name into a single safe path segment (no separators,
@@ -302,7 +326,11 @@ const cloneWorktrees = ({
   log = console,
   devDataDir = DEV_DATA_DIR,
   legacyWorktreesDir = LEGACY_WORKTREES_DIR,
-  devWorktreesDir = DEV_WORKTREES_DIR
+  devWorktreesDir = DEV_WORKTREES_DIR,
+  // When false (isolated worktree seeds DATA only), no worktree is copied:
+  // every active row is archived instead, with all its references nulled, so
+  // none keeps pointing at the source worktrees dir.
+  copyWorktrees = true
 } = {}) => {
   const dbPath = join(devDataDir, 'hive.db')
   const cloned = []
@@ -333,6 +361,18 @@ const cloneWorktrees = ({
   for (const row of rows) {
     try {
       if (!row.path) continue
+      // Data-only seed: don't copy the worktree, just archive the row (the
+      // block below nulls every reference to it) so it neither lists nor points
+      // at the source worktrees dir. You create worktrees fresh in this app.
+      if (!copyWorktrees) {
+        skipped.push({
+          id: row.id,
+          branch: row.branch_name,
+          path: row.path,
+          reason: 'data-only seed — worktrees not copied'
+        })
+        continue
+      }
       // A row already under ~/.hive-dev-worktrees can only have reached this DB
       // via cross-visibility import: the staged DB is a fresh copy of OFFICIAL,
       // and a prior dev refresh's worktree shows up in the shared repo, then gets
@@ -754,7 +794,9 @@ const runClone = ({
   sourceDataDir = LEGACY_DATA_DIR,
   devDataDir = DEV_DATA_DIR,
   legacyWorktreesDir = LEGACY_WORKTREES_DIR,
-  devWorktreesDir = DEV_WORKTREES_DIR
+  devWorktreesDir = DEV_WORKTREES_DIR,
+  // false → copy data only (no worktrees); see cloneWorktrees.copyWorktrees.
+  copyWorktrees = true
 } = {}) => {
   log.log?.(`[dev] cloning ${tildify(sourceDataDir)} → ${tildify(devDataDir)} …`)
 
@@ -779,18 +821,26 @@ const runClone = ({
       log,
       devDataDir: stagingDir,
       legacyWorktreesDir,
-      devWorktreesDir
+      devWorktreesDir,
+      copyWorktrees
     })
 
-    if (cloned.length) {
-      log.log?.(`[dev] cloned ${cloned.length} worktree(s):`)
-      for (const w of cloned) log.log?.(`        ${w.branch}  →  ${tildify(w.path)}`)
+    if (!copyWorktrees) {
+      log.log?.(
+        `[dev] data-only seed: ${skipped.length} worktree(s) archived (not copied) — ` +
+          'create worktrees fresh in this app.'
+      )
     } else {
-      log.log?.('[dev] no worktrees cloned.')
-    }
-    if (skipped.length) {
-      log.warn?.(`[dev] skipped ${skipped.length} worktree(s) (archived in dev DB):`)
-      for (const w of skipped) log.warn?.(`        ${w.branch ?? '?'} — ${w.reason}`)
+      if (cloned.length) {
+        log.log?.(`[dev] cloned ${cloned.length} worktree(s):`)
+        for (const w of cloned) log.log?.(`        ${w.branch}  →  ${tildify(w.path)}`)
+      } else {
+        log.log?.('[dev] no worktrees cloned.')
+      }
+      if (skipped.length) {
+        log.warn?.(`[dev] skipped ${skipped.length} worktree(s) (archived in dev DB):`)
+        for (const w of skipped) log.warn?.(`        ${w.branch ?? '?'} — ${w.reason}`)
+      }
     }
 
     // Repoint/clean connection member symlinks against the staged copy so dev
@@ -824,78 +874,132 @@ const runClone = ({
 }
 
 // Called before build:server so the dev answers the prompt up front instead of
-// waiting behind a build. No-op once ~/.hive-dev exists.
+// waiting behind a build. No-op once DEV_DATA_DIR already exists.
 export const ensureDevDataReady = async ({ log = console } = {}) => {
   if (existsSync(DEV_DATA_DIR)) return
 
-  if (!process.stdin.isTTY) {
+  // Explicit, non-interactive choice (scripts/worktree-sync exports this so the
+  // first `pnpm dev` in an isolated worktree never blocks on a prompt). When set
+  // it overrides BOTH the interactive prompt and the no-TTY default below.
+  const forced = parseSyncMode(process.env.HIVE_DEV_DATA_SYNC)
+
+  if (forced === 'fresh') {
+    mkdirSync(DEV_DATA_DIR, { recursive: true })
+    log.log?.('[dev] HIVE_DEV_DATA_SYNC=fresh → starting with an empty, isolated dev database.')
+    return
+  }
+
+  // No explicit choice and no TTY to prompt on → default fresh (unchanged).
+  if (forced !== 'clone' && !process.stdin.isTTY) {
     mkdirSync(DEV_DATA_DIR, { recursive: true })
     log.log?.('[dev] non-interactive shell (no TTY) → starting fresh with an empty dev database.')
     return
   }
 
-  // The clone flow is macOS-only: it quits the official app via `osascript` and
-  // detects it via `pgrep` against the .app bundle path, and the seeded paths it
-  // rewrites are POSIX. On Windows/Linux those primitives don't exist (and
-  // isOfficialAppRunning would falsely report "not running", risking a torn copy
-  // of a live SQLite tree), so we skip cloning and start fresh. Isolation still
-  // holds everywhere — HIVE_DATA_DIR/HIVE_WORKTREES_DIR are pinned to the dev
-  // dirs regardless of platform; only the convenience one-time clone is skipped.
-  if (process.platform !== 'darwin') {
-    mkdirSync(DEV_DATA_DIR, { recursive: true })
-    log.log?.(
-      `[dev] cloning the official app is macOS-only (current platform: ${process.platform}) → ` +
-        'starting fresh with an empty, isolated dev database.'
-    )
-    return
-  }
+  // Pick the clone SOURCE by context:
+  //   • isolated worktree (HIVE_DEV_DATA_DIR set) → the SHARED DEV sandbox
+  //     (~/.hive-dev). It's just files, not a running packaged app, so there's
+  //     nothing to quit. Production (~/.hive) is never read here.
+  //   • shared dev sandbox first run (HIVE_DEV_DATA_DIR unset, target ~/.hive-dev)
+  //     → production (~/.hive), which IS the running packaged app and must be
+  //     quit for a quiescent snapshot.
+  const source = IS_ISOLATED_WORKTREE
+    ? {
+        dataDir: SHARED_DEV_DATA_DIR,
+        label: tildify(SHARED_DEV_DATA_DIR),
+        mustQuitApp: false,
+        // Seed DATA only — projects, settings, connections, custom commands.
+        // The dev worktrees are NOT copied (you create them fresh in this app),
+        // so nothing keeps pointing at the shared ~/.hive-dev-worktrees.
+        copyWorktrees: false
+      }
+    : {
+        dataDir: LEGACY_DATA_DIR,
+        worktreesDir: LEGACY_WORKTREES_DIR,
+        label: tildify(LEGACY_DATA_DIR),
+        mustQuitApp: true,
+        copyWorktrees: true
+      }
 
-  // Defensive: the clone reads/writes the DB through the system `sqlite3` CLI.
-  // If it's missing, fall back to fresh rather than throwing mid-clone (which
-  // would roll back and exit). Recovery: install sqlite3, then `rm -rf
-  // ~/.hive-dev` and re-run `pnpm dev` to get the clone prompt again.
+  // The clone rewrites the copied DB's stored paths through the system `sqlite3`
+  // CLI (better-sqlite3 is built against Electron's ABI, unusable from plain
+  // node — see sqlite3Query). Without it we can't repoint worktree/connection
+  // rows off the source paths, so publishing the copy would let this worktree
+  // operate on the SHARED dev tree — breaking isolation. Fall back to fresh.
   if (!sqlite3Available()) {
     mkdirSync(DEV_DATA_DIR, { recursive: true })
     log.log?.(
       '[dev] `sqlite3` CLI not found on PATH → starting fresh with an empty, isolated dev ' +
-        'database. To clone official data instead, install sqlite3, then `rm -rf ~/.hive-dev` ' +
-        'and re-run `pnpm dev`.'
+        `database (can't safely repoint a copy without it). Install sqlite3 and re-run to clone.`
     )
     return
   }
 
-  if (!existsSync(join(LEGACY_DATA_DIR, 'hive.db'))) {
+  // Nothing to copy if the source has never been created. For an isolated
+  // worktree that means the shared dev sandbox doesn't exist yet — start fresh;
+  // run `pnpm dev` once WITHOUT isolation to build ~/.hive-dev, then re-seed.
+  if (!existsSync(join(source.dataDir, 'hive.db'))) {
     mkdirSync(DEV_DATA_DIR, { recursive: true })
     log.log?.(
-      `[dev] no official data found at ${tildify(LEGACY_DATA_DIR)} → starting fresh with an empty dev database.`
+      `[dev] no source data found at ${source.label} → starting fresh with an empty dev database.` +
+        (IS_ISOLATED_WORKTREE
+          ? ' (Run `pnpm dev` once on the shared sandbox to create ~/.hive-dev first, then re-seed.)'
+          : '')
     )
     return
   }
 
-  printSyncPrompt(log)
-  const choice = parseSyncAnswer(await ask('> '))
-  if (choice === 'fresh') {
-    mkdirSync(DEV_DATA_DIR, { recursive: true })
-    log.log?.('[dev] starting fresh with an empty dev database.')
-    return
-  }
+  // Interactive: ask clone-vs-fresh, then (prod source only) confirm the app
+  // quit. When the choice was forced to 'clone' (worktree-sync), skip both.
+  if (forced !== 'clone') {
+    printSyncPrompt(log)
+    const choice = parseSyncAnswer(await ask('> '))
+    if (choice === 'fresh') {
+      mkdirSync(DEV_DATA_DIR, { recursive: true })
+      log.log?.('[dev] starting fresh with an empty dev database.')
+      return
+    }
 
-  printQuitPrompt(log)
-  if (!parseQuitAnswer(await ask('> '))) {
-    log.log?.('[dev] Cancelled — official app left running, nothing copied. Exiting.')
-    process.exit(0)
-  }
-
-  log.log?.('[dev] Quitting official Hive…')
-  quitOfficialApp()
-  if (!(await waitUntilOfficialAppGone({ log }))) {
-    // The whole point of the gate is a quiescent SQLite + worktree snapshot.
-    // If the app won't quit, refuse rather than silently clone a torn DB.
+    if (source.mustQuitApp) {
+      printQuitPrompt(log)
+      if (!parseQuitAnswer(await ask('> '))) {
+        log.log?.('[dev] Cancelled — official app left running, nothing copied. Exiting.')
+        process.exit(0)
+      }
+    }
+  } else {
     log.log?.(
-      '[dev] Official Hive app is still running — aborting to avoid a torn snapshot. ' +
-        'Quit it manually, then run `pnpm dev` again. Nothing copied.'
+      `[dev] HIVE_DEV_DATA_SYNC=clone → cloning ${source.label} into this worktree (non-interactive).`
     )
-    process.exit(0)
   }
-  runClone({ log })
+
+  // Production source: quit the packaged app for a quiescent snapshot. The
+  // shared-dev source is plain files with no app to quit, so skip entirely.
+  if (source.mustQuitApp) {
+    log.log?.('[dev] Quitting official Hive…')
+    quitOfficialApp()
+    if (!(await waitUntilOfficialAppGone({ log }))) {
+      // No quiescent snapshot possible. Forced (non-interactive) runs degrade to
+      // a fresh, isolated DB rather than exiting the launch; interactive aborts.
+      if (forced === 'clone') {
+        mkdirSync(DEV_DATA_DIR, { recursive: true })
+        log.log?.(
+          '[dev] Official Hive app would not quit → starting fresh to avoid a torn snapshot.'
+        )
+        return
+      }
+      log.log?.(
+        '[dev] Official Hive app is still running — aborting to avoid a torn snapshot. ' +
+          'Quit it manually, then run `pnpm dev` again. Nothing copied.'
+      )
+      process.exit(0)
+    }
+  }
+
+  runClone({
+    log,
+    sourceDataDir: source.dataDir,
+    copyWorktrees: source.copyWorktrees,
+    ...(source.worktreesDir ? { legacyWorktreesDir: source.worktreesDir } : {})
+  })
 }

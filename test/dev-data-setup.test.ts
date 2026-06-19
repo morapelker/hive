@@ -24,6 +24,26 @@ describe('dev data setup', () => {
     expect(DEV_WORKTREES_DIR).toBe('/wt/standalone/.hive-data-worktrees')
   })
 
+  test('an isolated worktree seeds from the shared dev sandbox, never production', async () => {
+    vi.stubEnv('HIVE_DEV_DATA_DIR', '/wt/standalone/.hive-data')
+    vi.resetModules()
+    const mod = await import('../scripts/dev-data-setup.mjs')
+
+    // The clone SOURCE for an isolated worktree is the fixed shared-dev sandbox,
+    // not the relocated target and not production (~/.hive).
+    expect(mod.IS_ISOLATED_WORKTREE).toBe(true)
+    expect(mod.SHARED_DEV_DATA_DIR).toBe(resolve(homedir(), '.hive-dev'))
+    expect(mod.SHARED_DEV_DATA_DIR).not.toBe(mod.LEGACY_DATA_DIR)
+  })
+
+  test('the shared dev sandbox itself is not flagged isolated (clones from prod)', async () => {
+    vi.resetModules()
+    const mod = await import('../scripts/dev-data-setup.mjs')
+
+    expect(mod.IS_ISOLATED_WORKTREE).toBe(false)
+    expect(mod.LEGACY_DATA_DIR).toBe(resolve(homedir(), '.hive'))
+  })
+
   test('a relative HIVE_DEV_DATA_DIR is resolved to an absolute path and trimmed', async () => {
     vi.stubEnv('HIVE_DEV_DATA_DIR', '  rel/.hive-data  ')
     vi.resetModules()
@@ -43,6 +63,21 @@ describe('dev data setup', () => {
       expect(parseSyncAnswer(sync)).toBe('sync')
     }
     expect(parseSyncAnswer(undefined)).toBe('sync')
+  })
+
+  test('parses HIVE_DEV_DATA_SYNC into clone | fresh | null (unset/unknown -> null)', async () => {
+    const { parseSyncMode } = await import('../scripts/dev-data-setup.mjs')
+
+    for (const clone of ['clone', 'CLONE', 'sync', 's', 'y', 'yes', '  clone  ']) {
+      expect(parseSyncMode(clone)).toBe('clone')
+    }
+    for (const fresh of ['fresh', 'F', 'n', 'no', 'scratch', '  fresh  ']) {
+      expect(parseSyncMode(fresh)).toBe('fresh')
+    }
+    // Unset / blank / unrecognized fall back to the interactive prompt.
+    for (const none of ['', '  ', 'huh?', undefined]) {
+      expect(parseSyncMode(none)).toBeNull()
+    }
   })
 
   test('parses the quit-official-app confirm (default No)', async () => {

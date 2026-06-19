@@ -22,6 +22,15 @@
 #   .envrc whenever a shell cd's in, so you keep running the normal commands —
 #   no wrapper, no per-command flags.
 #
+#   It then SEEDS the isolated data once (default: copy the SHARED dev sandbox
+#   ~/.hive-dev, or --fresh for an empty DB) so the first `pnpm dev` starts
+#   unattended — no clone/fresh prompt. The source is ~/.hive-dev (your working
+#   dev data), NOT production (~/.hive), and nothing is quit — it's just files.
+#   Only DATA is copied — projects, settings, connections, custom commands; the
+#   dev WORKTREES are NOT copied (you create them fresh here). Degrades to a
+#   fresh DB if copying isn't possible (no sqlite3, or you've never run the
+#   shared `pnpm dev` so ~/.hive-dev doesn't exist yet).
+#
 # Result: separate from ~/.hive (prod), ~/.hive-dev (shared dev), and every
 # other worktree. Ports already auto-resolve (backend scans 3773+, Vite
 # increments from 5173), so nothing else needs assigning.
@@ -32,12 +41,25 @@
 
 set -euo pipefail
 
-if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
-  echo "usage: scripts/worktree-sync       # set up isolated dev data for this worktree"
-  echo "then:  pnpm dev                     # runs isolated, like a normal checkout"
-  echo "drop:  git worktree remove <dir>    # removes the worktree and its isolated data"
-  exit 0
-fi
+# Default: seed this worktree's dev data by copying the SHARED dev sandbox
+# (~/.hive-dev) so the first `pnpm dev` is ready with no prompt. `--fresh` empty.
+SYNC_MODE="clone"
+for arg in "$@"; do
+  case "$arg" in
+    -h | --help)
+      echo "usage: scripts/worktree-sync          # set up isolated dev data (copies ~/.hive-dev)"
+      echo "       scripts/worktree-sync --fresh  # ... but start with an empty dev database"
+      echo "then:  pnpm dev                        # runs isolated, like a normal checkout"
+      echo "drop:  git worktree remove <dir>       # removes the worktree and its isolated data"
+      exit 0
+      ;;
+    --fresh) SYNC_MODE="fresh" ;;
+    *)
+      echo "error: unknown argument '$arg' (see --help)." >&2
+      exit 1
+      ;;
+  esac
+done
 
 # --- locate this worktree's root (the dir holding package.json) ---------------
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -161,6 +183,18 @@ echo "==> direnv allow"
 direnv allow "$ROOT"
 verify
 
+# Seed the isolated dev data up front (clone ~/.hive, or empty with --fresh) so
+# the first `pnpm dev` runs unattended — no clone/fresh prompt. Runs under
+# `direnv exec` so HIVE_DEV_DATA_DIR is set, and exports HIVE_DEV_DATA_SYNC so
+# ensureDevDataReady takes the non-interactive path. No-op if .hive-data exists.
+if [ "$SYNC_MODE" = "clone" ]; then
+  echo "==> Seeding isolated dev data (copying ~/.hive-dev data — no worktrees)…"
+else
+  echo "==> Seeding isolated dev data (fresh, empty database)…"
+fi
+direnv exec "$ROOT" env HIVE_DEV_DATA_SYNC="$SYNC_MODE" \
+  node -e 'import("./scripts/dev-data-setup.mjs").then(m => m.ensureDevDataReady()).catch(e => { console.error(e); process.exit(1) })'
+
 echo
-echo "Done. This worktree is isolated. Use the normal commands — e.g.: pnpm dev"
-echo "(first run prompts to clone ~/.hive or start fresh.)"
+echo "Done. This worktree is isolated and its dev data is seeded."
+echo "Run the normal commands — e.g.: pnpm dev   (starts immediately, no prompt)"
