@@ -67,6 +67,7 @@ scripts/*
 !scripts/dev-data-setup.mjs
 !scripts/dev-web.mjs
 !scripts/probe-effect-logger.ts
+!scripts/worktree-sync
 
 .playwright-cli
 
@@ -79,3 +80,8 @@ scripts/*
 
 # Superpowers brainstorm artifacts
 .superpowers/brainstorm/
+
+# Per-worktree isolated Hive dev data (scripts/worktree-sync)
+.envrc
+.hive-data/
+.hive-data-worktrees/

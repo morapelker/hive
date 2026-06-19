@@ -29,14 +29,28 @@ import {
   writeFileSync
 } from 'node:fs'
 import { homedir } from 'node:os'
-import { basename, dirname, join, sep } from 'node:path'
+import { basename, dirname, join, resolve, sep } from 'node:path'
 import * as readline from 'node:readline/promises'
 import process from 'node:process'
 
 export const LEGACY_DATA_DIR = join(homedir(), '.hive')
 export const LEGACY_WORKTREES_DIR = join(homedir(), '.hive-worktrees')
-export const DEV_DATA_DIR = join(homedir(), '.hive-dev')
-export const DEV_WORKTREES_DIR = join(homedir(), '.hive-dev-worktrees')
+
+// Dev data location. Default = the single shared dev sandbox (~/.hive-dev), so a
+// plain `pnpm dev` from any clone behaves exactly as before. A standalone git
+// worktree can opt into FULL isolation — separate from ~/.hive (daily app),
+// ~/.hive-dev (shared dev), AND every other worktree — by exporting
+// HIVE_DEV_DATA_DIR (scripts/worktree-sync points it at <worktree>/.hive-data).
+// Both dirs stay siblings, mirroring the ~/.hive-dev / ~/.hive-dev-worktrees
+// layout, so the dev launcher's HIVE_DATA_DIR / HIVE_WORKTREES_DIR pinning keeps
+// relocating the whole tree with no other changes.
+const devDataOverride = process.env.HIVE_DEV_DATA_DIR?.trim()
+export const DEV_DATA_DIR = devDataOverride
+  ? resolve(devDataOverride)
+  : join(homedir(), '.hive-dev')
+export const DEV_WORKTREES_DIR = devDataOverride
+  ? resolve(`${devDataOverride}-worktrees`)
+  : join(homedir(), '.hive-dev-worktrees')
 
 const sleep = (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms))
 

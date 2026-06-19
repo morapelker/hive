@@ -1,13 +1,36 @@
 import { homedir } from 'node:os'
 import { resolve } from 'node:path'
-import { describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 
 describe('dev data setup', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    vi.resetModules()
+  })
+
   test('exposes the fixed dev data + worktrees dirs', async () => {
     const { DEV_DATA_DIR, DEV_WORKTREES_DIR } = await import('../scripts/dev-data-setup.mjs')
 
     expect(DEV_DATA_DIR).toBe(resolve(homedir(), '.hive-dev'))
     expect(DEV_WORKTREES_DIR).toBe(resolve(homedir(), '.hive-dev-worktrees'))
+  })
+
+  test('HIVE_DEV_DATA_DIR relocates both dev dirs as siblings (per-worktree isolation)', async () => {
+    vi.stubEnv('HIVE_DEV_DATA_DIR', '/wt/standalone/.hive-data')
+    vi.resetModules() // re-evaluate the module so the env override is read at load
+    const { DEV_DATA_DIR, DEV_WORKTREES_DIR } = await import('../scripts/dev-data-setup.mjs')
+
+    expect(DEV_DATA_DIR).toBe('/wt/standalone/.hive-data')
+    expect(DEV_WORKTREES_DIR).toBe('/wt/standalone/.hive-data-worktrees')
+  })
+
+  test('a relative HIVE_DEV_DATA_DIR is resolved to an absolute path and trimmed', async () => {
+    vi.stubEnv('HIVE_DEV_DATA_DIR', '  rel/.hive-data  ')
+    vi.resetModules()
+    const { DEV_DATA_DIR, DEV_WORKTREES_DIR } = await import('../scripts/dev-data-setup.mjs')
+
+    expect(DEV_DATA_DIR).toBe(resolve('rel/.hive-data'))
+    expect(DEV_WORKTREES_DIR).toBe(resolve('rel/.hive-data-worktrees'))
   })
 
   test('parses the clone-vs-fresh answer (empty defaults to sync)', async () => {
