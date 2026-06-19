@@ -836,9 +836,18 @@ export const useKanbanStore = create<KanbanState>()(
           for (const ticket of tickets) {
             if (ticket.current_session_id !== sessionId) continue
 
+            // 'done' is a terminal column: once a user marks a ticket done, no
+            // session event may auto-move it back. This matters on app
+            // relaunch/focus, when a still-active session re-emits its status
+            // (e.g. an `idle` replay → session_completed) for a done ticket.
+            // Each column-moving branch below guards on `column !== 'done'`.
             switch (event.type) {
               case 'session_completed': {
-                if (ticket.mode === 'build' && ticket.column !== 'review') {
+                if (
+                  ticket.mode === 'build' &&
+                  ticket.column !== 'review' &&
+                  ticket.column !== 'done'
+                ) {
                   // Auto-advance build ticket to review column (idempotent — skip if already there)
                   get()
                     .moveTicket(ticket.id, projectId, 'review', ticket.sort_order)
@@ -848,7 +857,7 @@ export const useKanbanStore = create<KanbanState>()(
                   get()
                     .updateTicket(ticket.id, projectId, { plan_ready: true })
                     .catch(() => {})
-                  if (ticket.column !== 'review') {
+                  if (ticket.column !== 'review' && ticket.column !== 'done') {
                     get()
                       .moveTicket(ticket.id, projectId, 'review', ticket.sort_order)
                       .catch(() => {})
@@ -881,7 +890,7 @@ export const useKanbanStore = create<KanbanState>()(
                   get()
                     .updateTicket(ticket.id, projectId, { plan_ready: true })
                     .catch(() => {})
-                  if (ticket.column !== 'review') {
+                  if (ticket.column !== 'review' && ticket.column !== 'done') {
                     get()
                       .moveTicket(ticket.id, projectId, 'review', ticket.sort_order)
                       .catch(() => {})
@@ -899,7 +908,7 @@ export const useKanbanStore = create<KanbanState>()(
                     .updateTicket(ticket.id, projectId, { plan_ready: false })
                     .catch(() => {})
                 }
-                if (ticket.column !== 'in_progress') {
+                if (ticket.column !== 'in_progress' && ticket.column !== 'done') {
                   get()
                     .moveTicket(ticket.id, projectId, 'in_progress', ticket.sort_order)
                     .catch(() => {})
