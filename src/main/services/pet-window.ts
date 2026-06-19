@@ -17,7 +17,10 @@ import type {
 } from '../../shared/types/pet'
 import { emitPetJumpToWorktree, emitPetSettingsUpdated, emitPetStatus } from './pet-events'
 
-const PET_POSITION_FILE = join(app.getPath('userData'), 'pet-position.json')
+// Resolved lazily (not captured at module load) so it honors the userData
+// relocation the entrypoint applies for isolated/dev data before app 'ready'
+// — see src/main/index.ts. A module-load capture would read the default path.
+const petPositionFile = (): string => join(app.getPath('userData'), 'pet-position.json')
 const PET_PADDING = 48
 const SCREEN_MARGIN = 24
 const PET_POINTER_INTERACTION_SUPPRESSION_MS = 250
@@ -133,8 +136,8 @@ function defaultPosition(size = petWindowSize()): PetPosition {
 
 export function loadPetPosition(size = petWindowSize()): PetPosition {
   try {
-    if (existsSync(PET_POSITION_FILE)) {
-      const parsed = JSON.parse(readFileSync(PET_POSITION_FILE, 'utf-8')) as PetPosition
+    if (existsSync(petPositionFile())) {
+      const parsed = JSON.parse(readFileSync(petPositionFile(), 'utf-8')) as PetPosition
       const position = constrainPosition(parsed, size)
       const displays = screen.getAllDisplays()
       const isInsideWorkArea = displays.some((display) => {
@@ -160,7 +163,7 @@ export function savePetPosition(position: PetPosition): void {
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true })
     }
-    writeFileSync(PET_POSITION_FILE, JSON.stringify(position))
+    writeFileSync(petPositionFile(), JSON.stringify(position))
   } catch {
     // Ignore save errors.
   }

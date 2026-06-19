@@ -15,9 +15,12 @@
 #   Writes a per-worktree .envrc exporting HIVE_DEV_DATA_DIR=<worktree>/.hive-data
 #   and registers it with direnv. scripts/dev-data-setup.mjs honors that var, so
 #   the dev launcher relocates the ENTIRE tree (DB, logs, icons, attachments,
-#   connections, custom commands, project worktrees) under this directory.
-#   direnv loads the .envrc automatically whenever a shell cd's in, so you keep
-#   running the normal commands — no wrapper, no per-command flags.
+#   connections, custom commands, project worktrees) under this directory, and
+#   src/main/index.ts relocates the Electron profile (window state, web caches,
+#   localStorage incl. the ticket-import credential cache) there too — so there
+#   is ZERO shared state with the daily app or other worktrees. direnv loads the
+#   .envrc whenever a shell cd's in, so you keep running the normal commands —
+#   no wrapper, no per-command flags.
 #
 # Result: separate from ~/.hive (prod), ~/.hive-dev (shared dev), and every
 # other worktree. Ports already auto-resolve (backend scans 3773+, Vite

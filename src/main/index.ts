@@ -3,6 +3,7 @@ import { app, shell, BrowserWindow, Menu, screen, webContents } from 'electron'
 import { join } from 'path'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { electronApp, is } from '@electron-toolkit/utils'
+import { getHiveDataDir } from './services/hive-paths'
 import { getDatabase, closeDatabase } from './db'
 import {
   connectOpenCodeSession,
@@ -135,6 +136,19 @@ import {
   readWarnBeforeQuitting
 } from './quit-confirmation'
 import { emitSettingsUpdated } from './services/settings-events'
+
+// Relocate the Electron profile (userData: window bounds, caches, cookies,
+// localStorage incl. the ticket-import credential cache) under HIVE_DATA_DIR
+// whenever it's pinned — i.e. `pnpm dev` and per-worktree isolation. This is
+// the last piece of shared state: it keeps dev runs and worktrees from sharing
+// UI state or credentials with the installed app or each other, and — since it
+// then lives inside the worktree's .hive-data — lets `git worktree remove` wipe
+// it. Must run before app 'ready' and before any userData read (pet-window's
+// path is resolved lazily for this reason). Prod leaves HIVE_DATA_DIR unset, so
+// the default OS profile is used unchanged.
+if (process.env.HIVE_DATA_DIR) {
+  app.setPath('userData', join(getHiveDataDir(), 'electron'))
+}
 
 const log = createLogger({ component: 'Main' })
 
