@@ -15,15 +15,16 @@
 # dev), and every other worktree. Ports already auto-resolve (backend scans
 # 3773+, Vite increments from 5173), so nothing else needs assigning.
 #
-# Usage:
-#   scripts/worktree-sync setup       install deps + write .envrc + direnv allow
-#   scripts/worktree-sync run         run `pnpm dev` isolated (no direnv needed)
-#   scripts/worktree-sync status      show resolved dirs + what exists
-#   scripts/worktree-sync teardown    remove this worktree's dev data (guarded)
+# Commands:
+#   setup      one-shot: check/install required tools (asks before installing),
+#              install deps, write .envrc, direnv allow, then verify isolation.
+#   run        run `pnpm dev` isolated without relying on direnv.
+#   status     show resolved dirs, tools, and what exists.
+#   teardown   remove this worktree's isolated dev data (guarded by a prompt).
 #
-# After `setup`, with direnv active, every new terminal that cd's here is
-# isolated automatically — `pnpm dev` just works. First `pnpm dev` will prompt
-# to clone ~/.hive or start fresh (handled by dev-data-setup.mjs).
+# After `setup`, with the direnv hook installed, every new terminal that cd's
+# here is isolated automatically — `pnpm dev` just works. The first `pnpm dev`
+# prompts to clone ~/.hive or start fresh (handled by dev-data-setup.mjs).
 
 set -euo pipefail
 
@@ -45,11 +46,101 @@ pnpm_cmd() {
   fi
 }
 
+# yes/no prompt, default No. Returns 0 on an explicit yes.
+confirm() {
+  local reply
+  printf '%s [y/N] ' "$1"
+  read -r reply
+  case "$reply" in
+    [yY] | [yY][eE][sS]) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Resolve the shell rc file direnv should be hooked into.
+shell_rc() {
+  case "$(basename "${SHELL:-zsh}")" in
+    zsh) echo "$HOME/.zshrc" ;;
+    bash) [ -f "$HOME/.bashrc" ] && echo "$HOME/.bashrc" || echo "$HOME/.bash_profile" ;;
+    *) echo "" ;;
+  esac
+}
+
+# Ensure `eval "$(direnv hook <shell>)"` is in the shell rc (idempotent, asks).
+ensure_direnv_hook() {
+  local shell_name rc hook_line
+  shell_name="$(basename "${SHELL:-zsh}")"
+  rc="$(shell_rc)"
+  hook_line="eval \"\$(direnv hook $shell_name)\""
+
+  if [ -z "$rc" ]; then
+    echo "note: add this to your shell rc so direnv loads .envrc: $hook_line"
+    return
+  fi
+  if [ -f "$rc" ] && grep -q "direnv hook" "$rc"; then
+    return # already hooked
+  fi
+  if confirm "Add direnv hook to $rc (one-time, lets direnv load .envrc)?"; then
+    printf '\n# direnv — load per-directory .envrc\n%s\n' "$hook_line" >>"$rc"
+    echo "Hook added to $rc. New shells pick it up; this shell: run \`$hook_line\`"
+  else
+    echo "Skipped. Add manually to $rc: $hook_line"
+  fi
+}
+
+# Verify the required toolchain; offer to install what's missing (asks first).
+preflight() {
+  echo "==> Checking required tools…"
+
+  # Node + corepack provide the pinned pnpm. We don't auto-install Node.
+  local tool
+  for tool in node corepack; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+      echo "error: '$tool' not found. Install Node.js 18+ (ships corepack), then re-run setup." >&2
+      exit 1
+    fi
+  done
+
+  # direnv powers auto-isolation on `cd`. Offer to install it.
+  if ! command -v direnv >/dev/null 2>&1; then
+    echo "direnv is not installed (needed to auto-isolate this worktree on cd)."
+    if command -v brew >/dev/null 2>&1; then
+      if confirm "Install direnv now via 'brew install direnv'?"; then
+        brew install direnv
+      else
+        echo "Skipping direnv — you can still launch with: scripts/worktree-sync run"
+      fi
+    else
+      echo "Homebrew not found. Install direnv manually (https://direnv.net) and re-run setup,"
+      echo "or skip it and use: scripts/worktree-sync run"
+    fi
+  fi
+
+  # If direnv is present, make sure the shell hook is wired up.
+  if command -v direnv >/dev/null 2>&1; then
+    ensure_direnv_hook
+  fi
+}
+
+# Confirm direnv will actually export the var when a shell enters this dir.
+verify() {
+  command -v direnv >/dev/null 2>&1 || return 0
+  local exported
+  exported="$(direnv exec "$ROOT" sh -c 'printf %s "${HIVE_DEV_DATA_DIR:-}"' 2>/dev/null || true)"
+  if [ "$exported" = "$DATA_DIR" ]; then
+    echo "✓ verified: cd here exports HIVE_DEV_DATA_DIR=$DATA_DIR"
+  else
+    echo "⚠ direnv did not export the var (got: '${exported:-<empty>}'). Try: direnv allow $ROOT"
+  fi
+}
+
 cmd_setup() {
   if [ ! -f "$ROOT/package.json" ]; then
     echo "error: $ROOT has no package.json — run inside a Hive checkout." >&2
     exit 1
   fi
+
+  preflight
 
   echo "==> Installing dependencies (corepack pnpm install)…"
   pnpm_cmd install
@@ -65,12 +156,12 @@ EOF
   if command -v direnv >/dev/null 2>&1; then
     echo "==> direnv allow"
     direnv allow "$ROOT"
+    verify
     echo
     echo "Done. New terminals that cd here auto-isolate. Run: pnpm dev"
   else
     echo
-    echo "direnv not found. Either install it (brew install direnv) and re-run"
-    echo "setup, or start the app with: scripts/worktree-sync run"
+    echo "Set up without direnv. Launch the isolated app with: scripts/worktree-sync run"
   fi
 }
 
@@ -84,9 +175,13 @@ cmd_status() {
   echo "Worktree root : $ROOT"
   echo "HIVE_DEV_DATA_DIR (env) : ${HIVE_DEV_DATA_DIR:-<unset>}"
   echo
-  printf '%-28s %s\n' "dev data dir:" "$DATA_DIR $([ -d "$DATA_DIR" ] && echo '(exists)' || echo '(not created yet)')"
-  printf '%-28s %s\n' "dev worktrees dir:" "$WORKTREES_DIR $([ -d "$WORKTREES_DIR" ] && echo '(exists)' || echo '(not created yet)')"
-  printf '%-28s %s\n' ".envrc:" "$ENVRC $([ -f "$ENVRC" ] && echo '(present)' || echo '(missing — run setup)')"
+  printf '%-22s %s\n' "node:" "$(command -v node >/dev/null 2>&1 && node --version || echo '<missing>')"
+  printf '%-22s %s\n' "corepack:" "$(command -v corepack >/dev/null 2>&1 && echo present || echo '<missing>')"
+  printf '%-22s %s\n' "direnv:" "$(command -v direnv >/dev/null 2>&1 && direnv version || echo '<missing>')"
+  echo
+  printf '%-22s %s\n' "dev data dir:" "$DATA_DIR $([ -d "$DATA_DIR" ] && echo '(exists)' || echo '(not created yet)')"
+  printf '%-22s %s\n' "dev worktrees dir:" "$WORKTREES_DIR $([ -d "$WORKTREES_DIR" ] && echo '(exists)' || echo '(not created yet)')"
+  printf '%-22s %s\n' ".envrc:" "$ENVRC $([ -f "$ENVRC" ] && echo '(present)' || echo '(missing — run setup)')"
 }
 
 cmd_teardown() {
@@ -94,9 +189,7 @@ cmd_teardown() {
   echo "  $DATA_DIR"
   echo "  $WORKTREES_DIR"
   echo "  $ENVRC"
-  printf "Type 'yes' to delete: "
-  read -r reply
-  if [ "$reply" != "yes" ]; then
+  if ! confirm "Delete the above?"; then
     echo "Aborted."
     exit 0
   fi
