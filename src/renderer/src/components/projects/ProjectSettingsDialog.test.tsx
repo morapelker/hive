@@ -116,9 +116,10 @@ describe('ProjectSettingsDialog', () => {
 
     await waitFor(() => expect(projectApiMocks.detectSetupSuggestions).toHaveBeenCalled())
 
-    expect(
-      screen.getByRole('button', { name: /worktree create script/i })
-    ).toHaveProperty('ariaExpanded', 'false')
+    expect(screen.getByRole('button', { name: /worktree create script/i })).toHaveProperty(
+      'ariaExpanded',
+      'false'
+    )
     expect(screen.queryByText(/Advanced\. When set/)).toBeNull()
     expect(screen.queryByPlaceholderText(/git worktree add --no-checkout/)).toBeNull()
   })
@@ -128,9 +129,10 @@ describe('ProjectSettingsDialog', () => {
 
     await waitFor(() => expect(projectApiMocks.detectSetupSuggestions).toHaveBeenCalled())
 
-    expect(
-      screen.getByRole('button', { name: /worktree create script/i })
-    ).toHaveProperty('ariaExpanded', 'true')
+    expect(screen.getByRole('button', { name: /worktree create script/i })).toHaveProperty(
+      'ariaExpanded',
+      'true'
+    )
     expect(screen.getByDisplayValue('echo custom-create')).toBeTruthy()
   })
 
@@ -142,9 +144,10 @@ describe('ProjectSettingsDialog', () => {
 
     await user.click(screen.getByRole('button', { name: /worktree create script/i }))
 
-    expect(
-      screen.getByRole('button', { name: /worktree create script/i })
-    ).toHaveProperty('ariaExpanded', 'true')
+    expect(screen.getByRole('button', { name: /worktree create script/i })).toHaveProperty(
+      'ariaExpanded',
+      'true'
+    )
     expect(screen.getByPlaceholderText(/git worktree add --no-checkout/)).toBeTruthy()
   })
 
@@ -182,5 +185,115 @@ describe('ProjectSettingsDialog', () => {
         'Changing Kanban storage mode is only supported for projects with no cards.'
       )
     ).toBeTruthy()
+    expect(mocks.loadProjects).not.toHaveBeenCalled()
+  })
+
+  it('does not reset Kanban mode when saved project fields echo back into the open dialog', async () => {
+    const user = userEvent.setup()
+    const onOpenChange = vi.fn()
+    const view = renderDialog({}, onOpenChange)
+
+    await waitFor(() => expect(projectApiMocks.detectSetupSuggestions).toHaveBeenCalled())
+    await user.click(screen.getByRole('button', { name: 'Markdown' }))
+
+    view.rerender(
+      <ProjectSettingsDialog
+        project={{ ...baseProject, custom_commands: [] }}
+        open={true}
+        onOpenChange={onOpenChange}
+      />
+    )
+
+    expect(screen.getByRole('button', { name: 'Markdown' })).toHaveClass('bg-primary')
+    expect(screen.getByRole('button', { name: 'Choose Kanban folder' })).toBeTruthy()
+    expect(kanbanApiMocks.config.get).toHaveBeenCalledTimes(1)
+  })
+
+  it('reloads projects only after a Kanban mode save succeeds', async () => {
+    const user = userEvent.setup()
+    const onOpenChange = vi.fn()
+
+    renderDialog({}, onOpenChange)
+
+    await waitFor(() => expect(projectApiMocks.detectSetupSuggestions).toHaveBeenCalled())
+    await user.click(screen.getByRole('button', { name: 'Markdown' }))
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false))
+
+    expect(kanbanApiMocks.config.update).toHaveBeenCalledWith(
+      'project-1',
+      expect.objectContaining({ layout: 'single-folder' })
+    )
+    expect(kanbanApiMocks.config.setMode).toHaveBeenCalledWith('project-1', 'markdown')
+    expect(mocks.loadProjects).toHaveBeenCalledTimes(1)
+    expect(mocks.loadProjects.mock.invocationCallOrder[0]).toBeGreaterThan(
+      kanbanApiMocks.config.setMode.mock.invocationCallOrder[0]
+    )
+  })
+
+  it('keeps Markdown selected and shows create-folder warning when activation folders are missing', async () => {
+    const user = userEvent.setup()
+    const onOpenChange = vi.fn()
+    kanbanApiMocks.config.setMode.mockResolvedValue({
+      success: false,
+      error: "ENOENT: no such file or directory, realpath '/tmp/hive/docs/kanban'"
+    })
+
+    renderDialog({}, onOpenChange)
+
+    await waitFor(() => expect(projectApiMocks.detectSetupSuggestions).toHaveBeenCalled())
+    await user.click(screen.getByRole('button', { name: 'Markdown' }))
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+
+    expect(kanbanApiMocks.config.update).toHaveBeenCalledWith(
+      'project-1',
+      expect.objectContaining({
+        layout: 'single-folder',
+        singleFolder: 'docs/kanban'
+      })
+    )
+    expect(kanbanApiMocks.config.setMode).toHaveBeenCalledWith('project-1', 'markdown')
+    expect(await screen.findByTestId('kanban-missing-folders-state')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Markdown' })).toHaveClass('bg-primary')
+    expect(onOpenChange).not.toHaveBeenCalledWith(false)
+    expect(mocks.loadProjects).not.toHaveBeenCalled()
+  })
+
+  it('falls back to default Markdown folders when loaded config fields are missing', async () => {
+    const user = userEvent.setup()
+    kanbanApiMocks.config.get.mockResolvedValue({
+      mode: 'markdown',
+      markdown: {
+        layout: 'single-folder',
+        statusFolders: {
+          todo: undefined,
+          in_progress: undefined,
+          review: undefined,
+          done: undefined
+        }
+      }
+    })
+
+    renderDialog({ kanban_storage_mode: 'markdown' })
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('docs/kanban')).toBeTruthy()
+    })
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(kanbanApiMocks.config.update).toHaveBeenCalledWith('project-1', {
+        layout: 'single-folder',
+        singleFolder: 'docs/kanban',
+        statusFolders: {
+          todo: 'docs/kanban/todo',
+          in_progress: 'docs/kanban/in-progress',
+          review: 'docs/kanban/review',
+          done: 'docs/kanban/done'
+        }
+      })
+    })
+    expect(screen.queryByText(/Cannot read properties of undefined/)).toBeNull()
   })
 })

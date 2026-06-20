@@ -1685,6 +1685,44 @@ export async function moveKanbanTicketToProject(
   }
 }
 
+function pluralize(count: number, singular: string): string {
+  return count === 1 ? singular : `${singular}s`
+}
+
+function formatBlockingTicketTitles(tickets: KanbanTicket[]): string {
+  const visibleTitles = tickets.slice(0, 3).map((ticket) => `"${ticket.title}"`)
+  const remaining = tickets.length - visibleTitles.length
+  if (remaining > 0) {
+    visibleTitles.push(`${remaining} more`)
+  }
+  return visibleTitles.join(', ')
+}
+
+function formatInternalTicketModeBlockerError(tickets: KanbanTicket[]): string {
+  const activeTickets = tickets.filter((ticket) => !ticket.archived_at)
+  const activeCount = activeTickets.length
+  const archivedCount = tickets.length - activeCount
+  const parts: string[] = []
+  if (activeCount > 0) {
+    parts.push(`${activeCount} active internal ${pluralize(activeCount, 'card')}`)
+  }
+  if (archivedCount > 0) {
+    parts.push(`${archivedCount} archived internal ${pluralize(archivedCount, 'card')}`)
+  }
+  const activeDetails =
+    activeCount > 0
+      ? ` Active ${pluralize(activeCount, 'blocker')}: ${formatBlockingTicketTitles(activeTickets)}.`
+      : ''
+  const archivedInstruction =
+    archivedCount > 0
+      ? ` To find archived cards, turn on the archive toggle in the Done column, unarchive them, then remove the remaining internal cards before switching storage.`
+      : ' Remove the internal cards before switching storage.'
+
+  return `Markdown mode cannot be enabled because this project still has ${parts.join(
+    ' and '
+  )}.${activeDetails}${archivedInstruction}`
+}
+
 export function getKanbanStorageConfig(projectId: string): KanbanStorageConfig {
   const project = requireProject(projectId)
   const parsed = parseMarkdownConfigResult(project)
@@ -1704,14 +1742,19 @@ export async function updateKanbanMarkdownConfig(
 ): Promise<KanbanStorageConfig> {
   validateMarkdownConfigShape(config)
   const project = requireProject(projectId)
-  await validateConfiguredFolders(project, config)
+  const currentMode = getProjectStorageMode(projectId)
+  if (currentMode === 'markdown') {
+    await validateConfiguredFolders(project, config)
+  }
   const previousConfig = parseMarkdownConfig(project)
-  if (getProjectStorageMode(projectId) === 'markdown' && previousConfig.layout !== config.layout) {
+  if (currentMode === 'markdown' && previousConfig.layout !== config.layout) {
     await migrateMarkdownLayout(projectId, project, previousConfig, config)
   }
   getDatabase().updateProjectKanbanMarkdownConfig(projectId, JSON.stringify(config))
   markdownBackend.invalidate(projectId)
-  await restartMarkdownKanbanProjectWatch(projectId)
+  if (currentMode === 'markdown') {
+    await restartMarkdownKanbanProjectWatch(projectId)
+  }
   return getKanbanStorageConfig(projectId)
 }
 
@@ -1725,8 +1768,7 @@ export async function setKanbanStorageMode(
   if (internalTickets.length > 0) {
     return {
       success: false,
-      error:
-        'Changing Kanban storage mode is only supported for projects with no active or archived internal cards.'
+      error: formatInternalTicketModeBlockerError(internalTickets)
     }
   }
   if (currentMode === 'markdown' && (await markdownBackend.hasAnyCardLikeFiles(projectId))) {
@@ -1737,6 +1779,16 @@ export async function setKanbanStorageMode(
     }
   }
   if (currentMode === 'internal' && mode === 'markdown') {
+    const project = requireProject(projectId)
+    const config = parseMarkdownConfig(project)
+    try {
+      await validateConfiguredFolders(project, config)
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error)
+      }
+    }
     await markdownBackend.repairAdoptedCards(projectId)
   }
   getDatabase().updateProjectKanbanStorageMode(projectId, mode)

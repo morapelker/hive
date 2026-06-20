@@ -627,9 +627,31 @@ describe('markdown diagnostics cache', () => {
     })
   })
 
-  test('saving markdown config does not create missing folders', async () => {
+  test('saving inactive markdown config persists missing folders without creating them', async () => {
     const { updateKanbanMarkdownConfig } = await import('../../src/main/services/kanban-backend')
     const missingFolder = join(tempRoot!, 'missing-cards')
+    mockState.project = {
+      ...mockState.project!,
+      kanban_storage_mode: 'internal'
+    }
+
+    await updateKanbanMarkdownConfig('proj-cache', {
+      layout: 'single-folder',
+      singleFolder: 'missing-cards'
+    })
+
+    await expect(access(missingFolder)).rejects.toThrow()
+    expect(mockDatabase.updateProjectKanbanMarkdownConfig).toHaveBeenCalledWith(
+      'proj-cache',
+      JSON.stringify({
+        layout: 'single-folder',
+        singleFolder: 'missing-cards'
+      })
+    )
+  })
+
+  test('saving active markdown config rejects missing folders', async () => {
+    const { updateKanbanMarkdownConfig } = await import('../../src/main/services/kanban-backend')
 
     await expect(
       updateKanbanMarkdownConfig('proj-cache', {
@@ -638,7 +660,6 @@ describe('markdown diagnostics cache', () => {
       })
     ).rejects.toThrow()
 
-    await expect(access(missingFolder)).rejects.toThrow()
     expect(mockDatabase.updateProjectKanbanMarkdownConfig).not.toHaveBeenCalled()
   })
 
