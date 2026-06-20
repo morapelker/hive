@@ -151,7 +151,7 @@ describe('ProjectSettingsDialog', () => {
     expect(screen.getByPlaceholderText(/git worktree add --no-checkout/)).toBeTruthy()
   })
 
-  it('saves project fields before showing a Kanban mode-change failure', async () => {
+  it('refreshes projects after saved project fields are followed by a Kanban mode-change failure', async () => {
     const user = userEvent.setup()
     const onOpenChange = vi.fn()
     kanbanApiMocks.config.setMode.mockResolvedValue({
@@ -185,6 +185,21 @@ describe('ProjectSettingsDialog', () => {
         'Changing Kanban storage mode is only supported for projects with no cards.'
       )
     ).toBeTruthy()
+    expect(mocks.loadProjects).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not refresh projects when project field save fails before Kanban updates', async () => {
+    const user = userEvent.setup()
+    mocks.updateProject.mockResolvedValue(false)
+
+    renderDialog({})
+
+    await waitFor(() => expect(projectApiMocks.detectSetupSuggestions).toHaveBeenCalled())
+    await user.click(screen.getByRole('button', { name: 'Markdown' }))
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+
+    expect(kanbanApiMocks.config.update).not.toHaveBeenCalled()
+    expect(kanbanApiMocks.config.setMode).not.toHaveBeenCalled()
     expect(mocks.loadProjects).not.toHaveBeenCalled()
   })
 
@@ -257,7 +272,51 @@ describe('ProjectSettingsDialog', () => {
     expect(await screen.findByTestId('kanban-missing-folders-state')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Markdown' })).toHaveClass('bg-primary')
     expect(onOpenChange).not.toHaveBeenCalledWith(false)
-    expect(mocks.loadProjects).not.toHaveBeenCalled()
+    expect(mocks.loadProjects).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not show create-folder CTA for internal-card blockers that mention not found', async () => {
+    const user = userEvent.setup()
+    const onOpenChange = vi.fn()
+    const blockerMessage =
+      'Markdown mode cannot be enabled because this project still has 1 active internal card. Remove the internal card before switching storage.'
+    kanbanApiMocks.config.setMode.mockResolvedValue({
+      success: false,
+      error: blockerMessage
+    })
+
+    renderDialog({}, onOpenChange)
+
+    await waitFor(() => expect(projectApiMocks.detectSetupSuggestions).toHaveBeenCalled())
+    await user.click(screen.getByRole('button', { name: 'Markdown' }))
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+
+    expect(await screen.findByText(blockerMessage)).toBeTruthy()
+    expect(screen.queryByTestId('kanban-missing-folders-state')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Create folder and enable' })).toBeNull()
+    expect(onOpenChange).not.toHaveBeenCalledWith(false)
+  })
+
+  it('does not show create-folder CTA for realpath permission failures', async () => {
+    const user = userEvent.setup()
+    const onOpenChange = vi.fn()
+    const permissionMessage = "EACCES: permission denied, realpath '/tmp/hive/docs/kanban'"
+    kanbanApiMocks.config.setMode.mockResolvedValue({
+      success: false,
+      error: permissionMessage
+    })
+
+    renderDialog({}, onOpenChange)
+
+    await waitFor(() => expect(projectApiMocks.detectSetupSuggestions).toHaveBeenCalled())
+    await user.click(screen.getByRole('button', { name: 'Markdown' }))
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+
+    expect(await screen.findByText(permissionMessage)).toBeTruthy()
+    expect(screen.queryByTestId('kanban-missing-folders-state')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Create folder and enable' })).toBeNull()
+    expect(onOpenChange).not.toHaveBeenCalledWith(false)
+    expect(mocks.loadProjects).toHaveBeenCalledTimes(1)
   })
 
   it('falls back to default Markdown folders when loaded config fields are missing', async () => {

@@ -183,6 +183,23 @@ describe('markdown kanban adoption repair', () => {
     expect(mockDatabase.updateProjectKanbanStorageMode).not.toHaveBeenCalled()
   })
 
+  test('switching to markdown explains a singular active internal card blocker', async () => {
+    const { setKanbanStorageMode } = await import('../../src/main/services/kanban-backend')
+    mockDatabase.getKanbanTicketsByProject.mockReturnValueOnce([
+      { title: 'Visible ENOENT realpath blocker', archived_at: null }
+    ])
+
+    const result = await setKanbanStorageMode('proj-adopt', 'markdown')
+
+    expect(result).toEqual({
+      success: false,
+      error:
+        'Markdown mode cannot be enabled because this project still has 1 active internal card. Remove the internal card before switching storage.'
+    })
+    expect(result.error).not.toContain('Visible ENOENT realpath blocker')
+    expect(mockDatabase.updateProjectKanbanStorageMode).not.toHaveBeenCalled()
+  })
+
   test('switching to markdown explains active and archived internal card blockers', async () => {
     const { setKanbanStorageMode } = await import('../../src/main/services/kanban-backend')
     mockDatabase.getKanbanTicketsByProject.mockReturnValueOnce([
@@ -195,8 +212,10 @@ describe('markdown kanban adoption repair', () => {
     expect(result).toEqual({
       success: false,
       error:
-        'Markdown mode cannot be enabled because this project still has 1 active internal card and 1 archived internal card. Active blocker: "Visible blocker". To find archived cards, turn on the archive toggle in the Done column, unarchive them, then remove the remaining internal cards before switching storage.'
+        'Markdown mode cannot be enabled because this project still has 1 active internal card and 1 archived internal card. To find archived cards, turn on the archive toggle in the Done column, unarchive them, then remove the remaining internal cards before switching storage.'
     })
+    expect(result.error).not.toContain('Visible blocker')
+    expect(result.error).not.toContain('Archived blocker')
     expect(mockDatabase.updateProjectKanbanStorageMode).not.toHaveBeenCalled()
   })
 })

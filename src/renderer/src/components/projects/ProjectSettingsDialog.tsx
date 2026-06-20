@@ -285,7 +285,7 @@ export function ProjectSettingsDialog({
         }
 
   const isMissingFolderError = (message: string): boolean =>
-    /ENOENT|no such file|cannot find|not found/i.test(message)
+    /ENOENT|no such file or directory/i.test(message)
 
   const extractMissingFolderPath = (message: string): string => {
     const quotedPath = message.match(/'([^']+)'/)?.[1]
@@ -299,6 +299,7 @@ export function ProjectSettingsDialog({
     setSaving(true)
     setKanbanConfigError(null)
     setCanCreateKanbanFolders(false)
+    let projectFieldsSaved = false
     try {
       try {
         const success = await updateProject(project.id, {
@@ -316,6 +317,7 @@ export function ProjectSettingsDialog({
           toast.error('Failed to save project settings')
           return
         }
+        projectFieldsSaved = true
       } catch {
         toast.error('Failed to save project settings')
         return
@@ -329,6 +331,7 @@ export function ProjectSettingsDialog({
         const message = modeResult.error ?? 'Kanban storage mode could not be changed'
         setKanbanConfigError(message)
         setCanCreateKanbanFolders(kanbanMode === 'markdown' && isMissingFolderError(message))
+        await loadProjects()
         return
       }
 
@@ -340,6 +343,9 @@ export function ProjectSettingsDialog({
       const message = error instanceof Error ? error.message : 'Failed to save Kanban settings'
       setKanbanConfigError(message)
       setCanCreateKanbanFolders(kanbanMode === 'markdown' && isMissingFolderError(message))
+      if (projectFieldsSaved) {
+        await loadProjects()
+      }
     } finally {
       setSaving(false)
     }
