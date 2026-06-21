@@ -7,6 +7,7 @@ import {
   readFile,
   rm,
   stat,
+  symlink,
   writeFile
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -121,6 +122,11 @@ function frontmatterOf(raw: string): Record<string, unknown> {
   const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/)
   if (!match) return {}
   return (YAML.parse(match[1]) ?? {}) as Record<string, unknown>
+}
+
+function bodyOf(raw: string): string {
+  const match = raw.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?([\s\S]*)$/)
+  return match ? match[1] : raw
 }
 
 function dependencyBlockersOf(frontmatter: Record<string, unknown>): string[] {
@@ -460,6 +466,308 @@ describe('markdown diagnostics cache', () => {
       message: expect.stringContaining('missing required frontmatter field "id"'),
       blocking: true
     })
+  })
+
+  test('converting a placeholder markdown file preserves body and writes kanban frontmatter', async () => {
+    const backend = (
+      await import('../../src/main/services/kanban-backend')
+    ).getMarkdownKanbanBackend()
+    const cardsPath = join(tempRoot!, 'cards')
+    const existingPath = join(cardsPath, 'existing.md')
+    const cardPath = join(cardsPath, 'needs-migration.md')
+    const body = '# Migrated From Docs\n\nKeep this body exactly.\n'
+    await writeFile(
+      existingPath,
+      [
+        '---',
+        'id: existing-card',
+        'title: Existing Card',
+        'column: todo',
+        'sort_order: 7',
+        'mode: build',
+        'archived_at: null',
+        'created_at: "2026-06-01T00:00:00.000Z"',
+        '---',
+        'Existing body'
+      ].join('\n'),
+      'utf-8'
+    )
+    await writeFile(
+      cardPath,
+      ['---', 'reviewer: keep-me', '---', body].join('\n'),
+      'utf-8'
+    )
+    backend.invalidate('proj-cache')
+
+    const ticket = await backend.convertMarkdownFileToCard('proj-cache', cardPath)
+    const raw = await readFile(cardPath, 'utf-8')
+    const frontmatter = frontmatterOf(raw)
+
+    expect(ticket.id).toMatch(/^migrated-from-docs-[a-z0-9]+$/)
+    expect(ticket.title).toBe('Migrated From Docs')
+    expect(ticket.column).toBe('todo')
+    expect(ticket.sort_order).toBe(8)
+    expect(frontmatter.id).toBe(ticket.id)
+    expect(frontmatter.title).toBe('Migrated From Docs')
+    expect(frontmatter.column).toBe('todo')
+    expect(frontmatter.sort_order).toBe(8)
+    expect(frontmatter.mode).toBe('build')
+    expect(frontmatter.archived_at).toBeNull()
+    expect(typeof frontmatter.created_at).toBe('string')
+    expect(frontmatter.reviewer).toBe('keep-me')
+    expect(bodyOf(raw)).toBe(body)
+  })
+
+  test('converting treats blank id frontmatter as missing', async () => {
+    const backend = (
+      await import('../../src/main/services/kanban-backend')
+    ).getMarkdownKanbanBackend()
+    const cardPath = join(tempRoot!, 'cards', 'blank-id.md')
+    const body = '# Blank ID Template\n\nBody\n'
+    await writeFile(
+      cardPath,
+      ['---', "id: ''", 'title: Blank ID Template', '---', body].join('\n'),
+      'utf-8'
+    )
+    backend.invalidate('proj-cache')
+
+    const ticket = await backend.convertMarkdownFileToCard('proj-cache', cardPath)
+    const frontmatter = frontmatterOf(await readFile(cardPath, 'utf-8'))
+
+    expect(ticket.id).toMatch(/^blank-id-template-[a-z0-9]+$/)
+    expect(frontmatter.id).toBe(ticket.id)
+    expect(frontmatter.title).toBe('Blank ID Template')
+  })
+
+  test('converting treats blank title and column frontmatter as missing', async () => {
+    const backend = (
+      await import('../../src/main/services/kanban-backend')
+    ).getMarkdownKanbanBackend()
+    const cardPath = join(tempRoot!, 'cards', 'blank-fields.md')
+    await writeFile(
+      cardPath,
+      ['---', "title: ''", 'column:', '---', '# Heading Title', 'Body'].join('\n'),
+      'utf-8'
+    )
+    backend.invalidate('proj-cache')
+
+    const ticket = await backend.convertMarkdownFileToCard('proj-cache', cardPath)
+    const frontmatter = frontmatterOf(await readFile(cardPath, 'utf-8'))
+
+    expect(ticket.title).toBe('Heading Title')
+    expect(ticket.column).toBe('todo')
+    expect(frontmatter.title).toBe('Heading Title')
+    expect(frontmatter.column).toBe('todo')
+  })
+
+  test('converting treats blank generated metadata as missing', async () => {
+    const backend = (
+      await import('../../src/main/services/kanban-backend')
+    ).getMarkdownKanbanBackend()
+    const cardPath = join(tempRoot!, 'cards', 'blank-generated.md')
+    await writeFile(
+      cardPath,
+      [
+        '---',
+        'sort_order:',
+        'created_at:',
+        '---',
+        '# Blank Generated Metadata',
+        'Body'
+      ].join('\n'),
+      'utf-8'
+    )
+    backend.invalidate('proj-cache')
+
+    const ticket = await backend.convertMarkdownFileToCard('proj-cache', cardPath)
+    const frontmatter = frontmatterOf(await readFile(cardPath, 'utf-8'))
+
+    expect(ticket.sort_order).toBe(0)
+    expect(typeof ticket.created_at).toBe('string')
+    expect(frontmatter.sort_order).toBe(0)
+    expect(typeof frontmatter.created_at).toBe('string')
+  })
+
+  test('converting removes blank dependency skeleton fields', async () => {
+    const backend = (
+      await import('../../src/main/services/kanban-backend')
+    ).getMarkdownKanbanBackend()
+    const cardPath = join(tempRoot!, 'cards', 'blank-dependencies.md')
+    await writeFile(
+      cardPath,
+      [
+        '---',
+        'id: blank-dependencies',
+        'title: Blank Dependencies',
+        'column: todo',
+        'dependencies:',
+        'depends_on:',
+        'mode: build',
+        'archived_at: null',
+        'created_at: 2026-06-17T20:36:08.965Z',
+        'sort_order: 2',
+        '---',
+        'Body'
+      ].join('\n'),
+      'utf-8'
+    )
+    backend.invalidate('proj-cache')
+
+    const ticket = await backend.convertMarkdownFileToCard('proj-cache', cardPath)
+    const frontmatter = frontmatterOf(await readFile(cardPath, 'utf-8'))
+
+    expect(ticket.id).toBe('blank-dependencies')
+    expect(frontmatter.dependencies).toBeUndefined()
+    expect(frontmatter.depends_on).toBeUndefined()
+  })
+
+  test('converting preserves explicit null markdown ticket mode', async () => {
+    const backend = (
+      await import('../../src/main/services/kanban-backend')
+    ).getMarkdownKanbanBackend()
+    const cardPath = join(tempRoot!, 'cards', 'null-mode-placeholder.md')
+    await writeFile(
+      cardPath,
+      ['---', 'mode: null', '---', '# Null Mode Placeholder', 'Body'].join('\n'),
+      'utf-8'
+    )
+    backend.invalidate('proj-cache')
+
+    const ticket = await backend.convertMarkdownFileToCard('proj-cache', cardPath)
+    const frontmatter = frontmatterOf(await readFile(cardPath, 'utf-8'))
+
+    expect(ticket.mode).toBeNull()
+    expect(frontmatter.mode).toBeNull()
+  })
+
+  test('converting a status-folder placeholder infers the folder column', async () => {
+    const backend = (
+      await import('../../src/main/services/kanban-backend')
+    ).getMarkdownKanbanBackend()
+    mockState.project = {
+      ...mockState.project!,
+      kanban_markdown_config: JSON.stringify({
+        layout: 'status-folders',
+        statusFolders: {
+          todo: 'cards/todo',
+          in_progress: 'cards/in-progress',
+          review: 'cards/review',
+          done: 'cards/done'
+        }
+      })
+    }
+    await mkdir(join(tempRoot!, 'cards', 'todo'), { recursive: true })
+    await mkdir(join(tempRoot!, 'cards', 'in-progress'), { recursive: true })
+    await mkdir(join(tempRoot!, 'cards', 'review'), { recursive: true })
+    await mkdir(join(tempRoot!, 'cards', 'done'), { recursive: true })
+    await writeFile(
+      join(tempRoot!, 'cards', 'review', 'existing-review.md'),
+      [
+        '---',
+        'id: existing-review',
+        'title: Existing Review',
+        'column: review',
+        'sort_order: 2',
+        '---',
+        'Review body'
+      ].join('\n'),
+      'utf-8'
+    )
+    const cardPath = join(tempRoot!, 'cards', 'review', 'needs-review.md')
+    await writeFile(cardPath, '# Needs Review\n', 'utf-8')
+    backend.invalidate('proj-cache')
+
+    const ticket = await backend.convertMarkdownFileToCard('proj-cache', cardPath)
+    const frontmatter = frontmatterOf(await readFile(cardPath, 'utf-8'))
+
+    expect(ticket.column).toBe('review')
+    expect(ticket.sort_order).toBe(3)
+    expect(frontmatter.column).toBe('review')
+    expect(frontmatter.sort_order).toBe(3)
+  })
+
+  test('converting unsafe markdown files fails without rewriting them', async () => {
+    const backend = (
+      await import('../../src/main/services/kanban-backend')
+    ).getMarkdownKanbanBackend()
+    const cardsPath = join(tempRoot!, 'cards')
+    const existingPath = join(cardsPath, 'existing.md')
+    const duplicatePath = join(cardsPath, 'duplicate.md')
+    const malformedPath = join(cardsPath, 'malformed.md')
+    const existing = ['---', 'id: shared-card', 'title: Existing', '---', 'Existing'].join('\n')
+    const duplicate = ['---', 'id: shared-card', 'title: Duplicate', '---', 'Duplicate'].join('\n')
+    const malformed = ['---', 'title: [', '---', 'Malformed'].join('\n')
+    await writeFile(existingPath, existing, 'utf-8')
+    await writeFile(duplicatePath, duplicate, 'utf-8')
+    await writeFile(malformedPath, malformed, 'utf-8')
+    backend.invalidate('proj-cache')
+
+    await expect(
+      backend.convertMarkdownFileToCard('proj-cache', duplicatePath)
+    ).rejects.toThrow(/already exists/)
+    await expect(
+      backend.convertMarkdownFileToCard('proj-cache', malformedPath)
+    ).rejects.toThrow()
+
+    expect(await readFile(duplicatePath, 'utf-8')).toBe(duplicate)
+    expect(await readFile(malformedPath, 'utf-8')).toBe(malformed)
+  })
+
+  test('converting rejects ids already claimed by invalid same-id diagnostics', async () => {
+    const backend = (
+      await import('../../src/main/services/kanban-backend')
+    ).getMarkdownKanbanBackend()
+    const cardsPath = join(tempRoot!, 'cards')
+    const invalidPath = join(cardsPath, 'invalid-shared.md')
+    const convertiblePath = join(cardsPath, 'convertible-shared.md')
+    const invalid = ['---', 'id: shared-card', 'title: []', '---', 'Invalid'].join('\n')
+    const convertible = ['---', 'id: shared-card', '---', '# Convertible'].join('\n')
+    await writeFile(invalidPath, invalid, 'utf-8')
+    await writeFile(convertiblePath, convertible, 'utf-8')
+    backend.invalidate('proj-cache')
+
+    await expect(
+      backend.convertMarkdownFileToCard('proj-cache', convertiblePath)
+    ).rejects.toThrow(/already exists/)
+
+    expect(await readFile(convertiblePath, 'utf-8')).toBe(convertible)
+  })
+
+  test('converting id-bearing placeholders in symlinked folders ignores their own diagnostic', async () => {
+    const backend = (
+      await import('../../src/main/services/kanban-backend')
+    ).getMarkdownKanbanBackend()
+    const realCardsPath = join(tempRoot!, 'real-cards')
+    const linkedCardsPath = join(tempRoot!, 'linked-cards')
+    await mkdir(realCardsPath, { recursive: true })
+    await symlink(realCardsPath, linkedCardsPath, 'dir')
+    mockState.project = {
+      ...mockState.project!,
+      kanban_markdown_config: JSON.stringify({
+        layout: 'single-folder',
+        singleFolder: 'linked-cards'
+      })
+    }
+    const cardPath = join(linkedCardsPath, 'symlinked-placeholder.md')
+    await writeFile(
+      cardPath,
+      ['---', 'id: symlinked-card', "title: ''", '---', '# Symlinked Card'].join('\n'),
+      'utf-8'
+    )
+    backend.invalidate('proj-cache')
+
+    await expect(backend.getDiagnostics('proj-cache')).resolves.toContainEqual(
+      expect.objectContaining({
+        ticketId: 'symlinked-card',
+        filePath: cardPath,
+        kind: 'invalid_frontmatter'
+      })
+    )
+
+    const ticket = await backend.convertMarkdownFileToCard('proj-cache', cardPath)
+
+    expect(ticket.id).toBe('symlinked-card')
+    expect(ticket.title).toBe('Symlinked Card')
   })
 
   test.each([

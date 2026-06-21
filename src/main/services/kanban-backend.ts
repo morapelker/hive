@@ -1,5 +1,15 @@
 import { randomBytes, randomUUID } from 'node:crypto'
-import { copyFile, readFile, readdir, rename, rm, stat, unlink, writeFile } from 'node:fs/promises'
+import {
+  copyFile,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  stat,
+  unlink,
+  writeFile
+} from 'node:fs/promises'
 import { basename, dirname, extname, join } from 'node:path'
 import YAML from 'yaml'
 
@@ -116,6 +126,12 @@ interface MarkdownRuntimeCleanupRow {
   card_id: string
   last_seen_path: string | null
   orphaned_at: string | null
+}
+
+interface ConfiguredMarkdownFileMatch {
+  filePath: string
+  indexFilePath: string
+  column: KanbanTicketColumn | null
 }
 
 function emptyRuntimeState(): MarkdownRuntimeState {
@@ -1141,6 +1157,67 @@ class MarkdownKanbanBackend implements KanbanBackend {
     return { created, updated, dependencyCount, ignoredDependencyCount }
   }
 
+  async convertMarkdownFileToCard(projectId: string, filePath: string): Promise<KanbanTicket> {
+    if (getProjectStorageMode(projectId) !== 'markdown') {
+      throw new Error('Project is not using Markdown Kanban storage.')
+    }
+    if (!isMarkdownCandidate(basename(filePath))) {
+      throw new Error('File is not a Markdown Kanban candidate.')
+    }
+
+    const project = requireProject(projectId)
+    const config = parseMarkdownConfig(project)
+    const match = await this.requireConfiguredMarkdownFile(project, config, filePath)
+    const canonicalFilePath = match.filePath
+    const indexFilePath = match.indexFilePath
+    const fileStat = await stat(canonicalFilePath)
+    if (!fileStat.isFile()) throw new Error('Markdown Kanban candidate is not a file.')
+    if (fileStat.size > CARD_FILE_SIZE_LIMIT_BYTES) {
+      throw new Error('Markdown card exceeds 1 MB limit')
+    }
+
+    const raw = await readFile(canonicalFilePath, 'utf-8')
+    const parsed = parseMarkdown(raw)
+    const frontmatter = parsed.frontmatter
+    const existingId = asString(frontmatter.id)
+    const removeFields = blankConversionRemoveFields(frontmatter)
+    const frontmatterForValidation = withoutBlankConversionFields(frontmatter)
+    validateKnownFrontmatter(frontmatterForValidation, existingId)
+
+    const title =
+      asString(frontmatter.title) ??
+      titleFromBody(parsed.body) ??
+      basename(canonicalFilePath, extname(canonicalFilePath))
+    const id = existingId ?? generateTicketId(title)
+    const column = asColumn(frontmatter.column) ?? match.column ?? 'todo'
+    const index = await this.reloadIndex(projectId)
+    this.assertCardIdAvailableForFile(index, id, indexFilePath)
+
+    const now = new Date().toISOString()
+    const updates: Frontmatter = {}
+    if (!existingId) updates.id = id
+    if (!hasUsableStringFrontmatter(frontmatter, 'title')) updates.title = title
+    if (!hasUsableStringFrontmatter(frontmatter, 'column')) updates.column = column
+    if (!hasUsableNullableModeFrontmatter(frontmatter)) updates.mode = 'build'
+    if (!hasOwnFrontmatter(frontmatter, 'archived_at')) updates.archived_at = null
+    if (!hasUsableStringFrontmatter(frontmatter, 'created_at')) {
+      updates.created_at = createdAtFromStat(fileStat, now)
+    }
+    if (!hasUsableNumberFrontmatter(frontmatter, 'sort_order')) {
+      updates.sort_order = nextSortOrderFromIndex(index, column, id)
+    }
+
+    if (Object.keys(updates).length > 0 || removeFields.length > 0) {
+      await rewriteCard(canonicalFilePath, updates, undefined, removeFields)
+      suppressMarkdownWrites(projectId, canonicalFilePath)
+      this.invalidate(projectId)
+    }
+
+    const ticket = await this.get(projectId, id)
+    if (!ticket) throw new Error('Converted markdown ticket could not be loaded')
+    return ticket
+  }
+
   async hasAnyCardLikeFiles(projectId: string): Promise<boolean> {
     const project = requireProject(projectId)
     const config = parseMarkdownConfig(project)
@@ -1454,6 +1531,52 @@ class MarkdownKanbanBackend implements KanbanBackend {
         `Cannot create markdown ticket "${ticketId}" because that card id already exists.`
       )
     }
+  }
+
+  private assertCardIdAvailableForFile(
+    index: MarkdownIndex,
+    ticketId: string,
+    filePath: string
+  ): void {
+    const paths = index.pathsById.get(ticketId) ?? []
+    const diagnosticPaths = index.diagnostics
+      .filter((diagnostic) => diagnostic.ticketId === ticketId && diagnostic.blocking)
+      .map((diagnostic) => diagnostic.filePath)
+    const conflictingPaths = [...paths, ...diagnosticPaths].filter((path) => path !== filePath)
+    if (conflictingPaths.length > 0) {
+      throw new Error(
+        `Cannot convert markdown file because card id "${ticketId}" already exists.`
+      )
+    }
+  }
+
+  private async requireConfiguredMarkdownFile(
+    project: Project,
+    config: KanbanMarkdownConfig,
+    filePath: string
+  ): Promise<ConfiguredMarkdownFileMatch> {
+    const canonicalFilePath = await realpath(filePath)
+    const canonicalFileFolder = await realpath(dirname(canonicalFilePath))
+    const folders =
+      config.layout === 'single-folder'
+        ? [{ folder: resolveProjectPath(project.path, config.singleFolder), column: null }]
+        : (Object.entries(config.statusFolders) as Array<[KanbanTicketColumn, string]>).map(
+            ([column, folder]) => ({
+              folder: resolveProjectPath(project.path, folder),
+              column
+            })
+          )
+    for (const candidate of folders) {
+      const canonicalFolder = await realpath(candidate.folder).catch(() => null)
+      if (canonicalFolder === canonicalFileFolder) {
+        return {
+          filePath: canonicalFilePath,
+          indexFilePath: join(candidate.folder, basename(filePath)),
+          column: candidate.column
+        }
+      }
+    }
+    throw new Error('File is outside configured Markdown Kanban folders.')
   }
 
   private readRuntime(projectId: string, cardId: string): MarkdownRuntimeState {
@@ -2007,6 +2130,41 @@ function hasOwnFrontmatter(frontmatter: Frontmatter, field: string): boolean {
   return Object.prototype.hasOwnProperty.call(frontmatter, field)
 }
 
+function withoutBlankConversionFields(frontmatter: Frontmatter): Frontmatter {
+  const next = { ...frontmatter }
+  for (const field of ['id', 'title', 'column', 'sort_order', 'created_at']) {
+    if (isBlankFrontmatterValue(next[field])) delete next[field]
+  }
+  for (const field of blankConversionRemoveFields(frontmatter)) delete next[field]
+  if (typeof next.mode === 'string' && next.mode.trim() === '') delete next.mode
+  return next
+}
+
+function blankConversionRemoveFields(frontmatter: Frontmatter): string[] {
+  return ['dependencies', 'depends_on'].filter((field) =>
+    isBlankFrontmatterValue(frontmatter[field])
+  )
+}
+
+function isBlankFrontmatterValue(value: unknown): boolean {
+  return value === null || value === undefined || (typeof value === 'string' && value.trim() === '')
+}
+
+function hasUsableStringFrontmatter(frontmatter: Frontmatter, field: string): boolean {
+  return hasOwnFrontmatter(frontmatter, field) && !isBlankFrontmatterValue(frontmatter[field])
+}
+
+function hasUsableNumberFrontmatter(frontmatter: Frontmatter, field: string): boolean {
+  return hasOwnFrontmatter(frontmatter, field) && asNumber(frontmatter[field]) !== null
+}
+
+function hasUsableNullableModeFrontmatter(frontmatter: Frontmatter): boolean {
+  return (
+    hasOwnFrontmatter(frontmatter, 'mode') &&
+    (frontmatter.mode === null || asMode(frontmatter.mode) !== null)
+  )
+}
+
 function createdAtFromStat(
   fileStat: { birthtime: Date; birthtimeMs: number },
   fallback: string
@@ -2150,6 +2308,20 @@ function suppressMarkdownWrites(projectId: string, paths: string | string[]): vo
   const pathList = Array.isArray(paths) ? paths : [paths]
   if (pathList.length === 0) return
   suppressMarkdownKanbanWatch(projectId, pathList)
+}
+
+function nextSortOrderFromIndex(
+  index: MarkdownIndex,
+  column: KanbanTicketColumn,
+  excludeTicketId?: string
+): number {
+  const max = Math.max(
+    -1,
+    ...index.tickets
+      .filter((ticket) => ticket.column === column && ticket.id !== excludeTicketId)
+      .map((ticket) => ticket.sort_order)
+  )
+  return max + 1
 }
 
 function mergeFrontmatter(

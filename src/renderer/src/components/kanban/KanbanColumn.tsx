@@ -72,24 +72,61 @@ function fileNameFromPath(filePath: string): string {
 }
 
 function MarkdownInvalidCardPlaceholder({ placeholder }: { placeholder: MarkdownCardPlaceholder }) {
+  const [isConverting, setIsConverting] = useState(false)
+
+  const handleConvert = useCallback(async () => {
+    setIsConverting(true)
+    try {
+      const ticket = await useKanbanStore
+        .getState()
+        .convertMarkdownPlaceholder(placeholder.projectId, placeholder.filePath)
+      toast.success(`Converted "${ticket.title}" to a kanban card`)
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : 'Failed to convert markdown file to kanban card'
+      )
+    } finally {
+      setIsConverting(false)
+    }
+  }, [placeholder.filePath, placeholder.projectId])
+
   return (
-    <div
-      data-testid="kanban-invalid-card-placeholder"
-      className="rounded-md border border-destructive/35 bg-destructive/5 p-2 text-sm shadow-sm"
-      title={`${placeholder.filePath}\n${placeholder.message}`}
-    >
-      <div className="flex items-start gap-2">
-        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
-        <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 items-center gap-1.5 font-medium text-destructive">
-            <FileText className="h-3.5 w-3.5 shrink-0" />
-            <span className="truncate">{fileNameFromPath(placeholder.filePath)}</span>
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <div
+          data-testid="kanban-invalid-card-placeholder"
+          className="rounded-md border border-destructive/35 bg-destructive/5 p-2 text-sm shadow-sm"
+          title={`${placeholder.filePath}\n${placeholder.message}`}
+        >
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+            <div className="min-w-0 flex-1">
+              <div className="flex min-w-0 items-center gap-1.5 font-medium text-destructive">
+                <FileText className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate">{fileNameFromPath(placeholder.filePath)}</span>
+              </div>
+              <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                {placeholder.message}
+              </p>
+              <p className="mt-1 truncate text-[10px] text-muted-foreground/70">
+                {placeholder.filePath}
+              </p>
+            </div>
           </div>
-          <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{placeholder.message}</p>
-          <p className="mt-1 truncate text-[10px] text-muted-foreground/70">{placeholder.filePath}</p>
         </div>
-      </div>
-    </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem
+          data-testid="ctx-convert-markdown-card"
+          disabled={isConverting}
+          onClick={handleConvert}
+          className="gap-2"
+        >
+          <FileText className="h-3.5 w-3.5" />
+          {isConverting ? 'Converting...' : 'Convert to kanban card'}
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   )
 }
 

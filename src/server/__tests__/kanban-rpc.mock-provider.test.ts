@@ -108,6 +108,57 @@ describe('kanban RPC mocked provider', () => {
     })
   })
 
+  it('routes kanban.markdown.convertFileToCard to the injected provider service', async () => {
+    const ticket = {
+      id: 'converted-card',
+      project_id: 'project-1',
+      title: 'Converted Card',
+      description: 'Body',
+      attachments: [],
+      column: 'todo' as const,
+      sort_order: 0,
+      current_session_id: null,
+      worktree_id: null,
+      mode: 'build' as const,
+      plan_ready: false,
+      created_at: '2026-06-21T00:00:00.000Z',
+      updated_at: '2026-06-21T00:00:00.000Z',
+      archived_at: null,
+      external_provider: null,
+      external_id: null,
+      external_url: null,
+      github_pr_number: null,
+      github_pr_url: null,
+      mark: null,
+      total_tokens: 0,
+      pending_launch_config: null,
+      goal_mode: false,
+      goal_success_criteria: null,
+      note: null
+    }
+    const convertMarkdownFileToCard = vi.fn(() => Effect.succeed(ticket))
+    const service = { convertMarkdownFileToCard } as unknown as KanbanRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      kanban: service
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'kanban-markdown-convert-1',
+        method: 'kanban.markdown.convertFileToCard',
+        params: { projectId: 'project-1', filePath: '/tmp/cards/doc.md' }
+      })
+    )
+
+    expect(convertMarkdownFileToCard).toHaveBeenCalledWith('project-1', '/tmp/cards/doc.md')
+    expect(response).toEqual({
+      id: 'kanban-markdown-convert-1',
+      ok: true,
+      value: ticket
+    })
+  })
+
   it('routes kanban.ticket.createBatch to the injected provider service', async () => {
     const payload = {
       drafts: [

@@ -15,6 +15,9 @@ const kanbanApiMock = vi.hoisted(() => ({
   diagnostics: {
     get: vi.fn()
   },
+  markdown: {
+    convertFileToCard: vi.fn()
+  },
   dependency: {
     getForProject: vi.fn()
   }
@@ -163,6 +166,7 @@ describe('duplicate markdown card renderer identity', () => {
     reorderTicket.mockReset()
     kanbanApiMock.ticket.getByProject.mockReset()
     kanbanApiMock.diagnostics.get.mockReset()
+    kanbanApiMock.markdown.convertFileToCard.mockReset()
     kanbanApiMock.dependency.getForProject.mockReset()
     kanbanApiMock.dependency.getForProject.mockResolvedValue([])
     vi.stubGlobal(
@@ -373,6 +377,102 @@ describe('duplicate markdown card renderer identity', () => {
     expect(getByTestId('kanban-invalid-card-placeholder')).toHaveTextContent(
       'Invalid markdown frontmatter'
     )
+  })
+
+  test('placeholder context menu converts the selected markdown file', async () => {
+    const converted = makeTicket({
+      id: 'converted-card',
+      title: 'Converted Card'
+    })
+    kanbanApiMock.markdown.convertFileToCard.mockResolvedValueOnce(converted)
+    kanbanApiMock.ticket.getByProject.mockResolvedValueOnce([converted])
+    kanbanApiMock.diagnostics.get.mockResolvedValueOnce([])
+    useKanbanStore.setState({
+      loadTickets: useKanbanStore.getInitialState().loadTickets,
+      convertMarkdownPlaceholder: useKanbanStore.getInitialState().convertMarkdownPlaceholder,
+      tickets: new Map([['proj-1', []]]),
+      markdownPlaceholders: new Map([
+        [
+          'proj-1',
+          [
+            {
+              projectId: 'proj-1',
+              filePath: '/tmp/project/cards/broken.md',
+              kind: 'invalid_frontmatter',
+              message: 'Invalid markdown frontmatter',
+              blocking: true
+            }
+          ]
+        ]
+      ])
+    })
+
+    const { getByTestId } = render(
+      <TooltipProvider>
+        <KanbanBoard projectId="proj-1" />
+      </TooltipProvider>
+    )
+
+    fireEvent.contextMenu(getByTestId('kanban-invalid-card-placeholder'))
+    fireEvent.click(getByTestId('ctx-convert-markdown-card'))
+
+    await waitFor(() => {
+      expect(kanbanApiMock.markdown.convertFileToCard).toHaveBeenCalledWith(
+        'proj-1',
+        '/tmp/project/cards/broken.md'
+      )
+    })
+    await waitFor(() => {
+      expect(useKanbanStore.getState().tickets.get('proj-1')).toEqual([converted])
+      expect(useKanbanStore.getState().markdownPlaceholders.get('proj-1')).toEqual([])
+    })
+  })
+
+  test('failed placeholder conversion does not reload the board', async () => {
+    const loadTickets = vi.fn().mockResolvedValue(undefined)
+    kanbanApiMock.markdown.convertFileToCard.mockRejectedValueOnce(new Error('Duplicate id'))
+    useKanbanStore.setState({
+      loadTickets,
+      convertMarkdownPlaceholder: useKanbanStore.getInitialState().convertMarkdownPlaceholder
+    })
+
+    await expect(
+      useKanbanStore
+        .getState()
+        .convertMarkdownPlaceholder('proj-1', '/tmp/project/cards/duplicate.md')
+    ).rejects.toThrow('Duplicate id')
+
+    expect(loadTickets).not.toHaveBeenCalled()
+  })
+
+  test('placeholder conversion reload preserves aggregate archive visibility', async () => {
+    const converted = makeTicket({
+      id: 'converted-card',
+      title: 'Converted Card'
+    })
+    const archived = makeTicket({
+      id: 'archived-card',
+      title: 'Archived Card',
+      archived_at: '2026-06-21T00:00:00.000Z'
+    })
+    kanbanApiMock.markdown.convertFileToCard.mockResolvedValueOnce(converted)
+    kanbanApiMock.ticket.getByProject.mockResolvedValueOnce([converted, archived])
+    kanbanApiMock.diagnostics.get.mockResolvedValueOnce([])
+    useKanbanStore.setState({
+      convertMarkdownPlaceholder: useKanbanStore.getInitialState().convertMarkdownPlaceholder,
+      loadTicketsWithArchiveVisibility:
+        useKanbanStore.getInitialState().loadTicketsWithArchiveVisibility,
+      showArchivedByProject: { '': true },
+      tickets: new Map([['proj-1', []]]),
+      markdownPlaceholders: new Map()
+    })
+
+    await useKanbanStore
+      .getState()
+      .convertMarkdownPlaceholder('proj-1', '/tmp/project/cards/broken.md')
+
+    expect(kanbanApiMock.ticket.getByProject).toHaveBeenCalledWith('proj-1', true)
+    expect(useKanbanStore.getState().tickets.get('proj-1')).toEqual([converted, archived])
   })
 
   test('loadTickets creates placeholders for id-bearing invalid markdown diagnostics', async () => {

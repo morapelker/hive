@@ -600,4 +600,36 @@ describe('kanbanApi', () => {
     expect(request).toHaveBeenNthCalledWith(2, 'kanban.watch.start', { projectId: 'project-1' })
     expect(request).toHaveBeenNthCalledWith(3, 'kanban.watch.stop', { projectId: 'project-1' })
   })
+
+  it('routes markdown file conversion through the renderer RPC client', async () => {
+    const ticket = {
+      id: 'converted-card',
+      project_id: 'project-1',
+      title: 'Converted Card',
+      description: 'Body',
+      attachments: [],
+      column: 'todo',
+      sort_order: 0,
+      current_session_id: null,
+      worktree_id: null,
+      mode: 'build',
+      plan_ready: false,
+      created_at: '2026-06-21T00:00:00.000Z',
+      updated_at: '2026-06-21T00:00:00.000Z',
+      archived_at: null
+    }
+    const request = vi.fn().mockResolvedValueOnce(ticket)
+    const subscribe = vi.fn()
+
+    setRendererRpcClient({ request, subscribe })
+
+    await expect(
+      kanbanApi.markdown.convertFileToCard('/project-1', '/tmp/cards/doc.md')
+    ).resolves.toEqual(ticket)
+
+    expect(request).toHaveBeenCalledWith('kanban.markdown.convertFileToCard', {
+      projectId: '/project-1',
+      filePath: '/tmp/cards/doc.md'
+    })
+  })
 })
