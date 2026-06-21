@@ -145,4 +145,77 @@ describe('markdown kanban adoption repair', () => {
     expect(await readFile(join(cardsPath, 'duplicate-a.md'), 'utf-8')).toBe(duplicateA)
     expect(await readFile(join(cardsPath, 'duplicate-b.md'), 'utf-8')).toBe(duplicateB)
   })
+
+  test('switching to markdown rejects missing configured folders without changing mode', async () => {
+    const { setKanbanStorageMode } = await import('../../src/main/services/kanban-backend')
+    mockState.project = {
+      ...mockState.project!,
+      kanban_markdown_config: JSON.stringify({
+        layout: 'single-folder',
+        singleFolder: 'missing-cards'
+      })
+    }
+
+    const result = await setKanbanStorageMode('proj-adopt', 'markdown')
+
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/ENOENT|no such file|not found/i)
+    expect(mockDatabase.updateProjectKanbanStorageMode).not.toHaveBeenCalled()
+    expect(mockState.project?.kanban_storage_mode).toBe('internal')
+  })
+
+  test('switching to markdown explains archived internal card blockers', async () => {
+    const { setKanbanStorageMode } = await import('../../src/main/services/kanban-backend')
+    mockDatabase.getKanbanTicketsByProject.mockReturnValueOnce([
+      {
+        title: 'Audit remaining Dutch Java parity',
+        archived_at: '2026-06-01T12:00:19.043Z'
+      }
+    ])
+
+    const result = await setKanbanStorageMode('proj-adopt', 'markdown')
+
+    expect(result).toEqual({
+      success: false,
+      error:
+        'Markdown mode cannot be enabled because this project still has 1 archived internal card. To find archived cards, turn on the archive toggle in the Done column, unarchive them, then remove the remaining internal cards before switching storage.'
+    })
+    expect(mockDatabase.updateProjectKanbanStorageMode).not.toHaveBeenCalled()
+  })
+
+  test('switching to markdown explains a singular active internal card blocker', async () => {
+    const { setKanbanStorageMode } = await import('../../src/main/services/kanban-backend')
+    mockDatabase.getKanbanTicketsByProject.mockReturnValueOnce([
+      { title: 'Visible ENOENT realpath blocker', archived_at: null }
+    ])
+
+    const result = await setKanbanStorageMode('proj-adopt', 'markdown')
+
+    expect(result).toEqual({
+      success: false,
+      error:
+        'Markdown mode cannot be enabled because this project still has 1 active internal card. Remove the internal card before switching storage.'
+    })
+    expect(result.error).not.toContain('Visible ENOENT realpath blocker')
+    expect(mockDatabase.updateProjectKanbanStorageMode).not.toHaveBeenCalled()
+  })
+
+  test('switching to markdown explains active and archived internal card blockers', async () => {
+    const { setKanbanStorageMode } = await import('../../src/main/services/kanban-backend')
+    mockDatabase.getKanbanTicketsByProject.mockReturnValueOnce([
+      { title: 'Visible blocker', archived_at: null },
+      { title: 'Archived blocker', archived_at: '2026-06-01T12:00:19.043Z' }
+    ])
+
+    const result = await setKanbanStorageMode('proj-adopt', 'markdown')
+
+    expect(result).toEqual({
+      success: false,
+      error:
+        'Markdown mode cannot be enabled because this project still has 1 active internal card and 1 archived internal card. To find archived cards, turn on the archive toggle in the Done column, unarchive them, then remove the remaining internal cards before switching storage.'
+    })
+    expect(result.error).not.toContain('Visible blocker')
+    expect(result.error).not.toContain('Archived blocker')
+    expect(mockDatabase.updateProjectKanbanStorageMode).not.toHaveBeenCalled()
+  })
 })

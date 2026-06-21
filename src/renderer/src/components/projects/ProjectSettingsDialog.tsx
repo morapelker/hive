@@ -56,6 +56,20 @@ type MarkdownConfig =
       statusFolders: { todo: string; in_progress: string; review: string; done: string }
     }
 
+const DEFAULT_MARKDOWN_FOLDERS = {
+  singleFolder: 'docs/kanban',
+  todo: 'docs/kanban/todo',
+  inProgress: 'docs/kanban/in-progress',
+  review: 'docs/kanban/review',
+  done: 'docs/kanban/done'
+}
+
+const folderOrDefault = (value: unknown, fallback: string): string => {
+  if (typeof value !== 'string') return fallback
+  const trimmed = value.trim()
+  return trimmed || fallback
+}
+
 interface ProjectSettingsDialogProps {
   project: Project
   open: boolean
@@ -91,88 +105,98 @@ export function ProjectSettingsDialog({
   const [pickingIcon, setPickingIcon] = useState(false)
   const [suggestions, setSuggestions] = useState<SuggestionItem[]>([])
   const [suggestionsOpen, setSuggestionsOpen] = useState(false)
+  const [initializedProjectId, setInitializedProjectId] = useState<string | null>(null)
+  const [initialProject, setInitialProject] = useState<Project | null>(null)
 
-  // Load current values when dialog opens
   useEffect(() => {
-    if (open) {
-      setSetupScript(project.setup_script ?? '')
-      setRunScript(project.run_script ?? '')
-      setArchiveScript(project.archive_script ?? '')
-      setWorktreeCreateScript(project.worktree_create_script ?? '')
-      setWorktreeCreateScriptExpanded((project.worktree_create_script ?? '').trim().length > 0)
-      setCustomIcon(project.custom_icon ?? null)
-      setCustomCommands(project.custom_commands ?? [])
-      setAutoAssignPort(project.auto_assign_port ?? false)
-      setKanbanMode(project.kanban_storage_mode ?? 'internal')
-      setKanbanConfigError(null)
-      setCanCreateKanbanFolders(false)
+    if (!open) {
+      setInitializedProjectId(null)
+      setInitialProject(null)
+      setSuggestions([])
       setSuggestionsOpen(false)
+      return
+    }
 
-      kanbanApi.config
-        .get<{ mode: 'internal' | 'markdown'; markdown: MarkdownConfig }>(project.id)
-        .then((config) => {
-          setKanbanMode(config.mode)
-          setKanbanLayout(config.markdown.layout)
-          setSingleFolder(
-            config.markdown.layout === 'single-folder'
-              ? config.markdown.singleFolder
-              : 'docs/kanban'
-          )
-          const statusFolders = config.markdown.statusFolders ?? {
-            todo: 'docs/kanban/todo',
-            in_progress: 'docs/kanban/in-progress',
-            review: 'docs/kanban/review',
-            done: 'docs/kanban/done'
-          }
-          setTodoFolder(statusFolders.todo)
-          setInProgressFolder(statusFolders.in_progress)
-          setReviewFolder(statusFolders.review)
-          setDoneFolder(statusFolders.done)
-        })
-        .catch(() => {
-          setKanbanConfigError('Failed to load Kanban storage settings')
-        })
+    if (initializedProjectId !== project.id) {
+      setInitializedProjectId(project.id)
+      setInitialProject(project)
+    }
+  }, [open, project, initializedProjectId])
 
-      if (project.is_remote === true) {
-        setSuggestions([])
-        return
-      }
+  // Load current values once per dialog-open/project combination. Later save echoes should not
+  // reset in-progress edits while the same project remains open.
+  useEffect(() => {
+    if (!open || !initialProject || initializedProjectId !== initialProject.id) {
+      return undefined
+    }
 
-      let cancelled = false
-      projectApi
-        .detectSetupSuggestions(project.path)
-        .then((items) => {
-          if (!cancelled) {
-            setSuggestions(items)
-          }
-        })
-        .catch(() => {
-          if (!cancelled) {
-            setSuggestions([])
-          }
-        })
+    let cancelled = false
+    setSetupScript(initialProject.setup_script ?? '')
+    setRunScript(initialProject.run_script ?? '')
+    setArchiveScript(initialProject.archive_script ?? '')
+    setWorktreeCreateScript(initialProject.worktree_create_script ?? '')
+    setWorktreeCreateScriptExpanded((initialProject.worktree_create_script ?? '').trim().length > 0)
+    setCustomIcon(initialProject.custom_icon ?? null)
+    setCustomCommands(initialProject.custom_commands ?? [])
+    setAutoAssignPort(initialProject.auto_assign_port ?? false)
+    setKanbanMode(initialProject.kanban_storage_mode ?? 'internal')
+    setKanbanConfigError(null)
+    setCanCreateKanbanFolders(false)
+    setSuggestionsOpen(false)
 
+    kanbanApi.config
+      .get<{ mode: 'internal' | 'markdown'; markdown: MarkdownConfig }>(initialProject.id)
+      .then((config) => {
+        if (cancelled) return
+        setKanbanMode(config.mode)
+        setKanbanLayout(config.markdown.layout)
+        setSingleFolder(
+          config.markdown.layout === 'single-folder'
+            ? folderOrDefault(config.markdown.singleFolder, DEFAULT_MARKDOWN_FOLDERS.singleFolder)
+            : DEFAULT_MARKDOWN_FOLDERS.singleFolder
+        )
+        const statusFolders = config.markdown.statusFolders ?? {
+          todo: DEFAULT_MARKDOWN_FOLDERS.todo,
+          in_progress: DEFAULT_MARKDOWN_FOLDERS.inProgress,
+          review: DEFAULT_MARKDOWN_FOLDERS.review,
+          done: DEFAULT_MARKDOWN_FOLDERS.done
+        }
+        setTodoFolder(folderOrDefault(statusFolders.todo, DEFAULT_MARKDOWN_FOLDERS.todo))
+        setInProgressFolder(
+          folderOrDefault(statusFolders.in_progress, DEFAULT_MARKDOWN_FOLDERS.inProgress)
+        )
+        setReviewFolder(folderOrDefault(statusFolders.review, DEFAULT_MARKDOWN_FOLDERS.review))
+        setDoneFolder(folderOrDefault(statusFolders.done, DEFAULT_MARKDOWN_FOLDERS.done))
+      })
+      .catch(() => {
+        if (cancelled) return
+        setKanbanConfigError('Failed to load Kanban storage settings')
+      })
+
+    if (initialProject.is_remote === true) {
+      setSuggestions([])
       return () => {
         cancelled = true
       }
     }
-    setSuggestions([])
-    setSuggestionsOpen(false)
-    return undefined
-  }, [
-    open,
-    project.id,
-    project.path,
-    project.is_remote,
-    project.setup_script,
-    project.run_script,
-    project.archive_script,
-    project.worktree_create_script,
-    project.custom_icon,
-    project.custom_commands,
-    project.auto_assign_port,
-    project.kanban_storage_mode
-  ])
+
+    projectApi
+      .detectSetupSuggestions(initialProject.path)
+      .then((items) => {
+        if (!cancelled) {
+          setSuggestions(items)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSuggestions([])
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [open, initializedProjectId, initialProject])
 
   const handlePickIcon = async (): Promise<void> => {
     setPickingIcon(true)
@@ -241,27 +265,27 @@ export function ProjectSettingsDialog({
     kanbanLayout === 'single-folder'
       ? {
           layout: 'single-folder' as const,
-          singleFolder: singleFolder.trim() || 'docs/kanban',
+          singleFolder: folderOrDefault(singleFolder, DEFAULT_MARKDOWN_FOLDERS.singleFolder),
           statusFolders: {
-            todo: todoFolder.trim() || 'docs/kanban/todo',
-            in_progress: inProgressFolder.trim() || 'docs/kanban/in-progress',
-            review: reviewFolder.trim() || 'docs/kanban/review',
-            done: doneFolder.trim() || 'docs/kanban/done'
+            todo: folderOrDefault(todoFolder, DEFAULT_MARKDOWN_FOLDERS.todo),
+            in_progress: folderOrDefault(inProgressFolder, DEFAULT_MARKDOWN_FOLDERS.inProgress),
+            review: folderOrDefault(reviewFolder, DEFAULT_MARKDOWN_FOLDERS.review),
+            done: folderOrDefault(doneFolder, DEFAULT_MARKDOWN_FOLDERS.done)
           }
         }
       : {
           layout: 'status-folders' as const,
-          singleFolder: singleFolder.trim() || 'docs/kanban',
+          singleFolder: folderOrDefault(singleFolder, DEFAULT_MARKDOWN_FOLDERS.singleFolder),
           statusFolders: {
-            todo: todoFolder.trim() || 'docs/kanban/todo',
-            in_progress: inProgressFolder.trim() || 'docs/kanban/in-progress',
-            review: reviewFolder.trim() || 'docs/kanban/review',
-            done: doneFolder.trim() || 'docs/kanban/done'
+            todo: folderOrDefault(todoFolder, DEFAULT_MARKDOWN_FOLDERS.todo),
+            in_progress: folderOrDefault(inProgressFolder, DEFAULT_MARKDOWN_FOLDERS.inProgress),
+            review: folderOrDefault(reviewFolder, DEFAULT_MARKDOWN_FOLDERS.review),
+            done: folderOrDefault(doneFolder, DEFAULT_MARKDOWN_FOLDERS.done)
           }
         }
 
   const isMissingFolderError = (message: string): boolean =>
-    /ENOENT|no such file|cannot find|not found/i.test(message)
+    /ENOENT|no such file or directory/i.test(message)
 
   const extractMissingFolderPath = (message: string): string => {
     const quotedPath = message.match(/'([^']+)'/)?.[1]
@@ -275,6 +299,7 @@ export function ProjectSettingsDialog({
     setSaving(true)
     setKanbanConfigError(null)
     setCanCreateKanbanFolders(false)
+    let projectFieldsSaved = false
     try {
       try {
         const success = await updateProject(project.id, {
@@ -292,8 +317,7 @@ export function ProjectSettingsDialog({
           toast.error('Failed to save project settings')
           return
         }
-
-        await loadProjects()
+        projectFieldsSaved = true
       } catch {
         toast.error('Failed to save project settings')
         return
@@ -304,10 +328,14 @@ export function ProjectSettingsDialog({
       }
       const modeResult = await kanbanApi.config.setMode(project.id, kanbanMode)
       if (!modeResult.success) {
-        setKanbanConfigError(modeResult.error ?? 'Kanban storage mode could not be changed')
+        const message = modeResult.error ?? 'Kanban storage mode could not be changed'
+        setKanbanConfigError(message)
+        setCanCreateKanbanFolders(kanbanMode === 'markdown' && isMissingFolderError(message))
+        await loadProjects()
         return
       }
 
+      await loadProjects()
       await useKanbanStore.getState().loadTickets(project.id)
       toast.success('Project settings saved')
       onOpenChange(false)
@@ -315,6 +343,9 @@ export function ProjectSettingsDialog({
       const message = error instanceof Error ? error.message : 'Failed to save Kanban settings'
       setKanbanConfigError(message)
       setCanCreateKanbanFolders(kanbanMode === 'markdown' && isMissingFolderError(message))
+      if (projectFieldsSaved) {
+        await loadProjects()
+      }
     } finally {
       setSaving(false)
     }
