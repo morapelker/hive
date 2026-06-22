@@ -1,7 +1,7 @@
 import simpleGit, { type SimpleGit } from 'simple-git'
+import { homedir } from 'os'
 import { join, basename } from 'path'
 import { existsSync, mkdirSync } from 'fs'
-import { getHiveWorktreesDir } from './hive-paths'
 import {
   ALL_BREED_NAMES,
   LEGACY_CITY_NAMES,
@@ -131,7 +131,7 @@ export class GitService {
    * Get the base directory for all Hive worktrees
    */
   static getWorktreesBaseDir(): string {
-    return getHiveWorktreesDir()
+    return join(homedir(), '.hive-worktrees')
   }
 
   /**

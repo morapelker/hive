@@ -64,7 +64,6 @@ scripts/*
 !scripts/prepare-win-deps.sh
 !scripts/codex-app-server-probe.ts
 !scripts/dev-desktop.mjs
-!scripts/dev-data-setup.mjs
 !scripts/dev-web.mjs
 !scripts/probe-effect-logger.ts
 

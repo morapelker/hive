@@ -8,7 +8,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import { EventEmitter } from 'node:events'
-import { homedir, tmpdir } from 'node:os'
+import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { spawn } from 'node:child_process'
 import { afterEach, describe, expect, test, vi } from 'vitest'
@@ -31,23 +31,6 @@ describe('dev desktop script', () => {
     })
 
     expect(env.HIVE_SERVER_ENTRY_PATH).toBe(resolve('/repo/hive/.dev-server/server.js'))
-  })
-
-  test('pins HIVE_DATA_DIR and HIVE_WORKTREES_DIR to the fixed dev dirs', async () => {
-    const { createDevDesktopEnv } = await import('../scripts/dev-desktop.mjs')
-
-    const env = createDevDesktopEnv({
-      cwd: '/repo/hive',
-      env: {
-        PATH: '/bin',
-        // External overrides are intentionally ignored — dev is always isolated.
-        HIVE_DATA_DIR: '/somewhere/else',
-        HIVE_WORKTREES_DIR: '/somewhere/else-worktrees'
-      }
-    })
-
-    expect(env.HIVE_DATA_DIR).toBe(resolve(homedir(), '.hive-dev'))
-    expect(env.HIVE_WORKTREES_DIR).toBe(resolve(homedir(), '.hive-dev-worktrees'))
   })
 
   test('preserves an explicit HIVE_SERVER_ENTRY_PATH', async () => {
@@ -77,23 +60,6 @@ describe('dev desktop script', () => {
 
     expect(env.PATH).toBe('/bin')
     expect(env.ELECTRON_RUN_AS_NODE).toBeUndefined()
-  })
-
-  test('strips inherited DB-location overrides so dev stays isolated', async () => {
-    const { createDevDesktopEnv } = await import('../scripts/dev-desktop.mjs')
-
-    const env = createDevDesktopEnv({
-      cwd: '/repo/hive',
-      env: {
-        PATH: '/bin',
-        HIVE_SERVER_DB_PATH: '/Users/me/.hive/hive.db',
-        HIVE_SERVER_BASE_DIR: '/Users/me/.hive'
-      }
-    })
-
-    expect(env.HIVE_SERVER_DB_PATH).toBeUndefined()
-    expect(env.HIVE_SERVER_BASE_DIR).toBeUndefined()
-    expect(env.HIVE_DATA_DIR).toBeDefined()
   })
 
   test('defaults headless server env for plain Node server mode', async () => {
@@ -131,23 +97,6 @@ describe('dev desktop script', () => {
     expect(env.HIVE_SERVER_HOST).toBe('0.0.0.0')
     expect(env.HIVE_SERVER_PORT).toBe('0')
     expect(env.HIVE_SERVER_REQUIRE_AUTH).toBe('false')
-  })
-
-  test('isolates headless dev from the official data dir', async () => {
-    const { createDevHeadlessEnv } = await import('../scripts/dev-desktop.mjs')
-
-    const env = createDevHeadlessEnv({
-      env: {
-        PATH: '/bin',
-        HIVE_SERVER_DB_PATH: '/Users/me/.hive/hive.db',
-        HIVE_SERVER_BASE_DIR: '/Users/me/.hive'
-      }
-    })
-
-    expect(env.HIVE_DATA_DIR).toBeDefined()
-    expect(env.HIVE_WORKTREES_DIR).toBeDefined()
-    expect(env.HIVE_SERVER_DB_PATH).toBeUndefined()
-    expect(env.HIVE_SERVER_BASE_DIR).toBeUndefined()
   })
 
   test('routes interactive TTY Ctrl-C bytes through launcher shutdown', async () => {
