@@ -4,8 +4,8 @@ import Database from 'better-sqlite3'
 import { dirname, join } from 'path'
 import { existsSync, mkdirSync, statSync } from 'fs'
 import { randomUUID } from 'crypto'
-import { homedir } from 'os'
 import { Worker as NodeWorker } from 'node:worker_threads'
+import { getHiveDbPath } from '../services/hive-paths'
 import { MIGRATIONS } from './schema'
 import type {
   Project,
@@ -76,13 +76,18 @@ export function resolveDatabasePath(options?: {
   }
 
   const serverBaseDir = options?.serverBaseDir ?? process.env.HIVE_SERVER_BASE_DIR
-  const homeDir = options?.homeDir ?? homedir()
 
   if (serverBaseDir) {
     return join(serverBaseDir, 'userdata', 'state.sqlite')
   }
 
-  return join(homeDir, '.hive', 'hive.db')
+  // Explicit test/home override keeps the historical layout; otherwise route
+  // through the shared data dir so HIVE_DATA_DIR (`pnpm dev`) is honored.
+  if (options?.homeDir) {
+    return join(options.homeDir, '.hive', 'hive.db')
+  }
+
+  return getHiveDbPath()
 }
 
 type ProjectRow = Omit<Project, 'auto_assign_port' | 'custom_commands'> & {

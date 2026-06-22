@@ -1,6 +1,6 @@
-import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { appendFileSync, mkdirSync, existsSync, writeFileSync } from 'node:fs'
+import { getHiveLogsDir } from './hive-paths'
 
 const LOG_FILE_NAME = 'codex.jsonl'
 
@@ -11,7 +11,7 @@ let resetPerSession = true
 
 function getLogFilePath(): string {
   if (!logFilePath) {
-    const logDir = join(homedir(), '.hive', 'logs')
+    const logDir = getHiveLogsDir()
     if (!existsSync(logDir)) {
       mkdirSync(logDir, { recursive: true })
     }

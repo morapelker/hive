@@ -1,4 +1,3 @@
-import { app } from 'electron'
 import {
   existsSync,
   statSync,
@@ -9,6 +8,7 @@ import {
 } from 'fs'
 import { join, basename, extname } from 'path'
 import { createLogger } from './logger'
+import { getHiveProjectIconsDir } from './hive-paths'
 import { getDatabase } from '../db'
 import type { DatabaseService } from '../db/database'
 import type { Project, ProjectCreate } from '../db/types'
@@ -40,14 +40,17 @@ const MIME_TYPES: Record<string, string> = {
   '.ico': 'image/x-icon'
 }
 
-const iconDir = join(app.getPath('home'), '.hive', 'project-icons')
+// Resolved lazily on each call (not captured at module load) so it always
+// reflects the current HIVE_DATA_DIR — matching every other migrated call site
+// and avoiding a stale path if this module is imported before the env is set.
+const iconDir = (): string => getHiveProjectIconsDir()
 
 /**
  * Ensure the project-icons directory exists
  */
 function ensureIconDir(): void {
-  if (!existsSync(iconDir)) {
-    mkdirSync(iconDir, { recursive: true })
+  if (!existsSync(iconDir())) {
+    mkdirSync(iconDir(), { recursive: true })
   }
 }
 
@@ -125,7 +128,7 @@ export function createProjectWithDefaultWorktree(
  * Resolve an icon filename to a data URL
  */
 export function getIconDataUrl(filename: string): string | null {
-  return getProjectIconDataUrl(filename, iconDir)
+  return getProjectIconDataUrl(filename, iconDir())
 }
 
 /**
@@ -156,17 +159,18 @@ export function uploadIcon(
     ensureIconDir()
 
     // Remove any previous icon for this project (different extension)
-    const existing = readdirSync(iconDir).filter((f) => f.startsWith(`${projectId}.`))
+    const dir = iconDir()
+    const existing = readdirSync(dir).filter((f) => f.startsWith(`${projectId}.`))
     for (const old of existing) {
       try {
-        unlinkSync(join(iconDir, old))
+        unlinkSync(join(dir, old))
       } catch {
         // ignore cleanup errors
       }
     }
 
     const buffer = Buffer.from(base64Data, 'base64')
-    writeFileSync(join(iconDir, destFilename), buffer)
+    writeFileSync(join(dir, destFilename), buffer)
 
     // Update the project record in the database
     const db = getDatabase()
@@ -191,5 +195,5 @@ export function uploadIcon(
  * Remove a custom project icon from disk.
  */
 export function removeIcon(projectId: string): { success: boolean; error?: string } {
-  return removeProjectIcon(projectId, iconDir)
+  return removeProjectIcon(projectId, iconDir())
 }
