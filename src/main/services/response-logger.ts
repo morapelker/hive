@@ -1,14 +1,15 @@
 import { join } from 'path'
 import { existsSync, mkdirSync, appendFileSync } from 'fs'
+import { homedir } from 'os'
 import { createLogger } from './logger'
-import { getHiveLogsDir } from './hive-paths'
 
 const log = createLogger({ component: 'ResponseLogger' })
 
 const RESPONSE_LOG_DIR = 'responses'
 
 function getResponseLogDir(): string {
-  return join(getHiveLogsDir(), RESPONSE_LOG_DIR)
+  const homeDir = homedir()
+  return join(homeDir, '.hive', 'logs', RESPONSE_LOG_DIR)
 }
 
 function ensureLogDir(): void {

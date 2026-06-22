@@ -1,6 +1,6 @@
 import { join } from 'path'
 import { existsSync, mkdirSync, appendFileSync, readdirSync, statSync, unlinkSync } from 'fs'
-import { getHiveLogsDir } from './hive-paths'
+import { homedir } from 'os'
 
 export enum LogLevel {
   DEBUG = 0,
@@ -37,6 +37,7 @@ const LOG_LEVELS: Record<LogLevel, string> = {
 // Configuration
 const MAX_LOG_FILE_SIZE = 5 * 1024 * 1024 // 5MB
 const MAX_LOG_FILES = 5
+const LOG_DIR_NAME = 'logs'
 
 export class LoggerService {
   private static instance: LoggerService | null = null
@@ -45,8 +46,9 @@ export class LoggerService {
   private minLevel: LogLevel
 
   private constructor() {
-    // Use ~/.hive/logs/ for logs (relocatable via HIVE_DATA_DIR for `pnpm dev`)
-    this.logDir = getHiveLogsDir()
+    // Use ~/.hive/logs/ for logs
+    const homeDir = homedir()
+    this.logDir = join(homeDir, '.hive', LOG_DIR_NAME)
     this.ensureLogDir()
     this.currentLogFile = this.getLogFileName()
     this.minLevel = process.env.NODE_ENV === 'development' ? LogLevel.DEBUG : LogLevel.INFO
