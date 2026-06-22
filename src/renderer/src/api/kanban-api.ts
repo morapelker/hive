@@ -201,6 +201,13 @@ export const kanbanApi = {
     get: async <TResult>(projectId: string): Promise<TResult[]> =>
       getRendererRpcClient().request<TResult[]>('kanban.diagnostics.get', { projectId })
   },
+  markdown: {
+    convertFileToCard: async <TResult>(projectId: string, filePath: string): Promise<TResult> =>
+      getRendererRpcClient().request<TResult>('kanban.markdown.convertFileToCard', {
+        projectId,
+        filePath
+      })
+  },
   watch: {
     start: async (projectId: string): Promise<{ success: boolean; error?: string }> =>
       getRendererRpcClient().request<{ success: boolean; error?: string }>('kanban.watch.start', {

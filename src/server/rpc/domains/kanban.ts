@@ -181,6 +181,10 @@ export interface KanbanRpcService {
   readonly getDiagnostics?: (
     projectId: string
   ) => Effect.Effect<MarkdownCardDiagnostic[], unknown, never>
+  readonly convertMarkdownFileToCard?: (
+    projectId: string,
+    filePath: string
+  ) => Effect.Effect<KanbanTicket, unknown, never>
   readonly startWatch?: (
     projectId: string
   ) => Effect.Effect<{ success: boolean; error?: string }, unknown, never>
@@ -270,6 +274,12 @@ const getTicketsByProjectParamsSchema = z
   })
   .strict()
 const projectIdParamsSchema = z.object({ projectId: z.string() }).strict()
+const markdownFileParamsSchema = z
+  .object({
+    projectId: z.string(),
+    filePath: z.string()
+  })
+  .strict()
 const updateTicketParamsSchema = z
   .object({
     projectId: z.string(),
@@ -823,6 +833,14 @@ export const makeLiveKanbanRpcService = (): KanbanRpcService => ({
         )
         if (getKanbanStorageConfig(projectId).mode !== 'markdown') return []
         return getMarkdownKanbanBackend().getDiagnostics(projectId)
+      },
+      catch: (cause) => cause
+    }),
+  convertMarkdownFileToCard: (projectId, filePath) =>
+    Effect.tryPromise({
+      try: async () => {
+        const { getMarkdownKanbanBackend } = await import('../../../main/services/kanban-backend')
+        return getMarkdownKanbanBackend().convertMarkdownFileToCard(projectId, filePath)
       },
       catch: (cause) => cause
     }),
@@ -1448,6 +1466,22 @@ export const makeKanbanRpcHandlers = (
             )
           }
           return yield* service.getDiagnostics(projectId)
+        })
+    ],
+    [
+      'kanban.markdown.convertFileToCard',
+      (params) =>
+        Effect.gen(function* () {
+          const { projectId, filePath } = yield* Effect.try({
+            try: () => markdownFileParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          if (!service.convertMarkdownFileToCard) {
+            return yield* Effect.die(
+              new Error('kanban.markdown.convertFileToCard service is not implemented')
+            )
+          }
+          return yield* service.convertMarkdownFileToCard(projectId, filePath)
         })
     ],
     [

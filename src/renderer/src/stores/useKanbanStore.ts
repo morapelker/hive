@@ -170,6 +170,17 @@ function placeholdersFromDiagnostics(
     }))
 }
 
+async function loadProjectTicketsSnapshot(
+  projectId: string,
+  includeArchived: boolean
+): Promise<{ tickets: KanbanTicket[]; diagnostics: MarkdownCardDiagnostic[] }> {
+  const tickets = await kanban.ticket.getByProject<KanbanTicket>(projectId, includeArchived)
+  const diagnostics = await kanban.diagnostics
+    .get<MarkdownCardDiagnostic>(projectId)
+    .catch(() => [])
+  return { tickets, diagnostics }
+}
+
 // ── State interface ────────────────────────────────────────────────────
 interface KanbanState {
   /** Tickets keyed by project ID */
@@ -204,7 +215,9 @@ interface KanbanState {
   setBoardTelegramTarget: (target: BoardTelegramTarget | null) => void
   clearBoardTelegramTarget: () => void
   loadTickets: (projectId: string) => Promise<void>
+  loadTicketsWithArchiveVisibility: (projectId: string, includeArchived: boolean) => Promise<void>
   createTicket: (projectId: string, data: KanbanTicketCreate) => Promise<KanbanTicket>
+  convertMarkdownPlaceholder: (projectId: string, filePath: string) => Promise<KanbanTicket>
   updateTicket: (ticketId: string, projectId: string, data: KanbanTicketUpdate) => Promise<void>
   deleteTicket: (ticketId: string, projectId: string) => Promise<void>
   moveTicketToProject: (
@@ -330,13 +343,10 @@ export const useKanbanStore = create<KanbanState>()(
         set({ isLoading: true })
         try {
           const includeArchived = get().showArchivedByProject[projectId] ?? false
-          const tickets = await kanban.ticket.getByProject<KanbanTicket>(
+          const { tickets, diagnostics } = await loadProjectTicketsSnapshot(
             projectId,
             includeArchived
           )
-          const diagnostics = await kanban.diagnostics
-            .get<MarkdownCardDiagnostic>(projectId)
-            .catch(() => [])
           set((state) => {
             const next = new Map(state.tickets)
             const nextDiagnostics = new Map(state.markdownDiagnostics)
@@ -355,6 +365,36 @@ export const useKanbanStore = create<KanbanState>()(
             }
           })
           // Load dependencies for this project
+          get().loadDependencies(projectId)
+        } catch {
+          set({ isLoading: false })
+        }
+      },
+
+      loadTicketsWithArchiveVisibility: async (projectId: string, includeArchived: boolean) => {
+        set({ isLoading: true })
+        try {
+          const { tickets, diagnostics } = await loadProjectTicketsSnapshot(
+            projectId,
+            includeArchived
+          )
+          set((state) => {
+            const next = new Map(state.tickets)
+            const nextDiagnostics = new Map(state.markdownDiagnostics)
+            const nextPlaceholders = new Map(state.markdownPlaceholders)
+            next.set(projectId, tickets)
+            nextDiagnostics.set(projectId, diagnostics)
+            nextPlaceholders.set(
+              projectId,
+              placeholdersFromDiagnostics(projectId, diagnostics, tickets)
+            )
+            return {
+              tickets: next,
+              markdownDiagnostics: nextDiagnostics,
+              markdownPlaceholders: nextPlaceholders,
+              isLoading: false
+            }
+          })
           get().loadDependencies(projectId)
         } catch {
           set({ isLoading: false })
@@ -407,6 +447,14 @@ export const useKanbanStore = create<KanbanState>()(
           next.set(projectId, [...existing, ticket])
           return { tickets: next }
         })
+        return ticket
+      },
+
+      convertMarkdownPlaceholder: async (projectId: string, filePath: string) => {
+        const ticket = await kanban.markdown.convertFileToCard<KanbanTicket>(projectId, filePath)
+        const includeArchived =
+          get().showArchivedByProject[projectId] ?? get().showArchivedByProject[''] ?? false
+        await get().loadTicketsWithArchiveVisibility(projectId, includeArchived)
         return ticket
       },
 
