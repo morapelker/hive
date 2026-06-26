@@ -55,6 +55,7 @@ export function useClaudeCliStatusListener(): void {
         // User approved ExitPlanMode from the terminal, matching the in-app implement action.
         sessionStore.clearPendingPlan(sessionId)
         notifyKanbanSessionSync(sessionId, { type: 'implement' })
+        closeLinkedTicketModal(sessionId)
         lastSendMode.set(sessionId, 'build')
         worktreeStatus.setSessionStatus(sessionId, 'working', metadata)
         return
