@@ -96,7 +96,9 @@ export async function startBackgroundSessionPrompt(opts: {
     modelId: model?.modelID,
     providerId: model?.providerID,
     modelVariant: model?.variant,
-    mode: 'build'
+    mode: 'build',
+    // Background/remote (e.g. Telegram) start — not an interactive tab send.
+    source: 'other'
   })
   const result = unwrapEnvelope(
     await opencodeApi.prompt(

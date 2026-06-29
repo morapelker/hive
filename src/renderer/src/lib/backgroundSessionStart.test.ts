@@ -128,7 +128,8 @@ describe('startBackgroundSessionPrompt', () => {
       modelId: 'claude-opus',
       providerId: 'anthropic',
       modelVariant: undefined,
-      mode: 'build'
+      mode: 'build',
+      source: 'other'
     })
     expect(opencodeApi.prompt).toHaveBeenCalledWith(
       '/repo/hive',

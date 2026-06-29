@@ -300,7 +300,8 @@ describe('autoLaunchTicket Claude CLI', () => {
       modelId: undefined,
       providerId: undefined,
       modelVariant: undefined,
-      mode: 'build'
+      mode: 'build',
+      source: 'other'
     })
   })
 

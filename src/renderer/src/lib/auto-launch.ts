@@ -240,7 +240,9 @@ export async function autoLaunchTicket(ticket: AutoLaunchTicket): Promise<void> 
         modelId: effectiveModel?.modelID,
         providerId: effectiveModel?.providerID,
         modelVariant: effectiveModel?.variant,
-        mode: config.mode
+        mode: config.mode,
+        // Auto-launch is not an interactive send from a tab.
+        source: 'other'
       })
       unwrapEnvelope(
         await opencodeApi.prompt(

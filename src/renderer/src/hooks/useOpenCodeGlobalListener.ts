@@ -675,7 +675,9 @@ export function useOpenCodeGlobalListener(): void {
             modelId: session?.model_id,
             providerId: session?.model_provider_id,
             modelVariant: session?.model_variant,
-            mode
+            mode,
+            // Background follow-up-queue drain for a non-active session.
+            source: 'other'
           })
           lastSendMode.set(sessionId, isPlanLike(mode) ? 'plan' : 'build')
           useWorktreeStatusStore

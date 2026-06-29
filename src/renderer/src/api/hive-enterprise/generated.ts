@@ -117,6 +117,7 @@ export type GqlPromptStartInput = {
   prompt: Scalars['String']['input'];
   providerId?: InputMaybe<Scalars['String']['input']>;
   sessionId: Scalars['String']['input'];
+  source?: InputMaybe<Scalars['String']['input']>;
   worktreeBranch?: InputMaybe<Scalars['String']['input']>;
   worktreeId?: InputMaybe<Scalars['String']['input']>;
   worktreePath?: InputMaybe<Scalars['String']['input']>;

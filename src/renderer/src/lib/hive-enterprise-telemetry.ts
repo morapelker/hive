@@ -9,10 +9,21 @@ import { currentPromptIdBySession } from '@/lib/message-send-times'
 import { computeTokenFieldDelta } from '@/lib/token-baselines'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useContextStore } from '@/stores/useContextStore'
+import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { type SessionMode, useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
+
+/**
+ * Where a prompt was sent from:
+ * - `board`   — the kanban board was the active view (board tab, pinned board,
+ *               or board assistant), e.g. ticket-modal followups, new-ticket launches.
+ * - `session` — a regular session tab was active.
+ * - `other`   — not sent interactively from a tab (Telegram, background session
+ *               starts, board auto-launch, background follow-up-queue drains).
+ */
+export type HivePromptSource = 'board' | 'session' | 'other'
 
 interface StartHivePromptTelemetryInput {
   sessionId: string
@@ -22,6 +33,23 @@ interface StartHivePromptTelemetryInput {
   providerId?: string | null
   modelVariant?: string | null
   mode?: SessionMode | null
+  /**
+   * Explicit source override. Omit for interactive sends so the source is
+   * derived from the active view; pass `'other'` from non-interactive callers.
+   */
+  source?: HivePromptSource
+}
+
+/**
+ * Derive the prompt source from the active top-level view at send time. The
+ * kanban board (board tab, pinned board, or focused board assistant) counts as
+ * `board`; anything else is `session`.
+ */
+function deriveBoardSource(): HivePromptSource {
+  const kanban = useKanbanStore.getState()
+  if (kanban.isBoardViewActive || kanban.isPinnedBoardActive) return 'board'
+  if (useSessionStore.getState().activeBoardAssistantProjectId != null) return 'board'
+  return 'session'
 }
 
 interface HivePromptMetadataSession {
@@ -149,6 +177,9 @@ export function startHivePromptTelemetry(input: StartHivePromptTelemetryInput): 
     handoffSessionId,
     connectionProjects: getConnectionProjects(session?.connection_id)
   })
+  // Resolve the source synchronously — the active view may change while the
+  // async git lookup below is in flight.
+  const source = input.source ?? deriveBoardSource()
 
   void (async () => {
     const remote = worktree?.path
@@ -167,6 +198,7 @@ export function startHivePromptTelemetry(input: StartHivePromptTelemetryInput): 
       projectPath: project?.path ?? null,
       gitRemoteUrl: remote?.success ? (remote.url ?? null) : null,
       contextLength,
+      source,
       ...metadata
     })
     if (promptId) currentPromptIdBySession.set(input.sessionId, promptId)
