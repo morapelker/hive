@@ -83,7 +83,7 @@ describe('ClaudeCodeImplementer model catalog', () => {
     const info = await impl.getModelInfo('any', 'sonnet')
     expect(info).toEqual({
       id: 'sonnet',
-      name: 'Sonnet 4.6',
+      name: 'Sonnet 5',
       limit: { context: 200000, output: 16000 }
     })
   })
