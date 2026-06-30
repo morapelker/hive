@@ -216,6 +216,7 @@ interface KanbanState {
   clearBoardTelegramTarget: () => void
   loadTickets: (projectId: string) => Promise<void>
   loadTicketsWithArchiveVisibility: (projectId: string, includeArchived: boolean) => Promise<void>
+  reconcileFinishedSessions: (projectId: string) => void
   createTicket: (projectId: string, data: KanbanTicketCreate) => Promise<KanbanTicket>
   convertMarkdownPlaceholder: (projectId: string, filePath: string) => Promise<KanbanTicket>
   updateTicket: (ticketId: string, projectId: string, data: KanbanTicketUpdate) => Promise<void>
@@ -366,6 +367,8 @@ export const useKanbanStore = create<KanbanState>()(
           })
           // Load dependencies for this project
           get().loadDependencies(projectId)
+          // Recover any finished-session moves dropped before this load
+          get().reconcileFinishedSessions(projectId)
         } catch {
           set({ isLoading: false })
         }
@@ -396,8 +399,32 @@ export const useKanbanStore = create<KanbanState>()(
             }
           })
           get().loadDependencies(projectId)
+          get().reconcileFinishedSessions(projectId)
         } catch {
           set({ isLoading: false })
+        }
+      },
+
+      // ── reconcileFinishedSessions ────────────────────────────────
+      // Safety net for session_completed/plan_ready events that were dropped
+      // because this project's tickets weren't loaded when the event fired (e.g.
+      // on app relaunch the idle→completed replay can beat the board load). Run
+      // after tickets load: any in_progress ticket whose linked session is in a
+      // concrete "finished" status is advanced to review.
+      reconcileFinishedSessions: (projectId: string) => {
+        const tickets = get().tickets.get(projectId) ?? []
+        const statuses = useWorktreeStatusStore.getState().sessionStatuses
+        for (const ticket of tickets) {
+          if (ticket.column !== 'in_progress' || !ticket.current_session_id) continue
+          const status = statuses[ticket.current_session_id]?.status ?? null
+          // Only act on positive "finished" evidence — never on progressing/asking/
+          // no-status, so we don't yank not-yet-started or actively-running sessions
+          // out of in_progress.
+          if (status !== 'completed' && status !== 'plan_ready') continue
+          if (isPlanLike(ticket.mode) && !ticket.plan_ready) {
+            get().updateTicket(ticket.id, projectId, { plan_ready: true }).catch(() => {})
+          }
+          get().moveTicket(ticket.id, projectId, 'review', ticket.sort_order).catch(() => {})
         }
       },
 
@@ -430,6 +457,7 @@ export const useKanbanStore = create<KanbanState>()(
             }
           })
           get().loadDependencies(projectId)
+          get().reconcileFinishedSessions(projectId)
         } catch {
           set({ isLoading: false })
         }
@@ -891,25 +919,19 @@ export const useKanbanStore = create<KanbanState>()(
             // Each column-moving branch below guards on `column !== 'done'`.
             switch (event.type) {
               case 'session_completed': {
-                if (
-                  ticket.mode === 'build' &&
-                  ticket.column !== 'review' &&
-                  ticket.column !== 'done'
-                ) {
-                  // Auto-advance build ticket to review column (idempotent — skip if already there)
-                  get()
-                    .moveTicket(ticket.id, projectId, 'review', ticket.sort_order)
-                    .catch(() => {})
-                } else if (isPlanLike(ticket.mode) && !ticket.plan_ready) {
-                  // Plan finished — set plan_ready and move to review for user attention
+                // Plan tickets: surface the finished plan for the review UI.
+                if (isPlanLike(ticket.mode) && !ticket.plan_ready) {
                   get()
                     .updateTicket(ticket.id, projectId, { plan_ready: true })
                     .catch(() => {})
-                  if (ticket.column !== 'review' && ticket.column !== 'done') {
-                    get()
-                      .moveTicket(ticket.id, projectId, 'review', ticket.sort_order)
-                      .catch(() => {})
-                  }
+                }
+                // The session finished → its progress bar is gone. Any non-terminal
+                // ticket must advance to review regardless of mode/plan state (board
+                // invariant: in_progress ⇔ a running progress bar). Move is idempotent.
+                if (ticket.column !== 'review' && ticket.column !== 'done') {
+                  get()
+                    .moveTicket(ticket.id, projectId, 'review', ticket.sort_order)
+                    .catch(() => {})
                 }
                 // Accumulate token delta to ticket's persistent total
                 if (event.tokenDelta && event.tokenDelta > 0) {
@@ -933,16 +955,19 @@ export const useKanbanStore = create<KanbanState>()(
               }
 
               case 'plan_ready': {
-                // Explicit plan.ready event — set flag and move to review
+                // Explicit plan.ready event — set the flag for plan tickets...
                 if (isPlanLike(ticket.mode) && !ticket.plan_ready) {
                   get()
                     .updateTicket(ticket.id, projectId, { plan_ready: true })
                     .catch(() => {})
-                  if (ticket.column !== 'review' && ticket.column !== 'done') {
-                    get()
-                      .moveTicket(ticket.id, projectId, 'review', ticket.sort_order)
-                      .catch(() => {})
-                  }
+                }
+                // ...and move any non-terminal ticket to review. A build ticket can
+                // land here when its completion is rerouted to plan_ready by a stale
+                // lastSendMode, so the move must not be gated on mode.
+                if (ticket.column !== 'review' && ticket.column !== 'done') {
+                  get()
+                    .moveTicket(ticket.id, projectId, 'review', ticket.sort_order)
+                    .catch(() => {})
                 }
                 break
               }
@@ -1230,9 +1255,10 @@ export const useKanbanStore = create<KanbanState>()(
               markdownPlaceholders: newPlaceholders
             }
           })
-          // Load dependencies for each project
+          // Load dependencies + recover dropped finished-session moves per project
           for (const pid of projectIds) {
             get().loadDependencies(pid)
+            get().reconcileFinishedSessions(pid)
           }
         } catch (error) {
           console.error('Failed to load tickets for connection:', error)
@@ -1314,9 +1340,10 @@ export const useKanbanStore = create<KanbanState>()(
               markdownPlaceholders: newPlaceholders
             }
           })
-          // Load dependencies for each project
+          // Load dependencies + recover dropped finished-session moves per project
           for (const pid of projectIds) {
             get().loadDependencies(pid)
+            get().reconcileFinishedSessions(pid)
           }
         } catch (error) {
           console.error('Failed to load tickets for pinned projects:', error)
