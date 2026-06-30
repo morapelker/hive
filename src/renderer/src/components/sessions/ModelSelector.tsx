@@ -10,7 +10,9 @@ import {
   findModelInfo,
   getModelDisplayName,
   getModelVariantKeys,
+  getVariantKeysForSdk,
   parseProviders,
+  ULTRACODE_VARIANT,
   type ModelInfo,
   type ProviderModels
 } from '@/lib/parseProviders'
@@ -54,6 +56,27 @@ type SelectableProviderModels = Omit<ProviderModels, 'models'> & {
 type SdkFilterOption = {
   agentSdk: HandoffAgentSdk
   label: string
+}
+
+const ULTRACODE_TOOLTIP = 'xhigh effort + dynamic-workflow orchestration'
+
+/** Styling for a variant chip. ultracode gets a distinct accent so it reads as
+ * the special CLI-only mode it is, rather than just another effort level. */
+function variantChipClass(isActive: boolean, isUltracode: boolean): string {
+  if (isUltracode) {
+    return cn(
+      'text-[10px] px-1.5 py-0.5 rounded font-medium',
+      isActive
+        ? 'bg-violet-600 text-white'
+        : 'bg-violet-500/15 text-violet-600 dark:text-violet-300 hover:bg-violet-500/25'
+    )
+  }
+  return cn(
+    'text-[10px] px-1.5 py-0.5 rounded',
+    isActive
+      ? 'bg-primary text-primary-foreground'
+      : 'bg-muted text-muted-foreground hover:bg-accent'
+  )
 }
 
 export const ModelSelector = memo(function ModelSelector({
@@ -157,7 +180,7 @@ export const ModelSelector = memo(function ModelSelector({
       const currentSdkProviders = providers.filter((provider) => provider.agentSdk === agentSdk)
       const currentSdkModel = findModelInfo(currentSdkProviders, providerID, modelID)
       if (!currentSdkModel) return false
-      return !variant || getModelVariantKeys(currentSdkModel).includes(variant)
+      return !variant || getVariantKeysForSdk(currentSdkModel, agentSdk).includes(variant)
     },
     [providers, agentSdk]
   )
@@ -170,7 +193,7 @@ export const ModelSelector = memo(function ModelSelector({
         if (sdkProviders.length === 0) return false
         const sdkModel = findModelInfo(sdkProviders, providerID, modelID)
         if (!sdkModel) return false
-        return !variant || getModelVariantKeys(sdkModel).includes(variant)
+        return !variant || getVariantKeysForSdk(sdkModel, sdk).includes(variant)
       })
     },
     [providers, catalogAgentSdks]
@@ -248,7 +271,9 @@ export const ModelSelector = memo(function ModelSelector({
   }
 
   function handleSelectModel(model: SelectableModelInfo): void {
-    const variantKeys = getModelVariantKeys(model)
+    // SDK-aware so a remembered `ultracode` choice is honored on re-select.
+    // ultracode is appended last, so it never becomes the implicit [0] default.
+    const variantKeys = getVariantKeysForSdk(model, model.agentSdk)
     const remembered = useSettingsStore
       .getState()
       .getModelVariantDefault(model.providerID, model.id)
@@ -376,7 +401,7 @@ export const ModelSelector = memo(function ModelSelector({
   // Cycle thinking-level variant for Alt+T
   const cycleVariant = useCallback(() => {
     if (!currentModel) return
-    const variantKeys = getModelVariantKeys(currentModel)
+    const variantKeys = getVariantKeysForSdk(currentModel, currentModel.agentSdk)
     if (variantKeys.length <= 1) return
 
     const currentVariant = selectedModel?.variant
@@ -552,7 +577,12 @@ export const ModelSelector = memo(function ModelSelector({
             <span className="truncate max-w-[140px]">{isLoading ? 'Loading...' : displayName}</span>
             {hasVariants && selectedModel?.variant && (
               <span
-                className="text-[10px] font-semibold text-primary uppercase"
+                className={cn(
+                  'text-[10px] font-semibold uppercase',
+                  selectedModel.variant === ULTRACODE_VARIANT
+                    ? 'text-violet-600 dark:text-violet-300'
+                    : 'text-primary'
+                )}
                 data-testid="variant-indicator"
               >
                 {selectedModel.variant}
@@ -561,7 +591,7 @@ export const ModelSelector = memo(function ModelSelector({
             <ChevronDown className="h-3 w-3 shrink-0 opacity-50" />
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="w-64 max-h-80 overflow-y-auto">
+        <DropdownMenuContent align="start" className="w-96 max-h-80 overflow-y-auto">
           <div className="flex items-center gap-1.5 px-2 pb-1.5 pt-1">
             <Search className="h-3 w-3 shrink-0 text-muted-foreground" />
             <input
@@ -581,7 +611,7 @@ export const ModelSelector = memo(function ModelSelector({
               </DropdownMenuLabel>
               {favoriteModelObjects.map((model) => {
                 const favActive = isActiveModel(model)
-                const favVariantKeys = getModelVariantKeys(model)
+                const favVariantKeys = getVariantKeysForSdk(model, model.agentSdk)
                 return (
                   <div key={`fav-${model.agentSdk}:${model.providerID}:${model.id}`}>
                     <DropdownMenuItem
@@ -599,18 +629,15 @@ export const ModelSelector = memo(function ModelSelector({
                       {favActive && <Check className="h-4 w-4 shrink-0 text-primary" />}
                     </DropdownMenuItem>
                     {favVariantKeys.length > 0 && (
-                      <div className="flex gap-1 pl-6 pb-1">
+                      <div className="flex flex-wrap gap-1 pl-6 pb-1">
                         {favVariantKeys.map((variant) => {
                           const isActiveVariant = favActive && selectedModel?.variant === variant
+                          const isUltracode = variant === ULTRACODE_VARIANT
                           return (
                             <button
                               key={variant}
-                              className={cn(
-                                'text-[10px] px-1.5 py-0.5 rounded',
-                                isActiveVariant
-                                  ? 'bg-primary text-primary-foreground'
-                                  : 'bg-muted text-muted-foreground hover:bg-accent'
-                              )}
+                              className={variantChipClass(isActiveVariant, isUltracode)}
+                              title={isUltracode ? ULTRACODE_TOOLTIP : undefined}
                               onClick={(e) => {
                                 e.stopPropagation()
                                 handleSelectVariant(model, variant)
@@ -638,7 +665,7 @@ export const ModelSelector = memo(function ModelSelector({
               </DropdownMenuLabel>
               {provider.models.map((model) => {
                 const active = isActiveModel(model)
-                const variantKeys = getModelVariantKeys(model)
+                const variantKeys = getVariantKeysForSdk(model, model.agentSdk)
                 return (
                   <div key={`${model.agentSdk}:${model.providerID}:${model.id}`}>
                     <DropdownMenuItem
@@ -660,20 +687,17 @@ export const ModelSelector = memo(function ModelSelector({
                     </DropdownMenuItem>
                     {variantKeys.length > 0 && (
                       <div
-                        className="flex gap-1 pl-6 pb-1"
+                        className="flex flex-wrap gap-1 pl-6 pb-1"
                         data-testid={`variant-chips-${model.id}`}
                       >
                         {variantKeys.map((variant) => {
                           const isActiveVariant = active && selectedModel?.variant === variant
+                          const isUltracode = variant === ULTRACODE_VARIANT
                           return (
                             <button
                               key={variant}
-                              className={cn(
-                                'text-[10px] px-1.5 py-0.5 rounded',
-                                isActiveVariant
-                                  ? 'bg-primary text-primary-foreground'
-                                  : 'bg-muted text-muted-foreground hover:bg-accent'
-                              )}
+                              className={variantChipClass(isActiveVariant, isUltracode)}
+                              title={isUltracode ? ULTRACODE_TOOLTIP : undefined}
                               onClick={(e) => {
                                 e.stopPropagation()
                                 handleSelectVariant(model, variant)
