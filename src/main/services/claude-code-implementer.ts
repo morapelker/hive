@@ -53,7 +53,7 @@ const CLAUDE_MODELS = [
   },
   {
     id: 'sonnet',
-    name: 'Sonnet 4.6',
+    name: 'Sonnet 5',
     limit: { context: 200000, output: 16000 },
     variants: CLAUDE_EFFORT_VARIANTS,
     defaultVariant: 'high'
