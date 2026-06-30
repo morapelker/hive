@@ -25,6 +25,39 @@ export interface ClaudeCliPtySpawn {
 const VALID_MODELS = new Set(['fable', 'opus', 'sonnet', 'haiku'])
 const VALID_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max'])
 
+/**
+ * "ultracode" is not a valid claude `--effort` value. It is enabled through the
+ * `ultracode` setting (xhigh effort plus standing dynamic-workflow
+ * orchestration) injected into the `--settings` JSON instead of via `--effort`.
+ */
+const ULTRACODE = 'ultracode'
+
+export function isUltracodeEffort(value: string | null | undefined): boolean {
+  return typeof value === 'string' && value.toLowerCase() === ULTRACODE
+}
+
+/**
+ * Merge `{ ultracode: true }` into the existing claude `--settings` JSON,
+ * preserving the hook config already in it. Falls back to a fresh object when
+ * there is no prior settings string or it cannot be parsed, so a malformed blob
+ * never breaks spawning.
+ */
+function withUltracodeSetting(hookSettingsJson: string | null | undefined): string {
+  let settings: Record<string, unknown> = {}
+  if (hookSettingsJson) {
+    try {
+      const parsed = JSON.parse(hookSettingsJson)
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        settings = parsed as Record<string, unknown>
+      }
+    } catch {
+      settings = {}
+    }
+  }
+  settings[ULTRACODE] = true
+  return JSON.stringify(settings)
+}
+
 export function normalizeClaudeCliModel(modelId: string | null | undefined): string | null {
   if (!modelId) return null
   const lower = modelId.toLowerCase()
@@ -54,6 +87,7 @@ export function buildClaudeCliPtySpawn(input: ClaudeCliPtySpawnInput): ClaudeCli
     args.push('--model', model)
   }
 
+  const ultracode = isUltracodeEffort(input.session.model_variant)
   const effort = normalizeClaudeCliEffort(input.session.model_variant)
   if (effort) {
     args.push('--effort', effort)
@@ -64,7 +98,12 @@ export function buildClaudeCliPtySpawn(input: ClaudeCliPtySpawnInput): ClaudeCli
     args.push('--resume', resumeId)
   }
 
-  if (input.hookSettingsJson) {
+  if (ultracode) {
+    // ultracode is enabled via the settings JSON, not `--effort`. Merge it into
+    // the hook settings (or a fresh object when there are none) so the flag is
+    // always present when selected.
+    args.push('--settings', withUltracodeSetting(input.hookSettingsJson))
+  } else if (input.hookSettingsJson) {
     args.push('--settings', input.hookSettingsJson)
   }
 

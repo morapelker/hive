@@ -12,7 +12,7 @@ import type { DatabaseService } from '../db/database'
 import { readClaudeTranscript, translateEntry } from './claude-transcript-reader'
 import { getUserEnvironmentVariables } from './env-vars'
 import { generateSessionTitle } from './claude-session-title'
-import { normalizeClaudeCliModel } from './claude-cli-spawner'
+import { isUltracodeEffort, normalizeClaudeCliModel } from './claude-cli-spawner'
 import { autoRenameWorktreeBranch } from './git-service'
 import { Options, PermissionMode } from '@anthropic-ai/claude-agent-sdk'
 import { CommandFilterService, type CommandFilterSettings } from './command-filter-service'
@@ -500,10 +500,15 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       const requestedModel = modelOverride?.modelID ?? this.selectedModel
       const resolvedModel = normalizeClaudeCliModel(requestedModel) ?? requestedModel
       const modelDef = CLAUDE_MODELS.find((m) => m.id === resolvedModel)
-      const effortLevel = (modelOverride?.variant ??
-        this.selectedVariant ??
-        modelDef?.defaultVariant ??
-        'high') as Options['effort']
+      const requestedEffort =
+        modelOverride?.variant ?? this.selectedVariant ?? modelDef?.defaultVariant ?? 'high'
+      // `ultracode` is a CLI-only setting with no Agent SDK `effort` equivalent.
+      // It should never reach here (the picker only offers it for claude-code-cli),
+      // but if a stale default leaks it in, fall back to its xhigh equivalent so
+      // the SDK never receives an invalid effort value.
+      const effortLevel = (isUltracodeEffort(requestedEffort)
+        ? 'xhigh'
+        : requestedEffort) as Options['effort']
 
       // Build SDK query options
       const options: Options = {

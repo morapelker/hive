@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { Session } from '../../db/types'
-import { buildClaudeCliPtySpawn, normalizeClaudeCliModel } from '../claude-cli-spawner'
+import {
+  buildClaudeCliPtySpawn,
+  isUltracodeEffort,
+  normalizeClaudeCliModel
+} from '../claude-cli-spawner'
 
 function makeSession(overrides: Partial<Session> = {}): Session {
   return {
@@ -168,5 +172,50 @@ describe('buildClaudeCliPtySpawn', () => {
 
     expect(spawn.args).not.toContain('--settings')
     expect(spawn.args.at(-1)).toBe('Say hi')
+  })
+
+  it('recognizes the ultracode effort case-insensitively', () => {
+    expect(isUltracodeEffort('ultracode')).toBe(true)
+    expect(isUltracodeEffort('UltraCode')).toBe(true)
+    expect(isUltracodeEffort('xhigh')).toBe(false)
+    expect(isUltracodeEffort(null)).toBe(false)
+    expect(isUltracodeEffort(undefined)).toBe(false)
+  })
+
+  it('enables ultracode via the settings flag, preserves hooks, and omits --effort', () => {
+    const hookSettingsJson = '{"hooks":{"Stop":[{"id":1}]}}'
+    const spawn = buildClaudeCliPtySpawn({
+      session: makeSession({ model_id: 'opus', model_variant: 'ultracode' }),
+      worktreePath: '/repo/worktree',
+      pendingPrompt: 'Go',
+      claudeBinary: 'claude',
+      hookSettingsJson
+    })
+
+    // ultracode rides in --settings; it is never passed as a --effort value.
+    expect(spawn.args).not.toContain('--effort')
+    // model is still forwarded as usual.
+    expect(spawn.args).toContain('--model')
+    expect(spawn.args).toContain('opus')
+
+    const settingsIndex = spawn.args.indexOf('--settings')
+    expect(settingsIndex).toBeGreaterThanOrEqual(0)
+    const settings = JSON.parse(spawn.args[settingsIndex + 1])
+    expect(settings.ultracode).toBe(true)
+    expect(settings.hooks).toEqual({ Stop: [{ id: 1 }] })
+  })
+
+  it('passes ultracode settings even when no hook settings are provided', () => {
+    const spawn = buildClaudeCliPtySpawn({
+      session: makeSession({ model_id: 'opus', model_variant: 'ultracode' }),
+      worktreePath: '/repo/worktree',
+      pendingPrompt: null,
+      claudeBinary: 'claude'
+    })
+
+    expect(spawn.args).not.toContain('--effort')
+    const settingsIndex = spawn.args.indexOf('--settings')
+    expect(settingsIndex).toBeGreaterThanOrEqual(0)
+    expect(JSON.parse(spawn.args[settingsIndex + 1])).toEqual({ ultracode: true })
   })
 })

@@ -83,6 +83,26 @@ export function getModelVariantKeys(model: Pick<ModelInfo, 'variants'>): string[
   return Object.keys(model.variants)
 }
 
+/** CLI-only effort: enabled via the claude `--settings` JSON, not `--effort`. */
+export const ULTRACODE_VARIANT = 'ultracode'
+
+/**
+ * Variant keys to offer for a model under a given agent SDK. `claude-code-cli`
+ * additionally offers `ultracode` — a CLI-only `--settings` mode — but only for
+ * high-tier models, detected by whether the model already exposes `xhigh`
+ * (Opus/Fable). Other SDKs cannot honor ultracode, so it is never offered there.
+ */
+export function getVariantKeysForSdk(
+  model: Pick<ModelInfo, 'variants'>,
+  agentSdk: string | null | undefined
+): string[] {
+  const base = getModelVariantKeys(model)
+  if (agentSdk === 'claude-code-cli' && base.includes('xhigh')) {
+    return [...base, ULTRACODE_VARIANT]
+  }
+  return base
+}
+
 export function findModelInfo(
   providers: ProviderModels[],
   providerID: string,
