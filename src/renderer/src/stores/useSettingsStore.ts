@@ -229,7 +229,13 @@ const DEFAULT_SETTINGS: AppSettings = {
   skippedUpdateVersion: null,
   initialSetupComplete: false,
   commandFilter: {
-    allowlist: ['edit: **', 'write: **'],
+    allowlist: [
+      'edit: **',
+      'write: **',
+      'read: **',
+      'grep: ** in **',
+      'glob: **'
+    ],
     blocklist: [
       'bash: rm -rf *',
       'bash: sudo rm *',
