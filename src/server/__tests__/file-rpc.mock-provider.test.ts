@@ -108,6 +108,60 @@ describe('file ops RPC mocked provider', () => {
     })
   })
 
+  it('routes fileOps.createFile to the injected provider service', async () => {
+    const createFile = vi.fn(() => Effect.succeed(null))
+    const service = { createFile } as unknown as FileOpsRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      fileOps: service
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'file-create-file-1',
+        method: 'fileOps.createFile',
+        params: {
+          filePath: '/tmp/hive/PLAN_123.md',
+          content: 'plan body'
+        }
+      })
+    )
+
+    expect(createFile).toHaveBeenCalledWith('/tmp/hive/PLAN_123.md', 'plan body')
+    expect(response).toEqual({
+      id: 'file-create-file-1',
+      ok: true,
+      value: null
+    })
+  })
+
+  it('validates fileOps.createFile params before calling the provider service', async () => {
+    const createFile = vi.fn(() => Effect.succeed(null))
+    const service = { createFile } as unknown as FileOpsRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      fileOps: service
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'file-create-file-invalid',
+        method: 'fileOps.createFile',
+        params: {
+          filePath: '',
+          content: 'plan body'
+        }
+      })
+    )
+
+    expect(createFile).not.toHaveBeenCalled()
+    expect(response).toMatchObject({
+      id: 'file-create-file-invalid',
+      ok: false,
+      error: { code: 'VALIDATION_FAILED' }
+    })
+  })
+
   it('routes fileOps.readImageAsBase64 to the injected provider service', async () => {
     const result = { data: 'aGVsbG8=', mimeType: 'image/png' }
     const readImageAsBase64 = vi.fn(() => Effect.succeed(result))

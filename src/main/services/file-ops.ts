@@ -1,5 +1,4 @@
 import { readFileSync, writeFileSync, existsSync, statSync } from 'fs'
-import { join } from 'path'
 import { getImageMimeType } from '@shared/types/file-utils'
 
 const MAX_FILE_SIZE = 1024 * 1024 // 1MB
@@ -76,6 +75,22 @@ export function writeFile(filePath: string, content: string): { success: boolean
       return { success: false, error: 'Path is a directory' }
     }
     writeFileSync(filePath, content, 'utf-8')
+    return { success: true }
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' }
+  }
+}
+
+export function createFile(filePath: string, content: string): { success: boolean; error?: string } {
+  try {
+    if (!filePath || typeof filePath !== 'string') {
+      return { success: false, error: 'Invalid file path' }
+    }
+    if (typeof content !== 'string') {
+      return { success: false, error: 'Invalid content' }
+    }
+    // 'wx' fails with EEXIST if the file already exists — create-only semantics
+    writeFileSync(filePath, content, { encoding: 'utf-8', flag: 'wx' })
     return { success: true }
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : 'Unknown error' }

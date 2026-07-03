@@ -1,6 +1,6 @@
 import { Effect } from 'effect'
 import { z } from 'zod'
-import { readFile, readFileAsBase64, writeFile } from '../../../main/services/file-ops'
+import { createFile, readFile, readFileAsBase64, writeFile } from '../../../main/services/file-ops'
 import { RpcRouteError } from '../../../shared/rpc/errors'
 import type { RpcHandler } from '../router'
 
@@ -18,6 +18,7 @@ export interface FileImageReadResult {
 export interface FileOpsRpcService {
   readonly readFile: (filePath: string) => Effect.Effect<FileReadResult, unknown, never>
   readonly writeFile: (filePath: string, content: string) => Effect.Effect<null, unknown, never>
+  readonly createFile: (filePath: string, content: string) => Effect.Effect<null, unknown, never>
   readonly readImageAsBase64: (
     filePath: string
   ) => Effect.Effect<FileImageReadResult, unknown, never>
@@ -37,6 +38,12 @@ export const makeLiveFileOpsRpcService = (): FileOpsRpcService => ({
   writeFile: (filePath, content) =>
     Effect.suspend(() => {
       const result = writeFile(filePath, content)
+      if (result.success) return Effect.succeed(null)
+      return Effect.fail(new Error(result.error ?? 'Unknown error'))
+    }),
+  createFile: (filePath, content) =>
+    Effect.suspend(() => {
+      const result = createFile(filePath, content)
       if (result.success) return Effect.succeed(null)
       return Effect.fail(new Error(result.error ?? 'Unknown error'))
     }),
@@ -79,6 +86,17 @@ export const makeFileOpsRpcHandlers = (
             catch: (cause) => cause
           })
           return yield* service.writeFile(filePath, content)
+        })
+    ],
+    [
+      'fileOps.createFile',
+      (params) =>
+        Effect.gen(function* () {
+          const { filePath, content } = yield* Effect.try({
+            try: () => writeFileParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          return yield* service.createFile(filePath, content)
         })
     ],
     [

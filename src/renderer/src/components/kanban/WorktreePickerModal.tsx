@@ -39,6 +39,7 @@ import { startHivePromptTelemetry } from '@/lib/hive-enterprise-telemetry'
 import type { KanbanTicket, Session } from '../../../../main/db/types'
 import { canonicalizeTicketTitle } from '@shared/types/branch-utils'
 import { supportsGoalMode } from '@shared/types/agent-sdk'
+import { createPlanFile, exceedsGoalPromptLimit, planFilePrompt } from '@/lib/goal-plan-file'
 
 // Stable empty array to avoid referential-inequality loops in Zustand selectors
 const EMPTY_ARRAY: readonly never[] = []
@@ -157,6 +158,21 @@ function composePromptForSdk(
   return goalMode && goalCriteria.trim()
     ? wrapGoalPrompt(fullPrompt, goalCriteria.trim())
     : fullPrompt
+}
+
+// Oversized goal prompts get rejected by the CLI. When the composed goal prompt
+// exceeds the limit, persist the full ticket prompt as PLAN_{uuid}.md in the
+// session root and swap the prompt body for "Implement PLAN_{uuid}.md" — the
+// /goal wrapper and success criteria stay as-is. Returns the prompt text to
+// compose the outbound prompt from.
+async function convertOversizedGoalPrompt(
+  promptText: string,
+  composedGoalPrompt: string | null,
+  rootPath: string | null | undefined
+): Promise<string> {
+  if (!exceedsGoalPromptLimit(composedGoalPrompt) || !rootPath) return promptText
+  const fileName = await createPlanFile(rootPath, promptText.trim())
+  return planFilePrompt(fileName)
 }
 
 // Strip a SelectedModel down to the shape the prompt RPC accepts. The renderer's
@@ -443,6 +459,16 @@ export function WorktreePickerModal({
       ? !isSending
       : (selectedWorktreeId !== null || isNewWorktree) && !isSending) && goalCriteriaValid
 
+  // The goal prompt as it would go out. Goal mode is build-only, so the mode
+  // prefix is empty and this matches the outbound prompt for every SDK.
+  const composedGoalPrompt = useMemo(() => {
+    if (!goalMode || !goalAvailable) return null
+    return composePromptForSdk(mode, agentSdk, promptText, goalMode, goalCriteria, {
+      claudeCli: agentSdk === 'claude-code-cli'
+    })
+  }, [goalMode, goalAvailable, mode, agentSdk, promptText, goalCriteria])
+  const willUsePlanFile = exceedsGoalPromptLimit(composedGoalPrompt)
+
   const handleSend = useCallback(async () => {
     if (!canSend) return
     setIsSending(true)
@@ -450,13 +476,22 @@ export function WorktreePickerModal({
     // ── Connection mode path ──────────────────────────────────────
     if (isConnectionMode && connectionId) {
       try {
+        const connectionPath = useConnectionStore
+          .getState()
+          .connections.find((c) => c.id === connectionId)?.path
+        const effectivePromptText = await convertOversizedGoalPrompt(
+          promptText,
+          composedGoalPrompt,
+          connectionPath
+        )
+
         // Create connection session
         const createConnectionSession = useSessionStore.getState().createConnectionSession
         const effectiveModel = selectedModel ?? autoResolvedModel ?? undefined
         const modelOverride = effectiveModel ? { ...effectiveModel, agentSdk } : undefined
         const cliPendingPrompt =
           agentSdk === 'claude-code-cli'
-            ? composePromptForSdk(mode, agentSdk, promptText, goalMode, goalCriteria, {
+            ? composePromptForSdk(mode, agentSdk, effectivePromptText, goalMode, goalCriteria, {
                 claudeCli: true
               })
             : null
@@ -529,7 +564,7 @@ export function WorktreePickerModal({
         if (sessionAgentSdk === 'claude-code-cli') {
           const outboundPrompt =
             cliPendingPrompt ??
-            composePromptForSdk(mode, sessionAgentSdk, promptText, goalMode, goalCriteria, {
+            composePromptForSdk(mode, sessionAgentSdk, effectivePromptText, goalMode, goalCriteria, {
               claudeCli: true
             })
 
@@ -552,9 +587,6 @@ export function WorktreePickerModal({
         }
 
         // Connect to opencode using connection path
-        const connectionPath = useConnectionStore
-          .getState()
-          .connections.find((c) => c.id === connectionId)?.path
         if (!connectionPath) return
 
         const connectResult = unwrapEnvelope(await opencodeApi.connect(connectionPath, sessionId))
@@ -569,11 +601,11 @@ export function WorktreePickerModal({
         })
 
         // Send prompt
-        if (promptText.trim()) {
+        if (effectivePromptText.trim()) {
           const outboundPrompt = composePromptForSdk(
             mode,
             sessionAgentSdk,
-            promptText,
+            effectivePromptText,
             goalMode,
             goalCriteria,
             { claudeCli: false }
@@ -733,12 +765,26 @@ export function WorktreePickerModal({
         return
       }
 
+      // Resolve the worktree record once — needed for plan-file creation and
+      // the OpenCode connect below. Newly created worktrees are already in the
+      // store at this point.
+      const allWorktrees = Array.from(
+        useWorktreeStore.getState().worktreesByProject.values()
+      ).flat()
+      const worktree = allWorktrees.find((w) => w.id === worktreeId)
+
+      const effectivePromptText = await convertOversizedGoalPrompt(
+        promptText,
+        composedGoalPrompt,
+        worktree?.path
+      )
+
       // Create session in the selected worktree
       const effectiveModel = selectedModel ?? autoResolvedModel ?? undefined
       const modelOverride = effectiveModel ? { ...effectiveModel, agentSdk } : undefined
       const cliPendingPrompt =
         agentSdk === 'claude-code-cli'
-          ? composePromptForSdk(mode, agentSdk, promptText, goalMode, goalCriteria, {
+          ? composePromptForSdk(mode, agentSdk, effectivePromptText, goalMode, goalCriteria, {
               claudeCli: true
             })
           : null
@@ -813,7 +859,7 @@ export function WorktreePickerModal({
       if (sessionAgentSdk === 'claude-code-cli') {
         const outboundPrompt =
           cliPendingPrompt ??
-          composePromptForSdk(mode, sessionAgentSdk, promptText, goalMode, goalCriteria, {
+          composePromptForSdk(mode, sessionAgentSdk, effectivePromptText, goalMode, goalCriteria, {
             claudeCli: true
           })
 
@@ -836,11 +882,6 @@ export function WorktreePickerModal({
       }
 
       // ── Start the OpenCode session in the background ──────────
-      // Resolve worktree path from the store
-      const allWorktrees = Array.from(
-        useWorktreeStore.getState().worktreesByProject.values()
-      ).flat()
-      const worktree = allWorktrees.find((w) => w.id === worktreeId)
       if (!worktree?.path) return
 
       // Connect to OpenCode to create the AI session
@@ -857,11 +898,11 @@ export function WorktreePickerModal({
       })
 
       // Send the prompt — apply plan mode prefix for opencode SDK
-      if (promptText.trim()) {
+      if (effectivePromptText.trim()) {
         const outboundPrompt = composePromptForSdk(
           mode,
           sessionAgentSdk,
-          promptText,
+          effectivePromptText,
           goalMode,
           goalCriteria,
           { claudeCli: false }
@@ -927,6 +968,7 @@ export function WorktreePickerModal({
     codexFastMode,
     goalMode,
     goalCriteria,
+    composedGoalPrompt,
     isConnectionMode,
     connectionId
   ])
@@ -1309,6 +1351,15 @@ export function WorktreePickerModal({
             </div>
           )}
         </div>
+
+        {willUsePlanFile && (
+          <div
+            data-testid="goal-plan-file-notice"
+            className="w-full rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-600 dark:text-amber-400"
+          >
+            Will be converted to an md file for implementation (&gt;3k characters)
+          </div>
+        )}
 
         <DialogFooter className="pt-1">
           <Button

@@ -20263,9 +20263,9 @@ describe('renderer API cleanup', () => {
     expect(worktreeSource).toContain('await dbApi.session.update<Session>(sessionId, {')
     expect(worktreeSource).toContain('opencode_session_id: connectResult.sessionId')
     expect(worktreeSource).not.toContain('await db.session.update(sessionId, {')
-    expect(worktreeSource).toContain(
-      'const worktree = allWorktrees.find((w) => w.id === worktreeId)'
-    )
+    // The store-based worktree lookup is hoisted above session creation so the
+    // goal plan-file conversion can reuse it
+    expect(source).toContain('const worktree = allWorktrees.find((w) => w.id === worktreeId)')
     expect(worktreeSource).not.toContain('window.opencodeOps.connect')
   })
 

@@ -2987,6 +2987,7 @@ describe('rpc router', () => {
             return { success: true, content: 'hello from http' }
           }),
         writeFile: () => Effect.succeed(null),
+        createFile: () => Effect.succeed(null),
         readImageAsBase64: () => Effect.succeed({ data: 'unused' })
       }
     })
@@ -3013,6 +3014,7 @@ describe('rpc router', () => {
       fileOps: {
         readFile: () => Effect.succeed({ success: false, error: 'should not run' }),
         writeFile: () => Effect.succeed(null),
+        createFile: () => Effect.succeed(null),
         readImageAsBase64: () => Effect.succeed({ data: 'unused' })
       }
     })
@@ -3043,6 +3045,7 @@ describe('rpc router', () => {
             calls.push({ filePath, content })
             return null
           }),
+        createFile: () => Effect.succeed(null),
         readImageAsBase64: () => Effect.succeed({ data: 'unused' })
       }
     })
@@ -3069,6 +3072,7 @@ describe('rpc router', () => {
       fileOps: {
         readFile: () => Effect.succeed({ success: false, error: 'unused' }),
         writeFile: () => Effect.succeed(null),
+        createFile: () => Effect.succeed(null),
         readImageAsBase64: () => Effect.succeed({ data: 'unused' })
       }
     })
@@ -3095,6 +3099,7 @@ describe('rpc router', () => {
       fileOps: {
         readFile: () => Effect.succeed({ success: false, error: 'unused' }),
         writeFile: () => Effect.succeed(null),
+        createFile: () => Effect.succeed(null),
         readImageAsBase64: (filePath) =>
           Effect.sync(() => {
             calls.push(filePath)
@@ -3125,6 +3130,7 @@ describe('rpc router', () => {
       fileOps: {
         readFile: () => Effect.succeed({ success: false, error: 'unused' }),
         writeFile: () => Effect.succeed(null),
+        createFile: () => Effect.succeed(null),
         readImageAsBase64: () => Effect.succeed({ data: 'unused' })
       }
     })
