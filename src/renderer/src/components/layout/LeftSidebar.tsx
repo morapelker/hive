@@ -12,7 +12,7 @@ import {
   RecentToggleButton,
   FilterChips
 } from '@/components/projects'
-import { ConnectionList } from '@/components/connections'
+import { ConnectionList, ConnectionsButton } from '@/components/connections'
 import { SpacesTabBar } from '@/components/spaces'
 import { ProjectFilter } from '@/components/projects/ProjectFilter'
 import { UsageIndicator } from './UsageIndicator'
@@ -155,6 +155,7 @@ export function LeftSidebar(): React.JSX.Element {
               <span>Projects</span>
             </div>
             <div className="flex items-center gap-1">
+              <ConnectionsButton />
               <RecentToggleButton />
               <SortProjectsButton />
               <AddProjectButton />

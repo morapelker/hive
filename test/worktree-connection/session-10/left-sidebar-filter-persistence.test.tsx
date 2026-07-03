@@ -31,7 +31,8 @@ vi.mock('@/components/projects', () => ({
 }))
 
 vi.mock('@/components/connections', () => ({
-  ConnectionList: () => <div data-testid="mock-connection-list" />
+  ConnectionList: () => <div data-testid="mock-connection-list" />,
+  ConnectionsButton: () => <button data-testid="connections-button" type="button" />
 }))
 
 vi.mock('@/components/spaces', () => ({
