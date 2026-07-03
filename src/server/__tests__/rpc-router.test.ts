@@ -3297,7 +3297,9 @@ describe('rpc router', () => {
         getPinned: () => Effect.succeed([]),
         getAll: () => Effect.succeed({ success: true, connections: [] }),
         get: () => Effect.succeed({ success: false, error: 'unused' }),
-        delete: () => Effect.succeed({ success: false, error: 'unused' })
+        delete: () => Effect.succeed({ success: false, error: 'unused' }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -3337,7 +3339,9 @@ describe('rpc router', () => {
         getPinned: () => Effect.succeed([]),
         getAll: () => Effect.succeed({ success: true, connections: [] }),
         get: () => Effect.succeed({ success: false, error: 'unused' }),
-        delete: () => Effect.succeed({ success: false, error: 'unused' })
+        delete: () => Effect.succeed({ success: false, error: 'unused' }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -3389,7 +3393,9 @@ describe('rpc router', () => {
         getPinned: () => Effect.succeed([]),
         getAll: () => Effect.succeed({ success: true, connections: [] }),
         get: () => Effect.succeed({ success: false, error: 'unused' }),
-        delete: () => Effect.succeed({ success: false, error: 'unused' })
+        delete: () => Effect.succeed({ success: false, error: 'unused' }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -3429,7 +3435,9 @@ describe('rpc router', () => {
         getPinned: () => Effect.succeed([]),
         getAll: () => Effect.succeed({ success: true, connections: [] }),
         get: () => Effect.succeed({ success: false, error: 'unused' }),
-        delete: () => Effect.succeed({ success: false, error: 'unused' })
+        delete: () => Effect.succeed({ success: false, error: 'unused' }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -3469,7 +3477,9 @@ describe('rpc router', () => {
         getPinned: () => Effect.succeed([]),
         getAll: () => Effect.succeed({ success: true, connections: [] }),
         get: () => Effect.succeed({ success: false, error: 'unused' }),
-        delete: () => Effect.succeed({ success: false, error: 'unused' })
+        delete: () => Effect.succeed({ success: false, error: 'unused' }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -3509,7 +3519,9 @@ describe('rpc router', () => {
         getPinned: () => Effect.succeed([]),
         getAll: () => Effect.succeed({ success: true, connections: [] }),
         get: () => Effect.succeed({ success: false, error: 'unused' }),
-        delete: () => Effect.succeed({ success: false, error: 'unused' })
+        delete: () => Effect.succeed({ success: false, error: 'unused' }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -3549,7 +3561,9 @@ describe('rpc router', () => {
         getPinned: () => Effect.succeed([]),
         getAll: () => Effect.succeed({ success: true, connections: [] }),
         get: () => Effect.succeed({ success: false, error: 'unused' }),
-        delete: () => Effect.succeed({ success: false, error: 'unused' })
+        delete: () => Effect.succeed({ success: false, error: 'unused' }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -3589,7 +3603,9 @@ describe('rpc router', () => {
         getPinned: () => Effect.succeed([]),
         getAll: () => Effect.succeed({ success: true, connections: [] }),
         get: () => Effect.succeed({ success: false, error: 'unused' }),
-        delete: () => Effect.succeed({ success: false, error: 'unused' })
+        delete: () => Effect.succeed({ success: false, error: 'unused' }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -3629,7 +3645,9 @@ describe('rpc router', () => {
         getPinned: () => Effect.succeed([]),
         getAll: () => Effect.succeed({ success: true, connections: [] }),
         get: () => Effect.succeed({ success: false, error: 'unused' }),
-        delete: () => Effect.succeed({ success: false, error: 'unused' })
+        delete: () => Effect.succeed({ success: false, error: 'unused' }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -3669,7 +3687,9 @@ describe('rpc router', () => {
         getPinned: () => Effect.succeed([]),
         getAll: () => Effect.succeed({ success: true, connections: [] }),
         get: () => Effect.succeed({ success: false, error: 'unused' }),
-        delete: () => Effect.succeed({ success: false, error: 'unused' })
+        delete: () => Effect.succeed({ success: false, error: 'unused' }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -3709,7 +3729,9 @@ describe('rpc router', () => {
         getPinned: () => Effect.succeed([]),
         getAll: () => Effect.succeed({ success: true, connections: [] }),
         get: () => Effect.succeed({ success: false, error: 'unused' }),
-        delete: () => Effect.succeed({ success: false, error: 'unused' })
+        delete: () => Effect.succeed({ success: false, error: 'unused' }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -3749,7 +3771,9 @@ describe('rpc router', () => {
         getPinned: () => Effect.succeed([]),
         getAll: () => Effect.succeed({ success: true, connections: [] }),
         get: () => Effect.succeed({ success: false, error: 'unused' }),
-        delete: () => Effect.succeed({ success: false, error: 'unused' })
+        delete: () => Effect.succeed({ success: false, error: 'unused' }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -3801,7 +3825,9 @@ describe('rpc router', () => {
         getPinned: () => Effect.succeed([]),
         getAll: () => Effect.succeed({ success: true, connections: [] }),
         get: () => Effect.succeed({ success: false, error: 'unused' }),
-        delete: () => Effect.succeed({ success: false, error: 'unused' })
+        delete: () => Effect.succeed({ success: false, error: 'unused' }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -3841,7 +3867,9 @@ describe('rpc router', () => {
         getPinned: () => Effect.succeed([]),
         getAll: () => Effect.succeed({ success: true, connections: [] }),
         get: () => Effect.succeed({ success: false, error: 'unused' }),
-        delete: () => Effect.succeed({ success: false, error: 'unused' })
+        delete: () => Effect.succeed({ success: false, error: 'unused' }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -3881,7 +3909,9 @@ describe('rpc router', () => {
         getPinned: () => Effect.succeed([]),
         getAll: () => Effect.succeed({ success: true, connections: [] }),
         get: () => Effect.succeed({ success: false, error: 'unused' }),
-        delete: () => Effect.succeed({ success: false, error: 'unused' })
+        delete: () => Effect.succeed({ success: false, error: 'unused' }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -3921,7 +3951,9 @@ describe('rpc router', () => {
         getPinned: () => Effect.succeed([]),
         getAll: () => Effect.succeed({ success: true, connections: [] }),
         get: () => Effect.succeed({ success: false, error: 'unused' }),
-        delete: () => Effect.succeed({ success: false, error: 'unused' })
+        delete: () => Effect.succeed({ success: false, error: 'unused' }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -3988,7 +4020,9 @@ describe('rpc router', () => {
           }),
         getAll: () => Effect.succeed({ success: true, connections: [] }),
         get: () => Effect.succeed({ success: false, error: 'unused' }),
-        delete: () => Effect.succeed({ success: false, error: 'unused' })
+        delete: () => Effect.succeed({ success: false, error: 'unused' }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -4028,7 +4062,9 @@ describe('rpc router', () => {
           }),
         getAll: () => Effect.succeed({ success: true, connections: [] }),
         get: () => Effect.succeed({ success: false, error: 'unused' }),
-        delete: () => Effect.succeed({ success: false, error: 'unused' })
+        delete: () => Effect.succeed({ success: false, error: 'unused' }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -4095,7 +4131,9 @@ describe('rpc router', () => {
             return { success: true, connections }
           }),
         get: () => Effect.succeed({ success: false, error: 'unused' }),
-        delete: () => Effect.succeed({ success: false, error: 'unused' })
+        delete: () => Effect.succeed({ success: false, error: 'unused' }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -4130,7 +4168,9 @@ describe('rpc router', () => {
         getPinned: () => Effect.succeed([]),
         getAll: () => Effect.succeed({ success: true, connections: [] }),
         get: () => Effect.succeed({ success: false, error: 'unused' }),
-        delete: () => Effect.succeed({ success: false, error: 'unused' })
+        delete: () => Effect.succeed({ success: false, error: 'unused' }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -4194,7 +4234,9 @@ describe('rpc router', () => {
             calls.push(connectionId)
             return { success: true, connection }
           }),
-        delete: () => Effect.succeed({ success: false, error: 'unused' })
+        delete: () => Effect.succeed({ success: false, error: 'unused' }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -4229,7 +4271,9 @@ describe('rpc router', () => {
         getPinned: () => Effect.succeed([]),
         getAll: () => Effect.succeed({ success: true, connections: [] }),
         get: () => Effect.succeed({ success: false, error: 'should not run' }),
-        delete: () => Effect.succeed({ success: false, error: 'unused' })
+        delete: () => Effect.succeed({ success: false, error: 'unused' }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -4268,7 +4312,9 @@ describe('rpc router', () => {
           Effect.sync(() => {
             calls.push(connectionId)
             return { success: true }
-          })
+          }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -4308,7 +4354,9 @@ describe('rpc router', () => {
           Effect.sync(() => {
             calls.push(connectionId)
             return { success: true }
-          })
+          }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
