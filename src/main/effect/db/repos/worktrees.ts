@@ -174,6 +174,20 @@ const update = (
     const db = yield* Db
     values.push(id)
     yield* db.exec(`UPDATE worktrees SET ${updates.join(', ')} WHERE id = ?`, values)
+
+    // Keep the project's default (main, no-worktree) row at least as recent as
+    // any worktree bump, so the project retains its recency for sorting even
+    // after the worktree is archived or deleted. MAX guards against regressing
+    // the default row when older timestamps are re-persisted (e.g. hydration).
+    if (data.last_message_at !== undefined && data.last_message_at !== null && !existing.is_default) {
+      yield* db.exec(
+        `UPDATE worktrees
+         SET last_message_at = MAX(COALESCE(last_message_at, 0), ?)
+         WHERE project_id = ? AND is_default = 1`,
+        [data.last_message_at, existing.project_id]
+      )
+    }
+
     return yield* get(id)
   })
 
