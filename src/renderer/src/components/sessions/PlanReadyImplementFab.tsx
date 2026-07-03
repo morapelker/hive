@@ -27,6 +27,7 @@ interface PlanReadyImplementFabProps {
   superpowersAvailable?: boolean
   isConnectionSession?: boolean
   onSaveAsTicket?: () => void
+  onSaveAsFile?: () => void
   worktreeId?: string
 }
 
@@ -40,6 +41,7 @@ export function PlanReadyImplementFab({
   superpowersAvailable,
   isConnectionSession,
   onSaveAsTicket,
+  onSaveAsFile,
   worktreeId
 }: PlanReadyImplementFabProps): React.JSX.Element {
   const vimModeEnabled = useSettingsStore((s) => s.vimModeEnabled)
@@ -68,6 +70,27 @@ export function PlanReadyImplementFab({
           data-testid="plan-ready-save-ticket-fab"
         >
           {vimModeEnabled ? <MnemonicLabel letter="s" label="Save as ticket" /> : 'Save as ticket'}
+        </button>
+      )}
+      {onSaveAsFile && (
+        <button
+          onClick={onSaveAsFile}
+          className={cn(
+            'h-8 rounded-full px-3',
+            'text-xs font-medium',
+            'bg-muted/80 text-foreground border border-border',
+            'shadow-md hover:bg-muted transition-colors duration-200',
+            'cursor-pointer',
+            visible ? 'opacity-100' : 'opacity-0'
+          )}
+          aria-label="Save plan as md file"
+          data-testid="plan-ready-save-file-fab"
+        >
+          {vimModeEnabled ? (
+            <MnemonicLabel letter="f" label="Save as md file" />
+          ) : (
+            'Save as md file'
+          )}
         </button>
       )}
       <button

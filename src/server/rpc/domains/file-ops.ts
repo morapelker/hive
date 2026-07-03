@@ -1,6 +1,6 @@
 import { Effect } from 'effect'
 import { z } from 'zod'
-import { readFile, readFileAsBase64, writeFile } from '../../../main/services/file-ops'
+import { createFile, readFile, readFileAsBase64, writeFile } from '../../../main/services/file-ops'
 import { RpcRouteError } from '../../../shared/rpc/errors'
 import type { RpcHandler } from '../router'
 
@@ -18,6 +18,12 @@ export interface FileImageReadResult {
 export interface FileOpsRpcService {
   readonly readFile: (filePath: string) => Effect.Effect<FileReadResult, unknown, never>
   readonly writeFile: (filePath: string, content: string) => Effect.Effect<null, unknown, never>
+  readonly createFile: (
+    directoryPath: string,
+    fileName: string,
+    content: string,
+    overwrite: boolean
+  ) => Effect.Effect<null, unknown, never>
   readonly readImageAsBase64: (
     filePath: string
   ) => Effect.Effect<FileImageReadResult, unknown, never>
@@ -26,6 +32,14 @@ export interface FileOpsRpcService {
 const readFileParamsSchema = z.object({ filePath: z.string().min(1) }).strict()
 const writeFileParamsSchema = z
   .object({ filePath: z.string().min(1), content: z.string() })
+  .strict()
+const createFileParamsSchema = z
+  .object({
+    directoryPath: z.string().min(1),
+    fileName: z.string().min(1),
+    content: z.string(),
+    overwrite: z.boolean()
+  })
   .strict()
 const readImageAsBase64ParamsSchema = z.object({ filePath: z.string().min(1) }).strict()
 
@@ -39,6 +53,17 @@ export const makeLiveFileOpsRpcService = (): FileOpsRpcService => ({
       const result = writeFile(filePath, content)
       if (result.success) return Effect.succeed(null)
       return Effect.fail(new Error(result.error ?? 'Unknown error'))
+    }),
+  createFile: (directoryPath, fileName, content, overwrite) =>
+    Effect.suspend(() => {
+      const result = createFile(directoryPath, fileName, content, overwrite)
+      if (result.success) return Effect.succeed(null)
+      return Effect.fail(
+        new RpcRouteError(result.code ?? 'FileCreateFailed', result.error ?? 'Unknown error', {
+          directoryPath,
+          fileName
+        })
+      )
     }),
   readImageAsBase64: (filePath) =>
     Effect.suspend(() => {
@@ -79,6 +104,17 @@ export const makeFileOpsRpcHandlers = (
             catch: (cause) => cause
           })
           return yield* service.writeFile(filePath, content)
+        })
+    ],
+    [
+      'fileOps.createFile',
+      (params) =>
+        Effect.gen(function* () {
+          const { directoryPath, fileName, content, overwrite } = yield* Effect.try({
+            try: () => createFileParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          return yield* service.createFile(directoryPath, fileName, content, overwrite)
         })
     ],
     [

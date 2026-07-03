@@ -85,4 +85,41 @@ describe('fileApi', () => {
       content: '# Hive'
     })
   })
+
+  it('routes createFile through the renderer RPC client', async () => {
+    const request = vi.fn().mockResolvedValue(null)
+    const subscribe = vi.fn()
+
+    setRendererRpcClient({ request, subscribe })
+
+    await expect(
+      fileApi.createFile('/tmp/hive', 'PLAN_feature.md', '# Plan', false)
+    ).resolves.toEqual({
+      success: true,
+      value: null
+    })
+    expect(request).toHaveBeenCalledWith('fileOps.createFile', {
+      directoryPath: '/tmp/hive',
+      fileName: 'PLAN_feature.md',
+      content: '# Plan',
+      overwrite: false
+    })
+  })
+
+  it('surfaces the RPC error code when createFile rejects', async () => {
+    const error = new Error('File already exists')
+    error.name = 'FileAlreadyExists'
+    const request = vi.fn().mockRejectedValue(error)
+    const subscribe = vi.fn()
+
+    setRendererRpcClient({ request, subscribe })
+
+    await expect(
+      fileApi.createFile('/tmp/hive', 'PLAN_feature.md', '# Plan', false)
+    ).resolves.toEqual({
+      success: false,
+      errorCode: 'FileAlreadyExists',
+      error: 'File already exists'
+    })
+  })
 })
