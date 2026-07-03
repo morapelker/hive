@@ -154,6 +154,14 @@ export const terminalApi = {
     )
     return { success: true, value: config }
   },
+  /** Force a fresh read of the Ghostty config (used by the settings "Sync from Ghostty" toggle). */
+  resyncGhosttyConfig: async (): Promise<Envelope<GhosttyTerminalConfig>> => {
+    const config = await getRendererRpcClient().request<GhosttyTerminalConfig>(
+      'terminalOps.resyncGhosttyConfig',
+      {}
+    )
+    return { success: true, value: config }
+  },
   /**
    * Fire-and-forget: persist renderer-side terminal diagnostics (font
    * resolution, renderer fallback, fitted dimensions) into the main-process

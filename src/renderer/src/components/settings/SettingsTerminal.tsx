@@ -98,6 +98,18 @@ export function SettingsTerminal(): React.JSX.Element {
   const [isDetecting, setIsDetecting] = useState(true)
   const [ghosttyAvailable, setGhosttyAvailable] = useState<boolean | null>(null)
   const [isMac, setIsMac] = useState(false)
+  const [isSyncingGhosttyConfig, setIsSyncingGhosttyConfig] = useState(false)
+
+  const resyncGhosttyConfig = async (): Promise<void> => {
+    setIsSyncingGhosttyConfig(true)
+    try {
+      await terminalApi.resyncGhosttyConfig()
+    } catch {
+      // Non-fatal: terminals fall back to defaults until the next re-sync.
+    } finally {
+      setIsSyncingGhosttyConfig(false)
+    }
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -246,7 +258,8 @@ export function SettingsTerminal(): React.JSX.Element {
               <Info className="h-3.5 w-3.5 text-blue-500 shrink-0 mt-0.5" />
               <p className="text-muted-foreground">
                 Ghostty renders via Metal for native performance. The terminal will restart when
-                switching backends. Colors and cursor style are read from your Ghostty config.
+                switching backends. Colors and cursor style are read from your Ghostty config once
+                at app launch.
               </p>
             </div>
 
@@ -275,6 +288,36 @@ export function SettingsTerminal(): React.JSX.Element {
               </p>
             </div>
           </>
+        )}
+
+        {isMac && (
+          <div className="mt-4 space-y-2">
+            <div>
+              <label className="text-sm font-medium">Ghostty config</label>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Fonts, colors, and shell are read from your Ghostty config once at app launch.
+                Edited your config? Re-sync to apply it without restarting.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => void resyncGhosttyConfig()}
+                disabled={isSyncingGhosttyConfig}
+                data-testid="ghostty-config-resync"
+                className={cn(
+                  'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs border border-border hover:bg-accent/50 transition-colors',
+                  isSyncingGhosttyConfig && 'opacity-50 cursor-not-allowed'
+                )}
+              >
+                {isSyncingGhosttyConfig && <Loader2 className="h-3 w-3 animate-spin" />}
+                Re-sync now
+              </button>
+              <span className="text-xs text-muted-foreground">
+                Applies to newly opened terminals; the Ghostty backend picks it up after an app
+                restart.
+              </span>
+            </div>
+          </div>
         )}
       </div>
 

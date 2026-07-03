@@ -37,14 +37,24 @@ const CURSOR_STYLE_MAP: Record<string, GhosttyConfig['cursorStyle']> = {
 /**
  * Config file search order matching Ghostty's own resolution.
  * Returns the first config file path that exists, or undefined.
+ *
+ * The `~/Library/Application Support/com.mitchellh.ghostty` candidates live in
+ * another app's data container: on macOS 14+ even an existsSync/stat there
+ * triggers the TCC "access data from other apps" prompt attributed to Hive.
+ * Callers must opt into them (includeAppSupport) — the ghostty-config-store
+ * does so only at app launch and on explicit re-sync, never mid-flow.
  */
-function findConfigFile(): string | undefined {
+function findConfigFile(includeAppSupport: boolean): string | undefined {
   const home = homedir()
   const xdgConfig = process.env.XDG_CONFIG_HOME || join(home, '.config')
 
   const candidates = [
-    join(home, 'Library', 'Application Support', 'com.mitchellh.ghostty', 'config.ghostty'),
-    join(home, 'Library', 'Application Support', 'com.mitchellh.ghostty', 'config'),
+    ...(includeAppSupport
+      ? [
+          join(home, 'Library', 'Application Support', 'com.mitchellh.ghostty', 'config.ghostty'),
+          join(home, 'Library', 'Application Support', 'com.mitchellh.ghostty', 'config')
+        ]
+      : []),
     join(xdgConfig, 'ghostty', 'config.ghostty'),
     join(xdgConfig, 'ghostty', 'config'),
     join(home, '.config', 'ghostty', 'config'),
@@ -60,6 +70,16 @@ function findConfigFile(): string | undefined {
   }
 
   return undefined
+}
+
+/**
+ * Resolve the Ghostty config file path without parsing it.
+ * Used by the native ghostty runtime init, which loads the file itself.
+ */
+export function resolveGhosttyConfigPath(opts: {
+  includeAppSupport: boolean
+}): string | undefined {
+  return findConfigFile(opts.includeAppSupport)
 }
 
 /**
@@ -284,9 +304,10 @@ function createIncludeResolver(baseConfigDir: string): (includePath: string) => 
 /**
  * Parse the user's Ghostty config file.
  * Searches standard locations, returns parsed config or empty defaults.
+ * AppSupport (TCC-protected) locations are skipped unless includeAppSupport is set.
  */
-export function parseGhosttyConfig(): GhosttyConfig {
-  const configPath = findConfigFile()
+export function parseGhosttyConfig(opts?: { includeAppSupport?: boolean }): GhosttyConfig {
+  const configPath = findConfigFile(opts?.includeAppSupport ?? false)
 
   if (!configPath) {
     log.info('No Ghostty config file found, using defaults')

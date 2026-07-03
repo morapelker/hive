@@ -52,7 +52,11 @@ public:
   // Initialize the Ghostty runtime. Must be called once before any other
   // operations. Returns true on success, false if already initialized or
   // if ghostty_init() fails.
-  bool init();
+  // configPath: explicit config file to load; null/empty loads no user
+  // config (libghostty built-in defaults). Never reads the default config
+  // locations — Ghostty's Application Support dir is TCC-protected and
+  // reading it triggers the macOS "access data from other apps" prompt.
+  bool init(const char* configPath = nullptr);
 
   // Check if the runtime has been initialized
   bool isInitialized() const;

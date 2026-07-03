@@ -50,7 +50,7 @@
     "postinstall": "electron-builder install-app-deps",
     "build:unpack": "pnpm run build && electron-builder --dir",
     "build:win": "pnpm run build && electron-builder --win",
-    "build:mac": "test -f .env.signing && . ./.env.signing; pnpm run build && electron-builder --mac",
+    "build:mac": "test -f .env.signing || { echo 'ERROR: .env.signing not found; a signed+notarized build requires it (see .env.signing.example). Use build:mac:unsigned for ad-hoc builds.' >&2; exit 1; }; . ./.env.signing && pnpm run build && electron-builder --mac",
     "build:mac:unsigned": "CSC_IDENTITY_AUTO_DISCOVERY=false pnpm run build && electron-builder --mac",
     "build:linux": "pnpm run build && electron-builder --linux",
     "lint": "eslint . --ext .ts,.tsx",

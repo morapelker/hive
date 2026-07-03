@@ -55,6 +55,7 @@ import {
 import { scriptRunner } from '../services/script-runner'
 import { ptyService } from '../services/pty-service'
 import { ghosttyService } from '../services/ghostty-service'
+import { getGhosttyConfigPathOnce } from '../services/ghostty-config-store'
 import { startFileTreeWatcher, stopFileTreeWatcher } from '../services/file-tree-watcher'
 import {
   createClaudeCliTerminal,
@@ -2892,7 +2893,9 @@ const handleDesktopBackendCommand = (
 
   if (message.command === 'terminalGhosttyInit') {
     try {
-      const value = ghosttyService.init()
+      // Path was resolved once at app launch; re-using the memo avoids
+      // touching Ghostty's TCC-protected dir mid-flow.
+      const value = ghosttyService.init(getGhosttyConfigPathOnce())
       sendDesktopBackendCommandResult(
         child,
         makeDesktopCommandResult(message.id, { ok: true, value }),

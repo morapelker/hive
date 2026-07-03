@@ -1,7 +1,7 @@
 import { Effect } from 'effect'
 import { z } from 'zod'
 import type { EventBus } from '../../events/event-bus'
-import { parseGhosttyConfig } from '../../../main/services/ghostty-config'
+import { getGhosttyTerminalConfig } from '../../../main/services/ghostty-config-store'
 import { createLogger } from '../../../main/services/logger'
 import { ptyService } from '../../../main/services/pty-service'
 import {
@@ -20,6 +20,8 @@ import type { RpcHandler } from '../router'
 
 export interface TerminalOpsRpcService {
   readonly getConfig: () => Effect.Effect<GhosttyTerminalConfig, unknown, never>
+  /** Force a re-read of the Ghostty config from disk (user-initiated; may touch the TCC-protected dir). */
+  readonly resyncGhosttyConfig?: () => Effect.Effect<GhosttyTerminalConfig, unknown>
   readonly logDiagnostics?: (
     event: string,
     data: Record<string, unknown>
@@ -1299,7 +1301,15 @@ export const makeLiveTerminalOpsRpcService = (eventBus?: EventBus): TerminalOpsR
   getConfig: () =>
     Effect.sync(() => {
       try {
-        return parseGhosttyConfig()
+        return getGhosttyTerminalConfig()
+      } catch {
+        return {}
+      }
+    }),
+  resyncGhosttyConfig: () =>
+    Effect.sync(() => {
+      try {
+        return getGhosttyTerminalConfig({ refresh: true })
       } catch {
         return {}
       }
@@ -1456,6 +1466,17 @@ export const makeTerminalOpsRpcHandlers = (
             catch: (cause) => cause
           })
           return yield* service.getConfig()
+        })
+    ],
+    [
+      'terminalOps.resyncGhosttyConfig',
+      (params) =>
+        Effect.gen(function* () {
+          yield* Effect.try({
+            try: () => emptyParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          return yield* (service.resyncGhosttyConfig?.() ?? service.getConfig())
         })
     ],
     [

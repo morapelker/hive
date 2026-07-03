@@ -14,9 +14,11 @@ const ptyServiceMocks = vi.hoisted(() => ({
   resize: vi.fn()
 }))
 
-vi.mock('../../main/services/ghostty-config', () => ({
-  parseGhosttyConfig: vi.fn(() => ({}))
+const ghosttyConfigStoreMocks = vi.hoisted(() => ({
+  getGhosttyTerminalConfig: vi.fn(() => ({}))
 }))
+
+vi.mock('../../main/services/ghostty-config-store', () => ghosttyConfigStoreMocks)
 
 const loggerMocks = vi.hoisted(() => ({
   debug: vi.fn(),
@@ -83,6 +85,28 @@ describe('terminal ops RPC live service', () => {
     ])
     expect(removeData).toHaveBeenCalledTimes(1)
     expect(removeExit).toHaveBeenCalledTimes(1)
+  })
+
+  it('serves getConfig from the ghostty config store without forcing a refresh', async () => {
+    ghosttyConfigStoreMocks.getGhosttyTerminalConfig.mockReturnValue({ fontFamily: 'TX-02' })
+    const service = makeLiveTerminalOpsRpcService()
+
+    const result = await Effect.runPromise(service.getConfig())
+
+    expect(result).toEqual({ fontFamily: 'TX-02' })
+    expect(ghosttyConfigStoreMocks.getGhosttyTerminalConfig).toHaveBeenCalledWith()
+  })
+
+  it('forces a fresh read through the resyncGhosttyConfig RPC', async () => {
+    ghosttyConfigStoreMocks.getGhosttyTerminalConfig.mockReturnValue({ fontSize: 13 })
+    const service = makeLiveTerminalOpsRpcService()
+
+    const result = await Effect.runPromise(service.resyncGhosttyConfig!())
+
+    expect(result).toEqual({ fontSize: 13 })
+    expect(ghosttyConfigStoreMocks.getGhosttyTerminalConfig).toHaveBeenCalledWith({
+      refresh: true
+    })
   })
 
   it('persists client diagnostics through the logDiagnostics RPC', async () => {
