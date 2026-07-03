@@ -104,6 +104,73 @@ describeIf('connection_history', () => {
     db.close()
   })
 
+  it('creates the note column defaulting to NULL on fresh databases', () => {
+    const db = new DatabaseService(makeDbPath())
+    db.init()
+
+    const columns = db.getRawDb().pragma('table_info(connection_history)') as { name: string }[]
+    expect(columns.map((c) => c.name)).toContain('note')
+
+    const entry = db.upsertConnectionHistory(['project-a', 'project-b'])
+    expect(entry?.note).toBeNull()
+
+    db.close()
+  })
+
+  it('adds the note column to a pre-existing table missing it (repair path)', () => {
+    const dbPath = makeDbPath()
+    const first = new DatabaseService(dbPath)
+    first.init()
+    // Simulate a database created before the note column existed.
+    first.getRawDb().exec('ALTER TABLE connection_history DROP COLUMN note')
+    first.close()
+
+    const second = new DatabaseService(dbPath)
+    second.init()
+    const columns = second.getRawDb().pragma('table_info(connection_history)') as {
+      name: string
+    }[]
+    expect(columns.map((c) => c.name)).toContain('note')
+
+    second.close()
+  })
+
+  it('setConnectionHistoryNote sets and clears the note, and reports unknown ids', () => {
+    const db = new DatabaseService(makeDbPath())
+    db.init()
+
+    const entry = db.upsertConnectionHistory(['project-a', 'project-b'])
+    expect(entry).not.toBeNull()
+
+    expect(db.setConnectionHistoryNote(entry!.id, 'urgent client work')).toBe(true)
+    let rows = db.getRecentConnectionHistory()
+    expect(rows[0].note).toBe('urgent client work')
+
+    expect(db.setConnectionHistoryNote(entry!.id, null)).toBe(true)
+    rows = db.getRecentConnectionHistory()
+    expect(rows[0].note).toBeNull()
+
+    expect(db.setConnectionHistoryNote('missing-id', 'nope')).toBe(false)
+
+    db.close()
+  })
+
+  it('preserves an existing note when the same project set is upserted again', () => {
+    const db = new DatabaseService(makeDbPath())
+    db.init()
+
+    const entry = db.upsertConnectionHistory(['project-a', 'project-b'])
+    expect(entry).not.toBeNull()
+    expect(db.setConnectionHistoryNote(entry!.id, 'keep me')).toBe(true)
+
+    const again = db.upsertConnectionHistory(['project-b', 'project-a'])
+    expect(again?.id).toBe(entry?.id)
+    expect(again?.use_count).toBe(2)
+    expect(again?.note).toBe('keep me')
+
+    db.close()
+  })
+
   it('getRecentConnectionHistory orders by recency and respects the limit', async () => {
     const db = new DatabaseService(makeDbPath())
     db.init()

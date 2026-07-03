@@ -40,4 +40,5 @@ export interface RecentConnectionEntry {
   projects: RecentConnectionProject[]
   last_used_at: string
   use_count: number
+  note: string | null
 }

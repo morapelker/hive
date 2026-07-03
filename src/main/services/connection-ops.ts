@@ -526,7 +526,8 @@ export function getRecentConnectionsOp(db: DatabaseService): {
         project_set_key: row.project_set_key,
         projects,
         last_used_at: row.last_used_at,
-        use_count: row.use_count
+        use_count: row.use_count,
+        note: row.note ?? null
       })
     }
 
@@ -534,6 +535,32 @@ export function getRecentConnectionsOp(db: DatabaseService): {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     log.error('Get recent connections failed', error instanceof Error ? error : new Error(message))
+    return { success: false, error: message }
+  }
+}
+
+/**
+ * Set or clear the note on a recent-connection history entry. Empty or
+ * whitespace-only notes are normalized to null (clears the note).
+ */
+export function setRecentConnectionNoteOp(
+  db: DatabaseService,
+  entryId: string,
+  note: string | null
+): { success: boolean; error?: string } {
+  log.info('Setting recent connection note', { entryId })
+  try {
+    const normalized = note && note.trim() ? note.trim() : null
+    if (!db.setConnectionHistoryNote(entryId, normalized)) {
+      return { success: false, error: 'Recent connection not found' }
+    }
+    return { success: true }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    log.error(
+      'Set recent connection note failed',
+      error instanceof Error ? error : new Error(message)
+    )
     return { success: false, error: message }
   }
 }
