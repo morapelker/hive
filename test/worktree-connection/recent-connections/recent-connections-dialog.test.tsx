@@ -96,6 +96,35 @@ describe('Recent Connections Dialog', () => {
     expect(createButton).not.toBeDisabled()
   })
 
+  test('shows error message instead of empty state when the API resolves unsuccessfully', async () => {
+    mockConnectionApi.getRecentConnections.mockResolvedValue({
+      success: false,
+      error: 'Database is locked'
+    })
+
+    render(<RecentConnectionsDialog open={true} onOpenChange={vi.fn()} />)
+
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 10))
+    })
+
+    expect(screen.getByTestId('recent-connections-error')).toHaveTextContent('Database is locked')
+    expect(screen.queryByTestId('recent-connections-empty')).not.toBeInTheDocument()
+  })
+
+  test('shows error message instead of empty state when the API rejects', async () => {
+    mockConnectionApi.getRecentConnections.mockRejectedValue(new Error('RPC connection lost'))
+
+    render(<RecentConnectionsDialog open={true} onOpenChange={vi.fn()} />)
+
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 10))
+    })
+
+    expect(screen.getByTestId('recent-connections-error')).toHaveTextContent('RPC connection lost')
+    expect(screen.queryByTestId('recent-connections-empty')).not.toBeInTheDocument()
+  })
+
   test('clicking Create invokes quickCreateConnection with the entry projects and closes on success', async () => {
     const user = userEvent.setup()
     const onOpenChange = vi.fn()

@@ -30,18 +30,29 @@ export function RecentConnectionsDialog({
   const [isLoading, setIsLoading] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [isCreating, setIsCreating] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!open) return
 
     setSelectedId(null)
     setIsCreating(false)
+    setError(null)
     setIsLoading(true)
 
     connectionApi
       .getRecentConnections()
       .then((result) => {
-        setEntries(result.entries ?? [])
+        if (result.success) {
+          setEntries(result.entries ?? [])
+        } else {
+          setEntries([])
+          setError(result.error || 'Failed to load recent connections')
+        }
+      })
+      .catch((err) => {
+        setEntries([])
+        setError(err instanceof Error ? err.message : 'Failed to load recent connections')
       })
       .finally(() => {
         setIsLoading(false)
@@ -77,7 +88,14 @@ export function RecentConnectionsDialog({
         </DialogHeader>
 
         <div className="max-h-[300px] overflow-y-auto border rounded-md">
-          {!isLoading && entries.length === 0 ? (
+          {error ? (
+            <div
+              className="px-4 py-8 text-center text-sm text-destructive"
+              data-testid="recent-connections-error"
+            >
+              {error}
+            </div>
+          ) : !isLoading && entries.length === 0 ? (
             <div
               className="px-4 py-8 text-center text-sm text-muted-foreground"
               data-testid="recent-connections-empty"
