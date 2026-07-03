@@ -1,16 +1,6 @@
 import type { PetState, PetStatusPayload } from '@shared/types/pet'
 import type { SessionStatusEntry, SessionStatusType } from '@/stores/useWorktreeStatusStore'
-
-const STATUS_PRIORITY: Record<SessionStatusType, number> = {
-  answering: 8,
-  command_approval: 7,
-  permission: 6,
-  planning: 5,
-  working: 4,
-  plan_ready: 3,
-  completed: 2,
-  unread: 1
-}
+import { STATUS_PRIORITY } from '@shared/types/session-status'
 
 const PET_STATE_BY_STATUS: Record<SessionStatusType, PetState> = {
   answering: 'question',
