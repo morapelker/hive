@@ -7,6 +7,7 @@ const makeTransport = (name: string, registered: boolean): CliHookTransport => (
   name,
   isRegistered: vi.fn(() => registered),
   onHook: vi.fn(() => true),
+  notifySessionIdle: vi.fn(),
   cancelAll: vi.fn()
 })
 
@@ -20,7 +21,7 @@ describe('CliHookTransportRouter', () => {
 
     expect(router.routeHook('session-1', body, res)).toBe(true)
 
-    expect(first.onHook).toHaveBeenCalledWith('session-1', body, res)
+    expect(first.onHook).toHaveBeenCalledWith('session-1', body, res, undefined)
     expect(second.onHook).not.toHaveBeenCalled()
   })
 
@@ -41,5 +42,38 @@ describe('CliHookTransportRouter', () => {
 
     expect(first.cancelAll).toHaveBeenCalledTimes(1)
     expect(second.cancelAll).toHaveBeenCalledTimes(1)
+  })
+
+  it('forwards ctx to the matched transport', () => {
+    const first = makeTransport('first', true)
+    const second = makeTransport('second', true)
+    const router = new CliHookTransportRouter([first, second])
+    const res = {} as ServerResponse
+    const body = { hook_event_name: 'Stop' }
+    const ctx = { suppressIdle: true }
+
+    router.routeHook('session-1', body, res, ctx)
+
+    expect(first.onHook).toHaveBeenCalledWith('session-1', body, res, ctx)
+    expect(second.onHook).not.toHaveBeenCalled()
+  })
+
+  it('notifySessionIdle dispatches to the registered transport with the given args', () => {
+    const first = makeTransport('first', false)
+    const second = makeTransport('second', true)
+    const router = new CliHookTransportRouter([first, second])
+
+    router.notifySessionIdle('session-1', 'All done.')
+
+    expect(second.notifySessionIdle).toHaveBeenCalledWith('session-1', 'All done.')
+    expect(first.notifySessionIdle).not.toHaveBeenCalled()
+  })
+
+  it('notifySessionIdle no-ops without throwing when no transport is registered', () => {
+    const transport = makeTransport('none', false)
+    const router = new CliHookTransportRouter([transport])
+
+    expect(() => router.notifySessionIdle('session-1')).not.toThrow()
+    expect(transport.notifySessionIdle).not.toHaveBeenCalled()
   })
 })
