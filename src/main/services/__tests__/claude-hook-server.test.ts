@@ -374,6 +374,184 @@ describe('ClaudeHookServer HTTP round-trip', () => {
     )
   })
 
+  it('keeps a pending question surfaced through unrelated sub-agent hooks until answered', async () => {
+    const { port } = await getClaudeHookServer()
+
+    await postHook(port, 'hive-session-1', 'tool', {
+      hook_event_name: 'PreToolUse',
+      tool_name: 'AskUserQuestion'
+    })
+    await vi.waitFor(() => {
+      expect(backendManagerMocks.publishDesktopBackendEvent).toHaveBeenCalledWith(
+        'claude-cli:status',
+        expect.objectContaining({ sessionId: 'hive-session-1', status: 'answering' })
+      )
+    })
+
+    // Parallel sub-agent tool completions must not clobber the question.
+    await postHook(port, 'hive-session-1', 'tool', {
+      hook_event_name: 'PostToolUse',
+      tool_name: 'Read'
+    })
+    await postHook(port, 'hive-session-1', 'tool', {
+      hook_event_name: 'PostToolUseFailure',
+      tool_name: 'Bash'
+    })
+    expect(backendManagerMocks.publishDesktopBackendEvent).toHaveBeenCalledTimes(1)
+
+    // Answering the question resolves the latch and publishes working.
+    await postHook(port, 'hive-session-1', 'tool', {
+      hook_event_name: 'PostToolUse',
+      tool_name: 'AskUserQuestion'
+    })
+    await vi.waitFor(() => {
+      expect(backendManagerMocks.publishDesktopBackendEvent).toHaveBeenCalledTimes(2)
+    })
+    expect(backendManagerMocks.publishDesktopBackendEvent).toHaveBeenLastCalledWith(
+      'claude-cli:status',
+      {
+        sessionId: 'hive-session-1',
+        status: 'working',
+        metadata: {
+          hookEventName: 'PostToolUse',
+          hookPath: 'tool',
+          toolName: 'AskUserQuestion'
+        }
+      }
+    )
+  })
+
+  it('re-surfaces a queued permission request after the question is answered', async () => {
+    const { port } = await getClaudeHookServer()
+
+    await postHook(port, 'hive-session-1', 'tool', {
+      hook_event_name: 'PreToolUse',
+      tool_name: 'AskUserQuestion'
+    })
+    // Permission arrives while the question is pending: queued, not published.
+    await postHook(port, 'hive-session-1', 'permission', {
+      hook_event_name: 'PermissionRequest',
+      tool_name: 'Bash'
+    })
+    await vi.waitFor(() => {
+      expect(backendManagerMocks.publishDesktopBackendEvent).toHaveBeenCalledTimes(1)
+    })
+
+    await postHook(port, 'hive-session-1', 'tool', {
+      hook_event_name: 'PostToolUse',
+      tool_name: 'AskUserQuestion'
+    })
+    await vi.waitFor(() => {
+      expect(backendManagerMocks.publishDesktopBackendEvent).toHaveBeenCalledTimes(3)
+    })
+    expect(backendManagerMocks.publishDesktopBackendEvent).toHaveBeenNthCalledWith(
+      2,
+      'claude-cli:status',
+      expect.objectContaining({ sessionId: 'hive-session-1', status: 'working' })
+    )
+    expect(backendManagerMocks.publishDesktopBackendEvent).toHaveBeenNthCalledWith(
+      3,
+      'claude-cli:status',
+      {
+        sessionId: 'hive-session-1',
+        status: 'permission',
+        metadata: {
+          hookEventName: 'PermissionRequest',
+          hookPath: 'permission',
+          toolName: 'Bash',
+          reason: 'interaction_resurfaced'
+        }
+      }
+    )
+
+    await postHook(port, 'hive-session-1', 'tool', {
+      hook_event_name: 'PostToolUse',
+      tool_name: 'Bash'
+    })
+    await vi.waitFor(() => {
+      expect(backendManagerMocks.publishDesktopBackendEvent).toHaveBeenCalledTimes(4)
+    })
+    expect(backendManagerMocks.publishDesktopBackendEvent).toHaveBeenLastCalledWith(
+      'claude-cli:status',
+      expect.objectContaining({ sessionId: 'hive-session-1', status: 'working' })
+    )
+  })
+
+  it('keeps plan_ready surfaced through sub-agent completions until the plan resolves', async () => {
+    const { port } = await getClaudeHookServer()
+
+    await postHook(port, 'hive-session-1', 'tool', {
+      hook_event_name: 'PreToolUse',
+      tool_name: 'ExitPlanMode',
+      tool_input: { plan: '# Plan' }
+    })
+    await vi.waitFor(() => {
+      expect(backendManagerMocks.publishDesktopBackendEvent).toHaveBeenCalledWith(
+        'claude-cli:status',
+        expect.objectContaining({ sessionId: 'hive-session-1', status: 'plan_ready' })
+      )
+    })
+
+    await postHook(port, 'hive-session-1', 'tool', {
+      hook_event_name: 'PostToolUse',
+      tool_name: 'Task'
+    })
+    expect(backendManagerMocks.publishDesktopBackendEvent).toHaveBeenCalledTimes(1)
+
+    await postHook(port, 'hive-session-1', 'tool', {
+      hook_event_name: 'PostToolUse',
+      tool_name: 'ExitPlanMode'
+    })
+    await vi.waitFor(() => {
+      expect(backendManagerMocks.publishDesktopBackendEvent).toHaveBeenCalledTimes(2)
+    })
+    expect(backendManagerMocks.publishDesktopBackendEvent).toHaveBeenLastCalledWith(
+      'claude-cli:status',
+      {
+        sessionId: 'hive-session-1',
+        status: 'working',
+        metadata: {
+          hookEventName: 'PostToolUse',
+          hookPath: 'tool',
+          toolName: 'ExitPlanMode'
+        }
+      }
+    )
+  })
+
+  it('clears pending interactions on turn boundaries so later hooks publish normally', async () => {
+    const { port } = await getClaudeHookServer()
+
+    await postHook(port, 'hive-session-1', 'tool', {
+      hook_event_name: 'PreToolUse',
+      tool_name: 'AskUserQuestion'
+    })
+    await postHook(port, 'hive-session-1', 'start', {
+      hook_event_name: 'UserPromptSubmit',
+      permission_mode: 'default'
+    })
+    await vi.waitFor(() => {
+      expect(backendManagerMocks.publishDesktopBackendEvent).toHaveBeenCalledTimes(2)
+    })
+    expect(backendManagerMocks.publishDesktopBackendEvent).toHaveBeenLastCalledWith(
+      'claude-cli:status',
+      expect.objectContaining({ sessionId: 'hive-session-1', status: 'working' })
+    )
+
+    // The abandoned question no longer suppresses later publishes.
+    await postHook(port, 'hive-session-1', 'permission', {
+      hook_event_name: 'PermissionRequest',
+      tool_name: 'Bash'
+    })
+    await vi.waitFor(() => {
+      expect(backendManagerMocks.publishDesktopBackendEvent).toHaveBeenCalledTimes(3)
+    })
+    expect(backendManagerMocks.publishDesktopBackendEvent).toHaveBeenLastCalledWith(
+      'claude-cli:status',
+      expect.objectContaining({ sessionId: 'hive-session-1', status: 'permission' })
+    )
+  })
+
   it('ignores unknown event names without publishing status events', async () => {
     const { port } = await getClaudeHookServer()
 

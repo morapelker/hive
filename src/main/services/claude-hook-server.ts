@@ -5,10 +5,15 @@ import { createLogger } from './logger'
 import { cliHookTransportRouter } from './cli-hook-transport-router'
 import { handleClaudeCliHiveTelemetryHook } from './hive-enterprise-claude-cli-telemetry'
 import { publishDesktopBackendEvent } from '../desktop/backend-event-publisher'
+import {
+  clearAllClaudeCliInteractions,
+  processClaudeCliHook
+} from './claude-cli-interaction-ledger'
 
 export interface ParsedClaudeHook {
   hook_event_name?: string
   tool_name?: string
+  tool_use_id?: string
   permission_mode?: string
   prompt?: unknown
   transcript_path?: unknown
@@ -164,11 +169,9 @@ export function publishClaudeCliStatus(payload: ClaudeCliStatusPayload): void {
   for (const subscriber of statusSubscribers) {
     subscriber(payload)
   }
-  void import('../desktop/backend-event-publisher')
-    .then(({ publishDesktopBackendEvent }) =>
-      publishDesktopBackendEvent('claude-cli:status', payload)
-    )
-    .catch(() => undefined)
+  void Promise.resolve(publishDesktopBackendEvent('claude-cli:status', payload)).catch(
+    () => undefined
+  )
 }
 
 /**
@@ -253,12 +256,18 @@ async function handleHook(req: http.IncomingMessage, res: http.ServerResponse): 
     const body = JSON.parse(rawBody || '{}') as ParsedClaudeHook
     if (route) {
       const status = mapHookEventToStatus(body)
-      if (status) {
-        publishClaudeCliStatus({
-          sessionId: route.sessionId,
-          status,
-          metadata: buildStatusMetadata(body, route.hookPath)
-        })
+      const mapped: ClaudeCliStatusPayload | null = status
+        ? {
+            sessionId: route.sessionId,
+            status,
+            metadata: buildStatusMetadata(body, route.hookPath)
+          }
+        : null
+      // The interaction ledger latches blocking statuses (question/permission/
+      // plan approval) so parallel sub-agent hooks can't clobber them, and
+      // re-surfaces queued interactions as each one resolves.
+      for (const payload of processClaudeCliHook(route.sessionId, body, mapped)) {
+        publishClaudeCliStatus(payload)
       }
       void handleClaudeCliHiveTelemetryHook(route.sessionId, body)
       // First user prompt of this CLI session → tell the renderer so it can
@@ -361,6 +370,7 @@ export async function closeClaudeHookServer(): Promise<void> {
     startingPromise = null
     lastStatusBySession.clear()
     statusSubscribers.clear()
+    clearAllClaudeCliInteractions()
     return
   }
 
@@ -379,4 +389,5 @@ export async function closeClaudeHookServer(): Promise<void> {
   startingPromise = null
   lastStatusBySession.clear()
   statusSubscribers.clear()
+  clearAllClaudeCliInteractions()
 }
