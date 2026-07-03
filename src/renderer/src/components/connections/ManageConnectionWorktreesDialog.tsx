@@ -145,8 +145,10 @@ export function ManageConnectionWorktreesDialog({
     setIsSubmitting(true)
 
     try {
-      await updateConnectionMembers(connectionId, Array.from(selectedIds))
-      onOpenChange(false)
+      const succeeded = await updateConnectionMembers(connectionId, Array.from(selectedIds))
+      if (succeeded) {
+        onOpenChange(false)
+      }
     } finally {
       setIsSubmitting(false)
     }

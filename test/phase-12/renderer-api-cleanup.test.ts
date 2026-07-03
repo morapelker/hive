@@ -15608,7 +15608,7 @@ describe('renderer API cleanup', () => {
     expect(connectionHandlersSource).not.toContain("connectionFailed('connection:removeMember'")
   })
 
-  it('routes connection store member-update additions through connectionApi', () => {
+  it('routes connection store member-update through the batched connectionApi.updateMembers RPC', () => {
     const source = fs.readFileSync(
       path.resolve(__dirname, '../../src/renderer/src/stores/useConnectionStore.ts'),
       'utf-8'
@@ -15626,12 +15626,32 @@ describe('renderer API cleanup', () => {
     expect(renameStart).toBeGreaterThan(updateMembersStart)
     expect(source).toContain("import { connectionApi } from '@/api/connection-api'")
     expect(updateMembersSource).toContain(
-      'const addResult = await connectionApi.addMember(connectionId, id)'
+      'connectionApi.updateMembers(connectionId, desiredWorktreeIds)'
     )
+  })
+
+  it('no longer routes member-update additions through the per-member addMember RPC', () => {
+    const source = fs.readFileSync(
+      path.resolve(__dirname, '../../src/renderer/src/stores/useConnectionStore.ts'),
+      'utf-8'
+    )
+    const updateMembersStart = source.indexOf(
+      'updateConnectionMembers: async (connectionId: string, desiredWorktreeIds: string[])'
+    )
+    const renameStart = source.indexOf(
+      'renameConnection: async (connectionId: string, customName: string | null)',
+      updateMembersStart
+    )
+    const updateMembersSource = source.slice(updateMembersStart, renameStart)
+
+    expect(updateMembersStart).toBeGreaterThan(-1)
+    expect(renameStart).toBeGreaterThan(updateMembersStart)
+    expect(source).toContain("import { connectionApi } from '@/api/connection-api'")
+    expect(updateMembersSource).not.toContain('connectionApi.addMember(')
     expect(updateMembersSource).not.toContain('window.connectionOps.addMember')
   })
 
-  it('routes connection store member-update removals through connectionApi', () => {
+  it('no longer routes member-update removals through the per-member removeMember RPC', () => {
     const source = fs.readFileSync(
       path.resolve(__dirname, '../../src/renderer/src/stores/useConnectionStore.ts'),
       'utf-8'
@@ -15648,31 +15668,8 @@ describe('renderer API cleanup', () => {
     expect(updateMembersStart).toBeGreaterThan(-1)
     expect(renameStart).toBeGreaterThan(updateMembersStart)
     expect(source).toContain("import { connectionApi } from '@/api/connection-api'")
-    expect(updateMembersSource).toContain(
-      'const removeResult = await connectionApi.removeMember(connectionId, id)'
-    )
+    expect(updateMembersSource).not.toContain('connectionApi.removeMember(')
     expect(updateMembersSource).not.toContain('window.connectionOps.removeMember')
-  })
-
-  it('routes connection store member-update reload through connectionApi', () => {
-    const source = fs.readFileSync(
-      path.resolve(__dirname, '../../src/renderer/src/stores/useConnectionStore.ts'),
-      'utf-8'
-    )
-    const updateMembersStart = source.indexOf(
-      'updateConnectionMembers: async (connectionId: string, desiredWorktreeIds: string[])'
-    )
-    const renameStart = source.indexOf(
-      'renameConnection: async (connectionId: string, customName: string | null)',
-      updateMembersStart
-    )
-    const updateMembersSource = source.slice(updateMembersStart, renameStart)
-
-    expect(updateMembersStart).toBeGreaterThan(-1)
-    expect(renameStart).toBeGreaterThan(updateMembersStart)
-    expect(source).toContain("import { connectionApi } from '@/api/connection-api'")
-    expect(updateMembersSource).toContain('const result = await connectionApi.get(connectionId)')
-    expect(updateMembersSource).not.toContain('window.connectionOps.get')
   })
 
   it('routes connection store rename through connectionApi', () => {
