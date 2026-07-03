@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 35
+export const CURRENT_SCHEMA_VERSION = 36
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -628,6 +628,26 @@ DROP TABLE IF EXISTS diff_comments;`
       DROP INDEX IF EXISTS idx_markdown_kanban_card_state_session;
       DROP TABLE IF EXISTS markdown_kanban_card_state;
       -- SQLite cannot drop project columns safely; no-op for those columns.
+    `
+  },
+  {
+    version: 36,
+    name: 'add_connection_history',
+    up: `
+      CREATE TABLE IF NOT EXISTS connection_history (
+        id TEXT PRIMARY KEY,
+        project_set_key TEXT NOT NULL UNIQUE,
+        project_ids TEXT NOT NULL,
+        last_used_at TEXT NOT NULL,
+        use_count INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_connection_history_last_used
+        ON connection_history(last_used_at DESC);
+    `,
+    down: `
+      DROP INDEX IF EXISTS idx_connection_history_last_used;
+      DROP TABLE IF EXISTS connection_history;
     `
   }
 ]

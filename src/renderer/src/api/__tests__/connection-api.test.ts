@@ -274,4 +274,59 @@ describe('connectionApi', () => {
       pinned: true
     })
   })
+
+  it('routes updateMembers through the renderer RPC client', async () => {
+    const result = {
+      success: true,
+      connection: {
+        id: 'connection-1',
+        name: 'Hive',
+        custom_name: null,
+        status: 'active' as const,
+        path: '/tmp/hive-connection',
+        color: null,
+        pinned: 0,
+        created_at: '2026-05-28T00:00:00.000Z',
+        updated_at: '2026-05-28T00:00:00.000Z',
+        members: []
+      }
+    }
+    const request = vi.fn().mockResolvedValue(result)
+    const subscribe = vi.fn()
+
+    setRendererRpcClient({ request, subscribe })
+
+    await expect(
+      connectionApi.updateMembers('connection-1', ['worktree-1', 'worktree-2'])
+    ).resolves.toBe(result)
+    expect(request).toHaveBeenCalledWith('connectionOps.updateMembers', {
+      connectionId: 'connection-1',
+      worktreeIds: ['worktree-1', 'worktree-2']
+    })
+  })
+
+  it('routes getRecentConnections through the renderer RPC client', async () => {
+    const result = {
+      success: true,
+      entries: [
+        {
+          id: 'recent-1',
+          project_set_key: 'project-1|project-2',
+          projects: [
+            { id: 'project-1', name: 'Project 1', path: '/tmp/project-1' },
+            { id: 'project-2', name: 'Project 2', path: '/tmp/project-2' }
+          ],
+          last_used_at: '2026-05-28T00:00:00.000Z',
+          use_count: 3
+        }
+      ]
+    }
+    const request = vi.fn().mockResolvedValue(result)
+    const subscribe = vi.fn()
+
+    setRendererRpcClient({ request, subscribe })
+
+    await expect(connectionApi.getRecentConnections()).resolves.toBe(result)
+    expect(request).toHaveBeenCalledWith('connectionOps.getRecentConnections', {})
+  })
 })

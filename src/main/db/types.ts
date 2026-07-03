@@ -454,6 +454,15 @@ export interface ConnectionWithMembers extends Connection {
   })[]
 }
 
+export interface ConnectionHistoryEntry {
+  id: string
+  project_set_key: string
+  project_ids: string // JSON array of sorted distinct project IDs
+  last_used_at: string
+  use_count: number
+  created_at: string
+}
+
 // Database response types for queries
 export interface SessionWithWorktree extends Session {
   worktree_name?: string
