@@ -24,6 +24,7 @@ import { useKeepAwake } from '@/hooks/useKeepAwake'
 import { useSleepWhenIdle } from '@/hooks/useSleepWhenIdle'
 import { ErrorBoundary, ErrorFallback } from '@/components/error'
 import { CreatePRModal } from '@/components/pr/CreatePRModal'
+import { ConnectionPRModal } from '@/components/pr/ConnectionPRModal'
 import { ProjectSettingsDialog } from '@/components/projects/ProjectSettingsDialog'
 import { TerminalPortalProvider, useTerminalPortal } from '@/contexts/TerminalPortalContext'
 import { ClaudeCliSessionPortalProvider } from '@/contexts/ClaudeCliSessionPortalContext'
@@ -244,6 +245,7 @@ export function AppLayout({ children }: AppLayoutProps): React.JSX.Element {
 
   const createPRWorktreeId = useGitStore((s) => s.createPRWorktreeId)
   const createPRWorktreePath = useGitStore((s) => s.createPRWorktreePath)
+  const connectionPRConnectionId = useGitStore((s) => s.connectionPRConnectionId)
 
   // Ensure remote info + branch info are loaded for PR modal worktree (may differ from sidebar)
   useEffect(() => {
@@ -306,6 +308,11 @@ export function AppLayout({ children }: AppLayoutProps): React.JSX.Element {
           {createPRWorktreeId && createPRWorktreePath && (
             <ErrorBoundary componentName="CreatePRModal" fallback={null}>
               <CreatePRModal worktreeId={createPRWorktreeId} worktreePath={createPRWorktreePath} />
+            </ErrorBoundary>
+          )}
+          {connectionPRConnectionId && (
+            <ErrorBoundary componentName="ConnectionPRModal" fallback={null}>
+              <ConnectionPRModal connectionId={connectionPRConnectionId} />
             </ErrorBoundary>
           )}
           <AgentSetupGuard />
