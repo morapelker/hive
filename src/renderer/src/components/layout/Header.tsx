@@ -143,6 +143,23 @@ export function Header(): React.JSX.Element {
   )
   const isConnectionMode = !!selectedConnectionId && !selectedWorktreeId
 
+  // Pre-warm GitHub remote detection for connection members so the PR button
+  // can appear as soon as a connection is selected
+  useEffect(() => {
+    if (!isConnectionMode || !selectedConnection) return
+    for (const member of selectedConnection.members) {
+      if (!useGitStore.getState().remoteInfo.has(member.worktree_id)) {
+        void useGitStore.getState().checkRemoteInfo(member.worktree_id, member.worktree_path)
+      }
+    }
+  }, [isConnectionMode, selectedConnection])
+
+  const connectionHasGitHubMember = useGitStore((s) =>
+    isConnectionMode && selectedConnection
+      ? selectedConnection.members.some((m) => s.remoteInfo.get(m.worktree_id)?.isGitHub)
+      : false
+  )
+
   const hasConflicts = useGitStore(
     (state) =>
       (selectedWorktree?.path ? state.conflictsByWorktree[selectedWorktree.path] : false) ?? false
@@ -339,6 +356,24 @@ export function Header(): React.JSX.Element {
         className="flex items-center gap-2"
         style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
       >
+        {/* Connection PR button — creates one PR per connected project with changes */}
+        {isConnectionMode && connectionHasGitHubMember && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs"
+            onClick={() => {
+              if (selectedConnectionId) {
+                useGitStore.getState().setConnectionPRModalOpen(true, selectedConnectionId)
+              }
+            }}
+            title="Create pull requests for the connected projects"
+            data-testid="connection-pr-button"
+          >
+            <GitPullRequest className="h-3.5 w-3.5 mr-1" />
+            PR
+          </Button>
+        )}
         {!isConnectionMode &&
           isGitHub &&
           hasAttachedPR &&
