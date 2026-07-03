@@ -31,6 +31,7 @@ export interface ClaudeCliStatusPayload {
     readonly hookPath?: string
     readonly toolName?: string
     readonly plan?: string
+    readonly taskNotification?: boolean
   }
 }
 
