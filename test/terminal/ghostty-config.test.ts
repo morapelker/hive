@@ -366,14 +366,28 @@ palette = 15=#a6adc8
       expect(config).toEqual({})
     })
 
-    test('reads from first found config path', () => {
-      // Simulate that the macOS Application Support path exists
+    test('skips the TCC-protected Application Support path by default', () => {
+      // Simulate that only the macOS Application Support path exists
       existsSyncMock.mockImplementation((path: unknown) => {
         return String(path).includes('com.mitchellh.ghostty/config.ghostty')
       })
       readFileSyncMock.mockReturnValue('font-size = 16')
 
       const config = parseGhosttyConfig()
+      expect(config).toEqual({})
+      // The protected dir must not even be stat'd (existsSync triggers TCC too)
+      for (const call of existsSyncMock.mock.calls) {
+        expect(String(call[0])).not.toContain('com.mitchellh.ghostty')
+      }
+    })
+
+    test('reads the Application Support path first when includeAppSupport is set', () => {
+      existsSyncMock.mockImplementation((path: unknown) => {
+        return String(path).includes('com.mitchellh.ghostty/config.ghostty')
+      })
+      readFileSyncMock.mockReturnValue('font-size = 16')
+
+      const config = parseGhosttyConfig({ includeAppSupport: true })
       expect(config.fontSize).toBe(16)
     })
 
