@@ -211,7 +211,7 @@ export const useConnectionStore = create<ConnectionState>()(
         }
       },
 
-      updateConnectionMembers: async (connectionId: string, desiredWorktreeIds: string[]): Promise<boolean> => {
+      updateConnectionMembers: async (connectionId: string, desiredWorktreeIds: string[]) => {
         const currentConnection = get().connections.find((c) => c.id === connectionId)
         if (!currentConnection) {
           toast.error('Connection not found')
