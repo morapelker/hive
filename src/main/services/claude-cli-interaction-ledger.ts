@@ -2,6 +2,9 @@ import { STATUS_PRIORITY, type SessionStatusType } from '@shared/types/session-s
 // Type-only import: claude-hook-server imports this module at runtime, so a
 // runtime import back would create a cycle.
 import type { ClaudeCliStatusPayload, ParsedClaudeHook } from './claude-hook-server'
+// Runtime import: claude-cli-subagent-tracker only *type*-imports from
+// claude-hook-server, so this does not create a cycle.
+import { parseTaskNotificationIds } from './claude-cli-subagent-tracker'
 
 /**
  * Per-session ledger of blocking interactions (questions, permission prompts,
@@ -145,8 +148,14 @@ export function processClaudeCliHook(
   mapped: ClaudeCliStatusPayload | null
 ): ClaudeCliStatusPayload[] {
   const event = hook.hook_event_name ?? ''
+  // A background-subagent task-notification resume is not a user turn
+  // boundary: it must not reset a latched question/permission/plan the way a
+  // real UserPromptSubmit would. It falls through to the normal non-reset
+  // flow below, which suppresses its publish while a latch is pending.
+  const isTaskNotificationResume =
+    event === 'UserPromptSubmit' && parseTaskNotificationIds(hook.prompt).length > 0
 
-  if (RESET_EVENTS.has(event)) {
+  if (RESET_EVENTS.has(event) && !isTaskNotificationResume) {
     ledgers.delete(sessionId)
     return mapped ? [mapped] : []
   }
