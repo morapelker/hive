@@ -40,6 +40,7 @@ import type {
   ConnectionMember,
   ConnectionMemberCreate,
   ConnectionWithMembers,
+  ConnectionHistoryEntry,
   KanbanTicket,
   KanbanTicketCreate,
   KanbanTicketBatchCreate,
@@ -630,6 +631,19 @@ export class DatabaseService {
       );
       CREATE INDEX IF NOT EXISTS idx_discord_resources_project ON discord_resources(project_id);
       CREATE INDEX IF NOT EXISTS idx_discord_resources_guild ON discord_resources(guild_id);
+    `)
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS connection_history (
+        id TEXT PRIMARY KEY,
+        project_set_key TEXT NOT NULL UNIQUE,
+        project_ids TEXT NOT NULL,
+        last_used_at TEXT NOT NULL,
+        use_count INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_connection_history_last_used
+        ON connection_history(last_used_at DESC);
     `)
 
     this.safeAddColumn(
@@ -2209,6 +2223,34 @@ export class DatabaseService {
     return db
       .prepare('SELECT * FROM connection_members WHERE worktree_id = ?')
       .all(worktreeId) as ConnectionMember[]
+  }
+
+  upsertConnectionHistory(projectIds: string[]): ConnectionHistoryEntry | null {
+    const distinct = [...new Set(projectIds)].sort()
+    if (distinct.length < 2) return null
+
+    const db = this.getDb()
+    const key = distinct.join('|')
+    const now = new Date().toISOString()
+
+    db.prepare(
+      `INSERT INTO connection_history (id, project_set_key, project_ids, last_used_at, use_count, created_at)
+       VALUES (?, ?, ?, ?, 1, ?)
+       ON CONFLICT(project_set_key) DO UPDATE SET
+         last_used_at = excluded.last_used_at,
+         use_count = connection_history.use_count + 1`
+    ).run(randomUUID(), key, JSON.stringify(distinct), now, now)
+
+    return db
+      .prepare('SELECT * FROM connection_history WHERE project_set_key = ?')
+      .get(key) as ConnectionHistoryEntry
+  }
+
+  getRecentConnectionHistory(limit = 50): ConnectionHistoryEntry[] {
+    const db = this.getDb()
+    return db
+      .prepare('SELECT * FROM connection_history ORDER BY last_used_at DESC LIMIT ?')
+      .all(limit) as ConnectionHistoryEntry[]
   }
 
   getActiveSessionsByConnection(connectionId: string): Session[] {

@@ -27,3 +27,17 @@ export interface ConnectionWithMembers extends Connection {
     project_name: string
   })[]
 }
+
+export interface RecentConnectionProject {
+  id: string
+  name: string
+  path: string
+}
+
+export interface RecentConnectionEntry {
+  id: string
+  project_set_key: string
+  projects: RecentConnectionProject[]
+  last_used_at: string
+  use_count: number
+}
