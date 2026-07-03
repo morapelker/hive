@@ -70,5 +70,19 @@ export const fileApi = {
         filePath,
         content
       })
+    ),
+  createFile: (
+    directoryPath: string,
+    fileName: string,
+    content: string,
+    overwrite: boolean
+  ): Promise<Envelope<null>> =>
+    toEnvelope(
+      getRendererRpcClient().request<null>('fileOps.createFile', {
+        directoryPath,
+        fileName,
+        content,
+        overwrite
+      })
     )
 }

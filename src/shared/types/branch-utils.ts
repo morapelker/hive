@@ -22,6 +22,23 @@ export function canonicalizeTicketTitle(title: string): string {
     .replace(/-+$/, '') // strip trailing dashes after truncation
 }
 
+/**
+ * Convert a plan title into a filesystem-safe filename fragment.
+ * Unlike canonicalizeTicketTitle (lowercase, 32-char cap for Windows
+ * worktree paths), this preserves case and keeps more of the title since
+ * the result is a user-visible, user-editable filename.
+ */
+export function normalizeFilename(title: string): string {
+  return title
+    .trim()
+    .replace(/\s+/g, '_') // underscore style matches the PLAN_ prefix
+    .replace(/[^A-Za-z0-9._-]/g, '') // strip filesystem-unsafe chars
+    .replace(/_{2,}/g, '_')
+    .replace(/^[._-]+|[._-]+$/g, '')
+    .slice(0, 64)
+    .replace(/[._-]+$/, '')
+}
+
 function normalizePlanTitle(title: string): string {
   const trimmed = title.trim()
   const withoutPrefix = trimmed.replace(/^plan\s*[:\-–—]\s*/i, '').trim()

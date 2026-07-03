@@ -15,6 +15,7 @@ import { useClaudeCliSessionPortal } from '@/contexts/ClaudeCliSessionPortalCont
 import { QuestionPrompt } from './QuestionPrompt'
 import { ClaudeCliEndedOverlay } from './ClaudeCliEndedOverlay'
 import { HandoffSplitButton } from './HandoffSplitButton'
+import { SavePlanAsFileModal } from './SavePlanAsFileModal'
 import { buildHandoffPrompt, type HandoffSelectionOverride } from '@/lib/handoffSelection'
 import { lastSendMode } from '@/lib/message-send-times'
 import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
@@ -26,7 +27,7 @@ import {
 } from '@/lib/hive-enterprise-telemetry'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
-import { extractPlanTitle } from '@shared/types/branch-utils'
+import { extractPlanTitle, normalizeFilename } from '@shared/types/branch-utils'
 import { supportsGoalMode } from '@shared/types/agent-sdk'
 import '@xterm/xterm/css/xterm.css'
 import '@/styles/xterm.css'
@@ -129,6 +130,7 @@ interface ClaudeCliPlanReadyCardProps {
   worktreeId?: string
   onHandoff: (override: HandoffSelectionOverride) => void
   onSaveAsTicket: () => void
+  onSaveAsFile: () => void
   savedAsTicket: boolean
 }
 
@@ -137,6 +139,7 @@ function ClaudeCliPlanReadyCard({
   worktreeId,
   onHandoff,
   onSaveAsTicket,
+  onSaveAsFile,
   savedAsTicket
 }: ClaudeCliPlanReadyCardProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -272,6 +275,17 @@ function ClaudeCliPlanReadyCard({
           >
             {savedAsTicket ? 'Saved as ticket' : 'Save as ticket'}
           </button>
+          <button
+            type="button"
+            onClick={onSaveAsFile}
+            className={cn(
+              'h-8 rounded-full border border-border bg-muted/80 px-3 text-xs font-medium',
+              'text-foreground shadow-md transition-colors hover:bg-muted'
+            )}
+            data-testid="claude-cli-plan-ready-save-file"
+          >
+            Save as md file
+          </button>
         </div>
       </div>
     </div>
@@ -286,6 +300,11 @@ export function ClaudeCliSessionView({
   const [terminalKey, setTerminalKey] = useState(0)
   const [ended, setEnded] = useState(false)
   const [planSavedAsTicket, setPlanSavedAsTicket] = useState(false)
+  // Captured at click time so the modal survives pendingPlan being cleared
+  const [savePlanFile, setSavePlanFile] = useState<{
+    planContent: string
+    directoryPath: string
+  } | null>(null)
   const pendingPlan = useSessionStore((state) => state.pendingPlans.get(sessionId) ?? null)
   const { getTarget, revision: portalRevision } = useClaudeCliSessionPortal()
   void portalRevision
@@ -482,6 +501,26 @@ export function ClaudeCliSessionView({
     }
   }, [pendingPlan?.planContent, sessionRecord?.project_id])
 
+  const handlePlanReadySaveAsFile = useCallback(() => {
+    const planContent = pendingPlan?.planContent
+    if (!planContent) {
+      toast.error('No plan content found')
+      return
+    }
+
+    const directoryPath = sessionRecord?.worktree_id
+      ? findWorktreePathById(sessionRecord.worktree_id)
+      : sessionRecord?.connection_id
+        ? findConnectionPathById(sessionRecord.connection_id)
+        : null
+    if (!directoryPath) {
+      toast.error('No worktree path for this session')
+      return
+    }
+
+    setSavePlanFile({ planContent, directoryPath })
+  }, [pendingPlan?.planContent, sessionRecord?.worktree_id, sessionRecord?.connection_id])
+
   const resolveQuestionPath = useCallback((): string | undefined => {
     if (sessionRecord?.worktree_id) {
       return findWorktreePathById(sessionRecord.worktree_id) ?? undefined
@@ -549,7 +588,19 @@ export function ClaudeCliSessionView({
             worktreeId={sessionRecord?.worktree_id ?? undefined}
             onHandoff={handlePlanReadyHandoff}
             onSaveAsTicket={handlePlanReadySaveAsTicket}
+            onSaveAsFile={handlePlanReadySaveAsFile}
             savedAsTicket={planSavedAsTicket}
+          />
+        )}
+        {savePlanFile && (
+          <SavePlanAsFileModal
+            open
+            onOpenChange={(o) => {
+              if (!o) setSavePlanFile(null)
+            }}
+            planContent={savePlanFile.planContent}
+            directoryPath={savePlanFile.directoryPath}
+            defaultFileName={`PLAN_${normalizeFilename(extractPlanTitle(savePlanFile.planContent) ?? '') || 'plan'}.md`}
           />
         )}
         {/* In the ticket modal the modal renders its own question sidebar, so only

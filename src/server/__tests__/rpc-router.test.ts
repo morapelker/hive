@@ -2987,6 +2987,7 @@ describe('rpc router', () => {
             return { success: true, content: 'hello from http' }
           }),
         writeFile: () => Effect.succeed(null),
+        createFile: () => Effect.succeed(null),
         readImageAsBase64: () => Effect.succeed({ data: 'unused' })
       }
     })
@@ -3013,6 +3014,7 @@ describe('rpc router', () => {
       fileOps: {
         readFile: () => Effect.succeed({ success: false, error: 'should not run' }),
         writeFile: () => Effect.succeed(null),
+        createFile: () => Effect.succeed(null),
         readImageAsBase64: () => Effect.succeed({ data: 'unused' })
       }
     })
@@ -3043,6 +3045,7 @@ describe('rpc router', () => {
             calls.push({ filePath, content })
             return null
           }),
+        createFile: () => Effect.succeed(null),
         readImageAsBase64: () => Effect.succeed({ data: 'unused' })
       }
     })
@@ -3069,6 +3072,7 @@ describe('rpc router', () => {
       fileOps: {
         readFile: () => Effect.succeed({ success: false, error: 'unused' }),
         writeFile: () => Effect.succeed(null),
+        createFile: () => Effect.succeed(null),
         readImageAsBase64: () => Effect.succeed({ data: 'unused' })
       }
     })
@@ -3088,6 +3092,81 @@ describe('rpc router', () => {
     })
   })
 
+  it('handles fileOps.createFile through the file ops RPC domain', async () => {
+    const calls: Array<{
+      directoryPath: string
+      fileName: string
+      content: string
+      overwrite: boolean
+    }> = []
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      fileOps: {
+        readFile: () => Effect.succeed({ success: false, error: 'unused' }),
+        writeFile: () => Effect.succeed(null),
+        createFile: (directoryPath, fileName, content, overwrite) =>
+          Effect.sync(() => {
+            calls.push({ directoryPath, fileName, content, overwrite })
+            return null
+          }),
+        readImageAsBase64: () => Effect.succeed({ data: 'unused' })
+      }
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'file-ops-create-file-1',
+        method: 'fileOps.createFile',
+        params: {
+          directoryPath: '/tmp/hive',
+          fileName: 'PLAN_feature.md',
+          content: '# Plan',
+          overwrite: false
+        }
+      })
+    )
+
+    expect(response).toEqual({
+      id: 'file-ops-create-file-1',
+      ok: true,
+      value: null
+    })
+    expect(calls).toEqual([
+      {
+        directoryPath: '/tmp/hive',
+        fileName: 'PLAN_feature.md',
+        content: '# Plan',
+        overwrite: false
+      }
+    ])
+  })
+
+  it('validates fileOps.createFile params', async () => {
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      fileOps: {
+        readFile: () => Effect.succeed({ success: false, error: 'unused' }),
+        writeFile: () => Effect.succeed(null),
+        createFile: () => Effect.succeed(null),
+        readImageAsBase64: () => Effect.succeed({ data: 'unused' })
+      }
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'file-ops-create-file-2',
+        method: 'fileOps.createFile',
+        params: { directoryPath: '/tmp/hive', fileName: 'PLAN_feature.md', content: '# Plan' }
+      })
+    )
+
+    expect(response).toMatchObject({
+      id: 'file-ops-create-file-2',
+      ok: false,
+      error: { code: 'VALIDATION_FAILED' }
+    })
+  })
+
   it('handles fileOps.readImageAsBase64 through the file ops RPC domain', async () => {
     const calls: string[] = []
     const router = makeRpcRouter({
@@ -3095,6 +3174,7 @@ describe('rpc router', () => {
       fileOps: {
         readFile: () => Effect.succeed({ success: false, error: 'unused' }),
         writeFile: () => Effect.succeed(null),
+        createFile: () => Effect.succeed(null),
         readImageAsBase64: (filePath) =>
           Effect.sync(() => {
             calls.push(filePath)
@@ -3125,6 +3205,7 @@ describe('rpc router', () => {
       fileOps: {
         readFile: () => Effect.succeed({ success: false, error: 'unused' }),
         writeFile: () => Effect.succeed(null),
+        createFile: () => Effect.succeed(null),
         readImageAsBase64: () => Effect.succeed({ data: 'unused' })
       }
     })
