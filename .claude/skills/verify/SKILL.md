@@ -36,6 +36,10 @@ playwright-cli -s=<s> tab-select 1   # tab 0 is the pet overlay, tab 1 is the ma
 - Snapshot refs vanish (all elements ref-less) while a context-menu/focus state is
   active — `playwright-cli press Escape`, then re-snapshot.
 - Open React context menus by dispatching a `contextmenu` MouseEvent via `eval` on the row ref.
+- In "Connect to..." connection mode, the Radix checkbox does NOT toggle on direct
+  click — click the worktree ROW (the cursor-pointer wrapper) instead.
+- Dispatching `contextmenu` on a row scrolled out of view opens the menu offscreen
+  and menuitem clicks time out — `scrollIntoView` (or pick a visible row) first.
 - Quit the dev app with `osascript -e 'tell application "Electron" to quit'`
   (production app is named "Hive", dev is "Electron").
 - Clean up after PR tests: `gh pr close <n> --repo morapelker/test-python --delete-branch`,
