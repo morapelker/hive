@@ -24,6 +24,7 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { toast } from '@/lib/toast'
 import { resolvePRContentProvider } from '@/lib/pr-content-provider'
+import { runCreatePRPipeline } from '@/lib/pr-pipeline'
 import { useGitStore, type GitFileStatus } from '@/stores/useGitStore'
 import { usePRNotificationStore } from '@/stores/usePRNotificationStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
@@ -55,8 +56,6 @@ export function CreatePRModal({ worktreeId, worktreePath }: CreatePRModalProps):
   const prTargetBranch = useGitStore((s) =>
     worktreeId ? s.prTargetBranch.get(worktreeId) : undefined
   )
-  const attachPR = useGitStore((s) => s.attachPR)
-  const setCreatingPR = useGitStore((s) => s.setCreatingPR)
   const fileStatusesByWorktree = useGitStore((s) => s.fileStatusesByWorktree)
   const isCommitting = useGitStore((s) => s.isCommitting)
   const loadFileStatuses = useGitStore((s) => s.loadFileStatuses)
@@ -278,166 +277,33 @@ export function CreatePRModal({ worktreeId, worktreePath }: CreatePRModalProps):
 
     // Close modal — PR creation continues in background via notification
     setOpen(false)
-    setCreatingPR(worktreeId, true)
 
-    const { show, update } = usePRNotificationStore.getState()
-    const notifId = show({
+    const notifId = usePRNotificationStore.getState().show({
       status: 'loading',
       message: 'Creating pull request...',
       worktreeId
     })
 
-    let finalTitle = prTitle
-    let finalBody = prBody
-
-    try {
-      // Step 1: Push if needed
-      let willPush = false
-      try {
-        willPush = await gitApi.needsPush(worktreePath)
-      } catch {
-        // Assume no push needed
+    // Resolve the project path for the already-exists title lookup
+    let projectPath: string | null = null
+    for (const [pid, worktrees] of useWorktreeStore.getState().worktreesByProject) {
+      if (worktrees.some((w) => w.id === worktreeId)) {
+        projectPath = useProjectStore.getState().projects.find((p) => p.id === pid)?.path ?? null
+        break
       }
-
-      if (willPush) {
-        update(notifId, { message: 'Pushing branch...' })
-        const pushResult = await gitApi.push(worktreePath)
-        if (!pushResult.success) {
-          throw new Error(pushResult.error ?? 'Push failed')
-        }
-      }
-
-      // Step 2: Generate content if needed (best-effort — failure should not block PR creation)
-      const needsGenerate = !finalTitle || !finalBody
-      let usedFallbackContent = false
-      let generationFailureReason: string | null = null
-      if (needsGenerate) {
-        update(notifId, { message: 'Generating PR content...' })
-        if (!provider) {
-          usedFallbackContent = true
-          generationFailureReason =
-            'No AI provider available for PR content generation. Using default title and description.'
-        } else {
-          try {
-            const genResult = await gitApi.generatePRContent(worktreePath, targetBase, provider)
-            if (genResult.success) {
-              if (!finalTitle && genResult.title) finalTitle = genResult.title
-              if (!finalBody && genResult.body) finalBody = genResult.body
-            } else {
-              console.warn('PR content generation failed, using fallback:', genResult.error)
-              generationFailureReason =
-                genResult.error ??
-                'AI content generation failed — you may want to edit the title and description'
-              usedFallbackContent = true
-            }
-          } catch (err) {
-            console.warn('PR content generation threw, using fallback:', err)
-            generationFailureReason = err instanceof Error ? err.message : String(err)
-            usedFallbackContent = true
-          }
-        }
-        // Fallback if generation failed or returned empty
-        if (!finalTitle) finalTitle = branchName
-        if (!finalBody) finalBody = ''
-      }
-
-      // Step 3: Create PR
-      update(notifId, { message: 'Creating pull request...' })
-      const createResult = await gitApi.createPR(worktreePath, targetBase, finalTitle, finalBody)
-
-      if (!createResult.success) {
-        // The backend populates url/number even on failure when a PR already
-        // exists — use that structured data first, regex fallback second.
-        let existingNumber = createResult.number
-        let existingUrl = createResult.url
-
-        if (!existingNumber) {
-          // Fallback: parse the error message ([\s\S] to match across newlines)
-          const errMsg = createResult.error ?? ''
-          const alreadyExistsMatch = errMsg.match(
-            /already exists[\s\S]*?\/pull\/(\d+)|pull request.*?#(\d+).*?already/i
-          )
-          if (alreadyExistsMatch) {
-            existingNumber = parseInt(alreadyExistsMatch[1] || alreadyExistsMatch[2], 10)
-            if (!existingUrl) {
-              const urlMatch = errMsg.match(/https:\/\/github\.com\/[^\s]+\/pull\/\d+/)
-              existingUrl = urlMatch?.[0] ?? `https://github.com/unknown/pull/${existingNumber}`
-            }
-          }
-        }
-
-        if (existingNumber) {
-          existingUrl = existingUrl ?? `https://github.com/unknown/pull/${existingNumber}`
-
-          // Auto-attach the existing PR
-          await attachPR(worktreeId, existingNumber, existingUrl)
-
-          let existingTitle: string | undefined
-          try {
-            const worktreeStore = useWorktreeStore.getState()
-            let projectId: string | null = null
-            for (const [pid, worktrees] of worktreeStore.worktreesByProject) {
-              if (worktrees.some((w) => w.id === worktreeId)) {
-                projectId = pid
-                break
-              }
-            }
-
-            const projectPath = projectId
-              ? useProjectStore.getState().projects.find((p) => p.id === projectId)?.path
-              : undefined
-            if (projectPath) {
-              const state = await gitApi.getPRState(projectPath, existingNumber)
-              if (state.success) existingTitle = state.title
-            }
-          } catch {
-            // Best-effort: existing PR notification still works without a title.
-          }
-
-          update(notifId, {
-            status: 'info',
-            message: `PR #${existingNumber} already exists`,
-            description: 'Attached to workspace',
-            prUrl: existingUrl,
-            prNumber: existingNumber,
-            prTitle: existingTitle,
-            worktreeId
-          })
-          return
-        }
-
-        throw new Error(createResult.error ?? 'PR creation failed')
-      }
-
-      // Attach the new PR
-      const prUrl = createResult.url ?? ''
-      const prNumber = createResult.number ?? 0
-      await attachPR(worktreeId, prNumber, prUrl)
-
-      update(notifId, {
-        status: usedFallbackContent ? 'warning' : 'success',
-        message: usedFallbackContent
-          ? `PR #${prNumber} created with default content`
-          : `Pull request #${prNumber} created`,
-        description: usedFallbackContent
-          ? (generationFailureReason ??
-            'AI content generation failed — you may want to edit the title and description')
-          : undefined,
-        prUrl,
-        prNumber,
-        prTitle: finalTitle,
-        worktreeId
-      })
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      update(notifId, {
-        status: 'error',
-        message: 'Failed to create pull request',
-        description: msg
-      })
-    } finally {
-      setCreatingPR(worktreeId, false)
     }
+
+    await runCreatePRPipeline({
+      worktreeId,
+      worktreePath,
+      projectPath,
+      baseBranch: targetBase,
+      title: prTitle,
+      body: prBody,
+      fallbackTitle: branchName,
+      provider,
+      notifId
+    })
   }, [
     worktreePath,
     worktreeId,
@@ -447,9 +313,7 @@ export function CreatePRModal({ worktreeId, worktreePath }: CreatePRModalProps):
     defaultAgentSdk,
     availableAgentSdks,
     branchInfo,
-    attachPR,
-    setOpen,
-    setCreatingPR
+    setOpen
   ])
 
   // ── Cancel handler ──────────────────────────────────────────────

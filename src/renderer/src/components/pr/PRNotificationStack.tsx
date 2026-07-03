@@ -42,7 +42,7 @@ function StatusIcon({ status }: { status: string }): React.JSX.Element {
 // Single notification card
 // ---------------------------------------------------------------------------
 
-type MergePhase = 'idle' | 'merging' | 'merged' | 'archiving'
+type MergePhase = 'idle' | 'merging' | 'merged'
 
 function PRNotificationCard({
   id,
@@ -52,7 +52,8 @@ function PRNotificationCard({
   prTitle,
   prUrl,
   prNumber,
-  worktreeId
+  worktreeId,
+  showArchiveButton
 }: {
   id: string
   status: string
@@ -62,13 +63,16 @@ function PRNotificationCard({
   prUrl?: string
   prNumber?: number
   worktreeId?: string
+  showArchiveButton?: boolean
 }): React.JSX.Element {
   const dismiss = usePRNotificationStore((s) => s.dismiss)
   const isDone =
     status === 'success' || status === 'error' || status === 'info' || status === 'warning'
 
   const [mergePhase, setMergePhase] = useState<MergePhase>('idle')
+  const [isArchiving, setIsArchiving] = useState(false)
   const showMergeButton = !!(prNumber && worktreeId && (status === 'success' || status === 'info'))
+  const showArchivePrompt = !!(showArchiveButton && worktreeId && isDone && mergePhase === 'idle')
 
   const handleClose = useCallback(() => {
     dismiss(id)
@@ -134,7 +138,7 @@ function PRNotificationCard({
       return
     }
 
-    setMergePhase('archiving')
+    setIsArchiving(true)
     try {
       const result = await worktreeStore.archiveWorktree(
         worktreeId,
@@ -146,13 +150,41 @@ function PRNotificationCard({
         dismiss(id)
       } else {
         toast.error(result.error || 'Archive failed')
-        setMergePhase('merged')
+        setIsArchiving(false)
       }
     } catch {
       toast.error('Failed to archive worktree')
-      setMergePhase('merged')
+      setIsArchiving(false)
     }
   }, [worktreeId, id, dismiss])
+
+  const archiveButton = isArchiving ? (
+    <button
+      type="button"
+      disabled
+      className={cn(
+        'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium',
+        'bg-secondary text-secondary-foreground',
+        'opacity-60 cursor-not-allowed'
+      )}
+    >
+      <Loader2 className="h-3 w-3 animate-spin" />
+      Archiving...
+    </button>
+  ) : (
+    <button
+      type="button"
+      onClick={handleArchive}
+      className={cn(
+        'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium',
+        'bg-secondary text-secondary-foreground',
+        'hover:bg-secondary/80 transition-colors'
+      )}
+    >
+      <Archive className="h-3 w-3" />
+      Archive
+    </button>
+  )
 
   return (
     <div
@@ -232,36 +264,10 @@ function PRNotificationCard({
                 Merging...
               </button>
             )}
-            {mergePhase === 'merged' && (
-              <button
-                type="button"
-                onClick={handleArchive}
-                className={cn(
-                  'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium',
-                  'bg-secondary text-secondary-foreground',
-                  'hover:bg-secondary/80 transition-colors'
-                )}
-              >
-                <Archive className="h-3 w-3" />
-                Archive
-              </button>
-            )}
-            {mergePhase === 'archiving' && (
-              <button
-                type="button"
-                disabled
-                className={cn(
-                  'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium',
-                  'bg-secondary text-secondary-foreground',
-                  'opacity-60 cursor-not-allowed'
-                )}
-              >
-                <Loader2 className="h-3 w-3 animate-spin" />
-                Archiving...
-              </button>
-            )}
+            {mergePhase === 'merged' && archiveButton}
           </div>
         )}
+        {showArchivePrompt && <div className="mt-1.5">{archiveButton}</div>}
       </div>
 
       {/* Close button — always rendered but only visible when done */}
@@ -307,6 +313,7 @@ export function PRNotificationStack(): React.JSX.Element | null {
           prUrl={n.prUrl}
           prNumber={n.prNumber}
           worktreeId={n.worktreeId}
+          showArchiveButton={n.showArchiveButton}
         />
       ))}
     </div>
