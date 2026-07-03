@@ -6,7 +6,7 @@ const log = createLogger({ component: 'GhosttyService' })
 
 // Types matching the N-API addon exports
 interface GhosttyAddon {
-  ghosttyInit(): boolean
+  ghosttyInit(configPath?: string): boolean
   ghosttyGetVersion(): string
   ghosttyCreateSurface(
     windowHandle: Buffer,
@@ -157,8 +157,11 @@ class GhosttyService {
   /**
    * Initialize the Ghostty runtime. Must be called once before creating surfaces.
    * Automatically loads the addon if not already loaded.
+   * configPath: explicit Ghostty config file for the runtime to load; omitted
+   * means built-in defaults (the runtime never reads Ghostty's own
+   * TCC-protected default locations).
    */
-  init(): { success: boolean; version?: string; error?: string } {
+  init(configPath?: string): { success: boolean; version?: string; error?: string } {
     if (this.initialized) {
       return { success: true, version: this.getVersion() }
     }
@@ -168,7 +171,7 @@ class GhosttyService {
     }
 
     try {
-      const result = this.addon!.ghosttyInit()
+      const result = this.addon!.ghosttyInit(configPath)
       if (!result) {
         return { success: false, error: 'ghostty_init() returned false' }
       }

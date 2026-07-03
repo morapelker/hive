@@ -48,7 +48,7 @@ GhosttyBridge::~GhosttyBridge() {
 // Lifecycle
 // ---------------------------------------------------------------------------
 
-bool GhosttyBridge::init() {
+bool GhosttyBridge::init(const char* configPath) {
   std::lock_guard<std::mutex> lock(mutex_);
 
   if (initialized_) {
@@ -63,14 +63,19 @@ bool GhosttyBridge::init() {
     return false;
   }
 
-  // Create and load config from user's default files
   config_ = ghostty_config_new();
   if (!config_) {
     fprintf(stderr, "[ghostty_bridge] ghostty_config_new failed\n");
     return false;
   }
 
-  ghostty_config_load_default_files(config_);
+  // Load only an explicitly provided config file. Never
+  // ghostty_config_load_default_files: that reads Ghostty's own
+  // Application Support container, which macOS TCC guards with the
+  // "access data from other apps" prompt attributed to this app.
+  if (configPath && configPath[0] != '\0') {
+    ghostty_config_load_file(config_, configPath);
+  }
   ghostty_config_finalize(config_);
 
   // Check for config diagnostics

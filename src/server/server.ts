@@ -10,6 +10,7 @@ import { attachWebSocketRpcServer } from './rpc/ws-server'
 import { resolveStaticFile, serveStaticFile } from './static'
 import { isDesktopBackendEventMessage } from '../shared/desktop-command'
 import { cleanupBranchWatchers } from '../main/services/branch-watcher'
+import { warmUpGhosttyConfig } from '../main/services/ghostty-config-store'
 import { setGitEventPublisher } from '../main/services/git-events'
 import { setWorktreeEventPublisher } from '../main/services/worktree-events'
 import { cleanupWorktreeWatchers } from '../main/services/worktree-watcher'
@@ -40,6 +41,10 @@ export const startHiveServer = (
   Effect.gen(function* () {
     const config = yield* resolveServerConfig(input)
     getDatabase().init()
+    // Read the Ghostty config once at boot so the macOS "access data from
+    // other apps" prompt (its dir is TCC-protected) appears at app launch,
+    // never mid-flow when a terminal mounts.
+    warmUpGhosttyConfig()
     const eventBus = makeEventBus()
 
     if (desktopBackendEventForwarder) {
