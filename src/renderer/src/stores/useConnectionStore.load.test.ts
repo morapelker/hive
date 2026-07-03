@@ -527,9 +527,9 @@ describe('useConnectionStore connection loading', () => {
       ]
     })
 
-    await useConnectionStore
-      .getState()
-      .updateConnectionMembers('connection-1', ['worktree-1', 'worktree-2'])
+    await expect(
+      useConnectionStore.getState().updateConnectionMembers('connection-1', ['worktree-1', 'worktree-2'])
+    ).resolves.toBe(true)
 
     // Exactly one batched RPC call — no per-member add/remove or reload round-trips.
     expect(request).toHaveBeenCalledWith('connectionOps.updateMembers', {
@@ -630,7 +630,9 @@ describe('useConnectionStore connection loading', () => {
       ]
     })
 
-    await useConnectionStore.getState().updateConnectionMembers('connection-1', ['worktree-1'])
+    await expect(
+      useConnectionStore.getState().updateConnectionMembers('connection-1', ['worktree-1'])
+    ).resolves.toBe(true)
 
     expect(request).toHaveBeenCalledWith('connectionOps.updateMembers', {
       connectionId: 'connection-1',
@@ -647,6 +649,111 @@ describe('useConnectionStore connection loading', () => {
     ])
     expect(toast.success).toHaveBeenCalledWith('Connection updated')
     expect(toast.error).not.toHaveBeenCalled()
+  })
+
+  it('resyncs the connection from the server and returns false when the batched connectionOps.updateMembers RPC reports failure', async () => {
+    request.mockImplementation(async (method: string) => {
+      if (method === 'connectionOps.updateMembers') {
+        return { success: false, error: 'partial failure applying members' }
+      }
+      if (method === 'connectionOps.get') {
+        return {
+          success: true,
+          connection: {
+            id: 'connection-1',
+            name: 'Hive Resynced',
+            custom_name: null,
+            status: 'active',
+            path: '/tmp/hive-connection',
+            color: null,
+            pinned: 0,
+            created_at: '2026-05-28T00:00:00.000Z',
+            updated_at: '2026-05-28T00:00:00.000Z',
+            members: [
+              {
+                id: 'member-1',
+                connection_id: 'connection-1',
+                worktree_id: 'worktree-1',
+                project_id: 'project-1',
+                symlink_name: 'worktree-1',
+                added_at: '2026-05-28T00:00:00.000Z',
+                worktree_name: 'Worktree 1',
+                worktree_branch: 'branch-1',
+                worktree_path: '/tmp/worktree-1',
+                project_name: 'Project 1'
+              },
+              {
+                id: 'member-2',
+                connection_id: 'connection-1',
+                worktree_id: 'worktree-2',
+                project_id: 'project-2',
+                symlink_name: 'worktree-2',
+                added_at: '2026-05-28T00:00:00.000Z',
+                worktree_name: 'Worktree 2',
+                worktree_branch: 'branch-2',
+                worktree_path: '/tmp/worktree-2',
+                project_name: 'Project 2'
+              }
+            ]
+          }
+        }
+      }
+      return null
+    })
+    useConnectionStore.setState({
+      connections: [
+        {
+          id: 'connection-1',
+          name: 'Hive',
+          custom_name: null,
+          status: 'active',
+          path: '/tmp/hive-connection',
+          color: null,
+          created_at: '2026-05-28T00:00:00.000Z',
+          updated_at: '2026-05-28T00:00:00.000Z',
+          members: [
+            {
+              id: 'member-1',
+              connection_id: 'connection-1',
+              worktree_id: 'worktree-1',
+              project_id: 'project-1',
+              symlink_name: 'worktree-1',
+              added_at: '2026-05-28T00:00:00.000Z',
+              worktree_name: 'Worktree 1',
+              worktree_branch: 'branch-1',
+              worktree_path: '/tmp/worktree-1',
+              project_name: 'Project 1'
+            }
+          ]
+        }
+      ]
+    })
+
+    await expect(
+      useConnectionStore.getState().updateConnectionMembers('connection-1', ['worktree-1', 'worktree-2'])
+    ).resolves.toBe(false)
+
+    expect(request).toHaveBeenCalledWith('connectionOps.updateMembers', {
+      connectionId: 'connection-1',
+      worktreeIds: ['worktree-1', 'worktree-2']
+    })
+    // Best-effort resync so stale renderer state (from a possibly-partial server-side
+    // apply) doesn't linger after a reported failure.
+    expect(request).toHaveBeenCalledWith('connectionOps.get', { connectionId: 'connection-1' })
+    expect(useConnectionStore.getState().connections).toEqual([
+      expect.objectContaining({
+        id: 'connection-1',
+        name: 'Hive Resynced',
+        members: [
+          expect.objectContaining({ worktree_id: 'worktree-1' }),
+          expect.objectContaining({ worktree_id: 'worktree-2' })
+        ]
+      })
+    ])
+    expect(toast.error).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to update connection')
+    )
+    expect(toast.success).not.toHaveBeenCalled()
   })
 
   it('renames a connection through connectionApi RPC', async () => {
@@ -788,6 +895,28 @@ describe('useConnectionStore connection loading', () => {
         expect.objectContaining({ id: 'worktree-project-2' })
       )
       expect(worktreeStoreMocks.fireSetupScript).toHaveBeenCalledTimes(2)
+      expect(worktreeStoreMocks.fireSetupScript).toHaveBeenNthCalledWith(
+        1,
+        'project-1',
+        'worktree-project-1',
+        '/tmp/project-1/wt'
+      )
+      expect(worktreeStoreMocks.fireSetupScript).toHaveBeenNthCalledWith(
+        2,
+        'project-2',
+        'worktree-project-2',
+        '/tmp/project-2/wt'
+      )
+      // Setup scripts must only fire once every worktree create has succeeded — every
+      // addWorktreeToProject call (one per successful create) happens before any fireSetupScript
+      // call, never interleaved with the per-project create loop.
+      const lastAddCallOrder = Math.max(
+        ...worktreeStoreMocks.addWorktreeToProject.mock.invocationCallOrder
+      )
+      const firstFireCallOrder = Math.min(
+        ...worktreeStoreMocks.fireSetupScript.mock.invocationCallOrder
+      )
+      expect(firstFireCallOrder).toBeGreaterThan(lastAddCallOrder)
 
       // Deliberately inserts WITHOUT selecting: no selecting createWorktree action, no rollback.
       expect(worktreeStoreMocks.createWorktree).not.toHaveBeenCalled()
@@ -796,7 +925,7 @@ describe('useConnectionStore connection loading', () => {
       expect(toast.error).not.toHaveBeenCalled()
     })
 
-    it('rolls back already-created worktrees and skips connection creation when a create fails', async () => {
+    it('rolls back already-created worktrees and skips connection creation when a create fails, without ever firing setup scripts', async () => {
       request.mockImplementation(async (method: string, params?: unknown) => {
         if (method === 'worktreeOps.create') {
           const { projectId } = params as { projectId: string }
@@ -832,6 +961,41 @@ describe('useConnectionStore connection loading', () => {
       expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('disk full'))
       // No connection is created when a worktree create fails.
       expect(request).not.toHaveBeenCalledWith('connectionOps.create', expect.anything())
+      // The setup script for the rolled-back worktree must never fire — a create failure
+      // partway through must not race a setup script against the rollback deletion.
+      expect(worktreeStoreMocks.fireSetupScript).not.toHaveBeenCalled()
+    })
+
+    it('does not remove a rolled-back worktree from the store when the rollback delete itself fails', async () => {
+      request.mockImplementation(async (method: string, params?: unknown) => {
+        if (method === 'worktreeOps.create') {
+          const { projectId } = params as { projectId: string }
+          if (projectId === 'project-2') {
+            return { success: false, error: 'disk full' }
+          }
+          return { success: true, worktree: worktreeFor(projectId) }
+        }
+        if (method === 'worktreeOps.delete') {
+          // Rollback's own delete call fails — the worktree still exists on disk.
+          return { success: false, error: 'delete failed' }
+        }
+        return null
+      })
+
+      const result = await useConnectionStore.getState().quickCreateConnection(projects)
+
+      expect(result).toBeNull()
+      expect(request).toHaveBeenCalledWith('worktreeOps.delete', {
+        worktreeId: 'worktree-project-1',
+        worktreePath: '/tmp/project-1/wt',
+        branchName: 'branch-project-1',
+        projectPath: '/tmp/project-1',
+        archive: false
+      })
+      // The delete failed, so the worktree still exists — it must not be hidden from the
+      // sidebar by removing it from the store.
+      expect(worktreeStoreMocks.removeWorktreeFromProject).not.toHaveBeenCalled()
+      expect(worktreeStoreMocks.fireSetupScript).not.toHaveBeenCalled()
     })
   })
 })

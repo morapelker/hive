@@ -63,6 +63,60 @@ describe('Recent Connections Dialog', () => {
     expect(screen.getByTestId('recent-connections-empty')).toBeInTheDocument()
   })
 
+  test('shows a loading spinner while fetching, taking precedence over the empty state', async () => {
+    let resolveFetch: (value: { success: true; entries: RecentConnectionEntry[] }) => void = () => {}
+    const pending = new Promise<{ success: true; entries: RecentConnectionEntry[] }>((resolve) => {
+      resolveFetch = resolve
+    })
+    mockConnectionApi.getRecentConnections.mockReturnValueOnce(pending)
+
+    render(<RecentConnectionsDialog open={true} onOpenChange={vi.fn()} />)
+
+    expect(screen.getByTestId('recent-connections-loading')).toBeInTheDocument()
+    expect(screen.queryByTestId('recent-connections-empty')).not.toBeInTheDocument()
+
+    await act(async () => {
+      resolveFetch({ success: true, entries: [] })
+      await new Promise((r) => setTimeout(r, 10))
+    })
+
+    expect(screen.queryByTestId('recent-connections-loading')).not.toBeInTheDocument()
+    expect(screen.getByTestId('recent-connections-empty')).toBeInTheDocument()
+  })
+
+  test('clears previously loaded rows while refetching on reopen', async () => {
+    const entry = makeEntry()
+    mockConnectionApi.getRecentConnections.mockResolvedValue({ success: true, entries: [entry] })
+
+    const { rerender } = render(<RecentConnectionsDialog open={true} onOpenChange={vi.fn()} />)
+
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 10))
+    })
+    expect(screen.getByTestId(`recent-connection-row-${entry.id}`)).toBeInTheDocument()
+
+    // Close, then hold the next fetch open so we can inspect state mid-flight on reopen.
+    rerender(<RecentConnectionsDialog open={false} onOpenChange={vi.fn()} />)
+
+    let resolveFetch: (value: { success: true; entries: RecentConnectionEntry[] }) => void = () => {}
+    const pending = new Promise<{ success: true; entries: RecentConnectionEntry[] }>((resolve) => {
+      resolveFetch = resolve
+    })
+    mockConnectionApi.getRecentConnections.mockReturnValueOnce(pending)
+
+    rerender(<RecentConnectionsDialog open={true} onOpenChange={vi.fn()} />)
+
+    // The stale row from the previous open must not remain visible/selectable during refresh.
+    expect(screen.queryByTestId(`recent-connection-row-${entry.id}`)).not.toBeInTheDocument()
+    expect(screen.getByTestId('recent-connections-loading')).toBeInTheDocument()
+
+    await act(async () => {
+      resolveFetch({ success: true, entries: [entry] })
+      await new Promise((r) => setTimeout(r, 10))
+    })
+    expect(screen.getByTestId(`recent-connection-row-${entry.id}`)).toBeInTheDocument()
+  })
+
   test('renders rows with joined project names', async () => {
     const entry = makeEntry()
     mockConnectionApi.getRecentConnections.mockResolvedValue({ success: true, entries: [entry] })

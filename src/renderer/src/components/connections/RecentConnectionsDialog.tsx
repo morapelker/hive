@@ -38,6 +38,7 @@ export function RecentConnectionsDialog({
     setSelectedId(null)
     setIsCreating(false)
     setError(null)
+    setEntries([])
     setIsLoading(true)
 
     connectionApi
@@ -95,7 +96,14 @@ export function RecentConnectionsDialog({
             >
               {error}
             </div>
-          ) : !isLoading && entries.length === 0 ? (
+          ) : isLoading ? (
+            <div
+              className="flex items-center justify-center py-8"
+              data-testid="recent-connections-loading"
+            >
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : entries.length === 0 ? (
             <div
               className="px-4 py-8 text-center text-sm text-muted-foreground"
               data-testid="recent-connections-empty"

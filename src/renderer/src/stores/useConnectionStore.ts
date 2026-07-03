@@ -54,7 +54,7 @@ interface ConnectionState {
   deleteConnection: (connectionId: string) => Promise<void>
   addMember: (connectionId: string, worktreeId: string) => Promise<void>
   removeMember: (connectionId: string, worktreeId: string) => Promise<void>
-  updateConnectionMembers: (connectionId: string, desiredWorktreeIds: string[]) => Promise<void>
+  updateConnectionMembers: (connectionId: string, desiredWorktreeIds: string[]) => Promise<boolean>
   quickCreateConnection: (
     projects: { id: string; path: string; name: string }[]
   ) => Promise<string | null>
@@ -211,11 +211,11 @@ export const useConnectionStore = create<ConnectionState>()(
         }
       },
 
-      updateConnectionMembers: async (connectionId: string, desiredWorktreeIds: string[]) => {
+      updateConnectionMembers: async (connectionId: string, desiredWorktreeIds: string[]): Promise<boolean> => {
         const currentConnection = get().connections.find((c) => c.id === connectionId)
         if (!currentConnection) {
           toast.error('Connection not found')
-          return
+          return false
         }
 
         const currentIds = new Set(currentConnection.members.map((m) => m.worktree_id))
@@ -225,7 +225,7 @@ export const useConnectionStore = create<ConnectionState>()(
         const toRemove = Array.from(currentIds).filter((id) => !desiredSet.has(id))
 
         if (toAdd.length === 0 && toRemove.length === 0) {
-          return
+          return true
         }
 
         try {
@@ -233,7 +233,21 @@ export const useConnectionStore = create<ConnectionState>()(
           const result = await connectionApi.updateMembers(connectionId, desiredWorktreeIds)
           if (!result.success) {
             toast.error(`Failed to update connection: ${result.error || 'Unknown error'}`)
-            return
+            // The server applies adds-then-removes non-transactionally, so a reported failure
+            // may still have partially persisted. Resync from the server (best-effort) so the
+            // renderer doesn't keep showing stale members.
+            try {
+              const resynced = await connectionApi.get(connectionId)
+              if (resynced.success && resynced.connection) {
+                const updated = resynced.connection
+                set((state) => ({
+                  connections: state.connections.map((c) => (c.id === connectionId ? updated : c))
+                }))
+              }
+            } catch {
+              // Ignore resync failures — this is best-effort only.
+            }
+            return false
           }
           if (result.connectionDeleted) {
             // Connection was deleted server-side — mirror the removeMember cleanup path.
@@ -253,9 +267,11 @@ export const useConnectionStore = create<ConnectionState>()(
             }))
           }
           toast.success('Connection updated')
+          return true
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
           toast.error(`Failed to update connection: ${message}`)
+          return false
         }
       },
 
@@ -276,14 +292,16 @@ export const useConnectionStore = create<ConnectionState>()(
         const rollback = async (): Promise<void> => {
           for (const { project, worktree } of created) {
             try {
-              await worktreeApi.delete({
+              const deleteResult = await worktreeApi.delete({
                 worktreeId: worktree.id,
                 worktreePath: worktree.path,
                 branchName: worktree.branch_name,
                 projectPath: project.path,
                 archive: false
               })
-              useWorktreeStore.getState().removeWorktreeFromProject(project.id, worktree.id)
+              if (deleteResult.success) {
+                useWorktreeStore.getState().removeWorktreeFromProject(project.id, worktree.id)
+              }
             } catch {
               // Ignore rollback failures — this is a best-effort cleanup.
             }
@@ -306,8 +324,14 @@ export const useConnectionStore = create<ConnectionState>()(
           // Insert WITHOUT selecting — deliberately NOT the createWorktree action, which
           // selects the new worktree and closes open file tabs.
           useWorktreeStore.getState().addWorktreeToProject(project.id, result.worktree)
-          fireSetupScript(project.id, result.worktree.id, result.worktree.path)
           created.push({ project, worktree: result.worktree })
+        }
+
+        // Only fire setup scripts once every worktree has been created successfully — the
+        // per-project create loop above can still fail partway through and roll back
+        // (delete) earlier directories, and we don't want setup scripts racing that deletion.
+        for (const { project, worktree } of created) {
+          fireSetupScript(project.id, worktree.id, worktree.path)
         }
 
         const connectionId = await get().createConnection(created.map((c) => c.worktree.id))
