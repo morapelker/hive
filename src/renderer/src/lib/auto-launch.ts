@@ -16,6 +16,7 @@ import { dbApi } from '@/api/db-api'
 import { terminalApi } from '@/api/terminal-api'
 import { startHivePromptTelemetry } from '@/lib/hive-enterprise-telemetry'
 import { autoPinBaseWorktree } from '@/lib/auto-pin'
+import { createPlanFile, exceedsGoalPromptLimit, planFilePrompt } from '@/lib/goal-plan-file'
 
 type AutoLaunchMode = 'build' | 'plan' | 'super-plan'
 
@@ -114,6 +115,37 @@ export async function autoLaunchTicket(ticket: AutoLaunchTicket): Promise<void> 
       worktreeId = config.worktree.worktreeId
     }
 
+    // Resolve the worktree record once — needed for plan-file creation and the
+    // OpenCode connect below. Newly created worktrees are already in the store.
+    const findWorktree = (): { path: string } | undefined =>
+      Array.from(useWorktreeStore.getState().worktreesByProject.values())
+        .flat()
+        .find((w) => w.id === worktreeId)
+    let worktree = findWorktree()
+    if (!worktree) {
+      // The project's worktrees may not be loaded yet (e.g. auto-launch firing
+      // from a store subscription shortly after startup)
+      await useWorktreeStore.getState().loadWorktrees(ticket.project_id)
+      worktree = findWorktree()
+    }
+
+    // Oversized goal prompts get rejected by the CLI — persist the full ticket
+    // prompt as PLAN_{uuid}.md in the worktree root and send a short
+    // "Implement PLAN_{uuid}.md" goal prompt instead (the /goal wrapper stays).
+    if (configGoalMode && configGoalSuccessCriteria && worktree?.path) {
+      const composed = composeAutoLaunchPrompt(
+        config,
+        config.sdk,
+        configGoalMode,
+        configGoalSuccessCriteria,
+        { claudeCli: config.sdk === 'claude-code-cli' }
+      )
+      if (exceedsGoalPromptLimit(composed)) {
+        const fileName = await createPlanFile(worktree.path, config.prompt.trim())
+        config = { ...config, prompt: planFilePrompt(fileName) }
+      }
+    }
+
     // 2. Create session
     const modelOverride = config.model ? { ...config.model, agentSdk: config.sdk } : undefined
     const cliPendingPrompt =
@@ -201,8 +233,6 @@ export async function autoLaunchTicket(ticket: AutoLaunchTicket): Promise<void> 
     }
 
     // 8. Connect to OpenCode and send prompt
-    const allWorktrees = Array.from(useWorktreeStore.getState().worktreesByProject.values()).flat()
-    const worktree = allWorktrees.find((w) => w.id === worktreeId)
     if (!worktree?.path) return
 
     const connectResult = unwrapEnvelope(await opencodeApi.connect(worktree.path, sessionId))
