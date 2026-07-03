@@ -4,6 +4,7 @@ import { toast } from '@/lib/toast'
 import { registerConnectionClear, clearWorktreeSelection } from './store-coordination'
 import { useKanbanStore } from './useKanbanStore'
 import { connectionApi } from '@/api/connection-api'
+import { worktreeApi } from '@/api/worktree-api'
 
 // Connection types matching the database schema
 interface ConnectionMemberEnriched {
@@ -54,6 +55,9 @@ interface ConnectionState {
   addMember: (connectionId: string, worktreeId: string) => Promise<void>
   removeMember: (connectionId: string, worktreeId: string) => Promise<void>
   updateConnectionMembers: (connectionId: string, desiredWorktreeIds: string[]) => Promise<void>
+  quickCreateConnection: (
+    projects: { id: string; path: string; name: string }[]
+  ) => Promise<string | null>
   selectConnection: (id: string | null) => void
 
   // Rename
@@ -225,29 +229,27 @@ export const useConnectionStore = create<ConnectionState>()(
         }
 
         try {
-          // Add new members first (to avoid transiently having 0 members)
-          for (const id of toAdd) {
-            const addResult = await connectionApi.addMember(connectionId, id)
-            if (!addResult.success) {
-              toast.error(`Failed to add member: ${addResult.error || 'Unknown error'}`)
-              return
-            }
+          // Apply the full member diff in a single batched RPC (history recorded once server-side).
+          const result = await connectionApi.updateMembers(connectionId, desiredWorktreeIds)
+          if (!result.success) {
+            toast.error(`Failed to update connection: ${result.error || 'Unknown error'}`)
+            return
           }
-          // Remove departing members
-          for (const id of toRemove) {
-            const removeResult = await connectionApi.removeMember(connectionId, id)
-            if (!removeResult.success) {
-              toast.error(`Failed to remove member: ${removeResult.error || 'Unknown error'}`)
-              return
-            }
-          }
-          // Reload the connection to get final state
-          const result = await connectionApi.get(connectionId)
-          if (result.success && result.connection) {
+          if (result.connectionDeleted) {
+            // Connection was deleted server-side — mirror the removeMember cleanup path.
+            const { usePinnedStore } = await import('./usePinnedStore')
+            usePinnedStore.getState().removeConnection(connectionId)
+
+            set((state) => {
+              const connections = state.connections.filter((c) => c.id !== connectionId)
+              const selectedConnectionId =
+                state.selectedConnectionId === connectionId ? null : state.selectedConnectionId
+              return { connections, selectedConnectionId }
+            })
+          } else if (result.connection) {
+            const updated = result.connection
             set((state) => ({
-              connections: state.connections.map((c) =>
-                c.id === connectionId ? result.connection! : c
-              )
+              connections: state.connections.map((c) => (c.id === connectionId ? updated : c))
             }))
           }
           toast.success('Connection updated')
@@ -255,6 +257,67 @@ export const useConnectionStore = create<ConnectionState>()(
           const message = error instanceof Error ? error.message : String(error)
           toast.error(`Failed to update connection: ${message}`)
         }
+      },
+
+      quickCreateConnection: async (projects: { id: string; path: string; name: string }[]) => {
+        if (projects.length < 2) {
+          return null
+        }
+
+        // Dynamic import to avoid a store cycle; fireSetupScript is a module-level export.
+        const { useWorktreeStore, fireSetupScript } = await import('./useWorktreeStore')
+
+        const created: {
+          project: { id: string; path: string; name: string }
+          worktree: { id: string; path: string; branch_name: string }
+        }[] = []
+
+        // Best-effort rollback of every already-created worktree (per-item try/catch).
+        const rollback = async (): Promise<void> => {
+          for (const { project, worktree } of created) {
+            try {
+              await worktreeApi.delete({
+                worktreeId: worktree.id,
+                worktreePath: worktree.path,
+                branchName: worktree.branch_name,
+                projectPath: project.path,
+                archive: false
+              })
+              useWorktreeStore.getState().removeWorktreeFromProject(project.id, worktree.id)
+            } catch {
+              // Ignore rollback failures — this is a best-effort cleanup.
+            }
+          }
+        }
+
+        for (const project of projects) {
+          const result = await worktreeApi.create({
+            projectId: project.id,
+            projectPath: project.path,
+            projectName: project.name
+          })
+          if (!result.success || !result.worktree) {
+            await rollback()
+            toast.error(
+              `Failed to create worktree in "${project.name}": ${result.error ?? 'Unknown error'}`
+            )
+            return null
+          }
+          // Insert WITHOUT selecting — deliberately NOT the createWorktree action, which
+          // selects the new worktree and closes open file tabs.
+          useWorktreeStore.getState().addWorktreeToProject(project.id, result.worktree)
+          fireSetupScript(project.id, result.worktree.id, result.worktree.path)
+          created.push({ project, worktree: result.worktree })
+        }
+
+        const connectionId = await get().createConnection(created.map((c) => c.worktree.id))
+        if (!connectionId) {
+          // createConnection already surfaced its own error toast — just undo the worktrees.
+          await rollback()
+          return null
+        }
+
+        return connectionId
       },
 
       renameConnection: async (connectionId: string, customName: string | null) => {

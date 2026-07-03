@@ -1,4 +1,4 @@
-import type { ConnectionWithMembers } from '@shared/types/connection'
+import type { ConnectionWithMembers, RecentConnectionEntry } from '@shared/types/connection'
 import { getRendererRpcClient } from './rpc-client'
 
 type ConnectionGetResult = {
@@ -37,6 +37,19 @@ type ConnectionRenameResult = {
   error?: string
 }
 
+type ConnectionUpdateMembersResult = {
+  success: boolean
+  connection?: ConnectionWithMembers
+  connectionDeleted?: boolean
+  error?: string
+}
+
+type RecentConnectionsResult = {
+  success: boolean
+  entries?: RecentConnectionEntry[]
+  error?: string
+}
+
 type ConnectionMutationResult = {
   success: boolean
   error?: string
@@ -62,6 +75,8 @@ export const connectionApi = {
     getRendererRpcClient().request<ConnectionGetAllResult>('connectionOps.getAll', {}),
   getPinned: async (): Promise<ConnectionWithMembers[]> =>
     getRendererRpcClient().request<ConnectionWithMembers[]>('connectionOps.getPinned', {}),
+  getRecentConnections: async (): Promise<RecentConnectionsResult> =>
+    getRendererRpcClient().request<RecentConnectionsResult>('connectionOps.getRecentConnections', {}),
   openInEditor: async (connectionPath: string): Promise<ConnectionMutationResult> =>
     getRendererRpcClient().request<ConnectionMutationResult>('connectionOps.openInEditor', {
       connectionPath
@@ -100,5 +115,13 @@ export const connectionApi = {
     getRendererRpcClient().request<{ success: boolean; error?: string }>(
       'connectionOps.setPinned',
       { connectionId, pinned }
-    )
+    ),
+  updateMembers: async (
+    connectionId: string,
+    worktreeIds: string[]
+  ): Promise<ConnectionUpdateMembersResult> =>
+    getRendererRpcClient().request<ConnectionUpdateMembersResult>('connectionOps.updateMembers', {
+      connectionId,
+      worktreeIds
+    })
 }

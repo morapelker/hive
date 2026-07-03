@@ -166,6 +166,7 @@ interface WorktreeState {
     nameHint?: string
   ) => Promise<{ success: boolean; worktree?: Worktree; error?: string }>
   addWorktreeToProject: (projectId: string, worktree: Worktree) => void
+  removeWorktreeFromProject: (projectId: string, worktreeId: string) => void
   updateWorktreeBranch: (worktreeId: string, newBranch: string) => void
   updateWorktreeModel: (worktreeId: string, model: SelectedModel) => void
   reorderWorktrees: (projectId: string, fromIndex: number, toIndex: number) => void
@@ -804,6 +805,23 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
       }
       const newMap = new Map(state.worktreesByProject)
       newMap.set(projectId, [worktree, ...current])
+      return { worktreesByProject: newMap }
+    })
+  },
+
+  // Inverse of addWorktreeToProject: drop a worktree from the project list without
+  // touching selection or firing side effects. Used only for quick-create rollback.
+  removeWorktreeFromProject: (projectId: string, worktreeId: string) => {
+    set((state) => {
+      const current = state.worktreesByProject.get(projectId)
+      if (!current || !current.some((w) => w.id === worktreeId)) {
+        return state
+      }
+      const newMap = new Map(state.worktreesByProject)
+      newMap.set(
+        projectId,
+        current.filter((w) => w.id !== worktreeId)
+      )
       return { worktreesByProject: newMap }
     })
   },

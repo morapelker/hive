@@ -13,13 +13,24 @@ vi.mock('@/api/pet-api', () => ({
   }
 }))
 
+const worktreeStoreMocks = vi.hoisted(() => ({
+  addWorktreeToProject: vi.fn(),
+  removeWorktreeFromProject: vi.fn(),
+  createWorktree: vi.fn(),
+  fireSetupScript: vi.fn()
+}))
+
 vi.mock('./useWorktreeStore', () => ({
   useWorktreeStore: {
     getState: vi.fn(() => ({
       worktreesByProject: new Map(),
-      loadWorktrees: vi.fn()
+      loadWorktrees: vi.fn(),
+      addWorktreeToProject: worktreeStoreMocks.addWorktreeToProject,
+      removeWorktreeFromProject: worktreeStoreMocks.removeWorktreeFromProject,
+      createWorktree: worktreeStoreMocks.createWorktree
     }))
-  }
+  },
+  fireSetupScript: worktreeStoreMocks.fireSetupScript
 }))
 
 vi.mock('./useKanbanStore', () => ({
@@ -195,6 +206,10 @@ describe('useConnectionStore connection loading', () => {
     })
     vi.mocked(toast.error).mockClear()
     vi.mocked(toast.success).mockClear()
+    worktreeStoreMocks.addWorktreeToProject.mockClear()
+    worktreeStoreMocks.removeWorktreeFromProject.mockClear()
+    worktreeStoreMocks.createWorktree.mockClear()
+    worktreeStoreMocks.fireSetupScript.mockClear()
   })
 
   afterEach(() => {
@@ -437,7 +452,52 @@ describe('useConnectionStore connection loading', () => {
     expect(toast.error).not.toHaveBeenCalled()
   })
 
-  it('updates connection members by adding new members through connectionApi RPC', async () => {
+  it('updates connection members by adding new members through the batched connectionOps.updateMembers RPC', async () => {
+    request.mockImplementation(async (method: string) => {
+      if (method === 'connectionOps.updateMembers') {
+        return {
+          success: true,
+          connection: {
+            id: 'connection-1',
+            name: 'Hive Updated',
+            custom_name: null,
+            status: 'active',
+            path: '/tmp/hive-connection',
+            color: null,
+            pinned: 0,
+            created_at: '2026-05-28T00:00:00.000Z',
+            updated_at: '2026-05-28T00:00:00.000Z',
+            members: [
+              {
+                id: 'member-1',
+                connection_id: 'connection-1',
+                worktree_id: 'worktree-1',
+                project_id: 'project-1',
+                symlink_name: 'worktree-1',
+                added_at: '2026-05-28T00:00:00.000Z',
+                worktree_name: 'Worktree 1',
+                worktree_branch: 'branch-1',
+                worktree_path: '/tmp/worktree-1',
+                project_name: 'Project 1'
+              },
+              {
+                id: 'member-2',
+                connection_id: 'connection-1',
+                worktree_id: 'worktree-2',
+                project_id: 'project-2',
+                symlink_name: 'worktree-2',
+                added_at: '2026-05-28T00:00:00.000Z',
+                worktree_name: 'Worktree 2',
+                worktree_branch: 'branch-2',
+                worktree_path: '/tmp/worktree-2',
+                project_name: 'Project 2'
+              }
+            ]
+          }
+        }
+      }
+      return null
+    })
     useConnectionStore.setState({
       connections: [
         {
@@ -471,13 +531,16 @@ describe('useConnectionStore connection loading', () => {
       .getState()
       .updateConnectionMembers('connection-1', ['worktree-1', 'worktree-2'])
 
-    expect(request).toHaveBeenCalledWith('connectionOps.addMember', {
+    // Exactly one batched RPC call — no per-member add/remove or reload round-trips.
+    expect(request).toHaveBeenCalledWith('connectionOps.updateMembers', {
       connectionId: 'connection-1',
-      worktreeId: 'worktree-2'
+      worktreeIds: ['worktree-1', 'worktree-2']
     })
-    expect(request).toHaveBeenCalledWith('connectionOps.get', {
-      connectionId: 'connection-1'
-    })
+    expect(
+      request.mock.calls.filter(([method]) => method === 'connectionOps.updateMembers')
+    ).toHaveLength(1)
+    expect(request).not.toHaveBeenCalledWith('connectionOps.addMember', expect.anything())
+    expect(request).not.toHaveBeenCalledWith('connectionOps.get', expect.anything())
     expect(useConnectionStore.getState().connections).toEqual([
       expect.objectContaining({
         id: 'connection-1',
@@ -492,12 +555,9 @@ describe('useConnectionStore connection loading', () => {
     expect(toast.error).not.toHaveBeenCalled()
   })
 
-  it('updates connection members by removing departing members through connectionApi RPC', async () => {
+  it('updates connection members by removing departing members through the batched connectionOps.updateMembers RPC', async () => {
     request.mockImplementation(async (method: string) => {
-      if (method === 'connectionOps.removeMember') {
-        return { success: true, connectionDeleted: false }
-      }
-      if (method === 'connectionOps.get') {
+      if (method === 'connectionOps.updateMembers') {
         return {
           success: true,
           connection: {
@@ -572,13 +632,12 @@ describe('useConnectionStore connection loading', () => {
 
     await useConnectionStore.getState().updateConnectionMembers('connection-1', ['worktree-1'])
 
-    expect(request).toHaveBeenCalledWith('connectionOps.removeMember', {
+    expect(request).toHaveBeenCalledWith('connectionOps.updateMembers', {
       connectionId: 'connection-1',
-      worktreeId: 'worktree-2'
+      worktreeIds: ['worktree-1']
     })
-    expect(request).toHaveBeenCalledWith('connectionOps.get', {
-      connectionId: 'connection-1'
-    })
+    expect(request).not.toHaveBeenCalledWith('connectionOps.removeMember', expect.anything())
+    expect(request).not.toHaveBeenCalledWith('connectionOps.get', expect.anything())
     expect(useConnectionStore.getState().connections).toEqual([
       expect.objectContaining({
         id: 'connection-1',
@@ -620,5 +679,159 @@ describe('useConnectionStore connection loading', () => {
       })
     ])
     expect(toast.error).not.toHaveBeenCalled()
+  })
+
+  describe('quickCreateConnection', () => {
+    const projects = [
+      { id: 'project-1', path: '/tmp/project-1', name: 'Project 1' },
+      { id: 'project-2', path: '/tmp/project-2', name: 'Project 2' }
+    ]
+
+    const worktreeFor = (projectId: string): Record<string, unknown> => ({
+      id: `worktree-${projectId}`,
+      project_id: projectId,
+      name: `wt-${projectId}`,
+      branch_name: `branch-${projectId}`,
+      path: `/tmp/${projectId}/wt`,
+      status: 'active',
+      is_default: false,
+      branch_renamed: 0,
+      last_message_at: null,
+      session_titles: '[]',
+      last_model_provider_id: null,
+      last_model_id: null,
+      last_model_variant: null,
+      attachments: '[]',
+      pinned: 0,
+      context: null,
+      github_pr_number: null,
+      github_pr_url: null,
+      base_branch: null,
+      created_at: '2026-05-28T00:00:00.000Z',
+      last_accessed_at: '2026-05-28T00:00:00.000Z'
+    })
+
+    it('returns null without creating anything when fewer than two projects are given', async () => {
+      const result = await useConnectionStore
+        .getState()
+        .quickCreateConnection([projects[0]])
+
+      expect(result).toBeNull()
+      expect(request).not.toHaveBeenCalledWith('worktreeOps.create', expect.anything())
+      expect(request).not.toHaveBeenCalledWith('connectionOps.create', expect.anything())
+    })
+
+    it('creates a worktree per project then a single connection, without touching worktree selection', async () => {
+      request.mockImplementation(async (method: string, params?: unknown) => {
+        if (method === 'worktreeOps.create') {
+          const { projectId } = params as { projectId: string }
+          return { success: true, worktree: worktreeFor(projectId) }
+        }
+        if (method === 'connectionOps.create') {
+          const { worktreeIds } = params as { worktreeIds: string[] }
+          return {
+            success: true,
+            connection: {
+              id: 'connection-created',
+              name: 'Created Connection',
+              custom_name: null,
+              status: 'active',
+              path: '/tmp/created-connection',
+              color: null,
+              pinned: 0,
+              created_at: '2026-05-28T00:00:00.000Z',
+              updated_at: '2026-05-28T00:00:00.000Z',
+              members: worktreeIds.map((worktreeId, index) => ({
+                id: `member-${index + 1}`,
+                connection_id: 'connection-created',
+                worktree_id: worktreeId,
+                project_id: `project-${index + 1}`,
+                symlink_name: `worktree-${index + 1}`,
+                added_at: '2026-05-28T00:00:00.000Z',
+                worktree_name: `Worktree ${index + 1}`,
+                worktree_branch: `branch-${index + 1}`,
+                worktree_path: `/tmp/worktree-${index + 1}`,
+                project_name: `Project ${index + 1}`
+              }))
+            }
+          }
+        }
+        return null
+      })
+
+      const result = await useConnectionStore.getState().quickCreateConnection(projects)
+
+      expect(result).toBe('connection-created')
+      expect(request).toHaveBeenCalledWith('worktreeOps.create', {
+        projectId: 'project-1',
+        projectPath: '/tmp/project-1',
+        projectName: 'Project 1'
+      })
+      expect(request).toHaveBeenCalledWith('worktreeOps.create', {
+        projectId: 'project-2',
+        projectPath: '/tmp/project-2',
+        projectName: 'Project 2'
+      })
+      expect(request).toHaveBeenCalledWith('connectionOps.create', {
+        worktreeIds: ['worktree-project-1', 'worktree-project-2']
+      })
+
+      expect(worktreeStoreMocks.addWorktreeToProject).toHaveBeenCalledTimes(2)
+      expect(worktreeStoreMocks.addWorktreeToProject).toHaveBeenNthCalledWith(
+        1,
+        'project-1',
+        expect.objectContaining({ id: 'worktree-project-1' })
+      )
+      expect(worktreeStoreMocks.addWorktreeToProject).toHaveBeenNthCalledWith(
+        2,
+        'project-2',
+        expect.objectContaining({ id: 'worktree-project-2' })
+      )
+      expect(worktreeStoreMocks.fireSetupScript).toHaveBeenCalledTimes(2)
+
+      // Deliberately inserts WITHOUT selecting: no selecting createWorktree action, no rollback.
+      expect(worktreeStoreMocks.createWorktree).not.toHaveBeenCalled()
+      expect(worktreeStoreMocks.removeWorktreeFromProject).not.toHaveBeenCalled()
+      expect(request).not.toHaveBeenCalledWith('worktreeOps.delete', expect.anything())
+      expect(toast.error).not.toHaveBeenCalled()
+    })
+
+    it('rolls back already-created worktrees and skips connection creation when a create fails', async () => {
+      request.mockImplementation(async (method: string, params?: unknown) => {
+        if (method === 'worktreeOps.create') {
+          const { projectId } = params as { projectId: string }
+          if (projectId === 'project-2') {
+            return { success: false, error: 'disk full' }
+          }
+          return { success: true, worktree: worktreeFor(projectId) }
+        }
+        if (method === 'worktreeOps.delete') {
+          return { success: true }
+        }
+        return null
+      })
+
+      const result = await useConnectionStore.getState().quickCreateConnection(projects)
+
+      expect(result).toBeNull()
+      // The first (successful) worktree is deleted, non-archiving.
+      expect(request).toHaveBeenCalledWith('worktreeOps.delete', {
+        worktreeId: 'worktree-project-1',
+        worktreePath: '/tmp/project-1/wt',
+        branchName: 'branch-project-1',
+        projectPath: '/tmp/project-1',
+        archive: false
+      })
+      expect(worktreeStoreMocks.removeWorktreeFromProject).toHaveBeenCalledWith(
+        'project-1',
+        'worktree-project-1'
+      )
+      expect(toast.error).toHaveBeenCalledWith(
+        expect.stringContaining('Project 2')
+      )
+      expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('disk full'))
+      // No connection is created when a worktree create fails.
+      expect(request).not.toHaveBeenCalledWith('connectionOps.create', expect.anything())
+    })
   })
 })
