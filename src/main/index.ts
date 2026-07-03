@@ -1,5 +1,5 @@
 import { loadShellEnv } from './services/shell-env'
-import { app, shell, BrowserWindow, Menu, screen, webContents } from 'electron'
+import { app, shell, BrowserWindow, Menu, screen, webContents, ipcMain } from 'electron'
 import { join } from 'path'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { electronApp, is } from '@electron-toolkit/utils'
@@ -299,6 +299,24 @@ function ensureDockVisible(reason: string): void {
   }
 }
 
+function registerWindowControlHandlers(): void {
+  ipcMain.handle('window:minimize', () => {
+    mainWindow?.minimize()
+  })
+  ipcMain.handle('window:maximize', () => {
+    if (!mainWindow) return
+    if (mainWindow.isMaximized()) {
+      mainWindow.unmaximize()
+    } else {
+      mainWindow.maximize()
+    }
+  })
+  ipcMain.handle('window:close', () => {
+    mainWindow?.close()
+  })
+  ipcMain.handle('window:isMaximized', () => mainWindow?.isMaximized() ?? false)
+}
+
 function createWindow(backendBootstrap?: LocalEnvironmentBootstrap | null): void {
   const savedBounds = loadWindowBounds()
 
@@ -316,7 +334,7 @@ function createWindow(backendBootstrap?: LocalEnvironmentBootstrap | null): void
           titleBarStyle: 'hiddenInset' as const,
           trafficLightPosition: { x: 15, y: 10 }
         }
-      : {}),
+      : { frame: false }),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -535,6 +553,7 @@ app
     // Register desktop-side integrations that back server desktop commands.
     log.info('Registering desktop integrations')
     registerDesktopBridgeHandlers()
+    registerWindowControlHandlers()
     configurePetWindow({ getMainWindow: () => mainWindow, headless: isHeadless })
     initTicketProviderManager([new GitHubProvider(), new JiraProvider()])
 

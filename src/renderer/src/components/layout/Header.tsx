@@ -19,7 +19,9 @@ import {
   Hammer,
   Map,
   Check,
-  MoonStar
+  MoonStar,
+  Minus,
+  Square
 } from 'lucide-react'
 import { KanbanIcon } from '@/components/kanban/KanbanIcon'
 import { Button } from '@/components/ui/button'
@@ -123,6 +125,12 @@ export function Header(): React.JSX.Element {
     }
     prevBoardActive.current = isBoardViewActive
   }, [isBoardViewActive])
+
+  const [isMaximized, setIsMaximized] = useState(false)
+  useEffect(() => {
+    if (isMac()) return
+    void window.desktopBridge.windowIsMaximized().then(setIsMaximized)
+  }, [])
 
   const hasProjects = projects.length > 0
 
@@ -765,6 +773,45 @@ export function Header(): React.JSX.Element {
             <PanelRightClose className="h-4 w-4" />
           )}
         </Button>
+        {!isMac() && (
+          <div
+            className="flex items-center -mr-4"
+            style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+          >
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-12 w-12 rounded-none"
+              onClick={() => void window.desktopBridge.windowMinimize()}
+              title="Minimize"
+              data-testid="window-minimize"
+            >
+              <Minus className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-12 w-12 rounded-none"
+              onClick={() => {
+                void window.desktopBridge.windowMaximize().then(() => setIsMaximized((v) => !v))
+              }}
+              title={isMaximized ? 'Restore' : 'Maximize'}
+              data-testid="window-maximize"
+            >
+              {isMaximized ? <Copy className="h-3.5 w-3.5" /> : <Square className="h-3.5 w-3.5" />}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-12 w-12 rounded-none hover:bg-red-600 hover:text-white"
+              onClick={() => void window.desktopBridge.windowClose()}
+              title="Close"
+              data-testid="window-close"
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+        )}
       </div>
     </header>
   )
