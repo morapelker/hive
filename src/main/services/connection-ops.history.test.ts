@@ -18,6 +18,7 @@ import {
   createConnectionOp,
   getRecentConnectionsOp,
   recordConnectionHistory,
+  setRecentConnectionNoteOp,
   updateConnectionMembersOp
 } from './connection-ops'
 
@@ -290,6 +291,57 @@ describeIf('connection-ops history recording', () => {
         )
       }
     }
+
+    db.close()
+  })
+
+  it('getRecentConnectionsOp surfaces the stored note on entries (null when unset)', async () => {
+    stubHome()
+    const db = makeDb()
+
+    const projectA = seedProject(db, 'proja')
+    const projectB = seedProject(db, 'projb')
+    const worktreeA = seedWorktree(db, projectA, 'main')
+    const worktreeB = seedWorktree(db, projectB, 'main')
+    await createConnectionOp(db, [worktreeA.id, worktreeB.id])
+
+    let result = getRecentConnectionsOp(db)
+    expect(result.success).toBe(true)
+    expect(result.entries![0].note).toBeNull()
+
+    const row = db.getRecentConnectionHistory()[0]
+    expect(db.setConnectionHistoryNote(row.id, 'urgent client work')).toBe(true)
+
+    result = getRecentConnectionsOp(db)
+    expect(result.entries![0].note).toBe('urgent client work')
+
+    db.close()
+  })
+
+  it('setRecentConnectionNoteOp trims, clears on empty, and reports missing entries', async () => {
+    stubHome()
+    const db = makeDb()
+
+    const projectA = seedProject(db, 'proja')
+    const projectB = seedProject(db, 'projb')
+    const worktreeA = seedWorktree(db, projectA, 'main')
+    const worktreeB = seedWorktree(db, projectB, 'main')
+    await createConnectionOp(db, [worktreeA.id, worktreeB.id])
+    const row = db.getRecentConnectionHistory()[0]
+
+    expect(setRecentConnectionNoteOp(db, row.id, '  my note  ')).toEqual({ success: true })
+    expect(db.getRecentConnectionHistory()[0].note).toBe('my note')
+
+    expect(setRecentConnectionNoteOp(db, row.id, '   ')).toEqual({ success: true })
+    expect(db.getRecentConnectionHistory()[0].note).toBeNull()
+
+    expect(setRecentConnectionNoteOp(db, row.id, null)).toEqual({ success: true })
+    expect(db.getRecentConnectionHistory()[0].note).toBeNull()
+
+    expect(setRecentConnectionNoteOp(db, 'missing-id', 'x')).toEqual({
+      success: false,
+      error: 'Recent connection not found'
+    })
 
     db.close()
   })

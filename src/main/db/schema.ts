@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 36
+export const CURRENT_SCHEMA_VERSION = 37
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -649,5 +649,12 @@ DROP TABLE IF EXISTS diff_comments;`
       DROP INDEX IF EXISTS idx_connection_history_last_used;
       DROP TABLE IF EXISTS connection_history;
     `
+  },
+  {
+    version: 37,
+    name: 'add_connection_history_note',
+    up: `-- NOTE: ALTER TABLE for connection_history.note is handled idempotently by
+         -- ensureConnectionTables() in database.ts to avoid "duplicate column" errors.`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
   }
 ]

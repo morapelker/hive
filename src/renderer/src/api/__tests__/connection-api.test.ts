@@ -317,7 +317,8 @@ describe('connectionApi', () => {
             { id: 'project-2', name: 'Project 2', path: '/tmp/project-2' }
           ],
           last_used_at: '2026-05-28T00:00:00.000Z',
-          use_count: 3
+          use_count: 3,
+          note: null
         }
       ]
     }
@@ -328,5 +329,27 @@ describe('connectionApi', () => {
 
     await expect(connectionApi.getRecentConnections()).resolves.toBe(result)
     expect(request).toHaveBeenCalledWith('connectionOps.getRecentConnections', {})
+  })
+
+  it('routes setRecentConnectionNote through the renderer RPC client', async () => {
+    const result = { success: true }
+    const request = vi.fn().mockResolvedValue(result)
+    const subscribe = vi.fn()
+
+    setRendererRpcClient({ request, subscribe })
+
+    await expect(connectionApi.setRecentConnectionNote('recent-1', 'my note')).resolves.toBe(
+      result
+    )
+    expect(request).toHaveBeenCalledWith('connectionOps.setRecentConnectionNote', {
+      entryId: 'recent-1',
+      note: 'my note'
+    })
+
+    await expect(connectionApi.setRecentConnectionNote('recent-1', null)).resolves.toBe(result)
+    expect(request).toHaveBeenCalledWith('connectionOps.setRecentConnectionNote', {
+      entryId: 'recent-1',
+      note: null
+    })
   })
 })

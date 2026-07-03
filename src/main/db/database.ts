@@ -640,11 +640,14 @@ export class DatabaseService {
         project_ids TEXT NOT NULL,
         last_used_at TEXT NOT NULL,
         use_count INTEGER NOT NULL DEFAULT 1,
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        note TEXT DEFAULT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_connection_history_last_used
         ON connection_history(last_used_at DESC);
     `)
+
+    this.safeAddColumn('connection_history', 'note', 'TEXT DEFAULT NULL')
 
     this.safeAddColumn(
       'sessions',
@@ -2256,6 +2259,12 @@ export class DatabaseService {
     return db
       .prepare('SELECT * FROM connection_history WHERE project_set_key = ?')
       .get(key) as ConnectionHistoryEntry
+  }
+
+  setConnectionHistoryNote(id: string, note: string | null): boolean {
+    const db = this.getDb()
+    const result = db.prepare('UPDATE connection_history SET note = ? WHERE id = ?').run(note, id)
+    return result.changes > 0
   }
 
   getRecentConnectionHistory(limit = 50): ConnectionHistoryEntry[] {

@@ -116,6 +116,14 @@ export const connectionApi = {
       'connectionOps.setPinned',
       { connectionId, pinned }
     ),
+  setRecentConnectionNote: async (
+    entryId: string,
+    note: string | null
+  ): Promise<ConnectionMutationResult> =>
+    getRendererRpcClient().request<ConnectionMutationResult>(
+      'connectionOps.setRecentConnectionNote',
+      { entryId, note }
+    ),
   updateMembers: async (
     connectionId: string,
     worktreeIds: string[]

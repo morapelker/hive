@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { act } from '@testing-library/react'
 import { RecentConnectionsDialog } from '../../../src/renderer/src/components/connections/RecentConnectionsDialog'
@@ -8,7 +8,8 @@ import type { RecentConnectionEntry } from '../../../src/shared/types/connection
 
 const apiMocks = vi.hoisted(() => ({
   connectionApi: {
-    getRecentConnections: vi.fn()
+    getRecentConnections: vi.fn(),
+    setRecentConnectionNote: vi.fn()
   }
 }))
 
@@ -38,8 +39,27 @@ function makeEntry(overrides: Partial<RecentConnectionEntry> = {}): RecentConnec
     ],
     last_used_at: new Date(Date.now() - 5 * 60000).toISOString(),
     use_count: 3,
+    note: null,
     ...overrides
   }
+}
+
+function makeSecondEntry(overrides: Partial<RecentConnectionEntry> = {}): RecentConnectionEntry {
+  return makeEntry({
+    id: 'hist-2',
+    project_set_key: 'proj-3,proj-4',
+    projects: [
+      { id: 'proj-3', name: 'Api', path: '/repos/api' },
+      { id: 'proj-4', name: 'Docs', path: '/repos/docs' }
+    ],
+    ...overrides
+  })
+}
+
+async function flush(): Promise<void> {
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 10))
+  })
 }
 
 describe('Recent Connections Dialog', () => {
@@ -202,5 +222,164 @@ describe('Recent Connections Dialog', () => {
 
     expect(quickCreateConnection).toHaveBeenCalledWith(entry.projects)
     expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  test('filter input narrows rows by project name, case-insensitively', async () => {
+    const user = userEvent.setup()
+    const entryA = makeEntry()
+    const entryB = makeSecondEntry()
+    mockConnectionApi.getRecentConnections.mockResolvedValue({
+      success: true,
+      entries: [entryA, entryB]
+    })
+
+    render(<RecentConnectionsDialog open={true} onOpenChange={vi.fn()} />)
+    await flush()
+
+    expect(screen.getByTestId('recent-connection-row-hist-1')).toBeInTheDocument()
+    expect(screen.getByTestId('recent-connection-row-hist-2')).toBeInTheDocument()
+
+    await user.type(screen.getByTestId('recent-connections-filter'), 'FRONT')
+
+    expect(screen.getByTestId('recent-connection-row-hist-1')).toBeInTheDocument()
+    expect(screen.queryByTestId('recent-connection-row-hist-2')).not.toBeInTheDocument()
+
+    await user.clear(screen.getByTestId('recent-connections-filter'))
+
+    expect(screen.getByTestId('recent-connection-row-hist-1')).toBeInTheDocument()
+    expect(screen.getByTestId('recent-connection-row-hist-2')).toBeInTheDocument()
+  })
+
+  test('shows a no-match state when the filter matches nothing', async () => {
+    const user = userEvent.setup()
+    mockConnectionApi.getRecentConnections.mockResolvedValue({
+      success: true,
+      entries: [makeEntry()]
+    })
+
+    render(<RecentConnectionsDialog open={true} onOpenChange={vi.fn()} />)
+    await flush()
+
+    await user.type(screen.getByTestId('recent-connections-filter'), 'zzz-no-match')
+
+    expect(screen.getByTestId('recent-connections-no-match')).toBeInTheDocument()
+    expect(screen.queryByTestId('recent-connections-empty')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('recent-connection-row-hist-1')).not.toBeInTheDocument()
+  })
+
+  test('filter matches the note text', async () => {
+    const user = userEvent.setup()
+    const entryA = makeEntry()
+    const entryB = makeSecondEntry({ note: 'urgent hotfix' })
+    mockConnectionApi.getRecentConnections.mockResolvedValue({
+      success: true,
+      entries: [entryA, entryB]
+    })
+
+    render(<RecentConnectionsDialog open={true} onOpenChange={vi.fn()} />)
+    await flush()
+
+    await user.type(screen.getByTestId('recent-connections-filter'), 'urgent')
+
+    expect(screen.queryByTestId('recent-connection-row-hist-1')).not.toBeInTheDocument()
+    expect(screen.getByTestId('recent-connection-row-hist-2')).toBeInTheDocument()
+  })
+
+  test('filtering out the selected row disables Create', async () => {
+    const user = userEvent.setup()
+    const entryA = makeEntry()
+    const entryB = makeSecondEntry()
+    mockConnectionApi.getRecentConnections.mockResolvedValue({
+      success: true,
+      entries: [entryA, entryB]
+    })
+
+    render(<RecentConnectionsDialog open={true} onOpenChange={vi.fn()} />)
+    await flush()
+
+    await user.click(screen.getByTestId('recent-connection-row-hist-1'))
+    const createButton = screen.getByTestId('recent-connections-create-button')
+    expect(createButton).not.toBeDisabled()
+
+    await user.type(screen.getByTestId('recent-connections-filter'), 'api')
+
+    expect(screen.queryByTestId('recent-connection-row-hist-1')).not.toBeInTheDocument()
+    expect(createButton).toBeDisabled()
+  })
+
+  test('renders the note as a styled prefix only when present', async () => {
+    const entryA = makeEntry({ note: 'urgent' })
+    const entryB = makeSecondEntry()
+    mockConnectionApi.getRecentConnections.mockResolvedValue({
+      success: true,
+      entries: [entryA, entryB]
+    })
+
+    render(<RecentConnectionsDialog open={true} onOpenChange={vi.fn()} />)
+    await flush()
+
+    expect(screen.getByTestId('recent-connection-note-hist-1')).toHaveTextContent('urgent')
+    expect(screen.queryByTestId('recent-connection-note-hist-2')).not.toBeInTheDocument()
+  })
+
+  test('right-click, Add note, then Enter saves via the API and shows the prefix', async () => {
+    const user = userEvent.setup()
+    const entry = makeEntry()
+    mockConnectionApi.getRecentConnections.mockResolvedValue({ success: true, entries: [entry] })
+    mockConnectionApi.setRecentConnectionNote.mockResolvedValue({ success: true })
+
+    render(<RecentConnectionsDialog open={true} onOpenChange={vi.fn()} />)
+    await flush()
+
+    fireEvent.contextMenu(screen.getByTestId('recent-connection-row-hist-1'))
+    await user.click(await screen.findByText('Add note'))
+
+    const input = await screen.findByTestId('recent-connection-note-input')
+    await user.type(input, 'ship it{Enter}')
+    await flush()
+
+    expect(mockConnectionApi.setRecentConnectionNote).toHaveBeenCalledWith('hist-1', 'ship it')
+    expect(screen.queryByTestId('recent-connection-note-input')).not.toBeInTheDocument()
+    expect(screen.getByTestId('recent-connection-note-hist-1')).toHaveTextContent('ship it')
+  })
+
+  test('Escape cancels the note edit without calling the API', async () => {
+    const user = userEvent.setup()
+    const entry = makeEntry()
+    mockConnectionApi.getRecentConnections.mockResolvedValue({ success: true, entries: [entry] })
+
+    render(<RecentConnectionsDialog open={true} onOpenChange={vi.fn()} />)
+    await flush()
+
+    fireEvent.contextMenu(screen.getByTestId('recent-connection-row-hist-1'))
+    await user.click(await screen.findByText('Add note'))
+
+    const input = await screen.findByTestId('recent-connection-note-input')
+    await user.type(input, 'discard me{Escape}')
+    await flush()
+
+    expect(mockConnectionApi.setRecentConnectionNote).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('recent-connection-note-input')).not.toBeInTheDocument()
+    // The dialog itself stays open.
+    expect(screen.getByTestId('recent-connections-dialog')).toBeInTheDocument()
+  })
+
+  test('Remove note is offered for noted entries and clears via the API', async () => {
+    const user = userEvent.setup()
+    const entry = makeEntry({ note: 'stale note' })
+    mockConnectionApi.getRecentConnections.mockResolvedValue({ success: true, entries: [entry] })
+    mockConnectionApi.setRecentConnectionNote.mockResolvedValue({ success: true })
+
+    render(<RecentConnectionsDialog open={true} onOpenChange={vi.fn()} />)
+    await flush()
+
+    fireEvent.contextMenu(screen.getByTestId('recent-connection-row-hist-1'))
+    // A noted entry offers Edit (not Add) alongside Remove.
+    expect(await screen.findByText('Edit note')).toBeInTheDocument()
+    await user.click(screen.getByText('Remove note'))
+    await flush()
+
+    expect(mockConnectionApi.setRecentConnectionNote).toHaveBeenCalledWith('hist-1', null)
+    expect(screen.queryByTestId('recent-connection-note-hist-1')).not.toBeInTheDocument()
   })
 })

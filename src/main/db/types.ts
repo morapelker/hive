@@ -461,6 +461,7 @@ export interface ConnectionHistoryEntry {
   last_used_at: string
   use_count: number
   created_at: string
+  note: string | null
 }
 
 // Database response types for queries

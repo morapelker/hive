@@ -813,7 +813,8 @@ describe('connection ops RPC mocked provider', () => {
             { id: 'project-2', name: 'Other', path: '/tmp/other' }
           ],
           last_used_at: '2026-05-26T00:00:00.000Z',
-          use_count: 3
+          use_count: 3,
+          note: 'demo note'
         }
       ]
     }
@@ -862,5 +863,89 @@ describe('connection ops RPC mocked provider', () => {
       ok: false,
       error: { code: 'VALIDATION_FAILED' }
     })
+  })
+
+  it('routes connectionOps.setRecentConnectionNote to the injected provider service', async () => {
+    const result = { success: true }
+    const setRecentConnectionNote = vi.fn(() => Effect.succeed(result))
+    const service = { setRecentConnectionNote } as unknown as ConnectionOpsRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      connectionOps: service
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'connection-set-recent-note-1',
+        method: 'connectionOps.setRecentConnectionNote',
+        params: { entryId: 'history-1', note: 'my note' }
+      })
+    )
+
+    expect(setRecentConnectionNote).toHaveBeenCalledWith('history-1', 'my note')
+    expect(response).toEqual({
+      id: 'connection-set-recent-note-1',
+      ok: true,
+      value: result
+    })
+  })
+
+  it('routes connectionOps.setRecentConnectionNote with a null note (clear)', async () => {
+    const result = { success: true }
+    const setRecentConnectionNote = vi.fn(() => Effect.succeed(result))
+    const service = { setRecentConnectionNote } as unknown as ConnectionOpsRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      connectionOps: service
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'connection-set-recent-note-clear',
+        method: 'connectionOps.setRecentConnectionNote',
+        params: { entryId: 'history-1', note: null }
+      })
+    )
+
+    expect(setRecentConnectionNote).toHaveBeenCalledWith('history-1', null)
+    expect(response).toEqual({
+      id: 'connection-set-recent-note-clear',
+      ok: true,
+      value: result
+    })
+  })
+
+  it('validates connectionOps.setRecentConnectionNote params before calling the provider service', async () => {
+    const setRecentConnectionNote = vi.fn(() => Effect.succeed({ success: true }))
+    const service = { setRecentConnectionNote } as unknown as ConnectionOpsRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      connectionOps: service
+    })
+
+    const invalidParams = [
+      { note: 'missing entry id' },
+      { entryId: '', note: 'empty entry id' },
+      { entryId: 'history-1', note: 42 },
+      { entryId: 'history-1', note: 'extra key', extra: true }
+    ]
+
+    for (const [index, params] of invalidParams.entries()) {
+      const response = await Effect.runPromise(
+        router.handle({
+          id: `connection-set-recent-note-invalid-${index}`,
+          method: 'connectionOps.setRecentConnectionNote',
+          params
+        })
+      )
+
+      expect(response).toMatchObject({
+        id: `connection-set-recent-note-invalid-${index}`,
+        ok: false,
+        error: { code: 'VALIDATION_FAILED' }
+      })
+    }
+
+    expect(setRecentConnectionNote).not.toHaveBeenCalled()
   })
 })
