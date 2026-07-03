@@ -21,6 +21,8 @@ const mocks = vi.hoisted(() => {
     getLastClaudeCliStatus: vi.fn(),
     publishClaudeCliStatus: vi.fn(),
     subscribeClaudeCliStatus: vi.fn(() => vi.fn()),
+    clearClaudeCliInteractions: vi.fn(),
+    clearAllClaudeCliInteractions: vi.fn(),
     ptyService: {
       has: vi.fn(() => false),
       create: vi.fn(() => ({ cols: 120, rows: 40 })),
@@ -120,6 +122,11 @@ vi.mock('./claude-hook-server', () => ({
 
 vi.mock('../desktop/backend-event-publisher', () => ({
   publishDesktopBackendEvent: mocks.publishDesktopBackendEvent
+}))
+
+vi.mock('./claude-cli-interaction-ledger', () => ({
+  clearClaudeCliInteractions: mocks.clearClaudeCliInteractions,
+  clearAllClaudeCliInteractions: mocks.clearAllClaudeCliInteractions
 }))
 
 import type { Session } from '../db/types'
@@ -484,7 +491,7 @@ describe('Claude CLI terminal hook status wiring', () => {
       }
     )
 
-    it.each(['planning', 'permission'])(
+    it.each(['planning', 'permission', 'answering'])(
       'publishes completed when Escape is typed while %s',
       async (status) => {
         await createClaudeCliTerminal('hive-session-1', {})
@@ -522,7 +529,7 @@ describe('Claude CLI terminal hook status wiring', () => {
       }
     )
 
-    it.each(['completed', 'plan_ready', 'answering', undefined])(
+    it.each(['completed', 'plan_ready', undefined])(
       'ignores Escape when the last published status is %s',
       async (status) => {
         await createClaudeCliTerminal('hive-session-1', {})
@@ -534,6 +541,64 @@ describe('Claude CLI terminal hook status wiring', () => {
         expect(mocks.publishClaudeCliStatus).not.toHaveBeenCalled()
       }
     )
+  })
+
+  describe('interaction ledger clears', () => {
+    it('clears the session ledger when a Claude CLI PTY starts, so restarts never inherit a stale latch', async () => {
+      await createClaudeCliTerminal('hive-session-1', {})
+
+      expect(mocks.clearClaudeCliInteractions).toHaveBeenCalledWith('hive-session-1')
+    })
+
+    it.each(['\x1b', '\x03'])(
+      'clears the session ledger on user interrupt %j so a phantom permission cannot re-surface',
+      async (key) => {
+        await createClaudeCliTerminal('hive-session-1', {})
+        mocks.getLastClaudeCliStatus.mockReturnValue('permission')
+        mocks.clearClaudeCliInteractions.mockClear()
+
+        handleClaudeCliTerminalInput('hive-session-1', key)
+
+        expect(mocks.clearClaudeCliInteractions).toHaveBeenCalledWith('hive-session-1')
+      }
+    )
+
+    it('clears the ledger on Escape while answering — no hook fires for an escaped question', async () => {
+      await createClaudeCliTerminal('hive-session-1', {})
+      mocks.getLastClaudeCliStatus.mockReturnValue('answering')
+      mocks.clearClaudeCliInteractions.mockClear()
+
+      handleClaudeCliTerminalInput('hive-session-1', '\x1b')
+
+      expect(mocks.clearClaudeCliInteractions).toHaveBeenCalledWith('hive-session-1')
+    })
+
+    it('clears the session ledger when the tracked PTY exits', async () => {
+      await createClaudeCliTerminal('hive-session-1', {})
+      mocks.clearClaudeCliInteractions.mockClear()
+
+      mocks.exitCallbacks.get('hive-session-1')?.(9)
+
+      expect(mocks.clearClaudeCliInteractions).toHaveBeenCalledWith('hive-session-1')
+    })
+
+    it('clears the session ledger when the terminal is destroyed', async () => {
+      await createClaudeCliTerminal('hive-session-1', {})
+      mocks.clearClaudeCliInteractions.mockClear()
+
+      destroyNodePtyTerminal('hive-session-1')
+
+      expect(mocks.clearClaudeCliInteractions).toHaveBeenCalledWith('hive-session-1')
+    })
+
+    it('clears all ledgers on cleanupTerminals', async () => {
+      await createClaudeCliTerminal('hive-session-1', {})
+      mocks.clearAllClaudeCliInteractions.mockClear()
+
+      cleanupTerminals()
+
+      expect(mocks.clearAllClaudeCliInteractions).toHaveBeenCalled()
+    })
   })
 
   it('removes the Claude CLI PTY-exit safety net when the terminal is destroyed', async () => {

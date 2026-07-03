@@ -8,6 +8,10 @@ import {
   subscribeClaudeCliStatus,
   type ClaudeCliStatusPayload
 } from './claude-hook-server'
+import {
+  clearAllClaudeCliInteractions,
+  clearClaudeCliInteractions
+} from './claude-cli-interaction-ledger'
 import { logClaudeBinaryVersion, resolveClaudeBinaryPath } from './claude-binary-resolver'
 import { buildClaudeCliPtySpawn } from './claude-cli-spawner'
 import { externalizeGoalHandoffPlan } from './claude-cli-plan-handoff'
@@ -57,6 +61,8 @@ function armClaudePlanFollowupWatcher(sessionId: string): void {
     sessionId,
     watchForClaudePlanFollowup(source.worktreePath, source.claudeSessionId, () => {
       closeClaudePlanFollowupWatcher(sessionId)
+      // Bypasses the interaction ledger deliberately: a plan followup implies a
+      // user prompt, whose UserPromptSubmit hook clears the ledger anyway.
       publishClaudeCliStatus({
         sessionId,
         status: 'planning',
@@ -100,21 +106,25 @@ function ensureClaudeCliStatusSubscription(): void {
 // Lone Escape / Ctrl+C. A bare Escape keypress arrives as exactly '\x1b';
 // multi-byte sequences (arrow keys, bracketed pastes) never match exactly.
 const INTERRUPT_KEYS = new Set(['\x1b', '\x03'])
-const INTERRUPTIBLE_STATUSES = new Set(['working', 'planning', 'permission'])
+const INTERRUPTIBLE_STATUSES = new Set(['working', 'planning', 'permission', 'answering'])
 
 /**
  * Claude Code never fires its Stop hook when the user interrupts a running
  * turn with Escape/Ctrl+C, and the CLI keeps running so the pty_exit fallback
  * never fires either — the session would stay stuck on 'working'. Mirror the
- * keypress itself into a status update instead. plan_ready/answering are
- * excluded: escaping those dialogs fires PostToolUseFailure hooks that the
- * existing pipeline already handles.
+ * keypress itself into a status update instead. Escaping a question or
+ * permission dialog fires no hook at all (verified empirically), so those
+ * statuses are interruptible too; plan_ready is excluded because rejecting a
+ * plan fires PostToolUseFailure(ExitPlanMode), which the pipeline handles.
  */
 export function handleClaudeCliTerminalInput(terminalId: string, data: string): void {
   if (!claudeCliSessions.has(terminalId)) return
   if (!INTERRUPT_KEYS.has(data)) return
   const last = getLastClaudeCliStatus(terminalId)
   if (!last || !INTERRUPTIBLE_STATUSES.has(last)) return
+  // No hook fires for an interrupted/denied interaction — drop any pending
+  // latch so the next hook cannot re-surface a phantom permission.
+  clearClaudeCliInteractions(terminalId)
   publishClaudeCliStatus({
     sessionId: terminalId,
     status: 'completed',
@@ -134,6 +144,7 @@ export function destroyNodePtyTerminal(terminalId: string): void {
   claudeWatchers.get(terminalId)?.close()
   claudeWatchers.delete(terminalId)
   closeClaudePlanFollowupWatcher(terminalId)
+  clearClaudeCliInteractions(terminalId)
   claudeCliSessions.delete(terminalId)
   claudeCliWorktreeBasenames.delete(terminalId)
   claudeCliTranscriptSources.delete(terminalId)
@@ -199,6 +210,7 @@ function attachNodePtyListeners(terminalId: string): void {
     claudeWatchers.delete(terminalId)
     closeClaudePlanFollowupWatcher(terminalId)
     if (claudeCliSessions.has(terminalId)) {
+      clearClaudeCliInteractions(terminalId)
       publishClaudeCliStatus({
         sessionId: terminalId,
         status: 'completed',
@@ -329,6 +341,8 @@ export async function createClaudeCliTerminal(
       })
     }
     claudeCliSessions.add(sessionId)
+    // A restarted session must never inherit a stale interaction latch.
+    clearClaudeCliInteractions(sessionId)
     claudeCliWorktreeBasenames.set(sessionId, path.basename(worktreePath))
     if (!pendingPrompt) {
       publishClaudeCliStatus({
@@ -377,6 +391,7 @@ export function cleanupTerminals(): void {
   claudeCliWorktreeBasenames.clear()
   claudeCliTranscriptSources.clear()
   claudeCliLastStatus.clear()
+  clearAllClaudeCliInteractions()
   unsubscribeClaudeCliStatus?.()
   unsubscribeClaudeCliStatus = null
   resetAllClaudeCliTitleState()

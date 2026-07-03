@@ -24,6 +24,7 @@ import {
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { checkAutoApprove } from '@/lib/permissionUtils'
 import { isPlanLike } from '@/lib/constants'
+import { shouldPreserveBlockingSessionStatus } from '@/lib/session-status-guards'
 import { handleSessionIdleFollowUp } from '@/lib/session-follow-up-dispatch'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import {
@@ -561,12 +562,16 @@ export function useOpenCodeGlobalListener(): void {
         // Don't overwrite plan_ready — session is blocked waiting for plan approval
         if (useSessionStore.getState().getPendingPlan(sessionId)) return
 
-        // Don't overwrite command_approval — session is blocked waiting for command approval
+        // Don't overwrite blocking statuses (command approval, permission, or a
+        // still-pending question) — the session is waiting on the user.
         const currentStatus = useWorktreeStatusStore.getState().sessionStatuses[sessionId]
-        if (currentStatus?.status === 'command_approval') return
-
-        // Don't overwrite permission — session is blocked waiting for permission approval
-        if (currentStatus?.status === 'permission') return
+        if (
+          shouldPreserveBlockingSessionStatus(
+            currentStatus?.status,
+            useQuestionStore.getState().getQuestions(sessionId).length > 0
+          )
+        )
+          return
 
         if (sessionId !== activeId) {
           const currentMode = useSessionStore.getState().getSessionMode(sessionId)
@@ -642,12 +647,16 @@ export function useOpenCodeGlobalListener(): void {
       // Don't overwrite plan_ready — session is blocked waiting for plan approval
       if (useSessionStore.getState().getPendingPlan(sessionId)) return
 
-      // Don't overwrite command_approval — session is blocked waiting for command approval
+      // Don't overwrite blocking statuses (command approval, permission, or a
+      // still-pending question) — the session is waiting on the user.
       const statusForIdle = useWorktreeStatusStore.getState().sessionStatuses[sessionId]
-      if (statusForIdle?.status === 'command_approval') return
-
-      // Don't overwrite permission — session is blocked waiting for permission approval
-      if (statusForIdle?.status === 'permission') return
+      if (
+        shouldPreserveBlockingSessionStatus(
+          statusForIdle?.status,
+          useQuestionStore.getState().getQuestions(sessionId).length > 0
+        )
+      )
+        return
 
       // Active session is handled by SessionView.
       if (sessionId === activeId) return
@@ -657,7 +666,10 @@ export function useOpenCodeGlobalListener(): void {
         isBlocked: () => {
           if (useSessionStore.getState().getPendingPlan(sessionId)) return true
           const current = useWorktreeStatusStore.getState().sessionStatuses[sessionId]
-          return current?.status === 'command_approval' || current?.status === 'permission'
+          return shouldPreserveBlockingSessionStatus(
+            current?.status,
+            useQuestionStore.getState().getQuestions(sessionId).length > 0
+          )
         },
         dequeueFollowUp: () => useSessionStore.getState().dequeueFollowUpMessage(sessionId),
         requeueFollowUp: (message) =>
