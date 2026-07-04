@@ -301,11 +301,11 @@ function ensureDockVisible(reason: string): void {
 
 function registerWindowControlHandlers(): void {
   ipcMain.handle('window:minimize', (event) => {
-    if (event.sender !== mainWindow?.webContents) return
+    if (!mainWindow || event.sender !== mainWindow.webContents) return
     mainWindow.minimize()
   })
   ipcMain.handle('window:maximize', (event) => {
-    if (event.sender !== mainWindow?.webContents) return
+    if (!mainWindow || event.sender !== mainWindow.webContents) return
     if (mainWindow.isMaximized()) {
       mainWindow.unmaximize()
     } else {
@@ -313,11 +313,11 @@ function registerWindowControlHandlers(): void {
     }
   })
   ipcMain.handle('window:close', (event) => {
-    if (event.sender !== mainWindow?.webContents) return
+    if (!mainWindow || event.sender !== mainWindow.webContents) return
     mainWindow.close()
   })
   ipcMain.handle('window:isMaximized', (event) => {
-    if (event.sender !== mainWindow?.webContents) return false
+    if (!mainWindow || event.sender !== mainWindow.webContents) return false
     return mainWindow.isMaximized()
   })
 }
