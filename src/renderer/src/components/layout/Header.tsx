@@ -126,11 +126,16 @@ export function Header(): React.JSX.Element {
     prevBoardActive.current = isBoardViewActive
   }, [isBoardViewActive])
 
+  const windowControls =
+    !isMac() && typeof window.desktopBridge?.windowMinimize === 'function'
+      ? window.desktopBridge
+      : null
+
   const [isMaximized, setIsMaximized] = useState(false)
   useEffect(() => {
-    if (isMac()) return
-    void window.desktopBridge.windowIsMaximized().then(setIsMaximized)
-  }, [])
+    if (!windowControls) return
+    void windowControls.windowIsMaximized().then(setIsMaximized)
+  }, [windowControls])
 
   const hasProjects = projects.length > 0
 
@@ -773,7 +778,7 @@ export function Header(): React.JSX.Element {
             <PanelRightClose className="h-4 w-4" />
           )}
         </Button>
-        {!isMac() && (
+        {windowControls && (
           <div
             className="flex items-center -mr-4"
             style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
@@ -782,7 +787,7 @@ export function Header(): React.JSX.Element {
               variant="ghost"
               size="icon"
               className="h-12 w-12 rounded-none"
-              onClick={() => void window.desktopBridge.windowMinimize()}
+              onClick={() => void windowControls.windowMinimize()}
               title="Minimize"
               data-testid="window-minimize"
             >
@@ -793,7 +798,10 @@ export function Header(): React.JSX.Element {
               size="icon"
               className="h-12 w-12 rounded-none"
               onClick={() => {
-                void window.desktopBridge.windowMaximize().then(() => setIsMaximized((v) => !v))
+                void windowControls
+                  .windowMaximize()
+                  .then(() => windowControls.windowIsMaximized())
+                  .then(setIsMaximized)
               }}
               title={isMaximized ? 'Restore' : 'Maximize'}
               data-testid="window-maximize"
@@ -804,7 +812,7 @@ export function Header(): React.JSX.Element {
               variant="ghost"
               size="icon"
               className="h-12 w-12 rounded-none hover:bg-red-600 hover:text-white"
-              onClick={() => void window.desktopBridge.windowClose()}
+              onClick={() => void windowControls.windowClose()}
               title="Close"
               data-testid="window-close"
             >

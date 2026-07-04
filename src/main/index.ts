@@ -300,21 +300,26 @@ function ensureDockVisible(reason: string): void {
 }
 
 function registerWindowControlHandlers(): void {
-  ipcMain.handle('window:minimize', () => {
-    mainWindow?.minimize()
+  ipcMain.handle('window:minimize', (event) => {
+    if (event.sender !== mainWindow?.webContents) return
+    mainWindow.minimize()
   })
-  ipcMain.handle('window:maximize', () => {
-    if (!mainWindow) return
+  ipcMain.handle('window:maximize', (event) => {
+    if (event.sender !== mainWindow?.webContents) return
     if (mainWindow.isMaximized()) {
       mainWindow.unmaximize()
     } else {
       mainWindow.maximize()
     }
   })
-  ipcMain.handle('window:close', () => {
-    mainWindow?.close()
+  ipcMain.handle('window:close', (event) => {
+    if (event.sender !== mainWindow?.webContents) return
+    mainWindow.close()
   })
-  ipcMain.handle('window:isMaximized', () => mainWindow?.isMaximized() ?? false)
+  ipcMain.handle('window:isMaximized', (event) => {
+    if (event.sender !== mainWindow?.webContents) return false
+    return mainWindow.isMaximized()
+  })
 }
 
 function createWindow(backendBootstrap?: LocalEnvironmentBootstrap | null): void {
