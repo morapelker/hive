@@ -4,7 +4,11 @@ import type { OpenCodeStreamEvent } from '@shared/types/opencode'
 import { TELEGRAM_CLAUDE_CLI_EVENT_CHANNEL } from '@shared/telegram-events'
 import { agentEventBus } from './agent-event-bus'
 import { publishDesktopBackendEvent } from '../desktop/backend-event-publisher'
-import { CliHookHoldCore, type ClaudeHookBody } from './cli-hook-hold-core'
+import {
+  CliHookHoldCore,
+  type ClaudeHookBody,
+  type CliHookRouteContext
+} from './cli-hook-hold-core'
 
 export type { ClaudeHookBody } from './cli-hook-hold-core'
 
@@ -30,8 +34,17 @@ class ClaudeCliTelegramBridge {
     return () => this.emitter.off('event', listener)
   }
 
-  onHook(sessionId: string, body: ClaudeHookBody, res: ServerResponse): boolean {
-    return this.core.onHook(sessionId, body, res)
+  onHook(
+    sessionId: string,
+    body: ClaudeHookBody,
+    res: ServerResponse,
+    ctx?: CliHookRouteContext
+  ): boolean {
+    return this.core.onHook(sessionId, body, res, ctx)
+  }
+
+  notifySessionIdle(sessionId: string, lastAssistantMessage?: string): void {
+    this.core.emitSessionIdle(sessionId, lastAssistantMessage)
   }
 
   hasPendingQuestion(requestId: string): boolean {

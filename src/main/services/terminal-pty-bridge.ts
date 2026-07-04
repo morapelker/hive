@@ -12,6 +12,10 @@ import {
   clearAllClaudeCliInteractions,
   clearClaudeCliInteractions
 } from './claude-cli-interaction-ledger'
+import {
+  clearAllClaudeCliSubagentTracking,
+  clearClaudeCliSubagentTracking
+} from './claude-cli-subagent-tracker'
 import { logClaudeBinaryVersion, resolveClaudeBinaryPath } from './claude-binary-resolver'
 import { buildClaudeCliPtySpawn } from './claude-cli-spawner'
 import { externalizeGoalHandoffPlan } from './claude-cli-plan-handoff'
@@ -125,6 +129,7 @@ export function handleClaudeCliTerminalInput(terminalId: string, data: string): 
   // No hook fires for an interrupted/denied interaction — drop any pending
   // latch so the next hook cannot re-surface a phantom permission.
   clearClaudeCliInteractions(terminalId)
+  clearClaudeCliSubagentTracking(terminalId)
   publishClaudeCliStatus({
     sessionId: terminalId,
     status: 'completed',
@@ -145,6 +150,7 @@ export function destroyNodePtyTerminal(terminalId: string): void {
   claudeWatchers.delete(terminalId)
   closeClaudePlanFollowupWatcher(terminalId)
   clearClaudeCliInteractions(terminalId)
+  clearClaudeCliSubagentTracking(terminalId)
   claudeCliSessions.delete(terminalId)
   claudeCliWorktreeBasenames.delete(terminalId)
   claudeCliTranscriptSources.delete(terminalId)
@@ -211,6 +217,7 @@ function attachNodePtyListeners(terminalId: string): void {
     closeClaudePlanFollowupWatcher(terminalId)
     if (claudeCliSessions.has(terminalId)) {
       clearClaudeCliInteractions(terminalId)
+      clearClaudeCliSubagentTracking(terminalId)
       publishClaudeCliStatus({
         sessionId: terminalId,
         status: 'completed',
@@ -343,6 +350,9 @@ export async function createClaudeCliTerminal(
     claudeCliSessions.add(sessionId)
     // A restarted session must never inherit a stale interaction latch.
     clearClaudeCliInteractions(sessionId)
+    // ...nor a stale subagent deferral/pending-notification set, which could
+    // otherwise swallow the next turn's Stop after a restart.
+    clearClaudeCliSubagentTracking(sessionId)
     claudeCliWorktreeBasenames.set(sessionId, path.basename(worktreePath))
     if (!pendingPrompt) {
       publishClaudeCliStatus({
@@ -392,6 +402,7 @@ export function cleanupTerminals(): void {
   claudeCliTranscriptSources.clear()
   claudeCliLastStatus.clear()
   clearAllClaudeCliInteractions()
+  clearAllClaudeCliSubagentTracking()
   unsubscribeClaudeCliStatus?.()
   unsubscribeClaudeCliStatus = null
   resetAllClaudeCliTitleState()

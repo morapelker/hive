@@ -18,6 +18,7 @@ interface HookStep {
   id?: string
   status: SessionStatusType | null
   plan?: string
+  prompt?: string
 }
 
 function buildHook(step: HookStep): ParsedClaudeHook {
@@ -25,6 +26,7 @@ function buildHook(step: HookStep): ParsedClaudeHook {
   if (step.tool) hook.tool_name = step.tool
   if (step.id) hook.tool_use_id = step.id
   if (step.plan) hook.tool_input = { plan: step.plan }
+  if (step.prompt !== undefined) hook.prompt = step.prompt
   return hook
 }
 
@@ -269,6 +271,32 @@ describe('plan_ready latch', () => {
 
     const released = process({ event: 'PostToolUse', tool: 'Bash', status: 'working' })
     expect(statuses(released)).toEqual(['working', 'plan_ready'])
+  })
+})
+
+describe('task-notification resume does not reset a latched interaction', () => {
+  it('keeps a latch alive across a task-notification UserPromptSubmit but a plain prompt clears it', () => {
+    expect(
+      statuses(process({ event: 'PreToolUse', tool: 'AskUserQuestion', status: 'answering' }))
+    ).toEqual(['answering'])
+    expect(hasBlockingClaudeCliInteraction(SESSION)).toBe(true)
+
+    // A background-subagent resume turn is not a user turn boundary: the
+    // latch must survive it, and its own publish is suppressed while pending.
+    expect(
+      process({
+        event: 'UserPromptSubmit',
+        status: 'working',
+        prompt: '<task-notification>\n<task-id>a</task-id>\n</task-notification>'
+      })
+    ).toEqual([])
+    expect(hasBlockingClaudeCliInteraction(SESSION)).toBe(true)
+
+    // A real user turn still resets normally.
+    expect(
+      statuses(process({ event: 'UserPromptSubmit', status: 'working', prompt: 'please continue' }))
+    ).toEqual(['working'])
+    expect(hasBlockingClaudeCliInteraction(SESSION)).toBe(false)
   })
 })
 
