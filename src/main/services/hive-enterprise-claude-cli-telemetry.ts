@@ -5,6 +5,7 @@ import { getDatabase } from '../db'
 import type { Project } from '../db/types'
 import { GitService } from './git-service'
 import { createLogger } from './logger'
+import { isTaskNotificationPrompt } from './claude-cli-subagent-tracker'
 
 const RecordPromptStartDocument = /* GraphQL */ `
   mutation HiveEnterpriseRecordPromptStart($input: PromptStartInput!) {
@@ -432,6 +433,15 @@ export async function handleClaudeCliHiveTelemetryHook(
     }
 
     if (hook.hook_event_name === 'UserPromptSubmit') {
+      // A background-subagent task-notification resume is an auto-generated
+      // continuation turn, not a real user prompt. Since a deferred Stop
+      // already skips telemetry for the turn that triggered it, treating this
+      // resume as a new prompt start would overwrite (clobber) the real
+      // prompt's still-active record in `activePromptBySession`, orphaning it
+      // and mis-attributing the eventual recordIdle to a phantom
+      // `<task-notification>…` prompt. Skip it so the real prompt's record
+      // survives through to the final passing Stop.
+      if (isTaskNotificationPrompt(hook.prompt)) return
       await recordStart(sessionId, hook, resolvedDeps)
       return
     }

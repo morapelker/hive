@@ -4,7 +4,7 @@ import { STATUS_PRIORITY, type SessionStatusType } from '@shared/types/session-s
 import type { ClaudeCliStatusPayload, ParsedClaudeHook } from './claude-hook-server'
 // Runtime import: claude-cli-subagent-tracker only *type*-imports from
 // claude-hook-server, so this does not create a cycle.
-import { parseTaskNotificationIds } from './claude-cli-subagent-tracker'
+import { isTaskNotificationPrompt } from './claude-cli-subagent-tracker'
 
 /**
  * Per-session ledger of blocking interactions (questions, permission prompts,
@@ -152,8 +152,7 @@ export function processClaudeCliHook(
   // boundary: it must not reset a latched question/permission/plan the way a
   // real UserPromptSubmit would. It falls through to the normal non-reset
   // flow below, which suppresses its publish while a latch is pending.
-  const isTaskNotificationResume =
-    event === 'UserPromptSubmit' && parseTaskNotificationIds(hook.prompt).length > 0
+  const isTaskNotificationResume = event === 'UserPromptSubmit' && isTaskNotificationPrompt(hook.prompt)
 
   if (RESET_EVENTS.has(event) && !isTaskNotificationResume) {
     ledgers.delete(sessionId)

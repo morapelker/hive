@@ -13,7 +13,7 @@ import {
 } from './claude-cli-interaction-ledger'
 import {
   clearAllClaudeCliSubagentTracking,
-  parseTaskNotificationIds,
+  isTaskNotificationPrompt,
   processClaudeCliSubagentHook,
   setClaudeCliDeferredCompletionHandler,
   type ClaudeCliBackgroundTask
@@ -179,7 +179,7 @@ function buildStatusMetadata(
     metadata.plan = plan
   }
 
-  if (hook.hook_event_name === 'UserPromptSubmit' && parseTaskNotificationIds(hook.prompt).length > 0) {
+  if (hook.hook_event_name === 'UserPromptSubmit' && isTaskNotificationPrompt(hook.prompt)) {
     metadata.taskNotification = true
   }
 
@@ -317,7 +317,7 @@ async function handleHook(req: http.IncomingMessage, res: http.ServerResponse): 
         body.hook_event_name === 'UserPromptSubmit' &&
         typeof body.prompt === 'string' &&
         body.prompt.trim().length > 0 &&
-        parseTaskNotificationIds(body.prompt).length === 0 &&
+        !isTaskNotificationPrompt(body.prompt) &&
         !firstPromptAnnounced.has(route.sessionId)
       ) {
         firstPromptAnnounced.add(route.sessionId)
@@ -354,6 +354,12 @@ export async function getClaudeHookServer(): Promise<{ port: number }> {
   setClaudeCliDeferredCompletionHandler((sessionId, payload, lastAssistantMessage) => {
     if (hasBlockingClaudeCliInteraction(sessionId)) return false
     clearClaudeCliInteractions(sessionId)
+    // Intentionally does not record telemetry idle here (no recordIdle call):
+    // this path fires when the resume turn's own Stop never showed up, so
+    // there is no matching hook payload to drive recordIdle off of. Known
+    // accepted gap: this can leave a dangling `activePromptBySession` entry
+    // in the telemetry module, which would inflate the *next* turn's usage
+    // delta with this turn's untallied tokens.
     publishClaudeCliStatus({
       ...payload,
       metadata: { ...payload.metadata, reason: 'deferred_completion_watchdog' }

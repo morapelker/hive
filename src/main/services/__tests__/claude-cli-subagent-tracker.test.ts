@@ -6,6 +6,7 @@ import {
   clearClaudeCliSubagentTracking,
   hasPendingClaudeCliSubagentWork,
   isClaudeCliCompletionDeferred,
+  isTaskNotificationPrompt,
   parseTaskNotificationIds,
   processClaudeCliSubagentHook,
   setClaudeCliDeferredCompletionHandler,
@@ -147,6 +148,21 @@ describe('foreground subagents', () => {
   it('a SubagentStop not self-listed in background_tasks leaves nothing pending', () => {
     expect(
       process({ event: 'SubagentStop', agentId: 'a', backgroundTasks: [] })
+    ).toEqual({ kind: 'pass' })
+    expect(hasPendingClaudeCliSubagentWork(SESSION)).toBe(false)
+
+    expect(process({ event: 'Stop', backgroundTasks: [] })).toEqual({ kind: 'pass' })
+  })
+})
+
+describe('isSelfListed requires a running status', () => {
+  it('a SubagentStop whose self-entry is already completed does not add a pending notification', () => {
+    expect(
+      process({
+        event: 'SubagentStop',
+        agentId: 'a',
+        backgroundTasks: [bgTask('a', { status: 'completed' })]
+      })
     ).toEqual({ kind: 'pass' })
     expect(hasPendingClaudeCliSubagentWork(SESSION)).toBe(false)
 
@@ -389,5 +405,26 @@ describe('parseTaskNotificationIds', () => {
 
   it('tolerates leading whitespace before the tag', () => {
     expect(parseTaskNotificationIds(`   \n${notificationPrompt('abc123')}`)).toEqual(['abc123'])
+  })
+})
+
+describe('isTaskNotificationPrompt', () => {
+  it('returns false for non-string prompts', () => {
+    expect(isTaskNotificationPrompt(undefined)).toBe(false)
+    expect(isTaskNotificationPrompt(null)).toBe(false)
+    expect(isTaskNotificationPrompt({ text: 'hi' })).toBe(false)
+  })
+
+  it('returns false for an ordinary user prompt', () => {
+    expect(isTaskNotificationPrompt('please fix the bug')).toBe(false)
+  })
+
+  it('returns true for a marker-prefixed prompt even with zero parseable task-id blocks', () => {
+    expect(isTaskNotificationPrompt('<task-notification></task-notification>')).toBe(true)
+    expect(parseTaskNotificationIds('<task-notification></task-notification>')).toEqual([])
+  })
+
+  it('tolerates leading whitespace before the tag', () => {
+    expect(isTaskNotificationPrompt(`   \n${notificationPrompt('abc123')}`)).toBe(true)
   })
 })

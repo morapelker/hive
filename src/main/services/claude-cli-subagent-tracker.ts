@@ -27,11 +27,10 @@ export interface ClaudeCliBackgroundTask {
   status?: string
 }
 
-export type ClaudeCliTrackedHook = ParsedClaudeHook & {
-  agent_id?: string
-  agent_type?: string
-  background_tasks?: ClaudeCliBackgroundTask[]
-}
+// `ParsedClaudeHook` already declares agent_id/agent_type/background_tasks
+// (claude-hook-server.ts), so this is just a local alias for readability at
+// this module's call sites — not a distinct shape.
+export type ClaudeCliTrackedHook = ParsedClaudeHook
 
 export const SUBAGENT_RESUME_TIMEOUT_MS = 90_000 // deferred with only pending notifications: resume should be near-immediate
 export const SUBAGENT_WATCHDOG_TIMEOUT_MS = 600_000 // deferred with running subagents: long tool calls can be hook-silent for minutes
@@ -60,6 +59,15 @@ interface SessionState {
 }
 
 // sessionId -> tracking state
+//
+// Accepted race: a hook can arrive after a PTY teardown has already cleared
+// this session (Esc/exit) and re-create bounded state for a now-dead session
+// — e.g. a pending-notification entry from a late SubagentStop, or a
+// deferring Stop that arms a timer whose eventual watchdog publish is simply
+// dedup-swallowed by publishClaudeCliStatus/SessionStart clears. This state
+// is bounded and self-heals on the next SessionStart (full clear) or PTY
+// restart, or expires on its own via the watchdog, so it is not worth
+// guarding against here.
 const sessions = new Map<string, SessionState>()
 
 let deferredCompletionHandler: DeferredCompletionHandler | null = null
@@ -72,17 +80,28 @@ export function setClaudeCliDeferredCompletionHandler(h: DeferredCompletionHandl
 }
 
 /**
+ * True iff `prompt` is a string whose trimmed start begins with the
+ * task-notification marker tag. This is the authoritative "is this a
+ * notification resume, not a user-authored prompt" check — it must stay true
+ * even for a marker-prefixed prompt with zero parseable `<task-id>` blocks,
+ * so callers gating turn-boundary behavior (ledger reset, first-prompt
+ * announce, status metadata) should use this rather than checking whether
+ * `parseTaskNotificationIds` returned anything.
+ */
+export function isTaskNotificationPrompt(prompt: unknown): boolean {
+  return typeof prompt === 'string' && prompt.trimStart().startsWith(TASK_NOTIFICATION_PREFIX)
+}
+
+/**
  * Pure parse of a Claude CLI background-task-resume prompt. Not a
  * notification unless the (trimmed) prompt starts with the marker tag; a
  * single resume can carry several `<task-id>` blocks (batch resume).
  */
 export function parseTaskNotificationIds(prompt: unknown): string[] {
-  if (typeof prompt !== 'string') return []
-  const trimmed = prompt.trimStart()
-  if (!trimmed.startsWith(TASK_NOTIFICATION_PREFIX)) return []
+  if (!isTaskNotificationPrompt(prompt)) return []
 
   const ids: string[] = []
-  for (const match of trimmed.matchAll(TASK_ID_PATTERN)) {
+  for (const match of (prompt as string).trimStart().matchAll(TASK_ID_PATTERN)) {
     ids.push(match[1])
   }
   return ids
@@ -150,7 +169,9 @@ function runningSubagentIds(backgroundTasks: ClaudeCliBackgroundTask[] | undefin
 }
 
 function isSelfListed(backgroundTasks: ClaudeCliBackgroundTask[] | undefined, agentId: string): boolean {
-  return (backgroundTasks ?? []).some((task) => task.id === agentId && task.type === 'subagent')
+  return (backgroundTasks ?? []).some(
+    (task) => task.id === agentId && task.type === 'subagent' && task.status === 'running'
+  )
 }
 
 /**
