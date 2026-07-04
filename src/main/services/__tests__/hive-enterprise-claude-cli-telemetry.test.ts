@@ -457,6 +457,104 @@ describe('Claude CLI Hive Enterprise telemetry', () => {
     ])
   })
 
+  it('ignores a task-notification UserPromptSubmit, recording no active prompt', async () => {
+    const db = makeDb({
+      hiveEnterpriseServerUrl: 'https://enterprise.example.com',
+      hiveAuthToken: 'token-1',
+      hiveOrganizationId: 'org-1'
+    })
+
+    await handleClaudeCliHiveTelemetryHook(
+      'hive-session-1',
+      {
+        hook_event_name: 'UserPromptSubmit',
+        prompt: '<task-notification>\n<task-id>a</task-id>\n</task-notification>'
+      },
+      { db, requestGraphql }
+    )
+
+    expect(requestGraphql).not.toHaveBeenCalled()
+
+    // With no active prompt recorded, the eventual Stop is a no-op too.
+    await handleClaudeCliHiveTelemetryHook(
+      'hive-session-1',
+      { hook_event_name: 'Stop' },
+      { db, requestGraphql }
+    )
+    expect(requestGraphql).not.toHaveBeenCalled()
+  })
+
+  it('keeps a real prompt active through a task-notification resume so the final Stop attributes usage to it', async () => {
+    const transcriptPath = makeTranscript(
+      `${assistantLine({ input: 100, output: 5, cacheRead: 20, cacheWrite: 7 })}\n`
+    )
+    const db = makeDb({
+      hiveEnterpriseServerUrl: 'https://enterprise.example.com',
+      hiveAuthToken: 'token-1',
+      hiveOrganizationId: 'org-1'
+    })
+
+    // The real, user-authored prompt.
+    await handleClaudeCliHiveTelemetryHook(
+      'hive-session-1',
+      {
+        hook_event_name: 'UserPromptSubmit',
+        prompt: 'Do the real work',
+        transcript_path: transcriptPath
+      },
+      { db, requestGraphql }
+    )
+    expect(requestGraphql).toHaveBeenCalledTimes(1)
+
+    // A deferred Stop (background subagent still running) is skipped upstream
+    // by claude-hook-server and never reaches this module. The subagent's
+    // completion then resumes the session via a task-notification prompt,
+    // which must NOT clobber the real prompt's still-active record.
+    await handleClaudeCliHiveTelemetryHook(
+      'hive-session-1',
+      {
+        hook_event_name: 'UserPromptSubmit',
+        prompt: '<task-notification>\n<task-id>a</task-id>\n</task-notification>',
+        transcript_path: transcriptPath
+      },
+      { db, requestGraphql }
+    )
+    // No new recordPromptStart — the notification did not start a new prompt.
+    expect(requestGraphql).toHaveBeenCalledTimes(1)
+
+    writeFileSync(
+      transcriptPath,
+      [
+        assistantLine({ input: 100, output: 5, cacheRead: 20, cacheWrite: 7 }),
+        assistantLine({ input: 140, output: 30, cacheRead: 25, cacheWrite: 9 })
+      ].join('\n') + '\n'
+    )
+
+    // The final, passing Stop attributes the entire multi-turn usage delta to
+    // the real prompt's id and baseline.
+    await handleClaudeCliHiveTelemetryHook(
+      'hive-session-1',
+      { hook_event_name: 'Stop', transcript_path: transcriptPath },
+      { db, requestGraphql }
+    )
+
+    expect(requestGraphql).toHaveBeenCalledTimes(2)
+    expect(requestGraphql.mock.calls[1]).toEqual([
+      'https://enterprise.example.com/api/graphql',
+      'token-1',
+      expect.stringContaining('recordPromptIdle'),
+      {
+        input: {
+          promptId: SERVER_PROMPT_ID,
+          inputTokens: 140,
+          outputTokens: 30,
+          cacheReadTokens: 25,
+          cacheWriteTokens: 9
+        }
+      }
+    ])
+  })
+
   it('does not record hooks when Hive Enterprise organization settings are missing', async () => {
     const db = makeDb({
       hiveEnterpriseServerUrl: 'https://enterprise.example.com',

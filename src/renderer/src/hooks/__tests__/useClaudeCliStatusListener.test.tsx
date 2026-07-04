@@ -79,6 +79,7 @@ type SubscribedPayload = {
     hookPath?: string
     toolName?: string
     plan?: string
+    taskNotification?: boolean
   }
 }
 
@@ -319,6 +320,88 @@ describe('useClaudeCliStatusListener', () => {
       hookEventName: 'PostToolUseFailure',
       hookPath: 'tool',
       toolName: 'ExitPlanMode'
+    })
+  })
+
+  describe('background subagent auto-resume (task-notification) publishes', () => {
+    it('preserves plan_ready and does not clear the pending plan when a subagent resume arrives while plan_ready', () => {
+      mocks.sessionStatuses = { 'hive-session-1': { status: 'plan_ready' } }
+      renderHook(() => useClaudeCliStatusListener())
+
+      subscribedCallback?.({
+        sessionId: 'hive-session-1',
+        status: 'working',
+        metadata: { hookEventName: 'UserPromptSubmit', hookPath: 'start', taskNotification: true }
+      })
+
+      expect(mocks.clearPendingPlan).not.toHaveBeenCalled()
+      expect(mocks.lastSendMode.get('hive-session-1')).toBeUndefined()
+      expect(mocks.setSessionStatus).not.toHaveBeenCalled()
+    })
+
+    it('falls through to a plain working status when a subagent resume arrives while not plan_ready', () => {
+      mocks.sessionStatuses = { 'hive-session-1': { status: 'working' } }
+      renderHook(() => useClaudeCliStatusListener())
+
+      subscribedCallback?.({
+        sessionId: 'hive-session-1',
+        status: 'working',
+        metadata: { hookEventName: 'UserPromptSubmit', hookPath: 'start', taskNotification: true }
+      })
+
+      expect(mocks.setSessionStatus).toHaveBeenCalledWith('hive-session-1', 'working', {
+        hookEventName: 'UserPromptSubmit',
+        hookPath: 'start',
+        taskNotification: true
+      })
+    })
+
+    it('falls through to a plain working status when a subagent resume arrives with no prior status', () => {
+      renderHook(() => useClaudeCliStatusListener())
+
+      subscribedCallback?.({
+        sessionId: 'hive-session-1',
+        status: 'working',
+        metadata: { hookEventName: 'UserPromptSubmit', hookPath: 'start', taskNotification: true }
+      })
+
+      expect(mocks.setSessionStatus).toHaveBeenCalledWith('hive-session-1', 'working', {
+        hookEventName: 'UserPromptSubmit',
+        hookPath: 'start',
+        taskNotification: true
+      })
+    })
+
+    it('still performs the human plan-approval transition when a real UserPromptSubmit arrives while plan_ready', () => {
+      mocks.sessionStatuses = { 'hive-session-1': { status: 'plan_ready' } }
+      renderHook(() => useClaudeCliStatusListener())
+
+      subscribedCallback?.({
+        sessionId: 'hive-session-1',
+        status: 'working',
+        metadata: { hookEventName: 'UserPromptSubmit', hookPath: 'start' }
+      })
+
+      expect(mocks.lastSendMode.get('hive-session-1')).toBe('build')
+      expect(mocks.setSessionStatus).toHaveBeenCalledWith('hive-session-1', 'working', {
+        hookEventName: 'UserPromptSubmit',
+        hookPath: 'start'
+      })
+    })
+
+    it('does not trigger a plan followup for an auto-resume planning publish while plan_ready', () => {
+      mocks.sessionStatuses = { 'hive-session-1': { status: 'plan_ready' } }
+      renderHook(() => useClaudeCliStatusListener())
+
+      subscribedCallback?.({
+        sessionId: 'hive-session-1',
+        status: 'planning',
+        metadata: { hookEventName: 'UserPromptSubmit', hookPath: 'start', taskNotification: true }
+      })
+
+      expect(mocks.clearPendingPlan).not.toHaveBeenCalled()
+      expect(mocks.notifyKanbanSessionSync).not.toHaveBeenCalled()
+      expect(mocks.setSessionStatus).not.toHaveBeenCalled()
     })
   })
 })

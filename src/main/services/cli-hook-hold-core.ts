@@ -11,6 +11,11 @@ export interface ClaudeHookBody {
   tool_input?: { plan?: unknown; questions?: unknown }
   assistant_message?: string
   last_assistant_message?: string
+  agent_id?: string
+}
+
+export interface CliHookRouteContext {
+  suppressIdle?: boolean
 }
 
 type InteractionKind = 'question' | 'plan'
@@ -68,7 +73,12 @@ export class CliHookHoldCore {
     return this.registered.has(sessionId)
   }
 
-  onHook(sessionId: string, body: ClaudeHookBody, res: ServerResponse): boolean {
+  onHook(
+    sessionId: string,
+    body: ClaudeHookBody,
+    res: ServerResponse,
+    ctx?: CliHookRouteContext
+  ): boolean {
     if (!this.registered.has(sessionId)) return false
 
     const event = body.hook_event_name
@@ -79,7 +89,7 @@ export class CliHookHoldCore {
       return this.holdPlan(sessionId, body, res)
     }
     if (event === 'Stop') {
-      this.emitIdle(sessionId, body)
+      if (!ctx?.suppressIdle) this.emitIdle(sessionId, body)
       return false
     }
     if (
@@ -240,16 +250,20 @@ export class CliHookHoldCore {
     return requestId
   }
 
-  private emitIdle(sessionId: string, body: ClaudeHookBody): void {
-    const text = body.last_assistant_message ?? body.assistant_message
-    if (typeof text === 'string' && text.trim().length > 0) {
+  emitSessionIdle(sessionId: string, lastAssistantMessage?: string): void {
+    if (typeof lastAssistantMessage === 'string' && lastAssistantMessage.trim().length > 0) {
       this.events.emitTransport({
         type: 'message.updated',
         sessionId,
-        data: { role: 'assistant', content: text }
+        data: { role: 'assistant', content: lastAssistantMessage }
       })
     }
     this.events.emitTransport({ type: 'session.idle', sessionId, data: {} })
+  }
+
+  private emitIdle(sessionId: string, body: ClaudeHookBody): void {
+    const text = body.last_assistant_message ?? body.assistant_message
+    this.emitSessionIdle(sessionId, text)
   }
 
   private finalize(

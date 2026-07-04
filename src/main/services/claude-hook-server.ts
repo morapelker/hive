@@ -7,8 +7,17 @@ import { handleClaudeCliHiveTelemetryHook } from './hive-enterprise-claude-cli-t
 import { publishDesktopBackendEvent } from '../desktop/backend-event-publisher'
 import {
   clearAllClaudeCliInteractions,
+  clearClaudeCliInteractions,
+  hasBlockingClaudeCliInteraction,
   processClaudeCliHook
 } from './claude-cli-interaction-ledger'
+import {
+  clearAllClaudeCliSubagentTracking,
+  isTaskNotificationPrompt,
+  processClaudeCliSubagentHook,
+  setClaudeCliDeferredCompletionHandler,
+  type ClaudeCliBackgroundTask
+} from './claude-cli-subagent-tracker'
 
 export interface ParsedClaudeHook {
   hook_event_name?: string
@@ -24,6 +33,11 @@ export interface ParsedClaudeHook {
   /** Final assistant message of the turn (Stop hook). Read both spellings: */
   assistant_message?: string
   last_assistant_message?: string
+  /** Present on subagent-scoped hooks (SubagentStop, subagent-scoped Stop). */
+  agent_id?: string
+  agent_type?: string
+  /** Snapshot of in-flight background work at Stop/SubagentStop time. */
+  background_tasks?: ClaudeCliBackgroundTask[]
 }
 
 export interface ClaudeCliStatusPayload {
@@ -35,6 +49,7 @@ export interface ClaudeCliStatusPayload {
     hookPath?: string
     toolName?: string
     plan?: string
+    taskNotification?: boolean
   }
 }
 
@@ -76,6 +91,11 @@ export function buildClaudeCliHookSettings(port: number, hiveSessionId: string):
       Stop: [
         {
           hooks: [{ type: 'http', url: hookUrl(port, hiveSessionId, 'stop') }]
+        }
+      ],
+      SubagentStop: [
+        {
+          hooks: [{ type: 'http', url: hookUrl(port, hiveSessionId, 'subagent') }]
         }
       ],
       PreToolUse: [
@@ -130,6 +150,8 @@ export function mapHookEventToStatus(hook: ParsedClaudeHook): SessionStatusType 
       if (hook.tool_name === 'ExitPlanMode') return 'plan_ready'
       if (hook.tool_name === 'AskUserQuestion') return 'answering'
       return 'permission'
+    case 'SubagentStop':
+      return null
     default:
       return null
   }
@@ -155,6 +177,10 @@ function buildStatusMetadata(
   const plan = extractPlanText(hook)
   if (plan !== undefined) {
     metadata.plan = plan
+  }
+
+  if (hook.hook_event_name === 'UserPromptSubmit' && isTaskNotificationPrompt(hook.prompt)) {
+    metadata.taskNotification = true
   }
 
   return metadata
@@ -263,20 +289,35 @@ async function handleHook(req: http.IncomingMessage, res: http.ServerResponse): 
             metadata: buildStatusMetadata(body, route.hookPath)
           }
         : null
-      // The interaction ledger latches blocking statuses (question/permission/
-      // plan approval) so parallel sub-agent hooks can't clobber them, and
-      // re-surfaces queued interactions as each one resolves.
-      for (const payload of processClaudeCliHook(route.sessionId, body, mapped)) {
-        publishClaudeCliStatus(payload)
+      // Background Task subagents can keep running after the main agent's
+      // Stop fires; the tracker decides whether this Stop is truly final
+      // ('pass'), must be swallowed because work is still in flight
+      // ('defer_stop'), or is scoped to a subagent turn and never a session
+      // completion ('subagent_scoped'). Only a 'pass' should reach the
+      // ledger/telemetry/status publish — a deferred Stop's RESET would
+      // otherwise clobber a subagent's latched question/permission.
+      const gate = processClaudeCliSubagentHook(route.sessionId, body, mapped)
+      if (gate.kind === 'pass') {
+        // The interaction ledger latches blocking statuses (question/permission/
+        // plan approval) so parallel sub-agent hooks can't clobber them, and
+        // re-surfaces queued interactions as each one resolves.
+        for (const payload of processClaudeCliHook(route.sessionId, body, mapped)) {
+          publishClaudeCliStatus(payload)
+        }
+        void handleClaudeCliHiveTelemetryHook(route.sessionId, body)
       }
-      void handleClaudeCliHiveTelemetryHook(route.sessionId, body)
       // First user prompt of this CLI session → tell the renderer so it can
       // auto-create a kanban ticket (if the setting is on). Fires for prompts
       // typed straight into the terminal as well as composer/handoff prompts.
+      // A task-notification resume is an auto-generated continuation turn,
+      // not a user-authored prompt, so it must never count as "first prompt"
+      // (and must not be recorded as announced — a later real prompt should
+      // still announce).
       if (
         body.hook_event_name === 'UserPromptSubmit' &&
         typeof body.prompt === 'string' &&
         body.prompt.trim().length > 0 &&
+        !isTaskNotificationPrompt(body.prompt) &&
         !firstPromptAnnounced.has(route.sessionId)
       ) {
         firstPromptAnnounced.add(route.sessionId)
@@ -288,7 +329,11 @@ async function handleHook(req: http.IncomingMessage, res: http.ServerResponse): 
       }
       // For forwarded CLI sessions a transport may take ownership of the
       // response (held open until answered). Otherwise behavior is unchanged.
-      owned = cliHookTransportRouter.routeHook(route.sessionId, body, res)
+      // suppressIdle keeps a deferred/subagent-scoped Stop from telling the
+      // transport the session went idle while background work is in flight.
+      owned = cliHookTransportRouter.routeHook(route.sessionId, body, res, {
+        suppressIdle: gate.kind !== 'pass'
+      })
     }
   } catch (error) {
     log.warn('Failed to parse Claude hook payload', {
@@ -303,6 +348,26 @@ async function handleHook(req: http.IncomingMessage, res: http.ServerResponse): 
 }
 
 export async function getClaudeHookServer(): Promise<{ port: number }> {
+  // Re-registered on every call (the setter is idempotent) because
+  // closeClaudeHookServer clears it — a subsequent getClaudeHookServer() must
+  // restore it even when reusing an already-listening server.
+  setClaudeCliDeferredCompletionHandler((sessionId, payload, lastAssistantMessage) => {
+    if (hasBlockingClaudeCliInteraction(sessionId)) return false
+    clearClaudeCliInteractions(sessionId)
+    // Intentionally does not record telemetry idle here (no recordIdle call):
+    // this path fires when the resume turn's own Stop never showed up, so
+    // there is no matching hook payload to drive recordIdle off of. Known
+    // accepted gap: this can leave a dangling `activePromptBySession` entry
+    // in the telemetry module, which would inflate the *next* turn's usage
+    // delta with this turn's untallied tokens.
+    publishClaudeCliStatus({
+      ...payload,
+      metadata: { ...payload.metadata, reason: 'deferred_completion_watchdog' }
+    })
+    cliHookTransportRouter.notifySessionIdle(sessionId, lastAssistantMessage)
+    return true
+  })
+
   if (server && boundPort !== null) {
     return { port: boundPort }
   }
@@ -371,6 +436,8 @@ export async function closeClaudeHookServer(): Promise<void> {
     lastStatusBySession.clear()
     statusSubscribers.clear()
     clearAllClaudeCliInteractions()
+    clearAllClaudeCliSubagentTracking()
+    setClaudeCliDeferredCompletionHandler(null)
     return
   }
 
@@ -390,4 +457,6 @@ export async function closeClaudeHookServer(): Promise<void> {
   lastStatusBySession.clear()
   statusSubscribers.clear()
   clearAllClaudeCliInteractions()
+  clearAllClaudeCliSubagentTracking()
+  setClaudeCliDeferredCompletionHandler(null)
 }

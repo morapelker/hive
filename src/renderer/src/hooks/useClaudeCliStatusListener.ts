@@ -13,6 +13,7 @@ type ClaudeCliStatusMetadata = {
   hookPath?: string
   toolName?: string
   plan?: string
+  taskNotification?: boolean
 }
 
 function closeLinkedTicketModal(sessionId: string): void {
@@ -50,6 +51,21 @@ export function useClaudeCliStatusListener(): void {
       const sessionStore = useSessionStore.getState()
       const currentStatus = worktreeStatus.sessionStatuses[sessionId]?.status
       const currentMode = sessionStore.modeBySession.get(sessionId)
+
+      // Background subagents auto-resume the main agent via a UserPromptSubmit
+      // whose prompt is a <task-notification>; the hook server stamps those
+      // publishes with taskNotification: true. To the state machine below this
+      // looks exactly like a human sending a prompt, but it isn't one — it must
+      // not clear a pending plan or flip the send mode away from plan. If the
+      // session was sitting at plan_ready, leave it there (the eventual Stop
+      // re-derives plan_ready from lastSendMode === 'plan'); otherwise fall
+      // through to the default status write below so the UI still reflects the
+      // session genuinely working again.
+      if (metadata?.taskNotification === true) {
+        if (currentStatus === 'plan_ready') return
+        worktreeStatus.setSessionStatus(sessionId, status, metadata)
+        return
+      }
 
       if (metadata?.hookEventName === 'PostToolUse' && metadata.toolName === 'ExitPlanMode') {
         // User approved ExitPlanMode from the terminal, matching the in-app implement action.
