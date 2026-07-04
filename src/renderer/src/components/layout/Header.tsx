@@ -135,6 +135,7 @@ export function Header(): React.JSX.Element {
   useEffect(() => {
     if (!windowControls) return
     void windowControls.windowIsMaximized().then(setIsMaximized)
+    return windowControls.onWindowMaximizedChanged(setIsMaximized)
   }, [windowControls])
 
   const hasProjects = projects.length > 0
@@ -797,12 +798,7 @@ export function Header(): React.JSX.Element {
               variant="ghost"
               size="icon"
               className="h-12 w-12 rounded-none"
-              onClick={() => {
-                void windowControls
-                  .windowMaximize()
-                  .then(() => windowControls.windowIsMaximized())
-                  .then(setIsMaximized)
-              }}
+              onClick={() => void windowControls.windowMaximize()}
               title={isMaximized ? 'Restore' : 'Maximize'}
               data-testid="window-maximize"
             >

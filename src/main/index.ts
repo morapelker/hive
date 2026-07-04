@@ -397,6 +397,12 @@ function createWindow(backendBootstrap?: LocalEnvironmentBootstrap | null): void
 
   // Save window bounds on resize and move
   const createdWindow = mainWindow
+  const emitMaximizedChanged = (): void => {
+    if (createdWindow.isDestroyed()) return
+    createdWindow.webContents.send('window:maximized-changed', createdWindow.isMaximized())
+  }
+  mainWindow.on('maximize', emitMaximizedChanged)
+  mainWindow.on('unmaximize', emitMaximizedChanged)
   mainWindow.on('resize', () => saveWindowBounds(createdWindow))
   mainWindow.on('move', () => saveWindowBounds(createdWindow))
   mainWindow.on('close', () => saveWindowBounds(createdWindow))

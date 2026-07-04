@@ -9,7 +9,16 @@ const desktopBridge = {
   windowMinimize: (): Promise<void> => ipcRenderer.invoke('window:minimize'),
   windowMaximize: (): Promise<void> => ipcRenderer.invoke('window:maximize'),
   windowClose: (): Promise<void> => ipcRenderer.invoke('window:close'),
-  windowIsMaximized: (): Promise<boolean> => ipcRenderer.invoke('window:isMaximized')
+  windowIsMaximized: (): Promise<boolean> => ipcRenderer.invoke('window:isMaximized'),
+  onWindowMaximizedChanged: (callback: (isMaximized: boolean) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, isMaximized: boolean): void => {
+      callback(isMaximized)
+    }
+    ipcRenderer.on('window:maximized-changed', listener)
+    return () => {
+      ipcRenderer.removeListener('window:maximized-changed', listener)
+    }
+  }
 }
 
 // Force 100% zoom — Ghostty's native NSView overlay requires 1:1 CSS-to-AppKit
