@@ -394,7 +394,8 @@ export async function fetchClaudeUsage(
         success: false,
         error: message,
         ...(response.status === 429 && retryAfter !== undefined ? { retryAfter } : {}),
-        ...(needsLogin ? { needsLogin: true } : {})
+        ...(needsLogin ? { needsLogin: true } : {}),
+        ...(rotated ? { rotated } : {})
       }
     }
 
@@ -418,7 +419,8 @@ export async function fetchClaudeUsage(
     return {
       success: false,
       error: message,
-      ...(error instanceof NeedsLoginError ? { needsLogin: true } : {})
+      ...(error instanceof NeedsLoginError ? { needsLogin: true } : {}),
+      ...(rotated ? { rotated } : {})
     }
   } finally {
     if (countedInFlight) {

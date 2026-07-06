@@ -139,6 +139,39 @@ describe('fetchUsageOp', () => {
     expect(result.success).toBe(true)
     expect(mocks.persistRotatedLiveClaudeTokens).not.toHaveBeenCalled()
   })
+
+  it('persists rotated live Claude tokens even when the overall usage fetch FAILED (e.g. a transient 500 after a successful proactive rotation)', async () => {
+    // The rotation already happened server-side (the old refresh token is
+    // burned) even though the usage HTTP request itself failed — the new
+    // tokens must still be persisted or the live store is left holding a
+    // dead refresh token.
+    mocks.fetchClaudeUsage.mockResolvedValue({
+      success: false,
+      error: 'Usage API returned 500: Internal Server Error',
+      rotated: {
+        accessToken: 'new-access',
+        refreshToken: 'new-refresh',
+        expiresAt: 2000,
+        rotatedFrom: 'internal-refresh-token'
+      }
+    })
+    mocks.persistRotatedLiveClaudeTokens.mockResolvedValue('persisted')
+
+    const result = await fetchUsageOp()
+
+    expect(result.success).toBe(false)
+    expect(mocks.persistRotatedLiveClaudeTokens).toHaveBeenCalledWith(
+      {
+        accessToken: 'new-access',
+        refreshToken: 'new-refresh',
+        expiresAt: 2000,
+        rotatedFrom: 'internal-refresh-token'
+      },
+      'internal-refresh-token',
+      undefined
+    )
+    expect(mocks.captureLiveAccountFromFetch).not.toHaveBeenCalled()
+  })
 })
 
 describe('fetchOpenAIUsageOp', () => {
@@ -215,5 +248,31 @@ describe('fetchOpenAIUsageOp', () => {
 
     expect(result.success).toBe(true)
     expect(mocks.persistRotatedLiveCodexTokens).not.toHaveBeenCalled()
+  })
+
+  it('persists rotated live Codex tokens even when the overall usage fetch FAILED (e.g. a transient 500 after a successful proactive rotation)', async () => {
+    mocks.fetchOpenAIUsage.mockResolvedValue({
+      success: false,
+      error: 'OpenAI Usage API returned 500: Internal Server Error',
+      rotated: {
+        accessToken: 'new-access',
+        refreshToken: 'new-refresh',
+        rotatedFrom: 'internal-refresh-token'
+      }
+    })
+    mocks.persistRotatedLiveCodexTokens.mockResolvedValue('persisted')
+
+    const result = await fetchOpenAIUsageOp()
+
+    expect(result.success).toBe(false)
+    expect(mocks.persistRotatedLiveCodexTokens).toHaveBeenCalledWith(
+      {
+        accessToken: 'new-access',
+        refreshToken: 'new-refresh',
+        rotatedFrom: 'internal-refresh-token'
+      },
+      'internal-refresh-token'
+    )
+    expect(mocks.captureLiveAccountFromFetch).not.toHaveBeenCalled()
   })
 })

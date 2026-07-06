@@ -310,6 +310,113 @@ describe('fetchClaudeUsage saved-account refresh', () => {
     await rm(osMock.homeDir, { recursive: true, force: true })
   })
 
+  describe('rotated token surfacing on usage-request failure (after a successful proactive rotation)', () => {
+    it('carries rotated (with rotatedFrom) on a non-2xx usage response, so the new refresh token still gets persisted', async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(
+          jsonResponse(
+            { access_token: 'proactive-new-access', refresh_token: 'proactive-new-refresh', expires_in: 3600 },
+            { status: 200 }
+          )
+        )
+        .mockResolvedValueOnce(
+          jsonResponse({ error: 'server error' }, { status: 500, statusText: 'Internal Server Error' })
+        )
+      vi.stubGlobal('fetch', fetchMock)
+
+      const result = await fetchClaudeUsage(
+        {
+          accessToken: 'old-access-token',
+          refreshToken: 'old-refresh-token',
+          expiresAt: Date.now() - 1_000,
+          accountId: 'acct-500'
+        },
+        { caller: 'usage:fetchForAccount', accountId: 'acct-500' }
+      )
+
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('Usage API returned 500')
+      expect(result.rotated).toMatchObject({
+        accessToken: 'proactive-new-access',
+        refreshToken: 'proactive-new-refresh',
+        rotatedFrom: 'old-refresh-token'
+      })
+    })
+
+    it('carries rotated (with rotatedFrom) when the usage request throws (e.g. network error/timeout)', async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(
+          jsonResponse(
+            { access_token: 'proactive-new-access', refresh_token: 'proactive-new-refresh', expires_in: 3600 },
+            { status: 200 }
+          )
+        )
+        .mockRejectedValueOnce(new Error('network down'))
+      vi.stubGlobal('fetch', fetchMock)
+
+      const result = await fetchClaudeUsage(
+        {
+          accessToken: 'old-access-token',
+          refreshToken: 'old-refresh-token',
+          expiresAt: Date.now() - 1_000,
+          accountId: 'acct-network-error'
+        },
+        { caller: 'usage:fetchForAccount', accountId: 'acct-network-error' }
+      )
+
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('network down')
+      expect(result.rotated).toMatchObject({
+        accessToken: 'proactive-new-access',
+        refreshToken: 'proactive-new-refresh',
+        rotatedFrom: 'old-refresh-token'
+      })
+    })
+
+    it('still surfaces the earlier proactive rotation when the reactive 401-retry refresh itself needs login', async () => {
+      const fetchMock = vi
+        .fn()
+        // Proactive refresh (expiresAt already elapsed) succeeds.
+        .mockResolvedValueOnce(
+          jsonResponse(
+            { access_token: 'proactive-new-access', refresh_token: 'proactive-new-refresh', expires_in: 3600 },
+            { status: 200 }
+          )
+        )
+        // Usage request with the freshly rotated token still comes back 401.
+        .mockResolvedValueOnce(jsonResponse({ error: 'expired' }, { status: 401, statusText: 'Unauthorized' }))
+        // The reactive retry refresh is rejected outright (invalid_grant).
+        .mockResolvedValueOnce(
+          jsonResponse({ error: 'invalid_grant' }, { status: 400, statusText: 'Bad Request' })
+        )
+      vi.stubGlobal('fetch', fetchMock)
+
+      const result = await fetchClaudeUsage(
+        {
+          accessToken: 'old-access-token',
+          refreshToken: 'old-refresh-token',
+          expiresAt: Date.now() - 1_000,
+          accountId: 'acct-double-refresh'
+        },
+        { caller: 'usage:fetchForAccount', accountId: 'acct-double-refresh' }
+      )
+
+      expect(result.success).toBe(false)
+      expect(result.needsLogin).toBe(true)
+      // The rotated tokens from the FIRST (proactive) refresh must still be
+      // surfaced so the caller persists them — otherwise the live store is
+      // left holding the now-burned `old-refresh-token`.
+      expect(result.rotated).toMatchObject({
+        accessToken: 'proactive-new-access',
+        refreshToken: 'proactive-new-refresh',
+        rotatedFrom: 'old-refresh-token'
+      })
+      expect(fetchMock).toHaveBeenCalledTimes(3)
+    })
+  })
+
   it('sets needsLogin and a Token refresh failed: invalid_grant error when the refresh itself needs login', async () => {
     const fetchMock = vi
       .fn()
