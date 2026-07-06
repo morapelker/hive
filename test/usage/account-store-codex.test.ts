@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { mkdtemp, readFile, rm, stat, writeFile } from 'fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -314,6 +314,162 @@ describe('account-store-codex', () => {
 
       const accounts = await listCodexAccounts()
       expect(accounts.find((a) => a.accountKey === 'user-a::acct-a')?.active).toBe(true)
+    })
+  })
+
+  describe('unknown-field preservation (byte-level interop with ccswitch)', () => {
+    it('round-trips top-level (api/auto_switch) and entry-level (last_usage/etc) unknown fields across switch + add + remove', async () => {
+      const accountKeyA = 'user-a::acct-a'
+      const accountKeyB = 'user-b::acct-b'
+
+      const api = { account: true, usage: true }
+      const autoSwitch = { enabled: false, threshold_5h_percent: 10, threshold_weekly_percent: 5 }
+      const lastUsageA = {
+        credits: { balance: '0', has_credits: false, unlimited: false },
+        plan_type: 'pro',
+        primary: { resets_at: 1780232342, used_percent: 28, window_minutes: 300 },
+        secondary: { resets_at: 1780796401, used_percent: 18, window_minutes: 10080 }
+      }
+
+      await mkdir(join(codexHome, 'accounts'), { recursive: true })
+      await writeFile(
+        join(codexHome, 'accounts', 'registry.json'),
+        JSON.stringify({
+          schema_version: 3,
+          active_account_key: null,
+          accounts: [
+            {
+              account_key: accountKeyA,
+              chatgpt_account_id: 'acct-a',
+              chatgpt_user_id: 'user-a',
+              email: 'old-a@example.com',
+              alias: '',
+              account_name: null,
+              plan: 'pro',
+              auth_mode: 'chatgpt',
+              created_at: 1700000000,
+              last_used_at: 1700000000,
+              last_usage: lastUsageA,
+              last_usage_at: 1700000500,
+              last_local_rollout: null
+            },
+            {
+              account_key: accountKeyB,
+              chatgpt_account_id: 'acct-b',
+              chatgpt_user_id: 'user-b',
+              email: 'old-b@example.com',
+              alias: '',
+              account_name: null,
+              plan: 'plus',
+              auth_mode: 'chatgpt',
+              created_at: 1700000100,
+              last_used_at: null,
+              last_usage: null,
+              last_usage_at: null,
+              last_local_rollout: null
+            }
+          ],
+          api,
+          auto_switch: autoSwitch
+        })
+      )
+
+      // Seed snapshots so switch/remove have real files to operate on.
+      await writeFile(
+        join(codexHome, 'accounts', `${snapshotName(accountKeyA)}.auth.json`),
+        JSON.stringify({
+          OPENAI_API_KEY: null,
+          auth_mode: 'chatgpt',
+          tokens: {
+            id_token: idTokenFor('user-a', 'acct-a', 'old-a@example.com', 'pro'),
+            access_token: 'a-access',
+            refresh_token: 'a-refresh',
+            account_id: 'acct-a'
+          },
+          last_refresh: '2026-01-01T00:00:00.000Z'
+        })
+      )
+      await writeFile(
+        join(codexHome, 'accounts', `${snapshotName(accountKeyB)}.auth.json`),
+        JSON.stringify({
+          OPENAI_API_KEY: null,
+          auth_mode: 'chatgpt',
+          tokens: {
+            id_token: idTokenFor('user-b', 'acct-b', 'old-b@example.com', 'plus'),
+            access_token: 'b-access',
+            refresh_token: 'b-refresh',
+            account_id: 'acct-b'
+          },
+          last_refresh: '2026-01-01T00:00:00.000Z'
+        })
+      )
+
+      await switchCodexAccount(accountKeyB)
+      await addCodexAccount(idTokenFor('user-a', 'acct-a', 'new-a@example.com', 'proplus'), 'a2', 'r2')
+      await removeCodexAccount(accountKeyB)
+
+      const registry = JSON.parse(await readFile(join(codexHome, 'accounts', 'registry.json'), 'utf-8'))
+
+      expect(registry.api).toEqual(api)
+      expect(registry.auto_switch).toEqual(autoSwitch)
+
+      expect(registry.accounts).toHaveLength(1)
+      const entryA = registry.accounts[0]
+      expect(entryA.account_key).toBe(accountKeyA)
+      expect(entryA.email).toBe('new-a@example.com')
+      expect(entryA.plan).toBe('proplus')
+      expect(entryA.created_at).toBe(1700000000)
+      expect(entryA.last_used_at).toBe(1700000000)
+      expect(entryA.last_usage).toEqual(lastUsageA)
+      expect(entryA.last_usage_at).toBe(1700000500)
+
+      // B was active (via switch) and then removed, so active_account_key nulls out.
+      expect(registry.active_account_key).toBeNull()
+    })
+  })
+
+  describe('created_at is second-scale, and new-entry shape matches ccswitch defaults', () => {
+    it('writes created_at in seconds, not milliseconds', async () => {
+      await addCodexAccount(idTokenFor('user-1', 'acct-1'), 'a', 'r')
+      const registry = JSON.parse(await readFile(join(codexHome, 'accounts', 'registry.json'), 'utf-8'))
+      expect(registry.accounts[0].created_at).toBeLessThan(1e11)
+      expect(registry.accounts[0].created_at).toBe(Math.floor(Date.now() / 1000))
+    })
+
+    it('defaults plan to "" (not null) and null-fills last_used_at/last_usage/last_usage_at/last_local_rollout on a brand-new entry when the id_token has no plan claim', async () => {
+      const idTokenNoPlan = buildIdToken({
+        email: 'no-plan@example.com',
+        'https://api.openai.com/auth': {
+          chatgpt_user_id: 'user-np',
+          chatgpt_account_id: 'acct-np'
+        }
+      })
+      await addCodexAccount(idTokenNoPlan, 'a', 'r')
+
+      const registry = JSON.parse(await readFile(join(codexHome, 'accounts', 'registry.json'), 'utf-8'))
+      const entry = registry.accounts[0]
+      expect(entry.plan).toBe('')
+      expect(entry.last_used_at).toBeNull()
+      expect(entry.last_usage).toBeNull()
+      expect(entry.last_usage_at).toBeNull()
+      expect(entry.last_local_rollout).toBeNull()
+    })
+
+    it('maps an empty-string plan to null in the listCodexAccounts DTO while the file keeps ""', async () => {
+      const idTokenNoPlan = buildIdToken({
+        email: 'no-plan@example.com',
+        'https://api.openai.com/auth': {
+          chatgpt_user_id: 'user-np',
+          chatgpt_account_id: 'acct-np'
+        }
+      })
+      await addCodexAccount(idTokenNoPlan, 'a', 'r')
+
+      const accounts = await listCodexAccounts()
+      expect(accounts[0].plan).toBeNull()
+
+      const registry = JSON.parse(await readFile(join(codexHome, 'accounts', 'registry.json'), 'utf-8'))
+      expect(registry.accounts[0].plan).toBe('')
     })
   })
 })

@@ -41,6 +41,13 @@ interface CodexRegistryAccountEntry {
   auth_mode: string
   created_at: number
   last_used_at: number | null
+  /**
+   * ccswitch also carries `last_usage`, `last_usage_at`, `last_local_rollout`
+   * and possibly other fields we don't interpret. The index signature lets us
+   * round-trip them untouched (mirrors Rust mutating a raw serde_json::Value
+   * in place instead of reconstructing a typed struct).
+   */
+  [key: string]: unknown
 }
 
 interface CodexRegistry {
@@ -48,6 +55,12 @@ interface CodexRegistry {
   active_account_key: string | null
   active_account_activated_at_ms?: number
   accounts: CodexRegistryAccountEntry[]
+  /**
+   * ccswitch also carries top-level `api`/`auto_switch` settings (and
+   * possibly other fields) we don't interpret. The index signature lets us
+   * round-trip them untouched.
+   */
+  [key: string]: unknown
 }
 
 /** Same resolution as `openai-usage-service.ts`: env var first, else `~/.codex`. */
@@ -84,24 +97,33 @@ function emptyRegistry(): CodexRegistry {
  * Read registry.json. Missing file => empty registry. A file that exists but
  * fails to parse throws (never silently treat a corrupt registry as empty
  * and then overwrite it).
+ *
+ * The Rust implementation reads the registry as a raw `serde_json::Value` and
+ * mutates it in place, so unknown top-level keys (e.g. ccswitch's `api` /
+ * `auto_switch` settings) and unknown entry-level keys (e.g. `last_usage`)
+ * always round-trip untouched. To match that, we start from the raw parsed
+ * object (preserving every field, known or not) and only overlay the
+ * normalized/typed fields on top — never reconstruct the object from a
+ * fixed field list.
  */
 async function readRegistry(): Promise<CodexRegistry> {
   const path = registryPath()
   if (!existsSync(path)) return emptyRegistry()
 
-  const data = await readJsonFile<Partial<CodexRegistry>>(path)
+  const data = await readJsonFile<Record<string, unknown>>(path)
   if (data === null) {
     throw new Error(`${path}: invalid JSON`)
   }
 
   return {
+    ...data,
     schema_version: typeof data.schema_version === 'number' ? data.schema_version : 3,
     active_account_key: typeof data.active_account_key === 'string' ? data.active_account_key : null,
     active_account_activated_at_ms:
       typeof data.active_account_activated_at_ms === 'number'
         ? data.active_account_activated_at_ms
         : undefined,
-    accounts: Array.isArray(data.accounts) ? data.accounts : []
+    accounts: Array.isArray(data.accounts) ? (data.accounts as CodexRegistryAccountEntry[]) : []
   }
 }
 
@@ -146,7 +168,9 @@ export async function listCodexAccounts(): Promise<CodexStoreAccount[]> {
     out.push({
       accountKey,
       email: (entry.email ?? '').toLowerCase(),
-      plan: entry.plan ?? null,
+      // The file keeps `plan: ""` (ccswitch's unwrap_or_default) when the
+      // id_token has no plan claim; the DTO surfaces that as null instead.
+      plan: entry.plan ? entry.plan : null,
       expiresAtMs: typeof accessToken === 'string' ? jwtExpMs(accessToken) : null,
       hasRefresh: typeof refreshToken === 'string' && refreshToken.length > 0,
       active
@@ -243,11 +267,14 @@ export async function addCodexAccount(
   const registry = await readRegistry()
   const existingIndex = registry.accounts.findIndex((a) => a.account_key === accountKey)
   if (existingIndex >= 0) {
+    // Rust (codex.rs:246-253) patches only `email`, and `plan` only when the
+    // id_token claim is present — otherwise the existing value (and every
+    // other entry-level field, known or not) is left untouched.
     const existing = registry.accounts[existingIndex]
     registry.accounts[existingIndex] = {
       ...existing,
       email,
-      plan: claims.plan ?? existing.plan ?? null
+      ...(claims.plan !== null ? { plan: claims.plan } : {})
     }
   } else {
     registry.accounts.push({
@@ -257,10 +284,15 @@ export async function addCodexAccount(
       email,
       alias: '',
       account_name: null,
-      plan: claims.plan ?? null,
+      // Rust: `claims.plan.clone().unwrap_or_default()` — empty string, not null.
+      plan: claims.plan ?? '',
       auth_mode: 'chatgpt',
-      created_at: Date.now(),
-      last_used_at: null
+      // Rust: `chrono::Utc::now().timestamp()` — seconds, not milliseconds.
+      created_at: Math.floor(Date.now() / 1000),
+      last_used_at: null,
+      last_usage: null,
+      last_usage_at: null,
+      last_local_rollout: null
     })
   }
   await writeRegistry(registry)
