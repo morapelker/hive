@@ -1,7 +1,14 @@
-import { describe, test, expect, vi, beforeEach } from 'vitest'
+import { describe, test, expect, vi, beforeAll, beforeEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { GitInitDialog } from '../../../src/renderer/src/components/projects/GitInitDialog'
+
+beforeAll(() => {
+  // Radix DropdownMenu relies on these in a real browser; jsdom lacks them.
+  Element.prototype.hasPointerCapture = vi.fn()
+  Element.prototype.releasePointerCapture = vi.fn()
+  Element.prototype.scrollIntoView = vi.fn()
+})
 
 vi.mock('../../../src/renderer/src/api/project-api', () => ({
   projectApi: {
@@ -105,6 +112,7 @@ describe('Session 8: Git Init Dialog', () => {
 
       render(<AddProjectButton />)
       await userEvent.click(screen.getByTestId('add-project-button'))
+      await userEvent.click(await screen.findByTestId('add-project-menu-existing'))
 
       // Wait for dialog to appear
       expect(await screen.findByText('Not a Git Repository')).toBeInTheDocument()
@@ -128,6 +136,7 @@ describe('Session 8: Git Init Dialog', () => {
 
       render(<AddProjectButton />)
       await userEvent.click(screen.getByTestId('add-project-button'))
+      await userEvent.click(await screen.findByTestId('add-project-menu-existing'))
 
       // Dialog should NOT appear for non-git errors
       expect(screen.queryByText('Not a Git Repository')).not.toBeInTheDocument()

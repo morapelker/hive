@@ -71,6 +71,11 @@ import {
   type GitOpsRpcService
 } from './domains/git-ops'
 import {
+  makeGithubOpsRpcHandlers,
+  makeLiveGithubOpsRpcService,
+  type GithubOpsRpcService
+} from './domains/github-ops'
+import {
   makeLiveProjectOpsRpcService,
   makeProjectOpsRpcHandlers,
   type ProjectOpsRpcService
@@ -149,6 +154,7 @@ export interface RpcContext {
   readonly fileOps?: FileOpsRpcService
   readonly fileTreeOps?: FileTreeOpsRpcService
   readonly gitOps?: GitOpsRpcService
+  readonly githubOps?: GithubOpsRpcService
   readonly kanban?: KanbanRpcService
   readonly loggingOps?: LoggingOpsRpcService
   readonly opencodeOps?: OpenCodeOpsRpcService
@@ -207,6 +213,9 @@ const makeDefaultRpcHandlers = (context: RpcContext): ReadonlyMap<string, RpcHan
     ...makeFileTreeOpsRpcHandlers(context.fileTreeOps ?? makeLiveFileTreeOpsRpcService()),
     ...makeGitOpsRpcHandlers(
       context.gitOps ?? makeLiveGitOpsRpcService({ eventBus: context.eventBus })
+    ),
+    ...makeGithubOpsRpcHandlers(
+      context.githubOps ?? makeLiveGithubOpsRpcService({ eventBus: context.eventBus })
     ),
     ...makeKanbanRpcHandlers(context.kanban ?? makeLiveKanbanRpcService()),
     ...makeLoggingOpsRpcHandlers(context.loggingOps ?? makeLiveLoggingOpsRpcService()),

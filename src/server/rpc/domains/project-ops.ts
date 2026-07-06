@@ -1,4 +1,4 @@
-import { existsSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, statSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { Effect } from 'effect'
 import { z } from 'zod'
@@ -22,6 +22,10 @@ export interface ProjectOpsRpcService {
   readonly isAndroidProject: (projectPath: string) => Effect.Effect<boolean, unknown, never>
   readonly loadLanguageIcons: () => Effect.Effect<Record<string, string>, unknown, never>
   readonly initRepository: (path: string) => Effect.Effect<InitRepositoryResult, unknown, never>
+  readonly createProjectFolder: (
+    parentPath: string,
+    name: string
+  ) => Effect.Effect<CreateProjectFolderResult, unknown, never>
   readonly pickProjectIcon: (
     projectId: string
   ) => Effect.Effect<PickProjectIconResult, unknown, never>
@@ -47,6 +51,12 @@ export interface InitRepositoryResult {
   readonly error?: string
 }
 
+export interface CreateProjectFolderResult {
+  readonly success: boolean
+  readonly path?: string
+  readonly error?: string
+}
+
 export interface PickProjectIconResult {
   readonly success: boolean
   readonly filename?: string
@@ -63,6 +73,13 @@ const textParamsSchema = z.object({ text: z.string() }).strict()
 const projectIdParamsSchema = z.object({ projectId: z.string().min(1) }).strict()
 const filenameParamsSchema = z.object({ filename: z.string().min(1) }).strict()
 const emptyParamsSchema = z.union([z.object({}).strict(), z.undefined(), z.null()])
+const createProjectFolderParamsSchema = z
+  .object({ parentPath: z.string().min(1), name: z.string().min(1) })
+  .strict()
+
+const INVALID_PROJECT_NAME_PATTERN = /[/\\:*?"<>|]/
+// Windows device names; folders with these names fail or misbehave on Windows.
+const WINDOWS_RESERVED_NAME_PATTERN = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i
 
 const isValidDirectory = (path: string): boolean => {
   try {
@@ -146,9 +163,8 @@ export const makeLiveProjectOpsRpcService = (): ProjectOpsRpcService => ({
   detectSetupSuggestions: (projectPath) =>
     Effect.tryPromise({
       try: async () => {
-        const { detectSetupSuggestions } = await import(
-          '../../../main/services/setup-script-suggester'
-        )
+        const { detectSetupSuggestions } =
+          await import('../../../main/services/setup-script-suggester')
         return detectSetupSuggestions(projectPath)
       },
       catch: (cause) => cause
@@ -182,6 +198,63 @@ export const makeLiveProjectOpsRpcService = (): ProjectOpsRpcService => ({
       try: async () => {
         const { initRepository } = await import('../../../main/services/git-repository')
         return initRepository(path)
+      },
+      catch: (cause) => cause
+    }),
+  createProjectFolder: (parentPath, name) =>
+    Effect.tryPromise({
+      try: async (): Promise<CreateProjectFolderResult> => {
+        const trimmed = name.trim()
+        if (
+          !trimmed ||
+          trimmed.endsWith('.') ||
+          INVALID_PROJECT_NAME_PATTERN.test(trimmed) ||
+          WINDOWS_RESERVED_NAME_PATTERN.test(trimmed)
+        ) {
+          return { success: false, error: 'The project name contains invalid characters.' }
+        }
+        if (!isValidDirectory(parentPath)) {
+          return { success: false, error: 'The selected location is not a valid directory.' }
+        }
+        const path = join(parentPath, trimmed)
+        const { mkdir, rm } = await import('node:fs/promises')
+        let createdByUs = false
+        if (existsSync(path)) {
+          // A previous attempt may have created the folder (and git init) but
+          // failed to add the project — resume instead of blocking the retry.
+          let entries: string[]
+          try {
+            entries = readdirSync(path)
+          } catch {
+            entries = ['?']
+          }
+          const alreadyExistsError = {
+            success: false,
+            error: `A folder named "${trimmed}" already exists in the selected location.`
+          }
+          if (entries.length > 1 || (entries.length === 1 && entries[0] !== '.git')) {
+            return alreadyExistsError
+          }
+          if (entries.length === 1) {
+            return isGitRepositoryPath(path) ? { success: true, path } : alreadyExistsError
+          }
+        } else {
+          await mkdir(path)
+          createdByUs = true
+        }
+        const { initRepository } = await import('../../../main/services/git-repository')
+        const initResult = initRepository(path)
+        if (!initResult.success) {
+          if (createdByUs) {
+            // The folder was just created empty by us, so it is safe to remove.
+            await rm(path, { recursive: true, force: true }).catch(() => undefined)
+          }
+          return {
+            success: false,
+            error: initResult.error || 'Failed to initialize Git repository.'
+          }
+        }
+        return { success: true, path }
       },
       catch: (cause) => cause
     }),
@@ -349,7 +422,10 @@ const requestProjectOpenPath = (path: string): Promise<string> => {
         return
       }
       if (typeof message.value !== 'string') {
-        finish(undefined, new Error(`Desktop command returned invalid open-path result: ${command}`))
+        finish(
+          undefined,
+          new Error(`Desktop command returned invalid open-path result: ${command}`)
+        )
         return
       }
       finish(message.value)
@@ -547,10 +623,7 @@ const requestProjectRemoveProjectIcon = (projectId: string): Promise<RemoveProje
       resolve(value ?? { success: true })
     }
     const timeout = setTimeout(() => {
-      finish(
-        undefined,
-        new Error(`Timed out waiting for desktop command response: ${command}`)
-      )
+      finish(undefined, new Error(`Timed out waiting for desktop command response: ${command}`))
     }, 5_000)
 
     const onMessage = (message: unknown): void => {
@@ -612,10 +685,7 @@ const requestProjectGetProjectIconPath = (filename: string): Promise<string | nu
       resolve(value ?? null)
     }
     const timeout = setTimeout(() => {
-      finish(
-        null,
-        new Error(`Timed out waiting for desktop command response: ${command}`)
-      )
+      finish(null, new Error(`Timed out waiting for desktop command response: ${command}`))
     }, 5_000)
 
     const onMessage = (message: unknown): void => {
@@ -787,6 +857,17 @@ export const makeProjectOpsRpcHandlers = (
             catch: (cause) => cause
           })
           return yield* service.initRepository(path)
+        })
+    ],
+    [
+      'projectOps.createProjectFolder',
+      (params) =>
+        Effect.gen(function* () {
+          const { parentPath, name } = yield* Effect.try({
+            try: () => createProjectFolderParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          return yield* service.createProjectFolder(parentPath, name)
         })
     ],
     [
