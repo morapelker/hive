@@ -44,8 +44,17 @@ vi.mock('../../src/main/db', () => ({
 }))
 
 import { migrateSavedCredentialsToStores } from '../../src/main/services/credentials-migration'
-import { addClaudeAccount, listClaudeAccounts } from '../../src/main/services/account-store-claude'
-import { addCodexAccount, listCodexAccounts, readCodexSnapshot } from '../../src/main/services/account-store-codex'
+import {
+  addClaudeAccount,
+  clearAccountStoreCacheForTests as clearClaudeAccountStoreCacheForTests,
+  listClaudeAccounts
+} from '../../src/main/services/account-store-claude'
+import {
+  addCodexAccount,
+  clearAccountStoreCacheForTests as clearCodexAccountStoreCacheForTests,
+  listCodexAccounts,
+  readCodexSnapshot
+} from '../../src/main/services/account-store-codex'
 
 const MIGRATION_KEY = 'saved_usage_credentials_migrated'
 
@@ -137,6 +146,12 @@ describe('migrateSavedCredentialsToStores', () => {
     vi.clearAllMocks()
     mocks.db.getSetting.mockReturnValue(null)
     mockRowsByProvider({})
+    // These tests use the real account-store-claude/codex modules with a
+    // fresh homeDir/codexHome per test, but their listClaudeAccounts()/
+    // listCodexAccounts() memo is module-level state that outlives a single
+    // test — clear it so each test starts from a real read of its own fixtures.
+    clearClaudeAccountStoreCacheForTests()
+    clearCodexAccountStoreCacheForTests()
   })
 
   afterEach(async () => {

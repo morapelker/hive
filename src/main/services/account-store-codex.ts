@@ -63,6 +63,28 @@ interface CodexRegistry {
   [key: string]: unknown
 }
 
+/**
+ * Short TTL memo for `listCodexAccounts()`, mirroring
+ * `account-store-claude.ts`'s `listClaudeAccounts()` memo — every list call
+ * re-reads registry.json plus every account's effective snapshot file, and
+ * callers like the saved-usage orchestrator's per-account mass refresh call
+ * it N+1 times in a row. Invalidated synchronously by every mutating
+ * function in this module, and never populated from a rejected read.
+ */
+const LIST_CACHE_TTL_MS = 15_000
+let listCache: { value: CodexStoreAccount[]; expiresAt: number } | null = null
+
+function invalidateListCache(): void {
+  listCache = null
+}
+
+/** Test-only escape hatch: forces the next `listCodexAccounts()` call to
+ * re-read, for tests that mutate the underlying fs fixtures directly instead
+ * of going through this module's own mutators. */
+export function clearAccountStoreCacheForTests(): void {
+  invalidateListCache()
+}
+
 /** Same resolution as `openai-usage-service.ts`: env var first, else `~/.codex`. */
 function codexHome(): string {
   return process.env.CODEX_HOME || join(homedir(), '.codex')
@@ -150,6 +172,10 @@ export async function readCodexLive(): Promise<CodexAuth | null> {
 
 /** List all managed Codex accounts. */
 export async function listCodexAccounts(): Promise<CodexStoreAccount[]> {
+  if (listCache !== null && listCache.expiresAt > Date.now()) {
+    return listCache.value
+  }
+
   const registry = await readRegistry()
   const live = await readCodexLive()
   const derivedLiveKey = deriveAccountKey(live)
@@ -176,6 +202,7 @@ export async function listCodexAccounts(): Promise<CodexStoreAccount[]> {
       active
     })
   }
+  listCache = { value: out, expiresAt: Date.now() + LIST_CACHE_TTL_MS }
   return out
 }
 
@@ -207,6 +234,7 @@ export async function updateCodexTokens(
   if (!existing) {
     throw new Error(`No Codex snapshot for account ${accountKey}`)
   }
+  invalidateListCache()
 
   const existingTokens = existing.tokens
   const tokens = {
@@ -248,6 +276,7 @@ export async function persistRotatedLiveCodexTokens(
   if ((live.tokens?.refresh_token ?? undefined) !== usedRefreshToken) {
     return 'skipped-race'
   }
+  invalidateListCache()
 
   const existingTokens = live.tokens
   const tokens = {
@@ -277,6 +306,7 @@ export async function persistRotatedLiveCodexTokens(
 
 /** Port of ccswitch `switch_to`: makes `accountKey` the live active Codex account. */
 export async function switchCodexAccount(accountKey: string): Promise<void> {
+  invalidateListCache()
   const registry = await readRegistry()
   const live = await readCodexLive()
 
@@ -310,6 +340,7 @@ export async function addCodexAccount(
   if (!claims.userId || !claims.accountId) {
     throw new Error('Codex id_token is missing chatgpt_user_id or chatgpt_account_id')
   }
+  invalidateListCache()
   const accountKey = `${claims.userId}::${claims.accountId}`
   const email = claims.email ?? ''
 
@@ -364,6 +395,7 @@ export async function addCodexAccount(
 
 /** Remove a managed account. Never touches auth.json. */
 export async function removeCodexAccount(accountKey: string): Promise<void> {
+  invalidateListCache()
   try {
     await unlink(snapshotPath(accountKey))
   } catch (error) {

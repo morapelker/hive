@@ -184,6 +184,56 @@ describe('useLoginStore', () => {
     expect(useLoginStore.getState().activeLogin).toBeNull()
   })
 
+  it('cancelling mid-poll must not resurrect activeLogin when the in-flight loginStatus resolves afterward', async () => {
+    let resolveStatus!: (value: {
+      loginId: string
+      provider: string
+      state: string
+      email: string | null
+      error: string | null
+    }) => void
+    const statusPromise = new Promise((resolve) => {
+      resolveStatus = resolve
+    })
+
+    request.mockImplementation(async (method: string) => {
+      if (method === 'accountOps.loginStart') return { loginId: 'login-8' }
+      if (method === 'accountOps.loginCancel') return true
+      if (method === 'accountOps.loginStatus') return statusPromise
+      return null
+    })
+
+    await useLoginStore.getState().startLogin('anthropic')
+
+    // Let the poll timer fire, kicking off the in-flight loginStatus request.
+    await vi.advanceTimersByTimeAsync(1500)
+
+    // Cancel while that request is still in flight.
+    await useLoginStore.getState().cancelLogin()
+    expect(useLoginStore.getState().activeLogin).toBeNull()
+    vi.mocked(toast.info).mockClear()
+
+    // Now the stale in-flight request resolves with a pre-cancel status.
+    resolveStatus({
+      loginId: 'login-8',
+      provider: 'anthropic',
+      state: 'waiting',
+      email: null,
+      error: null
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(useLoginStore.getState().activeLogin).toBeNull()
+    expect(toast.info).not.toHaveBeenCalled()
+    expect(toast.error).not.toHaveBeenCalled()
+    expect(toast.success).not.toHaveBeenCalled()
+
+    // And no reschedule should have happened either.
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(useLoginStore.getState().activeLogin).toBeNull()
+  })
+
   it('does not clobber the existing activeLogin when the server rejects a concurrent login', async () => {
     request.mockImplementation(async (method: string) => {
       if (method === 'accountOps.loginStart') return { loginId: 'login-7' }

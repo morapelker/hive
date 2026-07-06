@@ -61,6 +61,28 @@ export interface ClaudeStoreAccount {
   active: boolean
 }
 
+/**
+ * Short TTL memo for `listClaudeAccounts()`. Every list call re-reads
+ * sequence.json plus every account's effective Keychain blob (a `security`
+ * execFile each, ~10-30ms) — callers like the saved-usage orchestrator's
+ * per-account mass refresh call it N+1 times in a row, so a short memo cuts
+ * that down to one real read. Invalidated synchronously by every mutating
+ * function in this module, and never populated from a rejected read.
+ */
+const LIST_CACHE_TTL_MS = 15_000
+let listCache: { value: ClaudeStoreAccount[]; expiresAt: number } | null = null
+
+function invalidateListCache(): void {
+  listCache = null
+}
+
+/** Test-only escape hatch: forces the next `listClaudeAccounts()` call to
+ * re-read, for tests that mutate the underlying fs/Keychain fixtures
+ * directly instead of going through this module's own mutators. */
+export function clearAccountStoreCacheForTests(): void {
+  invalidateListCache()
+}
+
 function backupDir(): string {
   return join(homedir(), '.claude-switch-backup')
 }
@@ -204,6 +226,10 @@ export async function readClaudeLiveIdentity(): Promise<{ email: string | null; 
 
 /** List all managed Claude accounts, in sequence.json's `sequence` order. */
 export async function listClaudeAccounts(): Promise<ClaudeStoreAccount[]> {
+  if (listCache !== null && listCache.expiresAt > Date.now()) {
+    return listCache.value
+  }
+
   const seq = await readSequence()
   const liveEmail = await readClaudeLiveEmail()
 
@@ -227,6 +253,7 @@ export async function listClaudeAccounts(): Promise<ClaudeStoreAccount[]> {
       active: liveEmail !== null && liveEmail === email
     })
   }
+  listCache = { value: out, expiresAt: Date.now() + LIST_CACHE_TTL_MS }
   return out
 }
 
@@ -241,6 +268,7 @@ export async function updateClaudeTokens(
   rotated: { accessToken: string; refreshToken: string; expiresAt: number },
   scope?: string
 ): Promise<void> {
+  invalidateListCache()
   const existingRaw = (await keychainRead(accountService(num, email))) ?? '{}'
   let full: ClaudeCredentialBlob
   try {
@@ -335,6 +363,8 @@ export async function persistRotatedLiveClaudeTokens(
     return 'skipped-race'
   }
 
+  invalidateListCache()
+
   const oauth: ClaudeOauthBlob = { ...(full.claudeAiOauth ?? {}) }
   oauth.accessToken = rotated.accessToken
   oauth.refreshToken = rotated.refreshToken
@@ -368,6 +398,7 @@ export async function persistRotatedLiveClaudeTokens(
 
 /** Port of ccswitch `switch_to`: makes `num`/`email` the live active Claude account. */
 export async function switchClaudeAccount(num: string, email: string): Promise<void> {
+  invalidateListCache()
   const seq = await readSequence()
 
   // 1) Preserve the outgoing account's freshest (live) credentials into its
@@ -429,6 +460,7 @@ export async function switchClaudeAccount(num: string, email: string): Promise<v
  * its account number). Returns the account number.
  */
 export async function addClaudeAccount(email: string, uuid: string, blobJson: string): Promise<string> {
+  invalidateListCache()
   // Normalized so this account's Keychain entry is always reachable by the
   // same (lowercased) email that listing/effective-blob lookups use.
   const normalizedEmail = email.toLowerCase()
@@ -459,6 +491,7 @@ export async function addClaudeAccount(email: string, uuid: string, blobJson: st
  * sequence.json bookkeeping.
  */
 export async function removeClaudeAccount(num: string, email: string): Promise<void> {
+  invalidateListCache()
   await keychainDelete(accountService(num, email))
 
   const seq = await readSequence()

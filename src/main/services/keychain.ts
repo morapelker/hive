@@ -1,10 +1,20 @@
-import { execFile } from 'child_process'
+import { execFile, type ExecFileException } from 'child_process'
 import { platform, userInfo } from 'os'
 import { createLogger } from './logger'
 
 const log = createLogger({ component: 'Keychain' })
 
+/**
+ * `security`'s documented exit code for errSecItemNotFound. Preferred over
+ * the message regex below, which is fragile to macOS wording drift across
+ * OS versions/locales.
+ */
+const ERR_SEC_ITEM_NOT_FOUND_CODE = 44
+
 function isItemNotFoundError(error: unknown): boolean {
+  const code = (error as ExecFileException | undefined)?.code
+  if (code === ERR_SEC_ITEM_NOT_FOUND_CODE) return true
+
   const message = error instanceof Error ? error.message : String(error)
   return /could not be found/i.test(message)
 }

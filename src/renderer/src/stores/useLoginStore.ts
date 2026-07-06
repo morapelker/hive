@@ -135,6 +135,11 @@ function schedulePoll(
     accountApi
       .loginStatus(loginId)
       .then((status) => {
+        // The login may have been cancelled/replaced while this request was
+        // in flight — re-check before applying its (now stale) result or
+        // rescheduling another poll for a login that's no longer active.
+        if (get().activeLogin?.loginId !== loginId) return
+
         consecutiveFailures = 0
         applyStatus(status, provider, set)
         if (NON_TERMINAL_STATES.includes(status.state)) {
@@ -142,6 +147,8 @@ function schedulePoll(
         }
       })
       .catch(() => {
+        if (get().activeLogin?.loginId !== loginId) return
+
         consecutiveFailures += 1
         if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
           stopPolling()

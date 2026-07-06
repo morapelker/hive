@@ -813,56 +813,72 @@ export class DatabaseService {
   }
 
   // Saved usage account operations
+  //
+  // Emails are normalized to lowercase here, but legacy rows created before
+  // that normalization may still carry a mixed-case email. The
+  // (provider, email) unique index is case-sensitive (SQLite's default TEXT
+  // collation), so `INSERT ... ON CONFLICT(provider, email)` would not
+  // detect a case-variant match and would insert a duplicate row for the
+  // same account. To avoid that, look up any existing row
+  // case-insensitively first (via getSavedUsageAccountByProviderEmail) and
+  // update it directly when found, instead of relying on the unique index.
   upsertSavedUsageAccount(data: SavedUsageAccountUpsert): SavedUsageAccount {
     const db = this.getDb()
     const now = new Date().toISOString()
+    const email = data.email.toLowerCase()
     const hasLastUsage = data.last_usage_json !== undefined
     const hasStatus = data.status !== undefined
     const hasLastError = data.last_error !== undefined
 
-    db.prepare(
-      `INSERT INTO saved_usage_accounts (
-         id, provider, email, credentials_json, last_usage_json, last_fetched_at,
-         status, last_error, created_at, updated_at
-       )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(provider, email) DO UPDATE SET
-         credentials_json = excluded.credentials_json,
-         last_usage_json = CASE
-           WHEN ? THEN excluded.last_usage_json
-           ELSE saved_usage_accounts.last_usage_json
-         END,
-         last_fetched_at = CASE
-           WHEN ? THEN excluded.last_fetched_at
-           ELSE saved_usage_accounts.last_fetched_at
-         END,
-         status = CASE
-           WHEN ? THEN excluded.status
-           ELSE saved_usage_accounts.status
-         END,
-         last_error = CASE
-           WHEN ? THEN excluded.last_error
-           ELSE saved_usage_accounts.last_error
-         END,
-         updated_at = excluded.updated_at`
-    ).run(
-      randomUUID(),
-      data.provider,
-      data.email,
-      data.credentials_json,
-      data.last_usage_json ?? null,
-      hasLastUsage ? now : null,
-      data.status ?? 'ok',
-      data.last_error ?? null,
-      now,
-      now,
-      hasLastUsage ? 1 : 0,
-      hasLastUsage ? 1 : 0,
-      hasStatus ? 1 : 0,
-      hasLastError ? 1 : 0
-    )
+    const existing = this.getSavedUsageAccountByProviderEmail(data.provider, email)
 
-    const saved = this.getSavedUsageAccountByProviderEmail(data.provider, data.email)
+    if (existing) {
+      db.prepare(
+        `UPDATE saved_usage_accounts SET
+           email = ?,
+           credentials_json = ?,
+           last_usage_json = CASE WHEN ? THEN ? ELSE last_usage_json END,
+           last_fetched_at = CASE WHEN ? THEN ? ELSE last_fetched_at END,
+           status = CASE WHEN ? THEN ? ELSE status END,
+           last_error = CASE WHEN ? THEN ? ELSE last_error END,
+           updated_at = ?
+         WHERE id = ?`
+      ).run(
+        email,
+        data.credentials_json,
+        hasLastUsage ? 1 : 0,
+        data.last_usage_json ?? null,
+        hasLastUsage ? 1 : 0,
+        now,
+        hasStatus ? 1 : 0,
+        data.status ?? 'ok',
+        hasLastError ? 1 : 0,
+        data.last_error ?? null,
+        now,
+        existing.id
+      )
+    } else {
+      db.prepare(
+        `INSERT INTO saved_usage_accounts (
+           id, provider, email, credentials_json, last_usage_json, last_fetched_at,
+           status, last_error, created_at, updated_at
+         )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        randomUUID(),
+        data.provider,
+        email,
+        data.credentials_json,
+        data.last_usage_json ?? null,
+        hasLastUsage ? now : null,
+        data.status ?? 'ok',
+        data.last_error ?? null,
+        now,
+        now
+      )
+    }
+
+    const saved = this.getSavedUsageAccountByProviderEmail(data.provider, email)
     if (!saved) {
       throw new Error('Failed to upsert saved usage account')
     }
@@ -900,8 +916,10 @@ export class DatabaseService {
     email: string
   ): SavedUsageAccount | null {
     const db = this.getDb()
+    // COLLATE NOCASE: legacy rows may carry a mixed-case email pre-dating
+    // lowercase normalization, so match case-insensitively.
     const row = db
-      .prepare('SELECT * FROM saved_usage_accounts WHERE provider = ? AND email = ?')
+      .prepare('SELECT * FROM saved_usage_accounts WHERE provider = ? AND email = ? COLLATE NOCASE')
       .get(provider, email) as SavedUsageAccount | undefined
     return row ?? null
   }

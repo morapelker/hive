@@ -417,8 +417,19 @@ export async function fetchForSavedAccount(
           batchId: options.batchId
         })
 
+        let rotationPersistError: string | null = null
         if (result.rotated) {
-          await updateClaudeTokens(account.num, account.email, result.rotated, result.rotated.scope)
+          try {
+            await updateClaudeTokens(account.num, account.email, result.rotated, result.rotated.scope)
+          } catch (persistError) {
+            const message =
+              persistError instanceof Error ? persistError.message : String(persistError)
+            log.warn(
+              'Failed to persist rotated Claude tokens; keeping the successful usage fetch result',
+              { accountId, error: message }
+            )
+            rotationPersistError = `failed to persist rotated tokens: ${message}`
+          }
         }
 
         if (!result.success || !result.data) {
@@ -442,7 +453,7 @@ export async function fetchForSavedAccount(
         db.updateSavedUsageAccountUsage(accountId, {
           last_usage_json: JSON.stringify(result.data),
           status: 'ok',
-          last_error: null
+          last_error: rotationPersistError
         })
         return { success: true, data: result.data, status: 'ok' }
       }
@@ -470,8 +481,18 @@ export async function fetchForSavedAccount(
 
       const result = await fetchOpenAIUsage(override)
 
+      let rotationPersistError: string | null = null
       if (result.rotated) {
-        await updateCodexTokens(account.accountKey, result.rotated)
+        try {
+          await updateCodexTokens(account.accountKey, result.rotated)
+        } catch (persistError) {
+          const message = persistError instanceof Error ? persistError.message : String(persistError)
+          log.warn(
+            'Failed to persist rotated Codex tokens; keeping the successful usage fetch result',
+            { accountId, error: message }
+          )
+          rotationPersistError = `failed to persist rotated tokens: ${message}`
+        }
       }
 
       if (!result.success || !result.data) {
@@ -494,7 +515,7 @@ export async function fetchForSavedAccount(
       db.updateSavedUsageAccountUsage(accountId, {
         last_usage_json: JSON.stringify(result.data),
         status: 'ok',
-        last_error: null
+        last_error: rotationPersistError
       })
       return { success: true, data: result.data, status: 'ok' }
     } catch (error) {

@@ -10,6 +10,7 @@ vi.mock('../../src/main/services/logger', () => ({
 
 import {
   addCodexAccount,
+  clearAccountStoreCacheForTests,
   listCodexAccounts,
   persistRotatedLiveCodexTokens,
   readCodexLive,
@@ -61,6 +62,10 @@ describe('account-store-codex', () => {
     process.env.CODEX_HOME = codexHome
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+    // The listCodexAccounts() memo is module-level state that outlives a
+    // single test (fake system time resets to the same instant every test,
+    // so its TTL alone wouldn't force a re-read across tests).
+    clearAccountStoreCacheForTests()
   })
 
   afterEach(async () => {
@@ -315,6 +320,51 @@ describe('account-store-codex', () => {
 
       const accounts = await listCodexAccounts()
       expect(accounts.find((a) => a.accountKey === 'user-a::acct-a')?.active).toBe(true)
+    })
+  })
+
+  describe('listCodexAccounts caching', () => {
+    it('memoizes the result within the TTL, a mutation through this module invalidates it immediately, and it also expires after the TTL', async () => {
+      const idToken = idTokenFor('user-a', 'acct-a')
+      await addCodexAccount(idToken, 'a-access', 'a-refresh')
+      const snapshotFile = join(codexHome, 'accounts', `${snapshotName('user-a::acct-a')}.auth.json`)
+
+      const first = await listCodexAccounts()
+      expect(first[0].hasRefresh).toBe(true)
+
+      // Bypass this module's own mutators to change the underlying snapshot
+      // directly — within the TTL window, the memoized list must not see it.
+      const raw = JSON.parse(await readFile(snapshotFile, 'utf-8'))
+      raw.tokens.refresh_token = ''
+      await writeFile(snapshotFile, JSON.stringify(raw))
+      const second = await listCodexAccounts()
+      expect(second[0].hasRefresh).toBe(true)
+
+      // A mutation through the module's own API busts the cache immediately.
+      await updateCodexTokens('user-a::acct-a', { accessToken: 'new-access', refreshToken: '' })
+      const third = await listCodexAccounts()
+      expect(third[0].hasRefresh).toBe(false)
+
+      // Bypass again, then let the TTL lapse without any mutator call.
+      const raw2 = JSON.parse(await readFile(snapshotFile, 'utf-8'))
+      raw2.tokens.refresh_token = 'restored-refresh'
+      await writeFile(snapshotFile, JSON.stringify(raw2))
+      vi.setSystemTime(new Date(Date.now() + 15_001))
+      const fourth = await listCodexAccounts()
+      expect(fourth[0].hasRefresh).toBe(true)
+    })
+
+    it('does not memoize a rejected call', async () => {
+      await mkdir(join(codexHome, 'accounts'), { recursive: true })
+      await writeFile(join(codexHome, 'accounts', 'registry.json'), '{ not valid json')
+
+      await expect(listCodexAccounts()).rejects.toThrow(/invalid JSON/)
+
+      await writeFile(
+        join(codexHome, 'accounts', 'registry.json'),
+        JSON.stringify({ schema_version: 3, active_account_key: null, accounts: [] })
+      )
+      await expect(listCodexAccounts()).resolves.toEqual([])
     })
   })
 

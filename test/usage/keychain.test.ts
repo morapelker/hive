@@ -141,6 +141,34 @@ describe('keychain', () => {
       await expect(keychainDelete('My Service')).resolves.toBeUndefined()
     })
 
+    it('resolves silently based on exit code 44 (errSecItemNotFound), even if the message wording drifts', async () => {
+      mocks.execFile.mockImplementation(
+        (_cmd: string, _args: string[], _opts: unknown, cb: ExecFileCallback) => {
+          const error = Object.assign(new Error('security: some unrecognized future wording'), {
+            code: 44
+          })
+          cb(error, '')
+        }
+      )
+
+      await expect(keychainDelete('My Service')).resolves.toBeUndefined()
+    })
+
+    it('re-throws when neither the exit code nor the message indicate item-not-found', async () => {
+      mocks.execFile.mockImplementation(
+        (_cmd: string, _args: string[], _opts: unknown, cb: ExecFileCallback) => {
+          const error = Object.assign(new Error('security: some other unexpected failure'), {
+            code: 1
+          })
+          cb(error, '')
+        }
+      )
+
+      await expect(keychainDelete('My Service')).rejects.toThrow(
+        'security: some other unexpected failure'
+      )
+    })
+
     it('re-throws other security CLI failures', async () => {
       mocks.execFile.mockImplementation(
         (_cmd: string, _args: string[], _opts: unknown, cb: ExecFileCallback) =>

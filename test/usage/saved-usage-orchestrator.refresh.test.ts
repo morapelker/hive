@@ -332,6 +332,31 @@ describe('fetchForSavedAccount (Claude)', () => {
     expect(result.error).toBe('account no longer in store')
     expect(mocks.fetchClaudeUsage).not.toHaveBeenCalled()
   })
+
+  it('keeps the successful usage result when persisting the rotated tokens throws, recording the failure in last_error instead of flipping to error status', async () => {
+    mocks.fetchClaudeUsage.mockResolvedValue({
+      success: true,
+      data: usageData(),
+      rotated: {
+        accessToken: 'new-access',
+        refreshToken: 'new-refresh',
+        expiresAt: 2_000,
+        rotatedFrom: 'old-refresh'
+      }
+    })
+    mocks.updateClaudeTokens.mockRejectedValue(new Error('No Claude snapshot for account 1'))
+
+    const result = await fetchForSavedAccount('saved-1')
+
+    expect(result.success).toBe(true)
+    expect(result.status).toBe('ok')
+    expect(result.data).toEqual(usageData())
+    expect(mocks.db.updateSavedUsageAccountUsage).toHaveBeenCalledWith('saved-1', {
+      last_usage_json: JSON.stringify(usageData()),
+      status: 'ok',
+      last_error: 'failed to persist rotated tokens: No Claude snapshot for account 1'
+    })
+  })
 })
 
 describe('fetchForSavedAccount (OpenAI)', () => {
@@ -399,6 +424,27 @@ describe('fetchForSavedAccount (OpenAI)', () => {
 
     expect(result.success).toBe(false)
     expect(result.status).toBe('error')
+  })
+
+  it('keeps the successful usage result when persisting the rotated tokens throws, recording the failure in last_error instead of flipping to error status', async () => {
+    const data = { plan_type: 'plus', rate_limit: { primary_window: null, secondary_window: null } }
+    mocks.fetchOpenAIUsage.mockResolvedValue({
+      success: true,
+      data,
+      rotated: { accessToken: 'new-access', refreshToken: 'new-refresh', rotatedFrom: 'old-refresh' }
+    })
+    mocks.updateCodexTokens.mockRejectedValue(new Error('No Codex snapshot for account user-1::acct-1'))
+
+    const result = await fetchForSavedAccount('saved-openai-1')
+
+    expect(result.success).toBe(true)
+    expect(result.status).toBe('ok')
+    expect(result.data).toEqual(data)
+    expect(mocks.db.updateSavedUsageAccountUsage).toHaveBeenCalledWith('saved-openai-1', {
+      last_usage_json: JSON.stringify(data),
+      status: 'ok',
+      last_error: 'failed to persist rotated tokens: No Codex snapshot for account user-1::acct-1'
+    })
   })
 })
 

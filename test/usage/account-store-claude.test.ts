@@ -34,6 +34,7 @@ vi.mock('../../src/main/services/logger', () => ({
 import {
   LIVE_CLAUDE_KEYCHAIN_SERVICE,
   addClaudeAccount,
+  clearAccountStoreCacheForTests,
   listClaudeAccounts,
   persistRotatedLiveClaudeTokens,
   readClaudeAccountBlob,
@@ -81,6 +82,10 @@ describe('account-store-claude', () => {
     vi.clearAllMocks()
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+    // The listClaudeAccounts() memo is module-level state that outlives a
+    // single test (fake system time resets to the same instant every test,
+    // so its TTL alone wouldn't force a re-read across tests).
+    clearAccountStoreCacheForTests()
   })
 
   afterEach(async () => {
@@ -303,6 +308,63 @@ describe('account-store-claude', () => {
         hasRefresh: false,
         plan: null
       })
+    })
+  })
+
+  describe('listClaudeAccounts caching', () => {
+    it('memoizes the result within the TTL (no extra keychain reads), a mutation through this module invalidates it immediately, and it also expires after the TTL', async () => {
+      await addClaudeAccount('a@b.c', 'uuid-a', claudeBlob({ expiresAt: 1000 }))
+
+      mocks.keychainRead.mockClear()
+      const first = await listClaudeAccounts()
+      expect(first[0].expiresAtMs).toBe(1000)
+      expect(mocks.keychainRead).toHaveBeenCalled()
+
+      // Bypass this module's own mutators to change the underlying blob
+      // directly — within the TTL window, the memoized list must not see it,
+      // and no additional keychain read should happen at all.
+      mocks.keychainRead.mockClear()
+      mocks.keychainStore.set('Claude Code-Account-1-a@b.c', claudeBlob({ expiresAt: 2000 }))
+      const second = await listClaudeAccounts()
+      expect(second[0].expiresAtMs).toBe(1000)
+      expect(mocks.keychainRead).not.toHaveBeenCalled()
+
+      // A mutation through the module's own API busts the cache immediately.
+      await updateClaudeTokens('1', 'a@b.c', {
+        accessToken: 'newer-access',
+        refreshToken: 'newer-refresh',
+        expiresAt: 3000
+      })
+      mocks.keychainRead.mockClear()
+      const third = await listClaudeAccounts()
+      expect(third[0].expiresAtMs).toBe(3000)
+      expect(mocks.keychainRead).toHaveBeenCalled()
+
+      // Bypass again, then let the TTL lapse without any mutator call.
+      mocks.keychainStore.set('Claude Code-Account-1-a@b.c', claudeBlob({ expiresAt: 4000 }))
+      vi.setSystemTime(new Date(Date.now() + 15_001))
+      mocks.keychainRead.mockClear()
+      const fourth = await listClaudeAccounts()
+      expect(fourth[0].expiresAtMs).toBe(4000)
+      expect(mocks.keychainRead).toHaveBeenCalled()
+    })
+
+    it('does not memoize a rejected call', async () => {
+      await mkdir(join(mocks.homeDir, '.claude-switch-backup'), { recursive: true })
+      await writeFile(sequencePath(), '{ not valid json')
+
+      await expect(listClaudeAccounts()).rejects.toThrow(/invalid JSON/)
+
+      await writeFile(
+        sequencePath(),
+        JSON.stringify({
+          activeAccountNumber: null,
+          lastUpdated: new Date().toISOString(),
+          sequence: [],
+          accounts: {}
+        })
+      )
+      await expect(listClaudeAccounts()).resolves.toEqual([])
     })
   })
 
