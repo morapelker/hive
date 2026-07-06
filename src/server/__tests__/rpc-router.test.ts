@@ -4920,7 +4920,8 @@ describe('rpc router', () => {
         last_fetched_at: '2026-05-26T00:00:00.000Z',
         status: 'ok' as const,
         last_error: null,
-        created_at: '2026-05-25T00:00:00.000Z'
+        created_at: '2026-05-25T00:00:00.000Z',
+        plan: null
       }
     ]
     const calls: string[] = []

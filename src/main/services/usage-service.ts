@@ -1,9 +1,9 @@
 import { existsSync } from 'fs'
 import { readFile } from 'fs/promises'
-import { execFile } from 'child_process'
 import { join } from 'path'
-import { homedir, platform } from 'os'
+import { homedir } from 'os'
 import { createLogger } from './logger'
+import { keychainRead } from './keychain'
 import type { ClaudeRefreshResult, UsageData, UsageResult } from '@shared/types/usage'
 
 export type { UsageData, UsageResult }
@@ -94,24 +94,9 @@ function parseClaudeCredentials(raw: string): ClaudeUsageOverride | null {
  * service "Claude Code-credentials".
  */
 async function readFromKeychain(): Promise<ClaudeUsageOverride | null> {
-  if (platform() !== 'darwin') return null
-  try {
-    const stdout = await new Promise<string>((resolve, reject) => {
-      execFile(
-        'security',
-        ['find-generic-password', '-s', 'Claude Code-credentials', '-w'],
-        { timeout: 5000 },
-        (error, out) => {
-          if (error) reject(error)
-          else resolve(out.trim())
-        }
-      )
-    })
-    if (!stdout) return null
-    return parseClaudeCredentials(stdout)
-  } catch {
-    return null
-  }
+  const stdout = await keychainRead('Claude Code-credentials')
+  if (!stdout) return null
+  return parseClaudeCredentials(stdout)
 }
 
 /**

@@ -1,3 +1,9 @@
+export interface ScopedUsageWindow {
+  label: string
+  used_percent: number
+  resets_at: string | null
+}
+
 export interface UsageData {
   five_hour: { utilization: number; resets_at: string }
   seven_day: { utilization: number; resets_at: string }
@@ -7,6 +13,7 @@ export interface UsageData {
     used_credits: number
     monthly_limit: number
   }
+  scoped?: ScopedUsageWindow[]
 }
 
 export interface UsageResult {
@@ -15,6 +22,7 @@ export interface UsageResult {
   error?: string
   retryAfter?: number
   rotated?: ClaudeRefreshResult
+  needsLogin?: boolean
 }
 
 export interface ClaudeRefreshResult {
@@ -77,6 +85,7 @@ export interface OpenAIUsageResult {
     refreshToken: string
     idToken?: string
   }
+  needsLogin?: boolean
 }
 
 export interface SavedAccountDTO {
@@ -88,6 +97,7 @@ export interface SavedAccountDTO {
   status: SavedUsageStatus
   last_error: string | null
   created_at: string
+  plan: string | null
 }
 
 export interface FetchForAccountResult {
@@ -96,6 +106,7 @@ export interface FetchForAccountResult {
   error?: string
   retryAfter?: number
   status: SavedUsageStatus
+  needsLogin?: boolean
 }
 
 export interface RefreshAllResultItem {
@@ -103,4 +114,14 @@ export interface RefreshAllResultItem {
   success: boolean
   error?: string
   retryAfter?: number
+}
+
+export type LoginState = 'launching' | 'waiting' | 'exchanging' | 'done' | 'failed' | 'cancelled'
+
+export interface LoginStatusDTO {
+  loginId: string
+  provider: UsageProvider
+  state: LoginState
+  email: string | null
+  error: string | null
 }

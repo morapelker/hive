@@ -112,7 +112,8 @@ describe('account ops RPC mocked provider', () => {
         last_fetched_at: '2026-05-31T00:00:00.000Z',
         status: 'ok',
         last_error: null,
-        created_at: '2026-05-30T00:00:00.000Z'
+        created_at: '2026-05-30T00:00:00.000Z',
+        plan: null
       }
     ]
     const listSaved = vi.fn(() => Effect.succeed(result))

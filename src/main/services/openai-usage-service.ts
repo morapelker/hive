@@ -4,6 +4,7 @@ import { execFile } from 'child_process'
 import { join } from 'path'
 import { homedir, platform } from 'os'
 import { createLogger } from './logger'
+import { decodeJwtPayload } from './jwt-utils'
 import type { OpenAIUsageData, OpenAIUsageResult } from '@shared/types/usage'
 
 export type { OpenAIUsageData, OpenAIUsageResult }
@@ -102,22 +103,6 @@ export async function readCodexCredentials(): Promise<CodexAuth | null> {
   if (fromKeychain?.tokens?.access_token) return fromKeychain
 
   return null
-}
-
-/**
- * Decode the payload section of a JWT token.
- */
-function decodeJwtPayload(token: string): Record<string, unknown> | null {
-  try {
-    const parts = token.split('.')
-    if (parts.length !== 3) return null
-    const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/')
-    const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4)
-    const json = Buffer.from(padded, 'base64').toString('utf-8')
-    return JSON.parse(json)
-  } catch {
-    return null
-  }
 }
 
 /**

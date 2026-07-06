@@ -38,7 +38,8 @@ describe('accountApi', () => {
         last_fetched_at: '2026-05-25T00:00:00.000Z',
         status: 'ok',
         last_error: null,
-        created_at: '2026-05-24T00:00:00.000Z'
+        created_at: '2026-05-24T00:00:00.000Z',
+        plan: null
       }
     ]
     const request = vi.fn().mockResolvedValue(accounts)

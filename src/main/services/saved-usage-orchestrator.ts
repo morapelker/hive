@@ -56,7 +56,8 @@ export function toSavedAccountDTO(row: SavedUsageAccount): SavedAccountDTO {
     last_fetched_at: row.last_fetched_at,
     status: row.status,
     last_error: row.last_error,
-    created_at: row.created_at
+    created_at: row.created_at,
+    plan: null
   }
 }
 
