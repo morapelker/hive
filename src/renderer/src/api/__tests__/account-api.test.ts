@@ -60,4 +60,26 @@ describe('accountApi', () => {
     await expect(accountApi.removeSaved('account-1')).resolves.toBe(true)
     expect(request).toHaveBeenCalledWith('accountOps.removeSaved', { accountId: 'account-1' })
   })
+
+  it('routes switchAccount through the renderer RPC client', async () => {
+    const request = vi.fn().mockResolvedValue({ success: true })
+    const subscribe = vi.fn()
+
+    setRendererRpcClient({ request, subscribe })
+
+    await expect(accountApi.switchAccount('account-1')).resolves.toEqual({ success: true })
+    expect(request).toHaveBeenCalledWith('accountOps.switchAccount', { accountId: 'account-1' })
+  })
+
+  it('routes a switchAccount failure result through unchanged', async () => {
+    const request = vi.fn().mockResolvedValue({ success: false, error: 'account no longer in store' })
+    const subscribe = vi.fn()
+
+    setRendererRpcClient({ request, subscribe })
+
+    await expect(accountApi.switchAccount('account-1')).resolves.toEqual({
+      success: false,
+      error: 'account no longer in store'
+    })
+  })
 })

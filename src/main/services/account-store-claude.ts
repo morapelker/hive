@@ -291,6 +291,18 @@ async function readLiveCredentialsSource(): Promise<LiveCredentialsSource | null
 }
 
 /**
+ * The raw (unparsed) live Claude credential blob JSON — Keychain first,
+ * falling back to the legacy `~/.claude/.credentials.json` file, matching
+ * `usage-service.ts`'s `readFromFile` fallback. Used to seed a brand-new
+ * managed account entry from whatever the `claude` CLI currently has live
+ * (see `captureLiveAccountFromFetch` in saved-usage-orchestrator.ts).
+ */
+export async function readClaudeLiveRawBlob(): Promise<string | null> {
+  const source = await readLiveCredentialsSource()
+  return source?.raw ?? null
+}
+
+/**
  * Persist rotated tokens for the LIVE Claude credentials (the ones the
  * `claude` CLI itself reads/writes) after a Hive-initiated refresh.
  *

@@ -210,4 +210,101 @@ describe('account ops RPC mocked provider', () => {
       error: { code: 'VALIDATION_FAILED' }
     })
   })
+
+  it('routes accountOps.switchAccount to the injected provider service', async () => {
+    const switchAccount = vi.fn(() => Effect.succeed({ success: true }))
+    const service = { switchAccount } as unknown as AccountOpsRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      accountOps: service
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'account-switch-1',
+        method: 'accountOps.switchAccount',
+        params: { accountId: 'account-1' }
+      })
+    )
+
+    expect(switchAccount).toHaveBeenCalledWith('account-1')
+    expect(response).toEqual({
+      id: 'account-switch-1',
+      ok: true,
+      value: { success: true }
+    })
+  })
+
+  it('routes a switchAccount failure result through unchanged', async () => {
+    const switchAccount = vi.fn(() =>
+      Effect.succeed({ success: false, error: 'account no longer in store' })
+    )
+    const service = { switchAccount } as unknown as AccountOpsRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      accountOps: service
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'account-switch-2',
+        method: 'accountOps.switchAccount',
+        params: { accountId: 'account-1' }
+      })
+    )
+
+    expect(response).toEqual({
+      id: 'account-switch-2',
+      ok: true,
+      value: { success: false, error: 'account no longer in store' }
+    })
+  })
+
+  it('validates accountOps.switchAccount params before calling the provider service', async () => {
+    const switchAccount = vi.fn(() => Effect.succeed({ success: true }))
+    const service = { switchAccount } as unknown as AccountOpsRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      accountOps: service
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'account-switch-invalid',
+        method: 'accountOps.switchAccount',
+        params: { accountId: 123 }
+      })
+    )
+
+    expect(switchAccount).not.toHaveBeenCalled()
+    expect(response).toMatchObject({
+      id: 'account-switch-invalid',
+      ok: false,
+      error: { code: 'VALIDATION_FAILED' }
+    })
+  })
+
+  it('rejects unexpected extra params for accountOps.switchAccount', async () => {
+    const switchAccount = vi.fn(() => Effect.succeed({ success: true }))
+    const service = { switchAccount } as unknown as AccountOpsRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      accountOps: service
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'account-switch-extra',
+        method: 'accountOps.switchAccount',
+        params: { accountId: 'account-1', unexpected: true }
+      })
+    )
+
+    expect(switchAccount).not.toHaveBeenCalled()
+    expect(response).toMatchObject({
+      id: 'account-switch-extra',
+      ok: false,
+      error: { code: 'VALIDATION_FAILED' }
+    })
+  })
 })

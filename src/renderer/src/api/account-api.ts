@@ -9,5 +9,10 @@ export const accountApi = {
   listSaved: async (provider?: UsageProvider): Promise<SavedAccountDTO[]> =>
     getRendererRpcClient().request<SavedAccountDTO[]>('accountOps.listSaved', { provider }),
   removeSaved: async (accountId: string): Promise<boolean> =>
-    getRendererRpcClient().request<boolean>('accountOps.removeSaved', { accountId })
+    getRendererRpcClient().request<boolean>('accountOps.removeSaved', { accountId }),
+  switchAccount: async (accountId: string): Promise<{ success: boolean; error?: string }> =>
+    getRendererRpcClient().request<{ success: boolean; error?: string }>(
+      'accountOps.switchAccount',
+      { accountId }
+    )
 }

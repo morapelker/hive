@@ -4714,6 +4714,33 @@ describe('rpc router', () => {
     expect(calls).toEqual([])
   })
 
+  it('passes usageOps.fetchForAccount userInitiated through to the usage ops RPC domain', async () => {
+    const calls: Array<{ accountId: string; userInitiated: boolean | undefined }> = []
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      usageOps: {
+        fetch: () => Effect.succeed({ success: false, error: 'unused' }),
+        fetchOpenai: () => Effect.succeed({ success: false, error: 'unused' }),
+        fetchForAccount: (accountId, userInitiated) =>
+          Effect.sync(() => {
+            calls.push({ accountId, userInitiated })
+            return { success: true, status: 'ok' as const }
+          }),
+        refreshAllForProvider: () => Effect.succeed([])
+      }
+    })
+
+    await Effect.runPromise(
+      router.handle({
+        id: 'usage-ops-fetch-for-account-3',
+        method: 'usageOps.fetchForAccount',
+        params: { accountId: 'account-1', userInitiated: true }
+      })
+    )
+
+    expect(calls).toEqual([{ accountId: 'account-1', userInitiated: true }])
+  })
+
   it('handles usageOps.refreshAllForProvider through the usage ops RPC domain', async () => {
     const result = [
       { accountId: 'account-1', success: true },
@@ -4794,7 +4821,8 @@ describe('rpc router', () => {
           }),
         getOpenAIEmail: () => Effect.succeed(null),
         listSaved: () => Effect.succeed([]),
-        removeSaved: () => Effect.succeed(false)
+        removeSaved: () => Effect.succeed(false),
+        switchAccount: () => Effect.succeed({ success: false })
       }
     })
 
@@ -4826,7 +4854,8 @@ describe('rpc router', () => {
           }),
         getOpenAIEmail: () => Effect.succeed(null),
         listSaved: () => Effect.succeed([]),
-        removeSaved: () => Effect.succeed(false)
+        removeSaved: () => Effect.succeed(false),
+        switchAccount: () => Effect.succeed({ success: false })
       }
     })
 
@@ -4858,7 +4887,8 @@ describe('rpc router', () => {
             return 'openai-user@example.com'
           }),
         listSaved: () => Effect.succeed([]),
-        removeSaved: () => Effect.succeed(false)
+        removeSaved: () => Effect.succeed(false),
+        switchAccount: () => Effect.succeed({ success: false })
       }
     })
 
@@ -4890,7 +4920,8 @@ describe('rpc router', () => {
             return null
           }),
         listSaved: () => Effect.succeed([]),
-        removeSaved: () => Effect.succeed(false)
+        removeSaved: () => Effect.succeed(false),
+        switchAccount: () => Effect.succeed({ success: false })
       }
     })
 
@@ -4935,7 +4966,8 @@ describe('rpc router', () => {
             calls.push(provider ?? 'all')
             return accounts
           }),
-        removeSaved: () => Effect.succeed(false)
+        removeSaved: () => Effect.succeed(false),
+        switchAccount: () => Effect.succeed({ success: false })
       }
     })
 
@@ -4967,7 +4999,8 @@ describe('rpc router', () => {
             calls.push(provider ?? 'all')
             return []
           }),
-        removeSaved: () => Effect.succeed(false)
+        removeSaved: () => Effect.succeed(false),
+        switchAccount: () => Effect.succeed({ success: false })
       }
     })
 
@@ -4999,7 +5032,8 @@ describe('rpc router', () => {
           Effect.sync(() => {
             calls.push(accountId)
             return true
-          })
+          }),
+        switchAccount: () => Effect.succeed({ success: false })
       }
     })
 
@@ -5031,7 +5065,8 @@ describe('rpc router', () => {
           Effect.sync(() => {
             calls.push(accountId)
             return false
-          })
+          }),
+        switchAccount: () => Effect.succeed({ success: false })
       }
     })
 
@@ -5045,6 +5080,72 @@ describe('rpc router', () => {
 
     expect(response).toMatchObject({
       id: 'account-ops-remove-saved-2',
+      ok: false,
+      error: { code: 'VALIDATION_FAILED' }
+    })
+    expect(calls).toEqual([])
+  })
+
+  it('handles accountOps.switchAccount through the account ops RPC domain', async () => {
+    const calls: string[] = []
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      accountOps: {
+        getClaudeEmail: () => Effect.succeed(null),
+        getOpenAIEmail: () => Effect.succeed(null),
+        listSaved: () => Effect.succeed([]),
+        removeSaved: () => Effect.succeed(false),
+        switchAccount: (accountId) =>
+          Effect.sync(() => {
+            calls.push(accountId)
+            return { success: true }
+          })
+      }
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'account-ops-switch-account-1',
+        method: 'accountOps.switchAccount',
+        params: { accountId: 'account-1' }
+      })
+    )
+
+    expect(response).toEqual({
+      id: 'account-ops-switch-account-1',
+      ok: true,
+      value: { success: true }
+    })
+    expect(calls).toEqual(['account-1'])
+  })
+
+  it('validates accountOps.switchAccount params', async () => {
+    const calls: string[] = []
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      accountOps: {
+        getClaudeEmail: () => Effect.succeed(null),
+        getOpenAIEmail: () => Effect.succeed(null),
+        listSaved: () => Effect.succeed([]),
+        removeSaved: () => Effect.succeed(false),
+        switchAccount: (accountId) =>
+          Effect.sync(() => {
+            calls.push(accountId)
+            return { success: true }
+          })
+      }
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'account-ops-switch-account-2',
+        method: 'accountOps.switchAccount',
+        params: { accountId: 123 }
+      })
+    )
+
+    expect(response).toMatchObject({
+      id: 'account-ops-switch-account-2',
       ok: false,
       error: { code: 'VALIDATION_FAILED' }
     })

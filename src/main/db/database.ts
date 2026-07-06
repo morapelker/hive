@@ -887,20 +887,6 @@ export class DatabaseService {
     return this.getSavedUsageAccountById(id)
   }
 
-  updateSavedUsageAccountCredentials(
-    id: string,
-    credentialsJson: string
-  ): SavedUsageAccount | null {
-    const db = this.getDb()
-    const now = new Date().toISOString()
-    db.prepare(
-      `UPDATE saved_usage_accounts
-       SET credentials_json = ?, updated_at = ?
-       WHERE id = ?`
-    ).run(credentialsJson, now, id)
-    return this.getSavedUsageAccountById(id)
-  }
-
   getSavedUsageAccountById(id: string): SavedUsageAccount | null {
     const db = this.getDb()
     const row = db.prepare('SELECT * FROM saved_usage_accounts WHERE id = ?').get(id) as

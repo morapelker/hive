@@ -110,8 +110,11 @@ export async function fetchOpenAIUsageOp(): Promise<OpenAIUsageResult> {
   return result
 }
 
-export async function fetchForAccountOp(accountId: string): Promise<FetchForAccountResult> {
-  return fetchForSavedAccount(accountId, { caller: 'usage:fetchForAccount' })
+export async function fetchForAccountOp(
+  accountId: string,
+  userInitiated?: boolean
+): Promise<FetchForAccountResult> {
+  return fetchForSavedAccount(accountId, { caller: 'usage:fetchForAccount', userInitiated })
 }
 
 export async function refreshAllForProviderOp(

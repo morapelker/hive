@@ -180,6 +180,21 @@ export async function listCodexAccounts(): Promise<CodexStoreAccount[]> {
 }
 
 /**
+ * Effective credentials for a managed account: live auth.json when this
+ * account is currently the registry's active account (its real, freshest
+ * tokens live there), otherwise its own snapshot. Mirrors
+ * `account-store-claude.ts`'s `readClaudeEffectiveBlob`.
+ */
+export async function readCodexEffectiveAuth(accountKey: string): Promise<CodexAuth | null> {
+  const registry = await readRegistry()
+  const live = await readCodexLive()
+  const derivedLiveKey = deriveAccountKey(live)
+  const liveAccountKey = derivedLiveKey ?? registry.active_account_key
+  if (accountKey === liveAccountKey && live) return live
+  return readCodexSnapshot(accountKey)
+}
+
+/**
  * Patch rotated tokens into a snapshot (access always; refresh/id only when
  * provided), and mirror the full patched snapshot to live auth.json when
  * this account is the registry's active account.
