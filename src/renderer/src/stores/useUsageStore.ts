@@ -10,6 +10,9 @@ import type {
 } from '@shared/types/usage'
 import { accountApi } from '@/api/account-api'
 import { usageApi } from '@/api/usage-api'
+import { toast } from '@/lib/toast'
+import { useLoginStore } from './useLoginStore'
+import { useAccountStore } from './useAccountStore'
 
 export type { UsageData, UsageProvider, AnthropicRateLimitInfo, AnthropicRateLimitState }
 
@@ -31,11 +34,14 @@ interface UsageState {
   savedAccountLoadErrors: Record<UsageProvider, string | null>
   refreshingProviders: Record<UsageProvider, boolean>
   refreshingAccountIds: Set<string>
+  removingAccountIds: Set<string>
+  switchingAccountIds: Set<string>
 
   loadSavedAccounts: (provider?: UsageProvider) => Promise<void>
   refreshAllForProvider: (provider: UsageProvider) => Promise<void>
-  refreshSavedAccount: (id: string) => Promise<void>
+  refreshSavedAccount: (id: string, opts?: { userInitiated?: boolean }) => Promise<void>
   removeSavedAccount: (id: string) => Promise<void>
+  switchAccount: (id: string) => Promise<void>
   fetchUsageForProvider: (provider: UsageProvider) => Promise<void>
   forceRefreshProvider: (provider: UsageProvider) => Promise<void>
   setActiveProvider: (provider: UsageProvider) => void
@@ -44,10 +50,13 @@ interface UsageState {
 }
 
 const DEBOUNCE_MS = 180_000 // 3 minutes
-const FORCE_REFRESH_FLOOR_MS = 5_000
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
+}
+
+function providerLabel(provider: UsageProvider): string {
+  return provider === 'anthropic' ? 'Claude' : 'OpenAI'
 }
 
 function retryAfterFetchedAt(retryAfter: number | undefined): number | null {
@@ -72,6 +81,8 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
   savedAccountLoadErrors: { anthropic: null, openai: null },
   refreshingProviders: { anthropic: false, openai: false },
   refreshingAccountIds: new Set<string>(),
+  removingAccountIds: new Set<string>(),
+  switchingAccountIds: new Set<string>(),
 
   loadSavedAccounts: async (provider?: UsageProvider) => {
     try {
@@ -131,19 +142,38 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
     }
   },
 
-  refreshSavedAccount: async (id: string) => {
+  refreshSavedAccount: async (id: string, opts?: { userInitiated?: boolean }) => {
     const state = get()
     const provider = (['anthropic', 'openai'] as UsageProvider[]).find((p) =>
       state.savedAccounts[p].some((account) => account.id === id)
     )
+    const userInitiated = opts?.userInitiated ?? false
+    const account = provider
+      ? state.savedAccounts[provider].find((a) => a.id === id)
+      : undefined
 
     set((current) => ({
       refreshingAccountIds: new Set([...current.refreshingAccountIds, id])
     }))
     try {
-      await usageApi.fetchForAccount(id)
-      await get().loadSavedAccounts(provider)
+      const result = await usageApi.fetchForAccount(id, userInitiated)
+      if (result.needsLogin && userInitiated && provider) {
+        useLoginStore.getState().startLogin(provider, account?.email).catch(() => {})
+      } else if (!result.success && userInitiated) {
+        toast.error(
+          `${providerLabel(provider ?? 'anthropic')} account refresh failed: ${result.error ?? 'Unknown error'}`
+        )
+      }
+    } catch (err) {
+      if (userInitiated) {
+        toast.error(`${providerLabel(provider ?? 'anthropic')} account refresh failed: ${errorMessage(err)}`)
+      }
     } finally {
+      // Reload in its own catch so a reload hiccup after a SUCCESSFUL fetch
+      // can't reach the catch above and mis-toast a 'refresh failed'.
+      await get()
+        .loadSavedAccounts(provider)
+        .catch(() => {})
       set((current) => {
         const nextIds = new Set(current.refreshingAccountIds)
         nextIds.delete(id)
@@ -153,8 +183,78 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
   },
 
   removeSavedAccount: async (id: string) => {
-    await accountApi.removeSaved(id)
-    await get().loadSavedAccounts()
+    const state = get()
+    const provider = (['anthropic', 'openai'] as UsageProvider[]).find((p) =>
+      state.savedAccounts[p].some((account) => account.id === id)
+    )
+    const account = provider
+      ? state.savedAccounts[provider].find((a) => a.id === id)
+      : undefined
+
+    set((current) => ({
+      removingAccountIds: new Set([...current.removingAccountIds, id])
+    }))
+    try {
+      await accountApi.removeSaved(id)
+      toast.success(`Removed ${account?.email ?? 'account'}`)
+    } catch (err) {
+      toast.error(`Failed to remove account: ${errorMessage(err)}`)
+    } finally {
+      set((current) => {
+        const nextIds = new Set(current.removingAccountIds)
+        nextIds.delete(id)
+        return { removingAccountIds: nextIds }
+      })
+      await get()
+        .loadSavedAccounts(provider)
+        .catch(() => {})
+    }
+  },
+
+  switchAccount: async (id: string) => {
+    const state = get()
+    const provider = (['anthropic', 'openai'] as UsageProvider[]).find((p) =>
+      state.savedAccounts[p].some((account) => account.id === id)
+    )
+    const account = provider
+      ? state.savedAccounts[provider].find((a) => a.id === id)
+      : undefined
+
+    set((current) => ({
+      switchingAccountIds: new Set([...current.switchingAccountIds, id])
+    }))
+    try {
+      const result = await accountApi.switchAccount(id)
+      if (result.success) {
+        // Toast success off the op result FIRST — before the post-switch
+        // reloads, each wrapped in its own catch so a reload hiccup after a
+        // SUCCESSFUL switch can't reach the catch below and mis-toast a
+        // 'Switch failed'.
+        toast.success(`Switched to ${account?.email ?? 'account'}`)
+        if (provider) {
+          await useAccountStore
+            .getState()
+            .fetchEmail(provider)
+            .catch(() => {})
+          await get()
+            .loadSavedAccounts(provider)
+            .catch(() => {})
+          get()
+            .forceRefreshProvider(provider)
+            .catch(() => {})
+        }
+      } else {
+        toast.error(`Switch failed: ${result.error ?? 'Unknown error'}`)
+      }
+    } catch (err) {
+      toast.error(`Switch failed: ${errorMessage(err)}`)
+    } finally {
+      set((current) => {
+        const nextIds = new Set(current.switchingAccountIds)
+        nextIds.delete(id)
+        return { switchingAccountIds: nextIds }
+      })
+    }
   },
 
   fetchUsageForProvider: async (provider: UsageProvider) => {
@@ -232,14 +332,12 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
         state.anthropicLastRetryAfter !== null &&
         state.anthropicLastFetchedAt &&
         Date.now() - state.anthropicLastFetchedAt < DEBOUNCE_MS
-      )
+      ) {
+        const remainingMs = state.anthropicLastFetchedAt + DEBOUNCE_MS - Date.now()
+        const retrySeconds = Math.max(1, Math.ceil(remainingMs / 1000))
+        toast.error(`Rate limited — retry in ${retrySeconds}s`)
         return
-      if (
-        state.anthropicLastFetchedAt &&
-        state.anthropicLastError === null &&
-        Date.now() - state.anthropicLastFetchedAt < FORCE_REFRESH_FLOOR_MS
-      )
-        return
+      }
 
       set({ anthropicIsLoading: true, anthropicLastError: null })
       let succeeded = false
@@ -262,9 +360,14 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
             anthropicLastRetryAfter: result.retryAfter ?? null,
             ...(retryFetchedAt !== null ? { anthropicLastFetchedAt: retryFetchedAt } : {})
           })
+          toast.error(
+            `${providerLabel(provider)} usage refresh failed: ${result.error ?? 'Unknown error'}`
+          )
         }
       } catch (err) {
-        set({ anthropicLastError: errorMessage(err), anthropicLastRetryAfter: null })
+        const message = errorMessage(err)
+        set({ anthropicLastError: message, anthropicLastRetryAfter: null })
+        toast.error(`${providerLabel(provider)} usage refresh failed: ${message}`)
       } finally {
         set({
           anthropicIsLoading: false,
@@ -286,9 +389,14 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
             .catch(() => {})
         } else {
           set({ openaiLastError: result.error ?? 'Unknown error' })
+          toast.error(
+            `${providerLabel(provider)} usage refresh failed: ${result.error ?? 'Unknown error'}`
+          )
         }
       } catch (err) {
-        set({ openaiLastError: errorMessage(err) })
+        const message = errorMessage(err)
+        set({ openaiLastError: message })
+        toast.error(`${providerLabel(provider)} usage refresh failed: ${message}`)
       } finally {
         set({
           openaiIsLoading: false,
@@ -377,10 +485,18 @@ export function resolveDefaultUsageProvider(
   return 'anthropic'
 }
 
-function hasUsageWindow(value: unknown): value is { utilization: number; resets_at: string } {
+function hasUsageWindow(value: unknown): value is { utilization: number; resets_at: string | null } {
   if (typeof value !== 'object' || value === null) return false
   const record = value as Record<string, unknown>
-  return typeof record.utilization === 'number' && typeof record.resets_at === 'string'
+  // resets_at is legitimately null (or absent) for a window with no active
+  // session — the API sends { utilization: 0, resets_at: null } for an idle
+  // 5h window. Only reject a present, non-string, non-null resets_at.
+  return (
+    typeof record.utilization === 'number' &&
+    (record.resets_at === null ||
+      record.resets_at === undefined ||
+      typeof record.resets_at === 'string')
+  )
 }
 
 function isAnthropicUsageData(value: unknown): value is UsageData {

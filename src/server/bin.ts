@@ -1,4 +1,5 @@
 import { Effect } from 'effect'
+import { startAccountMaintenance } from '../main/services/account-maintenance'
 import { startHiveServer, type StartedHiveServer } from './server'
 
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 5_000
@@ -53,7 +54,19 @@ export const main = (): Promise<void> =>
       }) + '\n'
     )
 
-    const shutdown = createShutdownHandler(server)
+    // Account maintenance (ccswitch-store migration, launch mass refresh,
+    // expiry watcher) is only ever started here — the real spawned server
+    // process — never from `startHiveServer()` itself, so tests that start
+    // the HTTP/WS server directly never touch the real Keychain/filesystem
+    // account stores or make live network calls.
+    const stopAccountMaintenance = startAccountMaintenance()
+
+    const shutdown = createShutdownHandler({
+      close: async () => {
+        stopAccountMaintenance()
+        await server.close()
+      }
+    })
 
     process.on('SIGINT', shutdown)
     process.on('SIGTERM', shutdown)

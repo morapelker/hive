@@ -61,6 +61,7 @@ export {
   normalizeUsage
 } from './useUsageStore'
 export { useAccountStore } from './useAccountStore'
+export { useLoginStore, type ActiveLogin, type LoginState } from './useLoginStore'
 export { useHintStore } from './useHintStore'
 export { useVimModeStore } from './useVimModeStore'
 export { usePRReviewStore } from './usePRReviewStore'

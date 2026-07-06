@@ -19,7 +19,8 @@ export interface UsageOpsRpcService {
   readonly fetch: () => Effect.Effect<UsageResult, unknown, never>
   readonly fetchOpenai: () => Effect.Effect<OpenAIUsageResult, unknown, never>
   readonly fetchForAccount: (
-    accountId: string
+    accountId: string,
+    userInitiated?: boolean
   ) => Effect.Effect<FetchForAccountResult, unknown, never>
   readonly refreshAllForProvider: (
     provider: UsageProvider
@@ -27,7 +28,9 @@ export interface UsageOpsRpcService {
 }
 
 const emptyParamsSchema = z.union([z.object({}).strict(), z.undefined(), z.null()])
-const fetchForAccountParamsSchema = z.object({ accountId: z.string() }).strict()
+const fetchForAccountParamsSchema = z
+  .object({ accountId: z.string(), userInitiated: z.boolean().optional() })
+  .strict()
 const refreshAllForProviderParamsSchema = z
   .object({ provider: z.enum(['anthropic', 'openai']) })
   .strict()
@@ -43,9 +46,9 @@ export const makeLiveUsageOpsRpcService = (): UsageOpsRpcService => ({
       try: () => fetchOpenAIUsageOp(),
       catch: (cause) => cause
     }),
-  fetchForAccount: (accountId) =>
+  fetchForAccount: (accountId, userInitiated) =>
     Effect.tryPromise({
-      try: () => fetchForAccountOp(accountId),
+      try: () => fetchForAccountOp(accountId, userInitiated),
       catch: (cause) => cause
     }),
   refreshAllForProvider: (provider) =>
@@ -85,11 +88,11 @@ export const makeUsageOpsRpcHandlers = (
       'usageOps.fetchForAccount',
       (params) =>
         Effect.gen(function* () {
-          const { accountId } = yield* Effect.try({
+          const { accountId, userInitiated } = yield* Effect.try({
             try: () => fetchForAccountParamsSchema.parse(params),
             catch: (cause) => cause
           })
-          return yield* service.fetchForAccount(accountId)
+          return yield* service.fetchForAccount(accountId, userInitiated)
         })
     ],
     [

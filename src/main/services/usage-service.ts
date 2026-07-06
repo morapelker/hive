@@ -1,10 +1,11 @@
 import { existsSync } from 'fs'
 import { readFile } from 'fs/promises'
-import { execFile } from 'child_process'
 import { join } from 'path'
-import { homedir, platform } from 'os'
+import { homedir } from 'os'
 import { createLogger } from './logger'
-import type { ClaudeRefreshResult, UsageData, UsageResult } from '@shared/types/usage'
+import { keychainRead } from './keychain'
+import { refreshAnthropicToken } from './oauth-anthropic'
+import type { ClaudeRefreshResult, ScopedUsageWindow, UsageData, UsageResult } from '@shared/types/usage'
 
 export type { UsageData, UsageResult }
 
@@ -12,10 +13,23 @@ const log = createLogger({ component: 'UsageService' })
 
 const CLAUDE_CLIENT_USER_AGENT = 'claude-code/2.1.5'
 const ANTHROPIC_API_VERSION = '2023-06-01'
-const ANTHROPIC_TOKEN_URL = 'https://console.anthropic.com/v1/oauth/token'
-const ANTHROPIC_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e'
 
 type ClaudeTokenSource = 'keychain' | 'file' | 'override'
+
+/**
+ * Thrown by `refreshClaudeAccessToken` (and the OpenAI equivalent) when the
+ * OAuth server rejected the refresh token itself (rather than a transient
+ * network/server error) — the discriminant callers check to decide whether
+ * to prompt the user to log back in.
+ */
+export class NeedsLoginError extends Error {
+  readonly needsLogin = true as const
+
+  constructor(message: string) {
+    super(message)
+    this.name = 'NeedsLoginError'
+  }
+}
 
 export interface ClaudeUsageFetchContext {
   caller: 'usage:fetch' | 'usage:fetchForAccount' | 'refreshAllForProvider'
@@ -94,24 +108,9 @@ function parseClaudeCredentials(raw: string): ClaudeUsageOverride | null {
  * service "Claude Code-credentials".
  */
 async function readFromKeychain(): Promise<ClaudeUsageOverride | null> {
-  if (platform() !== 'darwin') return null
-  try {
-    const stdout = await new Promise<string>((resolve, reject) => {
-      execFile(
-        'security',
-        ['find-generic-password', '-s', 'Claude Code-credentials', '-w'],
-        { timeout: 5000 },
-        (error, out) => {
-          if (error) reject(error)
-          else resolve(out.trim())
-        }
-      )
-    })
-    if (!stdout) return null
-    return parseClaudeCredentials(stdout)
-  } catch {
-    return null
-  }
+  const stdout = await keychainRead('Claude Code-credentials')
+  if (!stdout) return null
+  return parseClaudeCredentials(stdout)
 }
 
 /**
@@ -192,59 +191,6 @@ async function readCappedBody(response: Response): Promise<string> {
   }
 }
 
-async function requestTokenRefresh(refreshToken: string): Promise<ClaudeRefreshResult> {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 10_000)
-
-  try {
-    const response = await fetch(ANTHROPIC_TOKEN_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        grant_type: 'refresh_token',
-        refresh_token: refreshToken,
-        client_id: ANTHROPIC_CLIENT_ID
-      }),
-      signal: controller.signal
-    })
-
-    clearTimeout(timeout)
-
-    if (!response.ok) {
-      const body = await readCappedBody(response)
-      throw new Error(`Token refresh failed (${response.status}): ${body}`)
-    }
-
-    const data = (await response.json()) as {
-      access_token?: unknown
-      refresh_token?: unknown
-      expires_in?: unknown
-    }
-    if (
-      typeof data.access_token !== 'string' ||
-      data.access_token.length === 0 ||
-      typeof data.refresh_token !== 'string' ||
-      data.refresh_token.length === 0 ||
-      typeof data.expires_in !== 'number' ||
-      !Number.isFinite(data.expires_in)
-    ) {
-      throw new Error('Token refresh failed: invalid token response')
-    }
-
-    return {
-      accessToken: data.access_token,
-      refreshToken: data.refresh_token,
-      expiresAt: Date.now() + data.expires_in * 1000
-    }
-  } catch (error) {
-    clearTimeout(timeout)
-    if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error('Token refresh failed: request timed out')
-    }
-    throw error
-  }
-}
-
 export async function refreshClaudeAccessToken(
   refreshToken: string | undefined,
   key: string
@@ -263,12 +209,21 @@ export async function refreshClaudeAccessToken(
     })
 
     try {
-      const result = await requestTokenRefresh(refreshToken)
+      const outcome = await refreshAnthropicToken(refreshToken)
+      if (!outcome.ok) {
+        throw new NeedsLoginError(`Token refresh failed: invalid_grant (${outcome.error})`)
+      }
       log.info('Claude token refresh success', {
         accountId: key,
-        newTokenSuffix: tokenSuffix(result.accessToken)
+        newTokenSuffix: tokenSuffix(outcome.result.accessToken)
       })
-      return result
+      return {
+        accessToken: outcome.result.accessToken,
+        refreshToken: outcome.result.refreshToken,
+        expiresAt: outcome.result.expiresAt,
+        scope: outcome.scope,
+        rotatedFrom: refreshToken
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       log.warn('Claude token refresh failed', { accountId: key, error: message })
@@ -330,45 +285,87 @@ function claudeRefreshKey(override: ClaudeUsageOverride): string {
   return `access:${tokenSuffix(override.accessToken)}`
 }
 
+/** Map the usage response's `limits[]` array to model-scoped usage windows (Fable/Opus/etc). */
+function mapScopedLimits(limits: unknown): ScopedUsageWindow[] | undefined {
+  if (!Array.isArray(limits)) return undefined
+
+  const scoped: ScopedUsageWindow[] = []
+  for (const entry of limits) {
+    if (!entry || typeof entry !== 'object') continue
+    const record = entry as {
+      percent?: unknown
+      resets_at?: unknown
+      scope?: { model?: { display_name?: unknown } }
+    }
+    const displayName = record.scope?.model?.display_name
+    if (typeof displayName !== 'string' || displayName.length === 0) continue
+
+    scoped.push({
+      label: displayName,
+      used_percent: typeof record.percent === 'number' ? record.percent : 0,
+      resets_at: typeof record.resets_at === 'string' ? record.resets_at : null
+    })
+  }
+  return scoped.length > 0 ? scoped : undefined
+}
+
 export async function fetchClaudeUsage(
   override?: ClaudeUsageOverride,
   ctx?: ClaudeUsageFetchContext
 ): Promise<UsageResult> {
-  const tokenWithSource =
-    override !== undefined
-      ? { token: override.accessToken, source: 'override' as const }
-      : await readAccessTokenWithSource()
-  if (!tokenWithSource?.token) {
-    log.warn('No Claude OAuth access token found (checked keychain and credentials file)', {
-      ...ctx
-    })
-    return { success: false, error: 'No access token found' }
+  let effectiveOverride: ClaudeUsageOverride
+  let tokenSource: ClaudeTokenSource
+
+  if (override !== undefined) {
+    effectiveOverride = override
+    tokenSource = 'override'
+  } else {
+    const liveWithSource = await readAccessTokenWithSource()
+    if (!liveWithSource?.token) {
+      log.warn('No Claude OAuth access token found (checked keychain and credentials file)', {
+        ...ctx
+      })
+      return { success: false, error: 'No access token found' }
+    }
+    // The LIVE credentials (whatever the `claude` CLI itself last wrote) are
+    // refreshed just like any other account from here on — build an
+    // override so the proactive/reactive refresh logic below applies to
+    // them too.
+    const liveBlob = await readClaudeCredentialsBlob()
+    effectiveOverride = {
+      accessToken: liveWithSource.token,
+      refreshToken: liveBlob?.refreshToken,
+      expiresAt: liveBlob?.expiresAt,
+      accountId: 'live'
+    }
+    tokenSource = liveWithSource.source
   }
-  let token = tokenWithSource.token
-  const tokenSource = tokenWithSource.source
+
+  let token = effectiveOverride.accessToken
 
   let countedInFlight = false
   let rotated: ClaudeRefreshResult | undefined
-  let currentRefreshToken = override?.refreshToken
+  let currentRefreshToken = effectiveOverride.refreshToken
+  let needsLogin = false
 
   try {
     inFlight += 1
     countedInFlight = true
 
     if (
-      override?.expiresAt !== undefined &&
-      Date.now() + 60_000 >= override.expiresAt &&
+      effectiveOverride.expiresAt !== undefined &&
+      Date.now() + 60_000 >= effectiveOverride.expiresAt &&
       currentRefreshToken
     ) {
-      rotated = await refreshClaudeAccessToken(currentRefreshToken, claudeRefreshKey(override))
+      rotated = await refreshClaudeAccessToken(currentRefreshToken, claudeRefreshKey(effectiveOverride))
       token = rotated.accessToken
       currentRefreshToken = rotated.refreshToken
     }
 
     let response = await fetchClaudeUsageResponse(token, tokenSource, ctx)
 
-    if (response.status === 401 && override && currentRefreshToken) {
-      rotated = await refreshClaudeAccessToken(currentRefreshToken, claudeRefreshKey(override))
+    if (response.status === 401 && currentRefreshToken) {
+      rotated = await refreshClaudeAccessToken(currentRefreshToken, claudeRefreshKey(effectiveOverride))
       token = rotated.accessToken
       currentRefreshToken = rotated.refreshToken
       response = await fetchClaudeUsageResponse(token, tokenSource, ctx)
@@ -388,15 +385,22 @@ export async function fetchClaudeUsage(
       const responseBody = await readCappedBody(response)
       log.warn('Claude usage response', { ...responseLogData, responseBody })
       const message = `Usage API returned ${response.status}: ${response.statusText}`
+      // A 401 with no refresh token to try means we truly can't recover
+      // without the user logging back in.
+      if (response.status === 401 && !currentRefreshToken) {
+        needsLogin = true
+      }
       return {
         success: false,
         error: message,
-        ...(response.status === 429 && retryAfter !== undefined ? { retryAfter } : {})
+        ...(response.status === 429 && retryAfter !== undefined ? { retryAfter } : {}),
+        ...(needsLogin ? { needsLogin: true } : {}),
+        ...(rotated ? { rotated } : {})
       }
     }
 
     log.info('Claude usage response', responseLogData)
-    const data = (await response.json()) as UsageData
+    const data = (await response.json()) as UsageData & { limits?: unknown }
 
     // API returns extra_usage credits in cents — convert to dollars
     if (data.extra_usage) {
@@ -404,11 +408,20 @@ export async function fetchClaudeUsage(
       data.extra_usage.monthly_limit = (data.extra_usage.monthly_limit ?? 0) / 100
     }
 
+    const scoped = mapScopedLimits(data.limits)
+    if (scoped) data.scoped = scoped
+    delete data.limits
+
     return { success: true, data, ...(rotated ? { rotated } : {}) }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     log.warn('Failed to fetch Claude usage', { ...ctx, error: message, inFlight })
-    return { success: false, error: message }
+    return {
+      success: false,
+      error: message,
+      ...(error instanceof NeedsLoginError ? { needsLogin: true } : {}),
+      ...(rotated ? { rotated } : {})
+    }
   } finally {
     if (countedInFlight) {
       inFlight = Math.max(0, inFlight - 1)
