@@ -279,6 +279,6 @@ export async function fetchOpenAIUsage(override?: OpenAIUsageOverride): Promise<
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     log.warn('Failed to fetch OpenAI usage', { error: message })
-    return { success: false, error: message }
+    return { success: false, error: message, ...(rotated ? { rotated } : {}) }
   }
 }

@@ -136,6 +136,31 @@ describe('fetchOpenAIUsage', () => {
       expect(after).toBe(before)
     })
 
+    it('preserves rotated tokens when the usage fetch throws after a successful proactive refresh', async () => {
+      await writeLiveAuth()
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(
+          jsonResponse(
+            { access_token: 'new-access', refresh_token: 'new-refresh', id_token: 'new-id' },
+            { status: 200 }
+          )
+        )
+        .mockRejectedValueOnce(new Error('network error'))
+      vi.stubGlobal('fetch', fetchMock)
+
+      const result = await fetchOpenAIUsage()
+
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('network error')
+      expect(result.rotated).toEqual({
+        accessToken: 'new-access',
+        refreshToken: 'new-refresh',
+        idToken: 'new-id',
+        rotatedFrom: 'live-refresh-token'
+      })
+    })
+
     it('needsLogin when the live refresh itself returns invalid_grant, without touching auth.json', async () => {
       const before = await writeLiveAuth()
       vi.stubGlobal(
