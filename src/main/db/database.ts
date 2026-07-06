@@ -937,6 +937,20 @@ export class DatabaseService {
     db.prepare(`UPDATE saved_usage_accounts SET credentials_json = '', updated_at = ?`).run(now)
   }
 
+  /**
+   * Blank a single row's credentials by id. Used by the one-time credentials
+   * migration so it can blank ONLY the rows it successfully migrated (or
+   * deliberately skipped), leaving a row whose keychain add hit a transient
+   * failure with its credentials intact for the next boot to retry.
+   */
+  clearSavedUsageAccountCredentialsById(id: string): void {
+    const db = this.getDb()
+    const now = new Date().toISOString()
+    db.prepare(
+      `UPDATE saved_usage_accounts SET credentials_json = '', updated_at = ? WHERE id = ?`
+    ).run(now, id)
+  }
+
   deleteSavedUsageAccount(id: string): boolean {
     const db = this.getDb()
     const result = db.prepare('DELETE FROM saved_usage_accounts WHERE id = ?').run(id)

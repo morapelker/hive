@@ -1,4 +1,4 @@
-import { mkdir, chmod, rename, readFile, writeFile } from 'fs/promises'
+import { mkdir, chmod, rename, readFile, unlink, writeFile } from 'fs/promises'
 import { dirname } from 'path'
 
 /**
@@ -18,9 +18,21 @@ export async function atomicWriteJson(
   await mkdir(dirname(path), { recursive: true })
 
   const tmpPath = `${path}.tmp.hive`
-  await writeFile(tmpPath, serialized, 'utf-8')
-  await chmod(tmpPath, opts?.mode ?? 0o600)
-  await rename(tmpPath, path)
+  const mode = opts?.mode ?? 0o600
+  try {
+    // Create the tmp file with the restrictive mode from the start — passing it
+    // to writeFile avoids the brief 0644 window that a create-then-chmod would
+    // open on a secrets file. The explicit chmod stays for exactness (writeFile
+    // honors the process umask, which could clear bits the caller asked for).
+    await writeFile(tmpPath, serialized, { encoding: 'utf-8', mode })
+    await chmod(tmpPath, mode)
+    await rename(tmpPath, path)
+  } catch (error) {
+    // Best-effort: don't leave a (potentially world-readable) partial secrets
+    // file behind if the chmod/rename failed.
+    await unlink(tmpPath).catch(() => {})
+    throw error
+  }
 }
 
 /**

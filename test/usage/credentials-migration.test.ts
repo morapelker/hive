@@ -20,7 +20,7 @@ const mocks = vi.hoisted(() => ({
     getSetting: vi.fn(),
     setSetting: vi.fn(),
     getSavedUsageAccountsByProvider: vi.fn(),
-    clearSavedUsageAccountCredentials: vi.fn()
+    clearSavedUsageAccountCredentialsById: vi.fn()
   }
 }))
 
@@ -175,7 +175,8 @@ describe('migrateSavedCredentialsToStores', () => {
     expect(codexAccounts).toHaveLength(1)
     expect(codexAccounts[0].accountKey).toBe('user-1::acct-1')
 
-    expect(mocks.db.clearSavedUsageAccountCredentials).toHaveBeenCalledTimes(1)
+    expect(mocks.db.clearSavedUsageAccountCredentialsById).toHaveBeenCalledWith('anthropic-1')
+    expect(mocks.db.clearSavedUsageAccountCredentialsById).toHaveBeenCalledWith('openai-1')
     expect(mocks.db.setSetting).toHaveBeenCalledWith(MIGRATION_KEY, expect.any(String))
   })
 
@@ -238,7 +239,47 @@ describe('migrateSavedCredentialsToStores', () => {
 
     const accounts = await listClaudeAccounts()
     expect(accounts.map((a) => a.email)).toEqual(['good@example.com'])
-    expect(mocks.db.clearSavedUsageAccountCredentials).toHaveBeenCalledTimes(1)
+    // The unparseable row is structurally unusable — it is blanked (as done),
+    // not treated as a transient failure that would block the migration flag.
+    expect(mocks.db.clearSavedUsageAccountCredentialsById).toHaveBeenCalledWith('bad-1')
+    expect(mocks.db.clearSavedUsageAccountCredentialsById).toHaveBeenCalledWith('good-1')
+    expect(mocks.db.setSetting).toHaveBeenCalledWith(MIGRATION_KEY, expect.any(String))
+  })
+
+  it('does not blank a row whose store add fails transiently, leaves the flag unset, and retries on the next run', async () => {
+    const failingRow = savedAnthropicRow({ id: 'a-fail', email: 'fail@example.com' })
+    const okRow = savedAnthropicRow({ id: 'a-ok', email: 'ok@example.com' })
+    mockRowsByProvider({ anthropic: [failingRow, okRow] })
+
+    // Make ONLY the failing row's keychain write blow up (a transient ACL
+    // denial — the plan's own predicted scenario), and only on the first run.
+    let failOnce = true
+    mocks.keychainWrite.mockImplementation(async (service: string, secret: string) => {
+      if (failOnce && service.includes('fail@example.com')) {
+        failOnce = false
+        throw new Error('keychain ACL denied')
+      }
+      mocks.keychainStore.set(service, secret)
+    })
+
+    await migrateSavedCredentialsToStores()
+
+    // The failing row keeps its credentials (NOT blanked); the healthy row is
+    // blanked. The one-shot flag is NOT set, so the next boot will retry.
+    expect(mocks.db.clearSavedUsageAccountCredentialsById).not.toHaveBeenCalledWith('a-fail')
+    expect(mocks.db.clearSavedUsageAccountCredentialsById).toHaveBeenCalledWith('a-ok')
+    expect(mocks.db.setSetting).not.toHaveBeenCalled()
+
+    // Second run: keychain now works, so the previously-failing row migrates
+    // and the migration completes.
+    clearClaudeAccountStoreCacheForTests()
+    await migrateSavedCredentialsToStores()
+
+    expect(mocks.db.clearSavedUsageAccountCredentialsById).toHaveBeenCalledWith('a-fail')
+    expect(mocks.db.setSetting).toHaveBeenCalledWith(MIGRATION_KEY, expect.any(String))
+
+    const accounts = await listClaudeAccounts()
+    expect(accounts.map((a) => a.email).sort()).toEqual(['fail@example.com', 'ok@example.com'])
   })
 
   it('is idempotent: no-ops immediately once the migration setting is already recorded', async () => {
@@ -248,7 +289,7 @@ describe('migrateSavedCredentialsToStores', () => {
     await migrateSavedCredentialsToStores()
 
     expect(mocks.db.getSavedUsageAccountsByProvider).not.toHaveBeenCalled()
-    expect(mocks.db.clearSavedUsageAccountCredentials).not.toHaveBeenCalled()
+    expect(mocks.db.clearSavedUsageAccountCredentialsById).not.toHaveBeenCalled()
     expect(mocks.db.setSetting).not.toHaveBeenCalled()
   })
 

@@ -535,6 +535,48 @@ describe('login-service', () => {
     expect(driver.close).toHaveBeenCalledTimes(1)
   })
 
+  it('ignores a capture callback that fires after the login was cancelled (no post-cancel exchange)', async () => {
+    const driver = createFakeDriver()
+    const { loginStart, loginStatus, loginCancel, setLoginBrowserLauncherForTests } =
+      await importFresh()
+    setLoginBrowserLauncherForTests(driver.launcher)
+
+    const { loginId } = await loginStart('anthropic', 'user@example.com')
+    await pumpUntil(() => loginStatus(loginId).state === 'waiting')
+    const state = new URL(driver.gotoCalls[0]).searchParams.get('state')
+
+    const cancelled = await loginCancel(loginId)
+    expect(cancelled).toBe(true)
+    expect(loginStatus(loginId).state).toBe('cancelled')
+
+    // A late framenavigated callback (a redirect landing after the cancel) must
+    // NOT resurrect the flow into 'exchanging'/'done'.
+    driver.triggerFrameNavigated(
+      `https://console.anthropic.com/oauth/code/callback?code=abc123&state=${state}`
+    )
+    await vi.advanceTimersByTimeAsync(20)
+
+    expect(loginStatus(loginId).state).toBe('cancelled')
+    expect(loginStatus(loginId).error).toBeNull()
+    expect(mocks.exchangeAnthropicCode).not.toHaveBeenCalled()
+  })
+
+  it('times out even while still launching (a hung Chrome launch does not block future logins)', async () => {
+    // A launcher that never resolves keeps the session in 'launching' forever
+    // unless the overall timeout also covers that state.
+    const neverResolves = new Promise<never>(() => {})
+    const { loginStart, loginStatus, setLoginBrowserLauncherForTests } = await importFresh()
+    setLoginBrowserLauncherForTests(() => neverResolves)
+
+    const { loginId } = await loginStart('anthropic', 'user@example.com')
+    expect(loginStatus(loginId).state).toBe('launching')
+
+    await vi.advanceTimersByTimeAsync(30 * 60 * 1000)
+
+    expect(loginStatus(loginId).state).toBe('failed')
+    expect(loginStatus(loginId).error).toBe('Login timed out')
+  })
+
   it('loginCancel returns false for an unknown login', async () => {
     const { loginCancel } = await importFresh()
     expect(await loginCancel('does-not-exist')).toBe(false)

@@ -270,6 +270,18 @@ export async function loginStart(
   }
   currentSession = session
 
+  // Start the overall timeout at session creation so it also covers the
+  // 'launching' state: a hung Chrome launch would otherwise leave a
+  // non-terminal 'launching' session forever, blocking every future login.
+  // `session.context` is read lazily at fire time, so it closes whatever
+  // context exists by then (possibly still null during launch).
+  const timeoutTimer = setTimeout(() => {
+    failSession(session, 'Login timed out')
+    void safeClose(session.context)
+  }, LOGIN_TIMEOUT_MS)
+  timeoutTimer.unref()
+  session.timeoutTimer = timeoutTimer
+
   // Fire-and-forget: the whole flow lives in the background so loginStart
   // never blocks the RPC caller. Every failure lands in session.state — this
   // never throws out of the background flow.
@@ -316,12 +328,8 @@ async function runLoginFlow(session: LoginSession, emailHint?: string): Promise<
     }
   })
 
-  const timeoutTimer = setTimeout(() => {
-    failSession(session, 'Login timed out')
-    void safeClose(context)
-  }, LOGIN_TIMEOUT_MS)
-  timeoutTimer.unref()
-  session.timeoutTimer = timeoutTimer
+  // The overall timeout timer was already armed in loginStart (it covers the
+  // 'launching' state too), so there's nothing to (re)start here.
 
   await context.route(config.matchGlob, (route) => handleRoute(session, config, route))
 
@@ -373,6 +381,11 @@ async function handleRoute(session: LoginSession, config: ProviderConfig, route:
 
 /** Shared capture logic for both the route interception and the framenavigated fallback. */
 function extractAndHandle(session: LoginSession, config: ProviderConfig, rawUrl: string): void {
+  // A route/framenavigated callback can still fire after the session went
+  // terminal (e.g. the user cancelled). `resolved` doesn't guard that — a
+  // cancel never sets it — so without this check a late callback could set
+  // 'exchanging' and complete to 'done' post-cancel.
+  if (isTerminal(session.state)) return
   if (session.resolved) return
   if (!rawUrl.startsWith(config.redirectPrefix)) return
 

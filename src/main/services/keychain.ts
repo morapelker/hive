@@ -20,10 +20,38 @@ function isItemNotFoundError(error: unknown): boolean {
 }
 
 function runSecurity(args: string[]): Promise<string> {
+  const subcommand = args[0] ?? 'security'
   return new Promise((resolve, reject) => {
-    execFile('security', args, { timeout: 5000 }, (error, stdout) => {
-      if (error) reject(error)
-      else resolve(stdout.trim())
+    // `-w <secret>` passes the secret as an argv element, so it is briefly
+    // visible in the process table. ccswitch does the same; this is an accepted
+    // tradeoff for Keychain-CLI parity (there is no stdin variant of
+    // `add-generic-password` that also does an in-place `-U` update).
+    //
+    // Critically, we MUST NOT surface execFile's raw ExecFileException: its
+    // `message` embeds the full command line — INCLUDING the `-w <secret>`
+    // credential. That message would otherwise propagate to log.warn, the
+    // saved_usage_accounts.last_error column, switchAccount error results, and
+    // renderer toasts. Reject instead with only the subcommand name, the exit
+    // code, and security's stderr (which never echoes `-w` values).
+    execFile('security', args, { timeout: 5000 }, (error, stdout, stderr) => {
+      if (error) {
+        const rawCode = (error as ExecFileException).code
+        const trimmedStderr = typeof stderr === 'string' ? stderr.trim() : ''
+        const notFound = isItemNotFoundError(error) || /could not be found/i.test(trimmedStderr)
+
+        const parts = [`security ${subcommand} failed`]
+        if (rawCode !== undefined) parts.push(`(exit ${rawCode})`)
+        if (trimmedStderr) parts.push(`- ${trimmedStderr}`)
+
+        const sanitized = new Error(parts.join(' ')) as Error & { code?: number | string }
+        // Preserve not-found detection: attach the exit code so the code-44
+        // check in isItemNotFoundError still fires on the sanitized error.
+        const resolvedCode = rawCode ?? (notFound ? ERR_SEC_ITEM_NOT_FOUND_CODE : undefined)
+        if (resolvedCode !== undefined) sanitized.code = resolvedCode
+        reject(sanitized)
+      } else {
+        resolve(stdout.trim())
+      }
     })
   })
 }

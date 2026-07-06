@@ -4,6 +4,7 @@ import {
   addClaudeAccount,
   listClaudeAccounts,
   readClaudeEffectiveBlob,
+  readClaudeLiveEmail,
   readClaudeLiveIdentity,
   readClaudeLiveRawBlob,
   removeClaudeAccount,
@@ -11,6 +12,7 @@ import {
   updateClaudeTokens,
   type ClaudeStoreAccount
 } from './account-store-claude'
+import { accountLockKey, withAccountLock, withAccountLocks } from './account-lock'
 import {
   addCodexAccount,
   listCodexAccounts,
@@ -56,36 +58,6 @@ const log = createLogger({ component: 'SavedUsageOrchestrator' })
  * there's no need to hit the network again.
  */
 const REFRESH_RECHECK_THRESHOLD_MS = 120_000
-
-/**
- * Per-account async mutex. Three callers can race to refresh the SAME
- * account's OAuth token concurrently: the 60s watcher, the boot/RPC mass
- * refresh, and a user-initiated fetch. Refresh tokens are single-use and
- * rotate on every refresh, so an overlapping second refresh would consume an
- * already-rotated token and fail with invalid_grant even though the account
- * has healthy, freshly-rotated credentials from the first refresh. Chains
- * each call onto the tail promise for its key, cleaning up the map entry once
- * the chain drains so it never grows unbounded.
- */
-const accountLockTails = new Map<string, Promise<unknown>>()
-
-function accountLockKey(provider: string, email: string): string {
-  return `${provider}:${email.toLowerCase()}`
-}
-
-function withAccountLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
-  const prior = accountLockTails.get(key) ?? Promise.resolve()
-  const result = prior.then(fn, fn)
-  const tail = result.then(
-    () => undefined,
-    () => undefined
-  )
-  accountLockTails.set(key, tail)
-  void tail.finally(() => {
-    if (accountLockTails.get(key) === tail) accountLockTails.delete(key)
-  })
-  return result
-}
 
 function safeParseJson(value: string): unknown {
   return JSON.parse(value)
@@ -207,6 +179,22 @@ export async function removeSavedAccount(accountId: string): Promise<boolean> {
   return db.deleteSavedUsageAccount(accountId)
 }
 
+/**
+ * The currently-live account's email for `provider` (the account being
+ * switched AWAY from). Tolerant of any read failure — a null just means we
+ * skip the outgoing lock. Codex derives it from the managed list's `active`
+ * entry so it matches the lowercased email the saved-account lock uses.
+ */
+async function readOutgoingLiveEmail(provider: SavedUsageProvider): Promise<string | null> {
+  try {
+    if (provider === 'anthropic') return await readClaudeLiveEmail()
+    const accounts = await listCodexAccounts()
+    return accounts.find((account) => account.active)?.email ?? null
+  } catch {
+    return null
+  }
+}
+
 export async function switchAccount(
   accountId: string
 ): Promise<{ success: boolean; error?: string }> {
@@ -214,20 +202,36 @@ export async function switchAccount(
   const row = db.getSavedUsageAccountById(accountId)
   if (!row) return { success: false, error: 'not found' }
 
-  try {
-    if (row.provider === 'anthropic') {
-      const account = await findClaudeStoreAccount(row.email)
-      if (!account) return { success: false, error: 'account no longer in store' }
-      await switchClaudeAccount(account.num, account.email)
-    } else {
-      const account = await findCodexStoreAccount(row.email)
-      if (!account) return { success: false, error: 'account no longer in store' }
-      await switchCodexAccount(account.accountKey)
-    }
-    return { success: true }
-  } catch (error) {
-    return { success: false, error: error instanceof Error ? error.message : String(error) }
+  // Serialize the switch under BOTH the outgoing-live and target account locks
+  // (sorted, deadlock-free). Combined with the live-fetch lock in usage-ops,
+  // this closes the window where a concurrent rotation-persist could, between
+  // its guard-read and its live-write+mirror, clobber the just-switched live
+  // credentials or mirror the outgoing account's tokens into the target's
+  // backup slot.
+  const targetKey = accountLockKey(row.provider, row.email)
+  const outgoingEmail = await readOutgoingLiveEmail(row.provider)
+  const keys = [targetKey]
+  if (outgoingEmail) {
+    const outgoingKey = accountLockKey(row.provider, outgoingEmail)
+    if (outgoingKey !== targetKey) keys.push(outgoingKey)
   }
+
+  return withAccountLocks(keys, async () => {
+    try {
+      if (row.provider === 'anthropic') {
+        const account = await findClaudeStoreAccount(row.email)
+        if (!account) return { success: false, error: 'account no longer in store' }
+        await switchClaudeAccount(account.num, account.email)
+      } else {
+        const account = await findCodexStoreAccount(row.email)
+        if (!account) return { success: false, error: 'account no longer in store' }
+        await switchCodexAccount(account.accountKey)
+      }
+      return { success: true }
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
 }
 
 function upsertUsageCacheRow(

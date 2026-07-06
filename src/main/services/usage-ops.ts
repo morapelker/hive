@@ -12,8 +12,9 @@ import {
 } from './saved-usage-orchestrator'
 import { fetchOpenAIUsage } from './openai-usage-service'
 import { fetchClaudeUsage } from './usage-service'
-import { persistRotatedLiveClaudeTokens } from './account-store-claude'
-import { persistRotatedLiveCodexTokens } from './account-store-codex'
+import { persistRotatedLiveClaudeTokens, readClaudeLiveEmail } from './account-store-claude'
+import { listCodexAccounts, persistRotatedLiveCodexTokens } from './account-store-codex'
+import { accountLockKey, withAccountLock } from './account-lock'
 import { createLogger } from './logger'
 
 const log = createLogger({ component: 'UsageOps' })
@@ -76,10 +77,45 @@ async function persistLiveCodexRotation(result: OpenAIUsageResult): Promise<void
   }
 }
 
-export async function fetchUsageOp(): Promise<UsageResult> {
-  const result = await fetchClaudeUsage(undefined, { caller: 'usage:fetch' })
+/**
+ * The live Claude email (when logged in), used to serialize this live fetch
+ * under the SAME per-account lock the saved-account path uses. Without it a
+ * left-click live fetch racing a mass refresh/watcher tick for the same
+ * account could double-consume the single-use rotating refresh token — the
+ * loser getting invalid_grant and marking a healthy account stale.
+ */
+async function readClaudeLiveLockEmail(): Promise<string | null> {
+  try {
+    return await readClaudeLiveEmail()
+  } catch {
+    return null
+  }
+}
 
-  await persistLiveClaudeRotation(result)
+/** Codex equivalent — the managed list's `active` entry's (lowercased) email. */
+async function readCodexLiveLockEmail(): Promise<string | null> {
+  try {
+    const accounts = await listCodexAccounts()
+    return accounts.find((account) => account.active)?.email ?? null
+  } catch {
+    return null
+  }
+}
+
+export async function fetchUsageOp(): Promise<UsageResult> {
+  const liveEmail = await readClaudeLiveLockEmail()
+
+  const fetchAndPersist = async (): Promise<UsageResult> => {
+    const result = await fetchClaudeUsage(undefined, { caller: 'usage:fetch' })
+    await persistLiveClaudeRotation(result)
+    return result
+  }
+
+  // Lock only when we know which account is live; logged-out fetches (no live
+  // email) can't race a saved-account rotation for a specific account.
+  const result = liveEmail
+    ? await withAccountLock(accountLockKey('anthropic', liveEmail), fetchAndPersist)
+    : await fetchAndPersist()
 
   if (result.success && result.data) {
     try {
@@ -94,9 +130,17 @@ export async function fetchUsageOp(): Promise<UsageResult> {
 }
 
 export async function fetchOpenAIUsageOp(): Promise<OpenAIUsageResult> {
-  const result = await fetchOpenAIUsage()
+  const liveEmail = await readCodexLiveLockEmail()
 
-  await persistLiveCodexRotation(result)
+  const fetchAndPersist = async (): Promise<OpenAIUsageResult> => {
+    const result = await fetchOpenAIUsage()
+    await persistLiveCodexRotation(result)
+    return result
+  }
+
+  const result = liveEmail
+    ? await withAccountLock(accountLockKey('openai', liveEmail), fetchAndPersist)
+    : await fetchAndPersist()
 
   if (result.success && result.data) {
     try {

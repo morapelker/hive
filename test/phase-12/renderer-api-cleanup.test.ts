@@ -9368,7 +9368,7 @@ describe('renderer API cleanup', () => {
     expect(actionEnd).toBeGreaterThan(actionStart)
     expect(source).toContain("import { usageApi } from '@/api/usage-api'")
     expect(actionSource).toContain('await usageApi.fetchForAccount(id, userInitiated)')
-    expect(actionSource).toContain('await get().loadSavedAccounts(provider)')
+    expect(actionSource).toContain('.loadSavedAccounts(provider)')
     expect(actionSource).not.toContain('window.usageOps.fetchForAccount')
     expect(actionSource).not.toContain('unwrapEnvelope(await window.usageOps.fetchForAccount')
   })

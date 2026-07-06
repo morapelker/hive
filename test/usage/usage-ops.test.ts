@@ -7,7 +7,9 @@ const mocks = vi.hoisted(() => ({
   fetchOpenAIUsage: vi.fn(),
   readCodexCredentials: vi.fn(),
   persistRotatedLiveClaudeTokens: vi.fn(),
+  readClaudeLiveEmail: vi.fn(),
   persistRotatedLiveCodexTokens: vi.fn(),
+  listCodexAccounts: vi.fn(),
   captureLiveAccountFromFetch: vi.fn(),
   fetchForSavedAccount: vi.fn(),
   refreshAllForProvider: vi.fn()
@@ -30,11 +32,13 @@ vi.mock('../../src/main/services/openai-usage-service', () => ({
 }))
 
 vi.mock('../../src/main/services/account-store-claude', () => ({
-  persistRotatedLiveClaudeTokens: mocks.persistRotatedLiveClaudeTokens
+  persistRotatedLiveClaudeTokens: mocks.persistRotatedLiveClaudeTokens,
+  readClaudeLiveEmail: mocks.readClaudeLiveEmail
 }))
 
 vi.mock('../../src/main/services/account-store-codex', () => ({
-  persistRotatedLiveCodexTokens: mocks.persistRotatedLiveCodexTokens
+  persistRotatedLiveCodexTokens: mocks.persistRotatedLiveCodexTokens,
+  listCodexAccounts: mocks.listCodexAccounts
 }))
 
 vi.mock('../../src/main/services/saved-usage-orchestrator', () => ({
@@ -49,6 +53,8 @@ describe('fetchUsageOp', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.captureLiveAccountFromFetch.mockResolvedValue(undefined)
+    mocks.readClaudeLiveEmail.mockResolvedValue(null)
+    mocks.listCodexAccounts.mockResolvedValue([])
   })
 
   it('persists rotated live Claude tokens using the token the refresh actually consumed (rotatedFrom), not a pre-read token', async () => {
@@ -178,6 +184,8 @@ describe('fetchOpenAIUsageOp', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.captureLiveAccountFromFetch.mockResolvedValue(undefined)
+    mocks.readClaudeLiveEmail.mockResolvedValue(null)
+    mocks.listCodexAccounts.mockResolvedValue([])
   })
 
   it('persists rotated live Codex tokens using the token the refresh actually consumed (rotatedFrom), not a pre-read token', async () => {

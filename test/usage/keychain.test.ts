@@ -113,12 +113,36 @@ describe('keychain', () => {
     it('throws when the security CLI fails', async () => {
       mocks.execFile.mockImplementation(
         (_cmd: string, _args: string[], _opts: unknown, cb: ExecFileCallback) =>
-          cb(new Error('security: something went wrong'), '')
+          cb(new Error('security: something went wrong'), '', 'security: something went wrong')
       )
 
       await expect(keychainWrite('My Service', 'sekret')).rejects.toThrow(
         'security: something went wrong'
       )
+    })
+
+    it('never leaks the -w secret (or raw command line) in the thrown/logged error', async () => {
+      const secret = 'super-secret-refresh-token'
+      // Node's real ExecFileException.message embeds the full argv, secret and
+      // all. runSecurity must sanitize it away.
+      mocks.execFile.mockImplementation(
+        (_cmd: string, args: string[], _opts: unknown, cb: ExecFileCallback) => {
+          const raw = Object.assign(
+            new Error(`Command failed: security ${args.join(' ')}\nsecurity: write failed`),
+            { code: 1 }
+          )
+          cb(raw, '', 'security: write failed')
+        }
+      )
+
+      const error = await keychainWrite('My Service', secret).catch((e) => e as Error)
+
+      expect(error).toBeInstanceOf(Error)
+      expect(error.message).not.toContain(secret)
+      expect(error.message).not.toContain('-w')
+      expect(error.message).toContain('add-generic-password')
+      // security's stderr is safe to surface (it never echoes -w values).
+      expect(error.message).toContain('security: write failed')
     })
 
     it('throws on non-macOS platforms without calling execFile', async () => {
@@ -160,7 +184,7 @@ describe('keychain', () => {
           const error = Object.assign(new Error('security: some other unexpected failure'), {
             code: 1
           })
-          cb(error, '')
+          cb(error, '', 'security: some other unexpected failure')
         }
       )
 
@@ -172,7 +196,11 @@ describe('keychain', () => {
     it('re-throws other security CLI failures', async () => {
       mocks.execFile.mockImplementation(
         (_cmd: string, _args: string[], _opts: unknown, cb: ExecFileCallback) =>
-          cb(new Error('security: some other unexpected failure'), '')
+          cb(
+            new Error('security: some other unexpected failure'),
+            '',
+            'security: some other unexpected failure'
+          )
       )
 
       await expect(keychainDelete('My Service')).rejects.toThrow(

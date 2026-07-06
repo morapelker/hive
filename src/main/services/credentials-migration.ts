@@ -36,17 +36,33 @@ interface StoredOpenAICredentials {
   email: string
 }
 
-async function migrateAnthropicRow(row: SavedUsageAccount): Promise<void> {
-  const parsed = JSON.parse(row.credentials_json) as Partial<StoredAnthropicCredentials>
+/**
+ * Per-row migration outcome. `migrated` and `skipped` (already-managed, or
+ * structurally unusable — no email / no idToken / unparseable blob) both mean
+ * "safe to blank this row's credentials". A THROW means a transient failure
+ * (e.g. a Keychain ACL denial) — the caller must leave the row's credentials
+ * intact and not mark the migration done, so the next boot retries.
+ */
+type RowOutcome = 'migrated' | 'skipped'
+
+async function migrateAnthropicRow(row: SavedUsageAccount): Promise<RowOutcome> {
+  let parsed: Partial<StoredAnthropicCredentials>
+  try {
+    parsed = JSON.parse(row.credentials_json) as Partial<StoredAnthropicCredentials>
+  } catch {
+    log.warn('Skipping saved Anthropic row with unparseable credentials_json', { id: row.id })
+    return 'skipped'
+  }
+
   const email = parsed.email
   if (!email) {
     log.warn('Skipping saved Anthropic row without an email', { id: row.id })
-    return
+    return 'skipped'
   }
 
   const managed = await listClaudeAccounts()
   if (managed.some((account) => account.email === email.toLowerCase())) {
-    return
+    return 'skipped'
   }
 
   const blobJson = JSON.stringify({
@@ -57,14 +73,24 @@ async function migrateAnthropicRow(row: SavedUsageAccount): Promise<void> {
       scopes: []
     }
   })
+  // A throw here (transient Keychain failure) propagates so the row is NOT
+  // blanked and the migration is retried on the next boot.
   await addClaudeAccount(email, '', blobJson)
+  return 'migrated'
 }
 
-async function migrateOpenAIRow(row: SavedUsageAccount): Promise<void> {
-  const parsed = JSON.parse(row.credentials_json) as Partial<StoredOpenAICredentials>
+async function migrateOpenAIRow(row: SavedUsageAccount): Promise<RowOutcome> {
+  let parsed: Partial<StoredOpenAICredentials>
+  try {
+    parsed = JSON.parse(row.credentials_json) as Partial<StoredOpenAICredentials>
+  } catch {
+    log.warn('Skipping saved OpenAI row with unparseable credentials_json', { id: row.id })
+    return 'skipped'
+  }
+
   if (!parsed.idToken) {
     log.warn('Skipping saved OpenAI row without an idToken', { id: row.id })
-    return
+    return 'skipped'
   }
 
   const claims = parseCodexIdToken(parsed.idToken)
@@ -72,22 +98,26 @@ async function migrateOpenAIRow(row: SavedUsageAccount): Promise<void> {
     log.warn('Skipping saved OpenAI row: id_token has no chatgpt_user_id/chatgpt_account_id', {
       id: row.id
     })
-    return
+    return 'skipped'
   }
 
   const accountKey = `${claims.userId}::${claims.accountId}`
   const managed = await listCodexAccounts()
   if (managed.some((account) => account.accountKey === accountKey)) {
-    return
+    return 'skipped'
   }
 
   await addCodexAccount(parsed.idToken, parsed.accessToken ?? '', parsed.refreshToken ?? '')
+  return 'migrated'
 }
 
 /**
  * Migrate every `saved_usage_accounts` row's credentials into the account
- * stores, then blank `credentials_json` for all rows. Idempotent: no-ops
- * immediately once the `saved_usage_credentials_migrated` setting is set.
+ * stores, blanking each row's `credentials_json` ONLY once it has been safely
+ * migrated (or deliberately skipped). Idempotent: no-ops immediately once the
+ * `saved_usage_credentials_migrated` setting is set. If any row hit a transient
+ * error, the setting is left unset so the next boot retries (store adds are
+ * idempotent, so already-migrated rows just skip).
  */
 export async function migrateSavedCredentialsToStores(): Promise<void> {
   const db = getDatabase()
@@ -96,30 +126,36 @@ export async function migrateSavedCredentialsToStores(): Promise<void> {
   const anthropicRows = db.getSavedUsageAccountsByProvider('anthropic')
   const openaiRows = db.getSavedUsageAccountsByProvider('openai')
 
-  for (const row of anthropicRows) {
-    if (!row.credentials_json) continue
-    try {
-      await migrateAnthropicRow(row)
-    } catch (error) {
-      log.warn('Failed to migrate saved Anthropic credentials', {
-        id: row.id,
-        error: error instanceof Error ? error.message : String(error)
-      })
+  let hadTransientError = false
+
+  const migrateRows = async (
+    rows: SavedUsageAccount[],
+    migrateRow: (row: SavedUsageAccount) => Promise<RowOutcome>
+  ): Promise<void> => {
+    for (const row of rows) {
+      if (!row.credentials_json) continue
+      try {
+        await migrateRow(row)
+        // Only blank a row we handled without throwing — a transient failure
+        // must NOT destroy the row's only surviving credentials.
+        db.clearSavedUsageAccountCredentialsById(row.id)
+      } catch (error) {
+        hadTransientError = true
+        log.warn('Failed to migrate saved credentials; leaving row intact for a retry', {
+          id: row.id,
+          provider: row.provider,
+          error: error instanceof Error ? error.message : String(error)
+        })
+      }
     }
   }
 
-  for (const row of openaiRows) {
-    if (!row.credentials_json) continue
-    try {
-      await migrateOpenAIRow(row)
-    } catch (error) {
-      log.warn('Failed to migrate saved OpenAI credentials', {
-        id: row.id,
-        error: error instanceof Error ? error.message : String(error)
-      })
-    }
-  }
+  await migrateRows(anthropicRows, migrateAnthropicRow)
+  await migrateRows(openaiRows, migrateOpenAIRow)
 
-  db.clearSavedUsageAccountCredentials()
-  db.setSetting(MIGRATION_SETTING_KEY, new Date().toISOString())
+  // Only mark the one-shot migration done when every row was fully handled;
+  // otherwise the next boot retries the rows still carrying credentials.
+  if (!hadTransientError) {
+    db.setSetting(MIGRATION_SETTING_KEY, new Date().toISOString())
+  }
 }

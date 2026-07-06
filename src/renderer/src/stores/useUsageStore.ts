@@ -164,15 +164,16 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
           `${providerLabel(provider ?? 'anthropic')} account refresh failed: ${result.error ?? 'Unknown error'}`
         )
       }
-      await get().loadSavedAccounts(provider)
     } catch (err) {
       if (userInitiated) {
         toast.error(`${providerLabel(provider ?? 'anthropic')} account refresh failed: ${errorMessage(err)}`)
       }
+    } finally {
+      // Reload in its own catch so a reload hiccup after a SUCCESSFUL fetch
+      // can't reach the catch above and mis-toast a 'refresh failed'.
       await get()
         .loadSavedAccounts(provider)
         .catch(() => {})
-    } finally {
       set((current) => {
         const nextIds = new Set(current.refreshingAccountIds)
         nextIds.delete(id)
@@ -225,14 +226,23 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
     try {
       const result = await accountApi.switchAccount(id)
       if (result.success) {
+        // Toast success off the op result FIRST — before the post-switch
+        // reloads, each wrapped in its own catch so a reload hiccup after a
+        // SUCCESSFUL switch can't reach the catch below and mis-toast a
+        // 'Switch failed'.
+        toast.success(`Switched to ${account?.email ?? 'account'}`)
         if (provider) {
-          await useAccountStore.getState().fetchEmail(provider)
-          await get().loadSavedAccounts(provider)
+          await useAccountStore
+            .getState()
+            .fetchEmail(provider)
+            .catch(() => {})
+          await get()
+            .loadSavedAccounts(provider)
+            .catch(() => {})
           get()
             .forceRefreshProvider(provider)
             .catch(() => {})
         }
-        toast.success(`Switched to ${account?.email ?? 'account'}`)
       } else {
         toast.error(`Switch failed: ${result.error ?? 'Unknown error'}`)
       }

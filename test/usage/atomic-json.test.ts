@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { mkdtemp, rm, stat, readFile, writeFile } from 'fs/promises'
+import { mkdir, mkdtemp, rm, stat, readFile, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -66,6 +66,17 @@ describe('atomic-json', () => {
     await atomicWriteJson(file, { a: 1 })
 
     await expect(stat(`${file}.tmp.hive`)).rejects.toThrow()
+  })
+
+  it('cleans up the .tmp.hive file (best-effort) when the rename fails', async () => {
+    // A non-empty directory at the destination path makes the final rename
+    // fail — the tmp file (already written + chmod'd) must not be left behind.
+    const target = join(dir, 'target')
+    await mkdir(join(target, 'child'), { recursive: true })
+
+    await expect(atomicWriteJson(target, { a: 1 })).rejects.toThrow()
+
+    await expect(stat(`${target}.tmp.hive`)).rejects.toThrow()
   })
 
   it('returns null from readJsonFile when the file is missing', async () => {

@@ -15,18 +15,21 @@ const mocks = vi.hoisted(() => ({
   readCodexCredentials: vi.fn(),
   listClaudeAccounts: vi.fn(),
   readClaudeEffectiveBlob: vi.fn(),
+  readClaudeLiveEmail: vi.fn(),
   readClaudeLiveIdentity: vi.fn(),
   readClaudeLiveRawBlob: vi.fn(),
   updateClaudeTokens: vi.fn(),
   switchClaudeAccount: vi.fn(),
   addClaudeAccount: vi.fn(),
   removeClaudeAccount: vi.fn(),
+  persistRotatedLiveClaudeTokens: vi.fn(),
   listCodexAccounts: vi.fn(),
   readCodexEffectiveAuth: vi.fn(),
   updateCodexTokens: vi.fn(),
   switchCodexAccount: vi.fn(),
   addCodexAccount: vi.fn(),
   removeCodexAccount: vi.fn(),
+  persistRotatedLiveCodexTokens: vi.fn(),
   migrateSavedCredentialsToStores: vi.fn(),
   refreshAnthropicToken: vi.fn(),
   refreshOpenAIToken: vi.fn()
@@ -60,12 +63,14 @@ vi.mock('../../src/main/services/openai-usage-service', () => ({
 vi.mock('../../src/main/services/account-store-claude', () => ({
   listClaudeAccounts: mocks.listClaudeAccounts,
   readClaudeEffectiveBlob: mocks.readClaudeEffectiveBlob,
+  readClaudeLiveEmail: mocks.readClaudeLiveEmail,
   readClaudeLiveIdentity: mocks.readClaudeLiveIdentity,
   readClaudeLiveRawBlob: mocks.readClaudeLiveRawBlob,
   updateClaudeTokens: mocks.updateClaudeTokens,
   switchClaudeAccount: mocks.switchClaudeAccount,
   addClaudeAccount: mocks.addClaudeAccount,
-  removeClaudeAccount: mocks.removeClaudeAccount
+  removeClaudeAccount: mocks.removeClaudeAccount,
+  persistRotatedLiveClaudeTokens: mocks.persistRotatedLiveClaudeTokens
 }))
 
 vi.mock('../../src/main/services/account-store-codex', () => ({
@@ -74,7 +79,8 @@ vi.mock('../../src/main/services/account-store-codex', () => ({
   updateCodexTokens: mocks.updateCodexTokens,
   switchCodexAccount: mocks.switchCodexAccount,
   addCodexAccount: mocks.addCodexAccount,
-  removeCodexAccount: mocks.removeCodexAccount
+  removeCodexAccount: mocks.removeCodexAccount,
+  persistRotatedLiveCodexTokens: mocks.persistRotatedLiveCodexTokens
 }))
 
 vi.mock('../../src/main/services/credentials-migration', () => ({
@@ -98,6 +104,7 @@ import {
   removeSavedAccount,
   switchAccount
 } from '../../src/main/services/saved-usage-orchestrator'
+import { fetchUsageOp } from '../../src/main/services/usage-ops'
 import type { SavedUsageAccount } from '../../src/main/db/types'
 import type { ClaudeStoreAccount } from '../../src/main/services/account-store-claude'
 import type { CodexStoreAccount } from '../../src/main/services/account-store-codex'
@@ -158,6 +165,7 @@ beforeEach(() => {
   mocks.migrateSavedCredentialsToStores.mockResolvedValue(undefined)
   mocks.listClaudeAccounts.mockResolvedValue([])
   mocks.listCodexAccounts.mockResolvedValue([])
+  mocks.readClaudeLiveEmail.mockResolvedValue(null)
   mocks.db.getSavedUsageAccountsByProvider.mockReturnValue([])
   mocks.db.upsertSavedUsageAccount.mockImplementation((data: { email: string }) =>
     savedRow({ ...data, id: `new-${data.email}` })
@@ -952,6 +960,83 @@ describe('account-level refresh/fetch locking', () => {
     expect(secondOutcome).toBe('refreshed')
     expect(mocks.refreshAnthropicToken).toHaveBeenCalledTimes(1)
     expect(mocks.updateClaudeTokens).toHaveBeenCalledTimes(1)
+  })
+
+  // Fix B: the live usage-ops fetch must share the SAME per-account lock as the
+  // saved-account path so a left-click live fetch and a mass refresh/watcher
+  // tick for the same account can't double-consume the single-use refresh token.
+  it('serializes a live fetchUsageOp against a concurrent fetchForSavedAccount for the same account', async () => {
+    mocks.readClaudeLiveEmail.mockResolvedValue('claude@example.com')
+    mocks.readClaudeLiveIdentity.mockResolvedValue({ email: 'claude@example.com', uuid: 'uuid-1' })
+    mocks.db.getSavedUsageAccountById.mockReturnValue(savedRow())
+    mocks.listClaudeAccounts.mockResolvedValue([claudeAccount()])
+
+    let inFlight = 0
+    let maxInFlight = 0
+    mocks.fetchClaudeUsage.mockImplementation(async () => {
+      inFlight += 1
+      maxInFlight = Math.max(maxInFlight, inFlight)
+      if (inFlight > 1) {
+        throw new Error('overlap detected: live fetch and saved fetch ran concurrently')
+      }
+      await flushMicrotasks()
+      inFlight -= 1
+      return { success: true, data: usageData() }
+    })
+
+    const [liveResult, savedResult] = await Promise.all([
+      fetchUsageOp(),
+      fetchForSavedAccount('saved-1')
+    ])
+
+    expect(liveResult.success).toBe(true)
+    expect(savedResult.success).toBe(true)
+    expect(maxInFlight).toBe(1)
+    expect(mocks.fetchClaudeUsage).toHaveBeenCalledTimes(2)
+  })
+
+  // Fix C: a switch must serialize against a concurrent live rotation-persist
+  // (fetchUsageOp) on the OUTGOING account, so the persist can't clobber the
+  // just-switched live credentials in its guard-read → write window.
+  it('serializes switchAccount against a concurrent live fetchUsageOp on the outgoing account', async () => {
+    // Live (outgoing) account is `old@example.com`; we switch TO `new@example.com`.
+    mocks.readClaudeLiveEmail.mockResolvedValue('old@example.com')
+    mocks.readClaudeLiveIdentity.mockResolvedValue({ email: 'old@example.com', uuid: 'uuid-old' })
+    mocks.db.getSavedUsageAccountById.mockReturnValue(
+      savedRow({ id: 'saved-target', email: 'new@example.com' })
+    )
+    mocks.listClaudeAccounts.mockResolvedValue([
+      claudeAccount({ num: '1', email: 'old@example.com' }),
+      claudeAccount({ num: '2', email: 'new@example.com', active: false })
+    ])
+
+    let inFlight = 0
+    let maxInFlight = 0
+    const track = async (): Promise<void> => {
+      inFlight += 1
+      maxInFlight = Math.max(maxInFlight, inFlight)
+      if (inFlight > 1) {
+        throw new Error('overlap detected: switch and live persist ran concurrently')
+      }
+      await flushMicrotasks()
+      inFlight -= 1
+    }
+    mocks.switchClaudeAccount.mockImplementation(async () => {
+      await track()
+    })
+    mocks.fetchClaudeUsage.mockImplementation(async () => {
+      await track()
+      return { success: true, data: usageData() }
+    })
+
+    const [switchResult, fetchResult] = await Promise.all([
+      switchAccount('saved-target'),
+      fetchUsageOp()
+    ])
+
+    expect(switchResult).toEqual({ success: true })
+    expect(fetchResult.success).toBe(true)
+    expect(maxInFlight).toBe(1)
   })
 })
 
