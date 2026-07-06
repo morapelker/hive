@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   onClaudeCliStatus: vi.fn(),
+  setClaudeCliPlanAutoApprove: vi.fn().mockResolvedValue({ success: true }),
   setSessionStatus: vi.fn(),
   setPendingPlan: vi.fn(),
   clearPendingPlan: vi.fn(),
@@ -13,7 +14,16 @@ const mocks = vi.hoisted(() => ({
   sessionStatuses: {} as Record<string, { status: string } | null>,
   kanbanState: {
     selectedTicketId: null as string | null,
-    tickets: new Map<string, Array<{ id: string; current_session_id: string | null }>>()
+    tickets: new Map<
+      string,
+      Array<{
+        id: string
+        current_session_id: string | null
+        auto_approve_plan?: boolean
+        mode?: 'build' | 'plan' | 'super-plan' | null
+        goal_mode?: boolean
+      }>
+    >()
   }
 }))
 
@@ -38,7 +48,8 @@ vi.mock('@/stores/useSessionStore', () => ({
 
 vi.mock('@/api/terminal-api', () => ({
   terminalApi: {
-    onClaudeCliStatus: mocks.onClaudeCliStatus
+    onClaudeCliStatus: mocks.onClaudeCliStatus,
+    setClaudeCliPlanAutoApprove: mocks.setClaudeCliPlanAutoApprove
   }
 }))
 
@@ -97,6 +108,7 @@ describe('useClaudeCliStatusListener', () => {
       return unsubscribe
     })
     unsubscribe.mockClear()
+    mocks.setClaudeCliPlanAutoApprove.mockClear()
     mocks.setSessionStatus.mockClear()
     mocks.setPendingPlan.mockClear()
     mocks.clearPendingPlan.mockClear()
@@ -403,5 +415,111 @@ describe('useClaudeCliStatusListener', () => {
       expect(mocks.notifyKanbanSessionSync).not.toHaveBeenCalled()
       expect(mocks.setSessionStatus).not.toHaveBeenCalled()
     })
+  })
+})
+
+describe('useClaudeCliStatusListener — plan auto-approve arming', () => {
+  let subscribedCallbackForAutoApprove: ((payload: SubscribedPayload) => void) | null = null
+
+  beforeEach(() => {
+    subscribedCallbackForAutoApprove = null
+    mocks.setClaudeCliPlanAutoApprove.mockClear()
+    mocks.sessionStatuses = {}
+    mocks.kanbanState = { selectedTicketId: null, tickets: new Map() }
+    mocks.onClaudeCliStatus.mockReset()
+    mocks.onClaudeCliStatus.mockImplementation((callback: (payload: SubscribedPayload) => void) => {
+      subscribedCallbackForAutoApprove = callback
+      return vi.fn()
+    })
+  })
+
+  it('re-asserts server-side arming on planning for an armed plan-like ticket', () => {
+    mocks.kanbanState.tickets = new Map([
+      [
+        'proj-1',
+        [
+          {
+            id: 'ticket-1',
+            current_session_id: 'hive-session-1',
+            auto_approve_plan: true,
+            mode: 'plan',
+            goal_mode: false
+          }
+        ]
+      ]
+    ])
+    renderHook(() => useClaudeCliStatusListener())
+
+    subscribedCallbackForAutoApprove?.({
+      sessionId: 'hive-session-1',
+      status: 'planning',
+      metadata: { hookEventName: 'UserPromptSubmit', hookPath: 'start' }
+    })
+
+    expect(mocks.setClaudeCliPlanAutoApprove).toHaveBeenCalledWith('hive-session-1', true)
+  })
+
+  it('does not arm on planning when the linked ticket is not flagged', () => {
+    mocks.kanbanState.tickets = new Map([
+      [
+        'proj-1',
+        [
+          {
+            id: 'ticket-1',
+            current_session_id: 'hive-session-1',
+            auto_approve_plan: false,
+            mode: 'plan',
+            goal_mode: false
+          }
+        ]
+      ]
+    ])
+    renderHook(() => useClaudeCliStatusListener())
+
+    subscribedCallbackForAutoApprove?.({
+      sessionId: 'hive-session-1',
+      status: 'planning',
+      metadata: { hookEventName: 'UserPromptSubmit', hookPath: 'start' }
+    })
+
+    expect(mocks.setClaudeCliPlanAutoApprove).not.toHaveBeenCalled()
+  })
+
+  it('does not arm on planning for a goal-mode ticket', () => {
+    mocks.kanbanState.tickets = new Map([
+      [
+        'proj-1',
+        [
+          {
+            id: 'ticket-1',
+            current_session_id: 'hive-session-1',
+            auto_approve_plan: true,
+            mode: 'plan',
+            goal_mode: true
+          }
+        ]
+      ]
+    ])
+    renderHook(() => useClaudeCliStatusListener())
+
+    subscribedCallbackForAutoApprove?.({
+      sessionId: 'hive-session-1',
+      status: 'planning',
+      metadata: { hookEventName: 'UserPromptSubmit', hookPath: 'start' }
+    })
+
+    expect(mocks.setClaudeCliPlanAutoApprove).not.toHaveBeenCalled()
+  })
+
+  it('disarms server-side on PostToolUse ExitPlanMode (any plan approval)', () => {
+    renderHook(() => useClaudeCliStatusListener())
+
+    subscribedCallbackForAutoApprove?.({
+      sessionId: 'hive-session-1',
+      status: 'working',
+      metadata: { hookEventName: 'PostToolUse', hookPath: 'tool', toolName: 'ExitPlanMode' }
+    })
+
+    expect(mocks.setClaudeCliPlanAutoApprove).toHaveBeenCalledWith('hive-session-1', false)
   })
 })

@@ -362,7 +362,8 @@ export class DatabaseService {
       goal_mode: row.goal_mode === 1,
       goal_success_criteria: (row.goal_success_criteria as string) ?? null,
       note: (row.note as string) ?? null,
-      created_from_session: row.created_from_session === 1
+      created_from_session: row.created_from_session === 1,
+      auto_approve_plan: row.auto_approve_plan === 1
     }
   }
 
@@ -679,6 +680,7 @@ export class DatabaseService {
     this.safeAddColumn('kanban_tickets', 'goal_mode', 'INTEGER NOT NULL DEFAULT 0')
     this.safeAddColumn('kanban_tickets', 'goal_success_criteria', 'TEXT DEFAULT NULL')
     this.safeAddColumn('kanban_tickets', 'created_from_session', 'INTEGER NOT NULL DEFAULT 0')
+    this.safeAddColumn('kanban_tickets', 'auto_approve_plan', 'INTEGER NOT NULL DEFAULT 0')
     this.safeAddColumn('sessions', 'session_type', "TEXT NOT NULL DEFAULT 'default'")
     this.safeAddColumn(
       'discord_resources',
@@ -786,6 +788,7 @@ export class DatabaseService {
     this.safeAddColumn('markdown_kanban_card_state', 'pending_launch_config', 'TEXT DEFAULT NULL')
     this.safeAddColumn('markdown_kanban_card_state', 'last_seen_path', 'TEXT DEFAULT NULL')
     this.safeAddColumn('markdown_kanban_card_state', 'orphaned_at', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('markdown_kanban_card_state', 'auto_approve_plan', 'INTEGER NOT NULL DEFAULT 0')
   }
 
   // Settings operations
@@ -2780,6 +2783,10 @@ export class DatabaseService {
     if (data.note !== undefined) {
       updates.push('note = ?')
       values.push(data.note)
+    }
+    if (data.auto_approve_plan !== undefined) {
+      updates.push('auto_approve_plan = ?')
+      values.push(data.auto_approve_plan ? 1 : 0)
     }
 
     if (updates.length === 1) return existing // Only updated_at, nothing meaningful changed

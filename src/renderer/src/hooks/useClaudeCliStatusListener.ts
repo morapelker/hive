@@ -31,6 +31,22 @@ function closeLinkedTicketModal(sessionId: string): void {
   }
 }
 
+// The hook server's armed registry is in-memory (desktop process), while the
+// durable auto_approve_plan flag lives on the ticket. Re-asserting on every
+// 'planning' publish keeps the two in sync across all spawn paths, --resume,
+// and app restarts, and is a no-op for non-armed tickets.
+function reassertPlanAutoApprove(sessionId: string): void {
+  for (const projectTickets of useKanbanStore.getState().tickets.values()) {
+    for (const ticket of projectTickets) {
+      if (ticket.current_session_id !== sessionId) continue
+      if (ticket.auto_approve_plan && isPlanLike(ticket.mode) && !ticket.goal_mode) {
+        void terminalApi.setClaudeCliPlanAutoApprove(sessionId, true).catch(() => undefined)
+      }
+      return
+    }
+  }
+}
+
 export function useClaudeCliStatusListener(): void {
   useEffect(() => {
     const handlePlanFollowup = (
@@ -67,8 +83,15 @@ export function useClaudeCliStatusListener(): void {
         return
       }
 
+      if (status === 'planning') {
+        reassertPlanAutoApprove(sessionId)
+      }
+
       if (metadata?.hookEventName === 'PostToolUse' && metadata.toolName === 'ExitPlanMode') {
         // User approved ExitPlanMode from the terminal, matching the in-app implement action.
+        // Any approval consumes the one-shot auto-approve arm (no-op if the hook
+        // server already consumed it when auto-approving).
+        void terminalApi.setClaudeCliPlanAutoApprove(sessionId, false).catch(() => undefined)
         sessionStore.clearPendingPlan(sessionId)
         notifyKanbanSessionSync(sessionId, { type: 'implement' })
         closeLinkedTicketModal(sessionId)
@@ -116,6 +139,7 @@ export function useClaudeCliStatusListener(): void {
         metadata?.hookEventName === 'UserPromptSubmit' &&
         isPlanLike(currentMode)
       ) {
+        reassertPlanAutoApprove(sessionId)
         lastSendMode.set(sessionId, 'plan')
         worktreeStatus.setSessionStatus(sessionId, 'planning', metadata)
         return

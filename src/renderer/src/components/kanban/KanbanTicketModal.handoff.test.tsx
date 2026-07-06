@@ -232,7 +232,8 @@ const ticket: KanbanTicket = {
   goal_mode: false,
   goal_success_criteria: null,
   note: null,
-  created_from_session: false
+  created_from_session: false,
+  auto_approve_plan: false
 }
 
 const worktree: Worktree = {

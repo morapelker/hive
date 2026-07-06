@@ -85,6 +85,16 @@ export const terminalApi = {
     }>('terminalOps.createClaudeCli', { sessionId, opts })
     return { success: true, value: result }
   },
+  setClaudeCliPlanAutoApprove: async (
+    sessionId: string,
+    enabled: boolean
+  ): Promise<Envelope<{ success: boolean; error?: string }>> => {
+    const result = await getRendererRpcClient().request<{
+      success: boolean
+      error?: string
+    }>('terminalOps.setClaudeCliPlanAutoApprove', { sessionId, enabled })
+    return { success: true, value: result }
+  },
   sendClaudeCliPrompt: async (
     sessionId: string,
     prompt: string

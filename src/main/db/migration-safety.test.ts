@@ -178,6 +178,30 @@ describeIf('database migration safety', () => {
     db.close()
   })
 
+  it('supports the kanban auto_approve_plan flag end-to-end on a fresh database', () => {
+    const db = new DatabaseService(makeDbPath())
+    db.init()
+
+    expect(columnNames(db, 'kanban_tickets')).toEqual(expect.arrayContaining(['auto_approve_plan']))
+    expect(columnNames(db, 'markdown_kanban_card_state')).toEqual(
+      expect.arrayContaining(['auto_approve_plan'])
+    )
+
+    const project = db.createProject({ name: 'Project', path: makeDbPath() })
+    const ticket = db.createKanbanTicket({ project_id: project.id, title: 'Ticket', mode: 'plan' })
+    expect(ticket.auto_approve_plan).toBe(false)
+
+    expect(db.updateKanbanTicket(ticket.id, { auto_approve_plan: true })?.auto_approve_plan).toBe(
+      true
+    )
+    expect(db.getKanbanTicket(ticket.id)?.auto_approve_plan).toBe(true)
+    expect(db.updateKanbanTicket(ticket.id, { auto_approve_plan: false })?.auto_approve_plan).toBe(
+      false
+    )
+
+    db.close()
+  })
+
   it('upgrades an origin/main v31-shaped database to v34 without losing existing worktrees', () => {
     const dbPath = makeDbPath()
     seedOriginMainVersion31Shape(dbPath)

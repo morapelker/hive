@@ -514,6 +514,8 @@ export interface KanbanTicket {
   note: string | null
   /** True when auto-created by the "automatically create ticket" setting on a session's first message. */
   created_from_session: boolean
+  /** One-shot: auto-approve the next claude-cli ExitPlanMode plan, then self-clears. */
+  auto_approve_plan: boolean
 }
 
 export interface KanbanTicketCreate {
@@ -555,6 +557,7 @@ export interface KanbanTicketUpdate {
   goal_mode?: boolean
   goal_success_criteria?: string | null
   note?: string | null
+  auto_approve_plan?: boolean
 }
 
 export interface BoardAssistantDraft {

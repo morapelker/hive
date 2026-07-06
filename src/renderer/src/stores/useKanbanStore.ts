@@ -1020,10 +1020,15 @@ export const useKanbanStore = create<KanbanState>()(
               }
 
               case 'implement': {
-                // Plan approved from session view — clear plan_ready, set mode to build
-                if (ticket.plan_ready || ticket.mode !== 'build') {
+                // Plan approved from session view — clear plan_ready, set mode to
+                // build, and consume the one-shot auto-approve flag.
+                if (ticket.plan_ready || ticket.mode !== 'build' || ticket.auto_approve_plan) {
                   get()
-                    .updateTicket(ticket.id, projectId, { plan_ready: false, mode: 'build' })
+                    .updateTicket(ticket.id, projectId, {
+                      plan_ready: false,
+                      mode: 'build',
+                      auto_approve_plan: false
+                    })
                     .catch(() => {})
                 }
                 break

@@ -160,7 +160,8 @@ describe('rpc router', () => {
       goal_mode: false,
       goal_success_criteria: null,
       note: null,
-      created_from_session: false
+      created_from_session: false,
+      auto_approve_plan: false
     }
     const calls: unknown[] = []
     const router = makeRpcRouter({
@@ -266,7 +267,8 @@ describe('rpc router', () => {
       goal_mode: false,
       goal_success_criteria: null,
       note: null,
-      created_from_session: false
+      created_from_session: false,
+      auto_approve_plan: false
     }
     const secondTicket = {
       ...firstTicket,
@@ -397,7 +399,8 @@ describe('rpc router', () => {
       goal_mode: false,
       goal_success_criteria: null,
       note: null,
-      created_from_session: false
+      created_from_session: false,
+      auto_approve_plan: false
     }
     const calls: Array<{ projectId: string; id: string }> = []
     const router = makeRpcRouter({
@@ -495,7 +498,8 @@ describe('rpc router', () => {
       goal_mode: false,
       goal_success_criteria: null,
       note: null,
-      created_from_session: false
+      created_from_session: false,
+      auto_approve_plan: false
     }
     const calls: Array<{ projectId: string; includeArchived: boolean | undefined }> = []
     const router = makeRpcRouter({
@@ -594,7 +598,8 @@ describe('rpc router', () => {
       goal_mode: true,
       goal_success_criteria: 'Build passes',
       note: 'Keep private',
-      created_from_session: false
+      created_from_session: false,
+      auto_approve_plan: false
     }
     const calls: Array<{ projectId: string; id: string; data: unknown }> = []
     const router = makeRpcRouter({
@@ -629,7 +634,7 @@ describe('rpc router', () => {
       goal_mode: true,
       goal_success_criteria: 'Build passes',
       note: 'Keep private',
-      created_from_session: false
+      auto_approve_plan: false
     }
     const response = await Effect.runPromise(
       router.handle({
@@ -776,7 +781,8 @@ describe('rpc router', () => {
       goal_mode: false,
       goal_success_criteria: null,
       note: null,
-      created_from_session: false
+      created_from_session: false,
+      auto_approve_plan: false
     }
     const calls: Array<{ projectId: string; id: string }> = []
     const router = makeRpcRouter({
@@ -946,7 +952,8 @@ describe('rpc router', () => {
       goal_mode: false,
       goal_success_criteria: null,
       note: null,
-      created_from_session: false
+      created_from_session: false,
+      auto_approve_plan: false
     }
     const calls: Array<{ projectId: string; ticketId: string }> = []
     const router = makeRpcRouter({
@@ -1045,7 +1052,8 @@ describe('rpc router', () => {
       goal_mode: false,
       goal_success_criteria: null,
       note: null,
-      created_from_session: false
+      created_from_session: false,
+      auto_approve_plan: false
     }
     const calls: Array<{ projectId: string; id: string; column: string; sortOrder: number }> = []
     const router = makeRpcRouter({
@@ -1319,7 +1327,8 @@ describe('rpc router', () => {
       goal_mode: false,
       goal_success_criteria: null,
       note: null,
-      created_from_session: false
+      created_from_session: false,
+      auto_approve_plan: false
     }
     const calls: string[] = []
     const router = makeRpcRouter({
@@ -1420,7 +1429,8 @@ describe('rpc router', () => {
       goal_mode: false,
       goal_success_criteria: null,
       note: null,
-      created_from_session: false
+      created_from_session: false,
+      auto_approve_plan: false
     }
     const calls: Array<{ projectId: string; id: string; tokens: number }> = []
     const router = makeRpcRouter({
@@ -2186,7 +2196,8 @@ describe('rpc router', () => {
       goal_mode: false,
       goal_success_criteria: null,
       note: null,
-      created_from_session: false
+      created_from_session: false,
+      auto_approve_plan: false
     }
     const calls: string[] = []
     const router = makeRpcRouter({
@@ -2298,7 +2309,8 @@ describe('rpc router', () => {
       goal_mode: false,
       goal_success_criteria: null,
       note: null,
-      created_from_session: false
+      created_from_session: false,
+      auto_approve_plan: false
     }
     const calls: Array<{ projectId: string; ticketId: string }> = []
     const router = makeRpcRouter({
@@ -6451,6 +6463,7 @@ describe('rpc router', () => {
           }),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -6491,6 +6504,7 @@ describe('rpc router', () => {
           }),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -6532,6 +6546,7 @@ describe('rpc router', () => {
             return result
           }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -6572,6 +6587,7 @@ describe('rpc router', () => {
             return { success: true, cols: 80, rows: 24 }
           }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -6613,6 +6629,7 @@ describe('rpc router', () => {
             calls.push({ sessionId, opts })
             return result
           }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -6641,6 +6658,57 @@ describe('rpc router', () => {
     expect(calls).toEqual([{ sessionId: 'session-1', opts: { pendingPrompt: 'continue' } }])
   })
 
+  it('handles terminalOps.setClaudeCliPlanAutoApprove through the terminal ops RPC domain', async () => {
+    const calls: Array<{ sessionId: string; enabled: boolean }> = []
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      terminalOps: {
+        getConfig: () => Effect.succeed({}),
+        create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: (sessionId, enabled) =>
+          Effect.sync(() => {
+            calls.push({ sessionId, enabled })
+            return { success: true }
+          }),
+        ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
+        ghosttyIsAvailable: () =>
+          Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
+        ghosttyCreateSurface: () => Effect.succeed({ success: true, surfaceId: 1 }),
+        ghosttySetFrame: () => Effect.succeed(undefined),
+        ghosttySetSize: () => Effect.succeed(undefined),
+        write: () => Effect.succeed(undefined),
+        resize: () => Effect.succeed(undefined),
+        destroy: () => Effect.succeed(undefined)
+      }
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'terminal-plan-auto-approve-1',
+        method: 'terminalOps.setClaudeCliPlanAutoApprove',
+        params: { sessionId: 'session-1', enabled: true }
+      })
+    )
+
+    expect(response).toEqual({
+      id: 'terminal-plan-auto-approve-1',
+      ok: true,
+      value: { success: true }
+    })
+    expect(calls).toEqual([{ sessionId: 'session-1', enabled: true }])
+
+    const invalid = await Effect.runPromise(
+      router.handle({
+        id: 'terminal-plan-auto-approve-2',
+        method: 'terminalOps.setClaudeCliPlanAutoApprove',
+        params: { sessionId: 'session-1', enabled: true, extra: 'nope' }
+      })
+    )
+    expect(invalid.ok).toBe(false)
+    expect(calls).toHaveLength(1)
+  })
+
   it('validates terminalOps.createClaudeCli params', async () => {
     const calls: string[] = []
     const router = makeRpcRouter({
@@ -6653,6 +6721,7 @@ describe('rpc router', () => {
             calls.push('createClaudeCli')
             return { success: true, cols: 80, rows: 24 }
           }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -6690,6 +6759,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () =>
           Effect.sync(() => {
             calls.push('ghosttyInit')
@@ -6730,6 +6800,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () =>
           Effect.sync(() => {
             calls.push('ghosttyInit')
@@ -6771,6 +6842,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.sync(() => {
@@ -6810,6 +6882,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.sync(() => {
@@ -6856,6 +6929,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -6896,6 +6970,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -6952,6 +7027,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -6991,6 +7067,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -7042,6 +7119,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -7081,6 +7159,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -7152,6 +7231,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -7194,6 +7274,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -7248,6 +7329,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -7289,6 +7371,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -7342,6 +7425,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -7384,6 +7468,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -7438,6 +7523,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -7481,6 +7567,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -7536,6 +7623,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -7580,6 +7668,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -7636,6 +7725,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -7681,6 +7771,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -7747,6 +7838,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -7789,6 +7881,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -7836,6 +7929,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -7883,6 +7977,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -7930,6 +8025,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -7978,6 +8074,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -8026,6 +8123,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -8065,6 +8163,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -8104,6 +8203,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -8143,6 +8243,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -8182,6 +8283,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -8221,6 +8323,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),

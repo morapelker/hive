@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 37
+export const CURRENT_SCHEMA_VERSION = 38
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -655,6 +655,14 @@ DROP TABLE IF EXISTS diff_comments;`
     name: 'add_connection_history_note',
     up: `-- NOTE: ALTER TABLE for connection_history.note is handled idempotently by
          -- ensureConnectionTables() in database.ts to avoid "duplicate column" errors.`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
+  },
+  {
+    version: 38,
+    name: 'add_ticket_auto_approve_plan',
+    up: `-- NOTE: ALTER TABLE for kanban_tickets.auto_approve_plan and
+         -- markdown_kanban_card_state.auto_approve_plan is handled idempotently by
+         -- safeAddColumn() in database.ts to avoid "duplicate column" errors.`,
     down: `-- SQLite cannot drop columns; this is a no-op for safety`
   }
 ]

@@ -16,6 +16,7 @@ import {
   clearAllClaudeCliSubagentTracking,
   clearClaudeCliSubagentTracking
 } from './claude-cli-subagent-tracker'
+import { setClaudeCliPlanAutoApprove } from './claude-cli-plan-auto-approve'
 import { logClaudeBinaryVersion, resolveClaudeBinaryPath } from './claude-binary-resolver'
 import { buildClaudeCliPtySpawn } from './claude-cli-spawner'
 import { externalizeGoalHandoffPlan } from './claude-cli-plan-handoff'
@@ -218,6 +219,7 @@ function attachNodePtyListeners(terminalId: string): void {
     if (claudeCliSessions.has(terminalId)) {
       clearClaudeCliInteractions(terminalId)
       clearClaudeCliSubagentTracking(terminalId)
+      setClaudeCliPlanAutoApprove(terminalId, false)
       publishClaudeCliStatus({
         sessionId: terminalId,
         status: 'completed',

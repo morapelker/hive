@@ -106,6 +106,7 @@ export type DesktopCommandName =
   | 'telegramClaudeCliQuestionReply'
   | 'telegramClaudeCliQuestionReject'
   | 'telegramClaudeCliPlanReply'
+  | 'terminalSetClaudeCliPlanAutoApprove'
 
 export interface OpenInAppPayload {
   readonly appName: string
@@ -345,6 +346,11 @@ export interface TerminalCreateResult {
 
 export interface TelegramClaudeCliSessionPayload {
   readonly sessionId: string
+}
+
+export interface TerminalClaudeCliPlanAutoApprovePayload {
+  readonly sessionId: string
+  readonly enabled: boolean
 }
 
 export interface TelegramClaudeCliQuestionReplyPayload {
@@ -944,6 +950,7 @@ export type DesktopCommandRequest =
   | TelegramClaudeCliQuestionReplyDesktopCommandRequest
   | TelegramClaudeCliQuestionRejectDesktopCommandRequest
   | TelegramClaudeCliPlanReplyDesktopCommandRequest
+  | TerminalSetClaudeCliPlanAutoApproveDesktopCommandRequest
 
 export interface QuitAppDesktopCommandRequest {
   readonly type: typeof DESKTOP_COMMAND_REQUEST_TYPE
@@ -1609,6 +1616,13 @@ export interface TelegramClaudeCliCancelDesktopCommandRequest {
   readonly payload: TelegramClaudeCliSessionPayload
 }
 
+export interface TerminalSetClaudeCliPlanAutoApproveDesktopCommandRequest {
+  readonly type: typeof DESKTOP_COMMAND_REQUEST_TYPE
+  readonly id: string
+  readonly command: 'terminalSetClaudeCliPlanAutoApprove'
+  readonly payload: TerminalClaudeCliPlanAutoApprovePayload
+}
+
 export interface TelegramClaudeCliQuestionReplyDesktopCommandRequest {
   readonly type: typeof DESKTOP_COMMAND_REQUEST_TYPE
   readonly id: string
@@ -2121,6 +2135,11 @@ export function makeDesktopCommandRequest(
   command: 'telegramClaudeCliPlanReply',
   payload: TelegramClaudeCliPlanReplyPayload
 ): TelegramClaudeCliPlanReplyDesktopCommandRequest
+export function makeDesktopCommandRequest(
+  id: string,
+  command: 'terminalSetClaudeCliPlanAutoApprove',
+  payload: TerminalClaudeCliPlanAutoApprovePayload
+): TerminalSetClaudeCliPlanAutoApproveDesktopCommandRequest
 export function makeDesktopCommandRequest(
   id: string,
   command: DesktopCommandName,
@@ -3298,6 +3317,19 @@ export function makeDesktopCommandRequest(
     } as TelegramClaudeCliPlanReplyDesktopCommandRequest
   }
 
+  if (command === 'terminalSetClaudeCliPlanAutoApprove') {
+    if (!payload) {
+      throw new Error('Missing terminalSetClaudeCliPlanAutoApprove payload')
+    }
+
+    return {
+      type: DESKTOP_COMMAND_REQUEST_TYPE,
+      id,
+      command,
+      payload
+    } as TerminalSetClaudeCliPlanAutoApproveDesktopCommandRequest
+  }
+
   return {
     type: DESKTOP_COMMAND_REQUEST_TYPE,
     id,
@@ -3452,7 +3484,9 @@ export const isDesktopCommandRequest = (value: unknown): value is DesktopCommand
       (value.command === 'telegramClaudeCliQuestionReject' &&
         isTelegramClaudeCliQuestionRejectPayload(value.payload)) ||
       (value.command === 'telegramClaudeCliPlanReply' &&
-        isTelegramClaudeCliPlanReplyPayload(value.payload)))
+        isTelegramClaudeCliPlanReplyPayload(value.payload)) ||
+      (value.command === 'terminalSetClaudeCliPlanAutoApprove' &&
+        isTerminalClaudeCliPlanAutoApprovePayload(value.payload)))
   )
 }
 
@@ -3993,3 +4027,8 @@ const isTelegramClaudeCliPlanReplyPayload = (
   typeof value.requestId === 'string' &&
   typeof value.approve === 'boolean' &&
   (value.feedback === undefined || typeof value.feedback === 'string')
+
+const isTerminalClaudeCliPlanAutoApprovePayload = (
+  value: unknown
+): value is TerminalClaudeCliPlanAutoApprovePayload =>
+  isRecord(value) && typeof value.sessionId === 'string' && typeof value.enabled === 'boolean'

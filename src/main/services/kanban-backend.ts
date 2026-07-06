@@ -117,6 +117,7 @@ interface MarkdownRuntimeState {
   note: string | null
   attachments: unknown[]
   plan_ready: boolean
+  auto_approve_plan: boolean
   total_tokens: number
   pending_launch_config: string | null
   updated_at: string | null
@@ -141,6 +142,7 @@ function emptyRuntimeState(): MarkdownRuntimeState {
     note: null,
     attachments: [],
     plan_ready: false,
+    auto_approve_plan: false,
     total_tokens: 0,
     pending_launch_config: null,
     updated_at: null
@@ -690,6 +692,8 @@ class MarkdownKanbanBackend implements KanbanBackend {
       runtimeUpdates.current_session_id = data.current_session_id
     if (data.worktree_id !== undefined) runtimeUpdates.worktree_id = data.worktree_id
     if (data.plan_ready !== undefined) runtimeUpdates.plan_ready = data.plan_ready
+    if (data.auto_approve_plan !== undefined)
+      runtimeUpdates.auto_approve_plan = data.auto_approve_plan
     if (data.pending_launch_config !== undefined)
       runtimeUpdates.pending_launch_config = data.pending_launch_config
     if (data.note !== undefined) runtimeUpdates.note = data.note
@@ -1480,7 +1484,8 @@ class MarkdownKanbanBackend implements KanbanBackend {
       pending_launch_config: runtime.pending_launch_config,
       goal_mode: asBoolean(frontmatter.goal_mode) ?? false,
       goal_success_criteria: nullableString(frontmatter.goal_success_criteria),
-      note: runtime.note
+      note: runtime.note,
+      auto_approve_plan: runtime.auto_approve_plan
     }
 
     return { ticket, filePath, frontmatter }
@@ -1494,6 +1499,7 @@ class MarkdownKanbanBackend implements KanbanBackend {
       current_session_id: runtime.current_session_id,
       worktree_id: runtime.worktree_id,
       plan_ready: runtime.plan_ready,
+      auto_approve_plan: runtime.auto_approve_plan,
       total_tokens: runtime.total_tokens,
       pending_launch_config: runtime.pending_launch_config,
       note: runtime.note,
@@ -1590,6 +1596,7 @@ class MarkdownKanbanBackend implements KanbanBackend {
           note: string | null
           attachments: string | null
           plan_ready: number
+          auto_approve_plan: number
           total_tokens: number
           pending_launch_config: string | null
           updated_at: string | null
@@ -1604,6 +1611,7 @@ class MarkdownKanbanBackend implements KanbanBackend {
       note: row.note,
       attachments: parseJsonArray(row.attachments),
       plan_ready: row.plan_ready === 1,
+      auto_approve_plan: row.auto_approve_plan === 1,
       total_tokens: row.total_tokens ?? 0,
       pending_launch_config: row.pending_launch_config,
       updated_at: row.updated_at
@@ -1650,6 +1658,10 @@ class MarkdownKanbanBackend implements KanbanBackend {
     if (data.plan_ready !== undefined) {
       updates.push('plan_ready = ?')
       values.push(data.plan_ready ? 1 : 0)
+    }
+    if (data.auto_approve_plan !== undefined) {
+      updates.push('auto_approve_plan = ?')
+      values.push(data.auto_approve_plan ? 1 : 0)
     }
     if (data.pending_launch_config !== undefined) {
       updates.push('pending_launch_config = ?')
@@ -1760,6 +1772,7 @@ export async function moveKanbanTicketToProject(
     if (!moved) return null
     return internalBackend.update(targetProjectId, ticketId, {
       plan_ready: false,
+      auto_approve_plan: false,
       pending_launch_config: null
     })
   }

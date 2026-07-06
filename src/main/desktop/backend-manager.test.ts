@@ -233,6 +233,7 @@ import {
   waitForBackendReady
 } from './backend-manager'
 import { publishDesktopBackendEvent } from './backend-event-publisher'
+import { isClaudeCliPlanAutoApproveArmed } from '../services/claude-cli-plan-auto-approve'
 
 class FakeChildProcess extends EventEmitter {
   stdout = new PassThrough()
@@ -3677,6 +3678,54 @@ describe('desktop backend manager', () => {
       }),
       expect.any(Function)
     )
+  })
+
+  it('applies backend terminalSetClaudeCliPlanAutoApprove commands to the armed registry', async () => {
+    const child = new FakeChildProcess()
+
+    await startDesktopBackend(
+      {
+        executablePath: '/electron',
+        entryPath: '/app/server.js',
+        cwd: '/app',
+        baseDir: mkdtempSync(join(tmpdir(), 'hive-backend-manager-')),
+        port: 0
+      },
+      {
+        spawnProcess: vi.fn(() => child as never),
+        fetch: vi.fn(async () => new Response('{}', { status: 200 })),
+        logger: makeLogger()
+      }
+    )
+
+    child.emit(
+      'message',
+      makeDesktopCommandRequest('plan-auto-approve-1', 'terminalSetClaudeCliPlanAutoApprove', {
+        sessionId: 'session-armed',
+        enabled: true
+      })
+    )
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(isClaudeCliPlanAutoApproveArmed('session-armed')).toBe(true)
+    expect(child.send).toHaveBeenCalledWith(
+      makeDesktopCommandResult('plan-auto-approve-1', {
+        ok: true,
+        value: { success: true }
+      }),
+      expect.any(Function)
+    )
+
+    child.emit(
+      'message',
+      makeDesktopCommandRequest('plan-auto-approve-2', 'terminalSetClaudeCliPlanAutoApprove', {
+        sessionId: 'session-armed',
+        enabled: false
+      })
+    )
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(isClaudeCliPlanAutoApproveArmed('session-armed')).toBe(false)
   })
 
   it('forwards backend terminalGhosttyInit commands to the Ghostty service', async () => {
