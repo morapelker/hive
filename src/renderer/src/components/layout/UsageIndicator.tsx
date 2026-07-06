@@ -3,12 +3,13 @@ import {
   useUsageStore,
   useAccountStore,
   useSessionStore,
+  useLoginStore,
   resolveUsageProvider,
   resolveDefaultUsageProvider,
   normalizeUsage
 } from '@/stores'
 import { useSettingsStore } from '@/stores/useSettingsStore'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { cn } from '@/lib/utils'
 import { Loader2 } from 'lucide-react'
 import claudeIcon from '@/assets/model-icons/claude.svg'
@@ -16,6 +17,7 @@ import openaiIcon from '@/assets/model-icons/openai.svg'
 import type {
   OpenAIUsageData,
   SavedAccountDTO,
+  SavedUsageStatus,
   AnthropicRateLimitState,
   AnthropicRateLimitWindow,
   UsageData,
@@ -94,9 +96,16 @@ interface UsageRowProps {
   percent: number
   resetTime: string
   rateLimit?: AnthropicRateLimitWindow
+  labelClassName?: string
 }
 
-function UsageRow({ label, percent, resetTime, rateLimit }: UsageRowProps): React.JSX.Element {
+function UsageRow({
+  label,
+  percent,
+  resetTime,
+  rateLimit,
+  labelClassName
+}: UsageRowProps): React.JSX.Element {
   const statusLabel = getStatusLabel(rateLimit?.status)
   const displayedPercent = rateLimit?.status === 'rejected' ? 100 : percent
   const percentLabel = rateLimit?.status === 'rejected' ? 'limit' : `${Math.round(percent)}%`
@@ -107,7 +116,15 @@ function UsageRow({ label, percent, resetTime, rateLimit }: UsageRowProps): Reac
 
   return (
     <div className="flex items-center gap-1.5">
-      <span className="text-[10px] text-muted-foreground w-5 shrink-0">{label}</span>
+      <span
+        className={cn(
+          'text-[10px] text-muted-foreground shrink-0 truncate',
+          labelClassName ?? 'w-5'
+        )}
+        title={label}
+      >
+        {label}
+      </span>
       <div className="h-1.5 flex-1 rounded-full bg-muted overflow-hidden">
         <div
           className={cn(
@@ -138,11 +155,11 @@ function UsageRow({ label, percent, resetTime, rateLimit }: UsageRowProps): Reac
   )
 }
 
-interface TooltipAccountRow {
+interface AccountRowData {
   id: string
   email: string | null
   usage: UsageData | null
-  status: 'ok' | 'stale' | 'error'
+  status: SavedUsageStatus
   lastError: string | null
   isActive: boolean
   isRefreshing: boolean
@@ -159,7 +176,21 @@ function usageFromSavedAccount(
   return normalizeUsage(provider, null, account.last_usage as OpenAIUsageData)
 }
 
-function UsageTooltipAccountRow({ row }: { row: TooltipAccountRow }): React.JSX.Element {
+export interface UsageAccountRowProps {
+  row: AccountRowData
+  isSwitching?: boolean
+  isLoginActive?: boolean
+  onSwitch?: () => void
+  onSignInAgain?: () => void
+}
+
+export function UsageAccountRow({
+  row,
+  isSwitching = false,
+  isLoginActive = false,
+  onSwitch,
+  onSignInAgain
+}: UsageAccountRowProps): React.JSX.Element {
   const fiveHourPercent = row.usage ? Math.round(row.usage.five_hour.utilization) : 0
   const sevenDayPercent = row.usage ? Math.round(row.usage.seven_day.utilization) : 0
   const fiveHourReset = row.usage
@@ -168,6 +199,7 @@ function UsageTooltipAccountRow({ row }: { row: TooltipAccountRow }): React.JSX.
   const sevenDayReset = row.usage
     ? formatResetTime(row.usage.seven_day.resets_at, 'seven_day')
     : 'N/A'
+  const scoped = row.usage?.scoped ?? []
 
   return (
     <div className="relative rounded-md border border-border/50 bg-background/40 px-2 py-1.5">
@@ -197,7 +229,44 @@ function UsageTooltipAccountRow({ row }: { row: TooltipAccountRow }): React.JSX.
       <div className={cn('mt-1 space-y-0.5', row.status === 'stale' && 'opacity-50')}>
         <UsageRow label="5h" percent={fiveHourPercent} resetTime={fiveHourReset} />
         <UsageRow label="7d" percent={sevenDayPercent} resetTime={sevenDayReset} />
+        {scoped.map((entry) => (
+          <UsageRow
+            key={entry.label}
+            label={entry.label}
+            percent={Math.round(entry.used_percent)}
+            resetTime={entry.resets_at ? formatResetTime(entry.resets_at, 'seven_day') : 'N/A'}
+            labelClassName="w-10"
+          />
+        ))}
       </div>
+
+      {(onSwitch || onSignInAgain) && (
+        <div className="mt-1.5 flex items-center gap-1.5">
+          {!row.isActive && onSwitch && (
+            <button
+              type="button"
+              onClick={onSwitch}
+              disabled={isSwitching}
+              aria-label={`Switch to ${row.email ?? 'this account'}`}
+              className="inline-flex items-center gap-1 rounded-sm border border-border/60 px-1.5 py-0.5 text-[9px] font-medium text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {isSwitching && <Loader2 className="h-2.5 w-2.5 animate-spin" />}
+              Switch
+            </button>
+          )}
+          {row.status === 'stale' && onSignInAgain && (
+            <button
+              type="button"
+              onClick={onSignInAgain}
+              disabled={isLoginActive}
+              aria-label={`Sign in again as ${row.email ?? 'this account'}`}
+              className="inline-flex items-center gap-1 rounded-sm border border-destructive/40 px-1.5 py-0.5 text-[9px] font-medium text-destructive transition-colors hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Sign in again
+            </button>
+          )}
+        </div>
+      )}
 
       {row.isRefreshing && (
         <div className="absolute inset-0 flex items-center justify-center rounded-md bg-background/60">
@@ -249,6 +318,8 @@ function ProviderUsageBlock({
   const forceRefreshProvider = useUsageStore((s) => s.forceRefreshProvider)
   const refreshAllForProvider = useUsageStore((s) => s.refreshAllForProvider)
   const loadSavedAccounts = useUsageStore((s) => s.loadSavedAccounts)
+  const switchAccount = useUsageStore((s) => s.switchAccount)
+  const switchingAccountIds = useUsageStore((s) => s.switchingAccountIds)
   const savedAccounts = useUsageStore((s) => s.savedAccounts[provider])
   const savedAccountLoadError = useUsageStore((s) => s.savedAccountLoadErrors[provider])
   const refreshingProvider = useUsageStore((s) => s.refreshingProviders[provider])
@@ -266,6 +337,8 @@ function ProviderUsageBlock({
     provider === 'anthropic' ? s.anthropicEmail : s.openaiEmail
   )
   const fetchEmail = useAccountStore((s) => s.fetchEmail)
+  const startLogin = useLoginStore((s) => s.startLogin)
+  const isLoginActive = useLoginStore((s) => s.activeLogin !== null)
 
   const usage = normalizeUsage(provider, anthropicUsage, openaiUsage)
 
@@ -274,7 +347,7 @@ function ProviderUsageBlock({
   const tooltipTitle = provider === 'anthropic' ? 'Claude API Usage' : 'OpenAI API Usage'
   const iconIsRefreshing = isLoading || refreshingProvider
 
-  const tooltipRows: TooltipAccountRow[] =
+  const accountRows: AccountRowData[] =
     savedAccounts.length > 0
       ? savedAccounts.map((account) => ({
           id: account.id,
@@ -319,8 +392,8 @@ function ProviderUsageBlock({
   if (!usage) {
     if (!isExplicitlySelected) return null
     return (
-      <Tooltip>
-        <TooltipTrigger asChild>
+      <HoverCard>
+        <HoverCardTrigger asChild>
           <div
             className="px-3 py-1.5 space-y-0.5 cursor-default opacity-40"
             onMouseEnter={handleLoadSavedAccounts}
@@ -349,8 +422,8 @@ function ProviderUsageBlock({
               </div>
             </div>
           </div>
-        </TooltipTrigger>
-        <TooltipContent
+        </HoverCardTrigger>
+        <HoverCardContent
           side="top"
           sideOffset={8}
           className="w-72 max-w-[min(18rem,calc(100vw-2rem))]"
@@ -362,8 +435,17 @@ function ProviderUsageBlock({
                 Saved accounts unavailable: {savedAccountLoadError}
               </div>
             )}
-            {tooltipRows.some((row) => row.email || row.usage) ? (
-              tooltipRows.map((row) => <UsageTooltipAccountRow key={row.id} row={row} />)
+            {accountRows.some((row) => row.email || row.usage) ? (
+              accountRows.map((row) => (
+                <UsageAccountRow
+                  key={row.id}
+                  row={row}
+                  isSwitching={switchingAccountIds.has(row.id)}
+                  isLoginActive={isLoginActive}
+                  onSwitch={() => switchAccount(row.id)}
+                  onSignInAgain={() => startLogin(provider, row.email ?? undefined)}
+                />
+              ))
             ) : (
               <div className="text-[10px]">No credentials configured</div>
             )}
@@ -375,8 +457,8 @@ function ProviderUsageBlock({
               </div>
             )}
           </div>
-        </TooltipContent>
-      </Tooltip>
+        </HoverCardContent>
+      </HoverCard>
     )
   }
 
@@ -391,8 +473,8 @@ function ProviderUsageBlock({
     provider === 'anthropic' ? getRateLimitWindow(anthropicRateLimit, 'seven_day') : undefined
 
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
+    <HoverCard>
+      <HoverCardTrigger asChild>
         <div
           className="px-3 py-1.5 space-y-0.5 cursor-default"
           onMouseEnter={handleLoadSavedAccounts}
@@ -431,8 +513,8 @@ function ProviderUsageBlock({
             </div>
           </div>
         </div>
-      </TooltipTrigger>
-      <TooltipContent
+      </HoverCardTrigger>
+      <HoverCardContent
         side="top"
         sideOffset={8}
         className="w-72 max-w-[min(18rem,calc(100vw-2rem))]"
@@ -444,8 +526,15 @@ function ProviderUsageBlock({
               Saved accounts unavailable: {savedAccountLoadError}
             </div>
           )}
-          {tooltipRows.map((row) => (
-            <UsageTooltipAccountRow key={row.id} row={row} />
+          {accountRows.map((row) => (
+            <UsageAccountRow
+              key={row.id}
+              row={row}
+              isSwitching={switchingAccountIds.has(row.id)}
+              isLoginActive={isLoginActive}
+              onSwitch={() => switchAccount(row.id)}
+              onSignInAgain={() => startLogin(provider, row.email ?? undefined)}
+            />
           ))}
           {provider === 'anthropic' && extra?.is_enabled && (
             <div className="border-t border-background/20 pt-1 text-[10px]">
@@ -477,8 +566,8 @@ function ProviderUsageBlock({
             </div>
           )}
         </div>
-      </TooltipContent>
-    </Tooltip>
+      </HoverCardContent>
+    </HoverCard>
   )
 }
 

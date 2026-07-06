@@ -2,6 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { resetRendererRpcClientForTests, setRendererRpcClient } from '@/api/rpc-client'
 import { useUsageStore, type UsageData } from '@/stores/useUsageStore'
+import { toast } from '@/lib/toast'
+
+vi.mock('@/lib/toast', () => ({
+  toast: {
+    error: vi.fn(),
+    success: vi.fn()
+  }
+}))
 
 const sampleUsage: UsageData = {
   five_hour: {
@@ -30,6 +38,8 @@ describe('useUsageStore', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-05-14T09:00:00.000Z'))
+    vi.mocked(toast.error).mockClear()
+    vi.mocked(toast.success).mockClear()
 
     request = vi.fn(async (method: string) => {
       if (method === 'accountOps.listSaved') return []
@@ -74,6 +84,7 @@ describe('useUsageStore', () => {
     expect(state.anthropicLastError).toBe('No access token found')
     expect(state.anthropicLastFetchedAt).toBeNull()
     expect(state.anthropicIsLoading).toBe(false)
+    expect(toast.error).not.toHaveBeenCalled()
   })
 
   it('records envelope-level Anthropic failures without rejecting or advancing debounce', async () => {
@@ -97,6 +108,49 @@ describe('useUsageStore', () => {
     expect(state.anthropicLastError).toBe('Could not decode usage response')
     expect(state.anthropicLastFetchedAt).toBeNull()
     expect(state.anthropicIsLoading).toBe(false)
+    expect(toast.error).toHaveBeenCalledWith(
+      'Claude usage refresh failed: Could not decode usage response'
+    )
+  })
+
+  it('always fetches on an explicit force refresh, even shortly after a successful attempt', async () => {
+    useUsageStore.setState({
+      anthropicLastFetchedAt: Date.now() - 1_000,
+      anthropicLastError: null
+    } as Partial<ReturnType<typeof useUsageStore.getState>>)
+    request.mockImplementation(async (method: string) => {
+      if (method === 'usageOps.fetch') return { success: true, data: sampleUsage }
+      if (method === 'accountOps.listSaved') return []
+      return null
+    })
+
+    await useUsageStore.getState().forceRefreshProvider('anthropic')
+
+    expect(request.mock.calls.filter(([method]) => method === 'usageOps.fetch')).toHaveLength(1)
+    expect(usageState().anthropicUsage).toBe(sampleUsage)
+  })
+
+  it('blocks a force refresh while a 429 retry-after window is active and toasts instead of fetching', async () => {
+    request.mockImplementation(async (method: string) => {
+      if (method === 'usageOps.fetch') {
+        return {
+          success: false,
+          error: 'Usage API returned 429: Too Many Requests',
+          retryAfter: 30
+        }
+      }
+      if (method === 'accountOps.listSaved') return []
+      return null
+    })
+
+    await useUsageStore.getState().forceRefreshProvider('anthropic')
+    vi.mocked(toast.error).mockClear()
+    request.mockClear()
+
+    await useUsageStore.getState().forceRefreshProvider('anthropic')
+
+    expect(request.mock.calls.filter(([method]) => method === 'usageOps.fetch')).toHaveLength(0)
+    expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/^Rate limited — retry in \d+s$/))
   })
 
   it('clears Anthropic errors and advances debounce after a successful fetch', async () => {
@@ -131,6 +185,7 @@ describe('useUsageStore', () => {
     expect(state.openaiLastError).toBe('OpenAI auth failed')
     expect(state.openaiLastFetchedAt).toBeNull()
     expect(state.openaiIsLoading).toBe(false)
+    expect(toast.error).toHaveBeenCalledWith('OpenAI usage refresh failed: OpenAI auth failed')
   })
 
   it('merges Anthropic rate-limit windows and drops stale windows', () => {

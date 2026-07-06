@@ -18,12 +18,14 @@ import {
   Database,
   Hash,
   RadioTower,
-  Building2
+  Building2,
+  Users
 } from 'lucide-react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { SettingsAppearance } from './SettingsAppearance'
 import { SettingsGeneral } from './SettingsGeneral'
+import { SettingsAccounts } from './SettingsAccounts'
 import { SettingsModels } from './SettingsModels'
 import { SettingsEditor } from './SettingsEditor'
 import { SettingsTerminal } from './SettingsTerminal'
@@ -45,6 +47,7 @@ import { cn } from '@/lib/utils'
 const SECTIONS = [
   { id: 'appearance', label: 'Appearance', icon: Palette },
   { id: 'general', label: 'General', icon: Monitor },
+  { id: 'accounts', label: 'Accounts', icon: Users },
   { id: 'custom-commands', label: 'Custom Commands', icon: Zap },
   { id: 'models', label: 'Models', icon: Sparkles },
   { id: 'pet', label: 'Pet', icon: Bug },
@@ -119,6 +122,7 @@ export function SettingsModal(): React.JSX.Element {
           <div className="flex-1 overflow-y-auto p-6">
             {activeSection === 'appearance' && <SettingsAppearance />}
             {activeSection === 'general' && <SettingsGeneral />}
+            {activeSection === 'accounts' && <SettingsAccounts />}
             {activeSection === 'custom-commands' && <SettingsCustomCommands />}
             {activeSection === 'models' && <SettingsModels />}
             {activeSection === 'pet' && <SettingsPet />}
