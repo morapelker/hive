@@ -18,6 +18,18 @@ import {
   setClaudeCliDeferredCompletionHandler,
   type ClaudeCliBackgroundTask
 } from './claude-cli-subagent-tracker'
+import {
+  clearAllClaudeCliPlanAutoApprove,
+  consumeClaudeCliPlanAutoApprove,
+  isClaudeCliPlanAutoApproveArmed,
+  setClaudeCliPlanAutoApprove
+} from './claude-cli-plan-auto-approve'
+import { ptyService } from './pty-service'
+
+// Delay between replying to the ExitPlanMode PermissionRequest hook and
+// pressing "1" on the PTY: claude renders its plan dialog only after the hook
+// response lands, and the keypress must hit the dialog, not the composer.
+const PLAN_AUTO_APPROVE_KEYSTROKE_DELAY_MS = 500
 
 export interface ParsedClaudeHook {
   hook_event_name?: string
@@ -327,13 +339,61 @@ async function handleHook(req: http.IncomingMessage, res: http.ServerResponse): 
           data: { promptText: body.prompt }
         })
       }
+      // Plan auto-approve: an armed session's ExitPlanMode is answered here
+      // instead of by the user. The setMode permission is only honored on the
+      // PermissionRequest hook (not PreToolUse), so the PreToolUse must fall
+      // through unheld — which also means transports (Telegram/Discord) must
+      // not grab it, or the plan would go to the phone instead. Subagent
+      // ExitPlanMode hooks (agent_id set) never consume the main plan's arm.
+      const autoApproveExitPlan =
+        body.tool_name === 'ExitPlanMode' &&
+        !body.agent_id &&
+        isClaudeCliPlanAutoApproveArmed(route.sessionId)
+      const bypassTransport =
+        autoApproveExitPlan &&
+        (body.hook_event_name === 'PreToolUse' || body.hook_event_name === 'PermissionRequest')
+
       // For forwarded CLI sessions a transport may take ownership of the
       // response (held open until answered). Otherwise behavior is unchanged.
       // suppressIdle keeps a deferred/subagent-scoped Stop from telling the
       // transport the session went idle while background work is in flight.
-      owned = cliHookTransportRouter.routeHook(route.sessionId, body, res, {
-        suppressIdle: gate.kind !== 'pass'
-      })
+      if (!bypassTransport) {
+        owned = cliHookTransportRouter.routeHook(route.sessionId, body, res, {
+          suppressIdle: gate.kind !== 'pass'
+        })
+      }
+
+      if (
+        autoApproveExitPlan &&
+        body.hook_event_name === 'PermissionRequest' &&
+        !res.writableEnded
+      ) {
+        // Hook responses cannot approve the plan dialog: on claude v2.1.201 a
+        // PermissionRequest hookSpecificOutput.decision (allow + setMode) is
+        // accepted but the interactive dialog is shown anyway (verified
+        // empirically — claude-playground keeps a keystroke fallback for the
+        // same reason). So reply '{}' to let the dialog render, then press "1"
+        // ("Yes, and bypass permissions") on the PTY — approval and
+        // bypassPermissions in the same stroke, exactly like a manual approve.
+        const approvedSessionId = route.sessionId
+        consumeClaudeCliPlanAutoApprove(approvedSessionId)
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end('{}')
+        setTimeout(() => {
+          if (!ptyService.has(approvedSessionId)) {
+            log.warn('Plan auto-approve keystroke skipped: PTY is gone', {
+              sessionId: approvedSessionId
+            })
+            return
+          }
+          ptyService.write(approvedSessionId, '1')
+          log.info('Auto-approved ExitPlanMode plan', { sessionId: approvedSessionId })
+        }, PLAN_AUTO_APPROVE_KEYSTROKE_DELAY_MS)
+      }
+
+      if (body.hook_event_name === 'SessionEnd') {
+        setClaudeCliPlanAutoApprove(route.sessionId, false)
+      }
     }
   } catch (error) {
     log.warn('Failed to parse Claude hook payload', {
@@ -437,6 +497,7 @@ export async function closeClaudeHookServer(): Promise<void> {
     statusSubscribers.clear()
     clearAllClaudeCliInteractions()
     clearAllClaudeCliSubagentTracking()
+    clearAllClaudeCliPlanAutoApprove()
     setClaudeCliDeferredCompletionHandler(null)
     return
   }
@@ -458,5 +519,6 @@ export async function closeClaudeHookServer(): Promise<void> {
   statusSubscribers.clear()
   clearAllClaudeCliInteractions()
   clearAllClaudeCliSubagentTracking()
+  clearAllClaudeCliPlanAutoApprove()
   setClaudeCliDeferredCompletionHandler(null)
 }

@@ -29,7 +29,8 @@ import {
   ChevronDown,
   Hammer,
   Map as MapIcon,
-  FolderInput
+  FolderInput,
+  FastForward
 } from 'lucide-react'
 import { CheckeredFlagIcon } from './CheckeredFlagIcon'
 import { UpdateStatusModal } from './UpdateStatusModal'
@@ -95,6 +96,9 @@ import { useSessionTimer } from '@/hooks/useSessionTimer'
 import { useSessionTokenDelta } from '@/hooks/useSessionTokenDelta'
 import { useConflictFixFlow } from '@/hooks/useConflictFixFlow'
 import { formatTokenCount } from '@/lib/format-utils'
+import { canToggleAutoApprovePlan } from '@/lib/plan-auto-approve'
+import { isClaudeCli } from '@shared/types/agent-sdk'
+import { terminalApi } from '@/api/terminal-api'
 import type { KanbanTicket, TicketMark } from '../../../../main/db/types'
 
 // ── Project tag color palette ──────────────────────────────────────
@@ -366,6 +370,24 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
       (state) => {
         if (!ticket.current_session_id) return null
         return state.codexGoalsBySession.get(ticket.current_session_id)?.status ?? null
+      },
+      [ticket.current_session_id]
+    )
+  )
+
+  const linkedSessionAgentSdk = useSessionStore(
+    useCallback(
+      (state) => {
+        if (!ticket.current_session_id) return null
+        for (const sessions of state.sessionsByWorktree.values()) {
+          const found = sessions.find((s) => s.id === ticket.current_session_id)
+          if (found) return found.agent_sdk
+        }
+        for (const sessions of state.sessionsByConnection.values()) {
+          const found = sessions.find((s) => s.id === ticket.current_session_id)
+          if (found) return found.agent_sdk
+        }
+        return null
       },
       [ticket.current_session_id]
     )
@@ -823,6 +845,32 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     }
   }, [ticket.id, ticket.project_id])
 
+  const canToggleAutoApprove =
+    !isArchived && !blockingDiagnostic && canToggleAutoApprovePlan(ticket, linkedSessionAgentSdk)
+
+  const handleToggleAutoApprove = useCallback(async () => {
+    const next = !ticket.auto_approve_plan
+    try {
+      await useKanbanStore.getState().updateTicket(ticket.id, ticket.project_id, {
+        auto_approve_plan: next
+      })
+      // Mirror the durable flag into the hook server's in-memory armed registry
+      // when a claude-cli session is already live; sessions armed before they
+      // exist are registered by the status listener on their first planning turn.
+      if (ticket.current_session_id && isClaudeCli(linkedSessionAgentSdk)) {
+        await terminalApi.setClaudeCliPlanAutoApprove(ticket.current_session_id, next)
+      }
+    } catch {
+      toast.error('Failed to toggle auto approve')
+    }
+  }, [
+    ticket.id,
+    ticket.project_id,
+    ticket.auto_approve_plan,
+    ticket.current_session_id,
+    linkedSessionAgentSdk
+  ])
+
   const handleSaveNote = useCallback(async (note: string | null) => {
     try {
       await useKanbanStore.getState().updateTicket(ticket.id, ticket.project_id, { note })
@@ -906,7 +954,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             </div>
 
             {/* Badges + progress row */}
-            {(hasAttachments || hasNote || worktreeName || projectTag || connectionName || ticket.plan_ready || isError || rightAlignedSlot || isArchived || isBlocked || blockingDiagnostic || isRunProcessAlive || ticket.github_pr_number || isCreatingPR || isForwardedToTelegram || ticket.goal_mode) && (
+            {(hasAttachments || hasNote || worktreeName || projectTag || connectionName || ticket.plan_ready || isError || rightAlignedSlot || isArchived || isBlocked || blockingDiagnostic || isRunProcessAlive || ticket.github_pr_number || isCreatingPR || isForwardedToTelegram || ticket.goal_mode || ticket.auto_approve_plan) && (
               <div className="mt-1.5 flex flex-wrap items-center gap-1">
                 {/* Archived badge */}
                 {isArchived && (
@@ -1016,6 +1064,23 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                   <span className="inline-flex items-center rounded-full bg-violet-500/10 border border-violet-500/30 px-2 py-0.5 text-[11px] font-medium text-violet-500">
                     Plan ready
                   </span>
+                )}
+
+                {/* Auto-approve plan badge */}
+                {ticket.auto_approve_plan && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span
+                        data-testid="kanban-ticket-auto-approve"
+                        className="inline-flex items-center rounded-full bg-violet-500/10 border border-violet-500/30 px-1.5 py-0.5 text-violet-500 cursor-help"
+                      >
+                        <FastForward className="h-3 w-3" />
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      Auto approve plan: implementation starts automatically when the plan is ready
+                    </TooltipContent>
+                  </Tooltip>
                 )}
 
                 {/* Error badge */}
@@ -1377,6 +1442,17 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             <ContextMenuItem onClick={() => handleSaveNote(null)} className="gap-2">
               <X className="h-3.5 w-3.5" />
               Remove note
+            </ContextMenuItem>
+          )}
+
+          {canToggleAutoApprove && (
+            <ContextMenuItem
+              data-testid="ctx-toggle-auto-approve"
+              onClick={() => void handleToggleAutoApprove()}
+              className="gap-2"
+            >
+              <FastForward className="h-3.5 w-3.5" />
+              {ticket.auto_approve_plan ? 'Disable auto approve' : 'Auto approve'}
             </ContextMenuItem>
           )}
 

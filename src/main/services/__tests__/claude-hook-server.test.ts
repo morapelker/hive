@@ -10,6 +10,15 @@ const telemetryMocks = vi.hoisted(() => ({
   handleClaudeCliHiveTelemetryHook: vi.fn().mockResolvedValue(undefined)
 }))
 
+const ptyServiceMocks = vi.hoisted(() => ({
+  has: vi.fn(() => true),
+  write: vi.fn()
+}))
+
+vi.mock('../pty-service', () => ({
+  ptyService: ptyServiceMocks
+}))
+
 vi.mock('../logger', () => ({
   createLogger: () => ({
     debug: vi.fn(),
@@ -42,6 +51,10 @@ import {
   SUBAGENT_WATCHDOG_TIMEOUT_MS
 } from '../claude-cli-subagent-tracker'
 import { cliHookTransportRouter } from '../cli-hook-transport-router'
+import {
+  isClaudeCliPlanAutoApproveArmed,
+  setClaudeCliPlanAutoApprove
+} from '../claude-cli-plan-auto-approve'
 
 async function postHook(
   port: number,
@@ -946,5 +959,119 @@ describe('first-prompt detection with task notifications', () => {
         }
       )
     })
+  })
+})
+
+describe('plan auto-approve', () => {
+  const exitPlanPermissionRequest = {
+    hook_event_name: 'PermissionRequest',
+    tool_name: 'ExitPlanMode',
+    tool_input: { plan: 'The plan' }
+  }
+
+  it('approves an armed ExitPlanMode plan by pressing "1" on the dialog, one-shot', async () => {
+    const { port } = await getClaudeHookServer()
+    const statusListener = vi.fn()
+    const unsubscribe = subscribeClaudeCliStatus(statusListener)
+    setClaudeCliPlanAutoApprove('hive-session-1', true)
+
+    try {
+      const response = await postHook(port, 'hive-session-1', 'permission', exitPlanPermissionRequest)
+
+      // The hook reply stays '{}' so claude renders its native plan dialog;
+      // hook decisions do not approve the plan dialog on current claude
+      // (verified empirically on v2.1.201). The approval is the delayed "1"
+      // keystroke below ("Yes, and bypass permissions").
+      expect(response.text).toBe('{}')
+      await vi.waitFor(() => {
+        expect(ptyServiceMocks.write).toHaveBeenCalledWith('hive-session-1', '1')
+      })
+      // plan_ready still flashes through to the in-app status flow.
+      expect(statusListener).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionId: 'hive-session-1', status: 'plan_ready' })
+      )
+      // One-shot: consumed on approval, a second plan is not auto-answered.
+      expect(isClaudeCliPlanAutoApproveArmed('hive-session-1')).toBe(false)
+      ptyServiceMocks.write.mockClear()
+      const second = await postHook(port, 'hive-session-1', 'permission', exitPlanPermissionRequest)
+      expect(second.text).toBe('{}')
+      await new Promise((resolve) => setTimeout(resolve, 700))
+      expect(ptyServiceMocks.write).not.toHaveBeenCalled()
+    } finally {
+      unsubscribe()
+    }
+  })
+
+  it('does not auto-answer non-ExitPlanMode PermissionRequests on an armed session', async () => {
+    const { port } = await getClaudeHookServer()
+    setClaudeCliPlanAutoApprove('hive-session-1', true)
+
+    const response = await postHook(port, 'hive-session-1', 'permission', {
+      hook_event_name: 'PermissionRequest',
+      tool_name: 'Bash',
+      tool_input: { command: 'rm -rf /' }
+    })
+
+    expect(response.text).toBe('{}')
+    expect(isClaudeCliPlanAutoApproveArmed('hive-session-1')).toBe(true)
+  })
+
+  it('does not auto-answer a subagent-scoped ExitPlanMode PermissionRequest', async () => {
+    const { port } = await getClaudeHookServer()
+    setClaudeCliPlanAutoApprove('hive-session-1', true)
+
+    const response = await postHook(port, 'hive-session-1', 'permission', {
+      ...exitPlanPermissionRequest,
+      agent_id: 'subagent-1'
+    })
+
+    expect(response.text).toBe('{}')
+    expect(isClaudeCliPlanAutoApproveArmed('hive-session-1')).toBe(true)
+  })
+
+  it('bypasses transport routing for armed ExitPlanMode PreToolUse, but routes when unarmed', async () => {
+    const { port } = await getClaudeHookServer()
+    const routeHookSpy = vi.spyOn(cliHookTransportRouter, 'routeHook')
+    setClaudeCliPlanAutoApprove('hive-session-1', true)
+
+    try {
+      const armedResponse = await postHook(port, 'hive-session-1', 'tool', {
+        hook_event_name: 'PreToolUse',
+        tool_name: 'ExitPlanMode',
+        tool_input: { plan: 'The plan' }
+      })
+      expect(armedResponse.text).toBe('{}')
+      expect(routeHookSpy).not.toHaveBeenCalled()
+      // PreToolUse does not consume the arm; only the PermissionRequest answer does.
+      expect(isClaudeCliPlanAutoApproveArmed('hive-session-1')).toBe(true)
+
+      setClaudeCliPlanAutoApprove('hive-session-1', false)
+      await postHook(port, 'hive-session-1', 'tool', {
+        hook_event_name: 'PreToolUse',
+        tool_name: 'ExitPlanMode',
+        tool_input: { plan: 'The plan' }
+      })
+      expect(routeHookSpy).toHaveBeenCalledTimes(1)
+    } finally {
+      routeHookSpy.mockRestore()
+    }
+  })
+
+  it('disarms on SessionEnd', async () => {
+    const { port } = await getClaudeHookServer()
+    setClaudeCliPlanAutoApprove('hive-session-1', true)
+
+    await postHook(port, 'hive-session-1', 'session', { hook_event_name: 'SessionEnd' })
+
+    expect(isClaudeCliPlanAutoApproveArmed('hive-session-1')).toBe(false)
+  })
+
+  it('clears armed sessions when the hook server closes', async () => {
+    await getClaudeHookServer()
+    setClaudeCliPlanAutoApprove('hive-session-close', true)
+
+    await closeClaudeHookServer()
+
+    expect(isClaudeCliPlanAutoApproveArmed('hive-session-close')).toBe(false)
   })
 })

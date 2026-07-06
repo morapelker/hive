@@ -63,6 +63,7 @@ import {
   handleClaudeCliTerminalInput
 } from '../services/terminal-pty-bridge'
 import { claudeCliTelegramBridge } from '../services/claude-cli-telegram-bridge'
+import { setClaudeCliPlanAutoApprove } from '../services/claude-cli-plan-auto-approve'
 import { openPathWithEditor, openPathWithTerminal } from '../services/settings-openers'
 import {
   beginPetPointerInteraction,
@@ -747,6 +748,16 @@ const handleDesktopBackendCommand = (
 
   if (message.command === 'telegramClaudeCliCancel') {
     claudeCliTelegramBridge.cancelSession(message.payload.sessionId)
+    sendDesktopBackendCommandResult(
+      child,
+      makeDesktopCommandResult(message.id, { ok: true, value: { success: true } }),
+      log
+    )
+    return
+  }
+
+  if (message.command === 'terminalSetClaudeCliPlanAutoApprove') {
+    setClaudeCliPlanAutoApprove(message.payload.sessionId, message.payload.enabled)
     sendDesktopBackendCommandResult(
       child,
       makeDesktopCommandResult(message.id, { ok: true, value: { success: true } }),

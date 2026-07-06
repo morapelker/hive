@@ -93,6 +93,7 @@ const baseTicket: KanbanTicket = {
   goal_success_criteria: null,
   pending_launch_config: null,
   created_from_session: false,
+  auto_approve_plan: false,
   attachments: [],
   archived_at: null,
   external_provider: null,
