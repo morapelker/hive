@@ -927,6 +927,12 @@ export class DatabaseService {
       .all(provider) as SavedUsageAccount[]
   }
 
+  clearSavedUsageAccountCredentials(): void {
+    const db = this.getDb()
+    const now = new Date().toISOString()
+    db.prepare(`UPDATE saved_usage_accounts SET credentials_json = '', updated_at = ?`).run(now)
+  }
+
   deleteSavedUsageAccount(id: string): boolean {
     const db = this.getDb()
     const result = db.prepare('DELETE FROM saved_usage_accounts WHERE id = ?').run(id)
