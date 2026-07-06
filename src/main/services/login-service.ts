@@ -418,8 +418,16 @@ async function exchange(session: LoginSession, code: string, state: string | nul
     session.email = email
     await refreshCacheForNewAccount(session.provider, email)
 
+    // A cancel could have landed while the exchange/store/cache-refresh above
+    // was in flight — don't clobber the terminal state it already set. The
+    // account may already be stored (the code was consumed; that's fine),
+    // but only loginCancel gets to decide the final state in that race, and
+    // it already closed the context and scheduled its own GC.
+    if (isTerminal(session.state)) return
+
     session.state = 'done'
     clearActiveTimers(session) // the 30-min timeout no longer applies once we've succeeded
+    scheduleGc(session)
     const closeTimer = setTimeout(() => {
       void safeClose(session.context)
     }, CLOSE_DELAY_MS)
@@ -463,9 +471,12 @@ async function refreshCacheForNewAccount(provider: UsageProvider, email: string)
   try {
     await listSavedAccounts(provider)
     const savedProvider: SavedUsageProvider = provider
-    const row = getDatabase().getSavedUsageAccountByProviderEmail(savedProvider, email)
+    // The orchestrator upserts rows with lowercased emails — match that here,
+    // since the email returned by the account-store helpers isn't guaranteed
+    // to be lowercased (e.g. Codex's id_token claim is verbatim).
+    const row = getDatabase().getSavedUsageAccountByProviderEmail(savedProvider, email.toLowerCase())
     if (row) {
-      void fetchForSavedAccount(row.id)
+      void fetchForSavedAccount(row.id).catch(() => {})
     }
   } catch (error) {
     log.warn('Failed to refresh saved-account cache after login', {

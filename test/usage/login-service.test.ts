@@ -162,6 +162,15 @@ async function pumpUntil(predicate: () => boolean, maxIterations = 400): Promise
   }
 }
 
+/** Lets a test control exactly when a mocked async dependency resolves. */
+function createDeferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((res) => {
+    resolve = res
+  })
+  return { promise, resolve }
+}
+
 describe('login-service', () => {
   beforeEach(async () => {
     vi.resetAllMocks()
@@ -261,11 +270,18 @@ describe('login-service', () => {
     expect(loginStatus(loginId).state).toBe('done')
 
     // The 30-minute waiting timeout is cancelled once a login succeeds — it
-    // must not re-fire (or double-close) once the original deadline elapses.
-    await vi.advanceTimersByTimeAsync(30 * 60 * 1000)
+    // must not re-fire (or double-close) as time passes.
+    // A 'done' session stays queryable comfortably before the 5-minute GC
+    // mark (leaving margin for the pumpUntil polling jitter above)...
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000 - 1500 - 5000)
     expect(driver.close).toHaveBeenCalledTimes(1)
     expect(loginStatus(loginId).state).toBe('done')
     expect(loginStatus(loginId).error).toBeNull()
+
+    // ...and is GC'd once 5 minutes since it went 'done' has elapsed, so a
+    // stale poll doesn't retain it forever.
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(() => loginStatus(loginId)).toThrow('login session not found')
   })
 
   it('resolves the cache row id via getSavedUsageAccountByProviderEmail and fires fetchForSavedAccount', async () => {
@@ -281,6 +297,35 @@ describe('login-service', () => {
     await pumpUntil(() => loginStatus(loginId).state === 'done')
 
     expect(mocks.fetchForSavedAccount).toHaveBeenCalledWith('row-42')
+  })
+
+  it('lowercases the addCodexAccount email before the cache lookup, and swallows a rejected fetch', async () => {
+    const driver = createFakeDriver()
+    mocks.addCodexAccount.mockResolvedValue({ accountKey: 'user-1::acct-1', email: 'User@Example.com' })
+    mocks.db.getSavedUsageAccountByProviderEmail.mockReturnValue({ id: 'row-99' })
+    mocks.fetchForSavedAccount.mockRejectedValue(new Error('network blip'))
+
+    const { loginStart, loginStatus, setLoginBrowserLauncherForTests } = await importFresh()
+    setLoginBrowserLauncherForTests(driver.launcher)
+
+    const { loginId } = await loginStart('openai', 'codex@example.com')
+    await pumpUntil(() => loginStatus(loginId).state === 'waiting')
+    const state = new URL(driver.gotoCalls[0]).searchParams.get('state')
+    await driver.triggerRoute(`http://localhost:1455/auth/callback?code=xyz789&state=${state}`)
+    await pumpUntil(() => loginStatus(loginId).state === 'done')
+
+    // The orchestrator upserts rows with lowercased emails — the lookup must
+    // match that, even though addCodexAccount returned a mixed-case email.
+    expect(mocks.db.getSavedUsageAccountByProviderEmail).toHaveBeenCalledWith(
+      'openai',
+      'user@example.com'
+    )
+    expect(mocks.fetchForSavedAccount).toHaveBeenCalledWith('row-99')
+
+    // A rejected fire-and-forget fetch must not crash the flow or leave an
+    // unhandled rejection.
+    await vi.advanceTimersByTimeAsync(0)
+    expect(loginStatus(loginId).state).toBe('done')
   })
 
   it('runs the full happy path for an OpenAI (Codex) login', async () => {
@@ -438,6 +483,56 @@ describe('login-service', () => {
     // have overwritten the terminal 'cancelled' state set before close() was called.
     expect(loginStatus(loginId).state).toBe('cancelled')
     expect(loginStatus(loginId).error).toBeNull()
+  })
+
+  it('a cancel that lands during the in-flight token exchange is not clobbered back to done', async () => {
+    const driver = createFakeDriver()
+    const deferred = createDeferred<{
+      accessToken: string
+      refreshToken: string
+      expiresAt: number
+      scope: string
+      account: { uuid: string; emailAddress: string }
+    }>()
+    mocks.exchangeAnthropicCode.mockReturnValue(deferred.promise)
+
+    const { loginStart, loginStatus, loginCancel, setLoginBrowserLauncherForTests } = await importFresh()
+    setLoginBrowserLauncherForTests(driver.launcher)
+
+    const { loginId } = await loginStart('anthropic', 'user@example.com')
+    await pumpUntil(() => loginStatus(loginId).state === 'waiting')
+    const state = new URL(driver.gotoCalls[0]).searchParams.get('state')
+
+    await driver.triggerRoute(
+      `https://console.anthropic.com/oauth/code/callback?code=abc123&state=${state}`
+    )
+    // The route handler runs extractAndHandle -> exchange() synchronously up
+    // to the awaited (still-pending) token exchange call.
+    expect(loginStatus(loginId).state).toBe('exchanging')
+
+    const cancelled = await loginCancel(loginId)
+    expect(cancelled).toBe(true)
+    expect(loginStatus(loginId).state).toBe('cancelled')
+    expect(driver.close).toHaveBeenCalledTimes(1)
+
+    // Now let the in-flight exchange resolve — it must NOT overwrite the
+    // already-terminal 'cancelled' state back to 'done'.
+    deferred.resolve({
+      accessToken: 'at',
+      refreshToken: 'rt',
+      expiresAt: 1,
+      scope: 'org:create_api_key user:profile user:inference',
+      account: { uuid: 'uuid-1', emailAddress: 'user@example.com' }
+    })
+    await vi.advanceTimersByTimeAsync(0)
+
+    // The account may still get stored (the code was consumed; that's fine) —
+    // only the session STATE must hold.
+    expect(mocks.addClaudeAccount).toHaveBeenCalled()
+    expect(loginStatus(loginId).state).toBe('cancelled')
+    expect(loginStatus(loginId).error).toBeNull()
+    // No second close from the (skipped) success path.
+    expect(driver.close).toHaveBeenCalledTimes(1)
   })
 
   it('loginCancel returns false for an unknown login', async () => {
