@@ -35,6 +35,7 @@ import {
   LIVE_CLAUDE_KEYCHAIN_SERVICE,
   addClaudeAccount,
   listClaudeAccounts,
+  persistRotatedLiveClaudeTokens,
   readClaudeAccountBlob,
   readClaudeEffectiveBlob,
   readClaudeLiveEmail,
@@ -46,6 +47,7 @@ import {
 const sequencePath = () => join(mocks.homeDir, '.claude-switch-backup', 'sequence.json')
 const identityPath = () => join(mocks.homeDir, '.claude.json')
 const nestedIdentityPath = () => join(mocks.homeDir, '.claude', '.claude.json')
+const credentialsFilePath = () => join(mocks.homeDir, '.claude', '.credentials.json')
 
 function claudeBlob(
   overrides: Partial<{
@@ -320,6 +322,94 @@ describe('account-store-claude', () => {
 
       const active = await readClaudeEffectiveBlob('1', 'a@b.c')
       expect(active?.parsed.accessToken).toBe('live-token')
+    })
+  })
+
+  describe('persistRotatedLiveClaudeTokens', () => {
+    const rotated = { accessToken: 'new-access', refreshToken: 'new-refresh', expiresAt: 9_999_999 }
+
+    it('returns no-live when there are no live credentials anywhere', async () => {
+      await expect(persistRotatedLiveClaudeTokens(rotated, 'old-refresh')).resolves.toBe('no-live')
+      expect(mocks.keychainWrite).not.toHaveBeenCalled()
+    })
+
+    it('writes to the Keychain when the live credentials came from there (keychain-sourced)', async () => {
+      mocks.keychainStore.set(LIVE_CLAUDE_KEYCHAIN_SERVICE, claudeBlob({ refreshToken: 'old-refresh' }))
+
+      const outcome = await persistRotatedLiveClaudeTokens(rotated, 'old-refresh', 'scope-a scope-b')
+
+      expect(outcome).toBe('persisted')
+      const live = JSON.parse(mocks.keychainStore.get(LIVE_CLAUDE_KEYCHAIN_SERVICE)!)
+      expect(live.claudeAiOauth).toMatchObject({
+        accessToken: 'new-access',
+        refreshToken: 'new-refresh',
+        expiresAt: 9_999_999,
+        scopes: ['scope-a', 'scope-b'],
+        // Unrelated fields on the blob are preserved.
+        subscriptionType: 'max'
+      })
+      // Never fell back to the credentials file.
+      await expect(readFile(credentialsFilePath(), 'utf-8')).rejects.toThrow()
+    })
+
+    it('writes to the credentials file (mode 0600) when the live credentials came from there (no Keychain entry)', async () => {
+      await mkdir(join(mocks.homeDir, '.claude'), { recursive: true })
+      await writeFile(credentialsFilePath(), claudeBlob({ refreshToken: 'old-refresh' }))
+
+      const outcome = await persistRotatedLiveClaudeTokens(rotated, 'old-refresh')
+
+      expect(outcome).toBe('persisted')
+      expect(mocks.keychainWrite).not.toHaveBeenCalledWith(LIVE_CLAUDE_KEYCHAIN_SERVICE, expect.anything())
+
+      const { stat } = await import('fs/promises')
+      const stats = await stat(credentialsFilePath())
+      expect(stats.mode & 0o777).toBe(0o600)
+
+      const patched = JSON.parse(await readFile(credentialsFilePath(), 'utf-8'))
+      expect(patched.claudeAiOauth).toMatchObject({
+        accessToken: 'new-access',
+        refreshToken: 'new-refresh',
+        expiresAt: 9_999_999
+      })
+    })
+
+    it('returns skipped-race without writing when the live refresh token no longer matches (another process rotated first)', async () => {
+      mocks.keychainStore.set(
+        LIVE_CLAUDE_KEYCHAIN_SERVICE,
+        claudeBlob({ refreshToken: 'someone-else-already-rotated-this' })
+      )
+
+      const outcome = await persistRotatedLiveClaudeTokens(rotated, 'old-refresh')
+
+      expect(outcome).toBe('skipped-race')
+      expect(mocks.keychainWrite).not.toHaveBeenCalled()
+      const live = JSON.parse(mocks.keychainStore.get(LIVE_CLAUDE_KEYCHAIN_SERVICE)!)
+      expect(live.claudeAiOauth.refreshToken).toBe('someone-else-already-rotated-this')
+    })
+
+    it('mirrors the patched blob to the managed account backup entry matching the live email', async () => {
+      await addClaudeAccount('a@b.c', 'uuid-a', claudeBlob({ accessToken: 'stale-backup-token' }))
+      await writeFile(identityPath(), JSON.stringify({ oauthAccount: { emailAddress: 'a@b.c' } }))
+      mocks.keychainStore.set(LIVE_CLAUDE_KEYCHAIN_SERVICE, claudeBlob({ refreshToken: 'old-refresh' }))
+
+      const outcome = await persistRotatedLiveClaudeTokens(rotated, 'old-refresh')
+
+      expect(outcome).toBe('persisted')
+      const backup = JSON.parse(mocks.keychainStore.get('Claude Code-Account-1-a@b.c')!)
+      expect(backup.claudeAiOauth.accessToken).toBe('new-access')
+      expect(backup.claudeAiOauth.refreshToken).toBe('new-refresh')
+    })
+
+    it('does not mirror to any account backup when the live email has no managed account', async () => {
+      await addClaudeAccount('other@example.com', 'uuid-o', claudeBlob())
+      await writeFile(identityPath(), JSON.stringify({ oauthAccount: { emailAddress: 'unmanaged@example.com' } }))
+      mocks.keychainStore.set(LIVE_CLAUDE_KEYCHAIN_SERVICE, claudeBlob({ refreshToken: 'old-refresh' }))
+
+      const outcome = await persistRotatedLiveClaudeTokens(rotated, 'old-refresh')
+
+      expect(outcome).toBe('persisted')
+      const untouchedBackup = JSON.parse(mocks.keychainStore.get('Claude Code-Account-1-other@example.com')!)
+      expect(untouchedBackup.claudeAiOauth.accessToken).toBe('access-1')
     })
   })
 })

@@ -29,6 +29,7 @@ export interface ClaudeRefreshResult {
   accessToken: string
   refreshToken: string
   expiresAt: number
+  scope?: string
 }
 
 export type AnthropicRateLimitType = 'five_hour' | 'seven_day'

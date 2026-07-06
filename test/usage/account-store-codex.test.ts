@@ -11,6 +11,7 @@ vi.mock('../../src/main/services/logger', () => ({
 import {
   addCodexAccount,
   listCodexAccounts,
+  persistRotatedLiveCodexTokens,
   readCodexLive,
   readCodexSnapshot,
   removeCodexAccount,
@@ -470,6 +471,106 @@ describe('account-store-codex', () => {
 
       const registry = JSON.parse(await readFile(join(codexHome, 'accounts', 'registry.json'), 'utf-8'))
       expect(registry.accounts[0].plan).toBe('')
+    })
+  })
+
+  describe('persistRotatedLiveCodexTokens', () => {
+    const rotated = { accessToken: 'new-access', refreshToken: 'new-refresh', idToken: 'new-id' }
+
+    it('returns no-live when auth.json does not exist', async () => {
+      await expect(persistRotatedLiveCodexTokens(rotated, 'old-refresh')).resolves.toBe('no-live')
+    })
+
+    it('returns skipped-race without writing when the live refresh token no longer matches', async () => {
+      await writeFile(
+        join(codexHome, 'auth.json'),
+        JSON.stringify({
+          auth_mode: 'chatgpt',
+          tokens: {
+            id_token: idTokenFor('user-x', 'acct-x'),
+            access_token: 'live-access',
+            refresh_token: 'someone-else-already-rotated-this',
+            account_id: 'acct-x'
+          },
+          last_refresh: '2026-01-01T00:00:00.000Z'
+        })
+      )
+
+      const outcome = await persistRotatedLiveCodexTokens(rotated, 'old-refresh')
+
+      expect(outcome).toBe('skipped-race')
+      const live = await readCodexLive()
+      expect(live?.tokens?.access_token).toBe('live-access')
+      expect(live?.last_refresh).toBe('2026-01-01T00:00:00.000Z')
+    })
+
+    it('patches tokens and last_refresh (mode 0600) when the refresh token matches, without requiring a managed account', async () => {
+      await writeFile(
+        join(codexHome, 'auth.json'),
+        JSON.stringify({
+          OPENAI_API_KEY: null,
+          auth_mode: 'chatgpt',
+          tokens: {
+            id_token: idTokenFor('user-unmanaged', 'acct-unmanaged'),
+            access_token: 'live-access',
+            refresh_token: 'old-refresh',
+            account_id: 'acct-unmanaged'
+          },
+          last_refresh: '2026-01-01T00:00:00.000Z'
+        })
+      )
+
+      vi.setSystemTime(new Date('2026-03-01T00:00:00.000Z'))
+      const outcome = await persistRotatedLiveCodexTokens(rotated, 'old-refresh')
+
+      expect(outcome).toBe('persisted')
+      const live = await readCodexLive()
+      expect(live?.tokens).toMatchObject({
+        access_token: 'new-access',
+        refresh_token: 'new-refresh',
+        id_token: 'new-id',
+        account_id: 'acct-unmanaged'
+      })
+      expect(live?.last_refresh).toBe('2026-03-01T00:00:00.000Z')
+
+      const { stat } = await import('fs/promises')
+      const stats = await stat(join(codexHome, 'auth.json'))
+      expect(stats.mode & 0o777).toBe(0o600)
+
+      // Not a managed account: no snapshot file should have been created for it.
+      await expect(readCodexSnapshot('user-unmanaged::acct-unmanaged')).resolves.toBeNull()
+    })
+
+    it('mirrors the patched auth to the snapshot when the live account_key is managed', async () => {
+      const idToken = idTokenFor('user-1', 'acct-1')
+      await addCodexAccount(idToken, 'old-access', 'old-refresh')
+      await switchCodexAccount('user-1::acct-1')
+
+      const outcome = await persistRotatedLiveCodexTokens(rotated, 'old-refresh')
+
+      expect(outcome).toBe('persisted')
+      const snapshot = await readCodexSnapshot('user-1::acct-1')
+      expect(snapshot?.tokens).toMatchObject({
+        access_token: 'new-access',
+        refresh_token: 'new-refresh',
+        id_token: 'new-id'
+      })
+    })
+
+    it('only rotates the fields provided, leaving refresh/id token untouched when omitted', async () => {
+      const idToken = idTokenFor('user-2', 'acct-2')
+      await addCodexAccount(idToken, 'old-access', 'old-refresh')
+      await switchCodexAccount('user-2::acct-2')
+
+      const outcome = await persistRotatedLiveCodexTokens({ accessToken: 'access-only' }, 'old-refresh')
+
+      expect(outcome).toBe('persisted')
+      const live = await readCodexLive()
+      expect(live?.tokens).toMatchObject({
+        access_token: 'access-only',
+        refresh_token: 'old-refresh',
+        id_token: idToken
+      })
     })
   })
 })

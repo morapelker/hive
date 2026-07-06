@@ -213,6 +213,53 @@ export async function updateCodexTokens(
   }
 }
 
+/**
+ * Persist rotated tokens for the LIVE Codex credentials (`auth.json`, the
+ * file the Codex CLI itself reads/writes) after a Hive-initiated refresh.
+ *
+ * Guards against a race with the Codex CLI rotating the very same refresh
+ * token concurrently: re-reads live auth.json and only writes when its
+ * current refresh token still matches the one Hive used to obtain
+ * `rotated` — otherwise some other process already moved the live
+ * credentials forward, and writing here would clobber that newer rotation.
+ */
+export async function persistRotatedLiveCodexTokens(
+  rotated: { accessToken: string; refreshToken?: string; idToken?: string },
+  usedRefreshToken: string
+): Promise<'persisted' | 'skipped-race' | 'no-live'> {
+  const live = await readCodexLive()
+  if (!live) return 'no-live'
+
+  if ((live.tokens?.refresh_token ?? undefined) !== usedRefreshToken) {
+    return 'skipped-race'
+  }
+
+  const existingTokens = live.tokens
+  const tokens = {
+    id_token: existingTokens?.id_token,
+    access_token: existingTokens?.access_token ?? '',
+    refresh_token: existingTokens?.refresh_token ?? '',
+    account_id: existingTokens?.account_id ?? ''
+  }
+  tokens.access_token = rotated.accessToken
+  if (rotated.refreshToken !== undefined) tokens.refresh_token = rotated.refreshToken
+  if (rotated.idToken !== undefined) tokens.id_token = rotated.idToken
+
+  const patched: CodexAuth = { ...live, tokens, last_refresh: new Date().toISOString() }
+  await atomicWriteJson(liveAuthPath(), patched, { pretty: true })
+
+  // Mirror to the managed account's snapshot, if the live account_key is
+  // registered (same "keep the snapshot fresh" pattern as
+  // updateCodexTokens/switchCodexAccount).
+  const registry = await readRegistry()
+  const liveKey = deriveAccountKey(patched) ?? registry.active_account_key
+  if (liveKey !== null && registry.accounts.some((entry) => entry.account_key === liveKey)) {
+    await atomicWriteJson(snapshotPath(liveKey), patched, { pretty: true })
+  }
+
+  return 'persisted'
+}
+
 /** Port of ccswitch `switch_to`: makes `accountKey` the live active Codex account. */
 export async function switchCodexAccount(accountKey: string): Promise<void> {
   const registry = await readRegistry()

@@ -1,10 +1,12 @@
 import { existsSync } from 'fs'
-import { readFile, writeFile } from 'fs/promises'
+import { readFile } from 'fs/promises'
 import { execFile } from 'child_process'
 import { join } from 'path'
 import { homedir, platform } from 'os'
 import { createLogger } from './logger'
 import { decodeJwtPayload } from './jwt-utils'
+import { refreshOpenAIToken } from './oauth-openai'
+import { NeedsLoginError } from './usage-service'
 import type { OpenAIUsageData, OpenAIUsageResult } from '@shared/types/usage'
 
 export type { OpenAIUsageData, OpenAIUsageResult }
@@ -14,8 +16,6 @@ const log = createLogger({ component: 'OpenAIUsageService' })
 const CODEX_HOME = process.env.CODEX_HOME || join(homedir(), '.codex')
 const AUTH_FILE = join(CODEX_HOME, 'auth.json')
 const USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage'
-const TOKEN_URL = 'https://auth.openai.com/oauth/token'
-const CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann'
 
 interface CodexAuthTokens {
   id_token: unknown
@@ -39,20 +39,12 @@ export interface OpenAIUsageOverride {
   email?: string
 }
 
-interface RefreshResponse {
-  id_token?: string
-  access_token?: string
-  refresh_token?: string
-}
-
 interface RefreshResult {
   accessToken: string
   refreshToken: string
   idToken?: string
 }
 
-/** Module-level promise to deduplicate concurrent refresh requests. */
-let refreshPromise: Promise<string> | null = null
 const inMemoryRefreshPromises = new Map<string, Promise<RefreshResult>>()
 
 /**
@@ -116,77 +108,11 @@ function isTokenExpired(accessToken: string): boolean {
 }
 
 /**
- * Refresh the access token using the given refresh token.
- */
-async function requestTokenRefresh(refreshToken: string): Promise<RefreshResponse> {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 10_000)
-
-  try {
-    const response = await fetch(TOKEN_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        client_id: CLIENT_ID,
-        grant_type: 'refresh_token',
-        refresh_token: refreshToken
-      }),
-      signal: controller.signal
-    })
-
-    clearTimeout(timeout)
-
-    if (!response.ok) {
-      const body = await response.text()
-      throw new Error(`Token refresh failed (${response.status}): ${body}`)
-    }
-
-    return (await response.json()) as RefreshResponse
-  } catch (error) {
-    clearTimeout(timeout)
-    if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error('Token refresh timed out')
-    }
-    throw error
-  }
-}
-
-/**
- * Refresh the live access token and persist the updated auth.json.
- * Uses a module-level promise to deduplicate concurrent live refresh requests.
- */
-async function refreshAccessToken(auth: CodexAuth): Promise<string> {
-  if (refreshPromise) return refreshPromise
-
-  refreshPromise = (async () => {
-    if (!auth.tokens?.refresh_token) {
-      throw new Error('No refresh token available')
-    }
-
-    const data = await requestTokenRefresh(auth.tokens.refresh_token)
-
-    if (data.access_token) auth.tokens.access_token = data.access_token
-    if (data.refresh_token) auth.tokens.refresh_token = data.refresh_token
-    if (data.id_token) auth.tokens.id_token = data.id_token
-    auth.last_refresh = new Date().toISOString()
-
-    try {
-      await writeFile(AUTH_FILE, JSON.stringify(auth, null, 2), { mode: 0o600 })
-    } catch {
-      // persist failed, continue with in-memory token
-    }
-
-    return auth.tokens.access_token
-  })().finally(() => {
-    refreshPromise = null
-  })
-
-  return refreshPromise
-}
-
-/**
- * Refresh a saved account in memory only. Concurrent refreshes for the same
- * account share the same HTTP request; different accounts refresh independently.
+ * Refresh a Codex account's tokens in memory only — the live path and the
+ * saved-account (override) path both go through here; neither persists
+ * anything itself. Concurrent refreshes for the same account share the same
+ * HTTP request; different accounts refresh independently. Throws
+ * `NeedsLoginError` when the OAuth server rejects the refresh token itself.
  */
 export async function refreshAccessTokenInMemory(auth: CodexAuth): Promise<RefreshResult> {
   if (!auth.tokens?.refresh_token) {
@@ -201,10 +127,14 @@ export async function refreshAccessTokenInMemory(auth: CodexAuth): Promise<Refre
   if (existing) return existing
 
   const promise = (async () => {
-    const data = await requestTokenRefresh(auth.tokens!.refresh_token)
-    if (data.access_token) auth.tokens!.access_token = data.access_token
-    if (data.refresh_token) auth.tokens!.refresh_token = data.refresh_token
-    if (data.id_token) auth.tokens!.id_token = data.id_token
+    const outcome = await refreshOpenAIToken(auth.tokens!.refresh_token)
+    if (!outcome.ok) {
+      throw new NeedsLoginError(`Token refresh failed: invalid_grant (${outcome.error})`)
+    }
+
+    auth.tokens!.access_token = outcome.result.accessToken
+    if (outcome.result.refreshToken) auth.tokens!.refresh_token = outcome.result.refreshToken
+    if (outcome.result.idToken) auth.tokens!.id_token = outcome.result.idToken
     auth.last_refresh = new Date().toISOString()
 
     return {
@@ -284,16 +214,17 @@ export async function fetchOpenAIUsage(override?: OpenAIUsageOverride): Promise<
   const accountId = auth.tokens.account_id
   let rotated: RefreshResult | undefined
 
-  // Refresh if token is expired
+  // Refresh if token is expired. Both the live path (auth read from
+  // auth.json/Keychain) and the override (saved-account) path refresh in
+  // memory only — persistence is the caller's responsibility (usage-ops.ts).
   if (isTokenExpired(accessToken)) {
     try {
-      if (override) {
-        rotated = await refreshAccessTokenInMemory(auth)
-        accessToken = rotated.accessToken
-      } else {
-        accessToken = await refreshAccessToken(auth)
-      }
+      rotated = await refreshAccessTokenInMemory(auth)
+      accessToken = rotated.accessToken
     } catch (error) {
+      if (error instanceof NeedsLoginError) {
+        return { success: false, error: error.message, needsLogin: true }
+      }
       const message = error instanceof Error ? error.message : String(error)
       log.warn('Failed to refresh OpenAI access token', { error: message })
       return { success: false, error: message }
@@ -306,28 +237,38 @@ export async function fetchOpenAIUsage(override?: OpenAIUsageOverride): Promise<
     // Retry once on 401 after forcing a refresh
     if (result.status === 401) {
       try {
-        if (override) {
-          rotated = await refreshAccessTokenInMemory(auth)
-          accessToken = rotated.accessToken
-        } else {
-          accessToken = await refreshAccessToken(auth)
-        }
+        rotated = await refreshAccessTokenInMemory(auth)
+        accessToken = rotated.accessToken
         result = await fetchUsage(accessToken, accountId)
       } catch (error) {
+        if (error instanceof NeedsLoginError) {
+          return {
+            success: false,
+            error: error.message,
+            needsLogin: true,
+            ...(rotated ? { rotated } : {})
+          }
+        }
         const message = error instanceof Error ? error.message : String(error)
         log.warn('Failed to refresh OpenAI access token on 401 retry', { error: message })
         return { success: false, error: message }
       }
     }
 
+    if (result.status === 401 || result.status === 403) {
+      const message = `OpenAI Usage API returned ${result.status}: ${result.body || 'unknown error'}`
+      log.warn(message)
+      return { success: false, error: message, needsLogin: true, ...(rotated ? { rotated } : {}) }
+    }
+
     if (result.status !== 200) {
       const message = `OpenAI Usage API returned ${result.status}: ${result.body || 'unknown error'}`
       log.warn(message)
-      return { success: false, error: message }
+      return { success: false, error: message, ...(rotated ? { rotated } : {}) }
     }
 
     const data = result.data as OpenAIUsageData
-    return { success: true, data, rotated }
+    return { success: true, data, ...(rotated ? { rotated } : {}) }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     log.warn('Failed to fetch OpenAI usage', { error: message })

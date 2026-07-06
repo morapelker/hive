@@ -267,6 +267,93 @@ export async function updateClaudeTokens(
   }
 }
 
+interface LiveCredentialsSource {
+  kind: 'keychain' | 'file'
+  raw: string
+  filePath?: string
+}
+
+/** Re-read the live credentials from wherever usage-service.ts's `readFromFile`
+ * would find them: Keychain first, falling back to the legacy credentials
+ * file. Returns null when neither source has anything. */
+async function readLiveCredentialsSource(): Promise<LiveCredentialsSource | null> {
+  const keychainRaw = await keychainRead(LIVE_CLAUDE_KEYCHAIN_SERVICE)
+  if (keychainRaw !== null) return { kind: 'keychain', raw: keychainRaw }
+
+  const filePath = join(homedir(), '.claude', '.credentials.json')
+  if (!existsSync(filePath)) return null
+  try {
+    const raw = await readFile(filePath, 'utf-8')
+    return { kind: 'file', raw, filePath }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Persist rotated tokens for the LIVE Claude credentials (the ones the
+ * `claude` CLI itself reads/writes) after a Hive-initiated refresh.
+ *
+ * Guards against a race with the `claude` CLI rotating the very same
+ * refresh token concurrently: re-reads the live blob and only writes when
+ * its current refresh token still matches the one Hive used to obtain
+ * `rotated` — otherwise some other process already moved the live
+ * credentials forward, and writing here would clobber that newer rotation.
+ */
+export async function persistRotatedLiveClaudeTokens(
+  rotated: { accessToken: string; refreshToken: string; expiresAt: number },
+  usedRefreshToken: string,
+  scope?: string
+): Promise<'persisted' | 'skipped-race' | 'no-live'> {
+  const source = await readLiveCredentialsSource()
+  if (!source) return 'no-live'
+
+  let full: ClaudeCredentialBlob
+  try {
+    full = JSON.parse(source.raw) as ClaudeCredentialBlob
+  } catch (error) {
+    log.warn('Live Claude credentials blob is not valid JSON; refusing to patch', {
+      source: source.kind,
+      error: error instanceof Error ? error.message : String(error)
+    })
+    return 'no-live'
+  }
+
+  if ((full.claudeAiOauth?.refreshToken ?? undefined) !== usedRefreshToken) {
+    return 'skipped-race'
+  }
+
+  const oauth: ClaudeOauthBlob = { ...(full.claudeAiOauth ?? {}) }
+  oauth.accessToken = rotated.accessToken
+  oauth.refreshToken = rotated.refreshToken
+  oauth.expiresAt = rotated.expiresAt
+  if (scope !== undefined) {
+    oauth.scopes = scope.split(' ')
+  }
+  full.claudeAiOauth = oauth
+  const patchedRaw = JSON.stringify(full)
+
+  if (source.kind === 'keychain') {
+    await keychainWrite(LIVE_CLAUDE_KEYCHAIN_SERVICE, patchedRaw)
+  } else {
+    await atomicWriteJson(source.filePath!, full, { mode: 0o600 })
+  }
+
+  // Mirror to the managed account's backup slot, if the live email
+  // corresponds to one (same "keep the backup fresh" pattern as
+  // updateClaudeTokens/switchClaudeAccount).
+  const liveEmail = await readClaudeLiveEmail()
+  if (liveEmail !== null) {
+    const seq = await readSequence()
+    const num = findNumByEmail(seq, liveEmail)
+    if (num !== null) {
+      await keychainWrite(accountService(num, liveEmail), patchedRaw)
+    }
+  }
+
+  return 'persisted'
+}
+
 /** Port of ccswitch `switch_to`: makes `num`/`email` the live active Claude account. */
 export async function switchClaudeAccount(num: string, email: string): Promise<void> {
   const seq = await readSequence()
