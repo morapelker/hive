@@ -181,13 +181,23 @@ async function runLaunchMassRefresh(): Promise<void> {
  */
 export function startAccountMaintenance(): () => void {
   const backoff = new Map<string, BackoffState>()
+  let inTick = false
 
   void runLaunchMassRefresh()
 
   const interval = setInterval(() => {
-    void tick(backoff).catch((error) => {
-      log.warn('Account maintenance tick failed', { error: message(error) })
-    })
+    if (inTick) {
+      log.warn('Skipping account maintenance tick: previous tick is still running')
+      return
+    }
+    inTick = true
+    void tick(backoff)
+      .catch((error) => {
+        log.warn('Account maintenance tick failed', { error: message(error) })
+      })
+      .finally(() => {
+        inTick = false
+      })
   }, TICK_INTERVAL_MS)
   interval.unref?.()
 

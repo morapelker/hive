@@ -35,7 +35,7 @@ import {
   type ClaudeUsageFetchContext,
   type ClaudeUsageOverride
 } from './usage-service'
-import { parseCodexIdToken } from './jwt-utils'
+import { jwtExpMs, parseCodexIdToken } from './jwt-utils'
 import type {
   FetchForAccountResult,
   OpenAIUsageData,
@@ -47,6 +47,45 @@ import type {
 import type { SavedUsageAccount, SavedUsageProvider, SavedUsageStatus } from '../db/types'
 
 const log = createLogger({ component: 'SavedUsageOrchestrator' })
+
+/**
+ * Watcher expiry threshold (kept in sync with account-maintenance.ts's
+ * EXPIRY_THRESHOLD_MS by convention, not import, to avoid a cycle between the
+ * two modules). Used by refreshTokensForStoreAccount's post-lock recheck: if
+ * an earlier lock holder already refreshed the token past this threshold,
+ * there's no need to hit the network again.
+ */
+const REFRESH_RECHECK_THRESHOLD_MS = 120_000
+
+/**
+ * Per-account async mutex. Three callers can race to refresh the SAME
+ * account's OAuth token concurrently: the 60s watcher, the boot/RPC mass
+ * refresh, and a user-initiated fetch. Refresh tokens are single-use and
+ * rotate on every refresh, so an overlapping second refresh would consume an
+ * already-rotated token and fail with invalid_grant even though the account
+ * has healthy, freshly-rotated credentials from the first refresh. Chains
+ * each call onto the tail promise for its key, cleaning up the map entry once
+ * the chain drains so it never grows unbounded.
+ */
+const accountLockTails = new Map<string, Promise<unknown>>()
+
+function accountLockKey(provider: string, email: string): string {
+  return `${provider}:${email.toLowerCase()}`
+}
+
+function withAccountLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const prior = accountLockTails.get(key) ?? Promise.resolve()
+  const result = prior.then(fn, fn)
+  const tail = result.then(
+    () => undefined,
+    () => undefined
+  )
+  accountLockTails.set(key, tail)
+  void tail.finally(() => {
+    if (accountLockTails.get(key) === tail) accountLockTails.delete(key)
+  })
+  return result
+}
 
 function safeParseJson(value: string): unknown {
   return JSON.parse(value)
@@ -348,39 +387,96 @@ export async function fetchForSavedAccount(
   const row = db.getSavedUsageAccountById(accountId)
   if (!row) return { success: false, error: 'not found', status: 'error' }
 
-  try {
-    if (row.provider === 'anthropic') {
-      const account = await findClaudeStoreAccount(row.email)
+  // Serialize the whole fetch (it may internally refresh the OAuth token) per
+  // account so concurrent callers (watcher / mass refresh / user-initiated)
+  // never race a single-use rotating refresh token against each other.
+  return withAccountLock(accountLockKey(row.provider, row.email), async () => {
+    try {
+      if (row.provider === 'anthropic') {
+        const account = await findClaudeStoreAccount(row.email)
+        if (!account) {
+          return accountError(accountId, 'account no longer in store', 'stale', row.last_usage_json)
+        }
+
+        const effective = await readClaudeEffectiveBlob(account.num, account.email)
+        const accessToken = effective?.parsed.accessToken
+        if (!accessToken) {
+          return accountError(accountId, 'Invalid Claude credentials', 'stale', row.last_usage_json)
+        }
+
+        const override: ClaudeUsageOverride = {
+          accessToken,
+          refreshToken: effective?.parsed.refreshToken,
+          expiresAt: effective?.parsed.expiresAt,
+          accountId
+        }
+
+        const result = await fetchClaudeUsage(override, {
+          caller: options.caller ?? 'usage:fetchForAccount',
+          accountId,
+          batchId: options.batchId
+        })
+
+        if (result.rotated) {
+          await updateClaudeTokens(account.num, account.email, result.rotated, result.rotated.scope)
+        }
+
+        if (!result.success || !result.data) {
+          const message = result.error ?? 'Claude usage fetch failed'
+          const needsLogin = result.needsLogin === true || isClaudeStaleError(message)
+          const status: SavedUsageStatus = needsLogin ? 'stale' : 'error'
+          db.updateSavedUsageAccountUsage(accountId, {
+            last_usage_json: row.last_usage_json,
+            status,
+            last_error: message
+          })
+          return {
+            success: false,
+            error: message,
+            status,
+            retryAfter: result.retryAfter,
+            ...(needsLogin ? { needsLogin: true } : {})
+          }
+        }
+
+        db.updateSavedUsageAccountUsage(accountId, {
+          last_usage_json: JSON.stringify(result.data),
+          status: 'ok',
+          last_error: null
+        })
+        return { success: true, data: result.data, status: 'ok' }
+      }
+
+      const account = await findCodexStoreAccount(row.email)
       if (!account) {
         return accountError(accountId, 'account no longer in store', 'stale', row.last_usage_json)
       }
 
-      const effective = await readClaudeEffectiveBlob(account.num, account.email)
-      const accessToken = effective?.parsed.accessToken
-      if (!accessToken) {
-        return accountError(accountId, 'Invalid Claude credentials', 'stale', row.last_usage_json)
+      const snapshot = await readCodexEffectiveAuth(account.accountKey)
+      const accessToken = snapshot?.tokens?.access_token
+      const refreshToken = snapshot?.tokens?.refresh_token
+      const codexAccountId = snapshot?.tokens?.account_id
+      if (!accessToken || !refreshToken || !codexAccountId) {
+        return accountError(accountId, 'Invalid OpenAI credentials', 'stale', row.last_usage_json)
       }
 
-      const override: ClaudeUsageOverride = {
+      const override: OpenAIUsageOverride = {
         accessToken,
-        refreshToken: effective?.parsed.refreshToken,
-        expiresAt: effective?.parsed.expiresAt,
-        accountId
+        refreshToken,
+        accountId: codexAccountId,
+        idToken: typeof snapshot?.tokens?.id_token === 'string' ? snapshot.tokens.id_token : undefined,
+        email: account.email
       }
 
-      const result = await fetchClaudeUsage(override, {
-        caller: options.caller ?? 'usage:fetchForAccount',
-        accountId,
-        batchId: options.batchId
-      })
+      const result = await fetchOpenAIUsage(override)
 
       if (result.rotated) {
-        await updateClaudeTokens(account.num, account.email, result.rotated, result.rotated.scope)
+        await updateCodexTokens(account.accountKey, result.rotated)
       }
 
       if (!result.success || !result.data) {
-        const message = result.error ?? 'Claude usage fetch failed'
-        const needsLogin = result.needsLogin === true || isClaudeStaleError(message)
+        const message = result.error ?? 'OpenAI usage fetch failed'
+        const needsLogin = result.needsLogin === true || isOpenAIStaleError(message)
         const status: SavedUsageStatus = needsLogin ? 'stale' : 'error'
         db.updateSavedUsageAccountUsage(accountId, {
           last_usage_json: row.last_usage_json,
@@ -391,7 +487,6 @@ export async function fetchForSavedAccount(
           success: false,
           error: message,
           status,
-          retryAfter: result.retryAfter,
           ...(needsLogin ? { needsLogin: true } : {})
         }
       }
@@ -402,65 +497,14 @@ export async function fetchForSavedAccount(
         last_error: null
       })
       return { success: true, data: result.data, status: 'ok' }
-    }
-
-    const account = await findCodexStoreAccount(row.email)
-    if (!account) {
-      return accountError(accountId, 'account no longer in store', 'stale', row.last_usage_json)
-    }
-
-    const snapshot = await readCodexEffectiveAuth(account.accountKey)
-    const accessToken = snapshot?.tokens?.access_token
-    const refreshToken = snapshot?.tokens?.refresh_token
-    const codexAccountId = snapshot?.tokens?.account_id
-    if (!accessToken || !refreshToken || !codexAccountId) {
-      return accountError(accountId, 'Invalid OpenAI credentials', 'stale', row.last_usage_json)
-    }
-
-    const override: OpenAIUsageOverride = {
-      accessToken,
-      refreshToken,
-      accountId: codexAccountId,
-      idToken: typeof snapshot?.tokens?.id_token === 'string' ? snapshot.tokens.id_token : undefined,
-      email: account.email
-    }
-
-    const result = await fetchOpenAIUsage(override)
-
-    if (result.rotated) {
-      await updateCodexTokens(account.accountKey, result.rotated)
-    }
-
-    if (!result.success || !result.data) {
-      const message = result.error ?? 'OpenAI usage fetch failed'
-      const needsLogin = result.needsLogin === true || isOpenAIStaleError(message)
-      const status: SavedUsageStatus = needsLogin ? 'stale' : 'error'
-      db.updateSavedUsageAccountUsage(accountId, {
-        last_usage_json: row.last_usage_json,
-        status,
-        last_error: message
-      })
-      return {
-        success: false,
-        error: message,
-        status,
-        ...(needsLogin ? { needsLogin: true } : {})
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (isNeedsLoginError(error)) {
+        return accountError(accountId, message, 'stale', row.last_usage_json, { needsLogin: true })
       }
+      return accountError(accountId, message, 'error', row.last_usage_json)
     }
-
-    db.updateSavedUsageAccountUsage(accountId, {
-      last_usage_json: JSON.stringify(result.data),
-      status: 'ok',
-      last_error: null
-    })
-    return { success: true, data: result.data, status: 'ok' }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    if (isNeedsLoginError(error)) {
-      return accountError(accountId, message, 'stale', row.last_usage_json, { needsLogin: true })
-    }
-    return accountError(accountId, message, 'error', row.last_usage_json)
-  }
+  })
 }
 
 export async function refreshAllForProvider(
@@ -565,35 +609,77 @@ function markCacheRowStale(provider: SavedUsageProvider, email: string, message:
  * browser/login flow — a rejected refresh token is reported as `needsLogin`
  * for the caller to act on.
  */
-export async function refreshTokensForStoreAccount(
+export function refreshTokensForStoreAccount(
   provider: UsageProvider,
   ref: RefreshTokensRef
 ): Promise<'refreshed' | 'needsLogin' | 'error'> {
+  if (provider === 'anthropic') {
+    const { num, email } = ref as { num: string; email: string }
+    return withAccountLock(accountLockKey('anthropic', email), () =>
+      refreshClaudeTokensLocked(num, email)
+    )
+  }
+
+  const { accountKey } = ref as { accountKey: string }
+  return resolveCodexEmailForLock(accountKey)
+    .then((email) =>
+      withAccountLock(accountLockKey('openai', email), () => refreshCodexTokensLocked(accountKey))
+    )
+    .catch((error) => {
+      log.warn('refreshTokensForStoreAccount failed', {
+        provider,
+        error: error instanceof Error ? error.message : String(error)
+      })
+      return 'error' as const
+    })
+}
+
+async function resolveCodexEmailForLock(accountKey: string): Promise<string> {
+  const accounts = await listCodexAccounts()
+  return accounts.find((account) => account.accountKey === accountKey)?.email ?? accountKey
+}
+
+async function refreshClaudeTokensLocked(
+  num: string,
+  email: string
+): Promise<'refreshed' | 'needsLogin' | 'error'> {
   try {
-    if (provider === 'anthropic') {
-      const { num, email } = ref as { num: string; email: string }
-      const effective = await readClaudeEffectiveBlob(num, email)
-      const refreshToken = effective?.parsed.refreshToken
-      if (!refreshToken) {
-        markCacheRowStale('anthropic', email, 'No refresh token available')
-        return 'needsLogin'
-      }
+    const effective = await readClaudeEffectiveBlob(num, email)
+    const refreshToken = effective?.parsed.refreshToken
+    if (!refreshToken) {
+      markCacheRowStale('anthropic', email, 'No refresh token available')
+      return 'needsLogin'
+    }
 
-      const outcome = await refreshAnthropicToken(refreshToken)
-      if (!outcome.ok) {
-        markCacheRowStale(
-          'anthropic',
-          email,
-          `Token refresh failed: invalid_grant (${outcome.error})`
-        )
-        return 'needsLogin'
-      }
-
-      await updateClaudeTokens(num, email, outcome.result, outcome.scope)
+    // An earlier lock holder may have already refreshed this account's token
+    // while we were waiting for the lock — re-check expiry before hitting the
+    // network again.
+    const expiresAt = effective?.parsed.expiresAt
+    if (typeof expiresAt === 'number' && expiresAt - Date.now() >= REFRESH_RECHECK_THRESHOLD_MS) {
       return 'refreshed'
     }
 
-    const { accountKey } = ref as { accountKey: string }
+    const outcome = await refreshAnthropicToken(refreshToken)
+    if (!outcome.ok) {
+      markCacheRowStale('anthropic', email, `Token refresh failed: ${outcome.error}`)
+      return 'needsLogin'
+    }
+
+    await updateClaudeTokens(num, email, outcome.result, outcome.scope)
+    return 'refreshed'
+  } catch (error) {
+    log.warn('refreshTokensForStoreAccount failed', {
+      provider: 'anthropic',
+      error: error instanceof Error ? error.message : String(error)
+    })
+    return 'error'
+  }
+}
+
+async function refreshCodexTokensLocked(
+  accountKey: string
+): Promise<'refreshed' | 'needsLogin' | 'error'> {
+  try {
     const snapshot = await readCodexEffectiveAuth(accountKey)
     const refreshToken = snapshot?.tokens?.refresh_token
     if (!refreshToken) {
@@ -601,12 +687,18 @@ export async function refreshTokensForStoreAccount(
       return 'needsLogin'
     }
 
+    // An earlier lock holder may have already refreshed this account's token
+    // while we were waiting for the lock — re-check expiry before hitting the
+    // network again.
+    const accessToken = snapshot?.tokens?.access_token
+    const expiresAtMs = typeof accessToken === 'string' ? jwtExpMs(accessToken) : null
+    if (typeof expiresAtMs === 'number' && expiresAtMs - Date.now() >= REFRESH_RECHECK_THRESHOLD_MS) {
+      return 'refreshed'
+    }
+
     const outcome = await refreshOpenAIToken(refreshToken)
     if (!outcome.ok) {
-      await markCodexCacheRowStale(
-        accountKey,
-        `Token refresh failed: invalid_grant (${outcome.error})`
-      )
+      await markCodexCacheRowStale(accountKey, `Token refresh failed: ${outcome.error}`)
       return 'needsLogin'
     }
 
@@ -614,7 +706,7 @@ export async function refreshTokensForStoreAccount(
     return 'refreshed'
   } catch (error) {
     log.warn('refreshTokensForStoreAccount failed', {
-      provider,
+      provider: 'openai',
       error: error instanceof Error ? error.message : String(error)
     })
     return 'error'

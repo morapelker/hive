@@ -267,4 +267,41 @@ describe('account maintenance', () => {
     await vi.advanceTimersByTimeAsync(TICK_MS * 5)
     expect(mocks.refreshTokensForStoreAccount).toHaveBeenCalledTimes(1)
   })
+
+  it('does not run a tick concurrently with a still-running previous tick', async () => {
+    mocks.listClaudeAccounts.mockResolvedValue([claudeAccount()])
+    mocks.readClaudeEffectiveBlob.mockResolvedValue({ parsed: { refreshToken: 'token-a' } })
+
+    let releaseFirst: ((value: 'refreshed') => void) | undefined
+    const firstGate = new Promise<'refreshed'>((resolve) => {
+      releaseFirst = resolve
+    })
+    mocks.refreshTokensForStoreAccount.mockReturnValueOnce(firstGate).mockResolvedValue('refreshed')
+
+    stop = startAccountMaintenance()
+    await vi.advanceTimersByTimeAsync(0)
+
+    // t=60s: first tick fires and hangs mid-refresh (the mock's promise is
+    // still pending).
+    await vi.advanceTimersByTimeAsync(TICK_MS)
+    expect(mocks.listClaudeAccounts).toHaveBeenCalledTimes(1)
+    expect(mocks.refreshTokensForStoreAccount).toHaveBeenCalledTimes(1)
+
+    // t=120s: the interval fires again while the first tick's work is still
+    // in flight — the re-entrancy guard must skip this tick's body entirely
+    // (not even re-list accounts), rather than running a second tick
+    // concurrently.
+    await vi.advanceTimersByTimeAsync(TICK_MS)
+    expect(mocks.listClaudeAccounts).toHaveBeenCalledTimes(1)
+    expect(mocks.refreshTokensForStoreAccount).toHaveBeenCalledTimes(1)
+
+    // Let the first tick's hung work finish, clearing the re-entrancy guard.
+    releaseFirst?.('refreshed')
+    await vi.advanceTimersByTimeAsync(0)
+
+    // t=180s: a fresh tick now runs normally.
+    await vi.advanceTimersByTimeAsync(TICK_MS)
+    expect(mocks.listClaudeAccounts).toHaveBeenCalledTimes(2)
+    expect(mocks.refreshTokensForStoreAccount).toHaveBeenCalledTimes(2)
+  })
 })

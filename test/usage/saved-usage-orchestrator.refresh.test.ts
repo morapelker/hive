@@ -682,6 +682,231 @@ describe('refreshTokensForStoreAccount', () => {
       expect.objectContaining({ status: 'stale' })
     )
   })
+
+  it('does not hardcode invalid_grant into the stale message, but keeps the classification prefix', async () => {
+    mocks.readClaudeEffectiveBlob.mockResolvedValue({
+      raw: '{}',
+      parsed: { accessToken: 'old-access', refreshToken: 'old-refresh', expiresAt: 1_000 }
+    })
+    mocks.refreshAnthropicToken.mockResolvedValue({
+      ok: false,
+      needsLogin: true,
+      error: 'some_other_error'
+    })
+    mocks.db.getSavedUsageAccountByProviderEmail.mockReturnValue(savedRow({ id: 'row-1' }))
+
+    const outcome = await refreshTokensForStoreAccount('anthropic', {
+      num: '1',
+      email: 'claude@example.com'
+    })
+
+    expect(outcome).toBe('needsLogin')
+    const call = mocks.db.updateSavedUsageAccountUsage.mock.calls.find(
+      ([id]: [string, unknown]) => id === 'row-1'
+    )
+    const lastError = (call?.[1] as { last_error?: string } | undefined)?.last_error
+    expect(lastError).toBe('Token refresh failed: some_other_error')
+    expect(lastError).not.toContain('invalid_grant (')
+    expect(lastError?.startsWith('Token refresh failed: ')).toBe(true)
+  })
+})
+
+describe('account-level refresh/fetch locking', () => {
+  beforeEach(() => {
+    mocks.db.getSavedUsageAccountById.mockReturnValue(savedRow())
+    mocks.listClaudeAccounts.mockResolvedValue([claudeAccount()])
+    mocks.readClaudeEffectiveBlob.mockResolvedValue({
+      raw: '{}',
+      parsed: { accessToken: 'old-access', refreshToken: 'old-refresh', expiresAt: 1_000 }
+    })
+  })
+
+  function flushMicrotasks(): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, 0))
+  }
+
+  it('runs two concurrent fetchForSavedAccount calls for the same account strictly sequentially', async () => {
+    let inFlight = 0
+    let maxInFlight = 0
+    mocks.fetchClaudeUsage.mockImplementation(async () => {
+      inFlight += 1
+      maxInFlight = Math.max(maxInFlight, inFlight)
+      if (inFlight > 1) {
+        throw new Error('overlap detected: more than one fetch in flight for the same account')
+      }
+      await flushMicrotasks()
+      inFlight -= 1
+      return { success: true, data: usageData() }
+    })
+
+    const [r1, r2] = await Promise.all([
+      fetchForSavedAccount('saved-1'),
+      fetchForSavedAccount('saved-1')
+    ])
+
+    expect(r1.success).toBe(true)
+    expect(r2.success).toBe(true)
+    expect(maxInFlight).toBe(1)
+    expect(mocks.fetchClaudeUsage).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not block concurrent fetches for different accounts (no global lock)', async () => {
+    const rowA = savedRow({ id: 'saved-a', email: 'a@example.com' })
+    const rowB = savedRow({ id: 'saved-b', email: 'b@example.com' })
+    mocks.db.getSavedUsageAccountById.mockImplementation((id: string) =>
+      id === 'saved-a' ? rowA : id === 'saved-b' ? rowB : null
+    )
+    mocks.listClaudeAccounts.mockResolvedValue([
+      claudeAccount({ num: '1', email: 'a@example.com' }),
+      claudeAccount({ num: '2', email: 'b@example.com' })
+    ])
+
+    let releaseA: (() => void) | undefined
+    const gateA = new Promise<void>((resolve) => {
+      releaseA = resolve
+    })
+    let bStarted = false
+
+    mocks.fetchClaudeUsage.mockImplementation(async (_override: unknown, ctx: { accountId: string }) => {
+      if (ctx.accountId === 'saved-a') {
+        await gateA
+      } else {
+        bStarted = true
+      }
+      return { success: true, data: usageData() }
+    })
+
+    const pA = fetchForSavedAccount('saved-a')
+    const pB = fetchForSavedAccount('saved-b')
+
+    // Give B a chance to reach its fetch call while A is still gated — if
+    // fetches were serialized across accounts, B would never start here.
+    await flushMicrotasks()
+    expect(bStarted).toBe(true)
+
+    releaseA?.()
+    const [resultA, resultB] = await Promise.all([pA, pB])
+    expect(resultA.success).toBe(true)
+    expect(resultB.success).toBe(true)
+  })
+
+  it('serializes refreshTokensForStoreAccount + fetchForSavedAccount for the same account: single refresh call, and the second op observes the refreshed creds', async () => {
+    let refreshed = false
+    mocks.readClaudeEffectiveBlob.mockImplementation(async () =>
+      refreshed
+        ? {
+            raw: '{}',
+            parsed: {
+              accessToken: 'new-access',
+              refreshToken: 'new-refresh',
+              expiresAt: Date.now() + 60 * 60_000
+            }
+          }
+        : {
+            raw: '{}',
+            parsed: {
+              accessToken: 'old-access',
+              refreshToken: 'old-refresh',
+              expiresAt: Date.now() + 30_000
+            }
+          }
+    )
+
+    let releaseRefresh: ((value: unknown) => void) | undefined
+    const refreshGate = new Promise((resolve) => {
+      releaseRefresh = resolve
+    })
+    mocks.refreshAnthropicToken.mockImplementation(async () => refreshGate)
+    mocks.updateClaudeTokens.mockImplementation(async () => {
+      refreshed = true
+    })
+
+    let observedAccessToken: string | undefined
+    mocks.fetchClaudeUsage.mockImplementation(async (override: { accessToken: string }) => {
+      observedAccessToken = override.accessToken
+      return { success: true, data: usageData() }
+    })
+
+    const refreshPromise = refreshTokensForStoreAccount('anthropic', {
+      num: '1',
+      email: 'claude@example.com'
+    })
+    const fetchPromise = fetchForSavedAccount('saved-1')
+
+    // Let the refresh reach (and block on) the oauth call before releasing it.
+    await flushMicrotasks()
+
+    releaseRefresh?.({
+      ok: true,
+      result: {
+        accessToken: 'new-access',
+        refreshToken: 'new-refresh',
+        expiresAt: Date.now() + 60 * 60_000
+      },
+      scope: 'a b'
+    })
+
+    const [refreshOutcome, fetchResult] = await Promise.all([refreshPromise, fetchPromise])
+
+    expect(refreshOutcome).toBe('refreshed')
+    expect(fetchResult.success).toBe(true)
+    expect(mocks.refreshAnthropicToken).toHaveBeenCalledTimes(1)
+    expect(observedAccessToken).toBe('new-access')
+  })
+
+  it('recheck-after-lock-acquire: a second concurrent refreshTokensForStoreAccount call observes the already-refreshed token and skips the network call', async () => {
+    let refreshed = false
+    mocks.readClaudeEffectiveBlob.mockImplementation(async () =>
+      refreshed
+        ? {
+            raw: '{}',
+            parsed: {
+              accessToken: 'new-access',
+              refreshToken: 'new-refresh',
+              expiresAt: Date.now() + 60 * 60_000
+            }
+          }
+        : {
+            raw: '{}',
+            parsed: {
+              accessToken: 'old-access',
+              refreshToken: 'old-refresh',
+              expiresAt: Date.now() + 30_000
+            }
+          }
+    )
+
+    let releaseRefresh: ((value: unknown) => void) | undefined
+    const refreshGate = new Promise((resolve) => {
+      releaseRefresh = resolve
+    })
+    mocks.refreshAnthropicToken.mockImplementation(async () => refreshGate)
+    mocks.updateClaudeTokens.mockImplementation(async () => {
+      refreshed = true
+    })
+
+    const first = refreshTokensForStoreAccount('anthropic', { num: '1', email: 'claude@example.com' })
+    const second = refreshTokensForStoreAccount('anthropic', { num: '1', email: 'claude@example.com' })
+
+    await flushMicrotasks()
+
+    releaseRefresh?.({
+      ok: true,
+      result: {
+        accessToken: 'new-access',
+        refreshToken: 'new-refresh',
+        expiresAt: Date.now() + 60 * 60_000
+      },
+      scope: 'a b'
+    })
+
+    const [firstOutcome, secondOutcome] = await Promise.all([first, second])
+
+    expect(firstOutcome).toBe('refreshed')
+    expect(secondOutcome).toBe('refreshed')
+    expect(mocks.refreshAnthropicToken).toHaveBeenCalledTimes(1)
+    expect(mocks.updateClaudeTokens).toHaveBeenCalledTimes(1)
+  })
 })
 
 function base64url(value: string): string {
