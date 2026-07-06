@@ -1,12 +1,21 @@
+export interface ScopedUsageWindow {
+  label: string
+  used_percent: number
+  resets_at: string | null
+}
+
 export interface UsageData {
-  five_hour: { utilization: number; resets_at: string }
-  seven_day: { utilization: number; resets_at: string }
+  // resets_at is null when the window has no active session (e.g. an idle
+  // 5h window) — the API sends { utilization: 0, resets_at: null }.
+  five_hour: { utilization: number; resets_at: string | null }
+  seven_day: { utilization: number; resets_at: string | null }
   extra_usage?: {
     is_enabled: boolean
     utilization: number
     used_credits: number
     monthly_limit: number
   }
+  scoped?: ScopedUsageWindow[]
 }
 
 export interface UsageResult {
@@ -15,12 +24,22 @@ export interface UsageResult {
   error?: string
   retryAfter?: number
   rotated?: ClaudeRefreshResult
+  needsLogin?: boolean
 }
 
 export interface ClaudeRefreshResult {
   accessToken: string
   refreshToken: string
   expiresAt: number
+  scope?: string
+  /**
+   * The refresh token that was actually passed into the refresh call that
+   * produced this result — NOT necessarily the token read before the fetch
+   * started (some other process may have rotated it in between). Callers
+   * that persist rotated live tokens must race-check against this token,
+   * not against a pre-read one, or a burned refresh token can be left live.
+   */
+  rotatedFrom: string
 }
 
 export type AnthropicRateLimitType = 'five_hour' | 'seven_day'
@@ -76,7 +95,10 @@ export interface OpenAIUsageResult {
     accessToken: string
     refreshToken: string
     idToken?: string
+    /** See `ClaudeRefreshResult.rotatedFrom` — same rationale, Codex side. */
+    rotatedFrom: string
   }
+  needsLogin?: boolean
 }
 
 export interface SavedAccountDTO {
@@ -88,6 +110,7 @@ export interface SavedAccountDTO {
   status: SavedUsageStatus
   last_error: string | null
   created_at: string
+  plan: string | null
 }
 
 export interface FetchForAccountResult {
@@ -96,6 +119,7 @@ export interface FetchForAccountResult {
   error?: string
   retryAfter?: number
   status: SavedUsageStatus
+  needsLogin?: boolean
 }
 
 export interface RefreshAllResultItem {
@@ -103,4 +127,14 @@ export interface RefreshAllResultItem {
   success: boolean
   error?: string
   retryAfter?: number
+}
+
+export type LoginState = 'launching' | 'waiting' | 'exchanging' | 'done' | 'failed' | 'cancelled'
+
+export interface LoginStatusDTO {
+  loginId: string
+  provider: UsageProvider
+  state: LoginState
+  email: string | null
+  error: string | null
 }

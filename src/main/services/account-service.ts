@@ -3,50 +3,30 @@ import { readFile } from 'fs/promises'
 import { join } from 'path'
 import { homedir } from 'os'
 import { createLogger } from './logger'
+import { decodeJwtPayload } from './jwt-utils'
+import { readClaudeLiveIdentity } from './account-store-claude'
 
 const log = createLogger({ component: 'AccountService' })
 
 const CODEX_HOME = process.env.CODEX_HOME || join(homedir(), '.codex')
 
 /**
- * Decode the payload section of a JWT token.
- */
-function decodeJwtPayload(token: string): Record<string, unknown> | null {
-  try {
-    const parts = token.split('.')
-    if (parts.length !== 3) return null
-    const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/')
-    const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4)
-    const json = Buffer.from(padded, 'base64').toString('utf-8')
-    return JSON.parse(json)
-  } catch {
-    return null
-  }
-}
-
-/**
- * Get the Claude account email from ~/.claude.json.
- * Reads oauthAccount.emailAddress from the file.
+ * Get the currently-live Claude account email.
+ *
+ * Delegates to the account store's `readClaudeLiveIdentity()` so this uses the
+ * SAME identity seam as everything else: it prefers the nested
+ * `~/.claude/.claude.json` (ccswitch's primary, which `switchClaudeAccount`
+ * writes) over the top-level `~/.claude.json`. Lowercased so the renderer's
+ * Active-badge comparison against the lowercased DTO emails works even for
+ * mixed-case accounts. Reading only the verbatim top-level file (as this used
+ * to) left the badge stuck on the pre-switch account.
  */
 export async function getClaudeAccountEmail(): Promise<string | null> {
-  const claudePath = join(homedir(), '.claude.json')
-  if (!existsSync(claudePath)) {
+  const { email } = await readClaudeLiveIdentity()
+  if (typeof email !== 'string' || email.length === 0) {
     return null
   }
-  try {
-    const raw = await readFile(claudePath, 'utf-8')
-    const data = JSON.parse(raw)
-    const email = data?.oauthAccount?.emailAddress
-    if (typeof email !== 'string' || email.length === 0) {
-      log.warn('Claude account email missing or invalid in config file')
-      return null
-    }
-    return email
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    log.warn('Failed to read Claude account email', { error: message })
-    return null
-  }
+  return email.toLowerCase()
 }
 
 /**

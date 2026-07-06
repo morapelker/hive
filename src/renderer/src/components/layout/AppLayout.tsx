@@ -5,6 +5,7 @@ import { LeftSidebar } from './LeftSidebar'
 import { MainPane } from './MainPane'
 import { RightSidebar } from './RightSidebar'
 import { Toaster } from '@/components/ui/sonner'
+import { LoginBanner } from './LoginBanner'
 import { SessionHistory } from '@/components/sessions/SessionHistory'
 import { CommandPalette } from '@/components/command-palette'
 import { SettingsModal } from '@/components/settings'
@@ -291,6 +292,7 @@ export function AppLayout({ children }: AppLayoutProps): React.JSX.Element {
             </ErrorBoundary>
           </div>
           <Toaster />
+          <LoginBanner />
           {isDragging && <DropOverlay variant={activeSessionId ? 'normal' : 'warning'} />}
           <ErrorBoundary componentName="SessionHistory" fallback={null}>
             <SessionHistory />

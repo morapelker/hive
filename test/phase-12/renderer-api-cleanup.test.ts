@@ -9358,15 +9358,17 @@ describe('renderer API cleanup', () => {
       path.resolve(__dirname, '../../src/renderer/src/stores/useUsageStore.ts'),
       'utf-8'
     )
-    const actionStart = source.indexOf('refreshSavedAccount: async (id: string) => {')
+    const actionStart = source.indexOf(
+      'refreshSavedAccount: async (id: string, opts?: { userInitiated?: boolean }) => {'
+    )
     const actionEnd = source.indexOf('  removeSavedAccount:', actionStart)
     const actionSource = source.slice(actionStart, actionEnd)
 
     expect(actionStart).toBeGreaterThan(-1)
     expect(actionEnd).toBeGreaterThan(actionStart)
     expect(source).toContain("import { usageApi } from '@/api/usage-api'")
-    expect(actionSource).toContain('await usageApi.fetchForAccount(id)')
-    expect(actionSource).toContain('await get().loadSavedAccounts(provider)')
+    expect(actionSource).toContain('await usageApi.fetchForAccount(id, userInitiated)')
+    expect(actionSource).toContain('.loadSavedAccounts(provider)')
     expect(actionSource).not.toContain('window.usageOps.fetchForAccount')
     expect(actionSource).not.toContain('unwrapEnvelope(await window.usageOps.fetchForAccount')
   })
@@ -9389,14 +9391,14 @@ describe('renderer API cleanup', () => {
       'utf-8'
     )
     const actionStart = source.indexOf('removeSavedAccount: async (id: string) => {')
-    const actionEnd = source.indexOf('  fetchUsageForProvider:', actionStart)
+    const actionEnd = source.indexOf('  switchAccount:', actionStart)
     const actionSource = source.slice(actionStart, actionEnd)
 
     expect(actionStart).toBeGreaterThan(-1)
     expect(actionEnd).toBeGreaterThan(actionStart)
     expect(source).toContain("import { accountApi } from '@/api/account-api'")
     expect(actionSource).toContain('await accountApi.removeSaved(id)')
-    expect(actionSource).toContain('await get().loadSavedAccounts()')
+    expect(actionSource).toContain('.loadSavedAccounts(provider)')
     expect(actionSource).not.toContain('window.accountOps.removeSaved')
     expect(actionSource).not.toContain('unwrapEnvelope(await window.accountOps.removeSaved')
   })
