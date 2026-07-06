@@ -4822,7 +4822,17 @@ describe('rpc router', () => {
         getOpenAIEmail: () => Effect.succeed(null),
         listSaved: () => Effect.succeed([]),
         removeSaved: () => Effect.succeed(false),
-        switchAccount: () => Effect.succeed({ success: false })
+        switchAccount: () => Effect.succeed({ success: false }),
+        loginStart: () => Effect.succeed({ loginId: 'login-1' }),
+        loginStatus: () =>
+          Effect.succeed({
+            loginId: 'login-1',
+            provider: 'anthropic' as const,
+            state: 'waiting' as const,
+            email: null,
+            error: null
+          }),
+        loginCancel: () => Effect.succeed(false)
       }
     })
 
@@ -4855,7 +4865,17 @@ describe('rpc router', () => {
         getOpenAIEmail: () => Effect.succeed(null),
         listSaved: () => Effect.succeed([]),
         removeSaved: () => Effect.succeed(false),
-        switchAccount: () => Effect.succeed({ success: false })
+        switchAccount: () => Effect.succeed({ success: false }),
+        loginStart: () => Effect.succeed({ loginId: 'login-1' }),
+        loginStatus: () =>
+          Effect.succeed({
+            loginId: 'login-1',
+            provider: 'anthropic' as const,
+            state: 'waiting' as const,
+            email: null,
+            error: null
+          }),
+        loginCancel: () => Effect.succeed(false)
       }
     })
 
@@ -4888,7 +4908,17 @@ describe('rpc router', () => {
           }),
         listSaved: () => Effect.succeed([]),
         removeSaved: () => Effect.succeed(false),
-        switchAccount: () => Effect.succeed({ success: false })
+        switchAccount: () => Effect.succeed({ success: false }),
+        loginStart: () => Effect.succeed({ loginId: 'login-1' }),
+        loginStatus: () =>
+          Effect.succeed({
+            loginId: 'login-1',
+            provider: 'anthropic' as const,
+            state: 'waiting' as const,
+            email: null,
+            error: null
+          }),
+        loginCancel: () => Effect.succeed(false)
       }
     })
 
@@ -4921,7 +4951,17 @@ describe('rpc router', () => {
           }),
         listSaved: () => Effect.succeed([]),
         removeSaved: () => Effect.succeed(false),
-        switchAccount: () => Effect.succeed({ success: false })
+        switchAccount: () => Effect.succeed({ success: false }),
+        loginStart: () => Effect.succeed({ loginId: 'login-1' }),
+        loginStatus: () =>
+          Effect.succeed({
+            loginId: 'login-1',
+            provider: 'anthropic' as const,
+            state: 'waiting' as const,
+            email: null,
+            error: null
+          }),
+        loginCancel: () => Effect.succeed(false)
       }
     })
 
@@ -4967,7 +5007,17 @@ describe('rpc router', () => {
             return accounts
           }),
         removeSaved: () => Effect.succeed(false),
-        switchAccount: () => Effect.succeed({ success: false })
+        switchAccount: () => Effect.succeed({ success: false }),
+        loginStart: () => Effect.succeed({ loginId: 'login-1' }),
+        loginStatus: () =>
+          Effect.succeed({
+            loginId: 'login-1',
+            provider: 'anthropic' as const,
+            state: 'waiting' as const,
+            email: null,
+            error: null
+          }),
+        loginCancel: () => Effect.succeed(false)
       }
     })
 
@@ -5000,7 +5050,17 @@ describe('rpc router', () => {
             return []
           }),
         removeSaved: () => Effect.succeed(false),
-        switchAccount: () => Effect.succeed({ success: false })
+        switchAccount: () => Effect.succeed({ success: false }),
+        loginStart: () => Effect.succeed({ loginId: 'login-1' }),
+        loginStatus: () =>
+          Effect.succeed({
+            loginId: 'login-1',
+            provider: 'anthropic' as const,
+            state: 'waiting' as const,
+            email: null,
+            error: null
+          }),
+        loginCancel: () => Effect.succeed(false)
       }
     })
 
@@ -5033,7 +5093,17 @@ describe('rpc router', () => {
             calls.push(accountId)
             return true
           }),
-        switchAccount: () => Effect.succeed({ success: false })
+        switchAccount: () => Effect.succeed({ success: false }),
+        loginStart: () => Effect.succeed({ loginId: 'login-1' }),
+        loginStatus: () =>
+          Effect.succeed({
+            loginId: 'login-1',
+            provider: 'anthropic' as const,
+            state: 'waiting' as const,
+            email: null,
+            error: null
+          }),
+        loginCancel: () => Effect.succeed(false)
       }
     })
 
@@ -5066,7 +5136,17 @@ describe('rpc router', () => {
             calls.push(accountId)
             return false
           }),
-        switchAccount: () => Effect.succeed({ success: false })
+        switchAccount: () => Effect.succeed({ success: false }),
+        loginStart: () => Effect.succeed({ loginId: 'login-1' }),
+        loginStatus: () =>
+          Effect.succeed({
+            loginId: 'login-1',
+            provider: 'anthropic' as const,
+            state: 'waiting' as const,
+            email: null,
+            error: null
+          }),
+        loginCancel: () => Effect.succeed(false)
       }
     })
 
@@ -5099,7 +5179,17 @@ describe('rpc router', () => {
           Effect.sync(() => {
             calls.push(accountId)
             return { success: true }
-          })
+          }),
+        loginStart: () => Effect.succeed({ loginId: 'login-1' }),
+        loginStatus: () =>
+          Effect.succeed({
+            loginId: 'login-1',
+            provider: 'anthropic' as const,
+            state: 'waiting' as const,
+            email: null,
+            error: null
+          }),
+        loginCancel: () => Effect.succeed(false)
       }
     })
 
@@ -5132,7 +5222,17 @@ describe('rpc router', () => {
           Effect.sync(() => {
             calls.push(accountId)
             return { success: true }
-          })
+          }),
+        loginStart: () => Effect.succeed({ loginId: 'login-1' }),
+        loginStatus: () =>
+          Effect.succeed({
+            loginId: 'login-1',
+            provider: 'anthropic' as const,
+            state: 'waiting' as const,
+            email: null,
+            error: null
+          }),
+        loginCancel: () => Effect.succeed(false)
       }
     })
 

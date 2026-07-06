@@ -1,6 +1,6 @@
 import { Effect } from 'effect'
 import { describe, expect, it, vi } from 'vitest'
-import type { SavedAccountDTO } from '../../shared/types/usage'
+import type { LoginStatusDTO, SavedAccountDTO } from '../../shared/types/usage'
 import { makeEventBus } from '../events/event-bus'
 import type { AccountOpsRpcService } from '../rpc/domains/account-ops'
 import { makeRpcRouter } from '../rpc/router'
@@ -303,6 +303,229 @@ describe('account ops RPC mocked provider', () => {
     expect(switchAccount).not.toHaveBeenCalled()
     expect(response).toMatchObject({
       id: 'account-switch-extra',
+      ok: false,
+      error: { code: 'VALIDATION_FAILED' }
+    })
+  })
+
+  it('routes accountOps.loginStart to the injected provider service', async () => {
+    const loginStart = vi.fn(() => Effect.succeed({ loginId: 'login-1' }))
+    const service = { loginStart } as unknown as AccountOpsRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      accountOps: service
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'account-login-start-1',
+        method: 'accountOps.loginStart',
+        params: { provider: 'anthropic', email: 'user@example.com' }
+      })
+    )
+
+    expect(loginStart).toHaveBeenCalledWith('anthropic', 'user@example.com')
+    expect(response).toEqual({
+      id: 'account-login-start-1',
+      ok: true,
+      value: { loginId: 'login-1' }
+    })
+  })
+
+  it('routes accountOps.loginStart without an email hint', async () => {
+    const loginStart = vi.fn(() => Effect.succeed({ loginId: 'login-2' }))
+    const service = { loginStart } as unknown as AccountOpsRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      accountOps: service
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'account-login-start-2',
+        method: 'accountOps.loginStart',
+        params: { provider: 'openai' }
+      })
+    )
+
+    expect(loginStart).toHaveBeenCalledWith('openai', undefined)
+    expect(response).toEqual({
+      id: 'account-login-start-2',
+      ok: true,
+      value: { loginId: 'login-2' }
+    })
+  })
+
+  it('validates accountOps.loginStart params before calling the provider service', async () => {
+    const loginStart = vi.fn(() => Effect.succeed({ loginId: 'login-1' }))
+    const service = { loginStart } as unknown as AccountOpsRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      accountOps: service
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'account-login-start-invalid',
+        method: 'accountOps.loginStart',
+        params: { provider: 'other' }
+      })
+    )
+
+    expect(loginStart).not.toHaveBeenCalled()
+    expect(response).toMatchObject({
+      id: 'account-login-start-invalid',
+      ok: false,
+      error: { code: 'VALIDATION_FAILED' }
+    })
+  })
+
+  it('rejects unexpected extra params for accountOps.loginStart', async () => {
+    const loginStart = vi.fn(() => Effect.succeed({ loginId: 'login-1' }))
+    const service = { loginStart } as unknown as AccountOpsRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      accountOps: service
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'account-login-start-extra',
+        method: 'accountOps.loginStart',
+        params: { provider: 'anthropic', unexpected: true }
+      })
+    )
+
+    expect(loginStart).not.toHaveBeenCalled()
+    expect(response).toMatchObject({
+      id: 'account-login-start-extra',
+      ok: false,
+      error: { code: 'VALIDATION_FAILED' }
+    })
+  })
+
+  it('routes accountOps.loginStatus to the injected provider service', async () => {
+    const status: LoginStatusDTO = {
+      loginId: 'login-1',
+      provider: 'anthropic',
+      state: 'waiting',
+      email: null,
+      error: null
+    }
+    const loginStatus = vi.fn(() => Effect.succeed(status))
+    const service = { loginStatus } as unknown as AccountOpsRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      accountOps: service
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'account-login-status-1',
+        method: 'accountOps.loginStatus',
+        params: { loginId: 'login-1' }
+      })
+    )
+
+    expect(loginStatus).toHaveBeenCalledWith('login-1')
+    expect(response).toEqual({
+      id: 'account-login-status-1',
+      ok: true,
+      value: status
+    })
+  })
+
+  it('routes a loginStatus failure (session not found) through as an error response', async () => {
+    const loginStatus = vi.fn(() => Effect.fail(new Error('login session not found')))
+    const service = { loginStatus } as unknown as AccountOpsRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      accountOps: service
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'account-login-status-missing',
+        method: 'accountOps.loginStatus',
+        params: { loginId: 'does-not-exist' }
+      })
+    )
+
+    expect(response).toMatchObject({
+      id: 'account-login-status-missing',
+      ok: false
+    })
+  })
+
+  it('validates accountOps.loginStatus params before calling the provider service', async () => {
+    const loginStatus = vi.fn(() =>
+      Effect.succeed({ loginId: 'login-1', provider: 'anthropic', state: 'waiting', email: null, error: null })
+    )
+    const service = { loginStatus } as unknown as AccountOpsRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      accountOps: service
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'account-login-status-invalid',
+        method: 'accountOps.loginStatus',
+        params: { loginId: 123 }
+      })
+    )
+
+    expect(loginStatus).not.toHaveBeenCalled()
+    expect(response).toMatchObject({
+      id: 'account-login-status-invalid',
+      ok: false,
+      error: { code: 'VALIDATION_FAILED' }
+    })
+  })
+
+  it('routes accountOps.loginCancel to the injected provider service', async () => {
+    const loginCancel = vi.fn(() => Effect.succeed(true))
+    const service = { loginCancel } as unknown as AccountOpsRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      accountOps: service
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'account-login-cancel-1',
+        method: 'accountOps.loginCancel',
+        params: { loginId: 'login-1' }
+      })
+    )
+
+    expect(loginCancel).toHaveBeenCalledWith('login-1')
+    expect(response).toEqual({
+      id: 'account-login-cancel-1',
+      ok: true,
+      value: true
+    })
+  })
+
+  it('validates accountOps.loginCancel params before calling the provider service', async () => {
+    const loginCancel = vi.fn(() => Effect.succeed(false))
+    const service = { loginCancel } as unknown as AccountOpsRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      accountOps: service
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'account-login-cancel-invalid',
+        method: 'accountOps.loginCancel',
+        params: {}
+      })
+    )
+
+    expect(loginCancel).not.toHaveBeenCalled()
+    expect(response).toMatchObject({
+      id: 'account-login-cancel-invalid',
       ok: false,
       error: { code: 'VALIDATION_FAILED' }
     })

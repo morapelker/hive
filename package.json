@@ -128,6 +128,7 @@
     "motion": "^12.38.0",
     "node-addon-api": "^8.6.0",
     "node-pty": "^1.1.0",
+    "patchright": "^1.61.1",
     "posthog-node": "^5.26.0",
     "qrcode-terminal": "^0.12.0",
     "radix-ui": "^1.4.3",

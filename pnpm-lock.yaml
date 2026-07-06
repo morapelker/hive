@@ -170,6 +170,9 @@ importers:
       node-pty:
         specifier: ^1.1.0
         version: 1.1.0
+      patchright:
+        specifier: ^1.61.1
+        version: 1.61.1
       posthog-node:
         specifier: ^5.26.0
         version: 5.26.0
@@ -5802,6 +5805,16 @@ packages:
 
   pascal-case@3.1.2:
     resolution: {integrity: sha512-uWlGT3YSnK9x3BQJaOdcZwrnV6hPpd8jFH1/ucpiLRPh/2zCVJKS19E4GvYHvaCcACn3foXZ0cLB9Wrx1KGe5g==}
+
+  patchright-core@1.61.1:
+    resolution: {integrity: sha512-d6Ju67DE6OzqlEX3WPvUX2SLEs6iMY1WERit//mpsrT98VHcztaUo0CBw2Lpxq25VdufVEiWEdcc0HnLwdiq6A==}
+    engines: {node: '>=18'}
+    hasBin: true
+
+  patchright@1.61.1:
+    resolution: {integrity: sha512-kZWNZ2tunsBMTBWtARFVWaNvB739GOybTlIPLT91eyx0YERjtUjESawomwO0hnOh6jt1L3Sru0PK62ylYOfqQw==}
+    engines: {node: '>=18'}
+    hasBin: true
 
   path-browserify@1.0.1:
     resolution: {integrity: sha512-b7uo2UCUOYZcnF/3ID0lulOJi/bafxa1xPe7ZPsammBSpjSWQkjNxlt635YGS2MiR9GjvuXCtz2emr3jbsz98g==}
@@ -13809,6 +13822,14 @@ snapshots:
     dependencies:
       no-case: 3.0.4
       tslib: 2.8.1
+
+  patchright-core@1.61.1: {}
+
+  patchright@1.61.1:
+    dependencies:
+      patchright-core: 1.61.1
+    optionalDependencies:
+      fsevents: 2.3.2
 
   path-browserify@1.0.1: {}
 
