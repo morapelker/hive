@@ -485,10 +485,18 @@ export function resolveDefaultUsageProvider(
   return 'anthropic'
 }
 
-function hasUsageWindow(value: unknown): value is { utilization: number; resets_at: string } {
+function hasUsageWindow(value: unknown): value is { utilization: number; resets_at: string | null } {
   if (typeof value !== 'object' || value === null) return false
   const record = value as Record<string, unknown>
-  return typeof record.utilization === 'number' && typeof record.resets_at === 'string'
+  // resets_at is legitimately null (or absent) for a window with no active
+  // session — the API sends { utilization: 0, resets_at: null } for an idle
+  // 5h window. Only reject a present, non-string, non-null resets_at.
+  return (
+    typeof record.utilization === 'number' &&
+    (record.resets_at === null ||
+      record.resets_at === undefined ||
+      typeof record.resets_at === 'string')
+  )
 }
 
 function isAnthropicUsageData(value: unknown): value is UsageData {

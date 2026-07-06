@@ -5,8 +5,10 @@ export interface ScopedUsageWindow {
 }
 
 export interface UsageData {
-  five_hour: { utilization: number; resets_at: string }
-  seven_day: { utilization: number; resets_at: string }
+  // resets_at is null when the window has no active session (e.g. an idle
+  // 5h window) — the API sends { utilization: 0, resets_at: null }.
+  five_hour: { utilization: number; resets_at: string | null }
+  seven_day: { utilization: number; resets_at: string | null }
   extra_usage?: {
     is_enabled: boolean
     utilization: number

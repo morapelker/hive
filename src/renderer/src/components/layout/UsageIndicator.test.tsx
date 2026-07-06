@@ -34,6 +34,29 @@ describe('UsageAccountRow', () => {
     expect(screen.queryByRole('button', { name: /switch to/i })).toBeNull()
   })
 
+  it('renders real seven_day usage when the idle five_hour window has a null resets_at', () => {
+    render(
+      <UsageAccountRow
+        row={{
+          id: 'acc-idle',
+          email: 'noa@example.com',
+          usage: {
+            five_hour: { utilization: 0, resets_at: null },
+            seven_day: { utilization: 66, resets_at: '2026-07-10T01:59:59.000Z' }
+          },
+          status: 'ok',
+          lastError: null,
+          isActive: false,
+          isRefreshing: false
+        }}
+        onSwitch={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText('66%')).toBeTruthy()
+    expect(screen.getByText('N/A')).toBeTruthy()
+  })
+
   it('shows a Switch button for a non-active account and calls onSwitch when clicked', async () => {
     const user = userEvent.setup()
     const onSwitch = vi.fn()

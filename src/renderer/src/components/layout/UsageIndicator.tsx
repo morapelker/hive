@@ -33,7 +33,13 @@ function getBarColor(percent: number, rateLimitStatus?: string): string {
   return 'bg-green-500'
 }
 
-function formatResetTime(isoString: string, type: 'five_hour' | 'seven_day'): string {
+function formatResetTime(
+  isoString: string | null | undefined,
+  type: 'five_hour' | 'seven_day'
+): string {
+  // null = window with no active session (idle 5h window); without this guard
+  // new Date(null) silently renders the 1970 epoch as a real time.
+  if (!isoString) return 'N/A'
   const date = new Date(isoString)
   if (isNaN(date.getTime())) return ''
 
