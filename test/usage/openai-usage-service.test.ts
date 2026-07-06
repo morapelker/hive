@@ -108,7 +108,8 @@ describe('fetchOpenAIUsage', () => {
       expect(result.rotated).toEqual({
         accessToken: 'new-access',
         refreshToken: 'new-refresh',
-        idToken: 'new-id'
+        idToken: 'new-id',
+        rotatedFrom: 'live-refresh-token'
       })
       expect(fetchMock).toHaveBeenNthCalledWith(
         1,
@@ -192,7 +193,8 @@ describe('fetchOpenAIUsage', () => {
       expect(result.rotated).toEqual({
         accessToken: 'retry-access',
         refreshToken: 'retry-refresh',
-        idToken: ''
+        idToken: '',
+        rotatedFrom: 'saved-refresh-token'
       })
     })
 
@@ -212,7 +214,8 @@ describe('fetchOpenAIUsage', () => {
       expect(result.rotated).toEqual({
         accessToken: 'retry-access',
         refreshToken: 'retry-refresh',
-        idToken: ''
+        idToken: '',
+        rotatedFrom: 'saved-refresh-token'
       })
     })
 

@@ -43,6 +43,8 @@ interface RefreshResult {
   accessToken: string
   refreshToken: string
   idToken?: string
+  /** See `ClaudeRefreshResult.rotatedFrom` (usage.ts) — same rationale, Codex side. */
+  rotatedFrom: string
 }
 
 const inMemoryRefreshPromises = new Map<string, Promise<RefreshResult>>()
@@ -127,7 +129,11 @@ export async function refreshAccessTokenInMemory(auth: CodexAuth): Promise<Refre
   if (existing) return existing
 
   const promise = (async () => {
-    const outcome = await refreshOpenAIToken(auth.tokens!.refresh_token)
+    // Captured before the refresh call so it reflects the token this refresh
+    // was actually performed with, not whatever `auth.tokens.refresh_token`
+    // is mutated to afterward.
+    const usedRefreshToken = auth.tokens!.refresh_token
+    const outcome = await refreshOpenAIToken(usedRefreshToken)
     if (!outcome.ok) {
       throw new NeedsLoginError(`Token refresh failed: invalid_grant (${outcome.error})`)
     }
@@ -140,7 +146,8 @@ export async function refreshAccessTokenInMemory(auth: CodexAuth): Promise<Refre
     return {
       accessToken: auth.tokens!.access_token,
       refreshToken: auth.tokens!.refresh_token,
-      idToken: typeof auth.tokens!.id_token === 'string' ? auth.tokens!.id_token : undefined
+      idToken: typeof auth.tokens!.id_token === 'string' ? auth.tokens!.id_token : undefined,
+      rotatedFrom: usedRefreshToken
     }
   })().finally(() => {
     inMemoryRefreshPromises.delete(accountId)

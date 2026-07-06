@@ -30,6 +30,14 @@ export interface ClaudeRefreshResult {
   refreshToken: string
   expiresAt: number
   scope?: string
+  /**
+   * The refresh token that was actually passed into the refresh call that
+   * produced this result — NOT necessarily the token read before the fetch
+   * started (some other process may have rotated it in between). Callers
+   * that persist rotated live tokens must race-check against this token,
+   * not against a pre-read one, or a burned refresh token can be left live.
+   */
+  rotatedFrom: string
 }
 
 export type AnthropicRateLimitType = 'five_hour' | 'seven_day'
@@ -85,6 +93,8 @@ export interface OpenAIUsageResult {
     accessToken: string
     refreshToken: string
     idToken?: string
+    /** See `ClaudeRefreshResult.rotatedFrom` — same rationale, Codex side. */
+    rotatedFrom: string
   }
   needsLogin?: boolean
 }

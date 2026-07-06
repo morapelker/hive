@@ -221,7 +221,8 @@ export async function refreshClaudeAccessToken(
         accessToken: outcome.result.accessToken,
         refreshToken: outcome.result.refreshToken,
         expiresAt: outcome.result.expiresAt,
-        scope: outcome.scope
+        scope: outcome.scope,
+        rotatedFrom: refreshToken
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)

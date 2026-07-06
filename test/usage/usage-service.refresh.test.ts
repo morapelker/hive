@@ -73,7 +73,8 @@ describe('fetchClaudeUsage saved-account refresh', () => {
     expect(result.success).toBe(true)
     expect(result.rotated).toMatchObject({
       accessToken: 'new-access-token',
-      refreshToken: 'new-refresh-token'
+      refreshToken: 'new-refresh-token',
+      rotatedFrom: 'old-refresh-token'
     })
     expect(result.rotated?.expiresAt).toBeGreaterThan(Date.now())
     expect(fetchMock).toHaveBeenNthCalledWith(
@@ -124,7 +125,8 @@ describe('fetchClaudeUsage saved-account refresh', () => {
     expect(result.data?.five_hour.utilization).toBe(44)
     expect(result.rotated).toMatchObject({
       accessToken: 'retry-access-token',
-      refreshToken: 'retry-refresh-token'
+      refreshToken: 'retry-refresh-token',
+      rotatedFrom: 'old-refresh-token'
     })
     expect(fetchMock).toHaveBeenNthCalledWith(
       3,
@@ -237,7 +239,8 @@ describe('fetchClaudeUsage saved-account refresh', () => {
     expect(result.success).toBe(true)
     expect(result.rotated).toMatchObject({
       accessToken: 'live-new-access',
-      refreshToken: 'live-new-refresh'
+      refreshToken: 'live-new-refresh',
+      rotatedFrom: 'live-refresh-token'
     })
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
@@ -292,7 +295,8 @@ describe('fetchClaudeUsage saved-account refresh', () => {
     expect(result.data?.five_hour.utilization).toBe(77)
     expect(result.rotated).toMatchObject({
       accessToken: 'live-retry-access',
-      refreshToken: 'live-retry-refresh'
+      refreshToken: 'live-retry-refresh',
+      rotatedFrom: 'live-refresh-token'
     })
     expect(fetchMock).toHaveBeenCalledTimes(3)
     expect(fetchMock).toHaveBeenNthCalledWith(
