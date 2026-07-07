@@ -11,7 +11,7 @@ import {
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { cn } from '@/lib/utils'
-import { Loader2 } from 'lucide-react'
+import { Loader2, RefreshCw } from 'lucide-react'
 import claudeIcon from '@/assets/model-icons/claude.svg'
 import openaiIcon from '@/assets/model-icons/openai.svg'
 import type {
@@ -187,6 +187,7 @@ export interface UsageAccountRowProps {
   isSwitching?: boolean
   isLoginActive?: boolean
   onSwitch?: () => void
+  onRefresh?: () => void
   onSignInAgain?: () => void
 }
 
@@ -195,6 +196,7 @@ export function UsageAccountRow({
   isSwitching = false,
   isLoginActive = false,
   onSwitch,
+  onRefresh,
   onSignInAgain
 }: UsageAccountRowProps): React.JSX.Element {
   const fiveHourPercent = row.usage ? Math.round(row.usage.five_hour.utilization) : 0
@@ -246,7 +248,7 @@ export function UsageAccountRow({
         ))}
       </div>
 
-      {(onSwitch || onSignInAgain) && (
+      {(onSwitch || onRefresh || onSignInAgain) && (
         <div className="mt-1.5 flex items-center gap-1.5">
           {!row.isActive && onSwitch && (
             <button
@@ -258,6 +260,22 @@ export function UsageAccountRow({
             >
               {isSwitching && <Loader2 className="h-2.5 w-2.5 animate-spin" />}
               Switch
+            </button>
+          )}
+          {onRefresh && (
+            <button
+              type="button"
+              onClick={onRefresh}
+              disabled={row.isRefreshing}
+              aria-label={`Refresh usage for ${row.email ?? 'this account'}`}
+              className="inline-flex items-center gap-1 rounded-sm border border-border/60 px-1.5 py-0.5 text-[9px] font-medium text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {row.isRefreshing ? (
+                <Loader2 className="h-2.5 w-2.5 animate-spin" />
+              ) : (
+                <RefreshCw className="h-2.5 w-2.5" />
+              )}
+              Refresh
             </button>
           )}
           {row.status === 'stale' && onSignInAgain && (
@@ -325,6 +343,7 @@ function ProviderUsageBlock({
   const refreshAllForProvider = useUsageStore((s) => s.refreshAllForProvider)
   const loadSavedAccounts = useUsageStore((s) => s.loadSavedAccounts)
   const switchAccount = useUsageStore((s) => s.switchAccount)
+  const refreshSavedAccount = useUsageStore((s) => s.refreshSavedAccount)
   const switchingAccountIds = useUsageStore((s) => s.switchingAccountIds)
   const savedAccounts = useUsageStore((s) => s.savedAccounts[provider])
   const savedAccountLoadError = useUsageStore((s) => s.savedAccountLoadErrors[provider])
@@ -449,6 +468,11 @@ function ProviderUsageBlock({
                   isSwitching={switchingAccountIds.has(row.id)}
                   isLoginActive={isLoginActive}
                   onSwitch={() => switchAccount(row.id)}
+                  onRefresh={
+                    savedAccounts.length > 0
+                      ? () => refreshSavedAccount(row.id, { userInitiated: true })
+                      : undefined
+                  }
                   onSignInAgain={() => startLogin(provider, row.email ?? undefined)}
                 />
               ))
@@ -540,6 +564,11 @@ function ProviderUsageBlock({
               isSwitching={switchingAccountIds.has(row.id)}
               isLoginActive={isLoginActive}
               onSwitch={() => switchAccount(row.id)}
+              onRefresh={
+                savedAccounts.length > 0
+                  ? () => refreshSavedAccount(row.id, { userInitiated: true })
+                  : undefined
+              }
               onSignInAgain={() => startLogin(provider, row.email ?? undefined)}
             />
           ))}
