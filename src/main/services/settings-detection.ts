@@ -137,6 +137,11 @@ export function detectTerminals(): DetectedApp[] {
             id: 'ghostty',
             name: 'Ghostty',
             commands: ['/Applications/Ghostty.app', '/usr/local/bin/ghostty']
+          },
+          {
+            id: 'cmux',
+            name: 'cmux',
+            commands: ['/Applications/cmux.app']
           }
         ]
       : currentPlatform === 'win32'
