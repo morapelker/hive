@@ -523,7 +523,8 @@ function ProviderUsageBlock({
       <HoverCardContent
         side="top"
         sideOffset={8}
-        className="w-72 max-w-[min(18rem,calc(100vw-2rem))]"
+        collisionPadding={8}
+        className="w-72 max-w-[min(18rem,calc(100vw-2rem))] max-h-(--radix-hover-card-content-available-height) overflow-y-auto"
       >
         <div className="space-y-2">
           <div className="font-medium">{tooltipTitle}</div>
