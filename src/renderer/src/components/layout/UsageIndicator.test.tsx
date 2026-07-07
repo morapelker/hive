@@ -83,6 +83,98 @@ describe('UsageAccountRow', () => {
     expect(onSwitch).toHaveBeenCalledTimes(1)
   })
 
+  it('shows a Refresh button and calls onRefresh when clicked', async () => {
+    const user = userEvent.setup()
+    const onRefresh = vi.fn()
+    render(
+      <UsageAccountRow
+        row={{
+          id: 'acc-r1',
+          email: 'other@example.com',
+          usage: sampleUsage,
+          status: 'ok',
+          lastError: null,
+          isActive: false,
+          isRefreshing: false
+        }}
+        onSwitch={vi.fn()}
+        onRefresh={onRefresh}
+      />
+    )
+
+    const button = screen.getByRole('button', {
+      name: /refresh usage for other@example.com/i
+    }) as HTMLButtonElement
+    expect(button.disabled).toBe(false)
+    await user.click(button)
+    expect(onRefresh).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows the Refresh button for the active account too', () => {
+    render(
+      <UsageAccountRow
+        row={{
+          id: 'acc-r2',
+          email: 'active@example.com',
+          usage: sampleUsage,
+          status: 'ok',
+          lastError: null,
+          isActive: true,
+          isRefreshing: false
+        }}
+        onSwitch={vi.fn()}
+        onRefresh={vi.fn()}
+      />
+    )
+
+    expect(screen.queryByRole('button', { name: /switch to/i })).toBeNull()
+    expect(
+      screen.getByRole('button', { name: /refresh usage for active@example.com/i })
+    ).toBeTruthy()
+  })
+
+  it('disables the Refresh button while the account is refreshing', () => {
+    render(
+      <UsageAccountRow
+        row={{
+          id: 'acc-r3',
+          email: 'other@example.com',
+          usage: sampleUsage,
+          status: 'ok',
+          lastError: null,
+          isActive: false,
+          isRefreshing: true
+        }}
+        onSwitch={vi.fn()}
+        onRefresh={vi.fn()}
+      />
+    )
+
+    const button = screen.getByRole('button', {
+      name: /refresh usage for other@example.com/i
+    }) as HTMLButtonElement
+    expect(button.disabled).toBe(true)
+  })
+
+  it('does not render a Refresh button when onRefresh is not provided', () => {
+    render(
+      <UsageAccountRow
+        row={{
+          id: 'anthropic-active',
+          email: 'active@example.com',
+          usage: sampleUsage,
+          status: 'ok',
+          lastError: null,
+          isActive: true,
+          isRefreshing: false
+        }}
+        onSwitch={vi.fn()}
+      />
+    )
+
+    expect(screen.queryByRole('button', { name: /refresh usage/i })).toBeNull()
+  })
+
   it('disables the Switch button and shows a spinner while switching', () => {
     render(
       <UsageAccountRow
