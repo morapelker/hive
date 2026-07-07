@@ -31,6 +31,7 @@ export type TerminalOption =
   | 'alacritty'
   | 'kitty'
   | 'ghostty'
+  | 'cmux'
   | 'powershell'
   | 'cmd'
   | 'custom'

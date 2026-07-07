@@ -67,6 +67,9 @@ function launchTerminal(
       case 'ghostty':
         spawnDetached('open', ['-a', 'Ghostty', targetPath], { detached: true })
         break
+      case 'cmux':
+        spawnDetached('open', ['-a', 'cmux', targetPath], { detached: true })
+        break
       default:
         spawnDetached('open', ['-a', 'Terminal', targetPath], { detached: true })
     }
