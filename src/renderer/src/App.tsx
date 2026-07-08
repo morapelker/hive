@@ -3,6 +3,7 @@ import { isHiveTelemetryEnabled, refreshHiveEnterpriseOrg } from '@/api/hive-ent
 import { AppLayout } from '@/components/layout'
 import { ErrorBoundary } from '@/components/error'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { reportActiveAccountsSnapshot } from '@/lib/hive-account-report'
 import { initPlatform } from '@/lib/platform'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useTipStore } from '@/stores/useTipStore'
@@ -28,6 +29,7 @@ function App(): React.JSX.Element {
     if (!isHiveTelemetryEnabled({ hiveAuthToken, hiveOrganizationId })) return
     didRefreshHiveOrg.current = true
     void refreshHiveEnterpriseOrg()
+    void reportActiveAccountsSnapshot()
   }, [hiveAuthToken, hiveOrganizationId, settingsLoading])
 
   if (!ready) return <div />

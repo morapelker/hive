@@ -10,6 +10,7 @@ import type {
 } from '@shared/types/usage'
 import { accountApi } from '@/api/account-api'
 import { usageApi } from '@/api/usage-api'
+import { reportActiveAccountsSnapshot } from '@/lib/hive-account-report'
 import { toast } from '@/lib/toast'
 import { useLoginStore } from './useLoginStore'
 import { useAccountStore } from './useAccountStore'
@@ -236,6 +237,7 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
             .getState()
             .fetchEmail(provider)
             .catch(() => {})
+          void reportActiveAccountsSnapshot()
           await get()
             .loadSavedAccounts(provider)
             .catch(() => {})

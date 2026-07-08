@@ -5,8 +5,11 @@ import {
   recordHivePromptStart,
   recordHiveQuestionsAnswered
 } from '@/api/hive-enterprise/client'
+import { reportActiveAccountsSnapshot } from '@/lib/hive-account-report'
 import { currentPromptIdBySession } from '@/lib/message-send-times'
 import { computeTokenFieldDelta } from '@/lib/token-baselines'
+import { isClaudeFamily } from '@shared/types/agent-sdk'
+import { useAccountStore } from '@/stores/useAccountStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useContextStore } from '@/stores/useContextStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
@@ -81,6 +84,30 @@ export interface HivePromptMetadata {
   handoffSessionId: string | null
   loggedAt: string
   connectionProjects: string | null
+}
+
+type HiveAccountProvider = 'anthropic' | 'openai'
+
+/**
+ * Map a prompt's session SDK to the provider whose active-account email
+ * should be stamped on the prompt row. Only Claude-family (`claude-code`,
+ * `claude-code-cli`) and `codex` sessions have an unambiguous active account
+ * to attribute to; `opencode`/`terminal`/unknown SDKs stamp null rather than
+ * guess. Deliberately NOT `resolveUsageProvider` (useUsageStore.ts) — that
+ * helper defaults unknown SDKs to `'anthropic'`, which is a reasonable guess
+ * for "which usage bar to show" but wrong for a durable attribution record.
+ */
+export function resolveHivePromptAccountProvider(
+  agentSdk: string | null | undefined
+): HiveAccountProvider | null {
+  if (isClaudeFamily(agentSdk)) return 'anthropic'
+  if (agentSdk === 'codex') return 'openai'
+  return null
+}
+
+function readHiveAccountEmail(provider: HiveAccountProvider): string | null {
+  const state = useAccountStore.getState()
+  return provider === 'anthropic' ? state.anthropicEmail : state.openaiEmail
 }
 
 const handoffSessionIdByChildSession = new Map<string, string>()
@@ -182,9 +209,22 @@ export function startHivePromptTelemetry(input: StartHivePromptTelemetryInput): 
   const source = input.source ?? deriveBoardSource()
 
   void (async () => {
+    void reportActiveAccountsSnapshot()
+
     const remote = worktree?.path
       ? await gitApi.getRemoteUrl(worktree.path, 'origin').catch(() => null)
       : null
+
+    // Stamp the prompt row with the active account for the session's SDK, if
+    // any. The email may not be loaded yet (e.g. app just launched), so give
+    // it one fetchEmail retry before giving up and stamping null.
+    const accountProvider = resolveHivePromptAccountProvider(session?.agent_sdk)
+    let accountEmail = accountProvider ? readHiveAccountEmail(accountProvider) : null
+    if (accountProvider && !accountEmail) {
+      await useAccountStore.getState().fetchEmail(accountProvider).catch(() => {})
+      accountEmail = readHiveAccountEmail(accountProvider)
+    }
+    accountEmail = accountEmail ? accountEmail.toLowerCase() : null
 
     // The server generates the prompt id and returns it; store it so the
     // matching idle event can correlate. A null id means nothing was recorded.
@@ -199,6 +239,8 @@ export function startHivePromptTelemetry(input: StartHivePromptTelemetryInput): 
       gitRemoteUrl: remote?.success ? (remote.url ?? null) : null,
       contextLength,
       source,
+      accountEmail,
+      accountProvider: accountEmail ? accountProvider : null,
       ...metadata
     })
     if (promptId) currentPromptIdBySession.set(input.sessionId, promptId)
