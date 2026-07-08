@@ -11,9 +11,13 @@ afterEach(() => {
   cleanup()
 })
 
+const inOneHour = (): string => new Date(Date.now() + 60 * 60 * 1000).toISOString()
+const inOneDay = (): string => new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+const oneHourAgo = (): string => new Date(Date.now() - 60 * 60 * 1000).toISOString()
+
 const sampleUsage: UsageData = {
-  five_hour: { utilization: 20, resets_at: '2026-05-14T12:00:00.000Z' },
-  seven_day: { utilization: 10, resets_at: '2026-05-15T12:00:00.000Z' }
+  five_hour: { utilization: 20, resets_at: inOneHour() },
+  seven_day: { utilization: 10, resets_at: inOneDay() }
 }
 
 describe('UsageAccountRow', () => {
@@ -44,7 +48,7 @@ describe('UsageAccountRow', () => {
           email: 'noa@example.com',
           usage: {
             five_hour: { utilization: 0, resets_at: null },
-            seven_day: { utilization: 66, resets_at: '2026-07-10T01:59:59.000Z' }
+            seven_day: { utilization: 66, resets_at: inOneDay() }
           },
           status: 'ok',
           lastError: null,
@@ -56,6 +60,56 @@ describe('UsageAccountRow', () => {
     )
 
     expect(screen.getByText('66%')).toBeTruthy()
+    expect(screen.getByText('N/A')).toBeTruthy()
+  })
+
+  it('shows N/A and an empty bar for a window whose reset time is in the past', () => {
+    render(
+      <UsageAccountRow
+        row={{
+          id: 'acc-stale-window',
+          email: 'stale@example.com',
+          usage: {
+            five_hour: { utilization: 42, resets_at: oneHourAgo() },
+            seven_day: { utilization: 66, resets_at: inOneDay() }
+          },
+          status: 'ok',
+          lastError: null,
+          isActive: false,
+          isRefreshing: false
+        }}
+      />
+    )
+
+    // Stale five_hour window: percent and reset time are both replaced
+    expect(screen.queryByText('42%')).toBeNull()
+    expect(screen.getByText('0%')).toBeTruthy()
+    expect(screen.getByText('N/A')).toBeTruthy()
+    // Fresh seven_day window still renders normally
+    expect(screen.getByText('66%')).toBeTruthy()
+  })
+
+  it('shows N/A and an empty bar for a scoped entry whose reset time is in the past', () => {
+    render(
+      <UsageAccountRow
+        row={{
+          id: 'acc-stale-scoped',
+          email: 'stale-scoped@example.com',
+          usage: {
+            ...sampleUsage,
+            scoped: [{ label: 'Fable', used_percent: 55, resets_at: oneHourAgo() }]
+          },
+          status: 'ok',
+          lastError: null,
+          isActive: false,
+          isRefreshing: false
+        }}
+      />
+    )
+
+    expect(screen.getByText('Fable')).toBeTruthy()
+    expect(screen.queryByText('55%')).toBeNull()
+    expect(screen.getByText('0%')).toBeTruthy()
     expect(screen.getByText('N/A')).toBeTruthy()
   })
 

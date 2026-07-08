@@ -76,6 +76,27 @@ function formatResetTime(
   return `${month} ${day}, ${timeStr}`
 }
 
+// A reset time already in the past means the snapshot predates the window's
+// reset — the utilization no longer reflects reality, so callers show N/A and
+// an empty bar instead of a confidently-wrong percentage. null is NOT stale:
+// it means "no active window" (see formatResetTime).
+function isResetInPast(isoString: string | null | undefined): boolean {
+  if (!isoString) return false
+  const time = new Date(isoString).getTime()
+  return !isNaN(time) && time < Date.now()
+}
+
+function usageWindowDisplay(
+  window: { utilization: number; resets_at: string | null } | undefined,
+  type: 'five_hour' | 'seven_day'
+): { percent: number; resetTime: string } {
+  if (!window || isResetInPast(window.resets_at)) return { percent: 0, resetTime: 'N/A' }
+  return {
+    percent: Math.round(window.utilization),
+    resetTime: formatResetTime(window.resets_at, type)
+  }
+}
+
 function formatRelativeReset(resetsAt: number): string {
   const seconds = Math.max(0, Math.ceil(resetsAt - Date.now() / 1000))
   const hours = Math.floor(seconds / 3600)
@@ -206,14 +227,8 @@ export function UsageAccountRow({
   members,
   membersLoading = false
 }: UsageAccountRowProps): React.JSX.Element {
-  const fiveHourPercent = row.usage ? Math.round(row.usage.five_hour.utilization) : 0
-  const sevenDayPercent = row.usage ? Math.round(row.usage.seven_day.utilization) : 0
-  const fiveHourReset = row.usage
-    ? formatResetTime(row.usage.five_hour.resets_at, 'five_hour')
-    : 'N/A'
-  const sevenDayReset = row.usage
-    ? formatResetTime(row.usage.seven_day.resets_at, 'seven_day')
-    : 'N/A'
+  const fiveHour = usageWindowDisplay(row.usage?.five_hour, 'five_hour')
+  const sevenDay = usageWindowDisplay(row.usage?.seven_day, 'seven_day')
   const scoped = row.usage?.scoped ?? []
 
   return (
@@ -243,17 +258,23 @@ export function UsageAccountRow({
       )}
 
       <div className={cn('mt-1 space-y-0.5', row.status === 'stale' && 'opacity-50')}>
-        <UsageRow label="5h" percent={fiveHourPercent} resetTime={fiveHourReset} />
-        <UsageRow label="7d" percent={sevenDayPercent} resetTime={sevenDayReset} />
-        {scoped.map((entry) => (
-          <UsageRow
-            key={entry.label}
-            label={entry.label}
-            percent={Math.round(entry.used_percent)}
-            resetTime={entry.resets_at ? formatResetTime(entry.resets_at, 'seven_day') : 'N/A'}
-            labelClassName="w-10"
-          />
-        ))}
+        <UsageRow label="5h" percent={fiveHour.percent} resetTime={fiveHour.resetTime} />
+        <UsageRow label="7d" percent={sevenDay.percent} resetTime={sevenDay.resetTime} />
+        {scoped.map((entry) => {
+          const display = usageWindowDisplay(
+            { utilization: entry.used_percent, resets_at: entry.resets_at },
+            'seven_day'
+          )
+          return (
+            <UsageRow
+              key={entry.label}
+              label={entry.label}
+              percent={display.percent}
+              resetTime={display.resetTime}
+              labelClassName="w-10"
+            />
+          )
+        })}
       </div>
 
       {(onSwitch || onRefresh || onSignInAgain) && (
@@ -576,10 +597,8 @@ function ProviderUsageBlock({
     )
   }
 
-  const fiveHourPercent = Math.round(usage.five_hour.utilization)
-  const sevenDayPercent = Math.round(usage.seven_day.utilization)
-  const fiveHourReset = formatResetTime(usage.five_hour.resets_at, 'five_hour')
-  const sevenDayReset = formatResetTime(usage.seven_day.resets_at, 'seven_day')
+  const fiveHour = usageWindowDisplay(usage.five_hour, 'five_hour')
+  const sevenDay = usageWindowDisplay(usage.seven_day, 'seven_day')
   const extra = usage.extra_usage
   const fiveHourRateLimit =
     provider === 'anthropic' ? getRateLimitWindow(anthropicRateLimit, 'five_hour') : undefined
@@ -614,14 +633,14 @@ function ProviderUsageBlock({
             <div className="flex-1 space-y-0.5">
               <UsageRow
                 label="5h"
-                percent={fiveHourPercent}
-                resetTime={fiveHourReset}
+                percent={fiveHour.percent}
+                resetTime={fiveHour.resetTime}
                 rateLimit={fiveHourRateLimit}
               />
               <UsageRow
                 label="7d"
-                percent={sevenDayPercent}
-                resetTime={sevenDayReset}
+                percent={sevenDay.percent}
+                resetTime={sevenDay.resetTime}
                 rateLimit={sevenDayRateLimit}
               />
             </div>
