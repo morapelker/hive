@@ -634,12 +634,21 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
         return
       }
 
+      // Cmd+click on a connection ticket — select the connection in the
+      // sidebar (same as ConnectionItem.handleClick), don't open the session
+      const ticketConnectionId = connectionId ?? connectionSession?.connectionId
+      if ((e.metaKey || e.ctrlKey) && ticketConnectionId && !isArchived) {
+        e.preventDefault()
+        useConnectionStore.getState().selectConnection(ticketConnectionId)
+        return
+      }
+
       useKanbanStore.getState().setSelectedTicketRef({
         projectId: ticket.project_id,
         ticketId: ticket.id
       })
     },
-    [ticket.id, ticket.worktree_id, ticket.project_id, isArchived, isPinnedMode, recordBoardTelegramTarget, blockingDiagnostic]
+    [ticket.id, ticket.worktree_id, ticket.project_id, isArchived, isPinnedMode, connectionId, connectionSession, recordBoardTelegramTarget, blockingDiagnostic]
   )
 
   // ── Middle-click — select attached worktree (same as sidebar) ─
