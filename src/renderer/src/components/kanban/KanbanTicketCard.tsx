@@ -38,7 +38,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip
 import { Button } from '@/components/ui/button'
 import { NoteEditorModal } from './NoteEditorModal'
 import { MoveToProjectModal } from './MoveToProjectModal'
-import { cn } from '@/lib/utils'
+import { cn, parseColorQuad } from '@/lib/utils'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { opencodeApi } from '@/api/opencode-api'
 import { systemApi } from '@/api/system-api'
@@ -341,6 +341,17 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
         if (!connectionSession) return null
         const conn = state.connections.find((c) => c.id === connectionSession.connectionId)
         return conn?.custom_name || conn?.name || null
+      },
+      [connectionSession]
+    )
+  )
+
+  const connectionColor = useConnectionStore(
+    useCallback(
+      (state) => {
+        if (!connectionSession) return null
+        const conn = state.connections.find((c) => c.id === connectionSession.connectionId)
+        return conn?.color ?? null
       },
       [connectionSession]
     )
@@ -1034,10 +1045,25 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
 
                 {/* Connection badge — shown on project board when ticket has connection session */}
                 {!connectionId && connectionName && (
-                  <span className="inline-flex items-center gap-1 rounded-full bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
-                    <LinkIcon className="h-3 w-3" />
-                    {connectionName}
-                  </span>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span
+                        data-testid="kanban-ticket-connection"
+                        className="inline-flex items-center rounded-full bg-muted/40 px-2 py-0.5 cursor-help"
+                      >
+                        {connectionColor ? (
+                          <span
+                            className="h-2.5 w-2.5 rounded-full shrink-0"
+                            style={{ backgroundColor: parseColorQuad(connectionColor)[1] }}
+                            aria-hidden="true"
+                          />
+                        ) : (
+                          <LinkIcon className="h-3 w-3 text-muted-foreground" />
+                        )}
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent>{connectionName}</TooltipContent>
+                  </Tooltip>
                 )}
 
                 {/* PR badge */}
