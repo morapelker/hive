@@ -537,7 +537,11 @@ export const startDesktopBackend = async (
 
   const log = deps.logger ?? defaultLog
   const headless = input.headless ?? false
-  const baseDir = input.baseDir ?? join(app.getPath('home'), '.hive')
+  // HIVE_DESKTOP_BASE_DIR redirects the backend's data dir (and thus its
+  // hive.db) for E2E/dev runs. `app.getPath('home')` ignores $HOME on macOS
+  // (getpwuid), so without this a dev build always opens the real user DB.
+  const baseDir =
+    input.baseDir ?? process.env.HIVE_DESKTOP_BASE_DIR ?? join(app.getPath('home'), '.hive')
   // `dev:web` pins the backend to a known free port via HIVE_DESKTOP_BACKEND_PORT so
   // its Vite dev server can target it. When set, scan only that single port.
   const pinnedPort = parseDesktopBackendPortEnv(process.env.HIVE_DESKTOP_BACKEND_PORT)

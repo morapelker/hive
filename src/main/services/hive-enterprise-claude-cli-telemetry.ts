@@ -3,6 +3,7 @@ import { APP_SETTINGS_DB_KEY, DEFAULT_HIVE_ENTERPRISE_SERVER_URL } from '@shared
 import type { DatabaseService } from '../db/database'
 import { getDatabase } from '../db'
 import type { Project } from '../db/types'
+import { getClaudeAccountEmail } from './account-service'
 import { GitService } from './git-service'
 import { createLogger } from './logger'
 import { isTaskNotificationPrompt } from './claude-cli-subagent-tracker'
@@ -71,6 +72,11 @@ interface PromptStartInput {
   handoffSessionId: string | null
   loggedAt: string
   connectionProjects: string | null
+  // Stamp only — the server-side touch on this mutation refreshes the
+  // matching member_active_accounts row's last_seen_at. This hook is Claude
+  // CLI-only, so a resolved email always means the 'anthropic' provider.
+  accountEmail: string | null
+  accountProvider: string | null
 }
 
 interface PromptIdleInput {
@@ -330,6 +336,7 @@ async function buildPromptStartInput(
     (worktree?.project_id ? db.getProject(worktree.project_id) : null) ??
     (session?.project_id ? db.getProject(session.project_id) : null)
   const transcript = readTranscript(transcriptPath)
+  const accountEmail = await getClaudeAccountEmail().catch(() => null)
 
   return {
     baseline: tokenCountersFromClaudeTranscript(transcript),
@@ -351,7 +358,9 @@ async function buildPromptStartInput(
       isGoalPrompt: prompt.trimStart().startsWith('/goal'),
       handoffSessionId: null,
       loggedAt: now.toISOString(),
-      connectionProjects: connectionProjects(db, session?.connection_id ?? null)
+      connectionProjects: connectionProjects(db, session?.connection_id ?? null),
+      accountEmail,
+      accountProvider: accountEmail ? 'anthropic' : null
     }
   }
 }

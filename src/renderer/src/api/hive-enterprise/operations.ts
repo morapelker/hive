@@ -44,3 +44,29 @@ export const RecordQuestionsAnsweredDocument = /* GraphQL */ `
     }
   }
 `
+
+export const ReportActiveAccountsDocument = /* GraphQL */ `
+  mutation HiveEnterpriseReportActiveAccounts($accounts: [ActiveAccountInput!]!) {
+    reportActiveAccounts(accounts: $accounts) {
+      recorded
+      storePrompts
+      recordQuestions
+    }
+  }
+`
+
+export const ListAccountMembersDocument = /* GraphQL */ `
+  query HiveEnterpriseListAccountMembers {
+    listAccountMembers {
+      provider
+      accountEmail
+      lastSeenAt
+      member {
+        id
+        email
+        name
+        picture
+      }
+    }
+  }
+`

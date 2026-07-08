@@ -20,6 +20,14 @@ vi.mock('../git-service', () => ({
   }))
 }))
 
+const accountServiceMocks = vi.hoisted(() => ({
+  getClaudeAccountEmail: vi.fn()
+}))
+
+vi.mock('../account-service', () => ({
+  getClaudeAccountEmail: accountServiceMocks.getClaudeAccountEmail
+}))
+
 // The server now generates the prompt id and returns it from recordPromptStart.
 const SERVER_PROMPT_ID = 'ServerGenerated123_prompt'
 
@@ -167,6 +175,7 @@ describe('Claude CLI Hive Enterprise telemetry', () => {
       url: 'git@github.com:example/hive.git',
       remote: 'origin'
     })
+    accountServiceMocks.getClaudeAccountEmail.mockResolvedValue('alice@example.com')
     requestGraphql.mockResolvedValue({
       recordPromptStart: { recorded: true, promptId: SERVER_PROMPT_ID }
     })
@@ -220,11 +229,63 @@ describe('Claude CLI Hive Enterprise telemetry', () => {
           isGoalPrompt: false,
           contextLength: 127,
           loggedAt: '2026-06-07T10:00:00.000Z',
-          connectionProjects: JSON.stringify([{ name: 'Hive Electron', path: '/repo' }])
+          connectionProjects: JSON.stringify([{ name: 'Hive Electron', path: '/repo' }]),
+          accountEmail: 'alice@example.com',
+          accountProvider: 'anthropic'
         })
       }
     )
     expect(requestGraphql.mock.calls[0][3].input).not.toHaveProperty('promptId')
+  })
+
+  it('stamps null account fields when no Claude account email can be resolved', async () => {
+    accountServiceMocks.getClaudeAccountEmail.mockResolvedValue(null)
+    const transcriptPath = makeTranscript('')
+    const db = makeDb({
+      hiveEnterpriseServerUrl: 'https://enterprise.example.com',
+      hiveAuthToken: 'token-1',
+      hiveOrganizationId: 'org-1'
+    })
+
+    await handleClaudeCliHiveTelemetryHook(
+      'hive-session-1',
+      {
+        hook_event_name: 'UserPromptSubmit',
+        prompt: 'No account logged in',
+        transcript_path: transcriptPath
+      },
+      { db, requestGraphql }
+    )
+
+    expect(requestGraphql.mock.calls[0][3].input).toMatchObject({
+      accountEmail: null,
+      accountProvider: null
+    })
+  })
+
+  it('stamps null account fields when the Claude account email read fails', async () => {
+    accountServiceMocks.getClaudeAccountEmail.mockRejectedValue(new Error('keychain unavailable'))
+    const transcriptPath = makeTranscript('')
+    const db = makeDb({
+      hiveEnterpriseServerUrl: 'https://enterprise.example.com',
+      hiveAuthToken: 'token-1',
+      hiveOrganizationId: 'org-1'
+    })
+
+    await handleClaudeCliHiveTelemetryHook(
+      'hive-session-1',
+      {
+        hook_event_name: 'UserPromptSubmit',
+        prompt: 'Account read fails',
+        transcript_path: transcriptPath
+      },
+      { db, requestGraphql }
+    )
+
+    expect(requestGraphql.mock.calls[0][3].input).toMatchObject({
+      accountEmail: null,
+      accountProvider: null
+    })
   })
 
   it('sends zero context length when the Claude CLI transcript has no prior assistant context', async () => {

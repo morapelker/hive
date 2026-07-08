@@ -15,6 +15,23 @@ export type Scalars = {
   InteractId: { input: string; output: string; }
 };
 
+export type GqlAccountMemberEntry = {
+  __typename?: 'AccountMemberEntry';
+  accountEmail: Scalars['String']['output'];
+  lastSeenAt: Scalars['String']['output'];
+  member: GqlMember;
+  provider: GqlAccountProvider;
+};
+
+export type GqlAccountProvider =
+  | 'anthropic'
+  | 'openai';
+
+export type GqlActiveAccountInput = {
+  email: Scalars['String']['input'];
+  provider: GqlAccountProvider;
+};
+
 export type GqlInvite = {
   __typename?: 'Invite';
   acceptedAt?: Maybe<Scalars['String']['output']>;
@@ -45,6 +62,7 @@ export type GqlMutation = {
   recordPromptStart: GqlPromptStartResult;
   recordQuestionsAnswered: GqlQuestionAnsweredResult;
   removeMember: Scalars['Boolean']['output'];
+  reportActiveAccounts: GqlReportActiveAccountsResult;
 };
 
 
@@ -78,6 +96,11 @@ export type GqlMutationRemoveMemberArgs = {
   userId: Scalars['InteractId']['input'];
 };
 
+
+export type GqlMutationReportActiveAccountsArgs = {
+  accounts: Array<GqlActiveAccountInput>;
+};
+
 export type GqlOrganization = {
   __typename?: 'Organization';
   id: Scalars['InteractId']['output'];
@@ -102,6 +125,8 @@ export type GqlPromptMutationResult = {
 };
 
 export type GqlPromptStartInput = {
+  accountEmail?: InputMaybe<Scalars['String']['input']>;
+  accountProvider?: InputMaybe<Scalars['String']['input']>;
   connectionProjects?: InputMaybe<Scalars['String']['input']>;
   contextLength?: InputMaybe<Scalars['Int']['input']>;
   gitRemoteUrl?: InputMaybe<Scalars['String']['input']>;
@@ -133,6 +158,7 @@ export type GqlPromptStartResult = {
 
 export type GqlQuery = {
   __typename?: 'Query';
+  listAccountMembers: Array<GqlAccountMemberEntry>;
   listInvites: Array<GqlInvite>;
   listMembers: Array<GqlMember>;
   listOrganizations: Array<GqlOrganization>;
@@ -159,6 +185,13 @@ export type GqlQuestionAnsweredInput = {
 
 export type GqlQuestionAnsweredResult = {
   __typename?: 'QuestionAnsweredResult';
+  recordQuestions: Scalars['Boolean']['output'];
+  recorded: Scalars['Boolean']['output'];
+  storePrompts: Scalars['Boolean']['output'];
+};
+
+export type GqlReportActiveAccountsResult = {
+  __typename?: 'ReportActiveAccountsResult';
   recordQuestions: Scalars['Boolean']['output'];
   recorded: Scalars['Boolean']['output'];
   storePrompts: Scalars['Boolean']['output'];
@@ -243,4 +276,38 @@ export type GqlHiveEnterpriseRecordQuestionsAnsweredMutation = (
     { __typename?: 'QuestionAnsweredResult' }
     & Pick<GqlQuestionAnsweredResult, 'recorded' | 'storePrompts' | 'recordQuestions'>
   ) }
+);
+
+export type GqlHiveEnterpriseReportActiveAccountsMutationVariables = Exact<{
+  accounts: Array<GqlActiveAccountInput> | GqlActiveAccountInput;
+}>;
+
+
+export type GqlHiveEnterpriseReportActiveAccountsMutation = (
+  { __typename?: 'Mutation' }
+  & { reportActiveAccounts: (
+    { __typename?: 'ReportActiveAccountsResult' }
+    & Pick<GqlReportActiveAccountsResult, 'recorded' | 'storePrompts' | 'recordQuestions'>
+  ) }
+);
+
+export type GqlHiveEnterpriseListAccountMembersQueryVariables = Exact<{ [key: string]: never; }>;
+
+
+export type GqlHiveEnterpriseListAccountMembersQuery = (
+  { __typename?: 'Query' }
+  & { listAccountMembers: Array<(
+    { __typename?: 'AccountMemberEntry' }
+    & Pick<GqlAccountMemberEntry, 'provider' | 'accountEmail' | 'lastSeenAt'>
+    & { member: (
+      { __typename?: 'Member' }
+      & Pick<
+        GqlMember,
+        | 'id'
+        | 'email'
+        | 'name'
+        | 'picture'
+      >
+    ) }
+  )> }
 );
