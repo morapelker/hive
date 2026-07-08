@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { APP_SETTINGS_DB_KEY, DEFAULT_HIVE_ENTERPRISE_SERVER_URL } from '@shared/types/settings'
 import type { DatabaseService } from '../db/database'
 import { getDatabase } from '../db'
@@ -160,6 +161,33 @@ function readTranscript(path: string | null): string {
   }
 }
 
+/**
+ * Task subagents write their usage to separate transcripts under
+ * `<sessionDir>/subagents/agent-*.jsonl` (nested subagents included, flat),
+ * never to the main transcript — for a main transcript at
+ * `<dir>/<sessionId>.jsonl` the session dir is `<dir>/<sessionId>/`.
+ */
+function subagentTranscriptPaths(transcriptPath: string | null): string[] {
+  if (!transcriptPath || !transcriptPath.endsWith('.jsonl')) return []
+  const subagentsDir = join(transcriptPath.slice(0, -'.jsonl'.length), 'subagents')
+  try {
+    return readdirSync(subagentsDir)
+      .filter((name) => name.endsWith('.jsonl'))
+      .map((name) => join(subagentsDir, name))
+  } catch {
+    return []
+  }
+}
+
+/** Sum assistant usage across the main transcript and all subagent transcripts. */
+export function tokenCountersFromTranscriptFiles(transcriptPath: string | null): TokenCounters {
+  let total = tokenCountersFromClaudeTranscript(readTranscript(transcriptPath))
+  for (const subagentPath of subagentTranscriptPaths(transcriptPath)) {
+    total = addCounters(total, tokenCountersFromClaudeTranscript(readTranscript(subagentPath)))
+  }
+  return total
+}
+
 async function waitForTranscriptUsageDelta(
   transcriptPath: string | null,
   baseline: TokenCounters
@@ -168,10 +196,7 @@ async function waitForTranscriptUsageDelta(
   let delta = zeroCounters()
 
   for (let attempt = 0; attempt <= attempts; attempt++) {
-    delta = subtractCounters(
-      tokenCountersFromClaudeTranscript(readTranscript(transcriptPath)),
-      baseline
-    )
+    delta = subtractCounters(tokenCountersFromTranscriptFiles(transcriptPath), baseline)
     if (tokenTotal(delta) > 0 || !transcriptPath || attempt === attempts) {
       return delta
     }
@@ -332,7 +357,7 @@ async function buildPromptStartInput(
   const transcript = readTranscript(transcriptPath)
 
   return {
-    baseline: tokenCountersFromClaudeTranscript(transcript),
+    baseline: tokenCountersFromTranscriptFiles(transcriptPath),
     input: {
       prompt,
       sessionId,
