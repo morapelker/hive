@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import {
   useUsageStore,
   useAccountStore,
@@ -10,6 +10,9 @@ import {
 } from '@/stores'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
+import { reportActiveAccountsSnapshot } from '@/lib/hive-account-report'
+import { fetchHiveAccountMembers, isHiveTelemetryEnabled } from '@/api/hive-enterprise/client'
+import { MemberAvatarStack, type AccountMemberInfo } from './MemberAvatarStack'
 import { cn } from '@/lib/utils'
 import { Loader2, RefreshCw } from 'lucide-react'
 import claudeIcon from '@/assets/model-icons/claude.svg'
@@ -189,6 +192,8 @@ export interface UsageAccountRowProps {
   onSwitch?: () => void
   onRefresh?: () => void
   onSignInAgain?: () => void
+  members?: AccountMemberInfo[]
+  membersLoading?: boolean
 }
 
 export function UsageAccountRow({
@@ -197,7 +202,9 @@ export function UsageAccountRow({
   isLoginActive = false,
   onSwitch,
   onRefresh,
-  onSignInAgain
+  onSignInAgain,
+  members,
+  membersLoading = false
 }: UsageAccountRowProps): React.JSX.Element {
   const fiveHourPercent = row.usage ? Math.round(row.usage.five_hour.utilization) : 0
   const sevenDayPercent = row.usage ? Math.round(row.usage.seven_day.utilization) : 0
@@ -220,6 +227,7 @@ export function UsageAccountRow({
         >
           {row.email ?? 'Active account'}
         </div>
+        <MemberAvatarStack members={members} loading={membersLoading} />
         {row.isActive && (
           <span className="shrink-0 rounded-full bg-primary/15 px-1.5 py-0.5 text-[9px] font-medium text-primary">
             Active
@@ -329,6 +337,68 @@ function getVisibleProviders(
   return PROVIDER_ORDER.filter((p) => selectedProviders.includes(p))
 }
 
+interface AccountMembersMapState {
+  membersByAccount: Map<string, AccountMemberInfo[]> | null
+  loading: boolean
+  refresh: () => void
+}
+
+/**
+ * Fresh-fetch-on-hover for the popover's member avatar stack. Every hover
+ * (mouseenter/focus on either HoverCard trigger) calls `refresh()`, which
+ * re-fetches the full org mapping and rebuilds a `provider:email` (lowercase)
+ * -> members lookup. No launch fetch, no TTL cache — intentionally always
+ * fresh per the product decision that staleness here is confusing (a member
+ * could have switched accounts seconds ago).
+ */
+function useAccountMembersMap(): AccountMembersMapState {
+  const [membersByAccount, setMembersByAccount] = useState<Map<
+    string,
+    AccountMemberInfo[]
+  > | null>(null)
+  const [loading, setLoading] = useState(false)
+  const loadingRef = useRef(false)
+  const mountedRef = useRef(true)
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
+
+  const refresh = useCallback((): void => {
+    if (loadingRef.current) return
+    if (!isHiveTelemetryEnabled(useSettingsStore.getState())) return
+
+    loadingRef.current = true
+    setLoading(true)
+    void fetchHiveAccountMembers()
+      .then((entries) => {
+        const map = new Map<string, AccountMemberInfo[]>()
+        for (const entry of entries ?? []) {
+          const key = `${entry.provider}:${entry.accountEmail.toLowerCase()}`
+          const info: AccountMemberInfo = {
+            id: entry.member.id,
+            email: entry.member.email,
+            name: entry.member.name ?? null,
+            picture: entry.member.picture ?? null
+          }
+          const existing = map.get(key)
+          if (existing) existing.push(info)
+          else map.set(key, [info])
+        }
+        if (mountedRef.current) setMembersByAccount(map)
+      })
+      .finally(() => {
+        loadingRef.current = false
+        if (mountedRef.current) setLoading(false)
+      })
+  }, [])
+
+  return { membersByAccount, loading, refresh }
+}
+
 function ProviderUsageBlock({
   provider,
   isExplicitlySelected
@@ -364,6 +434,12 @@ function ProviderUsageBlock({
   const fetchEmail = useAccountStore((s) => s.fetchEmail)
   const startLogin = useLoginStore((s) => s.startLogin)
   const isLoginActive = useLoginStore((s) => s.activeLogin !== null)
+  const telemetryEnabled = useSettingsStore((s) => isHiveTelemetryEnabled(s))
+  const {
+    membersByAccount,
+    loading: membersLoading,
+    refresh: refreshMembers
+  } = useAccountMembersMap()
 
   const usage = normalizeUsage(provider, anthropicUsage, openaiUsage)
 
@@ -397,7 +473,7 @@ function ProviderUsageBlock({
 
   const handleRefreshActive = (): void => {
     forceRefreshProvider(provider)
-    fetchEmail(provider)
+    void fetchEmail(provider).then(() => reportActiveAccountsSnapshot())
   }
 
   const handleRefreshAll = (event: React.MouseEvent): void => {
@@ -407,6 +483,12 @@ function ProviderUsageBlock({
 
   const handleLoadSavedAccounts = (): void => {
     loadSavedAccounts(provider).catch(() => {})
+    refreshMembers()
+  }
+
+  const membersFor = (rowEmail: string | null): AccountMemberInfo[] | undefined => {
+    if (!telemetryEnabled) return undefined
+    return membersByAccount?.get(`${provider}:${rowEmail?.toLowerCase() ?? ''}`) ?? []
   }
 
   useEffect(() => {
@@ -474,6 +556,8 @@ function ProviderUsageBlock({
                       : undefined
                   }
                   onSignInAgain={() => startLogin(provider, row.email ?? undefined)}
+                  members={membersFor(row.email)}
+                  membersLoading={membersLoading}
                 />
               ))
             ) : (
@@ -570,6 +654,8 @@ function ProviderUsageBlock({
                   : undefined
               }
               onSignInAgain={() => startLogin(provider, row.email ?? undefined)}
+              members={membersFor(row.email)}
+              membersLoading={membersLoading}
             />
           ))}
           {provider === 'anthropic' && extra?.is_enabled && (
@@ -649,6 +735,9 @@ export function UsageIndicator(): React.JSX.Element | null {
       fetchUsageForProvider(p)
       fetchEmail(p)
     })
+    // Deduped heartbeat carrier — reportActiveAccountsSnapshot itself owns the
+    // change-detection and 1h-heartbeat gating, this is just another trigger.
+    void reportActiveAccountsSnapshot()
   }, [activeSessionId, setActiveProvider, fetchUsageForProvider, fetchEmail, loadSavedAccounts])
 
   const visibleProviders = getVisibleProviders(

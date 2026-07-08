@@ -1,19 +1,24 @@
 import { GraphQLClient } from 'graphql-request'
 import { useSettingsStore, type AppSettings } from '@/stores/useSettingsStore'
 import {
+  ListAccountMembersDocument,
   MeDocument,
   RecordPromptIdleDocument,
   RecordPromptStartDocument,
-  RecordQuestionsAnsweredDocument
+  RecordQuestionsAnsweredDocument,
+  ReportActiveAccountsDocument
 } from './operations'
 import type {
+  GqlHiveEnterpriseListAccountMembersQuery,
   GqlHiveEnterpriseMeQuery,
   GqlHiveEnterpriseRecordPromptIdleMutation,
   GqlHiveEnterpriseRecordPromptIdleMutationVariables,
   GqlHiveEnterpriseRecordPromptStartMutation,
   GqlHiveEnterpriseRecordPromptStartMutationVariables,
   GqlHiveEnterpriseRecordQuestionsAnsweredMutation,
-  GqlHiveEnterpriseRecordQuestionsAnsweredMutationVariables
+  GqlHiveEnterpriseRecordQuestionsAnsweredMutationVariables,
+  GqlHiveEnterpriseReportActiveAccountsMutation,
+  GqlHiveEnterpriseReportActiveAccountsMutationVariables
 } from './generated'
 
 type TelemetryGateSettings = Pick<AppSettings, 'hiveAuthToken' | 'hiveOrganizationId'>
@@ -110,6 +115,57 @@ export async function recordHiveQuestionsAnswered(
     await reconcileOrgSettings(data.recordQuestionsAnswered)
   } catch (error) {
     console.warn('[HiveEnterprise] recordQuestionsAnswered failed:', error)
+  }
+}
+
+/**
+ * Report the caller's current active account(s) so hive-enterprise can keep
+ * its member↔account mapping fresh. The server upserts one row per (member,
+ * provider) — this always sends the full snapshot, never a partial diff — and
+ * echoes org settings back like the other telemetry mutations. Cadence
+ * (immediate-on-change vs hourly heartbeat) and dedupe live in the caller
+ * (`hive-account-report.ts`); this helper is a thin, fire-and-forget-safe
+ * transport that just reports success/failure.
+ */
+export async function reportHiveActiveAccounts(
+  accounts: GqlHiveEnterpriseReportActiveAccountsMutationVariables['accounts']
+): Promise<boolean> {
+  const settings = useSettingsStore.getState()
+  if (!isHiveTelemetryEnabled(settings)) return false
+  try {
+    const data = await requestWithRefresh<
+      GqlHiveEnterpriseReportActiveAccountsMutation,
+      GqlHiveEnterpriseReportActiveAccountsMutationVariables
+    >(ReportActiveAccountsDocument, { accounts })
+    await reconcileOrgSettings(data.reportActiveAccounts)
+    return data.reportActiveAccounts.recorded
+  } catch (error) {
+    console.warn('[HiveEnterprise] reportActiveAccounts failed:', error)
+    return false
+  }
+}
+
+/**
+ * Fetch the org's member↔active-account mapping for the usage popover's
+ * avatar stack. Every org member (dev role included) can read this — the
+ * server resolves org from the JWT, not a client-supplied id. Returns null on
+ * error or when telemetry is disabled so callers can distinguish "nothing to
+ * show" from "should render an empty state".
+ */
+export async function fetchHiveAccountMembers(): Promise<
+  GqlHiveEnterpriseListAccountMembersQuery['listAccountMembers'] | null
+> {
+  const settings = useSettingsStore.getState()
+  if (!isHiveTelemetryEnabled(settings)) return null
+  try {
+    const data = await requestWithRefresh<
+      GqlHiveEnterpriseListAccountMembersQuery,
+      Record<string, never>
+    >(ListAccountMembersDocument)
+    return data.listAccountMembers
+  } catch (error) {
+    console.warn('[HiveEnterprise] listAccountMembers failed:', error)
+    return null
   }
 }
 

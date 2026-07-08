@@ -25,6 +25,10 @@ playwright-cli -s=<s> tab-select 1   # tab 0 is the pet overlay, tab 1 is the ma
 ## Data & test targets
 
 - Dev shares the real `~/.hive/hive.db` with the installed app — only exercise the
+  test projects below, OR set `HIVE_DESKTOP_BASE_DIR=<dir>` at launch to point the
+  backend at an isolated data dir (`<dir>/hive.db`). Plain `HOME=` is NOT enough:
+  `app.getPath('home')` ignores `$HOME` on macOS, so the backend would still open
+  the real DB (verified 2026-07-08).
   **test-python** (GitHub remote) and **ct-test** (no remote) projects.
 - Inspect state read-only: `sqlite3 -readonly ~/.hive/hive.db "..."` (projects, worktrees,
   connections, connection_members tables).

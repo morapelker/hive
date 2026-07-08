@@ -2,7 +2,9 @@ import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { TooltipProvider } from '@/components/ui/tooltip'
 import { UsageAccountRow } from './UsageIndicator'
+import type { AccountMemberInfo } from './MemberAvatarStack'
 import type { UsageData } from '@shared/types/usage'
 
 afterEach(() => {
@@ -288,5 +290,49 @@ describe('UsageAccountRow', () => {
     )
 
     expect(screen.queryByText('Fable')).toBeNull()
+  })
+
+  it('renders the member avatar stack when members is given', () => {
+    const members: AccountMemberInfo[] = [
+      { id: 'member-1', email: 'alice@example.com', name: 'Alice', picture: null }
+    ]
+    render(
+      <TooltipProvider>
+        <UsageAccountRow
+          row={{
+            id: 'acc-8',
+            email: 'shared@example.com',
+            usage: sampleUsage,
+            status: 'ok',
+            lastError: null,
+            isActive: true,
+            isRefreshing: false
+          }}
+          members={members}
+          membersLoading={false}
+        />
+      </TooltipProvider>
+    )
+
+    expect(screen.getByTestId('member-avatar')).toBeTruthy()
+  })
+
+  it('renders nothing from the avatar stack when members is undefined', () => {
+    render(
+      <UsageAccountRow
+        row={{
+          id: 'acc-9',
+          email: 'shared@example.com',
+          usage: sampleUsage,
+          status: 'ok',
+          lastError: null,
+          isActive: true,
+          isRefreshing: false
+        }}
+      />
+    )
+
+    expect(screen.queryByTestId('member-avatar')).toBeNull()
+    expect(screen.queryByTestId('member-avatar-stack-loading')).toBeNull()
   })
 })
