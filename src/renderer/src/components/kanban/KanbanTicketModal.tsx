@@ -62,6 +62,7 @@ import { notifyKanbanSessionSync } from '@/stores/store-coordination'
 import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
 import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
 import { snapshotTokenBaseline } from '@/lib/token-baselines'
+import { markClaudeCliPromptStarted } from '@/lib/claude-cli-send-tracking'
 import { PLAN_MODE_PREFIX, getSuperPlanModePrefix, isPlanLike } from '@/lib/constants'
 import { buildSdkPlanImplementationPrompt } from '@/lib/proposedPlan'
 import { toast } from '@/lib/toast'
@@ -2124,6 +2125,7 @@ function PlanReviewModeContent({
               if (handoffPrompt) {
                 sessionStore.dequeuePendingMessage(newSessionId)
               }
+              markClaudeCliPromptStarted(newSessionId)
               startHivePromptTelemetry({
                 sessionId: newSessionId,
                 prompt: handoffPrompt,
@@ -2207,6 +2209,7 @@ function PlanReviewModeContent({
             if (handoffPrompt) {
               sessionStore.dequeuePendingMessage(newSessionId)
             }
+            markClaudeCliPromptStarted(newSessionId)
             startHivePromptTelemetry({
               sessionId: newSessionId,
               prompt: handoffPrompt,

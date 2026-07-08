@@ -18,6 +18,7 @@ import { HandoffSplitButton } from './HandoffSplitButton'
 import { SavePlanAsFileModal } from './SavePlanAsFileModal'
 import { buildHandoffPrompt, type HandoffSelectionOverride } from '@/lib/handoffSelection'
 import { lastSendMode } from '@/lib/message-send-times'
+import { markClaudeCliPromptStarted } from '@/lib/claude-cli-send-tracking'
 import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
 import { startBackgroundSessionPrompt } from '@/lib/backgroundSessionStart'
 import {
@@ -96,6 +97,7 @@ async function startTicketModalHandoffSession(opts: {
     if (opts.handoffPrompt) {
       useSessionStore.getState().dequeuePendingMessage(opts.sessionId)
     }
+    markClaudeCliPromptStarted(opts.sessionId)
     return
   }
 
