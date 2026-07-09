@@ -115,9 +115,19 @@ function ClassificationBadges({
   }
 }
 
-function ticketsSummary(tickets: RestoreProjectResult['tickets']): string | null {
+// `tickets.skipped` is set by the server for three distinct reasons (markdown
+// storage mode, the project was already in Hive, or the board had no
+// tickets to restore) — only the markdown-mode case is cheaply distinguishable
+// here (we already have `kanbanStorageMode` per row), so the other two share
+// a neutral "tickets skipped" label rather than a wrongly specific reason.
+function ticketsSummary(
+  tickets: RestoreProjectResult['tickets'],
+  kanbanStorageMode: BackupProject['kanban_storage_mode']
+): string | null {
   if (!tickets) return null
-  if (tickets.skipped) return 'tickets skipped (already in Hive)'
+  if (tickets.skipped) {
+    return kanbanStorageMode === 'markdown' ? 'tickets skipped (markdown mode)' : 'tickets skipped'
+  }
   const parts = [`${tickets.restored} ticket${tickets.restored === 1 ? '' : 's'} restored`]
   if (tickets.dependencyErrors > 0) {
     parts.push(
@@ -500,9 +510,9 @@ export function RestoreWizard({ backup, open, onOpenChange }: RestoreWizardProps
                             {wt.status === 'failed' && wt.error ? `: ${wt.error}` : ''}
                           </div>
                         ))}
-                        {ticketsSummary(status.result.tickets) && (
+                        {ticketsSummary(status.result.tickets, row.project.kanban_storage_mode) && (
                           <div className="text-xs text-muted-foreground pl-2">
-                            {ticketsSummary(status.result.tickets)}
+                            {ticketsSummary(status.result.tickets, row.project.kanban_storage_mode)}
                           </div>
                         )}
                       </>

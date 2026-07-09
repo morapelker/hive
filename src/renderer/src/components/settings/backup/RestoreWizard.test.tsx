@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { resetRendererRpcClientForTests, setRendererRpcClient } from '@/api/rpc-client'
-import type { BackupFile, ProjectClassification } from '@shared/types/backup'
+import type { BackupFile, ProjectClassification, RestoreProjectResult } from '@shared/types/backup'
 import { RestoreWizard } from './RestoreWizard'
 
 function makeProject(name: string, path: string, remoteUrl: string | null): BackupFile['projects'][number] {
@@ -165,5 +165,95 @@ describe('RestoreWizard', () => {
 
     expect(screen.getByText('Browse…')).not.toBeNull()
     expect(screen.getByText(/will be cloned into the folder you choose/)).not.toBeNull()
+  })
+
+  it('runs restore sequentially, synthesizes a failed result when restoreProject rejects, and refreshes stores before showing the summary', async () => {
+    const user = userEvent.setup()
+
+    const twoProjectBackup: BackupFile = {
+      version: 1,
+      kind: 'hive-backup',
+      created_at: '2026-07-09T00:00:00.000Z',
+      app_version: '1.2.12',
+      projects: [
+        makeProject('proj-a', '/Users/me/proj-a', 'git@github.com:a/a.git'),
+        makeProject('proj-b', '/Users/me/proj-b', 'git@github.com:a/b.git')
+      ]
+    }
+    const twoClassifications: ProjectClassification[] = [
+      {
+        path: '/Users/me/proj-a',
+        classification: 'exists-match',
+        alreadyInHive: false,
+        hiveProjectId: null,
+        effectivePath: '/Users/me/proj-a',
+        localRemoteUrl: 'git@github.com:a/a.git'
+      },
+      {
+        path: '/Users/me/proj-b',
+        classification: 'exists-match',
+        alreadyInHive: false,
+        hiveProjectId: null,
+        effectivePath: '/Users/me/proj-b',
+        localRemoteUrl: 'git@github.com:a/b.git'
+      }
+    ]
+    const successResult: RestoreProjectResult = {
+      success: true,
+      projectId: 'project-a',
+      projectName: 'proj-a',
+      action: 'pulled',
+      warnings: [],
+      worktrees: [],
+      tickets: { restored: 0, dependencyErrors: 0, skipped: true }
+    }
+
+    let restoreCallCount = 0
+    const request: ReturnType<typeof vi.fn> = vi.fn(async (method: string) => {
+      if (method === 'backupOps.classifyProjects') return twoClassifications
+      if (method === 'backupOps.restoreProject') {
+        restoreCallCount += 1
+        if (restoreCallCount === 1) return successResult
+        throw new Error('network exploded')
+      }
+      if (method === 'db.project.getAll') return []
+      if (method === 'db.worktree.getActiveByProject') return []
+      throw new Error(`unexpected method ${method}`)
+    })
+    setRendererRpcClient({ request, subscribe: vi.fn() })
+
+    render(<RestoreWizard backup={twoProjectBackup} open={true} onOpenChange={vi.fn()} />)
+
+    await screen.findByText('proj-a')
+    const continueButton = screen.getByRole('button', { name: 'Continue' })
+    await user.click(continueButton)
+
+    // Both rows are exists-match (no clone needed), so Continue goes straight
+    // to `run`, which kicks off automatically and lands on `summary`.
+    await screen.findByText('Restore complete.', {}, { timeout: 3000 })
+
+    // First project: real success synthesized by the server mock.
+    expect(screen.getByText('proj-a')).not.toBeNull()
+    expect(screen.getAllByText('Pulled')).not.toHaveLength(0)
+
+    // Second project: restoreProject rejected — the client must synthesize a
+    // failed result rather than crash, and surface the error inline.
+    expect(screen.getByText('proj-b')).not.toBeNull()
+    expect(screen.getByText('network exploded')).not.toBeNull()
+
+    expect(restoreCallCount).toBe(2)
+
+    // Store refresh (db.project.getAll via useProjectStore.loadProjects) must
+    // have already resolved by the time summary renders — `refreshStores` is
+    // awaited before `setStep('summary')` in the component.
+    const projectRefreshCalls = request.mock.calls.filter((call) => call[0] === 'db.project.getAll')
+    expect(projectRefreshCalls.length).toBeGreaterThan(0)
+
+    // Only the successful result (which carries a projectId) triggers a
+    // worktree reload — the synthesized failure has no projectId.
+    const worktreeRefreshCalls = request.mock.calls.filter(
+      (call) => call[0] === 'db.worktree.getActiveByProject'
+    )
+    expect(worktreeRefreshCalls).toEqual([['db.worktree.getActiveByProject', { projectId: 'project-a' }]])
   })
 })

@@ -106,4 +106,45 @@ describe('SettingsBackup', () => {
     expect(screen.getByTestId('restore-wizard')).not.toBeNull()
     expect(screen.getByText('2 projects found in this backup.')).not.toBeNull()
   })
+
+  it('shows an error toast when opening the backup file fails', async () => {
+    const user = userEvent.setup()
+    const request: ReturnType<typeof vi.fn> = vi.fn(async (method: string) => {
+      if (method === 'backupOps.openBackupFile') {
+        return { canceled: false, error: 'Failed to parse backup file: bad YAML' }
+      }
+      throw new Error(`unexpected method ${method}`)
+    })
+    setRendererRpcClient({ request, subscribe: vi.fn() })
+
+    render(<SettingsBackup />)
+
+    await user.click(screen.getByTestId('backup-restore'))
+    await act(async () => {})
+
+    expect(toast.error).toHaveBeenCalledWith('Could not read backup file', {
+      description: 'Failed to parse backup file: bad YAML'
+    })
+    expect(screen.queryByTestId('restore-wizard')).toBeNull()
+  })
+
+  it('does not toast when opening the backup file is canceled', async () => {
+    const user = userEvent.setup()
+    const request: ReturnType<typeof vi.fn> = vi.fn(async (method: string) => {
+      if (method === 'backupOps.openBackupFile') {
+        return { canceled: true }
+      }
+      throw new Error(`unexpected method ${method}`)
+    })
+    setRendererRpcClient({ request, subscribe: vi.fn() })
+
+    render(<SettingsBackup />)
+
+    await user.click(screen.getByTestId('backup-restore'))
+    await act(async () => {})
+
+    expect(toast.success).not.toHaveBeenCalled()
+    expect(toast.error).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('restore-wizard')).toBeNull()
+  })
 })

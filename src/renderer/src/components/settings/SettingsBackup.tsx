@@ -19,9 +19,12 @@ export function SettingsBackup(): React.JSX.Element {
       const result = await backupApi.exportBackup()
       if (result.canceled) return
       if (result.success) {
-        toast.success('Backup exported', {
-          description: `${result.projectCount} projects → ${result.path}`
-        })
+        const base = `${result.projectCount} projects → ${result.path}`
+        const description =
+          result.warnings && result.warnings.length > 0
+            ? `${base}\n${result.warnings.join('\n')}`
+            : base
+        toast.success('Backup exported', { description })
       } else {
         toast.error('Failed to export backup', { description: result.error })
       }
@@ -66,7 +69,8 @@ export function SettingsBackup(): React.JSX.Element {
           <div className="text-sm font-medium">Back up</div>
           <p className="text-xs text-muted-foreground">
             Export all projects, their worktrees, and boards to a YAML file. Sessions, account
-            credentials, and ticket attachments are not included.
+            credentials, and ticket attachments are not included. Markdown-mode boards export
+            their configuration only — their cards live in the repo&apos;s .md files.
           </p>
         </div>
         <Button
