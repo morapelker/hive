@@ -1348,7 +1348,7 @@ describe('backupOps.restoreProject', () => {
     expect(execGitCalls.some((call) => call[1][0] === 'branch')).toBe(false)
   })
 
-  it('sanitizes a project name containing path-traversal segments so the worktree path stays under ~/.hive-worktrees', async () => {
+  it('sanitizes a project name containing a leading path-traversal run so the worktree path stays under ~/.hive-worktrees', async () => {
     const deps = makeDeps({
       fs: mockFs(['/repo']),
       isGitRepository: vi.fn(() => true),
@@ -1374,6 +1374,97 @@ describe('backupOps.restoreProject', () => {
     const worktreePath = worktreeAddCall[1][2] as string
     expect(worktreePath.startsWith('/home/tester/.hive-worktrees/')).toBe(true)
     expect(worktreePath.includes('..')).toBe(false)
+  })
+
+  // Adversarial regression test: a naive `slug()` (lowercase + charset
+  // replace + trim only LEADING/TRAILING `-/.` runs) leaves `/` and `.`
+  // untouched *inside* the string. A project name like
+  // `a/../../../../../../tmp/pwned` starts with a real character so nothing
+  // gets trimmed, and the embedded `../../../../../../` survives into
+  // `path.join(homedir(), '.hive-worktrees', name, ...)`, which then
+  // normalizes the `..` segments right out of `.hive-worktrees` and lands on
+  // an attacker-chosen absolute path (e.g. `/tmp/pwned--wt`). This asserts
+  // both that the sanitizer neutralizes the traversal AND that the
+  // defense-in-depth containment check would catch anything that slipped
+  // through, by inspecting every mkdir/`git worktree add` argv path.
+  it('contains an embedded path-traversal project name (adversarial bypass) so every worktree/mkdir path stays under ~/.hive-worktrees', async () => {
+    const deps = makeDeps({
+      fs: mockFs(['/repo']),
+      isGitRepository: vi.fn(() => true),
+      git: { ...makeDeps().git, getRemoteUrl: vi.fn(async () => null) },
+      db: { ...makeDeps().db, getActiveWorktreesByProject: () => [] },
+      homedir: vi.fn(() => '/home/tester'),
+      execGit: execGitScript({ revParseHeads: { 'feature/a': true } })
+    })
+    const bp = backupProject({
+      name: 'a/../../../../../../tmp/pwned',
+      path: '/repo',
+      worktrees: [{ name: 'feature-a', branch_name: 'feature/a', base_branch: 'main' }]
+    })
+
+    const service = makeBackupOpsRpcService(deps)
+    const result = await Effect.runPromise(
+      service.restoreProject({ project: bp, options: { cloneParentDir: null } })
+    )
+
+    expect(result.success).toBe(true)
+    expect(result.worktrees).toEqual([{ branch: 'feature/a', status: 'created' }])
+
+    const boundary = '/home/tester/.hive-worktrees/'
+    const execGitCalls = (deps.execGit as ReturnType<typeof vi.fn>).mock.calls
+    const worktreeAddCall = execGitCalls.find((call) => call[1][0] === 'worktree')!
+    const worktreePath = worktreeAddCall[1][2] as string
+    expect(worktreePath.startsWith(boundary)).toBe(true)
+    expect(worktreePath.includes('..')).toBe(false)
+    expect(worktreePath.includes('/tmp/pwned')).toBe(false)
+
+    const mkdirCalls = (deps.fs.mkdir as ReturnType<typeof vi.fn>).mock.calls
+    for (const [mkdirPath] of mkdirCalls) {
+      expect((mkdirPath as string).startsWith(boundary)).toBe(true)
+    }
+  })
+
+  it('contains an embedded path-traversal worktree entry name (adversarial bypass) so every worktree/mkdir path stays under ~/.hive-worktrees', async () => {
+    const deps = makeDeps({
+      fs: mockFs(['/repo']),
+      isGitRepository: vi.fn(() => true),
+      git: { ...makeDeps().git, getRemoteUrl: vi.fn(async () => null) },
+      db: { ...makeDeps().db, getActiveWorktreesByProject: () => [] },
+      homedir: vi.fn(() => '/home/tester'),
+      execGit: execGitScript({ revParseHeads: { 'feature/a': true } })
+    })
+    const bp = backupProject({
+      name: 'repo',
+      path: '/repo',
+      worktrees: [
+        {
+          name: 'a/../../../../../../tmp/pwned',
+          branch_name: 'feature/a',
+          base_branch: 'main'
+        }
+      ]
+    })
+
+    const service = makeBackupOpsRpcService(deps)
+    const result = await Effect.runPromise(
+      service.restoreProject({ project: bp, options: { cloneParentDir: null } })
+    )
+
+    expect(result.success).toBe(true)
+    expect(result.worktrees).toEqual([{ branch: 'feature/a', status: 'created' }])
+
+    const boundary = '/home/tester/.hive-worktrees/'
+    const execGitCalls = (deps.execGit as ReturnType<typeof vi.fn>).mock.calls
+    const worktreeAddCall = execGitCalls.find((call) => call[1][0] === 'worktree')!
+    const worktreePath = worktreeAddCall[1][2] as string
+    expect(worktreePath.startsWith(boundary)).toBe(true)
+    expect(worktreePath.includes('..')).toBe(false)
+    expect(worktreePath.includes('/tmp/pwned')).toBe(false)
+
+    const mkdirCalls = (deps.fs.mkdir as ReturnType<typeof vi.fn>).mock.calls
+    for (const [mkdirPath] of mkdirCalls) {
+      expect((mkdirPath as string).startsWith(boundary)).toBe(true)
+    }
   })
 
   it('fails the clone flow instead of escaping the chosen folder when the backed-up path basename is ".."', async () => {

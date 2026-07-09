@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { homedir } from 'node:os'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, join, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 
 import { Effect } from 'effect'
@@ -616,14 +616,28 @@ async function classifyProjects(
 // rather than imported so backup-ops.ts doesn't pull in teleport-ops.ts's
 // module graph (Discord/teleport-remote-client wiring) for two small pure
 // helpers; per the task brief this duplication is acceptable.
-function slug(value: string): string {
+//
+// NOTE: unlike teleport-ops.ts's `slug`, this is used to build filesystem
+// path SEGMENTS (project name / worktree name) that are later joined under
+// `~/.hive-worktrees`, and those values come from a hand-editable backup
+// YAML. A slug that preserves `/` and only trims LEADING/TRAILING `-/.`
+// runs (e.g. teleport-ops.ts's version) lets an embedded `a/../../../tmp/x`
+// segment survive untouched and `path.join` will happily normalize the
+// `..` components right out of the intended `.hive-worktrees` root. This
+// version therefore replaces `/`/`\` with `-` (so no path separator ever
+// reaches `join`) and collapses runs of 2+ dots down to a single `.` (so
+// `..` can never reappear even after the separator replacement), before
+// applying the original charset/trim behavior.
+function sanitizePathSegment(value: string, fallback: string): string {
   const cleaned = value
     .toLowerCase()
-    .replace(/[^a-z0-9._/-]+/g, '-')
+    .replace(/[\\/]+/g, '-')
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/\.{2,}/g, '.')
     .replace(/-+/g, '-')
-    .replace(/^[-/.]+|[-/.]+$/g, '')
+    .replace(/^[-.]+|[-.]+$/g, '')
     .slice(0, 64)
-  return cleaned || 'worktree'
+  return cleaned || fallback
 }
 
 async function uniquePath(deps: BackupOpsDeps, basePath: string): Promise<string> {
@@ -846,7 +860,8 @@ async function restoreProject(
       }
     }
 
-    const safeProjectName = slug(project.name)
+    const safeProjectName = sanitizePathSegment(project.name, 'project')
+    const hiveWorktreesRoot = join(deps.homedir(), '.hive-worktrees')
 
     for (const entry of project.worktrees) {
       if (knownBranches.has(entry.branch_name)) {
@@ -920,9 +935,27 @@ async function restoreProject(
           deps.homedir(),
           '.hive-worktrees',
           safeProjectName,
-          `${safeProjectName}--${slug(entry.name)}`
+          `${safeProjectName}--${sanitizePathSegment(entry.name, 'worktree')}`
         )
       )
+
+      // Defense in depth: sanitizePathSegment above should already keep
+      // worktreePath under hiveWorktreesRoot, but a hand-edited backup YAML
+      // is untrusted input, so re-verify the fully resolved path before ever
+      // touching the filesystem or invoking git — never mkdir/execGit
+      // outside the `.hive-worktrees` boundary.
+      const resolvedWorktreePath = resolve(worktreePath)
+      if (
+        resolvedWorktreePath !== hiveWorktreesRoot &&
+        !resolvedWorktreePath.startsWith(hiveWorktreesRoot + sep)
+      ) {
+        worktreeResults.push({
+          branch: entry.branch_name,
+          status: 'failed',
+          error: 'invalid worktree path'
+        })
+        continue
+      }
 
       try {
         await deps.fs.mkdir(dirname(worktreePath))
