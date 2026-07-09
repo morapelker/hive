@@ -80,7 +80,7 @@ const classifications: ProjectClassification[] = [
 ]
 
 function setup(): ReturnType<typeof vi.fn> {
-  const request = vi.fn(async (method: string) => {
+  const request: ReturnType<typeof vi.fn> = vi.fn(async (method: string) => {
     if (method === 'backupOps.classifyProjects') return classifications
     throw new Error(`unexpected method ${method}`)
   })
