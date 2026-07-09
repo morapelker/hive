@@ -14,6 +14,11 @@ import {
   type AttachmentOpsRpcService
 } from './domains/attachment-ops'
 import {
+  makeBackupOpsRpcHandlers,
+  makeLiveBackupOpsRpcService,
+  type BackupOpsRpcService
+} from './domains/backup-ops'
+import {
   makeAnalyticsOpsRpcHandlers,
   makeLiveAnalyticsOpsRpcService,
   type AnalyticsOpsRpcService
@@ -146,6 +151,7 @@ export interface RpcContext {
   readonly accountOps?: AccountOpsRpcService
   readonly analyticsOps?: AnalyticsOpsRpcService
   readonly attachmentOps?: AttachmentOpsRpcService
+  readonly backupOps?: BackupOpsRpcService
   readonly bash?: BashRpcService
   readonly codexDebugLoggerOps?: CodexDebugLoggerOpsRpcService
   readonly connectionOps?: ConnectionOpsRpcService
@@ -200,6 +206,7 @@ const makeDefaultRpcHandlers = (context: RpcContext): ReadonlyMap<string, RpcHan
     ...makeAccountOpsRpcHandlers(context.accountOps ?? makeLiveAccountOpsRpcService()),
     ...makeAnalyticsOpsRpcHandlers(context.analyticsOps ?? makeLiveAnalyticsOpsRpcService()),
     ...makeAttachmentOpsRpcHandlers(context.attachmentOps ?? makeLiveAttachmentOpsRpcService()),
+    ...makeBackupOpsRpcHandlers(context.backupOps ?? makeLiveBackupOpsRpcService()),
     ...makeBashRpcHandlers(context.bash, context.eventBus),
     ...makeCodexDebugLoggerOpsRpcHandlers(
       context.codexDebugLoggerOps ?? makeLiveCodexDebugLoggerOpsRpcService()

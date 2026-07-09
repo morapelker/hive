@@ -27,6 +27,72 @@ export function deriveProjectNameFromGitUrl(url: string): string | null {
   return name ? name : null
 }
 
+const STANDARD_PORTS_BY_SCHEME: Record<string, string> = {
+  ssh: '22',
+  https: '443',
+  http: '80',
+  git: '9418'
+}
+
+/**
+ * Normalize a git remote URL so that ssh/https/scp-like forms of the same
+ * repository compare equal. Returns null for null/undefined/empty input and
+ * never throws, even for unparseable garbage.
+ */
+export function normalizeGitRemoteUrl(url: string | null | undefined): string | null {
+  if (url === null || url === undefined) return null
+  const trimmed = url.trim()
+  if (!trimmed) return null
+
+  try {
+    // scp-like syntax: user@host:org/repo(.git) — but not a URL scheme like ssh://
+    const scpMatch = trimmed.match(/^(?:[^@/\s]+@)?([^:/\s]+):(.+)$/)
+    if (scpMatch && !/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(trimmed)) {
+      const host = scpMatch[1].toLowerCase()
+      const path = stripPathDecorations(scpMatch[2])
+      return `${host}/${path}`
+    }
+
+    const schemeMatch = trimmed.match(/^([A-Za-z][A-Za-z0-9+.-]*):\/\/(.+)$/)
+    if (schemeMatch) {
+      const scheme = schemeMatch[1].toLowerCase()
+      const rest = schemeMatch[2]
+
+      // Strip userinfo (user@ or user:pass@) before the host.
+      const afterAuth = rest.replace(/^[^/@]+@/, '')
+
+      const hostMatch = afterAuth.match(/^([^/]+)(\/.*)?$/)
+      if (!hostMatch) return trimmed
+
+      let hostPort = hostMatch[1]
+      const pathPart = hostMatch[2] ?? ''
+
+      let port: string | null = null
+      const portMatch = hostPort.match(/^(.+):(\d+)$/)
+      if (portMatch) {
+        hostPort = portMatch[1]
+        port = portMatch[2]
+      }
+
+      const host = hostPort.toLowerCase()
+      const standardPort = STANDARD_PORTS_BY_SCHEME[scheme]
+      const keepPort = port && port !== standardPort ? port : null
+
+      const path = stripPathDecorations(pathPart.replace(/^\//, ''))
+      const hostWithPort = keepPort ? `${host}:${keepPort}` : host
+      return path ? `${hostWithPort}/${path}` : hostWithPort
+    }
+
+    return trimmed
+  } catch {
+    return trimmed
+  }
+}
+
+function stripPathDecorations(path: string): string {
+  return path.replace(/\/+$/, '').replace(/\.git$/i, '')
+}
+
 export function isSafeGitRemoteUrl(url: string): boolean {
   if (!url || url.startsWith('-')) return false
   if (/[\s\x00-\x1f\x7f]/.test(url)) return false
