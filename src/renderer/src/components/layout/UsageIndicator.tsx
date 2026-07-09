@@ -210,6 +210,7 @@ export interface UsageAccountRowProps {
   row: AccountRowData
   isSwitching?: boolean
   isLoginActive?: boolean
+  highlightActive?: boolean
   onSwitch?: () => void
   onRefresh?: () => void
   onSignInAgain?: () => void
@@ -221,6 +222,7 @@ export function UsageAccountRow({
   row,
   isSwitching = false,
   isLoginActive = false,
+  highlightActive = false,
   onSwitch,
   onRefresh,
   onSignInAgain,
@@ -232,7 +234,12 @@ export function UsageAccountRow({
   const scoped = row.usage?.scoped ?? []
 
   return (
-    <div className="relative rounded-md border border-border/50 bg-background/40 px-2 py-1.5">
+    <div
+      className={cn(
+        'relative rounded-md border border-border/50 bg-background/40 px-2 py-1.5',
+        highlightActive && row.isActive && 'border-2 border-purple-500'
+      )}
+    >
       <div className="flex items-center justify-between gap-2">
         <div
           className={cn(
@@ -492,6 +499,11 @@ function ProviderUsageBlock({
           }
         ]
 
+  // With multiple accounts, the active one goes last and gets a purple border
+  // so it reads as "currently active" at a glance.
+  const orderedRows = [...accountRows].sort((a, b) => Number(a.isActive) - Number(b.isActive))
+  const highlightActive = accountRows.length > 1
+
   const handleRefreshActive = (): void => {
     forceRefreshProvider(provider)
     void fetchEmail(provider).then(() => reportActiveAccountsSnapshot())
@@ -564,12 +576,13 @@ function ProviderUsageBlock({
               </div>
             )}
             {accountRows.some((row) => row.email || row.usage) ? (
-              accountRows.map((row) => (
+              orderedRows.map((row) => (
                 <UsageAccountRow
                   key={row.id}
                   row={row}
                   isSwitching={switchingAccountIds.has(row.id)}
                   isLoginActive={isLoginActive}
+                  highlightActive={highlightActive}
                   onSwitch={() => switchAccount(row.id)}
                   onRefresh={
                     savedAccounts.length > 0
@@ -660,12 +673,13 @@ function ProviderUsageBlock({
               Saved accounts unavailable: {savedAccountLoadError}
             </div>
           )}
-          {accountRows.map((row) => (
+          {orderedRows.map((row) => (
             <UsageAccountRow
               key={row.id}
               row={row}
               isSwitching={switchingAccountIds.has(row.id)}
               isLoginActive={isLoginActive}
+              highlightActive={highlightActive}
               onSwitch={() => switchAccount(row.id)}
               onRefresh={
                 savedAccounts.length > 0
