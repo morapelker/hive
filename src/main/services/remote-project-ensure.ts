@@ -1,22 +1,14 @@
-import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { promisify } from 'node:util'
 
 import { getDatabase } from '../db'
 import type { Project } from '../db/types'
 import { gitService } from '../effect/git/facade'
+import { execGit } from './git-exec'
 import { cloneRepository, deriveProjectNameFromGitUrl } from './git-repository'
 import { createProjectWithDefaultWorktree } from './project-ops'
 import { syncWorktreesOp } from './worktree-ops'
-
-const execFileAsync = promisify(execFile)
-
-async function execGit(cwd: string, args: string[]): Promise<string> {
-  const { stdout } = await execFileAsync('git', args, { cwd, encoding: 'utf-8' })
-  return stdout.trim()
-}
 
 function requireSuccess(result: { success: boolean; error?: string }, fallback: string): void {
   if (!result.success) throw new Error(result.error || fallback)

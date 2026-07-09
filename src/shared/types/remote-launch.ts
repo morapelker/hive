@@ -137,6 +137,11 @@ export interface RemoteLaunchStartResult {
   tmuxSession?: string
 }
 
+export interface RemoteLaunchPreflightParams {
+  projectId: string
+  branch: string
+}
+
 export interface RemoteLaunchPreflightResult {
   remoteConfigured: boolean
   branchOnOrigin: boolean
@@ -147,6 +152,40 @@ export interface RemoteLaunchPreflightResult {
   transfers: string[]
   /** Human-readable per-line errors. */
   transferErrors: string[]
+  /** Set when a git operation failed unexpectedly; other fields still reflect best-effort defaults. */
+  error?: string
+}
+
+export interface RemoteLaunchStopParams {
+  sessionId: string
+}
+
+export interface RemoteLaunchApplySetupPlanParams {
+  launchId: string
+  remoteWorktreeId: string
+  steps: SetupPlanStep[]
+}
+
+export interface RemoteLaunchApplySetupPlanResult {
+  success: boolean
+  failedStepIndex?: number
+  failedKind?: 'write' | 'run'
+  error?: string
+}
+
+export interface RemoteLaunchLaunchParams {
+  launchId: string
+  remoteSessionId: string
+  prompt: string
+}
+
+export interface RemoteLaunchLaunchResult {
+  tmuxSession: string
+}
+
+export interface RemoteLaunchKillTmuxParams {
+  remoteSessionId: string
+  tmuxSession: string
 }
 
 export interface RemoteLaunchAttachParams {
