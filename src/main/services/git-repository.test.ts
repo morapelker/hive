@@ -3,7 +3,12 @@ import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { cloneRepository, deriveProjectNameFromGitUrl, isSafeGitRemoteUrl } from './git-repository'
+import {
+  cloneRepository,
+  deriveProjectNameFromGitUrl,
+  isSafeGitRemoteUrl,
+  normalizeGitRemoteUrl
+} from './git-repository'
 
 const simpleGitMock = vi.hoisted(() => ({
   clone: vi.fn(),
@@ -62,6 +67,106 @@ describe('isSafeGitRemoteUrl', () => {
     expect(isSafeGitRemoteUrl('--upload-pack=x')).toBe(false)
     expect(isSafeGitRemoteUrl('')).toBe(false)
     expect(isSafeGitRemoteUrl('https://github.com/u/r with-space.git')).toBe(false)
+  })
+})
+
+describe('normalizeGitRemoteUrl', () => {
+  it('normalizes scp-like syntax to host/org/repo', () => {
+    expect(normalizeGitRemoteUrl('git@github.com:acme/hive.git')).toBe('github.com/acme/hive')
+  })
+
+  it('normalizes https URLs, with and without .git / trailing slash', () => {
+    expect(normalizeGitRemoteUrl('https://github.com/acme/hive')).toBe('github.com/acme/hive')
+    expect(normalizeGitRemoteUrl('https://github.com/acme/hive.git')).toBe('github.com/acme/hive')
+    expect(normalizeGitRemoteUrl('https://github.com/acme/hive.git/')).toBe(
+      'github.com/acme/hive'
+    )
+  })
+
+  it('strips userinfo from https URLs', () => {
+    expect(normalizeGitRemoteUrl('https://user@github.com/acme/hive.git')).toBe(
+      'github.com/acme/hive'
+    )
+    expect(normalizeGitRemoteUrl('https://user:pass@github.com/acme/hive.git')).toBe(
+      'github.com/acme/hive'
+    )
+  })
+
+  it('normalizes ssh:// URLs without an explicit port', () => {
+    expect(normalizeGitRemoteUrl('ssh://git@github.com/acme/hive.git')).toBe(
+      'github.com/acme/hive'
+    )
+  })
+
+  it('drops the port from ssh:// URLs when it is the standard port 22', () => {
+    expect(normalizeGitRemoteUrl('ssh://git@GitHub.com:22/acme/hive')).toBe(
+      'github.com/acme/hive'
+    )
+  })
+
+  it('keeps a non-standard port for ssh:// URLs', () => {
+    expect(normalizeGitRemoteUrl('ssh://git@github.com:2222/acme/hive.git')).toBe(
+      'github.com:2222/acme/hive'
+    )
+  })
+
+  it('drops the port from https:// URLs when it is the standard port 443', () => {
+    expect(normalizeGitRemoteUrl('https://github.com:443/acme/hive.git')).toBe(
+      'github.com/acme/hive'
+    )
+  })
+
+  it('keeps a non-standard port for https:// URLs', () => {
+    expect(normalizeGitRemoteUrl('https://github.com:8443/acme/hive.git')).toBe(
+      'github.com:8443/acme/hive'
+    )
+  })
+
+  it('drops the port from http:// URLs when it is the standard port 80', () => {
+    expect(normalizeGitRemoteUrl('http://github.com:80/acme/hive.git')).toBe(
+      'github.com/acme/hive'
+    )
+  })
+
+  it('drops the port from git:// URLs when it is the standard port 9418', () => {
+    expect(normalizeGitRemoteUrl('git://github.com:9418/acme/hive.git')).toBe(
+      'github.com/acme/hive'
+    )
+  })
+
+  it('normalizes plain git:// URLs', () => {
+    expect(normalizeGitRemoteUrl('git://github.com/acme/hive.git')).toBe('github.com/acme/hive')
+  })
+
+  it('lowercases the host but preserves path case', () => {
+    expect(normalizeGitRemoteUrl('https://github.com/Acme/Hive')).toBe('github.com/Acme/Hive')
+  })
+
+  it('treats all equivalent forms of the same repo as equal', () => {
+    const forms = [
+      'git@github.com:acme/hive.git',
+      'https://github.com/acme/hive',
+      'https://github.com/acme/hive.git/',
+      'ssh://git@github.com/acme/hive.git',
+      'ssh://git@GitHub.com:22/acme/hive'
+    ]
+
+    const normalized = forms.map((url) => normalizeGitRemoteUrl(url))
+    expect(new Set(normalized).size).toBe(1)
+    expect(normalized[0]).toBe('github.com/acme/hive')
+  })
+
+  it('returns null for null, undefined, empty, or whitespace-only input', () => {
+    expect(normalizeGitRemoteUrl(null)).toBeNull()
+    expect(normalizeGitRemoteUrl(undefined)).toBeNull()
+    expect(normalizeGitRemoteUrl('')).toBeNull()
+    expect(normalizeGitRemoteUrl('   ')).toBeNull()
+  })
+
+  it('does not throw on unparseable/garbage input', () => {
+    expect(() => normalizeGitRemoteUrl('not a url at all')).not.toThrow()
+    expect(normalizeGitRemoteUrl('not a url at all')).toBe('not a url at all')
+    expect(() => normalizeGitRemoteUrl('::::')).not.toThrow()
   })
 })
 
