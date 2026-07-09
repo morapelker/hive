@@ -104,8 +104,13 @@ export async function createConnectionOp(
     const dirName = randomUUID().slice(0, 8)
     const dirPath = createConnectionDir(dirName)
 
-    // Create the DB connection record with placeholder name and random color
-    const color = generateConnectionColor()
+    // Create the DB connection record with placeholder name and a random color,
+    // preferring one no existing connection is using
+    const usedColors = db
+      .getAllConnections()
+      .map((c) => c.color)
+      .filter((c): c is string => c !== null)
+    const color = generateConnectionColor(usedColors)
     const connection = db.createConnection({ name: dirName, path: dirPath, color })
 
     // For each worktree, look up its data, derive symlink name, create symlink + member

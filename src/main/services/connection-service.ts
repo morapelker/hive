@@ -123,7 +123,7 @@ ${sections.join('\n\n')}
  */
 export type ConnectionColorQuad = [string, string, string, string]
 
-const CONNECTION_COLOR_QUADS: ConnectionColorQuad[] = [
+export const CONNECTION_COLOR_QUADS: ConnectionColorQuad[] = [
   // ── Reds ───────────────────────────────────────────────
   ['#fecaca', '#dc2626', '#991b1b', '#ffffff'], // red light
   ['#fee2e2', '#ef4444', '#7f1d1d', '#ffffff'], // red medium
@@ -215,8 +215,11 @@ const CONNECTION_COLOR_QUADS: ConnectionColorQuad[] = [
   ['#e7e5e4', '#78716c', '#292524', '#ffffff'] // stone medium
 ]
 
-export function generateConnectionColor(): string {
-  const quad = CONNECTION_COLOR_QUADS[Math.floor(Math.random() * CONNECTION_COLOR_QUADS.length)]
+export function generateConnectionColor(usedColors: string[] = []): string {
+  const used = new Set(usedColors)
+  const unused = CONNECTION_COLOR_QUADS.filter((quad) => !used.has(JSON.stringify(quad)))
+  const pool = unused.length > 0 ? unused : CONNECTION_COLOR_QUADS
+  const quad = pool[Math.floor(Math.random() * pool.length)]
   return JSON.stringify(quad)
 }
 
