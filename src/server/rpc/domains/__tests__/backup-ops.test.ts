@@ -458,6 +458,20 @@ describe('backupOps.openBackupFile', () => {
 
     expect(result).toEqual({ canceled: true })
   })
+
+  it('handles requestOpenFileDialog rejection gracefully', async () => {
+    const deps = makeDeps({
+      requestOpenFileDialog: vi.fn(async () => {
+        throw new Error('Desktop command failed: backupOpenFileDialog')
+      })
+    })
+    const service = makeBackupOpsRpcService(deps)
+    const result = await Effect.runPromise(service.openBackupFile())
+
+    expect(result.canceled).toBe(false)
+    expect(result.backup).toBeUndefined()
+    expect(result.error).toContain('Desktop command failed')
+  })
 })
 
 describe('backupOps handler param validation', () => {

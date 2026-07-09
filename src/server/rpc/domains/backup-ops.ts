@@ -332,35 +332,39 @@ async function exportBackup(deps: BackupOpsDeps): Promise<BackupExportResult> {
 // ---------------------------------------------------------------------------
 
 async function openBackupFile(deps: BackupOpsDeps): Promise<BackupOpenResult> {
-  const filePath = await deps.requestOpenFileDialog()
-  if (filePath === null) {
-    return { canceled: true }
-  }
-
-  let raw: string
   try {
-    raw = (await deps.fs.readFile(filePath)).toString('utf-8')
+    const filePath = await deps.requestOpenFileDialog()
+    if (filePath === null) {
+      return { canceled: true }
+    }
+
+    let raw: string
+    try {
+      raw = (await deps.fs.readFile(filePath)).toString('utf-8')
+    } catch (error) {
+      return { canceled: false, error: errorMessage(error) }
+    }
+
+    let parsed: unknown
+    try {
+      parsed = YAML.parse(raw)
+    } catch (error) {
+      return { canceled: false, error: `Failed to parse backup file: ${errorMessage(error)}` }
+    }
+
+    if (isRecord(parsed) && typeof parsed.version === 'number' && parsed.version > 1) {
+      return { canceled: false, error: 'This backup was created by a newer version of Hive.' }
+    }
+
+    const result = backupFileSchema.safeParse(parsed)
+    if (!result.success) {
+      return { canceled: false, error: z.prettifyError(result.error) }
+    }
+
+    return { canceled: false, backup: result.data }
   } catch (error) {
     return { canceled: false, error: errorMessage(error) }
   }
-
-  let parsed: unknown
-  try {
-    parsed = YAML.parse(raw)
-  } catch (error) {
-    return { canceled: false, error: `Failed to parse backup file: ${errorMessage(error)}` }
-  }
-
-  if (isRecord(parsed) && typeof parsed.version === 'number' && parsed.version > 1) {
-    return { canceled: false, error: 'This backup was created by a newer version of Hive.' }
-  }
-
-  const result = backupFileSchema.safeParse(parsed)
-  if (!result.success) {
-    return { canceled: false, error: z.prettifyError(result.error) }
-  }
-
-  return { canceled: false, backup: result.data }
 }
 
 // ---------------------------------------------------------------------------
