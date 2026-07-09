@@ -94,8 +94,6 @@ interface BackupOpsGit {
   // lookup fails. Never expected to reject.
   readonly getRemoteUrl: (repoPath: string) => Promise<string | null>
   readonly hasUncommittedChanges: (repoPath: string) => Promise<boolean>
-  // ff-only pull semantics via the facade; never expected to reject.
-  readonly pull: (repoPath: string) => Promise<{ success: boolean; error?: string }>
   readonly getDefaultBranch: (repoPath: string) => Promise<string>
 }
 
@@ -704,12 +702,12 @@ async function restoreProject(
         warnings.push('uncommitted changes — pull skipped')
         action = 'attached'
       } else {
-        const pullResult = await deps.git.pull(effectivePath)
-        if (!pullResult.success) {
-          warnings.push(pullResult.error ?? 'pull failed')
-          action = 'attached'
-        } else {
+        try {
+          await deps.execGit(effectivePath, ['pull', '--ff-only'])
           action = 'pulled'
+        } catch (error) {
+          warnings.push(errorMessage(error))
+          action = 'attached'
         }
       }
     }
@@ -1131,7 +1129,6 @@ async function createLiveDeps(): Promise<BackupOpsDeps> {
       getRemoteUrl: (repoPath) =>
         gitService.getRemoteUrl(repoPath).then((result) => result.url ?? null),
       hasUncommittedChanges: (repoPath) => gitService.hasUncommittedChanges(repoPath),
-      pull: (repoPath) => gitService.pull(repoPath),
       getDefaultBranch: (repoPath) => gitService.getDefaultBranch(repoPath)
     },
     fs: {

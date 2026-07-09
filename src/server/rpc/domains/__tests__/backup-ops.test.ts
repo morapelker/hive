@@ -157,7 +157,6 @@ function makeDeps(overrides: Partial<BackupOpsDeps> = {}): BackupOpsDeps {
     git: {
       getRemoteUrl: vi.fn(async () => null),
       hasUncommittedChanges: vi.fn(async () => false),
-      pull: vi.fn(async () => ({ success: true })),
       getDefaultBranch: vi.fn(async () => 'main')
     },
     fs: makeFsDeps(),
@@ -556,6 +555,7 @@ interface ExecGitScript {
   fetchFails?: boolean
   worktreeAddFailFor?: Set<string>
   branchCreateFailFor?: Set<string>
+  pullFailsWith?: string
 }
 
 /** Dispatches the raw `execGit(cwd, args)` calls restoreProject issues for
@@ -563,6 +563,10 @@ interface ExecGitScript {
 function execGitScript(script: ExecGitScript = {}): BackupOpsDeps['execGit'] {
   return vi.fn(async (_cwd: string, args: string[]) => {
     const [cmd] = args
+    if (cmd === 'pull') {
+      if (script.pullFailsWith) throw new Error(script.pullFailsWith)
+      return ''
+    }
     if (cmd === 'fetch') {
       if (script.fetchFails) throw new Error('fetch failed')
       return ''
@@ -896,7 +900,78 @@ describe('backupOps.restoreProject', () => {
 
     expect(result.action).toBe('attached')
     expect(result.warnings).toContain('uncommitted changes — pull skipped')
-    expect(deps.git.pull).not.toHaveBeenCalled()
+    const execGitCalls = (deps.execGit as ReturnType<typeof vi.fn>).mock.calls
+    expect(execGitCalls.some((call) => call[1][0] === 'pull')).toBe(false)
+  })
+
+  it('pulls fast-forward-only via execGit on a clean tree and reports pulled', async () => {
+    const deps = makeDeps({
+      fs: mockFs(['/repo']),
+      isGitRepository: vi.fn(() => true),
+      git: {
+        ...makeDeps().git,
+        getRemoteUrl: vi.fn(async () => null),
+        hasUncommittedChanges: vi.fn(async () => false)
+      },
+      execGit: execGitScript()
+    })
+    const bp = backupProject({ path: '/repo' })
+
+    const service = makeBackupOpsRpcService(deps)
+    const result = await Effect.runPromise(
+      service.restoreProject({ project: bp, options: { cloneParentDir: null } })
+    )
+
+    expect(result.action).toBe('pulled')
+    expect(result.warnings).toEqual([])
+    expect(deps.execGit).toHaveBeenCalledWith('/repo', ['pull', '--ff-only'])
+  })
+
+  it('warns and reports attached (not pulled) when the ff-only pull fails, and still processes worktrees/tickets', async () => {
+    const deps = makeDeps({
+      fs: mockFs(['/repo']),
+      isGitRepository: vi.fn(() => true),
+      git: {
+        ...makeDeps().git,
+        getRemoteUrl: vi.fn(async () => null),
+        hasUncommittedChanges: vi.fn(async () => false)
+      },
+      execGit: execGitScript({
+        pullFailsWith: 'fatal: Not possible to fast-forward, aborting.',
+        revParseHeads: { 'feature/a': true }
+      })
+    })
+    const bp = backupProject({
+      path: '/repo',
+      worktrees: [{ name: 'feature-a', branch_name: 'feature/a', base_branch: 'main' }],
+      tickets: [
+        {
+          key: 't1',
+          title: 'Ticket',
+          description: null,
+          column: 'todo',
+          sort_order: 0,
+          mode: null,
+          mark: null,
+          total_tokens: 0,
+          archived_at: null,
+          worktree_branch: null
+        }
+      ]
+    })
+
+    const service = makeBackupOpsRpcService(deps)
+    const result = await Effect.runPromise(
+      service.restoreProject({ project: bp, options: { cloneParentDir: null } })
+    )
+
+    expect(result.action).toBe('attached')
+    expect(
+      result.warnings.some((w) => w.includes('fatal: Not possible to fast-forward'))
+    ).toBe(true)
+    expect(result.worktrees).toEqual([{ branch: 'feature/a', status: 'created' }])
+    expect(result.tickets).toEqual({ restored: 1, dependencyErrors: 0, skipped: false })
+    expect(result.success).toBe(true)
   })
 
   it('skips worktree creation when an active worktree already has the branch', async () => {
@@ -1117,7 +1192,6 @@ describe('backupOps.restoreProject', () => {
       tickets: null
     })
     expect(deps.cloneRepository).not.toHaveBeenCalled()
-    expect(deps.git.pull).not.toHaveBeenCalled()
     expect(deps.createProjectWithDefaultWorktree).not.toHaveBeenCalled()
     expect(deps.syncWorktreesOp).not.toHaveBeenCalled()
     expect(deps.execGit).not.toHaveBeenCalled()
