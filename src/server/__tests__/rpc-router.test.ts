@@ -161,7 +161,11 @@ describe('rpc router', () => {
       goal_success_criteria: null,
       note: null,
       created_from_session: false,
-      auto_approve_plan: false
+      auto_approve_plan: false,
+      model_provider_id: null,
+      model_id: null,
+      model_variant: null,
+      variant_group_id: null
     }
     const calls: unknown[] = []
     const router = makeRpcRouter({
@@ -268,7 +272,11 @@ describe('rpc router', () => {
       goal_success_criteria: null,
       note: null,
       created_from_session: false,
-      auto_approve_plan: false
+      auto_approve_plan: false,
+      model_provider_id: null,
+      model_id: null,
+      model_variant: null,
+      variant_group_id: null
     }
     const secondTicket = {
       ...firstTicket,
@@ -400,7 +408,11 @@ describe('rpc router', () => {
       goal_success_criteria: null,
       note: null,
       created_from_session: false,
-      auto_approve_plan: false
+      auto_approve_plan: false,
+      model_provider_id: null,
+      model_id: null,
+      model_variant: null,
+      variant_group_id: null
     }
     const calls: Array<{ projectId: string; id: string }> = []
     const router = makeRpcRouter({
@@ -499,7 +511,11 @@ describe('rpc router', () => {
       goal_success_criteria: null,
       note: null,
       created_from_session: false,
-      auto_approve_plan: false
+      auto_approve_plan: false,
+      model_provider_id: null,
+      model_id: null,
+      model_variant: null,
+      variant_group_id: null
     }
     const calls: Array<{ projectId: string; includeArchived: boolean | undefined }> = []
     const router = makeRpcRouter({
@@ -599,7 +615,11 @@ describe('rpc router', () => {
       goal_success_criteria: 'Build passes',
       note: 'Keep private',
       created_from_session: false,
-      auto_approve_plan: false
+      auto_approve_plan: false,
+      model_provider_id: null,
+      model_id: null,
+      model_variant: null,
+      variant_group_id: null
     }
     const calls: Array<{ projectId: string; id: string; data: unknown }> = []
     const router = makeRpcRouter({
@@ -782,7 +802,11 @@ describe('rpc router', () => {
       goal_success_criteria: null,
       note: null,
       created_from_session: false,
-      auto_approve_plan: false
+      auto_approve_plan: false,
+      model_provider_id: null,
+      model_id: null,
+      model_variant: null,
+      variant_group_id: null
     }
     const calls: Array<{ projectId: string; id: string }> = []
     const router = makeRpcRouter({
@@ -953,7 +977,11 @@ describe('rpc router', () => {
       goal_success_criteria: null,
       note: null,
       created_from_session: false,
-      auto_approve_plan: false
+      auto_approve_plan: false,
+      model_provider_id: null,
+      model_id: null,
+      model_variant: null,
+      variant_group_id: null
     }
     const calls: Array<{ projectId: string; ticketId: string }> = []
     const router = makeRpcRouter({
@@ -1053,7 +1081,11 @@ describe('rpc router', () => {
       goal_success_criteria: null,
       note: null,
       created_from_session: false,
-      auto_approve_plan: false
+      auto_approve_plan: false,
+      model_provider_id: null,
+      model_id: null,
+      model_variant: null,
+      variant_group_id: null
     }
     const calls: Array<{ projectId: string; id: string; column: string; sortOrder: number }> = []
     const router = makeRpcRouter({
@@ -1328,7 +1360,11 @@ describe('rpc router', () => {
       goal_success_criteria: null,
       note: null,
       created_from_session: false,
-      auto_approve_plan: false
+      auto_approve_plan: false,
+      model_provider_id: null,
+      model_id: null,
+      model_variant: null,
+      variant_group_id: null
     }
     const calls: string[] = []
     const router = makeRpcRouter({
@@ -1430,7 +1466,11 @@ describe('rpc router', () => {
       goal_success_criteria: null,
       note: null,
       created_from_session: false,
-      auto_approve_plan: false
+      auto_approve_plan: false,
+      model_provider_id: null,
+      model_id: null,
+      model_variant: null,
+      variant_group_id: null
     }
     const calls: Array<{ projectId: string; id: string; tokens: number }> = []
     const router = makeRpcRouter({
@@ -2197,7 +2237,11 @@ describe('rpc router', () => {
       goal_success_criteria: null,
       note: null,
       created_from_session: false,
-      auto_approve_plan: false
+      auto_approve_plan: false,
+      model_provider_id: null,
+      model_id: null,
+      model_variant: null,
+      variant_group_id: null
     }
     const calls: string[] = []
     const router = makeRpcRouter({
@@ -2310,7 +2354,11 @@ describe('rpc router', () => {
       goal_success_criteria: null,
       note: null,
       created_from_session: false,
-      auto_approve_plan: false
+      auto_approve_plan: false,
+      model_provider_id: null,
+      model_id: null,
+      model_variant: null,
+      variant_group_id: null
     }
     const calls: Array<{ projectId: string; ticketId: string }> = []
     const router = makeRpcRouter({

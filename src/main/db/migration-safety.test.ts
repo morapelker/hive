@@ -202,6 +202,101 @@ describeIf('database migration safety', () => {
     db.close()
   })
 
+  it('supports the multi-model ticket columns end-to-end on a fresh database', () => {
+    const db = new DatabaseService(makeDbPath())
+    db.init()
+
+    expect(columnNames(db, 'kanban_tickets')).toEqual(
+      expect.arrayContaining(['model_provider_id', 'model_id', 'model_variant', 'variant_group_id'])
+    )
+    expect(columnNames(db, 'markdown_kanban_card_state')).toEqual(
+      expect.arrayContaining(['model_provider_id', 'model_id', 'model_variant', 'variant_group_id'])
+    )
+
+    const project = db.createProject({ name: 'Project', path: makeDbPath() })
+
+    // Create without model fields -> all four null
+    const bareTicket = db.createKanbanTicket({ project_id: project.id, title: 'No model' })
+    expect(bareTicket.model_provider_id).toBeNull()
+    expect(bareTicket.model_id).toBeNull()
+    expect(bareTicket.model_variant).toBeNull()
+    expect(bareTicket.variant_group_id).toBeNull()
+    expect(bareTicket.note).toBeNull()
+
+    // Create with model fields + note -> round-trips via create response, get, and list
+    const ticket = db.createKanbanTicket({
+      project_id: project.id,
+      title: 'With model',
+      note: 'private annotation',
+      model_provider_id: 'anthropic',
+      model_id: 'claude-sonnet-5',
+      model_variant: 'high',
+      variant_group_id: 'group-1'
+    })
+    expect(ticket.note).toBe('private annotation')
+    expect(ticket.model_provider_id).toBe('anthropic')
+    expect(ticket.model_id).toBe('claude-sonnet-5')
+    expect(ticket.model_variant).toBe('high')
+    expect(ticket.variant_group_id).toBe('group-1')
+
+    const fetched = db.getKanbanTicket(ticket.id)
+    expect(fetched?.note).toBe('private annotation')
+    expect(fetched?.model_provider_id).toBe('anthropic')
+    expect(fetched?.model_id).toBe('claude-sonnet-5')
+    expect(fetched?.model_variant).toBe('high')
+    expect(fetched?.variant_group_id).toBe('group-1')
+
+    const listedTicket = db
+      .getKanbanTicketsByProject(project.id)
+      .find((candidate) => candidate.id === ticket.id)
+    expect(listedTicket?.model_provider_id).toBe('anthropic')
+    expect(listedTicket?.variant_group_id).toBe('group-1')
+
+    // Update: set each field, then clear each field back to null
+    const updatedSet = db.updateKanbanTicket(ticket.id, {
+      model_provider_id: 'openai',
+      model_id: 'gpt-5',
+      model_variant: 'medium',
+      variant_group_id: 'group-2'
+    })
+    expect(updatedSet?.model_provider_id).toBe('openai')
+    expect(updatedSet?.model_id).toBe('gpt-5')
+    expect(updatedSet?.model_variant).toBe('medium')
+    expect(updatedSet?.variant_group_id).toBe('group-2')
+
+    const updatedClear = db.updateKanbanTicket(ticket.id, {
+      model_provider_id: null,
+      model_id: null,
+      model_variant: null,
+      variant_group_id: null
+    })
+    expect(updatedClear?.model_provider_id).toBeNull()
+    expect(updatedClear?.model_id).toBeNull()
+    expect(updatedClear?.model_variant).toBeNull()
+    expect(updatedClear?.variant_group_id).toBeNull()
+
+    db.close()
+  })
+
+  it('is idempotent when the ticket model columns already exist', () => {
+    const dbPath = makeDbPath()
+    const db1 = new DatabaseService(dbPath)
+    db1.init()
+    db1.close()
+
+    // Re-running init() on an already-migrated database must not throw
+    // (safeAddColumn no-ops when the column is already present).
+    const db2 = new DatabaseService(dbPath)
+    expect(() => db2.init()).not.toThrow()
+    expect(columnNames(db2, 'kanban_tickets')).toEqual(
+      expect.arrayContaining(['model_provider_id', 'model_id', 'model_variant', 'variant_group_id'])
+    )
+    expect(columnNames(db2, 'markdown_kanban_card_state')).toEqual(
+      expect.arrayContaining(['model_provider_id', 'model_id', 'model_variant', 'variant_group_id'])
+    )
+    db2.close()
+  })
+
   it('upgrades an origin/main v31-shaped database to v34 without losing existing worktrees', () => {
     const dbPath = makeDbPath()
     seedOriginMainVersion31Shape(dbPath)
