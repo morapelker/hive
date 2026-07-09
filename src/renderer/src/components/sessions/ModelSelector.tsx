@@ -60,10 +60,16 @@ type SdkFilterOption = {
 
 const ULTRACODE_TOOLTIP = 'xhigh effort + dynamic-workflow orchestration'
 
-/** Styling for a variant chip. ultracode gets a distinct accent so it reads as
- * the special CLI-only mode it is, rather than just another effort level. */
-function variantChipClass(isActive: boolean, isUltracode: boolean): string {
-  if (isUltracode) {
+/** ultracode and codex's `ultra` effort share the violet accent so both read as
+ * special top-tier modes rather than just another effort level. */
+function isAccentVariant(variant: string): boolean {
+  return variant === ULTRACODE_VARIANT || variant === 'ultra'
+}
+
+/** Styling for a variant chip. Accent variants (ultracode, ultra) get a
+ * distinct look so they read as the special modes they are. */
+function variantChipClass(isActive: boolean, isAccent: boolean): string {
+  if (isAccent) {
     return cn(
       'text-[10px] px-1.5 py-0.5 rounded font-medium',
       isActive
@@ -579,7 +585,7 @@ export const ModelSelector = memo(function ModelSelector({
               <span
                 className={cn(
                   'text-[10px] font-semibold uppercase',
-                  selectedModel.variant === ULTRACODE_VARIANT
+                  isAccentVariant(selectedModel.variant)
                     ? 'text-violet-600 dark:text-violet-300'
                     : 'text-primary'
                 )}
@@ -636,7 +642,7 @@ export const ModelSelector = memo(function ModelSelector({
                           return (
                             <button
                               key={variant}
-                              className={variantChipClass(isActiveVariant, isUltracode)}
+                              className={variantChipClass(isActiveVariant, isAccentVariant(variant))}
                               title={isUltracode ? ULTRACODE_TOOLTIP : undefined}
                               onClick={(e) => {
                                 e.stopPropagation()
@@ -696,7 +702,7 @@ export const ModelSelector = memo(function ModelSelector({
                           return (
                             <button
                               key={variant}
-                              className={variantChipClass(isActiveVariant, isUltracode)}
+                              className={variantChipClass(isActiveVariant, isAccentVariant(variant))}
                               title={isUltracode ? ULTRACODE_TOOLTIP : undefined}
                               onClick={(e) => {
                                 e.stopPropagation()
