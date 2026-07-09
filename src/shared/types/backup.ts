@@ -91,3 +91,20 @@ export interface RestoreProjectResult {
   tickets: { restored: number; dependencyErrors: number; skipped: boolean } | null
   error?: string
 }
+
+// backupOps.exportBackup / backupOps.openBackupFile RPC result shapes.
+// Shared between the server RPC domain (src/server/rpc/domains/backup-ops.ts)
+// and the renderer API wrapper (src/renderer/src/api/backup-api.ts).
+export interface BackupExportResult {
+  readonly success: boolean
+  readonly canceled?: boolean
+  readonly path?: string
+  readonly projectCount?: number
+  readonly error?: string
+}
+
+export interface BackupOpenResult {
+  readonly canceled: boolean
+  readonly backup?: BackupFile
+  readonly error?: string
+}

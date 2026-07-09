@@ -16,6 +16,7 @@ import {
   Send,
   Zap,
   Database,
+  DatabaseBackup,
   Hash,
   RadioTower,
   Building2,
@@ -42,6 +43,7 @@ import { SettingsAdvanced } from './SettingsAdvanced'
 import { SettingsPet } from './SettingsPet'
 import { SettingsCustomCommands } from './SettingsCustomCommands'
 import { SettingsStorage } from './SettingsStorage'
+import { SettingsBackup } from './SettingsBackup'
 import { cn } from '@/lib/utils'
 
 const SECTIONS = [
@@ -61,6 +63,7 @@ const SECTIONS = [
   { id: 'security', label: 'Security', icon: Shield },
   { id: 'privacy', label: 'Privacy', icon: Eye },
   { id: 'storage', label: 'Storage', icon: Database },
+  { id: 'backup', label: 'Backup', icon: DatabaseBackup },
   { id: 'shortcuts', label: 'Shortcuts', icon: Keyboard },
   { id: 'advanced', label: 'Advanced', icon: Wrench },
   { id: 'updates', label: 'Updates', icon: Download }
@@ -136,6 +139,7 @@ export function SettingsModal(): React.JSX.Element {
             {activeSection === 'security' && <SettingsSecurity />}
             {activeSection === 'privacy' && <SettingsPrivacy />}
             {activeSection === 'storage' && <SettingsStorage />}
+            {activeSection === 'backup' && <SettingsBackup />}
             {activeSection === 'shortcuts' && <SettingsShortcuts />}
             {activeSection === 'updates' && <SettingsUpdates />}
             {activeSection === 'advanced' && <SettingsAdvanced />}

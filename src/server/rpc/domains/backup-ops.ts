@@ -9,7 +9,9 @@ import { z } from 'zod'
 import type { CustomProjectCommand } from '@shared/lib/custom-commands'
 import { isDesktopCommandResult, makeDesktopCommandRequest } from '../../../shared/desktop-command'
 import type {
+  BackupExportResult,
   BackupFile,
+  BackupOpenResult,
   BackupProject,
   ProjectClassification,
   RestoreProjectResult,
@@ -40,20 +42,6 @@ interface ProjectRawExtras {
 }
 
 const MAX_CUSTOM_ICON_BYTES = 1024 * 1024
-
-export interface BackupExportResult {
-  readonly success: boolean
-  readonly canceled?: boolean
-  readonly path?: string
-  readonly projectCount?: number
-  readonly error?: string
-}
-
-export interface BackupOpenResult {
-  readonly canceled: boolean
-  readonly backup?: BackupFile
-  readonly error?: string
-}
 
 interface BackupOpsDb {
   readonly getAllProjects: () => Project[]
