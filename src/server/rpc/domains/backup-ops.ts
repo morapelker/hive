@@ -42,6 +42,7 @@ interface ProjectRawExtras {
 }
 
 const MAX_CUSTOM_ICON_BYTES = 1024 * 1024
+const MAX_BACKUP_FILE_BYTES = 50 * 1024 * 1024
 
 interface BackupOpsDb {
   readonly getAllProjects: () => Project[]
@@ -209,6 +210,24 @@ const backupProjectSchema = z
     ticket_dependencies: z.array(backupTicketDependencySchema).nullable()
   })
   .passthrough()
+  // Ticket dependency edges and worktree_branch assignments are resolved by
+  // `key` during restore (see `keyToId` in restoreProject) — a duplicate key
+  // within one project would silently misroute a dependency/worktree edge to
+  // whichever ticket happens to win the map insert.
+  .superRefine((project, ctx) => {
+    if (!project.tickets) return
+    const seen = new Set<string>()
+    for (const ticket of project.tickets) {
+      if (seen.has(ticket.key)) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `duplicate ticket key "${ticket.key}" in project "${project.name}"`,
+          path: ['tickets']
+        })
+      }
+      seen.add(ticket.key)
+    }
+  })
 
 const backupFileSchema = z.object({
   version: z.number(),
@@ -286,15 +305,21 @@ function resolveStorageMode(project: Project): 'internal' | 'markdown' {
 
 async function readCustomIcon(
   deps: BackupOpsDeps,
-  iconPath: string | null
+  projectName: string,
+  iconPath: string | null,
+  warnings: string[]
 ): Promise<BackupFile['projects'][number]['custom_icon']> {
   if (!iconPath) return null
   try {
     const stats = await deps.fs.stat(iconPath)
-    if (stats.size > MAX_CUSTOM_ICON_BYTES) return null
+    if (stats.size > MAX_CUSTOM_ICON_BYTES) {
+      warnings.push(`custom icon for ${projectName} skipped (larger than 1 MB)`)
+      return null
+    }
     const data = await deps.fs.readFile(iconPath)
     return { filename: basename(iconPath), data_base64: data.toString('base64') }
-  } catch {
+  } catch (error) {
+    warnings.push(`custom icon for ${projectName} skipped (${errorMessage(error)})`)
     return null
   }
 }
@@ -347,7 +372,8 @@ function buildTicketsAndDependencies(
 
 async function buildBackupProject(
   deps: BackupOpsDeps,
-  project: Project
+  project: Project,
+  warnings: string[]
 ): Promise<BackupFile['projects'][number]> {
   const storageMode = resolveStorageMode(project)
   const isMarkdownMode = storageMode === 'markdown'
@@ -373,7 +399,7 @@ async function buildBackupProject(
     kanban_simple_mode: isProjectSimpleMode(project),
     kanban_storage_mode: storageMode,
     kanban_markdown_config: parseKanbanMarkdownConfig(project.kanban_markdown_config),
-    custom_icon: await readCustomIcon(deps, project.custom_icon),
+    custom_icon: await readCustomIcon(deps, project.name, project.custom_icon, warnings),
     worktrees: deps.db
       .getActiveWorktreesByProject(project.id)
       .filter((worktree) => !worktree.is_default)
@@ -391,8 +417,9 @@ async function exportBackup(deps: BackupOpsDeps): Promise<BackupExportResult> {
   try {
     const projects = deps.db.getAllProjects()
     const backupProjects: BackupFile['projects'] = []
+    const warnings: string[] = []
     for (const project of projects) {
-      backupProjects.push(await buildBackupProject(deps, project))
+      backupProjects.push(await buildBackupProject(deps, project, warnings))
     }
 
     const backupFile: BackupFile = {
@@ -410,7 +437,12 @@ async function exportBackup(deps: BackupOpsDeps): Promise<BackupExportResult> {
 
     await deps.fs.writeFile(filePath, YAML.stringify(backupFile))
 
-    return { success: true, path: filePath, projectCount: backupProjects.length }
+    return {
+      success: true,
+      path: filePath,
+      projectCount: backupProjects.length,
+      ...(warnings.length > 0 ? { warnings } : {})
+    }
   } catch (error) {
     return { success: false, error: errorMessage(error) }
   }
@@ -425,6 +457,19 @@ async function openBackupFile(deps: BackupOpsDeps): Promise<BackupOpenResult> {
     const filePath = await deps.requestOpenFileDialog()
     if (filePath === null) {
       return { canceled: true }
+    }
+
+    try {
+      const stats = await deps.fs.stat(filePath)
+      if (stats.size > MAX_BACKUP_FILE_BYTES) {
+        const sizeMb = (stats.size / (1024 * 1024)).toFixed(1)
+        return {
+          canceled: false,
+          error: `Backup file is too large (${sizeMb} MB — limit is 50 MB).`
+        }
+      }
+    } catch (error) {
+      return { canceled: false, error: errorMessage(error) }
     }
 
     let raw: string
@@ -590,6 +635,25 @@ async function uniquePath(deps: BackupOpsDeps, basePath: string): Promise<string
   throw new Error(`Could not choose a free path for ${basePath}`)
 }
 
+// Backed-up branch names come from a hand-editable YAML file and flow into
+// `git branch <name> <start>` / `git worktree add <path> <name>` as raw
+// positional argv (see execGitScript in the test file for the exact call
+// shapes). A name starting with `-` would be parsed by git as a flag (e.g.
+// `-f` force-resets whatever ref happens to sit in that argv slot) instead of
+// a ref — mirrors `invalidBranch` in `src/main/effect/git/layers.ts:37`,
+// widened to also reject whitespace/control characters, which are never
+// valid in a git ref name.
+function invalidBranchName(branch: string): boolean {
+  return !branch || branch.startsWith('-') || /[\s\x00-\x1f\x7f]/.test(branch)
+}
+
+// A clone destination basename derived from a backed-up `path` that is empty
+// or resolves to `.`/`..` (e.g. a `path` ending in `/..`) would place the
+// clone outside the user-chosen parent folder.
+function invalidCloneBasename(name: string): boolean {
+  return !name || name === '.' || name === '..'
+}
+
 const nonSuccessActions: ReadonlySet<RestoreProjectResult['action']> = new Set([
   'failed',
   'skipped-conflict',
@@ -665,7 +729,20 @@ async function restoreProject(
         }
       }
 
-      const dest = await uniquePath(deps, join(options.cloneParentDir, basename(project.path)))
+      const cloneBasename = basename(project.path)
+      if (invalidCloneBasename(cloneBasename)) {
+        return {
+          success: false,
+          projectName,
+          action: 'failed',
+          error: `cannot derive a clone destination from path "${project.path}"`,
+          warnings: [],
+          worktrees: [],
+          tickets: null
+        }
+      }
+
+      const dest = await uniquePath(deps, join(options.cloneParentDir, cloneBasename))
       const cloneResult = await deps.cloneRepository(project.remote_url, dest)
       if (!cloneResult.success) {
         return {
@@ -727,7 +804,7 @@ async function restoreProject(
         auto_assign_port: project.auto_assign_port
       })
       deps.db.updateProjectKanbanStorageMode(projectId, project.kanban_storage_mode)
-      if (project.kanban_markdown_config !== null) {
+      if (project.kanban_markdown_config != null) {
         deps.db.updateProjectKanbanMarkdownConfig(
           projectId,
           JSON.stringify(project.kanban_markdown_config)
@@ -769,9 +846,20 @@ async function restoreProject(
       }
     }
 
+    const safeProjectName = slug(project.name)
+
     for (const entry of project.worktrees) {
       if (knownBranches.has(entry.branch_name)) {
         worktreeResults.push({ branch: entry.branch_name, status: 'skipped-existing' })
+        continue
+      }
+
+      if (invalidBranchName(entry.branch_name)) {
+        worktreeResults.push({
+          branch: entry.branch_name,
+          status: 'failed',
+          error: 'invalid branch name'
+        })
         continue
       }
 
@@ -831,8 +919,8 @@ async function restoreProject(
         join(
           deps.homedir(),
           '.hive-worktrees',
-          project.name,
-          `${project.name}--${slug(entry.name)}`
+          safeProjectName,
+          `${safeProjectName}--${slug(entry.name)}`
         )
       )
 

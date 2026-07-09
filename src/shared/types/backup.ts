@@ -100,6 +100,10 @@ export interface BackupExportResult {
   readonly canceled?: boolean
   readonly path?: string
   readonly projectCount?: number
+  // Non-fatal issues encountered while building the export (e.g. a custom
+  // icon that was skipped for being missing or oversized). Absent/empty when
+  // the export had nothing to warn about.
+  readonly warnings?: string[]
   readonly error?: string
 }
 

@@ -341,6 +341,8 @@ describe('backupOps.exportBackup', () => {
     expect(result.success).toBe(true)
     const written = YAML.parse(readFileSync(outPath, 'utf-8')) as BackupFile
     expect(written.projects[0].custom_icon).toBeNull()
+    expect(result.warnings).toHaveLength(1)
+    expect(result.warnings?.[0]).toContain('custom icon for repo skipped')
   })
 
   it('embeds a custom_icon under the size limit as base64', async () => {
@@ -371,6 +373,7 @@ describe('backupOps.exportBackup', () => {
       filename: 'icon.png',
       data_base64: Buffer.from('fake-png-bytes').toString('base64')
     })
+    expect(result.warnings).toBeUndefined()
   })
 
   it('drops a custom_icon larger than 1 MB and continues exporting', async () => {
@@ -398,6 +401,8 @@ describe('backupOps.exportBackup', () => {
     expect(result.success).toBe(true)
     const written = YAML.parse(readFileSync(outPath, 'utf-8')) as BackupFile
     expect(written.projects[0].custom_icon).toBeNull()
+    expect(result.warnings).toHaveLength(1)
+    expect(result.warnings?.[0]).toContain('custom icon for repo skipped (larger than 1 MB)')
   })
 
   it('returns a failure result when an unexpected error occurs', async () => {
@@ -532,6 +537,55 @@ describe('backupOps.openBackupFile', () => {
     expect(result.canceled).toBe(false)
     expect(result.backup).toBeUndefined()
     expect(result.error).toContain('Desktop command failed')
+  })
+
+  it('rejects a picked file larger than 50 MB without reading its contents', async () => {
+    const readFileSpy = vi.fn(async () => Buffer.from(''))
+    const deps = makeDeps({
+      requestOpenFileDialog: vi.fn(async () => '/huge/backup.yaml'),
+      fs: {
+        ...makeFsDeps(),
+        stat: vi.fn(async () => ({ size: 51 * 1024 * 1024 })),
+        readFile: readFileSpy
+      }
+    })
+    const service = makeBackupOpsRpcService(deps)
+    const result = await Effect.runPromise(service.openBackupFile())
+
+    expect(result.canceled).toBe(false)
+    expect(result.backup).toBeUndefined()
+    expect(result.error).toMatch(/too large/i)
+    expect(readFileSpy).not.toHaveBeenCalled()
+  })
+
+  it('reports an error for a project with duplicate ticket keys instead of letting them silently misroute dependencies', async () => {
+    const dir = makeTempDir()
+    const filePath = join(dir, 'dup-keys.yaml')
+    const duplicateTicket = {
+      key: 't1',
+      title: 'Dup',
+      description: null,
+      column: 'todo' as const,
+      sort_order: 0,
+      mode: null,
+      mark: null,
+      total_tokens: 0,
+      archived_at: null,
+      worktree_branch: null
+    }
+    const backupWithDupKeys: BackupFile = {
+      ...validBackup,
+      projects: [{ ...validBackup.projects[0], tickets: [duplicateTicket, duplicateTicket] }]
+    }
+    writeFileSync(filePath, YAML.stringify(backupWithDupKeys), 'utf-8')
+
+    const deps = makeDeps({ requestOpenFileDialog: vi.fn(async () => filePath) })
+    const service = makeBackupOpsRpcService(deps)
+    const result = await Effect.runPromise(service.openBackupFile())
+
+    expect(result.canceled).toBe(false)
+    expect(result.backup).toBeUndefined()
+    expect(result.error).toContain('duplicate ticket key')
   })
 })
 
@@ -838,6 +892,36 @@ describe('backupOps.restoreProject', () => {
       projectId: 'project-repo',
       projectPath: '/clones/repo'
     })
+  })
+
+  it('restores fine when kanban_markdown_config is entirely absent (zod z.unknown() optional-key edge case), rather than persisting JSON.stringify(undefined)', async () => {
+    // Simulates the real DB layer, which throws on a non-string/non-null bind
+    // value — proves the `undefined` case is skipped rather than persisted.
+    const updateProjectKanbanMarkdownConfig = vi.fn((_id: string, config: string | null) => {
+      if (config !== null && typeof config !== 'string') {
+        throw new TypeError('SQLite3 can only bind numbers, strings, bigints, buffers, and null')
+      }
+      return null
+    })
+    const deps = makeDeps({
+      fs: mockFs(['/repo']),
+      isGitRepository: vi.fn(() => true),
+      git: { ...makeDeps().git, getRemoteUrl: vi.fn(async () => null) },
+      db: { ...makeDeps().db, updateProjectKanbanMarkdownConfig }
+    })
+    const bp = backupProject({ path: '/repo' }) as unknown as Record<string, unknown>
+    delete bp.kanban_markdown_config
+
+    const service = makeBackupOpsRpcService(deps)
+    const result = await Effect.runPromise(
+      service.restoreProject({
+        project: bp as unknown as BackupProject,
+        options: { cloneParentDir: null }
+      })
+    )
+
+    expect(result.success).toBe(true)
+    expect(updateProjectKanbanMarkdownConfig).not.toHaveBeenCalled()
   })
 
   it('suffixes the clone destination on collision', async () => {
@@ -1236,6 +1320,82 @@ describe('backupOps.restoreProject', () => {
     expect(result.success).toBe(false)
     expect(result.action).toBe('failed')
     expect(result.error).toContain('boom')
+  })
+
+  it('rejects a branch name that would be parsed as a git flag, without ever passing it to execGit', async () => {
+    const deps = makeDeps({
+      fs: mockFs(['/repo']),
+      isGitRepository: vi.fn(() => true),
+      git: { ...makeDeps().git, getRemoteUrl: vi.fn(async () => null) },
+      db: { ...makeDeps().db, getActiveWorktreesByProject: () => [] },
+      execGit: execGitScript()
+    })
+    const bp = backupProject({
+      path: '/repo',
+      worktrees: [{ name: 'evil', branch_name: '-f', base_branch: 'main' }]
+    })
+
+    const service = makeBackupOpsRpcService(deps)
+    const result = await Effect.runPromise(
+      service.restoreProject({ project: bp, options: { cloneParentDir: null } })
+    )
+
+    expect(result.worktrees).toEqual([
+      { branch: '-f', status: 'failed', error: 'invalid branch name' }
+    ])
+    const execGitCalls = (deps.execGit as ReturnType<typeof vi.fn>).mock.calls
+    expect(execGitCalls.some((call) => call[1].includes('-f'))).toBe(false)
+    expect(execGitCalls.some((call) => call[1][0] === 'branch')).toBe(false)
+  })
+
+  it('sanitizes a project name containing path-traversal segments so the worktree path stays under ~/.hive-worktrees', async () => {
+    const deps = makeDeps({
+      fs: mockFs(['/repo']),
+      isGitRepository: vi.fn(() => true),
+      git: { ...makeDeps().git, getRemoteUrl: vi.fn(async () => null) },
+      db: { ...makeDeps().db, getActiveWorktreesByProject: () => [] },
+      homedir: vi.fn(() => '/home/tester'),
+      execGit: execGitScript({ revParseHeads: { 'feature/a': true } })
+    })
+    const bp = backupProject({
+      name: '../../tmp/evil',
+      path: '/repo',
+      worktrees: [{ name: 'feature-a', branch_name: 'feature/a', base_branch: 'main' }]
+    })
+
+    const service = makeBackupOpsRpcService(deps)
+    const result = await Effect.runPromise(
+      service.restoreProject({ project: bp, options: { cloneParentDir: null } })
+    )
+
+    expect(result.worktrees).toEqual([{ branch: 'feature/a', status: 'created' }])
+    const execGitCalls = (deps.execGit as ReturnType<typeof vi.fn>).mock.calls
+    const worktreeAddCall = execGitCalls.find((call) => call[1][0] === 'worktree')!
+    const worktreePath = worktreeAddCall[1][2] as string
+    expect(worktreePath.startsWith('/home/tester/.hive-worktrees/')).toBe(true)
+    expect(worktreePath.includes('..')).toBe(false)
+  })
+
+  it('fails the clone flow instead of escaping the chosen folder when the backed-up path basename is ".."', async () => {
+    const deps = makeDeps({
+      fs: mockFs([]),
+      cloneRepository: vi.fn(async () => ({ success: true })),
+      execGit: execGitScript()
+    })
+    const bp = backupProject({
+      name: 'repo',
+      path: '/some/project/..',
+      remote_url: 'git@github.com:org/repo.git'
+    })
+
+    const service = makeBackupOpsRpcService(deps)
+    const result = await Effect.runPromise(
+      service.restoreProject({ project: bp, options: { cloneParentDir: '/clones' } })
+    )
+
+    expect(result.success).toBe(false)
+    expect(result.action).toBe('failed')
+    expect(deps.cloneRepository).not.toHaveBeenCalled()
   })
 })
 
