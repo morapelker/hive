@@ -1,5 +1,5 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { readFile, stat, writeFile } from 'node:fs/promises'
+import { access, mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -8,7 +8,7 @@ import YAML from 'yaml'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { KanbanTicket, Project, TicketDependency, Worktree } from '../../../../main/db'
-import type { BackupFile } from '../../../../shared/types/backup'
+import type { BackupFile, BackupProject } from '../../../../shared/types/backup'
 import {
   makeBackupOpsRpcHandlers,
   makeBackupOpsRpcService,
@@ -123,7 +123,12 @@ function makeFsDeps(): BackupOpsDeps['fs'] {
   return {
     readFile: (path) => readFile(path),
     writeFile: (path, content) => writeFile(path, content, 'utf-8'),
-    stat: (path) => stat(path)
+    stat: (path) => stat(path),
+    exists: (path) =>
+      access(path)
+        .then(() => true)
+        .catch(() => false),
+    mkdir: (path) => mkdir(path, { recursive: true }).then(() => undefined)
   }
 }
 
@@ -134,15 +139,66 @@ function makeDeps(overrides: Partial<BackupOpsDeps> = {}): BackupOpsDeps {
       getActiveWorktreesByProject: () => [],
       getWorktreesByProject: () => [],
       getKanbanTicketsByProject: () => [],
-      getDependenciesForProject: () => []
+      getDependenciesForProject: () => [],
+      getProjectByPath: () => null,
+      createWorktree: vi.fn((data) => worktree({ ...data, id: `wt-${data.branch_name}` })),
+      updateProject: vi.fn(() => null),
+      updateProjectKanbanStorageMode: vi.fn(() => null),
+      updateProjectKanbanMarkdownConfig: vi.fn(() => null),
+      updateProjectSimpleMode: vi.fn(),
+      createKanbanTicket: vi.fn((data) =>
+        ticket({ ...data, id: `ticket-${data.title}`, mark: null })
+      ),
+      updateKanbanTicket: vi.fn(() => null),
+      addTicketTokens: vi.fn(),
+      addTicketDependency: vi.fn(() => ({ success: true })),
+      transaction: vi.fn((fn) => fn())
     },
     git: {
-      getRemoteUrl: vi.fn(async () => null)
+      getRemoteUrl: vi.fn(async () => null),
+      hasUncommittedChanges: vi.fn(async () => false),
+      pull: vi.fn(async () => ({ success: true })),
+      getDefaultBranch: vi.fn(async () => 'main')
     },
     fs: makeFsDeps(),
     getAppVersion: vi.fn(async () => '1.2.3'),
     requestSaveFileDialog: vi.fn(async () => null),
     requestOpenFileDialog: vi.fn(async () => null),
+    execGit: vi.fn(async () => ''),
+    homedir: vi.fn(() => '/home/tester'),
+    cloneRepository: vi.fn(async () => ({ success: true })),
+    isGitRepository: vi.fn(() => true),
+    createProjectWithDefaultWorktree: vi.fn((data) =>
+      project({ id: `project-${data.name}`, name: data.name, path: data.path })
+    ),
+    uploadIcon: vi.fn(() => ({ success: true })),
+    syncWorktreesOp: vi.fn(async () => ({ success: true })),
+    ...overrides
+  }
+}
+
+function backupProject(overrides: Partial<BackupProject> = {}): BackupProject {
+  return {
+    name: 'repo',
+    path: '/repo',
+    remote_url: null,
+    description: null,
+    tags: null,
+    language: null,
+    setup_script: null,
+    run_script: null,
+    archive_script: null,
+    worktree_create_script: null,
+    custom_commands: null,
+    auto_assign_port: false,
+    sort_order: 0,
+    kanban_simple_mode: false,
+    kanban_storage_mode: 'internal',
+    kanban_markdown_config: null,
+    custom_icon: null,
+    worktrees: [],
+    tickets: null,
+    ticket_dependencies: null,
     ...overrides
   }
 }
@@ -194,6 +250,7 @@ describe('backupOps.exportBackup', () => {
 
     const deps = makeDeps({
       db: {
+        ...makeDeps().db,
         getAllProjects: () => [internalProject, markdownProject],
         getActiveWorktreesByProject: (projectId) => (projectId === 'project-a' ? [wtA] : []),
         getWorktreesByProject: (projectId) => (projectId === 'project-a' ? [wtA] : []),
@@ -204,7 +261,7 @@ describe('backupOps.exportBackup', () => {
         },
         getDependenciesForProject: (projectId) => (projectId === 'project-a' ? [dependencyA] : [])
       },
-      git: { getRemoteUrl },
+      git: { ...makeDeps().git, getRemoteUrl },
       requestSaveFileDialog: vi.fn(async () => outPath)
     })
 
@@ -244,6 +301,7 @@ describe('backupOps.exportBackup', () => {
     const writeFileSpy = vi.fn(async () => undefined)
     const deps = makeDeps({
       db: {
+        ...makeDeps().db,
         getAllProjects: () => [project()],
         getActiveWorktreesByProject: () => [],
         getWorktreesByProject: () => [],
@@ -268,6 +326,7 @@ describe('backupOps.exportBackup', () => {
 
     const deps = makeDeps({
       db: {
+        ...makeDeps().db,
         getAllProjects: () => [proj],
         getActiveWorktreesByProject: () => [],
         getWorktreesByProject: () => [],
@@ -294,6 +353,7 @@ describe('backupOps.exportBackup', () => {
 
     const deps = makeDeps({
       db: {
+        ...makeDeps().db,
         getAllProjects: () => [proj],
         getActiveWorktreesByProject: () => [],
         getWorktreesByProject: () => [],
@@ -323,6 +383,7 @@ describe('backupOps.exportBackup', () => {
 
     const deps = makeDeps({
       db: {
+        ...makeDeps().db,
         getAllProjects: () => [proj],
         getActiveWorktreesByProject: () => [],
         getWorktreesByProject: () => [],
@@ -343,6 +404,7 @@ describe('backupOps.exportBackup', () => {
   it('returns a failure result when an unexpected error occurs', async () => {
     const deps = makeDeps({
       db: {
+        ...makeDeps().db,
         getAllProjects: () => {
           throw new Error('db exploded')
         },
@@ -474,12 +536,652 @@ describe('backupOps.openBackupFile', () => {
   })
 })
 
+/** fs deps that never touch the real filesystem — every existence check is
+ * driven by an explicit allow-list, and mkdir/readFile/writeFile/stat are
+ * no-op mocks. */
+function mockFs(existingPaths: string[] = []): BackupOpsDeps['fs'] {
+  const set = new Set(existingPaths)
+  return {
+    readFile: vi.fn(async () => Buffer.from('')),
+    writeFile: vi.fn(async () => undefined),
+    stat: vi.fn(async () => ({ size: 0 })),
+    exists: vi.fn(async (path: string) => set.has(path)),
+    mkdir: vi.fn(async () => undefined)
+  }
+}
+
+interface ExecGitScript {
+  revParseHeads?: Record<string, boolean>
+  revParseRemotes?: Record<string, boolean>
+  fetchFails?: boolean
+  worktreeAddFailFor?: Set<string>
+  branchCreateFailFor?: Set<string>
+}
+
+/** Dispatches the raw `execGit(cwd, args)` calls restoreProject issues for
+ * worktree/branch plumbing, driven by a small script object per test. */
+function execGitScript(script: ExecGitScript = {}): BackupOpsDeps['execGit'] {
+  return vi.fn(async (_cwd: string, args: string[]) => {
+    const [cmd] = args
+    if (cmd === 'fetch') {
+      if (script.fetchFails) throw new Error('fetch failed')
+      return ''
+    }
+    if (cmd === 'rev-parse') {
+      const ref = args[2] ?? ''
+      if (ref.startsWith('refs/heads/')) {
+        const branch = ref.slice('refs/heads/'.length)
+        if (script.revParseHeads?.[branch]) return 'deadbeef'
+        throw new Error(`unknown revision: ${branch}`)
+      }
+      if (ref.startsWith('refs/remotes/origin/')) {
+        const branch = ref.slice('refs/remotes/origin/'.length)
+        if (script.revParseRemotes?.[branch]) return 'deadbeef'
+        throw new Error(`unknown revision: ${branch}`)
+      }
+      throw new Error(`unexpected rev-parse ref: ${ref}`)
+    }
+    if (cmd === 'branch') {
+      const branch = args[1]
+      if (script.branchCreateFailFor?.has(branch)) throw new Error('branch create failed')
+      return ''
+    }
+    if (cmd === 'worktree') {
+      const branch = args[3]
+      if (script.worktreeAddFailFor?.has(branch)) throw new Error('already checked out')
+      return ''
+    }
+    return ''
+  })
+}
+
+describe('backupOps.classifyProjects', () => {
+  it('classifies ssh-form backup remote vs https-form local remote as exists-match', async () => {
+    const deps = makeDeps({
+      fs: mockFs(['/backup/repo']),
+      isGitRepository: vi.fn(() => true),
+      git: {
+        ...makeDeps().git,
+        getRemoteUrl: vi.fn(async (repoPath: string) =>
+          repoPath === '/backup/repo' ? 'https://github.com/org/repo.git' : null
+        )
+      },
+      db: { ...makeDeps().db, getProjectByPath: () => null }
+    })
+
+    const service = makeBackupOpsRpcService(deps)
+    const [result] = await Effect.runPromise(
+      service.classifyProjects({
+        projects: [
+          { name: 'repo', path: '/backup/repo', remoteUrl: 'git@github.com:org/repo.git' }
+        ]
+      })
+    )
+
+    expect(result).toMatchObject({
+      path: '/backup/repo',
+      classification: 'exists-match',
+      alreadyInHive: false,
+      hiveProjectId: null,
+      effectivePath: '/backup/repo',
+      localRemoteUrl: 'https://github.com/org/repo.git'
+    })
+  })
+
+  it('classifies path exists + different remote as conflict', async () => {
+    const deps = makeDeps({
+      fs: mockFs(['/backup/repo']),
+      isGitRepository: vi.fn(() => true),
+      git: {
+        ...makeDeps().git,
+        getRemoteUrl: vi.fn(async () => 'git@github.com:org/other.git')
+      }
+    })
+
+    const service = makeBackupOpsRpcService(deps)
+    const [result] = await Effect.runPromise(
+      service.classifyProjects({
+        projects: [
+          { name: 'repo', path: '/backup/repo', remoteUrl: 'git@github.com:org/repo.git' }
+        ]
+      })
+    )
+
+    expect(result.classification).toBe('conflict')
+    expect(result.alreadyInHive).toBe(false)
+    expect(result.hiveProjectId).toBeNull()
+  })
+
+  it('classifies path exists + non-git dir as conflict', async () => {
+    const deps = makeDeps({
+      fs: mockFs(['/backup/repo']),
+      isGitRepository: vi.fn(() => false)
+    })
+
+    const service = makeBackupOpsRpcService(deps)
+    const [result] = await Effect.runPromise(
+      service.classifyProjects({
+        projects: [{ name: 'repo', path: '/backup/repo', remoteUrl: null }]
+      })
+    )
+
+    expect(result).toMatchObject({
+      classification: 'conflict',
+      alreadyInHive: false,
+      hiveProjectId: null,
+      localRemoteUrl: null
+    })
+  })
+
+  it('classifies missing path + remote as missing-clone', async () => {
+    const deps = makeDeps({ fs: mockFs([]) })
+
+    const service = makeBackupOpsRpcService(deps)
+    const [result] = await Effect.runPromise(
+      service.classifyProjects({
+        projects: [
+          { name: 'repo', path: '/backup/repo', remoteUrl: 'git@github.com:org/repo.git' }
+        ]
+      })
+    )
+
+    expect(result.classification).toBe('missing-clone')
+  })
+
+  it('classifies missing path + null remote as skipped-no-remote', async () => {
+    const deps = makeDeps({ fs: mockFs([]) })
+
+    const service = makeBackupOpsRpcService(deps)
+    const [result] = await Effect.runPromise(
+      service.classifyProjects({
+        projects: [{ name: 'repo', path: '/backup/repo', remoteUrl: null }]
+      })
+    )
+
+    expect(result.classification).toBe('skipped-no-remote')
+  })
+
+  it('marks a path-matched project already-in-Hive', async () => {
+    const hiveProject = project({ id: 'hive-1', path: '/backup/repo' })
+    const deps = makeDeps({
+      fs: mockFs(['/backup/repo']),
+      isGitRepository: vi.fn(() => true),
+      git: { ...makeDeps().git, getRemoteUrl: vi.fn(async () => null) },
+      db: { ...makeDeps().db, getProjectByPath: (path) => (path === '/backup/repo' ? hiveProject : null) }
+    })
+
+    const service = makeBackupOpsRpcService(deps)
+    const [result] = await Effect.runPromise(
+      service.classifyProjects({
+        projects: [{ name: 'repo', path: '/backup/repo', remoteUrl: null }]
+      })
+    )
+
+    expect(result).toMatchObject({
+      classification: 'exists-match',
+      alreadyInHive: true,
+      hiveProjectId: 'hive-1',
+      effectivePath: '/backup/repo'
+    })
+  })
+
+  it('matches by remote across Hive with a different local path than the backup', async () => {
+    const hiveProject = project({ id: 'hive-1', path: '/hive/other-repo' })
+    const deps = makeDeps({
+      fs: mockFs([]), // backup path itself does not exist on disk
+      db: { ...makeDeps().db, getAllProjects: () => [hiveProject] },
+      git: {
+        ...makeDeps().git,
+        getRemoteUrl: vi.fn(async (repoPath: string) =>
+          repoPath === '/hive/other-repo' ? 'git@github.com:org/repo.git' : null
+        )
+      }
+    })
+
+    const service = makeBackupOpsRpcService(deps)
+    const [result] = await Effect.runPromise(
+      service.classifyProjects({
+        projects: [
+          { name: 'repo', path: '/backup/repo', remoteUrl: 'https://github.com/org/repo.git' }
+        ]
+      })
+    )
+
+    expect(result).toMatchObject({
+      path: '/backup/repo',
+      classification: 'exists-match',
+      alreadyInHive: true,
+      hiveProjectId: 'hive-1',
+      effectivePath: '/hive/other-repo'
+    })
+  })
+
+  it('classifies both-null remotes at the same path as exists-match', async () => {
+    const deps = makeDeps({
+      fs: mockFs(['/backup/repo']),
+      isGitRepository: vi.fn(() => true),
+      git: { ...makeDeps().git, getRemoteUrl: vi.fn(async () => null) }
+    })
+
+    const service = makeBackupOpsRpcService(deps)
+    const [result] = await Effect.runPromise(
+      service.classifyProjects({
+        projects: [{ name: 'repo', path: '/backup/repo', remoteUrl: null }]
+      })
+    )
+
+    expect(result.classification).toBe('exists-match')
+  })
+
+  it('computes each Hive project remote once per batch, not per input entry', async () => {
+    const hiveA = project({ id: 'hive-a', path: '/hive/a' })
+    const hiveB = project({ id: 'hive-b', path: '/hive/b' })
+    const getRemoteUrl = vi.fn(async (repoPath: string) => {
+      if (repoPath === '/hive/a') return 'git@github.com:org/a.git'
+      if (repoPath === '/hive/b') return 'git@github.com:org/b.git'
+      return null
+    })
+    const deps = makeDeps({
+      fs: mockFs([]),
+      db: { ...makeDeps().db, getAllProjects: () => [hiveA, hiveB] },
+      git: { ...makeDeps().git, getRemoteUrl }
+    })
+
+    const service = makeBackupOpsRpcService(deps)
+    await Effect.runPromise(
+      service.classifyProjects({
+        projects: [
+          { name: 'a', path: '/backup/a', remoteUrl: 'git@github.com:org/a.git' },
+          { name: 'b', path: '/backup/b', remoteUrl: 'git@github.com:org/b.git' },
+          { name: 'c', path: '/backup/c', remoteUrl: 'git@github.com:org/c.git' }
+        ]
+      })
+    )
+
+    // Exactly one lookup per Hive project (2), regardless of the 3 input entries.
+    expect(getRemoteUrl).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('backupOps.restoreProject', () => {
+  it('clones a missing project and creates it in Hive', async () => {
+    const deps = makeDeps({
+      fs: mockFs([]),
+      cloneRepository: vi.fn(async () => ({ success: true })),
+      execGit: execGitScript()
+    })
+    const bp = backupProject({
+      name: 'repo',
+      path: '/original/repo',
+      remote_url: 'git@github.com:org/repo.git'
+    })
+
+    const service = makeBackupOpsRpcService(deps)
+    const result = await Effect.runPromise(
+      service.restoreProject({ project: bp, options: { cloneParentDir: '/clones' } })
+    )
+
+    expect(result.action).toBe('cloned')
+    expect(result.success).toBe(true)
+    expect(deps.cloneRepository).toHaveBeenCalledWith(
+      'git@github.com:org/repo.git',
+      '/clones/repo'
+    )
+    expect(deps.createProjectWithDefaultWorktree).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'repo', path: '/clones/repo' })
+    )
+    expect(deps.syncWorktreesOp).toHaveBeenCalledWith({
+      projectId: 'project-repo',
+      projectPath: '/clones/repo'
+    })
+  })
+
+  it('suffixes the clone destination on collision', async () => {
+    const deps = makeDeps({
+      fs: mockFs(['/clones/repo']),
+      cloneRepository: vi.fn(async () => ({ success: true })),
+      execGit: execGitScript()
+    })
+    const bp = backupProject({
+      name: 'repo',
+      path: '/original/repo',
+      remote_url: 'git@github.com:org/repo.git'
+    })
+
+    const service = makeBackupOpsRpcService(deps)
+    await Effect.runPromise(
+      service.restoreProject({ project: bp, options: { cloneParentDir: '/clones' } })
+    )
+
+    expect(deps.cloneRepository).toHaveBeenCalledWith(
+      'git@github.com:org/repo.git',
+      '/clones/repo-2'
+    )
+  })
+
+  it('fails with no clone folder selected when missing-clone and cloneParentDir is null', async () => {
+    const deps = makeDeps({ fs: mockFs([]) })
+    const bp = backupProject({ remote_url: 'git@github.com:org/repo.git' })
+
+    const service = makeBackupOpsRpcService(deps)
+    const result = await Effect.runPromise(
+      service.restoreProject({ project: bp, options: { cloneParentDir: null } })
+    )
+
+    expect(result).toMatchObject({
+      success: false,
+      action: 'failed',
+      error: 'no clone folder selected'
+    })
+    expect(deps.cloneRepository).not.toHaveBeenCalled()
+  })
+
+  it('skips the pull and warns when the working tree is dirty', async () => {
+    const deps = makeDeps({
+      fs: mockFs(['/repo']),
+      isGitRepository: vi.fn(() => true),
+      git: {
+        ...makeDeps().git,
+        getRemoteUrl: vi.fn(async () => null),
+        hasUncommittedChanges: vi.fn(async () => true)
+      },
+      execGit: execGitScript()
+    })
+    const bp = backupProject({ path: '/repo' })
+
+    const service = makeBackupOpsRpcService(deps)
+    const result = await Effect.runPromise(
+      service.restoreProject({ project: bp, options: { cloneParentDir: null } })
+    )
+
+    expect(result.action).toBe('attached')
+    expect(result.warnings).toContain('uncommitted changes — pull skipped')
+    expect(deps.git.pull).not.toHaveBeenCalled()
+  })
+
+  it('skips worktree creation when an active worktree already has the branch', async () => {
+    const deps = makeDeps({
+      fs: mockFs(['/repo']),
+      isGitRepository: vi.fn(() => true),
+      git: { ...makeDeps().git, getRemoteUrl: vi.fn(async () => null) },
+      db: {
+        ...makeDeps().db,
+        getActiveWorktreesByProject: () => [worktree({ branch_name: 'feature/a' })]
+      },
+      execGit: execGitScript()
+    })
+    const bp = backupProject({
+      path: '/repo',
+      worktrees: [{ name: 'feature-a', branch_name: 'feature/a', base_branch: 'main' }]
+    })
+
+    const service = makeBackupOpsRpcService(deps)
+    const result = await Effect.runPromise(
+      service.restoreProject({ project: bp, options: { cloneParentDir: null } })
+    )
+
+    expect(result.worktrees).toEqual([{ branch: 'feature/a', status: 'skipped-existing' }])
+    const execGitCalls = (deps.execGit as ReturnType<typeof vi.fn>).mock.calls
+    expect(execGitCalls.some((call) => call[1][0] === 'worktree')).toBe(false)
+  })
+
+  it('falls back to a fresh branch from default when local and remote branches are missing', async () => {
+    const deps = makeDeps({
+      fs: mockFs(['/repo']),
+      isGitRepository: vi.fn(() => true),
+      git: {
+        ...makeDeps().git,
+        getRemoteUrl: vi.fn(async () => 'git@github.com:org/repo.git'),
+        getDefaultBranch: vi.fn(async () => 'main')
+      },
+      db: { ...makeDeps().db, getActiveWorktreesByProject: () => [] },
+      execGit: execGitScript({ revParseHeads: {}, revParseRemotes: {} })
+    })
+    const bp = backupProject({
+      path: '/repo',
+      remote_url: 'git@github.com:org/repo.git',
+      worktrees: [{ name: 'feature-a', branch_name: 'feature/missing', base_branch: 'main' }]
+    })
+
+    const service = makeBackupOpsRpcService(deps)
+    const result = await Effect.runPromise(
+      service.restoreProject({ project: bp, options: { cloneParentDir: null } })
+    )
+
+    expect(result.worktrees).toEqual([
+      { branch: 'feature/missing', status: 'created-fresh-branch' }
+    ])
+    expect(
+      result.warnings.some((w) => w.includes('feature/missing') && w.includes('main'))
+    ).toBe(true)
+  })
+
+  it('marks a failed worktree add as failed and still attempts later worktrees', async () => {
+    const deps = makeDeps({
+      fs: mockFs(['/repo']),
+      isGitRepository: vi.fn(() => true),
+      git: { ...makeDeps().git, getRemoteUrl: vi.fn(async () => null) },
+      db: { ...makeDeps().db, getActiveWorktreesByProject: () => [] },
+      execGit: execGitScript({
+        revParseHeads: { 'feature/a': true, 'feature/b': true },
+        worktreeAddFailFor: new Set(['feature/a'])
+      })
+    })
+    const bp = backupProject({
+      path: '/repo',
+      worktrees: [
+        { name: 'feature-a', branch_name: 'feature/a', base_branch: 'main' },
+        { name: 'feature-b', branch_name: 'feature/b', base_branch: 'main' }
+      ]
+    })
+
+    const service = makeBackupOpsRpcService(deps)
+    const result = await Effect.runPromise(
+      service.restoreProject({ project: bp, options: { cloneParentDir: null } })
+    )
+
+    expect(result.success).toBe(true)
+    expect(result.worktrees).toEqual([
+      { branch: 'feature/a', status: 'failed', error: 'already checked out' },
+      { branch: 'feature/b', status: 'created' }
+    ])
+  })
+
+  it('skips tickets and leaves the project row untouched when already in Hive', async () => {
+    const existing = project({ id: 'existing-1', path: '/repo' })
+    const deps = makeDeps({
+      fs: mockFs(['/repo']),
+      isGitRepository: vi.fn(() => true),
+      git: { ...makeDeps().git, getRemoteUrl: vi.fn(async () => null) },
+      db: { ...makeDeps().db, getProjectByPath: () => existing },
+      execGit: execGitScript()
+    })
+    const bp = backupProject({
+      path: '/repo',
+      tickets: [
+        {
+          key: 't1',
+          title: 'Ticket',
+          description: null,
+          column: 'todo',
+          sort_order: 0,
+          mode: null,
+          mark: null,
+          total_tokens: 0,
+          archived_at: null,
+          worktree_branch: null
+        }
+      ]
+    })
+
+    const service = makeBackupOpsRpcService(deps)
+    const result = await Effect.runPromise(
+      service.restoreProject({ project: bp, options: { cloneParentDir: null } })
+    )
+
+    expect(result.tickets).toEqual({ restored: 0, dependencyErrors: 0, skipped: true })
+    expect(result.projectId).toBe('existing-1')
+    expect(deps.db.updateProject).not.toHaveBeenCalled()
+  })
+
+  it('restores tickets, remaps keys, resolves worktree_id by branch, and reports a dependency error for an unknown key', async () => {
+    const createdWorktree = worktree({ id: 'wt-feature-a', branch_name: 'feature/a' })
+    const deps = makeDeps({
+      fs: mockFs(['/repo']),
+      isGitRepository: vi.fn(() => true),
+      git: { ...makeDeps().git, getRemoteUrl: vi.fn(async () => null) },
+      db: {
+        ...makeDeps().db,
+        getActiveWorktreesByProject: () => [createdWorktree],
+        createKanbanTicket: vi.fn((data) => ticket({ ...data, id: `created-${data.title}` })),
+        addTicketDependency: vi.fn((dependentId: string, blockerId: string) => {
+          if (dependentId === 'created-Second' && blockerId === 'created-First') {
+            return { success: true }
+          }
+          return { success: false, error: 'unexpected dependency' }
+        })
+      },
+      execGit: execGitScript()
+    })
+    const bp = backupProject({
+      path: '/repo',
+      worktrees: [{ name: 'feature-a', branch_name: 'feature/a', base_branch: 'main' }],
+      tickets: [
+        {
+          key: 't1',
+          title: 'First',
+          description: null,
+          column: 'todo',
+          sort_order: 0,
+          mode: null,
+          mark: null,
+          total_tokens: 0,
+          archived_at: null,
+          worktree_branch: 'feature/a'
+        },
+        {
+          key: 't2',
+          title: 'Second',
+          description: null,
+          column: 'done',
+          sort_order: 1,
+          mode: null,
+          mark: null,
+          total_tokens: 500,
+          archived_at: '2026-01-01T00:00:00.000Z',
+          worktree_branch: null
+        }
+      ],
+      ticket_dependencies: [
+        { dependent: 't2', blocker: 't1' },
+        { dependent: 't2', blocker: 'unknown-key' }
+      ]
+    })
+
+    const service = makeBackupOpsRpcService(deps)
+    const result = await Effect.runPromise(
+      service.restoreProject({ project: bp, options: { cloneParentDir: null } })
+    )
+
+    expect(deps.db.createKanbanTicket).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'First', worktree_id: 'wt-feature-a' })
+    )
+    expect(deps.db.createKanbanTicket).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Second', worktree_id: null })
+    )
+    expect(deps.db.updateKanbanTicket).toHaveBeenCalledWith('created-Second', {
+      archived_at: '2026-01-01T00:00:00.000Z'
+    })
+    expect(deps.db.addTicketTokens).toHaveBeenCalledWith('created-Second', 500)
+    expect(deps.db.addTicketDependency).toHaveBeenCalledWith('created-Second', 'created-First')
+    expect(result.tickets).toEqual({ restored: 2, dependencyErrors: 1, skipped: false })
+  })
+
+  it('returns skipped-conflict and touches nothing when the path holds a different repo', async () => {
+    const deps = makeDeps({
+      fs: mockFs(['/repo']),
+      isGitRepository: vi.fn(() => false)
+    })
+    const bp = backupProject({ path: '/repo', remote_url: 'git@github.com:org/repo.git' })
+
+    const service = makeBackupOpsRpcService(deps)
+    const result = await Effect.runPromise(
+      service.restoreProject({ project: bp, options: { cloneParentDir: null } })
+    )
+
+    expect(result).toMatchObject({
+      success: false,
+      action: 'skipped-conflict',
+      warnings: ['path exists but contains a different repository'],
+      worktrees: [],
+      tickets: null
+    })
+    expect(deps.cloneRepository).not.toHaveBeenCalled()
+    expect(deps.git.pull).not.toHaveBeenCalled()
+    expect(deps.createProjectWithDefaultWorktree).not.toHaveBeenCalled()
+    expect(deps.syncWorktreesOp).not.toHaveBeenCalled()
+    expect(deps.execGit).not.toHaveBeenCalled()
+  })
+
+  it('returns skipped-no-remote when the path is missing and there is no remote', async () => {
+    const deps = makeDeps({ fs: mockFs([]) })
+    const bp = backupProject({ path: '/repo', remote_url: null })
+
+    const service = makeBackupOpsRpcService(deps)
+    const result = await Effect.runPromise(
+      service.restoreProject({ project: bp, options: { cloneParentDir: null } })
+    )
+
+    expect(result).toMatchObject({
+      success: false,
+      action: 'skipped-no-remote',
+      worktrees: [],
+      tickets: null
+    })
+  })
+
+  it('never throws out of the service when a dep throws unexpectedly', async () => {
+    const deps = makeDeps({
+      fs: mockFs(['/repo']),
+      isGitRepository: vi.fn(() => true),
+      git: {
+        ...makeDeps().git,
+        getRemoteUrl: vi.fn(async () => null),
+        hasUncommittedChanges: vi.fn(async () => {
+          throw new Error('boom')
+        })
+      }
+    })
+    const bp = backupProject({ path: '/repo' })
+
+    const service = makeBackupOpsRpcService(deps)
+    const result = await Effect.runPromise(
+      service.restoreProject({ project: bp, options: { cloneParentDir: null } })
+    )
+
+    expect(result.success).toBe(false)
+    expect(result.action).toBe('failed')
+    expect(result.error).toContain('boom')
+  })
+})
+
 describe('backupOps handler param validation', () => {
   it('rejects backupOps.exportBackup params with unexpected keys', async () => {
     const exportBackup = vi.fn(() => Effect.succeed({ success: true }))
     const handlers = makeBackupOpsRpcHandlers({
       exportBackup,
-      openBackupFile: vi.fn(() => Effect.succeed({ canceled: true }))
+      openBackupFile: vi.fn(() => Effect.succeed({ canceled: true })),
+      classifyProjects: vi.fn(() => Effect.succeed([])),
+      restoreProject: vi.fn(() =>
+        Effect.succeed({
+          success: true,
+          projectName: 'repo',
+          action: 'pulled' as const,
+          warnings: [],
+          worktrees: [],
+          tickets: null
+        })
+      )
     })
     const handler = handlers.get('backupOps.exportBackup')!
 

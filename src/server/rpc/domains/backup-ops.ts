@@ -1,12 +1,36 @@
-import { basename } from 'node:path'
+import { execFile } from 'node:child_process'
+import { homedir } from 'node:os'
+import { basename, dirname, join } from 'node:path'
+import { promisify } from 'node:util'
 
 import { Effect } from 'effect'
 import YAML from 'yaml'
 import { z } from 'zod'
+import type { CustomProjectCommand } from '@shared/lib/custom-commands'
 import { isDesktopCommandResult, makeDesktopCommandRequest } from '../../../shared/desktop-command'
-import type { BackupFile } from '../../../shared/types/backup'
-import type { KanbanTicket, Project, TicketDependency, Worktree } from '../../../main/db'
+import type {
+  BackupFile,
+  BackupProject,
+  ProjectClassification,
+  RestoreProjectResult,
+  RestoreWorktreeResult
+} from '../../../shared/types/backup'
+import type {
+  KanbanTicket,
+  KanbanTicketCreate,
+  KanbanTicketUpdate,
+  Project,
+  ProjectCreate,
+  ProjectUpdate,
+  TicketDependency,
+  TicketMark,
+  Worktree,
+  WorktreeCreate
+} from '../../../main/db'
+import { normalizeGitRemoteUrl } from '../../../main/services/git-repository'
 import type { RpcHandler } from '../router'
+
+const execFileAsync = promisify(execFile)
 
 // Raw SQLite row fields spread onto `Project` by `mapProjectRow` but not
 // declared on the `Project` interface (see database.ts:319 and the
@@ -40,18 +64,47 @@ interface BackupOpsDb {
     includeArchived: boolean
   ) => KanbanTicket[]
   readonly getDependenciesForProject: (projectId: string) => TicketDependency[]
+  readonly getProjectByPath: (path: string) => Project | null
+  readonly createWorktree: (data: WorktreeCreate) => Worktree
+  readonly updateProject: (
+    id: string,
+    data: Pick<ProjectUpdate, 'language' | 'custom_commands' | 'auto_assign_port'>
+  ) => Project | null
+  readonly updateProjectKanbanStorageMode: (
+    id: string,
+    mode: 'internal' | 'markdown'
+  ) => Project | null
+  readonly updateProjectKanbanMarkdownConfig: (id: string, config: string | null) => Project | null
+  readonly updateProjectSimpleMode: (id: string, enabled: boolean) => void
+  readonly createKanbanTicket: (data: KanbanTicketCreate) => KanbanTicket
+  readonly updateKanbanTicket: (
+    id: string,
+    data: Pick<KanbanTicketUpdate, 'archived_at'>
+  ) => KanbanTicket | null
+  readonly addTicketTokens: (ticketId: string, tokens: number) => void
+  readonly addTicketDependency: (
+    dependentId: string,
+    blockerId: string
+  ) => { success: boolean; error?: string }
+  readonly transaction: <T>(fn: () => T) => T
 }
 
 interface BackupOpsGit {
   // Resolves to the raw remote URL, or null when there is no remote / the
   // lookup fails. Never expected to reject.
   readonly getRemoteUrl: (repoPath: string) => Promise<string | null>
+  readonly hasUncommittedChanges: (repoPath: string) => Promise<boolean>
+  // ff-only pull semantics via the facade; never expected to reject.
+  readonly pull: (repoPath: string) => Promise<{ success: boolean; error?: string }>
+  readonly getDefaultBranch: (repoPath: string) => Promise<string>
 }
 
 interface BackupOpsFs {
   readonly readFile: (path: string) => Promise<Buffer>
   readonly writeFile: (path: string, content: string) => Promise<void>
   readonly stat: (path: string) => Promise<{ readonly size: number }>
+  readonly exists: (path: string) => Promise<boolean>
+  readonly mkdir: (path: string) => Promise<void>
 }
 
 export interface BackupOpsDeps {
@@ -61,11 +114,38 @@ export interface BackupOpsDeps {
   readonly getAppVersion: () => Promise<string>
   readonly requestSaveFileDialog: (defaultFileName: string) => Promise<string | null>
   readonly requestOpenFileDialog: () => Promise<string | null>
+  // Raw `git` invocation for worktree/branch plumbing not covered by the
+  // gitService facade (rev-parse existence checks, fetch, worktree add).
+  // Rejects on non-zero exit, mirroring teleport-ops.ts's execGit.
+  readonly execGit: (cwd: string, args: string[]) => Promise<string>
+  readonly homedir: () => string
+  readonly cloneRepository: (
+    url: string,
+    destDir: string
+  ) => Promise<{ success: boolean; error?: string }>
+  readonly isGitRepository: (path: string) => boolean
+  readonly createProjectWithDefaultWorktree: (data: ProjectCreate) => Project
+  readonly uploadIcon: (
+    projectId: string,
+    base64Data: string,
+    filename: string
+  ) => { success: boolean; error?: string }
+  readonly syncWorktreesOp: (params: {
+    projectId: string
+    projectPath: string
+  }) => Promise<{ success: boolean; error?: string }>
 }
 
 export interface BackupOpsRpcService {
   readonly exportBackup: () => Effect.Effect<BackupExportResult, unknown, never>
   readonly openBackupFile: () => Effect.Effect<BackupOpenResult, unknown, never>
+  readonly classifyProjects: (params: {
+    projects: ReadonlyArray<{ name: string; path: string; remoteUrl: string | null }>
+  }) => Effect.Effect<ProjectClassification[], unknown, never>
+  readonly restoreProject: (params: {
+    project: BackupProject
+    options: { cloneParentDir: string | null }
+  }) => Effect.Effect<RestoreProjectResult, unknown, never>
 }
 
 const emptyParamsSchema = z.union([z.object({}).strict(), z.undefined(), z.null()])
@@ -151,6 +231,29 @@ const backupFileSchema = z.object({
   app_version: z.string(),
   projects: z.array(backupProjectSchema)
 })
+
+// ---------------------------------------------------------------------------
+// classifyProjects / restoreProject param schemas
+// ---------------------------------------------------------------------------
+
+const classifyProjectsParamsSchema = z
+  .object({
+    projects: z.array(
+      z.object({
+        name: z.string(),
+        path: z.string(),
+        remoteUrl: z.string().nullable()
+      })
+    )
+  })
+  .strict()
+
+const restoreProjectParamsSchema = z
+  .object({
+    project: backupProjectSchema,
+    options: z.object({ cloneParentDir: z.string().nullable() }).strict()
+  })
+  .strict()
 
 // ---------------------------------------------------------------------------
 // exportBackup
@@ -368,6 +471,499 @@ async function openBackupFile(deps: BackupOpsDeps): Promise<BackupOpenResult> {
 }
 
 // ---------------------------------------------------------------------------
+// classifyProjects
+// ---------------------------------------------------------------------------
+
+/**
+ * One normalized-remote lookup per Hive project, computed once per
+ * classifyProjects/restoreProject call (never per input entry) — mirrors
+ * `ensureRemoteProject` in teleport-ops.ts.
+ */
+async function buildHiveRemoteMap(
+  deps: BackupOpsDeps
+): Promise<Map<string, { project: Project; rawRemote: string | null }>> {
+  const map = new Map<string, { project: Project; rawRemote: string | null }>()
+  for (const project of deps.db.getAllProjects()) {
+    const rawRemote = await getRemoteUrlSafe(deps, project.path)
+    const normalized = normalizeGitRemoteUrl(rawRemote)
+    if (normalized !== null && !map.has(normalized)) {
+      map.set(normalized, { project, rawRemote })
+    }
+  }
+  return map
+}
+
+async function classifyOne(
+  deps: BackupOpsDeps,
+  hiveByRemote: Map<string, { project: Project; rawRemote: string | null }>,
+  input: { name: string; path: string; remoteUrl: string | null }
+): Promise<ProjectClassification> {
+  const backupRemote = normalizeGitRemoteUrl(input.remoteUrl)
+
+  if (backupRemote !== null) {
+    const match = hiveByRemote.get(backupRemote)
+    if (match) {
+      return {
+        path: input.path,
+        classification: 'exists-match',
+        alreadyInHive: true,
+        hiveProjectId: match.project.id,
+        effectivePath: match.project.path,
+        localRemoteUrl: match.rawRemote
+      }
+    }
+  }
+
+  const pathExists = await deps.fs.exists(input.path)
+  if (pathExists) {
+    if (!deps.isGitRepository(input.path)) {
+      return {
+        path: input.path,
+        classification: 'conflict',
+        alreadyInHive: false,
+        hiveProjectId: null,
+        effectivePath: input.path,
+        localRemoteUrl: null
+      }
+    }
+
+    const localRemoteRaw = await getRemoteUrlSafe(deps, input.path)
+    const localRemote = normalizeGitRemoteUrl(localRemoteRaw)
+    const remotesMatch =
+      (localRemote !== null && localRemote === backupRemote) ||
+      (localRemote === null && backupRemote === null)
+
+    if (remotesMatch) {
+      const existing = deps.db.getProjectByPath(input.path)
+      return {
+        path: input.path,
+        classification: 'exists-match',
+        alreadyInHive: existing !== null,
+        hiveProjectId: existing?.id ?? null,
+        effectivePath: input.path,
+        localRemoteUrl: localRemoteRaw
+      }
+    }
+
+    return {
+      path: input.path,
+      classification: 'conflict',
+      alreadyInHive: false,
+      hiveProjectId: null,
+      effectivePath: input.path,
+      localRemoteUrl: localRemoteRaw
+    }
+  }
+
+  return {
+    path: input.path,
+    classification: backupRemote === null ? 'skipped-no-remote' : 'missing-clone',
+    alreadyInHive: false,
+    hiveProjectId: null,
+    effectivePath: input.path,
+    localRemoteUrl: null
+  }
+}
+
+async function classifyProjects(
+  deps: BackupOpsDeps,
+  projects: ReadonlyArray<{ name: string; path: string; remoteUrl: string | null }>
+): Promise<ProjectClassification[]> {
+  const hiveByRemote = await buildHiveRemoteMap(deps)
+  const results: ProjectClassification[] = []
+  for (const project of projects) {
+    results.push(await classifyOne(deps, hiveByRemote, project))
+  }
+  return results
+}
+
+// ---------------------------------------------------------------------------
+// restoreProject
+// ---------------------------------------------------------------------------
+
+// Local copies of teleport-ops.ts's `slug`/`uniquePath` helpers. Duplicated
+// rather than imported so backup-ops.ts doesn't pull in teleport-ops.ts's
+// module graph (Discord/teleport-remote-client wiring) for two small pure
+// helpers; per the task brief this duplication is acceptable.
+function slug(value: string): string {
+  const cleaned = value
+    .toLowerCase()
+    .replace(/[^a-z0-9._/-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^[-/.]+|[-/.]+$/g, '')
+    .slice(0, 64)
+  return cleaned || 'worktree'
+}
+
+async function uniquePath(deps: BackupOpsDeps, basePath: string): Promise<string> {
+  if (!(await deps.fs.exists(basePath))) return basePath
+  for (let i = 2; i < 100; i += 1) {
+    const candidate = `${basePath}-${i}`
+    if (!(await deps.fs.exists(candidate))) return candidate
+  }
+  throw new Error(`Could not choose a free path for ${basePath}`)
+}
+
+const nonSuccessActions: ReadonlySet<RestoreProjectResult['action']> = new Set([
+  'failed',
+  'skipped-conflict',
+  'skipped-no-remote'
+])
+
+async function restoreProject(
+  deps: BackupOpsDeps,
+  project: BackupProject,
+  options: { cloneParentDir: string | null }
+): Promise<RestoreProjectResult> {
+  const projectName = project.name
+  const warnings: string[] = []
+
+  try {
+    const hiveByRemote = await buildHiveRemoteMap(deps)
+    const classification = await classifyOne(deps, hiveByRemote, {
+      name: project.name,
+      path: project.path,
+      remoteUrl: project.remote_url
+    })
+
+    if (classification.classification === 'conflict') {
+      return {
+        success: false,
+        projectName,
+        action: 'skipped-conflict',
+        warnings: ['path exists but contains a different repository'],
+        worktrees: [],
+        tickets: null
+      }
+    }
+    if (classification.classification === 'skipped-no-remote') {
+      return {
+        success: false,
+        projectName,
+        action: 'skipped-no-remote',
+        warnings: [],
+        worktrees: [],
+        tickets: null
+      }
+    }
+
+    let effectivePath: string
+    let action: RestoreProjectResult['action']
+    let isFreshClone = false
+
+    if (classification.classification === 'exists-match') {
+      effectivePath = classification.effectivePath
+      action = 'attached'
+    } else {
+      // missing-clone
+      if (!options.cloneParentDir) {
+        return {
+          success: false,
+          projectName,
+          action: 'failed',
+          error: 'no clone folder selected',
+          warnings: [],
+          worktrees: [],
+          tickets: null
+        }
+      }
+      if (!project.remote_url) {
+        return {
+          success: false,
+          projectName,
+          action: 'failed',
+          error: 'no remote url to clone from',
+          warnings: [],
+          worktrees: [],
+          tickets: null
+        }
+      }
+
+      const dest = await uniquePath(deps, join(options.cloneParentDir, basename(project.path)))
+      const cloneResult = await deps.cloneRepository(project.remote_url, dest)
+      if (!cloneResult.success) {
+        return {
+          success: false,
+          projectName,
+          action: 'failed',
+          error: cloneResult.error ?? 'Failed to clone repository',
+          warnings: [],
+          worktrees: [],
+          tickets: null
+        }
+      }
+      effectivePath = dest
+      action = 'cloned'
+      isFreshClone = true
+    }
+
+    // Step 3: pull (only for exists-match — a fresh clone is already current)
+    if (!isFreshClone) {
+      const dirty = await deps.git.hasUncommittedChanges(effectivePath)
+      if (dirty) {
+        warnings.push('uncommitted changes — pull skipped')
+        action = 'attached'
+      } else {
+        const pullResult = await deps.git.pull(effectivePath)
+        if (!pullResult.success) {
+          warnings.push(pullResult.error ?? 'pull failed')
+          action = 'attached'
+        } else {
+          action = 'pulled'
+        }
+      }
+    }
+
+    // Step 4: register in Hive
+    const existingProject = deps.db.getProjectByPath(effectivePath)
+    let projectId: string
+    let wasAlreadyInHive: boolean
+
+    if (existingProject) {
+      projectId = existingProject.id
+      wasAlreadyInHive = true
+    } else {
+      const created = deps.createProjectWithDefaultWorktree({
+        name: project.name,
+        path: effectivePath,
+        description: project.description,
+        tags: project.tags,
+        setup_script: project.setup_script,
+        run_script: project.run_script,
+        archive_script: project.archive_script,
+        worktree_create_script: project.worktree_create_script
+      })
+      projectId = created.id
+
+      deps.db.updateProject(projectId, {
+        language: project.language,
+        custom_commands: project.custom_commands as CustomProjectCommand[] | null,
+        auto_assign_port: project.auto_assign_port
+      })
+      deps.db.updateProjectKanbanStorageMode(projectId, project.kanban_storage_mode)
+      if (project.kanban_markdown_config !== null) {
+        deps.db.updateProjectKanbanMarkdownConfig(
+          projectId,
+          JSON.stringify(project.kanban_markdown_config)
+        )
+      }
+      deps.db.updateProjectSimpleMode(projectId, project.kanban_simple_mode)
+
+      if (project.custom_icon) {
+        const iconResult = deps.uploadIcon(
+          projectId,
+          project.custom_icon.data_base64,
+          project.custom_icon.filename
+        )
+        if (!iconResult.success) {
+          warnings.push(`Failed to restore project icon: ${iconResult.error ?? 'unknown error'}`)
+        }
+      }
+
+      wasAlreadyInHive = false
+    }
+
+    // Step 5: sync worktrees from disk
+    const syncResult = await deps.syncWorktreesOp({ projectId, projectPath: effectivePath })
+    if (!syncResult.success) {
+      warnings.push(syncResult.error ?? 'Failed to sync worktrees')
+    }
+
+    // Step 6: worktrees (raw git, teleport-style)
+    const worktreeResults: RestoreWorktreeResult[] = []
+    const knownBranches = new Set(
+      deps.db.getActiveWorktreesByProject(projectId).map((worktree) => worktree.branch_name)
+    )
+
+    if (project.worktrees.length > 0 && project.remote_url !== null) {
+      try {
+        await deps.execGit(effectivePath, ['fetch', 'origin'])
+      } catch (error) {
+        warnings.push(`git fetch origin failed: ${errorMessage(error)}`)
+      }
+    }
+
+    for (const entry of project.worktrees) {
+      if (knownBranches.has(entry.branch_name)) {
+        worktreeResults.push({ branch: entry.branch_name, status: 'skipped-existing' })
+        continue
+      }
+
+      let localExists = true
+      try {
+        await deps.execGit(effectivePath, [
+          'rev-parse',
+          '--verify',
+          `refs/heads/${entry.branch_name}`
+        ])
+      } catch {
+        localExists = false
+      }
+
+      let status: 'created' | 'created-fresh-branch' = 'created'
+
+      if (!localExists) {
+        let remoteExists = true
+        try {
+          await deps.execGit(effectivePath, [
+            'rev-parse',
+            '--verify',
+            `refs/remotes/origin/${entry.branch_name}`
+          ])
+        } catch {
+          remoteExists = false
+        }
+
+        try {
+          if (remoteExists) {
+            await deps.execGit(effectivePath, [
+              'branch',
+              entry.branch_name,
+              `origin/${entry.branch_name}`
+            ])
+            status = 'created'
+          } else {
+            const defaultBranch = await deps.git.getDefaultBranch(effectivePath)
+            await deps.execGit(effectivePath, ['branch', entry.branch_name, defaultBranch])
+            status = 'created-fresh-branch'
+            warnings.push(
+              `branch ${entry.branch_name} not found on remote — created from ${defaultBranch}`
+            )
+          }
+        } catch (error) {
+          worktreeResults.push({
+            branch: entry.branch_name,
+            status: 'failed',
+            error: errorMessage(error)
+          })
+          continue
+        }
+      }
+
+      const worktreePath = await uniquePath(
+        deps,
+        join(
+          deps.homedir(),
+          '.hive-worktrees',
+          project.name,
+          `${project.name}--${slug(entry.name)}`
+        )
+      )
+
+      try {
+        await deps.fs.mkdir(dirname(worktreePath))
+        await deps.execGit(effectivePath, ['worktree', 'add', worktreePath, entry.branch_name])
+      } catch (error) {
+        worktreeResults.push({
+          branch: entry.branch_name,
+          status: 'failed',
+          error: errorMessage(error)
+        })
+        continue
+      }
+
+      deps.db.createWorktree({
+        project_id: projectId,
+        name: entry.name,
+        branch_name: entry.branch_name,
+        path: worktreePath,
+        base_branch: entry.base_branch
+      })
+      knownBranches.add(entry.branch_name)
+      worktreeResults.push({ branch: entry.branch_name, status })
+    }
+
+    // Step 7: tickets
+    let tickets: RestoreProjectResult['tickets']
+    const shouldSkipTickets =
+      project.kanban_storage_mode === 'markdown' ||
+      !project.tickets ||
+      project.tickets.length === 0 ||
+      wasAlreadyInHive
+
+    if (shouldSkipTickets) {
+      tickets = { restored: 0, dependencyErrors: 0, skipped: true }
+    } else {
+      const branchToWorktreeId = new Map(
+        deps.db
+          .getActiveWorktreesByProject(projectId)
+          .map((worktree) => [worktree.branch_name, worktree.id])
+      )
+      const keyToId = new Map<string, string>()
+      const ticketList = project.tickets ?? []
+
+      deps.db.transaction(() => {
+        for (const ticketEntry of ticketList) {
+          const created = deps.db.createKanbanTicket({
+            project_id: projectId,
+            title: ticketEntry.title,
+            description: ticketEntry.description,
+            attachments: [],
+            column: ticketEntry.column,
+            sort_order: ticketEntry.sort_order,
+            worktree_id: ticketEntry.worktree_branch
+              ? (branchToWorktreeId.get(ticketEntry.worktree_branch) ?? null)
+              : null,
+            mode: ticketEntry.mode,
+            mark: ticketEntry.mark as TicketMark | null
+          })
+          if (ticketEntry.archived_at) {
+            deps.db.updateKanbanTicket(created.id, { archived_at: ticketEntry.archived_at })
+          }
+          if (ticketEntry.total_tokens > 0) {
+            deps.db.addTicketTokens(created.id, ticketEntry.total_tokens)
+          }
+          keyToId.set(ticketEntry.key, created.id)
+        }
+      })
+
+      let dependencyErrors = 0
+      for (const edge of project.ticket_dependencies ?? []) {
+        const dependentId = keyToId.get(edge.dependent)
+        const blockerId = keyToId.get(edge.blocker)
+        if (!dependentId || !blockerId) {
+          dependencyErrors += 1
+          warnings.push(
+            `Could not restore dependency ${edge.dependent} -> ${edge.blocker}: unknown ticket key`
+          )
+          continue
+        }
+        const depResult = deps.db.addTicketDependency(dependentId, blockerId)
+        if (!depResult.success) {
+          dependencyErrors += 1
+          warnings.push(
+            depResult.error ?? `Could not restore dependency ${edge.dependent} -> ${edge.blocker}`
+          )
+        }
+      }
+
+      tickets = { restored: keyToId.size, dependencyErrors, skipped: false }
+    }
+
+    // Step 8
+    return {
+      success: !nonSuccessActions.has(action),
+      projectId,
+      projectName,
+      action,
+      warnings,
+      worktrees: worktreeResults,
+      tickets
+    }
+  } catch (error) {
+    return {
+      success: false,
+      projectName,
+      action: 'failed',
+      error: errorMessage(error),
+      warnings,
+      worktrees: [],
+      tickets: null
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Dialog request helpers — structurally copied from
 // requestKanbanSaveBoardExportDialog / requestKanbanOpenBoardImportFileDialog
 // in kanban.ts (~lines 870-976), injected through BackupOpsDeps for testing.
@@ -486,11 +1082,26 @@ async function readLiveAppVersion(): Promise<string> {
   }
 }
 
+// Local copy of teleport-ops.ts's execGit — duplicated for the same reason as
+// `slug`/`uniquePath` above (avoid pulling teleport-ops.ts's module graph in).
+async function runGit(cwd: string, args: string[]): Promise<string> {
+  const { stdout } = await execFileAsync('git', args, { cwd, encoding: 'utf-8' })
+  return stdout.trim()
+}
+
 async function createLiveDeps(): Promise<BackupOpsDeps> {
-  const [{ getDatabase }, { gitService }, fsModule] = await Promise.all([
+  const [
+    { getDatabase },
+    { gitService },
+    fsModule,
+    { isGitRepository, createProjectWithDefaultWorktree, uploadIcon, cloneRepository },
+    { syncWorktreesOp }
+  ] = await Promise.all([
     import('../../../main/db'),
     import('../../../main/effect/git/facade'),
-    import('node:fs/promises')
+    import('node:fs/promises'),
+    import('../../../main/services/project-ops'),
+    import('../../../main/services/worktree-ops')
   ])
   const db = getDatabase()
 
@@ -501,20 +1112,49 @@ async function createLiveDeps(): Promise<BackupOpsDeps> {
       getWorktreesByProject: (projectId) => db.getWorktreesByProject(projectId),
       getKanbanTicketsByProject: (projectId, includeArchived) =>
         db.getKanbanTicketsByProject(projectId, includeArchived),
-      getDependenciesForProject: (projectId) => db.getDependenciesForProject(projectId)
+      getDependenciesForProject: (projectId) => db.getDependenciesForProject(projectId),
+      getProjectByPath: (path) => db.getProjectByPath(path),
+      createWorktree: (data) => db.createWorktree(data),
+      updateProject: (id, data) => db.updateProject(id, data),
+      updateProjectKanbanStorageMode: (id, mode) => db.updateProjectKanbanStorageMode(id, mode),
+      updateProjectKanbanMarkdownConfig: (id, config) =>
+        db.updateProjectKanbanMarkdownConfig(id, config),
+      updateProjectSimpleMode: (id, enabled) => db.updateProjectSimpleMode(id, enabled),
+      createKanbanTicket: (data) => db.createKanbanTicket(data),
+      updateKanbanTicket: (id, data) => db.updateKanbanTicket(id, data),
+      addTicketTokens: (ticketId, tokens) => db.addTicketTokens(ticketId, tokens),
+      addTicketDependency: (dependentId, blockerId) =>
+        db.addTicketDependency(dependentId, blockerId),
+      transaction: (fn) => db.transaction(fn)
     },
     git: {
       getRemoteUrl: (repoPath) =>
-        gitService.getRemoteUrl(repoPath).then((result) => result.url ?? null)
+        gitService.getRemoteUrl(repoPath).then((result) => result.url ?? null),
+      hasUncommittedChanges: (repoPath) => gitService.hasUncommittedChanges(repoPath),
+      pull: (repoPath) => gitService.pull(repoPath),
+      getDefaultBranch: (repoPath) => gitService.getDefaultBranch(repoPath)
     },
     fs: {
       readFile: (path) => fsModule.readFile(path),
       writeFile: (path, content) => fsModule.writeFile(path, content, 'utf-8'),
-      stat: (path) => fsModule.stat(path)
+      stat: (path) => fsModule.stat(path),
+      exists: (path) =>
+        fsModule
+          .access(path)
+          .then(() => true)
+          .catch(() => false),
+      mkdir: (path) => fsModule.mkdir(path, { recursive: true }).then(() => undefined)
     },
     getAppVersion: () => readLiveAppVersion(),
     requestSaveFileDialog: (defaultFileName) => requestBackupSaveFileDialog(defaultFileName),
-    requestOpenFileDialog: () => requestBackupOpenFileDialog()
+    requestOpenFileDialog: () => requestBackupOpenFileDialog(),
+    execGit: (cwd, args) => runGit(cwd, args),
+    homedir: () => homedir(),
+    cloneRepository: (url, destDir) => cloneRepository(url, destDir),
+    isGitRepository: (path) => isGitRepository(path),
+    createProjectWithDefaultWorktree: (data) => createProjectWithDefaultWorktree(db, data),
+    uploadIcon: (projectId, base64Data, filename) => uploadIcon(projectId, base64Data, filename),
+    syncWorktreesOp: (params) => syncWorktreesOp(params)
   }
 }
 
@@ -528,6 +1168,16 @@ export const makeBackupOpsRpcService = (deps: BackupOpsDeps): BackupOpsRpcServic
     Effect.tryPromise({
       try: () => openBackupFile(deps),
       catch: (cause) => cause
+    }),
+  classifyProjects: (params) =>
+    Effect.tryPromise({
+      try: () => classifyProjects(deps, params.projects),
+      catch: (cause) => cause
+    }),
+  restoreProject: (params) =>
+    Effect.tryPromise({
+      try: () => restoreProject(deps, params.project, params.options),
+      catch: (cause) => cause
     })
 })
 
@@ -540,6 +1190,16 @@ export const makeLiveBackupOpsRpcService = (): BackupOpsRpcService => ({
   openBackupFile: () =>
     Effect.tryPromise({
       try: async () => openBackupFile(await createLiveDeps()),
+      catch: (cause) => cause
+    }),
+  classifyProjects: (params) =>
+    Effect.tryPromise({
+      try: async () => classifyProjects(await createLiveDeps(), params.projects),
+      catch: (cause) => cause
+    }),
+  restoreProject: (params) =>
+    Effect.tryPromise({
+      try: async () => restoreProject(await createLiveDeps(), params.project, params.options),
       catch: (cause) => cause
     })
 })
@@ -568,6 +1228,28 @@ export const makeBackupOpsRpcHandlers = (
             catch: (cause) => cause
           })
           return yield* service.openBackupFile()
+        })
+    ],
+    [
+      'backupOps.classifyProjects',
+      (params) =>
+        Effect.gen(function* () {
+          const parsed = yield* Effect.try({
+            try: () => classifyProjectsParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          return yield* service.classifyProjects(parsed)
+        })
+    ],
+    [
+      'backupOps.restoreProject',
+      (params) =>
+        Effect.gen(function* () {
+          const parsed = yield* Effect.try({
+            try: () => restoreProjectParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          return yield* service.restoreProject(parsed)
         })
     ]
   ])
