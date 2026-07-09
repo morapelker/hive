@@ -6,7 +6,7 @@ export interface CodexModelInfo {
   defaultVariant: string
 }
 
-export const CODEX_REASONING_EFFORTS = ['xhigh', 'high', 'medium', 'low'] as const
+export const CODEX_REASONING_EFFORTS = ['ultra', 'max', 'xhigh', 'high', 'medium', 'low'] as const
 export type CodexReasoningEffort = (typeof CODEX_REASONING_EFFORTS)[number]
 
 const CODEX_EFFORT_VARIANTS: Record<string, Record<string, never>> = {
@@ -16,7 +16,39 @@ const CODEX_EFFORT_VARIANTS: Record<string, Record<string, never>> = {
   low: {}
 }
 
+// gpt-5.6 efforts (wire values from codex models.json): luna stops at max, sol/terra add ultra.
+const CODEX_EFFORT_VARIANTS_MAX: Record<string, Record<string, never>> = {
+  max: {},
+  ...CODEX_EFFORT_VARIANTS
+}
+
+const CODEX_EFFORT_VARIANTS_ULTRA: Record<string, Record<string, never>> = {
+  ultra: {},
+  ...CODEX_EFFORT_VARIANTS_MAX
+}
+
 export const CODEX_MODELS: CodexModelInfo[] = [
+  {
+    id: 'gpt-5.6-sol',
+    name: 'GPT-5.6 Sol',
+    limit: { context: 372000, output: 32000 },
+    variants: CODEX_EFFORT_VARIANTS_ULTRA,
+    defaultVariant: 'high'
+  },
+  {
+    id: 'gpt-5.6-terra',
+    name: 'GPT-5.6 Terra',
+    limit: { context: 372000, output: 32000 },
+    variants: CODEX_EFFORT_VARIANTS_ULTRA,
+    defaultVariant: 'high'
+  },
+  {
+    id: 'gpt-5.6-luna',
+    name: 'GPT-5.6 Luna',
+    limit: { context: 372000, output: 32000 },
+    variants: CODEX_EFFORT_VARIANTS_MAX,
+    defaultVariant: 'high'
+  },
   {
     id: 'gpt-5.5',
     name: 'GPT-5.5',
@@ -103,6 +135,9 @@ export function getCodexModelInfo(
 // ── Model slug normalization ──────────────────────────────────────
 
 export const CODEX_MODEL_ALIASES: Record<string, string> = {
+  '5.6-sol': 'gpt-5.6-sol',
+  '5.6-terra': 'gpt-5.6-terra',
+  '5.6-luna': 'gpt-5.6-luna',
   '5.5': 'gpt-5.5',
   '5.4': 'gpt-5.4',
   '5.3': 'gpt-5.3-codex',
