@@ -554,6 +554,49 @@ describe('WorktreePickerModal remote launch', () => {
     expect(createWorktreeFromBranch).not.toHaveBeenCalled()
   })
 
+  it('treats store priming as best-effort: a rejecting ensureLoaded does not prevent the ticket update or success close', async () => {
+    const { updateTicket } = setupStores()
+    useRemoteLaunchStore.setState({
+      ensureLoaded: vi.fn(async () => {
+        throw new Error('db unavailable')
+      })
+    })
+    request.mockImplementation(async (method: string) => {
+      if (method === 'remoteLaunchOps.preflight') return PASSING_PREFLIGHT
+      if (method === 'remoteLaunchOps.start') {
+        return {
+          success: true,
+          localSessionId: 'remote-session-1',
+          tmuxSession: 'hive-launch-1'
+        } satisfies RemoteLaunchStartResult
+      }
+      return null
+    })
+    const onOpenChange = vi.fn()
+    renderModal({ onOpenChange })
+
+    await userEvent.click(screen.getByTestId('remote-launch-toggle'))
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith('remoteLaunchOps.preflight', expect.any(Object))
+    )
+
+    await userEvent.click(screen.getByTestId('wt-picker-send-btn'))
+
+    await waitFor(() =>
+      expect(updateTicket).toHaveBeenCalledWith(
+        'ticket-1',
+        'project-1',
+        expect.objectContaining({
+          current_session_id: 'remote-session-1',
+          column: 'in_progress'
+        })
+      )
+    )
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+    // The launch itself succeeded — the footer must not flip to the failed/Retry state.
+    expect(screen.getByTestId('wt-picker-send-btn')).not.toHaveTextContent(/retry/i)
+  })
+
   it('shows a step error on failed send and Retry re-invokes start with the same launchId', async () => {
     setupStores()
     let startCallCount = 0

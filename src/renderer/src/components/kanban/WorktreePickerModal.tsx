@@ -715,7 +715,14 @@ export function WorktreePickerModal({
         }
 
         if (result.localSessionId) {
-          await useRemoteLaunchStore.getState().ensureLoaded(result.localSessionId)
+          // Best-effort store priming for the ticket card's remote badge — the
+          // launch already succeeded, so a transient session-row fetch failure
+          // must not gate the ticket move or render the launch as failed.
+          // Consumers re-call ensureLoaded on mount anyway.
+          void useRemoteLaunchStore
+            .getState()
+            .ensureLoaded(result.localSessionId)
+            .catch(() => {})
         }
 
         const sortOrder = useKanbanStore
