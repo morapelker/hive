@@ -682,6 +682,7 @@ export class DatabaseService {
     this.safeAddColumn('kanban_tickets', 'created_from_session', 'INTEGER NOT NULL DEFAULT 0')
     this.safeAddColumn('kanban_tickets', 'auto_approve_plan', 'INTEGER NOT NULL DEFAULT 0')
     this.safeAddColumn('sessions', 'session_type', "TEXT NOT NULL DEFAULT 'default'")
+    this.safeAddColumn('sessions', 'remote_launch', 'TEXT DEFAULT NULL')
     this.safeAddColumn(
       'discord_resources',
       'managed_session_id',
@@ -1599,6 +1600,7 @@ export class DatabaseService {
       model_provider_id: data.model_provider_id ?? null,
       model_id: data.model_id ?? null,
       model_variant: data.model_variant ?? null,
+      remote_launch: data.remote_launch ?? null,
       created_at: now,
       updated_at: now,
       completed_at: null,
@@ -1606,8 +1608,8 @@ export class DatabaseService {
     }
 
     db.prepare(
-      `INSERT INTO sessions (id, worktree_id, project_id, connection_id, name, status, opencode_session_id, claude_session_id, agent_sdk, mode, session_type, model_provider_id, model_id, model_variant, created_at, updated_at, completed_at, pinned_to_board)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO sessions (id, worktree_id, project_id, connection_id, name, status, opencode_session_id, claude_session_id, agent_sdk, mode, session_type, model_provider_id, model_id, model_variant, remote_launch, created_at, updated_at, completed_at, pinned_to_board)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       session.id,
       session.worktree_id,
@@ -1623,6 +1625,7 @@ export class DatabaseService {
       session.model_provider_id,
       session.model_id,
       session.model_variant,
+      session.remote_launch,
       session.created_at,
       session.updated_at,
       session.completed_at,
@@ -1645,6 +1648,14 @@ export class DatabaseService {
     const row = db
       .prepare('SELECT * FROM sessions WHERE opencode_session_id = ? LIMIT 1')
       .get(opencodeSessionId) as Record<string, unknown> | undefined
+    return row ? this.mapSessionRow(row) : null
+  }
+
+  findSessionByRemoteLaunchId(launchId: string): Session | null {
+    const db = this.getDb()
+    const row = db
+      .prepare("SELECT * FROM sessions WHERE json_extract(remote_launch, '$.launchId') = ? LIMIT 1")
+      .get(launchId) as Record<string, unknown> | undefined
     return row ? this.mapSessionRow(row) : null
   }
 
@@ -1747,6 +1758,10 @@ export class DatabaseService {
     if (data.model_variant !== undefined) {
       updates.push('model_variant = ?')
       values.push(data.model_variant)
+    }
+    if (data.remote_launch !== undefined) {
+      updates.push('remote_launch = ?')
+      values.push(data.remote_launch)
     }
     if (data.completed_at !== undefined) {
       updates.push('completed_at = ?')

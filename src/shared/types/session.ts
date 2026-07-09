@@ -17,6 +17,7 @@ export interface Session {
   model_provider_id: string | null
   model_id: string | null
   model_variant: string | null
+  remote_launch: string | null
   created_at: string
   updated_at: string
   completed_at: string | null

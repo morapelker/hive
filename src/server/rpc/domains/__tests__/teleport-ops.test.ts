@@ -87,6 +87,7 @@ function session(overrides: Partial<Session> = {}): Session {
     model_provider_id: 'anthropic',
     model_id: 'claude-sonnet-4',
     model_variant: null,
+    remote_launch: null,
     created_at: now,
     updated_at: now,
     completed_at: null,
