@@ -12,7 +12,13 @@ vi.mock('./logger', () => ({
   })
 }))
 
-import { createConnectionDir, deleteConnectionDir, getConnectionsBaseDir } from './connection-service'
+import {
+  CONNECTION_COLOR_QUADS,
+  createConnectionDir,
+  deleteConnectionDir,
+  generateConnectionColor,
+  getConnectionsBaseDir
+} from './connection-service'
 
 const tempHomes: string[] = []
 
@@ -39,5 +45,30 @@ describe('connection service', () => {
     deleteConnectionDir(connectionDir)
 
     expect(existsSync(connectionDir)).toBe(false)
+  })
+})
+
+describe('generateConnectionColor', () => {
+  const allColors = CONNECTION_COLOR_QUADS.map((quad) => JSON.stringify(quad))
+
+  it('returns a color from the palette', () => {
+    expect(allColors).toContain(generateConnectionColor())
+  })
+
+  it('prefers a color no existing connection is using', () => {
+    const remaining = allColors[allColors.length - 1]
+    const used = allColors.slice(0, -1)
+
+    for (let i = 0; i < 20; i++) {
+      expect(generateConnectionColor(used)).toBe(remaining)
+    }
+  })
+
+  it('falls back to the full palette when every color is used', () => {
+    expect(allColors).toContain(generateConnectionColor(allColors))
+  })
+
+  it('ignores unknown used colors', () => {
+    expect(allColors).toContain(generateConnectionColor(['#123456', 'not-a-quad']))
   })
 })
