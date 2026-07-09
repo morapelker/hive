@@ -1,3 +1,4 @@
+export * from './backup'
 export * from './project'
 export * from './worktree'
 export * from './session'

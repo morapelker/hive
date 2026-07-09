@@ -1066,6 +1066,67 @@ const handleDesktopBackendCommand = (
       })
   }
 
+  if (message.command === 'backupOpenFileDialog') {
+    return dialog
+      .showOpenDialog({
+        title: 'Open Hive Backup',
+        filters: [{ name: 'Hive Backup', extensions: ['yaml', 'yml'] }],
+        properties: ['openFile']
+      })
+      .then((result) => {
+        sendDesktopBackendCommandResult(
+          child,
+          makeDesktopCommandResult(message.id, {
+            ok: true,
+            value: {
+              filePath:
+                result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0]
+            }
+          }),
+          log
+        )
+      })
+      .catch((error) => {
+        sendDesktopBackendCommandResult(
+          child,
+          makeDesktopCommandResult(message.id, {
+            ok: false,
+            error: error instanceof Error ? error.message : String(error)
+          }),
+          log
+        )
+      })
+  }
+
+  if (message.command === 'backupSaveFileDialog') {
+    return dialog
+      .showSaveDialog({
+        title: 'Export Hive Backup',
+        defaultPath: message.payload.defaultFileName,
+        filters: [{ name: 'Hive Backup', extensions: ['yaml', 'yml'] }]
+      })
+      .then((result) => {
+        sendDesktopBackendCommandResult(
+          child,
+          makeDesktopCommandResult(message.id, {
+            ok: true,
+            value: { filePath: result.canceled || !result.filePath ? null : result.filePath }
+          }),
+          log
+        )
+      })
+      .catch((error) => {
+        sendDesktopBackendCommandResult(
+          child,
+          makeDesktopCommandResult(message.id, {
+            ok: false,
+            error: error instanceof Error ? error.message : String(error)
+          }),
+          log
+        )
+      })
+  }
+
   if (message.command === 'systemGetAppVersion') {
     try {
       const version = app.getVersion()
