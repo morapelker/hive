@@ -1,11 +1,12 @@
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useUsageStore, resolveDefaultUsageProvider } from '@/stores/useUsageStore'
+import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { resolveModelForSdk } from '@/stores/useSettingsStore'
 import { toast } from '@/lib/toast'
 import { launchTicketWithModel, type LaunchModelConfig } from '@/lib/ticket-launch'
 import { canonicalizeModelSlug, canonicalizeTicketTitle } from '@shared/types/branch-utils'
 import { FALLBACK_MODELS } from '@shared/model-resolution'
-import type { KanbanTicket } from '../../../main/db/types'
+import { dbApi } from '@/api/db-api'
 
 type LaunchMode = 'build' | 'plan' | 'super-plan'
 
@@ -20,8 +21,6 @@ export interface MultiModelLaunchPlan {
   goalSuccessCriteria: string | null
   /** N >= 2; entries[0] applies to the original ticket, entries[1..] to duplicates. */
   entries: LaunchModelConfig[]
-  /** True when invoked from the auto-launch seam (clears pending_launch_config on the original ticket). */
-  clearPendingConfig?: boolean
 }
 
 interface EffectiveModel {
@@ -55,8 +54,9 @@ function errorMessage(err: unknown): string {
  * parallel, since worktree creation serializes anyway. A single model's
  * failure (duplicate or launch) is toasted and does not block the rest.
  *
- * The whole body is wrapped in try/catch: `updateTicket`/`duplicateTicket`
- * rethrow on RPC failure (useKanbanStore), and this function is fired with
+ * The whole body is wrapped in try/catch: `updateTicket` rethrows on RPC
+ * failure (useKanbanStore) — `duplicateTicket` does not, it catches
+ * internally and resolves `null` instead — and this function is fired with
  * `void` at the call site (no `.catch`), so an unguarded throw here would be
  * an unhandled rejection that silently kills the rest of the batch. Every
  * throw is toasted instead — this function never rethrows.
@@ -93,30 +93,32 @@ export async function runMultiModelLaunch(plan: MultiModelLaunchPlan): Promise<v
       variant_group_id: variantGroupId,
       goal_mode: plan.goalMode,
       goal_success_criteria: goalSuccessCriteria,
-      ...(plan.clearPendingConfig ? { pending_launch_config: null } : {})
+      // Every multi-model launch (auto-launch or manual, via the modal) must
+      // clear any pending_launch_config on the original ticket — otherwise a
+      // ticket queued via Save & Queue with a `models` array can auto-launch
+      // the full multi-model batch again after these sessions already started.
+      pending_launch_config: null
     })
 
     // Duplicates appear immediately as entries 1..N-1. A failed duplicate
-    // (either a `null` return or a thrown RPC error) skips that model's
-    // launch (ticketIds[i] stays null) but doesn't block the rest.
+    // (a `null` return) skips that model's launch (ticketIds[i] stays null)
+    // but doesn't block the rest.
     const ticketIds: (string | null)[] = [plan.ticket.id]
     for (let i = 1; i < plan.entries.length; i++) {
       const model = effectiveModels[i]
-      let duplicate: KanbanTicket | null = null
-      try {
-        duplicate = await useKanbanStore
-          .getState()
-          .duplicateTicket(plan.projectId, plan.ticket.id, {
-            column: 'in_progress',
-            sort_order: sortOrders[i],
-            model_provider_id: model.providerID,
-            model_id: model.modelID,
-            model_variant: model.variant,
-            variant_group_id: variantGroupId
-          })
-      } catch (err) {
-        console.error(`Failed to duplicate ticket for ${model.modelID}`, err)
-      }
+      // useKanbanStore.duplicateTicket catches internally and returns null on
+      // failure — it never throws, so a null return is the only failure case
+      // to handle here.
+      const duplicate = await useKanbanStore
+        .getState()
+        .duplicateTicket(plan.projectId, plan.ticket.id, {
+          column: 'in_progress',
+          sort_order: sortOrders[i],
+          model_provider_id: model.providerID,
+          model_id: model.modelID,
+          model_variant: model.variant,
+          variant_group_id: variantGroupId
+        })
       if (!duplicate) {
         toast.error(`Failed to duplicate ticket for ${model.modelID}`)
         ticketIds.push(null)
@@ -153,6 +155,22 @@ export async function runMultiModelLaunch(plan: MultiModelLaunchPlan): Promise<v
 
       if (!result.success) {
         toast.error(`Failed to launch ${model.modelID}: ${result.error}`)
+        // The launch can fail after the session was already created (e.g. the
+        // OpenCode connect or Claude CLI spawn step) — mark it finished before
+        // the ticket's link is cleared below so it doesn't linger as a phantom
+        // "working" session nothing else points at. Its own try/catch so a
+        // failure here never blocks the board-recovery update that follows.
+        if (result.sessionId) {
+          try {
+            await dbApi.session.update(result.sessionId, {
+              status: 'completed',
+              completed_at: new Date().toISOString()
+            })
+            useWorktreeStatusStore.getState().setSessionStatus(result.sessionId, 'completed')
+          } catch (err) {
+            console.error(`Failed to complete orphaned session for ${model.modelID}`, err)
+          }
+        }
         // The recovery update gets its own try/catch so a board-update
         // failure here never aborts the loop — the next entry must still launch.
         try {

@@ -151,6 +151,104 @@ const seedOriginMainVersion31Shape = (dbPath: string): void => {
   db.close()
 }
 
+const seedTicketModelColumnsV38Shape = (dbPath: string): void => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const Database = require('better-sqlite3')
+  const db = new Database(dbPath)
+  db.pragma('foreign_keys = ON')
+  db.exec(`
+    CREATE TABLE settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+
+    CREATE TABLE projects (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      path TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL,
+      last_accessed_at TEXT NOT NULL
+    );
+
+    CREATE TABLE worktrees (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      branch_name TEXT NOT NULL,
+      path TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at TEXT NOT NULL,
+      last_accessed_at TEXT NOT NULL
+    );
+
+    CREATE TABLE sessions (
+      id TEXT PRIMARY KEY,
+      worktree_id TEXT REFERENCES worktrees(id) ON DELETE SET NULL,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      status TEXT NOT NULL DEFAULT 'active',
+      mode TEXT NOT NULL DEFAULT 'build',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    -- v38 shape: kanban_tickets has auto_approve_plan (added at v38) but NOT
+    -- the model_provider_id/model_id/model_variant/variant_group_id columns
+    -- added at v39.
+    CREATE TABLE kanban_tickets (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      description TEXT,
+      attachments TEXT NOT NULL DEFAULT '[]',
+      "column" TEXT NOT NULL DEFAULT 'todo',
+      sort_order REAL NOT NULL DEFAULT 0,
+      current_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+      worktree_id TEXT REFERENCES worktrees(id) ON DELETE SET NULL,
+      mode TEXT,
+      plan_ready INTEGER NOT NULL DEFAULT 0,
+      archived_at TEXT DEFAULT NULL,
+      github_pr_number INTEGER DEFAULT NULL,
+      github_pr_url TEXT DEFAULT NULL,
+      mark TEXT DEFAULT NULL,
+      note TEXT DEFAULT NULL,
+      goal_mode INTEGER NOT NULL DEFAULT 0,
+      goal_success_criteria TEXT DEFAULT NULL,
+      created_from_session INTEGER NOT NULL DEFAULT 0,
+      auto_approve_plan INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    -- Same v38 shape for the markdown runtime-state table.
+    CREATE TABLE markdown_kanban_card_state (
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      card_id TEXT NOT NULL,
+      current_session_id TEXT DEFAULT NULL REFERENCES sessions(id) ON DELETE SET NULL,
+      worktree_id TEXT DEFAULT NULL REFERENCES worktrees(id) ON DELETE SET NULL,
+      note TEXT DEFAULT NULL,
+      attachments TEXT NOT NULL DEFAULT '[]',
+      plan_ready INTEGER NOT NULL DEFAULT 0,
+      total_tokens INTEGER NOT NULL DEFAULT 0,
+      pending_launch_config TEXT DEFAULT NULL,
+      last_seen_path TEXT DEFAULT NULL,
+      orphaned_at TEXT DEFAULT NULL,
+      auto_approve_plan INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (project_id, card_id)
+    );
+
+    INSERT INTO settings (key, value) VALUES ('schema_version', '38');
+    INSERT INTO projects (id, name, path, created_at, last_accessed_at)
+      VALUES ('project-1', 'Project', '/tmp/project-1', '2026-07-01T00:00:00.000Z', '2026-07-01T00:00:00.000Z');
+    INSERT INTO kanban_tickets (id, project_id, title, note, auto_approve_plan, created_at, updated_at)
+      VALUES ('ticket-1', 'project-1', 'Pre-upgrade ticket', 'kept note', 1, '2026-07-01T00:00:00.000Z', '2026-07-01T00:00:00.000Z');
+    INSERT INTO markdown_kanban_card_state (project_id, card_id, note, auto_approve_plan, created_at, updated_at)
+      VALUES ('project-1', 'card-1', 'kept card note', 0, '2026-07-01T00:00:00.000Z', '2026-07-01T00:00:00.000Z');
+  `)
+  db.close()
+}
+
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true })
@@ -312,6 +410,45 @@ describeIf('database migration safety', () => {
     expect(db.getRawDb().prepare('SELECT COUNT(*) AS count FROM worktrees').get()).toEqual({
       count: 1
     })
+
+    db.close()
+  })
+
+  it('upgrades a v38-shaped database to v39, adding the ticket model columns and preserving pre-upgrade tickets', () => {
+    const dbPath = makeDbPath()
+    seedTicketModelColumnsV38Shape(dbPath)
+
+    const db = new DatabaseService(dbPath)
+    db.init()
+
+    expect(db.getSchemaVersion()).toBe(CURRENT_SCHEMA_VERSION)
+    expect(columnNames(db, 'kanban_tickets')).toEqual(
+      expect.arrayContaining(['model_provider_id', 'model_id', 'model_variant', 'variant_group_id'])
+    )
+    expect(columnNames(db, 'markdown_kanban_card_state')).toEqual(
+      expect.arrayContaining(['model_provider_id', 'model_id', 'model_variant', 'variant_group_id'])
+    )
+
+    // The ticket written before the upgrade keeps its pre-existing fields and
+    // round-trips with the four new columns null.
+    const ticket = db.getKanbanTicket('ticket-1')
+    expect(ticket?.title).toBe('Pre-upgrade ticket')
+    expect(ticket?.note).toBe('kept note')
+    expect(ticket?.auto_approve_plan).toBe(true)
+    expect(ticket?.model_provider_id).toBeNull()
+    expect(ticket?.model_id).toBeNull()
+    expect(ticket?.model_variant).toBeNull()
+    expect(ticket?.variant_group_id).toBeNull()
+
+    const cardStateRow = db
+      .getRawDb()
+      .prepare('SELECT * FROM markdown_kanban_card_state WHERE project_id = ? AND card_id = ?')
+      .get('project-1', 'card-1') as Record<string, unknown>
+    expect(cardStateRow.note).toBe('kept card note')
+    expect(cardStateRow.model_provider_id).toBeNull()
+    expect(cardStateRow.model_id).toBeNull()
+    expect(cardStateRow.model_variant).toBeNull()
+    expect(cardStateRow.variant_group_id).toBeNull()
 
     db.close()
   })

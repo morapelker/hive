@@ -81,8 +81,7 @@ export async function autoLaunchTicket(ticket: AutoLaunchTicket): Promise<void> 
       sourceBranch: config.worktree.sourceBranch,
       goalMode: configGoalMode,
       goalSuccessCriteria: configGoalSuccessCriteria,
-      entries,
-      clearPendingConfig: true
+      entries
     })
     return
   }

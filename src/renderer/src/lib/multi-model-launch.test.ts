@@ -5,6 +5,8 @@ import { toast } from '@/lib/toast'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useUsageStore } from '@/stores/useUsageStore'
+import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
+import { dbApi } from '@/api/db-api'
 import type { KanbanTicket } from '../../../main/db/types'
 
 vi.mock('@/lib/toast', () => ({
@@ -18,9 +20,18 @@ vi.mock('@/lib/ticket-launch', () => ({
   launchTicketWithModel: vi.fn()
 }))
 
+vi.mock('@/api/db-api', () => ({
+  dbApi: {
+    session: {
+      update: vi.fn(async () => undefined)
+    }
+  }
+}))
+
 const initialKanbanState = useKanbanStore.getState()
 const initialUsageState = useUsageStore.getState()
 const initialSettingsState = useSettingsStore.getState()
+const initialWorktreeStatusState = useWorktreeStatusStore.getState()
 
 function makeTicket(overrides: Partial<KanbanTicket> = {}): KanbanTicket {
   return {
@@ -85,7 +96,6 @@ function basePlan(overrides: Partial<MultiModelLaunchPlan> = {}): MultiModelLaun
         codexFastMode: false
       }
     ],
-    clearPendingConfig: true,
     ...overrides
   }
 }
@@ -112,6 +122,7 @@ function setupStores(existingTickets: KanbanTicket[] = [makeTicket()]): {
   // Guard against persisted per-provider defaults leaking in from localStorage
   // in the test environment (see ticket-launch.test.ts's identical guard).
   useSettingsStore.setState({ selectedModel: null, selectedModelByProvider: {} })
+  useWorktreeStatusStore.setState({ setSessionStatus: vi.fn() })
 
   return { updateTicket, duplicateTicket, fetchUsageForProvider }
 }
@@ -136,6 +147,7 @@ describe('runMultiModelLaunch', () => {
     useKanbanStore.setState(initialKanbanState, true)
     useUsageStore.setState(initialUsageState, true)
     useSettingsStore.setState(initialSettingsState, true)
+    useWorktreeStatusStore.setState(initialWorktreeStatusState, true)
   })
 
   it('makes all N tickets appear immediately with badge fields, a shared group id, and fractional sort orders', async () => {
@@ -361,7 +373,12 @@ describe('runMultiModelLaunch', () => {
     expect(calls[1][0].ticketId).toBe('dup-2')
   })
 
-  it('skips the launch for a model whose duplicateTicket call throws, but still launches the next entry', async () => {
+  it('has no dead catch around duplicateTicket: a thrown error propagates to the top-level catch (Fix 6)', async () => {
+    // useKanbanStore.duplicateTicket is documented to catch internally and
+    // resolve null on failure — it never throws. If it somehow did throw, the
+    // per-entry loop no longer has its own try/catch around the call, so the
+    // throw surfaces through the function's single top-level catch instead of
+    // being swallowed with a duplicate console.error.
     setupStores()
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     const duplicateTicket = vi.fn(async (_projectId: string, _ticketId: string, overrides: unknown) => {
@@ -371,15 +388,87 @@ describe('runMultiModelLaunch', () => {
     })
     useKanbanStore.setState({ duplicateTicket })
 
+    await expect(runMultiModelLaunch(basePlan())).resolves.toBeUndefined()
+
+    expect(toast.error).toHaveBeenCalledWith(
+      'Failed to launch "Fix Login Bug": duplicate rpc failed'
+    )
+    expect(errorSpy).toHaveBeenCalledWith(
+      'Multi-model launch failed for "Fix Login Bug"',
+      expect.any(Error)
+    )
+    // The batch aborted at the top level — no per-model "Failed to duplicate"
+    // toast, and nothing launched.
+    expect(toast.error).not.toHaveBeenCalledWith('Failed to duplicate ticket for gpt-5.5-codex')
+    expect(launchTicketWithModel).not.toHaveBeenCalled()
+
+    errorSpy.mockRestore()
+  })
+
+  it('marks an orphaned session completed before clearing ticket links when a launch fails after session creation (Fix 5)', async () => {
+    setupStores([
+      makeTicket({ id: 'existing-1', column: 'in_progress', sort_order: 5 }),
+      makeTicket({ id: 'todo-1', column: 'todo', sort_order: 2 })
+    ])
+    vi.mocked(launchTicketWithModel).mockImplementation(async (spec) => {
+      if (spec.ticketId === 'dup-1') {
+        return { success: false, error: 'connect refused', sessionId: 'orphan-session', worktreeId: 'w' }
+      }
+      return { success: true, sessionId: 's', worktreeId: 'w' }
+    })
+
     await runMultiModelLaunch(basePlan())
 
-    expect(toast.error).toHaveBeenCalledWith('Failed to duplicate ticket for gpt-5.5-codex')
-    expect(errorSpy).toHaveBeenCalled()
+    expect(dbApi.session.update).toHaveBeenCalledWith('orphan-session', {
+      status: 'completed',
+      completed_at: expect.any(String)
+    })
+    expect(useWorktreeStatusStore.getState().setSessionStatus).toHaveBeenCalledWith(
+      'orphan-session',
+      'completed'
+    )
+    // entry-2 still launches despite the failure.
+    expect(launchTicketWithModel).toHaveBeenCalledTimes(3)
+  })
 
-    expect(launchTicketWithModel).toHaveBeenCalledTimes(2)
-    const calls = vi.mocked(launchTicketWithModel).mock.calls
-    expect(calls[0][0].ticketId).toBe('ticket-1')
-    expect(calls[1][0].ticketId).toBe('dup-2')
+  it('does not attempt to complete a session when the failed launch never created one', async () => {
+    setupStores([
+      makeTicket({ id: 'existing-1', column: 'in_progress', sort_order: 5 }),
+      makeTicket({ id: 'todo-1', column: 'todo', sort_order: 2 })
+    ])
+    vi.mocked(launchTicketWithModel).mockImplementation(async (spec) => {
+      if (spec.ticketId === 'dup-1') return { success: false, error: 'no provider' }
+      return { success: true, sessionId: 's', worktreeId: 'w' }
+    })
+
+    await runMultiModelLaunch(basePlan())
+
+    expect(dbApi.session.update).not.toHaveBeenCalled()
+  })
+
+  it('logs and continues when marking the orphaned session completed itself throws', async () => {
+    setupStores([
+      makeTicket({ id: 'existing-1', column: 'in_progress', sort_order: 5 }),
+      makeTicket({ id: 'todo-1', column: 'todo', sort_order: 2 })
+    ])
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.mocked(dbApi.session.update).mockRejectedValueOnce(new Error('session update rpc failed'))
+    vi.mocked(launchTicketWithModel).mockImplementation(async (spec) => {
+      if (spec.ticketId === 'dup-1') {
+        return { success: false, error: 'connect refused', sessionId: 'orphan-session', worktreeId: 'w' }
+      }
+      return { success: true, sessionId: 's', worktreeId: 'w' }
+    })
+
+    await runMultiModelLaunch(basePlan())
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      'Failed to complete orphaned session for gpt-5.5-codex',
+      expect.any(Error)
+    )
+    // The board-recovery update and the next entry's launch still proceed.
+    expect(toast.error).toHaveBeenCalledWith('Failed to launch gpt-5.5-codex: connect refused')
+    expect(launchTicketWithModel).toHaveBeenCalledTimes(3)
 
     errorSpy.mockRestore()
   })

@@ -1043,7 +1043,10 @@ export function WorktreePickerModal({
         model_variant: badgeModel.variant ?? null,
         // A single-model (re)launch shouldn't keep claiming membership in a
         // stale multi-launch group.
-        variant_group_id: null
+        variant_group_id: null,
+        // Clears a stale Save & Queue config so this manual launch can't be
+        // auto-launched again later (e.g. once its blocking dependency resolves).
+        pending_launch_config: null
       })
 
       // Trigger usage refresh so the board shows up-to-date usage (debounced in store)

@@ -72,7 +72,7 @@ describe('autoLaunchTicket multi-model routing', () => {
     useProjectStore.setState(initialProjectState, true)
   })
 
-  it('routes multi-entry + new worktree to runMultiModelLaunch with clearPendingConfig true', async () => {
+  it('routes multi-entry + new worktree to runMultiModelLaunch', async () => {
     await autoLaunchTicket({
       id: 'ticket-1',
       project_id: 'project-1',
@@ -98,8 +98,7 @@ describe('autoLaunchTicket multi-model routing', () => {
       sourceBranch: 'main',
       goalMode: true,
       goalSuccessCriteria: 'Tests pass',
-      entries: twoEntries,
-      clearPendingConfig: true
+      entries: twoEntries
     })
     expect(launchTicketWithModel).not.toHaveBeenCalled()
   })

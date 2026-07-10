@@ -132,6 +132,11 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
   // Working copy of the prompt — the goal-mode overflow branch may replace it
   // with a short "Implement PLAN_{uuid}.md" pointer.
   let prompt = spec.prompt
+  // Snapshots of the worktree/session ids as soon as each is created, hoisted
+  // above the try so the catch fallback can still report them (Fix 5: avoids
+  // leaving a phantom "working" session the caller can't see/clean up).
+  let createdWorktreeId: string | undefined
+  let createdSessionId: string | undefined
 
   try {
     // 1. Resolve worktree
@@ -158,6 +163,7 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
     } else {
       worktreeId = spec.worktree.worktreeId
     }
+    createdWorktreeId = worktreeId
 
     // Resolve the worktree record once — needed for plan-file creation and the
     // OpenCode connect below. Newly created worktrees are already in the store.
@@ -209,6 +215,7 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
     const session = sessionResult.session
     const sessionId = session.id
     const sessionAgentSdk = session.agent_sdk
+    createdSessionId = sessionId
 
     // 3. Set status tracking
     messageSendTimes.set(sessionId, Date.now())
@@ -267,18 +274,33 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
           pendingPrompt: outboundPrompt
         })
       )
-      if (result.success && outboundPrompt) {
+      if (!result.success) {
+        return {
+          success: false,
+          error: result.error ?? 'Failed to start Claude CLI',
+          sessionId,
+          worktreeId
+        }
+      }
+      if (outboundPrompt) {
         useSessionStore.getState().dequeuePendingMessage(sessionId)
       }
       return { success: true, sessionId, worktreeId }
     }
 
     // 7. Connect to OpenCode and send prompt
-    if (!worktree?.path) return { success: true, sessionId, worktreeId }
+    if (!worktree?.path) {
+      return { success: false, error: 'Worktree path not found', sessionId, worktreeId }
+    }
 
     const connectResult = unwrapEnvelope(await opencodeApi.connect(worktree.path, sessionId))
     if (!connectResult.success || !connectResult.sessionId) {
-      return { success: false, error: connectResult.error || 'Could not start session' }
+      return {
+        success: false,
+        error: connectResult.error || 'Could not start session',
+        sessionId,
+        worktreeId
+      }
     }
 
     useSessionStore.getState().setOpenCodeSessionId(sessionId, connectResult.sessionId)
@@ -336,6 +358,11 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
     return { success: true, sessionId, worktreeId }
   } catch (err) {
     const detail = err instanceof Error ? err.message : null
-    return { success: false, error: detail || 'Could not launch session' }
+    return {
+      success: false,
+      error: detail || 'Could not launch session',
+      ...(createdSessionId ? { sessionId: createdSessionId } : {}),
+      ...(createdWorktreeId ? { worktreeId: createdWorktreeId } : {})
+    }
   }
 }

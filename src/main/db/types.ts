@@ -610,6 +610,11 @@ export interface KanbanTicketBatchCreateItem {
   github_pr_number?: number | null
   github_pr_url?: string | null
   mark?: TicketMark | null
+  note?: string | null
+  model_provider_id?: string | null
+  model_id?: string | null
+  model_variant?: string | null
+  variant_group_id?: string | null
   depends_on?: string[]
 }
 

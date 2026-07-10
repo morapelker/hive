@@ -660,7 +660,12 @@ class MarkdownKanbanBackend implements KanbanBackend {
           attachments: draft.attachments ?? [],
           current_session_id: draft.current_session_id ?? null,
           worktree_id: draft.worktree_id ?? null,
-          plan_ready: draft.plan_ready ?? false
+          plan_ready: draft.plan_ready ?? false,
+          note: draft.note ?? null,
+          model_provider_id: draft.model_provider_id ?? null,
+          model_id: draft.model_id ?? null,
+          model_variant: draft.model_variant ?? null,
+          variant_group_id: draft.variant_group_id ?? null
         }
       })
     }

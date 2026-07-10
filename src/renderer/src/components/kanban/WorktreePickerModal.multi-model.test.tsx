@@ -520,7 +520,10 @@ describe('WorktreePickerModal multi-model UI', () => {
         model_variant: 'high',
         // Single-model launches must clear any stale variant_group_id from a
         // prior failed multi-launch of this ticket.
-        variant_group_id: null
+        variant_group_id: null,
+        // Clears a stale Save & Queue config so a manually-launched queued
+        // ticket can't be auto-launched again later.
+        pending_launch_config: null
       })
     )
     expect(runMultiModelLaunch).not.toHaveBeenCalled()

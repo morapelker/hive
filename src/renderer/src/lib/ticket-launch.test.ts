@@ -285,7 +285,7 @@ describe('launchTicketWithModel', () => {
     expect(toast.error).not.toHaveBeenCalled()
   })
 
-  it('returns {success:false} when the OpenCode connect fails', async () => {
+  it('returns {success:false} with the created sessionId/worktreeId when the OpenCode connect fails (Fix 5)', async () => {
     nextSession = makeSession({ agent_sdk: 'opencode' })
     setupStores()
     vi.mocked(opencodeApi.connect).mockResolvedValue({
@@ -299,9 +299,96 @@ describe('launchTicketWithModel', () => {
       })
     )
 
-    expect(result).toEqual({ success: false, error: 'connect refused' })
+    expect(result).toEqual({
+      success: false,
+      error: 'connect refused',
+      sessionId: 'session-1',
+      worktreeId: 'worktree-1'
+    })
     expect(opencodeApi.prompt).not.toHaveBeenCalled()
     expect(toast.error).not.toHaveBeenCalled()
+  })
+
+  it('returns {success:false, sessionId, worktreeId} when the resolved worktree has no path (Fix 1)', async () => {
+    nextSession = makeSession({ agent_sdk: 'opencode' })
+    setupStores()
+    // Worktree exists but carries no path — the pre-fix pipeline treated this
+    // as a silent success without connecting or sending a prompt.
+    useWorktreeStore.setState({
+      worktreesByProject: new Map([['project-1', [makeWorktree({ path: '' })]]])
+    })
+
+    const result = await launchTicketWithModel(
+      baseSpec({
+        modelConfig: { sdk: 'opencode', model: null, codexFastMode: false }
+      })
+    )
+
+    expect(result).toEqual({
+      success: false,
+      error: 'Worktree path not found',
+      sessionId: 'session-1',
+      worktreeId: 'worktree-1'
+    })
+    expect(opencodeApi.connect).not.toHaveBeenCalled()
+    expect(toast.error).not.toHaveBeenCalled()
+  })
+
+  it('returns {success:false, sessionId, worktreeId} when the claude-code-cli spawn RPC reports failure (Fix 2)', async () => {
+    setupStores()
+    request = vi.fn(async (method: string) => {
+      if (method === 'terminalOps.createClaudeCli') {
+        return { success: false, error: 'pty spawn failed' }
+      }
+      return null
+    })
+    setRendererRpcClient({ request, subscribe: vi.fn() })
+
+    const result = await launchTicketWithModel(baseSpec())
+
+    expect(result).toEqual({
+      success: false,
+      error: 'pty spawn failed',
+      sessionId: 'session-1',
+      worktreeId: 'worktree-1'
+    })
+    expect(useSessionStore.getState().dequeuePendingMessage).not.toHaveBeenCalled()
+  })
+
+  it('falls back to a default error message when the claude-code-cli spawn RPC fails without one', async () => {
+    setupStores()
+    request = vi.fn(async (method: string) => {
+      if (method === 'terminalOps.createClaudeCli') return { success: false }
+      return null
+    })
+    setRendererRpcClient({ request, subscribe: vi.fn() })
+
+    const result = await launchTicketWithModel(baseSpec())
+
+    expect(result).toEqual({
+      success: false,
+      error: 'Failed to start Claude CLI',
+      sessionId: 'session-1',
+      worktreeId: 'worktree-1'
+    })
+  })
+
+  it('includes the created sessionId/worktreeId in the catch fallback when a later step throws (Fix 5)', async () => {
+    setupStores()
+    useSessionStore.setState({
+      setSessionModel: vi.fn(async () => {
+        throw new Error('model apply failed')
+      })
+    })
+
+    const result = await launchTicketWithModel(baseSpec())
+
+    expect(result).toEqual({
+      success: false,
+      error: 'model apply failed',
+      sessionId: 'session-1',
+      worktreeId: 'worktree-1'
+    })
   })
 
   it('passes an explicit nameHint through to createWorktreeFromBranch', async () => {
