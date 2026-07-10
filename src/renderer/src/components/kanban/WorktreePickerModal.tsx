@@ -725,23 +725,37 @@ export function WorktreePickerModal({
             .catch(() => {})
         }
 
-        const sortOrder = useKanbanStore
-          .getState()
-          .computeSortOrder(
-            useKanbanStore.getState().getTicketsByColumn(projectId, 'in_progress'),
-            0
-          )
+        // Past this point the remote launch itself succeeded — a failure in
+        // the local ticket move must not be reported as a failed launch (the
+        // outer catch would repaint the green steps and imply the remote
+        // session doesn't exist). Surface it against the launch step with an
+        // explicit message instead; Retry reuses the same launchId, so it
+        // relinks the already-running session rather than launching twice.
+        try {
+          const sortOrder = useKanbanStore
+            .getState()
+            .computeSortOrder(
+              useKanbanStore.getState().getTicketsByColumn(projectId, 'in_progress'),
+              0
+            )
 
-        await updateTicket(ticket.id, projectId, {
-          current_session_id: result.localSessionId ?? null,
-          worktree_id: null,
-          mode: clampedMode,
-          column: 'in_progress',
-          sort_order: sortOrder,
-          plan_ready: false,
-          goal_mode: false,
-          goal_success_criteria: null
-        })
+          await updateTicket(ticket.id, projectId, {
+            current_session_id: result.localSessionId ?? null,
+            worktree_id: null,
+            mode: clampedMode,
+            column: 'in_progress',
+            sort_order: sortOrder,
+            plan_ready: false,
+            goal_mode: false,
+            goal_success_criteria: null
+          })
+        } catch (error) {
+          const message = `Remote session launched, but moving the ticket failed: ${error instanceof Error ? error.message : String(error)}. Retry to relink — the running remote session will be reused, not relaunched.`
+          setRemoteProgress((prev) => ({ ...prev, launch: 'error' }))
+          setRemoteError({ step: 'launch', message })
+          setRemotePhase('failed')
+          return
+        }
 
         toast.success('Launched on remote machine')
         onSendComplete?.()

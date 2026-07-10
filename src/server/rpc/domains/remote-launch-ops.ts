@@ -1116,8 +1116,14 @@ async function createLiveDeps(eventBus?: EventBus): Promise<RemoteLaunchOpsDeps>
         await mkdir(dirPath, { recursive: true })
       },
       writeFileBase64: async (targetPath, contentBase64) => {
-        const { writeFile } = await import('node:fs/promises')
-        await writeFile(targetPath, Buffer.from(contentBase64, 'base64'))
+        const { writeFile, chmod } = await import('node:fs/promises')
+        // Transferred files are typically secrets (.env, credentials) shipped
+        // to a possibly multi-user remote host — write them owner-only, same
+        // 0600 treatment as writeSecretFile in remote-tmux-launcher.ts
+        // (writeFile's mode only applies on creation and is subject to the
+        // umask, hence the explicit chmod after).
+        await writeFile(targetPath, Buffer.from(contentBase64, 'base64'), { mode: 0o600 })
+        await chmod(targetPath, 0o600)
       }
     },
     ensureRemoteProject,
