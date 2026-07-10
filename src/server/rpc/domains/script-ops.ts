@@ -78,7 +78,10 @@ const runArchiveParamsSchema = z
   })
   .strict()
 
-const resolvePortEnv = (worktreeId: string, cwd: string): Record<string, string> => {
+/** PORT env for a worktree's scripts when its project has auto-assign-port
+ * on. Exported for remote-launch-ops so remote setup scripts get the same
+ * injection as local `scriptOps.runSetup`. */
+export const resolvePortEnv = (worktreeId: string, cwd: string): Record<string, string> => {
   const env: Record<string, string> = {}
   try {
     const db = getDatabase()

@@ -118,10 +118,13 @@ describe('useRemoteLaunchStore', () => {
     expect(request).not.toHaveBeenCalled()
   })
 
-  it('caches null for a stopped client-role session', async () => {
+  it('keeps stopped client-role info (with stoppedAt) so stopped sessions stay distinguishable from local ones', async () => {
     await useRemoteLaunchStore.getState().ensureLoaded('session-stopped')
 
-    expect(useRemoteLaunchStore.getState().remoteBySessionId['session-stopped']).toBeNull()
+    expect(useRemoteLaunchStore.getState().remoteBySessionId['session-stopped']).toEqual({
+      ...clientInfo,
+      stoppedAt: '2026-07-10T00:00:00.000Z'
+    })
   })
 
   it('caches null (resolved, not stuck loading) when the session fetch rejects', async () => {
@@ -158,10 +161,19 @@ describe('useRemoteLaunchStore', () => {
     )
   })
 
-  it('clearRemoteInfo marks a session as no longer remote', () => {
+  it('markStopped stamps stoppedAt on cached info without discarding it', () => {
     useRemoteLaunchStore.getState().setRemoteInfo('session-fresh', clientInfo)
-    useRemoteLaunchStore.getState().clearRemoteInfo('session-fresh')
+    useRemoteLaunchStore.getState().markStopped('session-fresh')
 
-    expect(useRemoteLaunchStore.getState().remoteBySessionId['session-fresh']).toBeNull()
+    expect(useRemoteLaunchStore.getState().remoteBySessionId['session-fresh']).toEqual({
+      ...clientInfo,
+      stoppedAt: expect.any(String)
+    })
+  })
+
+  it('markStopped is a no-op for sessions with no cached info', () => {
+    useRemoteLaunchStore.getState().markStopped('session-unknown')
+
+    expect('session-unknown' in useRemoteLaunchStore.getState().remoteBySessionId).toBe(false)
   })
 })

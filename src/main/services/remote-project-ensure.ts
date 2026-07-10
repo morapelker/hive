@@ -56,7 +56,14 @@ export async function ensureRemoteProject(gitUrl: string, projectName: string): 
   for (const candidate of db.getAllProjects()) {
     const remote = await gitService.getRemoteUrl(candidate.path, 'origin')
     if (remote.success && remote.url && normalizeGitUrl(remote.url) === normalizeGitUrl(gitUrl)) {
-      await execGit(candidate.path, ['fetch', 'origin'])
+      // Best-effort refresh: a fetch failure (offline, transient auth) must
+      // not disqualify the matched project — callers that need fresh refs
+      // fetch again themselves and surface their own error.
+      try {
+        await execGit(candidate.path, ['fetch', 'origin'])
+      } catch {
+        // Reuse the matched project with possibly stale refs.
+      }
       return candidate
     }
   }

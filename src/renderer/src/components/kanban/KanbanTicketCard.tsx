@@ -163,6 +163,10 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   const [remoteTerminalOpen, setRemoteTerminalOpen] = useState(false)
   const [showStopRemoteConfirm, setShowStopRemoteConfirm] = useState(false)
   const remoteLaunchInfo = useTicketRemoteLaunch(ticket)
+  // The card only surfaces ACTIVE remote launches (badge, attach, stop) —
+  // a stopped one renders like a plain ticket here.
+  const activeRemoteLaunch =
+    remoteLaunchInfo && !remoteLaunchInfo.stoppedAt ? remoteLaunchInfo : null
   const hasNote = !!ticket.note && ticket.note.trim().length > 0
   const isExternalTicket = !!ticket.external_provider
   const dragCloneRef = useRef<HTMLElement | null>(null)
@@ -722,7 +726,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     try {
       const result = await remoteLaunchApi.stop({ sessionId })
       if (result.killed || result.alreadyDead) {
-        useRemoteLaunchStore.getState().clearRemoteInfo(sessionId)
+        useRemoteLaunchStore.getState().markStopped(sessionId)
         toast.success(
           result.killed ? 'Remote session stopped' : 'Remote session was already stopped'
         )
@@ -1002,7 +1006,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             </div>
 
             {/* Badges + progress row */}
-            {(hasAttachments || hasNote || worktreeName || projectTag || connectionName || ticket.plan_ready || isError || rightAlignedSlot || isArchived || isBlocked || blockingDiagnostic || isRunProcessAlive || ticket.github_pr_number || isCreatingPR || isForwardedToTelegram || ticket.goal_mode || ticket.auto_approve_plan || remoteLaunchInfo) && (
+            {(hasAttachments || hasNote || worktreeName || projectTag || connectionName || ticket.plan_ready || isError || rightAlignedSlot || isArchived || isBlocked || blockingDiagnostic || isRunProcessAlive || ticket.github_pr_number || isCreatingPR || isForwardedToTelegram || ticket.goal_mode || ticket.auto_approve_plan || activeRemoteLaunch) && (
               <div className="mt-1.5 flex flex-wrap items-center gap-1">
                 {/* Archived badge */}
                 {isArchived && (
@@ -1012,7 +1016,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                   </span>
                 )}
                 {/* Remote launch badge */}
-                {remoteLaunchInfo && (
+                {activeRemoteLaunch && (
                   <span
                     data-testid="ticket-remote-badge"
                     className="inline-flex items-center gap-1 rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[11px] font-medium text-sky-500"
@@ -1462,7 +1466,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
           )}
 
           {/* Remote launch actions — only when the current session is a remote (client-role) launch */}
-          {remoteLaunchInfo && (
+          {activeRemoteLaunch && (
             <>
               <ContextMenuItem
                 data-testid="ctx-open-remote-terminal"
@@ -1696,7 +1700,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
       )}
 
       {/* Stop remote session confirmation */}
-      {remoteLaunchInfo && (
+      {activeRemoteLaunch && (
         <AlertDialog open={showStopRemoteConfirm} onOpenChange={setShowStopRemoteConfirm}>
           <AlertDialogContent data-testid="ctx-stop-remote-confirm-dialog">
             <AlertDialogHeader>
@@ -1721,11 +1725,11 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
       )}
 
       {/* Remote terminal attach dialog */}
-      {remoteLaunchInfo && (
+      {activeRemoteLaunch && (
         <RemoteTerminalDialog
           open={remoteTerminalOpen}
           onOpenChange={setRemoteTerminalOpen}
-          remoteLaunch={remoteLaunchInfo}
+          remoteLaunch={activeRemoteLaunch}
         />
       )}
 

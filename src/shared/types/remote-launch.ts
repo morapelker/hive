@@ -108,7 +108,13 @@ export interface RemoteLaunchPingResult {
 }
 
 export type SetupPlanStep =
-  | { type: 'write'; destRelPath: string; contentBase64: string }
+  | {
+      type: 'write'
+      destRelPath: string
+      contentBase64: string
+      /** Source file had an execute bit — written 0700 instead of 0600 so transferred helpers stay runnable. */
+      executable?: boolean
+    }
   | { type: 'run'; command: string }
 
 /** Mirrors the model shape teleport ships, see `TeleportRemoteReceiveParams` in teleport-remote-client.ts. */
@@ -133,6 +139,12 @@ export interface RemoteLaunchPrepareParams {
    * bootstrap on the remote too. Null clears a stale remote value.
    */
   worktreeCreateScript?: string | null
+  /**
+   * The local project's auto-assign-port flag, synced onto the remote
+   * project row so remote setup scripts get the same `PORT` injection as
+   * local `scriptOps.runSetup`.
+   */
+  autoAssignPort?: boolean
   mode: RemoteLaunchMode
   model: RemoteLaunchModelSelection | null
 }

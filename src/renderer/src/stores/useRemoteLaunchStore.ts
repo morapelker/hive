@@ -7,12 +7,18 @@ interface SessionRemoteLaunchRow {
 }
 
 interface RemoteLaunchStoreState {
-  /** null = checked, not an ACTIVE remote (client-role) launch. */
+  /**
+   * null = checked, not a remote (client-role) launch. Stopped remote
+   * launches keep their info (with `stoppedAt` set) — consumers that only
+   * care about ACTIVE launches must check `!info.stoppedAt`, but a stopped
+   * remote session must stay distinguishable from a local one (it still has
+   * no worktree, so e.g. the local terminal portal can never work for it).
+   */
   remoteBySessionId: Record<string, RemoteLaunchClientInfo | null>
   ensureLoaded: (sessionId: string) => Promise<void>
   setRemoteInfo: (sessionId: string, info: RemoteLaunchClientInfo) => void
-  /** Mark a session as no longer remote (e.g. right after a successful stop). */
-  clearRemoteInfo: (sessionId: string) => void
+  /** Stamp a cached session's info as stopped (e.g. right after a successful stop). */
+  markStopped: (sessionId: string) => void
 }
 
 // Module-scoped so concurrent ensureLoaded() calls for the same sessionId
@@ -42,8 +48,7 @@ export const useRemoteLaunchStore = create<RemoteLaunchStoreState>()((set, get) 
       try {
         const session = await dbApi.session.get<SessionRemoteLaunchRow>(sessionId)
         const info = parseRemoteLaunch(session?.remote_launch)
-        // A stopped launch renders like a non-remote session: no badge/actions.
-        clientInfo = info?.role === 'client' && !info.stoppedAt ? info : null
+        clientInfo = info?.role === 'client' ? info : null
         failedLoads.delete(sessionId)
       } catch {
         failedLoads.add(sessionId)
@@ -64,8 +69,15 @@ export const useRemoteLaunchStore = create<RemoteLaunchStoreState>()((set, get) 
       remoteBySessionId: { ...state.remoteBySessionId, [sessionId]: info }
     })),
 
-  clearRemoteInfo: (sessionId) =>
-    set((state) => ({
-      remoteBySessionId: { ...state.remoteBySessionId, [sessionId]: null }
-    }))
+  markStopped: (sessionId) =>
+    set((state) => {
+      const info = state.remoteBySessionId[sessionId]
+      if (!info || info.stoppedAt) return state
+      return {
+        remoteBySessionId: {
+          ...state.remoteBySessionId,
+          [sessionId]: { ...info, stoppedAt: new Date().toISOString() }
+        }
+      }
+    })
 }))

@@ -652,7 +652,7 @@ export function KanbanColumn({
         if (remoteInfo?.role === 'client' && !remoteInfo.stoppedAt) {
           try {
             await remoteLaunchApi.stop({ sessionId: draggedTicket.current_session_id })
-            useRemoteLaunchStore.getState().clearRemoteInfo(draggedTicket.current_session_id)
+            useRemoteLaunchStore.getState().markStopped(draggedTicket.current_session_id)
           } catch (err) {
             toast.error(
               `Could not stop the remote session — ticket not moved: ${err instanceof Error ? err.message : String(err)}`

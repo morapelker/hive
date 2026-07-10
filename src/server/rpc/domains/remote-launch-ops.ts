@@ -42,6 +42,7 @@ import {
 import type { Project, Session, SessionCreate, Worktree } from '../../../main/db'
 import type { EventBus } from '../../events/event-bus'
 import type { RpcHandler } from '../router'
+import { resolvePortEnv } from './script-ops'
 import { slug } from './teleport-ops'
 
 const execFileAsync = promisify(execFile)
@@ -54,7 +55,10 @@ interface RemoteLaunchDb {
   getSession: (id: string) => Session | null
   createSession: (data: SessionCreate) => Session
   updateSession: (id: string, data: { remote_launch?: string | null }) => Session | null
-  updateProject: (id: string, data: { worktree_create_script?: string | null }) => Project | null
+  updateProject: (
+    id: string,
+    data: { worktree_create_script?: string | null; auto_assign_port?: boolean }
+  ) => Project | null
   findSessionByRemoteLaunchId: (launchId: string, role: 'client' | 'host') => Session | null
 }
 
@@ -88,13 +92,15 @@ interface RemoteLaunchRemote {
 interface StatResult {
   isFile: boolean
   isDirectory: boolean
+  /** Any execute bit set on the file's mode. */
+  executable?: boolean
 }
 
 interface RemoteLaunchFs {
   stat: (path: string) => Promise<StatResult | null>
   readFileBase64: (path: string) => Promise<string>
   mkdirp: (dirPath: string) => Promise<void>
-  writeFileBase64: (path: string, contentBase64: string) => Promise<void>
+  writeFileBase64: (path: string, contentBase64: string, executable?: boolean) => Promise<void>
 }
 
 interface RemoteLaunchTmux {
@@ -156,7 +162,8 @@ export interface RemoteLaunchOpsDeps {
   readonly runSetupCommand: (
     command: string,
     cwd: string,
-    channel: string
+    channel: string,
+    worktreeId: string
   ) => Promise<{ success: boolean; error?: string }>
   readonly tmux: RemoteLaunchTmux
   readonly desktopLaunchTmux: (
@@ -407,7 +414,12 @@ async function buildSetupPlanSteps(
         continue
       }
       const contentBase64 = await deps.fs.readFileBase64(entry.sourcePath)
-      steps.push({ type: 'write', destRelPath: entry.dest, contentBase64 })
+      steps.push({
+        type: 'write',
+        destRelPath: entry.dest,
+        contentBase64,
+        ...(stat.executable ? { executable: true } : {})
+      })
     } catch (error) {
       problems.push(`${entry.sourcePath}: ${errorMessage(error)}`)
     }
@@ -484,6 +496,7 @@ async function startRemoteLaunch(
         branch,
         ...(nameHint ? { nameHint } : {}),
         worktreeCreateScript: project.worktree_create_script ?? null,
+        autoAssignPort: project.auto_assign_port ?? false,
         mode: params.mode,
         model: params.model
       } satisfies RemoteLaunchPrepareParams,
@@ -684,17 +697,23 @@ async function prepareRemoteLaunch(
     throw stepError('clone', error)
   }
 
-  // Sync the local project's worktree-create script onto the remote project
-  // row: createWorktreeFromBranchOp reads it from there, and a freshly cloned
-  // remote project has none — silently skipping the project's custom worktree
-  // bootstrap (submodules, symlinks, ...).
+  // Sync local project config the remote flows read from the remote project
+  // row: createWorktreeFromBranchOp reads worktree_create_script (a freshly
+  // cloned remote project has none — silently skipping the project's custom
+  // worktree bootstrap), and setup-script PORT injection reads
+  // auto_assign_port (see resolvePortEnv in script-ops.ts).
+  const projectPatch: { worktree_create_script?: string | null; auto_assign_port?: boolean } = {}
   if (
     params.worktreeCreateScript !== undefined &&
     (project.worktree_create_script ?? null) !== params.worktreeCreateScript
   ) {
-    const updated = deps.db.updateProject(project.id, {
-      worktree_create_script: params.worktreeCreateScript
-    })
+    projectPatch.worktree_create_script = params.worktreeCreateScript
+  }
+  if (params.autoAssignPort !== undefined && project.auto_assign_port !== params.autoAssignPort) {
+    projectPatch.auto_assign_port = params.autoAssignPort
+  }
+  if (Object.keys(projectPatch).length > 0) {
+    const updated = deps.db.updateProject(project.id, projectPatch)
     if (updated) project = updated
   }
 
@@ -816,7 +835,7 @@ async function applySetupPlanRemoteLaunch(
           }
         }
         await deps.fs.mkdirp(dirname(resolved))
-        await deps.fs.writeFileBase64(resolved, step.contentBase64)
+        await deps.fs.writeFileBase64(resolved, step.contentBase64, step.executable ?? false)
       } catch (error) {
         return { success: false, failedStepIndex: i, failedKind: 'write', error: errorMessage(error) }
       }
@@ -826,7 +845,8 @@ async function applySetupPlanRemoteLaunch(
     const result = await deps.runSetupCommand(
       step.command,
       worktreePath,
-      `script:setup:${params.remoteWorktreeId}`
+      `script:setup:${params.remoteWorktreeId}`,
+      params.remoteWorktreeId
     )
     if (!result.success) {
       return {
@@ -1151,7 +1171,11 @@ async function createLiveDeps(eventBus?: EventBus): Promise<RemoteLaunchOpsDeps>
         const { stat } = await import('node:fs/promises')
         try {
           const info = await stat(targetPath)
-          return { isFile: info.isFile(), isDirectory: info.isDirectory() }
+          return {
+            isFile: info.isFile(),
+            isDirectory: info.isDirectory(),
+            executable: (info.mode & 0o111) !== 0
+          }
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
           throw error
@@ -1165,20 +1189,26 @@ async function createLiveDeps(eventBus?: EventBus): Promise<RemoteLaunchOpsDeps>
         const { mkdir } = await import('node:fs/promises')
         await mkdir(dirPath, { recursive: true })
       },
-      writeFileBase64: async (targetPath, contentBase64) => {
+      writeFileBase64: async (targetPath, contentBase64, executable) => {
         const { writeFile, chmod } = await import('node:fs/promises')
         // Transferred files are typically secrets (.env, credentials) shipped
         // to a possibly multi-user remote host — write them owner-only, same
         // 0600 treatment as writeSecretFile in remote-tmux-launcher.ts
         // (writeFile's mode only applies on creation and is subject to the
-        // umask, hence the explicit chmod after).
-        await writeFile(targetPath, Buffer.from(contentBase64, 'base64'), { mode: 0o600 })
-        await chmod(targetPath, 0o600)
+        // umask, hence the explicit chmod after). Executable sources keep
+        // their owner execute bit so `cp helper.sh . && ./helper.sh` setups
+        // still run.
+        const mode = executable ? 0o700 : 0o600
+        await writeFile(targetPath, Buffer.from(contentBase64, 'base64'), { mode })
+        await chmod(targetPath, mode)
       }
     },
     ensureRemoteProject,
     createWorktreeFromBranch: (params) => createWorktreeFromBranchOp(params),
-    runSetupCommand: (command, cwd, channel) => scriptRunner.runSequential([command], cwd, channel),
+    // Same PORT injection as local scriptOps.runSetup (auto-assign-port
+    // projects) — the flag is synced onto the remote project row by prepare.
+    runSetupCommand: (command, cwd, channel, worktreeId) =>
+      scriptRunner.runSequential([command], cwd, channel, resolvePortEnv(worktreeId, cwd)),
     tmux: createLiveTmuxDeps(),
     desktopLaunchTmux: (payload) => requestDesktopRemoteLaunchClaudeTmux(payload),
     pty: {
@@ -1306,7 +1336,8 @@ const setupPlanStepSchema = z.union([
     .object({
       type: z.literal('write'),
       destRelPath: z.string().min(1),
-      contentBase64: z.string()
+      contentBase64: z.string(),
+      executable: z.boolean().optional()
     })
     .strict(),
   z
@@ -1351,6 +1382,7 @@ const prepareParamsSchema = z
     branch: z.string().min(1),
     nameHint: z.string().optional(),
     worktreeCreateScript: z.string().nullable().optional(),
+    autoAssignPort: z.boolean().optional(),
     mode: modeSchema,
     model: modelSelectionSchema.nullable()
   })
