@@ -131,6 +131,11 @@ import {
   type TeleportOpsRpcService
 } from './domains/teleport-ops'
 import {
+  makeLiveRemoteLaunchOpsRpcService,
+  makeRemoteLaunchOpsRpcHandlers,
+  type RemoteLaunchOpsRpcService
+} from './domains/remote-launch-ops'
+import {
   makeLiveUpdaterOpsRpcService,
   makeUpdaterOpsRpcHandlers,
   type UpdaterOpsRpcService
@@ -167,6 +172,7 @@ export interface RpcContext {
   readonly perfDiagnosticsOps?: PerfDiagnosticsOpsRpcService
   readonly petOps?: PetOpsRpcService
   readonly projectOps?: ProjectOpsRpcService
+  readonly remoteLaunchOps?: RemoteLaunchOpsRpcService
   readonly scriptOps?: ScriptOpsRpcService
   readonly settingsOps?: SettingsOpsRpcService
   readonly storageOps?: StorageOpsRpcService
@@ -232,6 +238,9 @@ const makeDefaultRpcHandlers = (context: RpcContext): ReadonlyMap<string, RpcHan
     ),
     ...makePetOpsRpcHandlers(context.petOps ?? makeLivePetOpsRpcService()),
     ...makeProjectOpsRpcHandlers(context.projectOps ?? makeLiveProjectOpsRpcService()),
+    ...makeRemoteLaunchOpsRpcHandlers(
+      context.remoteLaunchOps ?? makeLiveRemoteLaunchOpsRpcService(context.eventBus)
+    ),
     ...makeScriptOpsRpcHandlers(context.scriptOps ?? makeLiveScriptOpsRpcService(context.eventBus)),
     ...makeSettingsOpsRpcHandlers(context.settingsOps ?? makeLiveSettingsOpsRpcService()),
     ...makeStorageOpsRpcHandlers(context.storageOps ?? makeLiveStorageOpsRpcService()),

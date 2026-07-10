@@ -169,6 +169,7 @@ export interface Session {
   model_provider_id: string | null
   model_id: string | null
   model_variant: string | null
+  remote_launch: string | null
   created_at: string
   updated_at: string
   completed_at: string | null
@@ -188,6 +189,7 @@ export interface SessionCreate {
   model_provider_id?: string | null
   model_id?: string | null
   model_variant?: string | null
+  remote_launch?: string | null
   pinned_to_board?: boolean
 }
 
@@ -202,6 +204,7 @@ export interface SessionUpdate {
   model_provider_id?: string | null
   model_id?: string | null
   model_variant?: string | null
+  remote_launch?: string | null
   updated_at?: string
   completed_at?: string | null
   pinned_to_board?: boolean

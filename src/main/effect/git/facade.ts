@@ -291,7 +291,7 @@ class GitFacade {
     branchName: string,
     breedType?: BreedType,
     prNumber?: number,
-    options?: { autoPull?: boolean; nameHint?: string; worktreeCreateScript?: string | null }
+    options?: { autoPull?: boolean; nameHint?: string; worktreeCreateScript?: string | null; baseRef?: string }
   ): Promise<CreateWorktreeResult> {
     return runResult(Effect.flatMap(Git, (git) => git.worktree.createFromBranch(repoPath, projectName, branchName, breedType, prNumber, options)))
   }

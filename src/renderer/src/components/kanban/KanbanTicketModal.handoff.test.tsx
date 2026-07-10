@@ -193,6 +193,7 @@ const sourceSession: Session = {
   model_provider_id: 'anthropic',
   model_id: 'opus',
   model_variant: 'high',
+  remote_launch: null,
   created_at: now,
   updated_at: now,
   completed_at: null,

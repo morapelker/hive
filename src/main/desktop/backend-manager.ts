@@ -62,6 +62,7 @@ import {
   destroyNodePtyTerminal,
   handleClaudeCliTerminalInput
 } from '../services/terminal-pty-bridge'
+import { launchClaudeCliInTmux } from '../services/remote-tmux-launcher'
 import { claudeCliTelegramBridge } from '../services/claude-cli-telegram-bridge'
 import { setClaudeCliPlanAutoApprove } from '../services/claude-cli-plan-auto-approve'
 import { openPathWithEditor, openPathWithTerminal } from '../services/settings-openers'
@@ -2948,6 +2949,27 @@ const handleDesktopBackendCommand = (
 
   if (message.command === 'terminalCreateClaudeCli') {
     return createClaudeCliTerminal(message.payload.sessionId, message.payload.opts)
+      .then((value) => {
+        sendDesktopBackendCommandResult(
+          child,
+          makeDesktopCommandResult(message.id, { ok: true, value }),
+          log
+        )
+      })
+      .catch((error) => {
+        sendDesktopBackendCommandResult(
+          child,
+          makeDesktopCommandResult(message.id, {
+            ok: true,
+            value: { success: false, error: error instanceof Error ? error.message : String(error) }
+          }),
+          log
+        )
+      })
+  }
+
+  if (message.command === 'remoteLaunchClaudeTmux') {
+    return launchClaudeCliInTmux(message.payload)
       .then((value) => {
         sendDesktopBackendCommandResult(
           child,

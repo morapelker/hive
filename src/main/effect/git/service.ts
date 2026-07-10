@@ -70,7 +70,7 @@ export class Git extends Context.Tag('GitIsland/Git')<
         branchName: string,
         breedType?: BreedType,
         prNumber?: number,
-        options?: { autoPull?: boolean; nameHint?: string; worktreeCreateScript?: string | null }
+        options?: { autoPull?: boolean; nameHint?: string; worktreeCreateScript?: string | null; baseRef?: string }
       ) => Eff<CreateWorktreeResult>
     }
     readonly branch: {

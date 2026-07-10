@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 38
+export const CURRENT_SCHEMA_VERSION = 39
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   model_provider_id TEXT,
   model_id TEXT,
   model_variant TEXT,
+  remote_launch TEXT DEFAULT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   completed_at TEXT
@@ -662,6 +663,13 @@ DROP TABLE IF EXISTS diff_comments;`
     name: 'add_ticket_auto_approve_plan',
     up: `-- NOTE: ALTER TABLE for kanban_tickets.auto_approve_plan and
          -- markdown_kanban_card_state.auto_approve_plan is handled idempotently by
+         -- safeAddColumn() in database.ts to avoid "duplicate column" errors.`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
+  },
+  {
+    version: 39,
+    name: 'add_session_remote_launch',
+    up: `-- NOTE: ALTER TABLE for sessions.remote_launch is handled idempotently by
          -- safeAddColumn() in database.ts to avoid "duplicate column" errors.`,
     down: `-- SQLite cannot drop columns; this is a no-op for safety`
   }

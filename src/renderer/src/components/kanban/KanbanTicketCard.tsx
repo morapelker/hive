@@ -31,10 +31,13 @@ import {
   Hammer,
   Map as MapIcon,
   FolderInput,
-  FastForward
+  FastForward,
+  RadioTower,
+  Unplug
 } from 'lucide-react'
 import { CheckeredFlagIcon } from './CheckeredFlagIcon'
 import { UpdateStatusModal } from './UpdateStatusModal'
+import { RemoteTerminalDialog } from './RemoteTerminalDialog'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
 import { NoteEditorModal } from './NoteEditorModal'
@@ -42,6 +45,8 @@ import { MoveToProjectModal } from './MoveToProjectModal'
 import { cn, parseColorQuad } from '@/lib/utils'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { opencodeApi } from '@/api/opencode-api'
+import { remoteLaunchApi } from '@/api/remote-launch-api'
+import { useRemoteLaunchStore } from '@/stores/useRemoteLaunchStore'
 import { systemApi } from '@/api/system-api'
 import { ProviderIcon, getProviderLabel } from '@/components/ui/provider-icon'
 import { toast } from '@/lib/toast'
@@ -96,6 +101,7 @@ import { useTelegramStore } from '@/stores/useTelegramStore'
 import { useSessionTimer } from '@/hooks/useSessionTimer'
 import { useSessionTokenDelta } from '@/hooks/useSessionTokenDelta'
 import { useConflictFixFlow } from '@/hooks/useConflictFixFlow'
+import { useTicketRemoteLaunch } from '@/hooks/useTicketRemoteLaunch'
 import { formatTokenCount } from '@/lib/format-utils'
 import { canToggleAutoApprovePlan } from '@/lib/plan-auto-approve'
 import { isClaudeCli } from '@shared/types/agent-sdk'
@@ -155,6 +161,13 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   const [showPRPicker, setShowPRPicker] = useState(false)
   const [showNoteEditor, setShowNoteEditor] = useState(false)
   const [showMoveToProject, setShowMoveToProject] = useState(false)
+  const [remoteTerminalOpen, setRemoteTerminalOpen] = useState(false)
+  const [showStopRemoteConfirm, setShowStopRemoteConfirm] = useState(false)
+  const remoteLaunchInfo = useTicketRemoteLaunch(ticket)
+  // The card only surfaces ACTIVE remote launches (badge, attach, stop) —
+  // a stopped one renders like a plain ticket here.
+  const activeRemoteLaunch =
+    remoteLaunchInfo && !remoteLaunchInfo.stoppedAt ? remoteLaunchInfo : null
   const hasNote = !!ticket.note && ticket.note.trim().length > 0
   const isExternalTicket = !!ticket.external_provider
   const dragCloneRef = useRef<HTMLElement | null>(null)
@@ -707,6 +720,25 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     setShowDeleteConfirm(false)
   }, [ticket.id, ticket.project_id])
 
+  const handleStopRemoteSession = useCallback(async () => {
+    const sessionId = ticket.current_session_id
+    setShowStopRemoteConfirm(false)
+    if (!sessionId) return
+    try {
+      const result = await remoteLaunchApi.stop({ sessionId })
+      if (result.killed || result.alreadyDead) {
+        useRemoteLaunchStore.getState().markStopped(sessionId)
+        toast.success(
+          result.killed ? 'Remote session stopped' : 'Remote session was already stopped'
+        )
+      }
+    } catch (err) {
+      toast.error(
+        `Failed to stop remote session: ${err instanceof Error ? err.message : String(err)}`
+      )
+    }
+  }, [ticket.current_session_id])
+
   const handleArchive = useCallback(async () => {
     try {
       await useKanbanStore.getState().archiveTicket(ticket.id, ticket.project_id)
@@ -1003,13 +1035,23 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             </div>
 
             {/* Badges + progress row */}
-            {(hasAttachments || hasNote || worktreeName || projectTag || connectionName || ticket.plan_ready || isError || rightAlignedSlot || isArchived || isBlocked || blockingDiagnostic || isRunProcessAlive || ticket.github_pr_number || isCreatingPR || isForwardedToTelegram || ticket.goal_mode || ticket.auto_approve_plan) && (
+            {(hasAttachments || hasNote || worktreeName || projectTag || connectionName || ticket.plan_ready || isError || rightAlignedSlot || isArchived || isBlocked || blockingDiagnostic || isRunProcessAlive || ticket.github_pr_number || isCreatingPR || isForwardedToTelegram || ticket.goal_mode || ticket.auto_approve_plan || activeRemoteLaunch) && (
               <div className="mt-1.5 flex flex-wrap items-center gap-1">
                 {/* Archived badge */}
                 {isArchived && (
                   <span className="inline-flex items-center gap-1 rounded-full bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
                     <Archive className="h-3 w-3" />
                     Archived
+                  </span>
+                )}
+                {/* Remote launch badge */}
+                {activeRemoteLaunch && (
+                  <span
+                    data-testid="ticket-remote-badge"
+                    className="inline-flex items-center gap-1 rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[11px] font-medium text-sky-500"
+                  >
+                    <RadioTower className="h-3 w-3" />
+                    Remote
                   </span>
                 )}
                 {isForwardedToTelegram && (
@@ -1452,6 +1494,28 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             </ContextMenuItem>
           )}
 
+          {/* Remote launch actions — only when the current session is a remote (client-role) launch */}
+          {activeRemoteLaunch && (
+            <>
+              <ContextMenuItem
+                data-testid="ctx-open-remote-terminal"
+                onClick={() => setRemoteTerminalOpen(true)}
+                className="gap-2"
+              >
+                <RadioTower className="h-3.5 w-3.5" />
+                Open remote terminal
+              </ContextMenuItem>
+              <ContextMenuItem
+                data-testid="ctx-stop-remote-session"
+                onClick={() => setShowStopRemoteConfirm(true)}
+                className="gap-2 text-red-500 focus:text-red-500"
+              >
+                <Unplug className="h-3.5 w-3.5" />
+                Stop remote session
+              </ContextMenuItem>
+            </>
+          )}
+
           {/* Worktree actions: edit context & pin/unpin (when worktree assigned) */}
           {ticket.worktree_id && (
             <>
@@ -1671,6 +1735,40 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
+      )}
+
+      {/* Stop remote session confirmation */}
+      {activeRemoteLaunch && (
+        <AlertDialog open={showStopRemoteConfirm} onOpenChange={setShowStopRemoteConfirm}>
+          <AlertDialogContent data-testid="ctx-stop-remote-confirm-dialog">
+            <AlertDialogHeader>
+              <AlertDialogTitle>Stop remote session</AlertDialogTitle>
+              <AlertDialogDescription>
+                Are you sure you want to stop the remote session for &ldquo;{ticket.title}&rdquo;?
+                This kills the remote tmux session and can&rsquo;t be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel data-testid="ctx-stop-remote-cancel-btn">Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                data-testid="ctx-stop-remote-confirm-btn"
+                variant="destructive"
+                onClick={handleStopRemoteSession}
+              >
+                Stop
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      )}
+
+      {/* Remote terminal attach dialog */}
+      {activeRemoteLaunch && (
+        <RemoteTerminalDialog
+          open={remoteTerminalOpen}
+          onOpenChange={setRemoteTerminalOpen}
+          remoteLaunch={activeRemoteLaunch}
+        />
       )}
 
       {/* Worktree picker modal for full assign (non-todo) */}
