@@ -244,6 +244,134 @@ describe('rpc router', () => {
     })
   })
 
+  it('handles kanban.ticket.duplicate through the kanban RPC domain', async () => {
+    const ticket = {
+      id: 'ticket-2',
+      project_id: project.id,
+      title: 'Ship HTTP migration',
+      description: null,
+      attachments: [],
+      column: 'todo' as const,
+      sort_order: 0,
+      current_session_id: null,
+      worktree_id: null,
+      mode: null,
+      plan_ready: false,
+      created_at: '2026-05-26T00:05:00.000Z',
+      updated_at: '2026-05-26T00:05:00.000Z',
+      archived_at: null,
+      external_provider: null,
+      external_id: null,
+      external_url: null,
+      github_pr_number: null,
+      github_pr_url: null,
+      mark: null,
+      total_tokens: 0,
+      pending_launch_config: null,
+      goal_mode: false,
+      goal_success_criteria: null,
+      note: null,
+      created_from_session: false,
+      auto_approve_plan: false,
+      model_provider_id: 'anthropic',
+      model_id: 'claude-opus-4-6',
+      model_variant: 'thinking',
+      variant_group_id: 'group-1'
+    }
+    const calls: unknown[] = []
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      kanban: {
+        createTicket: () => Effect.die(new Error('createTicket should not run')),
+        createTicketBatch: () => Effect.die(new Error('createTicketBatch should not run')),
+        getTicket: () => Effect.die(new Error('getTicket should not run')),
+        getTicketsByProject: () => Effect.die(new Error('getTicketsByProject should not run')),
+        updateTicket: () => Effect.die(new Error('updateTicket should not run')),
+        deleteTicket: () => Effect.die(new Error('deleteTicket should not run')),
+        archiveTicket: () => Effect.die(new Error('archiveTicket should not run')),
+        archiveAllDoneTickets: () => Effect.die(new Error('archiveAllDoneTickets should not run')),
+        unarchiveTicket: () => Effect.die(new Error('unarchiveTicket should not run')),
+        moveTicket: () => Effect.die(new Error('moveTicket should not run')),
+        duplicateTicket: (projectId, id, overrides) =>
+          Effect.sync(() => {
+            calls.push({ projectId, id, overrides })
+            return ticket
+          })
+      }
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'kanban-ticket-duplicate-1',
+        method: 'kanban.ticket.duplicate',
+        params: {
+          projectId: project.id,
+          id: 'ticket-1',
+          overrides: {
+            column: 'in_progress',
+            model_provider_id: 'anthropic',
+            model_id: 'claude-opus-4-6',
+            model_variant: 'thinking',
+            variant_group_id: 'group-1'
+          }
+        }
+      })
+    )
+
+    expect(response).toEqual({
+      id: 'kanban-ticket-duplicate-1',
+      ok: true,
+      value: ticket
+    })
+    expect(calls).toEqual([
+      {
+        projectId: project.id,
+        id: 'ticket-1',
+        overrides: {
+          column: 'in_progress',
+          model_provider_id: 'anthropic',
+          model_id: 'claude-opus-4-6',
+          model_variant: 'thinking',
+          variant_group_id: 'group-1'
+        }
+      }
+    ])
+  })
+
+  it('validates kanban.ticket.duplicate params', async () => {
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      kanban: {
+        createTicket: () => Effect.die(new Error('createTicket should not run')),
+        createTicketBatch: () => Effect.die(new Error('createTicketBatch should not run')),
+        getTicket: () => Effect.die(new Error('getTicket should not run')),
+        getTicketsByProject: () => Effect.die(new Error('getTicketsByProject should not run')),
+        updateTicket: () => Effect.die(new Error('updateTicket should not run')),
+        deleteTicket: () => Effect.die(new Error('deleteTicket should not run')),
+        archiveTicket: () => Effect.die(new Error('archiveTicket should not run')),
+        archiveAllDoneTickets: () => Effect.die(new Error('archiveAllDoneTickets should not run')),
+        unarchiveTicket: () => Effect.die(new Error('unarchiveTicket should not run')),
+        moveTicket: () => Effect.die(new Error('moveTicket should not run')),
+        duplicateTicket: () =>
+          Effect.die(new Error('duplicateTicket should not run for invalid params'))
+      }
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'kanban-ticket-duplicate-2',
+        method: 'kanban.ticket.duplicate',
+        params: { projectId: project.id, id: 'ticket-1', overrides: { unknownField: true } }
+      })
+    )
+
+    expect(response).toMatchObject({
+      id: 'kanban-ticket-duplicate-2',
+      ok: false,
+      error: { code: 'VALIDATION_FAILED' }
+    })
+  })
+
   it('handles kanban.ticket.createBatch through the kanban RPC domain', async () => {
     const firstTicket = {
       id: 'ticket-1',

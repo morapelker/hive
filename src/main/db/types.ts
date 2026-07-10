@@ -573,6 +573,16 @@ export interface KanbanTicketUpdate {
   variant_group_id?: string | null
 }
 
+/** Fields a caller may override on a freshly duplicated ticket; see KanbanBackend.duplicate. */
+export interface KanbanTicketDuplicateOverrides {
+  column?: KanbanTicketColumn
+  sort_order?: number
+  model_provider_id?: string | null
+  model_id?: string | null
+  model_variant?: string | null
+  variant_group_id?: string | null
+}
+
 export interface BoardAssistantDraft {
   draftKey: string
   title: string

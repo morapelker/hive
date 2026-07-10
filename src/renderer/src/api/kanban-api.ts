@@ -43,6 +43,16 @@ export const kanbanApi = {
       data: TData
     ): Promise<TResult> =>
       getRendererRpcClient().request<TResult>('kanban.ticket.create', data),
+    duplicate: async <TResult, TOverrides extends object>(
+      projectId: string,
+      id: string,
+      overrides?: TOverrides
+    ): Promise<TResult> =>
+      getRendererRpcClient().request<TResult>('kanban.ticket.duplicate', {
+        projectId,
+        id,
+        ...(overrides === undefined ? {} : { overrides })
+      }),
     createBatch: async <TResult, TData extends object>(
       projectId: string,
       data: TData

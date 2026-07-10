@@ -35,6 +35,7 @@ export type {
   KanbanTicketBatchCreate,
   KanbanTicketBatchCreateResult,
   KanbanTicketUpdate,
+  KanbanTicketDuplicateOverrides,
   KanbanTicketColumn,
   KanbanMarkdownConfig,
   KanbanStorageConfig,

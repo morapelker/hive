@@ -39,6 +39,7 @@ import type {
   KanbanTicketBatchCreateResult,
   KanbanTicketColumn,
   KanbanTicketCreate,
+  KanbanTicketDuplicateOverrides,
   KanbanTicketUpdate,
   MarkdownCardDiagnostic,
   Project,
@@ -171,6 +172,11 @@ export interface KanbanBackend {
   get(projectId: string, ticketId: string): Promise<KanbanTicket | null>
   list(projectId: string, includeArchived: boolean): Promise<KanbanTicket[]>
   create(projectId: string, data: KanbanTicketCreate): Promise<KanbanTicket>
+  duplicate(
+    projectId: string,
+    ticketId: string,
+    overrides?: KanbanTicketDuplicateOverrides
+  ): Promise<KanbanTicket>
   createBatch(
     projectId: string,
     data: KanbanTicketBatchCreate
@@ -242,6 +248,25 @@ class InternalKanbanBackend implements KanbanBackend {
   async create(projectId: string, data: KanbanTicketCreate): Promise<KanbanTicket> {
     assertProjectPayload(projectId, data.project_id)
     return getDatabase().createKanbanTicket({ ...data, project_id: projectId })
+  }
+
+  async duplicate(
+    projectId: string,
+    ticketId: string,
+    overrides?: KanbanTicketDuplicateOverrides
+  ): Promise<KanbanTicket> {
+    const source = await this.get(projectId, ticketId)
+    if (!source) throw new Error('Ticket does not exist')
+    return getDatabase().createKanbanTicket({
+      title: source.title,
+      description: source.description,
+      attachments: source.attachments,
+      mark: source.mark,
+      note: source.note,
+      ...overrides,
+      project_id: projectId,
+      column: overrides?.column ?? source.column
+    })
   }
 
   async createBatch(
@@ -547,6 +572,25 @@ class MarkdownKanbanBackend implements KanbanBackend {
     const ticket = await this.get(projectId, id)
     if (!ticket) throw new Error('Created markdown ticket could not be loaded')
     return ticket
+  }
+
+  async duplicate(
+    projectId: string,
+    ticketId: string,
+    overrides?: KanbanTicketDuplicateOverrides
+  ): Promise<KanbanTicket> {
+    const card = await this.requireMutableCard(projectId, ticketId)
+    const source = card.ticket
+    return this.create(projectId, {
+      title: source.title,
+      description: source.description,
+      attachments: source.attachments,
+      mark: source.mark,
+      note: source.note,
+      ...overrides,
+      project_id: projectId,
+      column: overrides?.column ?? source.column
+    })
   }
 
   async createBatch(
