@@ -44,7 +44,16 @@ export function RemoteTerminalDialog({
   const [errorKind, setErrorKind] = useState<ErrorKind | null>(null)
   const [errorDetail, setErrorDetail] = useState<string | undefined>(undefined)
 
-  const containerRef = useRef<HTMLDivElement | null>(null)
+  // A plain ref would race Radix's Portal: it renders `null` on the commit
+  // where it first mounts (its `mounted` state starts false, flipped true by
+  // its own useLayoutEffect — see @radix-ui/react-portal), and Presence tears
+  // the Portal down on every close, so this replays on every reopen. State
+  // (set via a callback ref) lets the connect effect below re-run once the
+  // container actually lands in the DOM instead of reading a stale ref.
+  const [containerEl, setContainerEl] = useState<HTMLDivElement | null>(null)
+  const containerRefCallback = useCallback((node: HTMLDivElement | null) => {
+    setContainerEl(node)
+  }, [])
   const termRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const resizeObserverRef = useRef<ResizeObserver | null>(null)
@@ -119,7 +128,7 @@ export function RemoteTerminalDialog({
 
   const ensureTerminalMounted = useCallback((): void => {
     if (termRef.current) return
-    const container = containerRef.current
+    const container = containerEl
     if (!container) return
 
     const term = new Terminal({
@@ -144,7 +153,7 @@ export function RemoteTerminalDialog({
     })
     resizeObserver.observe(container)
     resizeObserverRef.current = resizeObserver
-  }, [requestResize])
+  }, [containerEl, requestResize])
 
   const connect = useCallback(async () => {
     const myEpoch = ++epochRef.current
@@ -194,8 +203,12 @@ export function RemoteTerminalDialog({
       client.close()
       if (myEpoch !== epochRef.current) return
       const message = err instanceof Error ? err.message : String(err)
-      setErrorDetail(message)
-      setErrorKind(isSessionExitedError(message) ? 'exited' : 'unreachable')
+      const kind = isSessionExitedError(message) ? 'exited' : 'unreachable'
+      // The "exited" title is already the raw server message
+      // ("Remote session has exited") — showing it again as errorDetail
+      // would just repeat the same sentence underneath itself.
+      setErrorDetail(kind === 'exited' ? undefined : message)
+      setErrorKind(kind)
       setState('error')
       return
     }
@@ -234,7 +247,16 @@ export function RemoteTerminalDialog({
   }, [teardownConnection, ensureTerminalMounted, requestResize])
 
   useEffect(() => {
-    if (!open) return
+    // Radix's Portal (which DialogContent renders through) returns `null` on
+    // the commit where it first mounts — its `mounted` state starts false
+    // and only flips true via its own useLayoutEffect. Presence also tears
+    // the Portal down on every close, so this replays on every reopen, not
+    // just the first mount. Gating on `containerEl` (set via a callback ref)
+    // instead of firing straight off `open` means this effect no-ops on the
+    // commit(s) where the container doesn't exist yet, and actually connects
+    // once it lands in the DOM — so connect() still runs exactly once per
+    // open.
+    if (!open || !containerEl) return
 
     connect()
 
@@ -244,10 +266,11 @@ export function RemoteTerminalDialog({
       teardownConnection()
       disposeTerminal()
     }
-    // Only re-run on open/close transitions — connect() reads the latest
-    // remoteLaunch via remoteLaunchRef so it doesn't need to be a dependency.
+    // Only re-run on open/close transitions (and once the container mounts)
+    // — connect() reads the latest remoteLaunch via remoteLaunchRef so it
+    // doesn't need to be a dependency.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open])
+  }, [open, containerEl])
 
   const handleFocusTerminal = useCallback(() => {
     termRef.current?.focus()
@@ -274,7 +297,7 @@ export function RemoteTerminalDialog({
 
         <div className="relative flex-1 min-h-0">
           <div
-            ref={containerRef}
+            ref={containerRefCallback}
             onClick={handleFocusTerminal}
             className="absolute inset-0 p-2"
             data-testid="remote-terminal-container"
