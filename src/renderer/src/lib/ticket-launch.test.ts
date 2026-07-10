@@ -275,14 +275,28 @@ describe('launchTicketWithModel', () => {
     expect(toast.error).not.toHaveBeenCalled()
   })
 
-  it('returns {success:false} when session creation fails', async () => {
+  it('returns {success:false} with the resolved worktreeId when session creation fails', async () => {
     const createSession = vi.fn(async () => ({ success: false, error: 'no provider' }))
     useSessionStore.setState({ createSession })
 
     const result = await launchTicketWithModel(baseSpec())
 
-    expect(result).toEqual({ success: false, error: 'no provider' })
+    expect(result).toEqual({ success: false, error: 'no provider', worktreeId: 'worktree-1' })
     expect(toast.error).not.toHaveBeenCalled()
+  })
+
+  it('includes the created worktreeId when session creation fails after a NEW worktree was created (round 2)', async () => {
+    // Without the id in the failure result, the just-created git worktree
+    // would be invisible to callers — no ticket link ever gets stamped on
+    // this path, so nothing else records that it exists.
+    const createSession = vi.fn(async () => ({ success: false, error: 'no provider' }))
+    useSessionStore.setState({ createSession })
+
+    const result = await launchTicketWithModel(
+      baseSpec({ worktree: { type: 'new', sourceBranch: 'main' } })
+    )
+
+    expect(result).toEqual({ success: false, error: 'no provider', worktreeId: 'worktree-1' })
   })
 
   it('returns {success:false} with the created sessionId/worktreeId when the OpenCode connect fails (Fix 5)', async () => {
@@ -307,6 +321,65 @@ describe('launchTicketWithModel', () => {
     })
     expect(opencodeApi.prompt).not.toHaveBeenCalled()
     expect(toast.error).not.toHaveBeenCalled()
+  })
+
+  it('returns {success:false, sessionId, worktreeId} when the OpenCode prompt result reports failure (round 2)', async () => {
+    nextSession = makeSession({ agent_sdk: 'opencode' })
+    setupStores()
+    vi.mocked(opencodeApi.prompt).mockResolvedValue({
+      success: true,
+      value: { success: false, error: 'command bridge unavailable' }
+    })
+
+    const result = await launchTicketWithModel(
+      baseSpec({
+        modelConfig: { sdk: 'opencode', model: null, codexFastMode: false }
+      })
+    )
+
+    expect(result).toEqual({
+      success: false,
+      error: 'command bridge unavailable',
+      sessionId: 'session-1',
+      worktreeId: 'worktree-1'
+    })
+    expect(toast.error).not.toHaveBeenCalled()
+  })
+
+  it('falls back to a default error message when the OpenCode prompt fails without one', async () => {
+    nextSession = makeSession({ agent_sdk: 'opencode' })
+    setupStores()
+    vi.mocked(opencodeApi.prompt).mockResolvedValue({
+      success: true,
+      value: { success: false }
+    })
+
+    const result = await launchTicketWithModel(
+      baseSpec({
+        modelConfig: { sdk: 'opencode', model: null, codexFastMode: false }
+      })
+    )
+
+    expect(result).toEqual({
+      success: false,
+      error: 'Could not send prompt',
+      sessionId: 'session-1',
+      worktreeId: 'worktree-1'
+    })
+  })
+
+  it('returns success when the OpenCode prompt result succeeds', async () => {
+    nextSession = makeSession({ agent_sdk: 'opencode' })
+    setupStores()
+
+    const result = await launchTicketWithModel(
+      baseSpec({
+        modelConfig: { sdk: 'opencode', model: null, codexFastMode: false }
+      })
+    )
+
+    expect(result).toEqual({ success: true, sessionId: 'session-1', worktreeId: 'worktree-1' })
+    expect(opencodeApi.prompt).toHaveBeenCalledTimes(1)
   })
 
   it('returns {success:false, sessionId, worktreeId} when the resolved worktree has no path (Fix 1)', async () => {

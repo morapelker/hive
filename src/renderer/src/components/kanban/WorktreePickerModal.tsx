@@ -689,7 +689,10 @@ export function WorktreePickerModal({
           model_variant: badgeModel.variant ?? null,
           // A single-model (re)launch shouldn't keep claiming membership in a
           // stale multi-launch group.
-          variant_group_id: null
+          variant_group_id: null,
+          // Clears a stale Save & Queue config so this manual launch can't be
+          // auto-launched again later (same hole as the worktree path below).
+          pending_launch_config: null
         })
 
         void autoPinBaseWorktree(ticket.project_id)

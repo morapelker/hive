@@ -209,7 +209,14 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
       .getState()
       .createSession(worktreeId, spec.projectId, sdk, spec.mode, createOptions)
     if (!sessionResult.success || !sessionResult.session) {
-      return { success: false, error: sessionResult.error || 'Could not create session' }
+      // worktreeId is included so a just-created worktree stays visible to
+      // the caller — nothing else records it on this path (the ticket link
+      // is only stamped after session creation).
+      return {
+        success: false,
+        error: sessionResult.error || 'Could not create session',
+        worktreeId
+      }
     }
 
     const session = sessionResult.session
@@ -336,7 +343,7 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
         // Auto-launch is not an interactive send from a tab.
         source: 'other'
       })
-      unwrapEnvelope(
+      const promptResult = unwrapEnvelope(
         await opencodeApi.prompt(
           worktree.path,
           connectResult.sessionId,
@@ -353,6 +360,17 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
           promptOptions
         )
       )
+      if (!promptResult.success) {
+        // A rejected prompt (e.g. command bridge unavailable) means no agent
+        // is actually running — surface it so the caller's failure recovery
+        // runs instead of leaving the ticket linked to an idle session.
+        return {
+          success: false,
+          error: promptResult.error || 'Could not send prompt',
+          sessionId,
+          worktreeId
+        }
+      }
     }
 
     return { success: true, sessionId, worktreeId }
