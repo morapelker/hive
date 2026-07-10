@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   Trash2,
   Archive,
+  Copy,
   ArchiveRestore,
   GitBranch,
   ExternalLink,
@@ -714,6 +715,34 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
       toast.error('Failed to archive ticket')
     }
   }, [ticket.id, ticket.project_id])
+
+  const handleDuplicate = useCallback(async () => {
+    try {
+      const store = useKanbanStore.getState()
+      const created = await store.createTicket(ticket.project_id, {
+        project_id: ticket.project_id,
+        title: ticket.title,
+        description: ticket.description,
+        column: 'todo'
+      })
+      // Goal fields aren't part of the create payload — mirror them after creation
+      if (ticket.goal_mode || ticket.goal_success_criteria) {
+        await store.updateTicket(created.id, ticket.project_id, {
+          goal_mode: ticket.goal_mode,
+          goal_success_criteria: ticket.goal_success_criteria
+        })
+      }
+      toast.success('Ticket duplicated')
+    } catch {
+      toast.error('Failed to duplicate ticket')
+    }
+  }, [
+    ticket.project_id,
+    ticket.title,
+    ticket.description,
+    ticket.goal_mode,
+    ticket.goal_success_criteria
+  ])
 
   const handleMoveToProject = useCallback(
     async (project: { id: string; name: string }) => {
@@ -1558,6 +1587,15 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
               )}
             </ContextMenuSubContent>
           </ContextMenuSub>
+
+          <ContextMenuItem
+            data-testid="ctx-duplicate-ticket"
+            onClick={() => void handleDuplicate()}
+            className="gap-2"
+          >
+            <Copy className="h-3.5 w-3.5" />
+            Duplicate
+          </ContextMenuItem>
 
           {!isExternalTicket && (
             <ContextMenuItem

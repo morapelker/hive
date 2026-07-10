@@ -524,6 +524,21 @@ function ProviderUsageBlock({
     return membersByAccount?.get(`${provider}:${rowEmail?.toLowerCase() ?? ''}`) ?? []
   }
 
+  // The active account sorts last, so open the popover scrolled to the bottom
+  // to keep it in view when many accounts overflow the max height.
+  const popoverRef = useRef<HTMLDivElement | null>(null)
+  const scrollPopoverToBottom = useCallback((node: HTMLDivElement | null): void => {
+    popoverRef.current = node
+    if (node) node.scrollTop = node.scrollHeight
+  }, [])
+
+  // Saved accounts load async on hover and can land after the popover mounts,
+  // growing the content past the initial scroll position.
+  useEffect(() => {
+    const node = popoverRef.current
+    if (node) node.scrollTop = node.scrollHeight
+  }, [savedAccounts.length])
+
   useEffect(() => {
     loadSavedAccounts(provider).catch(() => {})
   }, [loadSavedAccounts, provider])
@@ -661,6 +676,7 @@ function ProviderUsageBlock({
         </div>
       </HoverCardTrigger>
       <HoverCardContent
+        ref={scrollPopoverToBottom}
         side="top"
         sideOffset={8}
         collisionPadding={8}

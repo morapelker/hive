@@ -476,9 +476,10 @@ export function WorktreePickerModal({
     // ── Connection mode path ──────────────────────────────────────
     if (isConnectionMode && connectionId) {
       try {
-        const connectionPath = useConnectionStore
+        const connection = useConnectionStore
           .getState()
-          .connections.find((c) => c.id === connectionId)?.path
+          .connections.find((c) => c.id === connectionId)
+        const connectionPath = connection?.path
         const effectivePromptText = await convertOversizedGoalPrompt(
           promptText,
           composedGoalPrompt,
@@ -544,6 +545,12 @@ export function WorktreePickerModal({
           goal_mode: goalMode,
           goal_success_criteria: goalMode ? goalCriteria.trim() : null
         })
+
+        // Name the connection after the ticket unless the user already renamed it
+        const ticketTitle = ticket.title.trim()
+        if (connection && !connection.custom_name && ticketTitle) {
+          void useConnectionStore.getState().renameConnection(connectionId, ticketTitle)
+        }
 
         void autoPinBaseWorktree(ticket.project_id)
 
