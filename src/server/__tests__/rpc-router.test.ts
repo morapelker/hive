@@ -244,6 +244,90 @@ describe('rpc router', () => {
     })
   })
 
+  it('round-trips model fields and note through kanban.ticket.create', async () => {
+    const ticket = {
+      id: 'ticket-model-1',
+      project_id: project.id,
+      title: 'Ship HTTP migration',
+      description: null,
+      attachments: [],
+      column: 'todo' as const,
+      sort_order: 0,
+      current_session_id: null,
+      worktree_id: null,
+      mode: null,
+      plan_ready: false,
+      created_at: '2026-05-26T00:05:00.000Z',
+      updated_at: '2026-05-26T00:05:00.000Z',
+      archived_at: null,
+      external_provider: null,
+      external_id: null,
+      external_url: null,
+      github_pr_number: null,
+      github_pr_url: null,
+      mark: null,
+      total_tokens: 0,
+      pending_launch_config: null,
+      goal_mode: false,
+      goal_success_criteria: null,
+      note: 'Launched via multi-model',
+      created_from_session: false,
+      auto_approve_plan: false,
+      model_provider_id: 'anthropic',
+      model_id: 'claude-opus-4-6',
+      model_variant: 'thinking',
+      variant_group_id: 'group-1'
+    }
+    const calls: unknown[] = []
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      kanban: {
+        createTicket: (projectId, data) =>
+          Effect.sync(() => {
+            calls.push({ projectId, data })
+            return ticket
+          }),
+        createTicketBatch: () => Effect.die(new Error('createTicketBatch should not run')),
+        getTicket: () => Effect.die(new Error('getTicket should not run')),
+        getTicketsByProject: () => Effect.die(new Error('getTicketsByProject should not run')),
+        updateTicket: () => Effect.die(new Error('updateTicket should not run')),
+        deleteTicket: () => Effect.die(new Error('deleteTicket should not run')),
+        archiveTicket: () => Effect.die(new Error('archiveTicket should not run')),
+        archiveAllDoneTickets: () => Effect.die(new Error('archiveAllDoneTickets should not run')),
+        unarchiveTicket: () => Effect.die(new Error('unarchiveTicket should not run')),
+        moveTicket: () => Effect.die(new Error('moveTicket should not run'))
+      }
+    })
+
+    const params = {
+      project_id: project.id,
+      title: 'Ship HTTP migration',
+      description: null,
+      attachments: [],
+      column: 'todo' as const,
+      plan_ready: false,
+      note: 'Launched via multi-model',
+      model_provider_id: 'anthropic',
+      model_id: 'claude-opus-4-6',
+      model_variant: 'thinking',
+      variant_group_id: 'group-1'
+    }
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'kanban-ticket-create-model-1',
+        method: 'kanban.ticket.create',
+        params
+      })
+    )
+
+    expect(response).toEqual({
+      id: 'kanban-ticket-create-model-1',
+      ok: true,
+      value: ticket
+    })
+    expect(calls).toEqual([{ projectId: project.id, data: params }])
+  })
+
   it('handles kanban.ticket.duplicate through the kanban RPC domain', async () => {
     const ticket = {
       id: 'ticket-2',
@@ -830,6 +914,116 @@ describe('rpc router', () => {
       ok: false,
       error: { code: 'VALIDATION_FAILED' }
     })
+  })
+
+  it('round-trips model fields through kanban.ticket.update, then nulls them out', async () => {
+    const ticketWithModel = {
+      id: 'ticket-1',
+      project_id: project.id,
+      title: 'Ship HTTP migration',
+      description: null,
+      attachments: [],
+      column: 'in_progress' as const,
+      sort_order: 0,
+      current_session_id: null,
+      worktree_id: null,
+      mode: null,
+      plan_ready: false,
+      created_at: '2026-05-26T00:05:00.000Z',
+      updated_at: '2026-05-26T00:06:00.000Z',
+      archived_at: null,
+      external_provider: null,
+      external_id: null,
+      external_url: null,
+      github_pr_number: null,
+      github_pr_url: null,
+      mark: null,
+      total_tokens: 0,
+      pending_launch_config: null,
+      goal_mode: false,
+      goal_success_criteria: null,
+      note: null,
+      created_from_session: false,
+      auto_approve_plan: false,
+      model_provider_id: 'anthropic',
+      model_id: 'claude-opus-4-6',
+      model_variant: 'thinking',
+      variant_group_id: 'group-1'
+    }
+    const ticketWithoutModel = {
+      ...ticketWithModel,
+      updated_at: '2026-05-26T00:07:00.000Z',
+      model_provider_id: null,
+      model_id: null,
+      model_variant: null,
+      variant_group_id: null
+    }
+    const calls: Array<{ projectId: string; id: string; data: unknown }> = []
+    const responses = [ticketWithModel, ticketWithoutModel]
+    let callIndex = 0
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      kanban: {
+        createTicket: () => Effect.die(new Error('createTicket should not run')),
+        createTicketBatch: () => Effect.die(new Error('createTicketBatch should not run')),
+        getTicket: () => Effect.die(new Error('getTicket should not run')),
+        getTicketsByProject: () => Effect.die(new Error('getTicketsByProject should not run')),
+        deleteTicket: () => Effect.die(new Error('deleteTicket should not run')),
+        archiveTicket: () => Effect.die(new Error('archiveTicket should not run')),
+        archiveAllDoneTickets: () => Effect.die(new Error('archiveAllDoneTickets should not run')),
+        unarchiveTicket: () => Effect.die(new Error('unarchiveTicket should not run')),
+        moveTicket: () => Effect.die(new Error('moveTicket should not run')),
+        updateTicket: (projectId, id, data) =>
+          Effect.sync(() => {
+            calls.push({ projectId, id, data })
+            return responses[callIndex++]
+          })
+      }
+    })
+
+    const setData = {
+      model_provider_id: 'anthropic',
+      model_id: 'claude-opus-4-6',
+      model_variant: 'thinking',
+      variant_group_id: 'group-1'
+    }
+    const setResponse = await Effect.runPromise(
+      router.handle({
+        id: 'kanban-ticket-update-model-1',
+        method: 'kanban.ticket.update',
+        params: { projectId: project.id, id: 'ticket-1', data: setData }
+      })
+    )
+
+    expect(setResponse).toEqual({
+      id: 'kanban-ticket-update-model-1',
+      ok: true,
+      value: ticketWithModel
+    })
+
+    const nullData = {
+      model_provider_id: null,
+      model_id: null,
+      model_variant: null,
+      variant_group_id: null
+    }
+    const nullResponse = await Effect.runPromise(
+      router.handle({
+        id: 'kanban-ticket-update-model-2',
+        method: 'kanban.ticket.update',
+        params: { projectId: project.id, id: 'ticket-1', data: nullData }
+      })
+    )
+
+    expect(nullResponse).toEqual({
+      id: 'kanban-ticket-update-model-2',
+      ok: true,
+      value: ticketWithoutModel
+    })
+    expect(calls).toEqual([
+      { projectId: project.id, id: 'ticket-1', data: setData },
+      { projectId: project.id, id: 'ticket-1', data: nullData }
+    ])
   })
 
   it('handles kanban.ticket.delete through the kanban RPC domain', async () => {

@@ -33,7 +33,9 @@ const MODEL_SLUG_CAP = 16
  * would push past the cap is dropped instead of truncated, e.g.
  * `claude-opus-4-5-20251101` -> `claude-opus-4-5`. Never returns an empty
  * string for non-empty input — if even the first segment overflows the cap,
- * falls back to a raw prefix of the sanitized string.
+ * falls back to a raw prefix of the sanitized string; if sanitation strips
+ * the input down to nothing (symbol-only or non-ASCII modelIDs like `你好`),
+ * falls back to the literal `model`.
  */
 export function canonicalizeModelSlug(modelID: string): string {
   const sanitized = modelID
@@ -41,6 +43,8 @@ export function canonicalizeModelSlug(modelID: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-') // any run of non-alphanumeric chars → single dash
     .replace(/^-+|-+$/g, '') // strip leading/trailing dashes
+
+  if (sanitized.length === 0) return modelID.length > 0 ? 'model' : ''
 
   if (sanitized.length <= MODEL_SLUG_CAP) return sanitized
 

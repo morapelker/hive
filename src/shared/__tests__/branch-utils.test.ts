@@ -73,4 +73,12 @@ describe('canonicalizeModelSlug', () => {
   it('returns an empty string for empty input', () => {
     expect(canonicalizeModelSlug('')).toBe('')
   })
+
+  it('falls back to "model" for symbol-only input that sanitizes to empty', () => {
+    expect(canonicalizeModelSlug('!!!___$$$')).toBe('model')
+  })
+
+  it('falls back to "model" for non-ASCII/unicode-only input that sanitizes to empty', () => {
+    expect(canonicalizeModelSlug('你好')).toBe('model')
+  })
 })
