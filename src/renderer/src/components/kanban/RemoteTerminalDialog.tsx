@@ -35,6 +35,35 @@ const REMOTE_TERMINAL_THEME: ITheme = {
 /** The server throws "Remote session has exited" when `tmux has-session` fails (see attachTerminalRemoteLaunch). */
 const isSessionExitedError = (message: string): boolean => /session has exited/i.test(message)
 
+/** How long to wait for `terminalOps.destroy` to settle before closing the client anyway. */
+const DESTROY_TIMEOUT_MS = 3000
+
+/**
+ * Sends `terminalOps.destroy` (detach only — the remote tmux session
+ * survives) and closes the client only once that request settles, or after
+ * DESTROY_TIMEOUT_MS if the remote is hung/unreachable. Closing the socket
+ * before the destroy frame is flushed silently drops it and leaks the
+ * remote attach PTY (verified live via `tmux list-clients`). Guards against
+ * a double-close if both the request and the timeout fire.
+ */
+function closeAfterDestroy(client: HiveClient, terminalId: string): void {
+  let closed = false
+  const closeOnce = (): void => {
+    if (closed) return
+    closed = true
+    client.close()
+  }
+
+  const timer = setTimeout(closeOnce, DESTROY_TIMEOUT_MS)
+  void client
+    .request('terminalOps.destroy', { terminalId })
+    .catch(() => {})
+    .finally(() => {
+      clearTimeout(timer)
+      closeOnce()
+    })
+}
+
 export function RemoteTerminalDialog({
   open,
   onOpenChange,
@@ -92,10 +121,12 @@ export function RemoteTerminalDialog({
     terminalIdRef.current = null
 
     if (client && terminalId) {
-      // Detach only — the remote tmux session survives this.
-      client.request('terminalOps.destroy', { terminalId }).catch(() => {})
+      // Detach only — the remote tmux session survives this. Close AFTER the
+      // destroy frame is sent, or the socket tears down before it flushes.
+      closeAfterDestroy(client, terminalId)
+    } else {
+      client?.close()
     }
-    client?.close()
   }, [])
 
   /** Dispose the xterm instance itself — only on dialog close/unmount, not on retry/reconnect. */
@@ -216,8 +247,8 @@ export function RemoteTerminalDialog({
     if (myEpoch !== epochRef.current) {
       // Superseded while attaching (dialog closed/reopened, or another
       // connect() started) — detach quietly instead of leaking the PTY/WS.
-      client.request('terminalOps.destroy', { terminalId: result.terminalId }).catch(() => {})
-      client.close()
+      // Close AFTER the destroy frame is sent (see closeAfterDestroy).
+      closeAfterDestroy(client, result.terminalId)
       return
     }
 

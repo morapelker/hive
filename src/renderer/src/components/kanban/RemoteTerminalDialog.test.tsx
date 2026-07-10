@@ -63,14 +63,37 @@ vi.stubGlobal('ResizeObserver', MockResizeObserver)
 
 // HiveClient mock: `attachTerminal` resolves a terminal id, `subscribe`
 // captures listeners so tests can push server events directly.
-const hiveClientMocks = vi.hoisted(() => ({
-  request: vi.fn(async (method: string) => {
-    if (method === 'remoteLaunchOps.attachTerminal') return { terminalId: 't1' }
-    return undefined
-  }),
-  subscribers: new Map<string, (event: ServerEvent) => void>(),
-  close: vi.fn()
-}))
+// `destroyDeferred`, when set, lets a test hold the `terminalOps.destroy`
+// response open (or reject it) to assert teardown ordering against `close`.
+const hiveClientMocks = vi.hoisted(() => {
+  function createDeferred<T>(): {
+    promise: Promise<T>
+    resolve: (value: T) => void
+    reject: (reason: unknown) => void
+  } {
+    let resolve!: (value: T) => void
+    let reject!: (reason: unknown) => void
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res
+      reject = rej
+    })
+    return { promise, resolve, reject }
+  }
+
+  return {
+    request: vi.fn(async (method: string) => {
+      if (method === 'remoteLaunchOps.attachTerminal') return { terminalId: 't1' }
+      if (method === 'terminalOps.destroy' && hiveClientMocks.destroyDeferred) {
+        return hiveClientMocks.destroyDeferred.promise
+      }
+      return undefined
+    }),
+    subscribers: new Map<string, (event: ServerEvent) => void>(),
+    close: vi.fn(),
+    createDeferred,
+    destroyDeferred: null as ReturnType<typeof createDeferred> | null
+  }
+})
 
 vi.mock('@/api/hive-client', () => ({
   HiveClient: vi.fn().mockImplementation(() => ({
@@ -96,13 +119,24 @@ const remoteLaunch: RemoteLaunchClientInfo = {
 }
 
 describe('RemoteTerminalDialog', () => {
-  afterEach(() => {
+  afterEach(async () => {
     cleanup()
+    // cleanup()'s unmount runs teardownConnection() -> closeAfterDestroy(),
+    // whose `.catch().finally()` chain resolves a couple of microtask ticks
+    // later (even when the mocked `terminalOps.destroy` "resolves
+    // immediately", since Promise handlers never run synchronously). Flush
+    // those ticks before clearing the mocks below, or that trailing
+    // `close()` call lands during the *next* test instead of this one.
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
     settingsMocks.state.teleport = null
     xtermMocks.instances.length = 0
     hiveClientMocks.subscribers.clear()
     hiveClientMocks.request.mockClear()
     hiveClientMocks.close.mockClear()
+    hiveClientMocks.destroyDeferred = null
+    vi.useRealTimers()
   })
 
   it('renders the settings-missing error state (no retry, Close only) when teleport settings are absent', async () => {
@@ -176,5 +210,111 @@ describe('RemoteTerminalDialog', () => {
     })
 
     expect(xtermMocks.instances[0]?.write).toHaveBeenCalledWith('hello world')
+  })
+
+  // Regression test: teardownConnection used to fire `terminalOps.destroy`
+  // without awaiting it, then call `client.close()` on the very next line —
+  // tearing down the WebSocket before the destroy frame was ever flushed.
+  // Verified live: the remote's `tmux attach-session` PTY (and its
+  // `tmux list-clients` entry) survived every dialog close. `close()` must
+  // wait for the destroy request to settle.
+  it('does not close the remote client until the terminalOps.destroy request settles', async () => {
+    settingsMocks.state.teleport = { url: 'https://remote.example.com', bootstrapToken: 'tok-1' }
+    const deferred = hiveClientMocks.createDeferred()
+    hiveClientMocks.destroyDeferred = deferred
+
+    const { rerender } = render(
+      <RemoteTerminalDialog open onOpenChange={vi.fn()} remoteLaunch={remoteLaunch} />
+    )
+
+    await waitFor(() =>
+      expect(screen.queryByTestId('remote-terminal-connecting')).not.toBeInTheDocument()
+    )
+
+    // Close the dialog — this runs the effect cleanup (epoch bump +
+    // teardownConnection + disposeTerminal).
+    rerender(<RemoteTerminalDialog open={false} onOpenChange={vi.fn()} remoteLaunch={remoteLaunch} />)
+
+    await waitFor(() =>
+      expect(hiveClientMocks.request).toHaveBeenCalledWith('terminalOps.destroy', { terminalId: 't1' })
+    )
+
+    // The destroy request is still pending — the socket must not be closed yet.
+    expect(hiveClientMocks.close).not.toHaveBeenCalled()
+
+    await act(async () => {
+      deferred.resolve(undefined)
+      await deferred.promise
+    })
+
+    await waitFor(() => expect(hiveClientMocks.close).toHaveBeenCalledTimes(1))
+  })
+
+  it('closes the remote client exactly once even if terminalOps.destroy rejects', async () => {
+    settingsMocks.state.teleport = { url: 'https://remote.example.com', bootstrapToken: 'tok-1' }
+    const deferred = hiveClientMocks.createDeferred()
+    hiveClientMocks.destroyDeferred = deferred
+
+    const { rerender } = render(
+      <RemoteTerminalDialog open onOpenChange={vi.fn()} remoteLaunch={remoteLaunch} />
+    )
+
+    await waitFor(() =>
+      expect(screen.queryByTestId('remote-terminal-connecting')).not.toBeInTheDocument()
+    )
+
+    rerender(<RemoteTerminalDialog open={false} onOpenChange={vi.fn()} remoteLaunch={remoteLaunch} />)
+
+    await waitFor(() =>
+      expect(hiveClientMocks.request).toHaveBeenCalledWith('terminalOps.destroy', { terminalId: 't1' })
+    )
+    expect(hiveClientMocks.close).not.toHaveBeenCalled()
+
+    await act(async () => {
+      deferred.reject(new Error('boom'))
+      await deferred.promise.catch(() => {})
+    })
+
+    await waitFor(() => expect(hiveClientMocks.close).toHaveBeenCalledTimes(1))
+    expect(hiveClientMocks.close).toHaveBeenCalledTimes(1)
+  })
+
+  it('closes the remote client after a timeout if terminalOps.destroy never settles', async () => {
+    vi.useFakeTimers()
+    settingsMocks.state.teleport = { url: 'https://remote.example.com', bootstrapToken: 'tok-1' }
+    const deferred = hiveClientMocks.createDeferred()
+    hiveClientMocks.destroyDeferred = deferred // never resolved/rejected
+
+    const { rerender } = render(
+      <RemoteTerminalDialog open onOpenChange={vi.fn()} remoteLaunch={remoteLaunch} />
+    )
+
+    // Flush the microtask chain inside connect() (the awaited
+    // remoteLaunchOps.attachTerminal request) without relying on waitFor's
+    // setTimeout-based polling, which fake timers would otherwise stall.
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(hiveClientMocks.request).toHaveBeenCalledWith(
+      'remoteLaunchOps.attachTerminal',
+      expect.objectContaining({ remoteSessionId: remoteLaunch.remoteSessionId })
+    )
+
+    rerender(<RemoteTerminalDialog open={false} onOpenChange={vi.fn()} remoteLaunch={remoteLaunch} />)
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(hiveClientMocks.close).not.toHaveBeenCalled()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000)
+    })
+
+    expect(hiveClientMocks.close).toHaveBeenCalledTimes(1)
   })
 })
