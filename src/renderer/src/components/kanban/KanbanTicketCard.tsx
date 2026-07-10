@@ -556,6 +556,9 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
 
   const isError = sessionStatus === 'error'
   const hasAttachments = ticket.attachments.length > 0
+  // Only surface the model on cards that are part of a multi-model duplicate
+  // group — for single-model launches the name is noise.
+  const showModelBadge = !!ticket.model_id && !!ticket.variant_group_id
   const isForwardedToTelegram = useTelegramStore(
     useCallback(
       (state) => !!ticket.current_session_id && state.activeForwardingSessionId === ticket.current_session_id,
@@ -1036,7 +1039,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             </div>
 
             {/* Badges + progress row */}
-            {(hasAttachments || hasNote || worktreeName || projectTag || connectionName || ticket.plan_ready || isError || rightAlignedSlot || isArchived || isBlocked || blockingDiagnostic || isRunProcessAlive || ticket.github_pr_number || isCreatingPR || isForwardedToTelegram || ticket.goal_mode || ticket.auto_approve_plan || activeRemoteLaunch || ticket.model_id) && (
+            {(hasAttachments || hasNote || worktreeName || projectTag || connectionName || ticket.plan_ready || isError || rightAlignedSlot || isArchived || isBlocked || blockingDiagnostic || isRunProcessAlive || ticket.github_pr_number || isCreatingPR || isForwardedToTelegram || ticket.goal_mode || ticket.auto_approve_plan || activeRemoteLaunch || showModelBadge) && (
               <div className="mt-1.5 flex flex-wrap items-center gap-1">
                 {/* Archived badge */}
                 {isArchived && (
@@ -1103,8 +1106,8 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                   </Tooltip>
                 )}
 
-                {/* Model badge */}
-                <TicketModelBadge ticket={ticket} />
+                {/* Model badge — only for multi-model duplicate groups */}
+                {showModelBadge && <TicketModelBadge ticket={ticket} />}
 
                 {/* Project tag (connection mode) or worktree name badge */}
                 {projectTag ? (
