@@ -1278,7 +1278,12 @@ function KanbanTicketModalContent({
                   />
                 </div>
               </div>
-              {remoteLaunchInfo ? (
+              {remoteLaunchInfo === undefined ? (
+                /* Remote-launch status still resolving — mounting the local
+                   portal now would start a terminal that remote client
+                   sessions (no local worktree) can never use. */
+                <div className="flex-1" data-testid="ticket-modal-session-resolving" />
+              ) : remoteLaunchInfo ? (
                 <RemoteSessionPanel
                   stopped={!!remoteLaunchInfo.stoppedAt}
                   onOpenTerminal={() => setRemoteTerminalOpen(true)}
@@ -1348,7 +1353,12 @@ function KanbanTicketModalContent({
           {/* Right: session stream (or loading spinner while DB lookup resolves) */}
           {isClaudeCli && ticket.current_session_id ? (
             <div className="flex flex-col h-full bg-background flex-1 min-w-0 border-l border-border/60">
-              {remoteLaunchInfo ? (
+              {remoteLaunchInfo === undefined ? (
+                /* Remote-launch status still resolving — mounting the local
+                   portal now would start a terminal that remote client
+                   sessions (no local worktree) can never use. */
+                <div className="flex-1" data-testid="ticket-modal-session-resolving" />
+              ) : remoteLaunchInfo ? (
                 <RemoteSessionPanel
                   stopped={!!remoteLaunchInfo.stoppedAt}
                   onOpenTerminal={() => setRemoteTerminalOpen(true)}
