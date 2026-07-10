@@ -72,6 +72,15 @@ interface RemoteLaunchRemote {
   /** The configured remote's base URL, used to stamp `RemoteLaunchClientInfo.url`. */
   getUrl: () => string
   request: <T>(method: string, params: unknown, timeoutMs: number) => Promise<T>
+  /**
+   * Like `request`, but targets `url` (a previously-stored
+   * `RemoteLaunchClientInfo.url`) instead of whatever Teleport remote is
+   * CURRENTLY configured. Used by `stop` so killing a session always hits the
+   * host it was launched on, even if the user re-points Teleport at a
+   * different remote afterwards. Auth still uses the current settings'
+   * bootstrapToken.
+   */
+  requestAt: <T>(url: string, method: string, params: unknown, timeoutMs: number) => Promise<T>
 }
 
 interface StatResult {
@@ -220,6 +229,20 @@ function extractRemoteStepError(error: unknown): RemoteStepError {
 function stepError(step: 'clone' | 'worktree', error: unknown): RpcRouteError {
   const message = errorMessage(error)
   return new RpcRouteError(RPC_ERROR_CODES.internalError, message, { step, message })
+}
+
+/**
+ * tmux resolves a `-t` target by exact match, then falls back to a unique
+ * PREFIX match (see `tmux(1)` TARGET SPECIFICATION). Our collision-avoidance
+ * naming scheme for launch sessions (`hive-<slug>`, `hive-<slug>-2`, ...)
+ * creates prefix-siblings, so a bare `-t hive-husky` risks prefix-matching
+ * `hive-husky-2` once `hive-husky` itself is gone — killing or attaching to a
+ * different ticket's live session. Force exact match with the `=` prefix.
+ * (Only applies to `-t` lookups; `new-session -s` takes a plain name and is
+ * unaffected.)
+ */
+export function exactTmuxTarget(name: string): string {
+  return `=${name}`
 }
 
 /**
@@ -511,30 +534,45 @@ async function startRemoteLaunch(
   }
   publish('launch', { status: 'done' })
 
-  const clientInfo: RemoteLaunchClientInfo = {
-    role: 'client',
-    url: deps.remote.getUrl(),
-    remoteSessionId: prepareResult.remoteSessionId,
-    remoteWorktreeId: prepareResult.remoteWorktreeId,
-    remoteProjectId: prepareResult.remoteProjectId,
-    tmuxSession: launchResult.tmuxSession,
-    branch: prepareResult.remoteBranch,
-    worktreePath: prepareResult.remoteWorktreePath,
-    launchedAt: new Date().toISOString()
+  // Local session bookkeeping happens after the remote launch already
+  // succeeded and `launch:done` was published, so a failure here must not
+  // reject the RPC raw (the modal would mark the already-green `launch` step
+  // as errored) and a retry with the same launchId must not double-create a
+  // local session row.
+  try {
+    const existing = deps.db.findSessionByRemoteLaunchId(launchId)
+    if (existing && parseRemoteLaunch(existing.remote_launch)?.role === 'client') {
+      return { success: true, localSessionId: existing.id, tmuxSession: launchResult.tmuxSession }
+    }
+
+    const clientInfo: RemoteLaunchClientInfo = {
+      role: 'client',
+      launchId,
+      url: deps.remote.getUrl(),
+      remoteSessionId: prepareResult.remoteSessionId,
+      remoteWorktreeId: prepareResult.remoteWorktreeId,
+      remoteProjectId: prepareResult.remoteProjectId,
+      tmuxSession: launchResult.tmuxSession,
+      branch: prepareResult.remoteBranch,
+      worktreePath: prepareResult.remoteWorktreePath,
+      launchedAt: new Date().toISOString()
+    }
+
+    const localSession = deps.db.createSession({
+      worktree_id: null,
+      project_id: params.projectId,
+      agent_sdk: 'claude-code-cli',
+      mode: params.mode,
+      model_provider_id: params.model?.providerId ?? null,
+      model_id: params.model?.id ?? null,
+      model_variant: params.model?.variant ?? null,
+      remote_launch: JSON.stringify(clientInfo)
+    })
+
+    return { success: true, localSessionId: localSession.id, tmuxSession: launchResult.tmuxSession }
+  } catch (error) {
+    return fail('launch', error)
   }
-
-  const localSession = deps.db.createSession({
-    worktree_id: null,
-    project_id: params.projectId,
-    agent_sdk: 'claude-code-cli',
-    mode: params.mode,
-    model_provider_id: params.model?.providerId ?? null,
-    model_id: params.model?.id ?? null,
-    model_variant: params.model?.variant ?? null,
-    remote_launch: JSON.stringify(clientInfo)
-  })
-
-  return { success: true, localSessionId: localSession.id, tmuxSession: launchResult.tmuxSession }
 }
 
 async function stopRemoteLaunch(
@@ -549,7 +587,8 @@ async function stopRemoteLaunch(
     throw new Error('Session is not a remote-launched client session')
   }
 
-  return deps.remote.request<RemoteLaunchKillResult>(
+  return deps.remote.requestAt<RemoteLaunchKillResult>(
+    info.url,
     'remoteLaunchOps.killTmux',
     { remoteSessionId: info.remoteSessionId, tmuxSession: info.tmuxSession } satisfies RemoteLaunchKillTmuxParams,
     15_000
@@ -766,7 +805,7 @@ async function attachTerminalRemoteLaunch(
   deps.pty.create(terminalId, {
     cwd: worktree.path,
     command: 'tmux',
-    args: ['attach-session', '-t', tmuxSession],
+    args: ['attach-session', '-t', exactTmuxTarget(tmuxSession)],
     cols: params.cols,
     rows: params.rows
   })
@@ -855,6 +894,34 @@ function requestDesktopRemoteLaunchClaudeTmux(
   })
 }
 
+/**
+ * Live `RemoteLaunchTmux` implementation (real `tmux` exec calls). Extracted
+ * out of `createLiveDeps` — rather than inlined — so it can be unit tested by
+ * mocking `node:child_process` without dragging in `createLiveDeps`'s other
+ * dynamic imports (db, git facade, etc.). See `exactTmuxTarget` for why
+ * targets are `=`-prefixed.
+ */
+export function createLiveTmuxDeps(): RemoteLaunchTmux {
+  return {
+    hasSession: async (name) => {
+      try {
+        await execFileAsync('tmux', ['has-session', '-t', exactTmuxTarget(name)])
+        return true
+      } catch {
+        return false
+      }
+    },
+    killSession: async (name) => {
+      try {
+        await execFileAsync('tmux', ['kill-session', '-t', exactTmuxTarget(name)])
+        return { killed: true, alreadyDead: false }
+      } catch (error) {
+        return classifyTmuxKillError(error)
+      }
+    }
+  }
+}
+
 async function createLiveDeps(eventBus?: EventBus): Promise<RemoteLaunchOpsDeps> {
   const [
     { getDatabase },
@@ -923,7 +990,14 @@ async function createLiveDeps(eventBus?: EventBus): Promise<RemoteLaunchOpsDeps>
       },
       getUrl: () => getTeleportSettings().url,
       request: (method, params, timeoutMs) =>
-        requestRemote(targetFromSettings(getTeleportSettings()), method, params, timeoutMs)
+        requestRemote(targetFromSettings(getTeleportSettings()), method, params, timeoutMs),
+      requestAt: (url, method, params, timeoutMs) =>
+        requestRemote(
+          targetFromSettings({ url, bootstrapToken: getTeleportSettings().bootstrapToken }),
+          method,
+          params,
+          timeoutMs
+        )
     },
     publishProgress: (launchId, event) => {
       if (!eventBus) return
@@ -958,24 +1032,7 @@ async function createLiveDeps(eventBus?: EventBus): Promise<RemoteLaunchOpsDeps>
     ensureRemoteProject,
     createWorktreeFromBranch: (params) => createWorktreeFromBranchOp(params),
     runSetupCommand: (command, cwd, channel) => scriptRunner.runSequential([command], cwd, channel),
-    tmux: {
-      hasSession: async (name) => {
-        try {
-          await execFileAsync('tmux', ['has-session', '-t', name])
-          return true
-        } catch {
-          return false
-        }
-      },
-      killSession: async (name) => {
-        try {
-          await execFileAsync('tmux', ['kill-session', '-t', name])
-          return { killed: true, alreadyDead: false }
-        } catch (error) {
-          return classifyTmuxKillError(error)
-        }
-      }
-    },
+    tmux: createLiveTmuxDeps(),
     desktopLaunchTmux: (payload) => requestDesktopRemoteLaunchClaudeTmux(payload),
     pty: {
       create: (terminalId, opts) => {

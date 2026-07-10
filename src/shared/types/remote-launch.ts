@@ -41,6 +41,14 @@ export interface RemoteLaunchClientInfo {
   branch: string
   worktreePath: string
   launchedAt: string
+  /**
+   * The RPC-level `launchId` this session was created for, when known.
+   * Optional (rather than required) so existing fixtures/callers that don't
+   * care about idempotency don't need updating — `startRemoteLaunch` always
+   * stamps it so `findSessionByRemoteLaunchId` can detect a retry of the same
+   * launch and reuse the local session instead of creating a duplicate.
+   */
+  launchId?: string
 }
 
 /** Stored (JSON.stringified) in the REMOTE session row's `remote_launch` column. */

@@ -1,10 +1,13 @@
+import { execFile } from 'node:child_process'
 import { Effect } from 'effect'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { Project, Session, SessionCreate, Worktree } from '../../../../main/db'
 import type { RemoteLaunchOpsDeps } from '../remote-launch-ops'
 import {
   classifyTmuxKillError,
+  createLiveTmuxDeps,
+  exactTmuxTarget,
   makeRemoteLaunchOpsRpcService
 } from '../remote-launch-ops'
 import type {
@@ -15,6 +18,16 @@ import type {
   RemoteLaunchProgressEvent,
   RemoteLaunchStartParams
 } from '../../../../shared/types/remote-launch'
+
+// `createLiveTmuxDeps` execs real `tmux` via `node:child_process`'s `execFile`
+// (promisified). Mocked here — rather than through the `RemoteLaunchTmux`
+// deps-injection seam used everywhere else in this file — specifically to
+// assert on the raw exec args, since that's where the `=`-exact-match prefix
+// (see `exactTmuxTarget`) actually gets applied.
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>()
+  return { ...actual, execFile: vi.fn() }
+})
 
 const now = '2026-07-09T00:00:00.000Z'
 
@@ -117,6 +130,9 @@ function baseDeps(overrides: Partial<RemoteLaunchOpsDeps> = {}): RemoteLaunchOps
       getUrl: vi.fn(() => 'https://remote.example.com'),
       request: vi.fn(async () => {
         throw new Error('unstubbed remote.request call')
+      }),
+      requestAt: vi.fn(async () => {
+        throw new Error('unstubbed remote.requestAt call')
       })
     },
     publishProgress: vi.fn(),
@@ -212,6 +228,9 @@ describe('remoteLaunchOps.start', () => {
       remote: {
         isConfigured: vi.fn(() => true),
         getUrl: vi.fn(() => 'https://remote.example.com'),
+        requestAt: vi.fn(async () => {
+          throw new Error('unstubbed remote.requestAt call')
+        }),
         request: makeRequestMock() as RemoteLaunchOpsDeps['remote']['request']
       },
       db: { ...baseDeps().db, createSession }
@@ -267,6 +286,9 @@ describe('remoteLaunchOps.start', () => {
       remote: {
         isConfigured: vi.fn(() => true),
         getUrl: vi.fn(() => 'https://remote.example.com'),
+        requestAt: vi.fn(async () => {
+          throw new Error('unstubbed remote.requestAt call')
+        }),
         request: makeRequestMock({
           'remoteLaunchOps.ping': async () => ({ ok: false, git: true, tmux: false, claude: true })
         }) as RemoteLaunchOpsDeps['remote']['request']
@@ -291,6 +313,9 @@ describe('remoteLaunchOps.start', () => {
       remote: {
         isConfigured: vi.fn(() => true),
         getUrl: vi.fn(() => 'https://remote.example.com'),
+        requestAt: vi.fn(async () => {
+          throw new Error('unstubbed remote.requestAt call')
+        }),
         request: makeRequestMock({
           'remoteLaunchOps.prepare': async () => {
             throw new Error('prepare boom')
@@ -322,6 +347,9 @@ describe('remoteLaunchOps.start', () => {
       remote: {
         isConfigured: vi.fn(() => true),
         getUrl: vi.fn(() => 'https://remote.example.com'),
+        requestAt: vi.fn(async () => {
+          throw new Error('unstubbed remote.requestAt call')
+        }),
         request: makeRequestMock({
           'remoteLaunchOps.applySetupPlan': async () => ({
             success: false,
@@ -360,6 +388,9 @@ describe('remoteLaunchOps.start', () => {
       remote: {
         isConfigured: vi.fn(() => true),
         getUrl: vi.fn(() => 'https://remote.example.com'),
+        requestAt: vi.fn(async () => {
+          throw new Error('unstubbed remote.requestAt call')
+        }),
         request: makeRequestMock({
           'remoteLaunchOps.applySetupPlan': async () => ({
             success: false,
@@ -399,6 +430,9 @@ describe('remoteLaunchOps.start', () => {
       remote: {
         isConfigured: vi.fn(() => true),
         getUrl: vi.fn(() => 'https://remote.example.com'),
+        requestAt: vi.fn(async () => {
+          throw new Error('unstubbed remote.requestAt call')
+        }),
         request: makeRequestMock({
           'remoteLaunchOps.launch': async () => {
             throw new Error('launch boom')
@@ -413,6 +447,93 @@ describe('remoteLaunchOps.start', () => {
     expect(result).toEqual({ success: false, step: 'launch', error: 'launch boom' })
   })
 
+  it('returns a structured launch failure (not a raw rejection) when local createSession throws after the remote launch already succeeded', async () => {
+    const publishProgress = vi.fn()
+    const createSession = vi.fn(() => {
+      throw new Error('local db write failed')
+    })
+    const deps = baseDeps({
+      publishProgress,
+      remote: {
+        isConfigured: vi.fn(() => true),
+        getUrl: vi.fn(() => 'https://remote.example.com'),
+        requestAt: vi.fn(async () => {
+          throw new Error('unstubbed remote.requestAt call')
+        }),
+        request: makeRequestMock() as RemoteLaunchOpsDeps['remote']['request']
+      },
+      db: { ...baseDeps().db, createSession }
+    })
+    const service = makeRemoteLaunchOpsRpcService(deps)
+
+    const result = await Effect.runPromise(service.start(startParams))
+
+    expect(result).toEqual({ success: false, step: 'launch', error: 'local db write failed' })
+    const events = stepEvents(publishProgress)
+    expect(events.map(([, e]) => `${e.step}:${e.status}`)).toEqual([
+      'connect:running',
+      'connect:done',
+      'branch-check:running',
+      'branch-check:done',
+      'clone:running',
+      'clone:done',
+      'worktree:running',
+      'worktree:done',
+      'file-transfer:running',
+      'file-transfer:done',
+      'setup-script:running',
+      'setup-script:done',
+      'launch:running',
+      'launch:done',
+      'launch:error'
+    ])
+  })
+
+  it('reuses an existing local client session on a retry with the same launchId, without a duplicate createSession call', async () => {
+    const publishProgress = vi.fn()
+    const createSession = vi.fn((_data: SessionCreate) => session({ id: 'local-session-1' }))
+    const existingClientSession = session({
+      id: 'local-session-existing',
+      remote_launch: JSON.stringify({
+        role: 'client',
+        launchId: startParams.launchId,
+        url: 'https://remote.example.com',
+        remoteSessionId: 'remote-session-1',
+        remoteWorktreeId: 'remote-worktree-1',
+        remoteProjectId: 'remote-project-1',
+        tmuxSession: 'hive-feature-x',
+        branch: 'feature/x',
+        worktreePath: '/remote/repo-feature-x',
+        launchedAt: now
+      })
+    })
+    const findSessionByRemoteLaunchId = vi.fn((launchId: string) =>
+      launchId === startParams.launchId ? existingClientSession : null
+    )
+    const deps = baseDeps({
+      publishProgress,
+      remote: {
+        isConfigured: vi.fn(() => true),
+        getUrl: vi.fn(() => 'https://remote.example.com'),
+        requestAt: vi.fn(async () => {
+          throw new Error('unstubbed remote.requestAt call')
+        }),
+        request: makeRequestMock() as RemoteLaunchOpsDeps['remote']['request']
+      },
+      db: { ...baseDeps().db, createSession, findSessionByRemoteLaunchId }
+    })
+    const service = makeRemoteLaunchOpsRpcService(deps)
+
+    const result = await Effect.runPromise(service.start(startParams))
+
+    expect(result).toEqual({
+      success: true,
+      localSessionId: 'local-session-existing',
+      tmuxSession: 'hive-feature-x'
+    })
+    expect(createSession).not.toHaveBeenCalled()
+  })
+
   it('hard-fails at branch-check when the branch is missing on origin, without calling prepare/applySetupPlan/launch', async () => {
     const publishProgress = vi.fn()
     const request = vi.fn(makeRequestMock())
@@ -422,6 +543,9 @@ describe('remoteLaunchOps.start', () => {
       remote: {
         isConfigured: vi.fn(() => true),
         getUrl: vi.fn(() => 'https://remote.example.com'),
+        requestAt: vi.fn(async () => {
+          throw new Error('unstubbed remote.requestAt call')
+        }),
         request: request as unknown as RemoteLaunchOpsDeps['remote']['request']
       }
     })
@@ -445,6 +569,9 @@ describe('remoteLaunchOps.start', () => {
       remote: {
         isConfigured: vi.fn(() => true),
         getUrl: vi.fn(() => 'https://remote.example.com'),
+        requestAt: vi.fn(async () => {
+          throw new Error('unstubbed remote.requestAt call')
+        }),
         request: request as unknown as RemoteLaunchOpsDeps['remote']['request']
       }
     })
@@ -471,6 +598,9 @@ describe('remoteLaunchOps.start', () => {
       remote: {
         isConfigured: vi.fn(() => true),
         getUrl: vi.fn(() => 'https://remote.example.com'),
+        requestAt: vi.fn(async () => {
+          throw new Error('unstubbed remote.requestAt call')
+        }),
         request: request as unknown as RemoteLaunchOpsDeps['remote']['request']
       }
     })
@@ -708,6 +838,96 @@ describe('remoteLaunchOps.killTmux', () => {
   })
 })
 
+describe('exactTmuxTarget', () => {
+  it('prefixes the name with "=" to force tmux exact-match target resolution', () => {
+    expect(exactTmuxTarget('hive-husky')).toBe('=hive-husky')
+    expect(exactTmuxTarget('hive-husky-2')).toBe('=hive-husky-2')
+  })
+})
+
+describe('createLiveTmuxDeps', () => {
+  const mockedExecFile = vi.mocked(execFile)
+
+  afterEach(() => {
+    mockedExecFile.mockReset()
+  })
+
+  type ExecFileCallback = (error: (Error & { code?: unknown; stderr?: string }) | null, stdout?: string, stderr?: string) => void
+
+  function stubExecFileOnce(invoke: (callback: ExecFileCallback) => void): void {
+    mockedExecFile.mockImplementationOnce(((...args: unknown[]) => {
+      const callback = args[args.length - 1] as ExecFileCallback
+      invoke(callback)
+      return {} as ReturnType<typeof execFile>
+    }) as typeof execFile)
+  }
+
+  it('has-session execs tmux with an exact-match ("=" prefixed) target', async () => {
+    stubExecFileOnce((callback) => callback(null, '', ''))
+
+    const tmux = createLiveTmuxDeps()
+    const alive = await tmux.hasSession('hive-husky')
+
+    expect(alive).toBe(true)
+    expect(mockedExecFile).toHaveBeenCalledWith(
+      'tmux',
+      ['has-session', '-t', '=hive-husky'],
+      expect.any(Function)
+    )
+  })
+
+  it('has-session does not prefix-match a same-named sibling once the exact session is gone', async () => {
+    // Real tmux would prefix-match `hive-husky-2` for a bare `-t hive-husky`
+    // lookup once `hive-husky` itself is dead; we can't spawn real tmux here,
+    // so this asserts the request we SEND is exact-match (the mock simply
+    // reports "not found", standing in for tmux correctly refusing to
+    // prefix-match a `=`-targeted lookup).
+    stubExecFileOnce((callback) =>
+      callback(Object.assign(new Error('exit 1'), { code: 1, stderr: "can't find session: hive-husky" }))
+    )
+
+    const tmux = createLiveTmuxDeps()
+    const alive = await tmux.hasSession('hive-husky')
+
+    expect(alive).toBe(false)
+    expect(mockedExecFile).toHaveBeenCalledWith(
+      'tmux',
+      ['has-session', '-t', '=hive-husky'],
+      expect.any(Function)
+    )
+  })
+
+  it('kill-session execs tmux with an exact-match ("=" prefixed) target', async () => {
+    stubExecFileOnce((callback) => callback(null, '', ''))
+
+    const tmux = createLiveTmuxDeps()
+    const result = await tmux.killSession('hive-husky')
+
+    expect(result).toEqual({ killed: true, alreadyDead: false })
+    expect(mockedExecFile).toHaveBeenCalledWith(
+      'tmux',
+      ['kill-session', '-t', '=hive-husky'],
+      expect.any(Function)
+    )
+  })
+
+  it('kill-session reports alreadyDead on "session not found" without prefix-killing a sibling', async () => {
+    stubExecFileOnce((callback) =>
+      callback(Object.assign(new Error('exit 1'), { code: 1, stderr: 'session not found: hive-husky' }))
+    )
+
+    const tmux = createLiveTmuxDeps()
+    const result = await tmux.killSession('hive-husky')
+
+    expect(result).toEqual({ killed: false, alreadyDead: true })
+    expect(mockedExecFile).toHaveBeenCalledWith(
+      'tmux',
+      ['kill-session', '-t', '=hive-husky'],
+      expect.any(Function)
+    )
+  })
+})
+
 describe('classifyTmuxKillError', () => {
   it('treats "session not found" stderr as already dead', () => {
     const error = Object.assign(new Error('exit 1'), { stderr: 'session not found: hive-x' })
@@ -782,7 +1002,7 @@ describe('remoteLaunchOps.attachTerminal', () => {
       expect.objectContaining({
         cwd: '/remote/repo-feature-x',
         command: 'tmux',
-        args: ['attach-session', '-t', 'hive-feature-x'],
+        args: ['attach-session', '-t', '=hive-feature-x'],
         cols: 80,
         rows: 24
       })
@@ -803,8 +1023,8 @@ describe('remoteLaunchOps.stop', () => {
     )
   })
 
-  it('delegates to remoteLaunchOps.killTmux with the client remote_launch info', async () => {
-    const request = vi.fn(async () => ({ killed: true, alreadyDead: false }))
+  it('delegates to remoteLaunchOps.killTmux via requestAt, targeting the stored client remote_launch url', async () => {
+    const requestAt = vi.fn(async () => ({ killed: true, alreadyDead: false }))
     const clientSession = session({
       remote_launch: JSON.stringify({
         role: 'client',
@@ -818,11 +1038,15 @@ describe('remoteLaunchOps.stop', () => {
         launchedAt: now
       })
     })
+    const request = vi.fn(async () => {
+      throw new Error('stop must not call request() — it should call requestAt()')
+    })
     const deps = baseDeps({
       db: { ...baseDeps().db, getSession: vi.fn(() => clientSession) },
       remote: {
         isConfigured: vi.fn(() => true),
         getUrl: vi.fn(() => 'https://remote.example.com'),
+        requestAt: requestAt as unknown as RemoteLaunchOpsDeps['remote']['requestAt'],
         request: request as unknown as RemoteLaunchOpsDeps['remote']['request']
       }
     })
@@ -831,10 +1055,54 @@ describe('remoteLaunchOps.stop', () => {
     const result = await Effect.runPromise(service.stop({ sessionId: 'session-1' }))
 
     expect(result).toEqual({ killed: true, alreadyDead: false })
-    expect(request).toHaveBeenCalledWith(
+    expect(requestAt).toHaveBeenCalledWith(
+      'https://remote.example.com',
       'remoteLaunchOps.killTmux',
       { remoteSessionId: 'remote-session-1', tmuxSession: 'hive-feature-x' },
       15_000
+    )
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it('targets the STORED remote_launch url even when current teleport settings point elsewhere', async () => {
+    // Simulates the user re-pointing Teleport at a different remote host
+    // after the session was launched: stop must still kill the session on
+    // the host it was actually launched on, not on whatever `remote.getUrl()`
+    // currently resolves to.
+    const requestAt = vi.fn(async () => ({ killed: true, alreadyDead: false }))
+    const clientSession = session({
+      remote_launch: JSON.stringify({
+        role: 'client',
+        url: 'https://old-remote.example.com',
+        remoteSessionId: 'remote-session-1',
+        remoteWorktreeId: 'remote-worktree-1',
+        remoteProjectId: 'remote-project-1',
+        tmuxSession: 'hive-feature-x',
+        branch: 'feature/x',
+        worktreePath: '/remote/repo-feature-x',
+        launchedAt: now
+      })
+    })
+    const deps = baseDeps({
+      db: { ...baseDeps().db, getSession: vi.fn(() => clientSession) },
+      remote: {
+        isConfigured: vi.fn(() => true),
+        getUrl: vi.fn(() => 'https://new-remote.example.com'),
+        requestAt: requestAt as unknown as RemoteLaunchOpsDeps['remote']['requestAt'],
+        request: vi.fn(async () => {
+          throw new Error('unstubbed remote.request call')
+        })
+      }
+    })
+    const service = makeRemoteLaunchOpsRpcService(deps)
+
+    await Effect.runPromise(service.stop({ sessionId: 'session-1' }))
+
+    expect(requestAt).toHaveBeenCalledWith(
+      'https://old-remote.example.com',
+      'remoteLaunchOps.killTmux',
+      expect.anything(),
+      expect.any(Number)
     )
   })
 })
