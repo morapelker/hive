@@ -1,4 +1,3 @@
-import { useMemo } from 'react'
 import { resolveModelIconAsset } from '@/components/worktrees/ModelIcon'
 import { getAvailableHandoffAgentSdks, getCachedModelCatalog } from '@/lib/handoffSelection'
 import { findModelInfo, getModelDisplayName } from '@/lib/parseProviders'
@@ -29,15 +28,10 @@ export function TicketModelBadge({
   className
 }: TicketModelBadgeProps): React.JSX.Element | null {
   const { model_provider_id: providerId, model_id: modelId, model_variant: variant } = ticket
-  // modelId falls back to '' when absent so the hook can run unconditionally (rules of hooks);
-  // the result is discarded by the early return below in that case.
-  const displayName = useMemo(
-    () => resolveModelDisplayName(providerId, modelId ?? ''),
-    [providerId, modelId]
-  )
   if (!modelId) return null
 
   const icon = resolveModelIconAsset(providerId, modelId)
+  const displayName = resolveModelDisplayName(providerId, modelId)
   const title = variant ? `${displayName} (${variant})` : displayName
 
   return (
