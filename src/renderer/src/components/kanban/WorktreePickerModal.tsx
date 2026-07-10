@@ -42,7 +42,7 @@ import { supportsGoalMode } from '@shared/types/agent-sdk'
 import { createPlanFile, exceedsGoalPromptLimit, planFilePrompt } from '@/lib/goal-plan-file'
 import { FALLBACK_MODELS } from '@shared/model-resolution'
 import { runMultiModelLaunch, type MultiModelLaunchPlan } from '@/lib/multi-model-launch'
-import type { LaunchModelConfig } from '@/lib/ticket-launch'
+import { resolveBadgeModel, type LaunchModelConfig } from '@/lib/ticket-launch'
 import type { AvailableAgentSdks } from '@/lib/agent-sdk-availability'
 
 // Stable empty array to avoid referential-inequality loops in Zustand selectors
@@ -626,9 +626,6 @@ export function WorktreePickerModal({
         // Create connection session
         const createConnectionSession = useSessionStore.getState().createConnectionSession
         const effectiveModel = selectedModel ?? autoResolvedModel ?? undefined
-        // Badge model is always resolvable — fall back to the per-SDK / hard
-        // fallback so the persisted badge columns are never null on a launch.
-        const badgeModel = effectiveModel ?? resolveModelForSdk(agentSdk) ?? FALLBACK_MODELS[agentSdk]
         const modelOverride = effectiveModel ? { ...effectiveModel, agentSdk } : undefined
         const cliPendingPrompt =
           agentSdk === 'claude-code-cli'
@@ -675,6 +672,14 @@ export function WorktreePickerModal({
             0
           )
 
+        // Badge records what the session ACTUALLY runs: the created session
+        // row's resolved model wins over the modal's own chain (createSession
+        // resolves independently and can differ), then the picked/auto model,
+        // then the per-SDK resolution + hard fallback (never null).
+        const badgeModel = resolveBadgeModel(
+          { sdk: agentSdk, model: effectiveModel ?? null, codexFastMode },
+          sessionResult.session
+        )
         await updateTicket(ticket.id, ticket.project_id, {
           current_session_id: sessionId,
           worktree_id: null,
@@ -686,7 +691,7 @@ export function WorktreePickerModal({
           goal_success_criteria: goalMode ? goalCriteria.trim() : null,
           model_provider_id: badgeModel.providerID,
           model_id: badgeModel.modelID,
-          model_variant: badgeModel.variant ?? null,
+          model_variant: badgeModel.variant,
           // A single-model (re)launch shouldn't keep claiming membership in a
           // stale multi-launch group.
           variant_group_id: null,
@@ -987,9 +992,6 @@ export function WorktreePickerModal({
 
       // Create session in the selected worktree
       const effectiveModel = selectedModel ?? autoResolvedModel ?? undefined
-      // Badge model is always resolvable — fall back to the per-SDK / hard
-      // fallback so the persisted badge columns are never null on a launch.
-      const badgeModel = effectiveModel ?? resolveModelForSdk(agentSdk) ?? FALLBACK_MODELS[agentSdk]
       const modelOverride = effectiveModel ? { ...effectiveModel, agentSdk } : undefined
       const cliPendingPrompt =
         agentSdk === 'claude-code-cli'
@@ -1040,6 +1042,14 @@ export function WorktreePickerModal({
         .getState()
         .computeSortOrder(useKanbanStore.getState().getTicketsByColumn(projectId, 'in_progress'), 0)
 
+      // Badge records what the session ACTUALLY runs: the created session
+      // row's resolved model wins over the modal's own chain (createSession
+      // resolves independently and can differ), then the picked/auto model,
+      // then the per-SDK resolution + hard fallback (never null).
+      const badgeModel = resolveBadgeModel(
+        { sdk: agentSdk, model: effectiveModel ?? null, codexFastMode },
+        sessionResult.session
+      )
       await updateTicket(ticket.id, projectId, {
         current_session_id: sessionId,
         worktree_id: worktreeId,
@@ -1051,7 +1061,7 @@ export function WorktreePickerModal({
         goal_success_criteria: goalMode ? goalCriteria.trim() : null,
         model_provider_id: badgeModel.providerID,
         model_id: badgeModel.modelID,
-        model_variant: badgeModel.variant ?? null,
+        model_variant: badgeModel.variant,
         // A single-model (re)launch shouldn't keep claiming membership in a
         // stale multi-launch group.
         variant_group_id: null,

@@ -529,7 +529,57 @@ describe('WorktreePickerModal multi-model UI', () => {
     expect(typeof update.pending_launch_config).toBe('string')
   })
 
+  it('stamps the badge from the session row when it differs from the picked model — the session is what actually runs (round 4)', async () => {
+    const { updateTicket } = setupStores()
+    // createSession resolves the ACTUAL model through its own chain (it can
+    // pick the first cached catalog entry) — when the returned session row
+    // carries model fields, they must win over the modal's independently
+    // computed selected/auto/fallback chain.
+    const createSession = vi.fn(
+      async (
+        worktreeId: string,
+        projectId: string,
+        sdk: TestAgentSdk = 'opencode',
+        mode: TestSessionMode = 'build'
+      ) => ({
+        success: true,
+        session: makeSession({
+          worktree_id: worktreeId,
+          project_id: projectId,
+          agent_sdk: sdk,
+          mode: mode === 'super-plan' ? 'plan' : mode,
+          model_provider_id: 'openai',
+          model_id: 'session-truth-model',
+          model_variant: null
+        })
+      })
+    )
+    useSessionStore.setState({ createSession })
+    await renderModal()
+
+    await userEvent.click(screen.getByTestId('sdk-toggle-claude-code-cli'))
+    await userEvent.click(screen.getByTestId('pick-model-claude-code-cli'))
+    await userEvent.click(screen.getByTestId('worktree-item-worktree-1'))
+    await userEvent.click(screen.getByTestId('wt-picker-send-btn'))
+
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith('terminalOps.createClaudeCli', expect.any(Object))
+    )
+    expect(updateTicket).toHaveBeenCalledWith(
+      'ticket-1',
+      'project-1',
+      expect.objectContaining({
+        model_provider_id: 'openai',
+        model_id: 'session-truth-model',
+        model_variant: null
+      })
+    )
+  })
+
   it('stamps model badge fields on the single-model launch update', async () => {
+    // The default mocked session row carries NO model fields — this is the
+    // fallback case: the badge comes from the picked model (then the per-SDK
+    // resolution / hard-fallback chain).
     const { updateTicket } = setupStores()
     await renderModal()
 

@@ -90,9 +90,11 @@ function composeLaunchPrompt(
  * (a) the resolved model persisted on the created session row, (b) the launch
  * config's explicit model, (c) the renderer's per-SDK resolution then the hard
  * SDK fallback. The last step guarantees non-null provider/model ids on every
- * launch.
+ * launch. Exported: WorktreePickerModal's interactive launch paths stamp with
+ * the same priority — the session row records what ACTUALLY runs (session
+ * creation resolves through its own chain and can differ from the picker's).
  */
-function resolveBadgeModel(
+export function resolveBadgeModel(
   modelConfig: LaunchModelConfig,
   session: { model_provider_id: string | null; model_id: string | null; model_variant: string | null }
 ): { providerID: string; modelID: string; variant: string | null } {

@@ -477,6 +477,87 @@ describe('WorktreePickerModal Claude CLI launch', () => {
     })
   })
 
+  it('stamps the connection-ticket badge from the session row when it differs from the picked model (round 4)', async () => {
+    const { updateTicket } = setupStores()
+    // createConnectionSession resolves the ACTUAL model via its own chain —
+    // when the returned session row carries model fields, they must win over
+    // the modal's independently computed selected/auto/fallback chain.
+    const createConnectionSession = vi.fn(
+      async (
+        connectionId: string,
+        sdk: TestAgentSdk = 'opencode',
+        mode: TestSessionMode = 'build'
+      ) => ({
+        success: true,
+        session: makeSession({
+          id: 'connection-session-1',
+          worktree_id: null,
+          connection_id: connectionId,
+          agent_sdk: sdk,
+          mode: mode === 'super-plan' ? 'plan' : mode,
+          model_provider_id: 'openai',
+          model_id: 'session-truth-model',
+          model_variant: null
+        })
+      })
+    )
+    useSessionStore.setState({ createConnectionSession })
+    await renderAndSelectClaudeCliForConnection()
+
+    await userEvent.click(screen.getByTestId('model-selector-pick-opus'))
+    await userEvent.click(screen.getByTestId('wt-picker-send-btn'))
+
+    await waitFor(() => expect(updateTicket).toHaveBeenCalledTimes(1))
+    expect(updateTicket).toHaveBeenCalledWith(
+      'ticket-1',
+      'project-1',
+      expect.objectContaining({
+        model_provider_id: 'openai',
+        model_id: 'session-truth-model',
+        model_variant: null
+      })
+    )
+  })
+
+  it('falls back to the picked model for the connection-ticket badge when the session row has no model fields', async () => {
+    const { updateTicket } = setupStores()
+    const createConnectionSession = vi.fn(
+      async (
+        connectionId: string,
+        sdk: TestAgentSdk = 'opencode',
+        mode: TestSessionMode = 'build'
+      ) => ({
+        success: true,
+        session: makeSession({
+          id: 'connection-session-1',
+          worktree_id: null,
+          connection_id: connectionId,
+          agent_sdk: sdk,
+          mode: mode === 'super-plan' ? 'plan' : mode,
+          model_provider_id: null,
+          model_id: null,
+          model_variant: null
+        })
+      })
+    )
+    useSessionStore.setState({ createConnectionSession })
+    await renderAndSelectClaudeCliForConnection()
+
+    await userEvent.click(screen.getByTestId('model-selector-pick-opus'))
+    await userEvent.click(screen.getByTestId('wt-picker-send-btn'))
+
+    await waitFor(() => expect(updateTicket).toHaveBeenCalledTimes(1))
+    expect(updateTicket).toHaveBeenCalledWith(
+      'ticket-1',
+      'project-1',
+      expect.objectContaining({
+        model_provider_id: 'anthropic',
+        model_id: 'opus',
+        model_variant: 'high'
+      })
+    )
+  })
+
   it('omits the synthetic plan prefix for Claude CLI plan launches', async () => {
     await renderAndSelectClaudeCli()
 
