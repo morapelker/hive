@@ -231,11 +231,30 @@ describe('launchTicketWithModel', () => {
         model_provider_id: 'anthropic',
         model_id: 'opus',
         model_variant: 'high',
+        // Default hygiene: a (re)launch through this shared pipeline clears
+        // any stale variant_group_id unless extras override it (next test).
+        variant_group_id: null,
         pending_launch_config: null
       })
     )
     expect(toast.error).not.toHaveBeenCalled()
     expect(toast.success).not.toHaveBeenCalled()
+  })
+
+  it('lets ticketUpdateExtras.variant_group_id override the default null (extras win)', async () => {
+    const { updateTicket } = setupStores()
+
+    await launchTicketWithModel(
+      baseSpec({
+        ticketUpdateExtras: { pending_launch_config: null, variant_group_id: 'group-123' }
+      })
+    )
+
+    expect(updateTicket).toHaveBeenCalledWith(
+      'ticket-1',
+      'project-1',
+      expect.objectContaining({ variant_group_id: 'group-123' })
+    )
   })
 
   it('returns {success:false} without creating a session when worktree creation fails', async () => {

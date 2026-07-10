@@ -517,7 +517,10 @@ describe('WorktreePickerModal multi-model UI', () => {
         worktree_id: 'worktree-1',
         model_provider_id: 'anthropic',
         model_id: 'picked-model',
-        model_variant: 'high'
+        model_variant: 'high',
+        // Single-model launches must clear any stale variant_group_id from a
+        // prior failed multi-launch of this ticket.
+        variant_group_id: null
       })
     )
     expect(runMultiModelLaunch).not.toHaveBeenCalled()

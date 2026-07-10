@@ -153,6 +153,10 @@ describe('runMultiModelLaunch', () => {
       sort_order: 4,
       mode: 'build',
       plan_ready: false,
+      // Stale session/worktree links from a previous launch of this ticket
+      // must be detached before the batch starts.
+      current_session_id: null,
+      worktree_id: null,
       model_provider_id: 'anthropic',
       model_id: 'claude-opus-4-5-20251101',
       model_variant: null,
@@ -243,7 +247,6 @@ describe('runMultiModelLaunch', () => {
       goalSuccessCriteria: null
     })
     expect(calls[0][0].modelConfig).toEqual(basePlan().entries[0])
-    expect(calls[0][0]).not.toHaveProperty('ticketUpdateExtras')
 
     expect(calls[1][0]).toMatchObject({
       ticketId: 'dup-1',
@@ -253,6 +256,15 @@ describe('runMultiModelLaunch', () => {
       ticketId: 'dup-2',
       worktree: { type: 'new', sourceBranch: 'main', nameHint: 'fix-login-bug-sonnet' }
     })
+
+    // Every launch carries ticketUpdateExtras.variant_group_id so the pipeline's
+    // shared success update (which defaults it to null) re-stamps the batch's
+    // shared group id instead of clearing it.
+    const groupId = calls[0][0].ticketUpdateExtras?.variant_group_id as string
+    expect(typeof groupId).toBe('string')
+    expect(groupId.length).toBeGreaterThan(0)
+    expect(calls[1][0].ticketUpdateExtras).toEqual({ variant_group_id: groupId })
+    expect(calls[2][0].ticketUpdateExtras).toEqual({ variant_group_id: groupId })
   })
 
   it('moves a failed launch back to To Do with cleared fields (keeping variant_group_id), toasts, and still launches the next entry', async () => {
@@ -295,6 +307,41 @@ describe('runMultiModelLaunch', () => {
     expect(vi.mocked(launchTicketWithModel).mock.calls[2][0].ticketId).toBe('dup-2')
   })
 
+  it('continues to the next entry and toasts both failures when the failure-recovery update itself throws', async () => {
+    setupStores([
+      makeTicket({ id: 'existing-1', column: 'in_progress', sort_order: 5 }),
+      makeTicket({ id: 'todo-1', column: 'todo', sort_order: 2 })
+    ])
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    // Only the recovery ("move back to todo") update throws — the initial
+    // "appears immediately" update (column: 'in_progress') must keep succeeding.
+    const updateTicket = vi.fn(async (_ticketId: string, _projectId: string, data: unknown) => {
+      if ((data as { column?: string }).column === 'todo') {
+        throw new Error('recovery rpc failed')
+      }
+    })
+    useKanbanStore.setState({ updateTicket })
+    vi.mocked(launchTicketWithModel).mockImplementation(async (spec) => {
+      if (spec.ticketId === 'dup-1') return { success: false, error: 'boom' }
+      return { success: true, sessionId: 's', worktreeId: 'w' }
+    })
+
+    await runMultiModelLaunch(basePlan())
+
+    expect(toast.error).toHaveBeenCalledWith('Failed to launch gpt-5.5-codex: boom')
+    expect(toast.error).toHaveBeenCalledWith(
+      'Failed to reset gpt-5.5-codex after launch failure: recovery rpc failed'
+    )
+    expect(errorSpy).toHaveBeenCalled()
+
+    // entry-2 (dup-2) still launched despite the recovery update throwing —
+    // the loop must never abort because of it.
+    expect(launchTicketWithModel).toHaveBeenCalledTimes(3)
+    expect(vi.mocked(launchTicketWithModel).mock.calls[2][0].ticketId).toBe('dup-2')
+
+    errorSpy.mockRestore()
+  })
+
   it('skips the launch for a model whose duplicateTicket call fails, but still launches the next entry', async () => {
     setupStores()
     const duplicateTicket = vi.fn(async (_projectId: string, _ticketId: string, overrides: unknown) => {
@@ -312,6 +359,54 @@ describe('runMultiModelLaunch', () => {
     const calls = vi.mocked(launchTicketWithModel).mock.calls
     expect(calls[0][0].ticketId).toBe('ticket-1')
     expect(calls[1][0].ticketId).toBe('dup-2')
+  })
+
+  it('skips the launch for a model whose duplicateTicket call throws, but still launches the next entry', async () => {
+    setupStores()
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const duplicateTicket = vi.fn(async (_projectId: string, _ticketId: string, overrides: unknown) => {
+      const o = overrides as { model_id: string }
+      if (o.model_id === 'gpt-5.5-codex') throw new Error('duplicate rpc failed')
+      return makeTicket({ id: 'dup-2' })
+    })
+    useKanbanStore.setState({ duplicateTicket })
+
+    await runMultiModelLaunch(basePlan())
+
+    expect(toast.error).toHaveBeenCalledWith('Failed to duplicate ticket for gpt-5.5-codex')
+    expect(errorSpy).toHaveBeenCalled()
+
+    expect(launchTicketWithModel).toHaveBeenCalledTimes(2)
+    const calls = vi.mocked(launchTicketWithModel).mock.calls
+    expect(calls[0][0].ticketId).toBe('ticket-1')
+    expect(calls[1][0].ticketId).toBe('dup-2')
+
+    errorSpy.mockRestore()
+  })
+
+  it('toasts and does not throw when the orchestrator hits an unexpected top-level error', async () => {
+    setupStores()
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    // Any unguarded throw in the setup/original-update phase must be caught
+    // by the top-level try/catch rather than propagating as an unhandled
+    // rejection (the modal fires this with `void`, no top-level .catch).
+    useKanbanStore.setState({
+      updateTicket: vi.fn(async () => {
+        throw new Error('board update exploded')
+      })
+    })
+
+    await expect(runMultiModelLaunch(basePlan())).resolves.toBeUndefined()
+
+    expect(toast.error).toHaveBeenCalledWith(
+      'Failed to launch "Fix Login Bug": board update exploded'
+    )
+    expect(errorSpy).toHaveBeenCalled()
+    // Nothing downstream ran — the batch legitimately aborted, but it toasted
+    // instead of vanishing as an unhandled rejection.
+    expect(launchTicketWithModel).not.toHaveBeenCalled()
+
+    errorSpy.mockRestore()
   })
 
   it('refreshes usage once per distinct SDK among entries, after the loop', async () => {

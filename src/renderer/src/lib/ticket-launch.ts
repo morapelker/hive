@@ -226,7 +226,11 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
     }
 
     // 5. Update ticket: clear pending config (via extras), set session + worktree,
-    //    and stamp the model badge fields.
+    //    and stamp the model badge fields. variant_group_id defaults to null
+    //    here (a single-model (re)launch shouldn't keep claiming membership in
+    //    a stale multi-launch group) — the multi-model orchestrator overrides
+    //    it back via ticketUpdateExtras, which must win, hence the field
+    //    ordering below.
     const badge = resolveBadgeModel(spec.modelConfig, session)
     await useKanbanStore.getState().updateTicket(spec.ticketId, spec.projectId, {
       current_session_id: sessionId,
@@ -237,6 +241,7 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
       model_provider_id: badge.providerID,
       model_id: badge.modelID,
       model_variant: badge.variant,
+      variant_group_id: null,
       ...spec.ticketUpdateExtras
     })
 

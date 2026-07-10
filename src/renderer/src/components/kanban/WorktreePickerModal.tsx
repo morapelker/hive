@@ -686,7 +686,10 @@ export function WorktreePickerModal({
           goal_success_criteria: goalMode ? goalCriteria.trim() : null,
           model_provider_id: badgeModel.providerID,
           model_id: badgeModel.modelID,
-          model_variant: badgeModel.variant ?? null
+          model_variant: badgeModel.variant ?? null,
+          // A single-model (re)launch shouldn't keep claiming membership in a
+          // stale multi-launch group.
+          variant_group_id: null
         })
 
         void autoPinBaseWorktree(ticket.project_id)
@@ -923,7 +926,11 @@ export function WorktreePickerModal({
         onSendComplete?.()
         onOpenChange(false)
         toast.success(`Starting ${entries.length} sessions`)
-        void runMultiModelLaunch(plan)
+        // The orchestrator itself never rethrows (it toasts internally) — this
+        // .catch is defense-in-depth against an unhandled rejection reaching here.
+        void runMultiModelLaunch(plan).catch((err) => {
+          console.error('runMultiModelLaunch rejected unexpectedly', err)
+        })
         return
       }
 
@@ -1033,7 +1040,10 @@ export function WorktreePickerModal({
         goal_success_criteria: goalMode ? goalCriteria.trim() : null,
         model_provider_id: badgeModel.providerID,
         model_id: badgeModel.modelID,
-        model_variant: badgeModel.variant ?? null
+        model_variant: badgeModel.variant ?? null,
+        // A single-model (re)launch shouldn't keep claiming membership in a
+        // stale multi-launch group.
+        variant_group_id: null
       })
 
       // Trigger usage refresh so the board shows up-to-date usage (debounced in store)
