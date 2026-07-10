@@ -519,6 +519,10 @@ export interface KanbanTicket {
   created_from_session: boolean
   /** One-shot: auto-approve the next claude-cli ExitPlanMode plan, then self-clears. */
   auto_approve_plan: boolean
+  model_provider_id: string | null
+  model_id: string | null
+  model_variant: string | null
+  variant_group_id: string | null
 }
 
 export interface KanbanTicketCreate {
@@ -540,6 +544,11 @@ export interface KanbanTicketCreate {
   github_pr_url?: string | null
   mark?: TicketMark | null
   created_from_session?: boolean
+  note?: string | null
+  model_provider_id?: string | null
+  model_id?: string | null
+  model_variant?: string | null
+  variant_group_id?: string | null
 }
 
 export interface KanbanTicketUpdate {
@@ -561,6 +570,20 @@ export interface KanbanTicketUpdate {
   goal_success_criteria?: string | null
   note?: string | null
   auto_approve_plan?: boolean
+  model_provider_id?: string | null
+  model_id?: string | null
+  model_variant?: string | null
+  variant_group_id?: string | null
+}
+
+/** Fields a caller may override on a freshly duplicated ticket; see KanbanBackend.duplicate. */
+export interface KanbanTicketDuplicateOverrides {
+  column?: KanbanTicketColumn
+  sort_order?: number
+  model_provider_id?: string | null
+  model_id?: string | null
+  model_variant?: string | null
+  variant_group_id?: string | null
 }
 
 export interface BoardAssistantDraft {
@@ -590,6 +613,11 @@ export interface KanbanTicketBatchCreateItem {
   github_pr_number?: number | null
   github_pr_url?: string | null
   mark?: TicketMark | null
+  note?: string | null
+  model_provider_id?: string | null
+  model_id?: string | null
+  model_variant?: string | null
+  variant_group_id?: string | null
   depends_on?: string[]
 }
 

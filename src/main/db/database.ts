@@ -363,7 +363,11 @@ export class DatabaseService {
       goal_success_criteria: (row.goal_success_criteria as string) ?? null,
       note: (row.note as string) ?? null,
       created_from_session: row.created_from_session === 1,
-      auto_approve_plan: row.auto_approve_plan === 1
+      auto_approve_plan: row.auto_approve_plan === 1,
+      model_provider_id: (row.model_provider_id as string) ?? null,
+      model_id: (row.model_id as string) ?? null,
+      model_variant: (row.model_variant as string) ?? null,
+      variant_group_id: (row.variant_group_id as string) ?? null
     }
   }
 
@@ -681,6 +685,10 @@ export class DatabaseService {
     this.safeAddColumn('kanban_tickets', 'goal_success_criteria', 'TEXT DEFAULT NULL')
     this.safeAddColumn('kanban_tickets', 'created_from_session', 'INTEGER NOT NULL DEFAULT 0')
     this.safeAddColumn('kanban_tickets', 'auto_approve_plan', 'INTEGER NOT NULL DEFAULT 0')
+    this.safeAddColumn('kanban_tickets', 'model_provider_id', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('kanban_tickets', 'model_id', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('kanban_tickets', 'model_variant', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('kanban_tickets', 'variant_group_id', 'TEXT DEFAULT NULL')
     this.safeAddColumn('sessions', 'session_type', "TEXT NOT NULL DEFAULT 'default'")
     this.safeAddColumn('sessions', 'remote_launch', 'TEXT DEFAULT NULL')
     this.safeAddColumn(
@@ -790,6 +798,10 @@ export class DatabaseService {
     this.safeAddColumn('markdown_kanban_card_state', 'last_seen_path', 'TEXT DEFAULT NULL')
     this.safeAddColumn('markdown_kanban_card_state', 'orphaned_at', 'TEXT DEFAULT NULL')
     this.safeAddColumn('markdown_kanban_card_state', 'auto_approve_plan', 'INTEGER NOT NULL DEFAULT 0')
+    this.safeAddColumn('markdown_kanban_card_state', 'model_provider_id', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('markdown_kanban_card_state', 'model_id', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('markdown_kanban_card_state', 'model_variant', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('markdown_kanban_card_state', 'variant_group_id', 'TEXT DEFAULT NULL')
   }
 
   // Settings operations
@@ -2611,10 +2623,15 @@ export class DatabaseService {
     const githubPrUrl = data.github_pr_url ?? null
     const mark = data.mark ?? null
     const createdFromSession = data.created_from_session ? 1 : 0
+    const note = data.note ?? null
+    const modelProviderId = data.model_provider_id ?? null
+    const modelId = data.model_id ?? null
+    const modelVariant = data.model_variant ?? null
+    const variantGroupId = data.variant_group_id ?? null
 
     db.prepare(
-      `INSERT INTO kanban_tickets (id, project_id, title, description, attachments, "column", sort_order, current_session_id, worktree_id, mode, plan_ready, external_provider, external_id, external_url, github_pr_number, github_pr_url, mark, created_from_session, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO kanban_tickets (id, project_id, title, description, attachments, "column", sort_order, current_session_id, worktree_id, mode, plan_ready, external_provider, external_id, external_url, github_pr_number, github_pr_url, mark, created_from_session, note, model_provider_id, model_id, model_variant, variant_group_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       id,
       data.project_id,
@@ -2634,6 +2651,11 @@ export class DatabaseService {
       githubPrUrl,
       mark,
       createdFromSession,
+      note,
+      modelProviderId,
+      modelId,
+      modelVariant,
+      variantGroupId,
       now,
       now
     )
@@ -2657,6 +2679,11 @@ export class DatabaseService {
       github_pr_url: githubPrUrl,
       mark,
       created_from_session: createdFromSession,
+      note,
+      model_provider_id: modelProviderId,
+      model_id: modelId,
+      model_variant: modelVariant,
+      variant_group_id: variantGroupId,
       total_tokens: 0,
       created_at: now,
       updated_at: now
@@ -2687,7 +2714,12 @@ export class DatabaseService {
           external_url: draft.external_url,
           github_pr_number: draft.github_pr_number,
           github_pr_url: draft.github_pr_url,
-          mark: draft.mark
+          mark: draft.mark,
+          note: draft.note,
+          model_provider_id: draft.model_provider_id,
+          model_id: draft.model_id,
+          model_variant: draft.model_variant,
+          variant_group_id: draft.variant_group_id
         })
         createdTickets.push(ticket)
         createdByDraftKey.set(draft.draft_key, ticket)
@@ -2831,6 +2863,22 @@ export class DatabaseService {
     if (data.auto_approve_plan !== undefined) {
       updates.push('auto_approve_plan = ?')
       values.push(data.auto_approve_plan ? 1 : 0)
+    }
+    if (data.model_provider_id !== undefined) {
+      updates.push('model_provider_id = ?')
+      values.push(data.model_provider_id)
+    }
+    if (data.model_id !== undefined) {
+      updates.push('model_id = ?')
+      values.push(data.model_id)
+    }
+    if (data.model_variant !== undefined) {
+      updates.push('model_variant = ?')
+      values.push(data.model_variant)
+    }
+    if (data.variant_group_id !== undefined) {
+      updates.push('variant_group_id = ?')
+      values.push(data.variant_group_id)
     }
 
     if (updates.length === 1) return existing // Only updated_at, nothing meaningful changed

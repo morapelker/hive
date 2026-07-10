@@ -234,7 +234,11 @@ const ticket: KanbanTicket = {
   goal_success_criteria: null,
   note: null,
   created_from_session: false,
-  auto_approve_plan: false
+  auto_approve_plan: false,
+  model_provider_id: null,
+  model_id: null,
+  model_variant: null,
+  variant_group_id: null
 }
 
 const worktree: Worktree = {

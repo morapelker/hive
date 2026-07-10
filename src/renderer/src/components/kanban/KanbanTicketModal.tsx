@@ -84,6 +84,7 @@ import {
   type TicketRunScriptState
 } from '@/hooks/useTicketRunScript'
 import { TicketRunButton } from './TicketRunButton'
+import { TicketModelBadge } from './TicketModelBadge'
 import { useQuestionStore, type QuestionRequest } from '@/stores/useQuestionStore'
 import { QuestionPrompt } from '@/components/sessions/QuestionPrompt'
 import { FollowupInput } from './FollowupInput'
@@ -1337,9 +1338,12 @@ function KanbanTicketModalContent({
             {/* Shared ticket context header for non-edit modes */}
             {modalMode !== 'edit' && (
               <div className="space-y-2 pb-3 border-b border-border/40">
-                <h2 className="text-base font-semibold text-foreground leading-tight">
-                  {ticket.title}
-                </h2>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-base font-semibold text-foreground leading-tight min-w-0 flex-1">
+                    {ticket.title}
+                  </h2>
+                  <TicketModelBadge ticket={ticket} className="shrink-0" />
+                </div>
                 {ticket.description && (
                   <div className="prose prose-sm dark:prose-invert max-w-none text-sm text-muted-foreground max-h-[120px] overflow-y-auto">
                     <MarkdownRenderer content={ticket.description} />
@@ -1619,6 +1623,7 @@ function EditModeContent({
                 <ProviderIcon provider={ticket.external_provider} />
               </button>
             )}
+            <TicketModelBadge ticket={ticket} />
           </div>
           <div className="flex items-center gap-1">
             {remoteLaunchInfo && (

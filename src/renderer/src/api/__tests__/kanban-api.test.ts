@@ -110,6 +110,64 @@ describe('kanbanApi', () => {
     expect(request).toHaveBeenCalledWith('kanban.ticket.create', data)
   })
 
+  it('routes ticket.duplicate through the renderer RPC client', async () => {
+    const ticket = {
+      id: 'ticket-2',
+      project_id: 'project-1',
+      title: 'Fix the board',
+      column: 'in_progress',
+      model_provider_id: 'anthropic',
+      model_id: 'claude-opus-4-6',
+      model_variant: 'thinking',
+      variant_group_id: 'group-1'
+    }
+    const request = vi.fn().mockResolvedValue(ticket)
+    const subscribe = vi.fn()
+
+    setRendererRpcClient({ request, subscribe })
+
+    const overrides = {
+      column: 'in_progress',
+      model_provider_id: 'anthropic',
+      model_id: 'claude-opus-4-6',
+      model_variant: 'thinking',
+      variant_group_id: 'group-1'
+    }
+    await expect(
+      kanbanApi.ticket.duplicate<typeof ticket, typeof overrides>(
+        'project-1',
+        'ticket-1',
+        overrides
+      )
+    ).resolves.toEqual(ticket)
+    expect(request).toHaveBeenCalledWith('kanban.ticket.duplicate', {
+      projectId: 'project-1',
+      id: 'ticket-1',
+      overrides
+    })
+  })
+
+  it('routes ticket.duplicate without overrides through the renderer RPC client', async () => {
+    const ticket = {
+      id: 'ticket-2',
+      project_id: 'project-1',
+      title: 'Fix the board',
+      column: 'todo'
+    }
+    const request = vi.fn().mockResolvedValue(ticket)
+    const subscribe = vi.fn()
+
+    setRendererRpcClient({ request, subscribe })
+
+    await expect(
+      kanbanApi.ticket.duplicate<typeof ticket, Record<string, never>>('project-1', 'ticket-1')
+    ).resolves.toEqual(ticket)
+    expect(request).toHaveBeenCalledWith('kanban.ticket.duplicate', {
+      projectId: 'project-1',
+      id: 'ticket-1'
+    })
+  })
+
   it('routes ticket.createBatch through the renderer RPC client', async () => {
     const result = {
       tickets: [{ id: 'ticket-1', project_id: 'project-1', title: 'Draft ticket' }],

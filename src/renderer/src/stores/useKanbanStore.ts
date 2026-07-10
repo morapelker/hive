@@ -4,6 +4,7 @@ import type {
   KanbanTicket,
   KanbanTicketColumn,
   KanbanTicketCreate,
+  KanbanTicketDuplicateOverrides,
   KanbanTicketUpdate,
   MarkdownCardDiagnostic,
   TicketDependency
@@ -218,6 +219,11 @@ interface KanbanState {
   loadTicketsWithArchiveVisibility: (projectId: string, includeArchived: boolean) => Promise<void>
   reconcileFinishedSessions: (projectId: string) => void
   createTicket: (projectId: string, data: KanbanTicketCreate) => Promise<KanbanTicket>
+  duplicateTicket: (
+    projectId: string,
+    ticketId: string,
+    overrides?: KanbanTicketDuplicateOverrides
+  ) => Promise<KanbanTicket | null>
   convertMarkdownPlaceholder: (projectId: string, filePath: string) => Promise<KanbanTicket>
   updateTicket: (ticketId: string, projectId: string, data: KanbanTicketUpdate) => Promise<void>
   deleteTicket: (ticketId: string, projectId: string) => Promise<void>
@@ -476,6 +482,31 @@ export const useKanbanStore = create<KanbanState>()(
           return { tickets: next }
         })
         return ticket
+      },
+
+      // ── duplicateTicket ──────────────────────────────────────────
+      duplicateTicket: async (
+        projectId: string,
+        ticketId: string,
+        overrides?: KanbanTicketDuplicateOverrides
+      ) => {
+        try {
+          const ticket = await kanban.ticket.duplicate<KanbanTicket, KanbanTicketDuplicateOverrides>(
+            projectId,
+            ticketId,
+            overrides
+          )
+          set((state) => {
+            const next = new Map(state.tickets)
+            const existing = next.get(projectId) ?? []
+            next.set(projectId, [...existing, ticket])
+            return { tickets: next }
+          })
+          return ticket
+        } catch (err) {
+          console.error('Failed to duplicate ticket:', ticketId, err)
+          return null
+        }
       },
 
       convertMarkdownPlaceholder: async (projectId: string, filePath: string) => {

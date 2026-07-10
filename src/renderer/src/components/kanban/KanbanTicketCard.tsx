@@ -36,6 +36,7 @@ import {
   Unplug
 } from 'lucide-react'
 import { CheckeredFlagIcon } from './CheckeredFlagIcon'
+import { TicketModelBadge } from './TicketModelBadge'
 import { UpdateStatusModal } from './UpdateStatusModal'
 import { RemoteTerminalDialog } from './RemoteTerminalDialog'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
@@ -1035,7 +1036,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             </div>
 
             {/* Badges + progress row */}
-            {(hasAttachments || hasNote || worktreeName || projectTag || connectionName || ticket.plan_ready || isError || rightAlignedSlot || isArchived || isBlocked || blockingDiagnostic || isRunProcessAlive || ticket.github_pr_number || isCreatingPR || isForwardedToTelegram || ticket.goal_mode || ticket.auto_approve_plan || activeRemoteLaunch) && (
+            {(hasAttachments || hasNote || worktreeName || projectTag || connectionName || ticket.plan_ready || isError || rightAlignedSlot || isArchived || isBlocked || blockingDiagnostic || isRunProcessAlive || ticket.github_pr_number || isCreatingPR || isForwardedToTelegram || ticket.goal_mode || ticket.auto_approve_plan || activeRemoteLaunch || ticket.model_id) && (
               <div className="mt-1.5 flex flex-wrap items-center gap-1">
                 {/* Archived badge */}
                 {isArchived && (
@@ -1101,6 +1102,9 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                     </TooltipContent>
                   </Tooltip>
                 )}
+
+                {/* Model badge */}
+                <TicketModelBadge ticket={ticket} />
 
                 {/* Project tag (connection mode) or worktree name badge */}
                 {projectTag ? (

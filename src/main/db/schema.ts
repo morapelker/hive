@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 39
+export const CURRENT_SCHEMA_VERSION = 40
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -671,6 +671,15 @@ DROP TABLE IF EXISTS diff_comments;`
     name: 'add_session_remote_launch',
     up: `-- NOTE: ALTER TABLE for sessions.remote_launch is handled idempotently by
          -- safeAddColumn() in database.ts to avoid "duplicate column" errors.`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
+  },
+  {
+    version: 40,
+    name: 'add_ticket_model_columns',
+    up: `-- NOTE: ALTER TABLE for kanban_tickets.model_provider_id/model_id/model_variant/
+         -- variant_group_id and the same four columns on markdown_kanban_card_state is
+         -- handled idempotently by safeAddColumn() in database.ts to avoid
+         -- "duplicate column" errors.`,
     down: `-- SQLite cannot drop columns; this is a no-op for safety`
   }
 ]

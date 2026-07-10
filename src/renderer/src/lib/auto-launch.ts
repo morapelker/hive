@@ -1,22 +1,9 @@
-import { useKanbanStore } from '@/stores/useKanbanStore'
-import { useSessionStore } from '@/stores/useSessionStore'
-import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useProjectStore } from '@/stores/useProjectStore'
-import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
-import { useUsageStore, resolveDefaultUsageProvider } from '@/stores/useUsageStore'
-import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
-import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
-import { snapshotTokenBaseline } from '@/lib/token-baselines'
-import { PLAN_MODE_PREFIX, getSuperPlanModePrefix, isPlanLike } from '@/lib/constants'
 import { toast } from '@/lib/toast'
-import { canonicalizeTicketTitle } from '@shared/types/branch-utils'
-import { unwrapEnvelope } from '@/lib/ipc-envelope'
-import { opencodeApi } from '@/api/opencode-api'
-import { dbApi } from '@/api/db-api'
-import { terminalApi } from '@/api/terminal-api'
-import { startHivePromptTelemetry } from '@/lib/hive-enterprise-telemetry'
 import { autoPinBaseWorktree } from '@/lib/auto-pin'
-import { createPlanFile, exceedsGoalPromptLimit, planFilePrompt } from '@/lib/goal-plan-file'
+import { launchTicketWithModel, type LaunchModelConfig } from '@/lib/ticket-launch'
+import { runMultiModelLaunch } from '@/lib/multi-model-launch'
+import type { HandoffAgentSdk } from '@shared/types/agent-sdk'
 
 type AutoLaunchMode = 'build' | 'plan' | 'super-plan'
 
@@ -27,48 +14,33 @@ interface AutoLaunchTicket {
   pending_launch_config: string | null
 }
 
+/** One provider/model entry in a (multi-model) pending launch config. */
+export interface PendingLaunchModelEntry {
+  sdk: HandoffAgentSdk
+  model: { providerID: string; modelID: string; variant?: string } | null
+  codexFastMode: boolean
+}
+
 interface PendingLaunchConfig {
   worktree: { type: 'new'; sourceBranch: string } | { type: 'existing'; worktreeId: string }
   prompt: string
   mode: AutoLaunchMode
   model: { providerID: string; modelID: string; variant?: string } | null
-  sdk: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex'
+  sdk: HandoffAgentSdk
   codexFastMode: boolean
   goalMode: boolean
   goalSuccessCriteria: string | null
+  /** NEW (optional): multi-model launch entries; [0] applies to the original ticket. */
+  models?: PendingLaunchModelEntry[]
 }
 
-function wrapGoalPrompt(prompt: string, criteria: string): string {
-  const stripped = prompt.replace(/^\/goal\s+/, '')
-  return `/goal ${stripped}. Goal success criteria: ${criteria}`
-}
-
-function composeAutoLaunchPrompt(
-  config: PendingLaunchConfig,
-  sessionAgentSdk: string | null | undefined,
-  configGoalMode: boolean,
-  configGoalSuccessCriteria: string | null,
-  options: { claudeCli: boolean }
-): string | null {
-  const trimmedPrompt = config.prompt.trim()
-  if (!trimmedPrompt) return null
-
-  const skipPrefix =
-    options.claudeCli ||
-    sessionAgentSdk === 'claude-code' ||
-    sessionAgentSdk === 'codex' ||
-    sessionAgentSdk === 'claude-code-cli'
-  const modePrefix =
-    config.mode === 'super-plan'
-      ? getSuperPlanModePrefix(sessionAgentSdk)
-      : config.mode === 'plan' && !skipPrefix
-        ? PLAN_MODE_PREFIX
-        : ''
-  const fullPrompt = modePrefix + trimmedPrompt
-
-  return configGoalMode && configGoalSuccessCriteria
-    ? wrapGoalPrompt(fullPrompt, configGoalSuccessCriteria)
-    : fullPrompt
+/**
+ * Normalize a pending launch config into the list of model entries to launch.
+ * Legacy configs (no `models`) yield a single entry from the top-level fields.
+ */
+export function resolveModelEntries(config: PendingLaunchConfig): LaunchModelConfig[] {
+  if (config.models?.length) return config.models
+  return [{ sdk: config.sdk, model: config.model, codexFastMode: config.codexFastMode }]
 }
 
 export async function autoLaunchTicket(ticket: AutoLaunchTicket): Promise<void> {
@@ -90,211 +62,51 @@ export async function autoLaunchTicket(ticket: AutoLaunchTicket): Promise<void> 
     return
   }
 
+  // Pin the base worktree once per batch (not per model — a future multi-launch
+  // must not re-pin for every model it spawns).
   void autoPinBaseWorktree(ticket.project_id)
 
-  try {
-    // 1. Resolve worktree
-    let worktreeId: string
-    if (config.worktree.type === 'new') {
-      const nameHint = canonicalizeTicketTitle(ticket.title)
-      const result = await useWorktreeStore
-        .getState()
-        .createWorktreeFromBranch(
-          ticket.project_id,
-          project.path,
-          project.name,
-          config.worktree.sourceBranch,
-          nameHint || undefined
-        )
-      if (!result.success || !result.worktree?.id) {
-        toast.error(`Auto-launch failed: ${result.error || 'Could not create worktree'}`)
-        return
-      }
-      worktreeId = result.worktree.id
-    } else {
-      worktreeId = config.worktree.worktreeId
-    }
+  const entries = resolveModelEntries(config)
 
-    // Resolve the worktree record once — needed for plan-file creation and the
-    // OpenCode connect below. Newly created worktrees are already in the store.
-    const findWorktree = (): { path: string } | undefined =>
-      Array.from(useWorktreeStore.getState().worktreesByProject.values())
-        .flat()
-        .find((w) => w.id === worktreeId)
-    let worktree = findWorktree()
-    if (!worktree) {
-      // The project's worktrees may not be loaded yet (e.g. auto-launch firing
-      // from a store subscription shortly after startup)
-      await useWorktreeStore.getState().loadWorktrees(ticket.project_id)
-      worktree = findWorktree()
-    }
-
-    // Oversized goal prompts get rejected by the CLI — persist the full ticket
-    // prompt as PLAN_{uuid}.md in the worktree root and send a short
-    // "Implement PLAN_{uuid}.md" goal prompt instead (the /goal wrapper stays).
-    if (configGoalMode && configGoalSuccessCriteria && worktree?.path) {
-      const composed = composeAutoLaunchPrompt(
-        config,
-        config.sdk,
-        configGoalMode,
-        configGoalSuccessCriteria,
-        { claudeCli: config.sdk === 'claude-code-cli' }
-      )
-      if (exceedsGoalPromptLimit(composed)) {
-        const fileName = await createPlanFile(worktree.path, config.prompt.trim())
-        config = { ...config, prompt: planFilePrompt(fileName) }
-      }
-    }
-
-    // 2. Create session
-    const modelOverride = config.model ? { ...config.model, agentSdk: config.sdk } : undefined
-    const cliPendingPrompt =
-      config.sdk === 'claude-code-cli'
-        ? composeAutoLaunchPrompt(config, config.sdk, configGoalMode, configGoalSuccessCriteria, {
-            claudeCli: true
-          })
-        : null
-    const createOptions = {
-      autoFocus: false,
-      ...(modelOverride ? { modelOverride } : {}),
-      ...(cliPendingPrompt ? { pendingMessage: cliPendingPrompt } : {})
-    }
-    const sessionResult = await useSessionStore
-      .getState()
-      .createSession(worktreeId, ticket.project_id, config.sdk, config.mode, createOptions)
-    if (!sessionResult.success || !sessionResult.session) {
-      toast.error(`Auto-launch failed: ${sessionResult.error || 'Could not create session'}`)
-      return
-    }
-
-    const sessionId = sessionResult.session.id
-    const sessionAgentSdk = sessionResult.session.agent_sdk
-
-    // 3. Set status tracking
-    messageSendTimes.set(sessionId, Date.now())
-    userExplicitSendTimes.set(sessionId, Date.now())
-    snapshotTokenBaseline(sessionId)
-    lastSendMode.set(sessionId, isPlanLike(config.mode) ? 'plan' : 'build')
-    useWorktreeStatusStore
-      .getState()
-      .setSessionStatus(sessionId, isPlanLike(config.mode) ? 'planning' : 'working')
-
-    // 4. Apply model override
-    const effectiveModel = config.model ?? undefined
-    if (config.model) {
-      await useSessionStore.getState().setSessionModel(sessionId, config.model)
-    }
-
-    // 5. Update ticket: clear pending config, set session + worktree
-    await useKanbanStore.getState().updateTicket(ticket.id, ticket.project_id, {
-      pending_launch_config: null,
-      current_session_id: sessionId,
-      worktree_id: worktreeId,
+  // Multiple models + a brand-new worktree: one worktree + duplicated ticket
+  // per model, all launched by the background orchestrator. An EXISTING
+  // worktree can only host one session, so multi-entry + existing worktree
+  // keeps the single-path entries[0] behavior below.
+  if (entries.length > 1 && config.worktree.type === 'new') {
+    await runMultiModelLaunch({
+      ticket: { id: ticket.id, title: ticket.title },
+      projectId: ticket.project_id,
+      prompt: config.prompt,
       mode: config.mode,
-      goal_mode: configGoalMode,
-      goal_success_criteria: configGoalMode ? configGoalSuccessCriteria : null
+      sourceBranch: config.worktree.sourceBranch,
+      goalMode: configGoalMode,
+      goalSuccessCriteria: configGoalSuccessCriteria,
+      entries
     })
-
-    // 6. Trigger usage refresh
-    useUsageStore.getState().fetchUsageForProvider(resolveDefaultUsageProvider(config.sdk))
-
-    // 7. Toast notification
-    toast.success(`Auto-launched: ${ticket.title}`)
-
-    if (sessionAgentSdk === 'claude-code-cli') {
-      const outboundPrompt =
-        cliPendingPrompt ??
-        composeAutoLaunchPrompt(
-          config,
-          sessionAgentSdk,
-          configGoalMode,
-          configGoalSuccessCriteria,
-          {
-            claudeCli: true
-          }
-        )
-
-      if (config.mode === 'super-plan') {
-        // Await so the persisted mode is committed before the main process
-        // reads it in buildClaudeCliPtySpawn (createClaudeCli).
-        await useSessionStore.getState().setSessionMode(sessionId, 'plan')
-      }
-
-      bumpWorktreeLastMessage({ worktreeId })
-      const result = unwrapEnvelope(
-        await terminalApi.createClaudeCli(sessionId, {
-          pendingPrompt: outboundPrompt
-        })
-      )
-      if (result.success && outboundPrompt) {
-        useSessionStore.getState().dequeuePendingMessage(sessionId)
-      }
-      return
-    }
-
-    // 8. Connect to OpenCode and send prompt
-    if (!worktree?.path) return
-
-    const connectResult = unwrapEnvelope(await opencodeApi.connect(worktree.path, sessionId))
-    if (!connectResult.success || !connectResult.sessionId) {
-      toast.error(`Auto-launch failed: ${connectResult.error || 'Could not start session'}`)
-      return
-    }
-
-    useSessionStore.getState().setOpenCodeSessionId(sessionId, connectResult.sessionId)
-    await dbApi.session.update(sessionId, { opencode_session_id: connectResult.sessionId })
-
-    // 9. Send prompt
-    if (config.prompt.trim()) {
-      const outboundPrompt = composeAutoLaunchPrompt(
-        config,
-        sessionAgentSdk,
-        configGoalMode,
-        configGoalSuccessCriteria,
-        { claudeCli: false }
-      )
-      if (!outboundPrompt) return
-
-      const promptOptions =
-        sessionAgentSdk === 'codex' ? { codexFastMode: config.codexFastMode } : undefined
-
-      if (config.mode === 'super-plan') {
-        useSessionStore.getState().setSessionMode(sessionId, 'plan')
-      }
-
-      bumpWorktreeLastMessage({ worktreeId })
-      startHivePromptTelemetry({
-        sessionId,
-        prompt: outboundPrompt,
-        worktreeId,
-        modelId: effectiveModel?.modelID,
-        providerId: effectiveModel?.providerID,
-        modelVariant: effectiveModel?.variant,
-        mode: config.mode,
-        // Auto-launch is not an interactive send from a tab.
-        source: 'other'
-      })
-      unwrapEnvelope(
-        await opencodeApi.prompt(
-          worktree.path,
-          connectResult.sessionId,
-          [{ type: 'text', text: outboundPrompt }],
-          // Strip `agentSdk` — the prompt RPC model schema is .strict() and
-          // rejects it ("RPC parameters failed validation").
-          effectiveModel
-            ? {
-                providerID: effectiveModel.providerID,
-                modelID: effectiveModel.modelID,
-                variant: effectiveModel.variant
-              }
-            : undefined,
-          promptOptions
-        )
-      )
-    }
-  } catch (err) {
-    console.error('Auto-launch failed for ticket:', ticket.id, err)
-    const detail = err instanceof Error ? err.message : null
-    toast.error(`Auto-launch failed for: ${ticket.title}${detail ? ` — ${detail}` : ''}`)
+    return
   }
+
+  const result = await launchTicketWithModel({
+    ticketId: ticket.id,
+    projectId: ticket.project_id,
+    ticketTitle: ticket.title,
+    worktree: config.worktree,
+    prompt: config.prompt,
+    mode: config.mode,
+    modelConfig: entries[0],
+    goalMode: configGoalMode,
+    goalSuccessCriteria: configGoalSuccessCriteria,
+    ticketUpdateExtras: { pending_launch_config: null }
+  })
+
+  if (result.success) {
+    toast.success(`Auto-launched: ${ticket.title}`)
+    return
+  }
+
+  // launchTicketWithModel funnels every failure (worktree/session/connect and
+  // any thrown error) into a single result, so the two historical failure
+  // toasts collapse to one. Keep the console.error for diagnostics.
+  console.error('Auto-launch failed for ticket:', ticket.id, result.error)
+  toast.error(`Auto-launch failed: ${result.error || 'Could not launch session'}`)
 }
