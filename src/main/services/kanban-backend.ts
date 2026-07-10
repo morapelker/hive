@@ -120,6 +120,10 @@ interface MarkdownRuntimeState {
   auto_approve_plan: boolean
   total_tokens: number
   pending_launch_config: string | null
+  model_provider_id: string | null
+  model_id: string | null
+  model_variant: string | null
+  variant_group_id: string | null
   updated_at: string | null
 }
 
@@ -145,6 +149,10 @@ function emptyRuntimeState(): MarkdownRuntimeState {
     auto_approve_plan: false,
     total_tokens: 0,
     pending_launch_config: null,
+    model_provider_id: null,
+    model_id: null,
+    model_variant: null,
+    variant_group_id: null,
     updated_at: null
   }
 }
@@ -526,7 +534,12 @@ class MarkdownKanbanBackend implements KanbanBackend {
         attachments: data.attachments ?? [],
         current_session_id: data.current_session_id ?? null,
         worktree_id: data.worktree_id ?? null,
-        plan_ready: data.plan_ready ?? false
+        plan_ready: data.plan_ready ?? false,
+        note: data.note ?? null,
+        model_provider_id: data.model_provider_id ?? null,
+        model_id: data.model_id ?? null,
+        model_variant: data.model_variant ?? null,
+        variant_group_id: data.variant_group_id ?? null
       },
       false
     )
@@ -697,6 +710,12 @@ class MarkdownKanbanBackend implements KanbanBackend {
     if (data.pending_launch_config !== undefined)
       runtimeUpdates.pending_launch_config = data.pending_launch_config
     if (data.note !== undefined) runtimeUpdates.note = data.note
+    if (data.model_provider_id !== undefined)
+      runtimeUpdates.model_provider_id = data.model_provider_id
+    if (data.model_id !== undefined) runtimeUpdates.model_id = data.model_id
+    if (data.model_variant !== undefined) runtimeUpdates.model_variant = data.model_variant
+    if (data.variant_group_id !== undefined)
+      runtimeUpdates.variant_group_id = data.variant_group_id
 
     if (Object.keys(publicUpdates).length > 0 || body !== undefined) {
       let touchedPaths: string[]
@@ -1485,7 +1504,11 @@ class MarkdownKanbanBackend implements KanbanBackend {
       goal_mode: asBoolean(frontmatter.goal_mode) ?? false,
       goal_success_criteria: nullableString(frontmatter.goal_success_criteria),
       note: runtime.note,
-      auto_approve_plan: runtime.auto_approve_plan
+      auto_approve_plan: runtime.auto_approve_plan,
+      model_provider_id: runtime.model_provider_id,
+      model_id: runtime.model_id,
+      model_variant: runtime.model_variant,
+      variant_group_id: runtime.variant_group_id
     }
 
     return { ticket, filePath, frontmatter }
@@ -1503,6 +1526,10 @@ class MarkdownKanbanBackend implements KanbanBackend {
       total_tokens: runtime.total_tokens,
       pending_launch_config: runtime.pending_launch_config,
       note: runtime.note,
+      model_provider_id: runtime.model_provider_id,
+      model_id: runtime.model_id,
+      model_variant: runtime.model_variant,
+      variant_group_id: runtime.variant_group_id,
       updated_at: laterIso(card.ticket.updated_at, runtime.updated_at ?? card.ticket.created_at)
     }
     this.markRuntimeSeen(projectId, card.ticket.id, card.filePath)
@@ -1599,6 +1626,10 @@ class MarkdownKanbanBackend implements KanbanBackend {
           auto_approve_plan: number
           total_tokens: number
           pending_launch_config: string | null
+          model_provider_id: string | null
+          model_id: string | null
+          model_variant: string | null
+          variant_group_id: string | null
           updated_at: string | null
         }
       | undefined
@@ -1614,6 +1645,10 @@ class MarkdownKanbanBackend implements KanbanBackend {
       auto_approve_plan: row.auto_approve_plan === 1,
       total_tokens: row.total_tokens ?? 0,
       pending_launch_config: row.pending_launch_config,
+      model_provider_id: row.model_provider_id,
+      model_id: row.model_id,
+      model_variant: row.model_variant,
+      variant_group_id: row.variant_group_id,
       updated_at: row.updated_at
     }
   }
@@ -1666,6 +1701,22 @@ class MarkdownKanbanBackend implements KanbanBackend {
     if (data.pending_launch_config !== undefined) {
       updates.push('pending_launch_config = ?')
       values.push(data.pending_launch_config)
+    }
+    if (data.model_provider_id !== undefined) {
+      updates.push('model_provider_id = ?')
+      values.push(data.model_provider_id)
+    }
+    if (data.model_id !== undefined) {
+      updates.push('model_id = ?')
+      values.push(data.model_id)
+    }
+    if (data.model_variant !== undefined) {
+      updates.push('model_variant = ?')
+      values.push(data.model_variant)
+    }
+    if (data.variant_group_id !== undefined) {
+      updates.push('variant_group_id = ?')
+      values.push(data.variant_group_id)
     }
     if (!preserveUpdatedAt) {
       updates.push('updated_at = ?')
