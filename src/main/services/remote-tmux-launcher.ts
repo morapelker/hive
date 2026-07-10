@@ -43,20 +43,42 @@ export function shq(value: string): string {
 }
 
 /**
- * Entries of `spawnEnv` that are new or different vs. the current
- * `process.env`. A tmux session created against an already-running tmux
- * server inherits that server's environment, not this process's — so only
- * the vars the spawn actually adds/overrides need an explicit `export` line
- * in the launch script; everything else is already correct via inheritance.
+ * Env vars owned by the tmux pane / login shell, never exported into the
+ * launch script: a tmux session created against an already-running server
+ * inherits THAT server's values for these, and overriding them from Hive's
+ * process (a GUI app) would break TUI size/term detection inside the pane.
  */
-function diffEnvFromProcess(spawnEnv: Record<string, string>): Record<string, string> {
-  const diff: Record<string, string> = {}
-  for (const [key, value] of Object.entries(spawnEnv)) {
-    if (process.env[key] !== value) {
-      diff[key] = value
-    }
+const TMUX_PANE_OWNED_ENV = new Set([
+  'TERM',
+  'TMUX',
+  'TMUX_PANE',
+  'COLUMNS',
+  'LINES',
+  'PWD',
+  'OLDPWD',
+  'SHLVL',
+  '_'
+])
+
+/**
+ * The full environment the launched claude process needs, written as explicit
+ * `export` lines. A tmux session inherits the tmux SERVER's environment —
+ * which matches Hive's `process.env` only when Hive started that server. A
+ * pre-existing server (user ran `tmux` earlier, different shell state) can
+ * be missing or hold stale auth vars, so everything except pane-owned vars
+ * is exported explicitly, mirroring the local PTY spawn's
+ * `{ ...process.env, ...spawn.env }` merge.
+ */
+function buildLaunchEnv(spawnEnv: Record<string, string>): Record<string, string> {
+  const merged: Record<string, string> = {}
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined) merged[key] = value
   }
-  return diff
+  Object.assign(merged, spawnEnv)
+  for (const key of TMUX_PANE_OWNED_ENV) {
+    delete merged[key]
+  }
+  return merged
 }
 
 /**
@@ -207,7 +229,7 @@ export async function launchClaudeCliInTmux(
       cwd: spawn.cwd,
       command: spawn.command,
       args,
-      env: diffEnvFromProcess(spawn.env),
+      env: buildLaunchEnv(spawn.env),
       promptFilePath
     })
     await writeSecretFile(scriptPath, script)

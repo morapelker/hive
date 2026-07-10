@@ -161,6 +161,38 @@ const MODE_DIALOG_CLASS: Record<ModalMode, string> = {
 // TicketAttachment is now imported from TicketAttachmentEditor
 type TicketAttachment = import('./TicketAttachmentEditor').TicketAttachment
 
+/**
+ * Shown in place of ClaudeCliPortalSlot for remote-launched sessions: the
+ * claude process runs inside a tmux session on the remote host, and mounting
+ * the local portal would queue a local claude-cli terminal whose creation
+ * fails (remote client sessions intentionally have no worktree/connection).
+ */
+function RemoteSessionPanel({ onOpenTerminal }: { onOpenTerminal: () => void }): React.JSX.Element {
+  return (
+    <div
+      data-testid="ticket-modal-remote-placeholder"
+      className="flex flex-1 items-center justify-center"
+    >
+      <div className="flex flex-col items-center gap-3 px-6 text-center">
+        <RadioTower className="h-6 w-6 text-muted-foreground" />
+        <p className="text-sm text-muted-foreground">
+          This session is running on a remote machine.
+        </p>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          data-testid="ticket-modal-remote-placeholder-open"
+          onClick={onOpenTerminal}
+        >
+          <RadioTower className="h-3.5 w-3.5 mr-1" />
+          Open remote terminal
+        </Button>
+      </div>
+    </div>
+  )
+}
+
 function ClaudeCliPortalSlot({ sessionId }: { sessionId: string }): React.JSX.Element {
   const { registerTarget } = useClaudeCliSessionPortal()
   const requestSessionMount = useSessionStore((s) => s.requestSessionMount)
@@ -1231,7 +1263,11 @@ function KanbanTicketModalContent({
                   />
                 </div>
               </div>
-              <ClaudeCliPortalSlot sessionId={ticket.current_session_id} />
+              {remoteLaunchInfo ? (
+                <RemoteSessionPanel onOpenTerminal={() => setRemoteTerminalOpen(true)} />
+              ) : (
+                <ClaudeCliPortalSlot sessionId={ticket.current_session_id} />
+              )}
             </div>
           ) : hasSession && sessionReady ? (
             <SessionStreamPanel
@@ -1294,7 +1330,11 @@ function KanbanTicketModalContent({
           {/* Right: session stream (or loading spinner while DB lookup resolves) */}
           {isClaudeCli && ticket.current_session_id ? (
             <div className="flex flex-col h-full bg-background flex-1 min-w-0 border-l border-border/60">
-              <ClaudeCliPortalSlot sessionId={ticket.current_session_id} />
+              {remoteLaunchInfo ? (
+                <RemoteSessionPanel onOpenTerminal={() => setRemoteTerminalOpen(true)} />
+              ) : (
+                <ClaudeCliPortalSlot sessionId={ticket.current_session_id} />
+              )}
             </div>
           ) : hasSession && sessionReady ? (
             <SessionStreamPanel
