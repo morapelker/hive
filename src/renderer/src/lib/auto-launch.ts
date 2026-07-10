@@ -2,6 +2,7 @@ import { useProjectStore } from '@/stores/useProjectStore'
 import { toast } from '@/lib/toast'
 import { autoPinBaseWorktree } from '@/lib/auto-pin'
 import { launchTicketWithModel, type LaunchModelConfig } from '@/lib/ticket-launch'
+import { runMultiModelLaunch } from '@/lib/multi-model-launch'
 import type { HandoffAgentSdk } from '@shared/types/agent-sdk'
 
 type AutoLaunchMode = 'build' | 'plan' | 'super-plan'
@@ -67,10 +68,25 @@ export async function autoLaunchTicket(ticket: AutoLaunchTicket): Promise<void> 
 
   const entries = resolveModelEntries(config)
 
-  // TODO(task 5): route to runMultiModelLaunch when
-  // `entries.length > 1 && config.worktree.type === 'new'` — one worktree +
-  // duplicated ticket per model. Until then, launch only entries[0] so existing
-  // single-model behavior is unchanged.
+  // Multiple models + a brand-new worktree: one worktree + duplicated ticket
+  // per model, all launched by the background orchestrator. An EXISTING
+  // worktree can only host one session, so multi-entry + existing worktree
+  // keeps the single-path entries[0] behavior below.
+  if (entries.length > 1 && config.worktree.type === 'new') {
+    await runMultiModelLaunch({
+      ticket: { id: ticket.id, title: ticket.title },
+      projectId: ticket.project_id,
+      prompt: config.prompt,
+      mode: config.mode,
+      sourceBranch: config.worktree.sourceBranch,
+      goalMode: configGoalMode,
+      goalSuccessCriteria: configGoalSuccessCriteria,
+      entries,
+      clearPendingConfig: true
+    })
+    return
+  }
+
   const result = await launchTicketWithModel({
     ticketId: ticket.id,
     projectId: ticket.project_id,
