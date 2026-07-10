@@ -1904,6 +1904,12 @@ export async function moveKanbanTicketToProject(
         goal_mode: sourceTicket.goal_mode,
         goal_success_criteria: sourceTicket.goal_success_criteria,
         note: sourceTicket.note,
+        // Badge/group metadata survives internal→internal moves untouched —
+        // keep the cross-backend recreate path consistent.
+        model_provider_id: sourceTicket.model_provider_id,
+        model_id: sourceTicket.model_id,
+        model_variant: sourceTicket.model_variant,
+        variant_group_id: sourceTicket.variant_group_id,
         pending_launch_config: null
       })) ?? created
 

@@ -847,7 +847,15 @@ export function WorktreePickerModal({
           sort_order: sortOrder,
           mode,
           goal_mode: goalMode,
-          goal_success_criteria: goalMode ? goalCriteria.trim() : null
+          goal_success_criteria: goalMode ? goalCriteria.trim() : null,
+          // Badge fields mean "what launched" — a queued-not-yet-launched
+          // ticket must have none (backward-drag doesn't clear them, so a
+          // relaunch-requeue would show the PREVIOUS launch's badge until
+          // auto-launch overwrites). Auto-launch stamps them at launch time.
+          model_provider_id: null,
+          model_id: null,
+          model_variant: null,
+          variant_group_id: null
         })
 
         onSendComplete?.()

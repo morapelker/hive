@@ -498,6 +498,37 @@ describe('WorktreePickerModal multi-model UI', () => {
     expect(parsed.models[1].model).toEqual(FALLBACK_MODELS.codex)
   })
 
+  it('clears stale badge/group fields in saveConfigOnly mode — badge means "what launched", so a queued-not-yet-launched ticket must have none (round 3)', async () => {
+    const { updateTicket } = setupStores()
+    // The ticket carries badge fields from a PREVIOUS launch (backward-drag
+    // doesn't clear them). Save & Queue must null them — auto-launch stamps
+    // the fresh ones at launch time.
+    const staleTicket: KanbanTicket = {
+      ...baseTicket,
+      model_provider_id: 'anthropic',
+      model_id: 'stale-model',
+      model_variant: 'high',
+      variant_group_id: 'stale-group'
+    }
+    useKanbanStore.setState({ tickets: new Map([['project-1', [staleTicket]]]) })
+    await renderModal({ saveConfigOnly: true, ticket: staleTicket })
+
+    await userEvent.click(screen.getByTestId('wt-picker-send-btn'))
+
+    await waitFor(() => expect(updateTicket).toHaveBeenCalledTimes(1))
+    const update = updateTicket.mock.calls[0][2] as Record<string, unknown>
+    expect(update).toEqual(
+      expect.objectContaining({
+        model_provider_id: null,
+        model_id: null,
+        model_variant: null,
+        variant_group_id: null
+      })
+    )
+    // The queued config itself is still written.
+    expect(typeof update.pending_launch_config).toBe('string')
+  })
+
   it('stamps model badge fields on the single-model launch update', async () => {
     const { updateTicket } = setupStores()
     await renderModal()
