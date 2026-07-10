@@ -61,6 +61,24 @@ function tokenizeLine(line: string): string[] | null {
   return tokens
 }
 
+/** Last path segment, fs-free (this module must stay renderer-importable). */
+function pathBasename(p: string): string {
+  const segments = p.split('/').filter((segment) => segment.length > 0)
+  return segments[segments.length - 1] ?? ''
+}
+
+/**
+ * `cp`'s directory-destination forms (`cp /abs/.env .`, `cp /abs/.env conf/`)
+ * mean "copy into, keeping the source basename" — but the remote apply step
+ * writes file bytes to the literal dest path, so resolve those forms to an
+ * explicit file path here.
+ */
+function normalizeTransferDest(dest: string, sourcePath: string): string {
+  if (dest === '.' || dest === './') return pathBasename(sourcePath)
+  if (dest.endsWith('/')) return dest + pathBasename(sourcePath)
+  return dest
+}
+
 function classifyCpLine(line: string, operands: string[]): SetupPlanEntry {
   const flag = operands.find((token) => token.startsWith('-'))
   if (flag) {
@@ -85,7 +103,7 @@ function classifyCpLine(line: string, operands: string[]): SetupPlanEntry {
     if (dest.startsWith('/') || dest.startsWith('~')) {
       return { kind: 'error', line, reason: 'destination must be relative to the worktree' }
     }
-    return { kind: 'transfer-candidate', sourcePath, dest, line }
+    return { kind: 'transfer-candidate', sourcePath, dest: normalizeTransferDest(dest, sourcePath), line }
   }
 
   if (sourcePath.startsWith('~')) {

@@ -7,10 +7,12 @@ interface SessionRemoteLaunchRow {
 }
 
 interface RemoteLaunchStoreState {
-  /** null = checked, not a remote (client-role) launch. */
+  /** null = checked, not an ACTIVE remote (client-role) launch. */
   remoteBySessionId: Record<string, RemoteLaunchClientInfo | null>
   ensureLoaded: (sessionId: string) => Promise<void>
   setRemoteInfo: (sessionId: string, info: RemoteLaunchClientInfo) => void
+  /** Mark a session as no longer remote (e.g. right after a successful stop). */
+  clearRemoteInfo: (sessionId: string) => void
 }
 
 // Module-scoped so concurrent ensureLoaded() calls for the same sessionId
@@ -28,16 +30,23 @@ export const useRemoteLaunchStore = create<RemoteLaunchStoreState>()((set, get) 
     if (existing) return existing
 
     const load = (async () => {
+      let clientInfo: RemoteLaunchClientInfo | null = null
       try {
         const session = await dbApi.session.get<SessionRemoteLaunchRow>(sessionId)
         const info = parseRemoteLaunch(session?.remote_launch)
-        const clientInfo = info?.role === 'client' ? info : null
-        set((state) => ({
-          remoteBySessionId: { ...state.remoteBySessionId, [sessionId]: clientInfo }
-        }))
+        // A stopped launch renders like a non-remote session: no badge/actions.
+        clientInfo = info?.role === 'client' && !info.stoppedAt ? info : null
+      } catch {
+        // Treat a failed fetch as "checked, not remote" — leaving the key
+        // absent would strand consumers in a loading state forever, since
+        // useTicketRemoteLaunch only re-fires ensureLoaded on sessionId
+        // change and ensureLoaded never retries a cached key.
       } finally {
         inFlightLoads.delete(sessionId)
       }
+      set((state) => ({
+        remoteBySessionId: { ...state.remoteBySessionId, [sessionId]: clientInfo }
+      }))
     })()
 
     inFlightLoads.set(sessionId, load)
@@ -47,5 +56,10 @@ export const useRemoteLaunchStore = create<RemoteLaunchStoreState>()((set, get) 
   setRemoteInfo: (sessionId, info) =>
     set((state) => ({
       remoteBySessionId: { ...state.remoteBySessionId, [sessionId]: info }
+    })),
+
+  clearRemoteInfo: (sessionId) =>
+    set((state) => ({
+      remoteBySessionId: { ...state.remoteBySessionId, [sessionId]: null }
     }))
 }))

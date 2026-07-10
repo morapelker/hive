@@ -30,10 +30,24 @@ describe('parseSetupScriptPlan', () => {
     ])
   })
 
-  it('classifies "cp /abs/file ." as a transfer-candidate with dest "."', () => {
+  it('classifies "cp /abs/file ." as a transfer-candidate, normalizing dest to the source basename', () => {
     const line = 'cp /abs/file .'
     expect(parseSetupScriptPlan(line).entries).toEqual([
-      { kind: 'transfer-candidate', sourcePath: '/abs/file', dest: '.', line }
+      { kind: 'transfer-candidate', sourcePath: '/abs/file', dest: 'file', line }
+    ])
+  })
+
+  it('normalizes a trailing-slash dest to include the source basename', () => {
+    const line = 'cp /abs/.env config/'
+    expect(parseSetupScriptPlan(line).entries).toEqual([
+      { kind: 'transfer-candidate', sourcePath: '/abs/.env', dest: 'config/.env', line }
+    ])
+  })
+
+  it('normalizes a "./" dest to the source basename', () => {
+    const line = 'cp /abs/.env ./'
+    expect(parseSetupScriptPlan(line).entries).toEqual([
+      { kind: 'transfer-candidate', sourcePath: '/abs/.env', dest: '.env', line }
     ])
   })
 
@@ -47,7 +61,7 @@ describe('parseSetupScriptPlan', () => {
   it('handles quoted paths with spaces', () => {
     const line = 'cp "/a b/c.env" .'
     expect(parseSetupScriptPlan(line).entries).toEqual([
-      { kind: 'transfer-candidate', sourcePath: '/a b/c.env', dest: '.', line }
+      { kind: 'transfer-candidate', sourcePath: '/a b/c.env', dest: 'c.env', line }
     ])
   })
 

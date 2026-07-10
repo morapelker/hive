@@ -63,9 +63,12 @@ function diffEnvFromProcess(spawnEnv: Record<string, string>): Record<string, st
  * Render a `sh` script that cd's into the worktree, exports the env deltas,
  * and execs the claude binary with its args plus the prompt file's contents
  * as the final argument. Every interpolated value is shq'd; the prompt
- * content itself never appears — only the path to the file holding it, read
- * at exec time via `$(cat ...)` so it is never captured in this script, tmux
- * history, or `ps`.
+ * content never appears in the persisted script or tmux history — only the
+ * path to the 0600 file holding it, expanded at exec time via `$(cat ...)`.
+ * The expanded prompt does end up in the claude process's argv (visible in
+ * `ps` on the remote host, like every local launch — see the pendingPrompt
+ * argv push in claude-cli-spawner.ts); interactive claude has no stdin/file
+ * prompt handoff, so argv is the only delivery for the initial prompt.
  */
 export function buildTmuxLaunchScript(opts: {
   cwd: string
@@ -146,8 +149,9 @@ function runTmuxNewSession(
  * Assemble the claude-cli invocation for a remote-launched session (same
  * spawn/hook machinery as the local `createClaudeCliTerminal` path) and start
  * it inside a detached tmux session, so it survives Hive restarts and is
- * attachable. The prompt is delivered via a file read at exec time, never as
- * argv or an env var, so it never appears in `ps` or shell history.
+ * attachable. The prompt is delivered via a 0600 file expanded at exec time,
+ * keeping it out of the persisted script and tmux history (though, as with
+ * local launches, it is claude's final argv token — see buildTmuxLaunchScript).
  */
 export async function launchClaudeCliInTmux(
   params: RemoteTmuxLaunchParams

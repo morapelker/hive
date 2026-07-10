@@ -39,6 +39,18 @@ describe('useRemoteLaunchStore', () => {
         if (id === 'session-garbage') {
           return { id, remote_launch: 'not-json' }
         }
+        if (id === 'session-stopped') {
+          return {
+            id,
+            remote_launch: JSON.stringify({
+              ...clientInfo,
+              stoppedAt: '2026-07-10T00:00:00.000Z'
+            })
+          }
+        }
+        if (id === 'session-fetch-fails') {
+          throw new Error('rpc unavailable')
+        }
         return { id, remote_launch: null }
       }
       return null
@@ -104,5 +116,29 @@ describe('useRemoteLaunchStore', () => {
       clientInfo
     )
     expect(request).not.toHaveBeenCalled()
+  })
+
+  it('caches null for a stopped client-role session', async () => {
+    await useRemoteLaunchStore.getState().ensureLoaded('session-stopped')
+
+    expect(useRemoteLaunchStore.getState().remoteBySessionId['session-stopped']).toBeNull()
+  })
+
+  it('caches null (resolved, not stuck loading) when the session fetch rejects', async () => {
+    await useRemoteLaunchStore.getState().ensureLoaded('session-fetch-fails')
+
+    expect(
+      useRemoteLaunchStore.getState().remoteBySessionId['session-fetch-fails']
+    ).toBeNull()
+    expect('session-fetch-fails' in useRemoteLaunchStore.getState().remoteBySessionId).toBe(
+      true
+    )
+  })
+
+  it('clearRemoteInfo marks a session as no longer remote', () => {
+    useRemoteLaunchStore.getState().setRemoteInfo('session-fresh', clientInfo)
+    useRemoteLaunchStore.getState().clearRemoteInfo('session-fresh')
+
+    expect(useRemoteLaunchStore.getState().remoteBySessionId['session-fresh']).toBeNull()
   })
 })

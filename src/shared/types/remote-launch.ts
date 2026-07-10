@@ -49,6 +49,12 @@ export interface RemoteLaunchClientInfo {
    * launch and reuse the local session instead of creating a duplicate.
    */
   launchId?: string
+  /**
+   * Stamped by `remoteLaunchOps.stop` once the remote tmux session was killed
+   * (or found already dead). A stopped launch no longer renders the remote
+   * badge/actions — `useRemoteLaunchStore` maps it to null.
+   */
+  stoppedAt?: string
 }
 
 /** Stored (JSON.stringified) in the REMOTE session row's `remote_launch` column. */
@@ -198,6 +204,14 @@ export interface RemoteLaunchKillTmuxParams {
 
 export interface RemoteLaunchAttachParams {
   remoteSessionId: string
+  /**
+   * Client-generated PTY id (must match `remote-attach-...`). Supplying it
+   * lets the client subscribe to `terminal:data:<id>` before the attach RPC
+   * creates the PTY, so the initial tmux screen dump isn't published before
+   * the subscription exists (the event bus does not replay). The server
+   * generates one when absent.
+   */
+  terminalId?: string
   cols?: number
   rows?: number
 }

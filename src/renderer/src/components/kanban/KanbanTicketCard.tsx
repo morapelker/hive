@@ -45,6 +45,7 @@ import { cn, parseColorQuad } from '@/lib/utils'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { opencodeApi } from '@/api/opencode-api'
 import { remoteLaunchApi } from '@/api/remote-launch-api'
+import { useRemoteLaunchStore } from '@/stores/useRemoteLaunchStore'
 import { systemApi } from '@/api/system-api'
 import { ProviderIcon, getProviderLabel } from '@/components/ui/provider-icon'
 import { toast } from '@/lib/toast'
@@ -720,10 +721,11 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     if (!sessionId) return
     try {
       const result = await remoteLaunchApi.stop({ sessionId })
-      if (result.killed) {
-        toast.success('Remote session stopped')
-      } else if (result.alreadyDead) {
-        toast.success('Remote session was already stopped')
+      if (result.killed || result.alreadyDead) {
+        useRemoteLaunchStore.getState().clearRemoteInfo(sessionId)
+        toast.success(
+          result.killed ? 'Remote session stopped' : 'Remote session was already stopped'
+        )
       }
     } catch (err) {
       toast.error(

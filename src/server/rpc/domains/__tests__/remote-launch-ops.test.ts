@@ -468,7 +468,15 @@ describe('remoteLaunchOps.start', () => {
 
     const result = await Effect.runPromise(service.start(startParams))
 
-    expect(result).toEqual({ success: false, step: 'launch', error: 'local db write failed' })
+    expect(result).toEqual({
+      success: false,
+      step: 'launch',
+      error:
+        'Remote session "hive-feature-x" is running, but recording it locally failed: local db write failed. Retry to relink it.',
+      tmuxSession: 'hive-feature-x'
+    })
+    // No `launch:error` after `launch:done` — the remote launch genuinely
+    // succeeded, so the progress stream must not repaint the green step.
     const events = stepEvents(publishProgress)
     expect(events.map(([, e]) => `${e.step}:${e.status}`)).toEqual([
       'connect:running',
@@ -484,8 +492,7 @@ describe('remoteLaunchOps.start', () => {
       'setup-script:running',
       'setup-script:done',
       'launch:running',
-      'launch:done',
-      'launch:error'
+      'launch:done'
     ])
   })
 
@@ -618,7 +625,16 @@ describe('remoteLaunchOps.prepare', () => {
   it('returns a reused result when findSessionByRemoteLaunchId hits, without calling ensureRemoteProject', async () => {
     const ensureRemoteProject = vi.fn(async () => project())
     const existingWorktree = worktree({ id: 'remote-worktree-9', path: '/remote/repo-existing' })
-    const existingSession = session({ id: 'remote-session-9', worktree_id: 'remote-worktree-9' })
+    const existingSession = session({
+      id: 'remote-session-9',
+      worktree_id: 'remote-worktree-9',
+      remote_launch: JSON.stringify({
+        role: 'host',
+        launchId: 'launch-1',
+        tmuxSession: null,
+        promptFile: null
+      })
+    })
     const deps = baseDeps({
       ensureRemoteProject,
       db: {
@@ -649,6 +665,50 @@ describe('remoteLaunchOps.prepare', () => {
       reused: true
     })
     expect(ensureRemoteProject).not.toHaveBeenCalled()
+  })
+
+  it('does not reuse a client-role session with the same launchId (host/client sharing a DB)', async () => {
+    const clientSession = session({
+      id: 'client-session-1',
+      worktree_id: null,
+      remote_launch: JSON.stringify({
+        role: 'client',
+        launchId: 'launch-1',
+        url: 'https://remote.example.com',
+        remoteSessionId: 'remote-session-9',
+        remoteWorktreeId: 'remote-worktree-9',
+        remoteProjectId: 'remote-project-9',
+        tmuxSession: 'hive-feature-x',
+        branch: 'feature/x',
+        worktreePath: '/remote/repo-wt',
+        launchedAt: now
+      })
+    })
+    const createSession = vi.fn((_data: SessionCreate) =>
+      session({ id: 'remote-session-new', worktree_id: 'remote-worktree-new' })
+    )
+    const deps = baseDeps({
+      db: {
+        ...baseDeps().db,
+        findSessionByRemoteLaunchId: vi.fn(() => clientSession),
+        createSession
+      }
+    })
+    const service = makeRemoteLaunchOpsRpcService(deps)
+
+    const result = await Effect.runPromise(
+      service.prepare({
+        launchId: 'launch-1',
+        gitUrl: 'git@github.com:org/repo.git',
+        projectName: 'repo',
+        branch: 'feature/x',
+        mode: 'build',
+        model: null
+      })
+    )
+
+    expect(result.reused).toBe(false)
+    expect(createSession).toHaveBeenCalled()
   })
 
   it('creates a fresh remote project/worktree/session when not previously launched', async () => {
@@ -776,6 +836,36 @@ describe('remoteLaunchOps.applySetupPlan', () => {
     expect(fs.mkdirp).not.toHaveBeenCalled()
     expect(fs.writeFileBase64).not.toHaveBeenCalled()
   })
+
+  it('fails a write whose destination is an existing directory, without writing', async () => {
+    const fs = {
+      stat: vi.fn(async () => ({ isFile: false, isDirectory: true })),
+      readFileBase64: vi.fn(async () => ''),
+      mkdirp: vi.fn(async () => undefined),
+      writeFileBase64: vi.fn(async () => undefined)
+    }
+    const deps = baseDeps({
+      db: { ...baseDeps().db, getWorktree: vi.fn(() => worktree({ path: '/remote/repo-wt' })) },
+      fs
+    })
+    const service = makeRemoteLaunchOpsRpcService(deps)
+
+    const result = await Effect.runPromise(
+      service.applySetupPlan({
+        launchId: 'launch-1',
+        remoteWorktreeId: 'worktree-1',
+        steps: [{ type: 'write', destRelPath: 'config', contentBase64: 'YQ==' }]
+      })
+    )
+
+    expect(result).toMatchObject({
+      success: false,
+      failedStepIndex: 0,
+      failedKind: 'write',
+      error: expect.stringMatching(/directory/i)
+    })
+    expect(fs.writeFileBase64).not.toHaveBeenCalled()
+  })
 })
 
 describe('remoteLaunchOps.launch', () => {
@@ -803,6 +893,39 @@ describe('remoteLaunchOps.launch', () => {
     )
 
     expect(result).toEqual({ tmuxSession: 'hive-feature-x' })
+    expect(desktopLaunchTmux).not.toHaveBeenCalled()
+  })
+
+  it('caps the session-name suffix search instead of looping forever when every variant is taken', async () => {
+    const desktopLaunchTmux = vi.fn(async () => ({ success: true, tmuxSession: 'unused' }))
+    const hostSession = session({
+      id: 'remote-session-1',
+      worktree_id: 'worktree-1',
+      remote_launch: JSON.stringify({
+        role: 'host',
+        launchId: 'launch-1',
+        tmuxSession: null,
+        promptFile: null
+      })
+    })
+    const hasSession = vi.fn(async () => true)
+    const deps = baseDeps({
+      desktopLaunchTmux,
+      db: {
+        ...baseDeps().db,
+        getSession: vi.fn(() => hostSession),
+        getWorktree: vi.fn(() => worktree({ path: '/remote/repo-wt' }))
+      },
+      tmux: { hasSession, killSession: vi.fn(async () => ({ killed: true, alreadyDead: false })) }
+    })
+    const service = makeRemoteLaunchOpsRpcService(deps)
+
+    await expect(
+      Effect.runPromise(
+        service.launch({ launchId: 'launch-1', remoteSessionId: 'remote-session-1', prompt: 'hi' })
+      )
+    ).rejects.toThrow(/are taken/)
+    expect(hasSession.mock.calls.length).toBeLessThanOrEqual(101)
     expect(desktopLaunchTmux).not.toHaveBeenCalled()
   })
 })
@@ -1009,6 +1132,45 @@ describe('remoteLaunchOps.attachTerminal', () => {
     )
     expect(attachListeners).toHaveBeenCalledWith(result.terminalId)
   })
+
+  it('honors a client-supplied terminalId so the client can subscribe before attaching', async () => {
+    const hostSession = session({
+      id: 'remote-session-1',
+      worktree_id: 'worktree-1',
+      remote_launch: JSON.stringify({
+        role: 'host',
+        launchId: 'launch-1',
+        tmuxSession: 'hive-feature-x',
+        promptFile: null
+      })
+    })
+    const create = vi.fn()
+    const attachListeners = vi.fn()
+    const deps = baseDeps({
+      db: {
+        ...baseDeps().db,
+        getSession: vi.fn(() => hostSession),
+        getWorktree: vi.fn(() => worktree({ path: '/remote/repo-feature-x' }))
+      },
+      tmux: { hasSession: vi.fn(async () => true), killSession: vi.fn(async () => ({ killed: true, alreadyDead: false })) },
+      pty: { create, attachListeners }
+    })
+    const service = makeRemoteLaunchOpsRpcService(deps)
+
+    const result = await Effect.runPromise(
+      service.attachTerminal({
+        remoteSessionId: 'remote-session-1',
+        terminalId: 'remote-attach-remote-session-1-client123'
+      })
+    )
+
+    expect(result.terminalId).toBe('remote-attach-remote-session-1-client123')
+    expect(create).toHaveBeenCalledWith(
+      'remote-attach-remote-session-1-client123',
+      expect.anything()
+    )
+    expect(attachListeners).toHaveBeenCalledWith('remote-attach-remote-session-1-client123')
+  })
 })
 
 describe('remoteLaunchOps.stop', () => {
@@ -1104,5 +1266,88 @@ describe('remoteLaunchOps.stop', () => {
       expect.anything(),
       expect.any(Number)
     )
+  })
+
+  it('stamps stoppedAt into the local session row after a successful kill', async () => {
+    const updateSession = vi.fn()
+    const clientInfo = {
+      role: 'client',
+      url: 'https://remote.example.com',
+      remoteSessionId: 'remote-session-1',
+      remoteWorktreeId: 'remote-worktree-1',
+      remoteProjectId: 'remote-project-1',
+      tmuxSession: 'hive-feature-x',
+      branch: 'feature/x',
+      worktreePath: '/remote/repo-feature-x',
+      launchedAt: now
+    }
+    const deps = baseDeps({
+      db: {
+        ...baseDeps().db,
+        getSession: vi.fn(() => session({ remote_launch: JSON.stringify(clientInfo) })),
+        updateSession
+      },
+      remote: {
+        isConfigured: vi.fn(() => true),
+        getUrl: vi.fn(() => 'https://remote.example.com'),
+        requestAt: vi.fn(async () => ({
+          killed: true,
+          alreadyDead: false
+        })) as unknown as RemoteLaunchOpsDeps['remote']['requestAt'],
+        request: vi.fn(async () => {
+          throw new Error('unstubbed remote.request call')
+        })
+      }
+    })
+    const service = makeRemoteLaunchOpsRpcService(deps)
+
+    await Effect.runPromise(service.stop({ sessionId: 'session-1' }))
+
+    expect(updateSession).toHaveBeenCalledTimes(1)
+    const [sessionId, patch] = updateSession.mock.calls[0]!
+    expect(sessionId).toBe('session-1')
+    const stored = JSON.parse((patch as { remote_launch: string }).remote_launch)
+    expect(stored).toEqual({ ...clientInfo, stoppedAt: expect.any(String) })
+  })
+
+  it('does not stamp stoppedAt when the kill fails outright', async () => {
+    const updateSession = vi.fn()
+    const deps = baseDeps({
+      db: {
+        ...baseDeps().db,
+        getSession: vi.fn(() =>
+          session({
+            remote_launch: JSON.stringify({
+              role: 'client',
+              url: 'https://remote.example.com',
+              remoteSessionId: 'remote-session-1',
+              remoteWorktreeId: 'remote-worktree-1',
+              remoteProjectId: 'remote-project-1',
+              tmuxSession: 'hive-feature-x',
+              branch: 'feature/x',
+              worktreePath: '/remote/repo-feature-x',
+              launchedAt: now
+            })
+          })
+        ),
+        updateSession
+      },
+      remote: {
+        isConfigured: vi.fn(() => true),
+        getUrl: vi.fn(() => 'https://remote.example.com'),
+        requestAt: vi.fn(async () => {
+          throw new Error('remote unreachable')
+        }) as unknown as RemoteLaunchOpsDeps['remote']['requestAt'],
+        request: vi.fn(async () => {
+          throw new Error('unstubbed remote.request call')
+        })
+      }
+    })
+    const service = makeRemoteLaunchOpsRpcService(deps)
+
+    await expect(Effect.runPromise(service.stop({ sessionId: 'session-1' }))).rejects.toThrow(
+      'remote unreachable'
+    )
+    expect(updateSession).not.toHaveBeenCalled()
   })
 })

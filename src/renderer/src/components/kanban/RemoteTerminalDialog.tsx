@@ -219,8 +219,21 @@ export function RemoteTerminalDialog({
     const target = remoteTargetFromUrl(remoteLaunchRef.current.url, teleport.bootstrapToken)
     const client = new HiveClient(target)
 
+    // Client-generated terminal id, subscribed BEFORE the attach RPC: the
+    // remote PTY dumps the current tmux screen as soon as attach creates it,
+    // and the event bus does not replay — subscribing only after the RPC
+    // returned would race that initial dump and open the dialog blank. Both
+    // frames ride the same WS in order (the transport flushes subscriptions
+    // on open, before any queued request), so the subscription is always
+    // registered server-side first.
+    const terminalId = `remote-attach-${remoteLaunchRef.current.remoteSessionId}-${Math.random().toString(36).slice(2)}`
+    const unsubData = client.subscribe(`terminal:data:${terminalId}`, (event: ServerEvent) => {
+      if (typeof event.payload === 'string') termRef.current?.write(event.payload)
+    })
+
     const attachParams: RemoteLaunchAttachParams = {
       remoteSessionId: remoteLaunchRef.current.remoteSessionId,
+      terminalId,
       ...(dims ? { cols: dims.cols, rows: dims.rows } : {})
     }
 
@@ -231,6 +244,7 @@ export function RemoteTerminalDialog({
         attachParams
       )
     } catch (err) {
+      unsubData()
       client.close()
       if (myEpoch !== epochRef.current) return
       const message = err instanceof Error ? err.message : String(err)
@@ -248,6 +262,7 @@ export function RemoteTerminalDialog({
       // Superseded while attaching (dialog closed/reopened, or another
       // connect() started) — detach quietly instead of leaking the PTY/WS.
       // Close AFTER the destroy frame is sent (see closeAfterDestroy).
+      unsubData()
       closeAfterDestroy(client, result.terminalId)
       return
     }
@@ -255,12 +270,7 @@ export function RemoteTerminalDialog({
     clientRef.current = client
     terminalIdRef.current = result.terminalId
 
-    unsubDataRef.current = client.subscribe(
-      `terminal:data:${result.terminalId}`,
-      (event: ServerEvent) => {
-        if (typeof event.payload === 'string') term?.write(event.payload)
-      }
-    )
+    unsubDataRef.current = unsubData
     unsubExitRef.current = client.subscribe(`terminal:exit:${result.terminalId}`, () => {
       if (myEpoch !== epochRef.current) return
       setState('detached')

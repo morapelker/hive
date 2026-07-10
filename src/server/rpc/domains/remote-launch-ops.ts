@@ -536,9 +536,10 @@ async function startRemoteLaunch(
 
   // Local session bookkeeping happens after the remote launch already
   // succeeded and `launch:done` was published, so a failure here must not
-  // reject the RPC raw (the modal would mark the already-green `launch` step
-  // as errored) and a retry with the same launchId must not double-create a
-  // local session row.
+  // reject the RPC raw and — since `launch:done` already went out — must not
+  // publish a second progress event for the same step (no `fail()` here).
+  // A retry with the same launchId must not double-create a local session
+  // row, and reuses the running tmux session via `prepare`'s reuse path.
   try {
     const existing = deps.db.findSessionByRemoteLaunchId(launchId)
     if (existing && parseRemoteLaunch(existing.remote_launch)?.role === 'client') {
@@ -571,7 +572,12 @@ async function startRemoteLaunch(
 
     return { success: true, localSessionId: localSession.id, tmuxSession: launchResult.tmuxSession }
   } catch (error) {
-    return fail('launch', error)
+    return {
+      success: false,
+      step: 'launch',
+      error: `Remote session "${launchResult.tmuxSession}" is running, but recording it locally failed: ${errorMessage(error)}. Retry to relink it.`,
+      tmuxSession: launchResult.tmuxSession
+    }
   }
 }
 
@@ -587,12 +593,21 @@ async function stopRemoteLaunch(
     throw new Error('Session is not a remote-launched client session')
   }
 
-  return deps.remote.requestAt<RemoteLaunchKillResult>(
+  const result = await deps.remote.requestAt<RemoteLaunchKillResult>(
     info.url,
     'remoteLaunchOps.killTmux',
     { remoteSessionId: info.remoteSessionId, tmuxSession: info.tmuxSession } satisfies RemoteLaunchKillTmuxParams,
     15_000
   )
+
+  // Stamp the local row so the ticket's remote badge/actions don't survive a
+  // successful stop (the renderer store maps a stopped client info to null).
+  if (result.killed || result.alreadyDead) {
+    const stopped: RemoteLaunchClientInfo = { ...info, stoppedAt: new Date().toISOString() }
+    deps.db.updateSession(params.sessionId, { remote_launch: JSON.stringify(stopped) })
+  }
+
+  return result
 }
 
 // -- Remote methods -----------------------------------------------------
@@ -609,7 +624,11 @@ async function prepareRemoteLaunch(
   params: RemoteLaunchPrepareParams
 ): Promise<RemoteLaunchPrepareResult> {
   const existing = deps.db.findSessionByRemoteLaunchId(params.launchId)
-  if (existing) {
+  // Role guard mirrors startRemoteLaunch's client-role check: only a HOST
+  // session is a valid reuse target here. A client-role row with the same
+  // launchId (possible when host and client share a DB, e.g. self-launch)
+  // has no worktree and would wrongly fail the retry.
+  if (existing && parseRemoteLaunch(existing.remote_launch)?.role === 'host') {
     const worktree = existing.worktree_id ? deps.db.getWorktree(existing.worktree_id) : null
     if (!worktree) {
       throw stepError('worktree', new Error('Reused remote-launch session has no worktree'))
@@ -714,6 +733,19 @@ async function applySetupPlanRemoteLaunch(
         }
       }
       try {
+        // Guard against a destination that names an existing directory (the
+        // parser normalizes `.`/trailing-slash dests, but `cp x dir` with no
+        // slash still reaches here) — writing file bytes there would EISDIR
+        // with a much less actionable message.
+        const destStat = await deps.fs.stat(resolved)
+        if (destStat?.isDirectory) {
+          return {
+            success: false,
+            failedStepIndex: i,
+            failedKind: 'write',
+            error: `Destination "${step.destRelPath}" is a directory on the remote; use a trailing slash (e.g. "${step.destRelPath}/") to copy into it`
+          }
+        }
         await deps.fs.mkdirp(dirname(resolved))
         await deps.fs.writeFileBase64(resolved, step.contentBase64)
       } catch (error) {
@@ -756,10 +788,16 @@ async function launchRemoteLaunch(
   const worktree = session.worktree_id ? deps.db.getWorktree(session.worktree_id) : null
   if (!worktree) throw new Error('Remote session has no worktree')
 
-  let name = `hive-${slug(worktree.branch_name)}`
+  const baseName = `hive-${slug(worktree.branch_name)}`
+  let name = baseName
   let suffix = 2
   while (await deps.tmux.hasSession(name)) {
-    name = `hive-${slug(worktree.branch_name)}-${suffix}`
+    if (suffix > 100) {
+      throw new Error(
+        `All tmux session names "${baseName}" through "${baseName}-100" are taken; kill stale hive sessions on the remote machine`
+      )
+    }
+    name = `${baseName}-${suffix}`
     suffix += 1
   }
 
@@ -801,7 +839,14 @@ async function attachTerminalRemoteLaunch(
   const worktree = session.worktree_id ? deps.db.getWorktree(session.worktree_id) : null
   if (!worktree) throw new Error('Remote session has no worktree')
 
-  const terminalId = `remote-attach-${params.remoteSessionId}-${Math.random().toString(36).slice(2)}`
+  // Prefer the client-generated id: it lets the client subscribe to
+  // `terminal:data:<id>` BEFORE this RPC creates the PTY, so the initial tmux
+  // screen dump (published as soon as listeners attach) isn't emitted before
+  // the subscription exists. The schema constrains it to the
+  // `remote-attach-` namespace so a client can't collide with other terminals.
+  const terminalId =
+    params.terminalId ??
+    `remote-attach-${params.remoteSessionId}-${Math.random().toString(36).slice(2)}`
   deps.pty.create(terminalId, {
     cwd: worktree.path,
     command: 'tmux',
@@ -1227,6 +1272,10 @@ const launchParamsSchema = z
 const attachTerminalParamsSchema = z
   .object({
     remoteSessionId: z.string().min(1),
+    terminalId: z
+      .string()
+      .regex(/^remote-attach-[A-Za-z0-9_-]{1,200}$/)
+      .optional(),
     cols: z.number().int().positive().optional(),
     rows: z.number().int().positive().optional()
   })

@@ -81,8 +81,12 @@ const hiveClientMocks = vi.hoisted(() => {
   }
 
   return {
-    request: vi.fn(async (method: string) => {
-      if (method === 'remoteLaunchOps.attachTerminal') return { terminalId: 't1' }
+    request: vi.fn(async (method: string, params?: unknown) => {
+      if (method === 'remoteLaunchOps.attachTerminal') {
+        // Echo the client-generated terminalId, like the real server does.
+        const terminalId = (params as { terminalId?: string } | undefined)?.terminalId ?? 't1'
+        return { terminalId }
+      }
       if (method === 'terminalOps.destroy' && hiveClientMocks.destroyDeferred) {
         return hiveClientMocks.destroyDeferred.promise
       }
@@ -201,12 +205,17 @@ describe('RemoteTerminalDialog', () => {
     render(<RemoteTerminalDialog open onOpenChange={vi.fn()} remoteLaunch={remoteLaunch} />)
 
     await waitFor(() => expect(xtermMocks.instances).toHaveLength(1))
-    await waitFor(() => expect(hiveClientMocks.subscribers.get('terminal:data:t1')).toBeTypeOf('function'))
+    // The dialog subscribes with its client-generated `remote-attach-...` id
+    // (installed BEFORE the attach RPC so the initial screen dump isn't lost).
+    const dataChannel = (): string | undefined =>
+      [...hiveClientMocks.subscribers.keys()].find((key) => key.startsWith('terminal:data:'))
+    await waitFor(() => expect(dataChannel()).toMatch(/^terminal:data:remote-attach-/))
 
-    const dataListener = hiveClientMocks.subscribers.get('terminal:data:t1')
+    const channel = dataChannel()!
+    const dataListener = hiveClientMocks.subscribers.get(channel)
 
     act(() => {
-      dataListener?.({ channel: 'terminal:data:t1', payload: 'hello world' } as ServerEvent)
+      dataListener?.({ channel, payload: 'hello world' } as ServerEvent)
     })
 
     expect(xtermMocks.instances[0]?.write).toHaveBeenCalledWith('hello world')
@@ -236,7 +245,7 @@ describe('RemoteTerminalDialog', () => {
     rerender(<RemoteTerminalDialog open={false} onOpenChange={vi.fn()} remoteLaunch={remoteLaunch} />)
 
     await waitFor(() =>
-      expect(hiveClientMocks.request).toHaveBeenCalledWith('terminalOps.destroy', { terminalId: 't1' })
+      expect(hiveClientMocks.request).toHaveBeenCalledWith('terminalOps.destroy', { terminalId: expect.stringMatching(/^remote-attach-/) })
     )
 
     // The destroy request is still pending — the socket must not be closed yet.
@@ -266,7 +275,7 @@ describe('RemoteTerminalDialog', () => {
     rerender(<RemoteTerminalDialog open={false} onOpenChange={vi.fn()} remoteLaunch={remoteLaunch} />)
 
     await waitFor(() =>
-      expect(hiveClientMocks.request).toHaveBeenCalledWith('terminalOps.destroy', { terminalId: 't1' })
+      expect(hiveClientMocks.request).toHaveBeenCalledWith('terminalOps.destroy', { terminalId: expect.stringMatching(/^remote-attach-/) })
     )
     expect(hiveClientMocks.close).not.toHaveBeenCalled()
 
