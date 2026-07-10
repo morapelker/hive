@@ -541,6 +541,26 @@ describe('remoteLaunchOps.start', () => {
     expect(createSession).not.toHaveBeenCalled()
   })
 
+  it('passes the canonicalized ticket title as nameHint to prepare (matching local worktree naming)', async () => {
+    const request = vi.fn(makeRequestMock())
+    const deps = baseDeps({
+      remote: {
+        isConfigured: vi.fn(() => true),
+        getUrl: vi.fn(() => 'https://remote.example.com'),
+        requestAt: vi.fn(async () => {
+          throw new Error('unstubbed remote.requestAt call')
+        }),
+        request: request as RemoteLaunchOpsDeps['remote']['request']
+      }
+    })
+    const service = makeRemoteLaunchOpsRpcService(deps)
+
+    await Effect.runPromise(service.start(startParams))
+
+    const prepareCall = request.mock.calls.find(([method]) => method === 'remoteLaunchOps.prepare')
+    expect(prepareCall?.[1]).toMatchObject({ nameHint: 'implement-the-thing' })
+  })
+
   it('hard-fails at branch-check when the branch is missing on origin, without calling prepare/applySetupPlan/launch', async () => {
     const publishProgress = vi.fn()
     const request = vi.fn(makeRequestMock())
@@ -866,6 +886,93 @@ describe('remoteLaunchOps.applySetupPlan', () => {
     })
     expect(fs.writeFileBase64).not.toHaveBeenCalled()
   })
+
+  it('skips an already-applied plan (retry of the same launchId) without touching fs or running commands', async () => {
+    const hostSession = session({
+      id: 'remote-session-1',
+      worktree_id: 'worktree-1',
+      remote_launch: JSON.stringify({
+        role: 'host',
+        launchId: 'launch-1',
+        tmuxSession: null,
+        promptFile: null,
+        setupAppliedAt: '2026-07-10T00:00:00.000Z'
+      })
+    })
+    const runSetupCommand = vi.fn(async () => ({ success: true }))
+    const fs = {
+      stat: vi.fn(async () => ({ isFile: true, isDirectory: false })),
+      readFileBase64: vi.fn(async () => ''),
+      mkdirp: vi.fn(async () => undefined),
+      writeFileBase64: vi.fn(async () => undefined)
+    }
+    const updateSession = vi.fn()
+    const deps = baseDeps({
+      db: {
+        ...baseDeps().db,
+        getWorktree: vi.fn(() => worktree({ path: '/remote/repo-wt' })),
+        findSessionByRemoteLaunchId: vi.fn(() => hostSession),
+        updateSession
+      },
+      fs,
+      runSetupCommand
+    })
+    const service = makeRemoteLaunchOpsRpcService(deps)
+
+    const result = await Effect.runPromise(
+      service.applySetupPlan({
+        launchId: 'launch-1',
+        remoteWorktreeId: 'worktree-1',
+        steps: [
+          { type: 'write', destRelPath: '.env', contentBase64: 'YQ==' },
+          { type: 'run', command: 'npm ci' }
+        ]
+      })
+    )
+
+    expect(result).toEqual({ success: true })
+    expect(fs.writeFileBase64).not.toHaveBeenCalled()
+    expect(runSetupCommand).not.toHaveBeenCalled()
+    expect(updateSession).not.toHaveBeenCalled()
+  })
+
+  it('stamps setupAppliedAt on the host session once the plan completes', async () => {
+    const hostSession = session({
+      id: 'remote-session-1',
+      worktree_id: 'worktree-1',
+      remote_launch: JSON.stringify({
+        role: 'host',
+        launchId: 'launch-1',
+        tmuxSession: null,
+        promptFile: null
+      })
+    })
+    const updateSession = vi.fn()
+    const deps = baseDeps({
+      db: {
+        ...baseDeps().db,
+        getWorktree: vi.fn(() => worktree({ path: '/remote/repo-wt' })),
+        findSessionByRemoteLaunchId: vi.fn(() => hostSession),
+        updateSession
+      }
+    })
+    const service = makeRemoteLaunchOpsRpcService(deps)
+
+    const result = await Effect.runPromise(
+      service.applySetupPlan({
+        launchId: 'launch-1',
+        remoteWorktreeId: 'worktree-1',
+        steps: [{ type: 'run', command: 'npm ci' }]
+      })
+    )
+
+    expect(result).toEqual({ success: true })
+    expect(updateSession).toHaveBeenCalledTimes(1)
+    const [sessionId, patch] = updateSession.mock.calls[0]!
+    expect(sessionId).toBe('remote-session-1')
+    const stored = JSON.parse((patch as { remote_launch: string }).remote_launch)
+    expect(stored).toMatchObject({ role: 'host', setupAppliedAt: expect.any(String) })
+  })
 })
 
 describe('remoteLaunchOps.launch', () => {
@@ -894,6 +1001,42 @@ describe('remoteLaunchOps.launch', () => {
 
     expect(result).toEqual({ tmuxSession: 'hive-feature-x' })
     expect(desktopLaunchTmux).not.toHaveBeenCalled()
+  })
+
+  it('preserves setupAppliedAt when rewriting the host info after a successful tmux launch', async () => {
+    const hostSession = session({
+      id: 'remote-session-1',
+      worktree_id: 'worktree-1',
+      remote_launch: JSON.stringify({
+        role: 'host',
+        launchId: 'launch-1',
+        tmuxSession: null,
+        promptFile: null,
+        setupAppliedAt: '2026-07-10T00:00:00.000Z'
+      })
+    })
+    const updateSession = vi.fn()
+    const deps = baseDeps({
+      db: {
+        ...baseDeps().db,
+        getSession: vi.fn(() => hostSession),
+        getWorktree: vi.fn(() => worktree({ path: '/remote/repo-wt' })),
+        updateSession
+      }
+    })
+    const service = makeRemoteLaunchOpsRpcService(deps)
+
+    await Effect.runPromise(
+      service.launch({ launchId: 'launch-1', remoteSessionId: 'remote-session-1', prompt: 'hi' })
+    )
+
+    const [, patch] = updateSession.mock.calls[0]!
+    const stored = JSON.parse((patch as { remote_launch: string }).remote_launch)
+    expect(stored).toMatchObject({
+      role: 'host',
+      tmuxSession: 'hive-feature-x',
+      setupAppliedAt: '2026-07-10T00:00:00.000Z'
+    })
   })
 
   it('caps the session-name suffix search instead of looping forever when every variant is taken', async () => {

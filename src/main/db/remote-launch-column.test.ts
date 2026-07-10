@@ -111,7 +111,7 @@ describeIf('sessions.remote_launch column', () => {
     db.close()
   })
 
-  it('findSessionByRemoteLaunchId finds by embedded launchId and ignores non-matches', () => {
+  it('findSessionByRemoteLaunchId finds by embedded launchId and role, ignoring non-matches', () => {
     const db = new DatabaseService(makeDbPath())
     db.init()
 
@@ -150,10 +150,26 @@ describeIf('sessions.remote_launch column', () => {
       remote_launch: JSON.stringify({ role: 'client', url: 'https://example.com' })
     })
 
-    const found = db.findSessionByRemoteLaunchId('launch-xyz')
+    // Client-role session sharing the target's launchId (self-launch: host
+    // and client rows live in the same DB) — the role filter must keep the
+    // two lookups from returning each other's row.
+    const clientTarget = db.createSession({
+      worktree_id: null,
+      project_id: project.id,
+      remote_launch: JSON.stringify({
+        role: 'client',
+        launchId: 'launch-xyz',
+        url: 'https://example.com'
+      })
+    })
+
+    const found = db.findSessionByRemoteLaunchId('launch-xyz', 'host')
     expect(found?.id).toBe(target.id)
 
-    expect(db.findSessionByRemoteLaunchId('does-not-exist')).toBeNull()
+    const foundClient = db.findSessionByRemoteLaunchId('launch-xyz', 'client')
+    expect(foundClient?.id).toBe(clientTarget.id)
+
+    expect(db.findSessionByRemoteLaunchId('does-not-exist', 'host')).toBeNull()
 
     db.close()
   })

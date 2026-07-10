@@ -63,6 +63,13 @@ export interface RemoteLaunchHostInfo {
   launchId: string
   tmuxSession: string | null
   promptFile: string | null
+  /**
+   * Stamped once `applySetupPlan` completes for this launchId. A retry of the
+   * same launch (which reuses the prepared worktree) must NOT re-run the
+   * setup plan — non-idempotent setup commands would execute twice on the
+   * same worktree after a late-step (launch/bookkeeping) failure.
+   */
+  setupAppliedAt?: string
 }
 
 export type RemoteLaunchInfo = RemoteLaunchClientInfo | RemoteLaunchHostInfo

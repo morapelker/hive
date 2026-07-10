@@ -1651,11 +1651,16 @@ export class DatabaseService {
     return row ? this.mapSessionRow(row) : null
   }
 
-  findSessionByRemoteLaunchId(launchId: string): Session | null {
+  // Role-qualified: when host and client share a DB (self-launch), one
+  // launchId matches BOTH the host-role and client-role rows, and an
+  // unqualified LIMIT 1 could hand either caller the other side's row.
+  findSessionByRemoteLaunchId(launchId: string, role: 'client' | 'host'): Session | null {
     const db = this.getDb()
     const row = db
-      .prepare("SELECT * FROM sessions WHERE json_extract(remote_launch, '$.launchId') = ? LIMIT 1")
-      .get(launchId) as Record<string, unknown> | undefined
+      .prepare(
+        "SELECT * FROM sessions WHERE json_extract(remote_launch, '$.launchId') = ? AND json_extract(remote_launch, '$.role') = ? LIMIT 1"
+      )
+      .get(launchId, role) as Record<string, unknown> | undefined
     return row ? this.mapSessionRow(row) : null
   }
 

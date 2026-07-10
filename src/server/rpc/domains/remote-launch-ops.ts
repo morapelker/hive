@@ -13,6 +13,7 @@ import {
   type RemoteLaunchClaudeTmuxResult
 } from '@shared/desktop-command'
 import { parseSetupScriptPlan } from '@shared/lib/setup-script-transfers'
+import { canonicalizeTicketTitle } from '@shared/types/branch-utils'
 import {
   parseRemoteLaunch,
   remoteLaunchProgressChannel,
@@ -53,7 +54,7 @@ interface RemoteLaunchDb {
   getSession: (id: string) => Session | null
   createSession: (data: SessionCreate) => Session
   updateSession: (id: string, data: { remote_launch?: string | null }) => Session | null
-  findSessionByRemoteLaunchId: (launchId: string) => Session | null
+  findSessionByRemoteLaunchId: (launchId: string, role: 'client' | 'host') => Session | null
 }
 
 interface RemoteLaunchGit {
@@ -443,6 +444,10 @@ async function startRemoteLaunch(
     if (!remoteUrl.success || !remoteUrl.url) {
       throw new Error(remoteUrl.error || 'Git remote "origin" is required for remote launch')
     }
+    // Same worktree-naming hint local launches pass (see WorktreePickerModal's
+    // createWorktreeAndWait call) so the remote worktree is named after the
+    // ticket instead of falling back to branch-based naming.
+    const nameHint = canonicalizeTicketTitle(params.ticketTitle)
     prepareResult = await deps.remote.request<RemoteLaunchPrepareResult>(
       'remoteLaunchOps.prepare',
       {
@@ -450,6 +455,7 @@ async function startRemoteLaunch(
         gitUrl: remoteUrl.url,
         projectName: project.name,
         branch: params.branch,
+        ...(nameHint ? { nameHint } : {}),
         mode: params.mode,
         model: params.model
       } satisfies RemoteLaunchPrepareParams,
@@ -541,7 +547,7 @@ async function startRemoteLaunch(
   // A retry with the same launchId must not double-create a local session
   // row, and reuses the running tmux session via `prepare`'s reuse path.
   try {
-    const existing = deps.db.findSessionByRemoteLaunchId(launchId)
+    const existing = deps.db.findSessionByRemoteLaunchId(launchId, 'client')
     if (existing && parseRemoteLaunch(existing.remote_launch)?.role === 'client') {
       return { success: true, localSessionId: existing.id, tmuxSession: launchResult.tmuxSession }
     }
@@ -623,11 +629,11 @@ async function prepareRemoteLaunch(
   deps: RemoteLaunchOpsDeps,
   params: RemoteLaunchPrepareParams
 ): Promise<RemoteLaunchPrepareResult> {
-  const existing = deps.db.findSessionByRemoteLaunchId(params.launchId)
-  // Role guard mirrors startRemoteLaunch's client-role check: only a HOST
-  // session is a valid reuse target here. A client-role row with the same
-  // launchId (possible when host and client share a DB, e.g. self-launch)
-  // has no worktree and would wrongly fail the retry.
+  // Host-role lookup (the query is role-qualified; the parse re-check is a
+  // cheap belt against a stale/garbled remote_launch column). A client-role
+  // row with the same launchId (possible when host and client share a DB,
+  // e.g. self-launch) has no worktree and would wrongly fail the retry.
+  const existing = deps.db.findSessionByRemoteLaunchId(params.launchId, 'host')
   if (existing && parseRemoteLaunch(existing.remote_launch)?.role === 'host') {
     const worktree = existing.worktree_id ? deps.db.getWorktree(existing.worktree_id) : null
     if (!worktree) {
@@ -719,6 +725,16 @@ async function applySetupPlanRemoteLaunch(
   if (!worktree) throw new Error('Remote worktree not found')
   const worktreePath = worktree.path
 
+  // Idempotency: a retry of the same launchId reuses the prepared worktree
+  // (see prepareRemoteLaunch), so a plan that already ran to completion must
+  // not run again — non-idempotent setup commands would execute twice.
+  const hostSession = deps.db.findSessionByRemoteLaunchId(params.launchId, 'host')
+  const parsed = hostSession ? parseRemoteLaunch(hostSession.remote_launch) : null
+  const hostInfo = parsed?.role === 'host' ? parsed : null
+  if (hostInfo?.setupAppliedAt) {
+    return { success: true }
+  }
+
   for (let i = 0; i < params.steps.length; i += 1) {
     const step = params.steps[i]
 
@@ -769,6 +785,14 @@ async function applySetupPlanRemoteLaunch(
     }
   }
 
+  if (hostSession && hostInfo) {
+    const stamped: RemoteLaunchHostInfo = {
+      ...hostInfo,
+      setupAppliedAt: new Date().toISOString()
+    }
+    deps.db.updateSession(hostSession.id, { remote_launch: JSON.stringify(stamped) })
+  }
+
   return { success: true }
 }
 
@@ -811,7 +835,11 @@ async function launchRemoteLaunch(
     throw new Error(bridgeResult.error || 'Failed to launch remote Claude CLI tmux session')
   }
 
+  // Spread the existing host info so fields stamped by earlier steps (e.g.
+  // applySetupPlan's setupAppliedAt) survive this rewrite — dropping them
+  // would make a post-launch retry re-run the setup plan.
   const updatedHostInfo: RemoteLaunchHostInfo = {
+    ...(hostInfo?.role === 'host' ? hostInfo : {}),
     role: 'host',
     launchId: params.launchId,
     tmuxSession: bridgeResult.tmuxSession,
@@ -1001,7 +1029,8 @@ async function createLiveDeps(eventBus?: EventBus): Promise<RemoteLaunchOpsDeps>
       getSession: (id) => db.getSession(id),
       createSession: (data) => db.createSession(data),
       updateSession: (id, data) => db.updateSession(id, data),
-      findSessionByRemoteLaunchId: (launchId) => db.findSessionByRemoteLaunchId(launchId)
+      findSessionByRemoteLaunchId: (launchId, role) =>
+        db.findSessionByRemoteLaunchId(launchId, role)
     },
     git: {
       getRemoteUrl: (repoPath) => gitService.getRemoteUrl(repoPath, 'origin'),
