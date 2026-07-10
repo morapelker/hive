@@ -108,10 +108,25 @@ interface WorktreePickerModalProps {
 /** In-memory: last-chosen source branch per project (resets on app restart) */
 const _lastSourceBranchByProject: Record<string, string> = {}
 
+/**
+ * In-memory: launchId of a FAILED remote launch per ticket. Reopening the
+ * modal after a failure reuses it so the whole server-side idempotency chain
+ * (client-session reuse, prepare reuse, setupAppliedAt, live-tmux
+ * short-circuit) still applies — a fresh id would start a second remote
+ * worktree/session next to the first attempt's leftovers. Cleared on success
+ * so an intentional relaunch of the same ticket gets a fresh id.
+ * (A plain record — this module imports lucide's `Map` icon, which shadows
+ * the global Map constructor.)
+ */
+const _failedRemoteLaunchIdByTicket: Record<string, string> = {}
+
 /** @internal — for test cleanup only */
 export function _resetLastSourceBranch(): void {
   for (const key of Object.keys(_lastSourceBranchByProject)) {
     delete _lastSourceBranchByProject[key]
+  }
+  for (const key of Object.keys(_failedRemoteLaunchIdByTicket)) {
+    delete _failedRemoteLaunchIdByTicket[key]
   }
 }
 
@@ -450,8 +465,10 @@ export function WorktreePickerModal({
       setRemotePhase('idle')
       setRemoteProgress({})
       setRemoteError(null)
-      // Retries within one open reuse this id; a fresh open gets a new one.
-      launchIdRef.current = crypto.randomUUID()
+      // Retries within one open reuse this id. A fresh open also reuses the
+      // id of a previously FAILED launch for this ticket (see
+      // _failedRemoteLaunchIdByTicket); otherwise it gets a new one.
+      launchIdRef.current = _failedRemoteLaunchIdByTicket[ticket.id] ?? crypto.randomUUID()
       // Refresh worktree list from git so the picker shows current state
       if (project?.path) {
         syncWorktrees(projectId, project.path, { force: true })
@@ -708,6 +725,7 @@ export function WorktreePickerModal({
         if (!result.success) {
           const step = result.step ?? lastRunningStep
           const message = result.error ?? 'Remote launch failed'
+          _failedRemoteLaunchIdByTicket[ticket.id] = launchId
           setRemoteProgress((prev) => ({ ...prev, [step]: 'error' }))
           setRemoteError({ step, message })
           setRemotePhase('failed')
@@ -751,18 +769,21 @@ export function WorktreePickerModal({
           })
         } catch (error) {
           const message = `Remote session launched, but moving the ticket failed: ${error instanceof Error ? error.message : String(error)}. Retry to relink — the running remote session will be reused, not relaunched.`
+          _failedRemoteLaunchIdByTicket[ticket.id] = launchId
           setRemoteProgress((prev) => ({ ...prev, launch: 'error' }))
           setRemoteError({ step: 'launch', message })
           setRemotePhase('failed')
           return
         }
 
+        delete _failedRemoteLaunchIdByTicket[ticket.id]
         toast.success('Launched on remote machine')
         onSendComplete?.()
         onOpenChange(false)
       } catch (error) {
         const step = lastRunningStep
         const message = error instanceof Error ? error.message : 'Failed to start remote launch'
+        _failedRemoteLaunchIdByTicket[ticket.id] = launchId
         setRemoteProgress((prev) => ({ ...prev, [step]: 'error' }))
         setRemoteError({ step, message })
         setRemotePhase('failed')

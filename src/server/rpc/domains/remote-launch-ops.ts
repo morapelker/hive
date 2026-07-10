@@ -134,6 +134,7 @@ interface RemoteLaunchCreateWorktreeParams {
   projectName: string
   branchName: string
   nameHint?: string
+  autoPull?: boolean
 }
 interface RemoteLaunchCreateWorktreeResult {
   success: boolean
@@ -325,11 +326,22 @@ async function preflightRemoteLaunch(
     } else {
       result.branchOnOrigin = await deps.git.branchExistsOnOrigin(project.path, branch)
       if (result.branchOnOrigin) {
-        await deps.git.fetchOrigin(project.path, branch)
-        const { ahead, behind } = await deps.git.aheadBehind(project.path, branch)
-        result.localAhead = ahead
-        result.localBehind = behind
-        result.diverged = ahead > 0 && behind > 0
+        // Remote-only selections (picker names them `origin/<branch>`) have
+        // no local ref, so the ahead/behind comparison is meaningless — and
+        // `rev-list origin/x...x` would error and wrongly block the launch.
+        let localBranchExists = true
+        try {
+          await deps.git.revParse(project.path, `refs/heads/${branch}`)
+        } catch {
+          localBranchExists = false
+        }
+        if (localBranchExists) {
+          await deps.git.fetchOrigin(project.path, branch)
+          const { ahead, behind } = await deps.git.aheadBehind(project.path, branch)
+          result.localAhead = ahead
+          result.localBehind = behind
+          result.diverged = ahead > 0 && behind > 0
+        }
       }
     }
   } catch (error) {
@@ -704,7 +716,13 @@ async function prepareRemoteLaunch(
       projectPath: project.path,
       projectName: project.name,
       branchName: params.branch,
-      nameHint: params.nameHint
+      nameHint: params.nameHint,
+      // The fetch + revParse above already validated origin/<branch>. The
+      // op's auto-pull would run `git pull origin <branch> --ff-only` in the
+      // shared base clone's checkout and could fast-forward ITS branch (e.g.
+      // main) onto the feature branch, corrupting the clone for later
+      // launches.
+      autoPull: false
     })
     if (!worktreeResult.success || !worktreeResult.worktree) {
       throw new Error(worktreeResult.error || 'Failed to create remote worktree')

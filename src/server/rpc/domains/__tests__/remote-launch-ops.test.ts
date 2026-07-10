@@ -691,6 +691,32 @@ describe('remoteLaunchOps.start', () => {
   })
 })
 
+describe('remoteLaunchOps.preflight', () => {
+  it('skips the local ahead/behind comparison for remote-only branches instead of erroring', async () => {
+    const aheadBehind = vi.fn(async () => ({ ahead: 0, behind: 0 }))
+    const deps = baseDeps({
+      git: {
+        ...baseDeps().git,
+        revParse: vi.fn(async () => {
+          throw new Error("fatal: ambiguous argument 'refs/heads/feature/x'")
+        }),
+        aheadBehind
+      }
+    })
+    const service = makeRemoteLaunchOpsRpcService(deps)
+
+    const result = await Effect.runPromise(
+      service.preflight({ projectId: 'project-1', branch: 'origin/feature/x' })
+    )
+
+    expect(result.error).toBeUndefined()
+    expect(result.branchOnOrigin).toBe(true)
+    expect(result.localAhead).toBe(0)
+    expect(result.localBehind).toBe(0)
+    expect(aheadBehind).not.toHaveBeenCalled()
+  })
+})
+
 describe('remoteLaunchOps.prepare', () => {
   it('returns a reused result when findSessionByRemoteLaunchId hits, without calling ensureRemoteProject', async () => {
     const ensureRemoteProject = vi.fn(async () => project())
@@ -819,6 +845,12 @@ describe('remoteLaunchOps.prepare', () => {
     // The worktree creation must observe the updated row.
     expect(updateProject.mock.invocationCallOrder[0]).toBeLessThan(
       createWorktreeFromBranch.mock.invocationCallOrder[0]!
+    )
+    // Auto-pull would run `git pull origin <branch> --ff-only` in the shared
+    // base clone's checkout and could fast-forward its branch onto the
+    // feature branch — remote prepare must always disable it.
+    expect(createWorktreeFromBranch).toHaveBeenCalledWith(
+      expect.objectContaining({ autoPull: false })
     )
   })
 

@@ -24,6 +24,28 @@ function uniquePath(basePath: string): string {
 }
 
 /**
+ * Normalize a git remote URL to `host/path` for equivalence comparison, so
+ * `git@github.com:org/repo.git`, `ssh://git@github.com/org/repo` and
+ * `https://github.com/org/repo.git` all match the same repo instead of
+ * cloning a duplicate copy under ~/hive-projects.
+ */
+export function normalizeGitUrl(url: string): string {
+  let u = url.trim()
+  const scp = /^(?:[^@/]+@)?([^:/]+):(?!\/)(.*)$/.exec(u)
+  if (scp) {
+    // scp-like syntax: [user@]host:path
+    u = `${scp[1]}/${scp[2]}`
+  } else {
+    u = u.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '') // scheme
+    u = u.replace(/^[^@/]+@/, '') // userinfo
+  }
+  return u
+    .replace(/\/+$/, '')
+    .replace(/\.git$/i, '')
+    .toLowerCase()
+}
+
+/**
  * Ensure a remote-side project exists for the given git URL, cloning it into
  * `~/hive-projects/<name>` if no existing project's `origin` remote already
  * matches. Reused by teleport receive and by launch-on-cloud.
@@ -33,7 +55,7 @@ export async function ensureRemoteProject(gitUrl: string, projectName: string): 
 
   for (const candidate of db.getAllProjects()) {
     const remote = await gitService.getRemoteUrl(candidate.path, 'origin')
-    if (remote.success && remote.url?.trim() === gitUrl.trim()) {
+    if (remote.success && remote.url && normalizeGitUrl(remote.url) === normalizeGitUrl(gitUrl)) {
       await execGit(candidate.path, ['fetch', 'origin'])
       return candidate
     }
