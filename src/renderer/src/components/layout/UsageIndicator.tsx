@@ -659,23 +659,39 @@ export function ProviderUsageBlock({
   }
 
   const handleOpenChange = (open: boolean): void => {
-    if (open) setViewedProvider(provider)
+    if (open) {
+      shouldPinPopoverToBottomRef.current = true
+      setViewedProvider(provider)
+    }
   }
 
   // The active account sorts last, so open the popover scrolled to the bottom
   // to keep it in view when many accounts overflow the max height.
   const popoverRef = useRef<HTMLDivElement | null>(null)
+  const shouldPinPopoverToBottomRef = useRef(true)
   const scrollPopoverToBottom = useCallback((node: HTMLDivElement | null): void => {
     popoverRef.current = node
-    if (node) node.scrollTop = node.scrollHeight
+    if (node && shouldPinPopoverToBottomRef.current) node.scrollTop = node.scrollHeight
   }, [])
 
+  const handlePopoverScroll = (event: React.UIEvent<HTMLDivElement>): void => {
+    const node = event.currentTarget
+    const distanceFromBottom = node.scrollHeight - node.clientHeight - node.scrollTop
+    shouldPinPopoverToBottomRef.current = distanceFromBottom <= 1
+  }
+
+  const handleProviderSelect = (nextProvider: UsageProvider): void => {
+    shouldPinPopoverToBottomRef.current = true
+    setViewedProvider(nextProvider)
+  }
+
   // Saved accounts load async on open and can land after the popover mounts,
-  // growing the content past the initial scroll position; toggling providers
-  // swaps the content wholesale. Re-pin to the bottom in both cases.
+  // growing the content past the initial scroll position. Keep following the
+  // bottom only until the user scrolls away; otherwise the update can move a
+  // Switch button between pointer-down and pointer-up and cancel the click.
   useEffect(() => {
     const node = popoverRef.current
-    if (node) node.scrollTop = node.scrollHeight
+    if (node && shouldPinPopoverToBottomRef.current) node.scrollTop = node.scrollHeight
   }, [viewedProvider, viewedSavedAccountsCount])
 
   useEffect(() => {
@@ -746,13 +762,14 @@ export function ProviderUsageBlock({
         sideOffset={8}
         collisionPadding={8}
         className="w-72 max-w-[min(18rem,calc(100vw-2rem))] max-h-(--radix-hover-card-content-available-height) overflow-y-auto"
+        onScroll={handlePopoverScroll}
       >
         <ProviderUsagePopoverBody provider={viewedProvider} />
         {toggleProviders.length > 1 && (
           <ProviderToggle
             providers={toggleProviders}
             viewedProvider={viewedProvider}
-            onSelect={setViewedProvider}
+            onSelect={handleProviderSelect}
           />
         )}
       </HoverCardContent>
