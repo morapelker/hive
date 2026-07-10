@@ -459,7 +459,11 @@ describe('WorktreePickerModal Claude CLI launch', () => {
       sort_order: 1,
       plan_ready: false,
       goal_mode: false,
-      goal_success_criteria: null
+      goal_success_criteria: null,
+      // Badge fields are now stamped on every launch (connection path included).
+      model_provider_id: 'anthropic',
+      model_id: 'opus',
+      model_variant: 'high'
     })
     expect(request).toHaveBeenCalledWith('terminalOps.createClaudeCli', {
       sessionId: 'connection-session-1',

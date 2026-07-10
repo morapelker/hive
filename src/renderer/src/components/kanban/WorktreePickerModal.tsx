@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
-import { Hammer, Map, Plus, GitBranch, Send, ChevronDown, Loader2, Search } from 'lucide-react'
+import { Hammer, Map, Plus, GitBranch, Send, ChevronDown, Loader2, Search, X } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -20,7 +20,7 @@ import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
-import { useSettingsStore, resolveModelForSdk } from '@/stores/useSettingsStore'
+import { useSettingsStore, resolveModelForSdk, type SelectedModel } from '@/stores/useSettingsStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useUsageStore, resolveDefaultUsageProvider } from '@/stores/useUsageStore'
 import { ModelSelector } from '@/components/sessions/ModelSelector'
@@ -40,6 +40,10 @@ import type { KanbanTicket, Session } from '../../../../main/db/types'
 import { canonicalizeTicketTitle } from '@shared/types/branch-utils'
 import { supportsGoalMode } from '@shared/types/agent-sdk'
 import { createPlanFile, exceedsGoalPromptLimit, planFilePrompt } from '@/lib/goal-plan-file'
+import { FALLBACK_MODELS } from '@shared/model-resolution'
+import { runMultiModelLaunch, type MultiModelLaunchPlan } from '@/lib/multi-model-launch'
+import type { LaunchModelConfig } from '@/lib/ticket-launch'
+import type { AvailableAgentSdks } from '@/lib/agent-sdk-availability'
 
 // Stable empty array to avoid referential-inequality loops in Zustand selectors
 const EMPTY_ARRAY: readonly never[] = []
@@ -186,6 +190,104 @@ function toRequestModel(
   return { providerID: model.providerID, modelID: model.modelID, variant: model.variant }
 }
 
+// One extra provider/model launched alongside the existing row-1 controls.
+interface ExtraModelRow {
+  key: string // crypto.randomUUID() — stable React key
+  sdk: PickerAgentSdk
+  model: SelectedModel | null // null = resolve for that row's sdk at launch
+  codexFastMode: boolean // per-row; seeded from the global codexFastMode
+}
+
+// Resolve a row's display/launch-default model. Never inherits another SDK's
+// default: the mode default only wins when it's already for this SDK, otherwise
+// the per-SDK resolution then the hard SDK fallback.
+function resolveRowDefaultModel(sdk: PickerAgentSdk, mode: PickerMode): SelectedModel {
+  const settings = useSettingsStore.getState()
+  const modeModel = settings.getModelForMode(mode)
+  if (modeModel && modeModel.agentSdk === sdk) return modeModel
+  const resolved = resolveModelForSdk(sdk) ?? FALLBACK_MODELS[sdk]
+  return { providerID: resolved.providerID, modelID: resolved.modelID, variant: resolved.variant }
+}
+
+// ── SDK toggle button group (shared by row 1 and each extra row) ────
+interface SdkToggleGroupProps {
+  value: PickerAgentSdk
+  onChange: (sdk: PickerAgentSdk) => void
+  availableAgentSdks: AvailableAgentSdks | null
+  idPrefix: string
+}
+
+function SdkToggleGroup({
+  value,
+  onChange,
+  availableAgentSdks,
+  idPrefix
+}: SdkToggleGroupProps): React.JSX.Element | null {
+  // Only render when 2+ SDKs are available (a single SDK has nothing to toggle).
+  const buttonCount = availableAgentSdks
+    ? [
+        availableAgentSdks.opencode,
+        availableAgentSdks.claude,
+        availableAgentSdks.codex,
+        availableAgentSdks.claude
+      ].filter(Boolean).length
+    : 0
+  if (!availableAgentSdks || buttonCount < 2) return null
+
+  const buttonClass = (active: boolean): string =>
+    cn(
+      'px-2.5 py-1 rounded-md text-xs border transition-colors',
+      active
+        ? 'bg-primary text-primary-foreground border-primary'
+        : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
+    )
+
+  return (
+    <div className="flex gap-1.5" data-testid={idPrefix}>
+      {availableAgentSdks.opencode && (
+        <button
+          type="button"
+          data-testid={`${idPrefix}-opencode`}
+          onClick={() => onChange('opencode')}
+          className={buttonClass(value === 'opencode')}
+        >
+          OpenCode
+        </button>
+      )}
+      {availableAgentSdks.claude && (
+        <button
+          type="button"
+          data-testid={`${idPrefix}-claude-code`}
+          onClick={() => onChange('claude-code')}
+          className={buttonClass(value === 'claude-code')}
+        >
+          Claude Code
+        </button>
+      )}
+      {availableAgentSdks.codex && (
+        <button
+          type="button"
+          data-testid={`${idPrefix}-codex`}
+          onClick={() => onChange('codex')}
+          className={buttonClass(value === 'codex')}
+        >
+          Codex
+        </button>
+      )}
+      {availableAgentSdks.claude && (
+        <button
+          type="button"
+          data-testid={`${idPrefix}-claude-code-cli`}
+          onClick={() => onChange('claude-code-cli')}
+          className={buttonClass(value === 'claude-code-cli')}
+        >
+          Claude CLI
+        </button>
+      )}
+    </div>
+  )
+}
+
 // ── Component ───────────────────────────────────────────────────────
 export function WorktreePickerModal({
   ticket,
@@ -219,6 +321,7 @@ export function WorktreePickerModal({
     variant?: string
   } | null>(null)
   const [selectedSdk, setSelectedSdk] = useState<PickerAgentSdk | null>(null)
+  const [extraModelRows, setExtraModelRows] = useState<ExtraModelRow[]>([])
 
   // ── Store access ────────────────────────────────────────────────
   const worktrees = useWorktreeStore(
@@ -267,15 +370,18 @@ export function WorktreePickerModal({
 
   const agentSdk =
     selectedSdk ?? selectedModel?.agentSdk ?? autoResolvedModel?.agentSdk ?? baseAgentSdk
-  const goalAvailable = supportsGoalMode(agentSdk) && mode === 'build' && !preAssignOnly
-  const availableSdkButtonCount = availableAgentSdks
-    ? [
-        availableAgentSdks.opencode,
-        availableAgentSdks.claude,
-        availableAgentSdks.codex,
-        availableAgentSdks.claude
-      ].filter(Boolean).length
-    : 0
+  // Extra model rows + the "+ Add model" button only apply to a brand-new
+  // worktree in the normal or save-config flows (an existing worktree hosts one
+  // session; connection/pre-assign never multi-launch).
+  const extraRowsVisible = isNewWorktree && !isConnectionMode && !preAssignOnly
+  const isMultiModel = extraRowsVisible && extraModelRows.length > 0
+  // Goal mode needs EVERY launched SDK to support it — row 1 (already gated
+  // below via agentSdk) plus every visible extra row.
+  const goalAvailable =
+    supportsGoalMode(agentSdk) &&
+    (extraRowsVisible ? extraModelRows.every((r) => supportsGoalMode(r.sdk)) : true) &&
+    mode === 'build' &&
+    !preAssignOnly
 
   // ── Count in-progress tickets per worktree ──────────────────────
   const ticketCountByWorktree = useMemo(() => {
@@ -324,6 +430,7 @@ export function WorktreePickerModal({
       setGoalCriteria('')
       setSelectedModel(null)
       setSelectedSdk(null)
+      setExtraModelRows([])
       setSourceBranch(_lastSourceBranchByProject[projectId] ?? null)
       setBranches([])
       setBranchFilter('')
@@ -356,6 +463,37 @@ export function WorktreePickerModal({
       setGoalMode(false)
       setGoalCriteria('')
     }
+  }, [])
+
+  // ── Extra model rows ────────────────────────────────────────────
+  const addModelRow = useCallback(() => {
+    setExtraModelRows((rows) => [
+      ...rows,
+      { key: crypto.randomUUID(), sdk: agentSdk, model: null, codexFastMode }
+    ])
+  }, [agentSdk, codexFastMode])
+
+  const removeModelRow = useCallback((key: string) => {
+    setExtraModelRows((rows) => rows.filter((r) => r.key !== key))
+  }, [])
+
+  const handleRowSdkChange = useCallback((key: string, sdk: PickerAgentSdk) => {
+    // Reset the row's model (new SDK has different models), mirroring handleSdkChange.
+    setExtraModelRows((rows) => rows.map((r) => (r.key === key ? { ...r, sdk, model: null } : r)))
+    if (!supportsGoalMode(sdk)) {
+      setGoalMode(false)
+      setGoalCriteria('')
+    }
+  }, [])
+
+  const updateRowModel = useCallback((key: string, model: SelectedModel) => {
+    setExtraModelRows((rows) => rows.map((r) => (r.key === key ? { ...r, model } : r)))
+  }, [])
+
+  const updateRowCodexFastMode = useCallback((key: string, value: boolean) => {
+    setExtraModelRows((rows) =>
+      rows.map((r) => (r.key === key ? { ...r, codexFastMode: value } : r))
+    )
   }, [])
 
   // ── Handle mode toggle ──────────────────────────────────────────
@@ -488,6 +626,9 @@ export function WorktreePickerModal({
         // Create connection session
         const createConnectionSession = useSessionStore.getState().createConnectionSession
         const effectiveModel = selectedModel ?? autoResolvedModel ?? undefined
+        // Badge model is always resolvable — fall back to the per-SDK / hard
+        // fallback so the persisted badge columns are never null on a launch.
+        const badgeModel = effectiveModel ?? resolveModelForSdk(agentSdk) ?? FALLBACK_MODELS[agentSdk]
         const modelOverride = effectiveModel ? { ...effectiveModel, agentSdk } : undefined
         const cliPendingPrompt =
           agentSdk === 'claude-code-cli'
@@ -542,7 +683,10 @@ export function WorktreePickerModal({
           sort_order: sortOrder,
           plan_ready: false,
           goal_mode: goalMode,
-          goal_success_criteria: goalMode ? goalCriteria.trim() : null
+          goal_success_criteria: goalMode ? goalCriteria.trim() : null,
+          model_provider_id: badgeModel.providerID,
+          model_id: badgeModel.modelID,
+          model_variant: badgeModel.variant ?? null
         })
 
         void autoPinBaseWorktree(ticket.project_id)
@@ -652,6 +796,18 @@ export function WorktreePickerModal({
     try {
       let worktreeId = selectedWorktreeId
 
+      // Row 1 (the existing controls) first, then each extra model row. Row 1's
+      // model uses the same effective-model chain as the single-model launch;
+      // extra rows pass their own model (null = the pipeline resolves per SDK).
+      const entries: LaunchModelConfig[] = [
+        { sdk: agentSdk, model: selectedModel ?? autoResolvedModel ?? null, codexFastMode },
+        ...extraModelRows.map((r) => ({
+          sdk: r.sdk,
+          model: r.model,
+          codexFastMode: r.codexFastMode
+        }))
+      ]
+
       // ── Save config only path: serialize config, don't create session ─
       if (saveConfigOnly) {
         const pendingConfig = {
@@ -664,7 +820,10 @@ export function WorktreePickerModal({
           sdk: agentSdk,
           codexFastMode,
           goalMode,
-          goalSuccessCriteria: goalMode ? goalCriteria.trim() : null
+          goalSuccessCriteria: goalMode ? goalCriteria.trim() : null,
+          // Multi-model entries (row 1 first). Legacy sdk/model/codexFastMode
+          // above stay so older builds can still auto-launch entries[0].
+          ...(isMultiModel ? { models: entries } : {})
         }
 
         const sortOrder = useKanbanStore
@@ -739,6 +898,33 @@ export function WorktreePickerModal({
 
       void autoPinBaseWorktree(projectId)
 
+      // ── Multi-model launch: hand off to the background orchestrator ──
+      // It owns EVERYTHING after this point — worktree creation, ticket
+      // duplication, all ticket updates, and the per-SDK prompt composition — so
+      // the modal creates/mutates nothing here and closes immediately (no spinner).
+      if (isMultiModel) {
+        const targetBranch = sourceBranch ?? defaultBranchName
+        _lastSourceBranchByProject[projectId] = targetBranch
+        const plan: MultiModelLaunchPlan = {
+          ticket: { id: ticket.id, title: ticket.title },
+          projectId,
+          // RAW prompt — the pipeline composes per SDK (plan prefix, goal wrap,
+          // oversized-goal plan-file swap) inside launchTicketWithModel; composing
+          // it here would double-prefix.
+          prompt: promptText.trim() || buildPrompt(mode, ticket),
+          mode,
+          sourceBranch: targetBranch,
+          goalMode,
+          goalSuccessCriteria: goalMode ? goalCriteria.trim() : null,
+          entries
+        }
+        onSendComplete?.()
+        onOpenChange(false)
+        toast.success(`Starting ${entries.length} sessions`)
+        void runMultiModelLaunch(plan)
+        return
+      }
+
       // Create new worktree if needed
       if (isNewWorktree && project) {
         const targetBranch = sourceBranch ?? defaultBranchName
@@ -781,6 +967,9 @@ export function WorktreePickerModal({
 
       // Create session in the selected worktree
       const effectiveModel = selectedModel ?? autoResolvedModel ?? undefined
+      // Badge model is always resolvable — fall back to the per-SDK / hard
+      // fallback so the persisted badge columns are never null on a launch.
+      const badgeModel = effectiveModel ?? resolveModelForSdk(agentSdk) ?? FALLBACK_MODELS[agentSdk]
       const modelOverride = effectiveModel ? { ...effectiveModel, agentSdk } : undefined
       const cliPendingPrompt =
         agentSdk === 'claude-code-cli'
@@ -839,7 +1028,10 @@ export function WorktreePickerModal({
         sort_order: sortOrder,
         plan_ready: false,
         goal_mode: goalMode,
-        goal_success_criteria: goalMode ? goalCriteria.trim() : null
+        goal_success_criteria: goalMode ? goalCriteria.trim() : null,
+        model_provider_id: badgeModel.providerID,
+        model_id: badgeModel.modelID,
+        model_variant: badgeModel.variant ?? null
       })
 
       // Trigger usage refresh so the board shows up-to-date usage (debounced in store)
@@ -970,7 +1162,9 @@ export function WorktreePickerModal({
     goalCriteria,
     composedGoalPrompt,
     isConnectionMode,
-    connectionId
+    connectionId,
+    extraModelRows,
+    isMultiModel
   ])
 
   // ── Mode toggle chip ────────────────────────────────────────────
@@ -1207,70 +1401,12 @@ export function WorktreePickerModal({
                 Provider & Model
               </label>
               {/* SDK toggle — only when 2+ SDKs are available */}
-              {availableAgentSdks && availableSdkButtonCount >= 2 && (
-                <div className="flex gap-1.5" data-testid="sdk-toggle">
-                  {availableAgentSdks.opencode && (
-                    <button
-                      type="button"
-                      data-testid="sdk-toggle-opencode"
-                      onClick={() => handleSdkChange('opencode')}
-                      className={cn(
-                        'px-2.5 py-1 rounded-md text-xs border transition-colors',
-                        agentSdk === 'opencode'
-                          ? 'bg-primary text-primary-foreground border-primary'
-                          : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
-                      )}
-                    >
-                      OpenCode
-                    </button>
-                  )}
-                  {availableAgentSdks.claude && (
-                    <button
-                      type="button"
-                      data-testid="sdk-toggle-claude-code"
-                      onClick={() => handleSdkChange('claude-code')}
-                      className={cn(
-                        'px-2.5 py-1 rounded-md text-xs border transition-colors',
-                        agentSdk === 'claude-code'
-                          ? 'bg-primary text-primary-foreground border-primary'
-                          : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
-                      )}
-                    >
-                      Claude Code
-                    </button>
-                  )}
-                  {availableAgentSdks.codex && (
-                    <button
-                      type="button"
-                      data-testid="sdk-toggle-codex"
-                      onClick={() => handleSdkChange('codex')}
-                      className={cn(
-                        'px-2.5 py-1 rounded-md text-xs border transition-colors',
-                        agentSdk === 'codex'
-                          ? 'bg-primary text-primary-foreground border-primary'
-                          : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
-                      )}
-                    >
-                      Codex
-                    </button>
-                  )}
-                  {availableAgentSdks.claude && (
-                    <button
-                      type="button"
-                      data-testid="sdk-toggle-claude-code-cli"
-                      onClick={() => handleSdkChange('claude-code-cli')}
-                      className={cn(
-                        'px-2.5 py-1 rounded-md text-xs border transition-colors',
-                        agentSdk === 'claude-code-cli'
-                          ? 'bg-primary text-primary-foreground border-primary'
-                          : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
-                      )}
-                    >
-                      Claude CLI
-                    </button>
-                  )}
-                </div>
-              )}
+              <SdkToggleGroup
+                value={agentSdk}
+                onChange={handleSdkChange}
+                availableAgentSdks={availableAgentSdks}
+                idPrefix="sdk-toggle"
+              />
               {goalAvailable && (
                 <div className="space-y-2 rounded-md border border-border/50 bg-muted/20 px-3 py-2.5">
                   <div className="flex items-center justify-between gap-3">
@@ -1326,6 +1462,69 @@ export function WorktreePickerModal({
                   </div>
                 )}
               </div>
+
+              {/* ── Extra model rows (new worktree only) ── */}
+              {extraRowsVisible && (
+                <div className="space-y-2" data-testid="extra-model-rows">
+                  {extraModelRows.map((row, i) => {
+                    const rowIndex = i + 1
+                    const rowModelValue = row.model ?? resolveRowDefaultModel(row.sdk, mode)
+                    return (
+                      <div
+                        key={row.key}
+                        data-testid={`extra-model-row-${rowIndex}`}
+                        className="space-y-2 rounded-md border border-border/50 bg-muted/10 px-3 py-2.5"
+                      >
+                        <SdkToggleGroup
+                          value={row.sdk}
+                          onChange={(sdk) => handleRowSdkChange(row.key, sdk)}
+                          availableAgentSdks={availableAgentSdks}
+                          idPrefix={`extra-model-row-${rowIndex}-sdk`}
+                        />
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <div className="min-w-0">
+                            <ModelSelector
+                              value={rowModelValue}
+                              onChange={(model) => updateRowModel(row.key, model)}
+                              agentSdkOverride={row.sdk}
+                            />
+                          </div>
+                          {row.sdk === 'codex' && (
+                            <div className="shrink-0">
+                              <CodexFastToggle
+                                enabled={row.codexFastMode}
+                                accepted={codexFastModeAccepted}
+                                onToggle={() =>
+                                  updateRowCodexFastMode(row.key, !row.codexFastMode)
+                                }
+                                onAccept={() => updateSetting('codexFastModeAccepted', true)}
+                              />
+                            </div>
+                          )}
+                          <button
+                            type="button"
+                            data-testid={`extra-model-row-${rowIndex}-remove`}
+                            onClick={() => removeModelRow(row.key)}
+                            aria-label="Remove model"
+                            className="ml-auto shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  })}
+                  <button
+                    type="button"
+                    data-testid="add-model-row"
+                    onClick={addModelRow}
+                    className="flex items-center gap-1.5 rounded-md border border-dashed border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    Add model
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
@@ -1397,7 +1596,11 @@ export function WorktreePickerModal({
             ) : (
               <>
                 <Send className="h-3.5 w-3.5" />
-                {isSending ? 'Starting...' : 'Send'}
+                {isSending
+                  ? 'Starting...'
+                  : isMultiModel
+                    ? `Start ${1 + extraModelRows.length} sessions`
+                    : 'Send'}
               </>
             )}
           </Button>
