@@ -1,11 +1,12 @@
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { TooltipProvider } from '@/components/ui/tooltip'
-import { UsageAccountRow } from './UsageIndicator'
+import { ProviderUsageBlock, UsageAccountRow } from './UsageIndicator'
+import { useAccountStore, useUsageStore } from '@/stores'
 import type { AccountMemberInfo } from './MemberAvatarStack'
-import type { UsageData } from '@shared/types/usage'
+import type { OpenAIUsageData, UsageData } from '@shared/types/usage'
 
 afterEach(() => {
   cleanup()
@@ -446,5 +447,118 @@ describe('UsageAccountRow', () => {
 
     expect(screen.queryByTestId('member-avatar')).toBeNull()
     expect(screen.queryByTestId('member-avatar-stack-loading')).toBeNull()
+  })
+})
+
+describe('ProviderUsageBlock provider toggle', () => {
+  const initialUsageState = useUsageStore.getState()
+  const initialAccountState = useAccountStore.getState()
+
+  const epochIn = (seconds: number): number => Math.floor(Date.now() / 1000) + seconds
+
+  const sampleOpenAIUsage: OpenAIUsageData = {
+    plan_type: 'plus',
+    rate_limit: {
+      primary_window: {
+        used_percent: 30,
+        limit_window_seconds: 18000,
+        reset_after_seconds: 3600,
+        reset_at: epochIn(3600)
+      },
+      secondary_window: {
+        used_percent: 12,
+        limit_window_seconds: 604800,
+        reset_after_seconds: 86400,
+        reset_at: epochIn(86400)
+      }
+    }
+  }
+
+  beforeEach(() => {
+    useUsageStore.setState({
+      anthropicUsage: sampleUsage,
+      openaiUsage: sampleOpenAIUsage,
+      loadSavedAccounts: async () => {}
+    })
+    useAccountStore.setState({
+      anthropicEmail: 'claude@example.com',
+      openaiEmail: 'openai@example.com'
+    })
+  })
+
+  afterEach(() => {
+    // Unmount before restoring: swapping the stubbed loadSavedAccounts back to
+    // the real action while components are mounted re-fires their effects
+    // against the mocked RPC, corrupting savedAccounts for the next test.
+    cleanup()
+    useUsageStore.setState(initialUsageState, true)
+    useAccountStore.setState(initialAccountState, true)
+  })
+
+  it('shows a toggle defaulting to the hovered provider and swaps content on click', async () => {
+    const user = userEvent.setup()
+    render(
+      <ProviderUsageBlock
+        provider="openai"
+        isExplicitlySelected
+        toggleProviders={['anthropic', 'openai']}
+      />
+    )
+
+    await user.hover(screen.getByTestId('usage-trigger-openai'))
+    await screen.findByText('OpenAI API Usage')
+
+    const claudeButton = screen.getByRole('button', { name: 'Show Claude usage' })
+    const openaiButton = screen.getByRole('button', { name: 'Show OpenAI usage' })
+    expect(openaiButton.getAttribute('aria-pressed')).toBe('true')
+    expect(claudeButton.getAttribute('aria-pressed')).toBe('false')
+
+    await user.click(claudeButton)
+    await screen.findByText('Claude API Usage')
+    expect(screen.queryByText('OpenAI API Usage')).toBeNull()
+    expect(screen.getByText('claude@example.com')).toBeTruthy()
+    expect(claudeButton.getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('resets to the hovered provider when the popover reopens', async () => {
+    const user = userEvent.setup()
+    render(
+      <ProviderUsageBlock
+        provider="openai"
+        isExplicitlySelected
+        toggleProviders={['anthropic', 'openai']}
+      />
+    )
+
+    const trigger = screen.getByTestId('usage-trigger-openai')
+    await user.hover(trigger)
+    await screen.findByText('OpenAI API Usage')
+    await user.click(screen.getByRole('button', { name: 'Show Claude usage' }))
+    await screen.findByText('Claude API Usage')
+
+    await user.unhover(screen.getByText('Claude API Usage'))
+    await waitFor(() => expect(screen.queryByText('Claude API Usage')).toBeNull(), {
+      timeout: 3000
+    })
+
+    await user.hover(trigger)
+    await screen.findByText('OpenAI API Usage')
+    expect(screen.queryByText('Claude API Usage')).toBeNull()
+  })
+
+  it('hides the toggle when only one provider is visible', async () => {
+    const user = userEvent.setup()
+    render(
+      <ProviderUsageBlock
+        provider="anthropic"
+        isExplicitlySelected
+        toggleProviders={['anthropic']}
+      />
+    )
+
+    await user.hover(screen.getByTestId('usage-trigger-anthropic'))
+    await screen.findByText('Claude API Usage')
+    expect(screen.queryByTestId('usage-provider-toggle')).toBeNull()
+    expect(screen.queryByRole('button', { name: /show .* usage/i })).toBeNull()
   })
 })
