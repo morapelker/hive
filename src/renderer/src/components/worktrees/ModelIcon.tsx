@@ -23,6 +23,28 @@ function getModelIcon(
   return null
 }
 
+/**
+ * Pure providerId/modelId → icon asset resolver, shared by any component that
+ * needs to render a provider's model icon without the worktree/session store
+ * lookups `ModelIcon` layers on top.
+ */
+export function resolveModelIconAsset(
+  providerId: string | null | undefined,
+  modelId: string | null | undefined
+): { src: string; alt: string } | null {
+  const matched = getModelIcon(modelId)
+
+  if ((providerId && CLAUDE_PROVIDER_IDS.has(providerId)) || matched?.label === 'Claude') {
+    return { src: claudeIcon, alt: 'Claude' }
+  }
+
+  if ((providerId && OPENAI_PROVIDER_IDS.has(providerId)) || matched?.label === 'OpenAI') {
+    return { src: openaiIcon, alt: 'OpenAI' }
+  }
+
+  return null
+}
+
 interface ModelIconProps {
   worktreeId: string
   className?: string
@@ -54,19 +76,9 @@ export function ModelIcon({ worktreeId, className }: ModelIconProps): React.JSX.
 
   if (!showModelIcons) return null
 
-  const matched = getModelIcon(lastModelInfo?.modelId)
-  if (
-    (lastModelInfo?.providerId && CLAUDE_PROVIDER_IDS.has(lastModelInfo.providerId)) ||
-    matched?.label === 'Claude'
-  ) {
-    return <img src={claudeIcon} alt="Claude" className={cn(className)} draggable={false} />
-  }
-
-  if (
-    (lastModelInfo?.providerId && OPENAI_PROVIDER_IDS.has(lastModelInfo.providerId)) ||
-    matched?.label === 'OpenAI'
-  ) {
-    return <img src={openaiIcon} alt="OpenAI" className={cn(className)} draggable={false} />
+  const asset = resolveModelIconAsset(lastModelInfo?.providerId, lastModelInfo?.modelId)
+  if (asset) {
+    return <img src={asset.src} alt={asset.alt} className={cn(className)} draggable={false} />
   }
 
   if (!lastModelInfo?.providerId && !lastModelInfo?.modelId) {
