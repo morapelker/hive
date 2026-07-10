@@ -562,6 +562,29 @@ describe('remoteLaunchOps.start', () => {
     expect(prepareCall?.[1]).toMatchObject({ nameHint: 'implement-the-thing' })
   })
 
+  it('strips the branch picker\'s "origin/" prefix before origin checks and the prepare payload', async () => {
+    const branchExistsOnOrigin = vi.fn(async () => true)
+    const request = vi.fn(makeRequestMock())
+    const deps = baseDeps({
+      git: { ...baseDeps().git, branchExistsOnOrigin },
+      remote: {
+        isConfigured: vi.fn(() => true),
+        getUrl: vi.fn(() => 'https://remote.example.com'),
+        requestAt: vi.fn(async () => {
+          throw new Error('unstubbed remote.requestAt call')
+        }),
+        request: request as RemoteLaunchOpsDeps['remote']['request']
+      }
+    })
+    const service = makeRemoteLaunchOpsRpcService(deps)
+
+    await Effect.runPromise(service.start({ ...startParams, branch: 'origin/feature/x' }))
+
+    expect(branchExistsOnOrigin).toHaveBeenCalledWith('/local/repo', 'feature/x')
+    const prepareCall = request.mock.calls.find(([method]) => method === 'remoteLaunchOps.prepare')
+    expect(prepareCall?.[1]).toMatchObject({ branch: 'feature/x' })
+  })
+
   it('ships the local worktree_create_script in the prepare payload', async () => {
     const request = vi.fn(makeRequestMock())
     const deps = baseDeps({

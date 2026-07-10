@@ -7,7 +7,7 @@ import { getDatabase } from '../db'
 import { logClaudeBinaryVersion, resolveClaudeBinaryPath } from './claude-binary-resolver'
 import { buildClaudeCliHookSettings, getClaudeHookServer } from './claude-hook-server'
 import { buildClaudeCliPtySpawn } from './claude-cli-spawner'
-import { watchForClaudeSessionId } from './claude-session-watcher'
+import { watchForClaudeSessionId, type ClaudeSessionWatchHandle } from './claude-session-watcher'
 import { createLogger } from './logger'
 
 const log = createLogger({ component: 'RemoteTmuxLauncher' })
@@ -101,6 +101,11 @@ export function buildTmuxLaunchScript(opts: {
 function remoteLaunchDir(): string {
   return join(homedir(), '.hive', 'remote-launch')
 }
+
+// One session-id watcher per Hive session: a relaunch for the same session
+// (retry after a dead tmux) must replace the previous watcher, not stack a
+// second set of fs watchers/timers next to it.
+const sessionIdWatchers = new Map<string, ClaudeSessionWatchHandle>()
 
 /** Write a file others on the machine cannot read (mode 0600), matching the
  * secrets-file precedent in atomic-json.ts: pass the mode to `writeFile` up
@@ -213,7 +218,9 @@ export async function launchClaudeCliInTmux(
     }
 
     if (!session.claude_session_id) {
-      watchForClaudeSessionId(worktreePath, (claudeSessionId) => {
+      sessionIdWatchers.get(sessionId)?.close()
+      const handle = watchForClaudeSessionId(worktreePath, (claudeSessionId) => {
+        sessionIdWatchers.delete(sessionId)
         try {
           db.updateSession(sessionId, { claude_session_id: claudeSessionId })
         } catch (error) {
@@ -223,6 +230,7 @@ export async function launchClaudeCliInTmux(
           })
         }
       })
+      sessionIdWatchers.set(sessionId, handle)
     }
 
     return { success: true, tmuxSession: tmuxSessionName }

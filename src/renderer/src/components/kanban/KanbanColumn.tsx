@@ -645,18 +645,20 @@ export function KanbanColumn({
         }
 
         // Remote-launched sessions have no local worktree/process — the agent
-        // runs in a tmux session on the remote host. Kill it there, or the
-        // ticket move would silently leave it running.
+        // runs in a tmux session on the remote host. Kill it there; if the
+        // remote can't be reached, abort the whole move rather than severing
+        // the ticket's only link to a still-running remote session.
         const remoteInfo = parseRemoteLaunch(session?.remote_launch)
         if (remoteInfo?.role === 'client' && !remoteInfo.stoppedAt) {
           try {
             await remoteLaunchApi.stop({ sessionId: draggedTicket.current_session_id })
             useRemoteLaunchStore.getState().clearRemoteInfo(draggedTicket.current_session_id)
           } catch (err) {
-            // Proceed with the move, but don't pretend the remote stopped.
             toast.error(
-              `Ticket moved, but stopping the remote session failed: ${err instanceof Error ? err.message : String(err)}`
+              `Could not stop the remote session — ticket not moved: ${err instanceof Error ? err.message : String(err)}`
             )
+            setPendingBackwardDrag(null)
+            return
           }
         }
 

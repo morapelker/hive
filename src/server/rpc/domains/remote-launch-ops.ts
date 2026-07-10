@@ -248,6 +248,17 @@ export function exactTmuxTarget(name: string): string {
 }
 
 /**
+ * The branch picker names remote-only branches `origin/<branch>` (see
+ * `normalizeBranchDisplayName` in effect/git/layers.ts). Origin-side checks
+ * (`ls-remote --heads origin <branch>`, `rev-parse origin/<branch>`) need the
+ * bare branch name — passing `origin/foo` through would look for a head
+ * literally named `origin/foo` and block valid remote-only branches.
+ */
+export function stripOriginPrefix(branch: string): string {
+  return branch.startsWith('origin/') ? branch.slice('origin/'.length) : branch
+}
+
+/**
  * Classify a rejected `tmux kill-session` exec into a `RemoteLaunchKillResult`,
  * or rethrow for failures that are not "the session was already gone" (e.g.
  * permission errors). Extracted as a pure function (vs. inlined in the exec
@@ -306,15 +317,16 @@ async function preflightRemoteLaunch(
     return result
   }
 
+  const branch = stripOriginPrefix(params.branch)
   try {
     const remoteUrl = await deps.git.getRemoteUrl(project.path)
     if (!remoteUrl.success || !remoteUrl.url) {
       result.error = remoteUrl.error || 'Git remote "origin" is required for remote launch'
     } else {
-      result.branchOnOrigin = await deps.git.branchExistsOnOrigin(project.path, params.branch)
+      result.branchOnOrigin = await deps.git.branchExistsOnOrigin(project.path, branch)
       if (result.branchOnOrigin) {
-        await deps.git.fetchOrigin(project.path, params.branch)
-        const { ahead, behind } = await deps.git.aheadBehind(project.path, params.branch)
+        await deps.git.fetchOrigin(project.path, branch)
+        const { ahead, behind } = await deps.git.aheadBehind(project.path, branch)
         result.localAhead = ahead
         result.localBehind = behind
         result.diverged = ahead > 0 && behind > 0
@@ -423,14 +435,15 @@ async function startRemoteLaunch(
 
   // Step 2: branch-check
   publish('branch-check', { status: 'running' })
+  const branch = stripOriginPrefix(params.branch)
   let project: Project
   try {
     const found = deps.db.getProject(params.projectId)
     if (!found) throw new Error('Project not found')
     project = found
-    const onOrigin = await deps.git.branchExistsOnOrigin(project.path, params.branch)
+    const onOrigin = await deps.git.branchExistsOnOrigin(project.path, branch)
     if (!onOrigin) {
-      throw new Error(`Branch "${params.branch}" was not found on origin`)
+      throw new Error(`Branch "${branch}" was not found on origin`)
     }
   } catch (error) {
     return fail('branch-check', error)
@@ -455,7 +468,7 @@ async function startRemoteLaunch(
         launchId,
         gitUrl: remoteUrl.url,
         projectName: project.name,
-        branch: params.branch,
+        branch,
         ...(nameHint ? { nameHint } : {}),
         worktreeCreateScript: project.worktree_create_script ?? null,
         mode: params.mode,
