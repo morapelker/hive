@@ -798,12 +798,14 @@ export function WorktreePickerModal({
 
       // Row 1 (the existing controls) first, then each extra model row. Row 1's
       // model uses the same effective-model chain as the single-model launch;
-      // extra rows pass their own model (null = the pipeline resolves per SDK).
+      // unpicked extra rows snapshot the concrete row-resolved model the
+      // ModelSelector displayed — downstream null-resolution ignores mode
+      // defaults, so passing null could launch a different model than shown.
       const entries: LaunchModelConfig[] = [
         { sdk: agentSdk, model: selectedModel ?? autoResolvedModel ?? null, codexFastMode },
         ...extraModelRows.map((r) => ({
           sdk: r.sdk,
-          model: r.model,
+          model: r.model ?? resolveRowDefaultModel(r.sdk, mode),
           codexFastMode: r.codexFastMode
         }))
       ]

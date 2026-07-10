@@ -1,9 +1,10 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { WorktreePickerModal, _resetLastSourceBranch } from './WorktreePickerModal'
 import { resetRendererRpcClientForTests, setRendererRpcClient } from '@/api/rpc-client'
 import { PLAN_MODE_PREFIX } from '@/lib/constants'
+import { FALLBACK_MODELS } from '@shared/model-resolution'
 import { runMultiModelLaunch } from '@/lib/multi-model-launch'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
@@ -290,7 +291,9 @@ function setupStores(): { updateTicket: ReturnType<typeof vi.fn> } {
   return { updateTicket }
 }
 
-function renderModal(props: Partial<React.ComponentProps<typeof WorktreePickerModal>> = {}): void {
+async function renderModal(
+  props: Partial<React.ComponentProps<typeof WorktreePickerModal>> = {}
+): Promise<void> {
   render(
     <WorktreePickerModal
       ticket={baseTicket}
@@ -301,6 +304,9 @@ function renderModal(props: Partial<React.ComponentProps<typeof WorktreePickerMo
       {...props}
     />
   )
+  // Flush the modal's async open effects (branch fetch → setBranches /
+  // setBranchesLoading) inside act so no state update settles outside it.
+  await act(async () => {})
 }
 
 describe('WorktreePickerModal multi-model UI', () => {
@@ -343,7 +349,7 @@ describe('WorktreePickerModal multi-model UI', () => {
   })
 
   it('adds and removes model rows and updates the send button label', async () => {
-    renderModal()
+    await renderModal()
 
     expect(screen.getByTestId('wt-picker-send-btn')).toHaveTextContent('Send')
     expect(screen.queryByTestId('extra-model-row-1')).toBeNull()
@@ -365,7 +371,7 @@ describe('WorktreePickerModal multi-model UI', () => {
   })
 
   it('hides the rows for an existing worktree, connection mode, and pre-assign mode', async () => {
-    renderModal()
+    await renderModal()
     await userEvent.click(screen.getByTestId('add-model-row'))
     expect(screen.getByTestId('extra-model-row-1')).toBeInTheDocument()
 
@@ -377,26 +383,18 @@ describe('WorktreePickerModal multi-model UI', () => {
     expect(screen.getByTestId('wt-picker-send-btn')).toHaveTextContent('Send')
 
     cleanup()
-    renderModal({ connectionId: 'connection-1' })
+    await renderModal({ connectionId: 'connection-1' })
     expect(screen.queryByTestId('add-model-row')).toBeNull()
 
     cleanup()
-    renderModal({ preAssignOnly: true })
+    await renderModal({ preAssignOnly: true })
     expect(screen.queryByTestId('add-model-row')).toBeNull()
   })
 
   it('hands multi-model launches to runMultiModelLaunch with raw prompt and row-ordered entries', async () => {
     const onOpenChange = vi.fn()
     const onSendComplete = vi.fn()
-    render(
-      <WorktreePickerModal
-        ticket={baseTicket}
-        projectId="project-1"
-        open
-        onOpenChange={onOpenChange}
-        onSendComplete={onSendComplete}
-      />
-    )
+    await renderModal({ onOpenChange, onSendComplete })
 
     // Row 1 = opencode + plan mode; extra row = codex.
     await userEvent.click(screen.getByTestId('wt-picker-mode-toggle')) // build -> plan
@@ -410,7 +408,9 @@ describe('WorktreePickerModal multi-model UI', () => {
 
     expect(plan.entries.map((e) => e.sdk)).toEqual(['opencode', 'codex'])
     expect(plan.entries[0].model).toBeNull()
-    expect(plan.entries[1].model).toBeNull()
+    // Unpicked extra rows snapshot the concrete row-resolved model (here the
+    // hard SDK fallback) so the launch can't diverge from what was displayed.
+    expect(plan.entries[1].model).toEqual(FALLBACK_MODELS.codex)
     expect(plan.mode).toBe('plan')
     expect(plan.sourceBranch).toBe('main')
     expect(plan.goalMode).toBe(false)
@@ -428,18 +428,55 @@ describe('WorktreePickerModal multi-model UI', () => {
     expect(useWorktreeStore.getState().createWorktreeFromBranch).not.toHaveBeenCalled()
   })
 
+  it('resolves an unpicked extra row from the row SDK mode default, not the per-SDK default', async () => {
+    // The build-mode default targets codex, and codex ALSO has a per-SDK
+    // default. The unpicked codex row must display AND launch the mode default
+    // — downstream null-resolution would pick the per-SDK default instead.
+    useSettingsStore.setState({
+      defaultModels: {
+        build: {
+          agentSdk: 'codex',
+          providerID: 'codex',
+          modelID: 'mode-default-model',
+          variant: 'fast'
+        },
+        plan: null,
+        ask: null,
+        review: null
+      },
+      selectedModelByProvider: {
+        codex: { providerID: 'codex', modelID: 'per-sdk-model' }
+      }
+    })
+    await renderModal()
+
+    // Pin row 1 to opencode so the codex mode default belongs to the extra row only.
+    await userEvent.click(screen.getByTestId('sdk-toggle-opencode'))
+    await userEvent.click(screen.getByTestId('add-model-row'))
+    await userEvent.click(screen.getByTestId('extra-model-row-1-sdk-codex'))
+
+    // The row's ModelSelector displays the mode default...
+    expect(screen.getByTestId('model-value-codex')).toHaveTextContent('mode-default-model')
+
+    await userEvent.click(screen.getByTestId('wt-picker-send-btn'))
+    await waitFor(() => expect(runMultiModelLaunch).toHaveBeenCalledTimes(1))
+    const plan = vi.mocked(runMultiModelLaunch).mock.calls[0][0]
+
+    // ...and the launch entry carries that same concrete model.
+    expect(plan.entries[1].model).toMatchObject({
+      providerID: 'codex',
+      modelID: 'mode-default-model',
+      variant: 'fast'
+    })
+    // Row 1 (opencode) has no default anywhere → stays null; the codex mode
+    // default must not leak across SDKs.
+    expect(plan.entries[0].sdk).toBe('opencode')
+    expect(plan.entries[0].model).toBeNull()
+  })
+
   it('serializes multi-model entries plus legacy row-1 fields in saveConfigOnly mode', async () => {
     const { updateTicket } = setupStores()
-    render(
-      <WorktreePickerModal
-        ticket={baseTicket}
-        projectId="project-1"
-        open
-        onOpenChange={vi.fn()}
-        onSendComplete={vi.fn()}
-        saveConfigOnly
-      />
-    )
+    await renderModal({ saveConfigOnly: true })
 
     await userEvent.click(screen.getByTestId('add-model-row'))
     await userEvent.click(screen.getByTestId('extra-model-row-1-sdk-codex'))
@@ -452,15 +489,18 @@ describe('WorktreePickerModal multi-model UI', () => {
     // Legacy row-1 fields stay for backward compat with old builds.
     expect(parsed.sdk).toBe('opencode')
     expect(parsed.codexFastMode).toBe(false)
-    // Multi-model entries, row 1 first.
+    // Multi-model entries, row 1 first. The unpicked extra row snapshots the
+    // concrete row-resolved model instead of null.
     expect(parsed.models).toHaveLength(2)
     expect(parsed.models[0].sdk).toBe('opencode')
+    expect(parsed.models[0].model).toBeNull()
     expect(parsed.models[1].sdk).toBe('codex')
+    expect(parsed.models[1].model).toEqual(FALLBACK_MODELS.codex)
   })
 
   it('stamps model badge fields on the single-model launch update', async () => {
     const { updateTicket } = setupStores()
-    renderModal()
+    await renderModal()
 
     await userEvent.click(screen.getByTestId('sdk-toggle-claude-code-cli'))
     await userEvent.click(screen.getByTestId('pick-model-claude-code-cli'))
@@ -484,7 +524,7 @@ describe('WorktreePickerModal multi-model UI', () => {
   })
 
   it('clears goal mode when an added row uses an SDK that does not support goals', async () => {
-    renderModal()
+    await renderModal()
 
     // Row 1 = codex (goal-capable) → enable goal mode.
     await userEvent.click(screen.getByTestId('sdk-toggle-codex'))
