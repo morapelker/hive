@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -478,6 +478,7 @@ describe('ProviderUsageBlock provider toggle', () => {
     useUsageStore.setState({
       anthropicUsage: sampleUsage,
       openaiUsage: sampleOpenAIUsage,
+      savedAccounts: { anthropic: [], openai: [] },
       loadSavedAccounts: async () => {}
     })
     useAccountStore.setState({
@@ -560,5 +561,53 @@ describe('ProviderUsageBlock provider toggle', () => {
     await screen.findByText('Claude API Usage')
     expect(screen.queryByTestId('usage-provider-toggle')).toBeNull()
     expect(screen.queryByRole('button', { name: /show .* usage/i })).toBeNull()
+  })
+
+  it('does not scroll back to the bottom when accounts load after the user scrolls up', async () => {
+    const user = userEvent.setup()
+    render(
+      <ProviderUsageBlock
+        provider="openai"
+        isExplicitlySelected
+        toggleProviders={['openai']}
+      />
+    )
+
+    await user.hover(screen.getByTestId('usage-trigger-openai'))
+    await screen.findByText('OpenAI API Usage')
+
+    const popover = screen.getByText('OpenAI API Usage').closest(
+      '[data-slot="hover-card-content"]'
+    ) as HTMLDivElement
+    Object.defineProperties(popover, {
+      scrollHeight: { configurable: true, value: 600 },
+      clientHeight: { configurable: true, value: 200 }
+    })
+
+    popover.scrollTop = 100
+    fireEvent.scroll(popover)
+
+    act(() => {
+      useUsageStore.setState((state) => ({
+        savedAccounts: {
+          ...state.savedAccounts,
+          openai: [
+            {
+              id: 'openai-loaded-account',
+              provider: 'openai',
+              email: 'loaded@example.com',
+              last_usage: sampleOpenAIUsage,
+              last_fetched_at: null,
+              status: 'ok',
+              last_error: null,
+              created_at: new Date().toISOString(),
+              plan: 'plus'
+            }
+          ]
+        }
+      }))
+    })
+
+    expect(popover.scrollTop).toBe(100)
   })
 })
