@@ -54,6 +54,7 @@ interface RemoteLaunchDb {
   getSession: (id: string) => Session | null
   createSession: (data: SessionCreate) => Session
   updateSession: (id: string, data: { remote_launch?: string | null }) => Session | null
+  updateProject: (id: string, data: { worktree_create_script?: string | null }) => Project | null
   findSessionByRemoteLaunchId: (launchId: string, role: 'client' | 'host') => Session | null
 }
 
@@ -456,6 +457,7 @@ async function startRemoteLaunch(
         projectName: project.name,
         branch: params.branch,
         ...(nameHint ? { nameHint } : {}),
+        worktreeCreateScript: project.worktree_create_script ?? null,
         mode: params.mode,
         model: params.model
       } satisfies RemoteLaunchPrepareParams,
@@ -654,6 +656,20 @@ async function prepareRemoteLaunch(
     project = await deps.ensureRemoteProject(params.gitUrl, params.projectName)
   } catch (error) {
     throw stepError('clone', error)
+  }
+
+  // Sync the local project's worktree-create script onto the remote project
+  // row: createWorktreeFromBranchOp reads it from there, and a freshly cloned
+  // remote project has none — silently skipping the project's custom worktree
+  // bootstrap (submodules, symlinks, ...).
+  if (
+    params.worktreeCreateScript !== undefined &&
+    (project.worktree_create_script ?? null) !== params.worktreeCreateScript
+  ) {
+    const updated = deps.db.updateProject(project.id, {
+      worktree_create_script: params.worktreeCreateScript
+    })
+    if (updated) project = updated
   }
 
   try {
@@ -1030,7 +1046,8 @@ async function createLiveDeps(eventBus?: EventBus): Promise<RemoteLaunchOpsDeps>
       createSession: (data) => db.createSession(data),
       updateSession: (id, data) => db.updateSession(id, data),
       findSessionByRemoteLaunchId: (launchId, role) =>
-        db.findSessionByRemoteLaunchId(launchId, role)
+        db.findSessionByRemoteLaunchId(launchId, role),
+      updateProject: (id, data) => db.updateProject(id, data)
     },
     git: {
       getRemoteUrl: (repoPath) => gitService.getRemoteUrl(repoPath, 'origin'),
@@ -1277,6 +1294,7 @@ const prepareParamsSchema = z
     projectName: z.string().min(1),
     branch: z.string().min(1),
     nameHint: z.string().optional(),
+    worktreeCreateScript: z.string().nullable().optional(),
     mode: modeSchema,
     model: modelSelectionSchema.nullable()
   })

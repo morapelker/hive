@@ -126,6 +126,13 @@ export interface RemoteLaunchPrepareParams {
   projectName: string
   branch: string
   nameHint?: string
+  /**
+   * The local project's `worktree_create_script`, synced onto the remote
+   * project row before worktree creation so `createWorktreeFromBranchOp`
+   * (which reads it from the project row) runs the project's custom worktree
+   * bootstrap on the remote too. Null clears a stale remote value.
+   */
+  worktreeCreateScript?: string | null
   mode: RemoteLaunchMode
   model: RemoteLaunchModelSelection | null
 }

@@ -50,6 +50,9 @@ import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { dbApi } from '@/api/db-api'
 import { gitApi } from '@/api/git-api'
 import { opencodeApi } from '@/api/opencode-api'
+import { remoteLaunchApi } from '@/api/remote-launch-api'
+import { useRemoteLaunchStore } from '@/stores/useRemoteLaunchStore'
+import { parseRemoteLaunch } from '@shared/types/remote-launch'
 
 // ── Layout animation spring ─────────────────────────────────────────
 const CARD_LAYOUT_SPRING = {
@@ -638,6 +641,22 @@ export function KanbanColumn({
             } catch {
               // Non-critical — session may already be idle
             }
+          }
+        }
+
+        // Remote-launched sessions have no local worktree/process — the agent
+        // runs in a tmux session on the remote host. Kill it there, or the
+        // ticket move would silently leave it running.
+        const remoteInfo = parseRemoteLaunch(session?.remote_launch)
+        if (remoteInfo?.role === 'client' && !remoteInfo.stoppedAt) {
+          try {
+            await remoteLaunchApi.stop({ sessionId: draggedTicket.current_session_id })
+            useRemoteLaunchStore.getState().clearRemoteInfo(draggedTicket.current_session_id)
+          } catch (err) {
+            // Proceed with the move, but don't pretend the remote stopped.
+            toast.error(
+              `Ticket moved, but stopping the remote session failed: ${err instanceof Error ? err.message : String(err)}`
+            )
           }
         }
 

@@ -116,6 +116,7 @@ function baseDeps(overrides: Partial<RemoteLaunchOpsDeps> = {}): RemoteLaunchOps
       getSession: vi.fn(() => session()),
       createSession: vi.fn((_data: SessionCreate) => session({ id: 'local-session-1' })),
       updateSession: vi.fn(() => session()),
+      updateProject: vi.fn(() => project()),
       findSessionByRemoteLaunchId: vi.fn(() => null)
     },
     git: {
@@ -561,6 +562,32 @@ describe('remoteLaunchOps.start', () => {
     expect(prepareCall?.[1]).toMatchObject({ nameHint: 'implement-the-thing' })
   })
 
+  it('ships the local worktree_create_script in the prepare payload', async () => {
+    const request = vi.fn(makeRequestMock())
+    const deps = baseDeps({
+      db: {
+        ...baseDeps().db,
+        getProject: vi.fn(() => project({ worktree_create_script: 'git submodule update --init' }))
+      },
+      remote: {
+        isConfigured: vi.fn(() => true),
+        getUrl: vi.fn(() => 'https://remote.example.com'),
+        requestAt: vi.fn(async () => {
+          throw new Error('unstubbed remote.requestAt call')
+        }),
+        request: request as RemoteLaunchOpsDeps['remote']['request']
+      }
+    })
+    const service = makeRemoteLaunchOpsRpcService(deps)
+
+    await Effect.runPromise(service.start(startParams))
+
+    const prepareCall = request.mock.calls.find(([method]) => method === 'remoteLaunchOps.prepare')
+    expect(prepareCall?.[1]).toMatchObject({
+      worktreeCreateScript: 'git submodule update --init'
+    })
+  })
+
   it('hard-fails at branch-check when the branch is missing on origin, without calling prepare/applySetupPlan/launch', async () => {
     const publishProgress = vi.fn()
     const request = vi.fn(makeRequestMock())
@@ -729,6 +756,72 @@ describe('remoteLaunchOps.prepare', () => {
 
     expect(result.reused).toBe(false)
     expect(createSession).toHaveBeenCalled()
+  })
+
+  it('syncs the shipped worktree_create_script onto the remote project row before creating the worktree', async () => {
+    const remoteProject = project({ id: 'remote-project-1', path: '/remote/repo' })
+    const updateProject = vi.fn(() =>
+      project({
+        id: 'remote-project-1',
+        path: '/remote/repo',
+        worktree_create_script: 'git submodule update --init'
+      })
+    )
+    const createWorktreeFromBranch = vi.fn(async () => ({
+      success: true,
+      worktree: worktree({ id: 'remote-worktree-1', path: '/remote/repo-feature-x' })
+    }))
+    const deps = baseDeps({
+      ensureRemoteProject: vi.fn(async () => remoteProject),
+      createWorktreeFromBranch,
+      db: { ...baseDeps().db, findSessionByRemoteLaunchId: vi.fn(() => null), updateProject }
+    })
+    const service = makeRemoteLaunchOpsRpcService(deps)
+
+    await Effect.runPromise(
+      service.prepare({
+        launchId: 'launch-2',
+        gitUrl: 'git@github.com:org/repo.git',
+        projectName: 'repo',
+        branch: 'feature/x',
+        worktreeCreateScript: 'git submodule update --init',
+        mode: 'build',
+        model: null
+      })
+    )
+
+    expect(updateProject).toHaveBeenCalledWith('remote-project-1', {
+      worktree_create_script: 'git submodule update --init'
+    })
+    // The worktree creation must observe the updated row.
+    expect(updateProject.mock.invocationCallOrder[0]).toBeLessThan(
+      createWorktreeFromBranch.mock.invocationCallOrder[0]!
+    )
+  })
+
+  it('does not touch the remote project row when the shipped script already matches', async () => {
+    const updateProject = vi.fn()
+    const deps = baseDeps({
+      ensureRemoteProject: vi.fn(async () =>
+        project({ id: 'remote-project-1', path: '/remote/repo', worktree_create_script: null })
+      ),
+      db: { ...baseDeps().db, findSessionByRemoteLaunchId: vi.fn(() => null), updateProject }
+    })
+    const service = makeRemoteLaunchOpsRpcService(deps)
+
+    await Effect.runPromise(
+      service.prepare({
+        launchId: 'launch-2',
+        gitUrl: 'git@github.com:org/repo.git',
+        projectName: 'repo',
+        branch: 'feature/x',
+        worktreeCreateScript: null,
+        mode: 'build',
+        model: null
+      })
+    )
+
+    expect(updateProject).not.toHaveBeenCalled()
   })
 
   it('creates a fresh remote project/worktree/session when not previously launched', async () => {

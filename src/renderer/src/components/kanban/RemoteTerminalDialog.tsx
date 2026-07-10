@@ -216,8 +216,21 @@ export function RemoteTerminalDialog({
       // Container might not be visible/sized yet — attach without an explicit size.
     }
 
-    const target = remoteTargetFromUrl(remoteLaunchRef.current.url, teleport.bootstrapToken)
-    const client = new HiveClient(target)
+    // A malformed stored URL makes `new URL` inside remoteTargetFromUrl
+    // throw; connect() is invoked fire-and-forget, so an uncaught throw here
+    // would strand the dialog on "Connecting…" forever.
+    let client: HiveClient
+    try {
+      client = new HiveClient(
+        remoteTargetFromUrl(remoteLaunchRef.current.url, teleport.bootstrapToken)
+      )
+    } catch {
+      if (myEpoch !== epochRef.current) return
+      setErrorDetail(`The stored remote URL "${remoteLaunchRef.current.url}" is not a valid URL`)
+      setErrorKind('unreachable')
+      setState('error')
+      return
+    }
 
     // Client-generated terminal id, subscribed BEFORE the attach RPC: the
     // remote PTY dumps the current tmux screen as soon as attach creates it,
