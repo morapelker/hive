@@ -341,6 +341,13 @@ export function WorktreePickerModal({
   // the user's explicit pick, else the same default the branch picker shows.
   const resolvedSourceBranch = sourceBranch ?? defaultBranchName
 
+  // The picker names remote-only branches `origin/<branch>`; the server
+  // strips that prefix before git operations, so user-facing remote copy
+  // must too — otherwise it reads "origin/origin/<branch>".
+  const remoteBranchDisplay = resolvedSourceBranch.startsWith('origin/')
+    ? resolvedSourceBranch.slice('origin/'.length)
+    : resolvedSourceBranch
+
   const worktreeNamePreview = useMemo(() => {
     return canonicalizeTicketTitle(ticket.title)
   }, [ticket.title])
@@ -1594,7 +1601,7 @@ export function WorktreePickerModal({
                                 data-testid="remote-branch-missing"
                                 className="text-xs text-destructive"
                               >
-                                Branch {resolvedSourceBranch} doesn&apos;t exist on origin — push
+                                Branch {remoteBranchDisplay} doesn&apos;t exist on origin — push
                                 it first
                               </p>
                             )}
@@ -1613,7 +1620,7 @@ export function WorktreePickerModal({
                               data-testid="remote-ahead-warning"
                               className="text-xs text-amber-600 dark:text-amber-400"
                             >
-                              Remote will run from origin/{resolvedSourceBranch} — missing{' '}
+                              Remote will run from origin/{remoteBranchDisplay} — missing{' '}
                               {remotePreflight.localAhead} local commit
                               {remotePreflight.localAhead === 1 ? '' : 's'}
                             </p>

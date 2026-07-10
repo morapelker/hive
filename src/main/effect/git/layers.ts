@@ -868,7 +868,7 @@ const make = Effect.gen(function* () {
                 worktreeName = `${options.nameHint}-${suffix}`
               }
               const worktreePath = join(projectWorktreesDir, `${projectName}--${worktreeName}`)
-              const baseRef = prNumber != null ? 'FETCH_HEAD' : branchName
+              const baseRef = prNumber != null ? 'FETCH_HEAD' : (options?.baseRef ?? branchName)
               try {
                 if (createScript) {
                   const scriptResult = await runWorktreeCreateScript({

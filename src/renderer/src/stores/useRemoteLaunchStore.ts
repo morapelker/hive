@@ -20,11 +20,19 @@ interface RemoteLaunchStoreState {
 // of firing duplicate db.session.get RPCs.
 const inFlightLoads = new Map<string, Promise<void>>()
 
+// Session ids whose last load FAILED (cached as null so the UI resolves, but
+// eligible for a retry on the next ensureLoaded call — e.g. a later mount).
+// Without this, one transient RPC error would hide the remote badge/actions
+// until app restart; without the null cache, it would hang "loading" forever.
+const failedLoads = new Set<string>()
+
 export const useRemoteLaunchStore = create<RemoteLaunchStoreState>()((set, get) => ({
   remoteBySessionId: {},
 
   ensureLoaded: (sessionId) => {
-    if (sessionId in get().remoteBySessionId) return Promise.resolve()
+    if (sessionId in get().remoteBySessionId && !failedLoads.has(sessionId)) {
+      return Promise.resolve()
+    }
 
     const existing = inFlightLoads.get(sessionId)
     if (existing) return existing
@@ -36,11 +44,9 @@ export const useRemoteLaunchStore = create<RemoteLaunchStoreState>()((set, get) 
         const info = parseRemoteLaunch(session?.remote_launch)
         // A stopped launch renders like a non-remote session: no badge/actions.
         clientInfo = info?.role === 'client' && !info.stoppedAt ? info : null
+        failedLoads.delete(sessionId)
       } catch {
-        // Treat a failed fetch as "checked, not remote" — leaving the key
-        // absent would strand consumers in a loading state forever, since
-        // useTicketRemoteLaunch only re-fires ensureLoaded on sessionId
-        // change and ensureLoaded never retries a cached key.
+        failedLoads.add(sessionId)
       } finally {
         inFlightLoads.delete(sessionId)
       }

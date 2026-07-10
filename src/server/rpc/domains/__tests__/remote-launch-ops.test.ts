@@ -848,9 +848,11 @@ describe('remoteLaunchOps.prepare', () => {
     )
     // Auto-pull would run `git pull origin <branch> --ff-only` in the shared
     // base clone's checkout and could fast-forward its branch onto the
-    // feature branch — remote prepare must always disable it.
+    // feature branch — remote prepare must always disable it. The worktree
+    // must be based on the origin ref: the branch may have no local ref on
+    // the remote clone (remote-only selection).
     expect(createWorktreeFromBranch).toHaveBeenCalledWith(
-      expect.objectContaining({ autoPull: false })
+      expect.objectContaining({ autoPull: false, baseRef: 'origin/feature/x' })
     )
   })
 
@@ -1222,8 +1224,20 @@ describe('remoteLaunchOps.launch', () => {
 })
 
 describe('remoteLaunchOps.killTmux', () => {
+  const hostSessionWithTmux = (tmuxSession: string | null): Session =>
+    session({
+      id: 'remote-session-1',
+      remote_launch: JSON.stringify({
+        role: 'host',
+        launchId: 'launch-1',
+        tmuxSession,
+        promptFile: null
+      })
+    })
+
   it('returns killed:true on success', async () => {
     const deps = baseDeps({
+      db: { ...baseDeps().db, getSession: vi.fn(() => hostSessionWithTmux('hive-feature-x')) },
       tmux: { hasSession: vi.fn(async () => true), killSession: vi.fn(async () => ({ killed: true, alreadyDead: false })) }
     })
     const service = makeRemoteLaunchOpsRpcService(deps)
@@ -1237,6 +1251,7 @@ describe('remoteLaunchOps.killTmux', () => {
 
   it('returns alreadyDead:true when the tmux session is already gone', async () => {
     const deps = baseDeps({
+      db: { ...baseDeps().db, getSession: vi.fn(() => hostSessionWithTmux('hive-feature-x')) },
       tmux: {
         hasSession: vi.fn(async () => false),
         killSession: vi.fn(async () => ({ killed: false, alreadyDead: true }))
@@ -1249,6 +1264,38 @@ describe('remoteLaunchOps.killTmux', () => {
     )
 
     expect(result).toEqual({ killed: false, alreadyDead: true })
+  })
+
+  it('refuses to kill a tmux session not recorded on the referenced host session', async () => {
+    const killSession = vi.fn(async () => ({ killed: true, alreadyDead: false }))
+    const deps = baseDeps({
+      db: { ...baseDeps().db, getSession: vi.fn(() => hostSessionWithTmux('hive-feature-x')) },
+      tmux: { hasSession: vi.fn(async () => true), killSession }
+    })
+    const service = makeRemoteLaunchOpsRpcService(deps)
+
+    await expect(
+      Effect.runPromise(
+        service.killTmux({ remoteSessionId: 'remote-session-1', tmuxSession: 'hive-other-ticket' })
+      )
+    ).rejects.toThrow(/does not belong/)
+    expect(killSession).not.toHaveBeenCalled()
+  })
+
+  it('reports alreadyDead without killing when the host session has no recorded tmux session', async () => {
+    const killSession = vi.fn(async () => ({ killed: true, alreadyDead: false }))
+    const deps = baseDeps({
+      db: { ...baseDeps().db, getSession: vi.fn(() => hostSessionWithTmux(null)) },
+      tmux: { hasSession: vi.fn(async () => true), killSession }
+    })
+    const service = makeRemoteLaunchOpsRpcService(deps)
+
+    const result = await Effect.runPromise(
+      service.killTmux({ remoteSessionId: 'remote-session-1', tmuxSession: 'hive-feature-x' })
+    )
+
+    expect(result).toEqual({ killed: false, alreadyDead: true })
+    expect(killSession).not.toHaveBeenCalled()
   })
 })
 

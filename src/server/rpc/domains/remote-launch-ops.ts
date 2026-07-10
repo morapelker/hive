@@ -135,6 +135,7 @@ interface RemoteLaunchCreateWorktreeParams {
   branchName: string
   nameHint?: string
   autoPull?: boolean
+  baseRef?: string
 }
 interface RemoteLaunchCreateWorktreeResult {
   success: boolean
@@ -722,7 +723,12 @@ async function prepareRemoteLaunch(
       // shared base clone's checkout and could fast-forward ITS branch (e.g.
       // main) onto the feature branch, corrupting the clone for later
       // launches.
-      autoPull: false
+      autoPull: false,
+      // Base on the origin ref explicitly: the branch may have no local ref
+      // on the remote clone (remote-only selection), where a bare branch
+      // name would fail `worktree add` — and a stale local ref would launch
+      // from outdated history.
+      baseRef: `origin/${params.branch}`
     })
     if (!worktreeResult.success || !worktreeResult.worktree) {
       throw new Error(worktreeResult.error || 'Failed to create remote worktree')
@@ -938,6 +944,19 @@ async function killTmuxRemoteLaunch(
   deps: RemoteLaunchOpsDeps,
   params: RemoteLaunchKillTmuxParams
 ): Promise<RemoteLaunchKillResult> {
+  // Ownership check: only kill the tmux session actually recorded on the
+  // referenced host session. Hive session names are guessable
+  // (`hive-<slug>`), so an unverified name would let a stale or misdirected
+  // client kill another launch's session (or any same-named tmux session).
+  const session = deps.db.getSession(params.remoteSessionId)
+  if (!session) throw new Error('Remote session not found')
+  const hostInfo = parseRemoteLaunch(session.remote_launch)
+  if (hostInfo?.role !== 'host' || !hostInfo.tmuxSession) {
+    return { killed: false, alreadyDead: true }
+  }
+  if (hostInfo.tmuxSession !== params.tmuxSession) {
+    throw new Error('tmux session does not belong to the given remote session')
+  }
   return deps.tmux.killSession(params.tmuxSession)
 }
 

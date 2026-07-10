@@ -135,6 +135,29 @@ describe('useRemoteLaunchStore', () => {
     )
   })
 
+  it('retries a previously failed load on the next ensureLoaded call', async () => {
+    let failNext = true
+    request.mockImplementation(async (method: string, params?: unknown) => {
+      if (method !== 'db.session.get') return null
+      if (failNext) {
+        failNext = false
+        throw new Error('rpc unavailable')
+      }
+      const { id } = params as { id: string }
+      return { id, remote_launch: JSON.stringify(clientInfo) }
+    })
+
+    await useRemoteLaunchStore.getState().ensureLoaded('session-flaky')
+    expect(useRemoteLaunchStore.getState().remoteBySessionId['session-flaky']).toBeNull()
+
+    // A later mount calls ensureLoaded again — the failed entry is retried
+    // (a successful null result would NOT be, see the non-refetch test above).
+    await useRemoteLaunchStore.getState().ensureLoaded('session-flaky')
+    expect(useRemoteLaunchStore.getState().remoteBySessionId['session-flaky']).toEqual(
+      clientInfo
+    )
+  })
+
   it('clearRemoteInfo marks a session as no longer remote', () => {
     useRemoteLaunchStore.getState().setRemoteInfo('session-fresh', clientInfo)
     useRemoteLaunchStore.getState().clearRemoteInfo('session-fresh')
