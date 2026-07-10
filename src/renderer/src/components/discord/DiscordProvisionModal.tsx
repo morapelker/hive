@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Hash, Loader2 } from 'lucide-react'
+import { Hash, Loader2, Search } from 'lucide-react'
 import { toast } from 'sonner'
 import type { Project } from '@shared/types/project'
 import type { DiscordProvisionProgress } from '@shared/types/discord'
@@ -34,11 +34,13 @@ export function DiscordProvisionModal({
   const [provisioning, setProvisioning] = useState(false)
   const [progress, setProgress] = useState<DiscordProvisionProgress | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [filter, setFilter] = useState('')
 
   useEffect(() => {
     if (!open) return
     setError(null)
     setProgress(null)
+    setFilter('')
     setSelectedIds(new Set(config?.selectedProjectIds ?? []))
     setLoadingProjects(true)
     dbApi.project
@@ -57,6 +59,15 @@ export function DiscordProvisionModal({
 
   const selectedProjectIds = useMemo(() => Array.from(selectedIds), [selectedIds])
   const percent = progress?.total ? Math.min(100, (progress.current / progress.total) * 100) : 0
+
+  const filteredProjects = useMemo(() => {
+    const query = filter.trim().toLowerCase()
+    if (!query) return projects
+    return projects.filter(
+      (project) =>
+        project.name.toLowerCase().includes(query) || project.path.toLowerCase().includes(query)
+    )
+  }, [projects, filter])
 
   const toggleProject = (projectId: string, checked: boolean): void => {
     setSelectedIds((prev) => {
@@ -102,7 +113,10 @@ export function DiscordProvisionModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg" data-testid="discord-provision-modal">
+      <DialogContent
+        className="flex max-h-[80vh] max-w-lg flex-col"
+        data-testid="discord-provision-modal"
+      >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Hash className="h-4 w-4" />
@@ -113,8 +127,20 @@ export function DiscordProvisionModal({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4">
-          <div className="max-h-72 overflow-y-auto rounded-md border">
+        <div className="flex min-h-0 flex-1 flex-col gap-4">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <input
+              type="text"
+              placeholder="Filter projects..."
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              className="w-full rounded-md border border-border bg-muted/50 py-1.5 pl-8 pr-3 text-sm placeholder:text-muted-foreground/60 focus:outline-none focus:ring-1 focus:ring-ring"
+              data-testid="discord-project-filter-input"
+            />
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-y-auto rounded-md border">
             {loadingProjects ? (
               <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -122,8 +148,12 @@ export function DiscordProvisionModal({
               </div>
             ) : projects.length === 0 ? (
               <div className="p-4 text-sm text-muted-foreground">No projects found.</div>
+            ) : filteredProjects.length === 0 ? (
+              <div className="p-4 text-sm text-muted-foreground">
+                No projects match &ldquo;{filter.trim()}&rdquo;.
+              </div>
             ) : (
-              projects.map((project) => (
+              filteredProjects.map((project) => (
                 <label
                   key={project.id}
                   className="flex items-center justify-between gap-3 border-b px-4 py-3 last:border-b-0"
