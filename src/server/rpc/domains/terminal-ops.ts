@@ -274,7 +274,10 @@ const detachBackendPtyListeners = (terminalId: string): void => {
   flushScheduled.delete(terminalId)
 }
 
-const attachBackendPtyListeners = (eventBus: EventBus | undefined, terminalId: string): void => {
+export const attachBackendPtyListeners = (
+  eventBus: EventBus | undefined,
+  terminalId: string
+): void => {
   detachBackendPtyListeners(terminalId)
 
   const removeData = ptyService.onData(terminalId, (data) => {

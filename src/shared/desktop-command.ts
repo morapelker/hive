@@ -63,6 +63,7 @@ export type DesktopCommandName =
   | 'terminalDestroy'
   | 'terminalWrite'
   | 'terminalCreateClaudeCli'
+  | 'remoteLaunchClaudeTmux'
   | 'terminalGhosttyInit'
   | 'terminalGhosttyIsAvailable'
   | 'terminalGhosttyCreateSurface'
@@ -356,6 +357,19 @@ export interface TerminalCreateResult {
   readonly cols?: number
   readonly rows?: number
   readonly error?: string
+}
+
+export interface RemoteLaunchClaudeTmuxPayload {
+  readonly sessionId: string
+  readonly worktreePath: string
+  readonly prompt: string
+  readonly tmuxSessionName: string
+}
+
+export interface RemoteLaunchClaudeTmuxResult {
+  readonly success: boolean
+  readonly error?: string
+  readonly tmuxSession?: string
 }
 
 export interface TelegramClaudeCliSessionPayload {
@@ -921,6 +935,7 @@ export type DesktopCommandRequest =
   | TerminalDestroyDesktopCommandRequest
   | TerminalWriteDesktopCommandRequest
   | TerminalCreateClaudeCliDesktopCommandRequest
+  | RemoteLaunchClaudeTmuxDesktopCommandRequest
   | TerminalGhosttyInitDesktopCommandRequest
   | TerminalGhosttyIsAvailableDesktopCommandRequest
   | TerminalGhosttyCreateSurfaceDesktopCommandRequest
@@ -1353,6 +1368,13 @@ export interface TerminalCreateClaudeCliDesktopCommandRequest {
   readonly id: string
   readonly command: 'terminalCreateClaudeCli'
   readonly payload: TerminalCreateClaudeCliPayload
+}
+
+export interface RemoteLaunchClaudeTmuxDesktopCommandRequest {
+  readonly type: typeof DESKTOP_COMMAND_REQUEST_TYPE
+  readonly id: string
+  readonly command: 'remoteLaunchClaudeTmux'
+  readonly payload: RemoteLaunchClaudeTmuxPayload
 }
 
 export interface TerminalGhosttyIsAvailableDesktopCommandRequest {
@@ -1952,6 +1974,11 @@ export function makeDesktopCommandRequest(
   command: 'terminalCreateClaudeCli',
   payload: TerminalCreateClaudeCliPayload
 ): TerminalCreateClaudeCliDesktopCommandRequest
+export function makeDesktopCommandRequest(
+  id: string,
+  command: 'remoteLaunchClaudeTmux',
+  payload: RemoteLaunchClaudeTmuxPayload
+): RemoteLaunchClaudeTmuxDesktopCommandRequest
 export function makeDesktopCommandRequest(
   id: string,
   command: 'terminalGhosttyIsAvailable'
@@ -2817,6 +2844,19 @@ export function makeDesktopCommandRequest(
     } as TerminalCreateClaudeCliDesktopCommandRequest
   }
 
+  if (command === 'remoteLaunchClaudeTmux') {
+    if (!payload) {
+      throw new Error('Missing remoteLaunchClaudeTmux payload')
+    }
+
+    return {
+      type: DESKTOP_COMMAND_REQUEST_TYPE,
+      id,
+      command,
+      payload
+    } as RemoteLaunchClaudeTmuxDesktopCommandRequest
+  }
+
   if (command === 'terminalGhosttyIsAvailable') {
     return {
       type: DESKTOP_COMMAND_REQUEST_TYPE,
@@ -3474,6 +3514,8 @@ export const isDesktopCommandRequest = (value: unknown): value is DesktopCommand
       (value.command === 'terminalWrite' && isTerminalWritePayload(value.payload)) ||
       (value.command === 'terminalCreateClaudeCli' &&
         isTerminalCreateClaudeCliPayload(value.payload)) ||
+      (value.command === 'remoteLaunchClaudeTmux' &&
+        isRemoteLaunchClaudeTmuxPayload(value.payload)) ||
       value.command === 'terminalGhosttyInit' ||
       value.command === 'terminalGhosttyIsAvailable' ||
       (value.command === 'terminalGhosttyCreateSurface' &&
@@ -3760,6 +3802,15 @@ const isTerminalCreateClaudeCliPayload = (
         value.opts.pendingPrompt === undefined ||
         value.opts.pendingPrompt === null ||
         typeof value.opts.pendingPrompt === 'string')))
+
+const isRemoteLaunchClaudeTmuxPayload = (
+  value: unknown
+): value is RemoteLaunchClaudeTmuxPayload =>
+  isRecord(value) &&
+  typeof value.sessionId === 'string' &&
+  typeof value.worktreePath === 'string' &&
+  typeof value.prompt === 'string' &&
+  typeof value.tmuxSessionName === 'string'
 
 const isTerminalGhosttyRect = (value: unknown): value is TerminalGhosttyRect =>
   isRecord(value) &&

@@ -805,7 +805,11 @@ const make = Effect.gen(function* () {
       duplicate: duplicateWorktree,
       createFromBranch: (repoPath, projectName, branchName, breedType: BreedType = 'dogs', prNumber, options) =>
         Effect.gen(function* () {
-          if (prNumber == null) {
+          // An explicit baseRef (remote launch passes `origin/<branch>`)
+          // must bypass the duplicate-checked-out-worktree fast path: the
+          // local checkout can be stale (remote prepare fetches but never
+          // pulls) and duplicating it would also copy uncommitted files.
+          if (prNumber == null && !options?.baseRef) {
             const worktrees = yield* listWorktrees(repoPath)
             const checkedOutWorktree = worktrees.find((worktree) => worktree.branch === branchName)
             if (checkedOutWorktree) {
@@ -868,7 +872,7 @@ const make = Effect.gen(function* () {
                 worktreeName = `${options.nameHint}-${suffix}`
               }
               const worktreePath = join(projectWorktreesDir, `${projectName}--${worktreeName}`)
-              const baseRef = prNumber != null ? 'FETCH_HEAD' : branchName
+              const baseRef = prNumber != null ? 'FETCH_HEAD' : (options?.baseRef ?? branchName)
               try {
                 if (createScript) {
                   const scriptResult = await runWorktreeCreateScript({

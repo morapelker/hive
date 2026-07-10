@@ -22,7 +22,9 @@ import {
   Upload,
   Lock,
   Plus,
-  Map as MapIcon
+  Map as MapIcon,
+  RadioTower,
+  Unplug
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -35,6 +37,16 @@ import {
   DialogDescription
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogAction,
+  AlertDialogCancel
+} from '@/components/ui/alert-dialog'
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -86,9 +98,12 @@ import { usePinAndActivateSession } from '@/hooks/usePinAndActivateSession'
 import { useConflictFixFlow } from '@/hooks/useConflictFixFlow'
 import { TicketAttachmentEditor } from './TicketAttachmentEditor'
 import { TicketDiscardChangesDialog } from './TicketDiscardChangesDialog'
+import { RemoteTerminalDialog } from './RemoteTerminalDialog'
 import { useImagePaste } from '@/hooks/useImagePaste'
+import { useTicketRemoteLaunch } from '@/hooks/useTicketRemoteLaunch'
 import { buildHandoffPrompt, type HandoffSelectionOverride } from '@/lib/handoffSelection'
 import { canonicalizeTicketTitle, extractPlanTitle } from '@shared/types/branch-utils'
+import type { RemoteLaunchClientInfo } from '@shared/types/remote-launch'
 import type { KanbanTicket, KanbanTicketUpdate, Session, Worktree } from '../../../../main/db/types'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { autoPinBaseWorktree } from '@/lib/auto-pin'
@@ -100,6 +115,8 @@ import { dbApi } from '@/api/db-api'
 import { fileApi } from '@/api/file-api'
 import { gitApi } from '@/api/git-api'
 import { opencodeApi } from '@/api/opencode-api'
+import { remoteLaunchApi } from '@/api/remote-launch-api'
+import { useRemoteLaunchStore } from '@/stores/useRemoteLaunchStore'
 import { systemApi } from '@/api/system-api'
 import { terminalApi } from '@/api/terminal-api'
 
@@ -143,6 +160,49 @@ const MODE_DIALOG_CLASS: Record<ModalMode, string> = {
 
 // TicketAttachment is now imported from TicketAttachmentEditor
 type TicketAttachment = import('./TicketAttachmentEditor').TicketAttachment
+
+/**
+ * Shown in place of ClaudeCliPortalSlot for remote-launched sessions: the
+ * claude process runs inside a tmux session on the remote host, and mounting
+ * the local portal would queue a local claude-cli terminal whose creation
+ * fails (remote client sessions intentionally have no worktree/connection).
+ */
+function RemoteSessionPanel({
+  stopped,
+  onOpenTerminal
+}: {
+  stopped?: boolean
+  onOpenTerminal: () => void
+}): React.JSX.Element {
+  return (
+    <div
+      data-testid="ticket-modal-remote-placeholder"
+      data-stopped={stopped ? 'true' : undefined}
+      className="flex flex-1 items-center justify-center"
+    >
+      <div className="flex flex-col items-center gap-3 px-6 text-center">
+        <RadioTower className="h-6 w-6 text-muted-foreground" />
+        <p className="text-sm text-muted-foreground">
+          {stopped
+            ? 'This remote session was stopped.'
+            : 'This session is running on a remote machine.'}
+        </p>
+        {!stopped && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            data-testid="ticket-modal-remote-placeholder-open"
+            onClick={onOpenTerminal}
+          >
+            <RadioTower className="h-3.5 w-3.5 mr-1" />
+            Open remote terminal
+          </Button>
+        )}
+      </div>
+    </div>
+  )
+}
 
 function ClaudeCliPortalSlot({ sessionId }: { sessionId: string }): React.JSX.Element {
   const { registerTarget } = useClaudeCliSessionPortal()
@@ -651,6 +711,34 @@ function KanbanTicketModalContent({
   const [editDraftDirty, setEditDraftDirty] = useState(false)
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false)
 
+  // ── Remote launch actions (shared across every mode/layout the modal can
+  // render, since the "in_progress" state right after a remote launch shows
+  // the full-width claude-cli session header below, not EditModeContent) ──
+  const remoteLaunchInfo = useTicketRemoteLaunch(ticket)
+  // Remote actions (attach/stop) only apply to ACTIVE launches; a stopped
+  // remote session still must NOT fall back to the local terminal portal.
+  const activeRemoteLaunch =
+    remoteLaunchInfo && !remoteLaunchInfo.stoppedAt ? remoteLaunchInfo : null
+  const [remoteTerminalOpen, setRemoteTerminalOpen] = useState(false)
+  const [showStopRemoteConfirm, setShowStopRemoteConfirm] = useState(false)
+  const handleStopRemoteSession = useCallback(async () => {
+    const sessionId = ticket.current_session_id
+    if (!sessionId) return
+    try {
+      const result = await remoteLaunchApi.stop({ sessionId })
+      if (result.killed || result.alreadyDead) {
+        useRemoteLaunchStore.getState().markStopped(sessionId)
+        toast.success(
+          result.killed ? 'Remote session stopped' : 'Remote session was already stopped'
+        )
+      }
+    } catch (err) {
+      toast.error(
+        `Failed to stop remote session: ${err instanceof Error ? err.message : String(err)}`
+      )
+    }
+  }, [ticket.current_session_id])
+
   // ── Run script state (shared across all modal modes) ─────────────
   // Hoisted here so the Cmd+R hotkey registers exactly once, and so each
   // mode receives the same state object via props.
@@ -1076,6 +1164,9 @@ function KanbanTicketModalContent({
           updateTicket={updateTicket}
           deleteTicket={deleteTicket}
           runScriptState={runScriptState}
+          remoteLaunchInfo={activeRemoteLaunch}
+          onOpenRemoteTerminal={() => setRemoteTerminalOpen(true)}
+          onStopRemoteSession={() => void handleStopRemoteSession()}
         />
       )
       break
@@ -1153,6 +1244,32 @@ function KanbanTicketModalContent({
                     testId="full-width-run-btn"
                     className="h-7 px-2 text-xs"
                   />
+                  {activeRemoteLaunch && (
+                    <>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        data-testid="ticket-modal-remote-terminal-btn"
+                        className="h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
+                        onClick={() => setRemoteTerminalOpen(true)}
+                      >
+                        <RadioTower className="h-3.5 w-3.5" />
+                        Remote terminal
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        data-testid="ticket-modal-stop-remote-btn"
+                        className="h-7 gap-1 px-2 text-xs text-red-500 hover:text-red-500"
+                        onClick={() => setShowStopRemoteConfirm(true)}
+                      >
+                        <Unplug className="h-3.5 w-3.5" />
+                        Stop remote
+                      </Button>
+                    </>
+                  )}
                   <JumpToSessionButton
                     ticket={ticket}
                     onClose={forceClose}
@@ -1161,7 +1278,19 @@ function KanbanTicketModalContent({
                   />
                 </div>
               </div>
-              <ClaudeCliPortalSlot sessionId={ticket.current_session_id} />
+              {remoteLaunchInfo === undefined ? (
+                /* Remote-launch status still resolving — mounting the local
+                   portal now would start a terminal that remote client
+                   sessions (no local worktree) can never use. */
+                <div className="flex-1" data-testid="ticket-modal-session-resolving" />
+              ) : remoteLaunchInfo ? (
+                <RemoteSessionPanel
+                  stopped={!!remoteLaunchInfo.stoppedAt}
+                  onOpenTerminal={() => setRemoteTerminalOpen(true)}
+                />
+              ) : (
+                <ClaudeCliPortalSlot sessionId={ticket.current_session_id} />
+              )}
             </div>
           ) : hasSession && sessionReady ? (
             <SessionStreamPanel
@@ -1224,7 +1353,19 @@ function KanbanTicketModalContent({
           {/* Right: session stream (or loading spinner while DB lookup resolves) */}
           {isClaudeCli && ticket.current_session_id ? (
             <div className="flex flex-col h-full bg-background flex-1 min-w-0 border-l border-border/60">
-              <ClaudeCliPortalSlot sessionId={ticket.current_session_id} />
+              {remoteLaunchInfo === undefined ? (
+                /* Remote-launch status still resolving — mounting the local
+                   portal now would start a terminal that remote client
+                   sessions (no local worktree) can never use. */
+                <div className="flex-1" data-testid="ticket-modal-session-resolving" />
+              ) : remoteLaunchInfo ? (
+                <RemoteSessionPanel
+                  stopped={!!remoteLaunchInfo.stoppedAt}
+                  onOpenTerminal={() => setRemoteTerminalOpen(true)}
+                />
+              ) : (
+                <ClaudeCliPortalSlot sessionId={ticket.current_session_id} />
+              )}
             </div>
           ) : hasSession && sessionReady ? (
             <SessionStreamPanel
@@ -1258,6 +1399,41 @@ function KanbanTicketModalContent({
         onKeepEditing={() => setShowDiscardConfirm(false)}
         onDiscard={forceClose}
       />
+      {activeRemoteLaunch && (
+        <>
+          <RemoteTerminalDialog
+            open={remoteTerminalOpen}
+            onOpenChange={setRemoteTerminalOpen}
+            remoteLaunch={activeRemoteLaunch}
+          />
+          <AlertDialog open={showStopRemoteConfirm} onOpenChange={setShowStopRemoteConfirm}>
+            <AlertDialogContent data-testid="ticket-modal-stop-remote-confirm-dialog">
+              <AlertDialogHeader>
+                <AlertDialogTitle>Stop remote session</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Are you sure you want to stop the remote session for &ldquo;{ticket.title}
+                  &rdquo;? This kills the remote tmux session and can&rsquo;t be undone.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel data-testid="ticket-modal-stop-remote-cancel-btn">
+                  Cancel
+                </AlertDialogCancel>
+                <AlertDialogAction
+                  data-testid="ticket-modal-stop-remote-confirm-btn"
+                  variant="destructive"
+                  onClick={() => {
+                    setShowStopRemoteConfirm(false)
+                    void handleStopRemoteSession()
+                  }}
+                >
+                  Stop
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </>
+      )}
     </Dialog>
   )
 }
@@ -1273,7 +1449,10 @@ function EditModeContent({
   onDirtyChange,
   updateTicket,
   deleteTicket,
-  runScriptState
+  runScriptState,
+  remoteLaunchInfo,
+  onOpenRemoteTerminal,
+  onStopRemoteSession
 }: {
   ticket: KanbanTicket
   onClose: () => void
@@ -1282,6 +1461,12 @@ function EditModeContent({
   updateTicket: (ticketId: string, projectId: string, data: KanbanTicketUpdate) => Promise<void>
   deleteTicket: (ticketId: string, projectId: string) => Promise<void>
   runScriptState: TicketRunScriptState
+  /** Client-role remote-launch info for the ticket's session, or null for local tickets. */
+  remoteLaunchInfo: RemoteLaunchClientInfo | null
+  /** Opens the (parent-owned) RemoteTerminalDialog. */
+  onOpenRemoteTerminal: () => void
+  /** Invokes the (parent-owned) remoteLaunchApi.stop call — called after this component's own inline confirm. */
+  onStopRemoteSession: () => void
 }) {
   const [title, setTitle] = useState(ticket.title)
   const [description, setDescription] = useState(ticket.description ?? '')
@@ -1299,6 +1484,9 @@ function EditModeContent({
   const { pinAndActivate: pinAndActivateSession, lifecycleLoading } =
     usePinAndActivateSession(onClose)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  // Inline confirm toggle only — the actual stop call is owned by the parent
+  // (KanbanTicketModalContent), shared with the full-width claude-cli header.
+  const [showStopRemoteConfirm, setShowStopRemoteConfirm] = useState(false)
   const isDirty =
     normalizeDraftText(title) !== normalizeDraftText(ticket.title) ||
     normalizeDraftText(description) !== normalizeDraftText(ticket.description) ||
@@ -1393,6 +1581,11 @@ function EditModeContent({
     }
   }, [deleteTicket, ticket.id, ticket.project_id, onClose])
 
+  const handleStopRemoteConfirmed = useCallback(() => {
+    setShowStopRemoteConfirm(false)
+    onStopRemoteSession()
+  }, [onStopRemoteSession])
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && title.trim()) {
@@ -1427,7 +1620,22 @@ function EditModeContent({
               </button>
             )}
           </div>
-          <JumpToSessionButton ticket={ticket} onClose={onClose} />
+          <div className="flex items-center gap-1">
+            {remoteLaunchInfo && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                data-testid="ticket-edit-remote-terminal-btn"
+                className="gap-1 text-xs text-muted-foreground hover:text-foreground"
+                onClick={onOpenRemoteTerminal}
+              >
+                <RadioTower className="h-3.5 w-3.5" />
+                Remote terminal
+              </Button>
+            )}
+            <JumpToSessionButton ticket={ticket} onClose={onClose} />
+          </div>
         </div>
         <DialogDescription>Update ticket details.</DialogDescription>
       </DialogHeader>
@@ -1618,17 +1826,53 @@ function EditModeContent({
                 Cancel
               </Button>
             </div>
+          ) : showStopRemoteConfirm ? (
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-destructive">Stop the remote session?</span>
+              <Button
+                type="button"
+                variant="destructive"
+                size="sm"
+                data-testid="ticket-edit-stop-remote-confirm-btn"
+                onClick={handleStopRemoteConfirmed}
+              >
+                Yes, stop
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowStopRemoteConfirm(false)}
+              >
+                Cancel
+              </Button>
+            </div>
           ) : (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              data-testid="ticket-edit-delete-btn"
-              className="text-destructive hover:text-destructive"
-              onClick={() => setShowDeleteConfirm(true)}
-            >
-              <Trash2 className="h-4 w-4" />
-            </Button>
+            <div className="flex items-center gap-1">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                data-testid="ticket-edit-delete-btn"
+                className="text-destructive hover:text-destructive"
+                onClick={() => setShowDeleteConfirm(true)}
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+              {remoteLaunchInfo && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  title="Stop remote session"
+                  data-testid="ticket-edit-stop-remote-btn"
+                  className="text-destructive hover:text-destructive"
+                  onClick={() => setShowStopRemoteConfirm(true)}
+                >
+                  <Unplug className="h-4 w-4" />
+                </Button>
+              )}
+            </div>
           )}
         </div>
         <div className="flex gap-2 flex-wrap">
