@@ -156,6 +156,7 @@ function setupStores(): {
   setSessionModel: ReturnType<typeof vi.fn>
   setSessionMode: ReturnType<typeof vi.fn>
   updateTicket: ReturnType<typeof vi.fn>
+  renameConnection: ReturnType<typeof vi.fn>
 } {
   const createSession = vi.fn(
     async (
@@ -195,6 +196,7 @@ function setupStores(): {
   const setSessionModel = vi.fn(async () => undefined)
   const setSessionMode = vi.fn(async () => undefined)
   const updateTicket = vi.fn(async () => undefined)
+  const renameConnection = vi.fn(async () => undefined)
 
   useSettingsStore.setState({
     availableAgentSdks: { opencode: true, claude: true, codex: true },
@@ -275,7 +277,8 @@ function setupStores(): {
         members: []
       }
     ],
-    loaded: true
+    loaded: true,
+    renameConnection
   })
   useKanbanStore.setState({
     tickets: new Map([['project-1', [baseTicket]]]),
@@ -303,7 +306,14 @@ function setupStores(): {
     fetchUsageForProvider: vi.fn()
   })
 
-  return { createSession, createConnectionSession, setSessionModel, setSessionMode, updateTicket }
+  return {
+    createSession,
+    createConnectionSession,
+    setSessionModel,
+    setSessionMode,
+    updateTicket,
+    renameConnection
+  }
 }
 
 async function renderAndSelectClaudeCli(ticket: KanbanTicket = baseTicket): Promise<void> {
@@ -461,6 +471,36 @@ describe('WorktreePickerModal Claude CLI launch', () => {
       sessionId: 'connection-session-1',
       opts: { pendingPrompt: expect.stringContaining('Please implement the following ticket.') }
     })
+  })
+
+  it('renames the connection after the ticket title when it has no custom name', async () => {
+    const { renameConnection } = setupStores()
+    await renderAndSelectClaudeCliForConnection()
+
+    await userEvent.click(screen.getByTestId('model-selector-pick-opus'))
+    await userEvent.click(screen.getByTestId('wt-picker-send-btn'))
+
+    await waitFor(() =>
+      expect(renameConnection).toHaveBeenCalledWith('connection-1', 'Launch Claude CLI')
+    )
+  })
+
+  it('does not rename a connection that already has a custom name', async () => {
+    const { renameConnection } = setupStores()
+    useConnectionStore.setState((state) => ({
+      connections: state.connections.map((c) =>
+        c.id === 'connection-1' ? { ...c, custom_name: 'My connection' } : c
+      )
+    }))
+    await renderAndSelectClaudeCliForConnection()
+
+    await userEvent.click(screen.getByTestId('model-selector-pick-opus'))
+    await userEvent.click(screen.getByTestId('wt-picker-send-btn'))
+
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith('terminalOps.createClaudeCli', expect.any(Object))
+    )
+    expect(renameConnection).not.toHaveBeenCalled()
   })
 
   it('omits the synthetic plan prefix for Claude CLI plan launches', async () => {
