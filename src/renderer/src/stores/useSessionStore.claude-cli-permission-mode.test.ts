@@ -68,3 +68,24 @@ describe('syncClaudeCliPermissionModeIfNeeded — Shift+Tab press counts', () =>
     expect(write).not.toHaveBeenCalled()
   })
 })
+
+describe('setSessionMode — syncCliPermissionMode option', () => {
+  beforeEach(() => {
+    seedSession('claude-code-cli')
+    useSessionStore.setState({ modeBySession: new Map([['s1', 'plan']]) } as never)
+  })
+
+  it('sends the PTY sync by default when leaving plan mode', async () => {
+    const write = mockWrite()
+    await useSessionStore.getState().setSessionMode('s1', 'build')
+    expect(write).toHaveBeenCalledTimes(1)
+    expect(write).toHaveBeenCalledWith('s1', SHIFT_TAB)
+  })
+
+  it('skips the PTY sync when syncCliPermissionMode is false but still updates the mode', async () => {
+    const write = mockWrite()
+    await useSessionStore.getState().setSessionMode('s1', 'build', { syncCliPermissionMode: false })
+    expect(write).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().modeBySession.get('s1')).toBe('build')
+  })
+})

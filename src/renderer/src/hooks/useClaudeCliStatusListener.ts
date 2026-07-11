@@ -93,6 +93,12 @@ export function useClaudeCliStatusListener(): void {
         // server already consumed it when auto-approving).
         void terminalApi.setClaudeCliPlanAutoApprove(sessionId, false).catch(() => undefined)
         sessionStore.clearPendingPlan(sessionId)
+        if (isPlanLike(currentMode)) {
+          // Persist the session itself to build mode so a later --resume respawn
+          // doesn't pass --permission-mode plan. Claude already left plan mode
+          // when the dialog was approved, so skip the Shift+Tab PTY sync.
+          void sessionStore.setSessionMode(sessionId, 'build', { syncCliPermissionMode: false })
+        }
         notifyKanbanSessionSync(sessionId, { type: 'implement' })
         closeLinkedTicketModal(sessionId)
         lastSendMode.set(sessionId, 'build')
