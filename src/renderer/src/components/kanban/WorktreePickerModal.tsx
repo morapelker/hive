@@ -405,6 +405,11 @@ export function WorktreePickerModal({
   const [isSending, setIsSending] = useState(false)
   const [goalMode, setGoalMode] = useState(false)
   const [goalCriteria, setGoalCriteria] = useState('')
+  // A ticket that already carries a goal re-arms the switch on open. The
+  // stored criteria waits here until the goal switch is actually available
+  // (build mode + a goal-capable SDK) and is applied once per open, so a
+  // manual uncheck is never overridden.
+  const goalPrefillRef = useRef<string | null>(null)
   const promptRef = useRef<HTMLTextAreaElement>(null)
   const [sourceBranch, setSourceBranch] = useState<string | null>(null) // null = default
   const [branchPopoverOpen, setBranchPopoverOpen] = useState(false)
@@ -586,6 +591,10 @@ export function WorktreePickerModal({
       setIsSending(false)
       setGoalMode(false)
       setGoalCriteria('')
+      goalPrefillRef.current =
+        ticket.goal_mode && ticket.goal_success_criteria?.trim()
+          ? ticket.goal_success_criteria
+          : null
       setSelectedModel(null)
       setSelectedSdk(null)
       setExtraModelRows([])
@@ -609,6 +618,26 @@ export function WorktreePickerModal({
       }
     }
   }, [open, ticket, projectId, project?.path, syncWorktrees])
+
+  // ── Apply the ticket's stored goal once the switch is available ──
+  // Fires immediately when the default SDK supports goal mode, or later when
+  // the user switches to a goal-capable SDK. One-shot per open.
+  useEffect(() => {
+    if (!open || !goalAvailable || goalPrefillRef.current === null) return
+    setGoalMode(true)
+    setGoalCriteria(goalPrefillRef.current)
+    goalPrefillRef.current = null
+  }, [open, goalAvailable])
+
+  // Backstop: goal mode must never stay on while the switch is hidden — the
+  // send path wraps the outgoing prompt with /goal whenever goalMode is set,
+  // which a non-goal SDK can't parse. (The first render after `open` flips can
+  // briefly see stale availability from a previous open of a mounted modal.)
+  useEffect(() => {
+    if (!goalMode || goalAvailable) return
+    setGoalMode(false)
+    setGoalCriteria('')
+  }, [goalMode, goalAvailable])
 
   // ── Reset remote state + unsubscribe when the modal closes ───────
   useEffect(() => {
