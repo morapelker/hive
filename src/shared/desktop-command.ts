@@ -109,6 +109,9 @@ export type DesktopCommandName =
   | 'telegramClaudeCliQuestionReply'
   | 'telegramClaudeCliQuestionReject'
   | 'telegramClaudeCliPlanReply'
+  | 'discordClaudeCliQuestionReply'
+  | 'discordClaudeCliQuestionReject'
+  | 'discordClaudeCliPlanReply'
   | 'terminalSetClaudeCliPlanAutoApprove'
 
 export interface OpenInAppPayload {
@@ -399,6 +402,13 @@ export interface TelegramClaudeCliPlanReplyPayload {
 export interface TelegramClaudeCliReplyResult {
   readonly success: boolean
 }
+
+// Discord reuses the Telegram claude-cli payload shapes: both transports hold
+// the same CLI hooks and resolve them with the same request/answer data.
+export type DiscordClaudeCliQuestionReplyPayload = TelegramClaudeCliQuestionReplyPayload
+export type DiscordClaudeCliQuestionRejectPayload = TelegramClaudeCliQuestionRejectPayload
+export type DiscordClaudeCliPlanReplyPayload = TelegramClaudeCliPlanReplyPayload
+export type DiscordClaudeCliReplyResult = TelegramClaudeCliReplyResult
 
 export interface TerminalGhosttyAvailabilityResult {
   readonly available: boolean
@@ -981,6 +991,9 @@ export type DesktopCommandRequest =
   | TelegramClaudeCliQuestionReplyDesktopCommandRequest
   | TelegramClaudeCliQuestionRejectDesktopCommandRequest
   | TelegramClaudeCliPlanReplyDesktopCommandRequest
+  | DiscordClaudeCliQuestionReplyDesktopCommandRequest
+  | DiscordClaudeCliQuestionRejectDesktopCommandRequest
+  | DiscordClaudeCliPlanReplyDesktopCommandRequest
   | TerminalSetClaudeCliPlanAutoApproveDesktopCommandRequest
 
 export interface QuitAppDesktopCommandRequest {
@@ -1688,6 +1701,27 @@ export interface TelegramClaudeCliQuestionRejectDesktopCommandRequest {
   readonly payload: TelegramClaudeCliQuestionRejectPayload
 }
 
+export interface DiscordClaudeCliQuestionReplyDesktopCommandRequest {
+  readonly type: typeof DESKTOP_COMMAND_REQUEST_TYPE
+  readonly id: string
+  readonly command: 'discordClaudeCliQuestionReply'
+  readonly payload: DiscordClaudeCliQuestionReplyPayload
+}
+
+export interface DiscordClaudeCliQuestionRejectDesktopCommandRequest {
+  readonly type: typeof DESKTOP_COMMAND_REQUEST_TYPE
+  readonly id: string
+  readonly command: 'discordClaudeCliQuestionReject'
+  readonly payload: DiscordClaudeCliQuestionRejectPayload
+}
+
+export interface DiscordClaudeCliPlanReplyDesktopCommandRequest {
+  readonly type: typeof DESKTOP_COMMAND_REQUEST_TYPE
+  readonly id: string
+  readonly command: 'discordClaudeCliPlanReply'
+  readonly payload: DiscordClaudeCliPlanReplyPayload
+}
+
 export interface TelegramClaudeCliPlanReplyDesktopCommandRequest {
   readonly type: typeof DESKTOP_COMMAND_REQUEST_TYPE
   readonly id: string
@@ -2200,6 +2234,21 @@ export function makeDesktopCommandRequest(
   command: 'telegramClaudeCliPlanReply',
   payload: TelegramClaudeCliPlanReplyPayload
 ): TelegramClaudeCliPlanReplyDesktopCommandRequest
+export function makeDesktopCommandRequest(
+  id: string,
+  command: 'discordClaudeCliQuestionReply',
+  payload: DiscordClaudeCliQuestionReplyPayload
+): DiscordClaudeCliQuestionReplyDesktopCommandRequest
+export function makeDesktopCommandRequest(
+  id: string,
+  command: 'discordClaudeCliQuestionReject',
+  payload: DiscordClaudeCliQuestionRejectPayload
+): DiscordClaudeCliQuestionRejectDesktopCommandRequest
+export function makeDesktopCommandRequest(
+  id: string,
+  command: 'discordClaudeCliPlanReply',
+  payload: DiscordClaudeCliPlanReplyPayload
+): DiscordClaudeCliPlanReplyDesktopCommandRequest
 export function makeDesktopCommandRequest(
   id: string,
   command: 'terminalSetClaudeCliPlanAutoApprove',
@@ -3409,6 +3458,26 @@ export function makeDesktopCommandRequest(
     } as TelegramClaudeCliPlanReplyDesktopCommandRequest
   }
 
+  if (
+    command === 'discordClaudeCliQuestionReply' ||
+    command === 'discordClaudeCliQuestionReject' ||
+    command === 'discordClaudeCliPlanReply'
+  ) {
+    if (!payload) {
+      throw new Error(`Missing ${command} payload`)
+    }
+
+    return {
+      type: DESKTOP_COMMAND_REQUEST_TYPE,
+      id,
+      command,
+      payload
+    } as
+      | DiscordClaudeCliQuestionReplyDesktopCommandRequest
+      | DiscordClaudeCliQuestionRejectDesktopCommandRequest
+      | DiscordClaudeCliPlanReplyDesktopCommandRequest
+  }
+
   if (command === 'terminalSetClaudeCliPlanAutoApprove') {
     if (!payload) {
       throw new Error('Missing terminalSetClaudeCliPlanAutoApprove payload')
@@ -3581,6 +3650,12 @@ export const isDesktopCommandRequest = (value: unknown): value is DesktopCommand
       (value.command === 'telegramClaudeCliQuestionReject' &&
         isTelegramClaudeCliQuestionRejectPayload(value.payload)) ||
       (value.command === 'telegramClaudeCliPlanReply' &&
+        isTelegramClaudeCliPlanReplyPayload(value.payload)) ||
+      (value.command === 'discordClaudeCliQuestionReply' &&
+        isTelegramClaudeCliQuestionReplyPayload(value.payload)) ||
+      (value.command === 'discordClaudeCliQuestionReject' &&
+        isTelegramClaudeCliQuestionRejectPayload(value.payload)) ||
+      (value.command === 'discordClaudeCliPlanReply' &&
         isTelegramClaudeCliPlanReplyPayload(value.payload)) ||
       (value.command === 'terminalSetClaudeCliPlanAutoApprove' &&
         isTerminalClaudeCliPlanAutoApprovePayload(value.payload)))

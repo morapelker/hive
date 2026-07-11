@@ -7,6 +7,7 @@ import { openCodeService } from './opencode-service'
 import { getDatabase } from '../db'
 import type { DatabaseService } from '../db/database'
 import { claudeCliDiscordBridge } from './claude-cli-discord-bridge'
+import { requestDiscordClaudeCliCommand } from './discord-claude-cli-command'
 
 type PermissionDecision = 'once' | 'always' | 'reject'
 
@@ -142,6 +143,16 @@ export class InteractiveReplyRouter {
       return
     }
 
+    // Claude CLI hooks are held in the Electron main process (where the PTY
+    // lives); reach them over the desktop IPC channel.
+    if (input.agentSdk === 'claude-code-cli') {
+      const forwarded = await requestDiscordClaudeCliCommand('discordClaudeCliQuestionReply', {
+        requestId: input.requestId,
+        answers: input.answers
+      }).catch(() => null)
+      if (forwarded?.success) return
+    }
+
     const claudeImpl = getImplementer<QuestionImplementer>(this.sdkManager, 'claude-code')
     if (claudeImpl?.hasPendingQuestion?.(input.requestId)) {
       await claudeImpl.questionReply?.(input.requestId, input.answers, input.worktreePath)
@@ -161,6 +172,13 @@ export class InteractiveReplyRouter {
     if (this.cliBridge.hasPendingQuestion(input.requestId)) {
       this.cliBridge.rejectQuestion(input.requestId)
       return
+    }
+
+    if (input.agentSdk === 'claude-code-cli') {
+      const forwarded = await requestDiscordClaudeCliCommand('discordClaudeCliQuestionReject', {
+        requestId: input.requestId
+      }).catch(() => null)
+      if (forwarded?.success) return
     }
 
     const claudeImpl = getImplementer<QuestionImplementer>(this.sdkManager, 'claude-code')
@@ -217,6 +235,13 @@ export class InteractiveReplyRouter {
       this.cliBridge.resolvePlan(input.requestId, input.approve, input.feedback)
       return
     }
+
+    const forwarded = await requestDiscordClaudeCliCommand('discordClaudeCliPlanReply', {
+      requestId: input.requestId,
+      approve: input.approve,
+      ...(input.feedback !== undefined ? { feedback: input.feedback } : {})
+    }).catch(() => null)
+    if (forwarded?.success) return
 
     const claudeImpl = getImplementer<ClaudePlanImplementer>(this.sdkManager, 'claude-code')
     const hasPending =
