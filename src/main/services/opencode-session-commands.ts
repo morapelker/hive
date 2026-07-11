@@ -7,6 +7,7 @@ import type { AgentSdkCapabilities, AgentSdkId, PromptOptions } from './agent-sd
 import { ClaudeCodeImplementer } from './claude-code-implementer'
 import { CodexImplementer } from './codex-implementer'
 import { claudeCliTelegramBridge } from './claude-cli-telegram-bridge'
+import { claudeCliDiscordBridge } from './claude-cli-discord-bridge'
 import { toError } from './error-utils'
 import { isClaudeCli, isTerminalBacked } from '@shared/types/agent-sdk'
 
@@ -504,6 +505,11 @@ export async function replyOpenCodeQuestion(
       return { success: true }
     }
 
+    if (claudeCliDiscordBridge.hasPendingQuestion(requestId)) {
+      claudeCliDiscordBridge.resolveQuestion(requestId, answers)
+      return { success: true }
+    }
+
     if (sdkManager) {
       const claudeImpl = sdkManager.getImplementer('claude-code') as ClaudeCodeImplementer
       if (claudeImpl.hasPendingQuestion(requestId)) {
@@ -545,6 +551,11 @@ export async function rejectOpenCodeQuestion(
       return { success: true }
     }
 
+    if (claudeCliDiscordBridge.hasPendingQuestion(requestId)) {
+      claudeCliDiscordBridge.rejectQuestion(requestId)
+      return { success: true }
+    }
+
     if (sdkManager) {
       const claudeImpl = sdkManager.getImplementer('claude-code') as ClaudeCodeImplementer
       if (claudeImpl.hasPendingQuestion(requestId)) {
@@ -582,6 +593,10 @@ export async function approveOpenCodePlan(
 ): Promise<{ success: boolean; error?: string }> {
   log.info('OpenCode session plan:approve', { hiveSessionId, requestId })
   try {
+    if (requestId && claudeCliDiscordBridge.hasPendingPlan(requestId)) {
+      claudeCliDiscordBridge.resolvePlan(requestId, true)
+      return { success: true }
+    }
     // TODO(codex): Generalize when Codex implements this HITL flow
     if (sdkManager) {
       const claudeImpl = sdkManager.getImplementer('claude-code') as ClaudeCodeImplementer
@@ -616,6 +631,10 @@ export async function rejectOpenCodePlan(
     feedbackLength: feedback.length
   })
   try {
+    if (requestId && claudeCliDiscordBridge.hasPendingPlan(requestId)) {
+      claudeCliDiscordBridge.resolvePlan(requestId, false, feedback)
+      return { success: true }
+    }
     // TODO(codex): Generalize when Codex implements this HITL flow
     if (sdkManager) {
       const claudeImpl = sdkManager.getImplementer('claude-code') as ClaudeCodeImplementer

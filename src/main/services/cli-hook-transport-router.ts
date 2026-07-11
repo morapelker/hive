@@ -45,7 +45,10 @@ export class CliHookTransportRouter {
   }
 }
 
+// Telegram first: forwarding a session to Telegram is an explicit per-session
+// action, while Discord claims sessions ambiently (any session in a worktree
+// with a provisioned channel), so the explicit choice must win.
 export const cliHookTransportRouter = new CliHookTransportRouter([
-  claudeCliDiscordBridge,
-  claudeCliTelegramBridge
+  claudeCliTelegramBridge,
+  claudeCliDiscordBridge
 ])

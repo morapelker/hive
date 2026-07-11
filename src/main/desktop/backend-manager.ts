@@ -64,6 +64,7 @@ import {
 } from '../services/terminal-pty-bridge'
 import { launchClaudeCliInTmux } from '../services/remote-tmux-launcher'
 import { claudeCliTelegramBridge } from '../services/claude-cli-telegram-bridge'
+import { claudeCliDiscordBridge } from '../services/claude-cli-discord-bridge'
 import { setClaudeCliPlanAutoApprove } from '../services/claude-cli-plan-auto-approve'
 import { openPathWithEditor, openPathWithTerminal } from '../services/settings-openers'
 import {
@@ -801,6 +802,49 @@ const handleDesktopBackendCommand = (
     const success = claudeCliTelegramBridge.hasPendingPlan(message.payload.requestId)
     if (success) {
       claudeCliTelegramBridge.resolvePlan(
+        message.payload.requestId,
+        message.payload.approve,
+        message.payload.feedback
+      )
+    }
+    sendDesktopBackendCommandResult(
+      child,
+      makeDesktopCommandResult(message.id, { ok: true, value: { success } }),
+      log
+    )
+    return
+  }
+
+  if (message.command === 'discordClaudeCliQuestionReply') {
+    const success = claudeCliDiscordBridge.hasPendingQuestion(message.payload.requestId)
+    if (success) {
+      claudeCliDiscordBridge.resolveQuestion(message.payload.requestId, message.payload.answers)
+    }
+    sendDesktopBackendCommandResult(
+      child,
+      makeDesktopCommandResult(message.id, { ok: true, value: { success } }),
+      log
+    )
+    return
+  }
+
+  if (message.command === 'discordClaudeCliQuestionReject') {
+    const success = claudeCliDiscordBridge.hasPendingQuestion(message.payload.requestId)
+    if (success) {
+      claudeCliDiscordBridge.rejectQuestion(message.payload.requestId)
+    }
+    sendDesktopBackendCommandResult(
+      child,
+      makeDesktopCommandResult(message.id, { ok: true, value: { success } }),
+      log
+    )
+    return
+  }
+
+  if (message.command === 'discordClaudeCliPlanReply') {
+    const success = claudeCliDiscordBridge.hasPendingPlan(message.payload.requestId)
+    if (success) {
+      claudeCliDiscordBridge.resolvePlan(
         message.payload.requestId,
         message.payload.approve,
         message.payload.feedback
