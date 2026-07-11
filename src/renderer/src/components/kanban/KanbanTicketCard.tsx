@@ -237,6 +237,34 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
 
   const isBlocked = !isSimpleMode && unresolvedBlockerCount > 0
 
+  // ── Queued launch target (branch it will run on, or new worktree) ──
+  const queuedWorktree = useMemo(() => {
+    if (!ticket.pending_launch_config) return null
+    try {
+      const config = JSON.parse(ticket.pending_launch_config) as {
+        worktree?: { type: 'new'; sourceBranch: string } | { type: 'existing'; worktreeId: string }
+      }
+      return config.worktree ?? null
+    } catch {
+      return null
+    }
+  }, [ticket.pending_launch_config])
+
+  const queuedBranchLabel = useWorktreeStore(
+    useCallback(
+      (state) => {
+        if (!queuedWorktree) return null
+        if (queuedWorktree.type === 'new') return '(new-worktree)'
+        for (const worktrees of state.worktreesByProject.values()) {
+          const found = worktrees.find((w) => w.id === queuedWorktree.worktreeId)
+          if (found) return found.branch_name || found.name
+        }
+        return null
+      },
+      [queuedWorktree]
+    )
+  )
+
   // ── Lookup worktree name ────────────────────────────────────────
   const worktreeName = useWorktreeStore(
     useCallback(
@@ -1039,7 +1067,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             </div>
 
             {/* Badges + progress row */}
-            {(hasAttachments || hasNote || worktreeName || projectTag || connectionName || ticket.plan_ready || isError || rightAlignedSlot || isArchived || isBlocked || blockingDiagnostic || isRunProcessAlive || ticket.github_pr_number || isCreatingPR || isForwardedToTelegram || ticket.goal_mode || ticket.auto_approve_plan || activeRemoteLaunch || showModelBadge) && (
+            {(hasAttachments || hasNote || worktreeName || queuedBranchLabel || projectTag || connectionName || ticket.plan_ready || isError || rightAlignedSlot || isArchived || isBlocked || blockingDiagnostic || isRunProcessAlive || ticket.github_pr_number || isCreatingPR || isForwardedToTelegram || ticket.goal_mode || ticket.auto_approve_plan || activeRemoteLaunch || showModelBadge) && (
               <div className="mt-1.5 flex flex-wrap items-center gap-1">
                 {/* Archived badge */}
                 {isArchived && (
@@ -1077,6 +1105,16 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                   <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 text-[11px] font-medium text-amber-500">
                     <Lock className="h-3 w-3" />
                     {unresolvedBlockerCount}
+                  </span>
+                )}
+                {/* Queued launch target badge — branch the queued ticket will run on */}
+                {queuedBranchLabel && (
+                  <span
+                    data-testid="ticket-queued-branch"
+                    className="inline-flex items-center gap-1 rounded-full bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
+                  >
+                    <GitBranch className="h-3 w-3" />
+                    {queuedBranchLabel}
                   </span>
                 )}
                 {/* Attachment badge */}
