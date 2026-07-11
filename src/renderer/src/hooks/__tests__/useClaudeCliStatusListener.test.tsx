@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   setSessionStatus: vi.fn(),
   setPendingPlan: vi.fn(),
   clearPendingPlan: vi.fn(),
+  setSessionMode: vi.fn().mockResolvedValue(undefined),
   notifyKanbanSessionSync: vi.fn(),
   setSelectedTicketId: vi.fn(),
   lastSendMode: new Map<string, 'plan' | 'build'>(),
@@ -41,7 +42,8 @@ vi.mock('@/stores/useSessionStore', () => ({
     getState: () => ({
       modeBySession: mocks.modeBySession,
       setPendingPlan: mocks.setPendingPlan,
-      clearPendingPlan: mocks.clearPendingPlan
+      clearPendingPlan: mocks.clearPendingPlan,
+      setSessionMode: mocks.setSessionMode
     })
   }
 }))
@@ -112,6 +114,7 @@ describe('useClaudeCliStatusListener', () => {
     mocks.setSessionStatus.mockClear()
     mocks.setPendingPlan.mockClear()
     mocks.clearPendingPlan.mockClear()
+    mocks.setSessionMode.mockClear()
     mocks.setSelectedTicketId.mockClear()
     mocks.notifyKanbanSessionSync.mockClear()
     mocks.lastSendMode.clear()
@@ -196,6 +199,61 @@ describe('useClaudeCliStatusListener', () => {
       hookPath: 'tool',
       toolName: 'ExitPlanMode'
     })
+  })
+
+  it('persists the session to build mode without PTY sync when a plan-mode terminal approval completes ExitPlanMode', () => {
+    mocks.modeBySession.set('hive-session-1', 'plan')
+    renderHook(() => useClaudeCliStatusListener())
+
+    subscribedCallback?.({
+      sessionId: 'hive-session-1',
+      status: 'working',
+      metadata: {
+        hookEventName: 'PostToolUse',
+        hookPath: 'tool',
+        toolName: 'ExitPlanMode'
+      }
+    })
+
+    expect(mocks.setSessionMode).toHaveBeenCalledWith('hive-session-1', 'build', {
+      syncCliPermissionMode: false
+    })
+  })
+
+  it('persists super-plan sessions to build mode on terminal plan approval', () => {
+    mocks.modeBySession.set('hive-session-1', 'super-plan')
+    renderHook(() => useClaudeCliStatusListener())
+
+    subscribedCallback?.({
+      sessionId: 'hive-session-1',
+      status: 'working',
+      metadata: {
+        hookEventName: 'PostToolUse',
+        hookPath: 'tool',
+        toolName: 'ExitPlanMode'
+      }
+    })
+
+    expect(mocks.setSessionMode).toHaveBeenCalledWith('hive-session-1', 'build', {
+      syncCliPermissionMode: false
+    })
+  })
+
+  it('leaves session mode untouched when ExitPlanMode completes for a build-mode session', () => {
+    mocks.modeBySession.set('hive-session-1', 'build')
+    renderHook(() => useClaudeCliStatusListener())
+
+    subscribedCallback?.({
+      sessionId: 'hive-session-1',
+      status: 'working',
+      metadata: {
+        hookEventName: 'PostToolUse',
+        hookPath: 'tool',
+        toolName: 'ExitPlanMode'
+      }
+    })
+
+    expect(mocks.setSessionMode).not.toHaveBeenCalled()
   })
 
   it('derives planning and plan_ready for Claude CLI plan-mode hook sequences', () => {

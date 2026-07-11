@@ -181,7 +181,11 @@ interface SessionState {
   toggleSessionMode: (sessionId: string) => Promise<void>
   toggleSuperMode: (sessionId: string) => Promise<void>
   toggleSuperPlanShortcut: (sessionId: string) => Promise<void>
-  setSessionMode: (sessionId: string, mode: SessionMode) => Promise<void>
+  setSessionMode: (
+    sessionId: string,
+    mode: SessionMode,
+    options?: { syncCliPermissionMode?: boolean }
+  ) => Promise<void>
   setSessionModel: (
     sessionId: string,
     model: SelectedModel,
@@ -1307,9 +1311,18 @@ export const useSessionStore = create<SessionState>()(
       },
 
       // Set session mode explicitly (also applies mode-specific model default)
-      setSessionMode: async (sessionId: string, mode: SessionMode) => {
+      // options.syncCliPermissionMode: false skips the Shift+Tab PTY sync for
+      // claude-cli sessions — for callers reacting to a mode change Claude
+      // already made itself (e.g. an approved ExitPlanMode dialog).
+      setSessionMode: async (
+        sessionId: string,
+        mode: SessionMode,
+        options?: { syncCliPermissionMode?: boolean }
+      ) => {
         const previousMode = get().modeBySession.get(sessionId) || 'build'
-        syncClaudeCliPermissionModeIfNeeded(get(), sessionId, previousMode, mode)
+        if (options?.syncCliPermissionMode !== false) {
+          syncClaudeCliPermissionModeIfNeeded(get(), sessionId, previousMode, mode)
+        }
 
         set((state) => {
           const newModeMap = new Map(state.modeBySession)
