@@ -584,9 +584,11 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
 
   const isError = sessionStatus === 'error'
   const hasAttachments = ticket.attachments.length > 0
-  // Only surface the model on cards that are part of a multi-model duplicate
-  // group — for single-model launches the name is noise.
-  const showModelBadge = !!ticket.model_id && !!ticket.variant_group_id
+  // Surface the model on cards that are part of a multi-model duplicate
+  // group — for single-model launches the name is noise, unless the user
+  // opted in via the "show model icons" setting.
+  const showModelIcons = useSettingsStore((s) => s.showModelIcons)
+  const showModelBadge = !!ticket.model_id && (showModelIcons || !!ticket.variant_group_id)
   const isForwardedToTelegram = useTelegramStore(
     useCallback(
       (state) => !!ticket.current_session_id && state.activeForwardingSessionId === ticket.current_session_id,
