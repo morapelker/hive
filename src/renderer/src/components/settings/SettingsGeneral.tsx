@@ -405,7 +405,7 @@ export function SettingsGeneral(): React.JSX.Element {
         <div>
           <label className="text-sm font-medium">Model icons</label>
           <p className="text-xs text-muted-foreground">
-            Show the model icon (Claude, OpenAI) next to the worktree status
+            Show the model icon (Claude, OpenAI) next to the worktree status and on kanban tickets
           </p>
         </div>
         <button
