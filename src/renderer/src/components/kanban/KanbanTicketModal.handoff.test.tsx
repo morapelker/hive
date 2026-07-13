@@ -442,6 +442,13 @@ describe('KanbanTicketModal handoff from Claude CLI plan review', () => {
     })
     expect(setActiveSession).not.toHaveBeenCalledWith('handoff-session')
     expect(useKanbanStore.getState().isBoardViewActive).toBe(true)
+    // The handoff session was created with the picker's explicit model; the
+    // build-mode flip must not clobber it with the mode-default model.
+    expect(useSessionStore.getState().setSessionMode).toHaveBeenCalledWith(
+      'handoff-session',
+      'build',
+      { applyModeDefault: false }
+    )
   })
 
   it('shows terminal-backed followup and implement controls for Claude CLI plan review', async () => {

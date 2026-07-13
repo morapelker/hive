@@ -130,6 +130,7 @@ function clampPlanCardPosition(
 interface ClaudeCliPlanReadyCardProps {
   planContent: string
   worktreeId?: string
+  sessionId: string
   onHandoff: (override: HandoffSelectionOverride) => void
   onSaveAsTicket: () => void
   onSaveAsFile: () => void
@@ -139,6 +140,7 @@ interface ClaudeCliPlanReadyCardProps {
 function ClaudeCliPlanReadyCard({
   planContent,
   worktreeId,
+  sessionId,
   onHandoff,
   onSaveAsTicket,
   onSaveAsFile,
@@ -261,6 +263,7 @@ function ClaudeCliPlanReadyCard({
         <div className="flex flex-wrap items-center gap-2">
           <HandoffSplitButton
             worktreeId={worktreeId}
+            sessionId={sessionId}
             onHandoff={onHandoff}
             testIdPrefix="claude-cli-plan-ready"
           />
@@ -400,7 +403,9 @@ export function ClaudeCliSessionView({
           return
         }
 
-        const setModePromise = sessionStore.setSessionMode(result.session.id, 'build')
+        const setModePromise = sessionStore.setSessionMode(result.session.id, 'build', {
+        applyModeDefault: false
+      })
         registerHivePromptHandoff(sessionId, result.session.id)
         sessionStore.setPendingMessage(result.session.id, handoffPrompt)
         await useKanbanStore
@@ -445,7 +450,9 @@ export function ClaudeCliSessionView({
         return
       }
 
-      const setModePromise = sessionStore.setSessionMode(result.session.id, 'build')
+      const setModePromise = sessionStore.setSessionMode(result.session.id, 'build', {
+        applyModeDefault: false
+      })
       registerHivePromptHandoff(sessionId, result.session.id)
       sessionStore.setPendingMessage(result.session.id, handoffPrompt)
       await useKanbanStore
@@ -588,6 +595,7 @@ export function ClaudeCliSessionView({
           <ClaudeCliPlanReadyCard
             planContent={pendingPlan.planContent}
             worktreeId={sessionRecord?.worktree_id ?? undefined}
+            sessionId={sessionId}
             onHandoff={handlePlanReadyHandoff}
             onSaveAsTicket={handlePlanReadySaveAsTicket}
             onSaveAsFile={handlePlanReadySaveAsFile}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import {
   getAvailableHandoffAgentSdks,
@@ -6,6 +6,7 @@ import {
   loadHandoffModelCatalog,
   type HandoffSelectionOverride
 } from '@/lib/handoffSelection'
+import { setHandoffPickerOpen } from '@/lib/handoff-ui-state'
 import { cn } from '@/lib/utils'
 import { supportsGoalMode } from '@shared/types/agent-sdk'
 import { HandoffModelPicker } from './HandoffModelPicker'
@@ -28,6 +29,8 @@ function MnemonicLabel({ letter, label }: { letter: string; label: string }): Re
 
 interface HandoffSplitButtonProps {
   worktreeId?: string
+  /** Source session, when known — scopes the picker-open guard that keeps the plan card / ticket modal alive during selection. */
+  sessionId?: string
   onHandoff: (override: HandoffSelectionOverride) => void
   vimModeEnabled?: boolean
   testIdPrefix?: string
@@ -36,6 +39,7 @@ interface HandoffSplitButtonProps {
 
 export function HandoffSplitButton({
   worktreeId,
+  sessionId,
   onHandoff,
   vimModeEnabled = false,
   testIdPrefix = 'plan-ready',
@@ -50,6 +54,41 @@ export function HandoffSplitButton({
   const [pickerOpen, setPickerOpen] = useState(false)
   const [catalogVersion, setCatalogVersion] = useState(0)
   const [goalMode, setGoalMode] = useState(false)
+  const pickerId = useId()
+  const containerRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    setHandoffPickerOpen(pickerId, sessionId ?? null, pickerOpen)
+    return () => {
+      setHandoffPickerOpen(pickerId, sessionId ?? null, false)
+    }
+  }, [pickerId, sessionId, pickerOpen])
+
+  // If something still hides or unmounts this button while the picker popover
+  // is open (its content is portalled to <body>), the popover would survive
+  // with a zero-size anchor and teleport to the viewport corner. Close it
+  // instead. Only trip after the anchor has been measured with a real size so
+  // layout-less environments (jsdom) never see a false collapse.
+  useEffect(() => {
+    if (!pickerOpen) return
+    const el = containerRef.current
+    if (!el) return
+
+    let hadSize = false
+    const check = (): void => {
+      const rect = el.getBoundingClientRect()
+      const visible = rect.width > 0 && rect.height > 0
+      if (visible) {
+        hadSize = true
+      } else if (hadSize) {
+        setPickerOpen(false)
+      }
+    }
+
+    check()
+    const interval = window.setInterval(check, 200)
+    return () => window.clearInterval(interval)
+  }, [pickerOpen])
 
   const showChevron = getAvailableHandoffAgentSdks(availableAgentSdks).length > 1
   void availableAgentSdks
@@ -95,6 +134,7 @@ export function HandoffSplitButton({
 
   return (
     <div
+      ref={containerRef}
       className={cn(
         'inline-flex h-8 items-center rounded-full border text-foreground shadow-md transition-colors duration-200',
         isGoalModeActive ? 'relative border-primary/40 bg-primary/15' : 'border-border bg-muted/80',
@@ -149,6 +189,9 @@ export function HandoffSplitButton({
             }}
             worktreeId={worktreeId}
             onConfirm={(override) => {
+              // Unregister before dispatching so the handoff's own teardown
+              // (plan clear, ticket sync, modal close) isn't guarded away.
+              setHandoffPickerOpen(pickerId, sessionId ?? null, false)
               onHandoff(withGoalMode(override))
             }}
             anchor={

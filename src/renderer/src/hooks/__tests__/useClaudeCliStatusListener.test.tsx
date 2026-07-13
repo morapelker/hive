@@ -97,6 +97,7 @@ type SubscribedPayload = {
 }
 
 import { useClaudeCliStatusListener } from '../useClaudeCliStatusListener'
+import { resetHandoffPickerState, setHandoffPickerOpen } from '@/lib/handoff-ui-state'
 
 describe('useClaudeCliStatusListener', () => {
   let subscribedCallback: ((payload: SubscribedPayload) => void) | null
@@ -128,6 +129,7 @@ describe('useClaudeCliStatusListener', () => {
 
   afterEach(() => {
     mocks.onClaudeCliStatus.mockReset()
+    resetHandoffPickerState()
   })
 
   it('subscribes to Claude CLI status events and writes payloads into the worktree status store', () => {
@@ -348,6 +350,74 @@ describe('useClaudeCliStatusListener', () => {
     })
 
     expect(mocks.setSelectedTicketId).toHaveBeenCalledWith(null)
+  })
+
+  it('defers plan-followup teardown while a handoff picker for the session is open', () => {
+    mocks.kanbanState = {
+      selectedTicketId: 'ticket-plan',
+      tickets: new Map([
+        ['project-1', [{ id: 'ticket-plan', current_session_id: 'hive-session-1' }]]
+      ])
+    }
+    setHandoffPickerOpen('picker-1', 'hive-session-1', true)
+    renderHook(() => useClaudeCliStatusListener())
+
+    subscribedCallback?.({
+      sessionId: 'hive-session-1',
+      status: 'planning',
+      metadata: { reason: 'claude_cli_plan_followup' }
+    })
+
+    // The user is mid-handoff: keep the modal, plan card, and ticket state up.
+    expect(mocks.clearPendingPlan).not.toHaveBeenCalled()
+    expect(mocks.notifyKanbanSessionSync).not.toHaveBeenCalled()
+    expect(mocks.setSelectedTicketId).not.toHaveBeenCalled()
+    // Status bookkeeping still proceeds.
+    expect(mocks.setSessionStatus).toHaveBeenCalledWith('hive-session-1', 'planning', {
+      reason: 'claude_cli_plan_followup'
+    })
+  })
+
+  it('defers terminal plan-approval teardown while a handoff picker for the session is open', () => {
+    mocks.kanbanState = {
+      selectedTicketId: 'ticket-plan',
+      tickets: new Map([
+        ['project-1', [{ id: 'ticket-plan', current_session_id: 'hive-session-1' }]]
+      ])
+    }
+    setHandoffPickerOpen('picker-1', 'hive-session-1', true)
+    renderHook(() => useClaudeCliStatusListener())
+
+    subscribedCallback?.({
+      sessionId: 'hive-session-1',
+      status: 'working',
+      metadata: { hookEventName: 'PostToolUse', hookPath: 'tool', toolName: 'ExitPlanMode' }
+    })
+
+    expect(mocks.clearPendingPlan).not.toHaveBeenCalled()
+    expect(mocks.notifyKanbanSessionSync).not.toHaveBeenCalled()
+    expect(mocks.setSelectedTicketId).not.toHaveBeenCalled()
+    expect(mocks.setSessionStatus).toHaveBeenCalledWith('hive-session-1', 'working', {
+      hookEventName: 'PostToolUse',
+      hookPath: 'tool',
+      toolName: 'ExitPlanMode'
+    })
+  })
+
+  it('tears down normally when the open handoff picker belongs to another session', () => {
+    setHandoffPickerOpen('picker-1', 'other-session', true)
+    renderHook(() => useClaudeCliStatusListener())
+
+    subscribedCallback?.({
+      sessionId: 'hive-session-1',
+      status: 'planning',
+      metadata: { reason: 'claude_cli_plan_followup' }
+    })
+
+    expect(mocks.clearPendingPlan).toHaveBeenCalledWith('hive-session-1')
+    expect(mocks.notifyKanbanSessionSync).toHaveBeenCalledWith('hive-session-1', {
+      type: 'plan_followup'
+    })
   })
 
   it('does not close the selected ticket modal for a different session followup', () => {
