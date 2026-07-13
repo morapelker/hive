@@ -47,6 +47,7 @@ function createSession(overrides: Partial<CodexSessionState> = {}): CodexSession
     titleGenerated: true,
     titleGenerationStarted: true,
     persistDebounceTimer: null,
+    goalIdleFallbackTimer: null,
     ...overrides
   }
 }

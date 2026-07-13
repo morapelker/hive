@@ -181,6 +181,14 @@ interface TurnCompletedInfo {
   cost?: number
 }
 
+// Busy/idle must never leak across threads: a turn lifecycle notification
+// whose own threadId differs from the session's parent thread (stamped on the
+// manager event) belongs to a collab subagent, not this session.
+function isForeignTurnLifecycleEvent(event: CodexManagerEvent): boolean {
+  const payloadThreadId = asString(asObject(event.payload)?.threadId)
+  return Boolean(payloadThreadId && event.threadId && payloadThreadId !== event.threadId)
+}
+
 function extractTurnCompletedInfo(event: CodexManagerEvent): TurnCompletedInfo {
   // ── Typed path: TurnCompletedNotification with Turn object ──
   const typed = event.payload as TurnCompletedNotification | undefined
@@ -668,6 +676,7 @@ function mapCodexEventToStreamEventsInner(
 
   // ── Turn started ──────────────────────────────────────────────
   if (method === 'turn/started') {
+    if (isForeignTurnLifecycleEvent(event)) return []
     return [
       {
         type: 'session.status',
@@ -706,6 +715,7 @@ function mapCodexEventToStreamEventsInner(
 
   // ── Turn completed ────────────────────────────────────────────
   if (method === 'turn/completed') {
+    if (isForeignTurnLifecycleEvent(event)) return []
     const info = extractTurnCompletedInfo(event)
     const events: OpenCodeStreamEvent[] = []
 

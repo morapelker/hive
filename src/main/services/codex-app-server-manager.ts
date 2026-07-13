@@ -104,6 +104,7 @@ export interface CodexProviderSession {
   model: string | null
   activeTurnId: string | null
   resumeCursor: string | null
+  goalStatus: ThreadGoalStatus | null
   createdAt: string
   updatedAt: string
   error?: string
@@ -443,6 +444,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         model: options.model ?? null,
         activeTurnId: null,
         resumeCursor: null,
+        goalStatus: null,
         createdAt: now,
         updatedAt: now
       }
@@ -813,21 +815,35 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       params.tokenBudget = input.tokenBudget ?? null
     }
 
-    return this.sendRequest<CodexThreadGoalSetResponse>(context, 'thread/goal/set', params)
+    const response = await this.sendRequest<CodexThreadGoalSetResponse>(
+      context,
+      'thread/goal/set',
+      params
+    )
+    this.updateSession(context, { goalStatus: response.goal.status })
+    return response
   }
 
   async getThreadGoal(threadId: string): Promise<CodexThreadGoalGetResponse> {
     const context = this.getSessionContextForThreadRpc(threadId, 'getThreadGoal')
-    return this.sendRequest<CodexThreadGoalGetResponse>(context, 'thread/goal/get', {
-      threadId: context.session.threadId
-    })
+    const response = await this.sendRequest<CodexThreadGoalGetResponse>(
+      context,
+      'thread/goal/get',
+      { threadId: context.session.threadId }
+    )
+    this.updateSession(context, { goalStatus: response.goal?.status ?? null })
+    return response
   }
 
   async clearThreadGoal(threadId: string): Promise<CodexThreadGoalClearResponse> {
     const context = this.getSessionContextForThreadRpc(threadId, 'clearThreadGoal')
-    return this.sendRequest<CodexThreadGoalClearResponse>(context, 'thread/goal/clear', {
-      threadId: context.session.threadId
-    })
+    const response = await this.sendRequest<CodexThreadGoalClearResponse>(
+      context,
+      'thread/goal/clear',
+      { threadId: context.session.threadId }
+    )
+    this.updateSession(context, { goalStatus: null })
+    return response
   }
 
   async getGoalsFeatureStatus(threadId: string): Promise<CodexGoalsFeatureStatus> {
@@ -1171,13 +1187,35 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     // Track collab subagent spawns (must run before child detection)
     this.rememberCollabReceiverTurns(context, notification.params, route.turnId)
 
-    // Detect if this notification is from a child thread
+    // Detect if this notification is from a child thread. Registered collab
+    // subagents are known via collabReceiverTurns, but registration can race
+    // the child's own lifecycle notifications — so any notification carrying a
+    // threadId other than the session's parent thread is also treated as child.
+    const providerConversationId = this.readProviderConversationId(notification.params)
+    const parentThreadId = context.session.threadId
+    const isForeignThread =
+      parentThreadId !== null &&
+      providerConversationId !== undefined &&
+      providerConversationId !== parentThreadId
+
     const childParentTurnId = this.readChildParentTurnId(context, notification.params)
-    const isChildConversation = childParentTurnId !== undefined
+    const isChildConversation = childParentTurnId !== undefined || isForeignThread
 
     // Suppress lifecycle notifications from child threads
     if (isChildConversation && this.shouldSuppressChildConversationNotification(notification.method)) {
       return
+    }
+
+    // Drop stale completions: only the active turn may settle the session.
+    // A missing activeTurnId (interrupt/resume) accepts any completion.
+    if (notification.method === 'turn/completed' && !isChildConversation) {
+      const completedTurnId = notification.params.turn.id
+      const activeTurnId = context.session.activeTurnId
+      if (activeTurnId !== null && completedTurnId !== activeTurnId) {
+        log.warn('Dropping stale turn/completed', { completedTurnId, activeTurnId })
+        logCodexLifecycleEvent('turn/completed/stale', { completedTurnId, activeTurnId })
+        return
+      }
     }
 
     // Extract textDelta for streaming text notifications (matches t3code pattern)
@@ -1185,8 +1223,6 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       notification.method === 'item/agentMessage/delta'
         ? asString(asObject(notification.params)?.delta)
         : undefined
-
-    const providerConversationId = this.readProviderConversationId(notification.params)
 
     // Emit event — child events get parent's turnId for proper attribution
     this.emitEvent({
@@ -1224,6 +1260,18 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         status: status === 'failed' ? 'error' : 'ready',
         activeTurnId: null
       })
+      return
+    }
+
+    if (notification.method === 'thread/goal/updated') {
+      if (isChildConversation) return
+      this.updateSession(context, { goalStatus: notification.params.goal.status })
+      return
+    }
+
+    if (notification.method === 'thread/goal/cleared') {
+      if (isChildConversation) return
+      this.updateSession(context, { goalStatus: null })
       return
     }
   }
