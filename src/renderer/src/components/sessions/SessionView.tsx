@@ -5107,7 +5107,9 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
           toast.error(result.error ?? 'Failed to create handoff session')
           return
         }
-        const setModePromise = sessionStore.setSessionMode(result.session.id, 'build')
+        const setModePromise = sessionStore.setSessionMode(result.session.id, 'build', {
+        applyModeDefault: false
+      })
         registerHivePromptHandoff(sessionId, result.session.id)
         sessionStore.setPendingMessage(result.session.id, handoffPrompt)
         await useKanbanStore
@@ -5140,7 +5142,9 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
         return
       }
 
-      const setModePromise = sessionStore.setSessionMode(result.session.id, 'build')
+      const setModePromise = sessionStore.setSessionMode(result.session.id, 'build', {
+        applyModeDefault: false
+      })
       registerHivePromptHandoff(sessionId, result.session.id)
       sessionStore.setPendingMessage(result.session.id, handoffPrompt)
       await useKanbanStore

@@ -6,6 +6,7 @@ import { useKanbanStore } from '@/stores/useKanbanStore'
 import { lastSendMode } from '@/lib/message-send-times'
 import { notifyKanbanSessionSync } from '@/stores/store-coordination'
 import { isPlanLike } from '@/lib/constants'
+import { isHandoffPickerOpenForSession } from '@/lib/handoff-ui-state'
 
 type ClaudeCliStatusMetadata = {
   reason?: string
@@ -55,9 +56,16 @@ export function useClaudeCliStatusListener(): void {
         reason: 'claude_cli_plan_followup'
       }
     ): void => {
-      useSessionStore.getState().clearPendingPlan(sessionId)
-      notifyKanbanSessionSync(sessionId, { type: 'plan_followup' })
-      closeLinkedTicketModal(sessionId)
+      // While the user has a handoff picker open for this session, keep the
+      // plan card, ticket state, and modal alive — tearing them down strands
+      // the picker popover (its anchor collapses). Status still updates; the
+      // handoff confirm path unregisters the picker before dispatching, so a
+      // real handoff's teardown is unaffected.
+      if (!isHandoffPickerOpenForSession(sessionId)) {
+        useSessionStore.getState().clearPendingPlan(sessionId)
+        notifyKanbanSessionSync(sessionId, { type: 'plan_followup' })
+        closeLinkedTicketModal(sessionId)
+      }
       lastSendMode.set(sessionId, 'plan')
       useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'planning', metadata)
     }
@@ -92,15 +100,19 @@ export function useClaudeCliStatusListener(): void {
         // Any approval consumes the one-shot auto-approve arm (no-op if the hook
         // server already consumed it when auto-approving).
         void terminalApi.setClaudeCliPlanAutoApprove(sessionId, false).catch(() => undefined)
-        sessionStore.clearPendingPlan(sessionId)
         if (isPlanLike(currentMode)) {
           // Persist the session itself to build mode so a later --resume respawn
           // doesn't pass --permission-mode plan. Claude already left plan mode
           // when the dialog was approved, so skip the Shift+Tab PTY sync.
           void sessionStore.setSessionMode(sessionId, 'build', { syncCliPermissionMode: false })
         }
-        notifyKanbanSessionSync(sessionId, { type: 'implement' })
-        closeLinkedTicketModal(sessionId)
+        // Same handoff-picker guard as handlePlanFollowup: don't rip the plan
+        // card / ticket modal out from under an open picker.
+        if (!isHandoffPickerOpenForSession(sessionId)) {
+          sessionStore.clearPendingPlan(sessionId)
+          notifyKanbanSessionSync(sessionId, { type: 'implement' })
+          closeLinkedTicketModal(sessionId)
+        }
         lastSendMode.set(sessionId, 'build')
         worktreeStatus.setSessionStatus(sessionId, 'working', metadata)
         return

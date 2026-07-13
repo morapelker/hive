@@ -2342,7 +2342,9 @@ function PlanReviewModeContent({
           const handoffPrompt = buildHandoffPrompt(planContent, override)
           const newSession = result.session
           const newSessionId = newSession.id
-          const setModePromise = sessionStore.setSessionMode(newSessionId, 'build')
+          const setModePromise = sessionStore.setSessionMode(newSessionId, 'build', {
+            applyModeDefault: false
+          })
 
           prepareTicketBuildSession(newSessionId, handoffGoalMode)
           if (newSession.agent_sdk === 'claude-code-cli') {
@@ -2421,7 +2423,9 @@ function PlanReviewModeContent({
         const handoffPrompt = buildHandoffPrompt(planContent, override)
         const newSession = result.session
         const newSessionId = newSession.id
-        const setModePromise = sessionStore.setSessionMode(newSessionId, 'build')
+        const setModePromise = sessionStore.setSessionMode(newSessionId, 'build', {
+          applyModeDefault: false
+        })
         const localWorktreePath = findWorktreePathById(worktreeId)
         if (!localWorktreePath) {
           toast.error('Could not find worktree path')
@@ -2912,6 +2916,7 @@ function PlanReviewModeContent({
         <DialogFooter className="flex-shrink-0 gap-1.5 flex-wrap">
           <HandoffSplitButton
             worktreeId={sessionRecord?.worktree_id ?? undefined}
+            sessionId={ticket.current_session_id ?? undefined}
             onHandoff={handleHandoff}
             testIdPrefix="plan-review"
             disabled={isActioning || !hasWorkingContext}

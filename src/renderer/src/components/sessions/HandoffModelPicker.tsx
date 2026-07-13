@@ -90,6 +90,18 @@ export function HandoffModelPicker({
     return loaded
   }, [])
 
+  // Every explicit pick applies immediately (not just on Handoff): the user
+  // can close the picker and fire the main split button — or right-click it
+  // into goal mode — expecting exactly the SDK/model/effort they just chose.
+  const persistOverride = useCallback((agentSdk: HandoffAgentSdk, model: SelectedModel) => {
+    useSettingsStore.getState().setLastHandoffOverride({
+      agentSdk,
+      providerID: model.providerID,
+      modelID: model.modelID,
+      variant: model.variant
+    })
+  }, [])
+
   const resolveModelForCatalog = useCallback(
     (providers: ProviderModels[], model: SelectedModel): SelectedModel => {
       const info = findModelInfo(providers, model.providerID, model.modelID)
@@ -141,36 +153,45 @@ export function HandoffModelPicker({
         configuredDefault.modelID
       )
       const nextInfo = configuredInfo ?? getFirstModelInfo(providers)
-      setPickedModel(nextInfo ? buildModelFromInfo(nextInfo, configuredDefault.variant) : configuredDefault)
+      const nextModel = nextInfo
+        ? buildModelFromInfo(nextInfo, configuredDefault.variant)
+        : configuredDefault
+      setPickedModel(nextModel)
+      persistOverride(nextSdk, nextModel)
     },
-    [ensureProviders]
+    [ensureProviders, persistOverride]
   )
 
-  const handleSelectModel = useCallback((model: SelectedModel) => {
-    const info = findModelInfo(currentProviders, model.providerID, model.modelID)
-    setPickedModel(info ? buildModelFromInfo(info, model.variant) : model)
-  }, [currentProviders])
+  const handleSelectModel = useCallback(
+    (model: SelectedModel) => {
+      const info = findModelInfo(currentProviders, model.providerID, model.modelID)
+      const nextModel = info ? buildModelFromInfo(info, model.variant) : model
+      setPickedModel(nextModel)
+      persistOverride(pickedSdk, nextModel)
+    },
+    [currentProviders, persistOverride, pickedSdk]
+  )
 
   const handleConfirm = useCallback(() => {
     if (!pickedModel) return
 
-    const nextOverride = {
-      agentSdk: pickedSdk,
-      providerID: pickedModel.providerID,
-      modelID: pickedModel.modelID,
-      variant: pickedModel.variant
-    }
-    useSettingsStore.getState().setLastHandoffOverride(nextOverride)
+    persistOverride(pickedSdk, pickedModel)
     onConfirm({ agentSdk: pickedSdk, model: pickedModel })
     onOpenChange(false)
-  }, [onConfirm, onOpenChange, pickedModel, pickedSdk])
+  }, [onConfirm, onOpenChange, persistOverride, pickedModel, pickedSdk])
 
   const modelLabel = currentModelInfo
     ? getModelDisplayName(currentModelInfo)
     : pickedModel?.modelID ?? (loadingSdks[pickedSdk] ? 'Loading…' : 'Select model')
 
   return (
-    <Popover open={open} onOpenChange={onOpenChange}>
+    // modal: the picker can be anchored inside a React portal (the claude-cli
+    // plan card portalled into the ticket modal), where its portalled content
+    // is outside the host Dialog's React tree. A non-modal popover's clicks
+    // then count as pointer-down-outside on the Dialog and close the ticket
+    // modal mid-selection. Modal mode makes this popover the topmost
+    // pointer-events-disabled layer so the Dialog ignores them.
+    <Popover open={open} onOpenChange={onOpenChange} modal>
       <PopoverTrigger asChild>{anchor}</PopoverTrigger>
       <PopoverContent align="end" className="w-[360px] p-3">
         <div className="space-y-3">
@@ -266,7 +287,9 @@ export function HandoffModelPicker({
                     key={variant}
                     type="button"
                     onClick={() => {
-                      setPickedModel({ ...pickedModel, variant })
+                      const nextModel = { ...pickedModel, variant }
+                      setPickedModel(nextModel)
+                      persistOverride(pickedSdk, nextModel)
                     }}
                     className={cn(
                       'rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-wide transition-colors',

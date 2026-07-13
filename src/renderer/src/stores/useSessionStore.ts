@@ -184,7 +184,7 @@ interface SessionState {
   setSessionMode: (
     sessionId: string,
     mode: SessionMode,
-    options?: { syncCliPermissionMode?: boolean }
+    options?: { syncCliPermissionMode?: boolean; applyModeDefault?: boolean }
   ) => Promise<void>
   setSessionModel: (
     sessionId: string,
@@ -1317,7 +1317,7 @@ export const useSessionStore = create<SessionState>()(
       setSessionMode: async (
         sessionId: string,
         mode: SessionMode,
-        options?: { syncCliPermissionMode?: boolean }
+        options?: { syncCliPermissionMode?: boolean; applyModeDefault?: boolean }
       ) => {
         const previousMode = get().modeBySession.get(sessionId) || 'build'
         if (options?.syncCliPermissionMode !== false) {
@@ -1336,8 +1336,12 @@ export const useSessionStore = create<SessionState>()(
           console.error('Failed to persist session mode:', error)
         }
 
-        // Apply mode-specific default model (same as toggleSessionMode)
-        await get().applyModeDefaultModel(sessionId, mode)
+        // Apply mode-specific default model (same as toggleSessionMode).
+        // Handoff paths opt out: they just created the session with an
+        // explicitly picked model/variant that the default must not clobber.
+        if (options?.applyModeDefault !== false) {
+          await get().applyModeDefaultModel(sessionId, mode)
+        }
 
         // Notify Kanban board of mode change
         notifyKanbanSessionSync(sessionId, { type: 'mode_change', sessionMode: mode })
