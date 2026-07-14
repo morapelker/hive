@@ -400,6 +400,18 @@ export function KanbanColumn({
 
   const handleDragOver = useCallback(
     (e: React.DragEvent) => {
+      // Done is date-sorted (newest first): reordering within it is disabled,
+      // and cross-column drops always land at the top regardless of cursor position
+      if (isDoneColumn) {
+        if (getKanbanDragData()?.sourceColumn === 'done') return
+        e.preventDefault()
+        e.dataTransfer.dropEffect = 'move'
+        setIsDragOver(true)
+        dropIndexRef.current = 0
+        setDropIndex(0)
+        return
+      }
+
       e.preventDefault()
       e.dataTransfer.dropEffect = 'move'
       setIsDragOver(true)
@@ -421,7 +433,7 @@ export function KanbanColumn({
       dropIndexRef.current = index
       setDropIndex(index)
     },
-    [tickets.length]
+    [tickets.length, isDoneColumn]
   )
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
@@ -584,6 +596,8 @@ export function KanbanColumn({
         }
       } else {
         // ── Same-column reorder ───────────────────────────────
+        // Done is always date-sorted — manual reordering is disabled
+        if (isDoneColumn) return
         const ticketProjectId = findTicketProjectId(ticketId, draggedProjectId)
         const draggedKey = ticketKey(ticketProjectId, ticketId)
         const projectTickets = projectTicketsForColumn(ticketProjectId)
@@ -607,6 +621,7 @@ export function KanbanColumn({
       tickets.length,
       isInProgressColumn,
       isTodoColumn,
+      isDoneColumn,
       isMultiProjectMode,
       projectId,
       findTicketProjectId,
