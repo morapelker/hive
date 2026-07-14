@@ -111,6 +111,10 @@ export interface AppSettings {
   // Quick Actions
   lastOpenAction: QuickActionType | null
 
+  // Projects
+  /** Root directory picked the last time a project was created via the plus button. */
+  lastProjectDirectory: string | null
+
   // Favorites
   favoriteModels: string[] // Array of "providerID::modelID" keys
 
@@ -215,6 +219,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   defaultModels: null,
   lastHandoffOverride: null,
   lastOpenAction: null,
+  lastProjectDirectory: null,
   favoriteModels: [],
   customChromeCommand: '',
   modelVariantDefaults: {},
@@ -437,6 +442,7 @@ function extractSettings(state: SettingsState): AppSettings {
     defaultModels: state.defaultModels,
     lastHandoffOverride: state.lastHandoffOverride,
     lastOpenAction: state.lastOpenAction,
+    lastProjectDirectory: state.lastProjectDirectory,
     favoriteModels: state.favoriteModels,
     customChromeCommand: state.customChromeCommand,
     modelVariantDefaults: state.modelVariantDefaults,
@@ -802,6 +808,7 @@ export const useSettingsStore = create<SettingsState>()(
         defaultModels: state.defaultModels,
         lastHandoffOverride: state.lastHandoffOverride,
         lastOpenAction: state.lastOpenAction,
+        lastProjectDirectory: state.lastProjectDirectory,
         favoriteModels: state.favoriteModels,
         customChromeCommand: state.customChromeCommand,
         modelVariantDefaults: state.modelVariantDefaults,
