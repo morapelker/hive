@@ -1194,6 +1194,7 @@ function KanbanTicketModalContent({
           moveTicket={moveTicket}
           updateTicket={updateTicket}
           dualPane={wantsDualPane}
+          sessionRecord={effectiveSession}
           runScriptState={runScriptState}
         />
       )
@@ -2889,6 +2890,7 @@ function PlanReviewModeContent({
         placeholder="Iterate on the plan... (Enter to send)"
         testIdPrefix="plan-review"
         showInlineSendButton
+        hideModeToggle={isClaudeCliPlanSession}
         textareaRef={textareaRef}
       />
 
@@ -2972,6 +2974,7 @@ function ReviewModeContent({
   moveTicket,
   updateTicket,
   dualPane = false,
+  sessionRecord,
   runScriptState
 }: {
   ticket: KanbanTicket
@@ -2984,12 +2987,14 @@ function ReviewModeContent({
   ) => Promise<void>
   updateTicket: (ticketId: string, projectId: string, data: KanbanTicketUpdate) => Promise<void>
   dualPane?: boolean
+  sessionRecord?: { agent_sdk: string } | null
   runScriptState: TicketRunScriptState
 }) {
   const worktree = useMemo(
     () => (ticket.worktree_id ? findWorktreeById(ticket.worktree_id) : null),
     [ticket.worktree_id]
   )
+  const isClaudeCliSession = sessionRecord?.agent_sdk === 'claude-code-cli'
   const [followUpText, setFollowUpText] = useState('')
   const [followUpMode, setFollowUpMode] = useState<FollowUpMode>('build')
   const [isSending, setIsSending] = useState(false)
@@ -3186,8 +3191,11 @@ function ReviewModeContent({
     setFollowUpMode((prev) => (prev === 'super-plan' ? 'plan' : 'super-plan'))
   }, [])
 
-  // Tab key toggles mode, Shift+Tab toggles super-plan
+  // Tab key toggles mode, Shift+Tab toggles super-plan.
+  // Claude CLI sessions manage plan/build inside the terminal — leave
+  // Tab/Shift+Tab alone so the embedded terminal receives them.
   useEffect(() => {
+    if (isClaudeCliSession) return
     const handler = (e: KeyboardEvent): void => {
       if (e.key === 'Tab' && !e.ctrlKey && !e.metaKey && !e.altKey) {
         // Only intercept when the modal is focused
@@ -3205,7 +3213,7 @@ function ReviewModeContent({
     }
     window.addEventListener('keydown', handler, true)
     return () => window.removeEventListener('keydown', handler, true)
-  }, [toggleMode, toggleSuperMode])
+  }, [isClaudeCliSession, toggleMode, toggleSuperMode])
 
   // ── Send followup ─────────────────────────────────────────────────
   const handleSendFollowup = useCallback(async () => {
@@ -3384,6 +3392,7 @@ function ReviewModeContent({
         isSending={isSending}
         placeholder="Provide followup instructions... (Enter to send)"
         testIdPrefix="review"
+        hideModeToggle={isClaudeCliSession}
         textareaRef={textareaRef}
       />
 
