@@ -10,7 +10,7 @@ import {
   DialogTitle
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { useProjectStore } from '@/stores'
+import { useProjectStore, useSettingsStore } from '@/stores'
 import { projectToast } from '@/lib/toast'
 import { projectApi } from '@/api/project-api'
 
@@ -31,6 +31,7 @@ export function CreateProjectDialog({
 
   useEffect(() => {
     if (open) {
+      setLocation((prev) => prev ?? useSettingsStore.getState().lastProjectDirectory)
       setName('')
       setError(null)
       setIsCreating(false)
@@ -60,6 +61,8 @@ export function CreateProjectDialog({
         setError(result.error || 'Failed to create project folder.')
         return
       }
+
+      void useSettingsStore.getState().updateSetting('lastProjectDirectory', location)
 
       const addResult = await addProject(result.path)
       if (!addResult.success) {

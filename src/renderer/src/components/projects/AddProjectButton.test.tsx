@@ -9,6 +9,16 @@ const mocks = vi.hoisted(() => ({
   addProject: vi.fn()
 }))
 
+const settingsMocks = vi.hoisted(() => {
+  const state = {
+    lastProjectDirectory: null as string | null,
+    updateSetting: vi.fn()
+  }
+  const useSettingsStore = (selector: (s: typeof state) => unknown): unknown => selector(state)
+  useSettingsStore.getState = () => state
+  return { state, useSettingsStore }
+})
+
 const projectApiMocks = vi.hoisted(() => ({
   openDirectoryDialog: vi.fn(),
   initRepository: vi.fn(),
@@ -30,7 +40,8 @@ const toastMocks = vi.hoisted(() => ({
 vi.mock('@/stores', () => ({
   useProjectStore: () => ({
     addProject: mocks.addProject
-  })
+  }),
+  useSettingsStore: settingsMocks.useSettingsStore
 }))
 
 vi.mock('@/api/project-api', () => ({
