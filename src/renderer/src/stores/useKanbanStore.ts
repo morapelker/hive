@@ -125,6 +125,11 @@ const COLUMN_ORDER: Record<KanbanTicketColumn, number> = {
   done: 3
 }
 
+// Done ignores manual sort_order — always newest first (updated_at ≈ when the
+// ticket entered Done, since moving a ticket bumps updated_at)
+const byUpdatedAtDesc = (a: KanbanTicket, b: KanbanTicket): number =>
+  b.updated_at.localeCompare(a.updated_at)
+
 function findTicketByRef(
   ticketsByProject: Map<string, KanbanTicket[]>,
   ref: TicketRef
@@ -826,11 +831,13 @@ export const useKanbanStore = create<KanbanState>()(
         const prev = get().tickets.get(projectId) ?? []
         const snapshot = prev.map((t) => ({ ...t }))
 
-        // Optimistic local update
+        // Optimistic local update (updated_at mirrors the backend bump so the
+        // date-sorted Done column places the ticket correctly right away)
+        const movedAt = new Date().toISOString()
         set((state) => {
           const next = new Map(state.tickets)
           const tickets = (next.get(projectId) ?? []).map((t) =>
-            t.id === ticketId ? { ...t, column, sort_order: sortOrder } : t
+            t.id === ticketId ? { ...t, column, sort_order: sortOrder, updated_at: movedAt } : t
           )
           next.set(projectId, tickets)
           return { tickets: next }
@@ -1206,7 +1213,7 @@ export const useKanbanStore = create<KanbanState>()(
         const tickets = get().tickets.get(projectId) ?? []
         return tickets
           .filter((t) => t.column === column && !t.archived_at)
-          .sort((a, b) => a.sort_order - b.sort_order)
+          .sort(column === 'done' ? byUpdatedAtDesc : (a, b) => a.sort_order - b.sort_order)
       },
 
       // ── getArchivedTicketsByColumn ─────────────────────────────────
@@ -1310,7 +1317,7 @@ export const useKanbanStore = create<KanbanState>()(
       ): KanbanTicket[] => {
         const projectIds = get().getConnectionProjectIds(connectionId)
         const merged = projectIds.flatMap((pid) => get().getTicketsByColumn(pid, column))
-        merged.sort((a, b) => a.sort_order - b.sort_order)
+        merged.sort(column === 'done' ? byUpdatedAtDesc : (a, b) => a.sort_order - b.sort_order)
         return merged
       },
 
@@ -1392,7 +1399,7 @@ export const useKanbanStore = create<KanbanState>()(
       getTicketsByColumnForPinned: (column: KanbanTicketColumn): KanbanTicket[] => {
         const projectIds = [...usePinnedStore.getState().pinnedProjectIds]
         const merged = projectIds.flatMap((pid) => get().getTicketsByColumn(pid, column))
-        merged.sort((a, b) => a.sort_order - b.sort_order)
+        merged.sort(column === 'done' ? byUpdatedAtDesc : (a, b) => a.sort_order - b.sort_order)
         return merged
       },
 
