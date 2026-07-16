@@ -1,6 +1,19 @@
+import { extname } from 'node:path'
 import type { Session } from '../db/types'
 import { getUserEnvironmentVariables } from './env-vars'
 import type { DatabaseService } from '../db/database'
+
+/**
+ * On Windows the resolved codex binary can be a `.cmd`/`.bat`/`.com` shim
+ * (npm/bun globals install these), which node-pty cannot spawn directly — it
+ * must go through the command processor. Detection already runs these shims
+ * with `shell: true` for the same reason.
+ */
+function isWindowsShimBinary(binaryPath: string): boolean {
+  if (process.platform !== 'win32') return false
+  const ext = extname(binaryPath).toLowerCase()
+  return ext === '.cmd' || ext === '.bat' || ext === '.com'
+}
 
 /**
  * Builds the PTY spawn spec for a `codex-cli` session — the codex TUI running
@@ -99,10 +112,26 @@ export function buildCodexCliPtySpawn(input: CodexCliPtySpawnInput): CodexCliPty
     args.push(prompt)
   }
 
+  const binary = input.codexBinary || 'codex'
+  const env = getUserEnvironmentVariables(input.db ?? null)
+  const cwd = input.worktreePath
+
+  if (isWindowsShimBinary(binary)) {
+    // node-pty can't launch a .cmd/.bat shim directly — run it through the
+    // command processor (`cmd.exe /c <shim> …`), or the PTY never starts even
+    // though detection reported codex-cli available.
+    return {
+      command: process.env.COMSPEC || 'cmd.exe',
+      args: ['/c', binary, ...args],
+      cwd,
+      env
+    }
+  }
+
   return {
-    command: input.codexBinary || 'codex',
+    command: binary,
     args,
-    cwd: input.worktreePath,
-    env: getUserEnvironmentVariables(input.db ?? null)
+    cwd,
+    env
   }
 }

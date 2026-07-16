@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import type { Session } from '../../db/types'
 import { buildCodexCliPtySpawn, normalizeCodexCliEffort } from '../codex-cli-spawner'
 
@@ -99,5 +99,44 @@ describe('buildCodexCliPtySpawn', () => {
     expect(spawn.args).toContain(
       'projects={"/repo/we\\"ird\\\\path"={trust_level="trusted"}}'
     )
+  })
+
+  describe('Windows shim binaries', () => {
+    const realPlatform = process.platform
+    const realComspec = process.env.COMSPEC
+
+    afterEach(() => {
+      Object.defineProperty(process, 'platform', { value: realPlatform })
+      if (realComspec === undefined) delete process.env.COMSPEC
+      else process.env.COMSPEC = realComspec
+    })
+
+    it('wraps a .cmd shim through the command processor on Windows', () => {
+      Object.defineProperty(process, 'platform', { value: 'win32' })
+      process.env.COMSPEC = 'C:\\Windows\\System32\\cmd.exe'
+
+      const spawn = buildCodexCliPtySpawn({
+        session: makeSession({ model_id: null }),
+        worktreePath: 'C:/repo',
+        codexBinary: 'C:/Users/x/AppData/npm/codex.cmd',
+        pendingPrompt: 'do it'
+      })
+
+      expect(spawn.command).toBe('C:\\Windows\\System32\\cmd.exe')
+      expect(spawn.args.slice(0, 2)).toEqual(['/c', 'C:/Users/x/AppData/npm/codex.cmd'])
+      expect(spawn.args).toContain('--dangerously-bypass-approvals-and-sandbox')
+      expect(spawn.args[spawn.args.length - 1]).toBe('do it')
+    })
+
+    it('spawns a real .exe directly (no wrapper) on Windows', () => {
+      Object.defineProperty(process, 'platform', { value: 'win32' })
+      const spawn = buildCodexCliPtySpawn({
+        session: makeSession({ model_id: null }),
+        worktreePath: 'C:/repo',
+        codexBinary: 'C:/Users/x/.bun/bin/codex.exe'
+      })
+      expect(spawn.command).toBe('C:/Users/x/.bun/bin/codex.exe')
+      expect(spawn.args[0]).toBe('--dangerously-bypass-approvals-and-sandbox')
+    })
   })
 })
