@@ -32,6 +32,9 @@ interface UsageState {
 
   activeProvider: UsageProvider
   savedAccounts: Record<UsageProvider, SavedAccountDTO[]>
+  /** True once savedAccounts[provider] reflects a successful load — an empty
+   * list is only meaningful (e.g. "the account really is gone") when set. */
+  savedAccountsLoaded: Record<UsageProvider, boolean>
   savedAccountLoadErrors: Record<UsageProvider, string | null>
   refreshingProviders: Record<UsageProvider, boolean>
   refreshingAccountIds: Set<string>
@@ -80,6 +83,7 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
 
   activeProvider: 'anthropic',
   savedAccounts: { anthropic: [], openai: [] },
+  savedAccountsLoaded: { anthropic: false, openai: false },
   savedAccountLoadErrors: { anthropic: null, openai: null },
   refreshingProviders: { anthropic: false, openai: false },
   refreshingAccountIds: new Set<string>(),
@@ -92,6 +96,7 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
       if (provider) {
         set((state) => ({
           savedAccounts: { ...state.savedAccounts, [provider]: accounts },
+          savedAccountsLoaded: { ...state.savedAccountsLoaded, [provider]: true },
           savedAccountLoadErrors: { ...state.savedAccountLoadErrors, [provider]: null }
         }))
         return
@@ -102,6 +107,7 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
           anthropic: accounts.filter((account) => account.provider === 'anthropic'),
           openai: accounts.filter((account) => account.provider === 'openai')
         },
+        savedAccountsLoaded: { anthropic: true, openai: true },
         savedAccountLoadErrors: { anthropic: null, openai: null }
       })
     } catch (error) {

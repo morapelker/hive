@@ -77,6 +77,7 @@ describe('useAccountScheduleStore', () => {
         anthropic: [makeAccount('acc-1', 'current@x.com'), makeAccount('acc-2', 'target@x.com')],
         openai: []
       },
+      savedAccountsLoaded: { anthropic: true, openai: false },
       refreshingProviders: { anthropic: false, openai: false },
       switchingAccountIds: new Set<string>()
     })
@@ -191,9 +192,12 @@ describe('useAccountScheduleStore', () => {
   })
 
   it('cancels with an error toast when the target account no longer exists at due time', async () => {
-    // Empty list = "maybe not loaded yet", so the pre-due prune stays out of
-    // the way and the due-time reload path decides.
-    useUsageStore.setState({ savedAccounts: { anthropic: [], openai: [] } })
+    // Not loaded yet, so the pre-due prune stays out of the way and the
+    // due-time reload path decides.
+    useUsageStore.setState({
+      savedAccounts: { anthropic: [], openai: [] },
+      savedAccountsLoaded: { anthropic: false, openai: false }
+    })
     useAccountScheduleStore.getState().scheduleByTime('anthropic', 'gone-id', 'gone@x.com', 1_000)
 
     vi.setSystemTime(Date.now() + 2_000)
@@ -212,6 +216,21 @@ describe('useAccountScheduleStore', () => {
     // Still due in an hour, but the target gets removed from the account list.
     useUsageStore.setState({
       savedAccounts: { anthropic: [makeAccount('acc-1', 'current@x.com')], openai: [] }
+    })
+    await useAccountScheduleStore.getState().checkSchedules()
+
+    expect(switchCalls()).toHaveLength(0)
+    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('target@x.com'))
+    expect(useAccountScheduleStore.getState().schedules.anthropic).toBeUndefined()
+  })
+
+  it('cancels a pending usage schedule when the LAST saved account is removed (loaded empty list)', async () => {
+    useAccountScheduleStore.getState().scheduleByUsage('anthropic', 'acc-2', 'target@x.com', 99)
+
+    // Removing the final account leaves a successfully loaded, empty list.
+    useUsageStore.setState({
+      savedAccounts: { anthropic: [], openai: [] },
+      savedAccountsLoaded: { anthropic: true, openai: false }
     })
     await useAccountScheduleStore.getState().checkSchedules()
 
@@ -256,7 +275,10 @@ describe('useAccountScheduleStore', () => {
   })
 
   it('keeps the schedule when the saved-accounts reload fails', async () => {
-    useUsageStore.setState({ savedAccounts: { anthropic: [], openai: [] } })
+    useUsageStore.setState({
+      savedAccounts: { anthropic: [], openai: [] },
+      savedAccountsLoaded: { anthropic: false, openai: false }
+    })
     useAccountScheduleStore.getState().scheduleByTime('anthropic', 'gone-id', 'gone@x.com', 1_000)
     request.mockImplementation(async (method: string) => {
       if (method === 'accountOps.listSaved') throw new Error('rpc down')
@@ -305,8 +327,11 @@ describe('useAccountScheduleStore', () => {
   })
 
   it('does not switch when the schedule is canceled during an in-flight account reload', async () => {
-    // Empty list forces the due-time reload path (pre-due prune skips it).
-    useUsageStore.setState({ savedAccounts: { anthropic: [], openai: [] } })
+    // Not-yet-loaded state forces the due-time reload path (pre-due prune skips it).
+    useUsageStore.setState({
+      savedAccounts: { anthropic: [], openai: [] },
+      savedAccountsLoaded: { anthropic: false, openai: false }
+    })
     useAccountScheduleStore
       .getState()
       .scheduleByTime('anthropic', 'acc-new', 'new@x.com', 1_000)

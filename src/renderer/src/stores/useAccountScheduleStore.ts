@@ -151,12 +151,13 @@ export const useAccountScheduleStore = create<AccountScheduleState>()(
           // Target removed while still pending (e.g. via the remove-account
           // UI): cancel right away rather than at due time — a usage schedule
           // that never fires would otherwise linger with no row to cancel it
-          // from. An empty list is ambiguous (may simply not be loaded yet),
-          // so only a non-empty list is treated as authoritative here; the
-          // empty case is resolved by the reload below once the schedule is due.
-          const knownAccounts = useUsageStore.getState().savedAccounts[provider]
+          // from. Only a successfully loaded list is authoritative (even when
+          // empty, e.g. the last account was removed); before the first load
+          // the check is deferred to the due-time reload below.
+          const usageState = useUsageStore.getState()
+          const knownAccounts = usageState.savedAccounts[provider]
           if (
-            knownAccounts.length > 0 &&
+            usageState.savedAccountsLoaded[provider] &&
             !knownAccounts.some((a) => a.id === schedule.accountId)
           ) {
             get().cancelSchedule(provider)
