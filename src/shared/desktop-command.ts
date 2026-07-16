@@ -634,7 +634,13 @@ export interface OpenCodeRefreshFromThreadResult {
   readonly error?: string
 }
 
-export type OpenCodeAgentSdk = 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
+export type OpenCodeAgentSdk =
+  | 'opencode'
+  | 'claude-code'
+  | 'claude-code-cli'
+  | 'codex'
+  | 'codex-cli'
+  | 'terminal'
 
 export interface OpenCodeListModelsPayload {
   readonly agentSdk?: OpenCodeAgentSdk
@@ -4059,6 +4065,7 @@ const isOpenCodeAgentSdk = (value: unknown): value is OpenCodeAgentSdk =>
   value === 'claude-code' ||
   value === 'claude-code-cli' ||
   value === 'codex' ||
+  value === 'codex-cli' ||
   value === 'terminal'
 
 const isOpenCodeListModelsPayload = (value: unknown): value is OpenCodeListModelsPayload =>

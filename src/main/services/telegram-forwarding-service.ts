@@ -19,7 +19,7 @@ import {
   type TelegramClaudeCliReplyResult,
   type TelegramClaudeCliSessionPayload
 } from '@shared/desktop-command'
-import { isClaudeCli } from '@shared/types/agent-sdk'
+import { isClaudeCli, isCliAgentSdk } from '@shared/types/agent-sdk'
 import { openCodeService } from './opencode-service'
 import { ClaudeCodeImplementer } from './claude-code-implementer'
 import { CodexImplementer } from './codex-implementer'
@@ -1180,8 +1180,13 @@ export class TelegramForwardingService {
     const session = this.db?.getSession(state.sessionId)
     if (!session) throw new Error('Active session not found')
 
-    // CLI sessions have no implementer; inject the prompt straight into the PTY.
-    if (isClaudeCli(session.agent_sdk)) {
+    // CLI sessions (claude-code-cli and codex-cli) have no SDK implementer to
+    // route a prompt to; inject it straight into the PTY, exactly like the
+    // in-app terminal follow-up path (terminal-pty-bridge → writeClaudeCliPrompt,
+    // also gated by isCliAgentSdk). Note codex-cli hooks skip transports (see
+    // claude-hook-server), so its questions/plans stay keyboard-driven in the
+    // TUI — but plain forwarded prompts must still reach the terminal here.
+    if (isCliAgentSdk(session.agent_sdk)) {
       const { delivered } = writeClaudeCliPrompt(state.sessionId, text)
       // No live PTY yet — keep it queued for the next idle flush (best-effort).
       if (!delivered) state.pendingQueuedPrompt = text

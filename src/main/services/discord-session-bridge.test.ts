@@ -310,6 +310,26 @@ describe('DiscordSessionBridge managed sessions', () => {
     )
   })
 
+  it('normalizes a codex-cli default to the codex SDK for the managed session', async () => {
+    // codex-cli has no Discord terminal bridge; it must be persisted/dispatched
+    // as codex or the prompt path rejects it as terminal-only.
+    const { db, bridge, openCode } = setupBridge()
+    setAppSettings(db, {
+      defaultAgentSdk: 'codex-cli',
+      selectedModelByProvider: {
+        'codex-cli': { providerID: 'codex', modelID: 'gpt-5.5' }
+      }
+    })
+
+    await bridge.handleUserMessage(userMessage(makeChannel(), 'codex cli default'))
+
+    expect(db.createdSessions[0]).toEqual(
+      expect.objectContaining({ agent_sdk: 'codex' })
+    )
+    // The prompt is dispatched (not rejected as a terminal-only CLI session).
+    expect(openCode.prompt).toHaveBeenCalled()
+  })
+
   it('reuses the same managed session for later messages without creating another one', async () => {
     const { db, bridge, openCode, emit } = setupBridge()
     const channel = makeChannel()

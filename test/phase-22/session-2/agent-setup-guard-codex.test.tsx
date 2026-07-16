@@ -50,9 +50,14 @@ vi.mock('@/components/setup/AgentPickerDialog', () => ({
     availableSdks
   }: {
     onSelect: (sdk: string) => void
-    availableSdks: { opencode: boolean; claude: boolean; codex: boolean }
+    availableSdks: { opencode: boolean; claude: boolean; codex: boolean; codexCli?: boolean }
   }) => (
     <div data-testid="agent-picker-dialog">
+      {availableSdks.codexCli && (
+        <button data-testid="pick-codex-cli" onClick={() => onSelect('codex-cli')}>
+          Codex (CLI)
+        </button>
+      )}
       {availableSdks.opencode && (
         <button data-testid="pick-opencode" onClick={() => onSelect('opencode')}>
           OpenCode
@@ -151,6 +156,65 @@ describe('AgentSetupGuard with Codex support', () => {
     await waitFor(() => {
       expect(screen.getByTestId('agent-not-found-dialog')).toBeInTheDocument()
     })
+  })
+
+  it('auto-selects codex-cli when the codex binary is present but app-server is unavailable', async () => {
+    // codex false (no app-server), codexCli true (binary present) — the only usable provider.
+    mockDetectAgentSdks.mockResolvedValue({
+      opencode: false,
+      claude: false,
+      codex: false,
+      codexCli: true
+    })
+
+    const { AgentSetupGuard } = await import('@/components/setup/AgentSetupGuard')
+    render(<AgentSetupGuard />)
+
+    await waitFor(() => {
+      expect(mockSettingsState.updateSetting).toHaveBeenCalledWith('defaultAgentSdk', 'codex-cli')
+      expect(mockSettingsState.updateSetting).toHaveBeenCalledWith('initialSetupComplete', true)
+    })
+    // Must NOT be treated as "no agent found".
+    expect(screen.queryByTestId('agent-not-found-dialog')).not.toBeInTheDocument()
+  })
+
+  it('offers Codex (CLI) as a distinct pick when combined with another provider', async () => {
+    mockDetectAgentSdks.mockResolvedValue({
+      opencode: true,
+      claude: false,
+      codex: false,
+      codexCli: true
+    })
+
+    const { AgentSetupGuard } = await import('@/components/setup/AgentSetupGuard')
+    render(<AgentSetupGuard />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('agent-picker-dialog')).toBeInTheDocument()
+    })
+    expect(screen.getByTestId('pick-opencode')).toBeInTheDocument()
+    expect(screen.getByTestId('pick-codex-cli')).toBeInTheDocument()
+    // The SDK-backed Codex isn't available, so it must not be offered.
+    expect(screen.queryByTestId('pick-codex')).not.toBeInTheDocument()
+  })
+
+  it('does not double up Codex and Codex (CLI) when both flags are set', async () => {
+    // codex true implies codexCli true; only the richer SDK Codex should show.
+    mockDetectAgentSdks.mockResolvedValue({
+      opencode: true,
+      claude: false,
+      codex: true,
+      codexCli: true
+    })
+
+    const { AgentSetupGuard } = await import('@/components/setup/AgentSetupGuard')
+    render(<AgentSetupGuard />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('agent-picker-dialog')).toBeInTheDocument()
+    })
+    expect(screen.getByTestId('pick-codex')).toBeInTheDocument()
+    expect(screen.queryByTestId('pick-codex-cli')).not.toBeInTheDocument()
   })
 
   it('auto-selects opencode when only opencode is installed (codex false)', async () => {

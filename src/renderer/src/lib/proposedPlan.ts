@@ -22,7 +22,9 @@ export function buildSdkPlanImplementationPrompt(
   agentSdk: string | null | undefined,
   planMarkdown: string
 ): string {
-  return agentSdk === 'codex'
+  // Both codex providers keep the just-produced <proposed_plan> in context, so
+  // "Implement the plan." is enough — no need to re-send the plan markdown.
+  return agentSdk === 'codex' || agentSdk === 'codex-cli'
     ? 'Implement the plan.'
     : buildPlanImplementationPrompt(planMarkdown)
 }

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { type AgentSdk, isClaudeFamily } from '@shared/types/agent-sdk'
+import { type AgentSdk, isClaudeFamily, isCodexFamily } from '@shared/types/agent-sdk'
 import type {
   UsageData,
   AnthropicRateLimitInfo,
@@ -492,7 +492,7 @@ export function resolveUsageProvider(session: SessionLike): UsageProvider {
 export function resolveDefaultUsageProvider(
   agentSdk: AgentSdk
 ): UsageProvider {
-  if (agentSdk === 'codex') return 'openai'
+  if (isCodexFamily(agentSdk)) return 'openai'
   return 'anthropic'
 }
 

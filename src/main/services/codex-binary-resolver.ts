@@ -6,6 +6,7 @@ import { createLogger } from './logger'
 
 const log = createLogger({ component: 'CodexBinaryResolver' })
 const codexAppServerSupportCache = new Map<string, boolean>()
+const codexHookSupportCache = new Map<string, boolean>()
 
 function splitResolvedPaths(result: string): string[] {
   return result
@@ -53,6 +54,62 @@ function stringifyProbeOutput(output: unknown): string {
 
 function hasCodexAppServerUsage(output: string): boolean {
   return /Usage:\s*codex\s+app-server\b/i.test(output)
+}
+
+/**
+ * The codex-cli provider injects `--dangerously-bypass-hook-trust` (and the
+ * `--enable hooks` / `-c hooks.*` overrides) on every spawn. An older codex
+ * that predates the hooks surface rejects those flags and the session fails to
+ * start, so hook-trust support is the capability gate for offering codex-cli.
+ */
+function hasCodexHookTrustFlag(output: string): boolean {
+  return /--dangerously-bypass-hook-trust\b/.test(output)
+}
+
+/**
+ * Minimum codex version whose non-interactive hook-trust bypass actually works.
+ * `--dangerously-bypass-hook-trust` first shipped in 0.131.0 but was
+ * parsed-but-ignored through 0.133.0 (openai/codex#24093 — the TUI still shows
+ * the blocking "Hooks need review" prompt), and it is absent before 0.131.0.
+ * Since every codex-cli spawn relies on that bypass, 0.134.0 is the first
+ * usable version. A help-text flag check alone can't distinguish the broken
+ * 0.131–0.133 builds, so we gate on the parsed version.
+ */
+const MIN_CODEX_CLI_HOOK_VERSION: readonly [number, number, number] = [0, 134, 0]
+
+/** Parse the first `X.Y.Z` triple from `codex --version` output (e.g. "codex-cli 0.144.0"). */
+function parseCodexVersion(output: string): [number, number, number] | null {
+  const m = output.match(/(\d+)\.(\d+)\.(\d+)/)
+  if (!m) return null
+  return [Number(m[1]), Number(m[2]), Number(m[3])]
+}
+
+function versionAtLeast(
+  actual: readonly [number, number, number],
+  min: readonly [number, number, number]
+): boolean {
+  for (let i = 0; i < 3; i++) {
+    if (actual[i] > min[i]) return true
+    if (actual[i] < min[i]) return false
+  }
+  return true
+}
+
+function readCodexVersionOutput(binaryPath: string): string | null {
+  try {
+    return execFileSync(binaryPath, ['--version'], {
+      encoding: 'utf-8',
+      timeout: 5000,
+      env: process.env,
+      shell: usesShellForCodexBinary(binaryPath)
+    })
+  } catch (error) {
+    const output = [
+      stringifyProbeOutput((error as { stdout?: unknown }).stdout),
+      stringifyProbeOutput((error as { stderr?: unknown }).stderr)
+    ].join('\n')
+    return output.trim() ? output : null
+  }
 }
 
 function firstExistingPath(paths: string[]): string | null {
@@ -166,6 +223,62 @@ export function supportsCodexAppServer(binaryPath: string): boolean {
     }
     if (!isBareCommand(binaryPath)) {
       codexAppServerSupportCache.set(binaryPath, false)
+    }
+    return false
+  }
+}
+
+/**
+ * Whether this codex binary supports the hook flags the codex-cli provider
+ * injects (see hasCodexHookTrustFlag). Probes `codex --help` and looks for
+ * `--dangerously-bypass-hook-trust`. Same caching/shell/error-output handling
+ * as supportsCodexAppServer.
+ */
+export function supportsCodexCliHooks(binaryPath: string): boolean {
+  const cached = codexHookSupportCache.get(binaryPath)
+  if (cached !== undefined) {
+    return cached
+  }
+
+  // Primary gate: version. The bypass Hive relies on only works >= 0.134.0
+  // (see MIN_CODEX_CLI_HOOK_VERSION); a help-text flag check would wrongly
+  // accept the broken 0.131–0.133 builds.
+  const versionOutput = readCodexVersionOutput(binaryPath)
+  const version = versionOutput ? parseCodexVersion(versionOutput) : null
+  if (version) {
+    const supported = versionAtLeast(version, MIN_CODEX_CLI_HOOK_VERSION)
+    if (supported || !isBareCommand(binaryPath)) {
+      codexHookSupportCache.set(binaryPath, supported)
+    }
+    return supported
+  }
+
+  // Fallback (version unparseable — e.g. a forked/patched build): best-effort
+  // help-text check for the flag.
+  try {
+    const output = execFileSync(binaryPath, ['--help'], {
+      encoding: 'utf-8',
+      timeout: 5000,
+      env: process.env,
+      shell: usesShellForCodexBinary(binaryPath)
+    })
+    const supported = hasCodexHookTrustFlag(output)
+    if (supported || !isBareCommand(binaryPath)) {
+      codexHookSupportCache.set(binaryPath, supported)
+    }
+    return supported
+  } catch (error) {
+    const output = [
+      stringifyProbeOutput((error as { stdout?: unknown }).stdout),
+      stringifyProbeOutput((error as { stderr?: unknown }).stderr)
+    ].join('\n')
+    const supported = hasCodexHookTrustFlag(output)
+    if (supported) {
+      codexHookSupportCache.set(binaryPath, true)
+      return true
+    }
+    if (!isBareCommand(binaryPath)) {
+      codexHookSupportCache.set(binaryPath, false)
     }
     return false
   }

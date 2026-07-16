@@ -52,6 +52,10 @@ describe('resolveHivePromptAccountProvider', () => {
     expect(resolveHivePromptAccountProvider('codex')).toBe('openai')
   })
 
+  it('maps codex-cli sessions to openai too (same OpenAI account family)', () => {
+    expect(resolveHivePromptAccountProvider('codex-cli')).toBe('openai')
+  })
+
   it('maps opencode, terminal, unknown, and missing SDKs to null', () => {
     expect(resolveHivePromptAccountProvider('opencode')).toBeNull()
     expect(resolveHivePromptAccountProvider('terminal')).toBeNull()

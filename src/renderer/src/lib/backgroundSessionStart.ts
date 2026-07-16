@@ -1,5 +1,5 @@
 import type { SelectedModel } from '@/stores/useSettingsStore'
-import { type AgentSdk, isClaudeCli } from '@shared/types/agent-sdk'
+import { type AgentSdk, isCliAgentSdk } from '@shared/types/agent-sdk'
 import { resolveModelForSdk } from '@/stores/useSettingsStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
@@ -58,7 +58,7 @@ export async function startBackgroundSessionPrompt(opts: {
   bumpTarget: { worktreeId?: string | null; connectionId?: string | null }
 }): Promise<void> {
   const session = findSessionModelSource(opts.sessionId)
-  if (isClaudeCli(session?.agent_sdk)) {
+  if (isCliAgentSdk(session?.agent_sdk)) {
     // Deliver straight to the live PTY if the session is already running;
     // otherwise queue it so the next spawn picks it up as the prompt argument
     // (createClaudeTerminal -> dequeuePendingMessage). Without the live-PTY path

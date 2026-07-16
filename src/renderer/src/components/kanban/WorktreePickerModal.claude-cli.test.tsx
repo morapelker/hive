@@ -93,7 +93,13 @@ const initialProjectState = useProjectStore.getState()
 const initialUsageState = useUsageStore.getState()
 const initialWorktreeStatusState = useWorktreeStatusStore.getState()
 
-type TestAgentSdk = 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
+type TestAgentSdk =
+  | 'opencode'
+  | 'claude-code'
+  | 'claude-code-cli'
+  | 'codex'
+  | 'codex-cli'
+  | 'terminal'
 type TestSessionMode = 'build' | 'plan' | 'super-plan'
 
 const baseTicket: KanbanTicket = {

@@ -8,7 +8,12 @@ import { resolveModelForSdk } from '@/stores/useSettingsStore'
 import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
 import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
 import { snapshotTokenBaseline } from '@/lib/token-baselines'
-import { PLAN_MODE_PREFIX, getSuperPlanModePrefix, isPlanLike } from '@/lib/constants'
+import {
+  CODEX_PLAN_MODE_PREFIX,
+  PLAN_MODE_PREFIX,
+  getSuperPlanModePrefix,
+  isPlanLike
+} from '@/lib/constants'
 import { canonicalizeTicketTitle } from '@shared/types/branch-utils'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { opencodeApi } from '@/api/opencode-api'
@@ -17,7 +22,7 @@ import { terminalApi } from '@/api/terminal-api'
 import { startHivePromptTelemetry } from '@/lib/hive-enterprise-telemetry'
 import { createPlanFile, exceedsGoalPromptLimit, planFilePrompt } from '@/lib/goal-plan-file'
 import { FALLBACK_MODELS } from '@shared/model-resolution'
-import type { HandoffAgentSdk } from '@shared/types/agent-sdk'
+import { isCliAgentSdk, isCodexCli, type HandoffAgentSdk } from '@shared/types/agent-sdk'
 import type { KanbanTicketUpdate } from '../../../main/db/types'
 
 type LaunchMode = 'build' | 'plan' | 'super-plan'
@@ -67,16 +72,25 @@ function composeLaunchPrompt(
   const trimmedPrompt = rawPrompt.trim()
   if (!trimmedPrompt) return null
 
+  // claude-cli skips the text prefix (it drives plan mode via --permission-mode
+  // plan); the SDKs skip it too (they inject plan instructions out-of-band).
+  // codex-cli is the exception: it has no such channel, so it carries codex's
+  // plan convention (`<proposed_plan>`) as a prompt prefix — see
+  // CODEX_PLAN_MODE_PREFIX.
   const skipPrefix =
     options.claudeCli ||
     sessionAgentSdk === 'claude-code' ||
     sessionAgentSdk === 'codex' ||
-    sessionAgentSdk === 'claude-code-cli'
+    isCliAgentSdk(sessionAgentSdk)
   const modePrefix =
     mode === 'super-plan'
       ? getSuperPlanModePrefix(sessionAgentSdk)
-      : mode === 'plan' && !skipPrefix
-        ? PLAN_MODE_PREFIX
+      : mode === 'plan'
+        ? isCodexCli(sessionAgentSdk)
+          ? CODEX_PLAN_MODE_PREFIX
+          : skipPrefix
+            ? ''
+            : PLAN_MODE_PREFIX
         : ''
   const fullPrompt = modePrefix + trimmedPrompt
 
@@ -186,7 +200,7 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
     // "Implement PLAN_{uuid}.md" goal prompt instead (the /goal wrapper stays).
     if (goalMode && goalSuccessCriteria && worktree?.path) {
       const composed = composeLaunchPrompt(prompt, spec.mode, sdk, goalMode, goalSuccessCriteria, {
-        claudeCli: sdk === 'claude-code-cli'
+        claudeCli: isCliAgentSdk(sdk)
       })
       if (exceedsGoalPromptLimit(composed)) {
         const fileName = await createPlanFile(worktree.path, prompt.trim())
@@ -196,12 +210,11 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
 
     // 2. Create session
     const modelOverride = model ? { ...model, agentSdk: sdk } : undefined
-    const cliPendingPrompt =
-      sdk === 'claude-code-cli'
-        ? composeLaunchPrompt(prompt, spec.mode, sdk, goalMode, goalSuccessCriteria, {
-            claudeCli: true
-          })
-        : null
+    const cliPendingPrompt = isCliAgentSdk(sdk)
+      ? composeLaunchPrompt(prompt, spec.mode, sdk, goalMode, goalSuccessCriteria, {
+          claudeCli: true
+        })
+      : null
     const createOptions = {
       autoFocus: false,
       ...(modelOverride ? { modelOverride } : {}),
@@ -264,7 +277,7 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
     // 6. Trigger usage refresh
     useUsageStore.getState().fetchUsageForProvider(resolveDefaultUsageProvider(sdk))
 
-    if (sessionAgentSdk === 'claude-code-cli') {
+    if (isCliAgentSdk(sessionAgentSdk)) {
       const outboundPrompt =
         cliPendingPrompt ??
         composeLaunchPrompt(prompt, spec.mode, sessionAgentSdk, goalMode, goalSuccessCriteria, {

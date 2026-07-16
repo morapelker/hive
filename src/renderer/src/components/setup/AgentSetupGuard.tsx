@@ -17,6 +17,7 @@ export function AgentSetupGuard(): React.JSX.Element | null {
     opencode: boolean
     claude: boolean
     codex: boolean
+    codexCli: boolean
   } | null>(null)
 
   useEffect(() => {
@@ -29,13 +30,17 @@ export function AgentSetupGuard(): React.JSX.Element | null {
       .then((result) => {
         if (cancelled) return
 
-        setDetectedSdks(result)
+        setDetectedSdks({ ...result, codexCli: result.codexCli ?? false })
 
-        const { opencode, claude, codex } = result
-        const found: Array<'opencode' | 'claude-code' | 'codex'> = []
+        const { opencode, claude, codex, codexCli } = result
+        const found: Array<'opencode' | 'claude-code' | 'codex' | 'codex-cli'> = []
         if (opencode) found.push('opencode')
         if (claude) found.push('claude-code')
         if (codex) found.push('codex')
+        // The codex binary can be present without app-server support (codex
+        // false, codexCli true) — then only the terminal Codex CLI is usable.
+        // Offer it so a codex-cli-only machine isn't wrongly shown "no agent".
+        else if (codexCli) found.push('codex-cli')
 
         if (found.length === 0) {
           setStatus('none-found')
@@ -77,7 +82,9 @@ export function AgentSetupGuard(): React.JSX.Element | null {
   if (status === 'choose' && detectedSdks) {
     return (
       <AgentPickerDialog
-        availableSdks={detectedSdks}
+        // Only offer the terminal Codex CLI as a distinct choice when the
+        // app-server-backed Codex isn't available (else they'd double up).
+        availableSdks={{ ...detectedSdks, codexCli: detectedSdks.codexCli && !detectedSdks.codex }}
         onSelect={(sdk) => {
           updateSetting('defaultAgentSdk', sdk)
           updateSetting('initialSetupComplete', true)

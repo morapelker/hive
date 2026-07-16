@@ -176,7 +176,24 @@ function normalizeToolStatus(status: unknown): 'running' | 'success' | 'error' {
 }
 
 function getImplementerSdk(sdk: AgentSdk): AgentSdk {
-  return sdk === 'claude-code-cli' ? 'claude-code' : sdk
+  // The terminal-backed CLIs have no Discord/streaming implementer of their
+  // own — dispatch to their SDK sibling (Discord runs the streaming provider,
+  // there is no PTY). Without this, getImplementer('codex-cli') misses and the
+  // bridge silently falls back to OpenCode with the Codex model.
+  if (sdk === 'claude-code-cli') return 'claude-code'
+  if (sdk === 'codex-cli') return 'codex'
+  return sdk
+}
+
+/**
+ * The SDK to PERSIST for a Discord-managed session. claude-code-cli keeps its
+ * id (it has a Discord terminal bridge that mirrors its PTY hooks), but
+ * codex-cli has no such bridge and Discord has no PTY, so it must run as the
+ * codex SDK provider. Persisting the CLI id would make promptOpenCodeSession
+ * reject every Discord prompt as terminal-only.
+ */
+function toDiscordManagedSdk(sdk: AgentSdk): AgentSdk {
+  return sdk === 'codex-cli' ? 'codex' : sdk
 }
 
 function displayToolName(name: string): string {
@@ -1261,7 +1278,7 @@ export class DiscordSessionBridge {
     const newSession = db.createSession({
       worktree_id: sourceSession.worktree_id,
       project_id: sourceSession.project_id ?? resource.project_id,
-      agent_sdk: selection.agentSdk,
+      agent_sdk: toDiscordManagedSdk(selection.agentSdk),
       mode: 'build',
       session_type: 'default',
       model_provider_id: selection.model.providerID,
@@ -1651,17 +1668,22 @@ export class DiscordSessionBridge {
       settings: this.readModelSettings(),
       mode
     })
-    if (resolved.agentSdk === 'opencode' || !this.sdkManager) return resolved
+    // Persist the Discord-runnable SDK (codex-cli -> codex), then validate an
+    // implementer exists — otherwise the created session is dispatched through
+    // a provider it can't run.
+    const agentSdk = toDiscordManagedSdk(resolved.agentSdk)
+    const model = resolved.model
+    if (agentSdk === 'opencode' || !this.sdkManager) return { agentSdk, model }
 
     try {
-      this.sdkManager.getImplementer(getImplementerSdk(resolved.agentSdk))
-      return resolved
+      this.sdkManager.getImplementer(getImplementerSdk(agentSdk))
+      return { agentSdk, model }
     } catch (error) {
       log.warn('Falling back to OpenCode for unregistered Discord agent SDK', {
-        requestedSdk: resolved.agentSdk,
+        requestedSdk: agentSdk,
         error: error instanceof Error ? error.message : String(error)
       })
-      return { agentSdk: 'opencode', model: resolved.model }
+      return { agentSdk: 'opencode', model }
     }
   }
 

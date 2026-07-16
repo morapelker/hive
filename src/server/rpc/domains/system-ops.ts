@@ -59,6 +59,8 @@ export interface AgentSdkDetectionResult {
   readonly opencode: boolean
   readonly claude: boolean
   readonly codex: boolean
+  /** Optional so pre-existing service stubs remain assignable; the live detector always sets it. */
+  readonly codexCli?: boolean
 }
 
 const emptyParamsSchema = z.union([z.object({}).strict(), z.undefined(), z.null()])

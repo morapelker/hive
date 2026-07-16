@@ -1,20 +1,32 @@
 import {
+  CODEX_CLI_SUPER_PLAN_MODE_PREFIX,
+  CODEX_PLAN_MODE_PREFIX,
   CODEX_SUPER_PLAN_MODE_PREFIX,
   PLAN_MODE_PREFIX,
   SUPER_PLAN_MODE_PREFIX
 } from '@shared/agent-mode-prefixes'
 
 export {
+  CODEX_CLI_SUPER_PLAN_MODE_PREFIX,
+  CODEX_PLAN_MODE_PREFIX,
   CODEX_SUPER_PLAN_MODE_PREFIX,
   PLAN_MODE_PREFIX,
   SUPER_PLAN_MODE_PREFIX,
+  getPlanModePrefix,
   getSuperPlanModePrefix
 } from '@shared/agent-mode-prefixes'
 
 export const ASK_MODE_PREFIX =
   '[Mode: Ask] You are in question-answering mode. The user wants information only. Do NOT make any code changes, do NOT use file editing tools, do NOT modify any files. Simply answer the question directly and concisely.\n\n'
 
-const SUPER_PLAN_MODE_PREFIXES = [CODEX_SUPER_PLAN_MODE_PREFIX, SUPER_PLAN_MODE_PREFIX]
+// Longest-first: CODEX_CLI_SUPER_PLAN_MODE_PREFIX starts with
+// CODEX_SUPER_PLAN_MODE_PREFIX, so it must be tried before it to strip the
+// trailing `<proposed_plan>` finalization too.
+const SUPER_PLAN_MODE_PREFIXES = [
+  CODEX_CLI_SUPER_PLAN_MODE_PREFIX,
+  CODEX_SUPER_PLAN_MODE_PREFIX,
+  SUPER_PLAN_MODE_PREFIX
+]
 
 export function stripSuperPlanModePrefix(value: string): string | null {
   for (const prefix of SUPER_PLAN_MODE_PREFIXES) {
@@ -30,6 +42,9 @@ export function stripModePrefix(value: string): string {
   const superPlanStripped = stripSuperPlanModePrefix(value)
   if (superPlanStripped !== null) {
     return superPlanStripped
+  }
+  if (value.startsWith(CODEX_PLAN_MODE_PREFIX)) {
+    return value.slice(CODEX_PLAN_MODE_PREFIX.length)
   }
   if (value.startsWith(PLAN_MODE_PREFIX)) {
     return value.slice(PLAN_MODE_PREFIX.length)

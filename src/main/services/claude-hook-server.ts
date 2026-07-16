@@ -24,12 +24,22 @@ import {
   isClaudeCliPlanAutoApproveArmed,
   setClaudeCliPlanAutoApprove
 } from './claude-cli-plan-auto-approve'
+// Runtime import is one-way: codex-cli-hooks only type-imports from this module.
+import { translateCodexHook, type CodexHookBody } from './codex-cli-hooks'
+import { writeClaudeCliPrompt } from './claude-cli-pty-prompt'
 import { ptyService } from './pty-service'
+
+type CliHookProvider = 'claude' | 'codex'
 
 // Delay between replying to the ExitPlanMode PermissionRequest hook and
 // pressing "1" on the PTY: claude renders its plan dialog only after the hook
 // response lands, and the keypress must hit the dialog, not the composer.
 const PLAN_AUTO_APPROVE_KEYSTROKE_DELAY_MS = 500
+// The codex implement follow-up (matches buildSdkPlanImplementationPrompt and
+// the approval prompt translateCodexHook recognizes). codex-cli plans have no
+// dialog and stay in Default collaboration mode, so implementing is just
+// sending this prompt — no keystroke/mode toggle.
+const CODEX_IMPLEMENT_PROMPT = 'Implement the plan.'
 
 export interface ParsedClaudeHook {
   hook_event_name?: string
@@ -240,17 +250,23 @@ export function subscribeClaudeCliStatus(
   }
 }
 
-function parseHookPath(url: string | undefined): { sessionId: string; hookPath: string } | null {
+function parseHookPath(
+  url: string | undefined
+): { sessionId: string; hookPath: string; provider: CliHookProvider } | null {
   if (!url) return null
 
   try {
     const parsed = new URL(url, `http://${host}`)
     const segments = parsed.pathname.split('/').filter(Boolean)
-    if (segments.length !== 3 || segments[0] !== 'hook') return null
+    if (segments.length !== 3) return null
+    const provider: CliHookProvider | null =
+      segments[0] === 'hook' ? 'claude' : segments[0] === 'codex-hook' ? 'codex' : null
+    if (!provider) return null
 
     return {
       sessionId: decodeURIComponent(segments[1]),
-      hookPath: segments[2]
+      hookPath: segments[2],
+      provider
     }
   } catch {
     return null
@@ -291,8 +307,17 @@ async function handleHook(req: http.IncomingMessage, res: http.ServerResponse): 
   let owned = false
   try {
     const rawBody = await readRequestBody(req)
-    const body = JSON.parse(rawBody || '{}') as ParsedClaudeHook
-    if (route) {
+    const parsedBody: unknown = JSON.parse(rawBody || '{}')
+    // Codex payloads are near-claude-shaped already; translation maps codex
+    // tool names and synthesizes the ExitPlanMode plan flow (codex has no plan
+    // tool — see codex-cli-hooks.ts) so the rest of this pipeline is
+    // provider-agnostic. A null translation means the event is noise for the
+    // pipeline (subagent-scoped hooks, unknown events).
+    const body =
+      route?.provider === 'codex'
+        ? translateCodexHook(route.sessionId, parsedBody as CodexHookBody)
+        : (parsedBody as ParsedClaudeHook)
+    if (route && body) {
       const status = mapHookEventToStatus(body)
       const mapped: ClaudeCliStatusPayload | null = status
         ? {
@@ -316,7 +341,11 @@ async function handleHook(req: http.IncomingMessage, res: http.ServerResponse): 
         for (const payload of processClaudeCliHook(route.sessionId, body, mapped)) {
           publishClaudeCliStatus(payload)
         }
-        void handleClaudeCliHiveTelemetryHook(route.sessionId, body)
+        // Telemetry parses claude-format transcript JSONL; codex rollout files
+        // have a different schema, so codex sessions skip it.
+        if (route.provider === 'claude') {
+          void handleClaudeCliHiveTelemetryHook(route.sessionId, body)
+        }
       }
       // First user prompt of this CLI session → tell the renderer so it can
       // auto-create a kanban ticket (if the setting is on). Fires for prompts
@@ -357,7 +386,10 @@ async function handleHook(req: http.IncomingMessage, res: http.ServerResponse): 
       // response (held open until answered). Otherwise behavior is unchanged.
       // suppressIdle keeps a deferred/subagent-scoped Stop from telling the
       // transport the session went idle while background work is in flight.
-      if (!bypassTransport) {
+      // Codex sessions skip transports: held hook responses can't answer the
+      // codex TUI (questions/plan popups are keyboard-driven there), so
+      // forwarding would strand the phone-side reply.
+      if (!bypassTransport && route.provider === 'claude') {
         owned = cliHookTransportRouter.routeHook(route.sessionId, body, res, {
           suppressIdle: gate.kind !== 'pass'
         })
@@ -368,24 +400,33 @@ async function handleHook(req: http.IncomingMessage, res: http.ServerResponse): 
         body.hook_event_name === 'PermissionRequest' &&
         !res.writableEnded
       ) {
-        // Hook responses cannot approve the plan dialog: on claude v2.1.201 a
-        // PermissionRequest hookSpecificOutput.decision (allow + setMode) is
-        // accepted but the interactive dialog is shown anyway (verified
-        // empirically — claude-playground keeps a keystroke fallback for the
-        // same reason). So reply '{}' to let the dialog render, then press "1"
-        // ("Yes, and bypass permissions") on the PTY — approval and
-        // bypassPermissions in the same stroke, exactly like a manual approve.
         const approvedSessionId = route.sessionId
+        const approvedProvider = route.provider
         consumeClaudeCliPlanAutoApprove(approvedSessionId)
         res.writeHead(200, { 'content-type': 'application/json' })
         res.end('{}')
         setTimeout(() => {
           if (!ptyService.has(approvedSessionId)) {
-            log.warn('Plan auto-approve keystroke skipped: PTY is gone', {
+            log.warn('Plan auto-approve action skipped: PTY is gone', {
               sessionId: approvedSessionId
             })
             return
           }
+          if (approvedProvider === 'codex') {
+            // Codex has no plan dialog (the plan is a `<proposed_plan>` block)
+            // and stays in Default collaboration mode, so implementing is just
+            // sending the implement follow-up. The renderer flips the Hive
+            // session mode to build off the resulting UserPromptSubmit.
+            writeClaudeCliPrompt(approvedSessionId, CODEX_IMPLEMENT_PROMPT)
+            log.info('Auto-implemented codex plan', { sessionId: approvedSessionId })
+            return
+          }
+          // Claude: hook responses cannot approve the plan dialog (on
+          // v2.1.201 a PermissionRequest decision is accepted but the dialog
+          // renders anyway — claude-playground keeps a keystroke fallback for
+          // the same reason). Reply '{}' (above) to let the dialog render,
+          // then press "1" ("Yes, and bypass permissions") — approval and
+          // bypassPermissions in one stroke, exactly like a manual approve.
           ptyService.write(approvedSessionId, '1')
           log.info('Auto-approved ExitPlanMode plan', { sessionId: approvedSessionId })
         }, PLAN_AUTO_APPROVE_KEYSTROKE_DELAY_MS)

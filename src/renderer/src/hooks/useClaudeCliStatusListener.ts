@@ -7,6 +7,7 @@ import { lastSendMode } from '@/lib/message-send-times'
 import { notifyKanbanSessionSync } from '@/stores/store-coordination'
 import { isPlanLike } from '@/lib/constants'
 import { isHandoffPickerOpenForSession } from '@/lib/handoff-ui-state'
+import { isCodexCli } from '@shared/types/agent-sdk'
 
 type ClaudeCliStatusMetadata = {
   reason?: string
@@ -166,7 +167,13 @@ export function useClaudeCliStatusListener(): void {
       if (
         status === 'completed' &&
         metadata?.hookEventName === 'Stop' &&
-        lastSendMode.get(sessionId) === 'plan'
+        lastSendMode.get(sessionId) === 'plan' &&
+        // codex-cli plan_ready is authoritative from the `<proposed_plan>`
+        // detection (a plan-turn Stop WITH a block is already translated to a
+        // plan_ready event upstream). A plain Stop here means the plan turn
+        // ended WITHOUT a plan (e.g. it asked a clarifying question), so it must
+        // NOT be re-derived to plan_ready — that's a claude-only fallback.
+        !isCodexCli(sessionStore.getSessionById(sessionId)?.agent_sdk)
       ) {
         worktreeStatus.setSessionStatus(sessionId, 'plan_ready', metadata)
         return

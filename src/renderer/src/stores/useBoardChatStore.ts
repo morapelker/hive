@@ -135,6 +135,9 @@ export function resolveBoardChatAgentSdk(
   const sdk = defaultAgentSdk ?? 'opencode'
   if (sdk === 'terminal') return 'opencode'
   if (sdk === 'claude-code-cli') return 'claude-code'
+  // codex-cli is terminal-backed; board chat needs a streaming implementer,
+  // so use its SDK sibling.
+  if (sdk === 'codex-cli') return 'codex'
   return sdk
 }
 

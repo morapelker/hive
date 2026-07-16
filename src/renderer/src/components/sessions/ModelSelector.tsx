@@ -42,7 +42,7 @@ interface ModelSelectorProps {
   value?: SelectedModel | null
   onChange?: (model: SelectedModel) => void
   // Override the SDK used for model listing (e.g. force 'opencode' in settings when defaultAgentSdk is 'terminal')
-  agentSdkOverride?: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex'
+  agentSdkOverride?: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'codex-cli'
   disableTitleTooltip?: boolean
   hideProviderPrefix?: boolean
   allowAgentSdkSelection?: boolean
