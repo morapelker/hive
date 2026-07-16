@@ -23,6 +23,7 @@ import { useConnectionWatcher } from '@/hooks/useConnectionWatcher'
 import { useAutoUpdate } from '@/hooks/useAutoUpdate'
 import { useKeepAwake } from '@/hooks/useKeepAwake'
 import { useSleepWhenIdle } from '@/hooks/useSleepWhenIdle'
+import { useAccountScheduleRunner } from '@/hooks/useAccountScheduleRunner'
 import { ErrorBoundary, ErrorFallback } from '@/components/error'
 import { CreatePRModal } from '@/components/pr/CreatePRModal'
 import { ConnectionPRModal } from '@/components/pr/ConnectionPRModal'
@@ -151,6 +152,8 @@ export function AppLayout({ children }: AppLayoutProps): React.JSX.Element {
   useKeepAwake()
   // One-shot sleep after all sessions have been idle for a continuous minute.
   useSleepWhenIdle()
+  // Scheduled account switches + mid-session 5-minute usage refresh
+  useAccountScheduleRunner()
 
   // Drag-and-drop from Finder
   const activeSessionId = useSessionStore((s) => s.activeSessionId)
