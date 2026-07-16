@@ -472,6 +472,7 @@ export async function createClaudeCliTerminal(
     // Grok resume state, computed in the branch below (null = fresh session).
     let grokResumedPlanState: ReturnType<typeof getGrokPlanState> | null = null
     let grokBuildNeedsPlanExit = false
+    let grokPromptViaPaste = false
     // Claude-only: set in the else-branch below; read by the log redaction.
     let customProviderCommand: string | null = null
     if (isGrok) {
@@ -517,10 +518,13 @@ export async function createClaudeCliTerminal(
       // via the scheduler below — never as a spawn arg that would land as
       // another planning turn.
       grokBuildNeedsPlanExit = !planLike && grokResumedPlanState === 'active'
-      if (!planLike && !grokBuildNeedsPlanExit && pendingPrompt?.trim()) {
-        // Normal build spawn: restore the positional prompt (appending works
-        // for the win32 cmd.exe wrap too — the prompt stays the last arg of
-        // the wrapped grok invocation).
+      // A cmd.exe-wrapped shim spawn must never carry the prompt as an arg:
+      // cmd interprets metacharacters (& | %VAR%) even in quoted args, which
+      // both mangles ordinary prompts and lets untrusted ticket text execute
+      // commands. Deliver by readiness-gated paste instead (scheduler below).
+      grokPromptViaPaste = spawn.command === 'cmd.exe'
+      if (!planLike && !grokBuildNeedsPlanExit && !grokPromptViaPaste && pendingPrompt?.trim()) {
+        // Normal build spawn: restore the positional prompt.
         spawn.args.push(pendingPrompt.trim())
       }
     } else {
@@ -652,6 +656,10 @@ export async function createClaudeCliTerminal(
       // still Active: leave plan (one Shift+Tab, plan → always-approve)
       // before delivering the prompt, or it would run as a planning turn.
       scheduleGrokPlanActivation(sessionId, pendingPrompt, { toggles: 'exit-plan' })
+    } else if (grokPromptViaPaste && pendingPrompt && !alreadyExists) {
+      // cmd.exe-wrapped shim spawn: the prompt stayed off the command line
+      // (cmd metacharacter hazard) — paste it once the TUI is ready.
+      scheduleGrokPlanActivation(sessionId, pendingPrompt, { toggles: null })
     } else if (alreadyExists && pendingPrompt) {
       if (isGrok && grokPlanDeliveries.has(sessionId)) {
         // The racing promptless call already scheduled the activation —

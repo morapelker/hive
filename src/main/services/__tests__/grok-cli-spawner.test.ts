@@ -39,6 +39,11 @@ describe('normalizeGrokCliModel', () => {
     expect(normalizeGrokCliModel('claude-opus-4-5-20251101')).toBeNull()
     expect(normalizeGrokCliModel(null)).toBeNull()
     expect(normalizeGrokCliModel(undefined)).toBeNull()
+    // Charset gate: a DB-sourced id must not smuggle shell metacharacters
+    // into the win32 cmd.exe shim wrap.
+    expect(normalizeGrokCliModel('grok&calc')).toBeNull()
+    expect(normalizeGrokCliModel('grok|x')).toBeNull()
+    expect(normalizeGrokCliModel('grok %PATH%')).toBeNull()
   })
 })
 

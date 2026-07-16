@@ -23,12 +23,14 @@ export interface GrokCliPtySpawn {
 /**
  * Grok only ships grok-family model ids (`grok models`); anything else stored
  * on the session (e.g. after a handoff from a Claude session) must not be
- * forwarded or grok exits with an unknown-model error.
+ * forwarded or grok exits with an unknown-model error. The charset gate also
+ * keeps a DB-sourced id from smuggling shell metacharacters into the win32
+ * cmd.exe shim wrap.
  */
 export function normalizeGrokCliModel(modelId: string | null | undefined): string | null {
   if (!modelId) return null
   const lower = modelId.toLowerCase()
-  return lower.startsWith('grok') ? lower : null
+  return /^grok[a-z0-9._-]*$/.test(lower) ? lower : null
 }
 
 // `grok --reasoning-effort banana` → "use one of: high, medium, low"
@@ -95,7 +97,10 @@ export function buildGrokCliPtySpawn(input: GrokCliPtySpawnInput): GrokCliPtySpa
   if (process.platform === 'win32' && !command.toLowerCase().endsWith('.exe')) {
     // `where grok` can resolve an npm-style shim (grok.cmd / extensionless
     // script); Windows process creation cannot spawn those without a shell,
-    // so route them through cmd.exe.
+    // so route them through cmd.exe. Only Hive-generated, metacharacter-free
+    // args may ride through cmd (flags, charset-gated model id, UUID resume
+    // id) — the pty bridge delivers user prompts by paste on this path, never
+    // as a cmd argument (cmd interprets & | % even in quoted args).
     finalArgs = ['/c', command, ...args]
     command = 'cmd.exe'
   }
