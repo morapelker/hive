@@ -147,13 +147,16 @@ export function resolveBoardChatAgentSdk(
  * would flip the board-assistant session to a provider whose prompt API
  * rejects it. claude-code-cli models share claude-code's catalog, so they are
  * restamped; grok-cli has no streaming sibling, so those candidates are
- * skipped in favor of the next one.
+ * skipped in favor of the next one — including UNSTAMPED grok models (the
+ * legacy global selectedModel can hold xai/grok-4.5 with no agentSdk field),
+ * which in Hive are only reachable through the grok-cli catalog and cannot
+ * be served by the streaming implementers.
  */
 function coerceBoardChatModel(model: SelectedModel | null | undefined): SelectedModel | null {
   if (!model) return null
-  if (!model.agentSdk) return model
-  if (model.agentSdk === 'claude-code-cli') return { ...model, agentSdk: 'claude-code' }
   if (model.agentSdk === 'grok-cli') return null
+  if (model.providerID === 'xai' || model.modelID.toLowerCase().startsWith('grok')) return null
+  if (model.agentSdk === 'claude-code-cli') return { ...model, agentSdk: 'claude-code' }
   return model
 }
 
