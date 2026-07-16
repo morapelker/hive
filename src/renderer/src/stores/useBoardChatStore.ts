@@ -141,6 +141,22 @@ export function resolveBoardChatAgentSdk(
   return sdk
 }
 
+/**
+ * Board chat runs through the streaming implementers only, but the session's
+ * SDK is re-derived downstream from `model?.agentSdk` — a CLI-stamped model
+ * would flip the board-assistant session to a provider whose prompt API
+ * rejects it. claude-code-cli models share claude-code's catalog, so they are
+ * restamped; grok-cli has no streaming sibling, so those candidates are
+ * skipped in favor of the next one.
+ */
+function coerceBoardChatModel(model: SelectedModel | null | undefined): SelectedModel | null {
+  if (!model) return null
+  if (!model.agentSdk) return model
+  if (model.agentSdk === 'claude-code-cli') return { ...model, agentSdk: 'claude-code' }
+  if (model.agentSdk === 'grok-cli') return null
+  return model
+}
+
 export function resolveBoardChatDefaultModel(
   settings: Pick<
     ReturnType<typeof useSettingsStore.getState>,
@@ -149,11 +165,16 @@ export function resolveBoardChatDefaultModel(
   agentSdkOverride?: 'opencode' | 'claude-code' | 'codex' | null
 ): SelectedModel | null {
   const agentSdk = agentSdkOverride ?? resolveBoardChatAgentSdk(settings.defaultAgentSdk)
-  return (
-    settings.getModelForMode('ask') ??
-    resolveModelForSdk(agentSdk, settings) ??
+  const candidates = [
+    settings.getModelForMode('ask'),
+    resolveModelForSdk(agentSdk, settings),
     settings.selectedModel
-  )
+  ]
+  for (const candidate of candidates) {
+    const usable = coerceBoardChatModel(candidate)
+    if (usable) return usable
+  }
+  return null
 }
 
 const BOARD_RULES_TAG_RE = /<board-assistant-rules>[\s\S]*?<\/board-assistant-rules>/gi
@@ -909,7 +930,8 @@ export const useBoardChatStore = create<BoardChatState>((set, get) => ({
           successfulProjectIds.push(batch.projectId)
           return
         }
-        const message = result.reason instanceof Error ? result.reason.message : String(result.reason)
+        const message =
+          result.reason instanceof Error ? result.reason.message : String(result.reason)
         failures.push(`${batch.projectName}: ${message}`)
       })
 
