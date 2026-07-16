@@ -27,7 +27,8 @@ import {
   clearGrokSessionTracking,
   ensureGrokHooksInstalled,
   seedGrokSessionTracking,
-  setGrokSessionIdSink
+  setGrokSessionIdSink,
+  setGrokSessionModeProvider
 } from './grok-cli-hooks'
 import { isCliAgentSdk, isGrokCli } from '@shared/types/agent-sdk'
 import { externalizeGoalHandoffPlan } from './claude-cli-plan-handoff'
@@ -151,14 +152,21 @@ function scheduleGrokPlanActivation(
     return
   }
 
+  let sawTuiOutput = false
   const entry: GrokPlanDelivery = {
     prompt,
     toggles: opts.toggles,
     quietTimer: null,
     ceilingTimer: setTimeout(() => deliverGrokPlanActivation(sessionId), GROK_PLAN_BOOT_CEILING_MS),
-    removeData: ptyService.onData(sessionId, () => {
-      // Debounce: each output chunk pushes readiness out until the TUI has
-      // rendered and gone quiet.
+    removeData: ptyService.onData(sessionId, (data) => {
+      // Pre-boot user keystrokes are echoed by the line discipline as plain
+      // text; only escape-sequence-bearing output (title OSC, alt-screen,
+      // TUI redraws) counts as evidence the TUI is up. Once seen, debounce:
+      // each output chunk pushes readiness out until rendering goes quiet.
+      if (!sawTuiOutput) {
+        if (!data.includes('\x1b')) return
+        sawTuiOutput = true
+      }
       if (entry.quietTimer) clearTimeout(entry.quietTimer)
       entry.quietTimer = setTimeout(
         () => deliverGrokPlanActivation(sessionId),
@@ -208,6 +216,16 @@ function ensureGrokSessionIdSink(): void {
         publishDesktopBackendEvent(`terminal:claude-session-id:${sessionId}`, grokSessionId)
       )
       .catch(() => undefined)
+  })
+
+  // Lets the adapter reconcile mid-session plan/build switches made in Hive
+  // (setSessionMode only sends Shift+Tab keystrokes — no hook fires for them).
+  setGrokSessionModeProvider((sessionId) => {
+    try {
+      return getDatabase().getSession(sessionId)?.mode ?? null
+    } catch {
+      return null
+    }
   })
 }
 
@@ -428,7 +446,8 @@ export async function createClaudeCliTerminal(
         // permission mode) — a racing/repeat create call that reuses the PTY
         // must not wipe an in-flight tool/permission sequence.
         seedGrokSessionTracking(sessionId, session.claude_session_id, {
-          planMode: session.mode === 'plan' || session.mode === 'super-plan'
+          planMode: session.mode === 'plan' || session.mode === 'super-plan',
+          dbMode: session.mode
         })
       }
       spawn = buildGrokCliPtySpawn({
@@ -604,6 +623,7 @@ export function cleanupTerminals(): void {
     cancelGrokPlanActivation(sessionId)
   }
   setGrokSessionIdSink(null)
+  setGrokSessionModeProvider(null)
   grokSessionIdSinkRegistered = false
   unsubscribeClaudeCliStatus?.()
   unsubscribeClaudeCliStatus = null

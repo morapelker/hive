@@ -8,6 +8,7 @@ import {
   clearAllGrokSessionTracking,
   seedGrokSessionTracking,
   setGrokSessionIdSink,
+  setGrokSessionModeProvider,
   translateGrokHook
 } from '../grok-cli-hooks'
 
@@ -28,6 +29,7 @@ beforeEach(() => {
 afterEach(() => {
   clearAllGrokSessionTracking()
   setGrokSessionIdSink(null)
+  setGrokSessionModeProvider(null)
   rmSync(sessionDir, { recursive: true, force: true })
 })
 
@@ -171,6 +173,58 @@ describe('translateGrokHook', () => {
         prompt: 'plan again'
       })?.permission_mode
     ).toBe('plan')
+  })
+
+  it('reconciles Hive-side mode switches: a CHANGED db mode overrides the hook-derived plan state', () => {
+    let dbMode = 'plan'
+    setGrokSessionModeProvider(() => dbMode)
+    seedGrokSessionTracking(HIVE_ID, ROOT, { planMode: true, dbMode: 'plan' })
+
+    // Unchanged db mode → grok-driven state stays in charge.
+    expect(
+      translateGrokHook(HIVE_ID, {
+        hookEventName: 'user_prompt_submit',
+        sessionId: ROOT,
+        prompt: 'first round'
+      })?.permission_mode
+    ).toBe('plan')
+
+    // User flips the session to build in Hive (setSessionMode persists mode
+    // and only sends Shift+Tab to the TUI — no hook fires).
+    dbMode = 'build'
+    expect(
+      translateGrokHook(HIVE_ID, {
+        hookEventName: 'user_prompt_submit',
+        sessionId: ROOT,
+        prompt: 'implement instead'
+      })?.permission_mode
+    ).toBeUndefined()
+
+    // ...and back to plan.
+    dbMode = 'plan'
+    expect(
+      translateGrokHook(HIVE_ID, {
+        hookEventName: 'user_prompt_submit',
+        sessionId: ROOT,
+        prompt: 'actually plan more'
+      })?.permission_mode
+    ).toBe('plan')
+
+    // Grok-driven approval still ends the plan while the db mode is unchanged
+    // (the renderer's own build-persist lands moments later).
+    translateGrokHook(HIVE_ID, {
+      hookEventName: 'post_tool_use',
+      sessionId: ROOT,
+      toolName: 'exit_plan_mode',
+      toolUseId: 'call-ok'
+    })
+    expect(
+      translateGrokHook(HIVE_ID, {
+        hookEventName: 'user_prompt_submit',
+        sessionId: ROOT,
+        prompt: 'post-approval'
+      })?.permission_mode
+    ).toBeUndefined()
   })
 
   it('maps grok tool names to their claude equivalents', () => {

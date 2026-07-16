@@ -198,6 +198,14 @@ interface GrokSessionTracking {
    * plan-followup handling across ALL planning rounds, not just the first.
    */
   planActive: boolean
+  /**
+   * The Hive session mode as last observed, so mid-session mode switches made
+   * in Hive (setSessionMode only sends Shift+Tab keystrokes to the TUI — no
+   * hook fires) are reconciled into planActive on the next prompt: a CHANGED
+   * db mode is a user decision and wins; an unchanged one leaves grok-driven
+   * transitions (enter/exit_plan_mode) in charge.
+   */
+  lastDbMode: string | null
 }
 
 const tracking = new Map<string, GrokSessionTracking>()
@@ -210,6 +218,14 @@ export function setGrokSessionIdSink(sink: GrokSessionIdSink | null): void {
   grokSessionIdSink = sink
 }
 
+type GrokSessionModeProvider = (hiveSessionId: string) => string | null
+let grokSessionModeProvider: GrokSessionModeProvider | null = null
+
+/** Registered by terminal-pty-bridge: reads the session's current Hive mode from the DB. */
+export function setGrokSessionModeProvider(provider: GrokSessionModeProvider | null): void {
+  grokSessionModeProvider = provider
+}
+
 /**
  * Seed tracking at spawn time with the session id we are resuming (or null
  * for a fresh session, in which case the first hook's sessionId becomes the
@@ -219,13 +235,14 @@ export function setGrokSessionIdSink(sink: GrokSessionIdSink | null): void {
 export function seedGrokSessionTracking(
   hiveSessionId: string,
   grokSessionId: string | null,
-  opts?: { planMode?: boolean }
+  opts?: { planMode?: boolean; dbMode?: string | null }
 ): void {
   tracking.set(hiveSessionId, {
     rootGrokSessionId: grokSessionId,
     lastPreToolUse: null,
     permissionMode: null,
-    planActive: opts?.planMode ?? false
+    planActive: opts?.planMode ?? false,
+    lastDbMode: opts?.dbMode ?? null
   })
 }
 
@@ -244,7 +261,8 @@ function getOrCreateTracking(hiveSessionId: string): GrokSessionTracking {
       rootGrokSessionId: null,
       lastPreToolUse: null,
       permissionMode: null,
-      planActive: false
+      planActive: false,
+      lastDbMode: null
     }
     tracking.set(hiveSessionId, state)
   }
@@ -360,6 +378,14 @@ export function translateGrokHook(
   if (mappedEvent === 'UserPromptSubmit') {
     if (typeof raw.prompt === 'string') {
       hook.prompt = unwrapUserQuery(raw.prompt)
+    }
+    // A Hive-side mode switch since the last look (ticket toggle, approval
+    // persist) is a user decision and overrides the hook-derived plan state;
+    // an unchanged db mode leaves grok-driven transitions in charge.
+    const dbMode = grokSessionModeProvider?.(hiveSessionId) ?? null
+    if (dbMode !== null && dbMode !== state.lastDbMode) {
+      state.planActive = dbMode === 'plan' || dbMode === 'super-plan'
+      state.lastDbMode = dbMode
     }
     // Plan iteration rounds must keep mapping to 'planning': the plan signal
     // comes from the tracked plan state, never from grok's permission mode
