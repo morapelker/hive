@@ -30,6 +30,7 @@ interface AgentSdkDetectionResult {
   readonly opencode: boolean
   readonly claude: boolean
   readonly codex: boolean
+  readonly grok: boolean
 }
 
 interface MenuStatePayload {

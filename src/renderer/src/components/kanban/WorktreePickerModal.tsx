@@ -51,7 +51,7 @@ import { remoteLaunchApi } from '@/api/remote-launch-api'
 import { startHivePromptTelemetry } from '@/lib/hive-enterprise-telemetry'
 import type { KanbanTicket, Session } from '../../../../main/db/types'
 import { canonicalizeTicketTitle } from '@shared/types/branch-utils'
-import { supportsGoalMode } from '@shared/types/agent-sdk'
+import { isCliAgentSdk, supportsGoalMode } from '@shared/types/agent-sdk'
 import { createPlanFile, exceedsGoalPromptLimit, planFilePrompt } from '@/lib/goal-plan-file'
 import {
   REMOTE_LAUNCH_STEPS,
@@ -70,7 +70,7 @@ const EMPTY_ARRAY: readonly never[] = []
 
 // ── Types ───────────────────────────────────────────────────────────
 type PickerMode = 'build' | 'plan' | 'super-plan'
-type PickerAgentSdk = 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex'
+type PickerAgentSdk = 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'grok-cli'
 
 function completionSendMode(mode: PickerMode): 'build' | 'plan' {
   return isPlanLike(mode) ? 'plan' : 'build'
@@ -196,7 +196,7 @@ function composePromptForSdk(
     options.claudeCli ||
     sessionAgentSdk === 'claude-code' ||
     sessionAgentSdk === 'codex' ||
-    sessionAgentSdk === 'claude-code-cli'
+    isCliAgentSdk(sessionAgentSdk)
   const modePrefix =
     mode === 'super-plan'
       ? getSuperPlanModePrefix(sessionAgentSdk)
@@ -280,11 +280,29 @@ interface ExtraModelRow {
 // Resolve a row's display/launch-default model. Never inherits another SDK's
 // default: the mode default only wins when it's already for this SDK, otherwise
 // the per-SDK resolution then the hard SDK fallback.
+/** A typed copy of the hard per-SDK default (spreading SharedSelectedModel would widen agentSdk to string). */
+function sdkFallbackModel(sdk: PickerAgentSdk | 'claude-code-cli'): SelectedModel {
+  const fallback = FALLBACK_MODELS[sdk]
+  return {
+    providerID: fallback.providerID,
+    modelID: fallback.modelID,
+    variant: fallback.variant,
+    agentSdk: sdk
+  }
+}
+
 function resolveRowDefaultModel(sdk: PickerAgentSdk, mode: PickerMode): SelectedModel {
   const settings = useSettingsStore.getState()
   const modeModel = settings.getModelForMode(mode)
   if (modeModel && modeModel.agentSdk === sdk) return modeModel
-  const resolved = resolveModelForSdk(sdk) ?? FALLBACK_MODELS[sdk]
+  // resolveModelForSdk falls back to the legacy global selectedModel, which
+  // belongs to whatever SDK last set it (often without an agentSdk stamp) —
+  // never let a foreign SDK's model become this row's value; floor on the
+  // hard SDK fallback.
+  const perSdk = resolveModelForSdk(sdk)
+  const fromPerSdkMap = !!settings.selectedModelByProvider?.[sdk]
+  const resolved =
+    perSdk && (fromPerSdkMap || perSdk.agentSdk === sdk) ? perSdk : FALLBACK_MODELS[sdk]
   return { providerID: resolved.providerID, modelID: resolved.modelID, variant: resolved.variant }
 }
 
@@ -312,7 +330,8 @@ function SdkToggleGroup({
         availableAgentSdks.opencode,
         availableAgentSdks.claude,
         availableAgentSdks.codex,
-        availableAgentSdks.claude
+        availableAgentSdks.claude,
+        availableAgentSdks.grok
       ].filter(Boolean).length
     : 0
   if (!availableAgentSdks || buttonCount < 2) return null
@@ -379,6 +398,19 @@ function SdkToggleGroup({
           className={buttonClass(value === 'claude-code-cli')}
         >
           Claude CLI
+        </button>
+      )}
+      {availableAgentSdks.grok && (
+        <button
+          type="button"
+          data-testid={`${idPrefix}-grok-cli`}
+          onClick={() => onChange('grok-cli')}
+          disabled={disabled}
+          aria-pressed={value === 'grok-cli'}
+          title={buttonTitle}
+          className={buttonClass(value === 'grok-cli')}
+        >
+          Grok
         </button>
       )}
     </div>
@@ -488,7 +520,7 @@ export function WorktreePickerModal({
   const defaultSdkNormalized = defaultAgentSdk === 'terminal' ? 'opencode' : defaultAgentSdk
   const baseAgentSdk = selectedSdk ?? defaultSdkNormalized
 
-  const autoResolvedModel = useMemo(() => {
+  const autoResolvedModel = useMemo((): SelectedModel | null => {
     const settings = useSettingsStore.getState()
     // Remote launches always run claude-code-cli — resolve against that SDK
     // regardless of what's actually selected, so a leftover default from a
@@ -499,8 +531,28 @@ export function WorktreePickerModal({
     if (modeModel && (!effectiveSelectedSdk || modeModel.agentSdk === effectiveSelectedSdk)) {
       return modeModel
     }
-    // Priority 2: per-provider / global default
-    return resolveModelForSdk(runOnRemote ? 'claude-code-cli' : baseAgentSdk) ?? null
+    // Priority 2: per-provider / global default. When an SDK was explicitly
+    // toggled (or remote forces claude-code-cli), never inherit a model from
+    // a DIFFERENT SDK: resolveModelForSdk falls back to the legacy global
+    // selectedModel, which belongs to whatever SDK last set it (and often
+    // carries no agentSdk stamp at all). Only a hit in the per-SDK map — or
+    // an explicit matching stamp — is trusted; anything else is replaced by
+    // the hard per-SDK default. A null result stays null (downstream session
+    // creation resolves its own chain).
+    const sdkKey = runOnRemote ? 'claude-code-cli' : baseAgentSdk
+    const resolved = resolveModelForSdk(sdkKey) ?? null
+    if (!effectiveSelectedSdk) return resolved
+    if (!resolved) {
+      // Other SDKs keep the null → downstream-resolution contract, but grok
+      // ships exactly one model — surface it instead of leaving the chip on
+      // the placeholder.
+      return effectiveSelectedSdk === 'grok-cli' ? sdkFallbackModel('grok-cli') : null
+    }
+    const fromPerSdkMap = !!settings.selectedModelByProvider?.[sdkKey]
+    if (fromPerSdkMap || resolved.agentSdk === effectiveSelectedSdk) {
+      return resolved
+    }
+    return sdkFallbackModel(effectiveSelectedSdk)
   }, [mode, baseAgentSdk, selectedSdk, runOnRemote])
 
   const agentSdk =
@@ -867,7 +919,7 @@ export function WorktreePickerModal({
   const composedGoalPrompt = useMemo(() => {
     if (!goalMode || !goalAvailable) return null
     return composePromptForSdk(mode, agentSdk, promptText, goalMode, goalCriteria, {
-      claudeCli: agentSdk === 'claude-code-cli'
+      claudeCli: isCliAgentSdk(agentSdk)
     })
   }, [goalMode, goalAvailable, mode, agentSdk, promptText, goalCriteria])
   const willUsePlanFile = exceedsGoalPromptLimit(composedGoalPrompt)
@@ -1014,12 +1066,11 @@ export function WorktreePickerModal({
         const createConnectionSession = useSessionStore.getState().createConnectionSession
         const effectiveModel = selectedModel ?? autoResolvedModel ?? undefined
         const modelOverride = effectiveModel ? { ...effectiveModel, agentSdk } : undefined
-        const cliPendingPrompt =
-          agentSdk === 'claude-code-cli'
-            ? composePromptForSdk(mode, agentSdk, effectivePromptText, goalMode, goalCriteria, {
-                claudeCli: true
-              })
-            : null
+        const cliPendingPrompt = isCliAgentSdk(agentSdk)
+          ? composePromptForSdk(mode, agentSdk, effectivePromptText, goalMode, goalCriteria, {
+              claudeCli: true
+            })
+          : null
         const createOptions = {
           ...(modelOverride ? { modelOverride } : {}),
           ...(cliPendingPrompt ? { pendingMessage: cliPendingPrompt } : {})
@@ -1109,12 +1160,19 @@ export function WorktreePickerModal({
         onOpenChange(false)
         toast.success('Session started')
 
-        if (sessionAgentSdk === 'claude-code-cli') {
+        if (isCliAgentSdk(sessionAgentSdk)) {
           const outboundPrompt =
             cliPendingPrompt ??
-            composePromptForSdk(mode, sessionAgentSdk, effectivePromptText, goalMode, goalCriteria, {
-              claudeCli: true
-            })
+            composePromptForSdk(
+              mode,
+              sessionAgentSdk,
+              effectivePromptText,
+              goalMode,
+              goalCriteria,
+              {
+                claudeCli: true
+              }
+            )
 
           if (mode === 'super-plan') {
             // Await so the persisted mode is committed before the main process
@@ -1386,12 +1444,11 @@ export function WorktreePickerModal({
       // Create session in the selected worktree
       const effectiveModel = selectedModel ?? autoResolvedModel ?? undefined
       const modelOverride = effectiveModel ? { ...effectiveModel, agentSdk } : undefined
-      const cliPendingPrompt =
-        agentSdk === 'claude-code-cli'
-          ? composePromptForSdk(mode, agentSdk, effectivePromptText, goalMode, goalCriteria, {
-              claudeCli: true
-            })
-          : null
+      const cliPendingPrompt = isCliAgentSdk(agentSdk)
+        ? composePromptForSdk(mode, agentSdk, effectivePromptText, goalMode, goalCriteria, {
+            claudeCli: true
+          })
+        : null
       const createOptions = {
         ...(modelOverride ? { modelOverride } : {}),
         ...(cliPendingPrompt ? { pendingMessage: cliPendingPrompt } : {})
@@ -1477,7 +1534,7 @@ export function WorktreePickerModal({
       onOpenChange(false)
       toast.success('Session started')
 
-      if (sessionAgentSdk === 'claude-code-cli') {
+      if (isCliAgentSdk(sessionAgentSdk)) {
         const outboundPrompt =
           cliPendingPrompt ??
           composePromptForSdk(mode, sessionAgentSdk, effectivePromptText, goalMode, goalCriteria, {
@@ -1533,14 +1590,14 @@ export function WorktreePickerModal({
 
         // Auto-revert super-plan → plan immediately (one-shot mode).
         // The prefix is already captured in fullPrompt above.
-          if (mode === 'super-plan') {
-            useSessionStore.getState().setSessionMode(sessionId, 'plan')
-          }
-          if (!connectResult.sessionId) {
-            throw new Error('Missing opencode session id')
-          }
+        if (mode === 'super-plan') {
+          useSessionStore.getState().setSessionMode(sessionId, 'plan')
+        }
+        if (!connectResult.sessionId) {
+          throw new Error('Missing opencode session id')
+        }
 
-          bumpWorktreeLastMessage({ worktreeId })
+        bumpWorktreeLastMessage({ worktreeId })
         startHivePromptTelemetry({
           sessionId,
           prompt: outboundPrompt,
@@ -1848,9 +1905,7 @@ export function WorktreePickerModal({
             >
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <span className="text-sm font-medium text-foreground">
-                    Run on remote machine
-                  </span>
+                  <span className="text-sm font-medium text-foreground">Run on remote machine</span>
                   <p className="truncate text-xs text-muted-foreground">{teleport?.url}</p>
                 </div>
                 <Switch
@@ -1875,9 +1930,7 @@ export function WorktreePickerModal({
                   {remotePhase === 'idle' ? (
                     <div className="space-y-1.5">
                       {preflightLoading && (
-                        <p className="text-xs text-muted-foreground">
-                          Checking remote status…
-                        </p>
+                        <p className="text-xs text-muted-foreground">Checking remote status…</p>
                       )}
                       {remotePreflight && !preflightLoading && (
                         <>
@@ -1889,16 +1942,15 @@ export function WorktreePickerModal({
                               {remotePreflight.error || 'Remote machine is not configured'}
                             </p>
                           )}
-                          {remotePreflight.remoteConfigured &&
-                            !remotePreflight.branchOnOrigin && (
-                              <p
-                                data-testid="remote-branch-missing"
-                                className="text-xs text-destructive"
-                              >
-                                Branch {remoteBranchDisplay} doesn&apos;t exist on origin — push
-                                it first
-                              </p>
-                            )}
+                          {remotePreflight.remoteConfigured && !remotePreflight.branchOnOrigin && (
+                            <p
+                              data-testid="remote-branch-missing"
+                              className="text-xs text-destructive"
+                            >
+                              Branch {remoteBranchDisplay} doesn&apos;t exist on origin — push it
+                              first
+                            </p>
+                          )}
                           {remotePreflight.transferErrors.length > 0 && (
                             <ul
                               data-testid="remote-transfer-errors"
@@ -2028,11 +2080,12 @@ export function WorktreePickerModal({
                   <ModelSelector
                     value={selectedModel ?? autoResolvedModel}
                     onChange={setSelectedModel}
-                    agentSdkOverride={
-                      runOnRemote
-                        ? 'claude-code-cli'
-                        : (selectedModel?.agentSdk ?? autoResolvedModel?.agentSdk ?? agentSdk)
-                    }
+                    // An explicitly toggled SDK must drive the catalog; the
+                    // model-derived sdk only fills in when nothing was toggled
+                    // (uiAgentSdk resolves in exactly that order). Consulting
+                    // the model first let a legacy global default's foreign
+                    // agentSdk pin the picker to the wrong catalog.
+                    agentSdkOverride={uiAgentSdk}
                   />
                 </div>
                 {agentSdk === 'codex' && (
@@ -2078,9 +2131,7 @@ export function WorktreePickerModal({
                               <CodexFastToggle
                                 enabled={row.codexFastMode}
                                 accepted={codexFastModeAccepted}
-                                onToggle={() =>
-                                  updateRowCodexFastMode(row.key, !row.codexFastMode)
-                                }
+                                onToggle={() => updateRowCodexFastMode(row.key, !row.codexFastMode)}
                                 onAccept={() => updateSetting('codexFastModeAccepted', true)}
                               />
                             </div>

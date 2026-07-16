@@ -16,7 +16,7 @@ import { dbApi } from '@/api/db-api'
 import { connectionApi } from '@/api/connection-api'
 import { terminalApi } from '@/api/terminal-api'
 import { opencodeApi } from '@/api/opencode-api'
-import { type AgentSdk, isTerminalBacked } from '@shared/types/agent-sdk'
+import { type AgentSdk, isCliAgentSdk, isTerminalBacked } from '@shared/types/agent-sdk'
 
 /**
  * Push the follow-up-message queue state for a session into the backend.
@@ -287,6 +287,11 @@ function findSessionInState(state: SessionState, sessionId: string): Session | n
 // therefore takes two presses, while returning from plan takes one. The
 // previous code sent a single press in both directions, which landed on
 // accept-edits (not plan) when entering plan mode.
+//
+// Grok Build's cycle is normal → plan → always-approve → normal, and Hive
+// grok sessions sit in always-approve during build (spawned with
+// --always-approve): entering plan is always-approve→normal→plan (2 presses)
+// and leaving is plan→always-approve (1 press) — the same press counts.
 export function syncClaudeCliPermissionModeIfNeeded(
   state: SessionState,
   sessionId: string,
@@ -294,7 +299,7 @@ export function syncClaudeCliPermissionModeIfNeeded(
   nextMode: SessionMode
 ): void {
   const session = findSessionInState(state, sessionId)
-  if (session?.agent_sdk !== 'claude-code-cli') return
+  if (!isCliAgentSdk(session?.agent_sdk)) return
   const wasPlanLike = previousMode === 'plan' || previousMode === 'super-plan'
   const isPlanLike = nextMode === 'plan' || nextMode === 'super-plan'
   if (wasPlanLike === isPlanLike) return

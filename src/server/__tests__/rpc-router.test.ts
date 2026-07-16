@@ -22141,7 +22141,8 @@ describe('rpc router', () => {
         getAppPaths: () =>
           Effect.succeed({ userData: '/tmp/hive-user-data', home: '/tmp', logs: '/tmp/hive-logs' }),
         isLogMode: () => Effect.succeed(true),
-        detectAgentSdks: () => Effect.succeed({ opencode: true, claude: false, codex: true }),
+        detectAgentSdks: () =>
+          Effect.succeed({ opencode: true, claude: false, codex: true, grok: false }),
         quitApp: () => Effect.succeed(undefined),
         openInApp: () => Effect.succeed({ success: true })
       }
@@ -22167,7 +22168,8 @@ describe('rpc router', () => {
         getAppPaths: () =>
           Effect.succeed({ userData: '/tmp/hive-user-data', home: '/tmp', logs: '/tmp/hive-logs' }),
         isLogMode: () => Effect.succeed(true),
-        detectAgentSdks: () => Effect.succeed({ opencode: true, claude: false, codex: true }),
+        detectAgentSdks: () =>
+          Effect.succeed({ opencode: true, claude: false, codex: true, grok: false }),
         quitApp: () => Effect.succeed(undefined),
         openInApp: () => Effect.succeed({ success: true })
       }
@@ -22197,7 +22199,8 @@ describe('rpc router', () => {
         getAppPaths: () =>
           Effect.succeed({ userData: '/tmp/hive-user-data', home: '/tmp', logs: '/tmp/hive-logs' }),
         isLogMode: () => Effect.succeed(true),
-        detectAgentSdks: () => Effect.succeed({ opencode: true, claude: false, codex: true }),
+        detectAgentSdks: () =>
+          Effect.succeed({ opencode: true, claude: false, codex: true, grok: false }),
         quitApp: () => Effect.succeed(undefined),
         openInApp: () => Effect.succeed({ success: true })
       }
@@ -22227,7 +22230,8 @@ describe('rpc router', () => {
         getAppPaths: () =>
           Effect.succeed({ userData: '/tmp/hive-user-data', home: '/tmp', logs: '/tmp/hive-logs' }),
         isLogMode: () => Effect.succeed(true),
-        detectAgentSdks: () => Effect.succeed({ opencode: true, claude: false, codex: true }),
+        detectAgentSdks: () =>
+          Effect.succeed({ opencode: true, claude: false, codex: true, grok: false }),
         quitApp: () => Effect.succeed(undefined),
         openInApp: () => Effect.succeed({ success: true })
       }
@@ -22261,7 +22265,8 @@ describe('rpc router', () => {
         getAppVersion: () => Effect.succeed('1.1.10'),
         getAppPaths: () => Effect.succeed(appPaths),
         isLogMode: () => Effect.succeed(true),
-        detectAgentSdks: () => Effect.succeed({ opencode: true, claude: false, codex: true }),
+        detectAgentSdks: () =>
+          Effect.succeed({ opencode: true, claude: false, codex: true, grok: false }),
         quitApp: () => Effect.succeed(undefined),
         openInApp: () => Effect.succeed({ success: true })
       }
@@ -22291,7 +22296,8 @@ describe('rpc router', () => {
         getAppPaths: () =>
           Effect.succeed({ userData: '/tmp/hive-user-data', home: '/tmp', logs: '/tmp/hive-logs' }),
         isLogMode: () => Effect.succeed(true),
-        detectAgentSdks: () => Effect.succeed({ opencode: true, claude: false, codex: true }),
+        detectAgentSdks: () =>
+          Effect.succeed({ opencode: true, claude: false, codex: true, grok: false }),
         quitApp: () => Effect.succeed(undefined),
         openInApp: () => Effect.succeed({ success: true })
       }
@@ -22321,7 +22327,8 @@ describe('rpc router', () => {
         getAppPaths: () =>
           Effect.succeed({ userData: '/tmp/hive-user-data', home: '/tmp', logs: '/tmp/hive-logs' }),
         isLogMode: () => Effect.succeed(true),
-        detectAgentSdks: () => Effect.succeed({ opencode: true, claude: false, codex: true }),
+        detectAgentSdks: () =>
+          Effect.succeed({ opencode: true, claude: false, codex: true, grok: false }),
         quitApp: () => Effect.succeed(undefined),
         openInApp: () => Effect.succeed({ success: true })
       }
@@ -22351,7 +22358,8 @@ describe('rpc router', () => {
         getAppPaths: () =>
           Effect.succeed({ userData: '/tmp/hive-user-data', home: '/tmp', logs: '/tmp/hive-logs' }),
         isLogMode: () => Effect.succeed(true),
-        detectAgentSdks: () => Effect.succeed({ opencode: true, claude: false, codex: true }),
+        detectAgentSdks: () =>
+          Effect.succeed({ opencode: true, claude: false, codex: true, grok: false }),
         quitApp: () => Effect.succeed(undefined),
         openInApp: () => Effect.succeed({ success: true })
       }
@@ -22373,7 +22381,7 @@ describe('rpc router', () => {
   })
 
   it('handles systemOps.detectAgentSdks through the system ops RPC domain', async () => {
-    const detected = { opencode: true, claude: false, codex: true }
+    const detected = { opencode: true, claude: false, codex: true, grok: false }
     const router = makeRpcRouter({
       eventBus: makeEventBus(),
       systemOps: {
@@ -22412,7 +22420,8 @@ describe('rpc router', () => {
         getAppPaths: () =>
           Effect.succeed({ userData: '/tmp/hive-user-data', home: '/tmp', logs: '/tmp/hive-logs' }),
         isLogMode: () => Effect.succeed(true),
-        detectAgentSdks: () => Effect.succeed({ opencode: true, claude: false, codex: true }),
+        detectAgentSdks: () =>
+          Effect.succeed({ opencode: true, claude: false, codex: true, grok: false }),
         quitApp: () => Effect.succeed(undefined),
         openInApp: () => Effect.succeed({ success: true })
       }
@@ -22443,7 +22452,8 @@ describe('rpc router', () => {
         getAppPaths: () =>
           Effect.succeed({ userData: '/tmp/hive-user-data', home: '/tmp', logs: '/tmp/hive-logs' }),
         isLogMode: () => Effect.succeed(true),
-        detectAgentSdks: () => Effect.succeed({ opencode: true, claude: false, codex: true }),
+        detectAgentSdks: () =>
+          Effect.succeed({ opencode: true, claude: false, codex: true, grok: false }),
         quitApp: () =>
           Effect.sync(() => {
             quitCalled = true
@@ -22477,7 +22487,8 @@ describe('rpc router', () => {
         getAppPaths: () =>
           Effect.succeed({ userData: '/tmp/hive-user-data', home: '/tmp', logs: '/tmp/hive-logs' }),
         isLogMode: () => Effect.succeed(true),
-        detectAgentSdks: () => Effect.succeed({ opencode: true, claude: false, codex: true }),
+        detectAgentSdks: () =>
+          Effect.succeed({ opencode: true, claude: false, codex: true, grok: false }),
         quitApp: () => Effect.succeed(undefined),
         openInApp: () => Effect.succeed({ success: true })
       }
@@ -22508,7 +22519,8 @@ describe('rpc router', () => {
         getAppPaths: () =>
           Effect.succeed({ userData: '/tmp/hive-user-data', home: '/tmp', logs: '/tmp/hive-logs' }),
         isLogMode: () => Effect.succeed(true),
-        detectAgentSdks: () => Effect.succeed({ opencode: true, claude: false, codex: true }),
+        detectAgentSdks: () =>
+          Effect.succeed({ opencode: true, claude: false, codex: true, grok: false }),
         quitApp: () => Effect.succeed(undefined),
         confirm: (message) =>
           Effect.sync(() => {
@@ -22544,7 +22556,8 @@ describe('rpc router', () => {
         getAppPaths: () =>
           Effect.succeed({ userData: '/tmp/hive-user-data', home: '/tmp', logs: '/tmp/hive-logs' }),
         isLogMode: () => Effect.succeed(true),
-        detectAgentSdks: () => Effect.succeed({ opencode: true, claude: false, codex: true }),
+        detectAgentSdks: () =>
+          Effect.succeed({ opencode: true, claude: false, codex: true, grok: false }),
         quitApp: () => Effect.succeed(undefined),
         confirm: () => Effect.succeed(true),
         openInApp: () => Effect.succeed({ success: true })
@@ -22576,7 +22589,8 @@ describe('rpc router', () => {
         getAppPaths: () =>
           Effect.succeed({ userData: '/tmp/hive-user-data', home: '/tmp', logs: '/tmp/hive-logs' }),
         isLogMode: () => Effect.succeed(true),
-        detectAgentSdks: () => Effect.succeed({ opencode: true, claude: false, codex: true }),
+        detectAgentSdks: () =>
+          Effect.succeed({ opencode: true, claude: false, codex: true, grok: false }),
         quitApp: () => Effect.succeed(undefined),
         openInApp: (appName, path) =>
           Effect.sync(() => {
@@ -22611,7 +22625,8 @@ describe('rpc router', () => {
         getAppPaths: () =>
           Effect.succeed({ userData: '/tmp/hive-user-data', home: '/tmp', logs: '/tmp/hive-logs' }),
         isLogMode: () => Effect.succeed(true),
-        detectAgentSdks: () => Effect.succeed({ opencode: true, claude: false, codex: true }),
+        detectAgentSdks: () =>
+          Effect.succeed({ opencode: true, claude: false, codex: true, grok: false }),
         quitApp: () => Effect.succeed(undefined),
         openInApp: () => Effect.succeed({ success: true })
       }
@@ -39684,7 +39699,8 @@ describe('rpc router', () => {
         getAppPaths: () =>
           Effect.succeed({ userData: '/tmp/hive-user-data', home: '/tmp', logs: '/tmp/hive-logs' }),
         isLogMode: () => Effect.succeed(true),
-        detectAgentSdks: () => Effect.succeed({ opencode: true, claude: false, codex: true }),
+        detectAgentSdks: () =>
+          Effect.succeed({ opencode: true, claude: false, codex: true, grok: false }),
         quitApp: () => Effect.succeed(undefined),
         openInApp: () => Effect.succeed({ success: true }),
         openInChrome: (url, customCommand) =>
@@ -39720,7 +39736,8 @@ describe('rpc router', () => {
         getAppPaths: () =>
           Effect.succeed({ userData: '/tmp/hive-user-data', home: '/tmp', logs: '/tmp/hive-logs' }),
         isLogMode: () => Effect.succeed(true),
-        detectAgentSdks: () => Effect.succeed({ opencode: true, claude: false, codex: true }),
+        detectAgentSdks: () =>
+          Effect.succeed({ opencode: true, claude: false, codex: true, grok: false }),
         quitApp: () => Effect.succeed(undefined),
         openInApp: () => Effect.succeed({ success: true }),
         openInChrome: () => Effect.succeed({ success: true })
@@ -39757,7 +39774,8 @@ describe('rpc router', () => {
         getAppPaths: () =>
           Effect.succeed({ userData: '/tmp/hive-user-data', home: '/tmp', logs: '/tmp/hive-logs' }),
         isLogMode: () => Effect.succeed(true),
-        detectAgentSdks: () => Effect.succeed({ opencode: true, claude: false, codex: true }),
+        detectAgentSdks: () =>
+          Effect.succeed({ opencode: true, claude: false, codex: true, grok: false }),
         quitApp: () => Effect.succeed(undefined),
         openInApp: () => Effect.succeed({ success: true }),
         updateMenuState: (state) =>
@@ -39798,7 +39816,8 @@ describe('rpc router', () => {
         getAppPaths: () =>
           Effect.succeed({ userData: '/tmp/hive-user-data', home: '/tmp', logs: '/tmp/hive-logs' }),
         isLogMode: () => Effect.succeed(true),
-        detectAgentSdks: () => Effect.succeed({ opencode: true, claude: false, codex: true }),
+        detectAgentSdks: () =>
+          Effect.succeed({ opencode: true, claude: false, codex: true, grok: false }),
         quitApp: () => Effect.succeed(undefined),
         openInApp: () => Effect.succeed({ success: true }),
         updateMenuState: () => Effect.succeed(undefined)
@@ -39829,7 +39848,8 @@ describe('rpc router', () => {
         getAppPaths: () =>
           Effect.succeed({ userData: '/tmp/hive-user-data', home: '/tmp', logs: '/tmp/hive-logs' }),
         isLogMode: () => Effect.succeed(true),
-        detectAgentSdks: () => Effect.succeed({ opencode: true, claude: false, codex: true }),
+        detectAgentSdks: () =>
+          Effect.succeed({ opencode: true, claude: false, codex: true, grok: false }),
         quitApp: () => Effect.succeed(undefined),
         openInApp: () => Effect.succeed({ success: true }),
         isPackaged: () => Effect.succeed(true)
@@ -39860,7 +39880,8 @@ describe('rpc router', () => {
         getAppPaths: () =>
           Effect.succeed({ userData: '/tmp/hive-user-data', home: '/tmp', logs: '/tmp/hive-logs' }),
         isLogMode: () => Effect.succeed(true),
-        detectAgentSdks: () => Effect.succeed({ opencode: true, claude: false, codex: true }),
+        detectAgentSdks: () =>
+          Effect.succeed({ opencode: true, claude: false, codex: true, grok: false }),
         quitApp: () => Effect.succeed(undefined),
         openInApp: () => Effect.succeed({ success: true }),
         isPackaged: () => Effect.succeed(false)
@@ -39891,7 +39912,8 @@ describe('rpc router', () => {
         getAppPaths: () =>
           Effect.succeed({ userData: '/tmp/hive-user-data', home: '/tmp', logs: '/tmp/hive-logs' }),
         isLogMode: () => Effect.succeed(true),
-        detectAgentSdks: () => Effect.succeed({ opencode: true, claude: false, codex: true }),
+        detectAgentSdks: () =>
+          Effect.succeed({ opencode: true, claude: false, codex: true, grok: false }),
         quitApp: () => Effect.succeed(undefined),
         openInApp: () => Effect.succeed({ success: true }),
         getPlatform: () => Effect.succeed('darwin')
@@ -39922,7 +39944,8 @@ describe('rpc router', () => {
         getAppPaths: () =>
           Effect.succeed({ userData: '/tmp/hive-user-data', home: '/tmp', logs: '/tmp/hive-logs' }),
         isLogMode: () => Effect.succeed(true),
-        detectAgentSdks: () => Effect.succeed({ opencode: true, claude: false, codex: true }),
+        detectAgentSdks: () =>
+          Effect.succeed({ opencode: true, claude: false, codex: true, grok: false }),
         quitApp: () => Effect.succeed(undefined),
         openInApp: () => Effect.succeed({ success: true }),
         getPlatform: () => Effect.succeed('linux')
@@ -39954,7 +39977,8 @@ describe('rpc router', () => {
         getAppPaths: () =>
           Effect.succeed({ userData: '/tmp/hive-user-data', home: '/tmp', logs: '/tmp/hive-logs' }),
         isLogMode: () => Effect.succeed(true),
-        detectAgentSdks: () => Effect.succeed({ opencode: true, claude: false, codex: true }),
+        detectAgentSdks: () =>
+          Effect.succeed({ opencode: true, claude: false, codex: true, grok: false }),
         quitApp: () => Effect.succeed(undefined),
         openInApp: () => Effect.succeed({ success: true }),
         setKeepAwake: (active) =>
@@ -39989,7 +40013,8 @@ describe('rpc router', () => {
         getAppPaths: () =>
           Effect.succeed({ userData: '/tmp/hive-user-data', home: '/tmp', logs: '/tmp/hive-logs' }),
         isLogMode: () => Effect.succeed(true),
-        detectAgentSdks: () => Effect.succeed({ opencode: true, claude: false, codex: true }),
+        detectAgentSdks: () =>
+          Effect.succeed({ opencode: true, claude: false, codex: true, grok: false }),
         quitApp: () => Effect.succeed(undefined),
         openInApp: () => Effect.succeed({ success: true }),
         setKeepAwake: () => Effect.succeed(undefined)
@@ -40021,7 +40046,8 @@ describe('rpc router', () => {
         getAppPaths: () =>
           Effect.succeed({ userData: '/tmp/hive-user-data', home: '/tmp', logs: '/tmp/hive-logs' }),
         isLogMode: () => Effect.succeed(true),
-        detectAgentSdks: () => Effect.succeed({ opencode: true, claude: false, codex: true }),
+        detectAgentSdks: () =>
+          Effect.succeed({ opencode: true, claude: false, codex: true, grok: false }),
         quitApp: () => Effect.succeed(undefined),
         openInApp: () => Effect.succeed({ success: true }),
         setSessionQueuedState: (sessionId, hasQueued) =>
@@ -40056,7 +40082,8 @@ describe('rpc router', () => {
         getAppPaths: () =>
           Effect.succeed({ userData: '/tmp/hive-user-data', home: '/tmp', logs: '/tmp/hive-logs' }),
         isLogMode: () => Effect.succeed(true),
-        detectAgentSdks: () => Effect.succeed({ opencode: true, claude: false, codex: true }),
+        detectAgentSdks: () =>
+          Effect.succeed({ opencode: true, claude: false, codex: true, grok: false }),
         quitApp: () => Effect.succeed(undefined),
         openInApp: () => Effect.succeed({ success: true }),
         setSessionQueuedState: () => Effect.succeed(undefined)

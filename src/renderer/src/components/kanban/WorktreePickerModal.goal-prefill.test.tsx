@@ -182,7 +182,7 @@ function setupStores(): void {
   )
 
   useSettingsStore.setState({
-    availableAgentSdks: { opencode: true, claude: true, codex: true },
+    availableAgentSdks: { opencode: true, claude: true, codex: true, grok: false },
     defaultAgentSdk: 'opencode',
     selectedModel: null,
     selectedModelByProvider: {},

@@ -17,7 +17,7 @@ import { terminalApi } from '@/api/terminal-api'
 import { startHivePromptTelemetry } from '@/lib/hive-enterprise-telemetry'
 import { createPlanFile, exceedsGoalPromptLimit, planFilePrompt } from '@/lib/goal-plan-file'
 import { FALLBACK_MODELS } from '@shared/model-resolution'
-import type { HandoffAgentSdk } from '@shared/types/agent-sdk'
+import { isCliAgentSdk, type HandoffAgentSdk } from '@shared/types/agent-sdk'
 import type { KanbanTicketUpdate } from '../../../main/db/types'
 
 type LaunchMode = 'build' | 'plan' | 'super-plan'
@@ -71,7 +71,7 @@ function composeLaunchPrompt(
     options.claudeCli ||
     sessionAgentSdk === 'claude-code' ||
     sessionAgentSdk === 'codex' ||
-    sessionAgentSdk === 'claude-code-cli'
+    isCliAgentSdk(sessionAgentSdk)
   const modePrefix =
     mode === 'super-plan'
       ? getSuperPlanModePrefix(sessionAgentSdk)
@@ -186,7 +186,7 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
     // "Implement PLAN_{uuid}.md" goal prompt instead (the /goal wrapper stays).
     if (goalMode && goalSuccessCriteria && worktree?.path) {
       const composed = composeLaunchPrompt(prompt, spec.mode, sdk, goalMode, goalSuccessCriteria, {
-        claudeCli: sdk === 'claude-code-cli'
+        claudeCli: isCliAgentSdk(sdk)
       })
       if (exceedsGoalPromptLimit(composed)) {
         const fileName = await createPlanFile(worktree.path, prompt.trim())
@@ -196,12 +196,11 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
 
     // 2. Create session
     const modelOverride = model ? { ...model, agentSdk: sdk } : undefined
-    const cliPendingPrompt =
-      sdk === 'claude-code-cli'
-        ? composeLaunchPrompt(prompt, spec.mode, sdk, goalMode, goalSuccessCriteria, {
-            claudeCli: true
-          })
-        : null
+    const cliPendingPrompt = isCliAgentSdk(sdk)
+      ? composeLaunchPrompt(prompt, spec.mode, sdk, goalMode, goalSuccessCriteria, {
+          claudeCli: true
+        })
+      : null
     const createOptions = {
       autoFocus: false,
       ...(modelOverride ? { modelOverride } : {}),
@@ -264,7 +263,7 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
     // 6. Trigger usage refresh
     useUsageStore.getState().fetchUsageForProvider(resolveDefaultUsageProvider(sdk))
 
-    if (sessionAgentSdk === 'claude-code-cli') {
+    if (isCliAgentSdk(sessionAgentSdk)) {
       const outboundPrompt =
         cliPendingPrompt ??
         composeLaunchPrompt(prompt, spec.mode, sessionAgentSdk, goalMode, goalSuccessCriteria, {

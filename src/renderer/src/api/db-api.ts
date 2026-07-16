@@ -74,7 +74,7 @@ type SessionCreateData = {
   name?: string | null
   opencode_session_id?: string | null
   claude_session_id?: string | null
-  agent_sdk?: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
+  agent_sdk?: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'grok-cli' | 'terminal'
   mode?: 'build' | 'plan' | 'super-plan'
   session_type?: 'default' | 'board-assistant'
   model_provider_id?: string | null
@@ -88,7 +88,7 @@ type SessionUpdateData = {
   status?: 'active' | 'completed' | 'error'
   opencode_session_id?: string | null
   claude_session_id?: string | null
-  agent_sdk?: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
+  agent_sdk?: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'grok-cli' | 'terminal'
   mode?: 'build' | 'plan' | 'super-plan'
   session_type?: 'default' | 'board-assistant'
   model_provider_id?: string | null

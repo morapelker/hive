@@ -135,6 +135,9 @@ export function resolveBoardChatAgentSdk(
   const sdk = defaultAgentSdk ?? 'opencode'
   if (sdk === 'terminal') return 'opencode'
   if (sdk === 'claude-code-cli') return 'claude-code'
+  // grok-cli is terminal-backed with no SDK sibling — board chat needs a
+  // streaming implementer, so fall back to opencode.
+  if (sdk === 'grok-cli') return 'opencode'
   return sdk
 }
 

@@ -1401,9 +1401,15 @@ export function SessionTabs(): React.JSX.Element | null {
                     New Codex Session
                   </ContextMenuItem>
                 )}
+                {availableAgentSdks?.grok && (
+                  <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('grok-cli')}>
+                    New Grok Build Session
+                  </ContextMenuItem>
+                )}
                 {(availableAgentSdks?.opencode ||
                   availableAgentSdks?.claude ||
-                  availableAgentSdks?.codex) && <ContextMenuSeparator />}
+                  availableAgentSdks?.codex ||
+                  availableAgentSdks?.grok) && <ContextMenuSeparator />}
                 <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('terminal')}>
                   <TerminalSquare className="h-4 w-4 mr-2 text-emerald-500" />
                   New Terminal

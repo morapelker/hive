@@ -24,12 +24,24 @@ import {
   isClaudeCliPlanAutoApproveArmed,
   setClaudeCliPlanAutoApprove
 } from './claude-cli-plan-auto-approve'
+// Runtime import is one-way: grok-cli-hooks only type-imports from this module.
+import { translateGrokHook, type GrokHookBody } from './grok-cli-hooks'
 import { ptyService } from './pty-service'
 
 // Delay between replying to the ExitPlanMode PermissionRequest hook and
 // pressing "1" on the PTY: claude renders its plan dialog only after the hook
 // response lands, and the keypress must hit the dialog, not the composer.
 const PLAN_AUTO_APPROVE_KEYSTROKE_DELAY_MS = 500
+
+// Approval keystroke per CLI: claude's plan dialog takes "1" ("Yes, and
+// bypass permissions"); grok's plan approval view takes "a" (approve —
+// always-approve is already armed underneath via the spawn args).
+const PLAN_AUTO_APPROVE_KEYSTROKE: Record<CliHookProvider, string> = {
+  claude: '1',
+  grok: 'a'
+}
+
+type CliHookProvider = 'claude' | 'grok'
 
 export interface ParsedClaudeHook {
   hook_event_name?: string
@@ -240,17 +252,23 @@ export function subscribeClaudeCliStatus(
   }
 }
 
-function parseHookPath(url: string | undefined): { sessionId: string; hookPath: string } | null {
+function parseHookPath(
+  url: string | undefined
+): { sessionId: string; hookPath: string; provider: CliHookProvider } | null {
   if (!url) return null
 
   try {
     const parsed = new URL(url, `http://${host}`)
     const segments = parsed.pathname.split('/').filter(Boolean)
-    if (segments.length !== 3 || segments[0] !== 'hook') return null
+    if (segments.length !== 3) return null
+    const provider: CliHookProvider | null =
+      segments[0] === 'hook' ? 'claude' : segments[0] === 'grok-hook' ? 'grok' : null
+    if (!provider) return null
 
     return {
       sessionId: decodeURIComponent(segments[1]),
-      hookPath: segments[2]
+      hookPath: segments[2],
+      provider
     }
   } catch {
     return null
@@ -291,8 +309,16 @@ async function handleHook(req: http.IncomingMessage, res: http.ServerResponse): 
   let owned = false
   try {
     const rawBody = await readRequestBody(req)
-    const body = JSON.parse(rawBody || '{}') as ParsedClaudeHook
-    if (route) {
+    const parsedBody: unknown = JSON.parse(rawBody || '{}')
+    // Grok payloads (camelCase, snake_case events, grok tool names) are
+    // translated into the claude hook shape so the rest of this pipeline is
+    // provider-agnostic. A null translation means the event is noise for the
+    // pipeline (child-session lifecycle, non-permission notifications).
+    const body =
+      route?.provider === 'grok'
+        ? translateGrokHook(route.sessionId, parsedBody as GrokHookBody)
+        : (parsedBody as ParsedClaudeHook)
+    if (route && body) {
       const status = mapHookEventToStatus(body)
       const mapped: ClaudeCliStatusPayload | null = status
         ? {
@@ -316,7 +342,11 @@ async function handleHook(req: http.IncomingMessage, res: http.ServerResponse): 
         for (const payload of processClaudeCliHook(route.sessionId, body, mapped)) {
           publishClaudeCliStatus(payload)
         }
-        void handleClaudeCliHiveTelemetryHook(route.sessionId, body)
+        // Telemetry parses claude-format transcript JSONL; grok's
+        // updates.jsonl has a different schema, so grok sessions skip it.
+        if (route.provider === 'claude') {
+          void handleClaudeCliHiveTelemetryHook(route.sessionId, body)
+        }
       }
       // First user prompt of this CLI session → tell the renderer so it can
       // auto-create a kanban ticket (if the setting is on). Fires for prompts
@@ -345,10 +375,20 @@ async function handleHook(req: http.IncomingMessage, res: http.ServerResponse): 
       // through unheld — which also means transports (Telegram/Discord) must
       // not grab it, or the plan would go to the phone instead. Subagent
       // ExitPlanMode hooks (agent_id set) never consume the main plan's arm.
+      //
+      // Grok has no PermissionRequest hook and its plan-approval view opens
+      // right after exit_plan_mode starts executing, so the keystroke is
+      // scheduled off the PreToolUse instead (a synthesized PermissionRequest
+      // from a permission notification is accepted too; the one-shot consume
+      // makes whichever fires first win).
       const autoApproveExitPlan =
         body.tool_name === 'ExitPlanMode' &&
         !body.agent_id &&
         isClaudeCliPlanAutoApproveArmed(route.sessionId)
+      const autoApproveTriggerEvent =
+        route.provider === 'grok'
+          ? body.hook_event_name === 'PreToolUse' || body.hook_event_name === 'PermissionRequest'
+          : body.hook_event_name === 'PermissionRequest'
       const bypassTransport =
         autoApproveExitPlan &&
         (body.hook_event_name === 'PreToolUse' || body.hook_event_name === 'PermissionRequest')
@@ -363,11 +403,7 @@ async function handleHook(req: http.IncomingMessage, res: http.ServerResponse): 
         })
       }
 
-      if (
-        autoApproveExitPlan &&
-        body.hook_event_name === 'PermissionRequest' &&
-        !res.writableEnded
-      ) {
+      if (autoApproveExitPlan && autoApproveTriggerEvent && !res.writableEnded) {
         // Hook responses cannot approve the plan dialog: on claude v2.1.201 a
         // PermissionRequest hookSpecificOutput.decision (allow + setMode) is
         // accepted but the interactive dialog is shown anyway (verified
@@ -375,7 +411,10 @@ async function handleHook(req: http.IncomingMessage, res: http.ServerResponse): 
         // same reason). So reply '{}' to let the dialog render, then press "1"
         // ("Yes, and bypass permissions") on the PTY — approval and
         // bypassPermissions in the same stroke, exactly like a manual approve.
+        // Grok's approval view takes "a" instead; always-approve is already
+        // armed underneath from the spawn args.
         const approvedSessionId = route.sessionId
+        const keystroke = PLAN_AUTO_APPROVE_KEYSTROKE[route.provider]
         consumeClaudeCliPlanAutoApprove(approvedSessionId)
         res.writeHead(200, { 'content-type': 'application/json' })
         res.end('{}')
@@ -386,7 +425,7 @@ async function handleHook(req: http.IncomingMessage, res: http.ServerResponse): 
             })
             return
           }
-          ptyService.write(approvedSessionId, '1')
+          ptyService.write(approvedSessionId, keystroke)
           log.info('Auto-approved ExitPlanMode plan', { sessionId: approvedSessionId })
         }, PLAN_AUTO_APPROVE_KEYSTROKE_DELAY_MS)
       }

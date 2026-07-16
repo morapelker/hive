@@ -121,12 +121,9 @@ describe('resolveSessionCreationSelection', () => {
 
 describe('handoff provider visuals', () => {
   it('orders Claude Code second and Claude CLI last', () => {
-    expect(getAvailableHandoffAgentSdks({ opencode: true, claude: true, codex: true })).toEqual([
-      'opencode',
-      'claude-code',
-      'codex',
-      'claude-code-cli'
-    ])
+    expect(
+      getAvailableHandoffAgentSdks({ opencode: true, claude: true, codex: true, grok: false })
+    ).toEqual(['opencode', 'claude-code', 'codex', 'claude-code-cli'])
   })
 
   it('displays Claude Code without legacy wording', () => {

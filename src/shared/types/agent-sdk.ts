@@ -26,6 +26,7 @@ export const AGENT_SDK_VALUES = [
   'claude-code',
   'claude-code-cli',
   'codex',
+  'grok-cli',
   'terminal'
 ] as const
 
@@ -41,13 +42,30 @@ export function isClaudeCli(sdk: MaybeSdk): boolean {
   return sdk === 'claude-code-cli'
 }
 
+/** The Grok Build CLI session type (terminal-backed, hook-driven like `claude-code-cli`). */
+export function isGrokCli(sdk: MaybeSdk): boolean {
+  return sdk === 'grok-cli'
+}
+
+/**
+ * Terminal-backed agent CLIs (`claude-code-cli`, `grok-cli`): a raw PTY
+ * running the vendor binary, driven through the shared hook-server control
+ * plane (status pipeline, interaction ledger, plan auto-approve). Use this —
+ * not isClaudeCli — for "does this session behave like a CLI agent" checks;
+ * isClaudeCli remains for genuinely claude-specific paths (teleport, remote
+ * tmux launch, Discord/Telegram bridges).
+ */
+export function isCliAgentSdk(sdk: MaybeSdk): boolean {
+  return sdk === 'claude-code-cli' || sdk === 'grok-cli'
+}
+
 /**
  * Sessions whose UI is a live terminal surface rather than the OpenCode-style
- * streaming view: the bare `terminal` SDK and `claude-code-cli`. These share
+ * streaming view: the bare `terminal` SDK and the CLI agents. These share
  * mount/teardown handling and must NOT be routed through the OpenCode IPC.
  */
 export function isTerminalBacked(sdk: MaybeSdk): boolean {
-  return sdk === 'terminal' || sdk === 'claude-code-cli'
+  return sdk === 'terminal' || isCliAgentSdk(sdk)
 }
 
 /** Either Claude variant — the SDK-driven `claude-code` or the terminal-backed `claude-code-cli`. */
@@ -64,6 +82,8 @@ export function supportsGoalMode(sdk: MaybeSdk): boolean {
  * Map an SDK to the one whose model catalog it uses. `claude-code-cli` has no
  * catalog of its own — it shares `claude-code`'s — so model-listing/selection
  * code should resolve through this rather than special-casing the CLI inline.
+ * (`grok-cli` maps to itself: grok ships a single model and sessions run on
+ * the FALLBACK_MODELS entry rather than a fetched catalog.)
  * Overloaded so nullable inputs (optional IPC payload fields) pass `null` /
  * `undefined` through unchanged.
  */

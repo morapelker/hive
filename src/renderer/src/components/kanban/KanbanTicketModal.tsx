@@ -36,6 +36,7 @@ import {
   DialogTitle,
   DialogDescription
 } from '@/components/ui/dialog'
+import { isCliAgentSdk } from '@shared/types/agent-sdk'
 import { Button } from '@/components/ui/button'
 import {
   AlertDialog,
@@ -455,7 +456,7 @@ async function sendFollowupToSession(opts: {
   // Resolve model AFTER setSessionMode (which may have applied a mode-specific default)
   const model = resolveSessionModel(opts.sessionId, result.session)
 
-  if (session.agent_sdk === 'claude-code-cli') {
+  if (isCliAgentSdk(session.agent_sdk)) {
     const delivery = unwrapEnvelope(
       await terminalApi.sendClaudeCliPrompt(opts.sessionId, fullPrompt)
     )
@@ -922,7 +923,7 @@ function KanbanTicketModalContent({
   }, [sessionRecord?.worktree_id])
 
   const effectiveSession = sessionRecord ?? dbSessionInfo?.session ?? null
-  const isClaudeCli = effectiveSession?.agent_sdk === 'claude-code-cli'
+  const isClaudeCli = isCliAgentSdk(effectiveSession?.agent_sdk)
   const currentWorktreeSessionStatus = useWorktreeStatusStore(
     useCallback(
       (state) =>
@@ -1991,7 +1992,7 @@ function PlanReviewModeContent({
   const dropZoneRef = useRef<HTMLDivElement>(null)
 
   const isConnectionSession = !!sessionRecord?.connection_id
-  const isClaudeCliPlanSession = sessionRecord?.agent_sdk === 'claude-code-cli'
+  const isClaudeCliPlanSession = isCliAgentSdk(sessionRecord?.agent_sdk)
   const hasWorkingContext = !!(sessionRecord?.worktree_id || sessionRecord?.connection_id)
 
   const [slashCommands, setSlashCommands] = useState<{ name: string }[]>([])
@@ -2348,7 +2349,7 @@ function PlanReviewModeContent({
           })
 
           prepareTicketBuildSession(newSessionId, handoffGoalMode)
-          if (newSession.agent_sdk === 'claude-code-cli') {
+          if (isCliAgentSdk(newSession.agent_sdk)) {
             registerHivePromptHandoff(sessionId, newSessionId)
             sessionStore.setPendingMessage(newSessionId, handoffPrompt)
           }
@@ -2356,7 +2357,7 @@ function PlanReviewModeContent({
           const boardMode = useSettingsStore.getState().boardMode
           if (boardMode === 'sticky-tab') {
             sessionStore.setActiveSession(BOARD_TAB_ID)
-          } else if (newSession.agent_sdk !== 'claude-code-cli') {
+          } else if (!isCliAgentSdk(newSession.agent_sdk)) {
             sessionStore.setActiveConnection(sessionRecord.connection_id)
             sessionStore.setActiveConnectionSession(newSessionId)
           }
@@ -2364,7 +2365,7 @@ function PlanReviewModeContent({
           onClose()
           void (async () => {
             await setModePromise
-            if (newSession.agent_sdk === 'claude-code-cli') {
+            if (isCliAgentSdk(newSession.agent_sdk)) {
               bumpWorktreeLastMessage({ connectionId: sessionRecord.connection_id })
               const cliResult = unwrapEnvelope(
                 await terminalApi.createClaudeCli(newSessionId, {
@@ -2434,7 +2435,7 @@ function PlanReviewModeContent({
         }
 
         prepareTicketBuildSession(newSessionId, handoffGoalMode)
-        if (newSession.agent_sdk === 'claude-code-cli') {
+        if (isCliAgentSdk(newSession.agent_sdk)) {
           registerHivePromptHandoff(sessionId, newSessionId)
           sessionStore.setPendingMessage(newSessionId, handoffPrompt)
         }
@@ -2442,7 +2443,7 @@ function PlanReviewModeContent({
         const boardMode = useSettingsStore.getState().boardMode
         if (boardMode === 'sticky-tab') {
           sessionStore.setActiveSession(BOARD_TAB_ID)
-        } else if (newSession.agent_sdk !== 'claude-code-cli') {
+        } else if (!isCliAgentSdk(newSession.agent_sdk)) {
           sessionStore.setActiveWorktree(worktreeId)
           sessionStore.setActiveSession(newSessionId)
         }
@@ -2450,7 +2451,7 @@ function PlanReviewModeContent({
         onClose()
         void (async () => {
           await setModePromise
-          if (newSession.agent_sdk === 'claude-code-cli') {
+          if (isCliAgentSdk(newSession.agent_sdk)) {
             bumpWorktreeLastMessage({ worktreeId })
             const cliResult = unwrapEnvelope(
               await terminalApi.createClaudeCli(newSessionId, {
@@ -2994,7 +2995,7 @@ function ReviewModeContent({
     () => (ticket.worktree_id ? findWorktreeById(ticket.worktree_id) : null),
     [ticket.worktree_id]
   )
-  const isClaudeCliSession = sessionRecord?.agent_sdk === 'claude-code-cli'
+  const isClaudeCliSession = isCliAgentSdk(sessionRecord?.agent_sdk)
   const [followUpText, setFollowUpText] = useState('')
   const [followUpMode, setFollowUpMode] = useState<FollowUpMode>('build')
   const [isSending, setIsSending] = useState(false)

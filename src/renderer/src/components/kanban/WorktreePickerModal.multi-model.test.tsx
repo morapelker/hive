@@ -102,7 +102,13 @@ const initialProjectState = useProjectStore.getState()
 const initialUsageState = useUsageStore.getState()
 const initialWorktreeStatusState = useWorktreeStatusStore.getState()
 
-type TestAgentSdk = 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
+type TestAgentSdk =
+  | 'opencode'
+  | 'claude-code'
+  | 'claude-code-cli'
+  | 'codex'
+  | 'grok-cli'
+  | 'terminal'
 type TestSessionMode = 'build' | 'plan' | 'super-plan'
 
 const baseTicket: KanbanTicket = {
@@ -184,7 +190,7 @@ function setupStores(): { updateTicket: ReturnType<typeof vi.fn> } {
   const updateTicket = vi.fn(async () => undefined)
 
   useSettingsStore.setState({
-    availableAgentSdks: { opencode: true, claude: true, codex: true },
+    availableAgentSdks: { opencode: true, claude: true, codex: true, grok: false },
     defaultAgentSdk: 'opencode',
     selectedModel: null,
     selectedModelByProvider: {},

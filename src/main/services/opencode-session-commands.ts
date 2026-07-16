@@ -9,7 +9,7 @@ import { CodexImplementer } from './codex-implementer'
 import { claudeCliTelegramBridge } from './claude-cli-telegram-bridge'
 import { claudeCliDiscordBridge } from './claude-cli-discord-bridge'
 import { toError } from './error-utils'
-import { isClaudeCli, isTerminalBacked } from '@shared/types/agent-sdk'
+import { isCliAgentSdk, isTerminalBacked } from '@shared/types/agent-sdk'
 
 const log = createLogger({ component: 'OpenCodeSessionCommands' })
 type PromptMessage =
@@ -29,7 +29,7 @@ const injectedWorktrees = new Set<string>()
 function resolveSdkId(
   dbService: DatabaseService,
   sessionId: string
-): 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal' | null {
+): 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'grok-cli' | 'terminal' | null {
   return (
     dbService.getAgentSdkForSession(sessionId) ?? dbService.getSession(sessionId)?.agent_sdk ?? null
   )
@@ -196,13 +196,13 @@ export async function promptOpenCodeSession(
         sdkId,
         route: sdkId && sdkId !== 'opencode' && !isTerminalBacked(sdkId) ? 'sdk' : 'opencode'
       })
-      if (isClaudeCli(sdkId)) {
-        // Terminal-backed Claude: prompts go through the PTY (bracketed paste /
-        // pending-prompt spawn), never the SDK implementer. Routing it there
-        // would corrupt the claude-code implementer's session state.
+      if (isCliAgentSdk(sdkId)) {
+        // Terminal-backed CLI agents: prompts go through the PTY (bracketed
+        // paste / pending-prompt spawn), never an SDK implementer. Routing
+        // one there would corrupt the implementer's session state.
         return {
           success: false,
-          error: 'claude-code-cli sessions receive prompts via the terminal, not the prompt API'
+          error: 'CLI agent sessions receive prompts via the terminal, not the prompt API'
         }
       }
       if (sdkId && sdkId !== 'opencode' && !isTerminalBacked(sdkId)) {
@@ -387,12 +387,37 @@ export async function refreshOpenCodeSessionFromThread(
 
 export async function listOpenCodeModels(
   opts?: {
-    agentSdk?: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
+    agentSdk?: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'grok-cli' | 'terminal'
   },
   sdkManager?: AgentSdkManager
 ): Promise<{ success: boolean; providers: unknown; error?: string }> {
   log.info('OpenCode session models', { agentSdk: opts?.agentSdk })
   try {
+    if (opts?.agentSdk === 'grok-cli') {
+      // Grok has no SDK implementer or fetched catalog; it ships a single
+      // model (`grok models`), mirrored here for the picker/badge. Variant
+      // keys are grok's --reasoning-effort values; key order is chip order
+      // and the first key is the default on first select (high matches
+      // grok's own default effort).
+      return {
+        success: true,
+        providers: {
+          providers: [
+            {
+              id: 'xai',
+              name: 'xAI',
+              models: {
+                'grok-4.5': {
+                  id: 'grok-4.5',
+                  name: 'Grok 4.5',
+                  variants: { high: {}, medium: {}, low: {} }
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
     const requestedSdk = opts?.agentSdk === 'claude-code-cli' ? 'claude-code' : opts?.agentSdk
     if (requestedSdk && requestedSdk !== 'opencode' && requestedSdk !== 'terminal' && sdkManager) {
       const impl = sdkManager.getImplementer(requestedSdk)
@@ -419,7 +444,7 @@ export async function setOpenCodeSelectedModel(
     providerID: string
     modelID: string
     variant?: string
-    agentSdk?: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
+    agentSdk?: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'grok-cli' | 'terminal'
   } | null,
   sdkManager?: AgentSdkManager
 ): Promise<{ success: boolean; error?: string }> {
@@ -434,7 +459,11 @@ export async function setOpenCodeSelectedModel(
       return { success: true }
     }
 
-    // Handle non-null model
+    // Handle non-null model. grok-cli has no implementer — model selection for
+    // it lives entirely in renderer settings (the spawner reads the session row).
+    if (model.agentSdk === 'grok-cli') {
+      return { success: true }
+    }
     if (model.agentSdk && model.agentSdk !== 'opencode' && sdkManager) {
       const impl = sdkManager.getImplementer(model.agentSdk)
       if (impl) {
@@ -457,7 +486,7 @@ export async function setOpenCodeSelectedModel(
 export async function getOpenCodeModelInfo(
   worktreePath: string,
   modelId: string,
-  agentSdk?: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal',
+  agentSdk?: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'grok-cli' | 'terminal',
   sdkManager?: AgentSdkManager
 ): Promise<{
   success: boolean
@@ -466,6 +495,9 @@ export async function getOpenCodeModelInfo(
 }> {
   log.info('OpenCode session modelInfo', { worktreePath, modelId, agentSdk })
   try {
+    if (agentSdk === 'grok-cli') {
+      return { success: false, error: 'Model info not available for grok-cli' }
+    }
     const requestedSdk = agentSdk === 'claude-code-cli' ? 'claude-code' : agentSdk
     if (requestedSdk && requestedSdk !== 'opencode' && requestedSdk !== 'terminal' && sdkManager) {
       const impl = sdkManager.getImplementer(requestedSdk)

@@ -219,7 +219,7 @@ function setupStores(): {
   const updateTicket = vi.fn(async () => undefined)
 
   useSettingsStore.setState({
-    availableAgentSdks: { opencode: true, claude: true, codex: true },
+    availableAgentSdks: { opencode: true, claude: true, codex: true, grok: false },
     defaultAgentSdk: 'opencode',
     selectedModel: null,
     selectedModelByProvider: {},
