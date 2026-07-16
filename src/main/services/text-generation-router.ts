@@ -142,24 +142,49 @@ export async function generateText(
 }
 
 /**
- * Resolve to an available provider, falling back if the requested one is unavailable.
+ * The providers that have an actual text-generation implementation. The
+ * terminal-backed CLI providers (`claude-code-cli`, `codex-cli`) have none —
+ * text generation runs through their SDK sibling's exec/app-server route — so
+ * they are normalized to that sibling before dispatch.
+ */
+type TextGenProvider = 'claude-code' | 'codex' | 'opencode'
+
+function toTextGenProvider(provider: AgentSdkId): TextGenProvider | null {
+  switch (provider) {
+    case 'claude-code':
+    case 'claude-code-cli':
+      return 'claude-code'
+    case 'codex':
+    case 'codex-cli':
+      return 'codex'
+    case 'opencode':
+      return 'opencode'
+    case 'terminal':
+      return null
+  }
+}
+
+/**
+ * Resolve to an available text-generation provider, falling back if the
+ * requested one is unavailable. CLI providers are normalized to their SDK
+ * sibling first, so the returned id always has a `generateWithProvider` branch
+ * (a bare CLI id would otherwise fall through the switch to `undefined`).
  * Fallback order: claude-code -> codex -> opencode.
  */
-function resolveProvider(provider: AgentSdkId): AgentSdkId | null {
-  if (provider === 'terminal') return null
+function resolveProvider(provider: AgentSdkId): TextGenProvider | null {
+  const normalized = toTextGenProvider(provider)
+  if (!normalized) return null
 
   const sdks = getCachedSdkDetection()
-  const providerAvailable: Record<Exclude<AgentSdkId, 'terminal'>, boolean> = {
+  const providerAvailable: Record<TextGenProvider, boolean> = {
     'claude-code': sdks.claude,
-    'claude-code-cli': sdks.claude,
     codex: sdks.codex,
-    'codex-cli': sdks.codexCli,
     opencode: sdks.opencode
   }
 
-  if (providerAvailable[provider]) return provider
+  if (providerAvailable[normalized]) return normalized
 
-  const fallbackOrder: Exclude<AgentSdkId, 'terminal'>[] = ['claude-code', 'codex', 'opencode']
+  const fallbackOrder: TextGenProvider[] = ['claude-code', 'codex', 'opencode']
   for (const fallback of fallbackOrder) {
     if (providerAvailable[fallback]) return fallback
   }
@@ -171,7 +196,7 @@ function resolveProvider(provider: AgentSdkId): AgentSdkId | null {
  * Dispatch to the correct provider implementation.
  */
 function generateWithProvider(
-  provider: AgentSdkId,
+  provider: TextGenProvider,
   prompt: string,
   systemPrompt: string,
   modelOverride?: string,
@@ -185,8 +210,6 @@ function generateWithProvider(
       return generateWithCodex(prompt, systemPrompt, modelOverride, outputSchema, cwd)
     case 'opencode':
       return generateWithOpenCode(prompt, systemPrompt, modelOverride, cwd)
-    case 'terminal':
-      return Promise.resolve(null)
   }
 }
 
