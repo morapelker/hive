@@ -130,25 +130,43 @@ export function resolveBoardChatAgentSdk(
   defaultAgentSdk:
     | ReturnType<typeof useSettingsStore.getState>['defaultAgentSdk']
     | null
-    | undefined
+    | undefined,
+  availableAgentSdks?: ReturnType<typeof useSettingsStore.getState>['availableAgentSdks']
 ): 'opencode' | 'claude-code' | 'codex' {
   const sdk = defaultAgentSdk ?? 'opencode'
-  if (sdk === 'terminal') return 'opencode'
-  if (sdk === 'claude-code-cli') return 'claude-code'
-  // codex-cli is terminal-backed; board chat needs a streaming implementer,
-  // so use its SDK sibling.
-  if (sdk === 'codex-cli') return 'codex'
-  return sdk
+  // Board chat runs a streaming implementer with no PTY, so map the
+  // terminal-backed CLIs to their streaming sibling.
+  const streaming =
+    sdk === 'terminal'
+      ? 'opencode'
+      : sdk === 'claude-code-cli'
+        ? 'claude-code'
+        : sdk === 'codex-cli'
+          ? 'codex'
+          : sdk
+  // …but only if that streaming provider is actually available. A codex build
+  // can support the CLI/hooks yet not the app-server (detection reports
+  // codex:false, codexCli:true), where CodexAppServerManager.startSession()
+  // throws; likewise claude-code may be absent. Fall back to opencode (always
+  // available) rather than persisting an agent_sdk the runtime can't start.
+  if (streaming === 'codex' && availableAgentSdks?.codex === false) return 'opencode'
+  if (streaming === 'claude-code' && availableAgentSdks?.claude === false) return 'opencode'
+  return streaming
 }
 
 export function resolveBoardChatDefaultModel(
   settings: Pick<
     ReturnType<typeof useSettingsStore.getState>,
-    'defaultAgentSdk' | 'selectedModel' | 'selectedModelByProvider' | 'getModelForMode'
+    | 'defaultAgentSdk'
+    | 'selectedModel'
+    | 'selectedModelByProvider'
+    | 'getModelForMode'
+    | 'availableAgentSdks'
   >,
   agentSdkOverride?: 'opencode' | 'claude-code' | 'codex' | null
 ): SelectedModel | null {
-  const agentSdk = agentSdkOverride ?? resolveBoardChatAgentSdk(settings.defaultAgentSdk)
+  const agentSdk =
+    agentSdkOverride ?? resolveBoardChatAgentSdk(settings.defaultAgentSdk, settings.availableAgentSdks)
   return (
     settings.getModelForMode('ask') ??
     resolveModelForSdk(agentSdk, settings) ??
@@ -555,7 +573,8 @@ async function ensureRuntime(): Promise<{
 
   const settings = useSettingsStore.getState()
   const baseAgentSdk =
-    state.selectedAgentSdkOverride ?? resolveBoardChatAgentSdk(settings.defaultAgentSdk)
+    state.selectedAgentSdkOverride ??
+    resolveBoardChatAgentSdk(settings.defaultAgentSdk, settings.availableAgentSdks)
   const model = state.selectedModelOverride ?? resolveBoardChatDefaultModel(settings, baseAgentSdk)
   // Coerce the persisted agent_sdk to a streaming implementer. `model.agentSdk`
   // can carry a terminal-backed CLI SDK (codex-cli / claude-code-cli) — e.g. a
@@ -565,7 +584,8 @@ async function ensureRuntime(): Promise<{
   // promptOpenCodeSession. resolveBoardChatAgentSdk maps codex-cli→codex,
   // claude-code-cli→claude-code (idempotent on the streaming SDKs).
   const agentSdk =
-    state.selectedAgentSdkOverride ?? resolveBoardChatAgentSdk(model?.agentSdk ?? baseAgentSdk)
+    state.selectedAgentSdkOverride ??
+    resolveBoardChatAgentSdk(model?.agentSdk ?? baseAgentSdk, settings.availableAgentSdks)
 
   const projectId = scope.kind === 'project' ? scope.projectId : state.selectedTargetProjectId
 

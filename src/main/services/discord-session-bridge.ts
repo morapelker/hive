@@ -17,6 +17,7 @@ import { getDatabase } from '../db'
 import type { DiscordResource, Session, SessionMode } from '../db/types'
 import { agentEventBus } from './agent-event-bus'
 import type { AgentSdkManager } from './agent-sdk-manager'
+import { resolveCodexBinaryPath, supportsCodexAppServer } from './codex-binary-resolver'
 import { createLogger } from './logger'
 import {
   abortOpenCodeSession,
@@ -185,15 +186,29 @@ function getImplementerSdk(sdk: AgentSdk): AgentSdk {
   return sdk
 }
 
+/** Whether the installed codex binary supports the app-server (not just the CLI). */
+function codexAppServerAvailable(): boolean {
+  const binary = resolveCodexBinaryPath()
+  return !!binary && supportsCodexAppServer(binary)
+}
+
 /**
  * The SDK to PERSIST for a Discord-managed session. claude-code-cli keeps its
  * id (it has a Discord terminal bridge that mirrors its PTY hooks), but
  * codex-cli has no such bridge and Discord has no PTY, so it must run as the
  * codex SDK provider. Persisting the CLI id would make promptOpenCodeSession
  * reject every Discord prompt as terminal-only.
+ *
+ * A codex build can support the CLI/hooks yet not the app-server (detection
+ * reports codex:false, codexCli:true). The codex implementer stays registered
+ * regardless, so resolveCreation's getImplementer check can't catch this — we
+ * must verify the binary actually supports app-server before coercing, or
+ * CodexAppServerManager.startSession() throws at connect time. Fall back to
+ * OpenCode when codex can't run.
  */
 function toDiscordManagedSdk(sdk: AgentSdk): AgentSdk {
-  return sdk === 'codex-cli' ? 'codex' : sdk
+  if (sdk !== 'codex-cli') return sdk
+  return codexAppServerAvailable() ? 'codex' : 'opencode'
 }
 
 function displayToolName(name: string): string {

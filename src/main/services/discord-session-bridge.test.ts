@@ -5,6 +5,19 @@ import { DiscordSessionBridge, splitDiscordMessage } from './discord-session-bri
 import type { DiscordResource, Session, Worktree } from '../db/types'
 import type { OpenCodeStreamEvent } from '@shared/types/opencode'
 
+// codex-cli is only coerced to the codex app-server SDK when the binary supports
+// app-server. Default the probe to available; the codex-cli-only fallback test
+// flips it off.
+const codexResolverMocks = vi.hoisted(() => ({
+  resolveCodexBinaryPath: vi.fn(() => 'codex'),
+  supportsCodexAppServer: vi.fn(() => true)
+}))
+vi.mock('./codex-binary-resolver', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./codex-binary-resolver')>()),
+  resolveCodexBinaryPath: codexResolverMocks.resolveCodexBinaryPath,
+  supportsCodexAppServer: codexResolverMocks.supportsCodexAppServer
+}))
+
 const PLAN_MODE_PREFIX =
   '[Mode: Plan] You are in planning mode. Focus on designing, analyzing, and outlining an approach. Do NOT make code changes - instead describe what changes should be made and why.\n\n'
 
@@ -247,6 +260,8 @@ const flushPromises = async (): Promise<void> => {
 describe('DiscordSessionBridge managed sessions', () => {
   beforeEach(() => {
     vi.useFakeTimers()
+    codexResolverMocks.resolveCodexBinaryPath.mockReturnValue('codex')
+    codexResolverMocks.supportsCodexAppServer.mockReturnValue(true)
   })
 
   it('creates a managed OpenCode build session on the first message and persists both ids', async () => {
@@ -327,6 +342,25 @@ describe('DiscordSessionBridge managed sessions', () => {
       expect.objectContaining({ agent_sdk: 'codex' })
     )
     // The prompt is dispatched (not rejected as a terminal-only CLI session).
+    expect(openCode.prompt).toHaveBeenCalled()
+  })
+
+  it('falls back to OpenCode for a codex-cli default when the binary lacks app-server support', async () => {
+    // codex:false, codexCli:true — the codex implementer is registered but the
+    // binary can't run app-server, so persist opencode instead of a codex
+    // session that would throw at startSession().
+    codexResolverMocks.supportsCodexAppServer.mockReturnValue(false)
+    const { db, bridge, openCode } = setupBridge()
+    setAppSettings(db, {
+      defaultAgentSdk: 'codex-cli',
+      selectedModelByProvider: {
+        'codex-cli': { providerID: 'codex', modelID: 'gpt-5.5' }
+      }
+    })
+
+    await bridge.handleUserMessage(userMessage(makeChannel(), 'codex cli no app-server'))
+
+    expect(db.createdSessions[0]).toEqual(expect.objectContaining({ agent_sdk: 'opencode' }))
     expect(openCode.prompt).toHaveBeenCalled()
   })
 
