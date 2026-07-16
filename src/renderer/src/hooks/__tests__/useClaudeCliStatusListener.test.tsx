@@ -318,6 +318,32 @@ describe('useClaudeCliStatusListener', () => {
     )
   })
 
+  it('does NOT re-derive planning from a working UserPromptSubmit for codex-cli (raw yolo TUI prompt)', () => {
+    // codex-cli status is authoritative upstream: a 'working' UserPromptSubmit
+    // means the prompt lacked the codex plan prefix (a raw TUI prompt that can
+    // mutate), so it must stay working rather than be relabeled read-only planning.
+    // claude-cli still derives planning here (see the plan-mode sequence test).
+    mocks.modeBySession.set('hive-session-1', 'plan')
+    mocks.sessionAgentSdk.set('hive-session-1', 'codex-cli')
+    renderHook(() => useClaudeCliStatusListener())
+
+    subscribedCallback?.({
+      sessionId: 'hive-session-1',
+      status: 'working',
+      metadata: { hookEventName: 'UserPromptSubmit', hookPath: 'start' }
+    })
+
+    expect(mocks.setSessionStatus).toHaveBeenLastCalledWith('hive-session-1', 'working', {
+      hookEventName: 'UserPromptSubmit',
+      hookPath: 'start'
+    })
+    expect(mocks.setSessionStatus).not.toHaveBeenCalledWith(
+      'hive-session-1',
+      'planning',
+      expect.anything()
+    )
+  })
+
   it('treats a prompt submitted while plan_ready as plan approval work', () => {
     mocks.modeBySession.set('hive-session-1', 'plan')
     mocks.sessionStatuses = { 'hive-session-1': { status: 'plan_ready' } }

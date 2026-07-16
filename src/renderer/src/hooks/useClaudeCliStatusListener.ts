@@ -156,7 +156,16 @@ export function useClaudeCliStatusListener(): void {
       if (
         status === 'working' &&
         metadata?.hookEventName === 'UserPromptSubmit' &&
-        isPlanLike(currentMode)
+        isPlanLike(currentMode) &&
+        // codex-cli's planning status is authoritative from upstream: the hook
+        // translator only sets permission_mode:'plan' (→ status 'planning') for
+        // prompts that actually carry the codex plan prefix. A 'working'
+        // UserPromptSubmit for a codex-cli session is therefore a raw yolo TUI
+        // prompt that can mutate and must NOT be re-derived to a read-only
+        // planning turn (mirrors the Stop→plan_ready guard below). claude-cli
+        // drives plan mode via its in-terminal permission mode, so its plan
+        // prompts arrive as 'working' and still need this fallback.
+        !isCodexCli(sessionStore.getSessionById(sessionId)?.agent_sdk)
       ) {
         reassertPlanAutoApprove(sessionId)
         lastSendMode.set(sessionId, 'plan')
