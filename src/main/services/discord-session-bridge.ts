@@ -1661,7 +1661,15 @@ export class DiscordSessionBridge {
         requestedSdk: resolved.agentSdk,
         error: error instanceof Error ? error.message : String(error)
       })
-      return { agentSdk: 'opencode', model: resolved.model }
+      // The requested SDK's model must not ride along (e.g. grok-cli resolves
+      // xai/grok-4.5, which OpenCode cannot serve) — re-resolve the model
+      // chain for opencode instead.
+      const fallback = resolveSessionCreation({
+        settings: this.readModelSettings(),
+        mode,
+        defaultAgentSdk: 'opencode'
+      })
+      return { agentSdk: 'opencode', model: fallback.model }
     }
   }
 
