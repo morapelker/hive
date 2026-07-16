@@ -1501,7 +1501,10 @@ export function WorktreePickerModal({
       onOpenChange(false)
       toast.success('Session started')
 
-      if (sessionAgentSdk === 'claude-code-cli') {
+      // Both CLI-backed agents (claude-code-cli, codex-cli) start their PTY via
+      // createClaudeCli (which routes codex-cli to createCodexCli); only the
+      // OpenCode/SDK providers fall through to opencodeApi.connect below.
+      if (isCliAgentSdk(sessionAgentSdk)) {
         const outboundPrompt =
           cliPendingPrompt ??
           composePromptForSdk(mode, sessionAgentSdk, effectivePromptText, goalMode, goalCriteria, {
