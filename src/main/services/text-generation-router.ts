@@ -7,6 +7,7 @@ import { Effect } from 'effect'
 import { loadClaudeSDK } from './claude-sdk-loader'
 import { resolveCodexBinaryPath } from './codex-binary-resolver'
 import { getCodexCliEnv } from './codex-cli-env'
+import { isWindowsShimBinary } from './codex-cli-spawner'
 import { detectAgentSdks } from './system-info'
 import type { AgentSdkDetection } from './system-info'
 import type { OpenCodeLaunchSpec } from './opencode-binary-resolver'
@@ -342,12 +343,21 @@ async function generateWithCodex(
     }
     args.push('--output-last-message', outputFile, '-')
 
+    // A Windows npm/bun global install resolves codex to a `.cmd`/`.bat` shim,
+    // which child_process can't launch directly — run it through the shell, the
+    // same way codex-app-server-manager and codex-cli-spawner handle the shim.
+    // Without this, `codexCli` would advertise Codex text generation (see
+    // toTextGenProvider) and then fail every `codex exec` here instead of the
+    // caller getting a chance to fall back.
+    const useShell = isWindowsShimBinary(binary)
+
     await spawnWithStdin(
       binary,
       args,
       fullPrompt,
       cwd,
-      spawnEnv
+      spawnEnv,
+      useShell
     )
     const output = await readFile(outputFile, 'utf-8')
     return output.trim() || null
@@ -416,7 +426,8 @@ function spawnWithStdin(
   args: string[],
   input: string,
   cwd?: string,
-  env?: NodeJS.ProcessEnv
+  env?: NodeJS.ProcessEnv,
+  shell?: boolean
 ): Promise<string> {
   return getRuntime()
     .runPromise(
@@ -429,7 +440,8 @@ function spawnWithStdin(
           maxOutputBytes: MAX_OUTPUT_SIZE,
           collectStderr: true,
           env: env ?? process.env,
-          cwd
+          cwd,
+          shell
         })
       )
     )

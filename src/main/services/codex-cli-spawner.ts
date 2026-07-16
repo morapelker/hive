@@ -9,7 +9,7 @@ import type { DatabaseService } from '../db/database'
  * must go through the command processor. Detection already runs these shims
  * with `shell: true` for the same reason.
  */
-function isWindowsShimBinary(binaryPath: string): boolean {
+export function isWindowsShimBinary(binaryPath: string): boolean {
   if (process.platform !== 'win32') return false
   const ext = extname(binaryPath).toLowerCase()
   return ext === '.cmd' || ext === '.bat' || ext === '.com'

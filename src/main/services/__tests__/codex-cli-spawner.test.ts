@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Session } from '../../db/types'
-import { buildCodexCliPtySpawn, normalizeCodexCliEffort } from '../codex-cli-spawner'
+import {
+  buildCodexCliPtySpawn,
+  isWindowsShimBinary,
+  normalizeCodexCliEffort
+} from '../codex-cli-spawner'
 
 function makeSession(overrides: Partial<Session> = {}): Session {
   return {
@@ -43,6 +47,28 @@ describe('normalizeCodexCliEffort', () => {
     expect(normalizeCodexCliEffort('ultracode')).toBeNull()
     expect(normalizeCodexCliEffort(null)).toBeNull()
     expect(normalizeCodexCliEffort(undefined)).toBeNull()
+  })
+})
+
+describe('isWindowsShimBinary', () => {
+  const realPlatform = process.platform
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: realPlatform })
+  })
+
+  it('flags .cmd/.bat/.com shims only on win32 (drives shell wrapping for text generation)', () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' })
+    expect(isWindowsShimBinary('C:/npm/codex.cmd')).toBe(true)
+    expect(isWindowsShimBinary('C:/npm/codex.BAT')).toBe(true)
+    expect(isWindowsShimBinary('C:/npm/codex.com')).toBe(true)
+    expect(isWindowsShimBinary('C:/bun/codex.exe')).toBe(false)
+    expect(isWindowsShimBinary('C:/bun/codex')).toBe(false)
+  })
+
+  it('is always false off win32 (POSIX runs the binary directly)', () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' })
+    expect(isWindowsShimBinary('/usr/local/bin/codex.cmd')).toBe(false)
+    expect(isWindowsShimBinary('/usr/local/bin/codex')).toBe(false)
   })
 })
 
