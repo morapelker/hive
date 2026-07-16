@@ -45,13 +45,25 @@ function grokHome(): string {
 }
 
 /**
- * A curl relay for one hook path. `$(printenv …)` is used instead of `$VAR`
- * so grok's own load-time variable expansion (which would bake in an empty
- * string while the config loads) can't corrupt the command; the value must
- * resolve at runtime in the spawned shell, where each Hive session's URL
- * differs.
+ * A curl relay for one hook path, generated for the platform this machine's
+ * grok will run the hook on (the file is written by the same host).
+ *
+ * POSIX: `$(printenv …)` is used instead of `$VAR` so grok's own load-time
+ * variable expansion (which would bake in an empty string while the config
+ * loads) can't corrupt the command; the value must resolve at runtime in the
+ * spawned shell, where each Hive session's URL differs.
+ *
+ * Windows: cmd syntax — `%VAR%` is untouched by grok's `${VAR}`/`$VAR`
+ * load-time expansion and resolves at execution; curl ships with Win10+.
  */
 function hookCommand(hookPath: string, curlMaxTimeSecs: number): string {
+  if (process.platform === 'win32') {
+    return (
+      `if not defined HIVE_GROK_HOOK_URL (echo {}) else ` +
+      `(curl -s -X POST -H "Content-Type: application/json" --data-binary @- --max-time ${curlMaxTimeSecs} ` +
+      `"%HIVE_GROK_HOOK_URL%/${hookPath}" || echo {})`
+    )
+  }
   return (
     `: ${GROK_HOOK_MARKER}; printenv HIVE_GROK_HOOK_URL >/dev/null 2>&1 || { cat >/dev/null; echo '{}'; exit 0; }; ` +
     `curl -s -X POST -H 'Content-Type: application/json' --data-binary @- --max-time ${curlMaxTimeSecs} ` +
