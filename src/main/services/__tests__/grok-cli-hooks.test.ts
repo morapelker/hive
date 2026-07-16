@@ -205,4 +205,55 @@ describe('translateGrokHook', () => {
     expect(hook?.hook_event_name).toBe('UserPromptSubmit')
     expect(sink).toHaveBeenCalledWith(HIVE_ID, ROOT)
   })
+
+  it('never adopts root from tool/subagent hooks — only session_start / user_prompt_submit', () => {
+    const sink = vi.fn()
+    setGrokSessionIdSink(sink)
+    seedGrokSessionTracking(HIVE_ID, null)
+
+    // A stray tool hook (e.g. a subagent's) arriving before the root is known
+    // must not become the root — later root hooks would all be mis-scoped.
+    translateGrokHook(HIVE_ID, {
+      hookEventName: 'pre_tool_use',
+      sessionId: CHILD,
+      toolName: 'run_terminal_command',
+      toolUseId: 'call-x'
+    })
+    translateGrokHook(HIVE_ID, { hookEventName: 'subagent_stop', sessionId: CHILD })
+    expect(sink).not.toHaveBeenCalled()
+
+    const start = translateGrokHook(HIVE_ID, {
+      hookEventName: 'session_start',
+      sessionId: ROOT,
+      source: 'new'
+    })
+    expect(start?.hook_event_name).toBe('SessionStart')
+    expect(sink).toHaveBeenCalledExactlyOnceWith(HIVE_ID, ROOT)
+
+    const stop = translateGrokHook(HIVE_ID, { hookEventName: 'stop', sessionId: ROOT })
+    expect(stop?.agent_id).toBeUndefined()
+  })
+
+  it('passes tool inputs through (ask_user_question questions reach the pipeline)', () => {
+    seedGrokSessionTracking(HIVE_ID, ROOT)
+    const questions = [{ question: 'Which color?', options: [{ label: 'Red' }] }]
+    const pre = translateGrokHook(HIVE_ID, {
+      hookEventName: 'pre_tool_use',
+      sessionId: ROOT,
+      toolName: 'ask_user_question',
+      toolUseId: 'call-q2',
+      toolInput: { questions }
+    })
+    expect(pre?.tool_input).toEqual({ questions })
+
+    // The synthesized PermissionRequest carries the paired tool's input too.
+    const permission = translateGrokHook(HIVE_ID, {
+      hookEventName: 'notification',
+      sessionId: ROOT,
+      notificationType: 'permission_prompt',
+      message: 'Tool permission requested'
+    })
+    expect(permission?.tool_name).toBe('AskUserQuestion')
+    expect(permission?.tool_input).toEqual({ questions })
+  })
 })

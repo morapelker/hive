@@ -423,9 +423,14 @@ export async function createClaudeCliTerminal(
       // relays payloads to the URL carried in this spawn's environment.
       ensureGrokHooksInstalled()
       ensureGrokSessionIdSink()
-      seedGrokSessionTracking(sessionId, session.claude_session_id, {
-        planMode: session.mode === 'plan' || session.mode === 'super-plan'
-      })
+      if (!alreadyExists) {
+        // Seeding replaces live tracking (lastPreToolUse pairing, tracked
+        // permission mode) — a racing/repeat create call that reuses the PTY
+        // must not wipe an in-flight tool/permission sequence.
+        seedGrokSessionTracking(sessionId, session.claude_session_id, {
+          planMode: session.mode === 'plan' || session.mode === 'super-plan'
+        })
+      }
       spawn = buildGrokCliPtySpawn({
         session,
         worktreePath,
@@ -598,6 +603,8 @@ export function cleanupTerminals(): void {
   for (const sessionId of grokPlanDeliveries.keys()) {
     cancelGrokPlanActivation(sessionId)
   }
+  setGrokSessionIdSink(null)
+  grokSessionIdSinkRegistered = false
   unsubscribeClaudeCliStatus?.()
   unsubscribeClaudeCliStatus = null
   resetAllClaudeCliTitleState()

@@ -174,7 +174,12 @@ interface GrokSessionTracking {
   /** The root grok session id for this Hive session (child/subagent grok sessions differ). */
   rootGrokSessionId: string | null
   /** Most recent root pre_tool_use — pairs permission_prompt notifications with their tool. */
-  lastPreToolUse: { toolName: string; toolUseId?: string; transcriptPath?: string } | null
+  lastPreToolUse: {
+    toolName: string
+    toolUseId?: string
+    transcriptPath?: string
+    toolInput?: unknown
+  } | null
   /**
    * Grok's live permission mode, seeded from the Hive session mode at spawn
    * and refreshed from each pre_tool_use payload. user_prompt_submit carries
@@ -253,6 +258,16 @@ function readPlanFile(transcriptPath: string | undefined): string | undefined {
  * pipeline must not see (subagent child-session lifecycle noise, notification
  * types other than permission prompts).
  */
+/**
+ * Events whose sessionId is trusted to name the ROOT grok session when
+ * tracking was seeded without one (fresh spawn). Root adoption must never
+ * happen from tool/subagent hooks: a subagent child session's lifecycle can
+ * interleave with the root's, and adopting a child id as root would flip
+ * every later root hook to subagent-scoped (dropped Stops, mis-routed
+ * ledger state).
+ */
+const ROOT_ADOPTION_EVENTS = new Set(['session_start', 'user_prompt_submit'])
+
 export function translateGrokHook(
   hiveSessionId: string,
   raw: GrokHookBody
@@ -260,7 +275,12 @@ export function translateGrokHook(
   const state = getOrCreateTracking(hiveSessionId)
   const grokSessionId = typeof raw.sessionId === 'string' ? raw.sessionId : null
 
-  if (grokSessionId && !state.rootGrokSessionId) {
+  if (
+    grokSessionId &&
+    !state.rootGrokSessionId &&
+    !raw.agentId &&
+    ROOT_ADOPTION_EVENTS.has(raw.hookEventName ?? '')
+  ) {
     state.rootGrokSessionId = grokSessionId
     grokSessionIdSink?.(hiveSessionId, grokSessionId)
   }
@@ -281,6 +301,9 @@ export function translateGrokHook(
       tool_name: paired?.toolName,
       tool_use_id: paired?.toolUseId,
       transcript_path: raw.transcriptPath
+    }
+    if (paired?.toolInput !== undefined && paired.toolInput !== null) {
+      hook.tool_input = paired.toolInput as ParsedClaudeHook['tool_input']
     }
     if (paired?.toolName === 'ExitPlanMode') {
       const plan = readPlanFile(raw.transcriptPath ?? paired.transcriptPath)
@@ -310,6 +333,13 @@ export function translateGrokHook(
   if (toolName) hook.tool_name = toolName
   if (raw.toolUseId) hook.tool_use_id = raw.toolUseId
   if (agentId) hook.agent_id = agentId
+  // Grok's tool inputs are claude-shaped (ask_user_question carries the same
+  // `questions` array as AskUserQuestion) — pass them through so consumers
+  // like the transport hold (question.asked) see them. exit_plan_mode is the
+  // exception: its input is empty and is overridden from plan.md below.
+  if (raw.toolInput !== undefined && raw.toolInput !== null) {
+    hook.tool_input = raw.toolInput as ParsedClaudeHook['tool_input']
+  }
 
   if (mappedEvent === 'UserPromptSubmit') {
     if (typeof raw.prompt === 'string') {
@@ -328,7 +358,8 @@ export function translateGrokHook(
       state.lastPreToolUse = {
         toolName,
         toolUseId: raw.toolUseId,
-        transcriptPath: raw.transcriptPath
+        transcriptPath: raw.transcriptPath,
+        toolInput: raw.toolInput
       }
     }
   }

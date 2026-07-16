@@ -37,7 +37,11 @@ export function logGrokBinaryVersion(binaryPath: string): void {
  */
 export function resolveGrokBinaryPath(): string | null {
   const command = process.platform === 'win32' ? 'where' : 'which'
-  const binary = process.platform === 'win32' ? 'grok.exe' : 'grok'
+  // Plain `grok` on every platform: `where grok` matches any PATHEXT variant
+  // (grok.exe, grok.cmd shims), keeping this consistent with detectAgentSdks'
+  // availability check — `where grok.exe` would reject shim installs that the
+  // settings UI already reported as available.
+  const binary = 'grok'
 
   try {
     const result = execFileSync(command, [binary], {
