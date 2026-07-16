@@ -318,8 +318,9 @@ function SdkToggleGroup({
   disabled,
   disabledTitle
 }: SdkToggleGroupProps): React.JSX.Element | null {
-  // Custom providers wrap the Claude CLI — offer them only when claude is detected.
-  const visibleCustomProviders = availableAgentSdks?.claude ? customProviders : []
+  // Custom providers run their own command through the login shell — they
+  // don't depend on stock-claude detection.
+  const visibleCustomProviders = customProviders
   // Only render when 2+ SDKs are available (a single SDK has nothing to toggle).
   const buttonCount =
     (availableAgentSdks

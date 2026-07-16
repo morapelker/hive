@@ -519,7 +519,14 @@ export const useSessionStore = create<SessionState>()(
               initialMode,
               modelOverride: options?.modelOverride
             })
-          const unavailableProviderError = getUnavailableProviderError(defaultAgentSdk)
+          // Custom providers run their own command through the login shell —
+          // stock-claude detection (`which claude` in the Electron process) is
+          // irrelevant to them and can false-negative on GUI launches.
+          const usesCustomProvider =
+            !!options?.customProviderId && defaultAgentSdk === 'claude-code-cli'
+          const unavailableProviderError = usesCustomProvider
+            ? null
+            : getUnavailableProviderError(defaultAgentSdk)
           if (unavailableProviderError) {
             return { success: false, error: unavailableProviderError }
           }
@@ -2093,7 +2100,13 @@ export const useSessionStore = create<SessionState>()(
               initialMode,
               modelOverride: opts?.modelOverride
             })
-          const unavailableProviderError = getUnavailableProviderError(defaultAgentSdk)
+          // Same bypass as createSession: custom providers don't need
+          // stock-claude detection.
+          const usesCustomProvider =
+            !!opts?.customProviderId && defaultAgentSdk === 'claude-code-cli'
+          const unavailableProviderError = usesCustomProvider
+            ? null
+            : getUnavailableProviderError(defaultAgentSdk)
           if (unavailableProviderError) {
             return { success: false, error: unavailableProviderError }
           }

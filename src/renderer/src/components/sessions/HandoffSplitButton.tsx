@@ -92,9 +92,8 @@ export function HandoffSplitButton({
   }, [pickerOpen])
 
   const availableHandoffSdks = getAvailableHandoffAgentSdks(availableAgentSdks)
-  const launchableCustomProviders = availableHandoffSdks.includes('claude-code-cli')
-    ? (customProviders ?? []).filter((p) => p.command.trim())
-    : []
+  // Custom providers don't depend on stock-claude detection.
+  const launchableCustomProviders = (customProviders ?? []).filter((p) => p.command.trim())
   const showChevron = availableHandoffSdks.length + launchableCustomProviders.length > 1
   void availableAgentSdks
   void lastHandoffOverride

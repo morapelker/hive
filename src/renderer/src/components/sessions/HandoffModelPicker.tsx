@@ -72,14 +72,11 @@ export function HandoffModelPicker({
     () => getAvailableHandoffAgentSdks(availableAgentSdks),
     [availableAgentSdks]
   )
-  // Custom providers wrap the Claude CLI — offer them only when the CLI is a
-  // valid handoff target and the provider has a launchable command.
+  // Custom providers run their own command through the login shell — they
+  // don't depend on stock-claude detection, only on a launchable command.
   const visibleCustomProviders = useMemo(
-    () =>
-      visibleSdks.includes('claude-code-cli')
-        ? (customProviders ?? []).filter((p) => p.command.trim())
-        : [],
-    [visibleSdks, customProviders]
+    () => (customProviders ?? []).filter((p) => p.command.trim()),
+    [customProviders]
   )
   const [pickedSdk, setPickedSdk] = useState<HandoffAgentSdk>('opencode')
   const [pickedCustomProviderId, setPickedCustomProviderId] = useState<string | null>(null)

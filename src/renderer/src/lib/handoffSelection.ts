@@ -259,11 +259,12 @@ export function getEffectiveHandoffSelection(opts: {
   const override = settings.lastHandoffOverride
 
   if (!override) return fallback
-  if (!isAgentSdkAvailable(override.agentSdk, settings.availableAgentSdks)) return fallback
 
   // A custom-provider override outlives its provider (they live in settings) —
   // a deleted provider must fall back rather than silently handing off to
-  // plain claude-cli under the stale display name.
+  // plain claude-cli under the stale display name. Checked before the SDK
+  // availability guard: custom providers run their own command and don't
+  // depend on stock-claude detection.
   if (override.customProviderId) {
     const provider = findCustomProvider(settings.customProviders, override.customProviderId)
     if (!provider || !provider.command.trim()) return fallback
@@ -284,6 +285,8 @@ export function getEffectiveHandoffSelection(opts: {
       }
     }
   }
+
+  if (!isAgentSdkAvailable(override.agentSdk, settings.availableAgentSdks)) return fallback
 
   const cachedProviders = getCachedModelCatalog(override.agentSdk)
   if (cachedProviders && !findModelInfo(cachedProviders, override.providerID, override.modelID)) {

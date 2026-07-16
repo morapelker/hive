@@ -718,14 +718,13 @@ export function SessionTabs(): React.JSX.Element | null {
   const availableAgentSdks = useSettingsStore((state) => state.availableAgentSdks)
   const defaultAgentSdk = useSettingsStore((state) => state.defaultAgentSdk)
   const rawCustomProviders = useSettingsStore((state) => state.customProviders)
-  // Custom providers wrap the Claude CLI — offer them only when claude is
-  // detected (createSession blocks 'claude-code-cli' otherwise) and when they
-  // have a launchable command.
-  const customProviders = useMemo(
+  // Custom providers run their own command through the login shell — they
+  // don't depend on stock-claude detection (which can false-negative on GUI
+  // launches), only on having a launchable command.
+  const customProvidersAvailable = useMemo(
     () => (rawCustomProviders ?? []).filter((p) => p.command.trim()),
     [rawCustomProviders]
   )
-  const customProvidersAvailable = availableAgentSdks?.claude ? customProviders : []
   const multipleProvidersAvailable =
     [availableAgentSdks?.opencode, availableAgentSdks?.claude, availableAgentSdks?.codex].filter(
       Boolean
