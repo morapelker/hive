@@ -150,6 +150,22 @@ describe('resolveSessionCreationSelection', () => {
       modelID: 'grok-4.5'
     })
   })
+
+  it('rejects a legacy grok global for explicit non-grok creates', () => {
+    useSettingsStore.setState({
+      defaultAgentSdk: 'grok-cli',
+      // Only an unstamped legacy grok global configured: an explicit opencode
+      // create must not stamp it (opencode may fail to serve it; the badge
+      // would desync from what actually runs).
+      selectedModel: { providerID: 'xai', modelID: 'grok-4.5' },
+      selectedModelByProvider: {},
+      defaultModels: { build: null, plan: null, ask: null, review: null }
+    })
+
+    const selection = resolveSessionCreationSelection({ agentSdkOverride: 'opencode' })
+    expect(selection.agentSdk).toBe('opencode')
+    expect(selection.model?.providerID).not.toBe('xai')
+  })
 })
 
 describe('handoff provider visuals', () => {

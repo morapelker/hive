@@ -101,10 +101,21 @@ function dropForeignModelForSdk(
   model: SelectedModel | null,
   agentSdk: HandoffAgentSdk
 ): SelectedModel | null {
-  if (agentSdk === 'grok-cli' && model && !model.modelID.toLowerCase().startsWith('grok')) {
-    return null
+  if (!model) return null
+  if (agentSdk === 'grok-cli') {
+    return model.modelID.toLowerCase().startsWith('grok') ? model : null
   }
-  return model
+  // Reverse direction: grok models exist only in the grok-cli catalog and
+  // cannot ride into another SDK from the unstamped legacy global
+  // selectedModel. A per-SDK map hit or an explicit non-grok stamp is
+  // trusted provenance (an xAI model the user selected FOR this SDK).
+  const grokFamily = model.providerID === 'xai' || model.modelID.toLowerCase().startsWith('grok')
+  if (!grokFamily) return model
+  if (model.agentSdk === 'grok-cli') return null
+  const trusted =
+    !!useSettingsStore.getState().selectedModelByProvider?.[agentSdk] ||
+    (model.agentSdk != null && model.agentSdk !== 'grok-cli')
+  return trusted ? model : null
 }
 
 function buildModelSelection(
@@ -279,23 +290,12 @@ export async function loadHandoffModelCatalog(
 }
 
 export function resolveModelForSdkDefault(agentSdk: HandoffAgentSdk): SelectedModel {
-  let configured = resolveModelForSdk(agentSdk)
-  // resolveModelForSdk falls back to the legacy global selectedModel, which
-  // can hold a grok model (unstamped or grok-cli-stamped) that only the
-  // grok-cli catalog serves — never hand that to a non-grok SDK. A per-SDK
-  // map hit or an explicit non-grok stamp is trusted provenance (an xAI
-  // model the user selected FOR this SDK).
-  if (agentSdk !== 'grok-cli' && configured) {
-    const grokFamily =
-      configured.providerID === 'xai' || configured.modelID.toLowerCase().startsWith('grok')
-    const trusted =
-      !!useSettingsStore.getState().selectedModelByProvider?.[agentSdk] ||
-      (configured.agentSdk != null && configured.agentSdk !== 'grok-cli')
-    if (configured.agentSdk === 'grok-cli' || (grokFamily && !trusted)) {
-      configured = null
-    }
-  }
-  return buildModelSelection(dropForeignModelForSdk(configured, agentSdk), agentSdk)
+  // dropForeignModelForSdk enforces SDK/model coherence in both directions
+  // (grok sessions get only grok models; grok models never leak elsewhere).
+  return buildModelSelection(
+    dropForeignModelForSdk(resolveModelForSdk(agentSdk), agentSdk),
+    agentSdk
+  )
 }
 
 export function resolveHandoffDefault(opts: { worktreeId?: string }): EffectiveHandoffSelection {
