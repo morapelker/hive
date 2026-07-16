@@ -463,11 +463,13 @@ export async function setOpenCodeSelectedModel(
     // it lives entirely in renderer settings (the spawner reads the session
     // row). This includes UNSTAMPED grok selections (Settings' global model
     // picker sends no agentSdk): persisting xai/grok-4.5 as OpenCode's model
-    // would make later OpenCode prompts run a model it cannot serve.
+    // would make later OpenCode prompts run a model it cannot serve. An
+    // explicit non-grok stamp is trusted — OpenCode's own catalog may expose
+    // xAI models, and those selections must reach openCodeService.
     if (
       model.agentSdk === 'grok-cli' ||
-      model.providerID === 'xai' ||
-      model.modelID.toLowerCase().startsWith('grok')
+      (!model.agentSdk &&
+        (model.providerID === 'xai' || model.modelID.toLowerCase().startsWith('grok')))
     ) {
       return { success: true }
     }

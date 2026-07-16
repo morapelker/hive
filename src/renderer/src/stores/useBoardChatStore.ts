@@ -155,7 +155,15 @@ export function resolveBoardChatAgentSdk(
 function coerceBoardChatModel(model: SelectedModel | null | undefined): SelectedModel | null {
   if (!model) return null
   if (model.agentSdk === 'grok-cli') return null
-  if (model.providerID === 'xai' || model.modelID.toLowerCase().startsWith('grok')) return null
+  // Unstamped grok models are ambiguous provenance (the legacy global
+  // selectedModel) and skipped; an explicit non-grok stamp is trusted —
+  // OpenCode's own catalog may expose xAI models.
+  if (
+    !model.agentSdk &&
+    (model.providerID === 'xai' || model.modelID.toLowerCase().startsWith('grok'))
+  ) {
+    return null
+  }
   if (model.agentSdk === 'claude-code-cli') return { ...model, agentSdk: 'claude-code' }
   return model
 }
