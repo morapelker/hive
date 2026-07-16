@@ -70,7 +70,7 @@ const FALLBACK_MODELS: Record<HandoffAgentSdk, SelectedModel> = {
 const modelCatalogCache = new Map<HandoffAgentSdk, ProviderModels[]>()
 const inflightModelCatalogRequests = new Map<HandoffAgentSdk, Promise<ProviderModels[]>>()
 
-function normalizeHandoffSdk(
+export function normalizeHandoffSdk(
   sdk:
     | 'opencode'
     | 'claude-code'
@@ -97,7 +97,7 @@ function getModeDefaultKey(mode: 'build' | 'plan' | 'super-plan' | undefined): '
  * stamped on the session/badge while buildGrokCliPtySpawn drops it and the
  * CLI runs its own default — discard it so the grok catalog/fallback wins.
  */
-function dropForeignModelForSdk(
+export function dropForeignModelForSdk(
   model: SelectedModel | null,
   agentSdk: HandoffAgentSdk
 ): SelectedModel | null {

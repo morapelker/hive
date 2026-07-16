@@ -9,7 +9,11 @@ import {
 } from './store-coordination'
 import { useSettingsStore } from './useSettingsStore'
 import { getUnavailableAgentSdkMessage } from '@/lib/agent-sdk-availability'
-import { resolveSessionCreationSelection } from '@/lib/handoffSelection'
+import {
+  dropForeignModelForSdk,
+  normalizeHandoffSdk,
+  resolveSessionCreationSelection
+} from '@/lib/handoffSelection'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { isWindows } from '@/lib/platform'
 import { systemApi } from '@/api/system-api'
@@ -1527,7 +1531,16 @@ export const useSessionStore = create<SessionState>()(
 
         const newModeDefault = modeDefault ?? resolveModelForSdk(sessionSdk, settings)
         if (!newModeDefault) return
-        await get().setSessionModel(sessionId, newModeDefault, { skipGlobalUpdate: true })
+        // Grok/model coherence: the unstamped legacy global selectedModel (or
+        // an unstamped mode default) can be foreign to the session's SDK. A
+        // grok session must not get a claude/opencode model stamped on its
+        // row — buildGrokCliPtySpawn would drop it and the CLI would run its
+        // own default while badges/telemetry report the foreign model — and
+        // grok models must not ride into non-grok sessions. The mode still
+        // flips; the model stays.
+        const coherent = dropForeignModelForSdk(newModeDefault, normalizeHandoffSdk(sessionSdk))
+        if (!coherent) return
+        await get().setSessionModel(sessionId, coherent, { skipGlobalUpdate: true })
       },
 
       // Keep opencode_session_id in sync in-memory after connect/reconnect (scope-agnostic)
