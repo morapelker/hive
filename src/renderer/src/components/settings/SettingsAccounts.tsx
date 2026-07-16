@@ -1,9 +1,15 @@
 import { useEffect, useState } from 'react'
-import { Loader2, Plus, RefreshCw, Repeat, Trash2 } from 'lucide-react'
+import { Loader2, Plus, RefreshCw, Repeat, Timer, Trash2 } from 'lucide-react'
 import { useAccountStore, useUsageStore } from '@/stores'
 import { useLoginStore } from '@/stores/useLoginStore'
+import { useAccountScheduleStore } from '@/stores/useAccountScheduleStore'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import {
+  ScheduleSwitchForm,
+  SchedulePendingSummary
+} from '@/components/accounts/ScheduleSwitchControls'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -35,6 +41,8 @@ function ProviderAccountsCard({ provider }: { provider: UsageProvider }): React.
   )
   const startLogin = useLoginStore((s) => s.startLogin)
   const isLoginActive = useLoginStore((s) => s.activeLogin !== null)
+  const schedule = useAccountScheduleStore((s) => s.schedules[provider])
+  const cancelSchedule = useAccountScheduleStore((s) => s.cancelSchedule)
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null)
 
   const icon = provider === 'anthropic' ? claudeIcon : openaiIcon
@@ -162,6 +170,39 @@ function ProviderAccountsCard({ provider }: { provider: UsageProvider }): React.
                         <Repeat className="h-3.5 w-3.5" />
                       )}
                     </Button>
+                  )}
+                  {!isActive && (
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className={cn(
+                            'h-7 w-7',
+                            schedule?.accountId === account.id
+                              ? 'text-amber-500 hover:text-amber-400'
+                              : 'text-muted-foreground hover:text-foreground'
+                          )}
+                          aria-label={`Schedule switch to ${account.email}`}
+                        >
+                          <Timer className="h-3.5 w-3.5" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent align="end" className="w-64 p-3">
+                        {schedule?.accountId === account.id ? (
+                          <SchedulePendingSummary
+                            schedule={schedule}
+                            onCancel={() => cancelSchedule(provider)}
+                          />
+                        ) : (
+                          <ScheduleSwitchForm
+                            provider={provider}
+                            accountId={account.id}
+                            email={account.email}
+                          />
+                        )}
+                      </PopoverContent>
+                    </Popover>
                   )}
                   {isExpired && (
                     <Button

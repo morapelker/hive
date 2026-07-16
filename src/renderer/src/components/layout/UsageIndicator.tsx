@@ -14,7 +14,12 @@ import { reportActiveAccountsSnapshot } from '@/lib/hive-account-report'
 import { fetchHiveAccountMembers, isHiveTelemetryEnabled } from '@/api/hive-enterprise/client'
 import { MemberAvatarStack, type AccountMemberInfo } from './MemberAvatarStack'
 import { cn } from '@/lib/utils'
-import { Loader2, RefreshCw } from 'lucide-react'
+import { Loader2, RefreshCw, Timer } from 'lucide-react'
+import { useAccountScheduleStore } from '@/stores/useAccountScheduleStore'
+import {
+  ScheduleSwitchForm,
+  SchedulePendingSummary
+} from '@/components/accounts/ScheduleSwitchControls'
 import claudeIcon from '@/assets/model-icons/claude.svg'
 import openaiIcon from '@/assets/model-icons/openai.svg'
 import type {
@@ -208,6 +213,7 @@ function usageFromSavedAccount(
 
 export interface UsageAccountRowProps {
   row: AccountRowData
+  provider?: UsageProvider
   isSwitching?: boolean
   isLoginActive?: boolean
   highlightActive?: boolean
@@ -220,6 +226,7 @@ export interface UsageAccountRowProps {
 
 export function UsageAccountRow({
   row,
+  provider,
   isSwitching = false,
   isLoginActive = false,
   highlightActive = false,
@@ -232,6 +239,12 @@ export function UsageAccountRow({
   const fiveHour = usageWindowDisplay(row.usage?.five_hour, 'five_hour')
   const sevenDay = usageWindowDisplay(row.usage?.seven_day, 'seven_day')
   const scoped = row.usage?.scoped ?? []
+
+  const schedule = useAccountScheduleStore((s) => (provider ? s.schedules[provider] : undefined))
+  const cancelSchedule = useAccountScheduleStore((s) => s.cancelSchedule)
+  const [showScheduleForm, setShowScheduleForm] = useState(false)
+  const scheduleTargetsRow = schedule !== undefined && schedule.accountId === row.id
+  const canSchedule = provider !== undefined && !row.isActive && onSwitch !== undefined
 
   return (
     <div
@@ -314,6 +327,23 @@ export function UsageAccountRow({
               Refresh
             </button>
           )}
+          {canSchedule && (
+            <button
+              type="button"
+              onClick={() => setShowScheduleForm((v) => !v)}
+              aria-label={`Schedule switch to ${row.email ?? 'this account'}`}
+              aria-expanded={showScheduleForm}
+              className={cn(
+                'inline-flex items-center gap-1 rounded-sm border px-1.5 py-0.5 text-[9px] font-medium transition-colors',
+                scheduleTargetsRow
+                  ? 'border-amber-500/50 text-amber-600 hover:bg-amber-500/10 dark:text-amber-400'
+                  : 'border-border/60 text-muted-foreground hover:bg-accent/60 hover:text-foreground'
+              )}
+            >
+              <Timer className="h-2.5 w-2.5" />
+              Schedule
+            </button>
+          )}
           {row.status === 'stale' && onSignInAgain && (
             <button
               type="button"
@@ -326,6 +356,23 @@ export function UsageAccountRow({
             </button>
           )}
         </div>
+      )}
+
+      {scheduleTargetsRow && provider && schedule && (
+        <SchedulePendingSummary
+          schedule={schedule}
+          onCancel={() => cancelSchedule(provider)}
+          className="mt-1.5"
+        />
+      )}
+      {!scheduleTargetsRow && showScheduleForm && canSchedule && provider && (
+        <ScheduleSwitchForm
+          provider={provider}
+          accountId={row.id}
+          email={row.email}
+          onDone={() => setShowScheduleForm(false)}
+          className="mt-1.5 border-t border-border/40 pt-1.5"
+        />
       )}
 
       {row.isRefreshing && (
@@ -563,6 +610,7 @@ function ProviderUsagePopoverBody({ provider }: { provider: UsageProvider }): Re
           <UsageAccountRow
             key={row.id}
             row={row}
+            provider={provider}
             isSwitching={switchingAccountIds.has(row.id)}
             isLoginActive={isLoginActive}
             highlightActive={highlightActive}
@@ -633,6 +681,7 @@ export function ProviderUsageBlock({
     provider === 'anthropic' ? s.anthropicIsLoading : s.openaiIsLoading
   )
   const fetchEmail = useAccountStore((s) => s.fetchEmail)
+  const hasPendingSchedule = useAccountScheduleStore((s) => s.schedules[provider] !== undefined)
 
   // Which provider the popover shows. The bottom toggle can point it at a
   // different provider than the hovered trigger; each open snaps it back.
@@ -739,6 +788,12 @@ export function ProviderUsageBlock({
                 )}
               />
             </button>
+            {hasPendingSchedule && (
+              <Timer
+                className="h-2.5 w-2.5 shrink-0 text-amber-500"
+                aria-label="Account switch scheduled"
+              />
+            )}
             <div className="flex-1 space-y-0.5">
               <UsageRow
                 label="5h"
