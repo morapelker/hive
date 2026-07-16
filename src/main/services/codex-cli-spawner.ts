@@ -88,6 +88,12 @@ export function buildCodexCliPtySpawn(input: CodexCliPtySpawnInput): CodexCliPty
     args.push(...input.hookArgs)
   }
 
+  // Final positional arg = the initial prompt, which auto-submits. This is
+  // valid for BOTH a fresh launch (`codex [PROMPT]`) and a resume: the
+  // interactive `codex resume [SESSION_ID] [PROMPT]` explicitly accepts an
+  // "Optional user prompt to start the session" (verified via `codex resume
+  // --help` on the >= 0.134 binaries we gate on — the `exec resume` variant is
+  // a separate, non-interactive command we don't use).
   const prompt = input.pendingPrompt?.trim()
   if (prompt) {
     args.push(prompt)
