@@ -251,6 +251,39 @@ describe('useAccountScheduleStore', () => {
     expect(useAccountScheduleStore.getState().schedules.anthropic).toBeDefined()
   })
 
+  it('does not drop a replacement schedule created during an in-flight switch', async () => {
+    useAccountScheduleStore.getState().scheduleByTime('anthropic', 'acc-2', 'target@x.com', 1_000)
+
+    const pendingSwitch: { resolve?: (value: { success: boolean }) => void } = {}
+    request.mockImplementation(async (method: string) => {
+      if (method === 'accountOps.switchAccount')
+        return new Promise((resolve) => {
+          pendingSwitch.resolve = resolve
+        })
+      if (method === 'accountOps.listSaved') return []
+      if (method === 'accountOps.getClaudeEmail') return 'other@x.com'
+      if (method === 'usageOps.fetch') return { success: true, data: undefined }
+      return null
+    })
+
+    vi.setSystemTime(Date.now() + 2_000)
+    const checking = useAccountScheduleStore.getState().checkSchedules()
+    // Flush microtasks until the switch RPC is actually in flight.
+    while (!pendingSwitch.resolve) await Promise.resolve()
+    expect(switchCalls()).toHaveLength(1)
+
+    // User replaces the schedule while the switch is still awaiting.
+    useAccountScheduleStore.getState().scheduleByUsage('anthropic', 'acc-1', 'current@x.com', 70)
+
+    pendingSwitch.resolve({ success: true })
+    await checking
+
+    const remaining = useAccountScheduleStore.getState().schedules.anthropic
+    expect(remaining).toBeDefined()
+    expect(remaining?.mode).toBe('usage')
+    expect(remaining?.accountId).toBe('acc-1')
+  })
+
   it('replaces an existing schedule for the provider and supports cancel', () => {
     const store = useAccountScheduleStore.getState()
     store.scheduleByTime('anthropic', 'acc-2', 'target@x.com', 60_000)

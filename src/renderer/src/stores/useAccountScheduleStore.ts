@@ -186,10 +186,17 @@ export const useAccountScheduleStore = create<AccountScheduleState>()(
               continue
             }
 
-            // switchAccount toasts success/failure itself.
+            // switchAccount toasts success/failure itself. Both outcome paths
+            // guard on createdAt: the user may have replaced the schedule
+            // while the switch was in flight, and the replacement must survive.
             const switched = await useUsageStore.getState().switchAccount(schedule.accountId)
             if (switched) {
-              get().cancelSchedule(provider)
+              set((state) => {
+                const current = state.schedules[provider]
+                if (!current || current.createdAt !== schedule.createdAt) return state
+                const { [provider]: _, ...rest } = state.schedules
+                return { schedules: rest }
+              })
             } else {
               // Keep the schedule but back off so a persistent failure doesn't
               // retry (and toast) on every tick.
