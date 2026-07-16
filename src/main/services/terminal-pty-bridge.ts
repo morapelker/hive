@@ -108,9 +108,23 @@ const GROK_PLAN_BOOT_QUIET_MS = 700
 const GROK_PLAN_BOOT_CEILING_MS = 10_000
 const GROK_PLAN_PROMPT_AFTER_TOGGLE_MS = 300
 
+/**
+ * Which direction the mode toggles move grok before the prompt is pasted:
+ * 'enter-plan' cycles always-approve → normal → plan (two Shift+Tabs) to arm
+ * a fresh plan session; 'exit-plan' presses once (plan → always-approve) to
+ * leave a resume-restored plan session before a build prompt; null pastes
+ * without touching the mode.
+ */
+type GrokModeToggles = 'enter-plan' | 'exit-plan' | null
+
+const GROK_TOGGLE_KEYS: Record<Exclude<GrokModeToggles, null>, string> = {
+  'enter-plan': '\x1b[Z\x1b[Z',
+  'exit-plan': '\x1b[Z'
+}
+
 interface GrokPlanDelivery {
   prompt: string | null
-  toggles: boolean
+  toggles: GrokModeToggles
   quietTimer: NodeJS.Timeout | null
   ceilingTimer: NodeJS.Timeout
   removeData: () => void
@@ -132,7 +146,7 @@ function deliverGrokPlanActivation(sessionId: string): void {
 
   if (!ptyService.has(sessionId)) return
   if (entry.toggles) {
-    ptyService.write(sessionId, '\x1b[Z\x1b[Z')
+    ptyService.write(sessionId, GROK_TOGGLE_KEYS[entry.toggles])
   }
   const pending = entry.prompt
   if (!pending) return
@@ -150,7 +164,7 @@ function deliverGrokPlanActivation(sessionId: string): void {
 function scheduleGrokPlanActivation(
   sessionId: string,
   prompt: string | null,
-  opts: { toggles: boolean }
+  opts: { toggles: GrokModeToggles }
 ): void {
   const existing = grokPlanDeliveries.get(sessionId)
   if (existing) {
@@ -454,6 +468,9 @@ export async function createClaudeCliTerminal(
     ensureClaudeCliStatusSubscription()
 
     let spawn: ClaudeCliPtySpawn
+    // Grok resume state, computed in the branch below (null = fresh session).
+    let grokResumedPlanState: ReturnType<typeof getGrokPlanState> | null = null
+    let grokBuildNeedsPlanExit = false
     if (isGrok) {
       const grokBinary = resolveGrokBinaryPath()
       if (!grokBinary) {
@@ -470,13 +487,13 @@ export async function createClaudeCliTerminal(
           dbMode: session.mode
         })
       }
+      // Built promptless first: whether the prompt may ride as a spawn arg
+      // depends on grok's persisted plan state, which is read with this
+      // spawn's env (GROK_HOME can be Hive-configured).
       spawn = buildGrokCliPtySpawn({
         session,
         worktreePath,
-        // Plan-mode prompts are delivered post-boot by the activation
-        // scheduler below, never as a spawn arg.
-        pendingPrompt:
-          session.mode === 'plan' || session.mode === 'super-plan' ? null : pendingPrompt,
+        pendingPrompt: null,
         grokBinary,
         hookUrlBase: buildGrokCliHookUrlBase(port, sessionId),
         db
@@ -486,6 +503,23 @@ export async function createClaudeCliTerminal(
       // can point it away from ~/.grok) that relays payloads to the URL
       // carried in the spawn environment.
       ensureGrokHooksInstalled(spawn.env)
+
+      const planLike = session.mode === 'plan' || session.mode === 'super-plan'
+      grokResumedPlanState = session.claude_session_id
+        ? getGrokPlanState(worktreePath, session.claude_session_id, spawn.env)
+        : null
+      // A build-mode resume whose grok session persisted an ACTIVE plan state
+      // (the Hive mode flipped while the PTY was down, so the Shift+Tab sync
+      // had nothing to write into) must toggle out of plan before the prompt,
+      // via the scheduler below — never as a spawn arg that would land as
+      // another planning turn.
+      grokBuildNeedsPlanExit = !planLike && grokResumedPlanState === 'active'
+      if (!planLike && !grokBuildNeedsPlanExit && pendingPrompt?.trim()) {
+        // Normal build spawn: restore the positional prompt (appending works
+        // for the win32 cmd.exe wrap too — the prompt stays the last arg of
+        // the wrapped grok invocation).
+        spawn.args.push(pendingPrompt.trim())
+      }
     } else {
       const claudeBinary = resolveClaudeBinaryPath()
       if (!claudeBinary) {
@@ -565,17 +599,20 @@ export async function createClaudeCliTerminal(
       // never armed — or was approved before the Hive mode flipped back to
       // plan while the PTY was down — still needs the activation. When the
       // state can't be read, err on not toggling.
-      const resumedPlanState = session.claude_session_id
-        ? getGrokPlanState(worktreePath, session.claude_session_id, spawn.env)
-        : null
       scheduleGrokPlanActivation(sessionId, pendingPrompt, {
-        toggles: resumedPlanState === null ? true : resumedPlanState === 'inactive'
+        toggles:
+          grokResumedPlanState === null || grokResumedPlanState === 'inactive' ? 'enter-plan' : null
       })
+    } else if (grokBuildNeedsPlanExit && !alreadyExists) {
+      // Build-mode resume of a grok session whose persisted plan state is
+      // still Active: leave plan (one Shift+Tab, plan → always-approve)
+      // before delivering the prompt, or it would run as a planning turn.
+      scheduleGrokPlanActivation(sessionId, pendingPrompt, { toggles: 'exit-plan' })
     } else if (alreadyExists && pendingPrompt) {
-      if (grokPlanSession && grokPlanDeliveries.has(sessionId)) {
+      if (isGrok && grokPlanDeliveries.has(sessionId)) {
         // The racing promptless call already scheduled the activation —
         // merge the prompt into it rather than pasting into a booting TUI.
-        scheduleGrokPlanActivation(sessionId, pendingPrompt, { toggles: false })
+        scheduleGrokPlanActivation(sessionId, pendingPrompt, { toggles: null })
         log.info('Grok plan activation pending; merged prompt into it', { sessionId })
       } else {
         // ptyService.create reused the live PTY, so the spawn args (and the
