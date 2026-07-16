@@ -140,18 +140,21 @@ describe('translateCodexHook', () => {
     expect(buildHook?.permission_mode).toBeUndefined()
   })
 
-  it("translates the plan popup's canned prompts into PostToolUse(ExitPlanMode)", () => {
+  it("translates the 'Implement the plan.' approval into PostToolUse(ExitPlanMode) — only in plan mode", () => {
     setHiveMode('plan')
-    for (const prompt of [
-      'Implement the plan.',
-      'A previous agent produced the plan below to accomplish the task…'
-    ]) {
-      const hook = translateCodexHook(HIVE_ID, {
-        hook_event_name: 'UserPromptSubmit',
-        prompt
-      })
-      expect(hook).toMatchObject({ hook_event_name: 'PostToolUse', tool_name: 'ExitPlanMode' })
-    }
+    expect(
+      translateCodexHook(HIVE_ID, { hook_event_name: 'UserPromptSubmit', prompt: 'Implement the plan.' })
+    ).toMatchObject({ hook_event_name: 'PostToolUse', tool_name: 'ExitPlanMode' })
+  })
+
+  it("does NOT convert a literal 'Implement the plan.' typed in build mode (no spurious plan-approved event)", () => {
+    setHiveMode('build')
+    const hook = translateCodexHook(HIVE_ID, {
+      hook_event_name: 'UserPromptSubmit',
+      prompt: 'Implement the plan.'
+    })
+    expect(hook).toMatchObject({ hook_event_name: 'UserPromptSubmit', prompt: 'Implement the plan.' })
+    expect(hook?.permission_mode).toBeUndefined()
   })
 
   it('latches plan_ready from a plan-mode Stop only when a <proposed_plan> block is present', () => {

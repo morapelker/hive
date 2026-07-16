@@ -55,10 +55,10 @@ const log = createLogger({ component: 'CodexCliHooks' })
  */
 export const CODEX_QUESTION_TOOL = 'request_user_input'
 
-// Canned prompts submitted by the codex TUI's "Implement this plan?" popup
-// (plan_implementation.rs) — the machine-readable "plan approved" signal.
+// The implement follow-up Hive sends to approve a plan (buildSdkPlanImplementationPrompt
+// + the hook-server auto-approve). Recognized only while the session is still
+// plan-like (see below), so it's the "plan approved → go to build" signal.
 const CODEX_PLAN_IMPLEMENT_MESSAGE = 'Implement the plan.'
-const CODEX_PLAN_CLEAR_CONTEXT_PREFIX = 'A previous agent produced the plan below'
 
 const TOOL_MAP: Record<string, string> = {
   [CODEX_QUESTION_TOOL]: 'AskUserQuestion'
@@ -199,12 +199,7 @@ function isPlanLikeHiveMode(hiveSessionId: string): boolean {
 }
 
 function isCodexPlanApprovalPrompt(prompt: unknown): boolean {
-  if (typeof prompt !== 'string') return false
-  const trimmed = prompt.trim()
-  return (
-    trimmed === CODEX_PLAN_IMPLEMENT_MESSAGE ||
-    trimmed.startsWith(CODEX_PLAN_CLEAR_CONTEXT_PREFIX)
-  )
+  return typeof prompt === 'string' && prompt.trim() === CODEX_PLAN_IMPLEMENT_MESSAGE
 }
 
 /**
@@ -256,12 +251,18 @@ export function translateCodexHook(
       return { hook_event_name: 'SessionStart', transcript_path: transcriptPath }
 
     case 'UserPromptSubmit': {
-      if (isCodexPlanApprovalPrompt(raw.prompt)) {
-        // The "Implement this plan?" popup's canned follow-up: codex switched
-        // itself to Default mode and is implementing. Synthesized
-        // PostToolUse(ExitPlanMode) releases the plan_ready latch and drives
-        // the renderer's existing "plan approved" handling (session → build,
-        // no Shift+Tab sync).
+      // Codex never reports plan mode itself; plan-driven handling is keyed off
+      // Hive's persisted session mode.
+      const planLike = isPlanLikeHiveMode(hiveSessionId)
+      // The "Implement the plan." follow-up is the plan-approval signal ONLY
+      // while the session is still plan-like (auto-approve fires before the
+      // renderer flips the mode; the manual implement path flips to build
+      // first, so it falls through to a normal working prompt here). Gating on
+      // planLike keeps a literal "Implement the plan." typed in a build-mode
+      // session from emitting a spurious plan-approved event.
+      if (planLike && isCodexPlanApprovalPrompt(raw.prompt)) {
+        // Synthesized PostToolUse(ExitPlanMode) releases the plan_ready latch
+        // and drives the renderer's "plan approved → build" handling.
         return {
           hook_event_name: 'PostToolUse',
           tool_name: 'ExitPlanMode',
@@ -273,9 +274,7 @@ export function translateCodexHook(
         prompt: raw.prompt,
         transcript_path: transcriptPath
       }
-      // Codex never reports plan mode itself; UserPromptSubmit→planning is
-      // driven off Hive's persisted session mode instead.
-      if (isPlanLikeHiveMode(hiveSessionId)) {
+      if (planLike) {
         hook.permission_mode = 'plan'
       }
       return hook
