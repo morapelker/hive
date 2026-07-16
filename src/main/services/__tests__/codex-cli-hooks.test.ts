@@ -55,10 +55,14 @@ describe('buildCodexCliHookArgs', () => {
       'hooks.Stop',
       'hooks.UserPromptSubmit'
     ])
-    // Each override curls the payload to the per-session codex-hook route.
+    // Each override curls the payload to the per-session codex-hook route, with
+    // both a POSIX command and a cmd.exe-compatible commandWindows override.
     for (const override of overrides) {
       expect(override).toContain(`http://127.0.0.1:4242/codex-hook/${HIVE_ID}/`)
       expect(override).toContain("type=\"command\"")
+      expect(override).toContain('commandWindows=')
+      expect(override).toContain('2>nul') // Windows null redirect + bare echo
+      expect(override).toContain("|| echo {}")
     }
     // Questions are the only PreToolUse we need.
     const preToolUse = overrides.find((o) => o.startsWith('hooks.PreToolUse'))

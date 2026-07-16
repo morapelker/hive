@@ -89,14 +89,25 @@ function codexHookUrl(port: number, hiveSessionId: string, path: string): string
 }
 
 /**
- * One hook command. Runs via `sh -c`; codex writes the payload JSON to stdin
- * and parses stdout for a decision. The hook server always replies `{}` ("no
- * verdict"); on a bridge outage (server down / curl timeout) we must STILL emit
- * a valid `{}` — codex's Stop hook treats empty stdout on exit 0 as invalid, so
- * a `|| echo '{}'` fallback keeps a transient outage from erroring every turn.
+ * The POSIX hook command. Codex runs it via `sh -c`; it writes the payload JSON
+ * to stdin and parses stdout for a decision. The hook server always replies
+ * `{}` ("no verdict"); on a bridge outage (server down / curl timeout) we must
+ * STILL emit a valid `{}` — codex's Stop hook treats empty stdout on exit 0 as
+ * invalid, so the `|| echo '{}'` fallback keeps a transient outage from
+ * erroring every turn.
  */
-function curlHookCommand(url: string, maxTimeSeconds: number): string {
+function curlHookCommandPosix(url: string, maxTimeSeconds: number): string {
   return `curl -s -m ${maxTimeSeconds} -X POST -H 'Content-Type: application/json' --data-binary @- '${url}' 2>/dev/null || echo '{}'`
+}
+
+/**
+ * The Windows hook command. Codex runs it via `cmd.exe /C`, so it needs
+ * double-quoted args, `2>nul`, and a bare `echo {}` (cmd.exe's echo keeps the
+ * quotes of `echo '{}'`). Supplied via codex's `commandWindows` override so the
+ * hooks still POST after the .cmd/.bat shim is wrapped for the PTY.
+ */
+function curlHookCommandWindows(url: string, maxTimeSeconds: number): string {
+  return `curl -s -m ${maxTimeSeconds} -X POST -H "Content-Type: application/json" --data-binary @- "${url}" 2>nul || echo {}`
 }
 
 function hookOverride(
@@ -104,11 +115,13 @@ function hookOverride(
   url: string,
   opts: { timeoutSeconds: number; matcher?: string }
 ): string[] {
-  const command = curlHookCommand(url, Math.max(5, opts.timeoutSeconds - 10))
+  const maxTime = Math.max(5, opts.timeoutSeconds - 10)
+  const command = curlHookCommandPosix(url, maxTime)
+  const commandWindows = curlHookCommandWindows(url, maxTime)
   const matcher = opts.matcher ? `matcher="${opts.matcher}",` : ''
-  // TOML inline value; the command is a triple-quoted literal string so no
-  // escaping is needed inside (it must simply never contain three quotes).
-  const value = `hooks.${event}=[{${matcher}hooks=[{type="command",command='''${command}''',timeout=${opts.timeoutSeconds}}]}]`
+  // TOML inline value; the commands are triple-quoted literal strings so no
+  // escaping is needed inside (they must simply never contain three quotes).
+  const value = `hooks.${event}=[{${matcher}hooks=[{type="command",command='''${command}''',commandWindows='''${commandWindows}''',timeout=${opts.timeoutSeconds}}]}]`
   return ['-c', value]
 }
 
