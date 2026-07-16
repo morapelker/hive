@@ -35,7 +35,18 @@ afterEach(() => {
 })
 
 describe('buildGrokHookFileContent', () => {
-  it('registers every event the pipeline consumes, with curl relays gated on HIVE_GROK_HOOK_URL', () => {
+  // hookCommand branches on process.platform at call time; stub it so both
+  // relay variants are exercised deterministically on any CI host.
+  const realPlatform = process.platform
+  const setPlatform = (value: NodeJS.Platform): void => {
+    Object.defineProperty(process, 'platform', { value, configurable: true })
+  }
+  afterEach(() => {
+    setPlatform(realPlatform)
+  })
+
+  it('registers every event the pipeline consumes, with POSIX curl relays gated on HIVE_GROK_HOOK_URL', () => {
+    setPlatform('darwin')
     const parsed = JSON.parse(buildGrokHookFileContent()) as {
       hooks: Record<string, Array<{ matcher?: string; hooks: Array<{ command: string }> }>>
     }
@@ -60,6 +71,22 @@ describe('buildGrokHookFileContent', () => {
       expect(command).not.toMatch(/\$HIVE_GROK_HOOK_URL/)
     }
   })
+
+  it('emits cmd.exe relays with runtime %VAR% expansion on win32', () => {
+    setPlatform('win32')
+    const parsed = JSON.parse(buildGrokHookFileContent()) as {
+      hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>>
+    }
+    for (const [, entries] of Object.entries(parsed.hooks)) {
+      const command = entries[0].hooks[0].command
+      expect(command).toContain('if not defined HIVE_GROK_HOOK_URL')
+      expect(command).toContain('"%HIVE_GROK_HOOK_URL%/')
+      expect(command).toContain('curl')
+      // POSIX-isms must not leak into the cmd variant.
+      expect(command).not.toContain('printenv')
+      expect(command).not.toMatch(/\$\{?HIVE_GROK_HOOK_URL/)
+    }
+  })
 })
 
 describe('getGrokPlanState', () => {
@@ -81,6 +108,22 @@ describe('getGrokPlanState', () => {
 
     // Session dir we can't see (encoding drift, relocated home) → unknown.
     expect(getGrokPlanState(worktree, CHILD, spawnEnv)).toBe('unknown')
+
+    rmSync(home, { recursive: true, force: true })
+  })
+
+  it("resolves session dirs whose cwd contains !'()* (grok encodes beyond encodeURIComponent)", () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'grok-home-test-'))
+    const spawnEnv = { GROK_HOME: home }
+    const worktree = "/repo/it's (v2)!*"
+    // Grok writes the dir name percent-encoded to RFC3986 unreserved chars
+    // only; encodeURIComponent alone would leave !'()* bare and miss the dir.
+    const encoded = '%2Frepo%2Fit%27s%20%28v2%29%21%2A'
+    const dir = path.join(home, 'sessions', encoded, ROOT)
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(path.join(dir, 'plan_mode.json'), JSON.stringify({ state: 'Active' }))
+
+    expect(getGrokPlanState(worktree, ROOT, spawnEnv)).toBe('active')
 
     rmSync(home, { recursive: true, force: true })
   })
