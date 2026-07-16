@@ -54,6 +54,12 @@ const flushScheduled = new Set<string>()
 const claudeWatchers = new Map<string, ClaudeSessionWatchHandle>()
 const claudePlanFollowupWatchers = new Map<string, ClaudePlanFollowupWatchHandle>()
 const claudeCliSessions = new Set<string>()
+// Sessions eligible for OSC terminal-title auto-naming. Only claude-code-cli:
+// claude emits a task-summary title, whereas codex's title is a configurable
+// status line (app name · project · branch · tokens), which would make a poor
+// session name / branch rename. So codex-cli is deliberately excluded from the
+// title-parse path (not merely dropped at persist time).
+const claudeCliTitleSessions = new Set<string>()
 const claudeCliWorktreeBasenames = new Map<string, string>()
 const claudeCliTranscriptSources = new Map<
   string,
@@ -199,6 +205,7 @@ export function destroyNodePtyTerminal(terminalId: string): void {
   clearClaudeCliSubagentTracking(terminalId)
   clearCodexSessionTracking(terminalId)
   claudeCliSessions.delete(terminalId)
+  claudeCliTitleSessions.delete(terminalId)
   claudeCliWorktreeBasenames.delete(terminalId)
   claudeCliTranscriptSources.delete(terminalId)
   claudeCliLastStatus.delete(terminalId)
@@ -218,7 +225,7 @@ function attachNodePtyListeners(terminalId: string): void {
     const existing = dataBuffers.get(terminalId)
     dataBuffers.set(terminalId, existing ? existing + data : data)
 
-    if (claudeCliSessions.has(terminalId)) {
+    if (claudeCliTitleSessions.has(terminalId)) {
       const title = processClaudeCliPtyData(terminalId, data, {
         worktreeBasename: claudeCliWorktreeBasenames.get(terminalId)
       })
@@ -274,6 +281,7 @@ function attachNodePtyListeners(terminalId: string): void {
       })
       claudeCliSessions.delete(terminalId)
     }
+    claudeCliTitleSessions.delete(terminalId)
     claudeCliWorktreeBasenames.delete(terminalId)
     claudeCliTranscriptSources.delete(terminalId)
     claudeCliLastStatus.delete(terminalId)
@@ -434,6 +442,13 @@ export async function createClaudeCliTerminal(
       })
     }
     claudeCliSessions.add(sessionId)
+    // Only claude-code-cli emits summary titles worth persisting (see
+    // claudeCliTitleSessions); codex-cli is excluded from title parsing.
+    if (isCodex) {
+      claudeCliTitleSessions.delete(sessionId)
+    } else {
+      claudeCliTitleSessions.add(sessionId)
+    }
     // A restarted session must never inherit a stale interaction latch.
     clearClaudeCliInteractions(sessionId)
     // ...nor a stale subagent deferral/pending-notification set, which could
@@ -484,6 +499,7 @@ export function cleanupTerminals(): void {
   }
   claudePlanFollowupWatchers.clear()
   claudeCliSessions.clear()
+  claudeCliTitleSessions.clear()
   claudeCliWorktreeBasenames.clear()
   claudeCliTranscriptSources.clear()
   claudeCliLastStatus.clear()
