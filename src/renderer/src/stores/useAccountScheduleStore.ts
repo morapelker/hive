@@ -148,6 +148,24 @@ export const useAccountScheduleStore = create<AccountScheduleState>()(
             continue
           }
 
+          // Target removed while still pending (e.g. via the remove-account
+          // UI): cancel right away rather than at due time — a usage schedule
+          // that never fires would otherwise linger with no row to cancel it
+          // from. An empty list is ambiguous (may simply not be loaded yet),
+          // so only a non-empty list is treated as authoritative here; the
+          // empty case is resolved by the reload below once the schedule is due.
+          const knownAccounts = useUsageStore.getState().savedAccounts[provider]
+          if (
+            knownAccounts.length > 0 &&
+            !knownAccounts.some((a) => a.id === schedule.accountId)
+          ) {
+            get().cancelSchedule(provider)
+            toast.error(
+              `Scheduled switch canceled: ${schedule.email ?? 'account'} is no longer saved`
+            )
+            continue
+          }
+
           let due = false
           if (schedule.mode === 'time') {
             due = schedule.executeAt !== null && Date.now() >= schedule.executeAt

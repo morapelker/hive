@@ -66,12 +66,14 @@ export function useAccountScheduleRunner(): void {
     tick()
     const interval = setInterval(tick, CHECK_INTERVAL_MS)
 
-    // Evaluate usage-based schedules the moment fresh usage data lands instead
-    // of waiting for the next tick.
+    // Evaluate schedules the moment fresh usage data or account-list changes
+    // land (e.g. the target of a pending schedule was removed) instead of
+    // waiting for the next tick.
     const unsubscribe = useUsageStore.subscribe((state, prevState) => {
       if (
         state.anthropicUsage !== prevState.anthropicUsage ||
-        state.openaiUsage !== prevState.openaiUsage
+        state.openaiUsage !== prevState.openaiUsage ||
+        state.savedAccounts !== prevState.savedAccounts
       ) {
         useAccountScheduleStore
           .getState()

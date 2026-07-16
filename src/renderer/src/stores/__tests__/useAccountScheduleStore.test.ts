@@ -190,7 +190,10 @@ describe('useAccountScheduleStore', () => {
     expect(useAccountScheduleStore.getState().schedules.anthropic).toBeUndefined()
   })
 
-  it('cancels with an error toast when the target account no longer exists', async () => {
+  it('cancels with an error toast when the target account no longer exists at due time', async () => {
+    // Empty list = "maybe not loaded yet", so the pre-due prune stays out of
+    // the way and the due-time reload path decides.
+    useUsageStore.setState({ savedAccounts: { anthropic: [], openai: [] } })
     useAccountScheduleStore.getState().scheduleByTime('anthropic', 'gone-id', 'gone@x.com', 1_000)
 
     vi.setSystemTime(Date.now() + 2_000)
@@ -198,6 +201,22 @@ describe('useAccountScheduleStore', () => {
 
     expect(switchCalls()).toHaveLength(0)
     expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('gone@x.com'))
+    expect(useAccountScheduleStore.getState().schedules.anthropic).toBeUndefined()
+  })
+
+  it('cancels a pending (not yet due) schedule once its target vanishes from the loaded accounts', async () => {
+    useAccountScheduleStore
+      .getState()
+      .scheduleByTime('anthropic', 'acc-2', 'target@x.com', 60 * 60_000)
+
+    // Still due in an hour, but the target gets removed from the account list.
+    useUsageStore.setState({
+      savedAccounts: { anthropic: [makeAccount('acc-1', 'current@x.com')], openai: [] }
+    })
+    await useAccountScheduleStore.getState().checkSchedules()
+
+    expect(switchCalls()).toHaveLength(0)
+    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('target@x.com'))
     expect(useAccountScheduleStore.getState().schedules.anthropic).toBeUndefined()
   })
 
@@ -237,6 +256,7 @@ describe('useAccountScheduleStore', () => {
   })
 
   it('keeps the schedule when the saved-accounts reload fails', async () => {
+    useUsageStore.setState({ savedAccounts: { anthropic: [], openai: [] } })
     useAccountScheduleStore.getState().scheduleByTime('anthropic', 'gone-id', 'gone@x.com', 1_000)
     request.mockImplementation(async (method: string) => {
       if (method === 'accountOps.listSaved') throw new Error('rpc down')
@@ -285,7 +305,8 @@ describe('useAccountScheduleStore', () => {
   })
 
   it('does not switch when the schedule is canceled during an in-flight account reload', async () => {
-    // Target not in the seeded savedAccounts, forcing the reload path.
+    // Empty list forces the due-time reload path (pre-due prune skips it).
+    useUsageStore.setState({ savedAccounts: { anthropic: [], openai: [] } })
     useAccountScheduleStore
       .getState()
       .scheduleByTime('anthropic', 'acc-new', 'new@x.com', 1_000)
