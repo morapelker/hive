@@ -86,6 +86,22 @@ function getModeDefaultKey(mode: 'build' | 'plan' | 'super-plan' | undefined): '
   return mode === 'plan' || mode === 'super-plan' ? 'plan' : 'build'
 }
 
+/**
+ * Grok runs only grok-family models: a foreign default leaking in from the
+ * legacy global selectedModel or a worktree's last-used model would be
+ * stamped on the session/badge while buildGrokCliPtySpawn drops it and the
+ * CLI runs its own default — discard it so the grok catalog/fallback wins.
+ */
+function dropForeignModelForSdk(
+  model: SelectedModel | null,
+  agentSdk: HandoffAgentSdk
+): SelectedModel | null {
+  if (agentSdk === 'grok-cli' && model && !model.modelID.toLowerCase().startsWith('grok')) {
+    return null
+  }
+  return model
+}
+
 function buildModelSelection(
   model: SelectedModel | null,
   agentSdk: HandoffAgentSdk
@@ -159,13 +175,7 @@ function resolveSessionSelection(opts: {
     model = getWorktreeFallbackModel(opts.worktreeId)
   }
 
-  // Grok runs only grok-family models: a foreign default leaking in from the
-  // legacy global selectedModel or the worktree's last-used model would be
-  // stamped on the session/badge while buildGrokCliPtySpawn drops it and the
-  // CLI runs its own default — discard it so the grok catalog/fallback wins.
-  if (resolvedSdk === 'grok-cli' && model && !model.modelID.toLowerCase().startsWith('grok')) {
-    model = null
-  }
+  model = dropForeignModelForSdk(model, resolvedSdk)
 
   const resolvedModel = buildModelSelection(model, resolvedSdk)
   const modelInfo = getModelInfoFromCache(resolvedSdk, resolvedModel)
@@ -318,7 +328,10 @@ export function resolveSessionCreationSelection(opts: {
 
   if (opts.agentSdkOverride) {
     const resolvedAgentSdk = normalizeHandoffSdk(opts.agentSdkOverride)
-    const model = resolveModelForSdk(resolvedAgentSdk, settings)
+    const model = dropForeignModelForSdk(
+      resolveModelForSdk(resolvedAgentSdk, settings),
+      resolvedAgentSdk
+    )
     return {
       agentSdk: resolvedAgentSdk,
       model: buildModelSelection(model, resolvedAgentSdk)

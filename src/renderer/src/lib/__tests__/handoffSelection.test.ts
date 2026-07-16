@@ -140,6 +140,15 @@ describe('resolveSessionCreationSelection', () => {
       providerID: 'xai',
       modelID: 'grok-4.5'
     })
+
+    // The explicit-SDK create path (session-tab context menu) resolves through
+    // a different branch — it must apply the same grok-family filter.
+    const explicit = resolveSessionCreationSelection({ agentSdkOverride: 'grok-cli' })
+    expect(explicit.agentSdk).toBe('grok-cli')
+    expect(explicit.model).toMatchObject({
+      providerID: 'xai',
+      modelID: 'grok-4.5'
+    })
   })
 })
 
