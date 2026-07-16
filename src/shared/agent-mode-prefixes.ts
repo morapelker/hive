@@ -14,13 +14,26 @@ export const CODEX_PROPOSED_PLAN_FINALIZATION =
   'When your plan is complete, output it wrapped in `<proposed_plan>` and `</proposed_plan>` tags, with the implementation steps as markdown inside the block. Producing that block IS the signal that you are done — do NOT ask "should I proceed?" and do NOT implement anything after it.\n\n'
 
 /**
+ * The read-only restraint every codex-cli planning prefix must carry. codex-cli
+ * always spawns in yolo mode (`--dangerously-bypass-approvals-and-sandbox`, no
+ * sandbox), so — unlike the `codex` app-server SDK, which enforces plan
+ * restraint out-of-band via its collaboration mode — the prompt text is the
+ * ONLY thing stopping the agent from mutating the worktree while the UI still
+ * treats the turn as planning. Shared by the plain plan and super-plan prefixes
+ * so they can't drift.
+ */
+export const CODEX_READ_ONLY_RESTRAINT =
+  'Do NOT modify files or run mutating commands — only read, explore, search, and reason about the codebase. '
+
+/**
  * Plan-mode prompt prefix for the codex-cli terminal provider. Mirrors the
  * restraint + finalization rules of the SDK's plan collaboration instructions,
  * so codex-cli asks for a plan the codex way (a `<proposed_plan>` block) rather
  * than the claude way (`--permission-mode plan` + an ExitPlanMode tool call).
  */
 export const CODEX_PLAN_MODE_PREFIX =
-  '[Mode: Plan] Investigate and design an approach. Do NOT modify files or run mutating commands — only read, explore, search, and reason about the codebase. ' +
+  '[Mode: Plan] Investigate and design an approach. ' +
+  CODEX_READ_ONLY_RESTRAINT +
   CODEX_PROPOSED_PLAN_FINALIZATION
 
 export const SUPER_PLAN_MODE_PREFIX =
@@ -35,14 +48,18 @@ export const CODEX_SUPER_PLAN_MODE_PREFIX =
   'Interview me relentlessly about every aspect of this plan until we reach a shared understanding. Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer.\n\nIf a question can be answered by exploring the codebase, explore the codebase instead.\nAll questions should be asked using the request_user_input tool if possible\n\n'
 
 /**
- * codex-cli's super-plan prefix: the same interview instruction plus the
- * `<proposed_plan>` finalization (codex-cli has no developer-instruction
- * channel, so the finalization rides the prompt). This is a NEW constant, so
+ * codex-cli's super-plan prefix: the interview instruction, the same read-only
+ * restraint the plain codex-cli plan prefix carries, plus the `<proposed_plan>`
+ * finalization (codex-cli has no developer-instruction channel, so both ride
+ * the prompt). The restraint is essential here because codex-cli super-plan
+ * launches still spawn in yolo mode — without it the interview could mutate the
+ * worktree while the ticket is treated as planning. This is a NEW constant, so
  * there are no pre-existing persisted messages to break; the strip list picks
- * it up alongside the plain codex prefix.
+ * it up alongside the plain codex prefix (it still starts with
+ * CODEX_SUPER_PLAN_MODE_PREFIX, so longest-first stripping is unaffected).
  */
 export const CODEX_CLI_SUPER_PLAN_MODE_PREFIX =
-  CODEX_SUPER_PLAN_MODE_PREFIX + CODEX_PROPOSED_PLAN_FINALIZATION
+  CODEX_SUPER_PLAN_MODE_PREFIX + CODEX_READ_ONLY_RESTRAINT + CODEX_PROPOSED_PLAN_FINALIZATION
 
 // Header that introduces the raw plan in a plan→implementor handoff prompt. Shared so the
 // renderer (which writes it in buildHandoffPrompt) and the main process (which detects and

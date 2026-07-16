@@ -35,6 +35,16 @@ describe('codex-cli plan convention', () => {
     expect(prefix).not.toContain('<proposed_plan>')
   })
 
+  it('carries the read-only restraint in every codex-cli planning prefix (yolo has no other guard)', () => {
+    // codex-cli spawns in yolo mode, so the prompt is the only thing keeping a
+    // planning turn from mutating the worktree.
+    expect(getPlanModePrefix('codex-cli')).toContain('Do NOT modify files')
+    expect(getSuperPlanModePrefix('codex-cli')).toContain('Do NOT modify files')
+    // The SDK codex enforces plan restraint out-of-band (collaboration mode), so
+    // its super-plan prompt deliberately does NOT carry the text restraint.
+    expect(getSuperPlanModePrefix('codex')).not.toContain('Do NOT modify files')
+  })
+
   it('implements the codex way — a bare "Implement the plan." (no re-sent plan markdown)', () => {
     expect(buildSdkPlanImplementationPrompt('codex-cli', '# some plan\n- a\n- b')).toBe(
       'Implement the plan.'
