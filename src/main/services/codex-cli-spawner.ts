@@ -1,6 +1,7 @@
 import { extname } from 'node:path'
 import type { Session } from '../db/types'
 import { getUserEnvironmentVariables } from './env-vars'
+import { CODEX_REASONING_EFFORTS } from './codex-models'
 import type { DatabaseService } from '../db/database'
 
 /**
@@ -57,10 +58,15 @@ export interface CodexCliPtySpawn {
   env: Record<string, string>
 }
 
-// Must match the canonical Codex `ReasoningEffort` enum
-// (src/shared/codex-schemas/ReasoningEffort.ts) — codex rejects anything else
-// passed to `-c model_reasoning_effort=...` and would fall back to its default.
-const VALID_EFFORTS = new Set(['none', 'minimal', 'low', 'medium', 'high', 'xhigh'])
+// Efforts codex accepts for `-c model_reasoning_effort=...`. codex-cli shares
+// codex's model catalog, so a codex-cli model_variant is always one of the
+// catalog's wire values (CODEX_REASONING_EFFORTS — includes gpt-5.6's `max`/
+// `ultra`, which the generated ReasoningEffort.ts schema is simply stale on; the
+// working SDK codex passes these straight through unfiltered). `none`/`minimal`
+// are added from that schema for completeness. Anything else — notably
+// claude-cli's `ultracode` — normalizes to null so we omit the flag and let
+// codex pick its default rather than passing a value codex would reject.
+const VALID_EFFORTS = new Set<string>([...CODEX_REASONING_EFFORTS, 'none', 'minimal'])
 
 export function normalizeCodexCliEffort(variant: string | null | undefined): string | null {
   if (!variant) return null

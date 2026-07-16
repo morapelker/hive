@@ -32,19 +32,21 @@ function makeSession(overrides: Partial<Session> = {}): Session {
 }
 
 describe('normalizeCodexCliEffort', () => {
-  it('accepts every canonical ReasoningEffort value (case-insensitively)', () => {
-    for (const effort of ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']) {
+  it('accepts every codex catalog effort plus the schema low-tier values (case-insensitively)', () => {
+    for (const effort of ['ultra', 'max', 'xhigh', 'high', 'medium', 'low', 'none', 'minimal']) {
       expect(normalizeCodexCliEffort(effort)).toBe(effort)
       expect(normalizeCodexCliEffort(effort.toUpperCase())).toBe(effort)
     }
   })
 
-  it('rejects values outside the Codex effort enum', () => {
-    // `ultra`/`max` are not part of the codex schema — passing them would make
-    // codex fall back to its default effort, so they must normalize to null.
-    expect(normalizeCodexCliEffort('ultra')).toBeNull()
-    expect(normalizeCodexCliEffort('max')).toBeNull()
+  it('passes gpt-5.6 max/ultra through (codex wire values, even though the generated schema is stale)', () => {
+    expect(normalizeCodexCliEffort('max')).toBe('max')
+    expect(normalizeCodexCliEffort('ultra')).toBe('ultra')
+  })
+
+  it('rejects non-codex efforts (e.g. claude-cli ultracode) and empty input', () => {
     expect(normalizeCodexCliEffort('ultracode')).toBeNull()
+    expect(normalizeCodexCliEffort('turbo')).toBeNull()
     expect(normalizeCodexCliEffort(null)).toBeNull()
     expect(normalizeCodexCliEffort(undefined)).toBeNull()
   })
