@@ -152,14 +152,19 @@ export function resolveBoardChatAgentSdk(
  * which in Hive are only reachable through the grok-cli catalog and cannot
  * be served by the streaming implementers.
  */
-function coerceBoardChatModel(model: SelectedModel | null | undefined): SelectedModel | null {
+function coerceBoardChatModel(
+  model: SelectedModel | null | undefined,
+  opts?: { trustedGrokProvenance?: boolean }
+): SelectedModel | null {
   if (!model) return null
   if (model.agentSdk === 'grok-cli') return null
   // Unstamped grok models are ambiguous provenance (the legacy global
-  // selectedModel) and skipped; an explicit non-grok stamp is trusted —
-  // OpenCode's own catalog may expose xAI models.
+  // selectedModel) and skipped; an explicit non-grok stamp — or a per-SDK
+  // map hit flagged by the caller — is trusted: OpenCode's own catalog may
+  // expose xAI models the user selected FOR opencode.
   if (
     !model.agentSdk &&
+    !opts?.trustedGrokProvenance &&
     (model.providerID === 'xai' || model.modelID.toLowerCase().startsWith('grok'))
   ) {
     return null
@@ -176,13 +181,20 @@ export function resolveBoardChatDefaultModel(
   agentSdkOverride?: 'opencode' | 'claude-code' | 'codex' | null
 ): SelectedModel | null {
   const agentSdk = agentSdkOverride ?? resolveBoardChatAgentSdk(settings.defaultAgentSdk)
-  const candidates = [
-    settings.getModelForMode('ask'),
-    resolveModelForSdk(agentSdk, settings),
-    settings.selectedModel
+  // A resolveModelForSdk hit backed by the per-SDK map is trusted provenance
+  // even when unstamped (the map only falls back to the legacy global when
+  // it is empty, so a non-null result with an entry for this SDK IS that
+  // entry — a model the user selected FOR this SDK).
+  const perSdkTrusted = !!settings.selectedModelByProvider?.[agentSdk]
+  const candidates: Array<{ model: SelectedModel | null | undefined; trusted: boolean }> = [
+    { model: settings.getModelForMode('ask'), trusted: false },
+    { model: resolveModelForSdk(agentSdk, settings), trusted: perSdkTrusted },
+    { model: settings.selectedModel, trusted: false }
   ]
   for (const candidate of candidates) {
-    const usable = coerceBoardChatModel(candidate)
+    const usable = coerceBoardChatModel(candidate.model, {
+      trustedGrokProvenance: candidate.trusted
+    })
     if (usable) return usable
   }
   return null
