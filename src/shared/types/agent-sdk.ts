@@ -71,6 +71,15 @@ export function isClaudeFamily(sdk: MaybeSdk): boolean {
   return sdk === 'claude-code' || sdk === 'claude-code-cli'
 }
 
+/**
+ * Either Codex variant — the app-server SDK `codex` or the terminal-backed
+ * `codex-cli`. Both bill to an OpenAI account, so usage/telemetry attribution
+ * should treat them the same.
+ */
+export function isCodexFamily(sdk: MaybeSdk): boolean {
+  return sdk === 'codex' || sdk === 'codex-cli'
+}
+
 /** SDKs whose CLI understands the `/goal` prompt prefix (persistent goal mode). */
 export function supportsGoalMode(sdk: MaybeSdk): boolean {
   return sdk === 'codex' || sdk === 'claude-code-cli' || sdk === 'codex-cli'
