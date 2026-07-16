@@ -59,17 +59,32 @@ export async function startBackgroundSessionPrompt(opts: {
 }): Promise<void> {
   const session = findSessionModelSource(opts.sessionId)
   if (isCliAgentSdk(session?.agent_sdk)) {
-    // Deliver straight to the live PTY if the session is already running;
-    // otherwise queue it so the next spawn picks it up as the prompt argument
-    // (createClaudeTerminal -> dequeuePendingMessage). Without the live-PTY path
-    // a follow-up to a running CLI session would be silently dropped.
+    // If the session already has a live PTY, deliver straight into it (a
+    // follow-up to a running CLI session).
     const { delivered } = unwrapEnvelope(
       await terminalApi.sendClaudeCliPrompt(opts.sessionId, opts.prompt)
     )
-    if (!delivered) {
+    if (delivered) {
+      markClaudeCliPromptStarted(opts.sessionId)
+      bumpWorktreeLastMessage(opts.bumpTarget)
+      return
+    }
+    // No live PTY yet. This helper *starts* background-created sessions (e.g. a
+    // Telegram plan handoff, created with autoFocus:false) — and unlike a
+    // foreground launch there is no terminal view that will mount and spawn the
+    // CLI. So start the PTY ourselves with the prompt as its initial argument,
+    // mirroring the ticket-modal CLI handoff (ClaudeCliSessionView). Merely
+    // queuing would leave the handoff idle until the user manually opened its
+    // tab, even though a "handoff started" toast was already shown.
+    const result = unwrapEnvelope(
+      await terminalApi.createClaudeCli(opts.sessionId, { pendingPrompt: opts.prompt })
+    )
+    if (!result.success) {
+      // Spawn failed — fall back to queuing so a later manual open still delivers it.
       useSessionStore.getState().setPendingMessage(opts.sessionId, opts.prompt)
       return
     }
+    useSessionStore.getState().dequeuePendingMessage(opts.sessionId)
     markClaudeCliPromptStarted(opts.sessionId)
     bumpWorktreeLastMessage(opts.bumpTarget)
     return

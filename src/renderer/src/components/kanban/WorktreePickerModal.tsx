@@ -1512,8 +1512,14 @@ export function WorktreePickerModal({
           })
 
         if (mode === 'super-plan') {
-          // Await so the persisted mode is committed before the main process
-          // reads it in buildClaudeCliPtySpawn (createClaudeCli).
+          // Auto-revert super-plan → plan (one-shot mode), applied for BOTH CLI
+          // agents — same as every other send/launch path (SessionView,
+          // KanbanTicketModal, ticket-launch) and the codex SDK branch below.
+          // The one-shot super-plan prefix is already baked into outboundPrompt
+          // above; this only persists the follow-up mode. It is NOT a claude-cli
+          // permission-mode artifact (codex-cli must revert too, to stay
+          // consistent with the codex SDK). Awaited so the persisted mode is
+          // committed before the main process reads it (createClaudeCli).
           await useSessionStore.getState().setSessionMode(sessionId, 'plan')
         }
 
