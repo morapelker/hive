@@ -176,7 +176,13 @@ function normalizeToolStatus(status: unknown): 'running' | 'success' | 'error' {
 }
 
 function getImplementerSdk(sdk: AgentSdk): AgentSdk {
-  return sdk === 'claude-code-cli' ? 'claude-code' : sdk
+  // The terminal-backed CLIs have no Discord/streaming implementer of their
+  // own — dispatch to their SDK sibling (Discord runs the streaming provider,
+  // there is no PTY). Without this, getImplementer('codex-cli') misses and the
+  // bridge silently falls back to OpenCode with the Codex model.
+  if (sdk === 'claude-code-cli') return 'claude-code'
+  if (sdk === 'codex-cli') return 'codex'
+  return sdk
 }
 
 function displayToolName(name: string): string {

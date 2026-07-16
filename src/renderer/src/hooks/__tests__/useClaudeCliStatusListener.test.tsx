@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   setSelectedTicketId: vi.fn(),
   lastSendMode: new Map<string, 'plan' | 'build'>(),
   modeBySession: new Map<string, 'build' | 'plan' | 'super-plan'>(),
+  sessionAgentSdk: new Map<string, string>(),
   sessionStatuses: {} as Record<string, { status: string } | null>,
   kanbanState: {
     selectedTicketId: null as string | null,
@@ -43,7 +44,12 @@ vi.mock('@/stores/useSessionStore', () => ({
       modeBySession: mocks.modeBySession,
       setPendingPlan: mocks.setPendingPlan,
       clearPendingPlan: mocks.clearPendingPlan,
-      setSessionMode: mocks.setSessionMode
+      setSessionMode: mocks.setSessionMode,
+      // Defaults to claude-code-cli so the plan-mode Stop→plan_ready fallback
+      // stays active for the existing claude tests; a codex-cli case overrides it.
+      getSessionById: (id: string) => ({
+        agent_sdk: mocks.sessionAgentSdk.get(id) ?? 'claude-code-cli'
+      })
     })
   }
 }))
@@ -120,6 +126,7 @@ describe('useClaudeCliStatusListener', () => {
     mocks.notifyKanbanSessionSync.mockClear()
     mocks.lastSendMode.clear()
     mocks.modeBySession.clear()
+    mocks.sessionAgentSdk.clear()
     mocks.sessionStatuses = {}
     mocks.kanbanState = {
       selectedTicketId: null,
@@ -284,6 +291,31 @@ describe('useClaudeCliStatusListener', () => {
       hookEventName: 'Stop',
       hookPath: 'stop'
     })
+  })
+
+  it('does NOT re-derive plan_ready from a tagless plan-mode Stop for codex-cli', () => {
+    // codex-cli plan_ready is authoritative from <proposed_plan> detection; a
+    // plain Stop (no plan block — e.g. it asked a question) must stay completed.
+    mocks.modeBySession.set('hive-session-1', 'plan')
+    mocks.lastSendMode.set('hive-session-1', 'plan')
+    mocks.sessionAgentSdk.set('hive-session-1', 'codex-cli')
+    renderHook(() => useClaudeCliStatusListener())
+
+    subscribedCallback?.({
+      sessionId: 'hive-session-1',
+      status: 'completed',
+      metadata: { hookEventName: 'Stop', hookPath: 'stop' }
+    })
+
+    expect(mocks.setSessionStatus).toHaveBeenLastCalledWith('hive-session-1', 'completed', {
+      hookEventName: 'Stop',
+      hookPath: 'stop'
+    })
+    expect(mocks.setSessionStatus).not.toHaveBeenCalledWith(
+      'hive-session-1',
+      'plan_ready',
+      expect.anything()
+    )
   })
 
   it('treats a prompt submitted while plan_ready as plan approval work', () => {
