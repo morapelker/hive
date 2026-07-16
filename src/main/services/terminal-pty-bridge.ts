@@ -32,6 +32,13 @@ import {
   setGrokSessionIdSink,
   setGrokSessionModeProvider
 } from './grok-cli-hooks'
+import {
+  GROK_PROMPT_AFTER_TOGGLE_MS,
+  clearAllGrokCliTerminals,
+  registerGrokCliTerminal,
+  stampGrokModeToggle,
+  unregisterGrokCliTerminal
+} from './grok-input-pacing'
 import { isCliAgentSdk, isGrokCli } from '@shared/types/agent-sdk'
 import { externalizeGoalHandoffPlan } from './claude-cli-plan-handoff'
 import { reassertClaudeCliPromptSubmit, writeClaudeCliPrompt } from './claude-cli-pty-prompt'
@@ -107,7 +114,6 @@ function armClaudePlanFollowupWatcher(sessionId: string): void {
 // echo raw or corrupt whatever eventually starts).
 const GROK_PLAN_BOOT_QUIET_MS = 700
 const GROK_PLAN_BOOT_CEILING_MS = 10_000
-const GROK_PLAN_PROMPT_AFTER_TOGGLE_MS = 300
 
 /**
  * Which direction the mode toggles move grok before the prompt is pasted:
@@ -148,6 +154,9 @@ function deliverGrokPlanActivation(sessionId: string): void {
   if (!ptyService.has(sessionId)) return
   if (entry.toggles) {
     ptyService.write(sessionId, GROK_TOGGLE_KEYS[entry.toggles])
+    // A renderer prompt racing in behind these toggles must also wait out
+    // the settle window (writeCliTerminalPaced reads this stamp).
+    stampGrokModeToggle(sessionId)
   }
   const pending = entry.prompt
   if (!pending) return
@@ -158,7 +167,7 @@ function deliverGrokPlanActivation(sessionId: string): void {
         reassertClaudeCliPromptSubmit(sessionId)
       }
     },
-    entry.toggles ? GROK_PLAN_PROMPT_AFTER_TOGGLE_MS : 0
+    entry.toggles ? GROK_PROMPT_AFTER_TOGGLE_MS : 0
   )
 }
 
@@ -345,6 +354,7 @@ export function destroyNodePtyTerminal(terminalId: string): void {
   clearGrokSessionTracking(terminalId)
   cancelGrokPlanActivation(terminalId)
   claudeCliSessions.delete(terminalId)
+  unregisterGrokCliTerminal(terminalId)
   claudeCliWorktreeBasenames.delete(terminalId)
   claudeCliTranscriptSources.delete(terminalId)
   claudeCliLastStatus.delete(terminalId)
@@ -421,6 +431,7 @@ function attachNodePtyListeners(terminalId: string): void {
       })
       claudeCliSessions.delete(terminalId)
     }
+    unregisterGrokCliTerminal(terminalId)
     claudeCliWorktreeBasenames.delete(terminalId)
     claudeCliTranscriptSources.delete(terminalId)
     claudeCliLastStatus.delete(terminalId)
@@ -684,6 +695,9 @@ export async function createClaudeCliTerminal(
       }
     }
     claudeCliSessions.add(sessionId)
+    if (isGrok) {
+      registerGrokCliTerminal(sessionId)
+    }
     // A restarted session must never inherit a stale interaction latch.
     clearClaudeCliInteractions(sessionId)
     // ...nor a stale subagent deferral/pending-notification set, which could
@@ -734,6 +748,7 @@ export function cleanupTerminals(): void {
   }
   claudePlanFollowupWatchers.clear()
   claudeCliSessions.clear()
+  clearAllGrokCliTerminals()
   claudeCliWorktreeBasenames.clear()
   claudeCliTranscriptSources.clear()
   claudeCliLastStatus.clear()
