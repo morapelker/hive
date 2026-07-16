@@ -8,6 +8,7 @@ vi.mock('../../db', () => ({
   getDatabase: () => ({ getSession: getSessionMock })
 }))
 
+import { CODEX_PLAN_MODE_PREFIX } from '@shared/agent-mode-prefixes'
 import {
   buildCodexCliHookArgs,
   clearAllCodexSessionTracking,
@@ -124,15 +125,16 @@ describe('translateCodexHook', () => {
     expect(post).toMatchObject({ hook_event_name: 'PostToolUse', tool_name: 'AskUserQuestion' })
   })
 
-  it('injects permission_mode plan on UserPromptSubmit while the Hive session is plan-like', () => {
+  it('injects permission_mode plan on UserPromptSubmit for a Hive plan-prefixed prompt', () => {
     setHiveMode('plan')
+    const prompt = CODEX_PLAN_MODE_PREFIX + 'Design the feature'
     const hook = translateCodexHook(HIVE_ID, {
       hook_event_name: 'UserPromptSubmit',
-      prompt: 'Design the feature'
+      prompt
     })
     expect(hook).toMatchObject({
       hook_event_name: 'UserPromptSubmit',
-      prompt: 'Design the feature',
+      prompt,
       permission_mode: 'plan'
     })
 
@@ -142,6 +144,21 @@ describe('translateCodexHook', () => {
       prompt: 'Implement it'
     })
     expect(buildHook?.permission_mode).toBeUndefined()
+  })
+
+  it('does NOT mark a raw TUI prompt as plan mode even when the session is persisted as plan', () => {
+    // The user typed straight into the yolo codex TUI, so the prompt lacks the
+    // codex plan convention; codex can mutate, so it must not report as planning.
+    setHiveMode('plan')
+    const hook = translateCodexHook(HIVE_ID, {
+      hook_event_name: 'UserPromptSubmit',
+      prompt: 'just fix the bug directly'
+    })
+    expect(hook).toMatchObject({
+      hook_event_name: 'UserPromptSubmit',
+      prompt: 'just fix the bug directly'
+    })
+    expect(hook?.permission_mode).toBeUndefined()
   })
 
   it("translates the 'Implement the plan.' approval into PostToolUse(ExitPlanMode) — only in plan mode", () => {

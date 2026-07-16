@@ -1,5 +1,6 @@
 import { getDatabase } from '../db'
 import { createLogger } from './logger'
+import { CODEX_PROPOSED_PLAN_FINALIZATION } from '@shared/agent-mode-prefixes'
 import type { ParsedClaudeHook } from './claude-hook-server'
 
 const log = createLogger({ component: 'CodexCliHooks' })
@@ -218,6 +219,23 @@ function isCodexPlanApprovalPrompt(prompt: unknown): boolean {
 }
 
 /**
+ * Whether a submitted prompt is a Hive-orchestrated codex-cli plan prompt (vs a
+ * raw prompt the user typed directly into the codex TUI). Both codex-cli plan
+ * prefixes — CODEX_PLAN_MODE_PREFIX and CODEX_CLI_SUPER_PLAN_MODE_PREFIX — embed
+ * CODEX_PROPOSED_PLAN_FINALIZATION (the `<proposed_plan>` instruction), which a
+ * raw TUI prompt never carries. We match on `includes` rather than a prefix
+ * check because goal mode wraps the whole thing as `/goal … Goal success
+ * criteria: …`, so the plan prefix is not at position 0.
+ *
+ * This gates plan-mode status: codex is spawned in bypass/yolo mode, so a raw
+ * TUI prompt in a plan-persisted session can mutate files and is NOT a read-only
+ * planning turn — only prefixed prompts actually instruct codex to plan.
+ */
+function isCodexPlanPrefixedPrompt(prompt: unknown): boolean {
+  return typeof prompt === 'string' && prompt.includes(CODEX_PROPOSED_PLAN_FINALIZATION)
+}
+
+/**
  * Extract the markdown inside a `<proposed_plan>…</proposed_plan>` block — the
  * codex plan convention (there is no ExitPlanMode tool). We ask codex to emit
  * this block via CODEX_PLAN_MODE_PREFIX / CODEX_SUPER_PLAN_MODE_PREFIX, exactly
@@ -289,7 +307,12 @@ export function translateCodexHook(
         prompt: raw.prompt,
         transcript_path: transcriptPath
       }
-      if (planLike) {
+      // Only report a plan turn when the prompt actually carries the codex plan
+      // convention. A raw prompt typed straight into the yolo-mode codex TUI
+      // while the session is persisted as plan/super-plan is NOT read-only
+      // planning — treating it as such would mislabel a mutating turn as
+      // "planning" (see isCodexPlanPrefixedPrompt).
+      if (planLike && isCodexPlanPrefixedPrompt(raw.prompt)) {
         hook.permission_mode = 'plan'
       }
       return hook
