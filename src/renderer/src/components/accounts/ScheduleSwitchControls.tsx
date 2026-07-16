@@ -152,7 +152,7 @@ export function ScheduleSwitchForm({
       <div className="text-[9px] text-muted-foreground/70">
         {mode === 'time'
           ? 'Switch to this account after the time elapses.'
-          : 'Switch when the active account crosses this usage.'}
+          : 'Switch when any usage bar of the active account crosses this percent.'}
         {replacesOther && (
           <span className="text-amber-500"> Replaces the pending {existing?.email} schedule.</span>
         )}

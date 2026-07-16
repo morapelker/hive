@@ -28,11 +28,25 @@ function makeAccount(id: string, email: string): SavedAccountDTO {
   }
 }
 
-function makeUsage(fiveHour: number, sevenDay: number, resetsAt?: string): UsageData {
+function makeUsage(
+  fiveHour: number,
+  sevenDay: number,
+  resetsAt?: string,
+  scoped?: { label: string; used_percent: number; resets_at?: string | null }[]
+): UsageData {
   const futureReset = resetsAt ?? new Date(Date.now() + 3_600_000).toISOString()
   return {
     five_hour: { utilization: fiveHour, resets_at: futureReset },
-    seven_day: { utilization: sevenDay, resets_at: futureReset }
+    seven_day: { utilization: sevenDay, resets_at: futureReset },
+    ...(scoped
+      ? {
+          scoped: scoped.map((s) => ({
+            label: s.label,
+            used_percent: s.used_percent,
+            resets_at: s.resets_at === undefined ? futureReset : s.resets_at
+          }))
+        }
+      : {})
   }
 }
 
@@ -119,6 +133,34 @@ describe('useAccountScheduleStore', () => {
     await useAccountScheduleStore.getState().checkSchedules()
 
     expect(switchCalls()).toHaveLength(1)
+  })
+
+  it('includes scoped bars (e.g. Fable) when finding the highest usage', async () => {
+    useAccountScheduleStore.getState().scheduleByUsage('anthropic', 'acc-2', 'target@x.com', 80)
+
+    // 5h and 7d are below the threshold; only the scoped model bar is above.
+    useUsageStore.setState({
+      anthropicUsage: makeUsage(50, 60, undefined, [{ label: 'Fable', used_percent: 85 }])
+    })
+    await useAccountScheduleStore.getState().checkSchedules()
+
+    expect(switchCalls()).toHaveLength(1)
+    expect(useAccountScheduleStore.getState().schedules.anthropic).toBeUndefined()
+  })
+
+  it('ignores a stale scoped bar whose reset time is in the past', async () => {
+    useAccountScheduleStore.getState().scheduleByUsage('anthropic', 'acc-2', 'target@x.com', 80)
+
+    const pastReset = new Date(Date.now() - 3_600_000).toISOString()
+    useUsageStore.setState({
+      anthropicUsage: makeUsage(50, 60, undefined, [
+        { label: 'Fable', used_percent: 95, resets_at: pastReset }
+      ])
+    })
+    await useAccountScheduleStore.getState().checkSchedules()
+
+    expect(switchCalls()).toHaveLength(0)
+    expect(useAccountScheduleStore.getState().schedules.anthropic).toBeDefined()
   })
 
   it('ignores stale usage whose reset time is in the past', async () => {

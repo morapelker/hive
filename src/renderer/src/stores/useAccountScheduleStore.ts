@@ -50,17 +50,20 @@ function isResetInPast(resetsAt: string | null | undefined): boolean {
 }
 
 /**
- * Highest current utilization across the active account's usage windows for
- * the provider — the number a 'usage' schedule is compared against. Returns
- * null when no fresh usage data is available.
+ * Highest current utilization across ALL of the active account's usage bars
+ * for the provider — 5h, 7d, and any scoped windows (Fable, etc.) — the
+ * number a 'usage' schedule is compared against. Returns null when no fresh
+ * usage data is available.
  */
 export function getActiveUsagePercent(provider: UsageProvider): number | null {
   const state = useUsageStore.getState()
   const usage = normalizeUsage(provider, state.anthropicUsage, state.openaiUsage)
   if (!usage) return null
-  const windows = [usage.five_hour, usage.seven_day].filter(
-    (w) => w && !isResetInPast(w.resets_at)
-  )
+  const windows = [
+    usage.five_hour,
+    usage.seven_day,
+    ...(usage.scoped ?? []).map((s) => ({ utilization: s.used_percent, resets_at: s.resets_at }))
+  ].filter((w) => w && !isResetInPast(w.resets_at))
   if (windows.length === 0) return null
   return Math.max(...windows.map((w) => w.utilization))
 }
