@@ -176,6 +176,11 @@ export const useAccountScheduleStore = create<AccountScheduleState>()(
                 continue
               }
               accounts = useUsageStore.getState().savedAccounts[provider]
+
+              // The reload awaited an IPC round-trip — the user may have
+              // canceled or replaced the schedule in the meantime.
+              const latest = get().schedules[provider]
+              if (!latest || latest.createdAt !== schedule.createdAt) continue
             }
 
             if (!accounts.some((a) => a.id === schedule.accountId)) {

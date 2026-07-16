@@ -284,6 +284,36 @@ describe('useAccountScheduleStore', () => {
     expect(remaining?.accountId).toBe('acc-1')
   })
 
+  it('does not switch when the schedule is canceled during an in-flight account reload', async () => {
+    // Target not in the seeded savedAccounts, forcing the reload path.
+    useAccountScheduleStore
+      .getState()
+      .scheduleByTime('anthropic', 'acc-new', 'new@x.com', 1_000)
+
+    const pendingList: { resolve?: (value: SavedAccountDTO[]) => void } = {}
+    request.mockImplementation(async (method: string) => {
+      if (method === 'accountOps.listSaved')
+        return new Promise((resolve) => {
+          pendingList.resolve = resolve
+        })
+      if (method === 'accountOps.switchAccount') return { success: true }
+      return null
+    })
+
+    vi.setSystemTime(Date.now() + 2_000)
+    const checking = useAccountScheduleStore.getState().checkSchedules()
+    while (!pendingList.resolve) await Promise.resolve()
+
+    // User cancels while the reload IPC is still in flight.
+    useAccountScheduleStore.getState().cancelSchedule('anthropic')
+
+    pendingList.resolve([makeAccount('acc-new', 'new@x.com')])
+    await checking
+
+    expect(switchCalls()).toHaveLength(0)
+    expect(useAccountScheduleStore.getState().schedules.anthropic).toBeUndefined()
+  })
+
   it('replaces an existing schedule for the provider and supports cancel', () => {
     const store = useAccountScheduleStore.getState()
     store.scheduleByTime('anthropic', 'acc-2', 'target@x.com', 60_000)
