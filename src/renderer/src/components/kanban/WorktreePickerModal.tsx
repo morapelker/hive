@@ -62,11 +62,17 @@ import {
 } from '@shared/types/remote-launch'
 import { FALLBACK_MODELS } from '@shared/model-resolution'
 import { runMultiModelLaunch, type MultiModelLaunchPlan } from '@/lib/multi-model-launch'
-import { resolveBadgeModel, type LaunchModelConfig } from '@/lib/ticket-launch'
+import {
+  resolveBadgeModel,
+  resolveCustomProviderBadge,
+  type LaunchModelConfig
+} from '@/lib/ticket-launch'
 import type { AvailableAgentSdks } from '@/lib/agent-sdk-availability'
+import type { CustomClaudeProvider } from '@shared/types/custom-provider'
 
 // Stable empty array to avoid referential-inequality loops in Zustand selectors
 const EMPTY_ARRAY: readonly never[] = []
+const EMPTY_CUSTOM_PROVIDERS: CustomClaudeProvider[] = []
 
 // ── Types ───────────────────────────────────────────────────────────
 type PickerMode = 'build' | 'plan' | 'super-plan'
@@ -273,6 +279,7 @@ function toRequestModel(
 interface ExtraModelRow {
   key: string // crypto.randomUUID() — stable React key
   sdk: PickerAgentSdk
+  customProviderId: string | null // claude-code-cli only: custom provider launch
   model: SelectedModel | null // null = resolve for that row's sdk at launch
   codexFastMode: boolean // per-row; seeded from the global codexFastMode
 }
@@ -291,8 +298,11 @@ function resolveRowDefaultModel(sdk: PickerAgentSdk, mode: PickerMode): Selected
 // ── SDK toggle button group (shared by row 1 and each extra row) ────
 interface SdkToggleGroupProps {
   value: PickerAgentSdk
-  onChange: (sdk: PickerAgentSdk) => void
+  /** Selected custom provider id (only meaningful while value === 'claude-code-cli'). */
+  customProviderId?: string | null
+  onChange: (sdk: PickerAgentSdk, customProviderId?: string | null) => void
   availableAgentSdks: AvailableAgentSdks | null
+  customProviders?: CustomClaudeProvider[]
   idPrefix: string
   disabled?: boolean
   disabledTitle?: string
@@ -300,21 +310,26 @@ interface SdkToggleGroupProps {
 
 function SdkToggleGroup({
   value,
+  customProviderId,
   onChange,
   availableAgentSdks,
+  customProviders = [],
   idPrefix,
   disabled,
   disabledTitle
 }: SdkToggleGroupProps): React.JSX.Element | null {
+  // Custom providers wrap the Claude CLI — offer them only when claude is detected.
+  const visibleCustomProviders = availableAgentSdks?.claude ? customProviders : []
   // Only render when 2+ SDKs are available (a single SDK has nothing to toggle).
-  const buttonCount = availableAgentSdks
-    ? [
-        availableAgentSdks.opencode,
-        availableAgentSdks.claude,
-        availableAgentSdks.codex,
-        availableAgentSdks.claude
-      ].filter(Boolean).length
-    : 0
+  const buttonCount =
+    (availableAgentSdks
+      ? [
+          availableAgentSdks.opencode,
+          availableAgentSdks.claude,
+          availableAgentSdks.codex,
+          availableAgentSdks.claude
+        ].filter(Boolean).length
+      : 0) + visibleCustomProviders.length
   if (!availableAgentSdks || buttonCount < 2) return null
 
   const buttonClass = (active: boolean): string =>
@@ -374,13 +389,27 @@ function SdkToggleGroup({
           data-testid={`${idPrefix}-claude-code-cli`}
           onClick={() => onChange('claude-code-cli')}
           disabled={disabled}
-          aria-pressed={value === 'claude-code-cli'}
+          aria-pressed={value === 'claude-code-cli' && !customProviderId}
           title={buttonTitle}
-          className={buttonClass(value === 'claude-code-cli')}
+          className={buttonClass(value === 'claude-code-cli' && !customProviderId)}
         >
           Claude CLI
         </button>
       )}
+      {visibleCustomProviders.map((provider) => (
+        <button
+          key={provider.id}
+          type="button"
+          data-testid={`${idPrefix}-custom-${provider.id}`}
+          onClick={() => onChange('claude-code-cli', provider.id)}
+          disabled={disabled}
+          aria-pressed={value === 'claude-code-cli' && customProviderId === provider.id}
+          title={buttonTitle}
+          className={buttonClass(value === 'claude-code-cli' && customProviderId === provider.id)}
+        >
+          {provider.name || 'Custom Provider'}
+        </button>
+      ))}
     </div>
   )
 }
@@ -423,6 +452,7 @@ export function WorktreePickerModal({
     variant?: string
   } | null>(null)
   const [selectedSdk, setSelectedSdk] = useState<PickerAgentSdk | null>(null)
+  const [selectedCustomProviderId, setSelectedCustomProviderId] = useState<string | null>(null)
   const [extraModelRows, setExtraModelRows] = useState<ExtraModelRow[]>([])
 
   // ── Remote launch state ──────────────────────────────────────────
@@ -480,6 +510,11 @@ export function WorktreePickerModal({
 
   // ── SDK / Model resolution ──────────────────────────────────────
   const availableAgentSdks = useSettingsStore((s) => s.availableAgentSdks)
+  const rawCustomProviders = useSettingsStore((s) => s.customProviders)
+  const customProviders = useMemo(
+    () => (rawCustomProviders ?? EMPTY_CUSTOM_PROVIDERS).filter((p) => p.command.trim()),
+    [rawCustomProviders]
+  )
   const defaultAgentSdk = useSettingsStore((s) => s.defaultAgentSdk) ?? 'opencode'
   const codexFastMode = useSettingsStore((s) => s.codexFastMode)
   const codexFastModeAccepted = useSettingsStore((s) => s.codexFastModeAccepted)
@@ -510,6 +545,13 @@ export function WorktreePickerModal({
   // `selectedSdk` itself (so turning remote back off restores whatever the
   // user had actually picked).
   const uiAgentSdk: PickerAgentSdk = runOnRemote ? 'claude-code-cli' : agentSdk
+  // Custom providers run the user's local command (often a local proxy alias),
+  // which doesn't exist on a remote host — remote launches always run stock
+  // claude-code-cli, and connection sessions don't support custom providers.
+  const effectiveCustomProviderId =
+    !runOnRemote && !isConnectionMode && agentSdk === 'claude-code-cli'
+      ? selectedCustomProviderId
+      : null
 
   // ── Remote section visibility + preflight ─────────────────────────
   const remoteSectionVisible =
@@ -597,6 +639,7 @@ export function WorktreePickerModal({
           : null
       setSelectedModel(null)
       setSelectedSdk(null)
+      setSelectedCustomProviderId(null)
       setExtraModelRows([])
       setSourceBranch(_lastSourceBranchByProject[projectId] ?? null)
       setBranches([])
@@ -714,8 +757,9 @@ export function WorktreePickerModal({
   }, [branches, branchFilter])
 
   // ── Handle SDK change ───────────────────────────────────────────
-  const handleSdkChange = useCallback((sdk: PickerAgentSdk) => {
+  const handleSdkChange = useCallback((sdk: PickerAgentSdk, customProviderId?: string | null) => {
     setSelectedSdk(sdk)
+    setSelectedCustomProviderId(customProviderId ?? null)
     setSelectedModel(null) // reset model — new SDK has different models
     if (!supportsGoalMode(sdk)) {
       setGoalMode(false)
@@ -727,22 +771,37 @@ export function WorktreePickerModal({
   const addModelRow = useCallback(() => {
     setExtraModelRows((rows) => [
       ...rows,
-      { key: crypto.randomUUID(), sdk: agentSdk, model: null, codexFastMode }
+      {
+        key: crypto.randomUUID(),
+        sdk: agentSdk,
+        customProviderId: agentSdk === 'claude-code-cli' ? selectedCustomProviderId : null,
+        model: null,
+        codexFastMode
+      }
     ])
-  }, [agentSdk, codexFastMode])
+  }, [agentSdk, selectedCustomProviderId, codexFastMode])
 
   const removeModelRow = useCallback((key: string) => {
     setExtraModelRows((rows) => rows.filter((r) => r.key !== key))
   }, [])
 
-  const handleRowSdkChange = useCallback((key: string, sdk: PickerAgentSdk) => {
-    // Reset the row's model (new SDK has different models), mirroring handleSdkChange.
-    setExtraModelRows((rows) => rows.map((r) => (r.key === key ? { ...r, sdk, model: null } : r)))
-    if (!supportsGoalMode(sdk)) {
-      setGoalMode(false)
-      setGoalCriteria('')
-    }
-  }, [])
+  const handleRowSdkChange = useCallback(
+    (key: string, sdk: PickerAgentSdk, customProviderId?: string | null) => {
+      // Reset the row's model (new SDK has different models), mirroring handleSdkChange.
+      setExtraModelRows((rows) =>
+        rows.map((r) =>
+          r.key === key
+            ? { ...r, sdk, customProviderId: customProviderId ?? null, model: null }
+            : r
+        )
+      )
+      if (!supportsGoalMode(sdk)) {
+        setGoalMode(false)
+        setGoalCriteria('')
+      }
+    },
+    []
+  )
 
   const updateRowModel = useCallback((key: string, model: SelectedModel) => {
     setExtraModelRows((rows) => rows.map((r) => (r.key === key ? { ...r, model } : r)))
@@ -1096,7 +1155,10 @@ export function WorktreePickerModal({
         void autoPinBaseWorktree(ticket.project_id)
 
         // Trigger usage refresh so the board shows up-to-date usage (debounced in store)
-        useUsageStore.getState().fetchUsageForProvider(resolveDefaultUsageProvider(agentSdk))
+        const connUsageProvider = resolveDefaultUsageProvider(agentSdk)
+        if (connUsageProvider) {
+          useUsageStore.getState().fetchUsageForProvider(connUsageProvider)
+        }
 
         // In sticky-tab mode, stay on the board instead of switching to the new session
         if (useSettingsStore.getState().boardMode === 'sticky-tab') {
@@ -1206,11 +1268,17 @@ export function WorktreePickerModal({
       // ModelSelector displayed — downstream null-resolution ignores mode
       // defaults, so passing null could launch a different model than shown.
       const entries: LaunchModelConfig[] = [
-        { sdk: agentSdk, model: selectedModel ?? autoResolvedModel ?? null, codexFastMode },
+        {
+          sdk: agentSdk,
+          model: selectedModel ?? autoResolvedModel ?? null,
+          codexFastMode,
+          customProviderId: effectiveCustomProviderId
+        },
         ...extraModelRows.map((r) => ({
           sdk: r.sdk,
           model: r.model ?? resolveRowDefaultModel(r.sdk, mode),
-          codexFastMode: r.codexFastMode
+          codexFastMode: r.codexFastMode,
+          customProviderId: r.sdk === 'claude-code-cli' ? r.customProviderId : null
         }))
       ]
 
@@ -1227,6 +1295,7 @@ export function WorktreePickerModal({
           codexFastMode,
           goalMode,
           goalSuccessCriteria: goalMode ? goalCriteria.trim() : null,
+          customProviderId: effectiveCustomProviderId,
           // Multi-model entries (row 1 first). Legacy sdk/model/codexFastMode
           // above stay so older builds can still auto-launch entries[0].
           ...(isMultiModel ? { models: entries } : {})
@@ -1394,7 +1463,8 @@ export function WorktreePickerModal({
           : null
       const createOptions = {
         ...(modelOverride ? { modelOverride } : {}),
-        ...(cliPendingPrompt ? { pendingMessage: cliPendingPrompt } : {})
+        ...(cliPendingPrompt ? { pendingMessage: cliPendingPrompt } : {}),
+        ...(effectiveCustomProviderId ? { customProviderId: effectiveCustomProviderId } : {})
       }
       const sessionResult = await createSession(
         worktreeId,
@@ -1439,10 +1509,12 @@ export function WorktreePickerModal({
       // row's resolved model wins over the modal's own chain (createSession
       // resolves independently and can differ), then the picked/auto model,
       // then the per-SDK resolution + hard fallback (never null).
-      const badgeModel = resolveBadgeModel(
-        { sdk: agentSdk, model: effectiveModel ?? null, codexFastMode },
-        sessionResult.session
-      )
+      const badgeModel =
+        resolveCustomProviderBadge(effectiveCustomProviderId) ??
+        resolveBadgeModel(
+          { sdk: agentSdk, model: effectiveModel ?? null, codexFastMode },
+          sessionResult.session
+        )
       await updateTicket(ticket.id, projectId, {
         current_session_id: sessionId,
         worktree_id: worktreeId,
@@ -1464,7 +1536,10 @@ export function WorktreePickerModal({
       })
 
       // Trigger usage refresh so the board shows up-to-date usage (debounced in store)
-      useUsageStore.getState().fetchUsageForProvider(resolveDefaultUsageProvider(agentSdk))
+      const launchUsageProvider = resolveDefaultUsageProvider(agentSdk, effectiveCustomProviderId)
+      if (launchUsageProvider) {
+        useUsageStore.getState().fetchUsageForProvider(launchUsageProvider)
+      }
 
       // In sticky-tab mode, stay on the board instead of switching to the new session
       if (useSettingsStore.getState().boardMode === 'sticky-tab') {
@@ -1576,6 +1651,7 @@ export function WorktreePickerModal({
     projectId,
     createSession,
     agentSdk,
+    effectiveCustomProviderId,
     mode,
     promptText,
     updateTicket,
@@ -1983,8 +2059,10 @@ export function WorktreePickerModal({
               {/* SDK toggle — only when 2+ SDKs are available */}
               <SdkToggleGroup
                 value={uiAgentSdk}
+                customProviderId={effectiveCustomProviderId}
                 onChange={handleSdkChange}
                 availableAgentSdks={availableAgentSdks}
+                customProviders={isConnectionMode ? undefined : customProviders}
                 idPrefix="sdk-toggle"
                 disabled={runOnRemote}
                 disabledTitle="Remote launches always use Claude CLI"
@@ -2024,17 +2102,20 @@ export function WorktreePickerModal({
                 </div>
               )}
               <div className="flex items-center gap-2 flex-wrap">
-                <div className="min-w-0">
-                  <ModelSelector
-                    value={selectedModel ?? autoResolvedModel}
-                    onChange={setSelectedModel}
-                    agentSdkOverride={
-                      runOnRemote
-                        ? 'claude-code-cli'
-                        : (selectedModel?.agentSdk ?? autoResolvedModel?.agentSdk ?? agentSdk)
-                    }
-                  />
-                </div>
+                {/* Custom providers own their model (baked into the command) — no model picker */}
+                {!effectiveCustomProviderId && (
+                  <div className="min-w-0">
+                    <ModelSelector
+                      value={selectedModel ?? autoResolvedModel}
+                      onChange={setSelectedModel}
+                      agentSdkOverride={
+                        runOnRemote
+                          ? 'claude-code-cli'
+                          : (selectedModel?.agentSdk ?? autoResolvedModel?.agentSdk ?? agentSdk)
+                      }
+                    />
+                  </div>
+                )}
                 {agentSdk === 'codex' && (
                   <div className="shrink-0">
                     <CodexFastToggle
@@ -2061,18 +2142,24 @@ export function WorktreePickerModal({
                       >
                         <SdkToggleGroup
                           value={row.sdk}
-                          onChange={(sdk) => handleRowSdkChange(row.key, sdk)}
+                          customProviderId={row.customProviderId}
+                          onChange={(sdk, customProviderId) =>
+                            handleRowSdkChange(row.key, sdk, customProviderId)
+                          }
                           availableAgentSdks={availableAgentSdks}
+                          customProviders={customProviders}
                           idPrefix={`extra-model-row-${rowIndex}-sdk`}
                         />
                         <div className="flex items-center gap-2 flex-wrap">
-                          <div className="min-w-0">
-                            <ModelSelector
-                              value={rowModelValue}
-                              onChange={(model) => updateRowModel(row.key, model)}
-                              agentSdkOverride={row.sdk}
-                            />
-                          </div>
+                          {!(row.sdk === 'claude-code-cli' && row.customProviderId) && (
+                            <div className="min-w-0">
+                              <ModelSelector
+                                value={rowModelValue}
+                                onChange={(model) => updateRowModel(row.key, model)}
+                                agentSdkOverride={row.sdk}
+                              />
+                            </div>
+                          )}
                           {row.sdk === 'codex' && (
                             <div className="shrink-0">
                               <CodexFastToggle

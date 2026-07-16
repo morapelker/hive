@@ -46,6 +46,7 @@ export function HandoffSplitButton({
   disabled = false
 }: HandoffSplitButtonProps): React.JSX.Element {
   const availableAgentSdks = useSettingsStore((state) => state.availableAgentSdks)
+  const customProviders = useSettingsStore((state) => state.customProviders)
   const lastHandoffOverride = useSettingsStore((state) => state.lastHandoffOverride)
   const defaultAgentSdk = useSettingsStore((state) => state.defaultAgentSdk)
   const defaultModels = useSettingsStore((state) => state.defaultModels)
@@ -90,7 +91,11 @@ export function HandoffSplitButton({
     return () => window.clearInterval(interval)
   }, [pickerOpen])
 
-  const showChevron = getAvailableHandoffAgentSdks(availableAgentSdks).length > 1
+  const availableHandoffSdks = getAvailableHandoffAgentSdks(availableAgentSdks)
+  const launchableCustomProviders = availableHandoffSdks.includes('claude-code-cli')
+    ? (customProviders ?? []).filter((p) => p.command.trim())
+    : []
+  const showChevron = availableHandoffSdks.length + launchableCustomProviders.length > 1
   void availableAgentSdks
   void lastHandoffOverride
   void defaultAgentSdk
@@ -125,9 +130,11 @@ export function HandoffSplitButton({
     return { ...override, goalMode: finalGoalMode }
   }
 
-  const labelTitle = `Handoff · ${effective.display.sdkName} / ${effective.display.modelName}${
-    effective.display.variant ? ` ${effective.display.variant.toUpperCase()}` : ''
-  }`
+  const labelTitle = effective.customProviderId
+    ? `Handoff · ${effective.display.sdkName}`
+    : `Handoff · ${effective.display.sdkName} / ${effective.display.modelName}${
+        effective.display.variant ? ` ${effective.display.variant.toUpperCase()}` : ''
+      }`
   const leftButtonTestId =
     testIdPrefix === 'plan-review' ? `${testIdPrefix}-handoff-btn` : `${testIdPrefix}-handoff-fab`
   const chevronTestId = `${testIdPrefix}-handoff-chevron`
@@ -159,7 +166,13 @@ export function HandoffSplitButton({
         disabled={disabled}
         data-testid={leftButtonTestId}
         onClick={() => {
-          onHandoff(withGoalMode({ agentSdk: effective.agentSdk, model: effective.model }))
+          onHandoff(
+            withGoalMode({
+              agentSdk: effective.agentSdk,
+              customProviderId: effective.customProviderId,
+              model: effective.model
+            })
+          )
         }}
         className={cn(
           'flex min-w-0 items-center gap-1.5 rounded-full px-3 text-xs font-medium',
@@ -170,8 +183,14 @@ export function HandoffSplitButton({
           {vimModeEnabled ? <MnemonicLabel letter="a" label="Handoff" /> : 'Handoff'}
         </span>
         <span className="text-muted-foreground">·</span>
-        <span className="shrink-0">{effective.display.sdkName} /</span>
-        <span className="max-w-[180px] truncate">{effective.display.modelName}</span>
+        {effective.customProviderId ? (
+          <span className="max-w-[180px] truncate">{effective.display.sdkName}</span>
+        ) : (
+          <>
+            <span className="shrink-0">{effective.display.sdkName} /</span>
+            <span className="max-w-[180px] truncate">{effective.display.modelName}</span>
+          </>
+        )}
         {effective.display.variant && (
           <span className="rounded-full border border-border/80 bg-background/70 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
             {effective.display.variant}

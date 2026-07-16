@@ -80,6 +80,7 @@ interface Session {
   opencode_session_id: string | null
   claude_session_id: string | null
   agent_sdk: AgentSdk
+  custom_provider_id?: string | null
   mode: SessionMode
   session_type: 'default' | 'board-assistant'
   model_provider_id: string | null
@@ -157,7 +158,12 @@ interface SessionState {
     projectId: string,
     agentSdkOverride?: AgentSdk,
     initialMode?: SessionMode,
-    options?: { autoFocus?: boolean; modelOverride?: SelectedModel; pendingMessage?: string | null }
+    options?: {
+      autoFocus?: boolean
+      modelOverride?: SelectedModel
+      pendingMessage?: string | null
+      customProviderId?: string | null
+    }
   ) => Promise<{ success: boolean; session?: Session; error?: string }>
   closeSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>
   reopenSession: (
@@ -238,7 +244,12 @@ interface SessionState {
     connectionId: string,
     agentSdkOverride?: AgentSdk,
     initialMode?: SessionMode,
-    opts?: { autoFocus?: boolean; modelOverride?: SelectedModel; pendingMessage?: string | null }
+    opts?: {
+      autoFocus?: boolean
+      modelOverride?: SelectedModel
+      pendingMessage?: string | null
+      customProviderId?: string | null
+    }
   ) => Promise<{ success: boolean; session?: Session; error?: string }>
   setActiveConnectionSession: (sessionId: string | null) => void
   setActiveConnection: (connectionId: string | null) => void
@@ -492,7 +503,12 @@ export const useSessionStore = create<SessionState>()(
         projectId: string,
         agentSdkOverride?: AgentSdk,
         initialMode?: SessionMode,
-        options?: { autoFocus?: boolean; modelOverride?: SelectedModel }
+        options?: {
+          autoFocus?: boolean
+          modelOverride?: SelectedModel
+          pendingMessage?: string | null
+          customProviderId?: string | null
+        }
       ) => {
         try {
           const autoFocus = options?.autoFocus !== false
@@ -518,6 +534,9 @@ export const useSessionStore = create<SessionState>()(
             project_id: projectId,
             name: isTerminal ? `Terminal ${sessionNumber}` : `Session ${sessionNumber}`,
             agent_sdk: defaultAgentSdk,
+            ...(options?.customProviderId && defaultAgentSdk === 'claude-code-cli'
+              ? { custom_provider_id: options.customProviderId }
+              : {}),
             mode: initialMode || 'build',
             ...(defaultModel
               ? {
@@ -2051,7 +2070,12 @@ export const useSessionStore = create<SessionState>()(
         connectionId: string,
         agentSdkOverride?: AgentSdk,
         initialMode?: SessionMode,
-        opts?: { autoFocus?: boolean; modelOverride?: SelectedModel }
+        opts?: {
+          autoFocus?: boolean
+          modelOverride?: SelectedModel
+          pendingMessage?: string | null
+          customProviderId?: string | null
+        }
       ) => {
         try {
           const autoFocus = opts?.autoFocus ?? true
@@ -2084,6 +2108,9 @@ export const useSessionStore = create<SessionState>()(
             connection_id: connectionId,
             name: isTerminal ? `Terminal ${sessionNumber}` : `Session ${sessionNumber}`,
             agent_sdk: defaultAgentSdk,
+            ...(opts?.customProviderId && defaultAgentSdk === 'claude-code-cli'
+              ? { custom_provider_id: opts.customProviderId }
+              : {}),
             mode: initialMode || 'build',
             ...(defaultModel
               ? {

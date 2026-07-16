@@ -299,6 +299,7 @@ export class DatabaseService {
     return {
       ...row,
       claude_session_id: (row.claude_session_id as string) ?? null,
+      custom_provider_id: (row.custom_provider_id as string) ?? null,
       pinned_to_board: !!(row.pinned_to_board as number),
       session_type: (row.session_type as string) ?? 'default'
     } as Session
@@ -691,6 +692,7 @@ export class DatabaseService {
     this.safeAddColumn('kanban_tickets', 'variant_group_id', 'TEXT DEFAULT NULL')
     this.safeAddColumn('sessions', 'session_type', "TEXT NOT NULL DEFAULT 'default'")
     this.safeAddColumn('sessions', 'remote_launch', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('sessions', 'custom_provider_id', 'TEXT DEFAULT NULL')
     this.safeAddColumn(
       'discord_resources',
       'managed_session_id',
@@ -1607,6 +1609,7 @@ export class DatabaseService {
       opencode_session_id: data.opencode_session_id ?? null,
       claude_session_id: data.claude_session_id ?? null,
       agent_sdk: data.agent_sdk ?? 'opencode',
+      custom_provider_id: data.custom_provider_id ?? null,
       mode: data.mode ?? 'build',
       session_type: data.session_type ?? 'default',
       model_provider_id: data.model_provider_id ?? null,
@@ -1620,8 +1623,8 @@ export class DatabaseService {
     }
 
     db.prepare(
-      `INSERT INTO sessions (id, worktree_id, project_id, connection_id, name, status, opencode_session_id, claude_session_id, agent_sdk, mode, session_type, model_provider_id, model_id, model_variant, remote_launch, created_at, updated_at, completed_at, pinned_to_board)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO sessions (id, worktree_id, project_id, connection_id, name, status, opencode_session_id, claude_session_id, agent_sdk, custom_provider_id, mode, session_type, model_provider_id, model_id, model_variant, remote_launch, created_at, updated_at, completed_at, pinned_to_board)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       session.id,
       session.worktree_id,
@@ -1632,6 +1635,7 @@ export class DatabaseService {
       session.opencode_session_id,
       session.claude_session_id,
       session.agent_sdk,
+      session.custom_provider_id,
       session.mode,
       session.session_type,
       session.model_provider_id,
@@ -1755,6 +1759,10 @@ export class DatabaseService {
     if (data.agent_sdk !== undefined) {
       updates.push('agent_sdk = ?')
       values.push(data.agent_sdk)
+    }
+    if (data.custom_provider_id !== undefined) {
+      updates.push('custom_provider_id = ?')
+      values.push(data.custom_provider_id)
     }
     if (data.mode !== undefined) {
       updates.push('mode = ?')

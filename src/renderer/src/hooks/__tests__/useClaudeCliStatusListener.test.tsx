@@ -10,6 +10,9 @@ const mocks = vi.hoisted(() => ({
   setSessionMode: vi.fn().mockResolvedValue(undefined),
   notifyKanbanSessionSync: vi.fn(),
   setSelectedTicketId: vi.fn(),
+  fetchUsageForProvider: vi.fn(),
+  resolveUsageProvider: vi.fn().mockReturnValue('anthropic'),
+  sessionById: new Map<string, { id: string; agent_sdk: string }>(),
   lastSendMode: new Map<string, 'plan' | 'build'>(),
   modeBySession: new Map<string, 'build' | 'plan' | 'super-plan'>(),
   sessionStatuses: {} as Record<string, { status: string } | null>,
@@ -43,9 +46,28 @@ vi.mock('@/stores/useSessionStore', () => ({
       modeBySession: mocks.modeBySession,
       setPendingPlan: mocks.setPendingPlan,
       clearPendingPlan: mocks.clearPendingPlan,
-      setSessionMode: mocks.setSessionMode
+      setSessionMode: mocks.setSessionMode,
+      getSessionById: (id: string) => mocks.sessionById.get(id) ?? null
     })
   }
+}))
+
+vi.mock('@/stores/useSettingsStore', () => ({
+  useSettingsStore: {
+    getState: () => ({
+      usageIndicatorMode: 'current-agent',
+      usageIndicatorProviders: []
+    })
+  }
+}))
+
+vi.mock('@/stores/useUsageStore', () => ({
+  useUsageStore: {
+    getState: () => ({
+      fetchUsageForProvider: mocks.fetchUsageForProvider
+    })
+  },
+  resolveUsageProvider: mocks.resolveUsageProvider
 }))
 
 vi.mock('@/api/terminal-api', () => ({
@@ -118,6 +140,10 @@ describe('useClaudeCliStatusListener', () => {
     mocks.setSessionMode.mockClear()
     mocks.setSelectedTicketId.mockClear()
     mocks.notifyKanbanSessionSync.mockClear()
+    mocks.fetchUsageForProvider.mockClear()
+    mocks.resolveUsageProvider.mockClear()
+    mocks.resolveUsageProvider.mockReturnValue('anthropic')
+    mocks.sessionById.clear()
     mocks.lastSendMode.clear()
     mocks.modeBySession.clear()
     mocks.sessionStatuses = {}
@@ -649,5 +675,88 @@ describe('useClaudeCliStatusListener — plan auto-approve arming', () => {
     })
 
     expect(mocks.setClaudeCliPlanAutoApprove).toHaveBeenCalledWith('hive-session-1', false)
+  })
+})
+
+describe('useClaudeCliStatusListener — usage refresh on completion', () => {
+  let subscribedCallbackForUsage: ((payload: SubscribedPayload) => void) | null = null
+
+  beforeEach(() => {
+    subscribedCallbackForUsage = null
+    mocks.onClaudeCliStatus.mockReset()
+    mocks.onClaudeCliStatus.mockImplementation((callback: (payload: SubscribedPayload) => void) => {
+      subscribedCallbackForUsage = callback
+      return vi.fn()
+    })
+    mocks.fetchUsageForProvider.mockClear()
+    mocks.resolveUsageProvider.mockClear()
+    mocks.resolveUsageProvider.mockReturnValue('anthropic')
+    mocks.sessionById.clear()
+    mocks.lastSendMode.clear()
+    mocks.sessionStatuses = {}
+  })
+
+  it('refreshes the session-resolved usage provider when a turn completes', () => {
+    mocks.sessionById.set('hive-session-1', { id: 'hive-session-1', agent_sdk: 'claude-code-cli' })
+    mocks.resolveUsageProvider.mockReturnValue('openai')
+    renderHook(() => useClaudeCliStatusListener())
+
+    subscribedCallbackForUsage?.({
+      sessionId: 'hive-session-1',
+      status: 'completed',
+      metadata: { hookEventName: 'Stop', hookPath: 'stop' }
+    })
+
+    expect(mocks.resolveUsageProvider).toHaveBeenCalledWith({
+      id: 'hive-session-1',
+      agent_sdk: 'claude-code-cli'
+    })
+    expect(mocks.fetchUsageForProvider).toHaveBeenCalledWith('openai')
+  })
+
+  it('also refreshes when a plan-mode Stop maps to plan_ready', () => {
+    mocks.sessionById.set('hive-session-1', { id: 'hive-session-1', agent_sdk: 'claude-code-cli' })
+    mocks.lastSendMode.set('hive-session-1', 'plan')
+    renderHook(() => useClaudeCliStatusListener())
+
+    subscribedCallbackForUsage?.({
+      sessionId: 'hive-session-1',
+      status: 'completed',
+      metadata: { hookEventName: 'Stop', hookPath: 'stop' }
+    })
+
+    expect(mocks.setSessionStatus).toHaveBeenCalledWith(
+      'hive-session-1',
+      'plan_ready',
+      expect.anything()
+    )
+    expect(mocks.fetchUsageForProvider).toHaveBeenCalledWith('anthropic')
+  })
+
+  it('skips the refresh when the provider resolves to none', () => {
+    mocks.sessionById.set('hive-session-1', { id: 'hive-session-1', agent_sdk: 'claude-code-cli' })
+    mocks.resolveUsageProvider.mockReturnValue(null)
+    renderHook(() => useClaudeCliStatusListener())
+
+    subscribedCallbackForUsage?.({
+      sessionId: 'hive-session-1',
+      status: 'completed',
+      metadata: { hookEventName: 'Stop', hookPath: 'stop' }
+    })
+
+    expect(mocks.fetchUsageForProvider).not.toHaveBeenCalled()
+  })
+
+  it('does not refresh on non-completion statuses', () => {
+    mocks.sessionById.set('hive-session-1', { id: 'hive-session-1', agent_sdk: 'claude-code-cli' })
+    renderHook(() => useClaudeCliStatusListener())
+
+    subscribedCallbackForUsage?.({
+      sessionId: 'hive-session-1',
+      status: 'working',
+      metadata: { hookEventName: 'UserPromptSubmit', hookPath: 'start' }
+    })
+
+    expect(mocks.fetchUsageForProvider).not.toHaveBeenCalled()
   })
 })

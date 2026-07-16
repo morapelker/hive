@@ -12,6 +12,7 @@ export interface Session {
   opencode_session_id: string | null
   claude_session_id: string | null
   agent_sdk: AgentSdk
+  custom_provider_id?: string | null
   mode: 'build' | 'plan'
   session_type: SessionType
   model_provider_id: string | null

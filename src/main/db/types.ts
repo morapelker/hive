@@ -164,6 +164,8 @@ export interface Session {
   opencode_session_id: string | null
   claude_session_id: string | null
   agent_sdk: AgentSdk
+  /** References a CustomClaudeProvider id in settings when this claude-code-cli session runs a custom command. */
+  custom_provider_id?: string | null
   mode: SessionMode
   session_type: SessionType
   model_provider_id: string | null
@@ -184,6 +186,7 @@ export interface SessionCreate {
   opencode_session_id?: string | null
   claude_session_id?: string | null
   agent_sdk?: AgentSdk
+  custom_provider_id?: string | null
   mode?: SessionMode
   session_type?: SessionType
   model_provider_id?: string | null
@@ -199,6 +202,7 @@ export interface SessionUpdate {
   opencode_session_id?: string | null
   claude_session_id?: string | null
   agent_sdk?: AgentSdk
+  custom_provider_id?: string | null
   mode?: SessionMode
   session_type?: SessionType
   model_provider_id?: string | null

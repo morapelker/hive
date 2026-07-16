@@ -609,6 +609,7 @@ export function useOpenCodeGlobalListener(): void {
         const sessionState = useSessionStore.getState()
         let idleSession: {
           agent_sdk?: string | null
+          custom_provider_id?: string | null
           model_provider_id?: string | null
           model_id?: string | null
         } | null = null
@@ -638,7 +639,9 @@ export function useOpenCodeGlobalListener(): void {
         }
         if (idleSession) {
           const provider = resolveUsageProvider(idleSession)
-          useUsageStore.getState().fetchUsageForProvider(provider)
+          if (provider) {
+            useUsageStore.getState().fetchUsageForProvider(provider)
+          }
         } else {
           useUsageStore.getState().fetchUsage()
         }

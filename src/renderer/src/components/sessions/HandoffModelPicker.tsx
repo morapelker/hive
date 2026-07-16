@@ -67,11 +67,22 @@ export function HandoffModelPicker({
   onConfirm
 }: HandoffModelPickerProps): React.JSX.Element {
   const availableAgentSdks = useSettingsStore((state) => state.availableAgentSdks)
+  const customProviders = useSettingsStore((state) => state.customProviders)
   const visibleSdks = useMemo(
     () => getAvailableHandoffAgentSdks(availableAgentSdks),
     [availableAgentSdks]
   )
+  // Custom providers wrap the Claude CLI — offer them only when the CLI is a
+  // valid handoff target and the provider has a launchable command.
+  const visibleCustomProviders = useMemo(
+    () =>
+      visibleSdks.includes('claude-code-cli')
+        ? (customProviders ?? []).filter((p) => p.command.trim())
+        : [],
+    [visibleSdks, customProviders]
+  )
   const [pickedSdk, setPickedSdk] = useState<HandoffAgentSdk>('opencode')
+  const [pickedCustomProviderId, setPickedCustomProviderId] = useState<string | null>(null)
   const [pickedModel, setPickedModel] = useState<SelectedModel | null>(null)
   const [providersBySdk, setProvidersBySdk] = useState<Partial<Record<HandoffAgentSdk, ProviderModels[]>>>({})
   const [loadingSdks, setLoadingSdks] = useState<Partial<Record<HandoffAgentSdk, boolean>>>({})
@@ -93,14 +104,18 @@ export function HandoffModelPicker({
   // Every explicit pick applies immediately (not just on Handoff): the user
   // can close the picker and fire the main split button — or right-click it
   // into goal mode — expecting exactly the SDK/model/effort they just chose.
-  const persistOverride = useCallback((agentSdk: HandoffAgentSdk, model: SelectedModel) => {
-    useSettingsStore.getState().setLastHandoffOverride({
-      agentSdk,
-      providerID: model.providerID,
-      modelID: model.modelID,
-      variant: model.variant
-    })
-  }, [])
+  const persistOverride = useCallback(
+    (agentSdk: HandoffAgentSdk, model: SelectedModel, customProviderId?: string | null) => {
+      useSettingsStore.getState().setLastHandoffOverride({
+        agentSdk,
+        customProviderId: customProviderId ?? null,
+        providerID: model.providerID,
+        modelID: model.modelID,
+        variant: model.variant
+      })
+    },
+    []
+  )
 
   const resolveModelForCatalog = useCallback(
     (providers: ProviderModels[], model: SelectedModel): SelectedModel => {
@@ -119,7 +134,10 @@ export function HandoffModelPicker({
     let active = true
     const effective = getEffectiveHandoffSelection({ worktreeId })
     setPickedSdk(effective.agentSdk)
+    setPickedCustomProviderId(effective.customProviderId ?? null)
     setPickedModel(effective.model)
+
+    if (effective.customProviderId) return // custom providers have no model catalog
 
     void ensureProviders(effective.agentSdk).then((providers) => {
       if (!active) return
@@ -143,6 +161,7 @@ export function HandoffModelPicker({
   const handleSelectSdk = useCallback(
     async (nextSdk: HandoffAgentSdk) => {
       setPickedSdk(nextSdk)
+      setPickedCustomProviderId(null)
       setPickedModel(null)
 
       const providers = await ensureProviders(nextSdk)
@@ -162,6 +181,19 @@ export function HandoffModelPicker({
     [ensureProviders, persistOverride]
   )
 
+  const handleSelectCustomProvider = useCallback(
+    (customProviderId: string) => {
+      setPickedSdk('claude-code-cli')
+      setPickedCustomProviderId(customProviderId)
+      // The provider's command decides the real model — persist the cli default
+      // only to satisfy the override's model shape.
+      const model = resolveModelForSdkDefault('claude-code-cli')
+      setPickedModel(model)
+      persistOverride('claude-code-cli', model, customProviderId)
+    },
+    [persistOverride]
+  )
+
   const handleSelectModel = useCallback(
     (model: SelectedModel) => {
       const info = findModelInfo(currentProviders, model.providerID, model.modelID)
@@ -175,10 +207,14 @@ export function HandoffModelPicker({
   const handleConfirm = useCallback(() => {
     if (!pickedModel) return
 
-    persistOverride(pickedSdk, pickedModel)
-    onConfirm({ agentSdk: pickedSdk, model: pickedModel })
+    persistOverride(pickedSdk, pickedModel, pickedCustomProviderId)
+    onConfirm({
+      agentSdk: pickedSdk,
+      customProviderId: pickedCustomProviderId,
+      model: pickedModel
+    })
     onOpenChange(false)
-  }, [onConfirm, onOpenChange, persistOverride, pickedModel, pickedSdk])
+  }, [onConfirm, onOpenChange, persistOverride, pickedModel, pickedSdk, pickedCustomProviderId])
 
   const modelLabel = currentModelInfo
     ? getModelDisplayName(currentModelInfo)
@@ -206,7 +242,9 @@ export function HandoffModelPicker({
                     'hover:bg-muted transition-colors'
                   )}
                 >
-                  <span className="truncate">{getHandoffSdkDisplayName(pickedSdk)}</span>
+                  <span className="truncate">
+                    {getHandoffSdkDisplayName(pickedSdk, pickedCustomProviderId)}
+                  </span>
                   <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
                 </button>
               </DropdownMenuTrigger>
@@ -221,15 +259,41 @@ export function HandoffModelPicker({
                     <Check
                       className={cn(
                         'h-3.5 w-3.5',
-                        pickedSdk === sdkOption ? 'opacity-100' : 'opacity-0'
+                        pickedSdk === sdkOption && !pickedCustomProviderId
+                          ? 'opacity-100'
+                          : 'opacity-0'
                       )}
                     />
                     <span>{getHandoffSdkDisplayName(sdkOption)}</span>
                   </DropdownMenuItem>
                 ))}
+                {visibleCustomProviders.map((provider) => (
+                  <DropdownMenuItem
+                    key={provider.id}
+                    onSelect={() => {
+                      handleSelectCustomProvider(provider.id)
+                    }}
+                  >
+                    <Check
+                      className={cn(
+                        'h-3.5 w-3.5',
+                        pickedCustomProviderId === provider.id ? 'opacity-100' : 'opacity-0'
+                      )}
+                    />
+                    <span>{provider.name || 'Custom Provider'}</span>
+                  </DropdownMenuItem>
+                ))}
               </DropdownMenuContent>
             </DropdownMenu>
 
+            {pickedCustomProviderId ? (
+              <div
+                className="flex h-8 items-center rounded-full border border-border bg-muted/30 px-3 text-xs text-muted-foreground"
+                title="The provider's command decides the model"
+              >
+                <span className="truncate">Model set by command</span>
+              </div>
+            ) : (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button
@@ -276,9 +340,10 @@ export function HandoffModelPicker({
                 ))}
               </DropdownMenuContent>
             </DropdownMenu>
+            )}
           </div>
 
-          {variantKeys.length > 0 && pickedModel && (
+          {variantKeys.length > 0 && pickedModel && !pickedCustomProviderId && (
             <div className="flex flex-wrap gap-1.5">
               {variantKeys.map((variant) => {
                 const active = pickedModel.variant === variant

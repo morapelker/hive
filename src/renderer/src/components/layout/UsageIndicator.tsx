@@ -796,18 +796,19 @@ export function UsageIndicator(): React.JSX.Element | null {
   useEffect(() => {
     if (activeSessionId) {
       const session = findSessionById(activeSessionId)
-      if (session) {
-        const provider = resolveUsageProvider(session)
+      const provider = session ? resolveUsageProvider(session) : null
+      if (provider) {
         setActiveProvider(provider)
       } else {
-        // BOARD_TAB_ID or stale session — fall back to default SDK
+        // BOARD_TAB_ID, stale session, or a custom provider attributed to no
+        // usage account — fall back to default SDK
         const { defaultAgentSdk } = useSettingsStore.getState()
-        setActiveProvider(resolveDefaultUsageProvider(defaultAgentSdk))
+        setActiveProvider(resolveDefaultUsageProvider(defaultAgentSdk) ?? 'anthropic')
       }
     } else {
       // No session at all — resolve from defaultAgentSdk setting
       const { defaultAgentSdk } = useSettingsStore.getState()
-      setActiveProvider(resolveDefaultUsageProvider(defaultAgentSdk))
+      setActiveProvider(resolveDefaultUsageProvider(defaultAgentSdk) ?? 'anthropic')
     }
 
     // Read settings via getState() to avoid array-ref dep churn

@@ -3,6 +3,8 @@ import { terminalApi } from '@/api/terminal-api'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
+import { useSettingsStore } from '@/stores/useSettingsStore'
+import { useUsageStore, resolveUsageProvider } from '@/stores/useUsageStore'
 import { lastSendMode } from '@/lib/message-send-times'
 import { notifyKanbanSessionSync } from '@/stores/store-coordination'
 import { isPlanLike } from '@/lib/constants'
@@ -45,6 +47,26 @@ function reassertPlanAutoApprove(sessionId: string): void {
       }
       return
     }
+  }
+}
+
+// claude-cli PTY sessions never ride the opencode event stream, so the
+// idle-triggered usage refresh in useOpenCodeGlobalListener never fires for
+// them. Refresh here when a turn finishes (Stop hook or synthetic completion),
+// resolving the provider per session so custom providers attribute to their
+// configured usage account ('none' skips). fetchUsageForProvider is
+// debounce-safe, matching the other SDKs' idle refresh semantics.
+function triggerClaudeCliUsageRefresh(sessionId: string): void {
+  const { usageIndicatorMode, usageIndicatorProviders } = useSettingsStore.getState()
+  const usageEnabled =
+    usageIndicatorMode === 'current-agent' ||
+    (usageIndicatorMode === 'specific-providers' && usageIndicatorProviders.length > 0)
+  if (!usageEnabled) return
+  const session = useSessionStore.getState().getSessionById(sessionId)
+  if (!session) return
+  const provider = resolveUsageProvider(session)
+  if (provider) {
+    useUsageStore.getState().fetchUsageForProvider(provider)
   }
 }
 
@@ -161,6 +183,10 @@ export function useClaudeCliStatusListener(): void {
         lastSendMode.set(sessionId, 'plan')
         worktreeStatus.setSessionStatus(sessionId, 'planning', metadata)
         return
+      }
+
+      if (status === 'completed') {
+        triggerClaudeCliUsageRefresh(sessionId)
       }
 
       if (
