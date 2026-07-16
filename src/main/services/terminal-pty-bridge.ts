@@ -99,7 +99,10 @@ function armClaudePlanFollowupWatcher(sessionId: string): void {
 // echoed raw by the line discipline (the user sees `^[[Z^[[200~…` gibberish)
 // and the keystrokes can be flushed. Readiness is detected from the PTY
 // output itself — grok's boot renders a burst of output and then goes quiet
-// once the composer is idle — with a ceiling in case output never settles.
+// once the composer is idle. The ceiling only waives the quiet-period wait
+// for a TUI that never stops rendering; it never waives having SEEN TUI
+// output — if grok never draws, nothing is ever written (a write could only
+// echo raw or corrupt whatever eventually starts).
 const GROK_PLAN_BOOT_QUIET_MS = 700
 const GROK_PLAN_BOOT_CEILING_MS = 10_000
 const GROK_PLAN_PROMPT_AFTER_TOGGLE_MS = 300
@@ -110,6 +113,10 @@ interface GrokPlanDelivery {
   quietTimer: NodeJS.Timeout | null
   ceilingTimer: NodeJS.Timeout
   removeData: () => void
+  /** True once escape-sequence-bearing PTY output proved the TUI is drawing. */
+  sawTuiOutput: boolean
+  /** True once the ceiling elapsed; the next TUI output delivers immediately. */
+  ceilingElapsed: boolean
 }
 
 const grokPlanDeliveries = new Map<string, GrokPlanDelivery>()
@@ -152,20 +159,35 @@ function scheduleGrokPlanActivation(
     return
   }
 
-  let sawTuiOutput = false
   const entry: GrokPlanDelivery = {
     prompt,
     toggles: opts.toggles,
     quietTimer: null,
-    ceilingTimer: setTimeout(() => deliverGrokPlanActivation(sessionId), GROK_PLAN_BOOT_CEILING_MS),
+    sawTuiOutput: false,
+    ceilingElapsed: false,
+    ceilingTimer: setTimeout(() => {
+      if (entry.sawTuiOutput) {
+        // Output that never settles: stop waiting for quiet and deliver.
+        deliverGrokPlanActivation(sessionId)
+      } else {
+        // No TUI yet — writing now would hit a bare PTY. Deliver on the
+        // first real output instead (the entry is torn down with the PTY if
+        // grok never comes up).
+        entry.ceilingElapsed = true
+      }
+    }, GROK_PLAN_BOOT_CEILING_MS),
     removeData: ptyService.onData(sessionId, (data) => {
       // Pre-boot user keystrokes are echoed by the line discipline as plain
       // text; only escape-sequence-bearing output (title OSC, alt-screen,
       // TUI redraws) counts as evidence the TUI is up. Once seen, debounce:
       // each output chunk pushes readiness out until rendering goes quiet.
-      if (!sawTuiOutput) {
+      if (!entry.sawTuiOutput) {
         if (!data.includes('\x1b')) return
-        sawTuiOutput = true
+        entry.sawTuiOutput = true
+        if (entry.ceilingElapsed) {
+          deliverGrokPlanActivation(sessionId)
+          return
+        }
       }
       if (entry.quietTimer) clearTimeout(entry.quietTimer)
       entry.quietTimer = setTimeout(
