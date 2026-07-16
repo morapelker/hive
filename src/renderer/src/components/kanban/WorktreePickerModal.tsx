@@ -33,6 +33,7 @@ import { useSessionStore } from '@/stores/useSessionStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useSettingsStore, resolveModelForSdk, type SelectedModel } from '@/stores/useSettingsStore'
+import { dropForeignModelForSdk, normalizeHandoffSdk } from '@/lib/handoffSelection'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useUsageStore, resolveDefaultUsageProvider } from '@/stores/useUsageStore'
 import { useRemoteLaunchStore } from '@/stores/useRemoteLaunchStore'
@@ -586,7 +587,16 @@ export function WorktreePickerModal({
       // creation resolves its own chain).
       const sdkKey = runOnRemote ? 'claude-code-cli' : baseAgentSdk
       const resolved = resolveModelForSdk(sdkKey) ?? null
-      if (!effectiveSelectedSdk) return resolved
+      if (!effectiveSelectedSdk) {
+        // No toggle: the launch runs under the model's own stamp, else the
+        // default SDK. The legacy global can still carry an unstamped grok
+        // model that would ride modelOverride past the shared
+        // session-creation filter into a non-grok default SDK — apply the
+        // same trusted-provenance rejection (per-SDK map hits and explicit
+        // non-grok stamps pass); null keeps the downstream-resolution
+        // contract.
+        return dropForeignModelForSdk(resolved, normalizeHandoffSdk(resolved?.agentSdk ?? sdkKey))
+      }
       if (!resolved) {
         // Other SDKs keep the null → downstream-resolution contract, but grok
         // ships exactly one model — surface it instead of leaving the chip on

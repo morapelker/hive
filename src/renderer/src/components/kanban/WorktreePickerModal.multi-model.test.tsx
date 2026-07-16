@@ -639,4 +639,27 @@ describe('WorktreePickerModal multi-model UI', () => {
     expect(screen.getByTestId('goal-mode-toggle')).toBeInTheDocument()
     expect(screen.queryByTestId('goal-success-criteria')).toBeNull()
   })
+
+  it('drops an unstamped legacy global grok model on a no-toggle non-grok launch', async () => {
+    // Upgraded profile: only the legacy global selectedModel, last set by
+    // grok, no per-SDK map. Without a toggle the launch runs the default
+    // opencode SDK — the grok-only model must not ride modelOverride onto it.
+    useSettingsStore.setState({
+      selectedModel: { providerID: 'xai', modelID: 'grok-4.5' },
+      selectedModelByProvider: {}
+    })
+    await renderModal()
+
+    expect(screen.getByTestId('model-value-opencode')).toHaveTextContent('null')
+  })
+
+  it('keeps an unstamped xAI model selected FOR opencode in the per-SDK map on a no-toggle launch', async () => {
+    useSettingsStore.setState({
+      selectedModel: null,
+      selectedModelByProvider: { opencode: { providerID: 'xai', modelID: 'grok-4.5' } }
+    })
+    await renderModal()
+
+    expect(screen.getByTestId('model-value-opencode')).toHaveTextContent('grok-4.5')
+  })
 })
