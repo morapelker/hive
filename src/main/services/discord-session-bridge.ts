@@ -1662,21 +1662,23 @@ export class DiscordSessionBridge {
         requestedSdk: resolved.agentSdk,
         error: error instanceof Error ? error.message : String(error)
       })
-      // The requested SDK's model must not ride along (e.g. grok-cli resolves
-      // xai/grok-4.5, which OpenCode cannot serve) — re-resolve the model
-      // chain for opencode instead. A cross-SDK mode default can redirect the
-      // re-resolution right back to the unregistered SDK (e.g. a grok-tagged
-      // plan default with an opencode configured default), so only trust the
-      // re-resolved model when the resolution actually landed on opencode;
-      // otherwise take the hard OpenCode fallback.
+      // Re-resolve the model chain for opencode. OpenCode is a multi-provider
+      // runtime and deliberately keeps cross-SDK models it can serve (e.g. a
+      // codex mode default's gpt model) — but grok models exist only in the
+      // grok-cli catalog, and a grok-tagged mode default re-applies during
+      // this re-resolve (the configured default SDK is still opencode), so
+      // grok-family models are replaced by the hard OpenCode fallback.
       const fallback = resolveSessionCreation({
         settings: this.readModelSettings(),
         mode,
         defaultAgentSdk: 'opencode'
       })
+      const fallbackIsGrokModel =
+        fallback.model.providerID === 'xai' ||
+        fallback.model.modelID.toLowerCase().startsWith('grok')
       return {
         agentSdk: 'opencode',
-        model: fallback.agentSdk === 'opencode' ? fallback.model : FALLBACK_MODELS.opencode
+        model: fallbackIsGrokModel ? FALLBACK_MODELS.opencode : fallback.model
       }
     }
   }
