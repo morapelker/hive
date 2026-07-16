@@ -243,7 +243,14 @@ async function ensureRuntimeSession(
     currentState.selectedAgentSdkOverride ?? resolveBoardChatAgentSdk(settings.defaultAgentSdk)
   const selectedModel =
     currentState.selectedModelOverride ?? resolveBoardChatDefaultModel(settings, baseAgentSdk)
-  const agentSdk = currentState.selectedAgentSdkOverride ?? selectedModel?.agentSdk ?? baseAgentSdk
+  // Coerce away terminal-backed CLI SDKs (codex-cli / claude-code-cli): a saved
+  // `/ask` default or model override can carry one via selectedModel.agentSdk,
+  // but the board assistant is a streaming PTY-less session, so persisting a CLI
+  // agent_sdk here makes later prompts fail promptOpenCodeSession's isCliAgentSdk
+  // guard. Mirrors the coercion in useBoardChatStore.ensureRuntime.
+  const agentSdk =
+    currentState.selectedAgentSdkOverride ??
+    resolveBoardChatAgentSdk(selectedModel?.agentSdk ?? baseAgentSdk)
 
   let runtimePath: string | null = null
   let worktreeId: string | null = null

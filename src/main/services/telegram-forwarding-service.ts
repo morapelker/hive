@@ -19,8 +19,7 @@ import {
   type TelegramClaudeCliReplyResult,
   type TelegramClaudeCliSessionPayload
 } from '@shared/desktop-command'
-import { isClaudeCli, isCliAgentSdk, isCodexCli } from '@shared/types/agent-sdk'
-import { getPlanModePrefix, getSuperPlanModePrefix } from '@shared/agent-mode-prefixes'
+import { isClaudeCli, isCodexCli } from '@shared/types/agent-sdk'
 import { openCodeService } from './opencode-service'
 import { ClaudeCodeImplementer } from './claude-code-implementer'
 import { CodexImplementer } from './codex-implementer'
@@ -254,24 +253,6 @@ export function isTrackedInteractionStale(
   return !tracked.has(requestId)
 }
 
-/**
- * Prepend codex-cli's plan-mode prompt prefix when a forwarded prompt targets a
- * codex-cli session in plan/super-plan mode. Only codex-cli is prefixed:
- * claude-code-cli drives plan mode via `--permission-mode` out-of-band, and the
- * non-CLI SDKs handle plan mode entirely off the prompt text — so both are left
- * verbatim. Mirrors the prefixing the renderer send paths apply (composePromptForSdk).
- */
-export function applyCodexCliPlanPrefix(
-  agentSdk: string | null | undefined,
-  mode: string | null | undefined,
-  text: string
-): string {
-  if (!isCodexCli(agentSdk)) return text
-  if (mode === 'super-plan') return getSuperPlanModePrefix('codex-cli') + text
-  if (mode === 'plan') return getPlanModePrefix('codex-cli') + text
-  return text
-}
-
 export class TelegramForwardingService {
   private db: DatabaseService | null = null
   private sdkManager: AgentSdkManager | null = null
@@ -403,6 +384,18 @@ export class TelegramForwardingService {
     }
     if (!!params.worktreeId === !!params.connectionId) {
       throw new Error('Telegram forwarding requires exactly one target')
+    }
+
+    // codex-cli is not Telegram-forwardable — same stance as Discord, which also
+    // excludes it. Its questions and plan approvals are keyboard-driven in the
+    // codex TUI, and its hooks deliberately skip transports (claude-hook-server),
+    // so a forwarded codex-cli session could accept an inbound prompt but never
+    // emit responses / busy / idle / plan.ready back to Telegram (and queued
+    // prompts, which flush on idle, would strand). Block it up-front rather than
+    // half-forwarding.
+    const targetSession = this.db?.getSession(params.sessionId)
+    if (targetSession && isCodexCli(targetSession.agent_sdk)) {
+      throw new Error('Telegram forwarding is not supported for Codex CLI sessions')
     }
 
     const previous = this.state
@@ -1199,23 +1192,13 @@ export class TelegramForwardingService {
     const session = this.db?.getSession(state.sessionId)
     if (!session) throw new Error('Active session not found')
 
-    // CLI sessions (claude-code-cli and codex-cli) have no SDK implementer to
-    // route a prompt to; inject it straight into the PTY, exactly like the
-    // in-app terminal follow-up path (terminal-pty-bridge → writeClaudeCliPrompt,
-    // also gated by isCliAgentSdk). Note codex-cli hooks skip transports (see
-    // claude-hook-server), so its questions/plans stay keyboard-driven in the
-    // TUI — but plain forwarded prompts must still reach the terminal here.
-    if (isCliAgentSdk(session.agent_sdk)) {
-      // codex-cli plan mode is enforced purely by the prompt prefix (it has no
-      // out-of-band permission-mode toggle like claude-cli), so a forwarded
-      // plan/super-plan follow-up must carry CODEX_PLAN_MODE_PREFIX or codex
-      // runs it as a default/build turn and never emits the <proposed_plan>
-      // block that drives plan_ready. claude-code-cli needs no prefix here.
-      const outbound = applyCodexCliPlanPrefix(session.agent_sdk, session.mode, text)
-      const { delivered } = writeClaudeCliPrompt(state.sessionId, outbound)
-      // No live PTY yet — queue the RAW text so the next idle flush re-derives
-      // the prefix from the (possibly changed) session mode rather than
-      // double-prefixing an already-prefixed prompt.
+    // Claude CLI sessions have no SDK implementer; inject the prompt straight
+    // into the PTY. codex-cli is intentionally NOT handled here: it's blocked
+    // from Telegram forwarding up-front (see startForwarding), so a codex-cli
+    // session never reaches this path.
+    if (isClaudeCli(session.agent_sdk)) {
+      const { delivered } = writeClaudeCliPrompt(state.sessionId, text)
+      // No live PTY yet — keep it queued for the next idle flush (best-effort).
       if (!delivered) state.pendingQueuedPrompt = text
       return
     }

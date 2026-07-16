@@ -8,12 +8,8 @@ import {
   DESKTOP_COMMAND_RESULT_TYPE,
   type DesktopCommandRequest
 } from '../../shared/desktop-command'
-import {
-  CODEX_CLI_SUPER_PLAN_MODE_PREFIX,
-  CODEX_PLAN_MODE_PREFIX
-} from '../../shared/agent-mode-prefixes'
 import { writeClaudeCliPrompt } from './claude-cli-pty-prompt'
-import { applyCodexCliPlanPrefix, TelegramForwardingService } from './telegram-forwarding-service'
+import { TelegramForwardingService } from './telegram-forwarding-service'
 
 vi.mock('./claude-cli-pty-prompt', () => ({
   writeClaudeCliPrompt: vi.fn(() => ({ delivered: true }))
@@ -148,45 +144,8 @@ describe('TelegramForwardingService backend events', () => {
   })
 })
 
-describe('applyCodexCliPlanPrefix', () => {
-  it('prefixes codex-cli plan / super-plan prompts with the codex plan prefix', () => {
-    expect(applyCodexCliPlanPrefix('codex-cli', 'plan', 'do X')).toBe(
-      CODEX_PLAN_MODE_PREFIX + 'do X'
-    )
-    expect(applyCodexCliPlanPrefix('codex-cli', 'super-plan', 'do X')).toBe(
-      CODEX_CLI_SUPER_PLAN_MODE_PREFIX + 'do X'
-    )
-  })
-
-  it('leaves codex-cli build/ask prompts and null mode verbatim', () => {
-    expect(applyCodexCliPlanPrefix('codex-cli', 'build', 'do X')).toBe('do X')
-    expect(applyCodexCliPlanPrefix('codex-cli', 'ask', 'do X')).toBe('do X')
-    expect(applyCodexCliPlanPrefix('codex-cli', null, 'do X')).toBe('do X')
-  })
-
-  it('never prefixes claude-code-cli (permission-mode drives its plan) or non-CLI SDKs', () => {
-    expect(applyCodexCliPlanPrefix('claude-code-cli', 'plan', 'do X')).toBe('do X')
-    expect(applyCodexCliPlanPrefix('codex', 'plan', 'do X')).toBe('do X')
-    expect(applyCodexCliPlanPrefix('opencode', 'super-plan', 'do X')).toBe('do X')
-  })
-})
-
 describe('TelegramForwardingService.sendPrompt CLI routing', () => {
-  it('injects a codex-cli plan follow-up into the PTY with the codex plan prefix', async () => {
-    vi.mocked(writeClaudeCliPrompt).mockClear()
-    const service = new TelegramForwardingService()
-    seedForwardingState(service)
-    Reflect.set(service, 'db', {
-      getSession: () => ({ agent_sdk: 'codex-cli', mode: 'plan', opencode_session_id: null })
-    })
-
-    const sendPrompt = Reflect.get(service, 'sendPrompt') as (text: string) => Promise<void>
-    await sendPrompt.call(service, 'add a test')
-
-    expect(writeClaudeCliPrompt).toHaveBeenCalledWith('s1', CODEX_PLAN_MODE_PREFIX + 'add a test')
-  })
-
-  it('injects a claude-code-cli follow-up into the PTY verbatim (no plan prefix)', async () => {
+  it('injects a claude-code-cli follow-up into the PTY verbatim', async () => {
     vi.mocked(writeClaudeCliPrompt).mockClear()
     const service = new TelegramForwardingService()
     seedForwardingState(service)
@@ -198,6 +157,36 @@ describe('TelegramForwardingService.sendPrompt CLI routing', () => {
     await sendPrompt.call(service, 'add a test')
 
     expect(writeClaudeCliPrompt).toHaveBeenCalledWith('s1', 'add a test')
+  })
+})
+
+describe('TelegramForwardingService.startForwarding SDK gating', () => {
+  it('rejects Telegram forwarding for codex-cli sessions (keyboard-driven TUI, no transport)', async () => {
+    const service = new TelegramForwardingService()
+    service.initialize({
+      db: {
+        getSetting: () =>
+          JSON.stringify({ botToken: 'token', chatId: 123, chatName: 'me', contextSize: 3 }),
+        getSession: () => ({
+          agent_sdk: 'codex-cli',
+          worktree_id: 'w1',
+          opencode_session_id: null
+        }),
+        getWorktree: () => ({ path: '/repo', branch_name: 'branch' }),
+        getProject: () => ({ name: 'Project' }),
+        setSetting: vi.fn(),
+        deleteSetting: vi.fn()
+      } as never
+    })
+
+    await expect(
+      service.startForwarding({
+        sessionId: 'cx1',
+        worktreeId: 'w1',
+        connectionId: null,
+        mode: 'all'
+      })
+    ).rejects.toThrow(/not supported for Codex CLI/i)
   })
 })
 
