@@ -2,7 +2,11 @@ import { execFileSync } from 'child_process'
 import { existsSync } from 'fs'
 import { homedir } from 'os'
 import { getLogDir } from './logger'
-import { resolveCodexBinaryPath, supportsCodexAppServer } from './codex-binary-resolver'
+import {
+  resolveCodexBinaryPath,
+  supportsCodexAppServer,
+  supportsCodexCliHooks
+} from './codex-binary-resolver'
 import { resolveOpenCodeLaunchSpec } from './opencode-binary-resolver'
 import type { OpenCodeLaunchSpec } from './opencode-binary-resolver'
 
@@ -46,7 +50,10 @@ export function detectAgentSdks(openCodeLaunchSpec: OpenCodeLaunchSpec | null): 
     opencode: openCodeLaunchSpec !== null,
     claude: check('claude'),
     codex: !!resolvedCodexBinary && supportsCodexAppServer(resolvedCodexBinary),
-    codexCli: !!resolvedCodexBinary
+    // codex-cli only needs the binary (no app-server), but the binary MUST
+    // support the hook flags every spawn injects — an older codex without them
+    // would fail to start, so gate on hook capability rather than mere presence.
+    codexCli: !!resolvedCodexBinary && supportsCodexCliHooks(resolvedCodexBinary)
   }
 }
 

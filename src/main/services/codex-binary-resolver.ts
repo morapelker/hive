@@ -6,6 +6,7 @@ import { createLogger } from './logger'
 
 const log = createLogger({ component: 'CodexBinaryResolver' })
 const codexAppServerSupportCache = new Map<string, boolean>()
+const codexHookSupportCache = new Map<string, boolean>()
 
 function splitResolvedPaths(result: string): string[] {
   return result
@@ -53,6 +54,16 @@ function stringifyProbeOutput(output: unknown): string {
 
 function hasCodexAppServerUsage(output: string): boolean {
   return /Usage:\s*codex\s+app-server\b/i.test(output)
+}
+
+/**
+ * The codex-cli provider injects `--dangerously-bypass-hook-trust` (and the
+ * `--enable hooks` / `-c hooks.*` overrides) on every spawn. An older codex
+ * that predates the hooks surface rejects those flags and the session fails to
+ * start, so hook-trust support is the capability gate for offering codex-cli.
+ */
+function hasCodexHookTrustFlag(output: string): boolean {
+  return /--dangerously-bypass-hook-trust\b/.test(output)
 }
 
 function firstExistingPath(paths: string[]): string | null {
@@ -166,6 +177,47 @@ export function supportsCodexAppServer(binaryPath: string): boolean {
     }
     if (!isBareCommand(binaryPath)) {
       codexAppServerSupportCache.set(binaryPath, false)
+    }
+    return false
+  }
+}
+
+/**
+ * Whether this codex binary supports the hook flags the codex-cli provider
+ * injects (see hasCodexHookTrustFlag). Probes `codex --help` and looks for
+ * `--dangerously-bypass-hook-trust`. Same caching/shell/error-output handling
+ * as supportsCodexAppServer.
+ */
+export function supportsCodexCliHooks(binaryPath: string): boolean {
+  const cached = codexHookSupportCache.get(binaryPath)
+  if (cached !== undefined) {
+    return cached
+  }
+
+  try {
+    const output = execFileSync(binaryPath, ['--help'], {
+      encoding: 'utf-8',
+      timeout: 5000,
+      env: process.env,
+      shell: usesShellForCodexBinary(binaryPath)
+    })
+    const supported = hasCodexHookTrustFlag(output)
+    if (supported || !isBareCommand(binaryPath)) {
+      codexHookSupportCache.set(binaryPath, supported)
+    }
+    return supported
+  } catch (error) {
+    const output = [
+      stringifyProbeOutput((error as { stdout?: unknown }).stdout),
+      stringifyProbeOutput((error as { stderr?: unknown }).stderr)
+    ].join('\n')
+    const supported = hasCodexHookTrustFlag(output)
+    if (supported) {
+      codexHookSupportCache.set(binaryPath, true)
+      return true
+    }
+    if (!isBareCommand(binaryPath)) {
+      codexHookSupportCache.set(binaryPath, false)
     }
     return false
   }
