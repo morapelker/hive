@@ -181,13 +181,23 @@ interface GrokSessionTracking {
     toolInput?: unknown
   } | null
   /**
-   * Grok's live permission mode, seeded from the Hive session mode at spawn
-   * and refreshed from each pre_tool_use payload. user_prompt_submit carries
-   * no permissionMode, but the pipeline maps UserPromptSubmit→planning off it
-   * (which in turn drives the renderer's plan-followup handling), so the last
-   * known mode is injected there.
+   * Grok's live permission mode, refreshed from each root pre_tool_use
+   * payload. NOTE: grok's plan state is a separate state machine, NOT a
+   * permission mode — during an active plan session this reports the mode
+   * armed underneath (bypassPermissions for --always-approve spawns), so it
+   * must never be used to decide "is this session planning".
    */
   permissionMode: string | null
+  /**
+   * Whether grok's plan session is active, seeded from the Hive session mode
+   * at spawn and updated from exit_plan_mode outcomes (PostToolUse = plan
+   * approved → off; PostToolUseFailure = revisions requested → still on;
+   * PostToolUse of enter_plan_mode → on). user_prompt_submit carries no plan
+   * signal of its own, but the pipeline maps UserPromptSubmit→planning off
+   * the injected permission_mode — which in turn drives the renderer's
+   * plan-followup handling across ALL planning rounds, not just the first.
+   */
+  planActive: boolean
 }
 
 const tracking = new Map<string, GrokSessionTracking>()
@@ -203,8 +213,8 @@ export function setGrokSessionIdSink(sink: GrokSessionIdSink | null): void {
 /**
  * Seed tracking at spawn time with the session id we are resuming (or null
  * for a fresh session, in which case the first hook's sessionId becomes the
- * root and is reported through the sink) and the permission mode implied by
- * the spawn args.
+ * root and is reported through the sink) and the plan state implied by the
+ * spawn (the pty bridge arms grok's plan mode for plan-mode Hive sessions).
  */
 export function seedGrokSessionTracking(
   hiveSessionId: string,
@@ -214,7 +224,8 @@ export function seedGrokSessionTracking(
   tracking.set(hiveSessionId, {
     rootGrokSessionId: grokSessionId,
     lastPreToolUse: null,
-    permissionMode: opts?.planMode ? 'plan' : null
+    permissionMode: null,
+    planActive: opts?.planMode ?? false
   })
 }
 
@@ -229,7 +240,12 @@ export function clearAllGrokSessionTracking(): void {
 function getOrCreateTracking(hiveSessionId: string): GrokSessionTracking {
   let state = tracking.get(hiveSessionId)
   if (!state) {
-    state = { rootGrokSessionId: null, lastPreToolUse: null, permissionMode: null }
+    state = {
+      rootGrokSessionId: null,
+      lastPreToolUse: null,
+      permissionMode: null,
+      planActive: false
+    }
     tracking.set(hiveSessionId, state)
   }
   return state
@@ -345,7 +361,12 @@ export function translateGrokHook(
     if (typeof raw.prompt === 'string') {
       hook.prompt = unwrapUserQuery(raw.prompt)
     }
-    if (state.permissionMode) {
+    // Plan iteration rounds must keep mapping to 'planning': the plan signal
+    // comes from the tracked plan state, never from grok's permission mode
+    // (which reads bypassPermissions underneath an active plan session).
+    if (state.planActive) {
+      hook.permission_mode = 'plan'
+    } else if (state.permissionMode) {
       hook.permission_mode = state.permissionMode
     }
   }
@@ -371,6 +392,17 @@ export function translateGrokHook(
     state.lastPreToolUse.toolUseId === raw.toolUseId
   ) {
     state.lastPreToolUse = null
+  }
+
+  // Track grok's plan lifecycle from the tools that drive it: an approved
+  // exit_plan_mode ends the plan session (a failed one means revisions were
+  // requested — planning continues), and an approved enter_plan_mode starts
+  // one mid-session.
+  if (isRootEvent && toolName === 'ExitPlanMode' && mappedEvent === 'PostToolUse') {
+    state.planActive = false
+  }
+  if (isRootEvent && toolName === 'EnterPlanMode' && mappedEvent === 'PostToolUse') {
+    state.planActive = true
   }
 
   // The plan text is not in exit_plan_mode's (empty) toolInput — surface the

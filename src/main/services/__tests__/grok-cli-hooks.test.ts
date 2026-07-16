@@ -96,8 +96,12 @@ describe('translateGrokHook', () => {
     expect(hook?.permission_mode).toBe('plan')
   })
 
-  it('tracks live permission mode from pre_tool_use payloads', () => {
+  it('keeps mapping prompts to plan across tool turns — grok reports the mode ARMED UNDERNEATH', () => {
     seedGrokSessionTracking(HIVE_ID, ROOT, { planMode: true })
+    // During an active plan session, pre_tool_use reports bypassPermissions
+    // (always-approve armed underneath); that must not end the plan signal —
+    // otherwise the second planning round maps to 'working' and the renderer
+    // treats plan feedback as an implement turn.
     translateGrokHook(HIVE_ID, {
       hookEventName: 'pre_tool_use',
       sessionId: ROOT,
@@ -105,12 +109,68 @@ describe('translateGrokHook', () => {
       toolUseId: 'call-1',
       permissionMode: 'bypassPermissions'
     })
-    const hook = translateGrokHook(HIVE_ID, {
+    const followup = translateGrokHook(HIVE_ID, {
       hookEventName: 'user_prompt_submit',
       sessionId: ROOT,
-      prompt: 'next turn'
+      prompt: 'plan revision notes'
     })
-    expect(hook?.permission_mode).toBe('bypassPermissions')
+    expect(followup?.permission_mode).toBe('plan')
+  })
+
+  it('ends the plan signal on approved exit_plan_mode and restarts it on enter_plan_mode', () => {
+    seedGrokSessionTracking(HIVE_ID, ROOT, { planMode: true })
+    translateGrokHook(HIVE_ID, {
+      hookEventName: 'pre_tool_use',
+      sessionId: ROOT,
+      toolName: 'run_terminal_command',
+      toolUseId: 'call-0',
+      permissionMode: 'bypassPermissions'
+    })
+
+    // Rejected plan (revisions requested) → still planning.
+    translateGrokHook(HIVE_ID, {
+      hookEventName: 'post_tool_use_failure',
+      sessionId: ROOT,
+      toolName: 'exit_plan_mode',
+      toolUseId: 'call-r'
+    })
+    expect(
+      translateGrokHook(HIVE_ID, {
+        hookEventName: 'user_prompt_submit',
+        sessionId: ROOT,
+        prompt: 'more revisions'
+      })?.permission_mode
+    ).toBe('plan')
+
+    // Approved plan → implementation prompts map off the live mode.
+    translateGrokHook(HIVE_ID, {
+      hookEventName: 'post_tool_use',
+      sessionId: ROOT,
+      toolName: 'exit_plan_mode',
+      toolUseId: 'call-a'
+    })
+    expect(
+      translateGrokHook(HIVE_ID, {
+        hookEventName: 'user_prompt_submit',
+        sessionId: ROOT,
+        prompt: 'implement it'
+      })?.permission_mode
+    ).toBe('bypassPermissions')
+
+    // Agent re-enters plan mode mid-session (approved enter_plan_mode).
+    translateGrokHook(HIVE_ID, {
+      hookEventName: 'post_tool_use',
+      sessionId: ROOT,
+      toolName: 'enter_plan_mode',
+      toolUseId: 'call-e'
+    })
+    expect(
+      translateGrokHook(HIVE_ID, {
+        hookEventName: 'user_prompt_submit',
+        sessionId: ROOT,
+        prompt: 'plan again'
+      })?.permission_mode
+    ).toBe('plan')
   })
 
   it('maps grok tool names to their claude equivalents', () => {
