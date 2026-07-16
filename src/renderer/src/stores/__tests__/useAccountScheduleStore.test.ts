@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { resetRendererRpcClientForTests, setRendererRpcClient } from '@/api/rpc-client'
-import { useAccountScheduleStore, describeSchedule } from '../useAccountScheduleStore'
+import {
+  useAccountScheduleStore,
+  describeSchedule,
+  resetExecutingProvidersForTests
+} from '../useAccountScheduleStore'
 import { useUsageStore } from '../useUsageStore'
 import { useAccountStore } from '../useAccountStore'
 import { toast } from '@/lib/toast'
@@ -59,6 +63,7 @@ describe('useAccountScheduleStore', () => {
     vi.clearAllMocks()
 
     useAccountScheduleStore.setState({ schedules: {} })
+    resetExecutingProvidersForTests()
     useAccountStore.setState({ anthropicEmail: 'current@x.com', openaiEmail: null })
     useUsageStore.setState({
       anthropicUsage: null,
@@ -194,6 +199,56 @@ describe('useAccountScheduleStore', () => {
     expect(switchCalls()).toHaveLength(0)
     expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('gone@x.com'))
     expect(useAccountScheduleStore.getState().schedules.anthropic).toBeUndefined()
+  })
+
+  it('keeps the schedule and backs off when the switch attempt fails', async () => {
+    useAccountScheduleStore.getState().scheduleByTime('anthropic', 'acc-2', 'target@x.com', 1_000)
+    request.mockImplementation(async (method: string) => {
+      if (method === 'accountOps.switchAccount') return { success: false, error: 'network down' }
+      if (method === 'accountOps.listSaved') return []
+      return null
+    })
+
+    vi.setSystemTime(Date.now() + 2_000)
+    await useAccountScheduleStore.getState().checkSchedules()
+
+    expect(switchCalls()).toHaveLength(1)
+    const kept = useAccountScheduleStore.getState().schedules.anthropic
+    expect(kept).toBeDefined()
+    expect(kept?.notBefore).toBe(Date.now() + 5 * 60_000)
+
+    // Still backing off — no second attempt yet.
+    await useAccountScheduleStore.getState().checkSchedules()
+    expect(switchCalls()).toHaveLength(1)
+
+    // After the retry delay it fires again; this time the switch succeeds.
+    request.mockImplementation(async (method: string) => {
+      if (method === 'accountOps.switchAccount') return { success: true }
+      if (method === 'accountOps.listSaved') return []
+      if (method === 'accountOps.getClaudeEmail') return 'target@x.com'
+      if (method === 'usageOps.fetch') return { success: true, data: undefined }
+      return null
+    })
+    vi.setSystemTime(Date.now() + 5 * 60_000 + 1_000)
+    await useAccountScheduleStore.getState().checkSchedules()
+
+    expect(switchCalls()).toHaveLength(2)
+    expect(useAccountScheduleStore.getState().schedules.anthropic).toBeUndefined()
+  })
+
+  it('keeps the schedule when the saved-accounts reload fails', async () => {
+    useAccountScheduleStore.getState().scheduleByTime('anthropic', 'gone-id', 'gone@x.com', 1_000)
+    request.mockImplementation(async (method: string) => {
+      if (method === 'accountOps.listSaved') throw new Error('rpc down')
+      return null
+    })
+
+    vi.setSystemTime(Date.now() + 2_000)
+    await useAccountScheduleStore.getState().checkSchedules()
+
+    expect(switchCalls()).toHaveLength(0)
+    expect(toast.error).not.toHaveBeenCalled()
+    expect(useAccountScheduleStore.getState().schedules.anthropic).toBeDefined()
   })
 
   it('replaces an existing schedule for the provider and supports cancel', () => {

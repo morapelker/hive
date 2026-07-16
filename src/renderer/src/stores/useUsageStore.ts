@@ -42,7 +42,8 @@ interface UsageState {
   refreshAllForProvider: (provider: UsageProvider) => Promise<void>
   refreshSavedAccount: (id: string, opts?: { userInitiated?: boolean }) => Promise<void>
   removeSavedAccount: (id: string) => Promise<void>
-  switchAccount: (id: string) => Promise<void>
+  /** Resolves true when the switch op succeeded (failures also toast). */
+  switchAccount: (id: string) => Promise<boolean>
   fetchUsageForProvider: (provider: UsageProvider) => Promise<void>
   forceRefreshProvider: (provider: UsageProvider) => Promise<void>
   setActiveProvider: (provider: UsageProvider) => void
@@ -245,6 +246,7 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
             .forceRefreshProvider(provider)
             .catch(() => {})
         }
+        return true
       } else {
         toast.error(`Switch failed: ${result.error ?? 'Unknown error'}`)
       }
@@ -257,6 +259,7 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
         return { switchingAccountIds: nextIds }
       })
     }
+    return false
   },
 
   fetchUsageForProvider: async (provider: UsageProvider) => {

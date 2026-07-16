@@ -65,7 +65,7 @@ export function ScheduleSwitchForm({
     const value = Number(customValue)
     if (!Number.isFinite(value) || value <= 0) return
     if (mode === 'time') submitTime(value * 60_000)
-    else submitUsage(value)
+    else if (value <= 100) submitUsage(value)
   }
 
   return (
@@ -126,6 +126,7 @@ export function ScheduleSwitchForm({
           <input
             type="number"
             min={1}
+            max={mode === 'usage' ? 100 : undefined}
             value={customValue}
             onChange={(e) => setCustomValue(e.target.value)}
             onKeyDown={(e) => {
@@ -154,7 +155,10 @@ export function ScheduleSwitchForm({
           ? 'Switch to this account after the time elapses.'
           : 'Switch when any usage bar of the active account crosses this percent.'}
         {replacesOther && (
-          <span className="text-amber-500"> Replaces the pending {existing?.email} schedule.</span>
+          <span className="text-amber-500">
+            {' '}
+            Replaces the pending {existing?.email ?? 'account'} schedule.
+          </span>
         )}
       </div>
     </div>

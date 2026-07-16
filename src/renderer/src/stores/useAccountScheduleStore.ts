@@ -17,6 +17,8 @@ export interface ScheduledSwitch {
   /** Utilization percent (0-100) at or above which a 'usage' schedule fires */
   thresholdPercent: number | null
   createdAt: number
+  /** Set after a failed switch attempt — don't retry before this time */
+  notBefore?: number
 }
 
 interface AccountScheduleState {
@@ -73,9 +75,18 @@ function activeEmailFor(provider: UsageProvider): string | null {
   return provider === 'anthropic' ? state.anthropicEmail : state.openaiEmail
 }
 
+// A due schedule whose switch attempt failed is retried, but not more often
+// than this — a persistently failing switch shouldn't toast every tick.
+const RETRY_DELAY_MS = 5 * 60_000
+
 // Re-entrancy guard: checkSchedules can be triggered by both the interval
 // tick and usage-store updates while a switch is still in flight.
 const executingProviders = new Set<UsageProvider>()
+
+/** Test hook: the guard lives outside the store, so setState can't reset it. */
+export function resetExecutingProvidersForTests(): void {
+  executingProviders.clear()
+}
 
 export const useAccountScheduleStore = create<AccountScheduleState>()(
   persist(
@@ -127,6 +138,7 @@ export const useAccountScheduleStore = create<AccountScheduleState>()(
         for (const provider of PROVIDERS) {
           const schedule = get().schedules[provider]
           if (!schedule || executingProviders.has(provider)) continue
+          if (schedule.notBefore !== undefined && Date.now() < schedule.notBefore) continue
 
           // Already on the target account (e.g. the user switched manually) —
           // the schedule is moot, drop it silently.
@@ -148,22 +160,26 @@ export const useAccountScheduleStore = create<AccountScheduleState>()(
           }
           if (!due) continue
 
+          // Re-entrancy during the awaits below is blocked by executingProviders,
+          // so the schedule can stay in place until the switch outcome is known —
+          // a transient failure must not silently drop the user's schedule.
           executingProviders.add(provider)
           try {
             // Make sure the target account still exists before switching.
             let accounts = useUsageStore.getState().savedAccounts[provider]
             if (!accounts.some((a) => a.id === schedule.accountId)) {
-              await useUsageStore
-                .getState()
-                .loadSavedAccounts(provider)
-                .catch(() => {})
+              try {
+                await useUsageStore.getState().loadSavedAccounts(provider)
+              } catch {
+                // Can't tell whether the account is gone — keep the schedule
+                // and let a later check retry.
+                continue
+              }
               accounts = useUsageStore.getState().savedAccounts[provider]
             }
 
-            // Clear before switching so a re-entrant check can't double-fire.
-            get().cancelSchedule(provider)
-
             if (!accounts.some((a) => a.id === schedule.accountId)) {
+              get().cancelSchedule(provider)
               toast.error(
                 `Scheduled switch canceled: ${schedule.email ?? 'account'} is no longer saved`
               )
@@ -171,7 +187,23 @@ export const useAccountScheduleStore = create<AccountScheduleState>()(
             }
 
             // switchAccount toasts success/failure itself.
-            await useUsageStore.getState().switchAccount(schedule.accountId)
+            const switched = await useUsageStore.getState().switchAccount(schedule.accountId)
+            if (switched) {
+              get().cancelSchedule(provider)
+            } else {
+              // Keep the schedule but back off so a persistent failure doesn't
+              // retry (and toast) on every tick.
+              set((state) => {
+                const current = state.schedules[provider]
+                if (!current || current.createdAt !== schedule.createdAt) return state
+                return {
+                  schedules: {
+                    ...state.schedules,
+                    [provider]: { ...current, notBefore: Date.now() + RETRY_DELAY_MS }
+                  }
+                }
+              })
+            }
           } finally {
             executingProviders.delete(provider)
           }

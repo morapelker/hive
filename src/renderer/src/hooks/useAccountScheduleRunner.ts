@@ -37,6 +37,11 @@ function providersWithRunningSessions(): Set<UsageProvider> {
  */
 export function useAccountScheduleRunner(): void {
   useEffect(() => {
+    // Failed fetches don't advance lastFetchedAt, so gate on our own attempt
+    // time too — otherwise a flaky network turns the 5-minute refresh into
+    // polling on every tick.
+    const lastAttemptAt: Partial<Record<UsageProvider, number>> = {}
+
     const tick = (): void => {
       const usageStore = useUsageStore.getState()
       for (const provider of providersWithRunningSessions()) {
@@ -44,7 +49,9 @@ export function useAccountScheduleRunner(): void {
           provider === 'anthropic'
             ? usageStore.anthropicLastFetchedAt
             : usageStore.openaiLastFetchedAt
-        if (!lastFetchedAt || Date.now() - lastFetchedAt >= SESSION_USAGE_REFRESH_MS) {
+        const lastActivity = Math.max(lastFetchedAt ?? 0, lastAttemptAt[provider] ?? 0)
+        if (Date.now() - lastActivity >= SESSION_USAGE_REFRESH_MS) {
+          lastAttemptAt[provider] = Date.now()
           // fetchUsageForProvider is silent on failure and debounce-safe, so a
           // flaky refresh never toasts every 5 minutes.
           usageStore.fetchUsageForProvider(provider).catch(() => {})
