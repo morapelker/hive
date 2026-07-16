@@ -36,4 +36,37 @@ describe('resolvePRContentProvider', () => {
       })
     ).toBeNull()
   })
+
+  it('resolves codex-cli to the codex provider when only the CLI is available', () => {
+    // codex false (no app-server) but codexCli true — `codex exec` still works.
+    expect(
+      resolvePRContentProvider('codex-cli', {
+        opencode: false,
+        claude: false,
+        codex: false,
+        codexCli: true
+      })
+    ).toBe('codex')
+  })
+
+  it('maps claude-code-cli to claude-code for PR content', () => {
+    expect(
+      resolvePRContentProvider('claude-code-cli', {
+        opencode: false,
+        claude: true,
+        codex: false
+      })
+    ).toBe('claude-code')
+  })
+
+  it('treats codex as available for PR content when only codexCli is set (falling back from terminal)', () => {
+    expect(
+      resolvePRContentProvider('terminal', {
+        opencode: false,
+        claude: false,
+        codex: false,
+        codexCli: true
+      })
+    ).toBe('codex')
+  })
 })

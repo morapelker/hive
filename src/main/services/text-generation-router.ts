@@ -178,7 +178,9 @@ function resolveProvider(provider: AgentSdkId): TextGenProvider | null {
   const sdks = getCachedSdkDetection()
   const providerAvailable: Record<TextGenProvider, boolean> = {
     'claude-code': sdks.claude,
-    codex: sdks.codex,
+    // Text generation spawns `codex exec`, which needs only the codex binary
+    // (no app-server) — available whenever either codex signal is set.
+    codex: sdks.codex || sdks.codexCli,
     opencode: sdks.opencode
   }
 
