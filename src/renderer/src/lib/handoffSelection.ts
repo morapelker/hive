@@ -112,9 +112,9 @@ function dropForeignModelForSdk(
   const grokFamily = model.providerID === 'xai' || model.modelID.toLowerCase().startsWith('grok')
   if (!grokFamily) return model
   if (model.agentSdk === 'grok-cli') return null
+  // Any stamp surviving the early return above is a non-grok stamp.
   const trusted =
-    !!useSettingsStore.getState().selectedModelByProvider?.[agentSdk] ||
-    (model.agentSdk != null && model.agentSdk !== 'grok-cli')
+    !!useSettingsStore.getState().selectedModelByProvider?.[agentSdk] || model.agentSdk != null
   return trusted ? model : null
 }
 
