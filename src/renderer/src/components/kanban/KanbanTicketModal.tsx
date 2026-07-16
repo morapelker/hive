@@ -2009,6 +2009,13 @@ function PlanReviewModeContent({
 
   const isConnectionSession = !!sessionRecord?.connection_id
   const isClaudeCliPlanSession = isCliAgentSdk(sessionRecord?.agent_sdk)
+  // Only claude-cli hides the modal mode toggle / cedes Tab+Shift+Tab to its
+  // terminal (its plan mode IS the in-terminal permission-mode toggle). codex-cli
+  // has no in-terminal toggle — plan/super-plan is driven from followUpMode via
+  // CODEX_PLAN_MODE_PREFIX — so it keeps the modal toggle. (Dropzone/superpowers
+  // below stay gated on isClaudeCliPlanSession: both CLI terminals hide those.)
+  const terminalOwnsModeToggle =
+    isClaudeCliPlanSession && !isCodexCli(sessionRecord?.agent_sdk)
   const hasWorkingContext = !!(sessionRecord?.worktree_id || sessionRecord?.connection_id)
 
   const [slashCommands, setSlashCommands] = useState<{ name: string }[]>([])
@@ -2096,7 +2103,7 @@ function PlanReviewModeContent({
 
   // Tab key toggles mode, Shift+Tab toggles super-plan
   useEffect(() => {
-    if (isClaudeCliPlanSession) return
+    if (terminalOwnsModeToggle) return
     const handler = (e: KeyboardEvent): void => {
       if (e.key === 'Tab' && !e.ctrlKey && !e.metaKey && !e.altKey) {
         const modal = document.querySelector('[data-testid="kanban-ticket-modal"]')
@@ -2113,7 +2120,7 @@ function PlanReviewModeContent({
     }
     window.addEventListener('keydown', handler, true)
     return () => window.removeEventListener('keydown', handler, true)
-  }, [isClaudeCliPlanSession, toggleMode, toggleSuperMode])
+  }, [terminalOwnsModeToggle, toggleMode, toggleSuperMode])
 
   // ── Send followup (reject pending plan + iterate) ────────────────
   const handleSendFollowup = useCallback(async () => {
@@ -2911,7 +2918,7 @@ function PlanReviewModeContent({
         placeholder="Iterate on the plan... (Enter to send)"
         testIdPrefix="plan-review"
         showInlineSendButton
-        hideModeToggle={isClaudeCliPlanSession}
+        hideModeToggle={terminalOwnsModeToggle}
         textareaRef={textareaRef}
       />
 
@@ -3015,7 +3022,13 @@ function ReviewModeContent({
     () => (ticket.worktree_id ? findWorktreeById(ticket.worktree_id) : null),
     [ticket.worktree_id]
   )
-  const isClaudeCliSession = isCliAgentSdk(sessionRecord?.agent_sdk)
+  // Hide the modal's follow-up mode toggle (and let Tab/Shift+Tab reach the
+  // embedded terminal) ONLY for claude-cli, whose plan mode IS the in-terminal
+  // permission-mode toggle. codex-cli has no in-terminal toggle — its
+  // plan/super-plan comes from followUpMode → CODEX_PLAN_MODE_PREFIX in
+  // sendFollowupToSession — so it must keep the modal toggle selectable.
+  const isClaudeCliSession =
+    isCliAgentSdk(sessionRecord?.agent_sdk) && !isCodexCli(sessionRecord?.agent_sdk)
   const [followUpText, setFollowUpText] = useState('')
   const [followUpMode, setFollowUpMode] = useState<FollowUpMode>('build')
   const [isSending, setIsSending] = useState(false)

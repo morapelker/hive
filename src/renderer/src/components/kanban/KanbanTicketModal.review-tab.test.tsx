@@ -349,4 +349,25 @@ describe('KanbanTicketModal review mode Tab handling', () => {
     expect(tabNotPrevented).toBe(true)
     expect(shiftTabNotPrevented).toBe(true)
   })
+
+  it('keeps the mode chip and intercepts Tab for codex-cli sessions (no in-terminal toggle)', async () => {
+    // codex-cli has no in-terminal permission-mode toggle — its plan/super-plan
+    // is driven from followUpMode via CODEX_PLAN_MODE_PREFIX — so unlike claude-cli
+    // the modal must keep the mode toggle and own Tab/Shift+Tab.
+    const session = makeSession('codex-cli')
+    dbApiMocks.session.get.mockResolvedValue(session)
+    setupStores(session)
+
+    renderModal()
+
+    const textarea = await screen.findByTestId('review-followup-input')
+    const chip = await screen.findByTestId('review-mode-toggle')
+    expect(chip).toHaveAttribute('data-mode', 'build')
+
+    textarea.focus()
+    const notPrevented = fireEvent.keyDown(textarea, { key: 'Tab' })
+
+    expect(notPrevented).toBe(false)
+    expect(chip).toHaveAttribute('data-mode', 'plan')
+  })
 })
