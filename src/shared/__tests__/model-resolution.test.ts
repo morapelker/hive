@@ -168,5 +168,17 @@ describe('model-resolution', () => {
       resolveSessionCreation({ settings: stampedXai, mode: 'build', defaultAgentSdk: 'opencode' })
         .model.modelID
     ).toBe('grok-4.5')
+
+    // A per-SDK map entry is trusted provenance even when unstamped — the
+    // user selected this xAI model FOR opencode from opencode's own catalog.
+    const perSdkXai: ModelResolutionSettings = {
+      selectedModelByProvider: {
+        opencode: { providerID: 'xai', modelID: 'grok-4-fast' }
+      }
+    }
+    expect(
+      resolveSessionCreation({ settings: perSdkXai, mode: 'build', defaultAgentSdk: 'opencode' })
+        .model.modelID
+    ).toBe('grok-4-fast')
   })
 })

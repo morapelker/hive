@@ -75,8 +75,14 @@ export function resolveSessionCreation(opts: {
     resolvedSdk = normalizeAgentSdk(modeDefault.agentSdk ?? requestedSdk)
   }
 
+  let fromPerSdkMap = false
   if (!model) {
     model = resolveModelForSdk(resolvedSdk, settings)
+    // A per-SDK map hit is trusted provenance even without an agentSdk stamp:
+    // resolveModelForSdk only falls back to the legacy global selectedModel
+    // when the map is empty, so a non-null result with a map entry for this
+    // SDK IS that entry.
+    fromPerSdkMap = !!model && !!settings.selectedModelByProvider?.[resolvedSdk]
   }
 
   // Deliberate divergence from renderer resolution: main has no model catalog or
@@ -88,13 +94,18 @@ export function resolveSessionCreation(opts: {
   // Keep the SDK/model pair coherent: grok sessions run only grok-family
   // models (the spawner drops anything else), and grok models cannot ride
   // into another SDK — the legacy global selectedModel is unstamped and can
-  // leak either way. An explicit matching stamp is trusted (e.g. an
-  // OpenCode-catalog xAI model stamped 'opencode').
+  // leak either way. Trusted provenance passes: an explicit matching stamp,
+  // or a per-SDK map entry (OpenCode's own catalog can expose xAI models the
+  // user selected FOR opencode, stored unstamped).
   if (resolvedSdk === 'grok-cli') {
     if (!isGrokModel(model)) {
       model = FALLBACK_MODELS['grok-cli']
     }
-  } else if (isGrokModel(model) && (!model.agentSdk || model.agentSdk === 'grok-cli')) {
+  } else if (
+    isGrokModel(model) &&
+    !fromPerSdkMap &&
+    (!model.agentSdk || model.agentSdk === 'grok-cli')
+  ) {
     model = FALLBACK_MODELS[resolvedSdk]
   }
 
