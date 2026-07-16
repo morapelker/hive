@@ -151,7 +151,9 @@ function resolveProvider(provider: AgentSdkId): AgentSdkId | null {
   const sdks = getCachedSdkDetection()
   const providerAvailable: Record<Exclude<AgentSdkId, 'terminal'>, boolean> = {
     'claude-code': sdks.claude,
+    'claude-code-cli': sdks.claude,
     codex: sdks.codex,
+    'codex-cli': sdks.codexCli,
     opencode: sdks.opencode
   }
 

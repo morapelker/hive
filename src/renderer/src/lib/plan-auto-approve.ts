@@ -1,4 +1,4 @@
-import { isClaudeCli } from '@shared/types/agent-sdk'
+import { isCliAgentSdk } from '@shared/types/agent-sdk'
 import { isPlanLike } from './constants'
 import type { KanbanTicket } from '../../../main/db/types'
 
@@ -15,6 +15,6 @@ export function canToggleAutoApprovePlan(
   if (!isPlanLike(ticket.mode)) return false
   if (ticket.goal_mode) return false
   if (ticket.plan_ready) return false
-  if (ticket.current_session_id && !isClaudeCli(linkedSessionAgentSdk)) return false
+  if (ticket.current_session_id && !isCliAgentSdk(linkedSessionAgentSdk)) return false
   return true
 }

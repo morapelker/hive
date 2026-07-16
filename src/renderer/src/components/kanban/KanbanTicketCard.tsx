@@ -105,7 +105,7 @@ import { useConflictFixFlow } from '@/hooks/useConflictFixFlow'
 import { useTicketRemoteLaunch } from '@/hooks/useTicketRemoteLaunch'
 import { formatTokenCount } from '@/lib/format-utils'
 import { canToggleAutoApprovePlan } from '@/lib/plan-auto-approve'
-import { isClaudeCli } from '@shared/types/agent-sdk'
+import { isCliAgentSdk } from '@shared/types/agent-sdk'
 import { terminalApi } from '@/api/terminal-api'
 import type { KanbanTicket, TicketMark } from '../../../../main/db/types'
 
@@ -972,7 +972,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
       // Mirror the durable flag into the hook server's in-memory armed registry
       // when a claude-cli session is already live; sessions armed before they
       // exist are registered by the status listener on their first planning turn.
-      if (ticket.current_session_id && isClaudeCli(linkedSessionAgentSdk)) {
+      if (ticket.current_session_id && isCliAgentSdk(linkedSessionAgentSdk)) {
         await terminalApi.setClaudeCliPlanAutoApprove(ticket.current_session_id, next)
       }
     } catch {

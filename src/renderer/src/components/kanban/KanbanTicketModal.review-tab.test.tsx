@@ -140,7 +140,7 @@ const worktree: Worktree = {
   last_accessed_at: now
 }
 
-function makeSession(agentSdk: string): Session {
+function makeSession(agentSdk: Session['agent_sdk']): Session {
   return {
     id: 'session-1',
     worktree_id: 'worktree-1',

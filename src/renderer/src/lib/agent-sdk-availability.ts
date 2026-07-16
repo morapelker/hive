@@ -4,6 +4,8 @@ export interface AvailableAgentSdks {
   opencode: boolean
   claude: boolean
   codex: boolean
+  /** codex binary present (no app-server requirement) — gates the terminal-backed codex-cli. */
+  codexCli?: boolean
 }
 
 /** Alias of the shared {@link AgentSdk} union, kept for this module's selection-focused naming. */
@@ -19,6 +21,8 @@ function getAgentSdkLabel(sdk: Exclude<SelectableAgentSdk, 'terminal'>): string 
       return 'Claude Code (CLI)'
     case 'codex':
       return 'Codex'
+    case 'codex-cli':
+      return 'Codex (CLI)'
   }
 }
 
@@ -36,8 +40,8 @@ export function isAgentSdkAvailable(
       return availableAgentSdks.claude
     case 'codex':
       return availableAgentSdks.codex
-    case 'terminal':
-      return true
+    case 'codex-cli':
+      return availableAgentSdks.codexCli ?? false
   }
 }
 

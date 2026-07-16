@@ -40,7 +40,8 @@ describe('system-info: detectAgentSdks opencode launchability', () => {
     ).toEqual({
       opencode: true,
       claude: true,
-      codex: true
+      codex: true,
+      codexCli: true
     })
   })
 
@@ -54,7 +55,8 @@ describe('system-info: detectAgentSdks opencode launchability', () => {
     expect(detectAgentSdks(null)).toEqual({
       opencode: false,
       claude: false,
-      codex: false
+      codex: false,
+      codexCli: true
     })
   })
 })

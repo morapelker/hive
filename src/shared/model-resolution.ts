@@ -22,7 +22,8 @@ export const FALLBACK_MODELS: Record<HandoffAgentSdk, SharedSelectedModel> = {
   opencode: { providerID: 'anthropic', modelID: 'claude-opus-4-5-20251101' },
   'claude-code': { providerID: 'anthropic', modelID: 'claude-opus-4-5-20251101' },
   'claude-code-cli': { providerID: 'anthropic', modelID: 'sonnet', variant: 'high' },
-  codex: { providerID: 'codex', modelID: 'gpt-5.5' }
+  codex: { providerID: 'codex', modelID: 'gpt-5.5' },
+  'codex-cli': { providerID: 'codex', modelID: 'gpt-5.5', variant: 'high' }
 }
 
 export function getModeDefaultKey(mode: string | null | undefined): ModeDefaultKey {
@@ -33,7 +34,9 @@ export function getModeDefaultKey(mode: string | null | undefined): ModeDefaultK
 }
 
 export function normalizeAgentSdk(sdk: AgentSdk | string | null | undefined): HandoffAgentSdk {
-  if (sdk === 'claude-code' || sdk === 'claude-code-cli' || sdk === 'codex') return sdk
+  if (sdk === 'claude-code' || sdk === 'claude-code-cli' || sdk === 'codex' || sdk === 'codex-cli') {
+    return sdk
+  }
   return 'opencode'
 }
 

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { isCliAgentSdk } from '@shared/types/agent-sdk'
 import { useGitStore } from '@/stores/useGitStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useSessionStore } from '@/stores/useSessionStore'
@@ -232,7 +233,7 @@ export function useLifecycleActions(worktreeId: string | null): LifecycleActions
         {
           autoFocus: false,
           modelOverride: reviewDefaultModel,
-          ...(effectiveSelection.agentSdk === 'claude-code-cli' ? { pendingMessage: prompt } : {})
+          ...(isCliAgentSdk(effectiveSelection.agentSdk) ? { pendingMessage: prompt } : {})
         }
       )
       if (!result.success || !result.session) {
@@ -263,7 +264,7 @@ export function useLifecycleActions(worktreeId: string | null): LifecycleActions
 
       void (async () => {
         try {
-          if (agentSdk === 'claude-code-cli') {
+          if (isCliAgentSdk(agentSdk)) {
             messageSendTimes.set(sessionId, Date.now())
             userExplicitSendTimes.set(sessionId, Date.now())
             snapshotTokenBaseline(sessionId)

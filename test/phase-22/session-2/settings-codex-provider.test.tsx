@@ -92,7 +92,8 @@ describe('SettingsGeneral: Codex provider button', () => {
       'Claude Code',
       'Codex',
       'Terminal',
-      'Claude Code (CLI)'
+      'Claude Code (CLI)',
+      'Codex (CLI)'
     ])
   })
 

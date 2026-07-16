@@ -287,6 +287,13 @@ function findSessionInState(state: SessionState, sessionId: string): Session | n
 // therefore takes two presses, while returning from plan takes one. The
 // previous code sent a single press in both directions, which landed on
 // accept-edits (not plan) when entering plan mode.
+//
+// codex-cli is intentionally NOT handled here: it drives plan mode purely
+// through a prompt convention (CODEX_PLAN_MODE_PREFIX → a `<proposed_plan>`
+// block), staying in codex's Default collaboration mode the whole time, so
+// there is no keystroke to sync. (Flipping it into native Plan mode would
+// surface codex's own "Implement this plan?" popup — the very claude-style
+// dialog the codex convention avoids.)
 export function syncClaudeCliPermissionModeIfNeeded(
   state: SessionState,
   sessionId: string,

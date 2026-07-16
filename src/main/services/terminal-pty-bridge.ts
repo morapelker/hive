@@ -18,7 +18,17 @@ import {
 } from './claude-cli-subagent-tracker'
 import { setClaudeCliPlanAutoApprove } from './claude-cli-plan-auto-approve'
 import { logClaudeBinaryVersion, resolveClaudeBinaryPath } from './claude-binary-resolver'
-import { buildClaudeCliPtySpawn } from './claude-cli-spawner'
+import { buildClaudeCliPtySpawn, type ClaudeCliPtySpawn } from './claude-cli-spawner'
+import { buildCodexCliPtySpawn } from './codex-cli-spawner'
+import {
+  buildCodexCliHookArgs,
+  clearAllCodexSessionTracking,
+  clearCodexSessionTracking,
+  seedCodexSessionTracking,
+  setCodexSessionIdSink
+} from './codex-cli-hooks'
+import { resolveCodexBinaryPath } from './codex-binary-resolver'
+import { isCliAgentSdk, isCodexCli } from '@shared/types/agent-sdk'
 import { externalizeGoalHandoffPlan } from './claude-cli-plan-handoff'
 import { reassertClaudeCliPromptSubmit, writeClaudeCliPrompt } from './claude-cli-pty-prompt'
 import { watchForClaudeSessionId, type ClaudeSessionWatchHandle } from './claude-session-watcher'
@@ -75,6 +85,41 @@ function armClaudePlanFollowupWatcher(sessionId: string): void {
       })
     })
   )
+}
+
+
+let codexSessionIdSinkRegistered = false
+
+/**
+ * Persist codex thread ids reported by the hook translation layer (the codex
+ * analog of watchForClaudeSessionId — the id arrives on every hook payload):
+ * store on the session row (the claude_session_id column holds the CLI-native
+ * session id for every CLI provider) and notify the renderer over the same
+ * channel. Unlike claude, the id is refreshed on change so `/clear` (which
+ * starts a new codex thread) keeps resume pointing at the live thread.
+ */
+function ensureCodexSessionIdSink(): void {
+  if (codexSessionIdSinkRegistered) return
+  codexSessionIdSinkRegistered = true
+
+  setCodexSessionIdSink((sessionId, codexThreadId) => {
+    try {
+      const db = getDatabase()
+      if (db.getSession(sessionId)?.claude_session_id !== codexThreadId) {
+        db.updateSession(sessionId, { claude_session_id: codexThreadId })
+      }
+    } catch (error) {
+      log.warn('Failed to persist Codex CLI thread id', {
+        sessionId,
+        error: error instanceof Error ? error.message : String(error)
+      })
+    }
+    void import('../desktop/backend-event-publisher')
+      .then(({ publishDesktopBackendEvent }) =>
+        publishDesktopBackendEvent(`terminal:claude-session-id:${sessionId}`, codexThreadId)
+      )
+      .catch(() => undefined)
+  })
 }
 
 function ensureClaudeCliStatusSubscription(): void {
@@ -152,6 +197,7 @@ export function destroyNodePtyTerminal(terminalId: string): void {
   closeClaudePlanFollowupWatcher(terminalId)
   clearClaudeCliInteractions(terminalId)
   clearClaudeCliSubagentTracking(terminalId)
+  clearCodexSessionTracking(terminalId)
   claudeCliSessions.delete(terminalId)
   claudeCliWorktreeBasenames.delete(terminalId)
   claudeCliTranscriptSources.delete(terminalId)
@@ -219,6 +265,7 @@ function attachNodePtyListeners(terminalId: string): void {
     if (claudeCliSessions.has(terminalId)) {
       clearClaudeCliInteractions(terminalId)
       clearClaudeCliSubagentTracking(terminalId)
+      clearCodexSessionTracking(terminalId)
       setClaudeCliPlanAutoApprove(terminalId, false)
       publishClaudeCliStatus({
         sessionId: terminalId,
@@ -248,9 +295,10 @@ export async function createClaudeCliTerminal(
     if (!session) {
       return { success: false, error: 'Session not found' }
     }
-    if (session.agent_sdk !== 'claude-code-cli') {
-      return { success: false, error: 'Session is not a Claude Code CLI session' }
+    if (!isCliAgentSdk(session.agent_sdk)) {
+      return { success: false, error: 'Session is not a CLI agent session' }
     }
+    const isCodex = isCodexCli(session.agent_sdk)
 
     let worktreePath: string | null = null
     if (session.worktree_id) {
@@ -269,24 +317,51 @@ export async function createClaudeCliTerminal(
       pendingPrompt = externalizeGoalHandoffPlan(pendingPrompt, worktreePath)
     }
 
-    const claudeBinary = resolveClaudeBinaryPath()
-    if (!claudeBinary) {
-      return { success: false, error: 'Claude binary not found on PATH' }
-    }
-    logClaudeBinaryVersion(claudeBinary)
-
     const alreadyExists = ptyService.has(sessionId)
     const { port } = await getClaudeHookServer()
     ensureClaudeCliStatusSubscription()
-    const hookSettingsJson = buildClaudeCliHookSettings(port, sessionId)
-    const spawn = buildClaudeCliPtySpawn({
-      session,
-      worktreePath,
-      pendingPrompt,
-      claudeBinary,
-      hookSettingsJson,
-      db
-    })
+
+    let spawn: ClaudeCliPtySpawn
+    if (isCodex) {
+      const codexBinary = resolveCodexBinaryPath()
+      if (!codexBinary) {
+        return { success: false, error: 'Codex binary not found on PATH' }
+      }
+      // Thread ids arrive on hook payloads (via the sink); hooks themselves
+      // ride the spawn args as -c overrides — nothing global is written.
+      ensureCodexSessionIdSink()
+      seedCodexSessionTracking(sessionId, session.claude_session_id)
+      // Plan mode is a PROMPT convention for codex-cli (CODEX_PLAN_MODE_PREFIX
+      // asks for a `<proposed_plan>` block and forbids mutation) — codex stays
+      // in its Default collaboration mode, so the plan prompt is delivered as a
+      // normal auto-submitting arg exactly like build mode. We deliberately do
+      // NOT flip codex into its native Plan collaboration mode: that mode shows
+      // codex's own interactive "Implement this plan?" popup, which is the
+      // claude-style plan dialog we want to avoid (see codex-cli-hooks.ts).
+      spawn = buildCodexCliPtySpawn({
+        session,
+        worktreePath,
+        pendingPrompt,
+        codexBinary,
+        hookArgs: buildCodexCliHookArgs(port, sessionId),
+        db
+      })
+    } else {
+      const claudeBinary = resolveClaudeBinaryPath()
+      if (!claudeBinary) {
+        return { success: false, error: 'Claude binary not found on PATH' }
+      }
+      logClaudeBinaryVersion(claudeBinary)
+      const hookSettingsJson = buildClaudeCliHookSettings(port, sessionId)
+      spawn = buildClaudeCliPtySpawn({
+        session,
+        worktreePath,
+        pendingPrompt,
+        claudeBinary,
+        hookSettingsJson,
+        db
+      })
+    }
 
     log.info('Creating Claude CLI PTY', {
       sessionId,
@@ -296,7 +371,9 @@ export async function createClaudeCliTerminal(
       )
     })
 
-    if (!session.claude_session_id) {
+    // Codex thread ids arrive on hook payloads (via the sink registered
+    // above); the filesystem watcher below is claude-transcript-specific.
+    if (!session.claude_session_id && !isCodex) {
       claudeWatchers.get(sessionId)?.close()
       claudeWatchers.set(
         sessionId,
@@ -322,10 +399,15 @@ export async function createClaudeCliTerminal(
         })
       )
     }
-    claudeCliTranscriptSources.set(sessionId, {
-      worktreePath,
-      claudeSessionId: session.claude_session_id
-    })
+    if (!isCodex) {
+      // Feeds the plan-followup watcher, which reads claude transcript files;
+      // codex plan followups arrive through hooks instead (UserPromptSubmit in
+      // plan mode → planning), so codex sessions never register a source.
+      claudeCliTranscriptSources.set(sessionId, {
+        worktreePath,
+        claudeSessionId: session.claude_session_id
+      })
+    }
 
     const { cols, rows } = ptyService.create(sessionId, {
       cwd: spawn.cwd,
@@ -335,11 +417,13 @@ export async function createClaudeCliTerminal(
     })
     if (alreadyExists && pendingPrompt) {
       // ptyService.create reused the live PTY, so the spawn args (and the
-      // prompt riding on them) never reached claude. Inject it as a paste so
-      // a racing promptless create call can't strand the prompt.
+      // prompt riding on them) never reached the CLI. Inject it as a paste so
+      // a racing promptless create call can't strand the prompt. (codex-cli
+      // plan prompts carry their instruction inline and need no mode toggle,
+      // so this path is identical for both CLIs.)
       const { delivered } = writeClaudeCliPrompt(sessionId, pendingPrompt)
       if (delivered) {
-        // The paste can land before claude's TUI is input-ready, which buffers
+        // The paste can land before the TUI is input-ready, which buffers
         // the text but drops the submitting CR — leaving the prompt sitting
         // unsent. Re-assert Enter across the boot window so it actually submits.
         reassertClaudeCliPromptSubmit(sessionId)
@@ -405,6 +489,7 @@ export function cleanupTerminals(): void {
   claudeCliLastStatus.clear()
   clearAllClaudeCliInteractions()
   clearAllClaudeCliSubagentTracking()
+  clearAllCodexSessionTracking()
   unsubscribeClaudeCliStatus?.()
   unsubscribeClaudeCliStatus = null
   resetAllClaudeCliTitleState()

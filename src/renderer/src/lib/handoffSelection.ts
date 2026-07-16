@@ -50,23 +50,25 @@ const SDK_DISPLAY_NAMES: Record<HandoffAgentSdk, string> = {
   opencode: 'OpenCode',
   'claude-code': 'Claude Code',
   'claude-code-cli': 'Claude Code (CLI)',
-  codex: 'Codex'
+  codex: 'Codex',
+  'codex-cli': 'Codex (CLI)'
 }
 
 const FALLBACK_MODELS: Record<HandoffAgentSdk, SelectedModel> = {
   opencode: { providerID: 'anthropic', modelID: 'claude-opus-4-5-20251101' },
   'claude-code': { providerID: 'anthropic', modelID: 'claude-opus-4-5-20251101' },
   'claude-code-cli': { providerID: 'anthropic', modelID: 'sonnet', variant: 'high' },
-  codex: { providerID: 'codex', modelID: 'gpt-5.5' }
+  codex: { providerID: 'codex', modelID: 'gpt-5.5' },
+  'codex-cli': { providerID: 'codex', modelID: 'gpt-5.5', variant: 'high' }
 }
 
 const modelCatalogCache = new Map<HandoffAgentSdk, ProviderModels[]>()
 const inflightModelCatalogRequests = new Map<HandoffAgentSdk, Promise<ProviderModels[]>>()
 
-function normalizeHandoffSdk(
-  sdk: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal' | null | undefined
-): HandoffAgentSdk {
-  if (sdk === 'claude-code' || sdk === 'claude-code-cli' || sdk === 'codex') return sdk
+function normalizeHandoffSdk(sdk: AgentSdk | null | undefined): HandoffAgentSdk {
+  if (sdk === 'claude-code' || sdk === 'claude-code-cli' || sdk === 'codex' || sdk === 'codex-cli') {
+    return sdk
+  }
   return 'opencode'
 }
 
@@ -177,7 +179,13 @@ export function getHandoffSdkDisplayName(agentSdk: HandoffAgentSdk): string {
 export function getAvailableHandoffAgentSdks(
   availableAgentSdks?: AvailableAgentSdks | null
 ): HandoffAgentSdk[] {
-  const orderedSdks: HandoffAgentSdk[] = ['opencode', 'claude-code', 'codex', 'claude-code-cli']
+  const orderedSdks: HandoffAgentSdk[] = [
+    'opencode',
+    'claude-code',
+    'codex',
+    'claude-code-cli',
+    'codex-cli'
+  ]
   return orderedSdks.filter((sdk) => isAgentSdkAvailable(sdk, availableAgentSdks))
 }
 

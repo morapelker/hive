@@ -41,7 +41,12 @@ import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/mes
 import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
 import { snapshotTokenBaseline } from '@/lib/token-baselines'
 import { autoPinBaseWorktree } from '@/lib/auto-pin'
-import { PLAN_MODE_PREFIX, getSuperPlanModePrefix, isPlanLike } from '@/lib/constants'
+import {
+  CODEX_PLAN_MODE_PREFIX,
+  PLAN_MODE_PREFIX,
+  getSuperPlanModePrefix,
+  isPlanLike
+} from '@/lib/constants'
 import { toast } from '@/lib/toast'
 import { opencodeApi } from '@/api/opencode-api'
 import { dbApi } from '@/api/db-api'
@@ -51,7 +56,7 @@ import { remoteLaunchApi } from '@/api/remote-launch-api'
 import { startHivePromptTelemetry } from '@/lib/hive-enterprise-telemetry'
 import type { KanbanTicket, Session } from '../../../../main/db/types'
 import { canonicalizeTicketTitle } from '@shared/types/branch-utils'
-import { supportsGoalMode } from '@shared/types/agent-sdk'
+import { isCliAgentSdk, isCodexCli, supportsGoalMode } from '@shared/types/agent-sdk'
 import { createPlanFile, exceedsGoalPromptLimit, planFilePrompt } from '@/lib/goal-plan-file'
 import {
   REMOTE_LAUNCH_STEPS,
@@ -70,7 +75,7 @@ const EMPTY_ARRAY: readonly never[] = []
 
 // ── Types ───────────────────────────────────────────────────────────
 type PickerMode = 'build' | 'plan' | 'super-plan'
-type PickerAgentSdk = 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex'
+type PickerAgentSdk = 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'codex-cli'
 
 function completionSendMode(mode: PickerMode): 'build' | 'plan' {
   return isPlanLike(mode) ? 'plan' : 'build'
@@ -192,16 +197,23 @@ function composePromptForSdk(
   const trimmedPrompt = prompt.trim()
   if (!trimmedPrompt) return null
 
+  // See composeLaunchPrompt (ticket-launch.ts): codex-cli carries codex's plan
+  // convention (`<proposed_plan>`) as a prompt prefix; claude-cli and the SDKs
+  // skip the text prefix.
   const skipPrefix =
     options.claudeCli ||
     sessionAgentSdk === 'claude-code' ||
     sessionAgentSdk === 'codex' ||
-    sessionAgentSdk === 'claude-code-cli'
+    isCliAgentSdk(sessionAgentSdk)
   const modePrefix =
     mode === 'super-plan'
       ? getSuperPlanModePrefix(sessionAgentSdk)
-      : mode === 'plan' && !skipPrefix
-        ? PLAN_MODE_PREFIX
+      : mode === 'plan'
+        ? isCodexCli(sessionAgentSdk)
+          ? CODEX_PLAN_MODE_PREFIX
+          : skipPrefix
+            ? ''
+            : PLAN_MODE_PREFIX
         : ''
   const fullPrompt = modePrefix + trimmedPrompt
 
@@ -312,7 +324,8 @@ function SdkToggleGroup({
         availableAgentSdks.opencode,
         availableAgentSdks.claude,
         availableAgentSdks.codex,
-        availableAgentSdks.claude
+        availableAgentSdks.claude,
+        availableAgentSdks.codexCli
       ].filter(Boolean).length
     : 0
   if (!availableAgentSdks || buttonCount < 2) return null
@@ -379,6 +392,19 @@ function SdkToggleGroup({
           className={buttonClass(value === 'claude-code-cli')}
         >
           Claude CLI
+        </button>
+      )}
+      {availableAgentSdks.codexCli && (
+        <button
+          type="button"
+          data-testid={`${idPrefix}-codex-cli`}
+          onClick={() => onChange('codex-cli')}
+          disabled={disabled}
+          aria-pressed={value === 'codex-cli'}
+          title={buttonTitle}
+          className={buttonClass(value === 'codex-cli')}
+        >
+          Codex CLI
         </button>
       )}
     </div>
@@ -867,7 +893,7 @@ export function WorktreePickerModal({
   const composedGoalPrompt = useMemo(() => {
     if (!goalMode || !goalAvailable) return null
     return composePromptForSdk(mode, agentSdk, promptText, goalMode, goalCriteria, {
-      claudeCli: agentSdk === 'claude-code-cli'
+      claudeCli: isCliAgentSdk(agentSdk)
     })
   }, [goalMode, goalAvailable, mode, agentSdk, promptText, goalCriteria])
   const willUsePlanFile = exceedsGoalPromptLimit(composedGoalPrompt)
@@ -1014,12 +1040,11 @@ export function WorktreePickerModal({
         const createConnectionSession = useSessionStore.getState().createConnectionSession
         const effectiveModel = selectedModel ?? autoResolvedModel ?? undefined
         const modelOverride = effectiveModel ? { ...effectiveModel, agentSdk } : undefined
-        const cliPendingPrompt =
-          agentSdk === 'claude-code-cli'
-            ? composePromptForSdk(mode, agentSdk, effectivePromptText, goalMode, goalCriteria, {
-                claudeCli: true
-              })
-            : null
+        const cliPendingPrompt = isCliAgentSdk(agentSdk)
+          ? composePromptForSdk(mode, agentSdk, effectivePromptText, goalMode, goalCriteria, {
+              claudeCli: true
+            })
+          : null
         const createOptions = {
           ...(modelOverride ? { modelOverride } : {}),
           ...(cliPendingPrompt ? { pendingMessage: cliPendingPrompt } : {})
@@ -1109,7 +1134,7 @@ export function WorktreePickerModal({
         onOpenChange(false)
         toast.success('Session started')
 
-        if (sessionAgentSdk === 'claude-code-cli') {
+        if (isCliAgentSdk(sessionAgentSdk)) {
           const outboundPrompt =
             cliPendingPrompt ??
             composePromptForSdk(mode, sessionAgentSdk, effectivePromptText, goalMode, goalCriteria, {
@@ -1386,12 +1411,11 @@ export function WorktreePickerModal({
       // Create session in the selected worktree
       const effectiveModel = selectedModel ?? autoResolvedModel ?? undefined
       const modelOverride = effectiveModel ? { ...effectiveModel, agentSdk } : undefined
-      const cliPendingPrompt =
-        agentSdk === 'claude-code-cli'
-          ? composePromptForSdk(mode, agentSdk, effectivePromptText, goalMode, goalCriteria, {
-              claudeCli: true
-            })
-          : null
+      const cliPendingPrompt = isCliAgentSdk(agentSdk)
+        ? composePromptForSdk(mode, agentSdk, effectivePromptText, goalMode, goalCriteria, {
+            claudeCli: true
+          })
+        : null
       const createOptions = {
         ...(modelOverride ? { modelOverride } : {}),
         ...(cliPendingPrompt ? { pendingMessage: cliPendingPrompt } : {})

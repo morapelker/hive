@@ -26,6 +26,7 @@ export const AGENT_SDK_VALUES = [
   'claude-code',
   'claude-code-cli',
   'codex',
+  'codex-cli',
   'terminal'
 ] as const
 
@@ -41,13 +42,28 @@ export function isClaudeCli(sdk: MaybeSdk): boolean {
   return sdk === 'claude-code-cli'
 }
 
+/** The Codex CLI session type (terminal-backed Codex TUI, distinct from the app-server-driven `codex`). */
+export function isCodexCli(sdk: MaybeSdk): boolean {
+  return sdk === 'codex-cli'
+}
+
+/**
+ * Terminal-backed sessions driven by an agent CLI (claude / codex TUIs in a
+ * PTY). These share the CLI status pipeline (hook server → status events),
+ * plan-card flow, and the always-mounted terminal portal — unlike the bare
+ * `terminal` SDK, which is a plain shell.
+ */
+export function isCliAgentSdk(sdk: MaybeSdk): boolean {
+  return sdk === 'claude-code-cli' || sdk === 'codex-cli'
+}
+
 /**
  * Sessions whose UI is a live terminal surface rather than the OpenCode-style
- * streaming view: the bare `terminal` SDK and `claude-code-cli`. These share
- * mount/teardown handling and must NOT be routed through the OpenCode IPC.
+ * streaming view: the bare `terminal` SDK and the CLI-backed agents. These
+ * share mount/teardown handling and must NOT be routed through the OpenCode IPC.
  */
 export function isTerminalBacked(sdk: MaybeSdk): boolean {
-  return sdk === 'terminal' || sdk === 'claude-code-cli'
+  return sdk === 'terminal' || isCliAgentSdk(sdk)
 }
 
 /** Either Claude variant — the SDK-driven `claude-code` or the terminal-backed `claude-code-cli`. */
@@ -57,18 +73,21 @@ export function isClaudeFamily(sdk: MaybeSdk): boolean {
 
 /** SDKs whose CLI understands the `/goal` prompt prefix (persistent goal mode). */
 export function supportsGoalMode(sdk: MaybeSdk): boolean {
-  return sdk === 'codex' || sdk === 'claude-code-cli'
+  return sdk === 'codex' || sdk === 'claude-code-cli' || sdk === 'codex-cli'
 }
 
 /**
- * Map an SDK to the one whose model catalog it uses. `claude-code-cli` has no
- * catalog of its own — it shares `claude-code`'s — so model-listing/selection
- * code should resolve through this rather than special-casing the CLI inline.
+ * Map an SDK to the one whose model catalog it uses. The CLI variants have no
+ * catalog of their own — `claude-code-cli` shares `claude-code`'s and
+ * `codex-cli` shares `codex`'s — so model-listing/selection code should
+ * resolve through this rather than special-casing the CLIs inline.
  * Overloaded so nullable inputs (optional IPC payload fields) pass `null` /
  * `undefined` through unchanged.
  */
 export function toModelCatalogSdk(sdk: AgentSdk): AgentSdk
 export function toModelCatalogSdk(sdk: AgentSdk | null | undefined): AgentSdk | null | undefined
 export function toModelCatalogSdk(sdk: AgentSdk | null | undefined): AgentSdk | null | undefined {
-  return sdk === 'claude-code-cli' ? 'claude-code' : sdk
+  if (sdk === 'claude-code-cli') return 'claude-code'
+  if (sdk === 'codex-cli') return 'codex'
+  return sdk
 }

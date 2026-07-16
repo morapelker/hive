@@ -15,7 +15,7 @@ import { SessionTerminalView } from '@/components/sessions/SessionTerminalView'
 import { FileViewer } from '@/components/file-viewer'
 import { ImageDiffView } from '@/components/diff'
 import { isImageFile } from '@shared/types/file-utils'
-import { isTerminalBacked } from '@shared/types/agent-sdk'
+import { isCliAgentSdk, isTerminalBacked } from '@shared/types/agent-sdk'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useSessionStore, BOARD_TAB_ID } from '@/stores/useSessionStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
@@ -147,7 +147,7 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
     }
 
     for (const [sessionId, count] of sessionMountRequests.entries()) {
-      if (count > 0 && getAgentSdk(sessionId) === 'claude-code-cli') {
+      if (count > 0 && isCliAgentSdk(getAgentSdk(sessionId))) {
         terminals.add(sessionId)
       }
     }
@@ -468,7 +468,7 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
             <div key={sessionId} className={isActive ? 'flex-1 flex flex-col min-h-0' : 'hidden'}>
               {agentSdk === 'terminal' ? (
                 <SessionTerminalView sessionId={sessionId} isVisible={isActive} />
-              ) : agentSdk === 'claude-code-cli' ? (
+              ) : isCliAgentSdk(agentSdk) ? (
                 <ClaudeCliSessionPortal sessionId={sessionId} isActive={isActive} />
               ) : (
                 <SessionView sessionId={sessionId} isVisible={isActive} />

@@ -58,6 +58,7 @@ export function SettingsGeneral(): React.JSX.Element {
   const claudeAvailable = isAgentSdkAvailable('claude-code', availableAgentSdks)
   const claudeCliAvailable = isAgentSdkAvailable('claude-code-cli', availableAgentSdks)
   const codexAvailable = isAgentSdkAvailable('codex', availableAgentSdks)
+  const codexCliAvailable = isAgentSdkAvailable('codex-cli', availableAgentSdks)
 
   return (
     <div className="space-y-6">
@@ -615,9 +616,27 @@ export function SettingsGeneral(): React.JSX.Element {
           >
             Claude Code (CLI)
           </button>
+          <button
+            onClick={() => updateSetting('defaultAgentSdk', 'codex-cli')}
+            disabled={!codexCliAvailable}
+            className={cn(
+              'px-3 py-1.5 rounded-md text-sm border transition-colors disabled:opacity-50 disabled:cursor-not-allowed',
+              defaultAgentSdk === 'codex-cli'
+                ? 'bg-primary text-primary-foreground border-primary'
+                : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
+            )}
+            data-testid="agent-sdk-codex-cli"
+            title={!codexCliAvailable ? 'Codex CLI is not currently available' : undefined}
+          >
+            Codex (CLI)
+          </button>
         </div>
         {availableAgentSdks &&
-          (!opencodeAvailable || !claudeAvailable || !claudeCliAvailable || !codexAvailable) && (
+          (!opencodeAvailable ||
+            !claudeAvailable ||
+            !claudeCliAvailable ||
+            !codexAvailable ||
+            !codexCliAvailable) && (
             <p className="text-xs text-muted-foreground/70 italic">
               Unavailable providers are disabled until their CLI is installed and launchable from
               Hive.

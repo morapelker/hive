@@ -10,6 +10,12 @@ export interface AgentSdkDetection {
   opencode: boolean
   claude: boolean
   codex: boolean
+  /**
+   * The terminal-backed codex-cli provider only needs the binary to exist —
+   * unlike the SDK-driven `codex`, which additionally requires app-server
+   * support in the installed version.
+   */
+  codexCli: boolean
 }
 
 export interface AppPaths {
@@ -39,7 +45,8 @@ export function detectAgentSdks(openCodeLaunchSpec: OpenCodeLaunchSpec | null): 
   return {
     opencode: openCodeLaunchSpec !== null,
     claude: check('claude'),
-    codex: !!resolvedCodexBinary && supportsCodexAppServer(resolvedCodexBinary)
+    codex: !!resolvedCodexBinary && supportsCodexAppServer(resolvedCodexBinary),
+    codexCli: !!resolvedCodexBinary
   }
 }
 
