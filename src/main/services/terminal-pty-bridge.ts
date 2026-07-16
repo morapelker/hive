@@ -19,6 +19,7 @@ import {
 import { setClaudeCliPlanAutoApprove } from './claude-cli-plan-auto-approve'
 import { logClaudeBinaryVersion, resolveClaudeBinaryPath } from './claude-binary-resolver'
 import { buildClaudeCliPtySpawn, type ClaudeCliPtySpawn } from './claude-cli-spawner'
+import { getCustomProviderById } from './custom-providers'
 import { logGrokBinaryVersion, resolveGrokBinaryPath } from './grok-binary-resolver'
 import { buildGrokCliPtySpawn } from './grok-cli-spawner'
 import {
@@ -471,6 +472,8 @@ export async function createClaudeCliTerminal(
     // Grok resume state, computed in the branch below (null = fresh session).
     let grokResumedPlanState: ReturnType<typeof getGrokPlanState> | null = null
     let grokBuildNeedsPlanExit = false
+    // Claude-only: set in the else-branch below; read by the log redaction.
+    let customProviderCommand: string | null = null
     if (isGrok) {
       const grokBinary = resolveGrokBinaryPath()
       if (!grokBinary) {
@@ -521,11 +524,42 @@ export async function createClaudeCliTerminal(
         spawn.args.push(pendingPrompt.trim())
       }
     } else {
-      const claudeBinary = resolveClaudeBinaryPath()
-      if (!claudeBinary) {
-        return { success: false, error: 'Claude binary not found on PATH' }
+      // Custom-provider sessions run a user-configured command (possibly a shell
+      // alias) through the login shell instead of the resolved claude binary, so
+      // PATH resolution and version logging don't apply to them. A deleted or
+      // blanked provider degrades to plain claude (matching the renderer launch
+      // paths) rather than permanently bricking the session's resumable
+      // transcript behind a hard error.
+      if (session.custom_provider_id) {
+        // The wrapper spawns through a POSIX login shell ($SHELL -ilc) — Windows
+        // GUI apps have no SHELL and no /bin/zsh, so fail with a clear message
+        // instead of a broken spawn (and never silently switch to stock claude).
+        if (process.platform === 'win32') {
+          return {
+            success: false,
+            error: 'Custom providers are not supported on Windows yet'
+          }
+        }
+        const provider = getCustomProviderById(db, session.custom_provider_id)
+        if (provider?.command.trim()) {
+          customProviderCommand = provider.command
+        } else {
+          log.warn('Custom provider missing or blank; falling back to plain claude', {
+            sessionId,
+            customProviderId: session.custom_provider_id
+          })
+        }
       }
-      logClaudeBinaryVersion(claudeBinary)
+
+      let claudeBinary: string | null = null
+      if (!customProviderCommand) {
+        claudeBinary = resolveClaudeBinaryPath()
+        if (!claudeBinary) {
+          return { success: false, error: 'Claude binary not found on PATH' }
+        }
+        logClaudeBinaryVersion(claudeBinary)
+      }
+
       const hookSettingsJson = buildClaudeCliHookSettings(port, sessionId)
       spawn = buildClaudeCliPtySpawn({
         session,
@@ -533,16 +567,26 @@ export async function createClaudeCliTerminal(
         pendingPrompt,
         claudeBinary,
         hookSettingsJson,
-        db
+        db,
+        customProviderCommand
       })
     }
 
     log.info('Creating Claude CLI PTY', {
       sessionId,
       command: spawn.command,
-      args: spawn.args.map((arg, index) =>
-        index === spawn.args.length - 1 && pendingPrompt ? '<prompt>' : arg
-      )
+      args: spawn.args.map((arg, index) => {
+        if (index === spawn.args.length - 1 && pendingPrompt) return '<prompt>'
+        // The custom command may embed inline secrets (ANTHROPIC_AUTH_TOKEN=…)
+        // — never write it to the log verbatim. The wrapper puts the shell
+        // script at index 1 and (for POSIX shells) argv0 at index 2; fish has
+        // no argv0 slot, so index 2 is a Hive flag there (always '--'-prefixed).
+        if (customProviderCommand && index === 1) return '<custom-provider-command>'
+        if (customProviderCommand && index === 2 && !arg.startsWith('--')) {
+          return '<custom-provider-argv0>'
+        }
+        return arg
+      })
     })
 
     // Grok session ids arrive on hook payloads (via the sink registered

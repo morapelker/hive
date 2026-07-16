@@ -1,5 +1,9 @@
 import { create } from 'zustand'
 import { type AgentSdk, isClaudeFamily } from '@shared/types/agent-sdk'
+import {
+  customProviderUsageToUsageProvider,
+  findCustomProvider
+} from '@shared/types/custom-provider'
 import type {
   UsageData,
   AnthropicRateLimitInfo,
@@ -14,6 +18,7 @@ import { reportActiveAccountsSnapshot } from '@/lib/hive-account-report'
 import { toast } from '@/lib/toast'
 import { useLoginStore } from './useLoginStore'
 import { useAccountStore } from './useAccountStore'
+import { useSettingsStore } from './useSettingsStore'
 
 export type { UsageData, UsageProvider, AnthropicRateLimitInfo, AnthropicRateLimitState }
 
@@ -32,6 +37,9 @@ interface UsageState {
 
   activeProvider: UsageProvider
   savedAccounts: Record<UsageProvider, SavedAccountDTO[]>
+  /** True once savedAccounts[provider] reflects a successful load — an empty
+   * list is only meaningful (e.g. "the account really is gone") when set. */
+  savedAccountsLoaded: Record<UsageProvider, boolean>
   savedAccountLoadErrors: Record<UsageProvider, string | null>
   refreshingProviders: Record<UsageProvider, boolean>
   refreshingAccountIds: Set<string>
@@ -42,7 +50,8 @@ interface UsageState {
   refreshAllForProvider: (provider: UsageProvider) => Promise<void>
   refreshSavedAccount: (id: string, opts?: { userInitiated?: boolean }) => Promise<void>
   removeSavedAccount: (id: string) => Promise<void>
-  switchAccount: (id: string) => Promise<void>
+  /** Resolves true when the switch op succeeded (failures also toast). */
+  switchAccount: (id: string) => Promise<boolean>
   fetchUsageForProvider: (provider: UsageProvider) => Promise<void>
   forceRefreshProvider: (provider: UsageProvider) => Promise<void>
   setActiveProvider: (provider: UsageProvider) => void
@@ -79,6 +88,7 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
 
   activeProvider: 'anthropic',
   savedAccounts: { anthropic: [], openai: [] },
+  savedAccountsLoaded: { anthropic: false, openai: false },
   savedAccountLoadErrors: { anthropic: null, openai: null },
   refreshingProviders: { anthropic: false, openai: false },
   refreshingAccountIds: new Set<string>(),
@@ -91,6 +101,7 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
       if (provider) {
         set((state) => ({
           savedAccounts: { ...state.savedAccounts, [provider]: accounts },
+          savedAccountsLoaded: { ...state.savedAccountsLoaded, [provider]: true },
           savedAccountLoadErrors: { ...state.savedAccountLoadErrors, [provider]: null }
         }))
         return
@@ -101,6 +112,7 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
           anthropic: accounts.filter((account) => account.provider === 'anthropic'),
           openai: accounts.filter((account) => account.provider === 'openai')
         },
+        savedAccountsLoaded: { anthropic: true, openai: true },
         savedAccountLoadErrors: { anthropic: null, openai: null }
       })
     } catch (error) {
@@ -245,6 +257,7 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
             .forceRefreshProvider(provider)
             .catch(() => {})
         }
+        return true
       } else {
         toast.error(`Switch failed: ${result.error ?? 'Unknown error'}`)
       }
@@ -257,6 +270,7 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
         return { switchingAccountIds: nextIds }
       })
     }
+    return false
   },
 
   fetchUsageForProvider: async (provider: UsageProvider) => {
@@ -467,11 +481,33 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
 
 interface SessionLike {
   agent_sdk?: string | null
+  custom_provider_id?: string | null
   model_provider_id?: string | null
   model_id?: string | null
 }
 
-export function resolveUsageProvider(session: SessionLike): UsageProvider {
+/**
+ * Resolve a custom claude-cli provider's usage attribution from settings.
+ * Returns undefined when the id doesn't reference a launchable provider
+ * (deleted, stale, or blank command — the spawn degrades those to plain
+ * claude) so callers fall back to the plain agent-SDK resolution.
+ */
+function resolveCustomProviderUsage(
+  customProviderId: string | null | undefined
+): UsageProvider | null | undefined {
+  if (!customProviderId) return undefined
+  const provider = findCustomProvider(
+    useSettingsStore.getState().customProviders,
+    customProviderId
+  )
+  if (!provider || !provider.command.trim()) return undefined
+  return customProviderUsageToUsageProvider(provider.usageProvider)
+}
+
+/** Null means "no usage account to refresh" (custom provider attributed to none). */
+export function resolveUsageProvider(session: SessionLike): UsageProvider | null {
+  const customUsage = resolveCustomProviderUsage(session.custom_provider_id)
+  if (customUsage !== undefined) return customUsage
   if (isClaudeFamily(session.agent_sdk)) {
     return 'anthropic'
   }
@@ -480,9 +516,13 @@ export function resolveUsageProvider(session: SessionLike): UsageProvider {
   return 'anthropic'
 }
 
+/** Null means "no usage account to refresh" (custom provider attributed to none). */
 export function resolveDefaultUsageProvider(
-  agentSdk: AgentSdk
-): UsageProvider {
+  agentSdk: AgentSdk,
+  customProviderId?: string | null
+): UsageProvider | null {
+  const customUsage = resolveCustomProviderUsage(customProviderId)
+  if (customUsage !== undefined) return customUsage
   if (agentSdk === 'codex') return 'openai'
   return 'anthropic'
 }

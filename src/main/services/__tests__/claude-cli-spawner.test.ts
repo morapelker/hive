@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import type { Session } from '../../db/types'
 import {
   buildClaudeCliPtySpawn,
+  buildCustomProviderShellSpawn,
   isUltracodeEffort,
   normalizeClaudeCliModel
 } from '../claude-cli-spawner'
@@ -17,6 +18,7 @@ function makeSession(overrides: Partial<Session> = {}): Session {
     opencode_session_id: null,
     claude_session_id: null,
     agent_sdk: 'claude-code-cli',
+    custom_provider_id: null,
     mode: 'build',
     session_type: 'default',
     model_provider_id: 'anthropic',
@@ -218,5 +220,131 @@ describe('buildClaudeCliPtySpawn', () => {
     const settingsIndex = spawn.args.indexOf('--settings')
     expect(settingsIndex).toBeGreaterThanOrEqual(0)
     expect(JSON.parse(spawn.args[settingsIndex + 1])).toEqual({ ultracode: true })
+  })
+
+  describe('custom provider commands', () => {
+    const originalShell = process.env.SHELL
+
+    afterEach(() => {
+      if (originalShell === undefined) delete process.env.SHELL
+      else process.env.SHELL = originalShell
+    })
+
+    it('wraps the command in the user shell with Hive args as positional parameters', () => {
+      process.env.SHELL = '/bin/zsh'
+      const hookSettingsJson = '{"hooks":{}}'
+      const spawn = buildClaudeCliPtySpawn({
+        session: makeSession({ claude_session_id: 'claude-uuid-1' }),
+        worktreePath: '/repo/worktree',
+        pendingPrompt: 'Implement this plan',
+        claudeBinary: '/usr/local/bin/claude',
+        hookSettingsJson,
+        customProviderCommand: 'claudex'
+      })
+
+      expect(spawn.command).toBe('/bin/zsh')
+      expect(spawn.args).toEqual([
+        '-ilc',
+        'claudex "$@"',
+        'claudex',
+        '--dangerously-skip-permissions',
+        '--resume',
+        'claude-uuid-1',
+        '--settings',
+        hookSettingsJson,
+        'Implement this plan'
+      ])
+      expect(spawn.cwd).toBe('/repo/worktree')
+    })
+
+    it('uses fish argv semantics for fish login shells', () => {
+      process.env.SHELL = '/opt/homebrew/bin/fish'
+      const spawn = buildCustomProviderShellSpawn('claudex', ['--dangerously-skip-permissions'])
+      expect(spawn.command).toBe('/opt/homebrew/bin/fish')
+      // fish has no argv0 slot after -c; trailing args land in $argv directly.
+      expect(spawn.args).toEqual(['-ilc', 'claudex $argv', '--dangerously-skip-permissions'])
+    })
+
+    it('falls back to a POSIX shell for csh-family login shells', () => {
+      process.env.SHELL = '/bin/tcsh'
+      const spawn = buildCustomProviderShellSpawn('claudex', ['--flag'])
+      const fallback = process.platform === 'darwin' ? '/bin/zsh' : '/bin/bash'
+      expect(spawn.command).toBe(fallback)
+      expect(spawn.args).toEqual([
+        fallback.endsWith('bash') ? '-ic' : '-ilc',
+        'claudex "$@"',
+        'claudex',
+        '--flag'
+      ])
+    })
+
+    it('uses interactive non-login bash so ~/.bashrc aliases resolve', () => {
+      process.env.SHELL = '/bin/bash'
+      const spawn = buildCustomProviderShellSpawn('claudex', ['--flag'])
+      expect(spawn.command).toBe('/bin/bash')
+      // bash login shells read .bash_profile, not .bashrc where aliases live.
+      expect(spawn.args).toEqual(['-ic', 'claudex "$@"', 'claudex', '--flag'])
+    })
+
+    it('suppresses the ultracode settings merge for custom providers', () => {
+      const hookSettingsJson = '{"hooks":{"Stop":[{"id":1}]}}'
+      const spawn = buildClaudeCliPtySpawn({
+        session: makeSession({ model_id: 'opus', model_variant: 'ultracode' }),
+        worktreePath: '/repo/worktree',
+        pendingPrompt: null,
+        claudeBinary: 'claude',
+        hookSettingsJson,
+        customProviderCommand: 'claudex'
+      })
+
+      const settingsIndex = spawn.args.indexOf('--settings')
+      expect(settingsIndex).toBeGreaterThanOrEqual(0)
+      expect(spawn.args[settingsIndex + 1]).toBe(hookSettingsJson)
+    })
+
+    it('suppresses --model and --effort so the command keeps its own model flags', () => {
+      const spawn = buildClaudeCliPtySpawn({
+        session: makeSession({ model_id: 'sonnet', model_variant: 'high' }),
+        worktreePath: '/repo/worktree',
+        pendingPrompt: null,
+        claudeBinary: 'claude',
+        customProviderCommand: 'claudex'
+      })
+
+      expect(spawn.args).not.toContain('--model')
+      expect(spawn.args).not.toContain('--effort')
+    })
+
+    it('keeps plan-mode permission flags for custom provider spawns', () => {
+      process.env.SHELL = '/bin/zsh'
+      const spawn = buildClaudeCliPtySpawn({
+        session: makeSession({ mode: 'plan' }),
+        worktreePath: '/repo/worktree',
+        pendingPrompt: null,
+        claudeBinary: 'claude',
+        customProviderCommand: 'ANTHROPIC_BASE_URL=http://127.0.0.1:8317 claude --model gpt-5'
+      })
+
+      expect(spawn.args[0]).toBe('-ilc')
+      expect(spawn.args[1]).toBe('ANTHROPIC_BASE_URL=http://127.0.0.1:8317 claude --model gpt-5 "$@"')
+      expect(spawn.args[2]).toBe('ANTHROPIC_BASE_URL=http://127.0.0.1:8317')
+      expect(spawn.args.slice(3, 6)).toEqual([
+        '--allow-dangerously-skip-permissions',
+        '--permission-mode',
+        'plan'
+      ])
+    })
+
+    it('falls back to the plain claude spawn when the custom command is blank', () => {
+      const spawn = buildClaudeCliPtySpawn({
+        session: makeSession(),
+        worktreePath: '/repo/worktree',
+        pendingPrompt: null,
+        claudeBinary: '/usr/local/bin/claude',
+        customProviderCommand: '   '
+      })
+
+      expect(spawn.command).toBe('/usr/local/bin/claude')
+    })
   })
 })

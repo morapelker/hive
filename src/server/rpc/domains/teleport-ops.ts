@@ -180,6 +180,12 @@ async function startTeleport(
     if (session.agent_sdk !== 'claude-code-cli') {
       throw new Error('Teleport only supports Claude Code CLI sessions')
     }
+    if (session.custom_provider_id) {
+      // A custom provider's command (alias/local proxy) only exists on this
+      // machine — the receiver would silently recreate the session on stock
+      // claude against a different account/model.
+      throw new Error('Custom provider sessions cannot be teleported')
+    }
     if (deps.isSessionBusy(session.id)) {
       throw new Error('Stop the Claude Code CLI session before teleporting it')
     }

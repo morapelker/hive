@@ -20,7 +20,8 @@ import {
   Hash,
   RadioTower,
   Building2,
-  Users
+  Users,
+  Bot
 } from 'lucide-react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { useSettingsStore } from '@/stores/useSettingsStore'
@@ -42,6 +43,7 @@ import { SettingsHiveEnterprise } from './SettingsHiveEnterprise'
 import { SettingsAdvanced } from './SettingsAdvanced'
 import { SettingsPet } from './SettingsPet'
 import { SettingsCustomCommands } from './SettingsCustomCommands'
+import { SettingsCustomProviders } from './SettingsCustomProviders'
 import { SettingsStorage } from './SettingsStorage'
 import { SettingsBackup } from './SettingsBackup'
 import { cn } from '@/lib/utils'
@@ -51,6 +53,7 @@ const SECTIONS = [
   { id: 'general', label: 'General', icon: Monitor },
   { id: 'accounts', label: 'Accounts', icon: Users },
   { id: 'custom-commands', label: 'Custom Commands', icon: Zap },
+  { id: 'custom-providers', label: 'Custom Providers', icon: Bot },
   { id: 'models', label: 'Models', icon: Sparkles },
   { id: 'pet', label: 'Pet', icon: Bug },
   { id: 'editor', label: 'Editor', icon: Code },
@@ -127,6 +130,7 @@ export function SettingsModal(): React.JSX.Element {
             {activeSection === 'general' && <SettingsGeneral />}
             {activeSection === 'accounts' && <SettingsAccounts />}
             {activeSection === 'custom-commands' && <SettingsCustomCommands />}
+            {activeSection === 'custom-providers' && <SettingsCustomProviders />}
             {activeSection === 'models' && <SettingsModels />}
             {activeSection === 'pet' && <SettingsPet />}
             {activeSection === 'editor' && <SettingsEditor />}

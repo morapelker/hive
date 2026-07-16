@@ -151,6 +151,7 @@ describe('HandoffModelPicker inside a modal dialog', () => {
     await waitFor(() =>
       expect(useSettingsStore.getState().lastHandoffOverride).toEqual({
         agentSdk: 'codex',
+        customProviderId: null,
         providerID: 'codex',
         modelID: 'gpt-x',
         variant: 'xhigh'

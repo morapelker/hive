@@ -95,9 +95,9 @@ describe('SettingsAccounts', () => {
   it('hides Switch on the active account and shows it on others', async () => {
     await renderSettingsAccounts()
 
-    expect(screen.queryByRole('button', { name: /switch to active@example.com/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^switch to active@example.com$/i })).toBeNull()
     expect(
-      screen.getByRole('button', { name: /switch to expired@example.com/i })
+      screen.getByRole('button', { name: /^switch to expired@example.com$/i })
     ).not.toBeNull()
   })
 

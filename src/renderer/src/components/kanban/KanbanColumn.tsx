@@ -592,7 +592,8 @@ export function KanbanColumn({
         // Trigger usage refresh when simple-mode drops a ticket into In Progress
         if (column === 'in_progress') {
           const sdk = useSettingsStore.getState().defaultAgentSdk ?? 'opencode'
-          useUsageStore.getState().fetchUsageForProvider(resolveDefaultUsageProvider(sdk))
+          const usageProvider = resolveDefaultUsageProvider(sdk)
+          if (usageProvider) useUsageStore.getState().fetchUsageForProvider(usageProvider)
         }
       } else {
         // ── Same-column reorder ───────────────────────────────

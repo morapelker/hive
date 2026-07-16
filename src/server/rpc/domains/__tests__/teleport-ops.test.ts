@@ -482,6 +482,19 @@ describe('teleportOps.start gating', () => {
     expect(result.error).toBe('Stop the Claude Code CLI session before teleporting it')
   })
 
+  it('rejects custom-provider sessions at the validate step', async () => {
+    // The provider's command (alias/local proxy) only exists on the sender's
+    // machine — the receiver would recreate the session on stock claude.
+    const service = makeStartService({
+      isSessionBusy: false,
+      session: session({ custom_provider_id: 'provider-1' })
+    })
+    const result = await Effect.runPromise(service.start({ sessionId: 'session-remote' }))
+    expect(result.success).toBe(false)
+    expect(result.step).toBe('validate')
+    expect(result.error).toBe('Custom provider sessions cannot be teleported')
+  })
+
   it('passes the busy gate for an idle session even when its DB status is active', async () => {
     // The session has DB status 'active' (the default), which used to wrongly
     // block teleport. With the live-status gate it now proceeds past validate
