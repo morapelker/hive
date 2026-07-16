@@ -57,7 +57,10 @@ export interface CodexCliPtySpawn {
   env: Record<string, string>
 }
 
-const VALID_EFFORTS = new Set(['ultra', 'max', 'xhigh', 'high', 'medium', 'low'])
+// Must match the canonical Codex `ReasoningEffort` enum
+// (src/shared/codex-schemas/ReasoningEffort.ts) — codex rejects anything else
+// passed to `-c model_reasoning_effort=...` and would fall back to its default.
+const VALID_EFFORTS = new Set(['none', 'minimal', 'low', 'medium', 'high', 'xhigh'])
 
 export function normalizeCodexCliEffort(variant: string | null | undefined): string | null {
   if (!variant) return null

@@ -19,7 +19,8 @@ import {
   type TelegramClaudeCliReplyResult,
   type TelegramClaudeCliSessionPayload
 } from '@shared/desktop-command'
-import { isClaudeCli, isCliAgentSdk } from '@shared/types/agent-sdk'
+import { isClaudeCli, isCliAgentSdk, isCodexCli } from '@shared/types/agent-sdk'
+import { getPlanModePrefix, getSuperPlanModePrefix } from '@shared/agent-mode-prefixes'
 import { openCodeService } from './opencode-service'
 import { ClaudeCodeImplementer } from './claude-code-implementer'
 import { CodexImplementer } from './codex-implementer'
@@ -251,6 +252,24 @@ export function isTrackedInteractionStale(
   requestId: string
 ): boolean {
   return !tracked.has(requestId)
+}
+
+/**
+ * Prepend codex-cli's plan-mode prompt prefix when a forwarded prompt targets a
+ * codex-cli session in plan/super-plan mode. Only codex-cli is prefixed:
+ * claude-code-cli drives plan mode via `--permission-mode` out-of-band, and the
+ * non-CLI SDKs handle plan mode entirely off the prompt text — so both are left
+ * verbatim. Mirrors the prefixing the renderer send paths apply (composePromptForSdk).
+ */
+export function applyCodexCliPlanPrefix(
+  agentSdk: string | null | undefined,
+  mode: string | null | undefined,
+  text: string
+): string {
+  if (!isCodexCli(agentSdk)) return text
+  if (mode === 'super-plan') return getSuperPlanModePrefix('codex-cli') + text
+  if (mode === 'plan') return getPlanModePrefix('codex-cli') + text
+  return text
 }
 
 export class TelegramForwardingService {
@@ -1187,8 +1206,16 @@ export class TelegramForwardingService {
     // claude-hook-server), so its questions/plans stay keyboard-driven in the
     // TUI — but plain forwarded prompts must still reach the terminal here.
     if (isCliAgentSdk(session.agent_sdk)) {
-      const { delivered } = writeClaudeCliPrompt(state.sessionId, text)
-      // No live PTY yet — keep it queued for the next idle flush (best-effort).
+      // codex-cli plan mode is enforced purely by the prompt prefix (it has no
+      // out-of-band permission-mode toggle like claude-cli), so a forwarded
+      // plan/super-plan follow-up must carry CODEX_PLAN_MODE_PREFIX or codex
+      // runs it as a default/build turn and never emits the <proposed_plan>
+      // block that drives plan_ready. claude-code-cli needs no prefix here.
+      const outbound = applyCodexCliPlanPrefix(session.agent_sdk, session.mode, text)
+      const { delivered } = writeClaudeCliPrompt(state.sessionId, outbound)
+      // No live PTY yet — queue the RAW text so the next idle flush re-derives
+      // the prefix from the (possibly changed) session mode rather than
+      // double-prefixing an already-prefixed prompt.
       if (!delivered) state.pendingQueuedPrompt = text
       return
     }

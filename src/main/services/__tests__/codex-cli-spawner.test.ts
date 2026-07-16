@@ -28,9 +28,18 @@ function makeSession(overrides: Partial<Session> = {}): Session {
 }
 
 describe('normalizeCodexCliEffort', () => {
-  it('accepts codex reasoning efforts and rejects anything else', () => {
-    expect(normalizeCodexCliEffort('high')).toBe('high')
-    expect(normalizeCodexCliEffort('ULTRA')).toBe('ultra')
+  it('accepts every canonical ReasoningEffort value (case-insensitively)', () => {
+    for (const effort of ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']) {
+      expect(normalizeCodexCliEffort(effort)).toBe(effort)
+      expect(normalizeCodexCliEffort(effort.toUpperCase())).toBe(effort)
+    }
+  })
+
+  it('rejects values outside the Codex effort enum', () => {
+    // `ultra`/`max` are not part of the codex schema — passing them would make
+    // codex fall back to its default effort, so they must normalize to null.
+    expect(normalizeCodexCliEffort('ultra')).toBeNull()
+    expect(normalizeCodexCliEffort('max')).toBeNull()
     expect(normalizeCodexCliEffort('ultracode')).toBeNull()
     expect(normalizeCodexCliEffort(null)).toBeNull()
     expect(normalizeCodexCliEffort(undefined)).toBeNull()
