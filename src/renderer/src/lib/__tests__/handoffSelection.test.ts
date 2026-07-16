@@ -117,6 +117,30 @@ describe('resolveSessionCreationSelection', () => {
       variant: 'high'
     })
   })
+
+  it('rejects a foreign legacy-global default for grok sessions and falls back to the grok model', () => {
+    useSettingsStore.setState({
+      defaultAgentSdk: 'grok-cli',
+      // Legacy config: only a global selectedModel from another SDK, no
+      // per-provider entries. buildGrokCliPtySpawn would drop this model id,
+      // so stamping it on the session would desync badges from the CLI.
+      selectedModel: {
+        providerID: 'anthropic',
+        modelID: 'claude-opus-4-5-20251101',
+        variant: 'max'
+      },
+      selectedModelByProvider: {},
+      defaultModels: { build: null, plan: null, ask: null, review: null }
+    })
+
+    const selection = resolveSessionCreationSelection({})
+
+    expect(selection.agentSdk).toBe('grok-cli')
+    expect(selection.model).toMatchObject({
+      providerID: 'xai',
+      modelID: 'grok-4.5'
+    })
+  })
 })
 
 describe('handoff provider visuals', () => {

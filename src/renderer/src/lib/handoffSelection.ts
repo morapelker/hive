@@ -159,6 +159,14 @@ function resolveSessionSelection(opts: {
     model = getWorktreeFallbackModel(opts.worktreeId)
   }
 
+  // Grok runs only grok-family models: a foreign default leaking in from the
+  // legacy global selectedModel or the worktree's last-used model would be
+  // stamped on the session/badge while buildGrokCliPtySpawn drops it and the
+  // CLI runs its own default — discard it so the grok catalog/fallback wins.
+  if (resolvedSdk === 'grok-cli' && model && !model.modelID.toLowerCase().startsWith('grok')) {
+    model = null
+  }
+
   const resolvedModel = buildModelSelection(model, resolvedSdk)
   const modelInfo = getModelInfoFromCache(resolvedSdk, resolvedModel)
 
