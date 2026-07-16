@@ -557,7 +557,15 @@ async function ensureRuntime(): Promise<{
   const baseAgentSdk =
     state.selectedAgentSdkOverride ?? resolveBoardChatAgentSdk(settings.defaultAgentSdk)
   const model = state.selectedModelOverride ?? resolveBoardChatDefaultModel(settings, baseAgentSdk)
-  const agentSdk = state.selectedAgentSdkOverride ?? model?.agentSdk ?? baseAgentSdk
+  // Coerce the persisted agent_sdk to a streaming implementer. `model.agentSdk`
+  // can carry a terminal-backed CLI SDK (codex-cli / claude-code-cli) — e.g. a
+  // saved `/ask` command default or a board-chat model override — but the board
+  // assistant is a streaming OpenCode-style session with no PTY, so persisting a
+  // CLI agent_sdk here makes later prompts fail the isCliAgentSdk guard in
+  // promptOpenCodeSession. resolveBoardChatAgentSdk maps codex-cli→codex,
+  // claude-code-cli→claude-code (idempotent on the streaming SDKs).
+  const agentSdk =
+    state.selectedAgentSdkOverride ?? resolveBoardChatAgentSdk(model?.agentSdk ?? baseAgentSdk)
 
   const projectId = scope.kind === 'project' ? scope.projectId : state.selectedTargetProjectId
 
