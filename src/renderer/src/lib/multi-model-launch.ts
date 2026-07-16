@@ -3,7 +3,11 @@ import { useUsageStore, resolveDefaultUsageProvider } from '@/stores/useUsageSto
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { resolveModelForSdk } from '@/stores/useSettingsStore'
 import { toast } from '@/lib/toast'
-import { launchTicketWithModel, type LaunchModelConfig } from '@/lib/ticket-launch'
+import {
+  launchTicketWithModel,
+  resolveCustomProviderBadge,
+  type LaunchModelConfig
+} from '@/lib/ticket-launch'
 import { canonicalizeModelSlug, canonicalizeTicketTitle } from '@shared/types/branch-utils'
 import { FALLBACK_MODELS } from '@shared/model-resolution'
 import { dbApi } from '@/api/db-api'
@@ -35,6 +39,10 @@ interface EffectiveModel {
  * yet: explicit config model -> per-SDK resolution -> hard SDK fallback.
  */
 function resolveEffectiveModel(entry: LaunchModelConfig): EffectiveModel {
+  // Custom providers own their model (baked into the command) — badge with the
+  // provider's display name rather than a claude model that won't actually run.
+  const customBadge = resolveCustomProviderBadge(entry.customProviderId)
+  if (customBadge) return customBadge
   const resolved = entry.model ?? resolveModelForSdk(entry.sdk) ?? FALLBACK_MODELS[entry.sdk]
   return {
     providerID: resolved.providerID,
@@ -199,10 +207,13 @@ export async function runMultiModelLaunch(plan: MultiModelLaunchPlan): Promise<v
       }
     }
 
-    // Usage refresh once per distinct SDK among entries.
-    const distinctSdks = new Set(plan.entries.map((entry) => entry.sdk))
-    for (const sdk of distinctSdks) {
-      useUsageStore.getState().fetchUsageForProvider(resolveDefaultUsageProvider(sdk))
+    // Usage refresh once per distinct resolved usage provider among entries
+    // ('none'-attributed custom providers resolve to null and are skipped).
+    const distinctProviders = new Set(
+      plan.entries.map((entry) => resolveDefaultUsageProvider(entry.sdk, entry.customProviderId))
+    )
+    for (const provider of distinctProviders) {
+      if (provider) useUsageStore.getState().fetchUsageForProvider(provider)
     }
   } catch (err) {
     console.error(`Multi-model launch failed for "${plan.ticket.title}"`, err)

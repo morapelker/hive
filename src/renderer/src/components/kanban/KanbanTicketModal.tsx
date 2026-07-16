@@ -2333,7 +2333,11 @@ function PlanReviewModeContent({
             sessionRecord.connection_id,
             override?.agentSdk,
             undefined,
-            { autoFocus: false, modelOverride: override?.model }
+            {
+              autoFocus: false,
+              modelOverride: override?.model,
+              customProviderId: override?.customProviderId ?? null
+            }
           )
           if (!result.success || !result.session) {
             toast.error(result.error ?? 'Failed to create handoff session')
@@ -2414,7 +2418,11 @@ function PlanReviewModeContent({
           ticket.project_id,
           override?.agentSdk,
           undefined,
-          { autoFocus: false, modelOverride: override?.model }
+          {
+            autoFocus: false,
+            modelOverride: override?.model,
+            customProviderId: override?.customProviderId ?? null
+          }
         )
         if (!result.success || !result.session) {
           toast.error(result.error ?? 'Failed to create handoff session')

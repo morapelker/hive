@@ -5101,7 +5101,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
           connectionId,
           override?.agentSdk,
           undefined,
-          { modelOverride: override?.model }
+          { modelOverride: override?.model, customProviderId: override?.customProviderId ?? null }
         )
         if (!result.success || !result.session) {
           toast.error(result.error ?? 'Failed to create handoff session')
@@ -5135,7 +5135,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
         currentProjectId,
         override?.agentSdk,
         undefined,
-        { modelOverride: override?.model }
+        { modelOverride: override?.model, customProviderId: override?.customProviderId ?? null }
       )
       if (!result.success || !result.session) {
         toast.error(result.error ?? 'Failed to create handoff session')

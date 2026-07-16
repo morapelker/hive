@@ -17,7 +17,8 @@ vi.mock('@/lib/toast', () => ({
 }))
 
 vi.mock('@/lib/ticket-launch', () => ({
-  launchTicketWithModel: vi.fn()
+  launchTicketWithModel: vi.fn(),
+  resolveCustomProviderBadge: vi.fn(() => null)
 }))
 
 vi.mock('@/api/db-api', () => ({

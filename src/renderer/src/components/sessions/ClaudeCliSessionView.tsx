@@ -396,7 +396,11 @@ export function ClaudeCliSessionView({
           sessionRecord.connection_id,
           override.agentSdk,
           undefined,
-          { autoFocus: !isMountedInTicketModal, modelOverride: override.model }
+          {
+            autoFocus: !isMountedInTicketModal,
+            modelOverride: override.model,
+            customProviderId: override.customProviderId ?? null
+          }
         )
         if (!result.success || !result.session) {
           toast.error(result.error ?? 'Failed to create handoff session')
@@ -443,7 +447,11 @@ export function ClaudeCliSessionView({
         sessionRecord.project_id,
         override.agentSdk,
         undefined,
-        { autoFocus: !isMountedInTicketModal, modelOverride: override.model }
+        {
+          autoFocus: !isMountedInTicketModal,
+          modelOverride: override.model,
+          customProviderId: override.customProviderId ?? null
+        }
       )
       if (!result.success || !result.session) {
         toast.error(result.error ?? 'Failed to create handoff session')

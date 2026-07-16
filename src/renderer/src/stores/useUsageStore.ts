@@ -1,5 +1,9 @@
 import { create } from 'zustand'
 import { type AgentSdk, isClaudeFamily } from '@shared/types/agent-sdk'
+import {
+  customProviderUsageToUsageProvider,
+  findCustomProvider
+} from '@shared/types/custom-provider'
 import type {
   UsageData,
   AnthropicRateLimitInfo,
@@ -14,6 +18,7 @@ import { reportActiveAccountsSnapshot } from '@/lib/hive-account-report'
 import { toast } from '@/lib/toast'
 import { useLoginStore } from './useLoginStore'
 import { useAccountStore } from './useAccountStore'
+import { useSettingsStore } from './useSettingsStore'
 
 export type { UsageData, UsageProvider, AnthropicRateLimitInfo, AnthropicRateLimitState }
 
@@ -476,11 +481,33 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
 
 interface SessionLike {
   agent_sdk?: string | null
+  custom_provider_id?: string | null
   model_provider_id?: string | null
   model_id?: string | null
 }
 
-export function resolveUsageProvider(session: SessionLike): UsageProvider {
+/**
+ * Resolve a custom claude-cli provider's usage attribution from settings.
+ * Returns undefined when the id doesn't reference a launchable provider
+ * (deleted, stale, or blank command — the spawn degrades those to plain
+ * claude) so callers fall back to the plain agent-SDK resolution.
+ */
+function resolveCustomProviderUsage(
+  customProviderId: string | null | undefined
+): UsageProvider | null | undefined {
+  if (!customProviderId) return undefined
+  const provider = findCustomProvider(
+    useSettingsStore.getState().customProviders,
+    customProviderId
+  )
+  if (!provider || !provider.command.trim()) return undefined
+  return customProviderUsageToUsageProvider(provider.usageProvider)
+}
+
+/** Null means "no usage account to refresh" (custom provider attributed to none). */
+export function resolveUsageProvider(session: SessionLike): UsageProvider | null {
+  const customUsage = resolveCustomProviderUsage(session.custom_provider_id)
+  if (customUsage !== undefined) return customUsage
   if (isClaudeFamily(session.agent_sdk)) {
     return 'anthropic'
   }
@@ -489,9 +516,13 @@ export function resolveUsageProvider(session: SessionLike): UsageProvider {
   return 'anthropic'
 }
 
+/** Null means "no usage account to refresh" (custom provider attributed to none). */
 export function resolveDefaultUsageProvider(
-  agentSdk: AgentSdk
-): UsageProvider {
+  agentSdk: AgentSdk,
+  customProviderId?: string | null
+): UsageProvider | null {
+  const customUsage = resolveCustomProviderUsage(customProviderId)
+  if (customUsage !== undefined) return customUsage
   if (agentSdk === 'codex') return 'openai'
   return 'anthropic'
 }

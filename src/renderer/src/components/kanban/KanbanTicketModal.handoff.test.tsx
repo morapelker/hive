@@ -434,7 +434,8 @@ describe('KanbanTicketModal handoff from Claude CLI plan review', () => {
     await waitFor(() => expect(createSession).toHaveBeenCalledTimes(1))
     expect(createSession).toHaveBeenCalledWith('worktree-1', 'project-1', 'claude-code-cli', undefined, {
       autoFocus: false,
-      modelOverride: undefined
+      modelOverride: undefined,
+      customProviderId: null
     })
     await waitFor(() => expect(terminalApiMocks.createClaudeCli).toHaveBeenCalledTimes(1))
     expect(terminalApiMocks.createClaudeCli).toHaveBeenCalledWith('handoff-session', {
@@ -483,7 +484,8 @@ describe('KanbanTicketModal handoff from Claude CLI plan review', () => {
     await waitFor(() => expect(createSession).toHaveBeenCalledTimes(1))
     expect(createSession).toHaveBeenCalledWith('worktree-1', 'project-1', 'claude-code-cli', undefined, {
       autoFocus: false,
-      modelOverride: undefined
+      modelOverride: undefined,
+      customProviderId: null
     })
     await waitFor(() => expect(terminalApiMocks.createClaudeCli).toHaveBeenCalledWith(
       'handoff-session',
@@ -511,7 +513,8 @@ describe('KanbanTicketModal handoff from Claude CLI plan review', () => {
     await waitFor(() => expect(createSession).toHaveBeenCalledTimes(1))
     expect(createSession).toHaveBeenCalledWith('worktree-1', 'project-1', 'codex', undefined, {
       autoFocus: true,
-      modelOverride: { providerID: 'codex', modelID: 'gpt-5.5' }
+      modelOverride: { providerID: 'codex', modelID: 'gpt-5.5' },
+      customProviderId: null
     })
     expect(setPendingMessage).toHaveBeenCalledWith(
       'handoff-session',
@@ -535,7 +538,8 @@ describe('KanbanTicketModal handoff from Claude CLI plan review', () => {
     await waitFor(() => expect(createSession).toHaveBeenCalledTimes(1))
     expect(createSession).toHaveBeenCalledWith('worktree-1', 'project-1', 'claude-code-cli', undefined, {
       autoFocus: true,
-      modelOverride: undefined
+      modelOverride: undefined,
+      customProviderId: null
     })
     expect(setPendingMessage).toHaveBeenCalledWith(
       'handoff-session',

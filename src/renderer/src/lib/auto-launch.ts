@@ -19,6 +19,8 @@ export interface PendingLaunchModelEntry {
   sdk: HandoffAgentSdk
   model: { providerID: string; modelID: string; variant?: string } | null
   codexFastMode: boolean
+  /** claude-code-cli only: launch through this custom provider's command. */
+  customProviderId?: string | null
 }
 
 interface PendingLaunchConfig {
@@ -30,6 +32,7 @@ interface PendingLaunchConfig {
   codexFastMode: boolean
   goalMode: boolean
   goalSuccessCriteria: string | null
+  customProviderId?: string | null
   /** NEW (optional): multi-model launch entries; [0] applies to the original ticket. */
   models?: PendingLaunchModelEntry[]
 }
@@ -40,7 +43,14 @@ interface PendingLaunchConfig {
  */
 export function resolveModelEntries(config: PendingLaunchConfig): LaunchModelConfig[] {
   if (config.models?.length) return config.models
-  return [{ sdk: config.sdk, model: config.model, codexFastMode: config.codexFastMode }]
+  return [
+    {
+      sdk: config.sdk,
+      model: config.model,
+      codexFastMode: config.codexFastMode,
+      customProviderId: config.customProviderId ?? null
+    }
+  ]
 }
 
 export async function autoLaunchTicket(ticket: AutoLaunchTicket): Promise<void> {

@@ -4,7 +4,8 @@ import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useUsageStore, resolveDefaultUsageProvider } from '@/stores/useUsageStore'
-import { resolveModelForSdk } from '@/stores/useSettingsStore'
+import { resolveModelForSdk, useSettingsStore } from '@/stores/useSettingsStore'
+import { findCustomProvider } from '@shared/types/custom-provider'
 import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
 import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
 import { snapshotTokenBaseline } from '@/lib/token-baselines'
@@ -26,6 +27,8 @@ export interface LaunchModelConfig {
   sdk: HandoffAgentSdk
   model: { providerID: string; modelID: string; variant?: string } | null
   codexFastMode: boolean
+  /** claude-code-cli only: launch through this custom provider's command. */
+  customProviderId?: string | null
 }
 
 export interface TicketLaunchSpec {
@@ -121,6 +124,42 @@ export function resolveBadgeModel(
 }
 
 /**
+ * Badge for a custom-provider launch: the provider's command decides the real
+ * model (often via alias flags), so the session row's resolved claude model
+ * would mislead — stamp the provider's display name instead. Returns null when
+ * the id doesn't reference a known provider.
+ */
+export function resolveCustomProviderBadge(
+  customProviderId: string | null | undefined
+): { providerID: string; modelID: string; variant: null } | null {
+  if (!customProviderId) return null
+  const provider = findCustomProvider(
+    useSettingsStore.getState().customProviders,
+    customProviderId
+  )
+  if (!provider) return null
+  return { providerID: 'custom', modelID: provider.name || 'Custom Provider', variant: null }
+}
+
+/**
+ * A launch config can outlive its provider (queued tickets, saved handoff
+ * overrides). Resolve the id against current settings — a deleted provider
+ * degrades to a plain claude-code-cli launch instead of failing at spawn.
+ */
+function resolveLaunchCustomProviderId(
+  sdk: HandoffAgentSdk,
+  customProviderId: string | null | undefined
+): string | null {
+  if (sdk !== 'claude-code-cli' || !customProviderId) return null
+  const provider = findCustomProvider(useSettingsStore.getState().customProviders, customProviderId)
+  if (!provider || !provider.command.trim()) {
+    console.warn('Custom provider no longer exists; launching plain Claude CLI:', customProviderId)
+    return null
+  }
+  return provider.id
+}
+
+/**
  * Headless ticket-launch pipeline shared by auto-launch (single model) and the
  * multi-model orchestrator. Resolves/creates the worktree, creates the session,
  * stamps status + ticket badge fields, and delivers the prompt per SDK. Every
@@ -195,6 +234,7 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
     }
 
     // 2. Create session
+    const customProviderId = resolveLaunchCustomProviderId(sdk, spec.modelConfig.customProviderId)
     const modelOverride = model ? { ...model, agentSdk: sdk } : undefined
     const cliPendingPrompt =
       sdk === 'claude-code-cli'
@@ -205,7 +245,8 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
     const createOptions = {
       autoFocus: false,
       ...(modelOverride ? { modelOverride } : {}),
-      ...(cliPendingPrompt ? { pendingMessage: cliPendingPrompt } : {})
+      ...(cliPendingPrompt ? { pendingMessage: cliPendingPrompt } : {}),
+      ...(customProviderId ? { customProviderId } : {})
     }
     const sessionResult = await useSessionStore
       .getState()
@@ -247,7 +288,7 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
     //    a stale multi-launch group) — the multi-model orchestrator overrides
     //    it back via ticketUpdateExtras, which must win, hence the field
     //    ordering below.
-    const badge = resolveBadgeModel(spec.modelConfig, session)
+    const badge = resolveCustomProviderBadge(customProviderId) ?? resolveBadgeModel(spec.modelConfig, session)
     await useKanbanStore.getState().updateTicket(spec.ticketId, spec.projectId, {
       current_session_id: sessionId,
       worktree_id: worktreeId,
@@ -262,7 +303,10 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
     })
 
     // 6. Trigger usage refresh
-    useUsageStore.getState().fetchUsageForProvider(resolveDefaultUsageProvider(sdk))
+    const usageProvider = resolveDefaultUsageProvider(sdk, customProviderId)
+    if (usageProvider) {
+      useUsageStore.getState().fetchUsageForProvider(usageProvider)
+    }
 
     if (sessionAgentSdk === 'claude-code-cli') {
       const outboundPrompt =
