@@ -26,6 +26,7 @@ import {
   clearAllGrokSessionTracking,
   clearGrokSessionTracking,
   ensureGrokHooksInstalled,
+  getGrokPlanState,
   seedGrokSessionTracking,
   setGrokSessionIdSink,
   setGrokSessionModeProvider
@@ -459,9 +460,6 @@ export async function createClaudeCliTerminal(
         return { success: false, error: 'Grok binary not found on PATH' }
       }
       logGrokBinaryVersion(grokBinary)
-      // Grok has no --settings flag; hooks live in a static global file that
-      // relays payloads to the URL carried in this spawn's environment.
-      ensureGrokHooksInstalled()
       ensureGrokSessionIdSink()
       if (!alreadyExists) {
         // Seeding replaces live tracking (lastPreToolUse pairing, tracked
@@ -483,6 +481,11 @@ export async function createClaudeCliTerminal(
         hookUrlBase: buildGrokCliHookUrlBase(port, sessionId),
         db
       })
+      // Grok has no --settings flag; hooks live in a static file under the
+      // GROK_HOME this spawn will actually run with (the user's Hive env vars
+      // can point it away from ~/.grok) that relays payloads to the URL
+      // carried in the spawn environment.
+      ensureGrokHooksInstalled(spawn.env)
     } else {
       const claudeBinary = resolveClaudeBinaryPath()
       if (!claudeBinary) {
@@ -556,10 +559,17 @@ export async function createClaudeCliTerminal(
     if (grokPlanSession && !alreadyExists) {
       // Fresh PTY for a grok plan session: activate plan mode with Shift+Tab
       // keystrokes once the TUI boots, then paste the prompt (which flips
-      // grok's plan state Pending→Active). Resumed sessions restore their
-      // persisted plan state, so they only get the delayed paste.
+      // grok's plan state Pending→Active). A resume restores grok's persisted
+      // plan state, so consult it: a session that is already Active must not
+      // be toggled (that would cycle it OUT of plan), but one whose plan was
+      // never armed — or was approved before the Hive mode flipped back to
+      // plan while the PTY was down — still needs the activation. When the
+      // state can't be read, err on not toggling.
+      const resumedPlanState = session.claude_session_id
+        ? getGrokPlanState(worktreePath, session.claude_session_id, spawn.env)
+        : null
       scheduleGrokPlanActivation(sessionId, pendingPrompt, {
-        toggles: !session.claude_session_id
+        toggles: resumedPlanState === null ? true : resumedPlanState === 'inactive'
       })
     } else if (alreadyExists && pendingPrompt) {
       if (grokPlanSession && grokPlanDeliveries.has(sessionId)) {

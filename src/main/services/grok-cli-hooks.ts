@@ -45,6 +45,16 @@ function grokHome(): string {
 }
 
 /**
+ * The GROK_HOME the spawned grok process will actually use: the spawn env
+ * (which carries the user's Hive-configured environment variables) wins over
+ * this process's env. Hooks must be installed under — and session state read
+ * from — that home, or a custom GROK_HOME runs hook-silent.
+ */
+function grokHomeForEnv(spawnEnv?: Record<string, string>): string {
+  return spawnEnv?.GROK_HOME?.trim() || grokHome()
+}
+
+/**
  * A curl relay for one hook path, generated for the platform this machine's
  * grok will run the hook on (the file is written by the same host).
  *
@@ -114,10 +124,12 @@ export function buildGrokHookFileContent(): string {
 
 /**
  * Idempotently install the global grok hook file. Called before every grok
- * spawn; rewrites only when content differs (upgrades across Hive versions).
+ * spawn with that spawn's environment (a Hive-configured GROK_HOME must
+ * receive the hooks, not the default home); rewrites only when content
+ * differs (upgrades across Hive versions).
  */
-export function ensureGrokHooksInstalled(): void {
-  const hooksDir = path.join(grokHome(), 'hooks')
+export function ensureGrokHooksInstalled(spawnEnv?: Record<string, string>): void {
+  const hooksDir = path.join(grokHomeForEnv(spawnEnv), 'hooks')
   const hookFile = path.join(hooksDir, GROK_HOOK_FILE_NAME)
   const content = buildGrokHookFileContent()
 
@@ -138,6 +150,48 @@ export function ensureGrokHooksInstalled(): void {
 /** Base URL exported to the grok process as HIVE_GROK_HOOK_URL. */
 export function buildGrokCliHookUrlBase(port: number, hiveSessionId: string): string {
   return `http://127.0.0.1:${port}/grok-hook/${encodeURIComponent(hiveSessionId)}`
+}
+
+/** Grok percent-encodes RFC3986-unreserved-only cwd names; encodeURIComponent leaves !'()* bare. */
+function encodeGrokCwd(worktreePath: string): string {
+  return encodeURIComponent(worktreePath).replace(
+    /[!'()*]/g,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`
+  )
+}
+
+/**
+ * A resumed grok session's persisted plan state, from
+ * `<home>/sessions/<percent-encoded-cwd>/<session-id>/plan_mode.json`
+ * (transient states collapse to Inactive on restart). Drives whether a
+ * resumed plan-mode Hive session still needs the Shift+Tab plan activation.
+ *
+ * Tri-state on purpose: a missing plan_mode.json inside an existing session
+ * dir is a real "never planned" (safe to toggle), but a missing session dir
+ * or unreadable state means we can't see grok's state (path-encoding drift,
+ * relocated home) — and toggling an actually-Active session would cycle it
+ * OUT of plan, so callers should treat 'unknown' conservatively.
+ */
+export function getGrokPlanState(
+  worktreePath: string,
+  grokSessionId: string,
+  spawnEnv?: Record<string, string>
+): 'active' | 'inactive' | 'unknown' {
+  try {
+    const sessionDir = path.join(
+      grokHomeForEnv(spawnEnv),
+      'sessions',
+      encodeGrokCwd(worktreePath),
+      grokSessionId
+    )
+    if (!existsSync(sessionDir)) return 'unknown'
+    const planModePath = path.join(sessionDir, 'plan_mode.json')
+    if (!existsSync(planModePath)) return 'inactive'
+    const parsed = JSON.parse(readFileSync(planModePath, 'utf-8')) as { state?: string }
+    return parsed.state === 'Active' ? 'active' : 'inactive'
+  } catch {
+    return 'unknown'
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -6,6 +6,7 @@ import {
   buildGrokCliHookUrlBase,
   buildGrokHookFileContent,
   clearAllGrokSessionTracking,
+  getGrokPlanState,
   seedGrokSessionTracking,
   setGrokSessionIdSink,
   setGrokSessionModeProvider,
@@ -58,6 +59,30 @@ describe('buildGrokHookFileContent', () => {
       // No bare $VAR tokens that grok's load-time expansion could blank out.
       expect(command).not.toMatch(/\$HIVE_GROK_HOOK_URL/)
     }
+  })
+})
+
+describe('getGrokPlanState', () => {
+  it('reads Active/Inactive from plan_mode.json and reports unknown for unseen session dirs', () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'grok-home-test-'))
+    const spawnEnv = { GROK_HOME: home }
+    const worktree = '/repo/my feature' // space exercises percent-encoding
+    const dir = path.join(home, 'sessions', encodeURIComponent(worktree), ROOT)
+    mkdirSync(dir, { recursive: true })
+
+    // Session dir exists but plan never armed → inactive (safe to toggle).
+    expect(getGrokPlanState(worktree, ROOT, spawnEnv)).toBe('inactive')
+
+    writeFileSync(path.join(dir, 'plan_mode.json'), JSON.stringify({ state: 'Active' }))
+    expect(getGrokPlanState(worktree, ROOT, spawnEnv)).toBe('active')
+
+    writeFileSync(path.join(dir, 'plan_mode.json'), JSON.stringify({ state: 'Inactive' }))
+    expect(getGrokPlanState(worktree, ROOT, spawnEnv)).toBe('inactive')
+
+    // Session dir we can't see (encoding drift, relocated home) → unknown.
+    expect(getGrokPlanState(worktree, CHILD, spawnEnv)).toBe('unknown')
+
+    rmSync(home, { recursive: true, force: true })
   })
 })
 
