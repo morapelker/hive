@@ -460,8 +460,15 @@ export async function setOpenCodeSelectedModel(
     }
 
     // Handle non-null model. grok-cli has no implementer — model selection for
-    // it lives entirely in renderer settings (the spawner reads the session row).
-    if (model.agentSdk === 'grok-cli') {
+    // it lives entirely in renderer settings (the spawner reads the session
+    // row). This includes UNSTAMPED grok selections (Settings' global model
+    // picker sends no agentSdk): persisting xai/grok-4.5 as OpenCode's model
+    // would make later OpenCode prompts run a model it cannot serve.
+    if (
+      model.agentSdk === 'grok-cli' ||
+      model.providerID === 'xai' ||
+      model.modelID.toLowerCase().startsWith('grok')
+    ) {
       return { success: true }
     }
     if (model.agentSdk && model.agentSdk !== 'opencode' && sdkManager) {
