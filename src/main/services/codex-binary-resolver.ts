@@ -66,6 +66,52 @@ function hasCodexHookTrustFlag(output: string): boolean {
   return /--dangerously-bypass-hook-trust\b/.test(output)
 }
 
+/**
+ * Minimum codex version whose non-interactive hook-trust bypass actually works.
+ * `--dangerously-bypass-hook-trust` first shipped in 0.131.0 but was
+ * parsed-but-ignored through 0.133.0 (openai/codex#24093 — the TUI still shows
+ * the blocking "Hooks need review" prompt), and it is absent before 0.131.0.
+ * Since every codex-cli spawn relies on that bypass, 0.134.0 is the first
+ * usable version. A help-text flag check alone can't distinguish the broken
+ * 0.131–0.133 builds, so we gate on the parsed version.
+ */
+const MIN_CODEX_CLI_HOOK_VERSION: readonly [number, number, number] = [0, 134, 0]
+
+/** Parse the first `X.Y.Z` triple from `codex --version` output (e.g. "codex-cli 0.144.0"). */
+function parseCodexVersion(output: string): [number, number, number] | null {
+  const m = output.match(/(\d+)\.(\d+)\.(\d+)/)
+  if (!m) return null
+  return [Number(m[1]), Number(m[2]), Number(m[3])]
+}
+
+function versionAtLeast(
+  actual: readonly [number, number, number],
+  min: readonly [number, number, number]
+): boolean {
+  for (let i = 0; i < 3; i++) {
+    if (actual[i] > min[i]) return true
+    if (actual[i] < min[i]) return false
+  }
+  return true
+}
+
+function readCodexVersionOutput(binaryPath: string): string | null {
+  try {
+    return execFileSync(binaryPath, ['--version'], {
+      encoding: 'utf-8',
+      timeout: 5000,
+      env: process.env,
+      shell: usesShellForCodexBinary(binaryPath)
+    })
+  } catch (error) {
+    const output = [
+      stringifyProbeOutput((error as { stdout?: unknown }).stdout),
+      stringifyProbeOutput((error as { stderr?: unknown }).stderr)
+    ].join('\n')
+    return output.trim() ? output : null
+  }
+}
+
 function firstExistingPath(paths: string[]): string | null {
   return paths.find((candidate) => existsSync(candidate)) ?? null
 }
@@ -194,6 +240,21 @@ export function supportsCodexCliHooks(binaryPath: string): boolean {
     return cached
   }
 
+  // Primary gate: version. The bypass Hive relies on only works >= 0.134.0
+  // (see MIN_CODEX_CLI_HOOK_VERSION); a help-text flag check would wrongly
+  // accept the broken 0.131–0.133 builds.
+  const versionOutput = readCodexVersionOutput(binaryPath)
+  const version = versionOutput ? parseCodexVersion(versionOutput) : null
+  if (version) {
+    const supported = versionAtLeast(version, MIN_CODEX_CLI_HOOK_VERSION)
+    if (supported || !isBareCommand(binaryPath)) {
+      codexHookSupportCache.set(binaryPath, supported)
+    }
+    return supported
+  }
+
+  // Fallback (version unparseable — e.g. a forked/patched build): best-effort
+  // help-text check for the flag.
   try {
     const output = execFileSync(binaryPath, ['--help'], {
       encoding: 'utf-8',
