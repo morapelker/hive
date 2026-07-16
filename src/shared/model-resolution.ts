@@ -51,6 +51,11 @@ export function resolveModelForSdk(
   return settings.selectedModel ?? null
 }
 
+/** Grok-family by identity, independent of any agentSdk stamp. */
+function isGrokModel(model: SharedSelectedModel): boolean {
+  return model.providerID === 'xai' || model.modelID.toLowerCase().startsWith('grok')
+}
+
 export function resolveSessionCreation(opts: {
   settings: ModelResolutionSettings
   mode?: string | null
@@ -77,6 +82,19 @@ export function resolveSessionCreation(opts: {
   // Deliberate divergence from renderer resolution: main has no model catalog or
   // worktree-history caches, so Discord substitutes the hard SDK fallback here.
   if (!model) {
+    model = FALLBACK_MODELS[resolvedSdk]
+  }
+
+  // Keep the SDK/model pair coherent: grok sessions run only grok-family
+  // models (the spawner drops anything else), and grok models cannot ride
+  // into another SDK — the legacy global selectedModel is unstamped and can
+  // leak either way. An explicit matching stamp is trusted (e.g. an
+  // OpenCode-catalog xAI model stamped 'opencode').
+  if (resolvedSdk === 'grok-cli') {
+    if (!isGrokModel(model)) {
+      model = FALLBACK_MODELS['grok-cli']
+    }
+  } else if (isGrokModel(model) && (!model.agentSdk || model.agentSdk === 'grok-cli')) {
     model = FALLBACK_MODELS[resolvedSdk]
   }
 
