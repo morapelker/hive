@@ -104,7 +104,8 @@ describe('translateGrokHook', () => {
       source: 'new'
     })
     expect(start?.hook_event_name).toBe('SessionStart')
-    expect(sink).toHaveBeenCalledExactlyOnceWith(HIVE_ID, ROOT)
+    expect(sink).toHaveBeenCalledOnce()
+    expect(sink).toHaveBeenCalledWith(HIVE_ID, ROOT)
 
     const stop = translateGrokHook(HIVE_ID, { hookEventName: 'stop', sessionId: ROOT })
     expect(stop?.hook_event_name).toBe('Stop')
@@ -367,7 +368,8 @@ describe('translateGrokHook', () => {
       source: 'new'
     })
     expect(start?.hook_event_name).toBe('SessionStart')
-    expect(sink).toHaveBeenCalledExactlyOnceWith(HIVE_ID, ROOT)
+    expect(sink).toHaveBeenCalledOnce()
+    expect(sink).toHaveBeenCalledWith(HIVE_ID, ROOT)
 
     const stop = translateGrokHook(HIVE_ID, { hookEventName: 'stop', sessionId: ROOT })
     expect(stop?.agent_id).toBeUndefined()

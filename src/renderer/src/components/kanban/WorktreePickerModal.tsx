@@ -526,33 +526,52 @@ export function WorktreePickerModal({
     // regardless of what's actually selected, so a leftover default from a
     // different SDK never leaks into the remote payload.
     const effectiveSelectedSdk = runOnRemote ? 'claude-code-cli' : selectedSdk
-    // Priority 1: mode-specific default
-    const modeModel = settings.getModelForMode(mode)
-    if (modeModel && (!effectiveSelectedSdk || modeModel.agentSdk === effectiveSelectedSdk)) {
-      return modeModel
+
+    const candidate = ((): SelectedModel | null => {
+      // Priority 1: mode-specific default
+      const modeModel = settings.getModelForMode(mode)
+      if (modeModel && (!effectiveSelectedSdk || modeModel.agentSdk === effectiveSelectedSdk)) {
+        return modeModel
+      }
+      // Priority 2: per-provider / global default. When an SDK was explicitly
+      // toggled (or remote forces claude-code-cli), never inherit a model from
+      // a DIFFERENT SDK: resolveModelForSdk falls back to the legacy global
+      // selectedModel, which belongs to whatever SDK last set it (and often
+      // carries no agentSdk stamp at all). Only a hit in the per-SDK map — or
+      // an explicit matching stamp — is trusted; anything else is replaced by
+      // the hard per-SDK default. A null result stays null (downstream session
+      // creation resolves its own chain).
+      const sdkKey = runOnRemote ? 'claude-code-cli' : baseAgentSdk
+      const resolved = resolveModelForSdk(sdkKey) ?? null
+      if (!effectiveSelectedSdk) return resolved
+      if (!resolved) {
+        // Other SDKs keep the null → downstream-resolution contract, but grok
+        // ships exactly one model — surface it instead of leaving the chip on
+        // the placeholder.
+        return effectiveSelectedSdk === 'grok-cli' ? sdkFallbackModel('grok-cli') : null
+      }
+      const fromPerSdkMap = !!settings.selectedModelByProvider?.[sdkKey]
+      if (fromPerSdkMap || resolved.agentSdk === effectiveSelectedSdk) {
+        return resolved
+      }
+      return sdkFallbackModel(effectiveSelectedSdk)
+    })()
+
+    // Whatever the candidate, check it against the SDK the launch would run
+    // it under (toggle > model's own stamp > default SDK): grok runs only
+    // grok-family models, and a foreign candidate here rides modelOverride
+    // past the session-creation filter straight onto the row/badge while the
+    // spawner drops it. Covers grok-as-default-SDK launches with only a
+    // legacy global model configured.
+    if (candidate) {
+      const runSdk = runOnRemote
+        ? 'claude-code-cli'
+        : (selectedSdk ?? candidate.agentSdk ?? baseAgentSdk)
+      if (runSdk === 'grok-cli' && !candidate.modelID.toLowerCase().startsWith('grok')) {
+        return sdkFallbackModel('grok-cli')
+      }
     }
-    // Priority 2: per-provider / global default. When an SDK was explicitly
-    // toggled (or remote forces claude-code-cli), never inherit a model from
-    // a DIFFERENT SDK: resolveModelForSdk falls back to the legacy global
-    // selectedModel, which belongs to whatever SDK last set it (and often
-    // carries no agentSdk stamp at all). Only a hit in the per-SDK map — or
-    // an explicit matching stamp — is trusted; anything else is replaced by
-    // the hard per-SDK default. A null result stays null (downstream session
-    // creation resolves its own chain).
-    const sdkKey = runOnRemote ? 'claude-code-cli' : baseAgentSdk
-    const resolved = resolveModelForSdk(sdkKey) ?? null
-    if (!effectiveSelectedSdk) return resolved
-    if (!resolved) {
-      // Other SDKs keep the null → downstream-resolution contract, but grok
-      // ships exactly one model — surface it instead of leaving the chip on
-      // the placeholder.
-      return effectiveSelectedSdk === 'grok-cli' ? sdkFallbackModel('grok-cli') : null
-    }
-    const fromPerSdkMap = !!settings.selectedModelByProvider?.[sdkKey]
-    if (fromPerSdkMap || resolved.agentSdk === effectiveSelectedSdk) {
-      return resolved
-    }
-    return sdkFallbackModel(effectiveSelectedSdk)
+    return candidate
   }, [mode, baseAgentSdk, selectedSdk, runOnRemote])
 
   const agentSdk =
