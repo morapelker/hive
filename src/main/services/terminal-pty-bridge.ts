@@ -278,6 +278,15 @@ export async function createClaudeCliTerminal(
     // transcript behind a hard error.
     let customProviderCommand: string | null = null
     if (session.custom_provider_id) {
+      // The wrapper spawns through a POSIX login shell ($SHELL -ilc) — Windows
+      // GUI apps have no SHELL and no /bin/zsh, so fail with a clear message
+      // instead of a broken spawn (and never silently switch to stock claude).
+      if (process.platform === 'win32') {
+        return {
+          success: false,
+          error: 'Custom providers are not supported on Windows yet'
+        }
+      }
       const provider = getCustomProviderById(db, session.custom_provider_id)
       if (provider?.command.trim()) {
         customProviderCommand = provider.command
