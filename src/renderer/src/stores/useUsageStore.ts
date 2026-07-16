@@ -479,8 +479,9 @@ interface SessionLike {
 
 /**
  * Resolve a custom claude-cli provider's usage attribution from settings.
- * Returns undefined when the id doesn't reference a known provider (deleted or
- * stale) so callers can fall back to the plain agent-SDK resolution.
+ * Returns undefined when the id doesn't reference a launchable provider
+ * (deleted, stale, or blank command — the spawn degrades those to plain
+ * claude) so callers fall back to the plain agent-SDK resolution.
  */
 function resolveCustomProviderUsage(
   customProviderId: string | null | undefined
@@ -490,7 +491,7 @@ function resolveCustomProviderUsage(
     useSettingsStore.getState().customProviders,
     customProviderId
   )
-  if (!provider) return undefined
+  if (!provider || !provider.command.trim()) return undefined
   return customProviderUsageToUsageProvider(provider.usageProvider)
 }
 

@@ -327,9 +327,12 @@ export async function createClaudeCliTerminal(
       args: spawn.args.map((arg, index) => {
         if (index === spawn.args.length - 1 && pendingPrompt) return '<prompt>'
         // The custom command may embed inline secrets (ANTHROPIC_AUTH_TOKEN=…)
-        // — never write it to the log verbatim.
-        if (customProviderCommand && arg.includes(customProviderCommand.split(/\s+/)[0])) {
-          return '<custom-provider-command>'
+        // — never write it to the log verbatim. The wrapper puts the shell
+        // script at index 1 and (for POSIX shells) argv0 at index 2; fish has
+        // no argv0 slot, so index 2 is a Hive flag there (always '--'-prefixed).
+        if (customProviderCommand && index === 1) return '<custom-provider-command>'
+        if (customProviderCommand && index === 2 && !arg.startsWith('--')) {
+          return '<custom-provider-argv0>'
         }
         return arg
       })

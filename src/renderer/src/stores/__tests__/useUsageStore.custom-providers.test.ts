@@ -32,6 +32,16 @@ describe('usage provider resolution for custom claude-cli providers', () => {
     ).toBe('anthropic')
   })
 
+  it('falls back when the provider command was blanked (spawn degrades to plain claude)', () => {
+    useSettingsStore.setState({
+      customProviders: [{ id: 'cp-blank', name: 'Blank', command: '  ', usageProvider: 'openai' }]
+    })
+    expect(
+      resolveUsageProvider({ agent_sdk: 'claude-code-cli', custom_provider_id: 'cp-blank' })
+    ).toBe('anthropic')
+    expect(resolveDefaultUsageProvider('claude-code-cli', 'cp-blank')).toBe('anthropic')
+  })
+
   it('keeps plain sessions on their existing attribution', () => {
     expect(resolveUsageProvider({ agent_sdk: 'claude-code-cli' })).toBe('anthropic')
     expect(resolveUsageProvider({ agent_sdk: 'codex', model_provider_id: 'openai' })).toBe('openai')
