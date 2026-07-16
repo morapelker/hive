@@ -268,8 +268,22 @@ describe('buildClaudeCliPtySpawn', () => {
     it('falls back to a POSIX shell for csh-family login shells', () => {
       process.env.SHELL = '/bin/tcsh'
       const spawn = buildCustomProviderShellSpawn('claudex', ['--flag'])
-      expect(spawn.command).toBe(process.platform === 'darwin' ? '/bin/zsh' : '/bin/bash')
-      expect(spawn.args).toEqual(['-ilc', 'claudex "$@"', 'claudex', '--flag'])
+      const fallback = process.platform === 'darwin' ? '/bin/zsh' : '/bin/bash'
+      expect(spawn.command).toBe(fallback)
+      expect(spawn.args).toEqual([
+        fallback.endsWith('bash') ? '-ic' : '-ilc',
+        'claudex "$@"',
+        'claudex',
+        '--flag'
+      ])
+    })
+
+    it('uses interactive non-login bash so ~/.bashrc aliases resolve', () => {
+      process.env.SHELL = '/bin/bash'
+      const spawn = buildCustomProviderShellSpawn('claudex', ['--flag'])
+      expect(spawn.command).toBe('/bin/bash')
+      // bash login shells read .bash_profile, not .bashrc where aliases live.
+      expect(spawn.args).toEqual(['-ic', 'claudex "$@"', 'claudex', '--flag'])
     })
 
     it('suppresses the ultracode settings merge for custom providers', () => {

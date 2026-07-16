@@ -145,16 +145,19 @@ export function buildClaudeCliPtySpawn(input: ClaudeCliPtySpawnInput): ClaudeCli
 const POSIX_WRAPPER_SHELLS = new Set(['zsh', 'bash', 'sh', 'dash', 'ksh'])
 
 /**
- * Run a custom provider's command through an interactive login shell so
- * aliases and functions from the user's shell config resolve. Hive's args
- * (hooks, resume, permission flags, prompt) ride as positional parameters —
- * "$@" (or fish's $argv) — so the prompt and --settings JSON are never
- * string-interpolated into the shell script.
+ * Run a custom provider's command through an interactive shell so aliases and
+ * functions from the user's shell config resolve. Hive's args (hooks, resume,
+ * permission flags, prompt) ride as positional parameters — "$@" (or fish's
+ * $argv) — so the prompt and --settings JSON are never string-interpolated
+ * into the shell script.
  *
  * Shell flavors differ: fish rejects "$@" and has no argv0 slot after -c;
- * csh/tcsh can't parse combined -ilc at all. Unknown/non-POSIX login shells
- * fall back to a platform POSIX shell (aliases defined only in e.g. .tcshrc
- * won't resolve there, but the spawn works instead of dying on a parse error).
+ * csh/tcsh can't parse combined -ilc at all; bash LOGIN shells read
+ * .bash_profile instead of .bashrc (where interactive aliases live), so bash
+ * gets interactive non-login (-ic) while zsh keeps -ilc (.zshrc is read by
+ * every interactive zsh). Unknown/non-POSIX login shells fall back to a
+ * platform POSIX shell (aliases defined only in e.g. .tcshrc won't resolve
+ * there, but the spawn works instead of dying on a parse error).
  */
 export function buildCustomProviderShellSpawn(
   customCommand: string,
@@ -170,6 +173,8 @@ export function buildCustomProviderShellSpawn(
   }
 
   const wrapperShell = POSIX_WRAPPER_SHELLS.has(shellName) ? shell : posixFallback
+  const wrapperName = wrapperShell.split('/').pop() ?? wrapperShell
+  const flags = wrapperName === 'bash' ? '-ic' : '-ilc'
   const argv0 = customCommand.split(/\s+/)[0] || 'claude'
-  return { command: wrapperShell, args: ['-ilc', `${customCommand} "$@"`, argv0, ...args] }
+  return { command: wrapperShell, args: [flags, `${customCommand} "$@"`, argv0, ...args] }
 }
