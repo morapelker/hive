@@ -97,7 +97,11 @@ export function HandoffSplitButton({
   const launchableCustomProviders = isWindows()
     ? []
     : (customProviders ?? []).filter((p) => p.command.trim())
-  const showChevron = availableHandoffSdks.length + launchableCustomProviders.length > 1
+  // A custom provider is never the fallback default — the picker must stay
+  // reachable whenever one exists, even as the only option.
+  const showChevron =
+    launchableCustomProviders.length > 0 ||
+    availableHandoffSdks.length + launchableCustomProviders.length > 1
   void availableAgentSdks
   void lastHandoffOverride
   void defaultAgentSdk

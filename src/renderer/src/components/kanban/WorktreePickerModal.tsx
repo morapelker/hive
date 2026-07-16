@@ -322,7 +322,10 @@ function SdkToggleGroup({
   // Custom providers run their own command through the login shell — they
   // don't depend on stock-claude detection.
   const visibleCustomProviders = customProviders
-  // Only render when 2+ SDKs are available (a single SDK has nothing to toggle).
+  // Only render when 2+ SDKs are available (a single stock SDK has nothing to
+  // toggle) — but a custom provider must always be selectable, even alone: it
+  // is never the implied default, so hiding its button would strand the user
+  // on a stock SDK.
   const buttonCount =
     (availableAgentSdks
       ? [
@@ -332,7 +335,7 @@ function SdkToggleGroup({
           availableAgentSdks.claude
         ].filter(Boolean).length
       : 0) + visibleCustomProviders.length
-  if (!availableAgentSdks || buttonCount < 2) return null
+  if (!availableAgentSdks || (buttonCount < 2 && visibleCustomProviders.length === 0)) return null
 
   const buttonClass = (active: boolean): string =>
     cn(
