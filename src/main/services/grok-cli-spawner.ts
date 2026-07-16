@@ -90,9 +90,19 @@ export function buildGrokCliPtySpawn(input: GrokCliPtySpawnInput): GrokCliPtySpa
     env.HIVE_GROK_HOOK_URL = input.hookUrlBase
   }
 
+  let command = input.grokBinary || 'grok'
+  let finalArgs = args
+  if (process.platform === 'win32' && !command.toLowerCase().endsWith('.exe')) {
+    // `where grok` can resolve an npm-style shim (grok.cmd / extensionless
+    // script); Windows process creation cannot spawn those without a shell,
+    // so route them through cmd.exe.
+    finalArgs = ['/c', command, ...args]
+    command = 'cmd.exe'
+  }
+
   return {
-    command: input.grokBinary || 'grok',
-    args,
+    command,
+    args: finalArgs,
     cwd: input.worktreePath,
     env
   }
