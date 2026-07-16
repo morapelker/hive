@@ -90,11 +90,13 @@ function codexHookUrl(port: number, hiveSessionId: string, path: string): string
 
 /**
  * One hook command. Runs via `sh -c`; codex writes the payload JSON to stdin
- * and parses stdout for a decision — `{}` (or a curl failure swallowed by
- * `|| true`) means "no verdict" and codex proceeds normally.
+ * and parses stdout for a decision. The hook server always replies `{}` ("no
+ * verdict"); on a bridge outage (server down / curl timeout) we must STILL emit
+ * a valid `{}` — codex's Stop hook treats empty stdout on exit 0 as invalid, so
+ * a `|| echo '{}'` fallback keeps a transient outage from erroring every turn.
  */
 function curlHookCommand(url: string, maxTimeSeconds: number): string {
-  return `curl -s -m ${maxTimeSeconds} -X POST -H 'Content-Type: application/json' --data-binary @- '${url}' 2>/dev/null || true`
+  return `curl -s -m ${maxTimeSeconds} -X POST -H 'Content-Type: application/json' --data-binary @- '${url}' 2>/dev/null || echo '{}'`
 }
 
 function hookOverride(

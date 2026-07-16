@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
-import { isCliAgentSdk, isCodexCli } from '@shared/types/agent-sdk'
+import { isCliAgentSdk, isCodexCli, supportsGoalMode } from '@shared/types/agent-sdk'
 import { useShallow } from 'zustand/react/shallow'
 import {
   Eye,
@@ -2327,7 +2327,11 @@ function PlanReviewModeContent({
 
       try {
         const sessionId = ticket.current_session_id
-        const handoffGoalMode = override?.goalMode === true && override?.agentSdk === 'codex'
+        // Any goal-capable target (codex, codex-cli, claude-code-cli) must keep
+        // goal_mode when relinked — buildHandoffPrompt already emits `/goal` for
+        // them, so `=== 'codex'` alone would drop goal tracking for the CLIs.
+        const handoffGoalMode =
+          override?.goalMode === true && supportsGoalMode(override?.agentSdk)
         useSessionStore.getState().clearPendingPlan(sessionId)
         useWorktreeStatusStore.getState().clearSessionStatus(sessionId)
         lastSendMode.delete(sessionId)
