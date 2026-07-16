@@ -20,7 +20,10 @@ export function LoginBanner(): React.JSX.Element | null {
       className="pointer-events-none fixed inset-x-0 top-0 z-50 flex justify-center px-4 pt-2"
       data-testid="login-banner"
     >
-      <div className="pointer-events-auto flex items-center gap-2 rounded-full border border-border bg-background/95 px-3 py-1.5 text-xs shadow-lg backdrop-blur">
+      <div
+        className="pointer-events-auto flex items-center gap-2 rounded-full border border-border bg-background/95 px-3 py-1.5 text-xs shadow-lg backdrop-blur"
+        style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+      >
         <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />
         <span className="text-foreground">
           Signing in to {providerName} — complete the sign-in in Chrome…
