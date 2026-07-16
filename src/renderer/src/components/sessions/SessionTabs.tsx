@@ -1332,7 +1332,7 @@ export function SessionTabs(): React.JSX.Element | null {
             onRefreshFromFile={() =>
               setRefreshTarget({ sessionId: session.id, name: session.name || 'Untitled' })
             }
-            canTeleport={session.agent_sdk === 'claude-code-cli'}
+            canTeleport={session.agent_sdk === 'claude-code-cli' && !session.custom_provider_id}
             onTeleport={() => void handleTeleportSession(session.id)}
             hintCode={sessionHints.sessionHintMap.get(session.id)}
           />
