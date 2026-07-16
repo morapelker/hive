@@ -3,6 +3,7 @@ import type { PermissionRequest } from '@shared/types/opencode'
 import { OPENCODE_STREAM_CHANNEL } from '@shared/opencode-events'
 import { applyModePrefix } from '@shared/agent-mode-prefixes'
 import {
+  FALLBACK_MODELS,
   normalizeAgentSdk,
   resolveSessionCreation,
   type ModelResolutionSettings,
@@ -1663,13 +1664,20 @@ export class DiscordSessionBridge {
       })
       // The requested SDK's model must not ride along (e.g. grok-cli resolves
       // xai/grok-4.5, which OpenCode cannot serve) — re-resolve the model
-      // chain for opencode instead.
+      // chain for opencode instead. A cross-SDK mode default can redirect the
+      // re-resolution right back to the unregistered SDK (e.g. a grok-tagged
+      // plan default with an opencode configured default), so only trust the
+      // re-resolved model when the resolution actually landed on opencode;
+      // otherwise take the hard OpenCode fallback.
       const fallback = resolveSessionCreation({
         settings: this.readModelSettings(),
         mode,
         defaultAgentSdk: 'opencode'
       })
-      return { agentSdk: 'opencode', model: fallback.model }
+      return {
+        agentSdk: 'opencode',
+        model: fallback.agentSdk === 'opencode' ? fallback.model : FALLBACK_MODELS.opencode
+      }
     }
   }
 
