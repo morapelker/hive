@@ -425,8 +425,14 @@ async function sendFollowupToSession(opts: {
   // This updates modeBySession, persists to DB, and applies mode-specific default model.
   await useSessionStore.getState().setSessionMode(opts.sessionId, opts.followUpMode)
 
-  // Claude Code & Codex handle plan mode via the SDK — don't prepend the text prefix
-  const skipPrefix = session.agent_sdk === 'claude-code' || session.agent_sdk === 'codex'
+  // Claude Code & Codex handle plan mode via the SDK, and the CLI agents run
+  // native plan mode (setSessionMode above syncs it into the TUI) — don't
+  // prepend the text prefix for any of them, matching the launch paths'
+  // composeLaunchPrompt gate.
+  const skipPrefix =
+    session.agent_sdk === 'claude-code' ||
+    session.agent_sdk === 'codex' ||
+    isCliAgentSdk(session.agent_sdk)
   const modePrefix =
     opts.followUpMode === 'super-plan'
       ? getSuperPlanModePrefix(session.agent_sdk)
