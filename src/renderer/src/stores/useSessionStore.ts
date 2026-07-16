@@ -11,6 +11,7 @@ import { useSettingsStore } from './useSettingsStore'
 import { getUnavailableAgentSdkMessage } from '@/lib/agent-sdk-availability'
 import { resolveSessionCreationSelection } from '@/lib/handoffSelection'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { isWindows } from '@/lib/platform'
 import { systemApi } from '@/api/system-api'
 import { dbApi } from '@/api/db-api'
 import { connectionApi } from '@/api/connection-api'
@@ -521,9 +522,14 @@ export const useSessionStore = create<SessionState>()(
             })
           // Custom providers run their own command through the login shell —
           // stock-claude detection (`which claude` in the Electron process) is
-          // irrelevant to them and can false-negative on GUI launches.
+          // irrelevant to them and can false-negative on GUI launches. Blocked
+          // up front on Windows (no POSIX login shell) so no dead session or
+          // ticket move happens before the spawn-time rejection.
           const usesCustomProvider =
             !!options?.customProviderId && defaultAgentSdk === 'claude-code-cli'
+          if (usesCustomProvider && isWindows()) {
+            return { success: false, error: 'Custom providers are not supported on Windows yet' }
+          }
           const unavailableProviderError = usesCustomProvider
             ? null
             : getUnavailableProviderError(defaultAgentSdk)
@@ -2100,10 +2106,13 @@ export const useSessionStore = create<SessionState>()(
               initialMode,
               modelOverride: opts?.modelOverride
             })
-          // Same bypass as createSession: custom providers don't need
-          // stock-claude detection.
+          // Same gating as createSession: custom providers don't need
+          // stock-claude detection but are blocked up front on Windows.
           const usesCustomProvider =
             !!opts?.customProviderId && defaultAgentSdk === 'claude-code-cli'
+          if (usesCustomProvider && isWindows()) {
+            return { success: false, error: 'Custom providers are not supported on Windows yet' }
+          }
           const unavailableProviderError = usesCustomProvider
             ? null
             : getUnavailableProviderError(defaultAgentSdk)

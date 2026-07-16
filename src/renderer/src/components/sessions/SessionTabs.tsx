@@ -34,6 +34,7 @@ import {
 import { KanbanIcon } from '@/components/kanban/KanbanIcon'
 import { useSessionStore, BOARD_TAB_ID } from '@/stores/useSessionStore'
 import { useShallow } from 'zustand/react/shallow'
+import { isWindows } from '@/lib/platform'
 import {
   useFileViewerStore,
   type FileViewerTab,
@@ -720,9 +721,10 @@ export function SessionTabs(): React.JSX.Element | null {
   const rawCustomProviders = useSettingsStore((state) => state.customProviders)
   // Custom providers run their own command through the login shell — they
   // don't depend on stock-claude detection (which can false-negative on GUI
-  // launches), only on having a launchable command.
+  // launches), only on having a launchable command. Hidden on Windows (no
+  // POSIX login shell).
   const customProvidersAvailable = useMemo(
-    () => (rawCustomProviders ?? []).filter((p) => p.command.trim()),
+    () => (isWindows() ? [] : (rawCustomProviders ?? []).filter((p) => p.command.trim())),
     [rawCustomProviders]
   )
   const multipleProvidersAvailable =

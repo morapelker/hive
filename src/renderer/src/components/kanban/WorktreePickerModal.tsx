@@ -26,6 +26,7 @@ import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover
 import { Input } from '@/components/ui/input'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { cn } from '@/lib/utils'
+import { isWindows } from '@/lib/platform'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useSessionStore } from '@/stores/useSessionStore'
@@ -513,7 +514,10 @@ export function WorktreePickerModal({
   const availableAgentSdks = useSettingsStore((s) => s.availableAgentSdks)
   const rawCustomProviders = useSettingsStore((s) => s.customProviders)
   const customProviders = useMemo(
-    () => (rawCustomProviders ?? EMPTY_CUSTOM_PROVIDERS).filter((p) => p.command.trim()),
+    () =>
+      isWindows()
+        ? EMPTY_CUSTOM_PROVIDERS
+        : (rawCustomProviders ?? EMPTY_CUSTOM_PROVIDERS).filter((p) => p.command.trim()),
     [rawCustomProviders]
   )
   const defaultAgentSdk = useSettingsStore((s) => s.defaultAgentSdk) ?? 'opencode'

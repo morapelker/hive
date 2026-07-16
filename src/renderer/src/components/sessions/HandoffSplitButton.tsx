@@ -8,6 +8,7 @@ import {
 } from '@/lib/handoffSelection'
 import { setHandoffPickerOpen } from '@/lib/handoff-ui-state'
 import { cn } from '@/lib/utils'
+import { isWindows } from '@/lib/platform'
 import { supportsGoalMode } from '@shared/types/agent-sdk'
 import { HandoffModelPicker } from './HandoffModelPicker'
 import { useSettingsStore } from '@/stores/useSettingsStore'
@@ -92,8 +93,10 @@ export function HandoffSplitButton({
   }, [pickerOpen])
 
   const availableHandoffSdks = getAvailableHandoffAgentSdks(availableAgentSdks)
-  // Custom providers don't depend on stock-claude detection.
-  const launchableCustomProviders = (customProviders ?? []).filter((p) => p.command.trim())
+  // Custom providers don't depend on stock-claude detection. Hidden on Windows.
+  const launchableCustomProviders = isWindows()
+    ? []
+    : (customProviders ?? []).filter((p) => p.command.trim())
   const showChevron = availableHandoffSdks.length + launchableCustomProviders.length > 1
   void availableAgentSdks
   void lastHandoffOverride

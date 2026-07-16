@@ -17,6 +17,7 @@ import {
   type ProviderModels
 } from '@/lib/parseProviders'
 import { cn } from '@/lib/utils'
+import { isWindows } from '@/lib/platform'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -74,8 +75,9 @@ export function HandoffModelPicker({
   )
   // Custom providers run their own command through the login shell — they
   // don't depend on stock-claude detection, only on a launchable command.
+  // Hidden on Windows (no POSIX login shell).
   const visibleCustomProviders = useMemo(
-    () => (customProviders ?? []).filter((p) => p.command.trim()),
+    () => (isWindows() ? [] : (customProviders ?? []).filter((p) => p.command.trim())),
     [customProviders]
   )
   const [pickedSdk, setPickedSdk] = useState<HandoffAgentSdk>('opencode')
