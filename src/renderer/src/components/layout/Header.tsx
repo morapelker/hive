@@ -1,5 +1,7 @@
 import { useEffect, useState, useMemo, useRef } from 'react'
-import { isMac } from '@/lib/platform'
+import { isMac, isWindows } from '@/lib/platform'
+import { WindowChromeControls } from '@/components/layout/WindowChromeControls'
+import { scheduleTitleBarOverlaySync, windowsCaptionPaddingRight } from '@/lib/desktop-chrome'
 import {
   PanelRightClose,
   PanelRightOpen,
@@ -19,9 +21,7 @@ import {
   Hammer,
   Map,
   Check,
-  MoonStar,
-  Minus,
-  Square
+  MoonStar
 } from 'lucide-react'
 import { KanbanIcon } from '@/components/kanban/KanbanIcon'
 import { Button } from '@/components/ui/button'
@@ -126,18 +126,6 @@ export function Header(): React.JSX.Element {
     prevBoardActive.current = isBoardViewActive
   }, [isBoardViewActive])
 
-  const windowControls =
-    !isMac() && typeof window.desktopBridge?.windowMinimize === 'function'
-      ? window.desktopBridge
-      : null
-
-  const [isMaximized, setIsMaximized] = useState(false)
-  useEffect(() => {
-    if (!windowControls) return
-    void windowControls.windowIsMaximized().then(setIsMaximized)
-    return windowControls.onWindowMaximizedChanged(setIsMaximized)
-  }, [windowControls])
-
   const hasProjects = projects.length > 0
 
   const selectedProject = projects.find((p) => p.id === selectedProjectId)
@@ -226,6 +214,10 @@ export function Header(): React.JSX.Element {
   const isFixConflictsLoading = isFixConflictsRunning || isFixConflictsFinalizing
 
   const showFixConflictsButton = hasConflicts || isFixConflictsLoading
+
+  useEffect(() => {
+    scheduleTitleBarOverlaySync()
+  }, [])
 
   return (
     <header
@@ -368,7 +360,12 @@ export function Header(): React.JSX.Element {
       <div className="flex-1" />
       <div
         className="flex items-center gap-2"
-        style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+        style={
+          {
+            WebkitAppRegion: 'no-drag',
+            ...(isWindows() ? { paddingRight: windowsCaptionPaddingRight } : {})
+          } as React.CSSProperties
+        }
       >
         {/* Connection PR button — creates one PR per connected project with changes */}
         {isConnectionMode && connectionHasGitHubMember && (
@@ -814,43 +811,7 @@ export function Header(): React.JSX.Element {
             <PanelRightClose className="h-4 w-4" />
           )}
         </Button>
-        {windowControls && (
-          <div
-            className="flex items-center -mr-4"
-            style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-          >
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-12 w-12 rounded-none"
-              onClick={() => void windowControls.windowMinimize()}
-              title="Minimize"
-              data-testid="window-minimize"
-            >
-              <Minus className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-12 w-12 rounded-none"
-              onClick={() => void windowControls.windowMaximize()}
-              title={isMaximized ? 'Restore' : 'Maximize'}
-              data-testid="window-maximize"
-            >
-              {isMaximized ? <Copy className="h-3.5 w-3.5" /> : <Square className="h-3.5 w-3.5" />}
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-12 w-12 rounded-none hover:bg-red-600 hover:text-white"
-              onClick={() => void windowControls.windowClose()}
-              title="Close"
-              data-testid="window-close"
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          </div>
-        )}
+        <WindowChromeControls />
       </div>
     </header>
   )

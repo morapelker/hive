@@ -10,6 +10,10 @@ const desktopBridge = {
   windowMaximize: (): Promise<void> => ipcRenderer.invoke('window:maximize'),
   windowClose: (): Promise<void> => ipcRenderer.invoke('window:close'),
   windowIsMaximized: (): Promise<boolean> => ipcRenderer.invoke('window:isMaximized'),
+  setTitleBarOverlay: (options: {
+    color: string
+    symbolColor: string
+  }): Promise<void> => ipcRenderer.invoke('window:setTitleBarOverlay', options),
   onWindowMaximizedChanged: (callback: (isMaximized: boolean) => void): (() => void) => {
     const listener = (_event: Electron.IpcRendererEvent, isMaximized: boolean): void => {
       callback(isMaximized)

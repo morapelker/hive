@@ -55,6 +55,7 @@ declare global {
       windowMaximize: () => Promise<void>
       windowClose: () => Promise<void>
       windowIsMaximized: () => Promise<boolean>
+      setTitleBarOverlay?: (options: { color: string; symbolColor: string }) => Promise<void>
       onWindowMaximizedChanged: (callback: (isMaximized: boolean) => void) => () => void
     }
   }
