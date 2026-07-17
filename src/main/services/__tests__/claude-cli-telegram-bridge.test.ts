@@ -217,6 +217,37 @@ describe('claudeCliTelegramBridge Stop + busy bridging (private channel)', () =>
     expect(events.some((e) => e.type === 'session.busy')).toBe(true)
     unsub()
   })
+
+  it('does not emit idle on Stop when ctx.suppressIdle is set', () => {
+    const events: OpenCodeStreamEvent[] = []
+    const unsub = claudeCliTelegramBridge.subscribe((e) => events.push(e))
+    claudeCliTelegramBridge.register(SESSION)
+
+    claudeCliTelegramBridge.onHook(
+      SESSION,
+      { hook_event_name: 'Stop', last_assistant_message: 'All done.' },
+      makeRes(),
+      { suppressIdle: true }
+    )
+
+    expect(events.some((e) => e.type === 'message.updated')).toBe(false)
+    expect(events.some((e) => e.type === 'session.idle')).toBe(false)
+    unsub()
+  })
+
+  it('notifySessionIdle delegates to the core and emits message.updated + session.idle', () => {
+    const events: OpenCodeStreamEvent[] = []
+    const unsub = claudeCliTelegramBridge.subscribe((e) => events.push(e))
+    claudeCliTelegramBridge.register(SESSION)
+
+    claudeCliTelegramBridge.notifySessionIdle(SESSION, 'Background work complete.')
+
+    const msg = events.find((e) => e.type === 'message.updated')
+    expect((msg!.data as { content: string }).content).toBe('Background work complete.')
+    expect(events.some((e) => e.type === 'session.idle')).toBe(true)
+    expect(publishedEvents).toHaveLength(0) // never reaches the renderer
+    unsub()
+  })
 })
 
 describe('claudeCliTelegramBridge teardown', () => {

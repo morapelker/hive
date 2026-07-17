@@ -43,6 +43,7 @@ import { SlashCommandPopover } from './SlashCommandPopover'
 import { FileMentionPopover } from './FileMentionPopover'
 import { ScrollToBottomFab } from './ScrollToBottomFab'
 import { PlanReadyImplementFab } from './PlanReadyImplementFab'
+import { SavePlanAsFileModal } from './SavePlanAsFileModal'
 import { IndeterminateProgressBar } from './IndeterminateProgressBar'
 import { TaskListWidget } from './TaskListWidget'
 import { GoalStatusWidget } from './GoalStatusWidget'
@@ -58,7 +59,11 @@ import type { CodexThreadGoal } from '@/stores/useSessionStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useContextStore } from '@/stores/useContextStore'
 import { maybeExtractJsonTitle } from '@shared/title-utils'
-import { canonicalizeTicketTitle, extractPlanTitle } from '@shared/types/branch-utils'
+import {
+  canonicalizeTicketTitle,
+  extractPlanTitle,
+  normalizeFilename
+} from '@shared/types/branch-utils'
 import { supportsGoalMode } from '@shared/types/agent-sdk'
 import type { TokenInfo, SessionModelRef } from '@/stores/useContextStore'
 import {
@@ -89,10 +94,7 @@ import { COMPLETION_WORDS } from '@/lib/format-utils'
 import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
 import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
 import { snapshotTokenBaseline, computeTokenDelta } from '@/lib/token-baselines'
-import {
-  notifyKanbanSessionSync,
-  notifyKanbanAutoCreateTicket
-} from '@/stores/store-coordination'
+import { notifyKanbanSessionSync, notifyKanbanAutoCreateTicket } from '@/stores/store-coordination'
 import { isComposingKeyboardEvent } from '@/lib/message-composer-shortcuts'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { handleSessionIdleFollowUp } from '@/lib/session-follow-up-dispatch'
@@ -712,6 +714,11 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
   const [sessionErrorStderr, setSessionErrorStderr] = useState<string | null>(null)
   const [retryTickMs, setRetryTickMs] = useState<number>(Date.now())
   const [planSavedAsTicket, setPlanSavedAsTicket] = useState(false)
+  // Captured at click time so the modal survives pendingPlan being cleared
+  const [savePlanFile, setSavePlanFile] = useState<{
+    planContent: string
+    directoryPath: string
+  } | null>(null)
 
   // Prompt history key: works for both worktree and connection sessions
   const historyKey = worktreeId ?? connectionId
@@ -5094,13 +5101,15 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
           connectionId,
           override?.agentSdk,
           undefined,
-          { modelOverride: override?.model }
+          { modelOverride: override?.model, customProviderId: override?.customProviderId ?? null }
         )
         if (!result.success || !result.session) {
           toast.error(result.error ?? 'Failed to create handoff session')
           return
         }
-        const setModePromise = sessionStore.setSessionMode(result.session.id, 'build')
+        const setModePromise = sessionStore.setSessionMode(result.session.id, 'build', {
+        applyModeDefault: false
+      })
         registerHivePromptHandoff(sessionId, result.session.id)
         sessionStore.setPendingMessage(result.session.id, handoffPrompt)
         await useKanbanStore
@@ -5126,14 +5135,16 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
         currentProjectId,
         override?.agentSdk,
         undefined,
-        { modelOverride: override?.model }
+        { modelOverride: override?.model, customProviderId: override?.customProviderId ?? null }
       )
       if (!result.success || !result.session) {
         toast.error(result.error ?? 'Failed to create handoff session')
         return
       }
 
-      const setModePromise = sessionStore.setSessionMode(result.session.id, 'build')
+      const setModePromise = sessionStore.setSessionMode(result.session.id, 'build', {
+        applyModeDefault: false
+      })
       registerHivePromptHandoff(sessionId, result.session.id)
       sessionStore.setPendingMessage(result.session.id, handoffPrompt)
       await useKanbanStore
@@ -5374,6 +5385,25 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
       toast.error('Failed to save as ticket')
     }
   }, [messages, pendingPlan, sessionRecord?.project_id])
+
+  const handlePlanReadySaveAsFile = useCallback(() => {
+    if (!worktreePath) {
+      toast.error('No worktree path for this session')
+      return
+    }
+
+    const planContent =
+      pendingPlan?.planContent ??
+      [...messages].reverse().find((m) => m.role === 'assistant' && m.content.trim().length > 0)
+        ?.content
+
+    if (!planContent) {
+      toast.error('No plan content found')
+      return
+    }
+
+    setSavePlanFile({ planContent, directoryPath: worktreePath })
+  }, [messages, pendingPlan, worktreePath])
 
   // Abort streaming
   const handleAbort = useCallback(async () => {
@@ -6182,6 +6212,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
               ? handlePlanReadySaveAsTicket
               : undefined
           }
+          onSaveAsFile={worktreePath ? handlePlanReadySaveAsFile : undefined}
         />
         {/* Scroll-to-bottom FAB */}
         <ScrollToBottomFab
@@ -6473,6 +6504,19 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
           open={ticketPickerOpen}
           onOpenChange={setTicketPickerOpen}
           onSelectTickets={handleTicketPickerSelect}
+        />
+      )}
+
+      {/* Save plan as md file modal */}
+      {savePlanFile && (
+        <SavePlanAsFileModal
+          open
+          onOpenChange={(o) => {
+            if (!o) setSavePlanFile(null)
+          }}
+          planContent={savePlanFile.planContent}
+          directoryPath={savePlanFile.directoryPath}
+          defaultFileName={`PLAN_${normalizeFilename(extractPlanTitle(savePlanFile.planContent) ?? '') || 'plan'}.md`}
         />
       )}
     </div>

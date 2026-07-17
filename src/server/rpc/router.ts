@@ -14,6 +14,11 @@ import {
   type AttachmentOpsRpcService
 } from './domains/attachment-ops'
 import {
+  makeBackupOpsRpcHandlers,
+  makeLiveBackupOpsRpcService,
+  type BackupOpsRpcService
+} from './domains/backup-ops'
+import {
   makeAnalyticsOpsRpcHandlers,
   makeLiveAnalyticsOpsRpcService,
   type AnalyticsOpsRpcService
@@ -71,6 +76,11 @@ import {
   type GitOpsRpcService
 } from './domains/git-ops'
 import {
+  makeGithubOpsRpcHandlers,
+  makeLiveGithubOpsRpcService,
+  type GithubOpsRpcService
+} from './domains/github-ops'
+import {
   makeLiveProjectOpsRpcService,
   makeProjectOpsRpcHandlers,
   type ProjectOpsRpcService
@@ -121,6 +131,11 @@ import {
   type TeleportOpsRpcService
 } from './domains/teleport-ops'
 import {
+  makeLiveRemoteLaunchOpsRpcService,
+  makeRemoteLaunchOpsRpcHandlers,
+  type RemoteLaunchOpsRpcService
+} from './domains/remote-launch-ops'
+import {
   makeLiveUpdaterOpsRpcService,
   makeUpdaterOpsRpcHandlers,
   type UpdaterOpsRpcService
@@ -141,6 +156,7 @@ export interface RpcContext {
   readonly accountOps?: AccountOpsRpcService
   readonly analyticsOps?: AnalyticsOpsRpcService
   readonly attachmentOps?: AttachmentOpsRpcService
+  readonly backupOps?: BackupOpsRpcService
   readonly bash?: BashRpcService
   readonly codexDebugLoggerOps?: CodexDebugLoggerOpsRpcService
   readonly connectionOps?: ConnectionOpsRpcService
@@ -149,12 +165,14 @@ export interface RpcContext {
   readonly fileOps?: FileOpsRpcService
   readonly fileTreeOps?: FileTreeOpsRpcService
   readonly gitOps?: GitOpsRpcService
+  readonly githubOps?: GithubOpsRpcService
   readonly kanban?: KanbanRpcService
   readonly loggingOps?: LoggingOpsRpcService
   readonly opencodeOps?: OpenCodeOpsRpcService
   readonly perfDiagnosticsOps?: PerfDiagnosticsOpsRpcService
   readonly petOps?: PetOpsRpcService
   readonly projectOps?: ProjectOpsRpcService
+  readonly remoteLaunchOps?: RemoteLaunchOpsRpcService
   readonly scriptOps?: ScriptOpsRpcService
   readonly settingsOps?: SettingsOpsRpcService
   readonly storageOps?: StorageOpsRpcService
@@ -194,6 +212,7 @@ const makeDefaultRpcHandlers = (context: RpcContext): ReadonlyMap<string, RpcHan
     ...makeAccountOpsRpcHandlers(context.accountOps ?? makeLiveAccountOpsRpcService()),
     ...makeAnalyticsOpsRpcHandlers(context.analyticsOps ?? makeLiveAnalyticsOpsRpcService()),
     ...makeAttachmentOpsRpcHandlers(context.attachmentOps ?? makeLiveAttachmentOpsRpcService()),
+    ...makeBackupOpsRpcHandlers(context.backupOps ?? makeLiveBackupOpsRpcService()),
     ...makeBashRpcHandlers(context.bash, context.eventBus),
     ...makeCodexDebugLoggerOpsRpcHandlers(
       context.codexDebugLoggerOps ?? makeLiveCodexDebugLoggerOpsRpcService()
@@ -208,6 +227,9 @@ const makeDefaultRpcHandlers = (context: RpcContext): ReadonlyMap<string, RpcHan
     ...makeGitOpsRpcHandlers(
       context.gitOps ?? makeLiveGitOpsRpcService({ eventBus: context.eventBus })
     ),
+    ...makeGithubOpsRpcHandlers(
+      context.githubOps ?? makeLiveGithubOpsRpcService({ eventBus: context.eventBus })
+    ),
     ...makeKanbanRpcHandlers(context.kanban ?? makeLiveKanbanRpcService()),
     ...makeLoggingOpsRpcHandlers(context.loggingOps ?? makeLiveLoggingOpsRpcService()),
     ...makeOpenCodeOpsRpcHandlers(context.opencodeOps ?? makeLiveOpenCodeOpsRpcService()),
@@ -216,6 +238,9 @@ const makeDefaultRpcHandlers = (context: RpcContext): ReadonlyMap<string, RpcHan
     ),
     ...makePetOpsRpcHandlers(context.petOps ?? makeLivePetOpsRpcService()),
     ...makeProjectOpsRpcHandlers(context.projectOps ?? makeLiveProjectOpsRpcService()),
+    ...makeRemoteLaunchOpsRpcHandlers(
+      context.remoteLaunchOps ?? makeLiveRemoteLaunchOpsRpcService(context.eventBus)
+    ),
     ...makeScriptOpsRpcHandlers(context.scriptOps ?? makeLiveScriptOpsRpcService(context.eventBus)),
     ...makeSettingsOpsRpcHandlers(context.settingsOps ?? makeLiveSettingsOpsRpcService()),
     ...makeStorageOpsRpcHandlers(context.storageOps ?? makeLiveStorageOpsRpcService()),

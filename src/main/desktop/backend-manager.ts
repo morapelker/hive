@@ -55,13 +55,17 @@ import {
 import { scriptRunner } from '../services/script-runner'
 import { ptyService } from '../services/pty-service'
 import { ghosttyService } from '../services/ghostty-service'
+import { getGhosttyConfigPathOnce } from '../services/ghostty-config-store'
 import { startFileTreeWatcher, stopFileTreeWatcher } from '../services/file-tree-watcher'
 import {
   createClaudeCliTerminal,
   destroyNodePtyTerminal,
   handleClaudeCliTerminalInput
 } from '../services/terminal-pty-bridge'
+import { launchClaudeCliInTmux } from '../services/remote-tmux-launcher'
 import { claudeCliTelegramBridge } from '../services/claude-cli-telegram-bridge'
+import { claudeCliDiscordBridge } from '../services/claude-cli-discord-bridge'
+import { setClaudeCliPlanAutoApprove } from '../services/claude-cli-plan-auto-approve'
 import { openPathWithEditor, openPathWithTerminal } from '../services/settings-openers'
 import {
   beginPetPointerInteraction,
@@ -535,7 +539,11 @@ export const startDesktopBackend = async (
 
   const log = deps.logger ?? defaultLog
   const headless = input.headless ?? false
-  const baseDir = input.baseDir ?? join(app.getPath('home'), '.hive')
+  // HIVE_DESKTOP_BASE_DIR redirects the backend's data dir (and thus its
+  // hive.db) for E2E/dev runs. `app.getPath('home')` ignores $HOME on macOS
+  // (getpwuid), so without this a dev build always opens the real user DB.
+  const baseDir =
+    input.baseDir ?? process.env.HIVE_DESKTOP_BASE_DIR ?? join(app.getPath('home'), '.hive')
   // `dev:web` pins the backend to a known free port via HIVE_DESKTOP_BACKEND_PORT so
   // its Vite dev server can target it. When set, scan only that single port.
   const pinnedPort = parseDesktopBackendPortEnv(process.env.HIVE_DESKTOP_BACKEND_PORT)
@@ -754,6 +762,16 @@ const handleDesktopBackendCommand = (
     return
   }
 
+  if (message.command === 'terminalSetClaudeCliPlanAutoApprove') {
+    setClaudeCliPlanAutoApprove(message.payload.sessionId, message.payload.enabled)
+    sendDesktopBackendCommandResult(
+      child,
+      makeDesktopCommandResult(message.id, { ok: true, value: { success: true } }),
+      log
+    )
+    return
+  }
+
   if (message.command === 'telegramClaudeCliQuestionReply') {
     const success = claudeCliTelegramBridge.hasPendingQuestion(message.payload.requestId)
     if (success) {
@@ -784,6 +802,49 @@ const handleDesktopBackendCommand = (
     const success = claudeCliTelegramBridge.hasPendingPlan(message.payload.requestId)
     if (success) {
       claudeCliTelegramBridge.resolvePlan(
+        message.payload.requestId,
+        message.payload.approve,
+        message.payload.feedback
+      )
+    }
+    sendDesktopBackendCommandResult(
+      child,
+      makeDesktopCommandResult(message.id, { ok: true, value: { success } }),
+      log
+    )
+    return
+  }
+
+  if (message.command === 'discordClaudeCliQuestionReply') {
+    const success = claudeCliDiscordBridge.hasPendingQuestion(message.payload.requestId)
+    if (success) {
+      claudeCliDiscordBridge.resolveQuestion(message.payload.requestId, message.payload.answers)
+    }
+    sendDesktopBackendCommandResult(
+      child,
+      makeDesktopCommandResult(message.id, { ok: true, value: { success } }),
+      log
+    )
+    return
+  }
+
+  if (message.command === 'discordClaudeCliQuestionReject') {
+    const success = claudeCliDiscordBridge.hasPendingQuestion(message.payload.requestId)
+    if (success) {
+      claudeCliDiscordBridge.rejectQuestion(message.payload.requestId)
+    }
+    sendDesktopBackendCommandResult(
+      child,
+      makeDesktopCommandResult(message.id, { ok: true, value: { success } }),
+      log
+    )
+    return
+  }
+
+  if (message.command === 'discordClaudeCliPlanReply') {
+    const success = claudeCliDiscordBridge.hasPendingPlan(message.payload.requestId)
+    if (success) {
+      claudeCliDiscordBridge.resolvePlan(
         message.payload.requestId,
         message.payload.approve,
         message.payload.feedback
@@ -1027,6 +1088,67 @@ const handleDesktopBackendCommand = (
       .showSaveDialog({
         defaultPath: `board-${message.payload.projectName}.hive.json`,
         filters: [{ name: 'Hive Board', extensions: ['hive.json'] }]
+      })
+      .then((result) => {
+        sendDesktopBackendCommandResult(
+          child,
+          makeDesktopCommandResult(message.id, {
+            ok: true,
+            value: { filePath: result.canceled || !result.filePath ? null : result.filePath }
+          }),
+          log
+        )
+      })
+      .catch((error) => {
+        sendDesktopBackendCommandResult(
+          child,
+          makeDesktopCommandResult(message.id, {
+            ok: false,
+            error: error instanceof Error ? error.message : String(error)
+          }),
+          log
+        )
+      })
+  }
+
+  if (message.command === 'backupOpenFileDialog') {
+    return dialog
+      .showOpenDialog({
+        title: 'Open Hive Backup',
+        filters: [{ name: 'Hive Backup', extensions: ['yaml', 'yml'] }],
+        properties: ['openFile']
+      })
+      .then((result) => {
+        sendDesktopBackendCommandResult(
+          child,
+          makeDesktopCommandResult(message.id, {
+            ok: true,
+            value: {
+              filePath:
+                result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0]
+            }
+          }),
+          log
+        )
+      })
+      .catch((error) => {
+        sendDesktopBackendCommandResult(
+          child,
+          makeDesktopCommandResult(message.id, {
+            ok: false,
+            error: error instanceof Error ? error.message : String(error)
+          }),
+          log
+        )
+      })
+  }
+
+  if (message.command === 'backupSaveFileDialog') {
+    return dialog
+      .showSaveDialog({
+        title: 'Export Hive Backup',
+        defaultPath: message.payload.defaultFileName,
+        filters: [{ name: 'Hive Backup', extensions: ['yaml', 'yml'] }]
       })
       .then((result) => {
         sendDesktopBackendCommandResult(
@@ -2890,9 +3012,32 @@ const handleDesktopBackendCommand = (
       })
   }
 
+  if (message.command === 'remoteLaunchClaudeTmux') {
+    return launchClaudeCliInTmux(message.payload)
+      .then((value) => {
+        sendDesktopBackendCommandResult(
+          child,
+          makeDesktopCommandResult(message.id, { ok: true, value }),
+          log
+        )
+      })
+      .catch((error) => {
+        sendDesktopBackendCommandResult(
+          child,
+          makeDesktopCommandResult(message.id, {
+            ok: true,
+            value: { success: false, error: error instanceof Error ? error.message : String(error) }
+          }),
+          log
+        )
+      })
+  }
+
   if (message.command === 'terminalGhosttyInit') {
     try {
-      const value = ghosttyService.init()
+      // Path was resolved once at app launch; re-using the memo avoids
+      // touching Ghostty's TCC-protected dir mid-flow.
+      const value = ghosttyService.init(getGhosttyConfigPathOnce())
       sendDesktopBackendCommandResult(
         child,
         makeDesktopCommandResult(message.id, { ok: true, value }),

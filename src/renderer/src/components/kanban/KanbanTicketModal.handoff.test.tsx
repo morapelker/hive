@@ -193,6 +193,7 @@ const sourceSession: Session = {
   model_provider_id: 'anthropic',
   model_id: 'opus',
   model_variant: 'high',
+  remote_launch: null,
   created_at: now,
   updated_at: now,
   completed_at: null,
@@ -232,7 +233,12 @@ const ticket: KanbanTicket = {
   goal_mode: false,
   goal_success_criteria: null,
   note: null,
-  created_from_session: false
+  created_from_session: false,
+  auto_approve_plan: false,
+  model_provider_id: null,
+  model_id: null,
+  model_variant: null,
+  variant_group_id: null
 }
 
 const worktree: Worktree = {
@@ -428,7 +434,8 @@ describe('KanbanTicketModal handoff from Claude CLI plan review', () => {
     await waitFor(() => expect(createSession).toHaveBeenCalledTimes(1))
     expect(createSession).toHaveBeenCalledWith('worktree-1', 'project-1', 'claude-code-cli', undefined, {
       autoFocus: false,
-      modelOverride: undefined
+      modelOverride: undefined,
+      customProviderId: null
     })
     await waitFor(() => expect(terminalApiMocks.createClaudeCli).toHaveBeenCalledTimes(1))
     expect(terminalApiMocks.createClaudeCli).toHaveBeenCalledWith('handoff-session', {
@@ -436,6 +443,13 @@ describe('KanbanTicketModal handoff from Claude CLI plan review', () => {
     })
     expect(setActiveSession).not.toHaveBeenCalledWith('handoff-session')
     expect(useKanbanStore.getState().isBoardViewActive).toBe(true)
+    // The handoff session was created with the picker's explicit model; the
+    // build-mode flip must not clobber it with the mode-default model.
+    expect(useSessionStore.getState().setSessionMode).toHaveBeenCalledWith(
+      'handoff-session',
+      'build',
+      { applyModeDefault: false }
+    )
   })
 
   it('shows terminal-backed followup and implement controls for Claude CLI plan review', async () => {
@@ -470,7 +484,8 @@ describe('KanbanTicketModal handoff from Claude CLI plan review', () => {
     await waitFor(() => expect(createSession).toHaveBeenCalledTimes(1))
     expect(createSession).toHaveBeenCalledWith('worktree-1', 'project-1', 'claude-code-cli', undefined, {
       autoFocus: false,
-      modelOverride: undefined
+      modelOverride: undefined,
+      customProviderId: null
     })
     await waitFor(() => expect(terminalApiMocks.createClaudeCli).toHaveBeenCalledWith(
       'handoff-session',
@@ -498,7 +513,8 @@ describe('KanbanTicketModal handoff from Claude CLI plan review', () => {
     await waitFor(() => expect(createSession).toHaveBeenCalledTimes(1))
     expect(createSession).toHaveBeenCalledWith('worktree-1', 'project-1', 'codex', undefined, {
       autoFocus: true,
-      modelOverride: { providerID: 'codex', modelID: 'gpt-5.5' }
+      modelOverride: { providerID: 'codex', modelID: 'gpt-5.5' },
+      customProviderId: null
     })
     expect(setPendingMessage).toHaveBeenCalledWith(
       'handoff-session',
@@ -522,7 +538,8 @@ describe('KanbanTicketModal handoff from Claude CLI plan review', () => {
     await waitFor(() => expect(createSession).toHaveBeenCalledTimes(1))
     expect(createSession).toHaveBeenCalledWith('worktree-1', 'project-1', 'claude-code-cli', undefined, {
       autoFocus: true,
-      modelOverride: undefined
+      modelOverride: undefined,
+      customProviderId: null
     })
     expect(setPendingMessage).toHaveBeenCalledWith(
       'handoff-session',

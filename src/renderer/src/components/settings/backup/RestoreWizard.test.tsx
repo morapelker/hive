@@ -1,0 +1,259 @@
+import { act, render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+import { resetRendererRpcClientForTests, setRendererRpcClient } from '@/api/rpc-client'
+import type { BackupFile, ProjectClassification, RestoreProjectResult } from '@shared/types/backup'
+import { RestoreWizard } from './RestoreWizard'
+
+function makeProject(name: string, path: string, remoteUrl: string | null): BackupFile['projects'][number] {
+  return {
+    name,
+    path,
+    remote_url: remoteUrl,
+    description: null,
+    tags: null,
+    language: null,
+    setup_script: null,
+    run_script: null,
+    archive_script: null,
+    worktree_create_script: null,
+    custom_commands: null,
+    auto_assign_port: false,
+    sort_order: 0,
+    kanban_simple_mode: false,
+    kanban_storage_mode: 'internal',
+    kanban_markdown_config: null,
+    custom_icon: null,
+    worktrees: [],
+    tickets: null,
+    ticket_dependencies: null
+  }
+}
+
+const backup: BackupFile = {
+  version: 1,
+  kind: 'hive-backup',
+  created_at: '2026-07-09T00:00:00.000Z',
+  app_version: '1.2.12',
+  projects: [
+    makeProject('exists-proj', '/Users/me/exists-proj', 'git@github.com:a/exists.git'),
+    makeProject('clone-proj', '/Users/me/clone-proj', 'git@github.com:a/clone.git'),
+    makeProject('conflict-proj', '/Users/me/conflict-proj', 'git@github.com:a/conflict.git'),
+    makeProject('no-remote-proj', '/Users/me/no-remote-proj', null)
+  ]
+}
+
+const classifications: ProjectClassification[] = [
+  {
+    path: '/Users/me/exists-proj',
+    classification: 'exists-match',
+    alreadyInHive: true,
+    hiveProjectId: 'project-1',
+    effectivePath: '/Users/me/exists-proj',
+    localRemoteUrl: 'git@github.com:a/exists.git'
+  },
+  {
+    path: '/Users/me/clone-proj',
+    classification: 'missing-clone',
+    alreadyInHive: false,
+    hiveProjectId: null,
+    effectivePath: '/Users/me/clone-proj',
+    localRemoteUrl: null
+  },
+  {
+    path: '/Users/me/conflict-proj',
+    classification: 'conflict',
+    alreadyInHive: false,
+    hiveProjectId: null,
+    effectivePath: '/Users/me/conflict-proj',
+    localRemoteUrl: 'git@github.com:other/repo.git'
+  },
+  {
+    path: '/Users/me/no-remote-proj',
+    classification: 'skipped-no-remote',
+    alreadyInHive: false,
+    hiveProjectId: null,
+    effectivePath: '/Users/me/no-remote-proj',
+    localRemoteUrl: null
+  }
+]
+
+function setup(): ReturnType<typeof vi.fn> {
+  const request: ReturnType<typeof vi.fn> = vi.fn(async (method: string) => {
+    if (method === 'backupOps.classifyProjects') return classifications
+    throw new Error(`unexpected method ${method}`)
+  })
+  setRendererRpcClient({ request, subscribe: vi.fn() })
+  return request
+}
+
+describe('RestoreWizard', () => {
+  afterEach(() => {
+    resetRendererRpcClientForTests()
+    vi.clearAllMocks()
+  })
+
+  it('classifies projects on open and renders badges per classification', async () => {
+    setup()
+    render(<RestoreWizard backup={backup} open={true} onOpenChange={vi.fn()} />)
+
+    await screen.findByText('Exists — will pull')
+    expect(screen.getByText('Already in Hive')).not.toBeNull()
+    expect(screen.getByText('Will clone')).not.toBeNull()
+    expect(screen.getByText('Conflict — different repo here')).not.toBeNull()
+    expect(screen.getByText("No remote — can't restore")).not.toBeNull()
+  })
+
+  it('defaults to all enabled rows selected and disables conflict/no-remote rows', async () => {
+    setup()
+    render(<RestoreWizard backup={backup} open={true} onOpenChange={vi.fn()} />)
+
+    await screen.findByText('Exists — will pull')
+
+    // 2 enabled rows (exists-match, missing-clone) selected by default.
+    expect(screen.getByText('2 selected')).not.toBeNull()
+
+    const conflictRow = screen.getByText('conflict-proj').closest('label')
+    const noRemoteRow = screen.getByText('no-remote-proj').closest('label')
+    expect(conflictRow).not.toBeNull()
+    expect(noRemoteRow).not.toBeNull()
+
+    const conflictCheckbox = within(conflictRow!).getByRole('checkbox')
+    const noRemoteCheckbox = within(noRemoteRow!).getByRole('checkbox')
+    expect(conflictCheckbox).toHaveAttribute('disabled')
+    expect(noRemoteCheckbox).toHaveAttribute('disabled')
+    expect(conflictCheckbox).toHaveAttribute('aria-checked', 'false')
+    expect(noRemoteCheckbox).toHaveAttribute('aria-checked', 'false')
+  })
+
+  it('select-all only toggles enabled rows, and clicking a disabled row is a no-op', async () => {
+    const user = userEvent.setup()
+    setup()
+    render(<RestoreWizard backup={backup} open={true} onOpenChange={vi.fn()} />)
+
+    await screen.findByText('Exists — will pull')
+    expect(screen.getByText('2 selected')).not.toBeNull()
+
+    const conflictRow = screen.getByText('conflict-proj').closest('label')!
+    const conflictCheckbox = within(conflictRow).getByRole('checkbox')
+    await user.click(conflictCheckbox)
+    // Still 2 selected — disabled row cannot be toggled.
+    expect(screen.getByText('2 selected')).not.toBeNull()
+
+    const selectAll = screen.getByText('Select all').closest('div')!
+    const selectAllCheckbox = within(selectAll).getByRole('checkbox')
+    await user.click(selectAllCheckbox)
+    expect(screen.getByText('0 selected')).not.toBeNull()
+
+    await user.click(selectAllCheckbox)
+    expect(screen.getByText('2 selected')).not.toBeNull()
+  })
+
+  it('Continue is disabled with zero selection and moves to the folder step when a clone is selected', async () => {
+    const user = userEvent.setup()
+    setup()
+    render(<RestoreWizard backup={backup} open={true} onOpenChange={vi.fn()} />)
+
+    await screen.findByText('Exists — will pull')
+
+    const continueButton = screen.getByRole('button', { name: 'Continue' })
+    expect(continueButton).not.toBeDisabled()
+
+    await user.click(continueButton)
+    await act(async () => {})
+
+    expect(screen.getByText('Browse…')).not.toBeNull()
+    expect(screen.getByText(/will be cloned into the folder you choose/)).not.toBeNull()
+  })
+
+  it('runs restore sequentially, synthesizes a failed result when restoreProject rejects, and refreshes stores before showing the summary', async () => {
+    const user = userEvent.setup()
+
+    const twoProjectBackup: BackupFile = {
+      version: 1,
+      kind: 'hive-backup',
+      created_at: '2026-07-09T00:00:00.000Z',
+      app_version: '1.2.12',
+      projects: [
+        makeProject('proj-a', '/Users/me/proj-a', 'git@github.com:a/a.git'),
+        makeProject('proj-b', '/Users/me/proj-b', 'git@github.com:a/b.git')
+      ]
+    }
+    const twoClassifications: ProjectClassification[] = [
+      {
+        path: '/Users/me/proj-a',
+        classification: 'exists-match',
+        alreadyInHive: false,
+        hiveProjectId: null,
+        effectivePath: '/Users/me/proj-a',
+        localRemoteUrl: 'git@github.com:a/a.git'
+      },
+      {
+        path: '/Users/me/proj-b',
+        classification: 'exists-match',
+        alreadyInHive: false,
+        hiveProjectId: null,
+        effectivePath: '/Users/me/proj-b',
+        localRemoteUrl: 'git@github.com:a/b.git'
+      }
+    ]
+    const successResult: RestoreProjectResult = {
+      success: true,
+      projectId: 'project-a',
+      projectName: 'proj-a',
+      action: 'pulled',
+      warnings: [],
+      worktrees: [],
+      tickets: { restored: 0, dependencyErrors: 0, skipped: true }
+    }
+
+    let restoreCallCount = 0
+    const request: ReturnType<typeof vi.fn> = vi.fn(async (method: string) => {
+      if (method === 'backupOps.classifyProjects') return twoClassifications
+      if (method === 'backupOps.restoreProject') {
+        restoreCallCount += 1
+        if (restoreCallCount === 1) return successResult
+        throw new Error('network exploded')
+      }
+      if (method === 'db.project.getAll') return []
+      if (method === 'db.worktree.getActiveByProject') return []
+      throw new Error(`unexpected method ${method}`)
+    })
+    setRendererRpcClient({ request, subscribe: vi.fn() })
+
+    render(<RestoreWizard backup={twoProjectBackup} open={true} onOpenChange={vi.fn()} />)
+
+    await screen.findByText('proj-a')
+    const continueButton = screen.getByRole('button', { name: 'Continue' })
+    await user.click(continueButton)
+
+    // Both rows are exists-match (no clone needed), so Continue goes straight
+    // to `run`, which kicks off automatically and lands on `summary`.
+    await screen.findByText('Restore complete.', {}, { timeout: 3000 })
+
+    // First project: real success synthesized by the server mock.
+    expect(screen.getByText('proj-a')).not.toBeNull()
+    expect(screen.getAllByText('Pulled')).not.toHaveLength(0)
+
+    // Second project: restoreProject rejected — the client must synthesize a
+    // failed result rather than crash, and surface the error inline.
+    expect(screen.getByText('proj-b')).not.toBeNull()
+    expect(screen.getByText('network exploded')).not.toBeNull()
+
+    expect(restoreCallCount).toBe(2)
+
+    // Store refresh (db.project.getAll via useProjectStore.loadProjects) must
+    // have already resolved by the time summary renders — `refreshStores` is
+    // awaited before `setStep('summary')` in the component.
+    const projectRefreshCalls = request.mock.calls.filter((call) => call[0] === 'db.project.getAll')
+    expect(projectRefreshCalls.length).toBeGreaterThan(0)
+
+    // Only the successful result (which carries a projectId) triggers a
+    // worktree reload — the synthesized failure has no projectId.
+    const worktreeRefreshCalls = request.mock.calls.filter(
+      (call) => call[0] === 'db.worktree.getActiveByProject'
+    )
+    expect(worktreeRefreshCalls).toEqual([['db.worktree.getActiveByProject', { projectId: 'project-a' }]])
+  })
+})

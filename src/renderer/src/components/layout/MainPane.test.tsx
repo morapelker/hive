@@ -227,6 +227,21 @@ describe('MainPane terminal visibility', () => {
     expect(terminal.closest('.hidden')).not.toBeNull()
   })
 
+  it('keeps the active terminal laid out while a ghostty-suppressing overlay is open', () => {
+    // Popovers/dropdowns push ghostty suppression to hide the native NSView.
+    // The HTML container must stay visible: overlays anchored inside the
+    // session view (e.g. the handoff picker) lose their anchor geometry and
+    // teleport to the viewport corner if the container collapses.
+    setupMainPaneState()
+    useLayoutStore.setState({ ghosttyOverlaySuppressed: true })
+
+    renderMainPane()
+
+    const terminal = screen.getByTestId('session-view-session-1')
+    expect(terminal.getAttribute('data-visible')).toBe('true')
+    expect(terminal.closest('.hidden')).toBeNull()
+  })
+
   it('keeps a plain terminal session mounted but hidden during board view', () => {
     setupMainPaneState(makeSession({ id: 'terminal-1', agent_sdk: 'terminal' }))
     useKanbanStore.setState({ isBoardViewActive: true })

@@ -5,6 +5,7 @@ import { LeftSidebar } from './LeftSidebar'
 import { MainPane } from './MainPane'
 import { RightSidebar } from './RightSidebar'
 import { Toaster } from '@/components/ui/sonner'
+import { LoginBanner } from './LoginBanner'
 import { SessionHistory } from '@/components/sessions/SessionHistory'
 import { CommandPalette } from '@/components/command-palette'
 import { SettingsModal } from '@/components/settings'
@@ -22,8 +23,10 @@ import { useConnectionWatcher } from '@/hooks/useConnectionWatcher'
 import { useAutoUpdate } from '@/hooks/useAutoUpdate'
 import { useKeepAwake } from '@/hooks/useKeepAwake'
 import { useSleepWhenIdle } from '@/hooks/useSleepWhenIdle'
+import { useAccountScheduleRunner } from '@/hooks/useAccountScheduleRunner'
 import { ErrorBoundary, ErrorFallback } from '@/components/error'
 import { CreatePRModal } from '@/components/pr/CreatePRModal'
+import { ConnectionPRModal } from '@/components/pr/ConnectionPRModal'
 import { ProjectSettingsDialog } from '@/components/projects/ProjectSettingsDialog'
 import { TerminalPortalProvider, useTerminalPortal } from '@/contexts/TerminalPortalContext'
 import { ClaudeCliSessionPortalProvider } from '@/contexts/ClaudeCliSessionPortalContext'
@@ -149,6 +152,8 @@ export function AppLayout({ children }: AppLayoutProps): React.JSX.Element {
   useKeepAwake()
   // One-shot sleep after all sessions have been idle for a continuous minute.
   useSleepWhenIdle()
+  // Scheduled account switches + mid-session 5-minute usage refresh
+  useAccountScheduleRunner()
 
   // Drag-and-drop from Finder
   const activeSessionId = useSessionStore((s) => s.activeSessionId)
@@ -244,6 +249,7 @@ export function AppLayout({ children }: AppLayoutProps): React.JSX.Element {
 
   const createPRWorktreeId = useGitStore((s) => s.createPRWorktreeId)
   const createPRWorktreePath = useGitStore((s) => s.createPRWorktreePath)
+  const connectionPRConnectionId = useGitStore((s) => s.connectionPRConnectionId)
 
   // Ensure remote info + branch info are loaded for PR modal worktree (may differ from sidebar)
   useEffect(() => {
@@ -289,6 +295,7 @@ export function AppLayout({ children }: AppLayoutProps): React.JSX.Element {
             </ErrorBoundary>
           </div>
           <Toaster />
+          <LoginBanner />
           {isDragging && <DropOverlay variant={activeSessionId ? 'normal' : 'warning'} />}
           <ErrorBoundary componentName="SessionHistory" fallback={null}>
             <SessionHistory />
@@ -306,6 +313,11 @@ export function AppLayout({ children }: AppLayoutProps): React.JSX.Element {
           {createPRWorktreeId && createPRWorktreePath && (
             <ErrorBoundary componentName="CreatePRModal" fallback={null}>
               <CreatePRModal worktreeId={createPRWorktreeId} worktreePath={createPRWorktreePath} />
+            </ErrorBoundary>
+          )}
+          {connectionPRConnectionId && (
+            <ErrorBoundary componentName="ConnectionPRModal" fallback={null}>
+              <ConnectionPRModal connectionId={connectionPRConnectionId} />
             </ErrorBoundary>
           )}
           <AgentSetupGuard />

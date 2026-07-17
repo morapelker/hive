@@ -57,6 +57,7 @@ import { perfDiagnostics } from './services/perf-diagnostics'
 import { configure as configureCodexDebugLogger } from './services/codex-debug-logger'
 import { ptyService } from './services/pty-service'
 import { ghosttyService } from './services/ghostty-service'
+import { getGhosttyConfigPathOnce } from './services/ghostty-config-store'
 import { closeClaudeHookServer } from './services/claude-hook-server'
 import { scriptRunner } from './services/script-runner'
 import { cleanupScripts } from './services/script-cleanup'
@@ -518,6 +519,13 @@ app
     // Load full shell environment for macOS when launched from Finder/Dock/Spotlight.
     // Must run before any child process spawning (opencode, scripts, Claude Code SDK).
     loadShellEnv()
+
+    // Resolve the Ghostty config path now: its dir is TCC-protected on macOS,
+    // so the one "access data from other apps" prompt happens at launch, not
+    // mid-flow when the first Ghostty terminal surface initializes.
+    if (process.platform === 'darwin') {
+      getGhosttyConfigPathOnce()
+    }
 
     // Resolve system-wide Claude binary (must run after loadShellEnv)
     const claudeBinaryPath = resolveClaudeBinaryPath()

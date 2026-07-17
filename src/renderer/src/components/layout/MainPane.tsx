@@ -20,7 +20,6 @@ import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useSessionStore, BOARD_TAB_ID } from '@/stores/useSessionStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
-import { useLayoutStore } from '@/stores/useLayoutStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { usePinnedStore } from '@/stores/usePinnedStore'
@@ -105,7 +104,6 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
   const activeDiff = useFileViewerStore((state) => state.activeDiff)
   const contextEditorWorktreeId = useFileViewerStore((state) => state.contextEditorWorktreeId)
   const closedTerminalSessionIds = useSessionStore((state) => state.closedTerminalSessionIds)
-  const ghosttyOverlaySuppressed = useLayoutStore((state) => state.ghosttyOverlaySuppressed)
   const activePinnedSessionId = useSessionStore((state) => state.activePinnedSessionId)
   const activeBoardAssistantProjectId = useSessionStore((state) => state.activeBoardAssistantProjectId)
   const isBoardViewActive = useKanbanStore((state) => state.isBoardViewActive)
@@ -211,9 +209,11 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
   // Determine which terminal session is currently visible (if any).
   // A terminal is visible when it's the active session AND no diff/file/loading overlay is on top.
   const visibleTerminalId = useMemo(() => {
-    if (ghosttyOverlaySuppressed) {
-      return null
-    }
+    // Note: ghostty overlay suppression must NOT hide the terminal container
+    // here. Collapsing it zeroes out any overlay anchored inside the session
+    // view (e.g. the handoff picker popover, which itself pushes suppression),
+    // teleporting the overlay to the viewport corner. TerminalView hides the
+    // native ghostty surface via effectiveVisible instead.
 
     // When the board, pinned board, or board assistant is occupying the main
     // pane, hide all stateful terminal sessions — otherwise the always-mounted
@@ -248,7 +248,6 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
     activeDiff,
     activeFilePath,
     getAgentSdk,
-    ghosttyOverlaySuppressed,
     isBoardViewActive,
     isPinnedBoardActive,
     activeBoardAssistantProjectId

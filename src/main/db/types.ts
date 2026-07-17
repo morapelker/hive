@@ -164,11 +164,14 @@ export interface Session {
   opencode_session_id: string | null
   claude_session_id: string | null
   agent_sdk: AgentSdk
+  /** References a CustomClaudeProvider id in settings when this claude-code-cli session runs a custom command. */
+  custom_provider_id?: string | null
   mode: SessionMode
   session_type: SessionType
   model_provider_id: string | null
   model_id: string | null
   model_variant: string | null
+  remote_launch: string | null
   created_at: string
   updated_at: string
   completed_at: string | null
@@ -183,11 +186,13 @@ export interface SessionCreate {
   opencode_session_id?: string | null
   claude_session_id?: string | null
   agent_sdk?: AgentSdk
+  custom_provider_id?: string | null
   mode?: SessionMode
   session_type?: SessionType
   model_provider_id?: string | null
   model_id?: string | null
   model_variant?: string | null
+  remote_launch?: string | null
   pinned_to_board?: boolean
 }
 
@@ -197,11 +202,13 @@ export interface SessionUpdate {
   opencode_session_id?: string | null
   claude_session_id?: string | null
   agent_sdk?: AgentSdk
+  custom_provider_id?: string | null
   mode?: SessionMode
   session_type?: SessionType
   model_provider_id?: string | null
   model_id?: string | null
   model_variant?: string | null
+  remote_launch?: string | null
   updated_at?: string
   completed_at?: string | null
   pinned_to_board?: boolean
@@ -454,6 +461,16 @@ export interface ConnectionWithMembers extends Connection {
   })[]
 }
 
+export interface ConnectionHistoryEntry {
+  id: string
+  project_set_key: string
+  project_ids: string // JSON array of sorted distinct project IDs
+  last_used_at: string
+  use_count: number
+  created_at: string
+  note: string | null
+}
+
 // Database response types for queries
 export interface SessionWithWorktree extends Session {
   worktree_name?: string
@@ -504,6 +521,12 @@ export interface KanbanTicket {
   note: string | null
   /** True when auto-created by the "automatically create ticket" setting on a session's first message. */
   created_from_session: boolean
+  /** One-shot: auto-approve the next claude-cli ExitPlanMode plan, then self-clears. */
+  auto_approve_plan: boolean
+  model_provider_id: string | null
+  model_id: string | null
+  model_variant: string | null
+  variant_group_id: string | null
 }
 
 export interface KanbanTicketCreate {
@@ -525,6 +548,11 @@ export interface KanbanTicketCreate {
   github_pr_url?: string | null
   mark?: TicketMark | null
   created_from_session?: boolean
+  note?: string | null
+  model_provider_id?: string | null
+  model_id?: string | null
+  model_variant?: string | null
+  variant_group_id?: string | null
 }
 
 export interface KanbanTicketUpdate {
@@ -545,6 +573,21 @@ export interface KanbanTicketUpdate {
   goal_mode?: boolean
   goal_success_criteria?: string | null
   note?: string | null
+  auto_approve_plan?: boolean
+  model_provider_id?: string | null
+  model_id?: string | null
+  model_variant?: string | null
+  variant_group_id?: string | null
+}
+
+/** Fields a caller may override on a freshly duplicated ticket; see KanbanBackend.duplicate. */
+export interface KanbanTicketDuplicateOverrides {
+  column?: KanbanTicketColumn
+  sort_order?: number
+  model_provider_id?: string | null
+  model_id?: string | null
+  model_variant?: string | null
+  variant_group_id?: string | null
 }
 
 export interface BoardAssistantDraft {
@@ -574,6 +617,11 @@ export interface KanbanTicketBatchCreateItem {
   github_pr_number?: number | null
   github_pr_url?: string | null
   mark?: TicketMark | null
+  note?: string | null
+  model_provider_id?: string | null
+  model_id?: string | null
+  model_variant?: string | null
+  variant_group_id?: string | null
   depends_on?: string[]
 }
 

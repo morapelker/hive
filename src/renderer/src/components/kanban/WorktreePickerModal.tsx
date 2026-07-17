@@ -1,5 +1,16 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
-import { Hammer, Map, Plus, GitBranch, Send, ChevronDown, Loader2, Search } from 'lucide-react'
+import {
+  Hammer,
+  Map,
+  Plus,
+  GitBranch,
+  Send,
+  ChevronDown,
+  Loader2,
+  Search,
+  Check,
+  X
+} from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -15,14 +26,16 @@ import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover
 import { Input } from '@/components/ui/input'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { cn } from '@/lib/utils'
+import { isWindows } from '@/lib/platform'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
-import { useSettingsStore, resolveModelForSdk } from '@/stores/useSettingsStore'
+import { useSettingsStore, resolveModelForSdk, type SelectedModel } from '@/stores/useSettingsStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useUsageStore, resolveDefaultUsageProvider } from '@/stores/useUsageStore'
+import { useRemoteLaunchStore } from '@/stores/useRemoteLaunchStore'
 import { ModelSelector } from '@/components/sessions/ModelSelector'
 import { CodexFastToggle } from '@/components/sessions/CodexFastToggle'
 import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
@@ -35,13 +48,32 @@ import { opencodeApi } from '@/api/opencode-api'
 import { dbApi } from '@/api/db-api'
 import { terminalApi } from '@/api/terminal-api'
 import { gitApi } from '@/api/git-api'
+import { remoteLaunchApi } from '@/api/remote-launch-api'
 import { startHivePromptTelemetry } from '@/lib/hive-enterprise-telemetry'
 import type { KanbanTicket, Session } from '../../../../main/db/types'
 import { canonicalizeTicketTitle } from '@shared/types/branch-utils'
 import { supportsGoalMode } from '@shared/types/agent-sdk'
+import { createPlanFile, exceedsGoalPromptLimit, planFilePrompt } from '@/lib/goal-plan-file'
+import {
+  REMOTE_LAUNCH_STEPS,
+  type RemoteLaunchModelSelection,
+  type RemoteLaunchMode,
+  type RemoteLaunchPreflightResult,
+  type RemoteLaunchStep
+} from '@shared/types/remote-launch'
+import { FALLBACK_MODELS } from '@shared/model-resolution'
+import { runMultiModelLaunch, type MultiModelLaunchPlan } from '@/lib/multi-model-launch'
+import {
+  resolveBadgeModel,
+  resolveCustomProviderBadge,
+  type LaunchModelConfig
+} from '@/lib/ticket-launch'
+import type { AvailableAgentSdks } from '@/lib/agent-sdk-availability'
+import type { CustomClaudeProvider } from '@shared/types/custom-provider'
 
 // Stable empty array to avoid referential-inequality loops in Zustand selectors
 const EMPTY_ARRAY: readonly never[] = []
+const EMPTY_CUSTOM_PROVIDERS: CustomClaudeProvider[] = []
 
 // ── Types ───────────────────────────────────────────────────────────
 type PickerMode = 'build' | 'plan' | 'super-plan'
@@ -56,6 +88,17 @@ interface BranchInfo {
   isRemote: boolean
   isCheckedOut: boolean
   worktreePath?: string
+}
+
+/** Labels for the 7-step remote-launch checklist, in `REMOTE_LAUNCH_STEPS` order. */
+const REMOTE_LAUNCH_STEP_LABELS: Record<RemoteLaunchStep, string> = {
+  connect: 'Connect',
+  'branch-check': 'Check branch',
+  clone: 'Clone project',
+  worktree: 'Create worktree',
+  'file-transfer': 'Transfer files',
+  'setup-script': 'Run setup script',
+  launch: 'Launch session'
 }
 
 interface WorktreePickerModalProps {
@@ -76,10 +119,25 @@ interface WorktreePickerModalProps {
 /** In-memory: last-chosen source branch per project (resets on app restart) */
 const _lastSourceBranchByProject: Record<string, string> = {}
 
+/**
+ * In-memory: launchId of a FAILED remote launch per ticket. Reopening the
+ * modal after a failure reuses it so the whole server-side idempotency chain
+ * (client-session reuse, prepare reuse, setupAppliedAt, live-tmux
+ * short-circuit) still applies — a fresh id would start a second remote
+ * worktree/session next to the first attempt's leftovers. Cleared on success
+ * so an intentional relaunch of the same ticket gets a fresh id.
+ * (A plain record — this module imports lucide's `Map` icon, which shadows
+ * the global Map constructor.)
+ */
+const _failedRemoteLaunchIdByTicket: Record<string, string> = {}
+
 /** @internal — for test cleanup only */
 export function _resetLastSourceBranch(): void {
   for (const key of Object.keys(_lastSourceBranchByProject)) {
     delete _lastSourceBranchByProject[key]
+  }
+  for (const key of Object.keys(_failedRemoteLaunchIdByTicket)) {
+    delete _failedRemoteLaunchIdByTicket[key]
   }
 }
 
@@ -159,6 +217,54 @@ function composePromptForSdk(
     : fullPrompt
 }
 
+// Matches the `\n<attachments>...\n</attachments>` block `buildPrompt` inserts
+// before the closing `</ticket>` tag, so it can be stripped from prefilled
+// text a user has since edited (attachments aren't sent to remote launches).
+const ATTACHMENTS_BLOCK_RE = /\n<attachments>[\s\S]*?<\/attachments>/g
+
+function stripAttachmentsBlock(text: string): string {
+  return text.replace(ATTACHMENTS_BLOCK_RE, '')
+}
+
+/**
+ * Compose the outbound prompt for a remote launch (always claude-code-cli,
+ * goal mode off). If the caller's `editedPrompt` still matches the unedited
+ * prefill for `mode` (i.e. the user never touched the textarea beyond the
+ * automatic mode-prefix swap), attachments are dropped by rebuilding the
+ * prompt from an attachment-less ticket. Otherwise the edited text is used
+ * verbatim, with any embedded `<attachments>` block stripped.
+ */
+export function buildRemotePrompt(
+  mode: 'build' | 'plan',
+  ticket: KanbanTicket,
+  editedPrompt: string
+): string {
+  const prefilled = buildPrompt(mode, ticket)
+  const basePrompt =
+    editedPrompt === prefilled
+      ? buildPrompt(mode, { ...ticket, attachments: [] })
+      : stripAttachmentsBlock(editedPrompt)
+
+  return (
+    composePromptForSdk(mode, 'claude-code-cli', basePrompt, false, '', { claudeCli: true }) ?? ''
+  )
+}
+
+// Oversized goal prompts get rejected by the CLI. When the composed goal prompt
+// exceeds the limit, persist the full ticket prompt as PLAN_{uuid}.md in the
+// session root and swap the prompt body for "Implement PLAN_{uuid}.md" — the
+// /goal wrapper and success criteria stay as-is. Returns the prompt text to
+// compose the outbound prompt from.
+async function convertOversizedGoalPrompt(
+  promptText: string,
+  composedGoalPrompt: string | null,
+  rootPath: string | null | undefined
+): Promise<string> {
+  if (!exceedsGoalPromptLimit(composedGoalPrompt) || !rootPath) return promptText
+  const fileName = await createPlanFile(rootPath, promptText.trim())
+  return planFilePrompt(fileName)
+}
+
 // Strip a SelectedModel down to the shape the prompt RPC accepts. The renderer's
 // model objects carry an extra `agentSdk` field used for SDK routing, but the
 // `opencodeOps.prompt` model schema is .strict() and rejects unknown keys — so
@@ -168,6 +274,149 @@ function toRequestModel(
 ): { providerID: string; modelID: string; variant?: string } | undefined {
   if (!model) return undefined
   return { providerID: model.providerID, modelID: model.modelID, variant: model.variant }
+}
+
+// One extra provider/model launched alongside the existing row-1 controls.
+interface ExtraModelRow {
+  key: string // crypto.randomUUID() — stable React key
+  sdk: PickerAgentSdk
+  customProviderId: string | null // claude-code-cli only: custom provider launch
+  model: SelectedModel | null // null = resolve for that row's sdk at launch
+  codexFastMode: boolean // per-row; seeded from the global codexFastMode
+}
+
+// Resolve a row's display/launch-default model. Never inherits another SDK's
+// default: the mode default only wins when it's already for this SDK, otherwise
+// the per-SDK resolution then the hard SDK fallback.
+function resolveRowDefaultModel(sdk: PickerAgentSdk, mode: PickerMode): SelectedModel {
+  const settings = useSettingsStore.getState()
+  const modeModel = settings.getModelForMode(mode)
+  if (modeModel && modeModel.agentSdk === sdk) return modeModel
+  const resolved = resolveModelForSdk(sdk) ?? FALLBACK_MODELS[sdk]
+  return { providerID: resolved.providerID, modelID: resolved.modelID, variant: resolved.variant }
+}
+
+// ── SDK toggle button group (shared by row 1 and each extra row) ────
+interface SdkToggleGroupProps {
+  value: PickerAgentSdk
+  /** Selected custom provider id (only meaningful while value === 'claude-code-cli'). */
+  customProviderId?: string | null
+  onChange: (sdk: PickerAgentSdk, customProviderId?: string | null) => void
+  availableAgentSdks: AvailableAgentSdks | null
+  customProviders?: CustomClaudeProvider[]
+  idPrefix: string
+  disabled?: boolean
+  disabledTitle?: string
+}
+
+function SdkToggleGroup({
+  value,
+  customProviderId,
+  onChange,
+  availableAgentSdks,
+  customProviders = [],
+  idPrefix,
+  disabled,
+  disabledTitle
+}: SdkToggleGroupProps): React.JSX.Element | null {
+  // Custom providers run their own command through the login shell — they
+  // don't depend on stock-claude detection.
+  const visibleCustomProviders = customProviders
+  // Only render when 2+ SDKs are available (a single stock SDK has nothing to
+  // toggle) — but a custom provider must always be selectable, even alone: it
+  // is never the implied default, so hiding its button would strand the user
+  // on a stock SDK.
+  const buttonCount =
+    (availableAgentSdks
+      ? [
+          availableAgentSdks.opencode,
+          availableAgentSdks.claude,
+          availableAgentSdks.codex,
+          availableAgentSdks.claude
+        ].filter(Boolean).length
+      : 0) + visibleCustomProviders.length
+  if (!availableAgentSdks || (buttonCount < 2 && visibleCustomProviders.length === 0)) return null
+
+  const buttonClass = (active: boolean): string =>
+    cn(
+      'px-2.5 py-1 rounded-md text-xs border transition-colors',
+      'disabled:opacity-40 disabled:cursor-not-allowed',
+      active
+        ? 'bg-primary text-primary-foreground border-primary'
+        : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
+    )
+  const buttonTitle = disabled ? disabledTitle : undefined
+
+  return (
+    <div className="flex gap-1.5" data-testid={idPrefix}>
+      {availableAgentSdks.opencode && (
+        <button
+          type="button"
+          data-testid={`${idPrefix}-opencode`}
+          onClick={() => onChange('opencode')}
+          disabled={disabled}
+          aria-pressed={value === 'opencode'}
+          title={buttonTitle}
+          className={buttonClass(value === 'opencode')}
+        >
+          OpenCode
+        </button>
+      )}
+      {availableAgentSdks.claude && (
+        <button
+          type="button"
+          data-testid={`${idPrefix}-claude-code`}
+          onClick={() => onChange('claude-code')}
+          disabled={disabled}
+          aria-pressed={value === 'claude-code'}
+          title={buttonTitle}
+          className={buttonClass(value === 'claude-code')}
+        >
+          Claude Code
+        </button>
+      )}
+      {availableAgentSdks.codex && (
+        <button
+          type="button"
+          data-testid={`${idPrefix}-codex`}
+          onClick={() => onChange('codex')}
+          disabled={disabled}
+          aria-pressed={value === 'codex'}
+          title={buttonTitle}
+          className={buttonClass(value === 'codex')}
+        >
+          Codex
+        </button>
+      )}
+      {availableAgentSdks.claude && (
+        <button
+          type="button"
+          data-testid={`${idPrefix}-claude-code-cli`}
+          onClick={() => onChange('claude-code-cli')}
+          disabled={disabled}
+          aria-pressed={value === 'claude-code-cli' && !customProviderId}
+          title={buttonTitle}
+          className={buttonClass(value === 'claude-code-cli' && !customProviderId)}
+        >
+          Claude CLI
+        </button>
+      )}
+      {visibleCustomProviders.map((provider) => (
+        <button
+          key={provider.id}
+          type="button"
+          data-testid={`${idPrefix}-custom-${provider.id}`}
+          onClick={() => onChange('claude-code-cli', provider.id)}
+          disabled={disabled}
+          aria-pressed={value === 'claude-code-cli' && customProviderId === provider.id}
+          title={buttonTitle}
+          className={buttonClass(value === 'claude-code-cli' && customProviderId === provider.id)}
+        >
+          {provider.name || 'Custom Provider'}
+        </button>
+      ))}
+    </div>
+  )
 }
 
 // ── Component ───────────────────────────────────────────────────────
@@ -190,6 +439,11 @@ export function WorktreePickerModal({
   const [isSending, setIsSending] = useState(false)
   const [goalMode, setGoalMode] = useState(false)
   const [goalCriteria, setGoalCriteria] = useState('')
+  // A ticket that already carries a goal re-arms the switch on open. The
+  // stored criteria waits here until the goal switch is actually available
+  // (build mode + a goal-capable SDK) and is applied once per open, so a
+  // manual uncheck is never overridden.
+  const goalPrefillRef = useRef<string | null>(null)
   const promptRef = useRef<HTMLTextAreaElement>(null)
   const [sourceBranch, setSourceBranch] = useState<string | null>(null) // null = default
   const [branchPopoverOpen, setBranchPopoverOpen] = useState(false)
@@ -203,6 +457,23 @@ export function WorktreePickerModal({
     variant?: string
   } | null>(null)
   const [selectedSdk, setSelectedSdk] = useState<PickerAgentSdk | null>(null)
+  const [selectedCustomProviderId, setSelectedCustomProviderId] = useState<string | null>(null)
+  const [extraModelRows, setExtraModelRows] = useState<ExtraModelRow[]>([])
+
+  // ── Remote launch state ──────────────────────────────────────────
+  const [runOnRemote, setRunOnRemote] = useState(false)
+  const [remotePreflight, setRemotePreflight] = useState<RemoteLaunchPreflightResult | null>(null)
+  const [preflightLoading, setPreflightLoading] = useState(false)
+  const [remotePhase, setRemotePhase] = useState<'idle' | 'launching' | 'failed'>('idle')
+  const [remoteProgress, setRemoteProgress] = useState<
+    Partial<Record<RemoteLaunchStep, 'running' | 'done' | 'error'>>
+  >({})
+  const [remoteError, setRemoteError] = useState<{
+    step: RemoteLaunchStep
+    message: string
+  } | null>(null)
+  const launchIdRef = useRef<string>('')
+  const remoteUnsubRef = useRef<(() => void) | null>(null)
 
   // ── Store access ────────────────────────────────────────────────
   const worktrees = useWorktreeStore(
@@ -227,39 +498,103 @@ export function WorktreePickerModal({
     return defaultWt?.branch_name ?? 'main'
   }, [worktrees])
 
+  // The branch a new worktree — local or remote — would be created from:
+  // the user's explicit pick, else the same default the branch picker shows.
+  const resolvedSourceBranch = sourceBranch ?? defaultBranchName
+
+  // The picker names remote-only branches `origin/<branch>`; the server
+  // strips that prefix before git operations, so user-facing remote copy
+  // must too — otherwise it reads "origin/origin/<branch>".
+  const remoteBranchDisplay = resolvedSourceBranch.startsWith('origin/')
+    ? resolvedSourceBranch.slice('origin/'.length)
+    : resolvedSourceBranch
+
   const worktreeNamePreview = useMemo(() => {
     return canonicalizeTicketTitle(ticket.title)
   }, [ticket.title])
 
   // ── SDK / Model resolution ──────────────────────────────────────
   const availableAgentSdks = useSettingsStore((s) => s.availableAgentSdks)
+  const rawCustomProviders = useSettingsStore((s) => s.customProviders)
+  const customProviders = useMemo(
+    () =>
+      isWindows()
+        ? EMPTY_CUSTOM_PROVIDERS
+        : (rawCustomProviders ?? EMPTY_CUSTOM_PROVIDERS).filter((p) => p.command.trim()),
+    [rawCustomProviders]
+  )
   const defaultAgentSdk = useSettingsStore((s) => s.defaultAgentSdk) ?? 'opencode'
   const codexFastMode = useSettingsStore((s) => s.codexFastMode)
   const codexFastModeAccepted = useSettingsStore((s) => s.codexFastModeAccepted)
   const updateSetting = useSettingsStore((s) => s.updateSetting)
+  const teleport = useSettingsStore((s) => s.teleport)
   const defaultSdkNormalized = defaultAgentSdk === 'terminal' ? 'opencode' : defaultAgentSdk
   const baseAgentSdk = selectedSdk ?? defaultSdkNormalized
 
   const autoResolvedModel = useMemo(() => {
     const settings = useSettingsStore.getState()
+    // Remote launches always run claude-code-cli — resolve against that SDK
+    // regardless of what's actually selected, so a leftover default from a
+    // different SDK never leaks into the remote payload.
+    const effectiveSelectedSdk = runOnRemote ? 'claude-code-cli' : selectedSdk
     // Priority 1: mode-specific default
     const modeModel = settings.getModelForMode(mode)
-    if (modeModel && (!selectedSdk || modeModel.agentSdk === selectedSdk)) return modeModel
+    if (modeModel && (!effectiveSelectedSdk || modeModel.agentSdk === effectiveSelectedSdk)) {
+      return modeModel
+    }
     // Priority 2: per-provider / global default
-    return resolveModelForSdk(baseAgentSdk) ?? null
-  }, [mode, baseAgentSdk, selectedSdk])
+    return resolveModelForSdk(runOnRemote ? 'claude-code-cli' : baseAgentSdk) ?? null
+  }, [mode, baseAgentSdk, selectedSdk, runOnRemote])
 
   const agentSdk =
     selectedSdk ?? selectedModel?.agentSdk ?? autoResolvedModel?.agentSdk ?? baseAgentSdk
-  const goalAvailable = supportsGoalMode(agentSdk) && mode === 'build' && !preAssignOnly
-  const availableSdkButtonCount = availableAgentSdks
-    ? [
-        availableAgentSdks.opencode,
-        availableAgentSdks.claude,
-        availableAgentSdks.codex,
-        availableAgentSdks.claude
-      ].filter(Boolean).length
-    : 0
+  // Remote launches always run claude-code-cli — drives the SDK-picker
+  // highlight/tooltip and the ModelSelector's catalog without mutating
+  // `selectedSdk` itself (so turning remote back off restores whatever the
+  // user had actually picked).
+  const uiAgentSdk: PickerAgentSdk = runOnRemote ? 'claude-code-cli' : agentSdk
+  // Custom providers run the user's local command (often a local proxy alias),
+  // which doesn't exist on a remote host — remote launches always run stock
+  // claude-code-cli, and connection sessions don't support custom providers.
+  const effectiveCustomProviderId =
+    !runOnRemote && !isConnectionMode && agentSdk === 'claude-code-cli'
+      ? selectedCustomProviderId
+      : null
+
+  // ── Remote section visibility + preflight ─────────────────────────
+  const remoteSectionVisible =
+    isNewWorktree &&
+    !!teleport?.url &&
+    !!teleport?.bootstrapToken &&
+    !connectionId &&
+    !preAssignOnly &&
+    !saveConfigOnly
+
+  const hasAttachments = (ticket.attachments ?? []).length > 0
+
+  const remoteSendBlocked =
+    runOnRemote &&
+    (preflightLoading ||
+      !remotePreflight ||
+      !remotePreflight.remoteConfigured ||
+      !!remotePreflight.error ||
+      !remotePreflight.branchOnOrigin ||
+      remotePreflight.transferErrors.length > 0)
+
+  // Extra model rows + the "+ Add model" button only apply to a brand-new
+  // worktree in the normal or save-config flows (an existing worktree hosts one
+  // session; connection/pre-assign never multi-launch, and a remote launch
+  // always runs a single claude-code-cli session).
+  const extraRowsVisible = isNewWorktree && !isConnectionMode && !preAssignOnly && !runOnRemote
+  const isMultiModel = extraRowsVisible && extraModelRows.length > 0
+  // Goal mode needs EVERY launched SDK to support it — row 1 (already gated
+  // below via agentSdk) plus every visible extra row.
+  const goalAvailable =
+    supportsGoalMode(agentSdk) &&
+    (extraRowsVisible ? extraModelRows.every((r) => supportsGoalMode(r.sdk)) : true) &&
+    mode === 'build' &&
+    !preAssignOnly &&
+    !runOnRemote
 
   // ── Count in-progress tickets per worktree ──────────────────────
   const ticketCountByWorktree = useMemo(() => {
@@ -306,18 +641,115 @@ export function WorktreePickerModal({
       setIsSending(false)
       setGoalMode(false)
       setGoalCriteria('')
+      goalPrefillRef.current =
+        ticket.goal_mode && ticket.goal_success_criteria?.trim()
+          ? ticket.goal_success_criteria
+          : null
       setSelectedModel(null)
       setSelectedSdk(null)
+      setSelectedCustomProviderId(null)
+      setExtraModelRows([])
       setSourceBranch(_lastSourceBranchByProject[projectId] ?? null)
       setBranches([])
       setBranchFilter('')
       setBranchPopoverOpen(false)
+      setRunOnRemote(false)
+      setRemotePreflight(null)
+      setPreflightLoading(false)
+      setRemotePhase('idle')
+      setRemoteProgress({})
+      setRemoteError(null)
+      // Retries within one open reuse this id. A fresh open also reuses the
+      // id of a previously FAILED launch for this ticket (see
+      // _failedRemoteLaunchIdByTicket); otherwise it gets a new one.
+      launchIdRef.current = _failedRemoteLaunchIdByTicket[ticket.id] ?? crypto.randomUUID()
       // Refresh worktree list from git so the picker shows current state
       if (project?.path) {
         syncWorktrees(projectId, project.path, { force: true })
       }
     }
   }, [open, ticket, projectId, project?.path, syncWorktrees])
+
+  // ── Apply the ticket's stored goal once the switch is available ──
+  // Fires immediately when the default SDK supports goal mode, or later when
+  // the user switches to a goal-capable SDK. One-shot per open.
+  useEffect(() => {
+    if (!open || !goalAvailable || goalPrefillRef.current === null) return
+    setGoalMode(true)
+    setGoalCriteria(goalPrefillRef.current)
+    goalPrefillRef.current = null
+  }, [open, goalAvailable])
+
+  // Backstop: goal mode must never stay on while the switch is hidden — the
+  // send path wraps the outgoing prompt with /goal whenever goalMode is set,
+  // which a non-goal SDK can't parse. (The first render after `open` flips can
+  // briefly see stale availability from a previous open of a mounted modal.)
+  useEffect(() => {
+    if (!goalMode || goalAvailable) return
+    setGoalMode(false)
+    setGoalCriteria('')
+  }, [goalMode, goalAvailable])
+
+  // ── Reset remote state + unsubscribe when the modal closes ───────
+  useEffect(() => {
+    if (open) return
+    remoteUnsubRef.current?.()
+    remoteUnsubRef.current = null
+    setRunOnRemote(false)
+    setRemotePreflight(null)
+    setPreflightLoading(false)
+    setRemotePhase('idle')
+    setRemoteProgress({})
+    setRemoteError(null)
+  }, [open])
+
+  // ── Clamp mode/goal-mode/model when remote is toggled on ──────────
+  useEffect(() => {
+    if (!runOnRemote) return
+    setGoalMode(false)
+    setGoalCriteria('')
+    setMode((prev) => {
+      if (prev !== 'super-plan') return prev
+      setSuperArmed(false)
+      return 'plan'
+    })
+    // A model picked for a different SDK isn't valid for claude-code-cli —
+    // same reset `handleSdkChange` does on an explicit SDK switch.
+    setSelectedModel(null)
+  }, [runOnRemote])
+
+  // ── Preflight check while remote is on, re-fired on branch change ─
+  useEffect(() => {
+    if (!runOnRemote || !isNewWorktree) return
+    let cancelled = false
+    setPreflightLoading(true)
+    setRemotePreflight(null)
+    remoteLaunchApi
+      .preflight({ projectId, branch: resolvedSourceBranch })
+      .then((result) => {
+        if (!cancelled) setRemotePreflight(result)
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setRemotePreflight({
+            remoteConfigured: false,
+            branchOnOrigin: false,
+            localAhead: 0,
+            localBehind: 0,
+            diverged: false,
+            transfers: [],
+            transferErrors: [],
+            error: 'Failed to check remote status'
+          })
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setPreflightLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [runOnRemote, isNewWorktree, projectId, resolvedSourceBranch])
 
   // ── Branch filtering ───────────────────────────────────────────
   const filteredBranches = useMemo(() => {
@@ -333,13 +765,60 @@ export function WorktreePickerModal({
   }, [branches, branchFilter])
 
   // ── Handle SDK change ───────────────────────────────────────────
-  const handleSdkChange = useCallback((sdk: PickerAgentSdk) => {
+  const handleSdkChange = useCallback((sdk: PickerAgentSdk, customProviderId?: string | null) => {
     setSelectedSdk(sdk)
+    setSelectedCustomProviderId(customProviderId ?? null)
     setSelectedModel(null) // reset model — new SDK has different models
     if (!supportsGoalMode(sdk)) {
       setGoalMode(false)
       setGoalCriteria('')
     }
+  }, [])
+
+  // ── Extra model rows ────────────────────────────────────────────
+  const addModelRow = useCallback(() => {
+    setExtraModelRows((rows) => [
+      ...rows,
+      {
+        key: crypto.randomUUID(),
+        sdk: agentSdk,
+        customProviderId: agentSdk === 'claude-code-cli' ? selectedCustomProviderId : null,
+        model: null,
+        codexFastMode
+      }
+    ])
+  }, [agentSdk, selectedCustomProviderId, codexFastMode])
+
+  const removeModelRow = useCallback((key: string) => {
+    setExtraModelRows((rows) => rows.filter((r) => r.key !== key))
+  }, [])
+
+  const handleRowSdkChange = useCallback(
+    (key: string, sdk: PickerAgentSdk, customProviderId?: string | null) => {
+      // Reset the row's model (new SDK has different models), mirroring handleSdkChange.
+      setExtraModelRows((rows) =>
+        rows.map((r) =>
+          r.key === key
+            ? { ...r, sdk, customProviderId: customProviderId ?? null, model: null }
+            : r
+        )
+      )
+      if (!supportsGoalMode(sdk)) {
+        setGoalMode(false)
+        setGoalCriteria('')
+      }
+    },
+    []
+  )
+
+  const updateRowModel = useCallback((key: string, model: SelectedModel) => {
+    setExtraModelRows((rows) => rows.map((r) => (r.key === key ? { ...r, model } : r)))
+  }, [])
+
+  const updateRowCodexFastMode = useCallback((key: string, value: boolean) => {
+    setExtraModelRows((rows) =>
+      rows.map((r) => (r.key === key ? { ...r, codexFastMode: value } : r))
+    )
   }, [])
 
   // ── Handle mode toggle ──────────────────────────────────────────
@@ -355,6 +834,7 @@ export function WorktreePickerModal({
 
   // ── Handle SUPER toggle ─────────────────────────────────────────
   const toggleSuper = useCallback(() => {
+    if (runOnRemote) return // super-plan is unavailable for remote launches
     if (mode === 'plan') {
       setMode('super-plan')
       setSuperArmed(true)
@@ -364,10 +844,11 @@ export function WorktreePickerModal({
       setMode('plan')
       setSuperArmed(false)
     }
-  }, [mode])
+  }, [mode, runOnRemote])
 
   // ── Handle Shift+Tab super-plan shortcut ─────────────────────
   const toggleSuperShortcut = useCallback(() => {
+    if (runOnRemote) return // super-plan is unavailable for remote launches
     setMode((prev) => {
       const next: PickerMode = prev === 'super-plan' ? 'plan' : 'super-plan'
       setPromptText((current) => swapModePrefix(current, prev, next))
@@ -375,7 +856,7 @@ export function WorktreePickerModal({
       setGoalCriteria('')
       return next
     })
-  }, [])
+  }, [runOnRemote])
 
   // ── Handle Tab / Shift+Tab keys ─────────────────────────────────
   // Must use window-level capture-phase listener to beat SessionView's
@@ -429,6 +910,7 @@ export function WorktreePickerModal({
   const handleSelectWorktree = useCallback((wtId: string) => {
     setSelectedWorktreeId(wtId)
     setIsNewWorktree(false)
+    setRunOnRemote(false) // remote launches only apply to new worktrees
   }, [])
 
   const handleSelectNewWorktree = useCallback(() => {
@@ -438,25 +920,170 @@ export function WorktreePickerModal({
 
   // ── Send flow ───────────────────────────────────────────────────
   const goalCriteriaValid = !goalMode || goalCriteria.trim().length > 0
+  const isRemoteLaunchActive =
+    runOnRemote && isNewWorktree && !isConnectionMode && !preAssignOnly && !saveConfigOnly
   const canSend =
     (isConnectionMode
       ? !isSending
-      : (selectedWorktreeId !== null || isNewWorktree) && !isSending) && goalCriteriaValid
+      : (selectedWorktreeId !== null || isNewWorktree) && !isSending) &&
+    goalCriteriaValid &&
+    !remoteSendBlocked
+
+  // The goal prompt as it would go out. Goal mode is build-only, so the mode
+  // prefix is empty and this matches the outbound prompt for every SDK.
+  const composedGoalPrompt = useMemo(() => {
+    if (!goalMode || !goalAvailable) return null
+    return composePromptForSdk(mode, agentSdk, promptText, goalMode, goalCriteria, {
+      claudeCli: agentSdk === 'claude-code-cli'
+    })
+  }, [goalMode, goalAvailable, mode, agentSdk, promptText, goalCriteria])
+  const willUsePlanFile = exceedsGoalPromptLimit(composedGoalPrompt)
 
   const handleSend = useCallback(async () => {
-    if (!canSend) return
+    const isRemoteRetry = isRemoteLaunchActive && remotePhase === 'failed'
+    if (!isRemoteRetry && !canSend) return
     setIsSending(true)
+
+    // ── Remote launch path (new worktree only, opt-in) ────────────
+    if (isRemoteLaunchActive) {
+      setRemotePhase('launching')
+      setRemoteProgress({})
+      setRemoteError(null)
+      const launchId = launchIdRef.current
+      const clampedMode: RemoteLaunchMode = mode === 'build' ? 'build' : 'plan'
+      const effectiveModel = selectedModel ?? autoResolvedModel ?? null
+      const model: RemoteLaunchModelSelection | null = effectiveModel
+        ? {
+            providerId: effectiveModel.providerID,
+            id: effectiveModel.modelID,
+            variant: effectiveModel.variant
+          }
+        : null
+      const prompt = buildRemotePrompt(clampedMode, ticket, promptText)
+
+      let lastRunningStep: RemoteLaunchStep = 'connect'
+      const unsub = remoteLaunchApi.onProgress(launchId, (event) => {
+        setRemoteProgress((prev) => ({ ...prev, [event.step]: event.status }))
+        if (event.status === 'running') lastRunningStep = event.step
+        if (event.status === 'error') {
+          setRemoteError({ step: event.step, message: event.error ?? 'Remote launch failed' })
+        }
+      })
+      remoteUnsubRef.current = unsub
+
+      try {
+        const result = await remoteLaunchApi.start({
+          launchId,
+          ticketId: ticket.id,
+          projectId,
+          branch: resolvedSourceBranch,
+          prompt,
+          mode: clampedMode,
+          model,
+          ticketTitle: ticket.title
+        })
+
+        if (!result.success) {
+          const step = result.step ?? lastRunningStep
+          const message = result.error ?? 'Remote launch failed'
+          _failedRemoteLaunchIdByTicket[ticket.id] = launchId
+          setRemoteProgress((prev) => ({ ...prev, [step]: 'error' }))
+          setRemoteError({ step, message })
+          setRemotePhase('failed')
+          return
+        }
+
+        if (result.localSessionId) {
+          // Best-effort store priming for the ticket card's remote badge — the
+          // launch already succeeded, so a transient session-row fetch failure
+          // must not gate the ticket move or render the launch as failed.
+          // Consumers re-call ensureLoaded on mount anyway.
+          void useRemoteLaunchStore
+            .getState()
+            .ensureLoaded(result.localSessionId)
+            .catch(() => {})
+        }
+
+        // Past this point the remote launch itself succeeded — a failure in
+        // the local ticket move must not be reported as a failed launch (the
+        // outer catch would repaint the green steps and imply the remote
+        // session doesn't exist). Surface it against the launch step with an
+        // explicit message instead; Retry reuses the same launchId, so it
+        // relinks the already-running session rather than launching twice.
+        try {
+          const sortOrder = useKanbanStore
+            .getState()
+            .computeSortOrder(
+              useKanbanStore.getState().getTicketsByColumn(projectId, 'in_progress'),
+              0
+            )
+
+          await updateTicket(ticket.id, projectId, {
+            current_session_id: result.localSessionId ?? null,
+            worktree_id: null,
+            mode: clampedMode,
+            column: 'in_progress',
+            sort_order: sortOrder,
+            plan_ready: false,
+            goal_mode: false,
+            goal_success_criteria: null,
+            model_provider_id: model?.providerId ?? null,
+            model_id: model?.id ?? null,
+            model_variant: model?.variant ?? null,
+            // A single-model (re)launch shouldn't keep claiming membership in a
+            // stale multi-launch group, and a manually-launched queued ticket
+            // can't be auto-launched again later (same as the local paths).
+            variant_group_id: null,
+            pending_launch_config: null
+          })
+        } catch (error) {
+          const message = `Remote session launched, but moving the ticket failed: ${error instanceof Error ? error.message : String(error)}. Retry to relink — the running remote session will be reused, not relaunched.`
+          _failedRemoteLaunchIdByTicket[ticket.id] = launchId
+          setRemoteProgress((prev) => ({ ...prev, launch: 'error' }))
+          setRemoteError({ step: 'launch', message })
+          setRemotePhase('failed')
+          return
+        }
+
+        delete _failedRemoteLaunchIdByTicket[ticket.id]
+        toast.success('Launched on remote machine')
+        onSendComplete?.()
+        onOpenChange(false)
+      } catch (error) {
+        const step = lastRunningStep
+        const message = error instanceof Error ? error.message : 'Failed to start remote launch'
+        _failedRemoteLaunchIdByTicket[ticket.id] = launchId
+        setRemoteProgress((prev) => ({ ...prev, [step]: 'error' }))
+        setRemoteError({ step, message })
+        setRemotePhase('failed')
+      } finally {
+        unsub()
+        remoteUnsubRef.current = null
+        setIsSending(false)
+      }
+      return
+    }
 
     // ── Connection mode path ──────────────────────────────────────
     if (isConnectionMode && connectionId) {
       try {
+        const connection = useConnectionStore
+          .getState()
+          .connections.find((c) => c.id === connectionId)
+        const connectionPath = connection?.path
+        const effectivePromptText = await convertOversizedGoalPrompt(
+          promptText,
+          composedGoalPrompt,
+          connectionPath
+        )
+
         // Create connection session
         const createConnectionSession = useSessionStore.getState().createConnectionSession
         const effectiveModel = selectedModel ?? autoResolvedModel ?? undefined
         const modelOverride = effectiveModel ? { ...effectiveModel, agentSdk } : undefined
         const cliPendingPrompt =
           agentSdk === 'claude-code-cli'
-            ? composePromptForSdk(mode, agentSdk, promptText, goalMode, goalCriteria, {
+            ? composePromptForSdk(mode, agentSdk, effectivePromptText, goalMode, goalCriteria, {
                 claudeCli: true
               })
             : null
@@ -499,6 +1126,14 @@ export function WorktreePickerModal({
             0
           )
 
+        // Badge records what the session ACTUALLY runs: the created session
+        // row's resolved model wins over the modal's own chain (createSession
+        // resolves independently and can differ), then the picked/auto model,
+        // then the per-SDK resolution + hard fallback (never null).
+        const badgeModel = resolveBadgeModel(
+          { sdk: agentSdk, model: effectiveModel ?? null, codexFastMode },
+          sessionResult.session
+        )
         await updateTicket(ticket.id, ticket.project_id, {
           current_session_id: sessionId,
           worktree_id: null,
@@ -507,13 +1142,31 @@ export function WorktreePickerModal({
           sort_order: sortOrder,
           plan_ready: false,
           goal_mode: goalMode,
-          goal_success_criteria: goalMode ? goalCriteria.trim() : null
+          goal_success_criteria: goalMode ? goalCriteria.trim() : null,
+          model_provider_id: badgeModel.providerID,
+          model_id: badgeModel.modelID,
+          model_variant: badgeModel.variant,
+          // A single-model (re)launch shouldn't keep claiming membership in a
+          // stale multi-launch group.
+          variant_group_id: null,
+          // Clears a stale Save & Queue config so this manual launch can't be
+          // auto-launched again later (same hole as the worktree path below).
+          pending_launch_config: null
         })
+
+        // Name the connection after the ticket unless the user already renamed it
+        const ticketTitle = ticket.title.trim()
+        if (connection && !connection.custom_name && ticketTitle) {
+          void useConnectionStore.getState().renameConnection(connectionId, ticketTitle)
+        }
 
         void autoPinBaseWorktree(ticket.project_id)
 
         // Trigger usage refresh so the board shows up-to-date usage (debounced in store)
-        useUsageStore.getState().fetchUsageForProvider(resolveDefaultUsageProvider(agentSdk))
+        const connUsageProvider = resolveDefaultUsageProvider(agentSdk)
+        if (connUsageProvider) {
+          useUsageStore.getState().fetchUsageForProvider(connUsageProvider)
+        }
 
         // In sticky-tab mode, stay on the board instead of switching to the new session
         if (useSettingsStore.getState().boardMode === 'sticky-tab') {
@@ -529,7 +1182,7 @@ export function WorktreePickerModal({
         if (sessionAgentSdk === 'claude-code-cli') {
           const outboundPrompt =
             cliPendingPrompt ??
-            composePromptForSdk(mode, sessionAgentSdk, promptText, goalMode, goalCriteria, {
+            composePromptForSdk(mode, sessionAgentSdk, effectivePromptText, goalMode, goalCriteria, {
               claudeCli: true
             })
 
@@ -552,9 +1205,6 @@ export function WorktreePickerModal({
         }
 
         // Connect to opencode using connection path
-        const connectionPath = useConnectionStore
-          .getState()
-          .connections.find((c) => c.id === connectionId)?.path
         if (!connectionPath) return
 
         const connectResult = unwrapEnvelope(await opencodeApi.connect(connectionPath, sessionId))
@@ -569,11 +1219,11 @@ export function WorktreePickerModal({
         })
 
         // Send prompt
-        if (promptText.trim()) {
+        if (effectivePromptText.trim()) {
           const outboundPrompt = composePromptForSdk(
             mode,
             sessionAgentSdk,
-            promptText,
+            effectivePromptText,
             goalMode,
             goalCriteria,
             { claudeCli: false }
@@ -620,6 +1270,26 @@ export function WorktreePickerModal({
     try {
       let worktreeId = selectedWorktreeId
 
+      // Row 1 (the existing controls) first, then each extra model row. Row 1's
+      // model uses the same effective-model chain as the single-model launch;
+      // unpicked extra rows snapshot the concrete row-resolved model the
+      // ModelSelector displayed — downstream null-resolution ignores mode
+      // defaults, so passing null could launch a different model than shown.
+      const entries: LaunchModelConfig[] = [
+        {
+          sdk: agentSdk,
+          model: selectedModel ?? autoResolvedModel ?? null,
+          codexFastMode,
+          customProviderId: effectiveCustomProviderId
+        },
+        ...extraModelRows.map((r) => ({
+          sdk: r.sdk,
+          model: r.model ?? resolveRowDefaultModel(r.sdk, mode),
+          codexFastMode: r.codexFastMode,
+          customProviderId: r.sdk === 'claude-code-cli' ? r.customProviderId : null
+        }))
+      ]
+
       // ── Save config only path: serialize config, don't create session ─
       if (saveConfigOnly) {
         const pendingConfig = {
@@ -632,7 +1302,11 @@ export function WorktreePickerModal({
           sdk: agentSdk,
           codexFastMode,
           goalMode,
-          goalSuccessCriteria: goalMode ? goalCriteria.trim() : null
+          goalSuccessCriteria: goalMode ? goalCriteria.trim() : null,
+          customProviderId: effectiveCustomProviderId,
+          // Multi-model entries (row 1 first). Legacy sdk/model/codexFastMode
+          // above stay so older builds can still auto-launch entries[0].
+          ...(isMultiModel ? { models: entries } : {})
         }
 
         const sortOrder = useKanbanStore
@@ -648,7 +1322,15 @@ export function WorktreePickerModal({
           sort_order: sortOrder,
           mode,
           goal_mode: goalMode,
-          goal_success_criteria: goalMode ? goalCriteria.trim() : null
+          goal_success_criteria: goalMode ? goalCriteria.trim() : null,
+          // Badge fields mean "what launched" — a queued-not-yet-launched
+          // ticket must have none (backward-drag doesn't clear them, so a
+          // relaunch-requeue would show the PREVIOUS launch's badge until
+          // auto-launch overwrites). Auto-launch stamps them at launch time.
+          model_provider_id: null,
+          model_id: null,
+          model_variant: null,
+          variant_group_id: null
         })
 
         onSendComplete?.()
@@ -707,6 +1389,37 @@ export function WorktreePickerModal({
 
       void autoPinBaseWorktree(projectId)
 
+      // ── Multi-model launch: hand off to the background orchestrator ──
+      // It owns EVERYTHING after this point — worktree creation, ticket
+      // duplication, all ticket updates, and the per-SDK prompt composition — so
+      // the modal creates/mutates nothing here and closes immediately (no spinner).
+      if (isMultiModel) {
+        const targetBranch = sourceBranch ?? defaultBranchName
+        _lastSourceBranchByProject[projectId] = targetBranch
+        const plan: MultiModelLaunchPlan = {
+          ticket: { id: ticket.id, title: ticket.title },
+          projectId,
+          // RAW prompt — the pipeline composes per SDK (plan prefix, goal wrap,
+          // oversized-goal plan-file swap) inside launchTicketWithModel; composing
+          // it here would double-prefix.
+          prompt: promptText.trim() || buildPrompt(mode, ticket),
+          mode,
+          sourceBranch: targetBranch,
+          goalMode,
+          goalSuccessCriteria: goalMode ? goalCriteria.trim() : null,
+          entries
+        }
+        onSendComplete?.()
+        onOpenChange(false)
+        toast.success(`Starting ${entries.length} sessions`)
+        // The orchestrator itself never rethrows (it toasts internally) — this
+        // .catch is defense-in-depth against an unhandled rejection reaching here.
+        void runMultiModelLaunch(plan).catch((err) => {
+          console.error('runMultiModelLaunch rejected unexpectedly', err)
+        })
+        return
+      }
+
       // Create new worktree if needed
       if (isNewWorktree && project) {
         const targetBranch = sourceBranch ?? defaultBranchName
@@ -733,18 +1446,33 @@ export function WorktreePickerModal({
         return
       }
 
+      // Resolve the worktree record once — needed for plan-file creation and
+      // the OpenCode connect below. Newly created worktrees are already in the
+      // store at this point.
+      const allWorktrees = Array.from(
+        useWorktreeStore.getState().worktreesByProject.values()
+      ).flat()
+      const worktree = allWorktrees.find((w) => w.id === worktreeId)
+
+      const effectivePromptText = await convertOversizedGoalPrompt(
+        promptText,
+        composedGoalPrompt,
+        worktree?.path
+      )
+
       // Create session in the selected worktree
       const effectiveModel = selectedModel ?? autoResolvedModel ?? undefined
       const modelOverride = effectiveModel ? { ...effectiveModel, agentSdk } : undefined
       const cliPendingPrompt =
         agentSdk === 'claude-code-cli'
-          ? composePromptForSdk(mode, agentSdk, promptText, goalMode, goalCriteria, {
+          ? composePromptForSdk(mode, agentSdk, effectivePromptText, goalMode, goalCriteria, {
               claudeCli: true
             })
           : null
       const createOptions = {
         ...(modelOverride ? { modelOverride } : {}),
-        ...(cliPendingPrompt ? { pendingMessage: cliPendingPrompt } : {})
+        ...(cliPendingPrompt ? { pendingMessage: cliPendingPrompt } : {}),
+        ...(effectiveCustomProviderId ? { customProviderId: effectiveCustomProviderId } : {})
       }
       const sessionResult = await createSession(
         worktreeId,
@@ -785,6 +1513,16 @@ export function WorktreePickerModal({
         .getState()
         .computeSortOrder(useKanbanStore.getState().getTicketsByColumn(projectId, 'in_progress'), 0)
 
+      // Badge records what the session ACTUALLY runs: the created session
+      // row's resolved model wins over the modal's own chain (createSession
+      // resolves independently and can differ), then the picked/auto model,
+      // then the per-SDK resolution + hard fallback (never null).
+      const badgeModel =
+        resolveCustomProviderBadge(effectiveCustomProviderId) ??
+        resolveBadgeModel(
+          { sdk: agentSdk, model: effectiveModel ?? null, codexFastMode },
+          sessionResult.session
+        )
       await updateTicket(ticket.id, projectId, {
         current_session_id: sessionId,
         worktree_id: worktreeId,
@@ -793,11 +1531,23 @@ export function WorktreePickerModal({
         sort_order: sortOrder,
         plan_ready: false,
         goal_mode: goalMode,
-        goal_success_criteria: goalMode ? goalCriteria.trim() : null
+        goal_success_criteria: goalMode ? goalCriteria.trim() : null,
+        model_provider_id: badgeModel.providerID,
+        model_id: badgeModel.modelID,
+        model_variant: badgeModel.variant,
+        // A single-model (re)launch shouldn't keep claiming membership in a
+        // stale multi-launch group.
+        variant_group_id: null,
+        // Clears a stale Save & Queue config so this manual launch can't be
+        // auto-launched again later (e.g. once its blocking dependency resolves).
+        pending_launch_config: null
       })
 
       // Trigger usage refresh so the board shows up-to-date usage (debounced in store)
-      useUsageStore.getState().fetchUsageForProvider(resolveDefaultUsageProvider(agentSdk))
+      const launchUsageProvider = resolveDefaultUsageProvider(agentSdk, effectiveCustomProviderId)
+      if (launchUsageProvider) {
+        useUsageStore.getState().fetchUsageForProvider(launchUsageProvider)
+      }
 
       // In sticky-tab mode, stay on the board instead of switching to the new session
       if (useSettingsStore.getState().boardMode === 'sticky-tab') {
@@ -813,7 +1563,7 @@ export function WorktreePickerModal({
       if (sessionAgentSdk === 'claude-code-cli') {
         const outboundPrompt =
           cliPendingPrompt ??
-          composePromptForSdk(mode, sessionAgentSdk, promptText, goalMode, goalCriteria, {
+          composePromptForSdk(mode, sessionAgentSdk, effectivePromptText, goalMode, goalCriteria, {
             claudeCli: true
           })
 
@@ -836,11 +1586,6 @@ export function WorktreePickerModal({
       }
 
       // ── Start the OpenCode session in the background ──────────
-      // Resolve worktree path from the store
-      const allWorktrees = Array.from(
-        useWorktreeStore.getState().worktreesByProject.values()
-      ).flat()
-      const worktree = allWorktrees.find((w) => w.id === worktreeId)
       if (!worktree?.path) return
 
       // Connect to OpenCode to create the AI session
@@ -857,11 +1602,11 @@ export function WorktreePickerModal({
       })
 
       // Send the prompt — apply plan mode prefix for opencode SDK
-      if (promptText.trim()) {
+      if (effectivePromptText.trim()) {
         const outboundPrompt = composePromptForSdk(
           mode,
           sessionAgentSdk,
-          promptText,
+          effectivePromptText,
           goalMode,
           goalCriteria,
           { claudeCli: false }
@@ -914,6 +1659,7 @@ export function WorktreePickerModal({
     projectId,
     createSession,
     agentSdk,
+    effectiveCustomProviderId,
     mode,
     promptText,
     updateTicket,
@@ -927,16 +1673,33 @@ export function WorktreePickerModal({
     codexFastMode,
     goalMode,
     goalCriteria,
+    composedGoalPrompt,
     isConnectionMode,
-    connectionId
+    connectionId,
+    isRemoteLaunchActive,
+    remotePhase,
+    resolvedSourceBranch,
+    extraModelRows,
+    isMultiModel
   ])
 
   // ── Mode toggle chip ────────────────────────────────────────────
   const ModeIcon = mode === 'build' ? Hammer : Map
   const modeLabel = mode === 'build' ? 'Build' : 'Plan'
 
+  // Block Esc / overlay-click / X-button close while a remote launch is in
+  // flight — the RPC keeps running server-side regardless, but v1 keeps the
+  // modal up so the checklist stays visible.
+  const handleDialogOpenChange = useCallback(
+    (next: boolean) => {
+      if (!next && runOnRemote && remotePhase === 'launching') return
+      onOpenChange(next)
+    },
+    [onOpenChange, runOnRemote, remotePhase]
+  )
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleDialogOpenChange}>
       <DialogContent
         data-testid="worktree-picker-modal"
         className="sm:max-w-[520px] overflow-visible"
@@ -990,12 +1753,15 @@ export function WorktreePickerModal({
                 <button
                   type="button"
                   onClick={toggleSuper}
+                  disabled={runOnRemote}
                   aria-pressed={mode === 'super-plan'}
                   aria-label={`Super mode ${mode === 'super-plan' ? 'enabled' : 'disabled'}`}
                   data-testid="wt-picker-super-toggle"
+                  title={runOnRemote ? 'Not available for remote launches' : undefined}
                   className={cn(
                     'flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium transition-colors',
                     'border select-none whitespace-nowrap',
+                    'disabled:opacity-40 disabled:cursor-not-allowed',
                     mode === 'super-plan'
                       ? 'bg-orange-500/10 border-orange-500/30 text-orange-500 hover:bg-orange-500/20 super-sparkle'
                       : 'bg-muted/50 border-border text-muted-foreground hover:bg-muted hover:text-foreground'
@@ -1158,6 +1924,140 @@ export function WorktreePickerModal({
             </div>
           )}
 
+          {/* ── Run on remote machine ────────────────────────────── */}
+          {remoteSectionVisible && (
+            <div
+              data-testid="remote-launch-section"
+              className="space-y-2.5 rounded-md border border-border/50 bg-muted/10 px-3 py-2.5"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <span className="text-sm font-medium text-foreground">
+                    Run on remote machine
+                  </span>
+                  <p className="truncate text-xs text-muted-foreground">{teleport?.url}</p>
+                </div>
+                <Switch
+                  checked={runOnRemote}
+                  onCheckedChange={setRunOnRemote}
+                  disabled={remotePhase === 'launching'}
+                  data-testid="remote-launch-toggle"
+                />
+              </div>
+
+              {runOnRemote && (
+                <>
+                  {hasAttachments && (
+                    <p
+                      data-testid="remote-attachments-notice"
+                      className="text-xs text-amber-600 dark:text-amber-400"
+                    >
+                      Attachments aren&apos;t sent to remote launches and will be stripped.
+                    </p>
+                  )}
+
+                  {remotePhase === 'idle' ? (
+                    <div className="space-y-1.5">
+                      {preflightLoading && (
+                        <p className="text-xs text-muted-foreground">
+                          Checking remote status…
+                        </p>
+                      )}
+                      {remotePreflight && !preflightLoading && (
+                        <>
+                          {(!remotePreflight.remoteConfigured || remotePreflight.error) && (
+                            <p
+                              data-testid="remote-preflight-error"
+                              className="text-xs text-destructive"
+                            >
+                              {remotePreflight.error || 'Remote machine is not configured'}
+                            </p>
+                          )}
+                          {remotePreflight.remoteConfigured &&
+                            !remotePreflight.branchOnOrigin && (
+                              <p
+                                data-testid="remote-branch-missing"
+                                className="text-xs text-destructive"
+                              >
+                                Branch {remoteBranchDisplay} doesn&apos;t exist on origin — push
+                                it first
+                              </p>
+                            )}
+                          {remotePreflight.transferErrors.length > 0 && (
+                            <ul
+                              data-testid="remote-transfer-errors"
+                              className="list-disc pl-4 text-xs text-destructive"
+                            >
+                              {remotePreflight.transferErrors.map((err) => (
+                                <li key={err}>{err}</li>
+                              ))}
+                            </ul>
+                          )}
+                          {(remotePreflight.localAhead > 0 || remotePreflight.diverged) && (
+                            <p
+                              data-testid="remote-ahead-warning"
+                              className="text-xs text-amber-600 dark:text-amber-400"
+                            >
+                              Remote will run from origin/{remoteBranchDisplay} — missing{' '}
+                              {remotePreflight.localAhead} local commit
+                              {remotePreflight.localAhead === 1 ? '' : 's'}
+                            </p>
+                          )}
+                          {remotePreflight.transfers.length > 0 && (
+                            <div className="text-xs text-muted-foreground">
+                              <p>Will copy to remote:</p>
+                              <ul className="list-disc pl-4">
+                                {remotePreflight.transfers.map((file) => (
+                                  <li key={file} className="truncate">
+                                    {file}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  ) : (
+                    <div data-testid="remote-launch-checklist" className="space-y-1.5">
+                      {REMOTE_LAUNCH_STEPS.map((step) => {
+                        const status = remoteProgress[step]
+                        return (
+                          <div
+                            key={step}
+                            data-testid={`remote-step-${step}`}
+                            className="flex items-center gap-2 text-xs"
+                          >
+                            {status === 'done' ? (
+                              <Check className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
+                            ) : status === 'running' ? (
+                              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />
+                            ) : status === 'error' ? (
+                              <X className="h-3.5 w-3.5 shrink-0 text-destructive" />
+                            ) : (
+                              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/40" />
+                            )}
+                            <span
+                              className={cn(
+                                'flex-1',
+                                status === 'error' ? 'text-destructive' : 'text-foreground'
+                              )}
+                            >
+                              {REMOTE_LAUNCH_STEP_LABELS[step]}
+                              {status === 'error' && remoteError?.step === step
+                                ? `: ${remoteError.message}`
+                                : ''}
+                            </span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
           {/* ── Provider & Model picker (hidden in pre-assign mode) ── */}
           {!preAssignOnly && (
             <div className="space-y-2">
@@ -1165,70 +2065,16 @@ export function WorktreePickerModal({
                 Provider & Model
               </label>
               {/* SDK toggle — only when 2+ SDKs are available */}
-              {availableAgentSdks && availableSdkButtonCount >= 2 && (
-                <div className="flex gap-1.5" data-testid="sdk-toggle">
-                  {availableAgentSdks.opencode && (
-                    <button
-                      type="button"
-                      data-testid="sdk-toggle-opencode"
-                      onClick={() => handleSdkChange('opencode')}
-                      className={cn(
-                        'px-2.5 py-1 rounded-md text-xs border transition-colors',
-                        agentSdk === 'opencode'
-                          ? 'bg-primary text-primary-foreground border-primary'
-                          : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
-                      )}
-                    >
-                      OpenCode
-                    </button>
-                  )}
-                  {availableAgentSdks.claude && (
-                    <button
-                      type="button"
-                      data-testid="sdk-toggle-claude-code"
-                      onClick={() => handleSdkChange('claude-code')}
-                      className={cn(
-                        'px-2.5 py-1 rounded-md text-xs border transition-colors',
-                        agentSdk === 'claude-code'
-                          ? 'bg-primary text-primary-foreground border-primary'
-                          : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
-                      )}
-                    >
-                      Claude Code
-                    </button>
-                  )}
-                  {availableAgentSdks.codex && (
-                    <button
-                      type="button"
-                      data-testid="sdk-toggle-codex"
-                      onClick={() => handleSdkChange('codex')}
-                      className={cn(
-                        'px-2.5 py-1 rounded-md text-xs border transition-colors',
-                        agentSdk === 'codex'
-                          ? 'bg-primary text-primary-foreground border-primary'
-                          : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
-                      )}
-                    >
-                      Codex
-                    </button>
-                  )}
-                  {availableAgentSdks.claude && (
-                    <button
-                      type="button"
-                      data-testid="sdk-toggle-claude-code-cli"
-                      onClick={() => handleSdkChange('claude-code-cli')}
-                      className={cn(
-                        'px-2.5 py-1 rounded-md text-xs border transition-colors',
-                        agentSdk === 'claude-code-cli'
-                          ? 'bg-primary text-primary-foreground border-primary'
-                          : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
-                      )}
-                    >
-                      Claude CLI
-                    </button>
-                  )}
-                </div>
-              )}
+              <SdkToggleGroup
+                value={uiAgentSdk}
+                customProviderId={effectiveCustomProviderId}
+                onChange={handleSdkChange}
+                availableAgentSdks={availableAgentSdks}
+                customProviders={isConnectionMode ? undefined : customProviders}
+                idPrefix="sdk-toggle"
+                disabled={runOnRemote}
+                disabledTitle="Remote launches always use Claude CLI"
+              />
               {goalAvailable && (
                 <div className="space-y-2 rounded-md border border-border/50 bg-muted/20 px-3 py-2.5">
                   <div className="flex items-center justify-between gap-3">
@@ -1264,15 +2110,20 @@ export function WorktreePickerModal({
                 </div>
               )}
               <div className="flex items-center gap-2 flex-wrap">
-                <div className="min-w-0">
-                  <ModelSelector
-                    value={selectedModel ?? autoResolvedModel}
-                    onChange={setSelectedModel}
-                    agentSdkOverride={
-                      selectedModel?.agentSdk ?? autoResolvedModel?.agentSdk ?? agentSdk
-                    }
-                  />
-                </div>
+                {/* Custom providers own their model (baked into the command) — no model picker */}
+                {!effectiveCustomProviderId && (
+                  <div className="min-w-0">
+                    <ModelSelector
+                      value={selectedModel ?? autoResolvedModel}
+                      onChange={setSelectedModel}
+                      agentSdkOverride={
+                        runOnRemote
+                          ? 'claude-code-cli'
+                          : (selectedModel?.agentSdk ?? autoResolvedModel?.agentSdk ?? agentSdk)
+                      }
+                    />
+                  </div>
+                )}
                 {agentSdk === 'codex' && (
                   <div className="shrink-0">
                     <CodexFastToggle
@@ -1284,6 +2135,75 @@ export function WorktreePickerModal({
                   </div>
                 )}
               </div>
+
+              {/* ── Extra model rows (new worktree only) ── */}
+              {extraRowsVisible && (
+                <div className="space-y-2" data-testid="extra-model-rows">
+                  {extraModelRows.map((row, i) => {
+                    const rowIndex = i + 1
+                    const rowModelValue = row.model ?? resolveRowDefaultModel(row.sdk, mode)
+                    return (
+                      <div
+                        key={row.key}
+                        data-testid={`extra-model-row-${rowIndex}`}
+                        className="space-y-2 rounded-md border border-border/50 bg-muted/10 px-3 py-2.5"
+                      >
+                        <SdkToggleGroup
+                          value={row.sdk}
+                          customProviderId={row.customProviderId}
+                          onChange={(sdk, customProviderId) =>
+                            handleRowSdkChange(row.key, sdk, customProviderId)
+                          }
+                          availableAgentSdks={availableAgentSdks}
+                          customProviders={customProviders}
+                          idPrefix={`extra-model-row-${rowIndex}-sdk`}
+                        />
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {!(row.sdk === 'claude-code-cli' && row.customProviderId) && (
+                            <div className="min-w-0">
+                              <ModelSelector
+                                value={rowModelValue}
+                                onChange={(model) => updateRowModel(row.key, model)}
+                                agentSdkOverride={row.sdk}
+                              />
+                            </div>
+                          )}
+                          {row.sdk === 'codex' && (
+                            <div className="shrink-0">
+                              <CodexFastToggle
+                                enabled={row.codexFastMode}
+                                accepted={codexFastModeAccepted}
+                                onToggle={() =>
+                                  updateRowCodexFastMode(row.key, !row.codexFastMode)
+                                }
+                                onAccept={() => updateSetting('codexFastModeAccepted', true)}
+                              />
+                            </div>
+                          )}
+                          <button
+                            type="button"
+                            data-testid={`extra-model-row-${rowIndex}-remove`}
+                            onClick={() => removeModelRow(row.key)}
+                            aria-label="Remove model"
+                            className="ml-auto shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  })}
+                  <button
+                    type="button"
+                    data-testid="add-model-row"
+                    onClick={addModelRow}
+                    className="flex items-center gap-1.5 rounded-md border border-dashed border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    Add model
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
@@ -1310,19 +2230,35 @@ export function WorktreePickerModal({
           )}
         </div>
 
+        {willUsePlanFile && (
+          <div
+            data-testid="goal-plan-file-notice"
+            className="w-full rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-600 dark:text-amber-400"
+          >
+            Will be converted to an md file for implementation (&gt;3k characters)
+          </div>
+        )}
+
         <DialogFooter className="pt-1">
           <Button
             type="button"
             variant="outline"
             onClick={() => onOpenChange(false)}
+            disabled={runOnRemote && remotePhase === 'launching'}
             data-testid="wt-picker-cancel-btn"
           >
-            Cancel
+            {runOnRemote && remotePhase === 'failed' ? 'Close' : 'Cancel'}
           </Button>
           <Button
             type="button"
             data-testid="wt-picker-send-btn"
-            disabled={!canSend}
+            disabled={
+              runOnRemote && remotePhase === 'launching'
+                ? true
+                : runOnRemote && remotePhase === 'failed'
+                  ? false
+                  : !canSend
+            }
             onClick={handleSend}
             className={cn(
               'gap-1.5',
@@ -1343,10 +2279,24 @@ export function WorktreePickerModal({
                 <Send className="h-3.5 w-3.5" />
                 {isSending ? 'Saving...' : 'Save & Queue'}
               </>
+            ) : runOnRemote && remotePhase === 'launching' ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Launching…
+              </>
+            ) : runOnRemote && remotePhase === 'failed' ? (
+              <>
+                <Send className="h-3.5 w-3.5" />
+                Retry
+              </>
             ) : (
               <>
                 <Send className="h-3.5 w-3.5" />
-                {isSending ? 'Starting...' : 'Send'}
+                {isSending
+                  ? 'Starting...'
+                  : isMultiModel
+                    ? `Start ${1 + extraModelRows.length} sessions`
+                    : 'Send'}
               </>
             )}
           </Button>

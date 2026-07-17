@@ -71,6 +71,7 @@ describe('rpc router', () => {
     model_provider_id: null,
     model_id: null,
     model_variant: null,
+    remote_launch: null,
     created_at: '2026-05-26T00:00:00.000Z',
     updated_at: '2026-05-26T00:00:00.000Z',
     completed_at: null,
@@ -160,7 +161,12 @@ describe('rpc router', () => {
       goal_mode: false,
       goal_success_criteria: null,
       note: null,
-      created_from_session: false
+      created_from_session: false,
+      auto_approve_plan: false,
+      model_provider_id: null,
+      model_id: null,
+      model_variant: null,
+      variant_group_id: null
     }
     const calls: unknown[] = []
     const router = makeRpcRouter({
@@ -239,6 +245,218 @@ describe('rpc router', () => {
     })
   })
 
+  it('round-trips model fields and note through kanban.ticket.create', async () => {
+    const ticket = {
+      id: 'ticket-model-1',
+      project_id: project.id,
+      title: 'Ship HTTP migration',
+      description: null,
+      attachments: [],
+      column: 'todo' as const,
+      sort_order: 0,
+      current_session_id: null,
+      worktree_id: null,
+      mode: null,
+      plan_ready: false,
+      created_at: '2026-05-26T00:05:00.000Z',
+      updated_at: '2026-05-26T00:05:00.000Z',
+      archived_at: null,
+      external_provider: null,
+      external_id: null,
+      external_url: null,
+      github_pr_number: null,
+      github_pr_url: null,
+      mark: null,
+      total_tokens: 0,
+      pending_launch_config: null,
+      goal_mode: false,
+      goal_success_criteria: null,
+      note: 'Launched via multi-model',
+      created_from_session: false,
+      auto_approve_plan: false,
+      model_provider_id: 'anthropic',
+      model_id: 'claude-opus-4-6',
+      model_variant: 'thinking',
+      variant_group_id: 'group-1'
+    }
+    const calls: unknown[] = []
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      kanban: {
+        createTicket: (projectId, data) =>
+          Effect.sync(() => {
+            calls.push({ projectId, data })
+            return ticket
+          }),
+        createTicketBatch: () => Effect.die(new Error('createTicketBatch should not run')),
+        getTicket: () => Effect.die(new Error('getTicket should not run')),
+        getTicketsByProject: () => Effect.die(new Error('getTicketsByProject should not run')),
+        updateTicket: () => Effect.die(new Error('updateTicket should not run')),
+        deleteTicket: () => Effect.die(new Error('deleteTicket should not run')),
+        archiveTicket: () => Effect.die(new Error('archiveTicket should not run')),
+        archiveAllDoneTickets: () => Effect.die(new Error('archiveAllDoneTickets should not run')),
+        unarchiveTicket: () => Effect.die(new Error('unarchiveTicket should not run')),
+        moveTicket: () => Effect.die(new Error('moveTicket should not run'))
+      }
+    })
+
+    const params = {
+      project_id: project.id,
+      title: 'Ship HTTP migration',
+      description: null,
+      attachments: [],
+      column: 'todo' as const,
+      plan_ready: false,
+      note: 'Launched via multi-model',
+      model_provider_id: 'anthropic',
+      model_id: 'claude-opus-4-6',
+      model_variant: 'thinking',
+      variant_group_id: 'group-1'
+    }
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'kanban-ticket-create-model-1',
+        method: 'kanban.ticket.create',
+        params
+      })
+    )
+
+    expect(response).toEqual({
+      id: 'kanban-ticket-create-model-1',
+      ok: true,
+      value: ticket
+    })
+    expect(calls).toEqual([{ projectId: project.id, data: params }])
+  })
+
+  it('handles kanban.ticket.duplicate through the kanban RPC domain', async () => {
+    const ticket = {
+      id: 'ticket-2',
+      project_id: project.id,
+      title: 'Ship HTTP migration',
+      description: null,
+      attachments: [],
+      column: 'todo' as const,
+      sort_order: 0,
+      current_session_id: null,
+      worktree_id: null,
+      mode: null,
+      plan_ready: false,
+      created_at: '2026-05-26T00:05:00.000Z',
+      updated_at: '2026-05-26T00:05:00.000Z',
+      archived_at: null,
+      external_provider: null,
+      external_id: null,
+      external_url: null,
+      github_pr_number: null,
+      github_pr_url: null,
+      mark: null,
+      total_tokens: 0,
+      pending_launch_config: null,
+      goal_mode: false,
+      goal_success_criteria: null,
+      note: null,
+      created_from_session: false,
+      auto_approve_plan: false,
+      model_provider_id: 'anthropic',
+      model_id: 'claude-opus-4-6',
+      model_variant: 'thinking',
+      variant_group_id: 'group-1'
+    }
+    const calls: unknown[] = []
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      kanban: {
+        createTicket: () => Effect.die(new Error('createTicket should not run')),
+        createTicketBatch: () => Effect.die(new Error('createTicketBatch should not run')),
+        getTicket: () => Effect.die(new Error('getTicket should not run')),
+        getTicketsByProject: () => Effect.die(new Error('getTicketsByProject should not run')),
+        updateTicket: () => Effect.die(new Error('updateTicket should not run')),
+        deleteTicket: () => Effect.die(new Error('deleteTicket should not run')),
+        archiveTicket: () => Effect.die(new Error('archiveTicket should not run')),
+        archiveAllDoneTickets: () => Effect.die(new Error('archiveAllDoneTickets should not run')),
+        unarchiveTicket: () => Effect.die(new Error('unarchiveTicket should not run')),
+        moveTicket: () => Effect.die(new Error('moveTicket should not run')),
+        duplicateTicket: (projectId, id, overrides) =>
+          Effect.sync(() => {
+            calls.push({ projectId, id, overrides })
+            return ticket
+          })
+      }
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'kanban-ticket-duplicate-1',
+        method: 'kanban.ticket.duplicate',
+        params: {
+          projectId: project.id,
+          id: 'ticket-1',
+          overrides: {
+            column: 'in_progress',
+            model_provider_id: 'anthropic',
+            model_id: 'claude-opus-4-6',
+            model_variant: 'thinking',
+            variant_group_id: 'group-1'
+          }
+        }
+      })
+    )
+
+    expect(response).toEqual({
+      id: 'kanban-ticket-duplicate-1',
+      ok: true,
+      value: ticket
+    })
+    expect(calls).toEqual([
+      {
+        projectId: project.id,
+        id: 'ticket-1',
+        overrides: {
+          column: 'in_progress',
+          model_provider_id: 'anthropic',
+          model_id: 'claude-opus-4-6',
+          model_variant: 'thinking',
+          variant_group_id: 'group-1'
+        }
+      }
+    ])
+  })
+
+  it('validates kanban.ticket.duplicate params', async () => {
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      kanban: {
+        createTicket: () => Effect.die(new Error('createTicket should not run')),
+        createTicketBatch: () => Effect.die(new Error('createTicketBatch should not run')),
+        getTicket: () => Effect.die(new Error('getTicket should not run')),
+        getTicketsByProject: () => Effect.die(new Error('getTicketsByProject should not run')),
+        updateTicket: () => Effect.die(new Error('updateTicket should not run')),
+        deleteTicket: () => Effect.die(new Error('deleteTicket should not run')),
+        archiveTicket: () => Effect.die(new Error('archiveTicket should not run')),
+        archiveAllDoneTickets: () => Effect.die(new Error('archiveAllDoneTickets should not run')),
+        unarchiveTicket: () => Effect.die(new Error('unarchiveTicket should not run')),
+        moveTicket: () => Effect.die(new Error('moveTicket should not run')),
+        duplicateTicket: () =>
+          Effect.die(new Error('duplicateTicket should not run for invalid params'))
+      }
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'kanban-ticket-duplicate-2',
+        method: 'kanban.ticket.duplicate',
+        params: { projectId: project.id, id: 'ticket-1', overrides: { unknownField: true } }
+      })
+    )
+
+    expect(response).toMatchObject({
+      id: 'kanban-ticket-duplicate-2',
+      ok: false,
+      error: { code: 'VALIDATION_FAILED' }
+    })
+  })
+
   it('handles kanban.ticket.createBatch through the kanban RPC domain', async () => {
     const firstTicket = {
       id: 'ticket-1',
@@ -266,7 +484,12 @@ describe('rpc router', () => {
       goal_mode: false,
       goal_success_criteria: null,
       note: null,
-      created_from_session: false
+      created_from_session: false,
+      auto_approve_plan: false,
+      model_provider_id: null,
+      model_id: null,
+      model_variant: null,
+      variant_group_id: null
     }
     const secondTicket = {
       ...firstTicket,
@@ -397,7 +620,12 @@ describe('rpc router', () => {
       goal_mode: false,
       goal_success_criteria: null,
       note: null,
-      created_from_session: false
+      created_from_session: false,
+      auto_approve_plan: false,
+      model_provider_id: null,
+      model_id: null,
+      model_variant: null,
+      variant_group_id: null
     }
     const calls: Array<{ projectId: string; id: string }> = []
     const router = makeRpcRouter({
@@ -495,7 +723,12 @@ describe('rpc router', () => {
       goal_mode: false,
       goal_success_criteria: null,
       note: null,
-      created_from_session: false
+      created_from_session: false,
+      auto_approve_plan: false,
+      model_provider_id: null,
+      model_id: null,
+      model_variant: null,
+      variant_group_id: null
     }
     const calls: Array<{ projectId: string; includeArchived: boolean | undefined }> = []
     const router = makeRpcRouter({
@@ -594,7 +827,12 @@ describe('rpc router', () => {
       goal_mode: true,
       goal_success_criteria: 'Build passes',
       note: 'Keep private',
-      created_from_session: false
+      created_from_session: false,
+      auto_approve_plan: false,
+      model_provider_id: null,
+      model_id: null,
+      model_variant: null,
+      variant_group_id: null
     }
     const calls: Array<{ projectId: string; id: string; data: unknown }> = []
     const router = makeRpcRouter({
@@ -629,7 +867,7 @@ describe('rpc router', () => {
       goal_mode: true,
       goal_success_criteria: 'Build passes',
       note: 'Keep private',
-      created_from_session: false
+      auto_approve_plan: false
     }
     const response = await Effect.runPromise(
       router.handle({
@@ -677,6 +915,116 @@ describe('rpc router', () => {
       ok: false,
       error: { code: 'VALIDATION_FAILED' }
     })
+  })
+
+  it('round-trips model fields through kanban.ticket.update, then nulls them out', async () => {
+    const ticketWithModel = {
+      id: 'ticket-1',
+      project_id: project.id,
+      title: 'Ship HTTP migration',
+      description: null,
+      attachments: [],
+      column: 'in_progress' as const,
+      sort_order: 0,
+      current_session_id: null,
+      worktree_id: null,
+      mode: null,
+      plan_ready: false,
+      created_at: '2026-05-26T00:05:00.000Z',
+      updated_at: '2026-05-26T00:06:00.000Z',
+      archived_at: null,
+      external_provider: null,
+      external_id: null,
+      external_url: null,
+      github_pr_number: null,
+      github_pr_url: null,
+      mark: null,
+      total_tokens: 0,
+      pending_launch_config: null,
+      goal_mode: false,
+      goal_success_criteria: null,
+      note: null,
+      created_from_session: false,
+      auto_approve_plan: false,
+      model_provider_id: 'anthropic',
+      model_id: 'claude-opus-4-6',
+      model_variant: 'thinking',
+      variant_group_id: 'group-1'
+    }
+    const ticketWithoutModel = {
+      ...ticketWithModel,
+      updated_at: '2026-05-26T00:07:00.000Z',
+      model_provider_id: null,
+      model_id: null,
+      model_variant: null,
+      variant_group_id: null
+    }
+    const calls: Array<{ projectId: string; id: string; data: unknown }> = []
+    const responses = [ticketWithModel, ticketWithoutModel]
+    let callIndex = 0
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      kanban: {
+        createTicket: () => Effect.die(new Error('createTicket should not run')),
+        createTicketBatch: () => Effect.die(new Error('createTicketBatch should not run')),
+        getTicket: () => Effect.die(new Error('getTicket should not run')),
+        getTicketsByProject: () => Effect.die(new Error('getTicketsByProject should not run')),
+        deleteTicket: () => Effect.die(new Error('deleteTicket should not run')),
+        archiveTicket: () => Effect.die(new Error('archiveTicket should not run')),
+        archiveAllDoneTickets: () => Effect.die(new Error('archiveAllDoneTickets should not run')),
+        unarchiveTicket: () => Effect.die(new Error('unarchiveTicket should not run')),
+        moveTicket: () => Effect.die(new Error('moveTicket should not run')),
+        updateTicket: (projectId, id, data) =>
+          Effect.sync(() => {
+            calls.push({ projectId, id, data })
+            return responses[callIndex++]
+          })
+      }
+    })
+
+    const setData = {
+      model_provider_id: 'anthropic',
+      model_id: 'claude-opus-4-6',
+      model_variant: 'thinking',
+      variant_group_id: 'group-1'
+    }
+    const setResponse = await Effect.runPromise(
+      router.handle({
+        id: 'kanban-ticket-update-model-1',
+        method: 'kanban.ticket.update',
+        params: { projectId: project.id, id: 'ticket-1', data: setData }
+      })
+    )
+
+    expect(setResponse).toEqual({
+      id: 'kanban-ticket-update-model-1',
+      ok: true,
+      value: ticketWithModel
+    })
+
+    const nullData = {
+      model_provider_id: null,
+      model_id: null,
+      model_variant: null,
+      variant_group_id: null
+    }
+    const nullResponse = await Effect.runPromise(
+      router.handle({
+        id: 'kanban-ticket-update-model-2',
+        method: 'kanban.ticket.update',
+        params: { projectId: project.id, id: 'ticket-1', data: nullData }
+      })
+    )
+
+    expect(nullResponse).toEqual({
+      id: 'kanban-ticket-update-model-2',
+      ok: true,
+      value: ticketWithoutModel
+    })
+    expect(calls).toEqual([
+      { projectId: project.id, id: 'ticket-1', data: setData },
+      { projectId: project.id, id: 'ticket-1', data: nullData }
+    ])
   })
 
   it('handles kanban.ticket.delete through the kanban RPC domain', async () => {
@@ -776,7 +1124,12 @@ describe('rpc router', () => {
       goal_mode: false,
       goal_success_criteria: null,
       note: null,
-      created_from_session: false
+      created_from_session: false,
+      auto_approve_plan: false,
+      model_provider_id: null,
+      model_id: null,
+      model_variant: null,
+      variant_group_id: null
     }
     const calls: Array<{ projectId: string; id: string }> = []
     const router = makeRpcRouter({
@@ -946,7 +1299,12 @@ describe('rpc router', () => {
       goal_mode: false,
       goal_success_criteria: null,
       note: null,
-      created_from_session: false
+      created_from_session: false,
+      auto_approve_plan: false,
+      model_provider_id: null,
+      model_id: null,
+      model_variant: null,
+      variant_group_id: null
     }
     const calls: Array<{ projectId: string; ticketId: string }> = []
     const router = makeRpcRouter({
@@ -1045,7 +1403,12 @@ describe('rpc router', () => {
       goal_mode: false,
       goal_success_criteria: null,
       note: null,
-      created_from_session: false
+      created_from_session: false,
+      auto_approve_plan: false,
+      model_provider_id: null,
+      model_id: null,
+      model_variant: null,
+      variant_group_id: null
     }
     const calls: Array<{ projectId: string; id: string; column: string; sortOrder: number }> = []
     const router = makeRpcRouter({
@@ -1319,7 +1682,12 @@ describe('rpc router', () => {
       goal_mode: false,
       goal_success_criteria: null,
       note: null,
-      created_from_session: false
+      created_from_session: false,
+      auto_approve_plan: false,
+      model_provider_id: null,
+      model_id: null,
+      model_variant: null,
+      variant_group_id: null
     }
     const calls: string[] = []
     const router = makeRpcRouter({
@@ -1420,7 +1788,12 @@ describe('rpc router', () => {
       goal_mode: false,
       goal_success_criteria: null,
       note: null,
-      created_from_session: false
+      created_from_session: false,
+      auto_approve_plan: false,
+      model_provider_id: null,
+      model_id: null,
+      model_variant: null,
+      variant_group_id: null
     }
     const calls: Array<{ projectId: string; id: string; tokens: number }> = []
     const router = makeRpcRouter({
@@ -2186,7 +2559,12 @@ describe('rpc router', () => {
       goal_mode: false,
       goal_success_criteria: null,
       note: null,
-      created_from_session: false
+      created_from_session: false,
+      auto_approve_plan: false,
+      model_provider_id: null,
+      model_id: null,
+      model_variant: null,
+      variant_group_id: null
     }
     const calls: string[] = []
     const router = makeRpcRouter({
@@ -2298,7 +2676,12 @@ describe('rpc router', () => {
       goal_mode: false,
       goal_success_criteria: null,
       note: null,
-      created_from_session: false
+      created_from_session: false,
+      auto_approve_plan: false,
+      model_provider_id: null,
+      model_id: null,
+      model_variant: null,
+      variant_group_id: null
     }
     const calls: Array<{ projectId: string; ticketId: string }> = []
     const router = makeRpcRouter({
@@ -2987,6 +3370,7 @@ describe('rpc router', () => {
             return { success: true, content: 'hello from http' }
           }),
         writeFile: () => Effect.succeed(null),
+        createFile: () => Effect.succeed(null),
         readImageAsBase64: () => Effect.succeed({ data: 'unused' })
       }
     })
@@ -3013,6 +3397,7 @@ describe('rpc router', () => {
       fileOps: {
         readFile: () => Effect.succeed({ success: false, error: 'should not run' }),
         writeFile: () => Effect.succeed(null),
+        createFile: () => Effect.succeed(null),
         readImageAsBase64: () => Effect.succeed({ data: 'unused' })
       }
     })
@@ -3043,6 +3428,7 @@ describe('rpc router', () => {
             calls.push({ filePath, content })
             return null
           }),
+        createFile: () => Effect.succeed(null),
         readImageAsBase64: () => Effect.succeed({ data: 'unused' })
       }
     })
@@ -3069,6 +3455,7 @@ describe('rpc router', () => {
       fileOps: {
         readFile: () => Effect.succeed({ success: false, error: 'unused' }),
         writeFile: () => Effect.succeed(null),
+        createFile: () => Effect.succeed(null),
         readImageAsBase64: () => Effect.succeed({ data: 'unused' })
       }
     })
@@ -3088,6 +3475,81 @@ describe('rpc router', () => {
     })
   })
 
+  it('handles fileOps.createFile through the file ops RPC domain', async () => {
+    const calls: Array<{
+      directoryPath: string
+      fileName: string
+      content: string
+      overwrite: boolean
+    }> = []
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      fileOps: {
+        readFile: () => Effect.succeed({ success: false, error: 'unused' }),
+        writeFile: () => Effect.succeed(null),
+        createFile: (directoryPath, fileName, content, overwrite) =>
+          Effect.sync(() => {
+            calls.push({ directoryPath, fileName, content, overwrite })
+            return null
+          }),
+        readImageAsBase64: () => Effect.succeed({ data: 'unused' })
+      }
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'file-ops-create-file-1',
+        method: 'fileOps.createFile',
+        params: {
+          directoryPath: '/tmp/hive',
+          fileName: 'PLAN_feature.md',
+          content: '# Plan',
+          overwrite: false
+        }
+      })
+    )
+
+    expect(response).toEqual({
+      id: 'file-ops-create-file-1',
+      ok: true,
+      value: null
+    })
+    expect(calls).toEqual([
+      {
+        directoryPath: '/tmp/hive',
+        fileName: 'PLAN_feature.md',
+        content: '# Plan',
+        overwrite: false
+      }
+    ])
+  })
+
+  it('validates fileOps.createFile params', async () => {
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      fileOps: {
+        readFile: () => Effect.succeed({ success: false, error: 'unused' }),
+        writeFile: () => Effect.succeed(null),
+        createFile: () => Effect.succeed(null),
+        readImageAsBase64: () => Effect.succeed({ data: 'unused' })
+      }
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'file-ops-create-file-2',
+        method: 'fileOps.createFile',
+        params: { directoryPath: '/tmp/hive', fileName: 'PLAN_feature.md', content: '# Plan' }
+      })
+    )
+
+    expect(response).toMatchObject({
+      id: 'file-ops-create-file-2',
+      ok: false,
+      error: { code: 'VALIDATION_FAILED' }
+    })
+  })
+
   it('handles fileOps.readImageAsBase64 through the file ops RPC domain', async () => {
     const calls: string[] = []
     const router = makeRpcRouter({
@@ -3095,6 +3557,7 @@ describe('rpc router', () => {
       fileOps: {
         readFile: () => Effect.succeed({ success: false, error: 'unused' }),
         writeFile: () => Effect.succeed(null),
+        createFile: () => Effect.succeed(null),
         readImageAsBase64: (filePath) =>
           Effect.sync(() => {
             calls.push(filePath)
@@ -3125,6 +3588,7 @@ describe('rpc router', () => {
       fileOps: {
         readFile: () => Effect.succeed({ success: false, error: 'unused' }),
         writeFile: () => Effect.succeed(null),
+        createFile: () => Effect.succeed(null),
         readImageAsBase64: () => Effect.succeed({ data: 'unused' })
       }
     })
@@ -3297,7 +3761,10 @@ describe('rpc router', () => {
         getPinned: () => Effect.succeed([]),
         getAll: () => Effect.succeed({ success: true, connections: [] }),
         get: () => Effect.succeed({ success: false, error: 'unused' }),
-        delete: () => Effect.succeed({ success: false, error: 'unused' })
+        delete: () => Effect.succeed({ success: false, error: 'unused' }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' }),
+        setRecentConnectionNote: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -3337,7 +3804,10 @@ describe('rpc router', () => {
         getPinned: () => Effect.succeed([]),
         getAll: () => Effect.succeed({ success: true, connections: [] }),
         get: () => Effect.succeed({ success: false, error: 'unused' }),
-        delete: () => Effect.succeed({ success: false, error: 'unused' })
+        delete: () => Effect.succeed({ success: false, error: 'unused' }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' }),
+        setRecentConnectionNote: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -3389,7 +3859,10 @@ describe('rpc router', () => {
         getPinned: () => Effect.succeed([]),
         getAll: () => Effect.succeed({ success: true, connections: [] }),
         get: () => Effect.succeed({ success: false, error: 'unused' }),
-        delete: () => Effect.succeed({ success: false, error: 'unused' })
+        delete: () => Effect.succeed({ success: false, error: 'unused' }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' }),
+        setRecentConnectionNote: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -3429,7 +3902,10 @@ describe('rpc router', () => {
         getPinned: () => Effect.succeed([]),
         getAll: () => Effect.succeed({ success: true, connections: [] }),
         get: () => Effect.succeed({ success: false, error: 'unused' }),
-        delete: () => Effect.succeed({ success: false, error: 'unused' })
+        delete: () => Effect.succeed({ success: false, error: 'unused' }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' }),
+        setRecentConnectionNote: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -3469,7 +3945,10 @@ describe('rpc router', () => {
         getPinned: () => Effect.succeed([]),
         getAll: () => Effect.succeed({ success: true, connections: [] }),
         get: () => Effect.succeed({ success: false, error: 'unused' }),
-        delete: () => Effect.succeed({ success: false, error: 'unused' })
+        delete: () => Effect.succeed({ success: false, error: 'unused' }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' }),
+        setRecentConnectionNote: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -3509,7 +3988,10 @@ describe('rpc router', () => {
         getPinned: () => Effect.succeed([]),
         getAll: () => Effect.succeed({ success: true, connections: [] }),
         get: () => Effect.succeed({ success: false, error: 'unused' }),
-        delete: () => Effect.succeed({ success: false, error: 'unused' })
+        delete: () => Effect.succeed({ success: false, error: 'unused' }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' }),
+        setRecentConnectionNote: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -3549,7 +4031,10 @@ describe('rpc router', () => {
         getPinned: () => Effect.succeed([]),
         getAll: () => Effect.succeed({ success: true, connections: [] }),
         get: () => Effect.succeed({ success: false, error: 'unused' }),
-        delete: () => Effect.succeed({ success: false, error: 'unused' })
+        delete: () => Effect.succeed({ success: false, error: 'unused' }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' }),
+        setRecentConnectionNote: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -3589,7 +4074,10 @@ describe('rpc router', () => {
         getPinned: () => Effect.succeed([]),
         getAll: () => Effect.succeed({ success: true, connections: [] }),
         get: () => Effect.succeed({ success: false, error: 'unused' }),
-        delete: () => Effect.succeed({ success: false, error: 'unused' })
+        delete: () => Effect.succeed({ success: false, error: 'unused' }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' }),
+        setRecentConnectionNote: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -3629,7 +4117,10 @@ describe('rpc router', () => {
         getPinned: () => Effect.succeed([]),
         getAll: () => Effect.succeed({ success: true, connections: [] }),
         get: () => Effect.succeed({ success: false, error: 'unused' }),
-        delete: () => Effect.succeed({ success: false, error: 'unused' })
+        delete: () => Effect.succeed({ success: false, error: 'unused' }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' }),
+        setRecentConnectionNote: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -3669,7 +4160,10 @@ describe('rpc router', () => {
         getPinned: () => Effect.succeed([]),
         getAll: () => Effect.succeed({ success: true, connections: [] }),
         get: () => Effect.succeed({ success: false, error: 'unused' }),
-        delete: () => Effect.succeed({ success: false, error: 'unused' })
+        delete: () => Effect.succeed({ success: false, error: 'unused' }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' }),
+        setRecentConnectionNote: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -3709,7 +4203,10 @@ describe('rpc router', () => {
         getPinned: () => Effect.succeed([]),
         getAll: () => Effect.succeed({ success: true, connections: [] }),
         get: () => Effect.succeed({ success: false, error: 'unused' }),
-        delete: () => Effect.succeed({ success: false, error: 'unused' })
+        delete: () => Effect.succeed({ success: false, error: 'unused' }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' }),
+        setRecentConnectionNote: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -3749,7 +4246,10 @@ describe('rpc router', () => {
         getPinned: () => Effect.succeed([]),
         getAll: () => Effect.succeed({ success: true, connections: [] }),
         get: () => Effect.succeed({ success: false, error: 'unused' }),
-        delete: () => Effect.succeed({ success: false, error: 'unused' })
+        delete: () => Effect.succeed({ success: false, error: 'unused' }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' }),
+        setRecentConnectionNote: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -3801,7 +4301,10 @@ describe('rpc router', () => {
         getPinned: () => Effect.succeed([]),
         getAll: () => Effect.succeed({ success: true, connections: [] }),
         get: () => Effect.succeed({ success: false, error: 'unused' }),
-        delete: () => Effect.succeed({ success: false, error: 'unused' })
+        delete: () => Effect.succeed({ success: false, error: 'unused' }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' }),
+        setRecentConnectionNote: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -3841,7 +4344,10 @@ describe('rpc router', () => {
         getPinned: () => Effect.succeed([]),
         getAll: () => Effect.succeed({ success: true, connections: [] }),
         get: () => Effect.succeed({ success: false, error: 'unused' }),
-        delete: () => Effect.succeed({ success: false, error: 'unused' })
+        delete: () => Effect.succeed({ success: false, error: 'unused' }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' }),
+        setRecentConnectionNote: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -3881,7 +4387,10 @@ describe('rpc router', () => {
         getPinned: () => Effect.succeed([]),
         getAll: () => Effect.succeed({ success: true, connections: [] }),
         get: () => Effect.succeed({ success: false, error: 'unused' }),
-        delete: () => Effect.succeed({ success: false, error: 'unused' })
+        delete: () => Effect.succeed({ success: false, error: 'unused' }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' }),
+        setRecentConnectionNote: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -3921,7 +4430,10 @@ describe('rpc router', () => {
         getPinned: () => Effect.succeed([]),
         getAll: () => Effect.succeed({ success: true, connections: [] }),
         get: () => Effect.succeed({ success: false, error: 'unused' }),
-        delete: () => Effect.succeed({ success: false, error: 'unused' })
+        delete: () => Effect.succeed({ success: false, error: 'unused' }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' }),
+        setRecentConnectionNote: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -3988,7 +4500,10 @@ describe('rpc router', () => {
           }),
         getAll: () => Effect.succeed({ success: true, connections: [] }),
         get: () => Effect.succeed({ success: false, error: 'unused' }),
-        delete: () => Effect.succeed({ success: false, error: 'unused' })
+        delete: () => Effect.succeed({ success: false, error: 'unused' }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' }),
+        setRecentConnectionNote: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -4028,7 +4543,10 @@ describe('rpc router', () => {
           }),
         getAll: () => Effect.succeed({ success: true, connections: [] }),
         get: () => Effect.succeed({ success: false, error: 'unused' }),
-        delete: () => Effect.succeed({ success: false, error: 'unused' })
+        delete: () => Effect.succeed({ success: false, error: 'unused' }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' }),
+        setRecentConnectionNote: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -4095,7 +4613,10 @@ describe('rpc router', () => {
             return { success: true, connections }
           }),
         get: () => Effect.succeed({ success: false, error: 'unused' }),
-        delete: () => Effect.succeed({ success: false, error: 'unused' })
+        delete: () => Effect.succeed({ success: false, error: 'unused' }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' }),
+        setRecentConnectionNote: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -4130,7 +4651,10 @@ describe('rpc router', () => {
         getPinned: () => Effect.succeed([]),
         getAll: () => Effect.succeed({ success: true, connections: [] }),
         get: () => Effect.succeed({ success: false, error: 'unused' }),
-        delete: () => Effect.succeed({ success: false, error: 'unused' })
+        delete: () => Effect.succeed({ success: false, error: 'unused' }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' }),
+        setRecentConnectionNote: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -4194,7 +4718,10 @@ describe('rpc router', () => {
             calls.push(connectionId)
             return { success: true, connection }
           }),
-        delete: () => Effect.succeed({ success: false, error: 'unused' })
+        delete: () => Effect.succeed({ success: false, error: 'unused' }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' }),
+        setRecentConnectionNote: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -4229,7 +4756,10 @@ describe('rpc router', () => {
         getPinned: () => Effect.succeed([]),
         getAll: () => Effect.succeed({ success: true, connections: [] }),
         get: () => Effect.succeed({ success: false, error: 'should not run' }),
-        delete: () => Effect.succeed({ success: false, error: 'unused' })
+        delete: () => Effect.succeed({ success: false, error: 'unused' }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' }),
+        setRecentConnectionNote: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -4268,7 +4798,10 @@ describe('rpc router', () => {
           Effect.sync(() => {
             calls.push(connectionId)
             return { success: true }
-          })
+          }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' }),
+        setRecentConnectionNote: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -4308,7 +4841,10 @@ describe('rpc router', () => {
           Effect.sync(() => {
             calls.push(connectionId)
             return { success: true }
-          })
+          }),
+        updateMembers: () => Effect.succeed({ success: false, error: 'unused' }),
+        getRecentConnections: () => Effect.succeed({ success: false, error: 'unused' }),
+        setRecentConnectionNote: () => Effect.succeed({ success: false, error: 'unused' })
       }
     })
 
@@ -4561,6 +5097,33 @@ describe('rpc router', () => {
     expect(calls).toEqual([])
   })
 
+  it('passes usageOps.fetchForAccount userInitiated through to the usage ops RPC domain', async () => {
+    const calls: Array<{ accountId: string; userInitiated: boolean | undefined }> = []
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      usageOps: {
+        fetch: () => Effect.succeed({ success: false, error: 'unused' }),
+        fetchOpenai: () => Effect.succeed({ success: false, error: 'unused' }),
+        fetchForAccount: (accountId, userInitiated) =>
+          Effect.sync(() => {
+            calls.push({ accountId, userInitiated })
+            return { success: true, status: 'ok' as const }
+          }),
+        refreshAllForProvider: () => Effect.succeed([])
+      }
+    })
+
+    await Effect.runPromise(
+      router.handle({
+        id: 'usage-ops-fetch-for-account-3',
+        method: 'usageOps.fetchForAccount',
+        params: { accountId: 'account-1', userInitiated: true }
+      })
+    )
+
+    expect(calls).toEqual([{ accountId: 'account-1', userInitiated: true }])
+  })
+
   it('handles usageOps.refreshAllForProvider through the usage ops RPC domain', async () => {
     const result = [
       { accountId: 'account-1', success: true },
@@ -4641,7 +5204,18 @@ describe('rpc router', () => {
           }),
         getOpenAIEmail: () => Effect.succeed(null),
         listSaved: () => Effect.succeed([]),
-        removeSaved: () => Effect.succeed(false)
+        removeSaved: () => Effect.succeed(false),
+        switchAccount: () => Effect.succeed({ success: false }),
+        loginStart: () => Effect.succeed({ loginId: 'login-1' }),
+        loginStatus: () =>
+          Effect.succeed({
+            loginId: 'login-1',
+            provider: 'anthropic' as const,
+            state: 'waiting' as const,
+            email: null,
+            error: null
+          }),
+        loginCancel: () => Effect.succeed(false)
       }
     })
 
@@ -4673,7 +5247,18 @@ describe('rpc router', () => {
           }),
         getOpenAIEmail: () => Effect.succeed(null),
         listSaved: () => Effect.succeed([]),
-        removeSaved: () => Effect.succeed(false)
+        removeSaved: () => Effect.succeed(false),
+        switchAccount: () => Effect.succeed({ success: false }),
+        loginStart: () => Effect.succeed({ loginId: 'login-1' }),
+        loginStatus: () =>
+          Effect.succeed({
+            loginId: 'login-1',
+            provider: 'anthropic' as const,
+            state: 'waiting' as const,
+            email: null,
+            error: null
+          }),
+        loginCancel: () => Effect.succeed(false)
       }
     })
 
@@ -4705,7 +5290,18 @@ describe('rpc router', () => {
             return 'openai-user@example.com'
           }),
         listSaved: () => Effect.succeed([]),
-        removeSaved: () => Effect.succeed(false)
+        removeSaved: () => Effect.succeed(false),
+        switchAccount: () => Effect.succeed({ success: false }),
+        loginStart: () => Effect.succeed({ loginId: 'login-1' }),
+        loginStatus: () =>
+          Effect.succeed({
+            loginId: 'login-1',
+            provider: 'anthropic' as const,
+            state: 'waiting' as const,
+            email: null,
+            error: null
+          }),
+        loginCancel: () => Effect.succeed(false)
       }
     })
 
@@ -4737,7 +5333,18 @@ describe('rpc router', () => {
             return null
           }),
         listSaved: () => Effect.succeed([]),
-        removeSaved: () => Effect.succeed(false)
+        removeSaved: () => Effect.succeed(false),
+        switchAccount: () => Effect.succeed({ success: false }),
+        loginStart: () => Effect.succeed({ loginId: 'login-1' }),
+        loginStatus: () =>
+          Effect.succeed({
+            loginId: 'login-1',
+            provider: 'anthropic' as const,
+            state: 'waiting' as const,
+            email: null,
+            error: null
+          }),
+        loginCancel: () => Effect.succeed(false)
       }
     })
 
@@ -4767,7 +5374,8 @@ describe('rpc router', () => {
         last_fetched_at: '2026-05-26T00:00:00.000Z',
         status: 'ok' as const,
         last_error: null,
-        created_at: '2026-05-25T00:00:00.000Z'
+        created_at: '2026-05-25T00:00:00.000Z',
+        plan: null
       }
     ]
     const calls: string[] = []
@@ -4781,7 +5389,18 @@ describe('rpc router', () => {
             calls.push(provider ?? 'all')
             return accounts
           }),
-        removeSaved: () => Effect.succeed(false)
+        removeSaved: () => Effect.succeed(false),
+        switchAccount: () => Effect.succeed({ success: false }),
+        loginStart: () => Effect.succeed({ loginId: 'login-1' }),
+        loginStatus: () =>
+          Effect.succeed({
+            loginId: 'login-1',
+            provider: 'anthropic' as const,
+            state: 'waiting' as const,
+            email: null,
+            error: null
+          }),
+        loginCancel: () => Effect.succeed(false)
       }
     })
 
@@ -4813,7 +5432,18 @@ describe('rpc router', () => {
             calls.push(provider ?? 'all')
             return []
           }),
-        removeSaved: () => Effect.succeed(false)
+        removeSaved: () => Effect.succeed(false),
+        switchAccount: () => Effect.succeed({ success: false }),
+        loginStart: () => Effect.succeed({ loginId: 'login-1' }),
+        loginStatus: () =>
+          Effect.succeed({
+            loginId: 'login-1',
+            provider: 'anthropic' as const,
+            state: 'waiting' as const,
+            email: null,
+            error: null
+          }),
+        loginCancel: () => Effect.succeed(false)
       }
     })
 
@@ -4845,7 +5475,18 @@ describe('rpc router', () => {
           Effect.sync(() => {
             calls.push(accountId)
             return true
-          })
+          }),
+        switchAccount: () => Effect.succeed({ success: false }),
+        loginStart: () => Effect.succeed({ loginId: 'login-1' }),
+        loginStatus: () =>
+          Effect.succeed({
+            loginId: 'login-1',
+            provider: 'anthropic' as const,
+            state: 'waiting' as const,
+            email: null,
+            error: null
+          }),
+        loginCancel: () => Effect.succeed(false)
       }
     })
 
@@ -4877,7 +5518,18 @@ describe('rpc router', () => {
           Effect.sync(() => {
             calls.push(accountId)
             return false
-          })
+          }),
+        switchAccount: () => Effect.succeed({ success: false }),
+        loginStart: () => Effect.succeed({ loginId: 'login-1' }),
+        loginStatus: () =>
+          Effect.succeed({
+            loginId: 'login-1',
+            provider: 'anthropic' as const,
+            state: 'waiting' as const,
+            email: null,
+            error: null
+          }),
+        loginCancel: () => Effect.succeed(false)
       }
     })
 
@@ -4891,6 +5543,92 @@ describe('rpc router', () => {
 
     expect(response).toMatchObject({
       id: 'account-ops-remove-saved-2',
+      ok: false,
+      error: { code: 'VALIDATION_FAILED' }
+    })
+    expect(calls).toEqual([])
+  })
+
+  it('handles accountOps.switchAccount through the account ops RPC domain', async () => {
+    const calls: string[] = []
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      accountOps: {
+        getClaudeEmail: () => Effect.succeed(null),
+        getOpenAIEmail: () => Effect.succeed(null),
+        listSaved: () => Effect.succeed([]),
+        removeSaved: () => Effect.succeed(false),
+        switchAccount: (accountId) =>
+          Effect.sync(() => {
+            calls.push(accountId)
+            return { success: true }
+          }),
+        loginStart: () => Effect.succeed({ loginId: 'login-1' }),
+        loginStatus: () =>
+          Effect.succeed({
+            loginId: 'login-1',
+            provider: 'anthropic' as const,
+            state: 'waiting' as const,
+            email: null,
+            error: null
+          }),
+        loginCancel: () => Effect.succeed(false)
+      }
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'account-ops-switch-account-1',
+        method: 'accountOps.switchAccount',
+        params: { accountId: 'account-1' }
+      })
+    )
+
+    expect(response).toEqual({
+      id: 'account-ops-switch-account-1',
+      ok: true,
+      value: { success: true }
+    })
+    expect(calls).toEqual(['account-1'])
+  })
+
+  it('validates accountOps.switchAccount params', async () => {
+    const calls: string[] = []
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      accountOps: {
+        getClaudeEmail: () => Effect.succeed(null),
+        getOpenAIEmail: () => Effect.succeed(null),
+        listSaved: () => Effect.succeed([]),
+        removeSaved: () => Effect.succeed(false),
+        switchAccount: (accountId) =>
+          Effect.sync(() => {
+            calls.push(accountId)
+            return { success: true }
+          }),
+        loginStart: () => Effect.succeed({ loginId: 'login-1' }),
+        loginStatus: () =>
+          Effect.succeed({
+            loginId: 'login-1',
+            provider: 'anthropic' as const,
+            state: 'waiting' as const,
+            email: null,
+            error: null
+          }),
+        loginCancel: () => Effect.succeed(false)
+      }
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'account-ops-switch-account-2',
+        method: 'accountOps.switchAccount',
+        params: { accountId: 123 }
+      })
+    )
+
+    expect(response).toMatchObject({
+      id: 'account-ops-switch-account-2',
       ok: false,
       error: { code: 'VALIDATION_FAILED' }
     })
@@ -6298,6 +7036,7 @@ describe('rpc router', () => {
           }),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -6338,6 +7077,7 @@ describe('rpc router', () => {
           }),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -6379,6 +7119,7 @@ describe('rpc router', () => {
             return result
           }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -6419,6 +7160,7 @@ describe('rpc router', () => {
             return { success: true, cols: 80, rows: 24 }
           }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -6460,6 +7202,7 @@ describe('rpc router', () => {
             calls.push({ sessionId, opts })
             return result
           }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -6488,6 +7231,57 @@ describe('rpc router', () => {
     expect(calls).toEqual([{ sessionId: 'session-1', opts: { pendingPrompt: 'continue' } }])
   })
 
+  it('handles terminalOps.setClaudeCliPlanAutoApprove through the terminal ops RPC domain', async () => {
+    const calls: Array<{ sessionId: string; enabled: boolean }> = []
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      terminalOps: {
+        getConfig: () => Effect.succeed({}),
+        create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: (sessionId, enabled) =>
+          Effect.sync(() => {
+            calls.push({ sessionId, enabled })
+            return { success: true }
+          }),
+        ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
+        ghosttyIsAvailable: () =>
+          Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
+        ghosttyCreateSurface: () => Effect.succeed({ success: true, surfaceId: 1 }),
+        ghosttySetFrame: () => Effect.succeed(undefined),
+        ghosttySetSize: () => Effect.succeed(undefined),
+        write: () => Effect.succeed(undefined),
+        resize: () => Effect.succeed(undefined),
+        destroy: () => Effect.succeed(undefined)
+      }
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'terminal-plan-auto-approve-1',
+        method: 'terminalOps.setClaudeCliPlanAutoApprove',
+        params: { sessionId: 'session-1', enabled: true }
+      })
+    )
+
+    expect(response).toEqual({
+      id: 'terminal-plan-auto-approve-1',
+      ok: true,
+      value: { success: true }
+    })
+    expect(calls).toEqual([{ sessionId: 'session-1', enabled: true }])
+
+    const invalid = await Effect.runPromise(
+      router.handle({
+        id: 'terminal-plan-auto-approve-2',
+        method: 'terminalOps.setClaudeCliPlanAutoApprove',
+        params: { sessionId: 'session-1', enabled: true, extra: 'nope' }
+      })
+    )
+    expect(invalid.ok).toBe(false)
+    expect(calls).toHaveLength(1)
+  })
+
   it('validates terminalOps.createClaudeCli params', async () => {
     const calls: string[] = []
     const router = makeRpcRouter({
@@ -6500,6 +7294,7 @@ describe('rpc router', () => {
             calls.push('createClaudeCli')
             return { success: true, cols: 80, rows: 24 }
           }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -6537,6 +7332,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () =>
           Effect.sync(() => {
             calls.push('ghosttyInit')
@@ -6577,6 +7373,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () =>
           Effect.sync(() => {
             calls.push('ghosttyInit')
@@ -6618,6 +7415,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.sync(() => {
@@ -6657,6 +7455,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.sync(() => {
@@ -6703,6 +7502,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -6743,6 +7543,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -6799,6 +7600,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -6838,6 +7640,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -6889,6 +7692,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -6928,6 +7732,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -6999,6 +7804,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -7041,6 +7847,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -7095,6 +7902,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -7136,6 +7944,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -7189,6 +7998,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -7231,6 +8041,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -7285,6 +8096,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -7328,6 +8140,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -7383,6 +8196,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -7427,6 +8241,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -7483,6 +8298,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -7528,6 +8344,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -7594,6 +8411,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -7636,6 +8454,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -7683,6 +8502,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -7730,6 +8550,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -7777,6 +8598,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -7825,6 +8647,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -7873,6 +8696,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -7912,6 +8736,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -7951,6 +8776,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -7990,6 +8816,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -8029,6 +8856,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -8068,6 +8896,7 @@ describe('rpc router', () => {
         getConfig: () => Effect.succeed({}),
         create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
         createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
         ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
         ghosttyIsAvailable: () =>
           Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
@@ -36164,6 +36993,7 @@ describe('rpc router', () => {
         isAndroidProject: () => Effect.succeed(false),
         loadLanguageIcons: () => Effect.succeed({}),
         initRepository: () => Effect.succeed({ success: true }),
+        createProjectFolder: () => Effect.succeed({ success: false }),
         pickProjectIcon: () => Effect.succeed({ success: false, error: 'cancelled' }),
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
@@ -36204,6 +37034,7 @@ describe('rpc router', () => {
         isAndroidProject: () => Effect.succeed(false),
         loadLanguageIcons: () => Effect.succeed({}),
         initRepository: () => Effect.succeed({ success: true }),
+        createProjectFolder: () => Effect.succeed({ success: false }),
         pickProjectIcon: () => Effect.succeed({ success: false, error: 'cancelled' }),
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
@@ -36248,6 +37079,7 @@ describe('rpc router', () => {
         isAndroidProject: () => Effect.succeed(false),
         loadLanguageIcons: () => Effect.succeed({}),
         initRepository: () => Effect.succeed({ success: true }),
+        createProjectFolder: () => Effect.succeed({ success: false }),
         pickProjectIcon: () => Effect.succeed({ success: false, error: 'cancelled' }),
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
@@ -36289,6 +37121,7 @@ describe('rpc router', () => {
         isAndroidProject: () => Effect.succeed(false),
         loadLanguageIcons: () => Effect.succeed({}),
         initRepository: () => Effect.succeed({ success: true }),
+        createProjectFolder: () => Effect.succeed({ success: false }),
         pickProjectIcon: () => Effect.succeed({ success: false, error: 'cancelled' }),
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
@@ -36334,6 +37167,7 @@ describe('rpc router', () => {
         isAndroidProject: () => Effect.succeed(false),
         loadLanguageIcons: () => Effect.succeed({}),
         initRepository: () => Effect.succeed({ success: true }),
+        createProjectFolder: () => Effect.succeed({ success: false }),
         pickProjectIcon: () => Effect.succeed({ success: false, error: 'cancelled' }),
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
@@ -36375,6 +37209,7 @@ describe('rpc router', () => {
         isAndroidProject: () => Effect.succeed(false),
         loadLanguageIcons: () => Effect.succeed({}),
         initRepository: () => Effect.succeed({ success: true }),
+        createProjectFolder: () => Effect.succeed({ success: false }),
         pickProjectIcon: () => Effect.succeed({ success: false, error: 'cancelled' }),
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
@@ -36419,6 +37254,7 @@ describe('rpc router', () => {
         isAndroidProject: () => Effect.succeed(false),
         loadLanguageIcons: () => Effect.succeed({}),
         initRepository: () => Effect.succeed({ success: true }),
+        createProjectFolder: () => Effect.succeed({ success: false }),
         pickProjectIcon: () => Effect.succeed({ success: false, error: 'cancelled' }),
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
@@ -36460,6 +37296,7 @@ describe('rpc router', () => {
         isAndroidProject: () => Effect.succeed(false),
         loadLanguageIcons: () => Effect.succeed({}),
         initRepository: () => Effect.succeed({ success: true }),
+        createProjectFolder: () => Effect.succeed({ success: false }),
         pickProjectIcon: () => Effect.succeed({ success: false, error: 'cancelled' }),
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
@@ -36500,6 +37337,7 @@ describe('rpc router', () => {
         isAndroidProject: () => Effect.succeed(false),
         loadLanguageIcons: () => Effect.succeed({}),
         initRepository: () => Effect.succeed({ success: true }),
+        createProjectFolder: () => Effect.succeed({ success: false }),
         pickProjectIcon: () => Effect.succeed({ success: false, error: 'cancelled' }),
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
@@ -36540,6 +37378,7 @@ describe('rpc router', () => {
         isAndroidProject: () => Effect.succeed(false),
         loadLanguageIcons: () => Effect.succeed({}),
         initRepository: () => Effect.succeed({ success: true }),
+        createProjectFolder: () => Effect.succeed({ success: false }),
         pickProjectIcon: () => Effect.succeed({ success: false, error: 'cancelled' }),
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
@@ -36580,6 +37419,7 @@ describe('rpc router', () => {
         isAndroidProject: () => Effect.succeed(false),
         loadLanguageIcons: () => Effect.succeed({}),
         initRepository: () => Effect.succeed({ success: true }),
+        createProjectFolder: () => Effect.succeed({ success: false }),
         pickProjectIcon: () => Effect.succeed({ success: false, error: 'cancelled' }),
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
@@ -36620,6 +37460,7 @@ describe('rpc router', () => {
         isAndroidProject: () => Effect.succeed(false),
         loadLanguageIcons: () => Effect.succeed({}),
         initRepository: () => Effect.succeed({ success: true }),
+        createProjectFolder: () => Effect.succeed({ success: false }),
         pickProjectIcon: () => Effect.succeed({ success: false, error: 'cancelled' }),
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
@@ -36662,6 +37503,7 @@ describe('rpc router', () => {
         isAndroidProject: () => Effect.succeed(false),
         loadLanguageIcons: () => Effect.succeed({}),
         initRepository: () => Effect.succeed({ success: true }),
+        createProjectFolder: () => Effect.succeed({ success: false }),
         pickProjectIcon: () => Effect.succeed({ success: false, error: 'cancelled' }),
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
@@ -36702,6 +37544,7 @@ describe('rpc router', () => {
         isAndroidProject: () => Effect.succeed(false),
         loadLanguageIcons: () => Effect.succeed({}),
         initRepository: () => Effect.succeed({ success: true }),
+        createProjectFolder: () => Effect.succeed({ success: false }),
         pickProjectIcon: () => Effect.succeed({ success: false, error: 'cancelled' }),
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
@@ -36743,6 +37586,7 @@ describe('rpc router', () => {
         isAndroidProject: () => Effect.succeed(false),
         loadLanguageIcons: () => Effect.succeed({}),
         initRepository: () => Effect.succeed({ success: true }),
+        createProjectFolder: () => Effect.succeed({ success: false }),
         pickProjectIcon: () => Effect.succeed({ success: false, error: 'cancelled' }),
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
@@ -36783,6 +37627,7 @@ describe('rpc router', () => {
         isAndroidProject: () => Effect.succeed(false),
         loadLanguageIcons: () => Effect.succeed({}),
         initRepository: () => Effect.succeed({ success: true }),
+        createProjectFolder: () => Effect.succeed({ success: false }),
         pickProjectIcon: () => Effect.succeed({ success: false, error: 'cancelled' }),
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
@@ -36833,6 +37678,7 @@ describe('rpc router', () => {
         isAndroidProject: () => Effect.succeed(false),
         loadLanguageIcons: () => Effect.succeed({}),
         initRepository: () => Effect.succeed({ success: true }),
+        createProjectFolder: () => Effect.succeed({ success: false }),
         pickProjectIcon: () => Effect.succeed({ success: false, error: 'cancelled' }),
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
@@ -36873,6 +37719,7 @@ describe('rpc router', () => {
         isAndroidProject: () => Effect.succeed(false),
         loadLanguageIcons: () => Effect.succeed({}),
         initRepository: () => Effect.succeed({ success: true }),
+        createProjectFolder: () => Effect.succeed({ success: false }),
         pickProjectIcon: () => Effect.succeed({ success: false, error: 'cancelled' }),
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
@@ -36914,6 +37761,7 @@ describe('rpc router', () => {
         isAndroidProject: () => Effect.succeed(false),
         loadLanguageIcons: () => Effect.succeed({}),
         initRepository: () => Effect.succeed({ success: true }),
+        createProjectFolder: () => Effect.succeed({ success: false }),
         pickProjectIcon: () => Effect.succeed({ success: false, error: 'cancelled' }),
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
@@ -36954,6 +37802,7 @@ describe('rpc router', () => {
         isAndroidProject: () => Effect.succeed(false),
         loadLanguageIcons: () => Effect.succeed({}),
         initRepository: () => Effect.succeed({ success: true }),
+        createProjectFolder: () => Effect.succeed({ success: false }),
         pickProjectIcon: () => Effect.succeed({ success: false, error: 'cancelled' }),
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
@@ -36994,6 +37843,7 @@ describe('rpc router', () => {
         isAndroidProject: (projectPath) => Effect.succeed(projectPath === '/tmp/hive'),
         loadLanguageIcons: () => Effect.succeed({}),
         initRepository: () => Effect.succeed({ success: true }),
+        createProjectFolder: () => Effect.succeed({ success: false }),
         pickProjectIcon: () => Effect.succeed({ success: false, error: 'cancelled' }),
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
@@ -37034,6 +37884,7 @@ describe('rpc router', () => {
         isAndroidProject: () => Effect.succeed(false),
         loadLanguageIcons: () => Effect.succeed({}),
         initRepository: () => Effect.succeed({ success: true }),
+        createProjectFolder: () => Effect.succeed({ success: false }),
         pickProjectIcon: () => Effect.succeed({ success: false, error: 'cancelled' }),
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
@@ -37077,6 +37928,7 @@ describe('rpc router', () => {
         isAndroidProject: () => Effect.succeed(false),
         loadLanguageIcons: () => Effect.succeed(icons),
         initRepository: () => Effect.succeed({ success: true }),
+        createProjectFolder: () => Effect.succeed({ success: false }),
         pickProjectIcon: () => Effect.succeed({ success: false, error: 'cancelled' }),
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
@@ -37117,6 +37969,7 @@ describe('rpc router', () => {
         isAndroidProject: () => Effect.succeed(false),
         loadLanguageIcons: () => Effect.succeed({}),
         initRepository: () => Effect.succeed({ success: true }),
+        createProjectFolder: () => Effect.succeed({ success: false }),
         pickProjectIcon: () => Effect.succeed({ success: false, error: 'cancelled' }),
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
@@ -37159,6 +38012,7 @@ describe('rpc router', () => {
         loadLanguageIcons: () => Effect.succeed({}),
         initRepository: (path) =>
           Effect.succeed(path === '/tmp/hive' ? result : { success: false, error: 'bad path' }),
+        createProjectFolder: () => Effect.succeed({ success: false }),
         pickProjectIcon: () => Effect.succeed({ success: false, error: 'cancelled' }),
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
@@ -37199,6 +38053,7 @@ describe('rpc router', () => {
         isAndroidProject: () => Effect.succeed(false),
         loadLanguageIcons: () => Effect.succeed({}),
         initRepository: () => Effect.succeed({ success: true }),
+        createProjectFolder: () => Effect.succeed({ success: false }),
         pickProjectIcon: () => Effect.succeed({ success: false, error: 'cancelled' }),
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
@@ -37240,6 +38095,7 @@ describe('rpc router', () => {
         isAndroidProject: () => Effect.succeed(false),
         loadLanguageIcons: () => Effect.succeed({}),
         initRepository: () => Effect.succeed({ success: true }),
+        createProjectFolder: () => Effect.succeed({ success: false }),
         pickProjectIcon: (projectId) =>
           Effect.succeed(
             projectId === 'project-1' ? result : { success: false, error: 'cancelled' }
@@ -37283,6 +38139,7 @@ describe('rpc router', () => {
         isAndroidProject: () => Effect.succeed(false),
         loadLanguageIcons: () => Effect.succeed({}),
         initRepository: () => Effect.succeed({ success: true }),
+        createProjectFolder: () => Effect.succeed({ success: false }),
         pickProjectIcon: () => Effect.succeed({ success: false, error: 'cancelled' }),
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
@@ -37323,6 +38180,7 @@ describe('rpc router', () => {
         isAndroidProject: () => Effect.succeed(false),
         loadLanguageIcons: () => Effect.succeed({}),
         initRepository: () => Effect.succeed({ success: true }),
+        createProjectFolder: () => Effect.succeed({ success: false }),
         pickProjectIcon: () => Effect.succeed({ success: false, error: 'cancelled' }),
         removeProjectIcon: (projectId) =>
           Effect.succeed(projectId === 'project-1' ? { success: true } : { success: false }),
@@ -37364,6 +38222,7 @@ describe('rpc router', () => {
         isAndroidProject: () => Effect.succeed(false),
         loadLanguageIcons: () => Effect.succeed({}),
         initRepository: () => Effect.succeed({ success: true }),
+        createProjectFolder: () => Effect.succeed({ success: false }),
         pickProjectIcon: () => Effect.succeed({ success: false, error: 'cancelled' }),
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
@@ -37405,6 +38264,7 @@ describe('rpc router', () => {
         isAndroidProject: () => Effect.succeed(false),
         loadLanguageIcons: () => Effect.succeed({}),
         initRepository: () => Effect.succeed({ success: true }),
+        createProjectFolder: () => Effect.succeed({ success: false }),
         pickProjectIcon: () => Effect.succeed({ success: false, error: 'cancelled' }),
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: (filename) =>
@@ -37446,6 +38306,7 @@ describe('rpc router', () => {
         isAndroidProject: () => Effect.succeed(false),
         loadLanguageIcons: () => Effect.succeed({}),
         initRepository: () => Effect.succeed({ success: true }),
+        createProjectFolder: () => Effect.succeed({ success: false }),
         pickProjectIcon: () => Effect.succeed({ success: false, error: 'cancelled' }),
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
@@ -37487,6 +38348,7 @@ describe('rpc router', () => {
         isAndroidProject: () => Effect.succeed(false),
         loadLanguageIcons: () => Effect.succeed({}),
         initRepository: () => Effect.succeed({ success: true }),
+        createProjectFolder: () => Effect.succeed({ success: false }),
         pickProjectIcon: () => Effect.succeed({ success: false, error: 'cancelled' }),
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
@@ -37528,6 +38390,7 @@ describe('rpc router', () => {
         isAndroidProject: () => Effect.succeed(false),
         loadLanguageIcons: () => Effect.succeed({}),
         initRepository: () => Effect.succeed({ success: true }),
+        createProjectFolder: () => Effect.succeed({ success: false }),
         pickProjectIcon: () => Effect.succeed({ success: false, error: 'cancelled' }),
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
@@ -37569,6 +38432,7 @@ describe('rpc router', () => {
         isAndroidProject: () => Effect.succeed(false),
         loadLanguageIcons: () => Effect.succeed({}),
         initRepository: () => Effect.succeed({ success: true }),
+        createProjectFolder: () => Effect.succeed({ success: false }),
         pickProjectIcon: () => Effect.succeed({ success: false, error: 'cancelled' }),
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
@@ -37610,6 +38474,7 @@ describe('rpc router', () => {
         isAndroidProject: () => Effect.succeed(false),
         loadLanguageIcons: () => Effect.succeed({}),
         initRepository: () => Effect.succeed({ success: true }),
+        createProjectFolder: () => Effect.succeed({ success: false }),
         pickProjectIcon: () => Effect.succeed({ success: false, error: 'cancelled' }),
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),

@@ -50,6 +50,9 @@ import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { dbApi } from '@/api/db-api'
 import { gitApi } from '@/api/git-api'
 import { opencodeApi } from '@/api/opencode-api'
+import { remoteLaunchApi } from '@/api/remote-launch-api'
+import { useRemoteLaunchStore } from '@/stores/useRemoteLaunchStore'
+import { parseRemoteLaunch } from '@shared/types/remote-launch'
 
 // ── Layout animation spring ─────────────────────────────────────────
 const CARD_LAYOUT_SPRING = {
@@ -397,6 +400,18 @@ export function KanbanColumn({
 
   const handleDragOver = useCallback(
     (e: React.DragEvent) => {
+      // Done is date-sorted (newest first): reordering within it is disabled,
+      // and cross-column drops always land at the top regardless of cursor position
+      if (isDoneColumn) {
+        if (getKanbanDragData()?.sourceColumn === 'done') return
+        e.preventDefault()
+        e.dataTransfer.dropEffect = 'move'
+        setIsDragOver(true)
+        dropIndexRef.current = 0
+        setDropIndex(0)
+        return
+      }
+
       e.preventDefault()
       e.dataTransfer.dropEffect = 'move'
       setIsDragOver(true)
@@ -418,7 +433,7 @@ export function KanbanColumn({
       dropIndexRef.current = index
       setDropIndex(index)
     },
-    [tickets.length]
+    [tickets.length, isDoneColumn]
   )
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
@@ -577,10 +592,13 @@ export function KanbanColumn({
         // Trigger usage refresh when simple-mode drops a ticket into In Progress
         if (column === 'in_progress') {
           const sdk = useSettingsStore.getState().defaultAgentSdk ?? 'opencode'
-          useUsageStore.getState().fetchUsageForProvider(resolveDefaultUsageProvider(sdk))
+          const usageProvider = resolveDefaultUsageProvider(sdk)
+          if (usageProvider) useUsageStore.getState().fetchUsageForProvider(usageProvider)
         }
       } else {
         // ── Same-column reorder ───────────────────────────────
+        // Done is always date-sorted — manual reordering is disabled
+        if (isDoneColumn) return
         const ticketProjectId = findTicketProjectId(ticketId, draggedProjectId)
         const draggedKey = ticketKey(ticketProjectId, ticketId)
         const projectTickets = projectTicketsForColumn(ticketProjectId)
@@ -604,6 +622,7 @@ export function KanbanColumn({
       tickets.length,
       isInProgressColumn,
       isTodoColumn,
+      isDoneColumn,
       isMultiProjectMode,
       projectId,
       findTicketProjectId,
@@ -638,6 +657,24 @@ export function KanbanColumn({
             } catch {
               // Non-critical — session may already be idle
             }
+          }
+        }
+
+        // Remote-launched sessions have no local worktree/process — the agent
+        // runs in a tmux session on the remote host. Kill it there; if the
+        // remote can't be reached, abort the whole move rather than severing
+        // the ticket's only link to a still-running remote session.
+        const remoteInfo = parseRemoteLaunch(session?.remote_launch)
+        if (remoteInfo?.role === 'client' && !remoteInfo.stoppedAt) {
+          try {
+            await remoteLaunchApi.stop({ sessionId: draggedTicket.current_session_id })
+            useRemoteLaunchStore.getState().markStopped(draggedTicket.current_session_id)
+          } catch (err) {
+            toast.error(
+              `Could not stop the remote session — ticket not moved: ${err instanceof Error ? err.message : String(err)}`
+            )
+            setPendingBackwardDrag(null)
+            return
           }
         }
 

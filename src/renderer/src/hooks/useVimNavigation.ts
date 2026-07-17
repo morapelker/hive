@@ -70,7 +70,8 @@ export function useVimNavigation(): void {
         A: 'plan-ready-handoff-chevron',
         u: 'plan-ready-supercharge-fab',
         o: 'plan-ready-supercharge-local-fab',
-        s: 'plan-ready-save-ticket-fab'
+        s: 'plan-ready-save-ticket-fab',
+        f: 'plan-ready-save-file-fab'
       }
       const testId = keyToTestId[key]
       if (!testId) return false
@@ -193,7 +194,8 @@ export function useVimNavigation(): void {
         event.key === 'o' ||
         event.key === 'a' ||
         event.key === 'A' ||
-        event.key === 's'
+        event.key === 's' ||
+        event.key === 'f'
       ) {
         if (clickPlanFabButton(event.key)) {
           event.preventDefault()

@@ -15,6 +15,8 @@ interface PRNotification {
   prNumber?: number
   prTitle?: string
   worktreeId?: string
+  /** Render an Archive button for worktrees with nothing to PR */
+  showArchiveButton?: boolean
 }
 
 interface PRNotificationState {

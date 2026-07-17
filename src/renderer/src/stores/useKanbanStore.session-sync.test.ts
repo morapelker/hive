@@ -55,6 +55,11 @@ function makeTicket(overrides: Partial<KanbanTicket> = {}): KanbanTicket {
     goal_success_criteria: null,
     note: null,
     created_from_session: true,
+    auto_approve_plan: false,
+    model_provider_id: null,
+    model_id: null,
+    model_variant: null,
+    variant_group_id: null,
     ...overrides
   }
 }
@@ -245,5 +250,42 @@ describe('reconcileFinishedSessions — recovers dropped finish moves on load', 
 
     expect(columnOf('ticket-1')).toBe('in_progress')
     expect(kanbanApi.ticket.move).not.toHaveBeenCalled()
+  })
+})
+
+describe('syncTicketWithSession — implement consumes auto-approve', () => {
+  it('clears auto_approve_plan alongside plan_ready and mode on implement', async () => {
+    seed(
+      makeTicket({ column: 'in_progress', mode: 'plan', plan_ready: true, auto_approve_plan: true })
+    )
+
+    useKanbanStore.getState().syncTicketWithSession(SESSION_ID, { type: 'implement' })
+    await flush()
+
+    expect(kanbanApi.ticket.update).toHaveBeenCalledWith(PROJECT_ID, 'ticket-1', {
+      plan_ready: false,
+      mode: 'build',
+      auto_approve_plan: false
+    })
+  })
+
+  it('clears a lingering auto_approve_plan on implement even for a build ticket', async () => {
+    seed(
+      makeTicket({
+        column: 'in_progress',
+        mode: 'build',
+        plan_ready: false,
+        auto_approve_plan: true
+      })
+    )
+
+    useKanbanStore.getState().syncTicketWithSession(SESSION_ID, { type: 'implement' })
+    await flush()
+
+    expect(kanbanApi.ticket.update).toHaveBeenCalledWith(PROJECT_ID, 'ticket-1', {
+      plan_ready: false,
+      mode: 'build',
+      auto_approve_plan: false
+    })
   })
 })

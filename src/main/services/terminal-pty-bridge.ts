@@ -8,8 +8,18 @@ import {
   subscribeClaudeCliStatus,
   type ClaudeCliStatusPayload
 } from './claude-hook-server'
+import {
+  clearAllClaudeCliInteractions,
+  clearClaudeCliInteractions
+} from './claude-cli-interaction-ledger'
+import {
+  clearAllClaudeCliSubagentTracking,
+  clearClaudeCliSubagentTracking
+} from './claude-cli-subagent-tracker'
+import { setClaudeCliPlanAutoApprove } from './claude-cli-plan-auto-approve'
 import { logClaudeBinaryVersion, resolveClaudeBinaryPath } from './claude-binary-resolver'
 import { buildClaudeCliPtySpawn } from './claude-cli-spawner'
+import { getCustomProviderById } from './custom-providers'
 import { externalizeGoalHandoffPlan } from './claude-cli-plan-handoff'
 import { reassertClaudeCliPromptSubmit, writeClaudeCliPrompt } from './claude-cli-pty-prompt'
 import { watchForClaudeSessionId, type ClaudeSessionWatchHandle } from './claude-session-watcher'
@@ -57,6 +67,8 @@ function armClaudePlanFollowupWatcher(sessionId: string): void {
     sessionId,
     watchForClaudePlanFollowup(source.worktreePath, source.claudeSessionId, () => {
       closeClaudePlanFollowupWatcher(sessionId)
+      // Bypasses the interaction ledger deliberately: a plan followup implies a
+      // user prompt, whose UserPromptSubmit hook clears the ledger anyway.
       publishClaudeCliStatus({
         sessionId,
         status: 'planning',
@@ -100,21 +112,26 @@ function ensureClaudeCliStatusSubscription(): void {
 // Lone Escape / Ctrl+C. A bare Escape keypress arrives as exactly '\x1b';
 // multi-byte sequences (arrow keys, bracketed pastes) never match exactly.
 const INTERRUPT_KEYS = new Set(['\x1b', '\x03'])
-const INTERRUPTIBLE_STATUSES = new Set(['working', 'planning', 'permission'])
+const INTERRUPTIBLE_STATUSES = new Set(['working', 'planning', 'permission', 'answering'])
 
 /**
  * Claude Code never fires its Stop hook when the user interrupts a running
  * turn with Escape/Ctrl+C, and the CLI keeps running so the pty_exit fallback
  * never fires either — the session would stay stuck on 'working'. Mirror the
- * keypress itself into a status update instead. plan_ready/answering are
- * excluded: escaping those dialogs fires PostToolUseFailure hooks that the
- * existing pipeline already handles.
+ * keypress itself into a status update instead. Escaping a question or
+ * permission dialog fires no hook at all (verified empirically), so those
+ * statuses are interruptible too; plan_ready is excluded because rejecting a
+ * plan fires PostToolUseFailure(ExitPlanMode), which the pipeline handles.
  */
 export function handleClaudeCliTerminalInput(terminalId: string, data: string): void {
   if (!claudeCliSessions.has(terminalId)) return
   if (!INTERRUPT_KEYS.has(data)) return
   const last = getLastClaudeCliStatus(terminalId)
   if (!last || !INTERRUPTIBLE_STATUSES.has(last)) return
+  // No hook fires for an interrupted/denied interaction — drop any pending
+  // latch so the next hook cannot re-surface a phantom permission.
+  clearClaudeCliInteractions(terminalId)
+  clearClaudeCliSubagentTracking(terminalId)
   publishClaudeCliStatus({
     sessionId: terminalId,
     status: 'completed',
@@ -134,6 +151,8 @@ export function destroyNodePtyTerminal(terminalId: string): void {
   claudeWatchers.get(terminalId)?.close()
   claudeWatchers.delete(terminalId)
   closeClaudePlanFollowupWatcher(terminalId)
+  clearClaudeCliInteractions(terminalId)
+  clearClaudeCliSubagentTracking(terminalId)
   claudeCliSessions.delete(terminalId)
   claudeCliWorktreeBasenames.delete(terminalId)
   claudeCliTranscriptSources.delete(terminalId)
@@ -199,6 +218,9 @@ function attachNodePtyListeners(terminalId: string): void {
     claudeWatchers.delete(terminalId)
     closeClaudePlanFollowupWatcher(terminalId)
     if (claudeCliSessions.has(terminalId)) {
+      clearClaudeCliInteractions(terminalId)
+      clearClaudeCliSubagentTracking(terminalId)
+      setClaudeCliPlanAutoApprove(terminalId, false)
       publishClaudeCliStatus({
         sessionId: terminalId,
         status: 'completed',
@@ -248,11 +270,42 @@ export async function createClaudeCliTerminal(
       pendingPrompt = externalizeGoalHandoffPlan(pendingPrompt, worktreePath)
     }
 
-    const claudeBinary = resolveClaudeBinaryPath()
-    if (!claudeBinary) {
-      return { success: false, error: 'Claude binary not found on PATH' }
+    // Custom-provider sessions run a user-configured command (possibly a shell
+    // alias) through the login shell instead of the resolved claude binary, so
+    // PATH resolution and version logging don't apply to them. A deleted or
+    // blanked provider degrades to plain claude (matching the renderer launch
+    // paths) rather than permanently bricking the session's resumable
+    // transcript behind a hard error.
+    let customProviderCommand: string | null = null
+    if (session.custom_provider_id) {
+      // The wrapper spawns through a POSIX login shell ($SHELL -ilc) — Windows
+      // GUI apps have no SHELL and no /bin/zsh, so fail with a clear message
+      // instead of a broken spawn (and never silently switch to stock claude).
+      if (process.platform === 'win32') {
+        return {
+          success: false,
+          error: 'Custom providers are not supported on Windows yet'
+        }
+      }
+      const provider = getCustomProviderById(db, session.custom_provider_id)
+      if (provider?.command.trim()) {
+        customProviderCommand = provider.command
+      } else {
+        log.warn('Custom provider missing or blank; falling back to plain claude', {
+          sessionId,
+          customProviderId: session.custom_provider_id
+        })
+      }
     }
-    logClaudeBinaryVersion(claudeBinary)
+
+    let claudeBinary: string | null = null
+    if (!customProviderCommand) {
+      claudeBinary = resolveClaudeBinaryPath()
+      if (!claudeBinary) {
+        return { success: false, error: 'Claude binary not found on PATH' }
+      }
+      logClaudeBinaryVersion(claudeBinary)
+    }
 
     const alreadyExists = ptyService.has(sessionId)
     const { port } = await getClaudeHookServer()
@@ -264,15 +317,25 @@ export async function createClaudeCliTerminal(
       pendingPrompt,
       claudeBinary,
       hookSettingsJson,
-      db
+      db,
+      customProviderCommand
     })
 
     log.info('Creating Claude CLI PTY', {
       sessionId,
       command: spawn.command,
-      args: spawn.args.map((arg, index) =>
-        index === spawn.args.length - 1 && pendingPrompt ? '<prompt>' : arg
-      )
+      args: spawn.args.map((arg, index) => {
+        if (index === spawn.args.length - 1 && pendingPrompt) return '<prompt>'
+        // The custom command may embed inline secrets (ANTHROPIC_AUTH_TOKEN=…)
+        // — never write it to the log verbatim. The wrapper puts the shell
+        // script at index 1 and (for POSIX shells) argv0 at index 2; fish has
+        // no argv0 slot, so index 2 is a Hive flag there (always '--'-prefixed).
+        if (customProviderCommand && index === 1) return '<custom-provider-command>'
+        if (customProviderCommand && index === 2 && !arg.startsWith('--')) {
+          return '<custom-provider-argv0>'
+        }
+        return arg
+      })
     })
 
     if (!session.claude_session_id) {
@@ -329,6 +392,11 @@ export async function createClaudeCliTerminal(
       })
     }
     claudeCliSessions.add(sessionId)
+    // A restarted session must never inherit a stale interaction latch.
+    clearClaudeCliInteractions(sessionId)
+    // ...nor a stale subagent deferral/pending-notification set, which could
+    // otherwise swallow the next turn's Stop after a restart.
+    clearClaudeCliSubagentTracking(sessionId)
     claudeCliWorktreeBasenames.set(sessionId, path.basename(worktreePath))
     if (!pendingPrompt) {
       publishClaudeCliStatus({
@@ -377,6 +445,8 @@ export function cleanupTerminals(): void {
   claudeCliWorktreeBasenames.clear()
   claudeCliTranscriptSources.clear()
   claudeCliLastStatus.clear()
+  clearAllClaudeCliInteractions()
+  clearAllClaudeCliSubagentTracking()
   unsubscribeClaudeCliStatus?.()
   unsubscribeClaudeCliStatus = null
   resetAllClaudeCliTitleState()

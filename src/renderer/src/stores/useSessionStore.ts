@@ -11,6 +11,7 @@ import { useSettingsStore } from './useSettingsStore'
 import { getUnavailableAgentSdkMessage } from '@/lib/agent-sdk-availability'
 import { resolveSessionCreationSelection } from '@/lib/handoffSelection'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { isWindows } from '@/lib/platform'
 import { systemApi } from '@/api/system-api'
 import { dbApi } from '@/api/db-api'
 import { connectionApi } from '@/api/connection-api'
@@ -80,6 +81,7 @@ interface Session {
   opencode_session_id: string | null
   claude_session_id: string | null
   agent_sdk: AgentSdk
+  custom_provider_id?: string | null
   mode: SessionMode
   session_type: 'default' | 'board-assistant'
   model_provider_id: string | null
@@ -157,7 +159,12 @@ interface SessionState {
     projectId: string,
     agentSdkOverride?: AgentSdk,
     initialMode?: SessionMode,
-    options?: { autoFocus?: boolean; modelOverride?: SelectedModel; pendingMessage?: string | null }
+    options?: {
+      autoFocus?: boolean
+      modelOverride?: SelectedModel
+      pendingMessage?: string | null
+      customProviderId?: string | null
+    }
   ) => Promise<{ success: boolean; session?: Session; error?: string }>
   closeSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>
   reopenSession: (
@@ -181,7 +188,11 @@ interface SessionState {
   toggleSessionMode: (sessionId: string) => Promise<void>
   toggleSuperMode: (sessionId: string) => Promise<void>
   toggleSuperPlanShortcut: (sessionId: string) => Promise<void>
-  setSessionMode: (sessionId: string, mode: SessionMode) => Promise<void>
+  setSessionMode: (
+    sessionId: string,
+    mode: SessionMode,
+    options?: { syncCliPermissionMode?: boolean; applyModeDefault?: boolean }
+  ) => Promise<void>
   setSessionModel: (
     sessionId: string,
     model: SelectedModel,
@@ -234,7 +245,12 @@ interface SessionState {
     connectionId: string,
     agentSdkOverride?: AgentSdk,
     initialMode?: SessionMode,
-    opts?: { autoFocus?: boolean; modelOverride?: SelectedModel; pendingMessage?: string | null }
+    opts?: {
+      autoFocus?: boolean
+      modelOverride?: SelectedModel
+      pendingMessage?: string | null
+      customProviderId?: string | null
+    }
   ) => Promise<{ success: boolean; session?: Session; error?: string }>
   setActiveConnectionSession: (sessionId: string | null) => void
   setActiveConnection: (connectionId: string | null) => void
@@ -488,7 +504,12 @@ export const useSessionStore = create<SessionState>()(
         projectId: string,
         agentSdkOverride?: AgentSdk,
         initialMode?: SessionMode,
-        options?: { autoFocus?: boolean; modelOverride?: SelectedModel }
+        options?: {
+          autoFocus?: boolean
+          modelOverride?: SelectedModel
+          pendingMessage?: string | null
+          customProviderId?: string | null
+        }
       ) => {
         try {
           const autoFocus = options?.autoFocus !== false
@@ -499,7 +520,19 @@ export const useSessionStore = create<SessionState>()(
               initialMode,
               modelOverride: options?.modelOverride
             })
-          const unavailableProviderError = getUnavailableProviderError(defaultAgentSdk)
+          // Custom providers run their own command through the login shell —
+          // stock-claude detection (`which claude` in the Electron process) is
+          // irrelevant to them and can false-negative on GUI launches. Blocked
+          // up front on Windows (no POSIX login shell) so no dead session or
+          // ticket move happens before the spawn-time rejection.
+          const usesCustomProvider =
+            !!options?.customProviderId && defaultAgentSdk === 'claude-code-cli'
+          if (usesCustomProvider && isWindows()) {
+            return { success: false, error: 'Custom providers are not supported on Windows yet' }
+          }
+          const unavailableProviderError = usesCustomProvider
+            ? null
+            : getUnavailableProviderError(defaultAgentSdk)
           if (unavailableProviderError) {
             return { success: false, error: unavailableProviderError }
           }
@@ -514,6 +547,9 @@ export const useSessionStore = create<SessionState>()(
             project_id: projectId,
             name: isTerminal ? `Terminal ${sessionNumber}` : `Session ${sessionNumber}`,
             agent_sdk: defaultAgentSdk,
+            ...(options?.customProviderId && defaultAgentSdk === 'claude-code-cli'
+              ? { custom_provider_id: options.customProviderId }
+              : {}),
             mode: initialMode || 'build',
             ...(defaultModel
               ? {
@@ -1307,9 +1343,18 @@ export const useSessionStore = create<SessionState>()(
       },
 
       // Set session mode explicitly (also applies mode-specific model default)
-      setSessionMode: async (sessionId: string, mode: SessionMode) => {
+      // options.syncCliPermissionMode: false skips the Shift+Tab PTY sync for
+      // claude-cli sessions — for callers reacting to a mode change Claude
+      // already made itself (e.g. an approved ExitPlanMode dialog).
+      setSessionMode: async (
+        sessionId: string,
+        mode: SessionMode,
+        options?: { syncCliPermissionMode?: boolean; applyModeDefault?: boolean }
+      ) => {
         const previousMode = get().modeBySession.get(sessionId) || 'build'
-        syncClaudeCliPermissionModeIfNeeded(get(), sessionId, previousMode, mode)
+        if (options?.syncCliPermissionMode !== false) {
+          syncClaudeCliPermissionModeIfNeeded(get(), sessionId, previousMode, mode)
+        }
 
         set((state) => {
           const newModeMap = new Map(state.modeBySession)
@@ -1323,8 +1368,12 @@ export const useSessionStore = create<SessionState>()(
           console.error('Failed to persist session mode:', error)
         }
 
-        // Apply mode-specific default model (same as toggleSessionMode)
-        await get().applyModeDefaultModel(sessionId, mode)
+        // Apply mode-specific default model (same as toggleSessionMode).
+        // Handoff paths opt out: they just created the session with an
+        // explicitly picked model/variant that the default must not clobber.
+        if (options?.applyModeDefault !== false) {
+          await get().applyModeDefaultModel(sessionId, mode)
+        }
 
         // Notify Kanban board of mode change
         notifyKanbanSessionSync(sessionId, { type: 'mode_change', sessionMode: mode })
@@ -2034,7 +2083,12 @@ export const useSessionStore = create<SessionState>()(
         connectionId: string,
         agentSdkOverride?: AgentSdk,
         initialMode?: SessionMode,
-        opts?: { autoFocus?: boolean; modelOverride?: SelectedModel }
+        opts?: {
+          autoFocus?: boolean
+          modelOverride?: SelectedModel
+          pendingMessage?: string | null
+          customProviderId?: string | null
+        }
       ) => {
         try {
           const autoFocus = opts?.autoFocus ?? true
@@ -2052,7 +2106,16 @@ export const useSessionStore = create<SessionState>()(
               initialMode,
               modelOverride: opts?.modelOverride
             })
-          const unavailableProviderError = getUnavailableProviderError(defaultAgentSdk)
+          // Same gating as createSession: custom providers don't need
+          // stock-claude detection but are blocked up front on Windows.
+          const usesCustomProvider =
+            !!opts?.customProviderId && defaultAgentSdk === 'claude-code-cli'
+          if (usesCustomProvider && isWindows()) {
+            return { success: false, error: 'Custom providers are not supported on Windows yet' }
+          }
+          const unavailableProviderError = usesCustomProvider
+            ? null
+            : getUnavailableProviderError(defaultAgentSdk)
           if (unavailableProviderError) {
             return { success: false, error: unavailableProviderError }
           }
@@ -2067,6 +2130,9 @@ export const useSessionStore = create<SessionState>()(
             connection_id: connectionId,
             name: isTerminal ? `Terminal ${sessionNumber}` : `Session ${sessionNumber}`,
             agent_sdk: defaultAgentSdk,
+            ...(opts?.customProviderId && defaultAgentSdk === 'claude-code-cli'
+              ? { custom_provider_id: opts.customProviderId }
+              : {}),
             mode: initialMode || 'build',
             ...(defaultModel
               ? {

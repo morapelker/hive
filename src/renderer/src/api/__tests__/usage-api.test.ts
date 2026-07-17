@@ -87,7 +87,29 @@ describe('usageApi', () => {
 
     await expect(usageApi.fetchForAccount('account-1')).resolves.toBe(result)
     expect(request).toHaveBeenCalledWith('usageOps.fetchForAccount', {
-      accountId: 'account-1'
+      accountId: 'account-1',
+      userInitiated: undefined
+    })
+  })
+
+  it('passes userInitiated through to the renderer RPC client', async () => {
+    const result: FetchForAccountResult = {
+      success: true,
+      data: {
+        five_hour: { utilization: 42, resets_at: '2026-05-26T05:00:00.000Z' },
+        seven_day: { utilization: 17, resets_at: '2026-06-02T00:00:00.000Z' }
+      },
+      status: 'ok'
+    }
+    const request = vi.fn().mockResolvedValue(result)
+    const subscribe = vi.fn()
+
+    setRendererRpcClient({ request, subscribe })
+
+    await expect(usageApi.fetchForAccount('account-1', true)).resolves.toBe(result)
+    expect(request).toHaveBeenCalledWith('usageOps.fetchForAccount', {
+      accountId: 'account-1',
+      userInitiated: true
     })
   })
 })

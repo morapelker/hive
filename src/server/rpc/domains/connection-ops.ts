@@ -8,13 +8,16 @@ import {
   getAllConnectionsOp,
   getConnectionOp,
   getPinnedConnectionsOp,
+  getRecentConnectionsOp,
   removeConnectionMemberOp,
   removeWorktreeFromAllConnectionsOp,
   renameConnectionOp,
-  setConnectionPinnedOp
+  setConnectionPinnedOp,
+  setRecentConnectionNoteOp,
+  updateConnectionMembersOp
 } from '../../../main/services/connection-ops'
 import { telemetryService } from '../../../main/services/telemetry-service'
-import type { ConnectionWithMembers } from '../../../shared/types/connection'
+import type { ConnectionWithMembers, RecentConnectionEntry } from '../../../shared/types/connection'
 import type { RpcHandler } from '../router'
 
 export interface ConnectionOpsCreateResult {
@@ -78,6 +81,24 @@ export interface ConnectionOpsSetPinnedResult {
   readonly error?: string
 }
 
+export interface ConnectionOpsUpdateMembersResult {
+  readonly success: boolean
+  readonly connection?: ConnectionWithMembers
+  readonly connectionDeleted?: boolean
+  readonly error?: string
+}
+
+export interface ConnectionOpsGetRecentResult {
+  readonly success: boolean
+  readonly entries?: RecentConnectionEntry[]
+  readonly error?: string
+}
+
+export interface ConnectionOpsSetRecentNoteResult {
+  readonly success: boolean
+  readonly error?: string
+}
+
 export interface ConnectionOpsRpcService {
   readonly create: (
     worktreeIds: string[]
@@ -113,6 +134,15 @@ export interface ConnectionOpsRpcService {
   readonly delete: (
     connectionId: string
   ) => Effect.Effect<ConnectionOpsDeleteResult, unknown, never>
+  readonly updateMembers: (
+    connectionId: string,
+    worktreeIds: string[]
+  ) => Effect.Effect<ConnectionOpsUpdateMembersResult, unknown, never>
+  readonly getRecentConnections: () => Effect.Effect<ConnectionOpsGetRecentResult, unknown, never>
+  readonly setRecentConnectionNote: (
+    entryId: string,
+    note: string | null
+  ) => Effect.Effect<ConnectionOpsSetRecentNoteResult, unknown, never>
 }
 
 const emptyParamsSchema = z.union([z.object({}).strict(), z.undefined(), z.null()])
@@ -136,6 +166,18 @@ const connectionMemberParamsSchema = z
   .object({
     connectionId: z.string().min(1),
     worktreeId: z.string().min(1)
+  })
+  .strict()
+const updateMembersParamsSchema = z
+  .object({
+    connectionId: z.string().min(1),
+    worktreeIds: z.array(z.string().min(1)).min(1)
+  })
+  .strict()
+const setRecentNoteParamsSchema = z
+  .object({
+    entryId: z.string().min(1),
+    note: z.string().nullable()
   })
   .strict()
 
@@ -231,6 +273,21 @@ export const makeLiveConnectionOpsRpcService = (): ConnectionOpsRpcService => ({
         const db = getDatabase()
         return deleteConnectionOp(db, connectionId)
       },
+      catch: (cause) => cause
+    }),
+  updateMembers: (connectionId, worktreeIds) =>
+    Effect.tryPromise({
+      try: async () => updateConnectionMembersOp(getDatabase(), connectionId, worktreeIds),
+      catch: (cause) => cause
+    }),
+  getRecentConnections: () =>
+    Effect.try({
+      try: () => getRecentConnectionsOp(getDatabase()),
+      catch: (cause) => cause
+    }),
+  setRecentConnectionNote: (entryId, note) =>
+    Effect.try({
+      try: () => setRecentConnectionNoteOp(getDatabase(), entryId, note),
       catch: (cause) => cause
     })
 })
@@ -369,6 +426,39 @@ export const makeConnectionOpsRpcHandlers = (
             catch: (cause) => cause
           })
           return yield* service.delete(connectionId)
+        })
+    ],
+    [
+      'connectionOps.updateMembers',
+      (params) =>
+        Effect.gen(function* () {
+          const { connectionId, worktreeIds } = yield* Effect.try({
+            try: () => updateMembersParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          return yield* service.updateMembers(connectionId, worktreeIds)
+        })
+    ],
+    [
+      'connectionOps.getRecentConnections',
+      (params) =>
+        Effect.gen(function* () {
+          yield* Effect.try({
+            try: () => emptyParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          return yield* service.getRecentConnections()
+        })
+    ],
+    [
+      'connectionOps.setRecentConnectionNote',
+      (params) =>
+        Effect.gen(function* () {
+          const { entryId, note } = yield* Effect.try({
+            try: () => setRecentNoteParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          return yield* service.setRecentConnectionNote(entryId, note)
         })
     ]
   ])

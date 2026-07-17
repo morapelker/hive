@@ -44,6 +44,9 @@ const log = createLogger({ component: 'CodexImplementer' })
 // Balances write coalescing during rapid streaming against data freshness for crash recovery.
 const PERSIST_DEBOUNCE_MS = 2000
 const CODEX_TURN_TIMEOUT_MS = 7 * 24 * 60 * 60 * 1000
+// Safety net for goal runs: if a suppressed turn/completed is never followed by
+// a continuation turn/started or a terminal goal update, emit idle anyway.
+const CODEX_GOAL_IDLE_FALLBACK_MS = 15_000
 const CODEX_GOAL_COMMAND = {
   name: 'goal',
   description: 'Set or manage a persistent Codex goal',
@@ -94,6 +97,7 @@ export interface CodexSessionState {
   titleGenerated: boolean
   titleGenerationStarted: boolean
   persistDebounceTimer: ReturnType<typeof setTimeout> | null
+  goalIdleFallbackTimer: ReturnType<typeof setTimeout> | null
 }
 
 interface CodexLiveToolState {
@@ -441,6 +445,31 @@ export class CodexImplementer implements AgentSdkImplementer {
       return
     }
 
+    // A terminal goal update resolves a previously suppressed idle: the goal
+    // run is over, so no continuation turn will arrive to cancel the fallback.
+    // Read the status from the event payload — the manager emits events before
+    // updating its own session state, so getSession() would still be stale here.
+    if (
+      targetSession &&
+      event.kind === 'notification' &&
+      (event.method === 'thread/goal/updated' || event.method === 'thread/goal/cleared')
+    ) {
+      const goalStatus = asString(asObject(asObject(event.payload)?.goal)?.status)
+      const goalRunOver =
+        event.method === 'thread/goal/cleared' ||
+        (goalStatus !== undefined && goalStatus !== 'active')
+      if (
+        goalRunOver &&
+        targetSession.goalIdleFallbackTimer &&
+        this.manager.getSession(targetSession.threadId)?.status !== 'running'
+      ) {
+        this.clearGoalIdleFallback(targetSession)
+        targetSession.status = 'ready'
+        this.emitStatus(targetSession.hiveSessionId, 'idle')
+      }
+      // Fall through — the goal event still forwards to the renderer below.
+    }
+
     // Goal continuation turns are started internally by the Codex app-server,
     // so they do not pass through prompt()'s scoped streaming listener.
     // Forward those global notifications through the same renderer/canonical
@@ -594,7 +623,8 @@ export class CodexImplementer implements AgentSdkImplementer {
       revertDiff: null,
       titleGenerated: false,
       titleGenerationStarted: false,
-      persistDebounceTimer: null
+      persistDebounceTimer: null,
+      goalIdleFallbackTimer: null
     }
     this.sessions.set(key, state)
 
@@ -668,7 +698,8 @@ export class CodexImplementer implements AgentSdkImplementer {
         revertDiff: null,
         titleGenerated: true,
         titleGenerationStarted: true,
-        persistDebounceTimer: null
+        persistDebounceTimer: null,
+        goalIdleFallbackTimer: null
       }
       this.sessions.set(newKey, state)
 
@@ -677,6 +708,10 @@ export class CodexImplementer implements AgentSdkImplementer {
       // Fire-and-forget: hydrate token usage so the context bar shows
       // accumulated usage from previous turns, not 0/200k.
       this.hydrateTokenUsageFromThread(state).catch(() => {})
+
+      // Fire-and-forget: hydrate goal status (updates the manager session as a
+      // side effect) so idle suppression works for resumed goal threads.
+      this.manager.getThreadGoal(threadId).catch(() => {})
 
       return {
         success: true,
@@ -706,6 +741,7 @@ export class CodexImplementer implements AgentSdkImplementer {
 
     // Flush any pending debounced persist before removing the session
     this.flushPendingPersist(session)
+    this.clearGoalIdleFallback(session)
 
     // Clean up local state
     this.sessions.delete(key)
@@ -727,6 +763,7 @@ export class CodexImplementer implements AgentSdkImplementer {
         clearTimeout(session.persistDebounceTimer)
         session.persistDebounceTimer = null
       }
+      this.clearGoalIdleFallback(session)
     }
 
     // Clear local state
@@ -861,6 +898,7 @@ export class CodexImplementer implements AgentSdkImplementer {
 
     // Emit busy status
     session.status = 'running'
+    this.clearGoalIdleFallback(session)
     this.emitStatus(session.hiveSessionId, 'busy')
 
     log.info('Prompt: starting', {
@@ -1025,16 +1063,20 @@ export class CodexImplementer implements AgentSdkImplementer {
         }
       }
 
-      // Detect turn completion and whether it failed
+      // Detect turn completion and whether it failed. A completion whose own
+      // threadId belongs to another thread (collab subagent) must not settle
+      // this session's turn.
       if (event.method === 'turn/completed') {
-        turnCompleted = true
         const typed = event.payload as TurnCompletedNotification | undefined
-        completedTurnId = event.turnId ?? typed?.turn?.id
-        const status: string | undefined =
-          typed?.turn?.status ??
-          ((event.payload as Record<string, unknown> | undefined)?.state as string | undefined)
-        if (status === 'failed') {
-          turnFailed = true
+        if (!typed?.threadId || typed.threadId === session.threadId) {
+          turnCompleted = true
+          completedTurnId = event.turnId ?? typed?.turn?.id
+          const status: string | undefined =
+            typed?.turn?.status ??
+            ((event.payload as Record<string, unknown> | undefined)?.state as string | undefined)
+          if (status === 'failed') {
+            turnFailed = true
+          }
         }
       }
 
@@ -1188,7 +1230,13 @@ export class CodexImplementer implements AgentSdkImplementer {
           }
 
           session.status = turnFailed ? 'error' : 'ready'
-          this.emitStatus(session.hiveSessionId, 'idle')
+          if (!turnFailed && this.manager.getSession(session.threadId)?.goalStatus === 'active') {
+            // A goal continuation turn is expected; defer idle to the fallback
+            // (cancelled by the next turn/started) or a terminal goal update.
+            this.armGoalIdleFallback(session)
+          } else {
+            this.emitStatus(session.hiveSessionId, 'idle')
+          }
 
           log.info('Prompt: completed', {
             worktreePath,
@@ -1333,6 +1381,7 @@ export class CodexImplementer implements AgentSdkImplementer {
     session.liveAssistantDraft = null
     session.currentTurnId = null
     session.currentAssistantMessageId = null
+    this.clearGoalIdleFallback(session)
     this.flushPendingPersist(session)
     this.persistCanonicalMessages(session)
     this.emitStatus(session.hiveSessionId, 'idle')
@@ -2472,6 +2521,27 @@ export class CodexImplementer implements AgentSdkImplementer {
     })
   }
 
+  // A goal-continuation turn is expected after this suppressed completion; if
+  // it never starts and no terminal goal update arrives, this timer ends the
+  // run so the session cannot stay "working" forever.
+  private armGoalIdleFallback(session: CodexSessionState): void {
+    this.clearGoalIdleFallback(session)
+    session.goalIdleFallbackTimer = setTimeout(() => {
+      session.goalIdleFallbackTimer = null
+      if (this.manager.getSession(session.threadId)?.status !== 'running') {
+        session.status = 'ready'
+        this.emitStatus(session.hiveSessionId, 'idle')
+      }
+    }, CODEX_GOAL_IDLE_FALLBACK_MS)
+  }
+
+  private clearGoalIdleFallback(session: CodexSessionState): void {
+    if (session.goalIdleFallbackTimer) {
+      clearTimeout(session.goalIdleFallbackTimer)
+      session.goalIdleFallbackTimer = null
+    }
+  }
+
   private forwardAutonomousStreamEvent(
     session: CodexSessionState,
     event: CodexManagerEvent
@@ -2495,8 +2565,21 @@ export class CodexImplementer implements AgentSdkImplementer {
 
     if (event.method === 'turn/started') {
       session.status = 'running'
+      this.clearGoalIdleFallback(session)
       this.resetLiveAssistantDraft(session)
     }
+
+    // Intermediate goal-continuation turns complete while the goal is still
+    // active; suppress their idle so the session doesn't read as finished.
+    const turnStatus: string | undefined =
+      event.method === 'turn/completed'
+        ? ((event.payload as TurnCompletedNotification | undefined)?.turn?.status ??
+          ((event.payload as Record<string, unknown> | undefined)?.state as string | undefined))
+        : undefined
+    const suppressIdle =
+      event.method === 'turn/completed' &&
+      turnStatus !== 'failed' &&
+      this.manager.getSession(session.threadId)?.goalStatus === 'active'
 
     if (
       contentStreamKindFromMethod(event.method) ||
@@ -2519,6 +2602,13 @@ export class CodexImplementer implements AgentSdkImplementer {
     }
 
     for (const streamEvent of streamEvents) {
+      if (
+        suppressIdle &&
+        streamEvent.type === 'session.status' &&
+        streamEvent.statusPayload?.type === 'idle'
+      ) {
+        continue
+      }
       const streamData = asObject(streamEvent.data)
       const part = asObject(streamData?.part)
       const state = asObject(part?.state)
@@ -2547,11 +2637,6 @@ export class CodexImplementer implements AgentSdkImplementer {
     }
 
     if (event.method === 'turn/completed') {
-      const typed = event.payload as TurnCompletedNotification | undefined
-      const status: string | undefined =
-        typed?.turn?.status ??
-        ((event.payload as Record<string, unknown> | undefined)?.state as string | undefined)
-
       this.flushPendingPersist(session)
       if (session.currentAssistantMessageId) {
         this.persistCanonicalMessages(session)
@@ -2559,7 +2644,10 @@ export class CodexImplementer implements AgentSdkImplementer {
       session.liveAssistantDraft = null
       session.currentTurnId = null
       session.currentAssistantMessageId = null
-      session.status = status === 'failed' ? 'error' : 'ready'
+      session.status = turnStatus === 'failed' ? 'error' : 'ready'
+      if (suppressIdle) {
+        this.armGoalIdleFallback(session)
+      }
     }
 
     return true
@@ -3444,9 +3532,12 @@ export class CodexImplementer implements AgentSdkImplementer {
         resetTimer()
 
         if (event.method === 'turn/completed') {
-          cleanup()
-          resolve()
-          return
+          const payloadThreadId = asString(asObject(event.payload)?.threadId)
+          if (!payloadThreadId || payloadThreadId === session.threadId) {
+            cleanup()
+            resolve()
+            return
+          }
         }
 
         // Only reject on truly fatal errors — not stderr warnings.
@@ -3598,7 +3689,8 @@ export class CodexImplementer implements AgentSdkImplementer {
         revertDiff: null,
         titleGenerated: true,
         titleGenerationStarted: true,
-        persistDebounceTimer: null
+        persistDebounceTimer: null,
+        goalIdleFallbackTimer: null
       }
 
       this.sessions.set(this.getSessionKey(worktreePath, threadId), recovered)

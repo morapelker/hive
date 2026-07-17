@@ -40,6 +40,7 @@ import type {
   ConnectionMember,
   ConnectionMemberCreate,
   ConnectionWithMembers,
+  ConnectionHistoryEntry,
   KanbanTicket,
   KanbanTicketCreate,
   KanbanTicketBatchCreate,
@@ -298,6 +299,7 @@ export class DatabaseService {
     return {
       ...row,
       claude_session_id: (row.claude_session_id as string) ?? null,
+      custom_provider_id: (row.custom_provider_id as string) ?? null,
       pinned_to_board: !!(row.pinned_to_board as number),
       session_type: (row.session_type as string) ?? 'default'
     } as Session
@@ -361,7 +363,12 @@ export class DatabaseService {
       goal_mode: row.goal_mode === 1,
       goal_success_criteria: (row.goal_success_criteria as string) ?? null,
       note: (row.note as string) ?? null,
-      created_from_session: row.created_from_session === 1
+      created_from_session: row.created_from_session === 1,
+      auto_approve_plan: row.auto_approve_plan === 1,
+      model_provider_id: (row.model_provider_id as string) ?? null,
+      model_id: (row.model_id as string) ?? null,
+      model_variant: (row.model_variant as string) ?? null,
+      variant_group_id: (row.variant_group_id as string) ?? null
     }
   }
 
@@ -632,6 +639,22 @@ export class DatabaseService {
       CREATE INDEX IF NOT EXISTS idx_discord_resources_guild ON discord_resources(guild_id);
     `)
 
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS connection_history (
+        id TEXT PRIMARY KEY,
+        project_set_key TEXT NOT NULL UNIQUE,
+        project_ids TEXT NOT NULL,
+        last_used_at TEXT NOT NULL,
+        use_count INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        note TEXT DEFAULT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_connection_history_last_used
+        ON connection_history(last_used_at DESC);
+    `)
+
+    this.safeAddColumn('connection_history', 'note', 'TEXT DEFAULT NULL')
+
     this.safeAddColumn(
       'sessions',
       'connection_id',
@@ -662,7 +685,14 @@ export class DatabaseService {
     this.safeAddColumn('kanban_tickets', 'goal_mode', 'INTEGER NOT NULL DEFAULT 0')
     this.safeAddColumn('kanban_tickets', 'goal_success_criteria', 'TEXT DEFAULT NULL')
     this.safeAddColumn('kanban_tickets', 'created_from_session', 'INTEGER NOT NULL DEFAULT 0')
+    this.safeAddColumn('kanban_tickets', 'auto_approve_plan', 'INTEGER NOT NULL DEFAULT 0')
+    this.safeAddColumn('kanban_tickets', 'model_provider_id', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('kanban_tickets', 'model_id', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('kanban_tickets', 'model_variant', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('kanban_tickets', 'variant_group_id', 'TEXT DEFAULT NULL')
     this.safeAddColumn('sessions', 'session_type', "TEXT NOT NULL DEFAULT 'default'")
+    this.safeAddColumn('sessions', 'remote_launch', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('sessions', 'custom_provider_id', 'TEXT DEFAULT NULL')
     this.safeAddColumn(
       'discord_resources',
       'managed_session_id',
@@ -769,6 +799,11 @@ export class DatabaseService {
     this.safeAddColumn('markdown_kanban_card_state', 'pending_launch_config', 'TEXT DEFAULT NULL')
     this.safeAddColumn('markdown_kanban_card_state', 'last_seen_path', 'TEXT DEFAULT NULL')
     this.safeAddColumn('markdown_kanban_card_state', 'orphaned_at', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('markdown_kanban_card_state', 'auto_approve_plan', 'INTEGER NOT NULL DEFAULT 0')
+    this.safeAddColumn('markdown_kanban_card_state', 'model_provider_id', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('markdown_kanban_card_state', 'model_id', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('markdown_kanban_card_state', 'model_variant', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('markdown_kanban_card_state', 'variant_group_id', 'TEXT DEFAULT NULL')
   }
 
   // Settings operations
@@ -796,56 +831,72 @@ export class DatabaseService {
   }
 
   // Saved usage account operations
+  //
+  // Emails are normalized to lowercase here, but legacy rows created before
+  // that normalization may still carry a mixed-case email. The
+  // (provider, email) unique index is case-sensitive (SQLite's default TEXT
+  // collation), so `INSERT ... ON CONFLICT(provider, email)` would not
+  // detect a case-variant match and would insert a duplicate row for the
+  // same account. To avoid that, look up any existing row
+  // case-insensitively first (via getSavedUsageAccountByProviderEmail) and
+  // update it directly when found, instead of relying on the unique index.
   upsertSavedUsageAccount(data: SavedUsageAccountUpsert): SavedUsageAccount {
     const db = this.getDb()
     const now = new Date().toISOString()
+    const email = data.email.toLowerCase()
     const hasLastUsage = data.last_usage_json !== undefined
     const hasStatus = data.status !== undefined
     const hasLastError = data.last_error !== undefined
 
-    db.prepare(
-      `INSERT INTO saved_usage_accounts (
-         id, provider, email, credentials_json, last_usage_json, last_fetched_at,
-         status, last_error, created_at, updated_at
-       )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(provider, email) DO UPDATE SET
-         credentials_json = excluded.credentials_json,
-         last_usage_json = CASE
-           WHEN ? THEN excluded.last_usage_json
-           ELSE saved_usage_accounts.last_usage_json
-         END,
-         last_fetched_at = CASE
-           WHEN ? THEN excluded.last_fetched_at
-           ELSE saved_usage_accounts.last_fetched_at
-         END,
-         status = CASE
-           WHEN ? THEN excluded.status
-           ELSE saved_usage_accounts.status
-         END,
-         last_error = CASE
-           WHEN ? THEN excluded.last_error
-           ELSE saved_usage_accounts.last_error
-         END,
-         updated_at = excluded.updated_at`
-    ).run(
-      randomUUID(),
-      data.provider,
-      data.email,
-      data.credentials_json,
-      data.last_usage_json ?? null,
-      hasLastUsage ? now : null,
-      data.status ?? 'ok',
-      data.last_error ?? null,
-      now,
-      now,
-      hasLastUsage ? 1 : 0,
-      hasLastUsage ? 1 : 0,
-      hasStatus ? 1 : 0,
-      hasLastError ? 1 : 0
-    )
+    const existing = this.getSavedUsageAccountByProviderEmail(data.provider, email)
 
-    const saved = this.getSavedUsageAccountByProviderEmail(data.provider, data.email)
+    if (existing) {
+      db.prepare(
+        `UPDATE saved_usage_accounts SET
+           email = ?,
+           credentials_json = ?,
+           last_usage_json = CASE WHEN ? THEN ? ELSE last_usage_json END,
+           last_fetched_at = CASE WHEN ? THEN ? ELSE last_fetched_at END,
+           status = CASE WHEN ? THEN ? ELSE status END,
+           last_error = CASE WHEN ? THEN ? ELSE last_error END,
+           updated_at = ?
+         WHERE id = ?`
+      ).run(
+        email,
+        data.credentials_json,
+        hasLastUsage ? 1 : 0,
+        data.last_usage_json ?? null,
+        hasLastUsage ? 1 : 0,
+        now,
+        hasStatus ? 1 : 0,
+        data.status ?? 'ok',
+        hasLastError ? 1 : 0,
+        data.last_error ?? null,
+        now,
+        existing.id
+      )
+    } else {
+      db.prepare(
+        `INSERT INTO saved_usage_accounts (
+           id, provider, email, credentials_json, last_usage_json, last_fetched_at,
+           status, last_error, created_at, updated_at
+         )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        randomUUID(),
+        data.provider,
+        email,
+        data.credentials_json,
+        data.last_usage_json ?? null,
+        hasLastUsage ? now : null,
+        data.status ?? 'ok',
+        data.last_error ?? null,
+        now,
+        now
+      )
+    }
+
+    const saved = this.getSavedUsageAccountByProviderEmail(data.provider, email)
     if (!saved) {
       throw new Error('Failed to upsert saved usage account')
     }
@@ -870,20 +921,6 @@ export class DatabaseService {
     return this.getSavedUsageAccountById(id)
   }
 
-  updateSavedUsageAccountCredentials(
-    id: string,
-    credentialsJson: string
-  ): SavedUsageAccount | null {
-    const db = this.getDb()
-    const now = new Date().toISOString()
-    db.prepare(
-      `UPDATE saved_usage_accounts
-       SET credentials_json = ?, updated_at = ?
-       WHERE id = ?`
-    ).run(credentialsJson, now, id)
-    return this.getSavedUsageAccountById(id)
-  }
-
   getSavedUsageAccountById(id: string): SavedUsageAccount | null {
     const db = this.getDb()
     const row = db.prepare('SELECT * FROM saved_usage_accounts WHERE id = ?').get(id) as
@@ -897,8 +934,10 @@ export class DatabaseService {
     email: string
   ): SavedUsageAccount | null {
     const db = this.getDb()
+    // COLLATE NOCASE: legacy rows may carry a mixed-case email pre-dating
+    // lowercase normalization, so match case-insensitively.
     const row = db
-      .prepare('SELECT * FROM saved_usage_accounts WHERE provider = ? AND email = ?')
+      .prepare('SELECT * FROM saved_usage_accounts WHERE provider = ? AND email = ? COLLATE NOCASE')
       .get(provider, email) as SavedUsageAccount | undefined
     return row ?? null
   }
@@ -908,6 +947,26 @@ export class DatabaseService {
     return db
       .prepare('SELECT * FROM saved_usage_accounts WHERE provider = ? ORDER BY created_at ASC')
       .all(provider) as SavedUsageAccount[]
+  }
+
+  clearSavedUsageAccountCredentials(): void {
+    const db = this.getDb()
+    const now = new Date().toISOString()
+    db.prepare(`UPDATE saved_usage_accounts SET credentials_json = '', updated_at = ?`).run(now)
+  }
+
+  /**
+   * Blank a single row's credentials by id. Used by the one-time credentials
+   * migration so it can blank ONLY the rows it successfully migrated (or
+   * deliberately skipped), leaving a row whose keychain add hit a transient
+   * failure with its credentials intact for the next boot to retry.
+   */
+  clearSavedUsageAccountCredentialsById(id: string): void {
+    const db = this.getDb()
+    const now = new Date().toISOString()
+    db.prepare(
+      `UPDATE saved_usage_accounts SET credentials_json = '', updated_at = ? WHERE id = ?`
+    ).run(now, id)
   }
 
   deleteSavedUsageAccount(id: string): boolean {
@@ -1364,6 +1423,18 @@ export class DatabaseService {
     values.push(id)
     db.prepare(`UPDATE worktrees SET ${updates.join(', ')} WHERE id = ?`).run(...values)
 
+    // Keep the project's default (main, no-worktree) row at least as recent as
+    // any worktree bump, so the project retains its recency for sorting even
+    // after the worktree is archived or deleted. MAX guards against regressing
+    // the default row when older timestamps are re-persisted (e.g. hydration).
+    if (data.last_message_at !== undefined && data.last_message_at !== null && !existing.is_default) {
+      db.prepare(
+        `UPDATE worktrees
+         SET last_message_at = MAX(COALESCE(last_message_at, 0), ?)
+         WHERE project_id = ? AND is_default = 1`
+      ).run(data.last_message_at, existing.project_id)
+    }
+
     return this.getWorktree(id)
   }
 
@@ -1538,11 +1609,13 @@ export class DatabaseService {
       opencode_session_id: data.opencode_session_id ?? null,
       claude_session_id: data.claude_session_id ?? null,
       agent_sdk: data.agent_sdk ?? 'opencode',
+      custom_provider_id: data.custom_provider_id ?? null,
       mode: data.mode ?? 'build',
       session_type: data.session_type ?? 'default',
       model_provider_id: data.model_provider_id ?? null,
       model_id: data.model_id ?? null,
       model_variant: data.model_variant ?? null,
+      remote_launch: data.remote_launch ?? null,
       created_at: now,
       updated_at: now,
       completed_at: null,
@@ -1550,8 +1623,8 @@ export class DatabaseService {
     }
 
     db.prepare(
-      `INSERT INTO sessions (id, worktree_id, project_id, connection_id, name, status, opencode_session_id, claude_session_id, agent_sdk, mode, session_type, model_provider_id, model_id, model_variant, created_at, updated_at, completed_at, pinned_to_board)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO sessions (id, worktree_id, project_id, connection_id, name, status, opencode_session_id, claude_session_id, agent_sdk, custom_provider_id, mode, session_type, model_provider_id, model_id, model_variant, remote_launch, created_at, updated_at, completed_at, pinned_to_board)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       session.id,
       session.worktree_id,
@@ -1562,11 +1635,13 @@ export class DatabaseService {
       session.opencode_session_id,
       session.claude_session_id,
       session.agent_sdk,
+      session.custom_provider_id,
       session.mode,
       session.session_type,
       session.model_provider_id,
       session.model_id,
       session.model_variant,
+      session.remote_launch,
       session.created_at,
       session.updated_at,
       session.completed_at,
@@ -1589,6 +1664,19 @@ export class DatabaseService {
     const row = db
       .prepare('SELECT * FROM sessions WHERE opencode_session_id = ? LIMIT 1')
       .get(opencodeSessionId) as Record<string, unknown> | undefined
+    return row ? this.mapSessionRow(row) : null
+  }
+
+  // Role-qualified: when host and client share a DB (self-launch), one
+  // launchId matches BOTH the host-role and client-role rows, and an
+  // unqualified LIMIT 1 could hand either caller the other side's row.
+  findSessionByRemoteLaunchId(launchId: string, role: 'client' | 'host'): Session | null {
+    const db = this.getDb()
+    const row = db
+      .prepare(
+        "SELECT * FROM sessions WHERE json_extract(remote_launch, '$.launchId') = ? AND json_extract(remote_launch, '$.role') = ? LIMIT 1"
+      )
+      .get(launchId, role) as Record<string, unknown> | undefined
     return row ? this.mapSessionRow(row) : null
   }
 
@@ -1672,6 +1760,10 @@ export class DatabaseService {
       updates.push('agent_sdk = ?')
       values.push(data.agent_sdk)
     }
+    if (data.custom_provider_id !== undefined) {
+      updates.push('custom_provider_id = ?')
+      values.push(data.custom_provider_id)
+    }
     if (data.mode !== undefined) {
       updates.push('mode = ?')
       values.push(data.mode)
@@ -1691,6 +1783,10 @@ export class DatabaseService {
     if (data.model_variant !== undefined) {
       updates.push('model_variant = ?')
       values.push(data.model_variant)
+    }
+    if (data.remote_launch !== undefined) {
+      updates.push('remote_launch = ?')
+      values.push(data.remote_launch)
     }
     if (data.completed_at !== undefined) {
       updates.push('completed_at = ?')
@@ -2211,6 +2307,40 @@ export class DatabaseService {
       .all(worktreeId) as ConnectionMember[]
   }
 
+  upsertConnectionHistory(projectIds: string[]): ConnectionHistoryEntry | null {
+    const distinct = [...new Set(projectIds)].sort()
+    if (distinct.length < 2) return null
+
+    const db = this.getDb()
+    const key = distinct.join('|')
+    const now = new Date().toISOString()
+
+    db.prepare(
+      `INSERT INTO connection_history (id, project_set_key, project_ids, last_used_at, use_count, created_at)
+       VALUES (?, ?, ?, ?, 1, ?)
+       ON CONFLICT(project_set_key) DO UPDATE SET
+         last_used_at = excluded.last_used_at,
+         use_count = connection_history.use_count + 1`
+    ).run(randomUUID(), key, JSON.stringify(distinct), now, now)
+
+    return db
+      .prepare('SELECT * FROM connection_history WHERE project_set_key = ?')
+      .get(key) as ConnectionHistoryEntry
+  }
+
+  setConnectionHistoryNote(id: string, note: string | null): boolean {
+    const db = this.getDb()
+    const result = db.prepare('UPDATE connection_history SET note = ? WHERE id = ?').run(note, id)
+    return result.changes > 0
+  }
+
+  getRecentConnectionHistory(limit = 50): ConnectionHistoryEntry[] {
+    const db = this.getDb()
+    return db
+      .prepare('SELECT * FROM connection_history ORDER BY last_used_at DESC LIMIT ?')
+      .all(limit) as ConnectionHistoryEntry[]
+  }
+
   getActiveSessionsByConnection(connectionId: string): Session[] {
     const db = this.getDb()
     const rows = db
@@ -2501,10 +2631,15 @@ export class DatabaseService {
     const githubPrUrl = data.github_pr_url ?? null
     const mark = data.mark ?? null
     const createdFromSession = data.created_from_session ? 1 : 0
+    const note = data.note ?? null
+    const modelProviderId = data.model_provider_id ?? null
+    const modelId = data.model_id ?? null
+    const modelVariant = data.model_variant ?? null
+    const variantGroupId = data.variant_group_id ?? null
 
     db.prepare(
-      `INSERT INTO kanban_tickets (id, project_id, title, description, attachments, "column", sort_order, current_session_id, worktree_id, mode, plan_ready, external_provider, external_id, external_url, github_pr_number, github_pr_url, mark, created_from_session, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO kanban_tickets (id, project_id, title, description, attachments, "column", sort_order, current_session_id, worktree_id, mode, plan_ready, external_provider, external_id, external_url, github_pr_number, github_pr_url, mark, created_from_session, note, model_provider_id, model_id, model_variant, variant_group_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       id,
       data.project_id,
@@ -2524,6 +2659,11 @@ export class DatabaseService {
       githubPrUrl,
       mark,
       createdFromSession,
+      note,
+      modelProviderId,
+      modelId,
+      modelVariant,
+      variantGroupId,
       now,
       now
     )
@@ -2547,6 +2687,11 @@ export class DatabaseService {
       github_pr_url: githubPrUrl,
       mark,
       created_from_session: createdFromSession,
+      note,
+      model_provider_id: modelProviderId,
+      model_id: modelId,
+      model_variant: modelVariant,
+      variant_group_id: variantGroupId,
       total_tokens: 0,
       created_at: now,
       updated_at: now
@@ -2577,7 +2722,12 @@ export class DatabaseService {
           external_url: draft.external_url,
           github_pr_number: draft.github_pr_number,
           github_pr_url: draft.github_pr_url,
-          mark: draft.mark
+          mark: draft.mark,
+          note: draft.note,
+          model_provider_id: draft.model_provider_id,
+          model_id: draft.model_id,
+          model_variant: draft.model_variant,
+          variant_group_id: draft.variant_group_id
         })
         createdTickets.push(ticket)
         createdByDraftKey.set(draft.draft_key, ticket)
@@ -2717,6 +2867,26 @@ export class DatabaseService {
     if (data.note !== undefined) {
       updates.push('note = ?')
       values.push(data.note)
+    }
+    if (data.auto_approve_plan !== undefined) {
+      updates.push('auto_approve_plan = ?')
+      values.push(data.auto_approve_plan ? 1 : 0)
+    }
+    if (data.model_provider_id !== undefined) {
+      updates.push('model_provider_id = ?')
+      values.push(data.model_provider_id)
+    }
+    if (data.model_id !== undefined) {
+      updates.push('model_id = ?')
+      values.push(data.model_id)
+    }
+    if (data.model_variant !== undefined) {
+      updates.push('model_variant = ?')
+      values.push(data.model_variant)
+    }
+    if (data.variant_group_id !== undefined) {
+      updates.push('variant_group_id = ?')
+      values.push(data.variant_group_id)
     }
 
     if (updates.length === 1) return existing // Only updated_at, nothing meaningful changed

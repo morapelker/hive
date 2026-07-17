@@ -41,6 +41,13 @@ import { getRuntime } from '../effect/spawn/runtime'
 
 const log = createLogger({ component: 'CodexAppServerManager' })
 
+// Codex's turn interrupt is not tree-aware: collab subagents run as sibling
+// threads inside the app-server and each needs its own turn/interrupt.
+const SUBAGENT_INTERRUPT_TIMEOUT_MS = 5_000
+// After an interrupt, codex auto-starts new turns from queued trigger-turn
+// mail; cap how many of those we re-interrupt per abort.
+const MAX_ABORT_REINTERRUPTS = 5
+
 // ── JSON-RPC protocol types ───────────────────────────────────────
 
 export interface JsonRpcError {
@@ -104,6 +111,7 @@ export interface CodexProviderSession {
   model: string | null
   activeTurnId: string | null
   resumeCursor: string | null
+  goalStatus: ThreadGoalStatus | null
   createdAt: string
   updatedAt: string
   error?: string
@@ -117,8 +125,13 @@ export interface CodexSessionContext {
   pendingApprovals: Map<string, PendingApprovalRequest>
   pendingUserInputs: Map<string, PendingUserInputRequest>
   collabReceiverTurns: Map<string, string> // childThreadId → parentTurnId
+  // Subagent threads observed on this app-server (any thread id ≠ the root
+  // thread). Needed because newer codex builds emit empty receiverThreadIds.
+  subagentThreadIds: Set<string>
   nextRequestId: number
   stopping: boolean
+  abortRequested: boolean
+  abortReinterruptsRemaining: number
 }
 
 // ── Start session input ───────────────────────────────────────────
@@ -443,6 +456,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         model: options.model ?? null,
         activeTurnId: null,
         resumeCursor: null,
+        goalStatus: null,
         createdAt: now,
         updatedAt: now
       }
@@ -483,8 +497,11 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         pendingApprovals: new Map(),
         pendingUserInputs: new Map(),
         collabReceiverTurns: new Map(),
+        subagentThreadIds: new Set(),
         nextRequestId: 1,
-        stopping: false
+        stopping: false,
+        abortRequested: false,
+        abortReinterruptsRemaining: 0
       }
 
       this.sessions.set(tempThreadId, context)
@@ -683,8 +700,11 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       throw new Error('sendTurn: session has no threadId')
     }
 
-    // Reset child tracking for new turn
+    // Reset child tracking and any in-flight abort for new turn
     context.collabReceiverTurns.clear()
+    context.subagentThreadIds.clear()
+    context.abortRequested = false
+    context.abortReinterruptsRemaining = 0
 
     // Build the turn input array
     const turnInput =
@@ -786,6 +806,10 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       expectedTurnId
     }
 
+    // Steering means the user wants the turn to continue — cancel any in-flight abort.
+    context.abortRequested = false
+    context.abortReinterruptsRemaining = 0
+
     const response = await this.sendRequest<TurnSteerResponse>(context, 'turn/steer', params)
 
     // Update active turn so subsequent steers use the correct expectedTurnId
@@ -813,21 +837,35 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       params.tokenBudget = input.tokenBudget ?? null
     }
 
-    return this.sendRequest<CodexThreadGoalSetResponse>(context, 'thread/goal/set', params)
+    const response = await this.sendRequest<CodexThreadGoalSetResponse>(
+      context,
+      'thread/goal/set',
+      params
+    )
+    this.updateSession(context, { goalStatus: response.goal.status })
+    return response
   }
 
   async getThreadGoal(threadId: string): Promise<CodexThreadGoalGetResponse> {
     const context = this.getSessionContextForThreadRpc(threadId, 'getThreadGoal')
-    return this.sendRequest<CodexThreadGoalGetResponse>(context, 'thread/goal/get', {
-      threadId: context.session.threadId
-    })
+    const response = await this.sendRequest<CodexThreadGoalGetResponse>(
+      context,
+      'thread/goal/get',
+      { threadId: context.session.threadId }
+    )
+    this.updateSession(context, { goalStatus: response.goal?.status ?? null })
+    return response
   }
 
   async clearThreadGoal(threadId: string): Promise<CodexThreadGoalClearResponse> {
     const context = this.getSessionContextForThreadRpc(threadId, 'clearThreadGoal')
-    return this.sendRequest<CodexThreadGoalClearResponse>(context, 'thread/goal/clear', {
-      threadId: context.session.threadId
-    })
+    const response = await this.sendRequest<CodexThreadGoalClearResponse>(
+      context,
+      'thread/goal/clear',
+      { threadId: context.session.threadId }
+    )
+    this.updateSession(context, { goalStatus: null })
+    return response
   }
 
   async getGoalsFeatureStatus(threadId: string): Promise<CodexGoalsFeatureStatus> {
@@ -962,12 +1000,55 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
     const targetTurnId = turnId ?? context.session.activeTurnId
 
+    // Snapshot known subagent thread ids before any await: the parent's
+    // turn/completed (status "interrupted") clears the tracking at the same
+    // moment the deferred interrupt response resolves.
+    const childThreadIds = [
+      ...new Set([...context.collabReceiverTurns.keys(), ...context.subagentThreadIds])
+    ]
+
+    context.abortRequested = true
+    context.abortReinterruptsRemaining = MAX_ABORT_REINTERRUPTS
+
     const params: TurnInterruptParams = {
       threadId: context.session.threadId!,
       turnId: targetTurnId ?? ''
     }
 
-    await this.sendRequest(context, 'turn/interrupt', params)
+    // Parent first: interrupting children first wakes the parent's wait_agent
+    // with completion mail, letting the parent model keep acting meanwhile.
+    try {
+      await this.sendRequest(context, 'turn/interrupt', params)
+    } catch (error) {
+      log.warn('interruptTurn: parent interrupt failed, continuing with subagents', {
+        threadId,
+        error: error instanceof Error ? error.message : String(error)
+      })
+    }
+
+    // Interrupt each subagent thread. Empty turnId skips codex's active-turn
+    // validation and still aborts whatever the thread is running.
+    const results = await Promise.allSettled(
+      childThreadIds.map((childThreadId) => {
+        const childParams: TurnInterruptParams = { threadId: childThreadId, turnId: '' }
+        return this.sendRequest(
+          context,
+          'turn/interrupt',
+          childParams,
+          SUBAGENT_INTERRUPT_TIMEOUT_MS
+        )
+      })
+    )
+    results.forEach((result, index) => {
+      if (result.status === 'rejected') {
+        log.warn('interruptTurn: subagent interrupt failed', {
+          threadId,
+          childThreadId: childThreadIds[index],
+          error:
+            result.reason instanceof Error ? result.reason.message : String(result.reason)
+        })
+      }
+    })
 
     this.updateSession(context, {
       status: 'ready',
@@ -1172,12 +1253,43 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     this.rememberCollabReceiverTurns(context, notification.params, route.turnId)
 
     // Detect if this notification is from a child thread
+    const providerConversationId = this.readProviderConversationId(notification.params)
     const childParentTurnId = this.readChildParentTurnId(context, notification.params)
-    const isChildConversation = childParentTurnId !== undefined
+    const isChildConversation = this.isChildThread(
+      context,
+      providerConversationId,
+      childParentTurnId
+    )
+    if (isChildConversation && providerConversationId) {
+      context.subagentThreadIds.add(providerConversationId)
+    }
+
+    // While an abort is in flight, codex auto-starts new turns from queued
+    // trigger-turn mail (on the parent or any subagent thread). Re-interrupt
+    // them, and keep a restarted parent turn from flipping the session back
+    // to running or reaching the renderer.
+    if (notification.method === 'turn/started' && context.abortRequested) {
+      this.reinterruptStartedTurn(context, notification.params)
+      if (!isChildConversation) {
+        return
+      }
+    }
 
     // Suppress lifecycle notifications from child threads
     if (isChildConversation && this.shouldSuppressChildConversationNotification(notification.method)) {
       return
+    }
+
+    // Drop stale completions: only the active turn may settle the session.
+    // A missing activeTurnId (interrupt/resume) accepts any completion.
+    if (notification.method === 'turn/completed' && !isChildConversation) {
+      const completedTurnId = notification.params.turn.id
+      const activeTurnId = context.session.activeTurnId
+      if (activeTurnId !== null && completedTurnId !== activeTurnId) {
+        log.warn('Dropping stale turn/completed', { completedTurnId, activeTurnId })
+        logCodexLifecycleEvent('turn/completed/stale', { completedTurnId, activeTurnId })
+        return
+      }
     }
 
     // Extract textDelta for streaming text notifications (matches t3code pattern)
@@ -1185,8 +1297,6 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       notification.method === 'item/agentMessage/delta'
         ? asString(asObject(notification.params)?.delta)
         : undefined
-
-    const providerConversationId = this.readProviderConversationId(notification.params)
 
     // Emit event — child events get parent's turnId for proper attribution
     this.emitEvent({
@@ -1218,12 +1328,29 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
     if (notification.method === 'turn/completed') {
       if (isChildConversation) return
-      context.collabReceiverTurns.clear()
       const status = notification.params.turn.status
+      // Subagents outlive an interrupted parent turn; keep the mappings so
+      // their trailing notifications stay suppressed/attributed.
+      if (status !== 'interrupted') {
+        context.collabReceiverTurns.clear()
+        context.subagentThreadIds.clear()
+      }
       this.updateSession(context, {
         status: status === 'failed' ? 'error' : 'ready',
         activeTurnId: null
       })
+      return
+    }
+
+    if (notification.method === 'thread/goal/updated') {
+      if (isChildConversation) return
+      this.updateSession(context, { goalStatus: notification.params.goal.status })
+      return
+    }
+
+    if (notification.method === 'thread/goal/cleared') {
+      if (isChildConversation) return
+      this.updateSession(context, { goalStatus: null })
       return
     }
   }
@@ -1236,7 +1363,14 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     const childParentTurnId = this.readChildParentTurnId(context, request.params)
     const effectiveTurnId = childParentTurnId ?? route.turnId
     const providerConversationId = this.readProviderConversationId(request.params)
-    const isChildConversation = childParentTurnId !== undefined
+    const isChildConversation = this.isChildThread(
+      context,
+      providerConversationId,
+      childParentTurnId
+    )
+    if (isChildConversation && providerConversationId) {
+      context.subagentThreadIds.add(providerConversationId)
+    }
 
     // Track approval requests
     if (
@@ -1417,6 +1551,22 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     return context.collabReceiverTurns.get(providerConversationId)
   }
 
+  private isChildThread(
+    context: CodexSessionContext,
+    providerConversationId: string | undefined,
+    childParentTurnId: string | undefined
+  ): boolean {
+    if (childParentTurnId !== undefined) return true
+    // Newer codex builds emit collab items with empty receiverThreadIds, so
+    // fall back to the thread id itself: this app-server hosts exactly one
+    // root thread — any other thread id belongs to a subagent.
+    return (
+      providerConversationId !== undefined &&
+      context.session.threadId !== null &&
+      providerConversationId !== context.session.threadId
+    )
+  }
+
   private rememberCollabReceiverTurns(
     context: CodexSessionContext,
     params: unknown,
@@ -1435,6 +1585,36 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         context.collabReceiverTurns.set(id, parentTurnId)
       }
     }
+  }
+
+  private reinterruptStartedTurn(context: CodexSessionContext, params: unknown): void {
+    if (context.abortReinterruptsRemaining <= 0) return
+
+    const payload = asObject(params)
+    // Use the notification's own thread id — it also covers subagent threads
+    // that never registered in collabReceiverTurns.
+    const startedThreadId = this.readProviderConversationId(params)
+    const startedTurnId = asString(asObject(payload?.turn)?.id)
+    if (!startedThreadId) return
+
+    context.abortReinterruptsRemaining -= 1
+
+    const interruptParams: TurnInterruptParams = {
+      threadId: startedThreadId,
+      turnId: startedTurnId ?? ''
+    }
+    void this.sendRequest(
+      context,
+      'turn/interrupt',
+      interruptParams,
+      SUBAGENT_INTERRUPT_TIMEOUT_MS
+    ).catch((error) => {
+      log.warn('reinterruptStartedTurn: interrupt failed', {
+        threadId: startedThreadId,
+        turnId: startedTurnId,
+        error: error instanceof Error ? error.message : String(error)
+      })
+    })
   }
 
   private shouldSuppressChildConversationNotification(method: string): boolean {

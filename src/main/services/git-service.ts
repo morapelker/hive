@@ -373,7 +373,7 @@ export class GitService {
     branchName: string,
     breedType: BreedType = 'dogs',
     prNumber?: number,
-    options?: { autoPull?: boolean; nameHint?: string; worktreeCreateScript?: string | null }
+    options?: { autoPull?: boolean; nameHint?: string; worktreeCreateScript?: string | null; baseRef?: string }
   ): Promise<CreateWorktreeResult> {
     return gitEffectService.createWorktreeFromBranch(
       this.repoPath,

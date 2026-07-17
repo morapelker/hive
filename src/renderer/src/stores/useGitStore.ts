@@ -84,6 +84,10 @@ interface GitStoreState {
   createPRWorktreeId: string | null
   createPRWorktreePath: string | null
 
+  // Connection PR modal
+  connectionPRModalOpen: boolean
+  connectionPRConnectionId: string | null
+
   // Actions
   loadFileStatuses: (worktreePath: string, opts?: { force?: boolean }) => Promise<void>
   loadBranchInfo: (worktreePath: string, opts?: { force?: boolean }) => Promise<void>
@@ -126,6 +130,9 @@ interface GitStoreState {
     open: boolean,
     context?: { worktreeId: string; worktreePath: string }
   ) => void
+
+  // Connection PR modal actions
+  setConnectionPRModalOpen: (open: boolean, connectionId?: string) => void
 
   // Commit, Push, Pull actions
   commit: (
@@ -182,6 +189,10 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
   createPRModalOpen: false,
   createPRWorktreeId: null,
   createPRWorktreePath: null,
+
+  // Connection PR modal
+  connectionPRModalOpen: false,
+  connectionPRConnectionId: null,
 
   // Load file statuses for a worktree
   loadFileStatuses: async (worktreePath: string, opts?: { force?: boolean }) => {
@@ -633,6 +644,16 @@ export const useGitStore = create<GitStoreState>()((set, get) => ({
       })
     }
     // Opening without context is a no-op (all callers must provide context)
+  },
+
+  // Open/close connection PR modal
+  setConnectionPRModalOpen: (open: boolean, connectionId?: string) => {
+    if (open && connectionId) {
+      set({ connectionPRModalOpen: true, connectionPRConnectionId: connectionId })
+    } else if (!open) {
+      set({ connectionPRModalOpen: false, connectionPRConnectionId: null })
+    }
+    // Opening without a connection id is a no-op (all callers must provide one)
   },
 
   setCreatingPR: (worktreeId: string, creating: boolean) => {

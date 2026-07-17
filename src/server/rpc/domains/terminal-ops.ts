@@ -1,7 +1,7 @@
 import { Effect } from 'effect'
 import { z } from 'zod'
 import type { EventBus } from '../../events/event-bus'
-import { parseGhosttyConfig } from '../../../main/services/ghostty-config'
+import { getGhosttyTerminalConfig } from '../../../main/services/ghostty-config-store'
 import { createLogger } from '../../../main/services/logger'
 import { ptyService } from '../../../main/services/pty-service'
 import {
@@ -20,6 +20,8 @@ import type { RpcHandler } from '../router'
 
 export interface TerminalOpsRpcService {
   readonly getConfig: () => Effect.Effect<GhosttyTerminalConfig, unknown, never>
+  /** Force a re-read of the Ghostty config from disk (user-initiated; may touch the TCC-protected dir). */
+  readonly resyncGhosttyConfig?: () => Effect.Effect<GhosttyTerminalConfig, unknown>
   readonly logDiagnostics?: (
     event: string,
     data: Record<string, unknown>
@@ -33,6 +35,10 @@ export interface TerminalOpsRpcService {
     sessionId: string,
     opts?: { pendingPrompt?: string | null }
   ) => Effect.Effect<TerminalCreateResult, unknown>
+  readonly setClaudeCliPlanAutoApprove: (
+    sessionId: string,
+    enabled: boolean
+  ) => Effect.Effect<TerminalPlanAutoApproveResult, unknown>
   readonly ghosttyInit: () => Effect.Effect<TerminalGhosttyInitResult, unknown>
   readonly ghosttyIsAvailable: () => Effect.Effect<TerminalGhosttyAvailabilityResult, unknown>
   readonly ghosttyCreateSurface: (
@@ -111,6 +117,12 @@ const createClaudeCliParamsSchema = z
         pendingPrompt: z.string().nullable().optional()
       })
       .optional()
+  })
+  .strict()
+const setClaudeCliPlanAutoApproveParamsSchema = z
+  .object({
+    sessionId: z.string().min(1),
+    enabled: z.boolean()
   })
   .strict()
 const ghosttyRectSchema = z
@@ -236,6 +248,7 @@ interface TerminalCreateResult {
 
 type TerminalDestroyResult = TerminalResizeResult
 type TerminalWriteResult = TerminalResizeResult
+type TerminalPlanAutoApproveResult = TerminalResizeResult
 
 const listenerCleanups = new Map<string, { removeData: () => void; removeExit: () => void }>()
 const dataBuffers = new Map<string, string>()
@@ -261,7 +274,10 @@ const detachBackendPtyListeners = (terminalId: string): void => {
   flushScheduled.delete(terminalId)
 }
 
-const attachBackendPtyListeners = (eventBus: EventBus | undefined, terminalId: string): void => {
+export const attachBackendPtyListeners = (
+  eventBus: EventBus | undefined,
+  terminalId: string
+): void => {
   detachBackendPtyListeners(terminalId)
 
   const removeData = ptyService.onData(terminalId, (data) => {
@@ -1136,6 +1152,58 @@ const requestDesktopTerminalCreateClaudeCli = (
   })
 }
 
+const requestDesktopTerminalSetClaudeCliPlanAutoApprove = (
+  sessionId: string,
+  enabled: boolean
+): Promise<TerminalPlanAutoApproveResult> => {
+  const send = process.send
+  // No desktop transport → single-process mode; the local registration in the
+  // service impl already took effect.
+  if (!send) return Promise.resolve({ success: true })
+
+  const id = `terminal-plan-auto-approve-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  const command = 'terminalSetClaudeCliPlanAutoApprove'
+
+  return new Promise<TerminalPlanAutoApproveResult>((resolve) => {
+    let settled = false
+    const cleanup = (): void => {
+      clearTimeout(timeout)
+      process.off('message', onMessage)
+    }
+    const finish = (value: TerminalPlanAutoApproveResult): void => {
+      if (settled) return
+      settled = true
+      cleanup()
+      resolve(value)
+    }
+    const timeout = setTimeout(() => {
+      finish({
+        success: false,
+        error: `Timed out waiting for desktop command response: ${command}`
+      })
+    }, 5_000)
+
+    const onMessage = (message: unknown): void => {
+      if (!isDesktopCommandResult(message) || message.id !== id) return
+      if (!message.ok) {
+        finish({ success: false, error: message.error ?? `Desktop command failed: ${command}` })
+        return
+      }
+      if (isTerminalCommandResult(message.value)) {
+        finish(message.value)
+        return
+      }
+      finish({ success: false, error: `Invalid desktop command response for ${command}` })
+    }
+
+    process.on('message', onMessage)
+    send.call(process, makeDesktopCommandRequest(id, command, { sessionId, enabled }), (error) => {
+      if (!error) return
+      finish({ success: false, error: error.message })
+    })
+  })
+}
+
 const requestDesktopTerminalResize = (
   terminalId: string,
   cols: number,
@@ -1299,7 +1367,15 @@ export const makeLiveTerminalOpsRpcService = (eventBus?: EventBus): TerminalOpsR
   getConfig: () =>
     Effect.sync(() => {
       try {
-        return parseGhosttyConfig()
+        return getGhosttyTerminalConfig()
+      } catch {
+        return {}
+      }
+    }),
+  resyncGhosttyConfig: () =>
+    Effect.sync(() => {
+      try {
+        return getGhosttyTerminalConfig({ refresh: true })
       } catch {
         return {}
       }
@@ -1329,6 +1405,21 @@ export const makeLiveTerminalOpsRpcService = (eventBus?: EventBus): TerminalOpsR
   createClaudeCli: (sessionId, opts) =>
     Effect.tryPromise({
       try: () => requestDesktopTerminalCreateClaudeCli(sessionId, opts),
+      catch: (cause) => cause
+    }),
+  setClaudeCliPlanAutoApprove: (sessionId, enabled) =>
+    Effect.tryPromise({
+      try: async () => {
+        // Dual registration (telegram-forwarding-service pattern): in
+        // single-process mode the hook server shares this process, so register
+        // locally; in desktop mode it lives in the Electron main process, so
+        // also forward over the command bridge. The unused one is a no-op.
+        const { setClaudeCliPlanAutoApprove } = await import(
+          '../../../main/services/claude-cli-plan-auto-approve'
+        )
+        setClaudeCliPlanAutoApprove(sessionId, enabled)
+        return requestDesktopTerminalSetClaudeCliPlanAutoApprove(sessionId, enabled)
+      },
       catch: (cause) => cause
     }),
   ghosttyInit: () =>
@@ -1459,6 +1550,17 @@ export const makeTerminalOpsRpcHandlers = (
         })
     ],
     [
+      'terminalOps.resyncGhosttyConfig',
+      (params) =>
+        Effect.gen(function* () {
+          yield* Effect.try({
+            try: () => emptyParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          return yield* (service.resyncGhosttyConfig?.() ?? service.getConfig())
+        })
+    ],
+    [
       'terminalOps.logDiagnostics',
       (params) =>
         Effect.gen(function* () {
@@ -1490,6 +1592,17 @@ export const makeTerminalOpsRpcHandlers = (
             catch: (cause) => cause
           })
           return yield* service.createClaudeCli(parsed.sessionId, parsed.opts)
+        })
+    ],
+    [
+      'terminalOps.setClaudeCliPlanAutoApprove',
+      (params) =>
+        Effect.gen(function* () {
+          const parsed = yield* Effect.try({
+            try: () => setClaudeCliPlanAutoApproveParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          return yield* service.setClaudeCliPlanAutoApprove(parsed.sessionId, parsed.enabled)
         })
     ],
     [

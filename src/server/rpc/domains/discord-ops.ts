@@ -5,6 +5,7 @@ import type {
   DiscordProvisionSummary,
   DiscordVerifyResult
 } from '@shared/types/discord'
+import { DISCORD_CLAUDE_CLI_EVENT_CHANNEL } from '@shared/discord-events'
 import type { EventBus } from '../../events/event-bus'
 import type { RpcHandler } from '../router'
 import type { AgentSdkManager } from '../../../main/services/agent-sdk-manager'
@@ -84,6 +85,18 @@ export const makeLiveDiscordOpsRpcService = (eventBus?: EventBus): DiscordOpsRpc
     bootedEventBuses.add(eventBus)
     void importDiscordService(eventBus)
       .then((service) => service.startListening())
+      .catch(() => undefined)
+    // Claude CLI hook events (questions, plans, idle/busy) are held in the
+    // Electron main process and relayed here over the desktop event channel;
+    // hand them to the session bridge so they post to Discord channels.
+    void import('../../../main/services/discord-session-bridge')
+      .then(({ discordSessionBridge }) => {
+        Effect.runSync(
+          eventBus.subscribe(DISCORD_CLAUDE_CLI_EVENT_CHANNEL, ({ payload }) => {
+            discordSessionBridge.handleBackendAgentEvent(payload)
+          })
+        )
+      })
       .catch(() => undefined)
   }
 

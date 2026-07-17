@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import {
   getAvailableHandoffAgentSdks,
@@ -6,7 +6,9 @@ import {
   loadHandoffModelCatalog,
   type HandoffSelectionOverride
 } from '@/lib/handoffSelection'
+import { setHandoffPickerOpen } from '@/lib/handoff-ui-state'
 import { cn } from '@/lib/utils'
+import { isWindows } from '@/lib/platform'
 import { supportsGoalMode } from '@shared/types/agent-sdk'
 import { HandoffModelPicker } from './HandoffModelPicker'
 import { useSettingsStore } from '@/stores/useSettingsStore'
@@ -28,6 +30,8 @@ function MnemonicLabel({ letter, label }: { letter: string; label: string }): Re
 
 interface HandoffSplitButtonProps {
   worktreeId?: string
+  /** Source session, when known — scopes the picker-open guard that keeps the plan card / ticket modal alive during selection. */
+  sessionId?: string
   onHandoff: (override: HandoffSelectionOverride) => void
   vimModeEnabled?: boolean
   testIdPrefix?: string
@@ -36,12 +40,14 @@ interface HandoffSplitButtonProps {
 
 export function HandoffSplitButton({
   worktreeId,
+  sessionId,
   onHandoff,
   vimModeEnabled = false,
   testIdPrefix = 'plan-ready',
   disabled = false
 }: HandoffSplitButtonProps): React.JSX.Element {
   const availableAgentSdks = useSettingsStore((state) => state.availableAgentSdks)
+  const customProviders = useSettingsStore((state) => state.customProviders)
   const lastHandoffOverride = useSettingsStore((state) => state.lastHandoffOverride)
   const defaultAgentSdk = useSettingsStore((state) => state.defaultAgentSdk)
   const defaultModels = useSettingsStore((state) => state.defaultModels)
@@ -50,8 +56,52 @@ export function HandoffSplitButton({
   const [pickerOpen, setPickerOpen] = useState(false)
   const [catalogVersion, setCatalogVersion] = useState(0)
   const [goalMode, setGoalMode] = useState(false)
+  const pickerId = useId()
+  const containerRef = useRef<HTMLDivElement | null>(null)
 
-  const showChevron = getAvailableHandoffAgentSdks(availableAgentSdks).length > 1
+  useEffect(() => {
+    setHandoffPickerOpen(pickerId, sessionId ?? null, pickerOpen)
+    return () => {
+      setHandoffPickerOpen(pickerId, sessionId ?? null, false)
+    }
+  }, [pickerId, sessionId, pickerOpen])
+
+  // If something still hides or unmounts this button while the picker popover
+  // is open (its content is portalled to <body>), the popover would survive
+  // with a zero-size anchor and teleport to the viewport corner. Close it
+  // instead. Only trip after the anchor has been measured with a real size so
+  // layout-less environments (jsdom) never see a false collapse.
+  useEffect(() => {
+    if (!pickerOpen) return
+    const el = containerRef.current
+    if (!el) return
+
+    let hadSize = false
+    const check = (): void => {
+      const rect = el.getBoundingClientRect()
+      const visible = rect.width > 0 && rect.height > 0
+      if (visible) {
+        hadSize = true
+      } else if (hadSize) {
+        setPickerOpen(false)
+      }
+    }
+
+    check()
+    const interval = window.setInterval(check, 200)
+    return () => window.clearInterval(interval)
+  }, [pickerOpen])
+
+  const availableHandoffSdks = getAvailableHandoffAgentSdks(availableAgentSdks)
+  // Custom providers don't depend on stock-claude detection. Hidden on Windows.
+  const launchableCustomProviders = isWindows()
+    ? []
+    : (customProviders ?? []).filter((p) => p.command.trim())
+  // A custom provider is never the fallback default — the picker must stay
+  // reachable whenever one exists, even as the only option.
+  const showChevron =
+    launchableCustomProviders.length > 0 ||
+    availableHandoffSdks.length + launchableCustomProviders.length > 1
   void availableAgentSdks
   void lastHandoffOverride
   void defaultAgentSdk
@@ -86,15 +136,18 @@ export function HandoffSplitButton({
     return { ...override, goalMode: finalGoalMode }
   }
 
-  const labelTitle = `Handoff · ${effective.display.sdkName} / ${effective.display.modelName}${
-    effective.display.variant ? ` ${effective.display.variant.toUpperCase()}` : ''
-  }`
+  const labelTitle = effective.customProviderId
+    ? `Handoff · ${effective.display.sdkName}`
+    : `Handoff · ${effective.display.sdkName} / ${effective.display.modelName}${
+        effective.display.variant ? ` ${effective.display.variant.toUpperCase()}` : ''
+      }`
   const leftButtonTestId =
     testIdPrefix === 'plan-review' ? `${testIdPrefix}-handoff-btn` : `${testIdPrefix}-handoff-fab`
   const chevronTestId = `${testIdPrefix}-handoff-chevron`
 
   return (
     <div
+      ref={containerRef}
       className={cn(
         'inline-flex h-8 items-center rounded-full border text-foreground shadow-md transition-colors duration-200',
         isGoalModeActive ? 'relative border-primary/40 bg-primary/15' : 'border-border bg-muted/80',
@@ -119,7 +172,13 @@ export function HandoffSplitButton({
         disabled={disabled}
         data-testid={leftButtonTestId}
         onClick={() => {
-          onHandoff(withGoalMode({ agentSdk: effective.agentSdk, model: effective.model }))
+          onHandoff(
+            withGoalMode({
+              agentSdk: effective.agentSdk,
+              customProviderId: effective.customProviderId,
+              model: effective.model
+            })
+          )
         }}
         className={cn(
           'flex min-w-0 items-center gap-1.5 rounded-full px-3 text-xs font-medium',
@@ -130,8 +189,14 @@ export function HandoffSplitButton({
           {vimModeEnabled ? <MnemonicLabel letter="a" label="Handoff" /> : 'Handoff'}
         </span>
         <span className="text-muted-foreground">·</span>
-        <span className="shrink-0">{effective.display.sdkName} /</span>
-        <span className="max-w-[180px] truncate">{effective.display.modelName}</span>
+        {effective.customProviderId ? (
+          <span className="max-w-[180px] truncate">{effective.display.sdkName}</span>
+        ) : (
+          <>
+            <span className="shrink-0">{effective.display.sdkName} /</span>
+            <span className="max-w-[180px] truncate">{effective.display.modelName}</span>
+          </>
+        )}
         {effective.display.variant && (
           <span className="rounded-full border border-border/80 bg-background/70 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
             {effective.display.variant}
@@ -149,6 +214,9 @@ export function HandoffSplitButton({
             }}
             worktreeId={worktreeId}
             onConfirm={(override) => {
+              // Unregister before dispatching so the handoff's own teardown
+              // (plan clear, ticket sync, modal close) isn't guarded away.
+              setHandoffPickerOpen(pickerId, sessionId ?? null, false)
               onHandoff(withGoalMode(override))
             }}
             anchor={

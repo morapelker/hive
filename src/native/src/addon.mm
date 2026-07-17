@@ -1,7 +1,7 @@
 // addon.mm — N-API addon entry point for the Ghostty native module
 //
 // Exposes the following functions to Node.js:
-//   ghosttyInit()                    → boolean
+//   ghosttyInit(configPath?)         → boolean
 //   ghosttyGetVersion()              → string
 //   ghosttyCreateSurface(handle, rect, opts) → number (surface ID)
 //   ghosttySetFrame(surfaceId, rect) → void
@@ -22,11 +22,15 @@
 using namespace ghostty;
 
 // ---------------------------------------------------------------------------
-// ghosttyInit() → boolean
+// ghosttyInit(configPath?: string) → boolean
 // ---------------------------------------------------------------------------
 Napi::Value GhosttyInit(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  bool result = GhosttyBridge::instance().init();
+  std::string configPath;
+  if (info.Length() > 0 && info[0].IsString()) {
+    configPath = info[0].As<Napi::String>().Utf8Value();
+  }
+  bool result = GhosttyBridge::instance().init(configPath.empty() ? nullptr : configPath.c_str());
   return Napi::Boolean::New(env, result);
 }
 

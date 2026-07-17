@@ -362,6 +362,66 @@ export class DiscordSessionBridge {
     this.discordPending.clear()
   }
 
+  /**
+   * Entry point for Claude CLI hook events relayed from the Electron main
+   * process (where the PTY + hook server live). Sessions started outside
+   * Discord (app UI, kanban tickets) have no runtime yet, so one is created
+   * lazily from the session's worktree channel mapping before the event is
+   * processed — that lets busy/idle/final-message events reach the channel too.
+   */
+  handleBackendAgentEvent(payload: unknown): void {
+    const event = asRecord(payload)
+    if (!event || typeof event.type !== 'string' || typeof event.sessionId !== 'string') return
+    void this.processRelayedCliEvent(payload as OpenCodeStreamEvent)
+  }
+
+  private async processRelayedCliEvent(event: OpenCodeStreamEvent): Promise<void> {
+    if (!this.runtimesBySessionId.has(event.sessionId)) {
+      await this.ensureRuntimeForSession(event.sessionId).catch((error) => {
+        log.warn('Failed to create Discord runtime for relayed CLI session', {
+          sessionId: event.sessionId,
+          error: error instanceof Error ? error.message : String(error)
+        })
+      })
+    }
+    // Relayed events are not re-broadcast to the renderer: the shared ones
+    // (question.asked, question.replied) already reached it via the main
+    // process's own agent event bus relay.
+    this.onStreamEvent(event, { republish: false })
+  }
+
+  private async ensureRuntimeForSession(sessionId: string): Promise<void> {
+    const db = this.getDb()
+    const session = db.getSession(sessionId)
+    if (!session?.worktree_id) return
+    const resource = db.getDiscordChannelResourceByWorktree(session.worktree_id)
+    if (!resource) return
+    const channel = await this.resolveChannel?.(resource.discord_id)
+    if (!channel) return
+    const worktree = db.getWorktree?.(session.worktree_id)
+    if (!worktree?.path) return
+    if (this.runtimesBySessionId.has(sessionId)) return
+
+    this.runtimesBySessionId.set(session.id, {
+      channelId: resource.discord_id,
+      channel,
+      hiveSessionId: session.id,
+      worktreePath: worktree.path,
+      opencodeSessionId: session.opencode_session_id ?? session.id,
+      model: this.getSessionModel(session),
+      mode: session.mode,
+      agentSdk: session.agent_sdk,
+      busy: false,
+      currentAssistantMessageId: null,
+      textBuffer: '',
+      pendingUserEchoText: null,
+      postedToolIds: new Set(),
+      typingInterval: null,
+      queue: [],
+      sendChain: Promise.resolve()
+    })
+  }
+
   async handleUserMessage(input: DiscordUserMessageInput): Promise<void> {
     const { resource, session } = await this.resolveManagedSession(input)
     const runtime = this.registerRuntime(input, session, resource)
@@ -603,7 +663,7 @@ export class DiscordSessionBridge {
     }
   }
 
-  private onStreamEvent(event: OpenCodeStreamEvent): void {
+  private onStreamEvent(event: OpenCodeStreamEvent, opts?: { republish?: boolean }): void {
     const runtime = this.runtimesBySessionId.get(event.sessionId)
 
     if (this.isInteractiveResolutionEvent(event.type)) {
@@ -618,9 +678,17 @@ export class DiscordSessionBridge {
 
     if (!runtime) return
 
-    this.publishEvent?.(OPENCODE_STREAM_CHANNEL, event)
+    if (opts?.republish !== false) {
+      this.publishEvent?.(OPENCODE_STREAM_CHANNEL, event)
+    }
 
     if (event.childSessionId) return
+
+    if (event.type === 'session.busy') {
+      runtime.busy = true
+      this.startTyping(runtime)
+      return
+    }
 
     if (event.type === 'message.part.updated') {
       this.handlePartUpdated(runtime, event)
@@ -1275,8 +1343,11 @@ export class DiscordSessionBridge {
 
     const session = this.getDb().getSession(event.sessionId)
     if (!session?.worktree_id) return null
+    // Any session in a worktree with a provisioned channel forwards its
+    // interactive prompts there — not only the Discord-managed session — so
+    // sessions started from the app (kanban tickets) surface in Discord too.
     const resource = this.getDb().getDiscordChannelResourceByWorktree(session.worktree_id)
-    if (!resource || resource.managed_session_id !== session.id) return null
+    if (!resource) return null
     const channel = await this.resolveChannel?.(resource.discord_id)
     if (!channel) return null
     const worktree = this.getDb().getWorktree?.(session.worktree_id)

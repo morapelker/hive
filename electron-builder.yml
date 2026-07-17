@@ -13,6 +13,13 @@ asarUnpack:
   - '**/*.node'
   - '**/better-sqlite3/**'
   - '**/node-pty/**'
+  # patchright (login-service.ts's dynamic `import('patchright')`) launches a
+  # real Chrome as a child process and needs real on-disk paths for its own
+  # driver/registry files — it cannot run from inside the ASAR archive.
+  # patchright-core is its actual implementation package (patchright itself is
+  # a thin re-export wrapper), pulled in transitively via pnpm's node_modules.
+  - '**/patchright/**'
+  - '**/patchright-core/**'
 
 # ── macOS ──────────────────────────────────────────────
 mac:

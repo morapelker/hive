@@ -1,6 +1,5 @@
 import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 
@@ -180,6 +179,12 @@ async function startTeleport(
     if (!session) throw new Error('Session not found')
     if (session.agent_sdk !== 'claude-code-cli') {
       throw new Error('Teleport only supports Claude Code CLI sessions')
+    }
+    if (session.custom_provider_id) {
+      // A custom provider's command (alias/local proxy) only exists on this
+      // machine — the receiver would silently recreate the session on stock
+      // claude against a different account/model.
+      throw new Error('Custom provider sessions cannot be teleported')
     }
     if (deps.isSessionBusy(session.id)) {
       throw new Error('Stop the Claude Code CLI session before teleporting it')
@@ -410,23 +415,21 @@ async function createLiveDeps(): Promise<TeleportOpsDeps> {
   const [
     { getDatabase },
     { gitService },
-    { cloneRepository, deriveProjectNameFromGitUrl },
-    { createProjectWithDefaultWorktree },
     { syncWorktreesOp },
     { discordService },
     { sendTeleportReceive },
     { getTeleportSettings },
-    { getLastClaudeCliStatus }
+    { getLastClaudeCliStatus },
+    { ensureRemoteProject }
   ] = await Promise.all([
     import('../../../main/db'),
     import('../../../main/effect/git/facade'),
-    import('../../../main/services/git-repository'),
-    import('../../../main/services/project-ops'),
     import('../../../main/services/worktree-ops'),
     import('../../../main/services/discord-service'),
     import('../../../main/services/teleport-remote-client'),
     import('../../../main/services/teleport-remote-client'),
-    import('../../../main/services/claude-hook-server')
+    import('../../../main/services/claude-hook-server'),
+    import('../../../main/services/remote-project-ensure')
   ])
   const db = getDatabase()
 
@@ -441,27 +444,7 @@ async function createLiveDeps(): Promise<TeleportOpsDeps> {
       push: (repoPath, remote, branch) => gitService.push(repoPath, remote, branch),
       revParseHead: (repoPath) => execGit(repoPath, ['rev-parse', 'HEAD']),
       fetch: (repoPath) => execGit(repoPath, ['fetch', 'origin']).then(() => undefined),
-      ensureRemoteProject: async (gitUrl, projectName) => {
-        for (const candidate of db.getAllProjects()) {
-          const remote = await gitService.getRemoteUrl(candidate.path, 'origin')
-          if (remote.success && remote.url?.trim() === gitUrl.trim()) {
-            await execGit(candidate.path, ['fetch', 'origin'])
-            return candidate
-          }
-        }
-
-        const derivedName = deriveProjectNameFromGitUrl(gitUrl) ?? projectName
-        const destDir = uniquePath(join(homedir(), 'hive-projects', derivedName))
-        mkdirSync(dirname(destDir), { recursive: true })
-        const cloneResult = await cloneRepository(gitUrl, destDir)
-        requireSuccess(cloneResult, 'Failed to clone remote project')
-        const project = createProjectWithDefaultWorktree(db, { name: derivedName, path: destDir })
-        requireSuccess(
-          await syncWorktreesOp({ projectId: project.id, projectPath: destDir }),
-          'Failed to sync cloned project worktrees'
-        )
-        return project
-      },
+      ensureRemoteProject,
       ensureTeleportWorktree: async (project, branch, headSha) => {
         const targetBranch = await resolveTeleportTargetBranch(project.path, branch, headSha)
 

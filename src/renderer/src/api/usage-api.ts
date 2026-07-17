@@ -16,8 +16,12 @@ export const usageApi = {
     getRendererRpcClient().request<RefreshAllResultItem[]>('usageOps.refreshAllForProvider', {
       provider
     }),
-  fetchForAccount: async (accountId: string): Promise<FetchForAccountResult> =>
+  fetchForAccount: async (
+    accountId: string,
+    userInitiated?: boolean
+  ): Promise<FetchForAccountResult> =>
     getRendererRpcClient().request<FetchForAccountResult>('usageOps.fetchForAccount', {
-      accountId
+      accountId,
+      userInitiated
     })
 }

@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -18,6 +18,14 @@ vi.mock('../git-service', () => ({
   GitService: vi.fn().mockImplementation(() => ({
     getRemoteUrl: gitServiceMocks.getRemoteUrl
   }))
+}))
+
+const accountServiceMocks = vi.hoisted(() => ({
+  getClaudeAccountEmail: vi.fn()
+}))
+
+vi.mock('../account-service', () => ({
+  getClaudeAccountEmail: accountServiceMocks.getClaudeAccountEmail
 }))
 
 // The server now generates the prompt id and returns it from recordPromptStart.
@@ -57,6 +65,7 @@ const session: Session = {
   model_provider_id: 'anthropic',
   model_id: 'sonnet',
   model_variant: 'high',
+  remote_launch: null,
   created_at: '2026-01-01T00:00:00.000Z',
   updated_at: '2026-01-01T00:00:00.000Z',
   completed_at: null,
@@ -156,6 +165,17 @@ function makeTranscript(text: string): string {
   return file
 }
 
+/**
+ * Write a subagent transcript next to the main transcript, mirroring Claude's
+ * on-disk layout: `<dir>/<sessionId>/subagents/agent-<id>.jsonl` for a main
+ * transcript at `<dir>/<sessionId>.jsonl`.
+ */
+function writeSubagentTranscript(transcriptPath: string, agentId: string, text: string): void {
+  const subagentsDir = join(transcriptPath.replace(/\.jsonl$/, ''), 'subagents')
+  mkdirSync(subagentsDir, { recursive: true })
+  writeFileSync(join(subagentsDir, `agent-${agentId}.jsonl`), text)
+}
+
 describe('Claude CLI Hive Enterprise telemetry', () => {
   const requestGraphql = vi.fn()
 
@@ -167,6 +187,7 @@ describe('Claude CLI Hive Enterprise telemetry', () => {
       url: 'git@github.com:example/hive.git',
       remote: 'origin'
     })
+    accountServiceMocks.getClaudeAccountEmail.mockResolvedValue('alice@example.com')
     requestGraphql.mockResolvedValue({
       recordPromptStart: { recorded: true, promptId: SERVER_PROMPT_ID }
     })
@@ -220,11 +241,63 @@ describe('Claude CLI Hive Enterprise telemetry', () => {
           isGoalPrompt: false,
           contextLength: 127,
           loggedAt: '2026-06-07T10:00:00.000Z',
-          connectionProjects: JSON.stringify([{ name: 'Hive Electron', path: '/repo' }])
+          connectionProjects: JSON.stringify([{ name: 'Hive Electron', path: '/repo' }]),
+          accountEmail: 'alice@example.com',
+          accountProvider: 'anthropic'
         })
       }
     )
     expect(requestGraphql.mock.calls[0][3].input).not.toHaveProperty('promptId')
+  })
+
+  it('stamps null account fields when no Claude account email can be resolved', async () => {
+    accountServiceMocks.getClaudeAccountEmail.mockResolvedValue(null)
+    const transcriptPath = makeTranscript('')
+    const db = makeDb({
+      hiveEnterpriseServerUrl: 'https://enterprise.example.com',
+      hiveAuthToken: 'token-1',
+      hiveOrganizationId: 'org-1'
+    })
+
+    await handleClaudeCliHiveTelemetryHook(
+      'hive-session-1',
+      {
+        hook_event_name: 'UserPromptSubmit',
+        prompt: 'No account logged in',
+        transcript_path: transcriptPath
+      },
+      { db, requestGraphql }
+    )
+
+    expect(requestGraphql.mock.calls[0][3].input).toMatchObject({
+      accountEmail: null,
+      accountProvider: null
+    })
+  })
+
+  it('stamps null account fields when the Claude account email read fails', async () => {
+    accountServiceMocks.getClaudeAccountEmail.mockRejectedValue(new Error('keychain unavailable'))
+    const transcriptPath = makeTranscript('')
+    const db = makeDb({
+      hiveEnterpriseServerUrl: 'https://enterprise.example.com',
+      hiveAuthToken: 'token-1',
+      hiveOrganizationId: 'org-1'
+    })
+
+    await handleClaudeCliHiveTelemetryHook(
+      'hive-session-1',
+      {
+        hook_event_name: 'UserPromptSubmit',
+        prompt: 'Account read fails',
+        transcript_path: transcriptPath
+      },
+      { db, requestGraphql }
+    )
+
+    expect(requestGraphql.mock.calls[0][3].input).toMatchObject({
+      accountEmail: null,
+      accountProvider: null
+    })
   })
 
   it('sends zero context length when the Claude CLI transcript has no prior assistant context', async () => {
@@ -400,6 +473,129 @@ describe('Claude CLI Hive Enterprise telemetry', () => {
     ])
   })
 
+  it('includes subagent transcript usage in idle token deltas', async () => {
+    const transcriptPath = makeTranscript(
+      `${assistantLine({ input: 100, output: 5, cacheRead: 20, cacheWrite: 7 })}\n`
+    )
+    const db = makeDb({
+      hiveEnterpriseServerUrl: 'https://enterprise.example.com',
+      hiveAuthToken: 'token-1',
+      hiveOrganizationId: 'org-1'
+    })
+
+    await handleClaudeCliHiveTelemetryHook(
+      'hive-session-1',
+      {
+        hook_event_name: 'UserPromptSubmit',
+        prompt: 'Fan out subagents',
+        transcript_path: transcriptPath
+      },
+      { db, requestGraphql }
+    )
+
+    // The turn spawns two Task subagents; their usage is written to separate
+    // transcripts under <sessionDir>/subagents/, never to the main transcript.
+    writeSubagentTranscript(
+      transcriptPath,
+      'a1',
+      [
+        assistantLine({ input: 50, output: 40, cacheRead: 1000, cacheWrite: 60 }),
+        assistantLine({ input: 10, output: 20, cacheRead: 2000, cacheWrite: 30 })
+      ].join('\n') + '\n'
+    )
+    writeSubagentTranscript(
+      transcriptPath,
+      'a2',
+      `${assistantLine({ input: 5, output: 15, cacheRead: 500, cacheWrite: 25 })}\n`
+    )
+    writeFileSync(
+      transcriptPath,
+      [
+        assistantLine({ input: 100, output: 5, cacheRead: 20, cacheWrite: 7 }),
+        assistantLine({ input: 140, output: 30, cacheRead: 25, cacheWrite: 9 })
+      ].join('\n') + '\n'
+    )
+
+    await handleClaudeCliHiveTelemetryHook(
+      'hive-session-1',
+      { hook_event_name: 'Stop', transcript_path: transcriptPath },
+      { db, requestGraphql }
+    )
+
+    expect(requestGraphql.mock.calls[1]).toEqual([
+      'https://enterprise.example.com/api/graphql',
+      'token-1',
+      expect.stringContaining('recordPromptIdle'),
+      {
+        input: {
+          promptId: SERVER_PROMPT_ID,
+          inputTokens: 140 + 50 + 10 + 5,
+          outputTokens: 30 + 40 + 20 + 15,
+          cacheReadTokens: 25 + 1000 + 2000 + 500,
+          cacheWriteTokens: 9 + 60 + 30 + 25
+        }
+      }
+    ])
+  })
+
+  it('excludes subagent usage from before the prompt via the start baseline', async () => {
+    const transcriptPath = makeTranscript(
+      `${assistantLine({ input: 100, output: 5, cacheRead: 20, cacheWrite: 7 })}\n`
+    )
+    // A subagent from a PREVIOUS prompt already exists at prompt start.
+    writeSubagentTranscript(
+      transcriptPath,
+      'old',
+      `${assistantLine({ input: 500, output: 400, cacheRead: 9000, cacheWrite: 300 })}\n`
+    )
+    const db = makeDb({
+      hiveEnterpriseServerUrl: 'https://enterprise.example.com',
+      hiveAuthToken: 'token-1',
+      hiveOrganizationId: 'org-1'
+    })
+
+    await handleClaudeCliHiveTelemetryHook(
+      'hive-session-1',
+      {
+        hook_event_name: 'UserPromptSubmit',
+        prompt: 'Continue',
+        transcript_path: transcriptPath
+      },
+      { db, requestGraphql }
+    )
+
+    writeFileSync(
+      transcriptPath,
+      [
+        assistantLine({ input: 100, output: 5, cacheRead: 20, cacheWrite: 7 }),
+        assistantLine({ input: 140, output: 30, cacheRead: 25, cacheWrite: 9 })
+      ].join('\n') + '\n'
+    )
+
+    await handleClaudeCliHiveTelemetryHook(
+      'hive-session-1',
+      { hook_event_name: 'Stop', transcript_path: transcriptPath },
+      { db, requestGraphql }
+    )
+
+    // Only this turn's main-transcript delta — the old subagent's usage was
+    // captured in the baseline and must not leak into this prompt's totals.
+    expect(requestGraphql.mock.calls[1]).toEqual([
+      'https://enterprise.example.com/api/graphql',
+      'token-1',
+      expect.stringContaining('recordPromptIdle'),
+      {
+        input: {
+          promptId: SERVER_PROMPT_ID,
+          inputTokens: 140,
+          outputTokens: 30,
+          cacheReadTokens: 25,
+          cacheWriteTokens: 9
+        }
+      }
+    ])
+  })
+
   it('waits briefly for Claude to flush transcript usage before recording idle', async () => {
     vi.useFakeTimers()
     const transcriptPath = makeTranscript(
@@ -452,6 +648,104 @@ describe('Claude CLI Hive Enterprise telemetry', () => {
           outputTokens: 22,
           cacheReadTokens: 10,
           cacheWriteTokens: 3
+        }
+      }
+    ])
+  })
+
+  it('ignores a task-notification UserPromptSubmit, recording no active prompt', async () => {
+    const db = makeDb({
+      hiveEnterpriseServerUrl: 'https://enterprise.example.com',
+      hiveAuthToken: 'token-1',
+      hiveOrganizationId: 'org-1'
+    })
+
+    await handleClaudeCliHiveTelemetryHook(
+      'hive-session-1',
+      {
+        hook_event_name: 'UserPromptSubmit',
+        prompt: '<task-notification>\n<task-id>a</task-id>\n</task-notification>'
+      },
+      { db, requestGraphql }
+    )
+
+    expect(requestGraphql).not.toHaveBeenCalled()
+
+    // With no active prompt recorded, the eventual Stop is a no-op too.
+    await handleClaudeCliHiveTelemetryHook(
+      'hive-session-1',
+      { hook_event_name: 'Stop' },
+      { db, requestGraphql }
+    )
+    expect(requestGraphql).not.toHaveBeenCalled()
+  })
+
+  it('keeps a real prompt active through a task-notification resume so the final Stop attributes usage to it', async () => {
+    const transcriptPath = makeTranscript(
+      `${assistantLine({ input: 100, output: 5, cacheRead: 20, cacheWrite: 7 })}\n`
+    )
+    const db = makeDb({
+      hiveEnterpriseServerUrl: 'https://enterprise.example.com',
+      hiveAuthToken: 'token-1',
+      hiveOrganizationId: 'org-1'
+    })
+
+    // The real, user-authored prompt.
+    await handleClaudeCliHiveTelemetryHook(
+      'hive-session-1',
+      {
+        hook_event_name: 'UserPromptSubmit',
+        prompt: 'Do the real work',
+        transcript_path: transcriptPath
+      },
+      { db, requestGraphql }
+    )
+    expect(requestGraphql).toHaveBeenCalledTimes(1)
+
+    // A deferred Stop (background subagent still running) is skipped upstream
+    // by claude-hook-server and never reaches this module. The subagent's
+    // completion then resumes the session via a task-notification prompt,
+    // which must NOT clobber the real prompt's still-active record.
+    await handleClaudeCliHiveTelemetryHook(
+      'hive-session-1',
+      {
+        hook_event_name: 'UserPromptSubmit',
+        prompt: '<task-notification>\n<task-id>a</task-id>\n</task-notification>',
+        transcript_path: transcriptPath
+      },
+      { db, requestGraphql }
+    )
+    // No new recordPromptStart — the notification did not start a new prompt.
+    expect(requestGraphql).toHaveBeenCalledTimes(1)
+
+    writeFileSync(
+      transcriptPath,
+      [
+        assistantLine({ input: 100, output: 5, cacheRead: 20, cacheWrite: 7 }),
+        assistantLine({ input: 140, output: 30, cacheRead: 25, cacheWrite: 9 })
+      ].join('\n') + '\n'
+    )
+
+    // The final, passing Stop attributes the entire multi-turn usage delta to
+    // the real prompt's id and baseline.
+    await handleClaudeCliHiveTelemetryHook(
+      'hive-session-1',
+      { hook_event_name: 'Stop', transcript_path: transcriptPath },
+      { db, requestGraphql }
+    )
+
+    expect(requestGraphql).toHaveBeenCalledTimes(2)
+    expect(requestGraphql.mock.calls[1]).toEqual([
+      'https://enterprise.example.com/api/graphql',
+      'token-1',
+      expect.stringContaining('recordPromptIdle'),
+      {
+        input: {
+          promptId: SERVER_PROMPT_ID,
+          inputTokens: 140,
+          outputTokens: 30,
+          cacheReadTokens: 25,
+          cacheWriteTokens: 9
         }
       }
     ])

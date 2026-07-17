@@ -1,5 +1,6 @@
 import { isAgentSdkAvailable, type AvailableAgentSdks } from './agent-sdk-availability'
 import { type AgentSdk, supportsGoalMode, toModelCatalogSdk } from '@shared/types/agent-sdk'
+import { findCustomProvider } from '@shared/types/custom-provider'
 import { HANDOFF_PLAN_PROMPT_HEADER } from '@shared/agent-mode-prefixes'
 import {
   findModelInfo,
@@ -21,6 +22,8 @@ import { opencodeApi } from '@/api/opencode-api'
 
 export interface EffectiveHandoffSelection {
   agentSdk: HandoffAgentSdk
+  /** claude-code-cli only: hand off to this custom provider's command. */
+  customProviderId?: string | null
   model: SelectedModel
   display: {
     sdkName: string
@@ -31,6 +34,8 @@ export interface EffectiveHandoffSelection {
 
 export interface HandoffSelectionOverride {
   agentSdk: HandoffAgentSdk
+  /** claude-code-cli only: hand off to this custom provider's command. */
+  customProviderId?: string | null
   model: SelectedModel
   goalMode?: boolean
 }
@@ -170,7 +175,17 @@ function getModelInfoFromCache(
   return findModelInfo(providers, model.providerID, model.modelID)
 }
 
-export function getHandoffSdkDisplayName(agentSdk: HandoffAgentSdk): string {
+export function getHandoffSdkDisplayName(
+  agentSdk: HandoffAgentSdk,
+  customProviderId?: string | null
+): string {
+  if (customProviderId) {
+    const provider = findCustomProvider(
+      useSettingsStore.getState().customProviders,
+      customProviderId
+    )
+    if (provider) return provider.name || 'Custom Provider'
+  }
   return SDK_DISPLAY_NAMES[agentSdk]
 }
 
@@ -244,6 +259,33 @@ export function getEffectiveHandoffSelection(opts: {
   const override = settings.lastHandoffOverride
 
   if (!override) return fallback
+
+  // A custom-provider override outlives its provider (they live in settings) —
+  // a deleted provider must fall back rather than silently handing off to
+  // plain claude-cli under the stale display name. Checked before the SDK
+  // availability guard: custom providers run their own command and don't
+  // depend on stock-claude detection.
+  if (override.customProviderId) {
+    const provider = findCustomProvider(settings.customProviders, override.customProviderId)
+    if (!provider || !provider.command.trim()) return fallback
+    const model: SelectedModel = {
+      providerID: override.providerID,
+      modelID: override.modelID,
+      variant: override.variant
+    }
+    return {
+      agentSdk: override.agentSdk,
+      customProviderId: provider.id,
+      model,
+      display: {
+        // The provider's command decides the real model — show only the name.
+        sdkName: provider.name || 'Custom Provider',
+        modelName: provider.name || 'Custom Provider',
+        variant: undefined
+      }
+    }
+  }
+
   if (!isAgentSdkAvailable(override.agentSdk, settings.availableAgentSdks)) return fallback
 
   const cachedProviders = getCachedModelCatalog(override.agentSdk)

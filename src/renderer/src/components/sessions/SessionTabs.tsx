@@ -34,6 +34,7 @@ import {
 import { KanbanIcon } from '@/components/kanban/KanbanIcon'
 import { useSessionStore, BOARD_TAB_ID } from '@/stores/useSessionStore'
 import { useShallow } from 'zustand/react/shallow'
+import { isWindows } from '@/lib/platform'
 import {
   useFileViewerStore,
   type FileViewerTab,
@@ -717,10 +718,21 @@ export function SessionTabs(): React.JSX.Element | null {
   const autoStartSession = useSettingsStore((state) => state.autoStartSession)
   const availableAgentSdks = useSettingsStore((state) => state.availableAgentSdks)
   const defaultAgentSdk = useSettingsStore((state) => state.defaultAgentSdk)
+  const rawCustomProviders = useSettingsStore((state) => state.customProviders)
+  // Custom providers run their own command through the login shell — they
+  // don't depend on stock-claude detection (which can false-negative on GUI
+  // launches), only on having a launchable command. Hidden on Windows (no
+  // POSIX login shell).
+  const customProvidersAvailable = useMemo(
+    () => (isWindows() ? [] : (rawCustomProviders ?? []).filter((p) => p.command.trim())),
+    [rawCustomProviders]
+  )
   const multipleProvidersAvailable =
     [availableAgentSdks?.opencode, availableAgentSdks?.claude, availableAgentSdks?.codex].filter(
       Boolean
-    ).length >= 2
+    ).length +
+      customProvidersAvailable.length >=
+    2
   const autoStartedRef = useRef<string | null>(null)
 
   useEffect(() => {
@@ -893,7 +905,7 @@ export function SessionTabs(): React.JSX.Element | null {
   }
 
   // Handle creating a new session with a specific agent SDK (from context menu)
-  const handleCreateSessionWithSdk = async (sdk: AgentSdk) => {
+  const handleCreateSessionWithSdk = async (sdk: AgentSdk, customProviderId?: string) => {
     if (isConnectionMode && selectedConnectionId) {
       const result = await createConnectionSession(selectedConnectionId, sdk)
       if (!result.success) {
@@ -911,7 +923,13 @@ export function SessionTabs(): React.JSX.Element | null {
 
     if (!selectedWorktreeId || !project) return
 
-    const result = await createSession(selectedWorktreeId, project.id, sdk)
+    const result = await createSession(
+      selectedWorktreeId,
+      project.id,
+      sdk,
+      undefined,
+      customProviderId ? { customProviderId } : undefined
+    )
     if (!result.success) {
       toast.error(result.error || 'Failed to create session')
     }
@@ -1315,7 +1333,7 @@ export function SessionTabs(): React.JSX.Element | null {
             onRefreshFromFile={() =>
               setRefreshTarget({ sessionId: session.id, name: session.name || 'Untitled' })
             }
-            canTeleport={session.agent_sdk === 'claude-code-cli'}
+            canTeleport={session.agent_sdk === 'claude-code-cli' && !session.custom_provider_id}
             onTeleport={() => void handleTeleportSession(session.id)}
             hintCode={sessionHints.sessionHintMap.get(session.id)}
           />
@@ -1396,6 +1414,15 @@ export function SessionTabs(): React.JSX.Element | null {
                     New Claude Code CLI Session
                   </ContextMenuItem>
                 )}
+                {!isConnectionMode &&
+                  customProvidersAvailable.map((provider) => (
+                    <ContextMenuItem
+                      key={provider.id}
+                      onSelect={() => handleCreateSessionWithSdk('claude-code-cli', provider.id)}
+                    >
+                      New {provider.name || 'Custom Provider'} Session
+                    </ContextMenuItem>
+                  ))}
                 {availableAgentSdks?.codex && (
                   <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('codex')}>
                     New Codex Session

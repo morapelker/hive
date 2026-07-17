@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import { Loader2, Search, Settings2, GitBranch } from 'lucide-react'
+import { Loader2, Search, Settings2, GitBranch, Plus } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { toast } from '@/lib/toast'
 import {
   Dialog,
   DialogContent,
@@ -31,6 +32,7 @@ interface WorktreeOption {
 interface ProjectGroup {
   projectId: string
   projectName: string
+  projectPath: string
   worktrees: WorktreeOption[]
 }
 
@@ -41,6 +43,8 @@ export function ManageConnectionWorktreesDialog({
 }: ManageConnectionWorktreesDialogProps): React.JSX.Element {
   const projects = useProjectStore((s) => s.projects)
   const worktreesByProject = useWorktreeStore((s) => s.worktreesByProject)
+  const createWorktree = useWorktreeStore((s) => s.createWorktree)
+  const creatingForProjectId = useWorktreeStore((s) => s.creatingForProjectId)
   const connections = useConnectionStore((s) => s.connections)
   const updateConnectionMembers = useConnectionStore((s) => s.updateConnectionMembers)
 
@@ -73,6 +77,7 @@ export function ManageConnectionWorktreesDialog({
       groups.push({
         projectId: project.id,
         projectName: project.name,
+        projectPath: project.path,
         worktrees: activeWorktrees.map((w) => ({
           id: w.id,
           name: w.name,
@@ -140,13 +145,30 @@ export function ManageConnectionWorktreesDialog({
     })
   }, [])
 
+  const handleCreateWorktree = useCallback(
+    async (group: ProjectGroup) => {
+      if (creatingForProjectId) return
+
+      const result = await createWorktree(group.projectId, group.projectPath, group.projectName)
+      if (result.success && result.worktree) {
+        setSelectedIds((prev) => new Set(prev).add(result.worktree!.id))
+        setFilter('')
+      } else {
+        toast.error(`Failed to create worktree: ${result.error || 'Unknown error'}`)
+      }
+    },
+    [creatingForProjectId, createWorktree]
+  )
+
   const handleSave = useCallback(async () => {
     if (selectedIds.size === 0 || !hasChanges) return
     setIsSubmitting(true)
 
     try {
-      await updateConnectionMembers(connectionId, Array.from(selectedIds))
-      onOpenChange(false)
+      const succeeded = await updateConnectionMembers(connectionId, Array.from(selectedIds))
+      if (succeeded) {
+        onOpenChange(false)
+      }
     } finally {
       setIsSubmitting(false)
     }
@@ -193,8 +215,23 @@ export function ManageConnectionWorktreesDialog({
               {filteredGroups.map((group) => (
                 <div key={group.projectId}>
                   {/* Project group header */}
-                  <div className="px-3 py-1.5 text-xs font-medium text-muted-foreground uppercase tracking-wider bg-muted/30 sticky top-0">
-                    {group.projectName}
+                  <div className="flex items-center justify-between px-3 py-1.5 text-xs font-medium text-muted-foreground uppercase tracking-wider bg-muted/30 sticky top-0">
+                    <span className="truncate">{group.projectName}</span>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-5 w-5 p-0 cursor-pointer hover:bg-accent shrink-0"
+                      onClick={() => handleCreateWorktree(group)}
+                      disabled={creatingForProjectId !== null}
+                      title={`Create worktree in ${group.projectName}`}
+                      data-testid={`manage-worktrees-create-${group.projectId}`}
+                    >
+                      {creatingForProjectId === group.projectId ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Plus className="h-3.5 w-3.5" />
+                      )}
+                    </Button>
                   </div>
                   {/* Worktrees in this project */}
                   {group.worktrees.map((wt) => (

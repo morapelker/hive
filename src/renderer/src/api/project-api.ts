@@ -13,6 +13,12 @@ export interface InitRepositoryResult {
   error?: string
 }
 
+export interface CreateProjectFolderResult {
+  success: boolean
+  path?: string
+  error?: string
+}
+
 export interface PickProjectIconResult {
   success: boolean
   filename?: string
@@ -79,6 +85,14 @@ export const projectApi = {
     }),
   initRepository: async (path: string): Promise<InitRepositoryResult> =>
     getRendererRpcClient().request<InitRepositoryResult>('projectOps.initRepository', { path }),
+  createProjectFolder: async (
+    parentPath: string,
+    name: string
+  ): Promise<CreateProjectFolderResult> =>
+    getRendererRpcClient().request<CreateProjectFolderResult>('projectOps.createProjectFolder', {
+      parentPath,
+      name
+    }),
   detectFavicon: async (projectPath: string): Promise<string | null> =>
     getRendererRpcClient().request<string | null>('projectOps.detectFavicon', { path: projectPath })
 }

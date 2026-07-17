@@ -5,10 +5,36 @@ import { createLogger } from './logger'
 import { cliHookTransportRouter } from './cli-hook-transport-router'
 import { handleClaudeCliHiveTelemetryHook } from './hive-enterprise-claude-cli-telemetry'
 import { publishDesktopBackendEvent } from '../desktop/backend-event-publisher'
+import {
+  clearAllClaudeCliInteractions,
+  clearClaudeCliInteractions,
+  hasBlockingClaudeCliInteraction,
+  processClaudeCliHook
+} from './claude-cli-interaction-ledger'
+import {
+  clearAllClaudeCliSubagentTracking,
+  isTaskNotificationPrompt,
+  processClaudeCliSubagentHook,
+  setClaudeCliDeferredCompletionHandler,
+  type ClaudeCliBackgroundTask
+} from './claude-cli-subagent-tracker'
+import {
+  clearAllClaudeCliPlanAutoApprove,
+  consumeClaudeCliPlanAutoApprove,
+  isClaudeCliPlanAutoApproveArmed,
+  setClaudeCliPlanAutoApprove
+} from './claude-cli-plan-auto-approve'
+import { ptyService } from './pty-service'
+
+// Delay between replying to the ExitPlanMode PermissionRequest hook and
+// pressing "1" on the PTY: claude renders its plan dialog only after the hook
+// response lands, and the keypress must hit the dialog, not the composer.
+const PLAN_AUTO_APPROVE_KEYSTROKE_DELAY_MS = 500
 
 export interface ParsedClaudeHook {
   hook_event_name?: string
   tool_name?: string
+  tool_use_id?: string
   permission_mode?: string
   prompt?: unknown
   transcript_path?: unknown
@@ -19,6 +45,11 @@ export interface ParsedClaudeHook {
   /** Final assistant message of the turn (Stop hook). Read both spellings: */
   assistant_message?: string
   last_assistant_message?: string
+  /** Present on subagent-scoped hooks (SubagentStop, subagent-scoped Stop). */
+  agent_id?: string
+  agent_type?: string
+  /** Snapshot of in-flight background work at Stop/SubagentStop time. */
+  background_tasks?: ClaudeCliBackgroundTask[]
 }
 
 export interface ClaudeCliStatusPayload {
@@ -30,6 +61,7 @@ export interface ClaudeCliStatusPayload {
     hookPath?: string
     toolName?: string
     plan?: string
+    taskNotification?: boolean
   }
 }
 
@@ -71,6 +103,11 @@ export function buildClaudeCliHookSettings(port: number, hiveSessionId: string):
       Stop: [
         {
           hooks: [{ type: 'http', url: hookUrl(port, hiveSessionId, 'stop') }]
+        }
+      ],
+      SubagentStop: [
+        {
+          hooks: [{ type: 'http', url: hookUrl(port, hiveSessionId, 'subagent') }]
         }
       ],
       PreToolUse: [
@@ -125,6 +162,8 @@ export function mapHookEventToStatus(hook: ParsedClaudeHook): SessionStatusType 
       if (hook.tool_name === 'ExitPlanMode') return 'plan_ready'
       if (hook.tool_name === 'AskUserQuestion') return 'answering'
       return 'permission'
+    case 'SubagentStop':
+      return null
     default:
       return null
   }
@@ -152,6 +191,10 @@ function buildStatusMetadata(
     metadata.plan = plan
   }
 
+  if (hook.hook_event_name === 'UserPromptSubmit' && isTaskNotificationPrompt(hook.prompt)) {
+    metadata.taskNotification = true
+  }
+
   return metadata
 }
 
@@ -164,11 +207,9 @@ export function publishClaudeCliStatus(payload: ClaudeCliStatusPayload): void {
   for (const subscriber of statusSubscribers) {
     subscriber(payload)
   }
-  void import('../desktop/backend-event-publisher')
-    .then(({ publishDesktopBackendEvent }) =>
-      publishDesktopBackendEvent('claude-cli:status', payload)
-    )
-    .catch(() => undefined)
+  void Promise.resolve(publishDesktopBackendEvent('claude-cli:status', payload)).catch(
+    () => undefined
+  )
 }
 
 /**
@@ -253,21 +294,42 @@ async function handleHook(req: http.IncomingMessage, res: http.ServerResponse): 
     const body = JSON.parse(rawBody || '{}') as ParsedClaudeHook
     if (route) {
       const status = mapHookEventToStatus(body)
-      if (status) {
-        publishClaudeCliStatus({
-          sessionId: route.sessionId,
-          status,
-          metadata: buildStatusMetadata(body, route.hookPath)
-        })
+      const mapped: ClaudeCliStatusPayload | null = status
+        ? {
+            sessionId: route.sessionId,
+            status,
+            metadata: buildStatusMetadata(body, route.hookPath)
+          }
+        : null
+      // Background Task subagents can keep running after the main agent's
+      // Stop fires; the tracker decides whether this Stop is truly final
+      // ('pass'), must be swallowed because work is still in flight
+      // ('defer_stop'), or is scoped to a subagent turn and never a session
+      // completion ('subagent_scoped'). Only a 'pass' should reach the
+      // ledger/telemetry/status publish — a deferred Stop's RESET would
+      // otherwise clobber a subagent's latched question/permission.
+      const gate = processClaudeCliSubagentHook(route.sessionId, body, mapped)
+      if (gate.kind === 'pass') {
+        // The interaction ledger latches blocking statuses (question/permission/
+        // plan approval) so parallel sub-agent hooks can't clobber them, and
+        // re-surfaces queued interactions as each one resolves.
+        for (const payload of processClaudeCliHook(route.sessionId, body, mapped)) {
+          publishClaudeCliStatus(payload)
+        }
+        void handleClaudeCliHiveTelemetryHook(route.sessionId, body)
       }
-      void handleClaudeCliHiveTelemetryHook(route.sessionId, body)
       // First user prompt of this CLI session → tell the renderer so it can
       // auto-create a kanban ticket (if the setting is on). Fires for prompts
       // typed straight into the terminal as well as composer/handoff prompts.
+      // A task-notification resume is an auto-generated continuation turn,
+      // not a user-authored prompt, so it must never count as "first prompt"
+      // (and must not be recorded as announced — a later real prompt should
+      // still announce).
       if (
         body.hook_event_name === 'UserPromptSubmit' &&
         typeof body.prompt === 'string' &&
         body.prompt.trim().length > 0 &&
+        !isTaskNotificationPrompt(body.prompt) &&
         !firstPromptAnnounced.has(route.sessionId)
       ) {
         firstPromptAnnounced.add(route.sessionId)
@@ -277,9 +339,61 @@ async function handleHook(req: http.IncomingMessage, res: http.ServerResponse): 
           data: { promptText: body.prompt }
         })
       }
+      // Plan auto-approve: an armed session's ExitPlanMode is answered here
+      // instead of by the user. The setMode permission is only honored on the
+      // PermissionRequest hook (not PreToolUse), so the PreToolUse must fall
+      // through unheld — which also means transports (Telegram/Discord) must
+      // not grab it, or the plan would go to the phone instead. Subagent
+      // ExitPlanMode hooks (agent_id set) never consume the main plan's arm.
+      const autoApproveExitPlan =
+        body.tool_name === 'ExitPlanMode' &&
+        !body.agent_id &&
+        isClaudeCliPlanAutoApproveArmed(route.sessionId)
+      const bypassTransport =
+        autoApproveExitPlan &&
+        (body.hook_event_name === 'PreToolUse' || body.hook_event_name === 'PermissionRequest')
+
       // For forwarded CLI sessions a transport may take ownership of the
       // response (held open until answered). Otherwise behavior is unchanged.
-      owned = cliHookTransportRouter.routeHook(route.sessionId, body, res)
+      // suppressIdle keeps a deferred/subagent-scoped Stop from telling the
+      // transport the session went idle while background work is in flight.
+      if (!bypassTransport) {
+        owned = cliHookTransportRouter.routeHook(route.sessionId, body, res, {
+          suppressIdle: gate.kind !== 'pass'
+        })
+      }
+
+      if (
+        autoApproveExitPlan &&
+        body.hook_event_name === 'PermissionRequest' &&
+        !res.writableEnded
+      ) {
+        // Hook responses cannot approve the plan dialog: on claude v2.1.201 a
+        // PermissionRequest hookSpecificOutput.decision (allow + setMode) is
+        // accepted but the interactive dialog is shown anyway (verified
+        // empirically — claude-playground keeps a keystroke fallback for the
+        // same reason). So reply '{}' to let the dialog render, then press "1"
+        // ("Yes, and bypass permissions") on the PTY — approval and
+        // bypassPermissions in the same stroke, exactly like a manual approve.
+        const approvedSessionId = route.sessionId
+        consumeClaudeCliPlanAutoApprove(approvedSessionId)
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end('{}')
+        setTimeout(() => {
+          if (!ptyService.has(approvedSessionId)) {
+            log.warn('Plan auto-approve keystroke skipped: PTY is gone', {
+              sessionId: approvedSessionId
+            })
+            return
+          }
+          ptyService.write(approvedSessionId, '1')
+          log.info('Auto-approved ExitPlanMode plan', { sessionId: approvedSessionId })
+        }, PLAN_AUTO_APPROVE_KEYSTROKE_DELAY_MS)
+      }
+
+      if (body.hook_event_name === 'SessionEnd') {
+        setClaudeCliPlanAutoApprove(route.sessionId, false)
+      }
     }
   } catch (error) {
     log.warn('Failed to parse Claude hook payload', {
@@ -294,6 +408,26 @@ async function handleHook(req: http.IncomingMessage, res: http.ServerResponse): 
 }
 
 export async function getClaudeHookServer(): Promise<{ port: number }> {
+  // Re-registered on every call (the setter is idempotent) because
+  // closeClaudeHookServer clears it — a subsequent getClaudeHookServer() must
+  // restore it even when reusing an already-listening server.
+  setClaudeCliDeferredCompletionHandler((sessionId, payload, lastAssistantMessage) => {
+    if (hasBlockingClaudeCliInteraction(sessionId)) return false
+    clearClaudeCliInteractions(sessionId)
+    // Intentionally does not record telemetry idle here (no recordIdle call):
+    // this path fires when the resume turn's own Stop never showed up, so
+    // there is no matching hook payload to drive recordIdle off of. Known
+    // accepted gap: this can leave a dangling `activePromptBySession` entry
+    // in the telemetry module, which would inflate the *next* turn's usage
+    // delta with this turn's untallied tokens.
+    publishClaudeCliStatus({
+      ...payload,
+      metadata: { ...payload.metadata, reason: 'deferred_completion_watchdog' }
+    })
+    cliHookTransportRouter.notifySessionIdle(sessionId, lastAssistantMessage)
+    return true
+  })
+
   if (server && boundPort !== null) {
     return { port: boundPort }
   }
@@ -361,6 +495,10 @@ export async function closeClaudeHookServer(): Promise<void> {
     startingPromise = null
     lastStatusBySession.clear()
     statusSubscribers.clear()
+    clearAllClaudeCliInteractions()
+    clearAllClaudeCliSubagentTracking()
+    clearAllClaudeCliPlanAutoApprove()
+    setClaudeCliDeferredCompletionHandler(null)
     return
   }
 
@@ -379,4 +517,8 @@ export async function closeClaudeHookServer(): Promise<void> {
   startingPromise = null
   lastStatusBySession.clear()
   statusSubscribers.clear()
+  clearAllClaudeCliInteractions()
+  clearAllClaudeCliSubagentTracking()
+  clearAllClaudeCliPlanAutoApprove()
+  setClaudeCliDeferredCompletionHandler(null)
 }

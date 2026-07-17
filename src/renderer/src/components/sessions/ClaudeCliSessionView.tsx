@@ -15,8 +15,10 @@ import { useClaudeCliSessionPortal } from '@/contexts/ClaudeCliSessionPortalCont
 import { QuestionPrompt } from './QuestionPrompt'
 import { ClaudeCliEndedOverlay } from './ClaudeCliEndedOverlay'
 import { HandoffSplitButton } from './HandoffSplitButton'
+import { SavePlanAsFileModal } from './SavePlanAsFileModal'
 import { buildHandoffPrompt, type HandoffSelectionOverride } from '@/lib/handoffSelection'
 import { lastSendMode } from '@/lib/message-send-times'
+import { markClaudeCliPromptStarted } from '@/lib/claude-cli-send-tracking'
 import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
 import { startBackgroundSessionPrompt } from '@/lib/backgroundSessionStart'
 import {
@@ -26,7 +28,7 @@ import {
 } from '@/lib/hive-enterprise-telemetry'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
-import { extractPlanTitle } from '@shared/types/branch-utils'
+import { extractPlanTitle, normalizeFilename } from '@shared/types/branch-utils'
 import { supportsGoalMode } from '@shared/types/agent-sdk'
 import '@xterm/xterm/css/xterm.css'
 import '@/styles/xterm.css'
@@ -95,6 +97,7 @@ async function startTicketModalHandoffSession(opts: {
     if (opts.handoffPrompt) {
       useSessionStore.getState().dequeuePendingMessage(opts.sessionId)
     }
+    markClaudeCliPromptStarted(opts.sessionId)
     return
   }
 
@@ -127,16 +130,20 @@ function clampPlanCardPosition(
 interface ClaudeCliPlanReadyCardProps {
   planContent: string
   worktreeId?: string
+  sessionId: string
   onHandoff: (override: HandoffSelectionOverride) => void
   onSaveAsTicket: () => void
+  onSaveAsFile: () => void
   savedAsTicket: boolean
 }
 
 function ClaudeCliPlanReadyCard({
   planContent,
   worktreeId,
+  sessionId,
   onHandoff,
   onSaveAsTicket,
+  onSaveAsFile,
   savedAsTicket
 }: ClaudeCliPlanReadyCardProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -256,6 +263,7 @@ function ClaudeCliPlanReadyCard({
         <div className="flex flex-wrap items-center gap-2">
           <HandoffSplitButton
             worktreeId={worktreeId}
+            sessionId={sessionId}
             onHandoff={onHandoff}
             testIdPrefix="claude-cli-plan-ready"
           />
@@ -272,6 +280,17 @@ function ClaudeCliPlanReadyCard({
           >
             {savedAsTicket ? 'Saved as ticket' : 'Save as ticket'}
           </button>
+          <button
+            type="button"
+            onClick={onSaveAsFile}
+            className={cn(
+              'h-8 rounded-full border border-border bg-muted/80 px-3 text-xs font-medium',
+              'text-foreground shadow-md transition-colors hover:bg-muted'
+            )}
+            data-testid="claude-cli-plan-ready-save-file"
+          >
+            Save as md file
+          </button>
         </div>
       </div>
     </div>
@@ -286,6 +305,11 @@ export function ClaudeCliSessionView({
   const [terminalKey, setTerminalKey] = useState(0)
   const [ended, setEnded] = useState(false)
   const [planSavedAsTicket, setPlanSavedAsTicket] = useState(false)
+  // Captured at click time so the modal survives pendingPlan being cleared
+  const [savePlanFile, setSavePlanFile] = useState<{
+    planContent: string
+    directoryPath: string
+  } | null>(null)
   const pendingPlan = useSessionStore((state) => state.pendingPlans.get(sessionId) ?? null)
   const { getTarget, revision: portalRevision } = useClaudeCliSessionPortal()
   void portalRevision
@@ -372,14 +396,20 @@ export function ClaudeCliSessionView({
           sessionRecord.connection_id,
           override.agentSdk,
           undefined,
-          { autoFocus: !isMountedInTicketModal, modelOverride: override.model }
+          {
+            autoFocus: !isMountedInTicketModal,
+            modelOverride: override.model,
+            customProviderId: override.customProviderId ?? null
+          }
         )
         if (!result.success || !result.session) {
           toast.error(result.error ?? 'Failed to create handoff session')
           return
         }
 
-        const setModePromise = sessionStore.setSessionMode(result.session.id, 'build')
+        const setModePromise = sessionStore.setSessionMode(result.session.id, 'build', {
+        applyModeDefault: false
+      })
         registerHivePromptHandoff(sessionId, result.session.id)
         sessionStore.setPendingMessage(result.session.id, handoffPrompt)
         await useKanbanStore
@@ -417,14 +447,20 @@ export function ClaudeCliSessionView({
         sessionRecord.project_id,
         override.agentSdk,
         undefined,
-        { autoFocus: !isMountedInTicketModal, modelOverride: override.model }
+        {
+          autoFocus: !isMountedInTicketModal,
+          modelOverride: override.model,
+          customProviderId: override.customProviderId ?? null
+        }
       )
       if (!result.success || !result.session) {
         toast.error(result.error ?? 'Failed to create handoff session')
         return
       }
 
-      const setModePromise = sessionStore.setSessionMode(result.session.id, 'build')
+      const setModePromise = sessionStore.setSessionMode(result.session.id, 'build', {
+        applyModeDefault: false
+      })
       registerHivePromptHandoff(sessionId, result.session.id)
       sessionStore.setPendingMessage(result.session.id, handoffPrompt)
       await useKanbanStore
@@ -481,6 +517,26 @@ export function ClaudeCliSessionView({
       toast.error('Failed to save as ticket')
     }
   }, [pendingPlan?.planContent, sessionRecord?.project_id])
+
+  const handlePlanReadySaveAsFile = useCallback(() => {
+    const planContent = pendingPlan?.planContent
+    if (!planContent) {
+      toast.error('No plan content found')
+      return
+    }
+
+    const directoryPath = sessionRecord?.worktree_id
+      ? findWorktreePathById(sessionRecord.worktree_id)
+      : sessionRecord?.connection_id
+        ? findConnectionPathById(sessionRecord.connection_id)
+        : null
+    if (!directoryPath) {
+      toast.error('No worktree path for this session')
+      return
+    }
+
+    setSavePlanFile({ planContent, directoryPath })
+  }, [pendingPlan?.planContent, sessionRecord?.worktree_id, sessionRecord?.connection_id])
 
   const resolveQuestionPath = useCallback((): string | undefined => {
     if (sessionRecord?.worktree_id) {
@@ -547,9 +603,22 @@ export function ClaudeCliSessionView({
           <ClaudeCliPlanReadyCard
             planContent={pendingPlan.planContent}
             worktreeId={sessionRecord?.worktree_id ?? undefined}
+            sessionId={sessionId}
             onHandoff={handlePlanReadyHandoff}
             onSaveAsTicket={handlePlanReadySaveAsTicket}
+            onSaveAsFile={handlePlanReadySaveAsFile}
             savedAsTicket={planSavedAsTicket}
+          />
+        )}
+        {savePlanFile && (
+          <SavePlanAsFileModal
+            open
+            onOpenChange={(o) => {
+              if (!o) setSavePlanFile(null)
+            }}
+            planContent={savePlanFile.planContent}
+            directoryPath={savePlanFile.directoryPath}
+            defaultFileName={`PLAN_${normalizeFilename(extractPlanTitle(savePlanFile.planContent) ?? '') || 'plan'}.md`}
           />
         )}
         {/* In the ticket modal the modal renders its own question sidebar, so only

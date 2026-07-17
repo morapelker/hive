@@ -1,10 +1,13 @@
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { APP_SETTINGS_DB_KEY, DEFAULT_HIVE_ENTERPRISE_SERVER_URL } from '@shared/types/settings'
 import type { DatabaseService } from '../db/database'
 import { getDatabase } from '../db'
 import type { Project } from '../db/types'
+import { getClaudeAccountEmail } from './account-service'
 import { GitService } from './git-service'
 import { createLogger } from './logger'
+import { isTaskNotificationPrompt } from './claude-cli-subagent-tracker'
 
 const RecordPromptStartDocument = /* GraphQL */ `
   mutation HiveEnterpriseRecordPromptStart($input: PromptStartInput!) {
@@ -70,6 +73,11 @@ interface PromptStartInput {
   handoffSessionId: string | null
   loggedAt: string
   connectionProjects: string | null
+  // Stamp only — the server-side touch on this mutation refreshes the
+  // matching member_active_accounts row's last_seen_at. This hook is Claude
+  // CLI-only, so a resolved email always means the 'anthropic' provider.
+  accountEmail: string | null
+  accountProvider: string | null
 }
 
 interface PromptIdleInput {
@@ -159,6 +167,33 @@ function readTranscript(path: string | null): string {
   }
 }
 
+/**
+ * Task subagents write their usage to separate transcripts under
+ * `<sessionDir>/subagents/agent-*.jsonl` (nested subagents included, flat),
+ * never to the main transcript — for a main transcript at
+ * `<dir>/<sessionId>.jsonl` the session dir is `<dir>/<sessionId>/`.
+ */
+function subagentTranscriptPaths(transcriptPath: string | null): string[] {
+  if (!transcriptPath || !transcriptPath.endsWith('.jsonl')) return []
+  const subagentsDir = join(transcriptPath.slice(0, -'.jsonl'.length), 'subagents')
+  try {
+    return readdirSync(subagentsDir)
+      .filter((name) => name.endsWith('.jsonl'))
+      .map((name) => join(subagentsDir, name))
+  } catch {
+    return []
+  }
+}
+
+/** Sum assistant usage across the main transcript and all subagent transcripts. */
+export function tokenCountersFromTranscriptFiles(transcriptPath: string | null): TokenCounters {
+  let total = tokenCountersFromClaudeTranscript(readTranscript(transcriptPath))
+  for (const subagentPath of subagentTranscriptPaths(transcriptPath)) {
+    total = addCounters(total, tokenCountersFromClaudeTranscript(readTranscript(subagentPath)))
+  }
+  return total
+}
+
 async function waitForTranscriptUsageDelta(
   transcriptPath: string | null,
   baseline: TokenCounters
@@ -167,10 +202,7 @@ async function waitForTranscriptUsageDelta(
   let delta = zeroCounters()
 
   for (let attempt = 0; attempt <= attempts; attempt++) {
-    delta = subtractCounters(
-      tokenCountersFromClaudeTranscript(readTranscript(transcriptPath)),
-      baseline
-    )
+    delta = subtractCounters(tokenCountersFromTranscriptFiles(transcriptPath), baseline)
     if (tokenTotal(delta) > 0 || !transcriptPath || attempt === attempts) {
       return delta
     }
@@ -329,9 +361,10 @@ async function buildPromptStartInput(
     (worktree?.project_id ? db.getProject(worktree.project_id) : null) ??
     (session?.project_id ? db.getProject(session.project_id) : null)
   const transcript = readTranscript(transcriptPath)
+  const accountEmail = await getClaudeAccountEmail().catch(() => null)
 
   return {
-    baseline: tokenCountersFromClaudeTranscript(transcript),
+    baseline: tokenCountersFromTranscriptFiles(transcriptPath),
     input: {
       prompt,
       sessionId,
@@ -350,7 +383,9 @@ async function buildPromptStartInput(
       isGoalPrompt: prompt.trimStart().startsWith('/goal'),
       handoffSessionId: null,
       loggedAt: now.toISOString(),
-      connectionProjects: connectionProjects(db, session?.connection_id ?? null)
+      connectionProjects: connectionProjects(db, session?.connection_id ?? null),
+      accountEmail,
+      accountProvider: accountEmail ? 'anthropic' : null
     }
   }
 }
@@ -432,6 +467,15 @@ export async function handleClaudeCliHiveTelemetryHook(
     }
 
     if (hook.hook_event_name === 'UserPromptSubmit') {
+      // A background-subagent task-notification resume is an auto-generated
+      // continuation turn, not a real user prompt. Since a deferred Stop
+      // already skips telemetry for the turn that triggered it, treating this
+      // resume as a new prompt start would overwrite (clobber) the real
+      // prompt's still-active record in `activePromptBySession`, orphaning it
+      // and mis-attributing the eventual recordIdle to a phantom
+      // `<task-notification>…` prompt. Skip it so the real prompt's record
+      // survives through to the final passing Stop.
+      if (isTaskNotificationPrompt(hook.prompt)) return
       await recordStart(sessionId, hook, resolvedDeps)
       return
     }

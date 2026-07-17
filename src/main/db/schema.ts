@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 35
+export const CURRENT_SCHEMA_VERSION = 40
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   model_provider_id TEXT,
   model_id TEXT,
   model_variant TEXT,
+  remote_launch TEXT DEFAULT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   completed_at TEXT
@@ -629,5 +630,56 @@ DROP TABLE IF EXISTS diff_comments;`
       DROP TABLE IF EXISTS markdown_kanban_card_state;
       -- SQLite cannot drop project columns safely; no-op for those columns.
     `
+  },
+  {
+    version: 36,
+    name: 'add_connection_history',
+    up: `
+      CREATE TABLE IF NOT EXISTS connection_history (
+        id TEXT PRIMARY KEY,
+        project_set_key TEXT NOT NULL UNIQUE,
+        project_ids TEXT NOT NULL,
+        last_used_at TEXT NOT NULL,
+        use_count INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_connection_history_last_used
+        ON connection_history(last_used_at DESC);
+    `,
+    down: `
+      DROP INDEX IF EXISTS idx_connection_history_last_used;
+      DROP TABLE IF EXISTS connection_history;
+    `
+  },
+  {
+    version: 37,
+    name: 'add_connection_history_note',
+    up: `-- NOTE: ALTER TABLE for connection_history.note is handled idempotently by
+         -- ensureConnectionTables() in database.ts to avoid "duplicate column" errors.`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
+  },
+  {
+    version: 38,
+    name: 'add_ticket_auto_approve_plan',
+    up: `-- NOTE: ALTER TABLE for kanban_tickets.auto_approve_plan and
+         -- markdown_kanban_card_state.auto_approve_plan is handled idempotently by
+         -- safeAddColumn() in database.ts to avoid "duplicate column" errors.`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
+  },
+  {
+    version: 39,
+    name: 'add_session_remote_launch',
+    up: `-- NOTE: ALTER TABLE for sessions.remote_launch is handled idempotently by
+         -- safeAddColumn() in database.ts to avoid "duplicate column" errors.`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
+  },
+  {
+    version: 40,
+    name: 'add_ticket_model_columns',
+    up: `-- NOTE: ALTER TABLE for kanban_tickets.model_provider_id/model_id/model_variant/
+         -- variant_group_id and the same four columns on markdown_kanban_card_state is
+         -- handled idempotently by safeAddColumn() in database.ts to avoid
+         -- "duplicate column" errors.`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
   }
 ]

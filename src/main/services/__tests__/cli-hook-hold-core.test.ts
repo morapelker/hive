@@ -143,4 +143,65 @@ describe('CliHookHoldCore', () => {
     expect(core.hasPendingQuestion(requestId)).toBe(false)
     expect(shared.some((event) => event.type === 'question.rejected')).toBe(true)
   })
+
+  it('Stop with ctx.suppressIdle emits neither message.updated nor session.idle', () => {
+    const { core, transport } = makeCore()
+    core.register(SESSION)
+    const res = makeRes()
+
+    const owned = core.onHook(
+      SESSION,
+      { hook_event_name: 'Stop', last_assistant_message: 'All done.' },
+      res,
+      { suppressIdle: true }
+    )
+
+    expect(owned).toBe(false)
+    expect(transport.some((event) => event.type === 'message.updated')).toBe(false)
+    expect(transport.some((event) => event.type === 'session.idle')).toBe(false)
+  })
+
+  it('Stop with no ctx / suppressIdle: false emits idle unchanged (regression)', () => {
+    const { core, transport } = makeCore()
+    core.register(SESSION)
+    const res = makeRes()
+
+    core.onHook(SESSION, { hook_event_name: 'Stop', last_assistant_message: 'All done.' }, res)
+
+    expect(transport.find((event) => event.type === 'message.updated')).toBeTruthy()
+    expect(transport.some((event) => event.type === 'session.idle')).toBe(true)
+
+    const { core: core2, transport: transport2 } = makeCore()
+    core2.register(SESSION)
+    const res2 = makeRes()
+    core2.onHook(SESSION, { hook_event_name: 'Stop', last_assistant_message: 'All done.' }, res2, {
+      suppressIdle: false
+    })
+
+    expect(transport2.find((event) => event.type === 'message.updated')).toBeTruthy()
+    expect(transport2.some((event) => event.type === 'session.idle')).toBe(true)
+  })
+
+  it('emitSessionIdle(sessionId, text) emits message.updated then session.idle', () => {
+    const { core, transport } = makeCore()
+
+    core.emitSessionIdle(SESSION, 'Finished the task.')
+
+    expect(transport).toHaveLength(2)
+    expect(transport[0]).toMatchObject({
+      type: 'message.updated',
+      sessionId: SESSION,
+      data: { role: 'assistant', content: 'Finished the task.' }
+    })
+    expect(transport[1]).toMatchObject({ type: 'session.idle', sessionId: SESSION })
+  })
+
+  it('emitSessionIdle(sessionId) with no text emits only session.idle', () => {
+    const { core, transport } = makeCore()
+
+    core.emitSessionIdle(SESSION)
+
+    expect(transport).toHaveLength(1)
+    expect(transport[0]).toMatchObject({ type: 'session.idle', sessionId: SESSION })
+  })
 })

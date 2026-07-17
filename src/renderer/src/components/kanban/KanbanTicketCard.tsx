@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   Trash2,
   Archive,
+  Copy,
   ArchiveRestore,
   GitBranch,
   ExternalLink,
@@ -29,17 +30,24 @@ import {
   ChevronDown,
   Hammer,
   Map as MapIcon,
-  FolderInput
+  FolderInput,
+  FastForward,
+  RadioTower,
+  Unplug
 } from 'lucide-react'
 import { CheckeredFlagIcon } from './CheckeredFlagIcon'
+import { TicketModelBadge } from './TicketModelBadge'
 import { UpdateStatusModal } from './UpdateStatusModal'
+import { RemoteTerminalDialog } from './RemoteTerminalDialog'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
 import { NoteEditorModal } from './NoteEditorModal'
 import { MoveToProjectModal } from './MoveToProjectModal'
-import { cn } from '@/lib/utils'
+import { cn, parseColorQuad } from '@/lib/utils'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { opencodeApi } from '@/api/opencode-api'
+import { remoteLaunchApi } from '@/api/remote-launch-api'
+import { useRemoteLaunchStore } from '@/stores/useRemoteLaunchStore'
 import { systemApi } from '@/api/system-api'
 import { ProviderIcon, getProviderLabel } from '@/components/ui/provider-icon'
 import { toast } from '@/lib/toast'
@@ -94,7 +102,11 @@ import { useTelegramStore } from '@/stores/useTelegramStore'
 import { useSessionTimer } from '@/hooks/useSessionTimer'
 import { useSessionTokenDelta } from '@/hooks/useSessionTokenDelta'
 import { useConflictFixFlow } from '@/hooks/useConflictFixFlow'
+import { useTicketRemoteLaunch } from '@/hooks/useTicketRemoteLaunch'
 import { formatTokenCount } from '@/lib/format-utils'
+import { canToggleAutoApprovePlan } from '@/lib/plan-auto-approve'
+import { isClaudeCli } from '@shared/types/agent-sdk'
+import { terminalApi } from '@/api/terminal-api'
 import type { KanbanTicket, TicketMark } from '../../../../main/db/types'
 
 // ── Project tag color palette ──────────────────────────────────────
@@ -150,6 +162,13 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   const [showPRPicker, setShowPRPicker] = useState(false)
   const [showNoteEditor, setShowNoteEditor] = useState(false)
   const [showMoveToProject, setShowMoveToProject] = useState(false)
+  const [remoteTerminalOpen, setRemoteTerminalOpen] = useState(false)
+  const [showStopRemoteConfirm, setShowStopRemoteConfirm] = useState(false)
+  const remoteLaunchInfo = useTicketRemoteLaunch(ticket)
+  // The card only surfaces ACTIVE remote launches (badge, attach, stop) —
+  // a stopped one renders like a plain ticket here.
+  const activeRemoteLaunch =
+    remoteLaunchInfo && !remoteLaunchInfo.stoppedAt ? remoteLaunchInfo : null
   const hasNote = !!ticket.note && ticket.note.trim().length > 0
   const isExternalTicket = !!ticket.external_provider
   const dragCloneRef = useRef<HTMLElement | null>(null)
@@ -217,6 +236,34 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   )
 
   const isBlocked = !isSimpleMode && unresolvedBlockerCount > 0
+
+  // ── Queued launch target (branch it will run on, or new worktree) ──
+  const queuedWorktree = useMemo(() => {
+    if (!ticket.pending_launch_config) return null
+    try {
+      const config = JSON.parse(ticket.pending_launch_config) as {
+        worktree?: { type: 'new'; sourceBranch: string } | { type: 'existing'; worktreeId: string }
+      }
+      return config.worktree ?? null
+    } catch {
+      return null
+    }
+  }, [ticket.pending_launch_config])
+
+  const queuedBranchLabel = useWorktreeStore(
+    useCallback(
+      (state) => {
+        if (!queuedWorktree) return null
+        if (queuedWorktree.type === 'new') return '(new-worktree)'
+        for (const worktrees of state.worktreesByProject.values()) {
+          const found = worktrees.find((w) => w.id === queuedWorktree.worktreeId)
+          if (found) return found.branch_name || found.name
+        }
+        return null
+      },
+      [queuedWorktree]
+    )
+  )
 
   // ── Lookup worktree name ────────────────────────────────────────
   const worktreeName = useWorktreeStore(
@@ -342,6 +389,17 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     )
   )
 
+  const connectionColor = useConnectionStore(
+    useCallback(
+      (state) => {
+        if (!connectionSession) return null
+        const conn = state.connections.find((c) => c.id === connectionSession.connectionId)
+        return conn?.color ?? null
+      },
+      [connectionSession]
+    )
+  )
+
   // ── Lookup linked session status ────────────────────────────────
   const sessionStatus = useSessionStore(
     useCallback(
@@ -366,6 +424,24 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
       (state) => {
         if (!ticket.current_session_id) return null
         return state.codexGoalsBySession.get(ticket.current_session_id)?.status ?? null
+      },
+      [ticket.current_session_id]
+    )
+  )
+
+  const linkedSessionAgentSdk = useSessionStore(
+    useCallback(
+      (state) => {
+        if (!ticket.current_session_id) return null
+        for (const sessions of state.sessionsByWorktree.values()) {
+          const found = sessions.find((s) => s.id === ticket.current_session_id)
+          if (found) return found.agent_sdk
+        }
+        for (const sessions of state.sessionsByConnection.values()) {
+          const found = sessions.find((s) => s.id === ticket.current_session_id)
+          if (found) return found.agent_sdk
+        }
+        return null
       },
       [ticket.current_session_id]
     )
@@ -508,6 +584,11 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
 
   const isError = sessionStatus === 'error'
   const hasAttachments = ticket.attachments.length > 0
+  // Surface the model on cards that are part of a multi-model duplicate
+  // group — for single-model launches the name is noise, unless the user
+  // opted in via the "show model icons" setting.
+  const showModelIcons = useSettingsStore((s) => s.showModelIcons)
+  const showModelBadge = !!ticket.model_id && (showModelIcons || !!ticket.variant_group_id)
   const isForwardedToTelegram = useTelegramStore(
     useCallback(
       (state) => !!ticket.current_session_id && state.activeForwardingSessionId === ticket.current_session_id,
@@ -612,12 +693,21 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
         return
       }
 
+      // Cmd+click on a connection ticket — select the connection in the
+      // sidebar (same as ConnectionItem.handleClick), don't open the session
+      const ticketConnectionId = connectionId ?? connectionSession?.connectionId
+      if ((e.metaKey || e.ctrlKey) && ticketConnectionId && !isArchived) {
+        e.preventDefault()
+        useConnectionStore.getState().selectConnection(ticketConnectionId)
+        return
+      }
+
       useKanbanStore.getState().setSelectedTicketRef({
         projectId: ticket.project_id,
         ticketId: ticket.id
       })
     },
-    [ticket.id, ticket.worktree_id, ticket.project_id, isArchived, isPinnedMode, recordBoardTelegramTarget, blockingDiagnostic]
+    [ticket.id, ticket.worktree_id, ticket.project_id, isArchived, isPinnedMode, connectionId, connectionSession, recordBoardTelegramTarget, blockingDiagnostic]
   )
 
   // ── Middle-click — select attached worktree (same as sidebar) ─
@@ -664,6 +754,25 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     setShowDeleteConfirm(false)
   }, [ticket.id, ticket.project_id])
 
+  const handleStopRemoteSession = useCallback(async () => {
+    const sessionId = ticket.current_session_id
+    setShowStopRemoteConfirm(false)
+    if (!sessionId) return
+    try {
+      const result = await remoteLaunchApi.stop({ sessionId })
+      if (result.killed || result.alreadyDead) {
+        useRemoteLaunchStore.getState().markStopped(sessionId)
+        toast.success(
+          result.killed ? 'Remote session stopped' : 'Remote session was already stopped'
+        )
+      }
+    } catch (err) {
+      toast.error(
+        `Failed to stop remote session: ${err instanceof Error ? err.message : String(err)}`
+      )
+    }
+  }, [ticket.current_session_id])
+
   const handleArchive = useCallback(async () => {
     try {
       await useKanbanStore.getState().archiveTicket(ticket.id, ticket.project_id)
@@ -672,6 +781,34 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
       toast.error('Failed to archive ticket')
     }
   }, [ticket.id, ticket.project_id])
+
+  const handleDuplicate = useCallback(async () => {
+    try {
+      const store = useKanbanStore.getState()
+      const created = await store.createTicket(ticket.project_id, {
+        project_id: ticket.project_id,
+        title: ticket.title,
+        description: ticket.description,
+        column: 'todo'
+      })
+      // Goal fields aren't part of the create payload — mirror them after creation
+      if (ticket.goal_mode || ticket.goal_success_criteria) {
+        await store.updateTicket(created.id, ticket.project_id, {
+          goal_mode: ticket.goal_mode,
+          goal_success_criteria: ticket.goal_success_criteria
+        })
+      }
+      toast.success('Ticket duplicated')
+    } catch {
+      toast.error('Failed to duplicate ticket')
+    }
+  }, [
+    ticket.project_id,
+    ticket.title,
+    ticket.description,
+    ticket.goal_mode,
+    ticket.goal_success_criteria
+  ])
 
   const handleMoveToProject = useCallback(
     async (project: { id: string; name: string }) => {
@@ -823,6 +960,32 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     }
   }, [ticket.id, ticket.project_id])
 
+  const canToggleAutoApprove =
+    !isArchived && !blockingDiagnostic && canToggleAutoApprovePlan(ticket, linkedSessionAgentSdk)
+
+  const handleToggleAutoApprove = useCallback(async () => {
+    const next = !ticket.auto_approve_plan
+    try {
+      await useKanbanStore.getState().updateTicket(ticket.id, ticket.project_id, {
+        auto_approve_plan: next
+      })
+      // Mirror the durable flag into the hook server's in-memory armed registry
+      // when a claude-cli session is already live; sessions armed before they
+      // exist are registered by the status listener on their first planning turn.
+      if (ticket.current_session_id && isClaudeCli(linkedSessionAgentSdk)) {
+        await terminalApi.setClaudeCliPlanAutoApprove(ticket.current_session_id, next)
+      }
+    } catch {
+      toast.error('Failed to toggle auto approve')
+    }
+  }, [
+    ticket.id,
+    ticket.project_id,
+    ticket.auto_approve_plan,
+    ticket.current_session_id,
+    linkedSessionAgentSdk
+  ])
+
   const handleSaveNote = useCallback(async (note: string | null) => {
     try {
       await useKanbanStore.getState().updateTicket(ticket.id, ticket.project_id, { note })
@@ -906,13 +1069,23 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             </div>
 
             {/* Badges + progress row */}
-            {(hasAttachments || hasNote || worktreeName || projectTag || connectionName || ticket.plan_ready || isError || rightAlignedSlot || isArchived || isBlocked || blockingDiagnostic || isRunProcessAlive || ticket.github_pr_number || isCreatingPR || isForwardedToTelegram || ticket.goal_mode) && (
+            {(hasAttachments || hasNote || worktreeName || queuedBranchLabel || projectTag || connectionName || ticket.plan_ready || isError || rightAlignedSlot || isArchived || isBlocked || blockingDiagnostic || isRunProcessAlive || ticket.github_pr_number || isCreatingPR || isForwardedToTelegram || ticket.goal_mode || ticket.auto_approve_plan || activeRemoteLaunch || showModelBadge) && (
               <div className="mt-1.5 flex flex-wrap items-center gap-1">
                 {/* Archived badge */}
                 {isArchived && (
                   <span className="inline-flex items-center gap-1 rounded-full bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
                     <Archive className="h-3 w-3" />
                     Archived
+                  </span>
+                )}
+                {/* Remote launch badge */}
+                {activeRemoteLaunch && (
+                  <span
+                    data-testid="ticket-remote-badge"
+                    className="inline-flex items-center gap-1 rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[11px] font-medium text-sky-500"
+                  >
+                    <RadioTower className="h-3 w-3" />
+                    Remote
                   </span>
                 )}
                 {isForwardedToTelegram && (
@@ -934,6 +1107,16 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                   <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 text-[11px] font-medium text-amber-500">
                     <Lock className="h-3 w-3" />
                     {unresolvedBlockerCount}
+                  </span>
+                )}
+                {/* Queued launch target badge — branch the queued ticket will run on */}
+                {queuedBranchLabel && (
+                  <span
+                    data-testid="ticket-queued-branch"
+                    className="inline-flex items-center gap-1 rounded-full bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
+                  >
+                    <GitBranch className="h-3 w-3" />
+                    {queuedBranchLabel}
                   </span>
                 )}
                 {/* Attachment badge */}
@@ -963,6 +1146,9 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                   </Tooltip>
                 )}
 
+                {/* Model badge — only for multi-model duplicate groups */}
+                {showModelBadge && <TicketModelBadge ticket={ticket} />}
+
                 {/* Project tag (connection mode) or worktree name badge */}
                 {projectTag ? (
                   <span className="inline-flex items-center gap-1 rounded-full bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
@@ -977,10 +1163,25 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
 
                 {/* Connection badge — shown on project board when ticket has connection session */}
                 {!connectionId && connectionName && (
-                  <span className="inline-flex items-center gap-1 rounded-full bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
-                    <LinkIcon className="h-3 w-3" />
-                    {connectionName}
-                  </span>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span
+                        data-testid="kanban-ticket-connection"
+                        className="inline-flex items-center rounded-full bg-muted/40 px-2 py-0.5 cursor-help"
+                      >
+                        {connectionColor ? (
+                          <span
+                            className="h-2.5 w-2.5 rounded-full shrink-0"
+                            style={{ backgroundColor: parseColorQuad(connectionColor)[1] }}
+                            aria-hidden="true"
+                          />
+                        ) : (
+                          <LinkIcon className="h-3 w-3 text-muted-foreground" />
+                        )}
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent>{connectionName}</TooltipContent>
+                  </Tooltip>
                 )}
 
                 {/* PR badge */}
@@ -1016,6 +1217,23 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                   <span className="inline-flex items-center rounded-full bg-violet-500/10 border border-violet-500/30 px-2 py-0.5 text-[11px] font-medium text-violet-500">
                     Plan ready
                   </span>
+                )}
+
+                {/* Auto-approve plan badge */}
+                {ticket.auto_approve_plan && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span
+                        data-testid="kanban-ticket-auto-approve"
+                        className="inline-flex items-center rounded-full bg-violet-500/10 border border-violet-500/30 px-1.5 py-0.5 text-violet-500 cursor-help"
+                      >
+                        <FastForward className="h-3 w-3" />
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      Auto approve plan: implementation starts automatically when the plan is ready
+                    </TooltipContent>
+                  </Tooltip>
                 )}
 
                 {/* Error badge */}
@@ -1323,6 +1541,28 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             </ContextMenuItem>
           )}
 
+          {/* Remote launch actions — only when the current session is a remote (client-role) launch */}
+          {activeRemoteLaunch && (
+            <>
+              <ContextMenuItem
+                data-testid="ctx-open-remote-terminal"
+                onClick={() => setRemoteTerminalOpen(true)}
+                className="gap-2"
+              >
+                <RadioTower className="h-3.5 w-3.5" />
+                Open remote terminal
+              </ContextMenuItem>
+              <ContextMenuItem
+                data-testid="ctx-stop-remote-session"
+                onClick={() => setShowStopRemoteConfirm(true)}
+                className="gap-2 text-red-500 focus:text-red-500"
+              >
+                <Unplug className="h-3.5 w-3.5" />
+                Stop remote session
+              </ContextMenuItem>
+            </>
+          )}
+
           {/* Worktree actions: edit context & pin/unpin (when worktree assigned) */}
           {ticket.worktree_id && (
             <>
@@ -1377,6 +1617,17 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             <ContextMenuItem onClick={() => handleSaveNote(null)} className="gap-2">
               <X className="h-3.5 w-3.5" />
               Remove note
+            </ContextMenuItem>
+          )}
+
+          {canToggleAutoApprove && (
+            <ContextMenuItem
+              data-testid="ctx-toggle-auto-approve"
+              onClick={() => void handleToggleAutoApprove()}
+              className="gap-2"
+            >
+              <FastForward className="h-3.5 w-3.5" />
+              {ticket.auto_approve_plan ? 'Disable auto approve' : 'Auto approve'}
             </ContextMenuItem>
           )}
 
@@ -1447,6 +1698,15 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
               )}
             </ContextMenuSubContent>
           </ContextMenuSub>
+
+          <ContextMenuItem
+            data-testid="ctx-duplicate-ticket"
+            onClick={() => void handleDuplicate()}
+            className="gap-2"
+          >
+            <Copy className="h-3.5 w-3.5" />
+            Duplicate
+          </ContextMenuItem>
 
           {!isExternalTicket && (
             <ContextMenuItem
@@ -1522,6 +1782,40 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
+      )}
+
+      {/* Stop remote session confirmation */}
+      {activeRemoteLaunch && (
+        <AlertDialog open={showStopRemoteConfirm} onOpenChange={setShowStopRemoteConfirm}>
+          <AlertDialogContent data-testid="ctx-stop-remote-confirm-dialog">
+            <AlertDialogHeader>
+              <AlertDialogTitle>Stop remote session</AlertDialogTitle>
+              <AlertDialogDescription>
+                Are you sure you want to stop the remote session for &ldquo;{ticket.title}&rdquo;?
+                This kills the remote tmux session and can&rsquo;t be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel data-testid="ctx-stop-remote-cancel-btn">Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                data-testid="ctx-stop-remote-confirm-btn"
+                variant="destructive"
+                onClick={handleStopRemoteSession}
+              >
+                Stop
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      )}
+
+      {/* Remote terminal attach dialog */}
+      {activeRemoteLaunch && (
+        <RemoteTerminalDialog
+          open={remoteTerminalOpen}
+          onOpenChange={setRemoteTerminalOpen}
+          remoteLaunch={activeRemoteLaunch}
+        />
       )}
 
       {/* Worktree picker modal for full assign (non-todo) */}

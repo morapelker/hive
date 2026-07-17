@@ -12,11 +12,13 @@ export interface Session {
   opencode_session_id: string | null
   claude_session_id: string | null
   agent_sdk: AgentSdk
+  custom_provider_id?: string | null
   mode: 'build' | 'plan'
   session_type: SessionType
   model_provider_id: string | null
   model_id: string | null
   model_variant: string | null
+  remote_launch: string | null
   created_at: string
   updated_at: string
   completed_at: string | null

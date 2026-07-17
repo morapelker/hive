@@ -527,9 +527,7 @@ describe('connection ops RPC mocked provider', () => {
   })
 
   it('validates connectionOps.removeWorktreeFromAll params before calling the provider service', async () => {
-    const removeWorktreeFromAll = vi.fn(() =>
-      Effect.succeed({ success: false, error: 'unused' })
-    )
+    const removeWorktreeFromAll = vi.fn(() => Effect.succeed({ success: false, error: 'unused' }))
     const service = { removeWorktreeFromAll } as unknown as ConnectionOpsRpcService
     const router = makeRpcRouter({
       eventBus: makeEventBus(),
@@ -721,5 +719,233 @@ describe('connection ops RPC mocked provider', () => {
       ok: false,
       error: { code: 'VALIDATION_FAILED' }
     })
+  })
+
+  it('routes connectionOps.updateMembers to the injected provider service', async () => {
+    const connection: ConnectionWithMembers = {
+      id: 'connection-1',
+      name: 'Hive',
+      custom_name: null,
+      status: 'active',
+      path: '/tmp/hive-connection',
+      color: null,
+      pinned: 0,
+      created_at: '2026-05-26T00:00:00.000Z',
+      updated_at: '2026-05-26T00:00:00.000Z',
+      members: [
+        {
+          id: 'member-1',
+          connection_id: 'connection-1',
+          worktree_id: 'worktree-1',
+          project_id: 'project-1',
+          symlink_name: 'hive',
+          added_at: '2026-05-26T00:00:00.000Z',
+          worktree_name: 'main',
+          worktree_branch: 'main',
+          worktree_path: '/tmp/hive',
+          project_name: 'Hive'
+        }
+      ]
+    }
+    const result = { success: true, connection }
+    const updateMembers = vi.fn(() => Effect.succeed(result))
+    const service = { updateMembers } as unknown as ConnectionOpsRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      connectionOps: service
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'connection-update-members-1',
+        method: 'connectionOps.updateMembers',
+        params: {
+          connectionId: 'connection-1',
+          worktreeIds: ['worktree-1', 'worktree-2']
+        }
+      })
+    )
+
+    expect(updateMembers).toHaveBeenCalledWith('connection-1', ['worktree-1', 'worktree-2'])
+    expect(response).toEqual({
+      id: 'connection-update-members-1',
+      ok: true,
+      value: result
+    })
+  })
+
+  it('rejects connectionOps.updateMembers with an empty worktreeIds array before calling the provider service', async () => {
+    const updateMembers = vi.fn(() => Effect.succeed({ success: false, error: 'unused' }))
+    const service = { updateMembers } as unknown as ConnectionOpsRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      connectionOps: service
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'connection-update-members-invalid',
+        method: 'connectionOps.updateMembers',
+        params: {
+          connectionId: 'connection-1',
+          worktreeIds: []
+        }
+      })
+    )
+
+    expect(updateMembers).not.toHaveBeenCalled()
+    expect(response).toMatchObject({
+      id: 'connection-update-members-invalid',
+      ok: false,
+      error: { code: 'VALIDATION_FAILED' }
+    })
+  })
+
+  it('routes connectionOps.getRecentConnections to the injected provider service', async () => {
+    const result = {
+      success: true,
+      entries: [
+        {
+          id: 'history-1',
+          project_set_key: 'project-1|project-2',
+          projects: [
+            { id: 'project-1', name: 'Hive', path: '/tmp/hive' },
+            { id: 'project-2', name: 'Other', path: '/tmp/other' }
+          ],
+          last_used_at: '2026-05-26T00:00:00.000Z',
+          use_count: 3,
+          note: 'demo note'
+        }
+      ]
+    }
+    const getRecentConnections = vi.fn(() => Effect.succeed(result))
+    const service = { getRecentConnections } as unknown as ConnectionOpsRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      connectionOps: service
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'connection-get-recent-1',
+        method: 'connectionOps.getRecentConnections',
+        params: {}
+      })
+    )
+
+    expect(getRecentConnections).toHaveBeenCalledWith()
+    expect(response).toEqual({
+      id: 'connection-get-recent-1',
+      ok: true,
+      value: result
+    })
+  })
+
+  it('validates connectionOps.getRecentConnections params before calling the provider service', async () => {
+    const getRecentConnections = vi.fn(() => Effect.succeed({ success: true, entries: [] }))
+    const service = { getRecentConnections } as unknown as ConnectionOpsRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      connectionOps: service
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'connection-get-recent-invalid',
+        method: 'connectionOps.getRecentConnections',
+        params: { connectionId: 'connection-1' }
+      })
+    )
+
+    expect(getRecentConnections).not.toHaveBeenCalled()
+    expect(response).toMatchObject({
+      id: 'connection-get-recent-invalid',
+      ok: false,
+      error: { code: 'VALIDATION_FAILED' }
+    })
+  })
+
+  it('routes connectionOps.setRecentConnectionNote to the injected provider service', async () => {
+    const result = { success: true }
+    const setRecentConnectionNote = vi.fn(() => Effect.succeed(result))
+    const service = { setRecentConnectionNote } as unknown as ConnectionOpsRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      connectionOps: service
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'connection-set-recent-note-1',
+        method: 'connectionOps.setRecentConnectionNote',
+        params: { entryId: 'history-1', note: 'my note' }
+      })
+    )
+
+    expect(setRecentConnectionNote).toHaveBeenCalledWith('history-1', 'my note')
+    expect(response).toEqual({
+      id: 'connection-set-recent-note-1',
+      ok: true,
+      value: result
+    })
+  })
+
+  it('routes connectionOps.setRecentConnectionNote with a null note (clear)', async () => {
+    const result = { success: true }
+    const setRecentConnectionNote = vi.fn(() => Effect.succeed(result))
+    const service = { setRecentConnectionNote } as unknown as ConnectionOpsRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      connectionOps: service
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'connection-set-recent-note-clear',
+        method: 'connectionOps.setRecentConnectionNote',
+        params: { entryId: 'history-1', note: null }
+      })
+    )
+
+    expect(setRecentConnectionNote).toHaveBeenCalledWith('history-1', null)
+    expect(response).toEqual({
+      id: 'connection-set-recent-note-clear',
+      ok: true,
+      value: result
+    })
+  })
+
+  it('validates connectionOps.setRecentConnectionNote params before calling the provider service', async () => {
+    const setRecentConnectionNote = vi.fn(() => Effect.succeed({ success: true }))
+    const service = { setRecentConnectionNote } as unknown as ConnectionOpsRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      connectionOps: service
+    })
+
+    const invalidParams = [
+      { note: 'missing entry id' },
+      { entryId: '', note: 'empty entry id' },
+      { entryId: 'history-1', note: 42 },
+      { entryId: 'history-1', note: 'extra key', extra: true }
+    ]
+
+    for (const [index, params] of invalidParams.entries()) {
+      const response = await Effect.runPromise(
+        router.handle({
+          id: `connection-set-recent-note-invalid-${index}`,
+          method: 'connectionOps.setRecentConnectionNote',
+          params
+        })
+      )
+
+      expect(response).toMatchObject({
+        id: `connection-set-recent-note-invalid-${index}`,
+        ok: false,
+        error: { code: 'VALIDATION_FAILED' }
+      })
+    }
+
+    expect(setRecentConnectionNote).not.toHaveBeenCalled()
   })
 })

@@ -9,6 +9,7 @@ import type {
   KanbanTicketBatchCreate,
   KanbanTicketBatchCreateResult,
   KanbanTicketCreate,
+  KanbanTicketDuplicateOverrides,
   KanbanTicketUpdate,
   MarkdownCardDiagnostic,
   TicketDependency
@@ -86,6 +87,13 @@ export interface KanbanRpcService {
     column: KanbanTicket['column'],
     sortOrder: number
   ) => Effect.Effect<KanbanTicket | null, unknown, never>
+  // Optional (like the other ticket methods below) so the 50+ existing test
+  // mocks that construct a full `kanban:` service literal don't all need updating.
+  readonly duplicateTicket?: (
+    projectId: string,
+    id: string,
+    overrides?: KanbanTicketDuplicateOverrides
+  ) => Effect.Effect<KanbanTicket, unknown, never>
   readonly moveTicketToProject?: (
     projectId: string,
     id: string,
@@ -216,7 +224,12 @@ const kanbanTicketCreateSchema = z
     github_pr_number: z.number().nullable().optional(),
     github_pr_url: z.string().nullable().optional(),
     mark: ticketMarkSchema.nullable().optional(),
-    created_from_session: z.boolean().optional()
+    created_from_session: z.boolean().optional(),
+    note: z.string().nullable().optional(),
+    model_provider_id: z.string().nullable().optional(),
+    model_id: z.string().nullable().optional(),
+    model_variant: z.string().nullable().optional(),
+    variant_group_id: z.string().nullable().optional()
   })
   .strict() satisfies z.ZodType<KanbanTicketCreate>
 
@@ -240,6 +253,23 @@ const kanbanTicketBatchCreateParamsSchema = z
     data: kanbanTicketBatchCreateSchema
   })
   .strict()
+const kanbanTicketDuplicateOverridesSchema = z
+  .object({
+    column: ticketColumnSchema.optional(),
+    sort_order: z.number().optional(),
+    model_provider_id: z.string().nullable().optional(),
+    model_id: z.string().nullable().optional(),
+    model_variant: z.string().nullable().optional(),
+    variant_group_id: z.string().nullable().optional()
+  })
+  .strict() satisfies z.ZodType<KanbanTicketDuplicateOverrides>
+const kanbanTicketDuplicateParamsSchema = z
+  .object({
+    projectId: z.string(),
+    id: z.string(),
+    overrides: kanbanTicketDuplicateOverridesSchema.optional()
+  })
+  .strict()
 const kanbanTicketUpdateSchema = z
   .object({
     title: z.string().optional(),
@@ -258,7 +288,12 @@ const kanbanTicketUpdateSchema = z
     goal_mode: z.boolean().optional(),
     goal_success_criteria: z.string().nullable().optional(),
     note: z.string().nullable().optional(),
-    archived_at: z.string().nullable().optional()
+    archived_at: z.string().nullable().optional(),
+    auto_approve_plan: z.boolean().optional(),
+    model_provider_id: z.string().nullable().optional(),
+    model_id: z.string().nullable().optional(),
+    model_variant: z.string().nullable().optional(),
+    variant_group_id: z.string().nullable().optional()
   })
   .strict() satisfies z.ZodType<KanbanTicketUpdate>
 const ticketIdProjectParamsSchema = z
@@ -478,6 +513,14 @@ export const makeLiveKanbanRpcService = (): KanbanRpcService => ({
       try: async () => {
         const { getKanbanBackendForProject } = await import('../../../main/services/kanban-backend')
         return getKanbanBackendForProject(projectId).create(projectId, data)
+      },
+      catch: (cause) => cause
+    }),
+  duplicateTicket: (projectId, id, overrides) =>
+    Effect.tryPromise({
+      try: async () => {
+        const { getKanbanBackendForProject } = await import('../../../main/services/kanban-backend')
+        return getKanbanBackendForProject(projectId).duplicate(projectId, id, overrides)
       },
       catch: (cause) => cause
     }),
@@ -1033,6 +1076,20 @@ export const makeKanbanRpcHandlers = (
             catch: (cause) => cause
           })
           return yield* service.createTicket(data.project_id, data)
+        })
+    ],
+    [
+      'kanban.ticket.duplicate',
+      (params) =>
+        Effect.gen(function* () {
+          const { projectId, id, overrides } = yield* Effect.try({
+            try: () => kanbanTicketDuplicateParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          if (!service.duplicateTicket) {
+            return yield* Effect.die(new Error('kanban.ticket.duplicate service is not implemented'))
+          }
+          return yield* service.duplicateTicket(projectId, id, overrides)
         })
     ],
     [

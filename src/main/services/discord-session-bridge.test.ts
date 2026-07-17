@@ -62,6 +62,10 @@ class FakeBridgeDatabase {
     return this.sessions.find((session) => session.id === id) ?? null
   }
 
+  getWorktree(id: string): Worktree | null {
+    return this.worktrees.find((worktree) => worktree.id === id) ?? null
+  }
+
   getAgentSdkForSession(agentSessionId: string): string | null {
     return (
       this.sessions.find((session) => session.opencode_session_id === agentSessionId)?.agent_sdk ??
@@ -87,6 +91,7 @@ class FakeBridgeDatabase {
       model_provider_id: data.model_provider_id ?? null,
       model_id: data.model_id ?? null,
       model_variant: data.model_variant ?? null,
+      remote_launch: data.remote_launch ?? null,
       created_at: now,
       updated_at: now,
       completed_at: null,
@@ -136,6 +141,7 @@ const makeSession = (overrides: Partial<Session> = {}): Session => ({
   model_provider_id: 'anthropic',
   model_id: 'claude-opus-4-5-20251101',
   model_variant: null,
+  remote_launch: null,
   created_at: '2026-01-01T00:00:00.000Z',
   updated_at: '2026-01-01T00:00:00.000Z',
   completed_at: null,
@@ -1173,6 +1179,167 @@ describe('DiscordSessionBridge stream delivery', () => {
         content: expect.stringContaining('Handoff started')
       })
     )
+  })
+})
+
+describe('DiscordSessionBridge relayed CLI sessions', () => {
+  const makeWorktree = (overrides: Partial<Worktree> = {}): Worktree => ({
+    id: 'worktree-1',
+    project_id: 'project-1',
+    name: 'worktree',
+    branch_name: 'feature/worktree',
+    path: '/repo/project/worktree',
+    status: 'active',
+    is_default: false,
+    branch_renamed: 0,
+    last_message_at: null,
+    session_titles: '[]',
+    last_model_provider_id: null,
+    last_model_id: null,
+    last_model_variant: null,
+    attachments: '[]',
+    pinned: 0,
+    context: null,
+    github_pr_number: null,
+    github_pr_url: null,
+    base_branch: null,
+    created_at: '2026-01-01T00:00:00.000Z',
+    last_accessed_at: '2026-01-01T00:00:00.000Z',
+    ...overrides
+  })
+
+  const setupRelayedCliSession = (overrides: { replyRouter?: unknown } = {}) => {
+    const setup = setupBridge({ replyRouter: overrides.replyRouter })
+    const { channel, messages } = makeInteractiveChannel()
+    // The session was started from the app (kanban ticket), so it is NOT the
+    // resource's managed session.
+    setup.db.resources = [makeResource({ managed_session_id: 'some-other-session' })]
+    setup.db.sessions.push(
+      makeSession({
+        id: 'ticket-session',
+        agent_sdk: 'claude-code-cli',
+        opencode_session_id: null
+      })
+    )
+    setup.db.worktrees.push(makeWorktree())
+    setup.bridge.setChannelResolver(async (channelId) =>
+      channelId === 'channel-1' ? (channel as never) : null
+    )
+    return { ...setup, channel, messages }
+  }
+
+  beforeEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('forwards a relayed question for a session that is not the managed session', async () => {
+    const { bridge, channel, messages } = setupRelayedCliSession()
+
+    bridge.handleBackendAgentEvent({
+      type: 'question.asked',
+      sessionId: 'ticket-session',
+      data: {
+        requestId: 'req-cli-1',
+        questions: [
+          {
+            question: 'Which color?',
+            header: 'Color',
+            options: [{ label: 'Red' }, { label: 'Blue' }],
+            multiple: false
+          }
+        ]
+      }
+    })
+    await flushPromises()
+
+    expect(channel.send).toHaveBeenCalled()
+    expect(messages[0].content).toContain('Which color?')
+    expect(messages[0].components).toBeTruthy()
+  })
+
+  it('routes a question answer through the reply router with the claude-code-cli sdk', async () => {
+    const replyRouter = {
+      setAgentSdkManager: vi.fn(),
+      replyQuestion: vi.fn(async () => undefined),
+      rejectQuestion: vi.fn(async () => undefined),
+      replyPermission: vi.fn(async () => undefined),
+      replyCommandApproval: vi.fn(async () => undefined),
+      replyPlan: vi.fn(async () => undefined)
+    }
+    const { bridge } = setupRelayedCliSession({ replyRouter })
+
+    bridge.handleBackendAgentEvent({
+      type: 'question.asked',
+      sessionId: 'ticket-session',
+      data: {
+        requestId: 'req-cli-2',
+        questions: [
+          {
+            question: 'Which color?',
+            options: [{ label: 'Red' }, { label: 'Blue' }],
+            multiple: false
+          }
+        ]
+      }
+    })
+    await flushPromises()
+
+    await bridge.handleComponentInteraction({
+      isButton: () => false,
+      isStringSelectMenu: () => true,
+      customId: 'question:req-cli-2:select:0',
+      values: ['1'],
+      deferUpdate: vi.fn(async () => undefined)
+    })
+    await bridge.handleComponentInteraction({
+      isButton: () => true,
+      isStringSelectMenu: () => false,
+      customId: 'question:req-cli-2:submit',
+      deferUpdate: vi.fn(async () => undefined)
+    })
+    await flushPromises()
+
+    expect(replyRouter.replyQuestion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId: 'req-cli-2',
+        answers: [['Blue']],
+        agentSdk: 'claude-code-cli'
+      })
+    )
+  })
+
+  it('posts the final assistant message when a relayed CLI session goes idle', async () => {
+    const { bridge, channel } = setupRelayedCliSession()
+
+    bridge.handleBackendAgentEvent({
+      type: 'message.updated',
+      sessionId: 'ticket-session',
+      data: { role: 'assistant', content: 'All done here.' }
+    })
+    await flushPromises()
+    bridge.handleBackendAgentEvent({
+      type: 'session.idle',
+      sessionId: 'ticket-session',
+      data: {}
+    })
+    await flushPromises()
+
+    expect(channel.send).toHaveBeenCalledWith('All done here.')
+  })
+
+  it('forwards a relayed plan for a non-managed session', async () => {
+    const { bridge, messages } = setupRelayedCliSession()
+
+    bridge.handleBackendAgentEvent({
+      type: 'plan.ready',
+      sessionId: 'ticket-session',
+      data: { requestId: 'req-plan-1', plan: '1. Do the thing' }
+    })
+    await flushPromises()
+
+    expect(messages[0].content).toContain('Plan ready')
+    expect(messages[0].content).toContain('1. Do the thing')
+    expect(messages[0].components).toBeTruthy()
   })
 })
 

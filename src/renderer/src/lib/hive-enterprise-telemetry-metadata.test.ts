@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildHivePromptMetadata } from './hive-enterprise-telemetry'
+import { buildHivePromptMetadata, resolveHivePromptAccountProvider } from './hive-enterprise-telemetry'
 
 describe('Hive Enterprise prompt metadata', () => {
   it('captures provider, model, mode, goal, handoff, timestamp, and connection projects', () => {
@@ -39,5 +39,24 @@ describe('Hive Enterprise prompt metadata', () => {
         { name: 'hive-enterprise', path: '/workspace/hive-enterprise' }
       ])
     })
+  })
+})
+
+describe('resolveHivePromptAccountProvider', () => {
+  it('maps claude-code and claude-code-cli sessions to anthropic', () => {
+    expect(resolveHivePromptAccountProvider('claude-code')).toBe('anthropic')
+    expect(resolveHivePromptAccountProvider('claude-code-cli')).toBe('anthropic')
+  })
+
+  it('maps codex sessions to openai', () => {
+    expect(resolveHivePromptAccountProvider('codex')).toBe('openai')
+  })
+
+  it('maps opencode, terminal, unknown, and missing SDKs to null', () => {
+    expect(resolveHivePromptAccountProvider('opencode')).toBeNull()
+    expect(resolveHivePromptAccountProvider('terminal')).toBeNull()
+    expect(resolveHivePromptAccountProvider('some-future-sdk')).toBeNull()
+    expect(resolveHivePromptAccountProvider(null)).toBeNull()
+    expect(resolveHivePromptAccountProvider(undefined)).toBeNull()
   })
 })

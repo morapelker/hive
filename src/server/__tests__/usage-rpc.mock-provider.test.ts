@@ -176,12 +176,32 @@ describe('usage ops RPC mocked provider', () => {
       })
     )
 
-    expect(fetchForAccount).toHaveBeenCalledWith('account-1')
+    expect(fetchForAccount).toHaveBeenCalledWith('account-1', undefined)
     expect(response).toEqual({
       id: 'usage-fetch-for-account-1',
       ok: true,
       value: result
     })
+  })
+
+  it('passes userInitiated through to the injected provider service', async () => {
+    const result: FetchForAccountResult = { success: true, status: 'ok' }
+    const fetchForAccount = vi.fn(() => Effect.succeed(result))
+    const service = { fetchForAccount } as unknown as UsageOpsRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      usageOps: service
+    })
+
+    await Effect.runPromise(
+      router.handle({
+        id: 'usage-fetch-for-account-user-initiated',
+        method: 'usageOps.fetchForAccount',
+        params: { accountId: 'account-1', userInitiated: true }
+      })
+    )
+
+    expect(fetchForAccount).toHaveBeenCalledWith('account-1', true)
   })
 
   it('validates usageOps.fetchForAccount params before calling the provider service', async () => {
@@ -205,6 +225,32 @@ describe('usage ops RPC mocked provider', () => {
     expect(fetchForAccount).not.toHaveBeenCalled()
     expect(response).toMatchObject({
       id: 'usage-fetch-for-account-invalid',
+      ok: false,
+      error: { code: 'VALIDATION_FAILED' }
+    })
+  })
+
+  it('rejects a non-boolean userInitiated for usageOps.fetchForAccount', async () => {
+    const fetchForAccount = vi.fn(() =>
+      Effect.succeed({ success: false, status: 'error' as const })
+    )
+    const service = { fetchForAccount } as unknown as UsageOpsRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      usageOps: service
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'usage-fetch-for-account-bad-user-initiated',
+        method: 'usageOps.fetchForAccount',
+        params: { accountId: 'account-1', userInitiated: 'yes' }
+      })
+    )
+
+    expect(fetchForAccount).not.toHaveBeenCalled()
+    expect(response).toMatchObject({
+      id: 'usage-fetch-for-account-bad-user-initiated',
       ok: false,
       error: { code: 'VALIDATION_FAILED' }
     })

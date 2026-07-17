@@ -17,6 +17,7 @@ import {
   type ProviderModels
 } from '@/lib/parseProviders'
 import { cn } from '@/lib/utils'
+import { isWindows } from '@/lib/platform'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -67,11 +68,20 @@ export function HandoffModelPicker({
   onConfirm
 }: HandoffModelPickerProps): React.JSX.Element {
   const availableAgentSdks = useSettingsStore((state) => state.availableAgentSdks)
+  const customProviders = useSettingsStore((state) => state.customProviders)
   const visibleSdks = useMemo(
     () => getAvailableHandoffAgentSdks(availableAgentSdks),
     [availableAgentSdks]
   )
+  // Custom providers run their own command through the login shell — they
+  // don't depend on stock-claude detection, only on a launchable command.
+  // Hidden on Windows (no POSIX login shell).
+  const visibleCustomProviders = useMemo(
+    () => (isWindows() ? [] : (customProviders ?? []).filter((p) => p.command.trim())),
+    [customProviders]
+  )
   const [pickedSdk, setPickedSdk] = useState<HandoffAgentSdk>('opencode')
+  const [pickedCustomProviderId, setPickedCustomProviderId] = useState<string | null>(null)
   const [pickedModel, setPickedModel] = useState<SelectedModel | null>(null)
   const [providersBySdk, setProvidersBySdk] = useState<Partial<Record<HandoffAgentSdk, ProviderModels[]>>>({})
   const [loadingSdks, setLoadingSdks] = useState<Partial<Record<HandoffAgentSdk, boolean>>>({})
@@ -90,6 +100,22 @@ export function HandoffModelPicker({
     return loaded
   }, [])
 
+  // Every explicit pick applies immediately (not just on Handoff): the user
+  // can close the picker and fire the main split button — or right-click it
+  // into goal mode — expecting exactly the SDK/model/effort they just chose.
+  const persistOverride = useCallback(
+    (agentSdk: HandoffAgentSdk, model: SelectedModel, customProviderId?: string | null) => {
+      useSettingsStore.getState().setLastHandoffOverride({
+        agentSdk,
+        customProviderId: customProviderId ?? null,
+        providerID: model.providerID,
+        modelID: model.modelID,
+        variant: model.variant
+      })
+    },
+    []
+  )
+
   const resolveModelForCatalog = useCallback(
     (providers: ProviderModels[], model: SelectedModel): SelectedModel => {
       const info = findModelInfo(providers, model.providerID, model.modelID)
@@ -107,7 +133,10 @@ export function HandoffModelPicker({
     let active = true
     const effective = getEffectiveHandoffSelection({ worktreeId })
     setPickedSdk(effective.agentSdk)
+    setPickedCustomProviderId(effective.customProviderId ?? null)
     setPickedModel(effective.model)
+
+    if (effective.customProviderId) return // custom providers have no model catalog
 
     void ensureProviders(effective.agentSdk).then((providers) => {
       if (!active) return
@@ -131,6 +160,7 @@ export function HandoffModelPicker({
   const handleSelectSdk = useCallback(
     async (nextSdk: HandoffAgentSdk) => {
       setPickedSdk(nextSdk)
+      setPickedCustomProviderId(null)
       setPickedModel(null)
 
       const providers = await ensureProviders(nextSdk)
@@ -141,36 +171,62 @@ export function HandoffModelPicker({
         configuredDefault.modelID
       )
       const nextInfo = configuredInfo ?? getFirstModelInfo(providers)
-      setPickedModel(nextInfo ? buildModelFromInfo(nextInfo, configuredDefault.variant) : configuredDefault)
+      const nextModel = nextInfo
+        ? buildModelFromInfo(nextInfo, configuredDefault.variant)
+        : configuredDefault
+      setPickedModel(nextModel)
+      persistOverride(nextSdk, nextModel)
     },
-    [ensureProviders]
+    [ensureProviders, persistOverride]
   )
 
-  const handleSelectModel = useCallback((model: SelectedModel) => {
-    const info = findModelInfo(currentProviders, model.providerID, model.modelID)
-    setPickedModel(info ? buildModelFromInfo(info, model.variant) : model)
-  }, [currentProviders])
+  const handleSelectCustomProvider = useCallback(
+    (customProviderId: string) => {
+      setPickedSdk('claude-code-cli')
+      setPickedCustomProviderId(customProviderId)
+      // The provider's command decides the real model — persist the cli default
+      // only to satisfy the override's model shape.
+      const model = resolveModelForSdkDefault('claude-code-cli')
+      setPickedModel(model)
+      persistOverride('claude-code-cli', model, customProviderId)
+    },
+    [persistOverride]
+  )
+
+  const handleSelectModel = useCallback(
+    (model: SelectedModel) => {
+      const info = findModelInfo(currentProviders, model.providerID, model.modelID)
+      const nextModel = info ? buildModelFromInfo(info, model.variant) : model
+      setPickedModel(nextModel)
+      persistOverride(pickedSdk, nextModel)
+    },
+    [currentProviders, persistOverride, pickedSdk]
+  )
 
   const handleConfirm = useCallback(() => {
     if (!pickedModel) return
 
-    const nextOverride = {
+    persistOverride(pickedSdk, pickedModel, pickedCustomProviderId)
+    onConfirm({
       agentSdk: pickedSdk,
-      providerID: pickedModel.providerID,
-      modelID: pickedModel.modelID,
-      variant: pickedModel.variant
-    }
-    useSettingsStore.getState().setLastHandoffOverride(nextOverride)
-    onConfirm({ agentSdk: pickedSdk, model: pickedModel })
+      customProviderId: pickedCustomProviderId,
+      model: pickedModel
+    })
     onOpenChange(false)
-  }, [onConfirm, onOpenChange, pickedModel, pickedSdk])
+  }, [onConfirm, onOpenChange, persistOverride, pickedModel, pickedSdk, pickedCustomProviderId])
 
   const modelLabel = currentModelInfo
     ? getModelDisplayName(currentModelInfo)
     : pickedModel?.modelID ?? (loadingSdks[pickedSdk] ? 'Loading…' : 'Select model')
 
   return (
-    <Popover open={open} onOpenChange={onOpenChange}>
+    // modal: the picker can be anchored inside a React portal (the claude-cli
+    // plan card portalled into the ticket modal), where its portalled content
+    // is outside the host Dialog's React tree. A non-modal popover's clicks
+    // then count as pointer-down-outside on the Dialog and close the ticket
+    // modal mid-selection. Modal mode makes this popover the topmost
+    // pointer-events-disabled layer so the Dialog ignores them.
+    <Popover open={open} onOpenChange={onOpenChange} modal>
       <PopoverTrigger asChild>{anchor}</PopoverTrigger>
       <PopoverContent align="end" className="w-[360px] p-3">
         <div className="space-y-3">
@@ -185,7 +241,9 @@ export function HandoffModelPicker({
                     'hover:bg-muted transition-colors'
                   )}
                 >
-                  <span className="truncate">{getHandoffSdkDisplayName(pickedSdk)}</span>
+                  <span className="truncate">
+                    {getHandoffSdkDisplayName(pickedSdk, pickedCustomProviderId)}
+                  </span>
                   <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
                 </button>
               </DropdownMenuTrigger>
@@ -200,15 +258,41 @@ export function HandoffModelPicker({
                     <Check
                       className={cn(
                         'h-3.5 w-3.5',
-                        pickedSdk === sdkOption ? 'opacity-100' : 'opacity-0'
+                        pickedSdk === sdkOption && !pickedCustomProviderId
+                          ? 'opacity-100'
+                          : 'opacity-0'
                       )}
                     />
                     <span>{getHandoffSdkDisplayName(sdkOption)}</span>
                   </DropdownMenuItem>
                 ))}
+                {visibleCustomProviders.map((provider) => (
+                  <DropdownMenuItem
+                    key={provider.id}
+                    onSelect={() => {
+                      handleSelectCustomProvider(provider.id)
+                    }}
+                  >
+                    <Check
+                      className={cn(
+                        'h-3.5 w-3.5',
+                        pickedCustomProviderId === provider.id ? 'opacity-100' : 'opacity-0'
+                      )}
+                    />
+                    <span>{provider.name || 'Custom Provider'}</span>
+                  </DropdownMenuItem>
+                ))}
               </DropdownMenuContent>
             </DropdownMenu>
 
+            {pickedCustomProviderId ? (
+              <div
+                className="flex h-8 items-center rounded-full border border-border bg-muted/30 px-3 text-xs text-muted-foreground"
+                title="The provider's command decides the model"
+              >
+                <span className="truncate">Model set by command</span>
+              </div>
+            ) : (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button
@@ -255,9 +339,10 @@ export function HandoffModelPicker({
                 ))}
               </DropdownMenuContent>
             </DropdownMenu>
+            )}
           </div>
 
-          {variantKeys.length > 0 && pickedModel && (
+          {variantKeys.length > 0 && pickedModel && !pickedCustomProviderId && (
             <div className="flex flex-wrap gap-1.5">
               {variantKeys.map((variant) => {
                 const active = pickedModel.variant === variant
@@ -266,7 +351,9 @@ export function HandoffModelPicker({
                     key={variant}
                     type="button"
                     onClick={() => {
-                      setPickedModel({ ...pickedModel, variant })
+                      const nextModel = { ...pickedModel, variant }
+                      setPickedModel(nextModel)
+                      persistOverride(pickedSdk, nextModel)
                     }}
                     className={cn(
                       'rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-wide transition-colors',

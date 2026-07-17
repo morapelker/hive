@@ -16,14 +16,18 @@ import {
   Send,
   Zap,
   Database,
+  DatabaseBackup,
   Hash,
   RadioTower,
-  Building2
+  Building2,
+  Users,
+  Bot
 } from 'lucide-react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { SettingsAppearance } from './SettingsAppearance'
 import { SettingsGeneral } from './SettingsGeneral'
+import { SettingsAccounts } from './SettingsAccounts'
 import { SettingsModels } from './SettingsModels'
 import { SettingsEditor } from './SettingsEditor'
 import { SettingsTerminal } from './SettingsTerminal'
@@ -39,13 +43,17 @@ import { SettingsHiveEnterprise } from './SettingsHiveEnterprise'
 import { SettingsAdvanced } from './SettingsAdvanced'
 import { SettingsPet } from './SettingsPet'
 import { SettingsCustomCommands } from './SettingsCustomCommands'
+import { SettingsCustomProviders } from './SettingsCustomProviders'
 import { SettingsStorage } from './SettingsStorage'
+import { SettingsBackup } from './SettingsBackup'
 import { cn } from '@/lib/utils'
 
 const SECTIONS = [
   { id: 'appearance', label: 'Appearance', icon: Palette },
   { id: 'general', label: 'General', icon: Monitor },
+  { id: 'accounts', label: 'Accounts', icon: Users },
   { id: 'custom-commands', label: 'Custom Commands', icon: Zap },
+  { id: 'custom-providers', label: 'Custom Providers', icon: Bot },
   { id: 'models', label: 'Models', icon: Sparkles },
   { id: 'pet', label: 'Pet', icon: Bug },
   { id: 'editor', label: 'Editor', icon: Code },
@@ -58,6 +66,7 @@ const SECTIONS = [
   { id: 'security', label: 'Security', icon: Shield },
   { id: 'privacy', label: 'Privacy', icon: Eye },
   { id: 'storage', label: 'Storage', icon: Database },
+  { id: 'backup', label: 'Backup', icon: DatabaseBackup },
   { id: 'shortcuts', label: 'Shortcuts', icon: Keyboard },
   { id: 'advanced', label: 'Advanced', icon: Wrench },
   { id: 'updates', label: 'Updates', icon: Download }
@@ -119,7 +128,9 @@ export function SettingsModal(): React.JSX.Element {
           <div className="flex-1 overflow-y-auto p-6">
             {activeSection === 'appearance' && <SettingsAppearance />}
             {activeSection === 'general' && <SettingsGeneral />}
+            {activeSection === 'accounts' && <SettingsAccounts />}
             {activeSection === 'custom-commands' && <SettingsCustomCommands />}
+            {activeSection === 'custom-providers' && <SettingsCustomProviders />}
             {activeSection === 'models' && <SettingsModels />}
             {activeSection === 'pet' && <SettingsPet />}
             {activeSection === 'editor' && <SettingsEditor />}
@@ -132,6 +143,7 @@ export function SettingsModal(): React.JSX.Element {
             {activeSection === 'security' && <SettingsSecurity />}
             {activeSection === 'privacy' && <SettingsPrivacy />}
             {activeSection === 'storage' && <SettingsStorage />}
+            {activeSection === 'backup' && <SettingsBackup />}
             {activeSection === 'shortcuts' && <SettingsShortcuts />}
             {activeSection === 'updates' && <SettingsUpdates />}
             {activeSection === 'advanced' && <SettingsAdvanced />}

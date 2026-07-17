@@ -31,6 +31,7 @@ export interface ClaudeCliStatusPayload {
     readonly hookPath?: string
     readonly toolName?: string
     readonly plan?: string
+    readonly taskNotification?: boolean
   }
 }
 
@@ -82,6 +83,16 @@ export const terminalApi = {
       rows?: number
       error?: string
     }>('terminalOps.createClaudeCli', { sessionId, opts })
+    return { success: true, value: result }
+  },
+  setClaudeCliPlanAutoApprove: async (
+    sessionId: string,
+    enabled: boolean
+  ): Promise<Envelope<{ success: boolean; error?: string }>> => {
+    const result = await getRendererRpcClient().request<{
+      success: boolean
+      error?: string
+    }>('terminalOps.setClaudeCliPlanAutoApprove', { sessionId, enabled })
     return { success: true, value: result }
   },
   sendClaudeCliPrompt: async (
@@ -150,6 +161,14 @@ export const terminalApi = {
   getConfig: async (): Promise<Envelope<GhosttyTerminalConfig>> => {
     const config = await getRendererRpcClient().request<GhosttyTerminalConfig>(
       'terminalOps.getConfig',
+      {}
+    )
+    return { success: true, value: config }
+  },
+  /** Force a fresh read of the Ghostty config (used by the settings "Sync from Ghostty" toggle). */
+  resyncGhosttyConfig: async (): Promise<Envelope<GhosttyTerminalConfig>> => {
+    const config = await getRendererRpcClient().request<GhosttyTerminalConfig>(
+      'terminalOps.resyncGhosttyConfig',
       {}
     )
     return { success: true, value: config }

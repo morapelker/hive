@@ -18,6 +18,8 @@ export type DesktopCommandName =
   | 'gitShowInFinder'
   | 'kanbanOpenBoardImportFileDialog'
   | 'kanbanSaveBoardExportDialog'
+  | 'backupOpenFileDialog'
+  | 'backupSaveFileDialog'
   | 'systemGetAppVersion'
   | 'systemGetAppPaths'
   | 'systemIsPackaged'
@@ -61,6 +63,7 @@ export type DesktopCommandName =
   | 'terminalDestroy'
   | 'terminalWrite'
   | 'terminalCreateClaudeCli'
+  | 'remoteLaunchClaudeTmux'
   | 'terminalGhosttyInit'
   | 'terminalGhosttyIsAvailable'
   | 'terminalGhosttyCreateSurface'
@@ -106,6 +109,10 @@ export type DesktopCommandName =
   | 'telegramClaudeCliQuestionReply'
   | 'telegramClaudeCliQuestionReject'
   | 'telegramClaudeCliPlanReply'
+  | 'discordClaudeCliQuestionReply'
+  | 'discordClaudeCliQuestionReject'
+  | 'discordClaudeCliPlanReply'
+  | 'terminalSetClaudeCliPlanAutoApprove'
 
 export interface OpenInAppPayload {
   readonly appName: string
@@ -195,6 +202,18 @@ export interface KanbanSaveBoardExportDialogPayload {
 }
 
 export interface KanbanSaveBoardExportDialogResult {
+  readonly filePath: string | null
+}
+
+export interface BackupOpenFileDialogResult {
+  readonly filePath: string | null
+}
+
+export interface BackupSaveFileDialogPayload {
+  readonly defaultFileName: string
+}
+
+export interface BackupSaveFileDialogResult {
   readonly filePath: string | null
 }
 
@@ -343,8 +362,26 @@ export interface TerminalCreateResult {
   readonly error?: string
 }
 
+export interface RemoteLaunchClaudeTmuxPayload {
+  readonly sessionId: string
+  readonly worktreePath: string
+  readonly prompt: string
+  readonly tmuxSessionName: string
+}
+
+export interface RemoteLaunchClaudeTmuxResult {
+  readonly success: boolean
+  readonly error?: string
+  readonly tmuxSession?: string
+}
+
 export interface TelegramClaudeCliSessionPayload {
   readonly sessionId: string
+}
+
+export interface TerminalClaudeCliPlanAutoApprovePayload {
+  readonly sessionId: string
+  readonly enabled: boolean
 }
 
 export interface TelegramClaudeCliQuestionReplyPayload {
@@ -365,6 +402,13 @@ export interface TelegramClaudeCliPlanReplyPayload {
 export interface TelegramClaudeCliReplyResult {
   readonly success: boolean
 }
+
+// Discord reuses the Telegram claude-cli payload shapes: both transports hold
+// the same CLI hooks and resolve them with the same request/answer data.
+export type DiscordClaudeCliQuestionReplyPayload = TelegramClaudeCliQuestionReplyPayload
+export type DiscordClaudeCliQuestionRejectPayload = TelegramClaudeCliQuestionRejectPayload
+export type DiscordClaudeCliPlanReplyPayload = TelegramClaudeCliPlanReplyPayload
+export type DiscordClaudeCliReplyResult = TelegramClaudeCliReplyResult
 
 export interface TerminalGhosttyAvailabilityResult {
   readonly available: boolean
@@ -856,6 +900,8 @@ export type DesktopCommandRequest =
   | GitShowInFinderDesktopCommandRequest
   | KanbanOpenBoardImportFileDialogDesktopCommandRequest
   | KanbanSaveBoardExportDialogDesktopCommandRequest
+  | BackupOpenFileDialogDesktopCommandRequest
+  | BackupSaveFileDialogDesktopCommandRequest
   | SystemGetAppVersionDesktopCommandRequest
   | SystemGetAppPathsDesktopCommandRequest
   | SystemIsPackagedDesktopCommandRequest
@@ -899,6 +945,7 @@ export type DesktopCommandRequest =
   | TerminalDestroyDesktopCommandRequest
   | TerminalWriteDesktopCommandRequest
   | TerminalCreateClaudeCliDesktopCommandRequest
+  | RemoteLaunchClaudeTmuxDesktopCommandRequest
   | TerminalGhosttyInitDesktopCommandRequest
   | TerminalGhosttyIsAvailableDesktopCommandRequest
   | TerminalGhosttyCreateSurfaceDesktopCommandRequest
@@ -944,6 +991,10 @@ export type DesktopCommandRequest =
   | TelegramClaudeCliQuestionReplyDesktopCommandRequest
   | TelegramClaudeCliQuestionRejectDesktopCommandRequest
   | TelegramClaudeCliPlanReplyDesktopCommandRequest
+  | DiscordClaudeCliQuestionReplyDesktopCommandRequest
+  | DiscordClaudeCliQuestionRejectDesktopCommandRequest
+  | DiscordClaudeCliPlanReplyDesktopCommandRequest
+  | TerminalSetClaudeCliPlanAutoApproveDesktopCommandRequest
 
 export interface QuitAppDesktopCommandRequest {
   readonly type: typeof DESKTOP_COMMAND_REQUEST_TYPE
@@ -1030,6 +1081,19 @@ export interface KanbanSaveBoardExportDialogDesktopCommandRequest {
   readonly id: string
   readonly command: 'kanbanSaveBoardExportDialog'
   readonly payload: KanbanSaveBoardExportDialogPayload
+}
+
+export interface BackupOpenFileDialogDesktopCommandRequest {
+  readonly type: typeof DESKTOP_COMMAND_REQUEST_TYPE
+  readonly id: string
+  readonly command: 'backupOpenFileDialog'
+}
+
+export interface BackupSaveFileDialogDesktopCommandRequest {
+  readonly type: typeof DESKTOP_COMMAND_REQUEST_TYPE
+  readonly id: string
+  readonly command: 'backupSaveFileDialog'
+  readonly payload: BackupSaveFileDialogPayload
 }
 
 export interface SystemGetAppVersionDesktopCommandRequest {
@@ -1317,6 +1381,13 @@ export interface TerminalCreateClaudeCliDesktopCommandRequest {
   readonly id: string
   readonly command: 'terminalCreateClaudeCli'
   readonly payload: TerminalCreateClaudeCliPayload
+}
+
+export interface RemoteLaunchClaudeTmuxDesktopCommandRequest {
+  readonly type: typeof DESKTOP_COMMAND_REQUEST_TYPE
+  readonly id: string
+  readonly command: 'remoteLaunchClaudeTmux'
+  readonly payload: RemoteLaunchClaudeTmuxPayload
 }
 
 export interface TerminalGhosttyIsAvailableDesktopCommandRequest {
@@ -1609,6 +1680,13 @@ export interface TelegramClaudeCliCancelDesktopCommandRequest {
   readonly payload: TelegramClaudeCliSessionPayload
 }
 
+export interface TerminalSetClaudeCliPlanAutoApproveDesktopCommandRequest {
+  readonly type: typeof DESKTOP_COMMAND_REQUEST_TYPE
+  readonly id: string
+  readonly command: 'terminalSetClaudeCliPlanAutoApprove'
+  readonly payload: TerminalClaudeCliPlanAutoApprovePayload
+}
+
 export interface TelegramClaudeCliQuestionReplyDesktopCommandRequest {
   readonly type: typeof DESKTOP_COMMAND_REQUEST_TYPE
   readonly id: string
@@ -1621,6 +1699,27 @@ export interface TelegramClaudeCliQuestionRejectDesktopCommandRequest {
   readonly id: string
   readonly command: 'telegramClaudeCliQuestionReject'
   readonly payload: TelegramClaudeCliQuestionRejectPayload
+}
+
+export interface DiscordClaudeCliQuestionReplyDesktopCommandRequest {
+  readonly type: typeof DESKTOP_COMMAND_REQUEST_TYPE
+  readonly id: string
+  readonly command: 'discordClaudeCliQuestionReply'
+  readonly payload: DiscordClaudeCliQuestionReplyPayload
+}
+
+export interface DiscordClaudeCliQuestionRejectDesktopCommandRequest {
+  readonly type: typeof DESKTOP_COMMAND_REQUEST_TYPE
+  readonly id: string
+  readonly command: 'discordClaudeCliQuestionReject'
+  readonly payload: DiscordClaudeCliQuestionRejectPayload
+}
+
+export interface DiscordClaudeCliPlanReplyDesktopCommandRequest {
+  readonly type: typeof DESKTOP_COMMAND_REQUEST_TYPE
+  readonly id: string
+  readonly command: 'discordClaudeCliPlanReply'
+  readonly payload: DiscordClaudeCliPlanReplyPayload
 }
 
 export interface TelegramClaudeCliPlanReplyDesktopCommandRequest {
@@ -1699,6 +1798,15 @@ export function makeDesktopCommandRequest(
   command: 'kanbanSaveBoardExportDialog',
   payload: KanbanSaveBoardExportDialogPayload
 ): KanbanSaveBoardExportDialogDesktopCommandRequest
+export function makeDesktopCommandRequest(
+  id: string,
+  command: 'backupOpenFileDialog'
+): BackupOpenFileDialogDesktopCommandRequest
+export function makeDesktopCommandRequest(
+  id: string,
+  command: 'backupSaveFileDialog',
+  payload: BackupSaveFileDialogPayload
+): BackupSaveFileDialogDesktopCommandRequest
 export function makeDesktopCommandRequest(
   id: string,
   command: 'systemGetAppVersion'
@@ -1900,6 +2008,11 @@ export function makeDesktopCommandRequest(
   command: 'terminalCreateClaudeCli',
   payload: TerminalCreateClaudeCliPayload
 ): TerminalCreateClaudeCliDesktopCommandRequest
+export function makeDesktopCommandRequest(
+  id: string,
+  command: 'remoteLaunchClaudeTmux',
+  payload: RemoteLaunchClaudeTmuxPayload
+): RemoteLaunchClaudeTmuxDesktopCommandRequest
 export function makeDesktopCommandRequest(
   id: string,
   command: 'terminalGhosttyIsAvailable'
@@ -2123,6 +2236,26 @@ export function makeDesktopCommandRequest(
 ): TelegramClaudeCliPlanReplyDesktopCommandRequest
 export function makeDesktopCommandRequest(
   id: string,
+  command: 'discordClaudeCliQuestionReply',
+  payload: DiscordClaudeCliQuestionReplyPayload
+): DiscordClaudeCliQuestionReplyDesktopCommandRequest
+export function makeDesktopCommandRequest(
+  id: string,
+  command: 'discordClaudeCliQuestionReject',
+  payload: DiscordClaudeCliQuestionRejectPayload
+): DiscordClaudeCliQuestionRejectDesktopCommandRequest
+export function makeDesktopCommandRequest(
+  id: string,
+  command: 'discordClaudeCliPlanReply',
+  payload: DiscordClaudeCliPlanReplyPayload
+): DiscordClaudeCliPlanReplyDesktopCommandRequest
+export function makeDesktopCommandRequest(
+  id: string,
+  command: 'terminalSetClaudeCliPlanAutoApprove',
+  payload: TerminalClaudeCliPlanAutoApprovePayload
+): TerminalSetClaudeCliPlanAutoApproveDesktopCommandRequest
+export function makeDesktopCommandRequest(
+  id: string,
   command: DesktopCommandName,
   payload?:
     | OpenInAppPayload
@@ -2135,6 +2268,7 @@ export function makeDesktopCommandRequest(
     | ProjectGetProjectIconPathPayload
     | GitShowInFinderPayload
     | KanbanSaveBoardExportDialogPayload
+    | BackupSaveFileDialogPayload
     | OpenInChromePayload
     | UpdateMenuStatePayload
     | SetKeepAwakePayload
@@ -2306,6 +2440,19 @@ export function makeDesktopCommandRequest(
       command,
       payload
     } as KanbanSaveBoardExportDialogDesktopCommandRequest
+  }
+
+  if (command === 'backupSaveFileDialog') {
+    if (!payload) {
+      throw new Error('Missing backupSaveFileDialog payload')
+    }
+
+    return {
+      type: DESKTOP_COMMAND_REQUEST_TYPE,
+      id,
+      command,
+      payload
+    } as BackupSaveFileDialogDesktopCommandRequest
   }
 
   if (command === 'systemGetAppVersion') {
@@ -2744,6 +2891,19 @@ export function makeDesktopCommandRequest(
       command,
       payload
     } as TerminalCreateClaudeCliDesktopCommandRequest
+  }
+
+  if (command === 'remoteLaunchClaudeTmux') {
+    if (!payload) {
+      throw new Error('Missing remoteLaunchClaudeTmux payload')
+    }
+
+    return {
+      type: DESKTOP_COMMAND_REQUEST_TYPE,
+      id,
+      command,
+      payload
+    } as RemoteLaunchClaudeTmuxDesktopCommandRequest
   }
 
   if (command === 'terminalGhosttyIsAvailable') {
@@ -3298,6 +3458,39 @@ export function makeDesktopCommandRequest(
     } as TelegramClaudeCliPlanReplyDesktopCommandRequest
   }
 
+  if (
+    command === 'discordClaudeCliQuestionReply' ||
+    command === 'discordClaudeCliQuestionReject' ||
+    command === 'discordClaudeCliPlanReply'
+  ) {
+    if (!payload) {
+      throw new Error(`Missing ${command} payload`)
+    }
+
+    return {
+      type: DESKTOP_COMMAND_REQUEST_TYPE,
+      id,
+      command,
+      payload
+    } as
+      | DiscordClaudeCliQuestionReplyDesktopCommandRequest
+      | DiscordClaudeCliQuestionRejectDesktopCommandRequest
+      | DiscordClaudeCliPlanReplyDesktopCommandRequest
+  }
+
+  if (command === 'terminalSetClaudeCliPlanAutoApprove') {
+    if (!payload) {
+      throw new Error('Missing terminalSetClaudeCliPlanAutoApprove payload')
+    }
+
+    return {
+      type: DESKTOP_COMMAND_REQUEST_TYPE,
+      id,
+      command,
+      payload
+    } as TerminalSetClaudeCliPlanAutoApproveDesktopCommandRequest
+  }
+
   return {
     type: DESKTOP_COMMAND_REQUEST_TYPE,
     id,
@@ -3339,6 +3532,9 @@ export const isDesktopCommandRequest = (value: unknown): value is DesktopCommand
       value.command === 'kanbanOpenBoardImportFileDialog' ||
       (value.command === 'kanbanSaveBoardExportDialog' &&
         isKanbanSaveBoardExportDialogPayload(value.payload)) ||
+      value.command === 'backupOpenFileDialog' ||
+      (value.command === 'backupSaveFileDialog' &&
+        isBackupSaveFileDialogPayload(value.payload)) ||
       value.command === 'systemGetAppVersion' ||
       value.command === 'systemGetAppPaths' ||
       value.command === 'systemIsPackaged' ||
@@ -3387,6 +3583,8 @@ export const isDesktopCommandRequest = (value: unknown): value is DesktopCommand
       (value.command === 'terminalWrite' && isTerminalWritePayload(value.payload)) ||
       (value.command === 'terminalCreateClaudeCli' &&
         isTerminalCreateClaudeCliPayload(value.payload)) ||
+      (value.command === 'remoteLaunchClaudeTmux' &&
+        isRemoteLaunchClaudeTmuxPayload(value.payload)) ||
       value.command === 'terminalGhosttyInit' ||
       value.command === 'terminalGhosttyIsAvailable' ||
       (value.command === 'terminalGhosttyCreateSurface' &&
@@ -3452,7 +3650,15 @@ export const isDesktopCommandRequest = (value: unknown): value is DesktopCommand
       (value.command === 'telegramClaudeCliQuestionReject' &&
         isTelegramClaudeCliQuestionRejectPayload(value.payload)) ||
       (value.command === 'telegramClaudeCliPlanReply' &&
-        isTelegramClaudeCliPlanReplyPayload(value.payload)))
+        isTelegramClaudeCliPlanReplyPayload(value.payload)) ||
+      (value.command === 'discordClaudeCliQuestionReply' &&
+        isTelegramClaudeCliQuestionReplyPayload(value.payload)) ||
+      (value.command === 'discordClaudeCliQuestionReject' &&
+        isTelegramClaudeCliQuestionRejectPayload(value.payload)) ||
+      (value.command === 'discordClaudeCliPlanReply' &&
+        isTelegramClaudeCliPlanReplyPayload(value.payload)) ||
+      (value.command === 'terminalSetClaudeCliPlanAutoApprove' &&
+        isTerminalClaudeCliPlanAutoApprovePayload(value.payload)))
   )
 }
 
@@ -3589,6 +3795,11 @@ const isKanbanSaveBoardExportDialogPayload = (
 ): value is KanbanSaveBoardExportDialogPayload =>
   isRecord(value) && typeof value.projectName === 'string'
 
+const isBackupSaveFileDialogPayload = (
+  value: unknown
+): value is BackupSaveFileDialogPayload =>
+  isRecord(value) && typeof value.defaultFileName === 'string'
+
 const isUpdaterCheckForUpdatePayload = (value: unknown): value is UpdaterCheckForUpdatePayload =>
   isRecord(value) && (value.manual === undefined || typeof value.manual === 'boolean')
 
@@ -3666,6 +3877,15 @@ const isTerminalCreateClaudeCliPayload = (
         value.opts.pendingPrompt === undefined ||
         value.opts.pendingPrompt === null ||
         typeof value.opts.pendingPrompt === 'string')))
+
+const isRemoteLaunchClaudeTmuxPayload = (
+  value: unknown
+): value is RemoteLaunchClaudeTmuxPayload =>
+  isRecord(value) &&
+  typeof value.sessionId === 'string' &&
+  typeof value.worktreePath === 'string' &&
+  typeof value.prompt === 'string' &&
+  typeof value.tmuxSessionName === 'string'
 
 const isTerminalGhosttyRect = (value: unknown): value is TerminalGhosttyRect =>
   isRecord(value) &&
@@ -3993,3 +4213,8 @@ const isTelegramClaudeCliPlanReplyPayload = (
   typeof value.requestId === 'string' &&
   typeof value.approve === 'boolean' &&
   (value.feedback === undefined || typeof value.feedback === 'string')
+
+const isTerminalClaudeCliPlanAutoApprovePayload = (
+  value: unknown
+): value is TerminalClaudeCliPlanAutoApprovePayload =>
+  isRecord(value) && typeof value.sessionId === 'string' && typeof value.enabled === 'boolean'

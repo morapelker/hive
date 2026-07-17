@@ -81,3 +81,49 @@ export function writeFile(filePath: string, content: string): { success: boolean
     return { success: false, error: error instanceof Error ? error.message : 'Unknown error' }
   }
 }
+
+export function createFile(
+  directoryPath: string,
+  fileName: string,
+  content: string,
+  overwrite: boolean
+): { success: boolean; error?: string; code?: string } {
+  try {
+    if (!directoryPath || typeof directoryPath !== 'string') {
+      return { success: false, error: 'Invalid directory path', code: 'DirectoryNotFound' }
+    }
+    if (typeof content !== 'string') {
+      return { success: false, error: 'Invalid content', code: 'InvalidContent' }
+    }
+    if (
+      !fileName ||
+      typeof fileName !== 'string' ||
+      fileName.includes('/') ||
+      fileName.includes('\\') ||
+      fileName === '.' ||
+      fileName === '..'
+    ) {
+      return { success: false, error: 'Invalid file name', code: 'InvalidFileName' }
+    }
+    if (!existsSync(directoryPath) || !statSync(directoryPath).isDirectory()) {
+      return { success: false, error: 'Directory does not exist', code: 'DirectoryNotFound' }
+    }
+    const filePath = join(directoryPath, fileName)
+    if (existsSync(filePath)) {
+      if (statSync(filePath).isDirectory()) {
+        return {
+          success: false,
+          error: 'A directory with this name exists',
+          code: 'InvalidFileName'
+        }
+      }
+      if (!overwrite) {
+        return { success: false, error: 'File already exists', code: 'FileAlreadyExists' }
+      }
+    }
+    writeFileSync(filePath, content, 'utf-8')
+    return { success: true }
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' }
+  }
+}

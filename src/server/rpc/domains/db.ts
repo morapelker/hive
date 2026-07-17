@@ -301,11 +301,13 @@ const sessionCreateParamsSchema = z.object({
   opencode_session_id: z.string().nullable().optional(),
   claude_session_id: z.string().nullable().optional(),
   agent_sdk: agentSdkSchema.optional(),
+  custom_provider_id: z.string().nullable().optional(),
   mode: sessionModeSchema.optional(),
   session_type: sessionTypeSchema.optional(),
   model_provider_id: z.string().nullable().optional(),
   model_id: z.string().nullable().optional(),
   model_variant: z.string().nullable().optional(),
+  remote_launch: z.string().nullable().optional(),
   pinned_to_board: z.boolean().optional()
 }) satisfies z.ZodType<SessionCreate>
 const sessionUpdateDataSchema = z.object({
@@ -314,11 +316,13 @@ const sessionUpdateDataSchema = z.object({
   opencode_session_id: z.string().nullable().optional(),
   claude_session_id: z.string().nullable().optional(),
   agent_sdk: agentSdkSchema.optional(),
+  custom_provider_id: z.string().nullable().optional(),
   mode: sessionModeSchema.optional(),
   session_type: sessionTypeSchema.optional(),
   model_provider_id: z.string().nullable().optional(),
   model_id: z.string().nullable().optional(),
   model_variant: z.string().nullable().optional(),
+  remote_launch: z.string().nullable().optional(),
   updated_at: z.string().optional(),
   completed_at: z.string().nullable().optional(),
   pinned_to_board: z.boolean().optional()

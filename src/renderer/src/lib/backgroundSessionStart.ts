@@ -6,6 +6,7 @@ import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
 import { lastSendMode, messageSendTimes, userExplicitSendTimes } from '@/lib/message-send-times'
 import { snapshotTokenBaseline } from '@/lib/token-baselines'
+import { markClaudeCliPromptStarted } from '@/lib/claude-cli-send-tracking'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { opencodeApi } from '@/api/opencode-api'
 import { dbApi } from '@/api/db-api'
@@ -67,7 +68,10 @@ export async function startBackgroundSessionPrompt(opts: {
     )
     if (!delivered) {
       useSessionStore.getState().setPendingMessage(opts.sessionId, opts.prompt)
+      return
     }
+    markClaudeCliPromptStarted(opts.sessionId)
+    bumpWorktreeLastMessage(opts.bumpTarget)
     return
   }
 

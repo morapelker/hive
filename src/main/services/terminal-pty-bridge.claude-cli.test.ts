@@ -21,6 +21,10 @@ const mocks = vi.hoisted(() => {
     getLastClaudeCliStatus: vi.fn(),
     publishClaudeCliStatus: vi.fn(),
     subscribeClaudeCliStatus: vi.fn(() => vi.fn()),
+    clearClaudeCliInteractions: vi.fn(),
+    clearAllClaudeCliInteractions: vi.fn(),
+    clearClaudeCliSubagentTracking: vi.fn(),
+    clearAllClaudeCliSubagentTracking: vi.fn(),
     ptyService: {
       has: vi.fn(() => false),
       create: vi.fn(() => ({ cols: 120, rows: 40 })),
@@ -122,6 +126,16 @@ vi.mock('../desktop/backend-event-publisher', () => ({
   publishDesktopBackendEvent: mocks.publishDesktopBackendEvent
 }))
 
+vi.mock('./claude-cli-interaction-ledger', () => ({
+  clearClaudeCliInteractions: mocks.clearClaudeCliInteractions,
+  clearAllClaudeCliInteractions: mocks.clearAllClaudeCliInteractions
+}))
+
+vi.mock('./claude-cli-subagent-tracker', () => ({
+  clearClaudeCliSubagentTracking: mocks.clearClaudeCliSubagentTracking,
+  clearAllClaudeCliSubagentTracking: mocks.clearAllClaudeCliSubagentTracking
+}))
+
 import type { Session } from '../db/types'
 import {
   cleanupTerminals,
@@ -149,6 +163,7 @@ function makeSession(overrides: Partial<Session> = {}): Session {
     model_provider_id: 'anthropic',
     model_id: 'sonnet',
     model_variant: 'high',
+    remote_launch: null,
     created_at: '2026-01-01T00:00:00.000Z',
     updated_at: '2026-01-01T00:00:00.000Z',
     completed_at: null,
@@ -484,7 +499,7 @@ describe('Claude CLI terminal hook status wiring', () => {
       }
     )
 
-    it.each(['planning', 'permission'])(
+    it.each(['planning', 'permission', 'answering'])(
       'publishes completed when Escape is typed while %s',
       async (status) => {
         await createClaudeCliTerminal('hive-session-1', {})
@@ -522,7 +537,7 @@ describe('Claude CLI terminal hook status wiring', () => {
       }
     )
 
-    it.each(['completed', 'plan_ready', 'answering', undefined])(
+    it.each(['completed', 'plan_ready', undefined])(
       'ignores Escape when the last published status is %s',
       async (status) => {
         await createClaudeCliTerminal('hive-session-1', {})
@@ -534,6 +549,116 @@ describe('Claude CLI terminal hook status wiring', () => {
         expect(mocks.publishClaudeCliStatus).not.toHaveBeenCalled()
       }
     )
+  })
+
+  describe('interaction ledger clears', () => {
+    it('clears the session ledger when a Claude CLI PTY starts, so restarts never inherit a stale latch', async () => {
+      await createClaudeCliTerminal('hive-session-1', {})
+
+      expect(mocks.clearClaudeCliInteractions).toHaveBeenCalledWith('hive-session-1')
+    })
+
+    it.each(['\x1b', '\x03'])(
+      'clears the session ledger on user interrupt %j so a phantom permission cannot re-surface',
+      async (key) => {
+        await createClaudeCliTerminal('hive-session-1', {})
+        mocks.getLastClaudeCliStatus.mockReturnValue('permission')
+        mocks.clearClaudeCliInteractions.mockClear()
+
+        handleClaudeCliTerminalInput('hive-session-1', key)
+
+        expect(mocks.clearClaudeCliInteractions).toHaveBeenCalledWith('hive-session-1')
+      }
+    )
+
+    it('clears the ledger on Escape while answering — no hook fires for an escaped question', async () => {
+      await createClaudeCliTerminal('hive-session-1', {})
+      mocks.getLastClaudeCliStatus.mockReturnValue('answering')
+      mocks.clearClaudeCliInteractions.mockClear()
+
+      handleClaudeCliTerminalInput('hive-session-1', '\x1b')
+
+      expect(mocks.clearClaudeCliInteractions).toHaveBeenCalledWith('hive-session-1')
+    })
+
+    it('clears the session ledger when the tracked PTY exits', async () => {
+      await createClaudeCliTerminal('hive-session-1', {})
+      mocks.clearClaudeCliInteractions.mockClear()
+
+      mocks.exitCallbacks.get('hive-session-1')?.(9)
+
+      expect(mocks.clearClaudeCliInteractions).toHaveBeenCalledWith('hive-session-1')
+    })
+
+    it('clears the session ledger when the terminal is destroyed', async () => {
+      await createClaudeCliTerminal('hive-session-1', {})
+      mocks.clearClaudeCliInteractions.mockClear()
+
+      destroyNodePtyTerminal('hive-session-1')
+
+      expect(mocks.clearClaudeCliInteractions).toHaveBeenCalledWith('hive-session-1')
+    })
+
+    it('clears all ledgers on cleanupTerminals', async () => {
+      await createClaudeCliTerminal('hive-session-1', {})
+      mocks.clearAllClaudeCliInteractions.mockClear()
+
+      cleanupTerminals()
+
+      expect(mocks.clearAllClaudeCliInteractions).toHaveBeenCalled()
+    })
+  })
+
+  describe('subagent tracker clears', () => {
+    it('clears subagent tracking when a Claude CLI PTY restarts, so a stale deferral cannot survive', async () => {
+      await createClaudeCliTerminal('hive-session-1', {})
+      mocks.clearClaudeCliSubagentTracking.mockClear()
+
+      mocks.ptyService.has.mockReturnValue(true)
+      await createClaudeCliTerminal('hive-session-1', {})
+
+      expect(mocks.clearClaudeCliSubagentTracking).toHaveBeenCalledWith('hive-session-1')
+    })
+
+    it.each(['\x1b', '\x03'])(
+      'clears subagent tracking on user interrupt %j',
+      async (key) => {
+        await createClaudeCliTerminal('hive-session-1', {})
+        mocks.getLastClaudeCliStatus.mockReturnValue('working')
+        mocks.clearClaudeCliSubagentTracking.mockClear()
+
+        handleClaudeCliTerminalInput('hive-session-1', key)
+
+        expect(mocks.clearClaudeCliSubagentTracking).toHaveBeenCalledWith('hive-session-1')
+      }
+    )
+
+    it('clears subagent tracking when the tracked PTY exits', async () => {
+      await createClaudeCliTerminal('hive-session-1', {})
+      mocks.clearClaudeCliSubagentTracking.mockClear()
+
+      mocks.exitCallbacks.get('hive-session-1')?.(9)
+
+      expect(mocks.clearClaudeCliSubagentTracking).toHaveBeenCalledWith('hive-session-1')
+    })
+
+    it('clears subagent tracking when the terminal is destroyed', async () => {
+      await createClaudeCliTerminal('hive-session-1', {})
+      mocks.clearClaudeCliSubagentTracking.mockClear()
+
+      destroyNodePtyTerminal('hive-session-1')
+
+      expect(mocks.clearClaudeCliSubagentTracking).toHaveBeenCalledWith('hive-session-1')
+    })
+
+    it('clears all subagent tracking on cleanupTerminals', async () => {
+      await createClaudeCliTerminal('hive-session-1', {})
+      mocks.clearAllClaudeCliSubagentTracking.mockClear()
+
+      cleanupTerminals()
+
+      expect(mocks.clearAllClaudeCliSubagentTracking).toHaveBeenCalled()
+    })
   })
 
   it('removes the Claude CLI PTY-exit safety net when the terminal is destroyed', async () => {

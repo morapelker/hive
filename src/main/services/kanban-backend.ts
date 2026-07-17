@@ -39,6 +39,7 @@ import type {
   KanbanTicketBatchCreateResult,
   KanbanTicketColumn,
   KanbanTicketCreate,
+  KanbanTicketDuplicateOverrides,
   KanbanTicketUpdate,
   MarkdownCardDiagnostic,
   Project,
@@ -117,8 +118,13 @@ interface MarkdownRuntimeState {
   note: string | null
   attachments: unknown[]
   plan_ready: boolean
+  auto_approve_plan: boolean
   total_tokens: number
   pending_launch_config: string | null
+  model_provider_id: string | null
+  model_id: string | null
+  model_variant: string | null
+  variant_group_id: string | null
   updated_at: string | null
 }
 
@@ -141,8 +147,13 @@ function emptyRuntimeState(): MarkdownRuntimeState {
     note: null,
     attachments: [],
     plan_ready: false,
+    auto_approve_plan: false,
     total_tokens: 0,
     pending_launch_config: null,
+    model_provider_id: null,
+    model_id: null,
+    model_variant: null,
+    variant_group_id: null,
     updated_at: null
   }
 }
@@ -161,6 +172,11 @@ export interface KanbanBackend {
   get(projectId: string, ticketId: string): Promise<KanbanTicket | null>
   list(projectId: string, includeArchived: boolean): Promise<KanbanTicket[]>
   create(projectId: string, data: KanbanTicketCreate): Promise<KanbanTicket>
+  duplicate(
+    projectId: string,
+    ticketId: string,
+    overrides?: KanbanTicketDuplicateOverrides
+  ): Promise<KanbanTicket>
   createBatch(
     projectId: string,
     data: KanbanTicketBatchCreate
@@ -232,6 +248,25 @@ class InternalKanbanBackend implements KanbanBackend {
   async create(projectId: string, data: KanbanTicketCreate): Promise<KanbanTicket> {
     assertProjectPayload(projectId, data.project_id)
     return getDatabase().createKanbanTicket({ ...data, project_id: projectId })
+  }
+
+  async duplicate(
+    projectId: string,
+    ticketId: string,
+    overrides?: KanbanTicketDuplicateOverrides
+  ): Promise<KanbanTicket> {
+    const source = await this.get(projectId, ticketId)
+    if (!source) throw new Error('Ticket does not exist')
+    return getDatabase().createKanbanTicket({
+      title: source.title,
+      description: source.description,
+      attachments: source.attachments,
+      mark: source.mark,
+      note: source.note,
+      ...overrides,
+      project_id: projectId,
+      column: overrides?.column ?? source.column
+    })
   }
 
   async createBatch(
@@ -524,7 +559,12 @@ class MarkdownKanbanBackend implements KanbanBackend {
         attachments: data.attachments ?? [],
         current_session_id: data.current_session_id ?? null,
         worktree_id: data.worktree_id ?? null,
-        plan_ready: data.plan_ready ?? false
+        plan_ready: data.plan_ready ?? false,
+        note: data.note ?? null,
+        model_provider_id: data.model_provider_id ?? null,
+        model_id: data.model_id ?? null,
+        model_variant: data.model_variant ?? null,
+        variant_group_id: data.variant_group_id ?? null
       },
       false
     )
@@ -532,6 +572,25 @@ class MarkdownKanbanBackend implements KanbanBackend {
     const ticket = await this.get(projectId, id)
     if (!ticket) throw new Error('Created markdown ticket could not be loaded')
     return ticket
+  }
+
+  async duplicate(
+    projectId: string,
+    ticketId: string,
+    overrides?: KanbanTicketDuplicateOverrides
+  ): Promise<KanbanTicket> {
+    const card = await this.requireMutableCard(projectId, ticketId)
+    const source = card.ticket
+    return this.create(projectId, {
+      title: source.title,
+      description: source.description,
+      attachments: source.attachments,
+      mark: source.mark,
+      note: source.note,
+      ...overrides,
+      project_id: projectId,
+      column: overrides?.column ?? source.column
+    })
   }
 
   async createBatch(
@@ -601,7 +660,12 @@ class MarkdownKanbanBackend implements KanbanBackend {
           attachments: draft.attachments ?? [],
           current_session_id: draft.current_session_id ?? null,
           worktree_id: draft.worktree_id ?? null,
-          plan_ready: draft.plan_ready ?? false
+          plan_ready: draft.plan_ready ?? false,
+          note: draft.note ?? null,
+          model_provider_id: draft.model_provider_id ?? null,
+          model_id: draft.model_id ?? null,
+          model_variant: draft.model_variant ?? null,
+          variant_group_id: draft.variant_group_id ?? null
         }
       })
     }
@@ -690,9 +754,17 @@ class MarkdownKanbanBackend implements KanbanBackend {
       runtimeUpdates.current_session_id = data.current_session_id
     if (data.worktree_id !== undefined) runtimeUpdates.worktree_id = data.worktree_id
     if (data.plan_ready !== undefined) runtimeUpdates.plan_ready = data.plan_ready
+    if (data.auto_approve_plan !== undefined)
+      runtimeUpdates.auto_approve_plan = data.auto_approve_plan
     if (data.pending_launch_config !== undefined)
       runtimeUpdates.pending_launch_config = data.pending_launch_config
     if (data.note !== undefined) runtimeUpdates.note = data.note
+    if (data.model_provider_id !== undefined)
+      runtimeUpdates.model_provider_id = data.model_provider_id
+    if (data.model_id !== undefined) runtimeUpdates.model_id = data.model_id
+    if (data.model_variant !== undefined) runtimeUpdates.model_variant = data.model_variant
+    if (data.variant_group_id !== undefined)
+      runtimeUpdates.variant_group_id = data.variant_group_id
 
     if (Object.keys(publicUpdates).length > 0 || body !== undefined) {
       let touchedPaths: string[]
@@ -1480,7 +1552,12 @@ class MarkdownKanbanBackend implements KanbanBackend {
       pending_launch_config: runtime.pending_launch_config,
       goal_mode: asBoolean(frontmatter.goal_mode) ?? false,
       goal_success_criteria: nullableString(frontmatter.goal_success_criteria),
-      note: runtime.note
+      note: runtime.note,
+      auto_approve_plan: runtime.auto_approve_plan,
+      model_provider_id: runtime.model_provider_id,
+      model_id: runtime.model_id,
+      model_variant: runtime.model_variant,
+      variant_group_id: runtime.variant_group_id
     }
 
     return { ticket, filePath, frontmatter }
@@ -1494,9 +1571,14 @@ class MarkdownKanbanBackend implements KanbanBackend {
       current_session_id: runtime.current_session_id,
       worktree_id: runtime.worktree_id,
       plan_ready: runtime.plan_ready,
+      auto_approve_plan: runtime.auto_approve_plan,
       total_tokens: runtime.total_tokens,
       pending_launch_config: runtime.pending_launch_config,
       note: runtime.note,
+      model_provider_id: runtime.model_provider_id,
+      model_id: runtime.model_id,
+      model_variant: runtime.model_variant,
+      variant_group_id: runtime.variant_group_id,
       updated_at: laterIso(card.ticket.updated_at, runtime.updated_at ?? card.ticket.created_at)
     }
     this.markRuntimeSeen(projectId, card.ticket.id, card.filePath)
@@ -1590,8 +1672,13 @@ class MarkdownKanbanBackend implements KanbanBackend {
           note: string | null
           attachments: string | null
           plan_ready: number
+          auto_approve_plan: number
           total_tokens: number
           pending_launch_config: string | null
+          model_provider_id: string | null
+          model_id: string | null
+          model_variant: string | null
+          variant_group_id: string | null
           updated_at: string | null
         }
       | undefined
@@ -1604,8 +1691,13 @@ class MarkdownKanbanBackend implements KanbanBackend {
       note: row.note,
       attachments: parseJsonArray(row.attachments),
       plan_ready: row.plan_ready === 1,
+      auto_approve_plan: row.auto_approve_plan === 1,
       total_tokens: row.total_tokens ?? 0,
       pending_launch_config: row.pending_launch_config,
+      model_provider_id: row.model_provider_id,
+      model_id: row.model_id,
+      model_variant: row.model_variant,
+      variant_group_id: row.variant_group_id,
       updated_at: row.updated_at
     }
   }
@@ -1651,9 +1743,29 @@ class MarkdownKanbanBackend implements KanbanBackend {
       updates.push('plan_ready = ?')
       values.push(data.plan_ready ? 1 : 0)
     }
+    if (data.auto_approve_plan !== undefined) {
+      updates.push('auto_approve_plan = ?')
+      values.push(data.auto_approve_plan ? 1 : 0)
+    }
     if (data.pending_launch_config !== undefined) {
       updates.push('pending_launch_config = ?')
       values.push(data.pending_launch_config)
+    }
+    if (data.model_provider_id !== undefined) {
+      updates.push('model_provider_id = ?')
+      values.push(data.model_provider_id)
+    }
+    if (data.model_id !== undefined) {
+      updates.push('model_id = ?')
+      values.push(data.model_id)
+    }
+    if (data.model_variant !== undefined) {
+      updates.push('model_variant = ?')
+      values.push(data.model_variant)
+    }
+    if (data.variant_group_id !== undefined) {
+      updates.push('variant_group_id = ?')
+      values.push(data.variant_group_id)
     }
     if (!preserveUpdatedAt) {
       updates.push('updated_at = ?')
@@ -1760,6 +1872,7 @@ export async function moveKanbanTicketToProject(
     if (!moved) return null
     return internalBackend.update(targetProjectId, ticketId, {
       plan_ready: false,
+      auto_approve_plan: false,
       pending_launch_config: null
     })
   }
@@ -1791,6 +1904,12 @@ export async function moveKanbanTicketToProject(
         goal_mode: sourceTicket.goal_mode,
         goal_success_criteria: sourceTicket.goal_success_criteria,
         note: sourceTicket.note,
+        // Badge/group metadata survives internal→internal moves untouched —
+        // keep the cross-backend recreate path consistent.
+        model_provider_id: sourceTicket.model_provider_id,
+        model_id: sourceTicket.model_id,
+        model_variant: sourceTicket.model_variant,
+        variant_group_id: sourceTicket.variant_group_id,
         pending_launch_config: null
       })) ?? created
 

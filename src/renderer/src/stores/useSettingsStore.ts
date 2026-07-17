@@ -6,6 +6,8 @@ import type { TelegramConfig } from '@shared/types/telegram'
 import type { UsageProvider } from '@shared/types/usage'
 import type { PetSettings } from '@shared/types/pet'
 import type { AgentSdk, HandoffAgentSdk } from '@shared/types/agent-sdk'
+import type { CustomClaudeProvider } from '@shared/types/custom-provider'
+import { sanitizeCustomProviders } from '@shared/types/custom-provider'
 import type { ReviewPromptType } from '@/constants/reviewPrompts'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { systemApi } from '@/api/system-api'
@@ -31,6 +33,7 @@ export type TerminalOption =
   | 'alacritty'
   | 'kitty'
   | 'ghostty'
+  | 'cmux'
   | 'powershell'
   | 'cmd'
   | 'custom'
@@ -102,6 +105,7 @@ export interface AppSettings {
   defaultModels: ModeDefaultModels | null
   lastHandoffOverride: {
     agentSdk: HandoffAgentSdk
+    customProviderId?: string | null
     providerID: string
     modelID: string
     variant?: string
@@ -109,6 +113,10 @@ export interface AppSettings {
 
   // Quick Actions
   lastOpenAction: QuickActionType | null
+
+  // Projects
+  /** Root directory picked the last time a project was created via the plus button. */
+  lastProjectDirectory: string | null
 
   // Favorites
   favoriteModels: string[] // Array of "providerID::modelID" keys
@@ -131,6 +139,9 @@ export interface AppSettings {
 
   // Agent SDK
   defaultAgentSdk: AgentSdk
+
+  // Custom claude-cli-based providers
+  customProviders: CustomClaudeProvider[]
 
   // Setup
   initialSetupComplete: boolean
@@ -214,6 +225,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   defaultModels: null,
   lastHandoffOverride: null,
   lastOpenAction: null,
+  lastProjectDirectory: null,
   favoriteModels: [],
   customChromeCommand: '',
   modelVariantDefaults: {},
@@ -222,6 +234,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   usageIndicatorMode: 'current-agent',
   usageIndicatorProviders: [],
   defaultAgentSdk: 'opencode',
+  customProviders: [],
   stripAtMentions: true,
   codexFastMode: false,
   codexFastModeAccepted: false,
@@ -399,6 +412,8 @@ async function loadSettingsFromDatabase(): Promise<AppSettings | null> {
           result.customProjectCommands = []
         }
 
+        result.customProviders = sanitizeCustomProviders(parsed.customProviders)
+
         return result
       }
     }
@@ -436,6 +451,7 @@ function extractSettings(state: SettingsState): AppSettings {
     defaultModels: state.defaultModels,
     lastHandoffOverride: state.lastHandoffOverride,
     lastOpenAction: state.lastOpenAction,
+    lastProjectDirectory: state.lastProjectDirectory,
     favoriteModels: state.favoriteModels,
     customChromeCommand: state.customChromeCommand,
     modelVariantDefaults: state.modelVariantDefaults,
@@ -444,6 +460,7 @@ function extractSettings(state: SettingsState): AppSettings {
     usageIndicatorMode: state.usageIndicatorMode,
     usageIndicatorProviders: state.usageIndicatorProviders,
     defaultAgentSdk: state.defaultAgentSdk,
+    customProviders: state.customProviders,
     stripAtMentions: state.stripAtMentions,
     codexFastMode: state.codexFastMode,
     codexFastModeAccepted: state.codexFastModeAccepted,
@@ -801,6 +818,7 @@ export const useSettingsStore = create<SettingsState>()(
         defaultModels: state.defaultModels,
         lastHandoffOverride: state.lastHandoffOverride,
         lastOpenAction: state.lastOpenAction,
+        lastProjectDirectory: state.lastProjectDirectory,
         favoriteModels: state.favoriteModels,
         customChromeCommand: state.customChromeCommand,
         modelVariantDefaults: state.modelVariantDefaults,
@@ -809,6 +827,7 @@ export const useSettingsStore = create<SettingsState>()(
         usageIndicatorMode: state.usageIndicatorMode,
         usageIndicatorProviders: state.usageIndicatorProviders,
         defaultAgentSdk: state.defaultAgentSdk,
+        customProviders: state.customProviders,
         activeSection: state.activeSection,
         stripAtMentions: state.stripAtMentions,
         codexFastMode: state.codexFastMode,

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, useRef } from 'react'
 import { revealLabel } from '@/lib/platform'
 import {
   AlertCircle,
+  Archive,
   Code,
   Copy,
   ExternalLink,
@@ -38,13 +39,18 @@ import {
   usePinnedStore,
   useHintStore,
   useVimModeStore,
-  useSettingsStore
+  useSettingsStore,
+  useProjectStore,
+  useWorktreeStore
 } from '@/stores'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { HintBadge } from '@/components/ui/HintBadge'
+import { ArchiveConfirmDialog } from '@/components/worktrees/ArchiveConfirmDialog'
+import type { DiffStatFile } from '@/components/worktrees/DirtyFilesConfirmDialog'
 import { toast, clipboardToast } from '@/lib/toast'
 import { connectionApi } from '@/api/connection-api'
 import { projectApi } from '@/api/project-api'
+import { gitApi } from '@/api/git-api'
 
 interface ConnectionMemberEnriched {
   id: string
@@ -263,6 +269,97 @@ export function ConnectionItem({
     onManageWorktrees?.(connection.id)
   }, [onManageWorktrees, connection.id])
 
+  // Archive All confirmation state
+  const [archiveAllConfirmOpen, setArchiveAllConfirmOpen] = useState(false)
+  const [archiveAllConfirmFiles, setArchiveAllConfirmFiles] = useState<DiffStatFile[]>([])
+  const [isArchivingAll, setIsArchivingAll] = useState(false)
+
+  // Members whose worktrees can actually be archived (default worktrees never are)
+  const getArchivableMembers = useCallback((): ConnectionMemberEnriched[] => {
+    const allWorktrees = Array.from(
+      useWorktreeStore.getState().worktreesByProject.values()
+    ).flat()
+    return (connection.members || []).filter(
+      (m) => !allWorktrees.find((w) => w.id === m.worktree_id)?.is_default
+    )
+  }, [connection.members])
+
+  const doArchiveAll = useCallback(async (): Promise<void> => {
+    setIsArchivingAll(true)
+    try {
+      const projects = useProjectStore.getState().projects
+      const archiveWorktree = useWorktreeStore.getState().archiveWorktree
+      let failures = 0
+      for (const member of getArchivableMembers()) {
+        const project = projects.find((p) => p.id === member.project_id)
+        if (!project) {
+          failures++
+          continue
+        }
+        const result = await archiveWorktree(
+          member.worktree_id,
+          member.worktree_path,
+          member.worktree_branch,
+          project.path
+        )
+        if (!result.success) failures++
+      }
+
+      if (failures > 0) {
+        toast.error(`Failed to archive ${failures} ${failures === 1 ? 'worktree' : 'worktrees'}`)
+        return
+      }
+
+      // Archiving the last member cascade-deletes the connection server-side; delete
+      // explicitly if it survived (e.g. only default worktrees remained as members).
+      const connectionStore = useConnectionStore.getState()
+      if (connectionStore.connections.some((c) => c.id === connection.id)) {
+        await connectionStore.deleteConnection(connection.id)
+      } else {
+        if (connectionStore.selectedConnectionId === connection.id) {
+          connectionStore.selectConnection(null)
+        }
+        toast.success('Connection worktrees archived')
+      }
+    } finally {
+      setIsArchivingAll(false)
+    }
+  }, [connection.id, getArchivableMembers])
+
+  const handleArchiveAll = useCallback(async (): Promise<void> => {
+    if (isArchivingAll) return
+    const dirtyFiles: DiffStatFile[] = []
+    for (const member of getArchivableMembers()) {
+      try {
+        const result = await gitApi.getDiffStat(member.worktree_path)
+        if (result.success && result.files && result.files.length > 0) {
+          dirtyFiles.push(
+            ...result.files.map((f) => ({ ...f, path: `${member.worktree_name}/${f.path}` }))
+          )
+        }
+      } catch {
+        // If we can't check, proceed without confirmation
+      }
+    }
+    if (dirtyFiles.length > 0) {
+      setArchiveAllConfirmFiles(dirtyFiles)
+      setArchiveAllConfirmOpen(true)
+      return
+    }
+    doArchiveAll()
+  }, [isArchivingAll, getArchivableMembers, doArchiveAll])
+
+  const handleArchiveAllConfirm = useCallback((): void => {
+    setArchiveAllConfirmOpen(false)
+    setArchiveAllConfirmFiles([])
+    doArchiveAll()
+  }, [doArchiveAll])
+
+  const handleArchiveAllCancel = useCallback((): void => {
+    setArchiveAllConfirmOpen(false)
+    setArchiveAllConfirmFiles([])
+  }, [])
+
   // Build the project names string from unique project names
   const projectNames = [...new Set(connection.members?.map((m) => m.project_name) || [])].join(
     ' + '
@@ -313,6 +410,14 @@ export function ConnectionItem({
         Copy Path
       </ContextMenuItem>
       <ContextMenuSeparator />
+      <ContextMenuItem
+        onClick={handleArchiveAll}
+        disabled={isArchivingAll}
+        className="text-destructive focus:text-destructive focus:bg-destructive/10"
+      >
+        <Archive className="h-4 w-4 mr-2" />
+        Archive All
+      </ContextMenuItem>
       <ContextMenuItem
         onClick={handleDelete}
         className="text-destructive focus:text-destructive focus:bg-destructive/10"
@@ -488,6 +593,14 @@ export function ConnectionItem({
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem
+            onClick={handleArchiveAll}
+            disabled={isArchivingAll}
+            className="text-destructive focus:text-destructive focus:bg-destructive/10"
+          >
+            <Archive className="h-4 w-4 mr-2" />
+            Archive All
+          </DropdownMenuItem>
+          <DropdownMenuItem
             onClick={handleDelete}
             className="text-destructive focus:text-destructive focus:bg-destructive/10"
           >
@@ -518,6 +631,14 @@ export function ConnectionItem({
           </TooltipContent>
         )}
       </Tooltip>
+
+      <ArchiveConfirmDialog
+        open={archiveAllConfirmOpen}
+        worktreeName={displayName}
+        files={archiveAllConfirmFiles}
+        onCancel={handleArchiveAllCancel}
+        onConfirm={handleArchiveAllConfirm}
+      />
 
       {/* Context Menu (right-click) */}
       <ContextMenuContent className="w-52">{menuItems}</ContextMenuContent>

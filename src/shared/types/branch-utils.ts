@@ -22,6 +22,59 @@ export function canonicalizeTicketTitle(title: string): string {
     .replace(/-+$/, '') // strip trailing dashes after truncation
 }
 
+const MODEL_SLUG_CAP = 16
+
+/**
+ * Convert a model ID into a short, filesystem-safe slug for the multi-model
+ * worktree nameHint (`<ticket-slug>-<model-slug>`). Reuses
+ * canonicalizeTicketTitle's sanitation mechanics (lowercase, non-alphanumeric
+ * runs -> single dash, trim leading/trailing dashes) but caps at ~16 chars
+ * without cutting a dash-separated segment in half: a trailing segment that
+ * would push past the cap is dropped instead of truncated, e.g.
+ * `claude-opus-4-5-20251101` -> `claude-opus-4-5`. Never returns an empty
+ * string for non-empty input — if even the first segment overflows the cap,
+ * falls back to a raw prefix of the sanitized string; if sanitation strips
+ * the input down to nothing (symbol-only or non-ASCII modelIDs like `你好`),
+ * falls back to the literal `model`.
+ */
+export function canonicalizeModelSlug(modelID: string): string {
+  const sanitized = modelID
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-') // any run of non-alphanumeric chars → single dash
+    .replace(/^-+|-+$/g, '') // strip leading/trailing dashes
+
+  if (sanitized.length === 0) return modelID.length > 0 ? 'model' : ''
+
+  if (sanitized.length <= MODEL_SLUG_CAP) return sanitized
+
+  let capped = ''
+  for (const segment of sanitized.split('-')) {
+    const candidate = capped ? `${capped}-${segment}` : segment
+    if (candidate.length > MODEL_SLUG_CAP) break
+    capped = candidate
+  }
+
+  return capped || sanitized.slice(0, MODEL_SLUG_CAP).replace(/-+$/, '')
+}
+
+/**
+ * Convert a plan title into a filesystem-safe filename fragment.
+ * Unlike canonicalizeTicketTitle (lowercase, 32-char cap for Windows
+ * worktree paths), this preserves case and keeps more of the title since
+ * the result is a user-visible, user-editable filename.
+ */
+export function normalizeFilename(title: string): string {
+  return title
+    .trim()
+    .replace(/\s+/g, '_') // underscore style matches the PLAN_ prefix
+    .replace(/[^A-Za-z0-9._-]/g, '') // strip filesystem-unsafe chars
+    .replace(/_{2,}/g, '_')
+    .replace(/^[._-]+|[._-]+$/g, '')
+    .slice(0, 64)
+    .replace(/[._-]+$/, '')
+}
+
 function normalizePlanTitle(title: string): string {
   const trimmed = title.trim()
   const withoutPrefix = trimmed.replace(/^plan\s*[:\-–—]\s*/i, '').trim()

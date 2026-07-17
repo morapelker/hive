@@ -4,7 +4,7 @@ import { useConnectionStore } from './useConnectionStore'
 import { lastSendMode } from '@/lib/message-send-times'
 import { notifyKanbanSessionSync } from './store-coordination'
 import { dbApi } from '@/api/db-api'
-import type { SessionStatusType } from '@shared/types/session-status'
+import { higherPriority, type SessionStatusType } from '@shared/types/session-status'
 
 // Re-exported from the shared definition so existing importers keep working.
 export type { SessionStatusType }
@@ -73,27 +73,6 @@ interface WorktreeStatusState {
   setMergeConflictFlow: (worktreeId: string, flow: MergeConflictFlow | null) => void
   setMergeConflictWorktreeForTicket: (ticketId: string, worktreeId: string | null) => void
   isWorktreeBeingReviewed: (worktreeId: string) => boolean
-}
-
-// Priority ranking for status aggregation (higher number = higher priority)
-const STATUS_PRIORITY: Record<SessionStatusType, number> = {
-  answering: 8,
-  command_approval: 7,
-  permission: 6,
-  planning: 5,
-  working: 4,
-  plan_ready: 3,
-  completed: 2,
-  unread: 1
-}
-
-function higherPriority(
-  a: SessionStatusType | null,
-  b: SessionStatusType | null
-): SessionStatusType | null {
-  if (!a) return b
-  if (!b) return a
-  return STATUS_PRIORITY[a] >= STATUS_PRIORITY[b] ? a : b
 }
 
 export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => ({

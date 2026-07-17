@@ -62,6 +62,21 @@ export interface CreateFromBranchParams {
   branchName: string
   prNumber?: number
   nameHint?: string
+  /**
+   * Overrides the user's auto-pull setting when set. Remote launch passes
+   * false: auto-pull runs `git pull origin <branch> --ff-only` in the BASE
+   * clone's checkout, which would fast-forward the shared remote clone's
+   * checked-out branch (e.g. main) to the feature branch when it's a
+   * descendant.
+   */
+  autoPull?: boolean
+  /**
+   * Commit-ish to base the new worktree on instead of `branchName`. Remote
+   * launch passes `origin/<branch>`: the branch may exist only on origin
+   * (no local ref on the remote clone), and prepare has already fetched and
+   * verified it.
+   */
+  baseRef?: string
 }
 
 export interface WorktreeResult {
@@ -525,9 +540,10 @@ export const createWorktreeFromBranchOpEffect = (
           breedType,
           params.prNumber,
           {
-            autoPull: autoPullEnabled,
+            autoPull: params.autoPull ?? autoPullEnabled,
             nameHint: params.nameHint,
-            worktreeCreateScript: project?.worktree_create_script ?? null
+            worktreeCreateScript: project?.worktree_create_script ?? null,
+            baseRef: params.baseRef
           }
         )
       )

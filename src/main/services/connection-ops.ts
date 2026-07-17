@@ -12,8 +12,24 @@ import {
 } from './connection-service'
 import type { DatabaseService } from '../db/database'
 import type { ConnectionWithMembers } from '../db/types'
+import type { RecentConnectionEntry, RecentConnectionProject } from '../../shared/types/connection'
 
 const log = createLogger({ component: 'ConnectionOps' })
+
+/**
+ * Record a connection's project set into connection history.
+ * History failures must never fail the parent operation, so all errors are
+ * swallowed after logging a warning. (<2 distinct projects is already a
+ * silent no-op inside DatabaseService.upsertConnectionHistory.)
+ */
+export function recordConnectionHistory(db: DatabaseService, projectIds: string[]): void {
+  try {
+    db.upsertConnectionHistory(projectIds)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    log.warn('Failed to record connection history', { error: message })
+  }
+}
 
 /**
  * Derive a display name for a connection from its member project names.
@@ -88,8 +104,13 @@ export async function createConnectionOp(
     const dirName = randomUUID().slice(0, 8)
     const dirPath = createConnectionDir(dirName)
 
-    // Create the DB connection record with placeholder name and random color
-    const color = generateConnectionColor()
+    // Create the DB connection record with placeholder name and a random color,
+    // preferring one no existing connection is using
+    const usedColors = db
+      .getAllConnections()
+      .map((c) => c.color)
+      .filter((c): c is string => c !== null)
+    const color = generateConnectionColor(usedColors)
     const connection = db.createConnection({ name: dirName, path: dirPath, color })
 
     // For each worktree, look up its data, derive symlink name, create symlink + member
@@ -128,6 +149,10 @@ export async function createConnectionOp(
       const derivedName = deriveConnectionName(enriched)
       db.updateConnection(connection.id, { name: derivedName })
       generateConnectionInstructions(dirPath, buildAgentsMdMembers(enriched))
+      recordConnectionHistory(
+        db,
+        enriched.members.map((m) => m.project_id)
+      )
     }
 
     // Re-fetch to get the final state with derived name
@@ -347,6 +372,74 @@ export async function removeConnectionMemberOp(
 }
 
 /**
+ * Batch-update a connection's members to match a desired set of worktree IDs.
+ * Diffs the desired set against the current members, applies adds before
+ * removes (so the connection never goes transiently empty), and records
+ * exactly one history entry for the final member set.
+ */
+export async function updateConnectionMembersOp(
+  db: DatabaseService,
+  connectionId: string,
+  worktreeIds: string[]
+): Promise<{
+  success: boolean
+  connection?: ConnectionWithMembers
+  connectionDeleted?: boolean
+  error?: string
+}> {
+  log.info('Updating connection members', { connectionId, worktreeCount: worktreeIds.length })
+  try {
+    const connection = db.getConnection(connectionId)
+    if (!connection) {
+      return { success: false, error: 'Connection not found' }
+    }
+
+    const desired = [...new Set(worktreeIds)]
+    const current = connection.members.map((m) => m.worktree_id)
+    const toAdd = desired.filter((id) => !current.includes(id))
+    const toRemove = current.filter((id) => !desired.includes(id))
+
+    for (const worktreeId of toAdd) {
+      const result = await addConnectionMemberOp(db, connectionId, worktreeId)
+      if (!result.success) {
+        return { success: false, error: result.error }
+      }
+    }
+
+    for (const worktreeId of toRemove) {
+      const result = await removeConnectionMemberOp(db, connectionId, worktreeId)
+      if (!result.success) {
+        return { success: false, error: result.error }
+      }
+      if (result.connectionDeleted) {
+        // Defensive: unreachable in practice since adds run first and
+        // worktreeIds is required to be non-empty at the RPC boundary.
+        log.warn('Connection deleted mid-update', { connectionId })
+        return { success: true, connectionDeleted: true }
+      }
+    }
+
+    const final = db.getConnection(connectionId)
+    if (final) {
+      recordConnectionHistory(
+        db,
+        final.members.map((m) => m.project_id)
+      )
+    }
+
+    log.info('Connection members updated', { connectionId })
+    return { success: true, connection: final ?? undefined }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    log.error(
+      'Update connection members failed',
+      error instanceof Error ? error : new Error(message)
+    )
+    return { success: false, error: message }
+  }
+}
+
+/**
  * Remove a worktree from ALL connections it belongs to.
  * Used by the archive cascade -- when a worktree is archived, clean up its connections.
  */
@@ -401,6 +494,76 @@ export async function removeWorktreeFromAllConnectionsOp(
     const message = error instanceof Error ? error.message : String(error)
     log.error(
       'Remove worktree from all connections failed',
+      error instanceof Error ? error : new Error(message)
+    )
+    return { success: false, error: message }
+  }
+}
+
+/**
+ * Fetch recent connection history, resolving each entry's project IDs to
+ * live project data. Entries referencing a deleted project (or that no
+ * longer have at least 2 distinct projects) are dropped entirely.
+ */
+export function getRecentConnectionsOp(db: DatabaseService): {
+  success: boolean
+  entries?: RecentConnectionEntry[]
+  error?: string
+} {
+  try {
+    const rows = db.getRecentConnectionHistory(50)
+    const entries: RecentConnectionEntry[] = []
+
+    for (const row of rows) {
+      const projectIds = JSON.parse(row.project_ids) as string[]
+      const projects: RecentConnectionProject[] = []
+
+      for (const projectId of projectIds) {
+        const project = db.getProject(projectId)
+        if (!project) break
+        projects.push({ id: project.id, name: project.name, path: project.path })
+      }
+
+      if (projects.length !== projectIds.length || projects.length < 2) continue
+
+      entries.push({
+        id: row.id,
+        project_set_key: row.project_set_key,
+        projects,
+        last_used_at: row.last_used_at,
+        use_count: row.use_count,
+        note: row.note ?? null
+      })
+    }
+
+    return { success: true, entries: entries.slice(0, 15) }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    log.error('Get recent connections failed', error instanceof Error ? error : new Error(message))
+    return { success: false, error: message }
+  }
+}
+
+/**
+ * Set or clear the note on a recent-connection history entry. Empty or
+ * whitespace-only notes are normalized to null (clears the note).
+ */
+export function setRecentConnectionNoteOp(
+  db: DatabaseService,
+  entryId: string,
+  note: string | null
+): { success: boolean; error?: string } {
+  log.info('Setting recent connection note', { entryId })
+  try {
+    const normalized = note && note.trim() ? note.trim() : null
+    if (!db.setConnectionHistoryNote(entryId, normalized)) {
+      return { success: false, error: 'Recent connection not found' }
+    }
+    return { success: true }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    log.error(
+      'Set recent connection note failed',
       error instanceof Error ? error : new Error(message)
     )
     return { success: false, error: message }
