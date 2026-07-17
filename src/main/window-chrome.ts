@@ -33,15 +33,40 @@ export function loadWindowBounds(): WindowBounds | null {
   try {
     const file = boundsFile()
     if (existsSync(file)) {
-      const bounds = JSON.parse(readFileSync(file, 'utf-8')) as WindowBounds
+      const raw: unknown = JSON.parse(readFileSync(file, 'utf-8'))
+      if (typeof raw !== 'object' || raw === null) return null
+      const o = raw as Record<string, unknown>
+      const { x, y, width, height } = o
+      if (
+        typeof x !== 'number' ||
+        !Number.isFinite(x) ||
+        typeof y !== 'number' ||
+        !Number.isFinite(y) ||
+        typeof width !== 'number' ||
+        !Number.isFinite(width) ||
+        width < 0 ||
+        typeof height !== 'number' ||
+        !Number.isFinite(height) ||
+        height < 0
+      ) {
+        return null
+      }
+      // ponytail: rebuild after checks — kills `as WindowBounds`
+      const bounds: WindowBounds = {
+        x,
+        y,
+        width,
+        height,
+        ...(typeof o.isMaximized === 'boolean' ? { isMaximized: o.isMaximized } : {})
+      }
       const displays = screen.getAllDisplays()
       const isOnScreen = displays.some((display) => {
-        const { x, y, width, height } = display.bounds
+        const { x: dx, y: dy, width: dw, height: dh } = display.bounds
         return (
-          bounds.x >= x &&
-          bounds.y >= y &&
-          bounds.x + bounds.width <= x + width &&
-          bounds.y + bounds.height <= y + height
+          bounds.x >= dx &&
+          bounds.y >= dy &&
+          bounds.x + bounds.width <= dx + dw &&
+          bounds.y + bounds.height <= dy + dh
         )
       })
       if (isOnScreen) return bounds
@@ -140,9 +165,22 @@ export function wireWindowChromeEvents(window: BrowserWindow): void {
     window.webContents.send('window:maximized-changed', window.isMaximized())
   }
 
+  let saveTimer: ReturnType<typeof setTimeout> | null = null
+  const scheduleSave = (): void => {
+    if (saveTimer) clearTimeout(saveTimer)
+    saveTimer = setTimeout(() => {
+      saveTimer = null
+      saveWindowBounds(window)
+    }, 250)
+  }
+
   window.on('maximize', emitMaximizedChanged)
   window.on('unmaximize', emitMaximizedChanged)
-  window.on('resize', () => saveWindowBounds(window))
-  window.on('move', () => saveWindowBounds(window))
-  window.on('close', () => saveWindowBounds(window))
+  window.on('resize', scheduleSave)
+  window.on('move', scheduleSave)
+  window.on('close', () => {
+    if (saveTimer) clearTimeout(saveTimer)
+    saveTimer = null
+    saveWindowBounds(window)
+  })
 }
