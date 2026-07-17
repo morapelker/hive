@@ -13,7 +13,7 @@ export function WindowChromeControls(): React.JSX.Element | null {
 
   useEffect(() => {
     if (!windowControls) return
-    void windowControls.windowIsMaximized().then(setIsMaximized)
+    void windowControls.windowIsMaximized?.().then(setIsMaximized)
     return windowControls.onWindowMaximizedChanged(setIsMaximized)
   }, [windowControls])
 
@@ -28,7 +28,7 @@ export function WindowChromeControls(): React.JSX.Element | null {
         variant="ghost"
         size="icon"
         className="h-12 w-12 rounded-none"
-        onClick={() => void windowControls.windowMinimize()}
+        onClick={() => void windowControls.windowMinimize?.()}
         title="Minimize"
         data-testid="window-minimize"
       >
@@ -38,7 +38,7 @@ export function WindowChromeControls(): React.JSX.Element | null {
         variant="ghost"
         size="icon"
         className="h-12 w-12 rounded-none"
-        onClick={() => void windowControls.windowMaximize()}
+        onClick={() => void windowControls.windowMaximize?.()}
         title={isMaximized ? 'Restore' : 'Maximize'}
         data-testid="window-maximize"
       >

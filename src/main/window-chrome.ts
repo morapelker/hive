@@ -150,7 +150,7 @@ export function registerWindowChromeHandlers(getMainWindow: MainWindowGetter): v
         withMainWindow(getMainWindow, event, (window) => {
           window.setTitleBarOverlay({
             color: options.color || TRANSPARENT_TITLE_BAR_OVERLAY,
-            symbolColor: options.symbolColor,
+            symbolColor: options.symbolColor || DEFAULT_SYMBOL_COLOR,
             height: HEADER_HEIGHT
           })
         })

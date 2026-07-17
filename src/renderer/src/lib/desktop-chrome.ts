@@ -16,12 +16,19 @@ export function syncTitleBarOverlay(): void {
   void bridge.setTitleBarOverlay({ color: TRANSPARENT_TITLE_BAR_OVERLAY, symbolColor })
 }
 
+// ponytail: cancel prior RAF chain so rapid theme changes don't stack IPC
+let overlaySyncRaf: number | null = null
+
 /** Defer until after CSS/class updates have painted. */
 export function scheduleTitleBarOverlaySync(): void {
   if (!isWindows()) return
-  requestAnimationFrame(() => {
+  if (overlaySyncRaf !== null) cancelAnimationFrame(overlaySyncRaf)
+  overlaySyncRaf = requestAnimationFrame(() => {
     syncTitleBarOverlay()
-    requestAnimationFrame(syncTitleBarOverlay)
+    overlaySyncRaf = requestAnimationFrame(() => {
+      overlaySyncRaf = null
+      syncTitleBarOverlay()
+    })
   })
 }
 
