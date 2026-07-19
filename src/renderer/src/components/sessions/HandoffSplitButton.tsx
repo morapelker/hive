@@ -136,7 +136,12 @@ export function HandoffSplitButton({
     return { ...override, goalMode: finalGoalMode }
   }
 
-  const labelTitle = effective.customProviderId
+  // A custom provider without declared models shows only its name (the command
+  // decides the model — modelName mirrors sdkName then); with a declared model
+  // picked it reads like any SDK: "Provider / Model EFFORT".
+  const customNameOnly =
+    !!effective.customProviderId && effective.display.modelName === effective.display.sdkName
+  const labelTitle = customNameOnly
     ? `Handoff · ${effective.display.sdkName}`
     : `Handoff · ${effective.display.sdkName} / ${effective.display.modelName}${
         effective.display.variant ? ` ${effective.display.variant.toUpperCase()}` : ''
@@ -189,7 +194,7 @@ export function HandoffSplitButton({
           {vimModeEnabled ? <MnemonicLabel letter="a" label="Handoff" /> : 'Handoff'}
         </span>
         <span className="text-muted-foreground">·</span>
-        {effective.customProviderId ? (
+        {customNameOnly ? (
           <span className="max-w-[180px] truncate">{effective.display.sdkName}</span>
         ) : (
           <>

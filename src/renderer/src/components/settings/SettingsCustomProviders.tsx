@@ -1,6 +1,11 @@
 import { Plus, Trash2 } from 'lucide-react'
 import { useSettingsStore } from '@/stores/useSettingsStore'
-import type { CustomClaudeProvider, CustomProviderUsage } from '@shared/types/custom-provider'
+import {
+  CUSTOM_PROVIDER_EFFORTS,
+  type CustomClaudeProvider,
+  type CustomProviderModel,
+  type CustomProviderUsage
+} from '@shared/types/custom-provider'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
@@ -21,7 +26,8 @@ export function SettingsCustomProviders(): React.JSX.Element {
       id: crypto.randomUUID(),
       name: '',
       command: '',
-      usageProvider: 'none'
+      usageProvider: 'none',
+      models: []
     }
     updateSetting('customProviders', [...providers, provider])
   }
@@ -39,6 +45,31 @@ export function SettingsCustomProviders(): React.JSX.Element {
       'customProviders',
       providers.map((p) => (p.id === id ? { ...p, ...patch } : p))
     )
+  }
+
+  const handleModelAdd = (provider: CustomClaudeProvider): void => {
+    handleChange(provider.id, {
+      models: [
+        ...(provider.models ?? []),
+        { id: crypto.randomUUID(), name: '', slug: '', efforts: [] }
+      ]
+    })
+  }
+
+  const handleModelChange = (
+    provider: CustomClaudeProvider,
+    modelId: string,
+    patch: Partial<CustomProviderModel>
+  ): void => {
+    handleChange(provider.id, {
+      models: (provider.models ?? []).map((m) => (m.id === modelId ? { ...m, ...patch } : m))
+    })
+  }
+
+  const handleModelRemove = (provider: CustomClaudeProvider, modelId: string): void => {
+    handleChange(provider.id, {
+      models: (provider.models ?? []).filter((m) => m.id !== modelId)
+    })
   }
 
   return (
@@ -115,6 +146,115 @@ export function SettingsCustomProviders(): React.JSX.Element {
                   <p className="text-xs text-muted-foreground mt-1">
                     Which account&apos;s usage to refresh when this provider finishes a turn.
                   </p>
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground">Models</label>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Optional. Declare the models this provider serves — session pickers then offer
+                    them, and Hive passes the selection as{' '}
+                    <span className="font-mono">--model</span> /{' '}
+                    <span className="font-mono">--effort</span> after the command. Leave empty to
+                    let the command decide the model.
+                  </p>
+                  <div className="space-y-2 mt-2">
+                    {(provider.models ?? []).map((model) => {
+                      const slugValue = model.slug.trim()
+                      const duplicateSlug =
+                        slugValue !== '' &&
+                        (provider.models ?? []).some(
+                          (other) => other.id !== model.id && other.slug.trim() === slugValue
+                        )
+                      return (
+                        <div
+                          key={model.id}
+                          className="rounded-md border p-2 space-y-2"
+                          data-testid={`custom-provider-model-${model.id}`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <Input
+                              value={model.name}
+                              onChange={(e) =>
+                                handleModelChange(provider, model.id, { name: e.target.value })
+                              }
+                              placeholder="Name — e.g. GLM 4.6"
+                              className="h-8"
+                              data-testid="custom-provider-model-name"
+                            />
+                            <Input
+                              value={model.slug}
+                              onChange={(e) =>
+                                handleModelChange(provider, model.id, { slug: e.target.value })
+                              }
+                              placeholder="Slug — e.g. glm-4.6"
+                              className="h-8 font-mono"
+                              data-testid="custom-provider-model-slug"
+                            />
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleModelRemove(provider, model.id)}
+                              className="text-muted-foreground hover:text-destructive shrink-0 h-8 w-8"
+                              data-testid="custom-provider-model-remove"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                          {slugValue === '' && (
+                            <p className="text-xs text-destructive">
+                              Slug required — the model is ignored until one is set. It is passed
+                              verbatim as <span className="font-mono">--model</span>.
+                            </p>
+                          )}
+                          {duplicateSlug && (
+                            <p className="text-xs text-destructive">
+                              Duplicate slug — another model of this provider already uses it.
+                            </p>
+                          )}
+                          <div className="flex items-center gap-1 flex-wrap">
+                            <span className="text-[10px] uppercase tracking-wide text-muted-foreground mr-1">
+                              Efforts
+                            </span>
+                            {CUSTOM_PROVIDER_EFFORTS.map((effort) => {
+                              const active = model.efforts.includes(effort)
+                              return (
+                                <button
+                                  key={effort}
+                                  role="checkbox"
+                                  aria-checked={active}
+                                  onClick={() => {
+                                    const next = new Set(model.efforts)
+                                    if (active) next.delete(effort)
+                                    else next.add(effort)
+                                    handleModelChange(provider, model.id, {
+                                      efforts: CUSTOM_PROVIDER_EFFORTS.filter((e) => next.has(e))
+                                    })
+                                  }}
+                                  className={cn(
+                                    'px-2 py-0.5 rounded-md text-xs border transition-colors',
+                                    active
+                                      ? 'bg-accent text-accent-foreground border-accent'
+                                      : 'text-muted-foreground hover:bg-accent/50'
+                                  )}
+                                  data-testid={`custom-provider-model-effort-${effort}`}
+                                >
+                                  {effort}
+                                </button>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      )
+                    })}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleModelAdd(provider)}
+                      data-testid="custom-provider-model-add"
+                    >
+                      <Plus className="h-4 w-4 mr-1" />
+                      Add Model
+                    </Button>
+                  </div>
                 </div>
               </div>
               <Button

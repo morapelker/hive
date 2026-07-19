@@ -153,6 +153,41 @@ describe('applyModeDefaultModel', () => {
     })
   })
 
+  test('does not clobber a custom-provider session model with a stock mode default', async () => {
+    useSessionStore.setState({
+      sessionsByWorktree: new Map([
+        [
+          'wt-1',
+          [
+            {
+              ...baseSession,
+              agent_sdk: 'claude-code-cli' as const,
+              custom_provider_id: 'prov-1',
+              model_provider_id: 'custom',
+              model_id: 'glm-4.6',
+              model_variant: 'high'
+            }
+          ]
+        ]
+      ]),
+      sessionsByConnection: new Map(),
+      boardAssistantByProject: new Map()
+    })
+    seedSettings({
+      agentSdk: 'claude-code-cli',
+      providerID: 'anthropic',
+      modelID: 'sonnet',
+      variant: 'xhigh'
+    })
+    const setSessionModel = vi
+      .spyOn(useSessionStore.getState(), 'setSessionModel')
+      .mockResolvedValue(undefined)
+
+    await useSessionStore.getState().applyModeDefaultModel('session-1', 'plan')
+
+    expect(setSessionModel).not.toHaveBeenCalled()
+  })
+
   test('does not change terminal session models', async () => {
     seedSession('terminal')
     seedSettings(claudePlanDefault)

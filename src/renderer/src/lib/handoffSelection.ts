@@ -1,6 +1,12 @@
 import { isAgentSdkAvailable, type AvailableAgentSdks } from './agent-sdk-availability'
 import { type AgentSdk, supportsGoalMode, toModelCatalogSdk } from '@shared/types/agent-sdk'
-import { findCustomProvider } from '@shared/types/custom-provider'
+import {
+  CUSTOM_MODEL_PROVIDER_ID,
+  findCustomProvider,
+  getCustomProviderModelDisplayName,
+  resolveCustomProviderModelSelection,
+  type CustomClaudeProvider
+} from '@shared/types/custom-provider'
 import { HANDOFF_PLAN_PROMPT_HEADER } from '@shared/agent-mode-prefixes'
 import {
   findModelInfo,
@@ -175,6 +181,31 @@ function getModelInfoFromCache(
   return findModelInfo(providers, model.providerID, model.modelID)
 }
 
+/**
+ * Resolve a candidate model/effort against a custom provider's declared models
+ * into the `SelectedModel` shape that rides overrides, launch configs, and the
+ * session row (`providerID: 'custom'`, `modelID: <slug>`, `variant: <effort>`).
+ * An invalid candidate degrades to the provider's default (first model/effort);
+ * null when the provider declares no launchable models — the command keeps
+ * owning the model, as before this feature.
+ */
+export function resolveCustomProviderSelectedModel(
+  provider: CustomClaudeProvider,
+  candidate?: { modelID?: string | null; variant?: string | null } | null
+): SelectedModel | null {
+  const selection = resolveCustomProviderModelSelection(
+    provider,
+    candidate?.modelID,
+    candidate?.variant
+  )
+  if (!selection) return null
+  return {
+    providerID: CUSTOM_MODEL_PROVIDER_ID,
+    modelID: selection.model.slug.trim(),
+    variant: selection.effort ?? undefined
+  }
+}
+
 export function getHandoffSdkDisplayName(
   agentSdk: HandoffAgentSdk,
   customProviderId?: string | null
@@ -268,6 +299,31 @@ export function getEffectiveHandoffSelection(opts: {
   if (override.customProviderId) {
     const provider = findCustomProvider(settings.customProviders, override.customProviderId)
     if (!provider || !provider.command.trim()) return fallback
+    const providerName = provider.name || 'Custom Provider'
+    // Resolve the remembered model/effort against the provider's declared
+    // models — a slug/effort the user has since removed degrades to the
+    // provider default rather than riding along stale.
+    const selection = resolveCustomProviderModelSelection(
+      provider,
+      override.modelID,
+      override.variant
+    )
+    if (selection) {
+      return {
+        agentSdk: override.agentSdk,
+        customProviderId: provider.id,
+        model: {
+          providerID: CUSTOM_MODEL_PROVIDER_ID,
+          modelID: selection.model.slug.trim(),
+          variant: selection.effort ?? undefined
+        },
+        display: {
+          sdkName: providerName,
+          modelName: getCustomProviderModelDisplayName(selection.model),
+          variant: selection.effort ?? undefined
+        }
+      }
+    }
     const model: SelectedModel = {
       providerID: override.providerID,
       modelID: override.modelID,
@@ -278,9 +334,10 @@ export function getEffectiveHandoffSelection(opts: {
       customProviderId: provider.id,
       model,
       display: {
-        // The provider's command decides the real model — show only the name.
-        sdkName: provider.name || 'Custom Provider',
-        modelName: provider.name || 'Custom Provider',
+        // No declared models: the provider's command decides the real model —
+        // show only the name.
+        sdkName: providerName,
+        modelName: providerName,
         variant: undefined
       }
     }
@@ -316,6 +373,8 @@ export function resolveSessionCreationSelection(opts: {
   agentSdkOverride?: AgentSdk
   initialMode?: 'build' | 'plan' | 'super-plan'
   modelOverride?: SelectedModel
+  /** claude-code-cli only: resolve the model from this provider's declared list. */
+  customProviderId?: string | null
 }): {
   agentSdk: AgentSdk
   model: SelectedModel | null
@@ -328,8 +387,29 @@ export function resolveSessionCreationSelection(opts: {
     return { agentSdk, model: null }
   }
 
-  if (opts.modelOverride) {
-    return { agentSdk, model: opts.modelOverride }
+  // Custom-provider sessions must never be stamped with a stock-claude model:
+  // once the spawner passes --model for declared models, a stale claude value
+  // would only be dead weight (it can't match a declared slug), and a declared
+  // provider needs its default model stamped even when no override rides in.
+  if (opts.customProviderId && agentSdk === 'claude-code-cli') {
+    const provider = findCustomProvider(settings.customProviders, opts.customProviderId)
+    if (provider) {
+      const model = resolveCustomProviderSelectedModel(provider, opts.modelOverride)
+      return { agentSdk, model }
+    }
+  }
+  // A custom-shaped override that reaches here has lost its provider (deleted,
+  // degraded, or a dangling id) — never leak the proxy slug into stock-claude
+  // resolution. Scoped to claude-code-cli: 'custom' is also a legal opencode
+  // catalog provider id and must pass through untouched for other SDKs.
+  const modelOverride =
+    agentSdk === 'claude-code-cli' &&
+    opts.modelOverride?.providerID === CUSTOM_MODEL_PROVIDER_ID
+      ? undefined
+      : opts.modelOverride
+
+  if (modelOverride) {
+    return { agentSdk, model: modelOverride }
   }
 
   if (opts.agentSdkOverride) {
