@@ -6,6 +6,9 @@ function Toaster({ ...props }: ToasterProps) {
       position="bottom-left"
       theme="dark"
       className="toaster group"
+      // Below the z-50 popup layer (context/dropdown menus, dialogs) so toasts
+      // never intercept clicks on menu items that overlap them
+      style={{ zIndex: 40 }}
       toastOptions={{
         classNames: {
           toast:
