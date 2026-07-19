@@ -43,15 +43,21 @@ describe('SettingsCustomProviders models editor', () => {
     expect(models[0].id).toBeTruthy()
   })
 
-  it('persists typed name and slug into the settings store', async () => {
+  it('persists typed name and slug into the settings store (row-scoped testids)', async () => {
     const user = userEvent.setup()
-    seedProvider({ models: [{ id: 'm1', name: '', slug: '', efforts: [] }] })
+    seedProvider({
+      models: [
+        { id: 'm1', name: '', slug: '', efforts: [] },
+        { id: 'm2', name: 'Other', slug: 'other', efforts: [] }
+      ]
+    })
     render(<SettingsCustomProviders />)
 
-    await user.type(screen.getByTestId('custom-provider-model-name'), 'GLM 4.6')
-    await user.type(screen.getByTestId('custom-provider-model-slug'), 'glm-4.6')
+    await user.type(screen.getByTestId('custom-provider-model-name-m1'), 'GLM 4.6')
+    await user.type(screen.getByTestId('custom-provider-model-slug-m1'), 'glm-4.6')
 
     expect(currentModels()[0]).toMatchObject({ name: 'GLM 4.6', slug: 'glm-4.6' })
+    expect(currentModels()[1]).toMatchObject({ name: 'Other', slug: 'other' })
   })
 
   it('toggles effort chips and stores them in canonical order', async () => {
@@ -59,11 +65,11 @@ describe('SettingsCustomProviders models editor', () => {
     seedProvider({ models: [{ id: 'm1', name: 'GLM', slug: 'glm-4.6', efforts: [] }] })
     render(<SettingsCustomProviders />)
 
-    await user.click(screen.getByTestId('custom-provider-model-effort-high'))
-    await user.click(screen.getByTestId('custom-provider-model-effort-low'))
+    await user.click(screen.getByTestId('custom-provider-model-effort-m1-high'))
+    await user.click(screen.getByTestId('custom-provider-model-effort-m1-low'))
     expect(currentModels()[0].efforts).toEqual(['low', 'high'])
 
-    await user.click(screen.getByTestId('custom-provider-model-effort-high'))
+    await user.click(screen.getByTestId('custom-provider-model-effort-m1-high'))
     expect(currentModels()[0].efforts).toEqual(['low'])
   })
 
@@ -77,8 +83,7 @@ describe('SettingsCustomProviders models editor', () => {
     })
     render(<SettingsCustomProviders />)
 
-    const removeButtons = screen.getAllByTestId('custom-provider-model-remove')
-    await user.click(removeButtons[0])
+    await user.click(screen.getByTestId('custom-provider-model-remove-m1'))
 
     const models = currentModels()
     expect(models).toHaveLength(1)

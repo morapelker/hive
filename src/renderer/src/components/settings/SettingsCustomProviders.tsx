@@ -178,7 +178,7 @@ export function SettingsCustomProviders(): React.JSX.Element {
                               }
                               placeholder="Name — e.g. GLM 4.6"
                               className="h-8"
-                              data-testid="custom-provider-model-name"
+                              data-testid={`custom-provider-model-name-${model.id}`}
                             />
                             <Input
                               value={model.slug}
@@ -187,14 +187,14 @@ export function SettingsCustomProviders(): React.JSX.Element {
                               }
                               placeholder="Slug — e.g. glm-4.6"
                               className="h-8 font-mono"
-                              data-testid="custom-provider-model-slug"
+                              data-testid={`custom-provider-model-slug-${model.id}`}
                             />
                             <Button
                               variant="ghost"
                               size="icon"
                               onClick={() => handleModelRemove(provider, model.id)}
                               className="text-muted-foreground hover:text-destructive shrink-0 h-8 w-8"
-                              data-testid="custom-provider-model-remove"
+                              data-testid={`custom-provider-model-remove-${model.id}`}
                             >
                               <Trash2 className="h-3.5 w-3.5" />
                             </Button>
@@ -235,7 +235,7 @@ export function SettingsCustomProviders(): React.JSX.Element {
                                       ? 'bg-accent text-accent-foreground border-accent'
                                       : 'text-muted-foreground hover:bg-accent/50'
                                   )}
-                                  data-testid={`custom-provider-model-effort-${effort}`}
+                                  data-testid={`custom-provider-model-effort-${model.id}-${effort}`}
                                 >
                                   {effort}
                                 </button>
