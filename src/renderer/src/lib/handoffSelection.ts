@@ -185,18 +185,22 @@ function getModelInfoFromCache(
  * Resolve a candidate model/effort against a custom provider's declared models
  * into the `SelectedModel` shape that rides overrides, launch configs, and the
  * session row (`providerID: 'custom'`, `modelID: <slug>`, `variant: <effort>`).
- * An invalid candidate degrades to the provider's default (first model/effort);
- * null when the provider declares no launchable models — the command keeps
- * owning the model, as before this feature.
+ * Only candidates already carrying the 'custom' marker count — a legacy stock
+ * stamp like anthropic/sonnet must not accidentally match a declared slug
+ * named after a stock alias. Invalid or non-custom candidates degrade to the
+ * provider's default (first model/effort); null when the provider declares no
+ * launchable models — the command keeps owning the model, as before this
+ * feature.
  */
 export function resolveCustomProviderSelectedModel(
   provider: CustomClaudeProvider,
-  candidate?: { modelID?: string | null; variant?: string | null } | null
+  candidate?: { providerID?: string; modelID?: string | null; variant?: string | null } | null
 ): SelectedModel | null {
+  const isCustomCandidate = candidate?.providerID === CUSTOM_MODEL_PROVIDER_ID
   const selection = resolveCustomProviderModelSelection(
     provider,
-    candidate?.modelID,
-    candidate?.variant
+    isCustomCandidate ? candidate?.modelID : null,
+    isCustomCandidate ? candidate?.variant : null
   )
   if (!selection) return null
   return {
@@ -302,11 +306,15 @@ export function getEffectiveHandoffSelection(opts: {
     const providerName = provider.name || 'Custom Provider'
     // Resolve the remembered model/effort against the provider's declared
     // models — a slug/effort the user has since removed degrades to the
-    // provider default rather than riding along stale.
+    // provider default rather than riding along stale. Only overrides already
+    // carrying the 'custom' marker count as a remembered pick: a legacy
+    // override's stock stamp (anthropic/sonnet) must not accidentally match a
+    // declared slug named after a stock alias.
+    const isCustomOverrideModel = override.providerID === CUSTOM_MODEL_PROVIDER_ID
     const selection = resolveCustomProviderModelSelection(
       provider,
-      override.modelID,
-      override.variant
+      isCustomOverrideModel ? override.modelID : null,
+      isCustomOverrideModel ? override.variant : null
     )
     if (selection) {
       return {
