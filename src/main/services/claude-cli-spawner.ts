@@ -111,9 +111,14 @@ export function buildClaudeCliPtySpawn(input: ClaudeCliPtySpawnInput): ClaudeCli
   // explicitly picked it, so pass it verbatim (last-flag-wins is now desired).
   // Stale stock-claude values in model_id (pre-feature sessions) never match a
   // declared slug and stay suppressed.
-  const customModel = customCommand
-    ? matchCustomProviderModel(input.customProviderModels, input.session.model_id)
-    : null
+  // The slug match additionally requires the 'custom' marker: legacy sessions
+  // carry stock stamps (model_provider_id 'anthropic', model_id 'sonnet'), and
+  // a provider later declaring a slug named like a stock alias must not start
+  // overriding the alias-baked model on their respawn.
+  const customModel =
+    customCommand && input.session.model_provider_id === CUSTOM_MODEL_PROVIDER_ID
+      ? matchCustomProviderModel(input.customProviderModels, input.session.model_id)
+      : null
   // A custom-provider session whose provider was deleted/blanked degrades to
   // plain claude with its proxy slug still in model_id — never let that slug
   // reach normalizeClaudeCliModel, whose substring matching could turn e.g.

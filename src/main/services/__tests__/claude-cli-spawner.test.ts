@@ -362,6 +362,28 @@ describe('buildClaudeCliPtySpawn', () => {
       expect(spawn.args).not.toContain('--effort')
     })
 
+    it('requires the custom marker — a legacy stock stamp never matches a declared slug', () => {
+      // Legacy custom-provider sessions carry stock stamps (anthropic/sonnet).
+      // A provider later declaring a slug named like a stock alias must not
+      // start overriding the alias-baked model on their respawn.
+      const spawn = buildClaudeCliPtySpawn({
+        session: makeSession({
+          custom_provider_id: 'prov-1',
+          model_provider_id: 'anthropic',
+          model_id: 'sonnet',
+          model_variant: 'high'
+        }),
+        worktreePath: '/repo/worktree',
+        pendingPrompt: null,
+        claudeBinary: 'claude',
+        customProviderCommand: 'claudex',
+        customProviderModels: [{ id: 'm1', name: 'Sonnet proxy', slug: 'sonnet', efforts: ['high'] }]
+      })
+
+      expect(spawn.args).not.toContain('--model')
+      expect(spawn.args).not.toContain('--effort')
+    })
+
     it('keeps suppressing --model when the session model matches no declared slug', () => {
       // Stale stock-claude values (pre-feature sessions) must never reach the
       // provider's command.
