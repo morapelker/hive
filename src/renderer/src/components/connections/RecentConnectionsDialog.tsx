@@ -464,8 +464,8 @@ export function RecentConnectionsDialog({
                     <button
                       className={cn(
                         'flex flex-col w-full px-3 py-2 text-sm text-left',
-                        'hover:bg-accent/50 transition-colors',
-                        selectedId === SELECTED_COMBO_ID && 'bg-accent/30'
+                        'bg-primary/10 hover:bg-primary/15 transition-colors',
+                        selectedId === SELECTED_COMBO_ID && 'bg-primary/20'
                       )}
                       onClick={() => setSelectedId(SELECTED_COMBO_ID)}
                       data-testid="recent-connection-row-selected-combo"
@@ -507,7 +507,13 @@ export function RecentConnectionsDialog({
                             className={cn(
                               'flex flex-col w-full px-3 py-2 text-sm text-left',
                               'hover:bg-accent/50 transition-colors',
-                              selectedId === entry.id && 'bg-accent/30'
+                              selectedId === entry.id && 'bg-accent/30',
+                              // The pinned exact-selection entry is special in the
+                              // same way as the synthetic row -- tint it to match
+                              entry.id === exactSelectionEntry?.id &&
+                                (selectedId === entry.id
+                                  ? 'bg-primary/20 hover:bg-primary/20'
+                                  : 'bg-primary/10 hover:bg-primary/15')
                             )}
                             onClick={() => setSelectedId(entry.id)}
                             data-testid={`recent-connection-row-${entry.id}`}
