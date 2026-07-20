@@ -1,10 +1,24 @@
 import { useEffect, useState } from 'react'
-import { Loader2, Plus, RefreshCw, Repeat, Timer, Trash2 } from 'lucide-react'
+import { Link2, Loader2, Plus, RefreshCw, Repeat, Share2, Timer, Trash2 } from 'lucide-react'
 import { useAccountStore, useUsageStore } from '@/stores'
 import { useLoginStore } from '@/stores/useLoginStore'
 import { useAccountScheduleStore } from '@/stores/useAccountScheduleStore'
+import { useSettingsStore } from '@/stores/useSettingsStore'
+import { accountApi } from '@/api/account-api'
+import { createHiveAccountShare } from '@/api/hive-enterprise/client'
+import { buildShareAccountLink } from '@shared/account-share-link'
+import { toast, clipboardToast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from '@/components/ui/dialog'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
   ScheduleSwitchForm,
@@ -21,7 +35,7 @@ import {
   AlertDialogTitle
 } from '@/components/ui/alert-dialog'
 import { isMac } from '@/lib/platform'
-import type { UsageProvider } from '@shared/types/usage'
+import type { SavedAccountDTO, UsageProvider } from '@shared/types/usage'
 import claudeIcon from '@/assets/model-icons/claude.svg'
 import openaiIcon from '@/assets/model-icons/openai.svg'
 
@@ -44,6 +58,38 @@ function ProviderAccountsCard({ provider }: { provider: UsageProvider }): React.
   const schedule = useAccountScheduleStore((s) => s.schedules[provider])
   const cancelSchedule = useAccountScheduleStore((s) => s.cancelSchedule)
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null)
+  const hiveAuthToken = useSettingsStore((s) => s.hiveAuthToken)
+  const [sharingAccountId, setSharingAccountId] = useState<string | null>(null)
+  const [shareResult, setShareResult] = useState<{ email: string; link: string } | null>(null)
+
+  // Sharing needs a connected Hive Enterprise server: the encrypted payload is
+  // parked there behind the one-time token. The encryption key stays in the link.
+  const canShare = isMac() && Boolean(hiveAuthToken)
+
+  const handleShare = async (account: SavedAccountDTO): Promise<void> => {
+    setSharingAccountId(account.id)
+    try {
+      const exported = await accountApi.exportShare(account.id)
+      const created = await createHiveAccountShare(exported.provider, exported.encryptedPayload)
+      const serverUrl = useSettingsStore.getState().hiveEnterpriseServerUrl
+      const link = buildShareAccountLink({ serverUrl, token: created.token, key: exported.key })
+      setShareResult({ email: account.email, link })
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to create share link')
+    } finally {
+      setSharingAccountId(null)
+    }
+  }
+
+  const copyShareLink = async (): Promise<void> => {
+    if (!shareResult) return
+    try {
+      await navigator.clipboard.writeText(shareResult.link)
+      clipboardToast.copied('Share link')
+    } catch {
+      clipboardToast.failed()
+    }
+  }
 
   const icon = provider === 'anthropic' ? claudeIcon : openaiIcon
   const label = provider === 'anthropic' ? 'Claude' : 'OpenAI'
@@ -155,6 +201,23 @@ function ProviderAccountsCard({ provider }: { provider: UsageProvider }): React.
                       <RefreshCw className="h-3.5 w-3.5" />
                     )}
                   </Button>
+                  {canShare && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                      onClick={() => handleShare(account)}
+                      disabled={sharingAccountId !== null}
+                      aria-label={`Share ${account.email}`}
+                      title="Share this account with another computer via a one-time link"
+                    >
+                      {sharingAccountId === account.id ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Share2 className="h-3.5 w-3.5" />
+                      )}
+                    </Button>
+                  )}
                   {!isActive && (
                     <Button
                       variant="ghost"
@@ -236,6 +299,36 @@ function ProviderAccountsCard({ provider }: { provider: UsageProvider }): React.
         </div>
       )}
 
+      <Dialog
+        open={shareResult !== null}
+        onOpenChange={(open) => {
+          if (!open) setShareResult(null)
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Share account</DialogTitle>
+            <DialogDescription>
+              One-time link for <span className="font-semibold">{shareResult?.email}</span>. Open
+              it in Hive on another computer to add this account there. The link works once and
+              expires in 24 hours — treat it like a password.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex items-center gap-2">
+            <Input
+              readOnly
+              value={shareResult?.link ?? ''}
+              className="font-mono text-xs"
+              onFocus={(event) => event.currentTarget.select()}
+              data-testid="share-account-link"
+            />
+            <Button size="sm" onClick={copyShareLink}>
+              Copy
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <AlertDialog
         open={confirmRemoveId !== null}
         onOpenChange={(open) => {
@@ -271,6 +364,9 @@ function ProviderAccountsCard({ provider }: { provider: UsageProvider }): React.
 export function SettingsAccounts(): React.JSX.Element {
   const loadSavedAccounts = useUsageStore((s) => s.loadSavedAccounts)
   const fetchEmail = useAccountStore((s) => s.fetchEmail)
+  const [importOpen, setImportOpen] = useState(false)
+  const [importUrl, setImportUrl] = useState('')
+  const [importing, setImporting] = useState(false)
 
   useEffect(() => {
     loadSavedAccounts().catch(() => {})
@@ -278,13 +374,56 @@ export function SettingsAccounts(): React.JSX.Element {
     fetchEmail('openai')
   }, [loadSavedAccounts, fetchEmail])
 
+  // Refresh when a share link is imported through the hive:// deep link.
+  useEffect(() => {
+    return accountApi.onSharedAccountImported(({ provider, email }) => {
+      toast.success(`Imported ${email} (${provider === 'anthropic' ? 'Claude' : 'OpenAI'})`)
+      loadSavedAccounts().catch(() => {})
+      fetchEmail(provider)
+    })
+  }, [loadSavedAccounts, fetchEmail])
+
+  const handleImport = async (): Promise<void> => {
+    const url = importUrl.trim()
+    if (!url) return
+    setImporting(true)
+    try {
+      const result = await accountApi.importShare(url)
+      toast.success(
+        `Imported ${result.email} (${result.provider === 'anthropic' ? 'Claude' : 'OpenAI'})`
+      )
+      setImportOpen(false)
+      setImportUrl('')
+      await loadSavedAccounts().catch(() => {})
+      fetchEmail(result.provider)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to import share link')
+    } finally {
+      setImporting(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
-      <div>
-        <h3 className="text-base font-medium mb-1">Accounts</h3>
-        <p className="text-sm text-muted-foreground">
-          Manage saved Claude and OpenAI accounts used for usage tracking and quick switching.
-        </p>
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <h3 className="text-base font-medium mb-1">Accounts</h3>
+          <p className="text-sm text-muted-foreground">
+            Manage saved Claude and OpenAI accounts used for usage tracking and quick switching.
+          </p>
+        </div>
+        {isMac() && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 shrink-0 text-xs"
+            onClick={() => setImportOpen(true)}
+            data-testid="import-share-link"
+          >
+            <Link2 className="h-3.5 w-3.5" />
+            Import share link
+          </Button>
+        )}
       </div>
 
       <div className="space-y-4">
@@ -292,6 +431,43 @@ export function SettingsAccounts(): React.JSX.Element {
           <ProviderAccountsCard key={provider} provider={provider} />
         ))}
       </div>
+
+      <Dialog
+        open={importOpen}
+        onOpenChange={(open) => {
+          setImportOpen(open)
+          if (!open) setImportUrl('')
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Import account from share link</DialogTitle>
+            <DialogDescription>
+              Paste a <span className="font-mono">hive://share-account</span> link generated on
+              another computer. The account is claimed once and the link stops working.
+            </DialogDescription>
+          </DialogHeader>
+          <Input
+            value={importUrl}
+            onChange={(event) => setImportUrl(event.target.value)}
+            placeholder="hive://share-account?server=…&token=…&key=…"
+            className="font-mono text-xs"
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && !importing) void handleImport()
+            }}
+          />
+          <DialogFooter>
+            <Button
+              size="sm"
+              onClick={() => void handleImport()}
+              disabled={importing || importUrl.trim().length === 0}
+            >
+              {importing && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              Import
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

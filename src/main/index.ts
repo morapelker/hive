@@ -136,8 +136,12 @@ import {
   readWarnBeforeQuitting
 } from './quit-confirmation'
 import { emitSettingsUpdated } from './services/settings-events'
+import { markDeepLinksReady, registerDeepLinkHandling } from './services/deep-link-service'
 
 const log = createLogger({ component: 'Main' })
+
+// Must be wired before app 'ready' so cold-start hive:// links are captured.
+registerDeepLinkHandling()
 
 // Track custom commands file mtime for change detection
 let lastKnownMtime: number | null = null
@@ -789,6 +793,9 @@ app
       // Initialize auto-updater after backend event publishing is available.
       updaterService.init()
     }
+
+    // Backend is up — deep links can now import accounts and publish events.
+    markDeepLinksReady()
 
     app.on('activate', function () {
       ensureDockVisible('activate')
