@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { RecentConnectionsDialog } from '../RecentConnectionsDialog'
+import { useConnectionStore } from '@/stores/useConnectionStore'
 import type { RecentConnectionEntry } from '@shared/types/connection'
 
 vi.mock('@/api/connection-api', () => ({
@@ -151,5 +152,95 @@ describe('RecentConnectionsDialog project filter panel', () => {
     expect(screen.getByTestId('recent-connection-row-e5')).toBeInTheDocument()
     expect(screen.queryByTestId('recent-connection-row-e1')).not.toBeInTheDocument()
     expect(screen.queryByTestId('recent-connection-row-e2')).not.toBeInTheDocument()
+  })
+})
+
+describe('RecentConnectionsDialog pinned selection row', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('does not show the selection row with fewer than 2 projects selected', async () => {
+    await renderDialog()
+
+    await userEvent.click(screen.getByTestId('recent-connections-project-option-proj-a'))
+
+    expect(screen.queryByTestId('recent-connection-row-selected-combo')).not.toBeInTheDocument()
+  })
+
+  it('pins a synthetic row with exactly the selected projects when no entry matches', async () => {
+    // alpha+beta+gamma exists in no entry
+    await renderDialog()
+
+    await userEvent.click(screen.getByTestId('recent-connections-project-option-proj-a'))
+    await userEvent.click(screen.getByTestId('recent-connections-project-option-proj-b'))
+    await userEvent.click(screen.getByTestId('recent-connections-project-option-proj-c'))
+
+    const combo = screen.getByTestId('recent-connection-row-selected-combo')
+    expect(combo).toHaveTextContent('alpha-service + beta-web + gamma-api')
+    expect(combo).toHaveTextContent('New connection from selected projects')
+    // No entry contains all three, but the no-match empty state must not replace the row
+    expect(screen.queryByTestId('recent-connections-no-match')).not.toBeInTheDocument()
+  })
+
+  it('creates a new connection from the synthetic selection row', async () => {
+    const quickCreateConnection = vi.fn().mockResolvedValue('conn-1')
+    useConnectionStore.setState({ quickCreateConnection } as never)
+    const onOpenChange = vi.fn()
+
+    vi.mocked(connectionApi.getRecentConnections).mockResolvedValue({
+      success: true,
+      entries
+    })
+    render(<RecentConnectionsDialog open onOpenChange={onOpenChange} />)
+    await waitFor(() =>
+      expect(screen.queryByTestId('recent-connections-loading')).not.toBeInTheDocument()
+    )
+
+    await userEvent.click(screen.getByTestId('recent-connections-project-option-proj-a'))
+    await userEvent.click(screen.getByTestId('recent-connections-project-option-proj-b'))
+    await userEvent.click(screen.getByTestId('recent-connections-project-option-proj-c'))
+    await userEvent.click(screen.getByTestId('recent-connection-row-selected-combo'))
+    await userEvent.click(screen.getByTestId('recent-connections-create-button'))
+
+    await waitFor(() => expect(quickCreateConnection).toHaveBeenCalledWith([alpha, beta, gamma]))
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it('pins the exact matching entry first instead of a synthetic row', async () => {
+    await renderDialog()
+
+    // beta+gamma matches e3, which normally sorts last
+    await userEvent.click(screen.getByTestId('recent-connections-project-option-proj-b'))
+    await userEvent.click(screen.getByTestId('recent-connections-project-option-proj-c'))
+
+    expect(screen.queryByTestId('recent-connection-row-selected-combo')).not.toBeInTheDocument()
+    const rows = screen.getAllByTestId(/^recent-connection-row-/)
+    expect(rows[0]).toHaveAttribute('data-testid', 'recent-connection-row-e3')
+  })
+
+  it('keeps the pinned exact match visible even when the text filter excludes it', async () => {
+    await renderDialog()
+
+    await userEvent.click(screen.getByTestId('recent-connections-project-option-proj-b'))
+    await userEvent.click(screen.getByTestId('recent-connections-project-option-proj-c'))
+    await userEvent.type(screen.getByTestId('recent-connections-filter'), 'zzz-no-match')
+
+    expect(screen.getByTestId('recent-connection-row-e3')).toBeInTheDocument()
+  })
+
+  it('drops the synthetic selection when the combination gains an exact match', async () => {
+    await renderDialog()
+
+    await userEvent.click(screen.getByTestId('recent-connections-project-option-proj-a'))
+    await userEvent.click(screen.getByTestId('recent-connections-project-option-proj-b'))
+    await userEvent.click(screen.getByTestId('recent-connections-project-option-proj-c'))
+    await userEvent.click(screen.getByTestId('recent-connection-row-selected-combo'))
+
+    // Deselect gamma: alpha+beta matches e1 exactly, so the synthetic row vanishes
+    await userEvent.click(screen.getByTestId('recent-connections-project-option-proj-c'))
+
+    expect(screen.queryByTestId('recent-connection-row-selected-combo')).not.toBeInTheDocument()
+    expect(screen.getByTestId('recent-connections-create-button')).toBeDisabled()
   })
 })
