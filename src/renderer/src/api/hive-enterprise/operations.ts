@@ -55,6 +55,15 @@ export const ReportActiveAccountsDocument = /* GraphQL */ `
   }
 `
 
+export const CreateAccountShareDocument = /* GraphQL */ `
+  mutation HiveEnterpriseCreateAccountShare($provider: AccountProvider!, $encryptedPayload: String!) {
+    createAccountShare(provider: $provider, encryptedPayload: $encryptedPayload) {
+      token
+      expiresAt
+    }
+  }
+`
+
 export const ListAccountMembersDocument = /* GraphQL */ `
   query HiveEnterpriseListAccountMembers {
     listAccountMembers {
