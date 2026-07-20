@@ -20,6 +20,7 @@ import { setClaudeCliPlanAutoApprove } from './claude-cli-plan-auto-approve'
 import { logClaudeBinaryVersion, resolveClaudeBinaryPath } from './claude-binary-resolver'
 import { buildClaudeCliPtySpawn } from './claude-cli-spawner'
 import { getCustomProviderById } from './custom-providers'
+import type { CustomProviderModel } from '@shared/types/custom-provider'
 import { externalizeGoalHandoffPlan } from './claude-cli-plan-handoff'
 import { reassertClaudeCliPromptSubmit, writeClaudeCliPrompt } from './claude-cli-pty-prompt'
 import { watchForClaudeSessionId, type ClaudeSessionWatchHandle } from './claude-session-watcher'
@@ -277,6 +278,7 @@ export async function createClaudeCliTerminal(
     // paths) rather than permanently bricking the session's resumable
     // transcript behind a hard error.
     let customProviderCommand: string | null = null
+    let customProviderModels: CustomProviderModel[] | null = null
     if (session.custom_provider_id) {
       // The wrapper spawns through a POSIX login shell ($SHELL -ilc) — Windows
       // GUI apps have no SHELL and no /bin/zsh, so fail with a clear message
@@ -290,6 +292,7 @@ export async function createClaudeCliTerminal(
       const provider = getCustomProviderById(db, session.custom_provider_id)
       if (provider?.command.trim()) {
         customProviderCommand = provider.command
+        customProviderModels = provider.models ?? null
       } else {
         log.warn('Custom provider missing or blank; falling back to plain claude', {
           sessionId,
@@ -318,7 +321,8 @@ export async function createClaudeCliTerminal(
       claudeBinary,
       hookSettingsJson,
       db,
-      customProviderCommand
+      customProviderCommand,
+      customProviderModels
     })
 
     log.info('Creating Claude CLI PTY', {

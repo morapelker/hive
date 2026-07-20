@@ -315,6 +315,158 @@ describe('buildClaudeCliPtySpawn', () => {
       expect(spawn.args).not.toContain('--effort')
     })
 
+    it('passes a provider-declared model slug and effort verbatim', () => {
+      process.env.SHELL = '/bin/zsh'
+      const spawn = buildClaudeCliPtySpawn({
+        session: makeSession({
+          custom_provider_id: 'prov-1',
+          model_provider_id: 'custom',
+          model_id: 'glm-4.6',
+          model_variant: 'high'
+        }),
+        worktreePath: '/repo/worktree',
+        pendingPrompt: 'Do the thing',
+        claudeBinary: 'claude',
+        customProviderCommand: 'claudex',
+        customProviderModels: [
+          { id: 'm1', name: 'GLM 4.6', slug: 'glm-4.6', efforts: ['low', 'high'] }
+        ]
+      })
+
+      // Positional params ride after the command's own flags, so the picked
+      // model wins over an alias-baked --model (last-flag-wins).
+      expect(spawn.args.slice(0, 3)).toEqual(['-ilc', 'claudex "$@"', 'claudex'])
+      const modelIndex = spawn.args.indexOf('--model')
+      expect(spawn.args[modelIndex + 1]).toBe('glm-4.6')
+      const effortIndex = spawn.args.indexOf('--effort')
+      expect(spawn.args[effortIndex + 1]).toBe('high')
+      expect(spawn.args[spawn.args.length - 1]).toBe('Do the thing')
+    })
+
+    it('omits --effort when the session variant is not declared for the model', () => {
+      const spawn = buildClaudeCliPtySpawn({
+        session: makeSession({
+          custom_provider_id: 'prov-1',
+          model_provider_id: 'custom',
+          model_id: 'glm-4.6',
+          model_variant: 'max'
+        }),
+        worktreePath: '/repo/worktree',
+        pendingPrompt: null,
+        claudeBinary: 'claude',
+        customProviderCommand: 'claudex',
+        customProviderModels: [{ id: 'm1', name: 'GLM 4.6', slug: 'glm-4.6', efforts: ['low'] }]
+      })
+
+      expect(spawn.args).toContain('--model')
+      expect(spawn.args).not.toContain('--effort')
+    })
+
+    it('requires the custom marker — a legacy stock stamp never matches a declared slug', () => {
+      // Legacy custom-provider sessions carry stock stamps (anthropic/sonnet).
+      // A provider later declaring a slug named like a stock alias must not
+      // start overriding the alias-baked model on their respawn.
+      const spawn = buildClaudeCliPtySpawn({
+        session: makeSession({
+          custom_provider_id: 'prov-1',
+          model_provider_id: 'anthropic',
+          model_id: 'sonnet',
+          model_variant: 'high'
+        }),
+        worktreePath: '/repo/worktree',
+        pendingPrompt: null,
+        claudeBinary: 'claude',
+        customProviderCommand: 'claudex',
+        customProviderModels: [{ id: 'm1', name: 'Sonnet proxy', slug: 'sonnet', efforts: ['high'] }]
+      })
+
+      expect(spawn.args).not.toContain('--model')
+      expect(spawn.args).not.toContain('--effort')
+    })
+
+    it('keeps suppressing --model when the session model matches no declared slug', () => {
+      // Stale stock-claude values (pre-feature sessions) must never reach the
+      // provider's command.
+      const spawn = buildClaudeCliPtySpawn({
+        session: makeSession({
+          custom_provider_id: 'prov-1',
+          model_id: 'sonnet',
+          model_variant: 'high'
+        }),
+        worktreePath: '/repo/worktree',
+        pendingPrompt: null,
+        claudeBinary: 'claude',
+        customProviderCommand: 'claudex',
+        customProviderModels: [
+          { id: 'm1', name: 'GLM 4.6', slug: 'glm-4.6', efforts: ['low', 'high'] }
+        ]
+      })
+
+      expect(spawn.args).not.toContain('--model')
+      expect(spawn.args).not.toContain('--effort')
+    })
+
+    it('suppresses --model/--effort when a custom-model session degrades to plain claude', () => {
+      // Provider deleted → bridge passes no customProviderCommand, but the row
+      // still carries the proxy slug. Substring normalization would turn
+      // 'kimi-sonnet' into --model sonnet on stock claude — must stay out.
+      const spawn = buildClaudeCliPtySpawn({
+        session: makeSession({
+          custom_provider_id: 'prov-deleted',
+          model_provider_id: 'custom',
+          model_id: 'kimi-sonnet',
+          model_variant: 'high'
+        }),
+        worktreePath: '/repo/worktree',
+        pendingPrompt: null,
+        claudeBinary: '/usr/local/bin/claude'
+      })
+
+      expect(spawn.command).toBe('/usr/local/bin/claude')
+      expect(spawn.args).not.toContain('--model')
+      expect(spawn.args).not.toContain('--effort')
+    })
+
+    it('ignores declared models whose slug is blank', () => {
+      const spawn = buildClaudeCliPtySpawn({
+        session: makeSession({ model_id: '', model_variant: 'high' }),
+        worktreePath: '/repo/worktree',
+        pendingPrompt: null,
+        claudeBinary: 'claude',
+        customProviderCommand: 'claudex',
+        customProviderModels: [{ id: 'm1', name: 'Unfinished row', slug: '  ', efforts: ['high'] }]
+      })
+
+      expect(spawn.args).not.toContain('--model')
+      expect(spawn.args).not.toContain('--effort')
+    })
+
+    it('still suppresses the ultracode settings merge for declared provider models', () => {
+      const hookSettingsJson = '{"hooks":{"Stop":[{"id":1}]}}'
+      const spawn = buildClaudeCliPtySpawn({
+        session: makeSession({
+          custom_provider_id: 'prov-1',
+          model_provider_id: 'custom',
+          model_id: 'glm-4.6',
+          model_variant: 'ultracode'
+        }),
+        worktreePath: '/repo/worktree',
+        pendingPrompt: null,
+        claudeBinary: 'claude',
+        hookSettingsJson,
+        customProviderCommand: 'claudex',
+        customProviderModels: [
+          { id: 'm1', name: 'GLM 4.6', slug: 'glm-4.6', efforts: ['low', 'high'] }
+        ]
+      })
+
+      const settingsIndex = spawn.args.indexOf('--settings')
+      expect(spawn.args[settingsIndex + 1]).toBe(hookSettingsJson)
+      expect(spawn.args).not.toContain('--effort')
+      // The declared model itself still rides along.
+      expect(spawn.args).toContain('--model')
+    })
+
     it('keeps plan-mode permission flags for custom provider spawns', () => {
       process.env.SHELL = '/bin/zsh'
       const spawn = buildClaudeCliPtySpawn({

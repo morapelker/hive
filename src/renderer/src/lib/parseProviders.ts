@@ -1,3 +1,10 @@
+import {
+  CUSTOM_MODEL_PROVIDER_ID,
+  getCustomProviderModelDisplayName,
+  getLaunchableCustomProviderModels,
+  type CustomClaudeProvider
+} from '@shared/types/custom-provider'
+
 export interface ModelInfo {
   id: string
   name?: string
@@ -101,6 +108,30 @@ export function getVariantKeysForSdk(
     return [...base, ULTRACODE_VARIANT]
   }
   return base
+}
+
+/**
+ * Synthesize a picker catalog from a custom provider's declared models so the
+ * existing model-dropdown + variant-chip machinery works unchanged. Efforts map
+ * onto variants; `getVariantKeysForSdk`'s ultracode append must NOT be used on
+ * this catalog (ultracode is a stock-claude `--settings` mode, not an effort).
+ * Empty when the provider declares no launchable models.
+ */
+export function buildCustomProviderCatalog(provider: CustomClaudeProvider): ProviderModels[] {
+  const models = getLaunchableCustomProviderModels(provider.models)
+  if (models.length === 0) return []
+  return [
+    {
+      providerID: CUSTOM_MODEL_PROVIDER_ID,
+      providerName: provider.name || 'Custom Provider',
+      models: models.map((model) => ({
+        id: model.slug.trim(),
+        name: getCustomProviderModelDisplayName(model),
+        providerID: CUSTOM_MODEL_PROVIDER_ID,
+        variants: Object.fromEntries(model.efforts.map((effort) => [effort, {}]))
+      }))
+    }
+  ]
 }
 
 export function findModelInfo(

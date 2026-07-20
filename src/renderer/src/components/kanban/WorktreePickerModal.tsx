@@ -37,6 +37,7 @@ import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useUsageStore, resolveDefaultUsageProvider } from '@/stores/useUsageStore'
 import { useRemoteLaunchStore } from '@/stores/useRemoteLaunchStore'
 import { ModelSelector } from '@/components/sessions/ModelSelector'
+import { CustomProviderModelSelector } from '@/components/sessions/CustomProviderModelSelector'
 import { CodexFastToggle } from '@/components/sessions/CodexFastToggle'
 import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
 import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
@@ -69,7 +70,8 @@ import {
   type LaunchModelConfig
 } from '@/lib/ticket-launch'
 import type { AvailableAgentSdks } from '@/lib/agent-sdk-availability'
-import type { CustomClaudeProvider } from '@shared/types/custom-provider'
+import { findCustomProvider, type CustomClaudeProvider } from '@shared/types/custom-provider'
+import { resolveCustomProviderSelectedModel } from '@/lib/handoffSelection'
 
 // Stable empty array to avoid referential-inequality loops in Zustand selectors
 const EMPTY_ARRAY: readonly never[] = []
@@ -560,6 +562,17 @@ export function WorktreePickerModal({
     !runOnRemote && !isConnectionMode && agentSdk === 'claude-code-cli'
       ? selectedCustomProviderId
       : null
+
+  // Row 1's custom-provider selection: the picked model validated against the
+  // provider's declared models (stale/foreign picks degrade to the provider
+  // default), null when the provider declares none — then no model rides the
+  // launch and the provider's command keeps owning it.
+  const selectedCustomProvider = effectiveCustomProviderId
+    ? findCustomProvider(customProviders, effectiveCustomProviderId)
+    : undefined
+  const customProviderModel = selectedCustomProvider
+    ? resolveCustomProviderSelectedModel(selectedCustomProvider, selectedModel)
+    : null
 
   // ── Remote section visibility + preflight ─────────────────────────
   const remoteSectionVisible =
@@ -1278,16 +1291,26 @@ export function WorktreePickerModal({
       const entries: LaunchModelConfig[] = [
         {
           sdk: agentSdk,
-          model: selectedModel ?? autoResolvedModel ?? null,
+          model: effectiveCustomProviderId
+            ? customProviderModel
+            : (selectedModel ?? autoResolvedModel ?? null),
           codexFastMode,
           customProviderId: effectiveCustomProviderId
         },
-        ...extraModelRows.map((r) => ({
-          sdk: r.sdk,
-          model: r.model ?? resolveRowDefaultModel(r.sdk, mode),
-          codexFastMode: r.codexFastMode,
-          customProviderId: r.sdk === 'claude-code-cli' ? r.customProviderId : null
-        }))
+        ...extraModelRows.map((r) => {
+          const rowProvider =
+            r.sdk === 'claude-code-cli'
+              ? findCustomProvider(customProviders, r.customProviderId)
+              : undefined
+          return {
+            sdk: r.sdk,
+            model: rowProvider
+              ? resolveCustomProviderSelectedModel(rowProvider, r.model)
+              : (r.model ?? resolveRowDefaultModel(r.sdk, mode)),
+            codexFastMode: r.codexFastMode,
+            customProviderId: r.sdk === 'claude-code-cli' ? r.customProviderId : null
+          }
+        })
       ]
 
       // ── Save config only path: serialize config, don't create session ─
@@ -1298,7 +1321,7 @@ export function WorktreePickerModal({
             : { type: 'existing' as const, worktreeId: worktreeId! },
           prompt: promptText.trim() || buildPrompt(mode, ticket),
           mode,
-          model: selectedModel ?? null,
+          model: effectiveCustomProviderId ? customProviderModel : (selectedModel ?? null),
           sdk: agentSdk,
           codexFastMode,
           goalMode,
@@ -1461,7 +1484,9 @@ export function WorktreePickerModal({
       )
 
       // Create session in the selected worktree
-      const effectiveModel = selectedModel ?? autoResolvedModel ?? undefined
+      const effectiveModel = effectiveCustomProviderId
+        ? (customProviderModel ?? undefined)
+        : (selectedModel ?? autoResolvedModel ?? undefined)
       const modelOverride = effectiveModel ? { ...effectiveModel, agentSdk } : undefined
       const cliPendingPrompt =
         agentSdk === 'claude-code-cli'
@@ -1503,9 +1528,13 @@ export function WorktreePickerModal({
         .getState()
         .setSessionStatus(sessionId, isPlanLike(mode) ? 'planning' : 'working')
 
-      // Apply user's model override to the session if they explicitly picked one
+      // Apply user's model override to the session if they explicitly picked
+      // one (custom-provider picks apply as their validated selection)
       if (selectedModel) {
-        await useSessionStore.getState().setSessionModel(sessionId, selectedModel)
+        const explicitModel = effectiveCustomProviderId ? customProviderModel : selectedModel
+        if (explicitModel) {
+          await useSessionStore.getState().setSessionModel(sessionId, explicitModel)
+        }
       }
 
       // Update the ticket with session info and move to in_progress
@@ -1518,7 +1547,7 @@ export function WorktreePickerModal({
       // resolves independently and can differ), then the picked/auto model,
       // then the per-SDK resolution + hard fallback (never null).
       const badgeModel =
-        resolveCustomProviderBadge(effectiveCustomProviderId) ??
+        resolveCustomProviderBadge(effectiveCustomProviderId, effectiveModel) ??
         resolveBadgeModel(
           { sdk: agentSdk, model: effectiveModel ?? null, codexFastMode },
           sessionResult.session
@@ -2110,8 +2139,19 @@ export function WorktreePickerModal({
                 </div>
               )}
               <div className="flex items-center gap-2 flex-wrap">
-                {/* Custom providers own their model (baked into the command) — no model picker */}
-                {!effectiveCustomProviderId && (
+                {/* Custom providers: picker over their declared models; without
+                    any, the command owns the model (no picker, as before) */}
+                {effectiveCustomProviderId ? (
+                  selectedCustomProvider && (
+                    <div className="min-w-0">
+                      <CustomProviderModelSelector
+                        provider={selectedCustomProvider}
+                        value={selectedModel}
+                        onChange={setSelectedModel}
+                      />
+                    </div>
+                  )
+                ) : (
                   <div className="min-w-0">
                     <ModelSelector
                       value={selectedModel ?? autoResolvedModel}
@@ -2159,7 +2199,24 @@ export function WorktreePickerModal({
                           idPrefix={`extra-model-row-${rowIndex}-sdk`}
                         />
                         <div className="flex items-center gap-2 flex-wrap">
-                          {!(row.sdk === 'claude-code-cli' && row.customProviderId) && (
+                          {row.sdk === 'claude-code-cli' && row.customProviderId ? (
+                            (() => {
+                              const rowProvider = findCustomProvider(
+                                customProviders,
+                                row.customProviderId
+                              )
+                              return rowProvider ? (
+                                <div className="min-w-0">
+                                  <CustomProviderModelSelector
+                                    provider={rowProvider}
+                                    value={row.model}
+                                    onChange={(model) => updateRowModel(row.key, model)}
+                                    testIdPrefix={`extra-model-row-${rowIndex}-custom-model`}
+                                  />
+                                </div>
+                              ) : null
+                            })()
+                          ) : (
                             <div className="min-w-0">
                               <ModelSelector
                                 value={rowModelValue}

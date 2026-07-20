@@ -18,6 +18,7 @@ import { connectionApi } from '@/api/connection-api'
 import { terminalApi } from '@/api/terminal-api'
 import { opencodeApi } from '@/api/opencode-api'
 import { type AgentSdk, isTerminalBacked } from '@shared/types/agent-sdk'
+import { CUSTOM_MODEL_PROVIDER_ID } from '@shared/types/custom-provider'
 
 /**
  * Push the follow-up-message queue state for a session into the backend.
@@ -518,7 +519,8 @@ export const useSessionStore = create<SessionState>()(
               worktreeId,
               agentSdkOverride,
               initialMode,
-              modelOverride: options?.modelOverride
+              modelOverride: options?.modelOverride,
+              customProviderId: options?.customProviderId
             })
           // Custom providers run their own command through the login shell —
           // stock-claude detection (`which claude` in the Electron process) is
@@ -1474,9 +1476,15 @@ export const useSessionStore = create<SessionState>()(
           console.error('Failed to push model to agent backend:', error)
         }
 
-        // Update per-provider last-used model so new worktrees inherit it
-        // Skip when auto-applying mode defaults — those shouldn't rewrite global preferences
-        if (!options?.skipGlobalUpdate) {
+        // Update per-provider last-used model so new worktrees inherit it.
+        // Skip when auto-applying mode defaults — those shouldn't rewrite global
+        // preferences — and for custom-provider models ('custom' marker on a
+        // cli session): a proxy slug must never become the stock claude-code-cli
+        // default. Other SDKs pass through — 'custom' is also a legal opencode
+        // catalog provider id.
+        const isCustomProviderModel =
+          model.providerID === CUSTOM_MODEL_PROVIDER_ID && agentSdk === 'claude-code-cli'
+        if (!options?.skipGlobalUpdate && !isCustomProviderModel) {
           try {
             const { useSettingsStore } = await import('./useSettingsStore')
             useSettingsStore
@@ -1487,9 +1495,10 @@ export const useSessionStore = create<SessionState>()(
           }
         }
 
-        // Also persist as the worktree's last-used model (only for worktree sessions)
+        // Also persist as the worktree's last-used model (only for worktree
+        // sessions; custom-provider slugs would leak into stock fallback chains)
         const scope = findSessionScope(get(), sessionId)
-        if (scope?.type === 'worktree') {
+        if (scope?.type === 'worktree' && !isCustomProviderModel) {
           try {
             await dbApi.worktree.updateModel({
               worktreeId: scope.scopeId,
@@ -1513,6 +1522,10 @@ export const useSessionStore = create<SessionState>()(
         const settings = useSettingsStore.getState()
         const sessionSdk = session?.agent_sdk ?? settings.defaultAgentSdk ?? 'opencode'
         if (sessionSdk === 'terminal') return
+        // Custom-provider sessions carry a provider-declared model (or none) —
+        // mode defaults always resolve to STOCK claude models, which would
+        // clobber the declared slug and silently un-pass --model on respawn.
+        if (session?.custom_provider_id) return
 
         const modeDefault = settings.getModelForMode(newMode)
         // Cross-SDK mode default on a live session is impossible to apply because the
@@ -2104,7 +2117,8 @@ export const useSessionStore = create<SessionState>()(
             resolveSessionCreationSelection({
               agentSdkOverride,
               initialMode,
-              modelOverride: opts?.modelOverride
+              modelOverride: opts?.modelOverride,
+              customProviderId: opts?.customProviderId
             })
           // Same gating as createSession: custom providers don't need
           // stock-claude detection but are blocked up front on Windows.
