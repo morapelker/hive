@@ -57,9 +57,14 @@ export function encryptSharePayload(plaintext: string): { key: string; ciphertex
   return { key: key.toString('base64url'), ciphertext }
 }
 
-export function decryptSharePayload(keyB64url: string, ciphertextB64: string): string {
+function decodeShareKey(keyB64url: string): Buffer {
   const key = Buffer.from(keyB64url, 'base64url')
   if (key.length !== 32) throw new Error('Share link has an invalid encryption key')
+  return key
+}
+
+export function decryptSharePayload(keyB64url: string, ciphertextB64: string): string {
+  const key = decodeShareKey(keyB64url)
   const raw = Buffer.from(ciphertextB64, 'base64')
   if (raw.length < 12 + 16 + 1) throw new Error('Share payload is malformed')
   const decipher = createDecipheriv('aes-256-gcm', key, raw.subarray(0, 12))
@@ -276,6 +281,9 @@ export async function importAccountShareFromLink(url: string): Promise<ImportedA
   if (!serverUrl || !token || !key) {
     throw new Error('Share link is missing required parameters')
   }
+  // Claiming burns the one-time token, so reject a damaged/truncated key
+  // BEFORE the claim — otherwise a bad paste destroys the share for nothing.
+  decodeShareKey(key)
 
   // Only claim against the enterprise server this machine is logged in to.
   // Besides enforcing "share links need enterprise set up", this guarantees

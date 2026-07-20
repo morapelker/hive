@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   decryptSharePayload,
   encryptSharePayload,
+  importAccountShareFromLink,
   isShareAccountLink
 } from '../account-share-service'
 import { buildShareAccountLink } from '../../../shared/account-share-link'
@@ -59,5 +60,16 @@ describe('share account links', () => {
     expect(isShareAccountLink('https://example.com')).toBe(false)
     expect(isShareAccountLink('hive://something-else?token=x')).toBe(false)
     expect(isShareAccountLink('not a url')).toBe(false)
+  })
+
+  it('rejects a truncated key before claiming (the claim burns the one-time token)', async () => {
+    const link = buildShareAccountLink({
+      serverUrl: 'https://hive.example.com',
+      token: 'tok_123',
+      key: 'too-short'
+    })
+    await expect(importAccountShareFromLink(link)).rejects.toThrow(
+      'Share link has an invalid encryption key'
+    )
   })
 })
