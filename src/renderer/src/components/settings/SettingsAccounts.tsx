@@ -206,7 +206,7 @@ function ProviderAccountsCard({ provider }: { provider: UsageProvider }): React.
                       variant="ghost"
                       size="icon"
                       className="h-7 w-7 text-muted-foreground hover:text-foreground"
-                      onClick={() => handleShare(account)}
+                      onClick={() => void handleShare(account)}
                       disabled={sharingAccountId !== null}
                       aria-label={`Share ${account.email}`}
                       title="Share this account with another computer via a one-time link"

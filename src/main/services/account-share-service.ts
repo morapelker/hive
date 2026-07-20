@@ -213,6 +213,9 @@ function parseSharePayload(json: string): SharePayloadV1 {
   if (payload.v !== 1 || !payload.email) {
     throw new Error('Unsupported share payload')
   }
+  if (payload.provider !== 'anthropic' && payload.provider !== 'openai') {
+    throw new Error(`Unknown share provider: ${String(payload.provider)}`)
+  }
   return payload
 }
 
@@ -255,14 +258,12 @@ export async function importAccountShareFromLink(url: string): Promise<ImportedA
   if (payload.provider === 'anthropic') {
     if (!payload.claude?.blobJson) throw new Error('Share payload is missing Claude credentials')
     await addClaudeAccount(payload.email, payload.claude.uuid ?? '', payload.claude.blobJson)
-  } else if (payload.provider === 'openai') {
+  } else {
     const tokens = payload.codex?.auth?.tokens
     if (!tokens?.access_token || !tokens.refresh_token || typeof tokens.id_token !== 'string') {
       throw new Error('Share payload is missing OpenAI credentials')
     }
     await addCodexAccount(tokens.id_token, tokens.access_token, tokens.refresh_token)
-  } else {
-    throw new Error(`Unknown share provider: ${String(payload.provider)}`)
   }
 
   log.info('Imported shared account', { provider: payload.provider, email: payload.email })

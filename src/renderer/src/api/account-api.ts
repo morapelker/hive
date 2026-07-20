@@ -3,6 +3,7 @@ import {
   SHARED_ACCOUNT_IMPORTED_CHANNEL,
   type SharedAccountImportedPayload
 } from '@shared/app-events'
+import type { ServerEvent } from '@shared/rpc/protocol'
 import { getRendererRpcClient } from './rpc-client'
 
 export interface ExportedAccountShare {
@@ -47,8 +48,8 @@ export const accountApi = {
   onSharedAccountImported: (
     callback: (payload: SharedAccountImportedPayload) => void
   ): (() => void) =>
-    getRendererRpcClient().subscribe(SHARED_ACCOUNT_IMPORTED_CHANNEL, (payload) => {
-      const data = payload as Partial<SharedAccountImportedPayload> | null
+    getRendererRpcClient().subscribe(SHARED_ACCOUNT_IMPORTED_CHANNEL, (event: ServerEvent) => {
+      const data = event.payload as Partial<SharedAccountImportedPayload> | null
       if (data && (data.provider === 'anthropic' || data.provider === 'openai')) {
         callback({ provider: data.provider, email: data.email ?? '' })
       }
