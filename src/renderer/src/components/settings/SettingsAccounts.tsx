@@ -364,6 +364,7 @@ function ProviderAccountsCard({ provider }: { provider: UsageProvider }): React.
 export function SettingsAccounts(): React.JSX.Element {
   const loadSavedAccounts = useUsageStore((s) => s.loadSavedAccounts)
   const fetchEmail = useAccountStore((s) => s.fetchEmail)
+  const hiveAuthToken = useSettingsStore((s) => s.hiveAuthToken)
   const [importOpen, setImportOpen] = useState(false)
   const [importUrl, setImportUrl] = useState('')
   const [importing, setImporting] = useState(false)
@@ -412,7 +413,7 @@ export function SettingsAccounts(): React.JSX.Element {
             Manage saved Claude and OpenAI accounts used for usage tracking and quick switching.
           </p>
         </div>
-        {isMac() && (
+        {isMac() && Boolean(hiveAuthToken) && (
           <Button
             variant="outline"
             size="sm"

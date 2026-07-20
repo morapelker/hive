@@ -6,6 +6,13 @@
  * with a random key that only ever travels inside the link itself. The
  * hive-enterprise server stores just the ciphertext behind an unguessable
  * one-time token and deletes it on claim — it can never read the credentials.
+ *
+ * The whole flow requires a connected Hive Enterprise account on BOTH sides:
+ * creating a share needs the renderer's authenticated GraphQL client, and
+ * claiming (below) requires this machine to be logged in to the SAME server
+ * the link points at — the claim mutation itself is authenticated, and the
+ * server-match check ensures our JWT is never sent to a foreign host named
+ * by a crafted link.
  */
 import { createCipheriv, createDecipheriv, randomBytes } from 'crypto'
 import { getDatabase } from '../db'
@@ -22,6 +29,7 @@ import {
 } from './account-store-codex'
 import { createLogger } from './logger'
 import { SHARE_ACCOUNT_LINK_HOST } from '../../shared/account-share-link'
+import { APP_SETTINGS_DB_KEY } from '../../shared/types/settings'
 import type { UsageProvider } from '@shared/types/usage'
 
 const log = createLogger({ component: 'AccountShareService' })
@@ -117,6 +125,37 @@ export function isShareAccountLink(url: string): boolean {
   }
 }
 
+function normalizeServerUrl(url: string): string {
+  return url.trim().replace(/\/+$/, '').toLowerCase()
+}
+
+/**
+ * This machine's Hive Enterprise connection, read from the persisted app
+ * settings (the renderer's settings store writes them to the same DB).
+ * Throws when the machine is not logged in — importing a shared account is
+ * only available with a connected enterprise account.
+ */
+function readHiveEnterpriseConnection(): { serverUrl: string; authToken: string } {
+  let settings: { hiveEnterpriseServerUrl?: unknown; hiveAuthToken?: unknown } = {}
+  try {
+    const raw = getDatabase().getSetting(APP_SETTINGS_DB_KEY)
+    if (raw) settings = JSON.parse(raw) as typeof settings
+  } catch (error) {
+    log.warn('Failed to read app settings for share import', {
+      error: error instanceof Error ? error.message : String(error)
+    })
+  }
+  const serverUrl =
+    typeof settings.hiveEnterpriseServerUrl === 'string' ? settings.hiveEnterpriseServerUrl : ''
+  const authToken = typeof settings.hiveAuthToken === 'string' ? settings.hiveAuthToken : ''
+  if (!serverUrl || !authToken) {
+    throw new Error(
+      'This computer is not connected to Hive Enterprise. Sign in under Settings → Hive Enterprise, then try the share link again.'
+    )
+  }
+  return { serverUrl, authToken }
+}
+
 const CLAIM_ACCOUNT_SHARE_MUTATION = /* GraphQL */ `
   mutation ClaimAccountShare($token: String!) {
     claimAccountShare(token: $token) {
@@ -126,13 +165,20 @@ const CLAIM_ACCOUNT_SHARE_MUTATION = /* GraphQL */ `
   }
 `
 
-async function claimFromServer(serverUrl: string, token: string): Promise<string> {
+async function claimFromServer(
+  serverUrl: string,
+  token: string,
+  authToken: string
+): Promise<string> {
   const endpoint = `${serverUrl.replace(/\/+$/, '')}/api/graphql`
   let response: Response
   try {
     response = await fetch(endpoint, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${authToken}`
+      },
       body: JSON.stringify({ query: CLAIM_ACCOUNT_SHARE_MUTATION, variables: { token } })
     })
   } catch (error) {
@@ -193,7 +239,17 @@ export async function importAccountShareFromLink(url: string): Promise<ImportedA
     throw new Error('Share link is missing required parameters')
   }
 
-  const encryptedPayload = await claimFromServer(serverUrl, token)
+  // Only claim against the enterprise server this machine is logged in to.
+  // Besides enforcing "share links need enterprise set up", this guarantees
+  // the auth token below is never sent to a host a crafted link chose.
+  const connection = readHiveEnterpriseConnection()
+  if (normalizeServerUrl(serverUrl) !== normalizeServerUrl(connection.serverUrl)) {
+    throw new Error(
+      `This share link is for ${serverUrl}, but this computer is connected to ${connection.serverUrl}.`
+    )
+  }
+
+  const encryptedPayload = await claimFromServer(connection.serverUrl, token, connection.authToken)
   const payload = parseSharePayload(decryptSharePayload(key, encryptedPayload))
 
   if (payload.provider === 'anthropic') {
