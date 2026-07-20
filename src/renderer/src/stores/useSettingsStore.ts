@@ -875,9 +875,15 @@ if (typeof window !== 'undefined') {
     const typedData = data as {
       commandFilter?: CommandFilterSettings
       customProjectCommands?: unknown
+      hiveAuthToken?: unknown
     }
     if (typedData.commandFilter) {
       useSettingsStore.setState({ commandFilter: typedData.commandFilter })
+    }
+    // Main persists a rotated Hive Enterprise token (e.g. during a share-link
+    // claim); sync it here so a later full-blob save doesn't restore the stale one.
+    if (typeof typedData.hiveAuthToken === 'string' && typedData.hiveAuthToken) {
+      useSettingsStore.setState({ hiveAuthToken: typedData.hiveAuthToken })
     }
     if (Array.isArray(typedData.customProjectCommands)) {
       const validCommands: CustomProjectCommand[] = []

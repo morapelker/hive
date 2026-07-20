@@ -74,7 +74,11 @@ async function handleDeepLink(url: string): Promise<void> {
     const result = await importAccountShareFromLink(url)
     const providerLabel = result.provider === 'anthropic' ? 'Claude' : 'OpenAI'
     notify('Account imported', `${result.email} (${providerLabel}) was added to Hive.`)
-    void publishDesktopBackendEvent(SHARED_ACCOUNT_IMPORTED_CHANNEL, result)
+    // Only provider/email — the result may also carry a rotated auth token.
+    void publishDesktopBackendEvent(SHARED_ACCOUNT_IMPORTED_CHANNEL, {
+      provider: result.provider,
+      email: result.email
+    })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     log.error(

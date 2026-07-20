@@ -28,6 +28,7 @@ import {
   type CodexAuth
 } from './account-store-codex'
 import { createLogger } from './logger'
+import { emitSettingsUpdated } from './settings-events'
 import { SHARE_ACCOUNT_LINK_HOST } from '../../shared/account-share-link'
 import { APP_SETTINGS_DB_KEY } from '../../shared/types/settings'
 import type { UsageProvider } from '@shared/types/usage'
@@ -114,6 +115,13 @@ export async function exportAccountShare(accountId: string): Promise<ExportedAcc
 export interface ImportedAccountShare {
   provider: UsageProvider
   email: string
+  /**
+   * Rotated Hive Enterprise token from the claim response, if the server
+   * issued one. Already persisted to the DB; the renderer must also apply it
+   * to its in-memory settings store (its full-blob saves would otherwise
+   * write the stale token back).
+   */
+  refreshedAuthToken?: string
 }
 
 export function isShareAccountLink(url: string): boolean {
@@ -165,11 +173,34 @@ const CLAIM_ACCOUNT_SHARE_MUTATION = /* GraphQL */ `
   }
 `
 
+/**
+ * Mirror requestWithRefresh in the renderer's hive-enterprise client: the
+ * server may rotate an about-to-expire token on any authenticated call via
+ * the `x-hive-refreshed-token` response header, and dropping it would leave
+ * a stale token that fails later requests. Persisted straight to the
+ * settings blob (this runs outside the renderer), then pushed to a live
+ * renderer via the settings-updated channel.
+ */
+function persistRefreshedHiveAuthToken(refreshedToken: string): void {
+  try {
+    const db = getDatabase()
+    const raw = db.getSetting(APP_SETTINGS_DB_KEY)
+    const settings = raw ? (JSON.parse(raw) as Record<string, unknown>) : {}
+    settings.hiveAuthToken = refreshedToken
+    db.setSetting(APP_SETTINGS_DB_KEY, JSON.stringify(settings))
+    emitSettingsUpdated({ hiveAuthToken: refreshedToken })
+  } catch (error) {
+    log.warn('Failed to persist refreshed Hive Enterprise token', {
+      error: error instanceof Error ? error.message : String(error)
+    })
+  }
+}
+
 async function claimFromServer(
   serverUrl: string,
   token: string,
   authToken: string
-): Promise<string> {
+): Promise<{ encryptedPayload: string; refreshedAuthToken: string | null }> {
   const endpoint = `${serverUrl.replace(/\/+$/, '')}/api/graphql`
   let response: Response
   try {
@@ -200,7 +231,11 @@ async function claimFromServer(
   if (!claimed) {
     throw new Error('This share link was already used or has expired')
   }
-  return claimed.encryptedPayload
+  const refreshedAuthToken = response.headers.get('x-hive-refreshed-token')
+  return {
+    encryptedPayload: claimed.encryptedPayload,
+    refreshedAuthToken: refreshedAuthToken && refreshedAuthToken !== authToken ? refreshedAuthToken : null
+  }
 }
 
 function parseSharePayload(json: string): SharePayloadV1 {
@@ -252,8 +287,11 @@ export async function importAccountShareFromLink(url: string): Promise<ImportedA
     )
   }
 
-  const encryptedPayload = await claimFromServer(connection.serverUrl, token, connection.authToken)
-  const payload = parseSharePayload(decryptSharePayload(key, encryptedPayload))
+  const claimed = await claimFromServer(connection.serverUrl, token, connection.authToken)
+  if (claimed.refreshedAuthToken) {
+    persistRefreshedHiveAuthToken(claimed.refreshedAuthToken)
+  }
+  const payload = parseSharePayload(decryptSharePayload(key, claimed.encryptedPayload))
 
   if (payload.provider === 'anthropic') {
     if (!payload.claude?.blobJson) throw new Error('Share payload is missing Claude credentials')
@@ -267,5 +305,9 @@ export async function importAccountShareFromLink(url: string): Promise<ImportedA
   }
 
   log.info('Imported shared account', { provider: payload.provider, email: payload.email })
-  return { provider: payload.provider, email: payload.email }
+  return {
+    provider: payload.provider,
+    email: payload.email,
+    ...(claimed.refreshedAuthToken ? { refreshedAuthToken: claimed.refreshedAuthToken } : {})
+  }
 }

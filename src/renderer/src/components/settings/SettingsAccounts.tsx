@@ -390,6 +390,12 @@ export function SettingsAccounts(): React.JSX.Element {
     setImporting(true)
     try {
       const result = await accountApi.importShare(url)
+      if (result.refreshedAuthToken) {
+        // The claim rotated our enterprise token (import runs outside the
+        // renderer, which normally persists these); adopt it before any other
+        // settings save writes the stale one back.
+        await useSettingsStore.getState().updateSetting('hiveAuthToken', result.refreshedAuthToken)
+      }
       toast.success(
         `Imported ${result.email} (${result.provider === 'anthropic' ? 'Claude' : 'OpenAI'})`
       )

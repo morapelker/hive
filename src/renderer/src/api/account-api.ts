@@ -16,6 +16,8 @@ export interface ExportedAccountShare {
 export interface ImportedAccountShare {
   provider: UsageProvider
   email: string
+  /** Rotated Hive Enterprise token from the claim; apply it to the settings store. */
+  refreshedAuthToken?: string
 }
 
 export const accountApi = {
