@@ -133,4 +133,52 @@ describe('model-resolution', () => {
       model: FALLBACK_MODELS.opencode
     })
   })
+
+  it('keeps grok sessions on grok-family models and vice versa', () => {
+    // A foreign legacy global must not stamp a grok session…
+    const foreignLegacy: ModelResolutionSettings = {
+      defaultAgentSdk: 'grok-cli',
+      selectedModel: { providerID: 'anthropic', modelID: 'claude-opus-4-5-20251101' },
+      selectedModelByProvider: {}
+    }
+    expect(resolveSessionCreation({ settings: foreignLegacy, mode: 'build' })).toEqual({
+      agentSdk: 'grok-cli',
+      model: FALLBACK_MODELS['grok-cli']
+    })
+
+    // …and an unstamped grok legacy global must not ride into another SDK
+    // (e.g. the Discord fallback re-resolving for opencode).
+    const grokLegacy: ModelResolutionSettings = {
+      selectedModel: { providerID: 'xai', modelID: 'grok-4.5' },
+      selectedModelByProvider: {}
+    }
+    expect(
+      resolveSessionCreation({ settings: grokLegacy, mode: 'build', defaultAgentSdk: 'opencode' })
+    ).toEqual({
+      agentSdk: 'opencode',
+      model: FALLBACK_MODELS.opencode
+    })
+
+    // An explicit non-grok stamp is trusted (OpenCode-catalog xAI model).
+    const stampedXai: ModelResolutionSettings = {
+      selectedModel: { providerID: 'xai', modelID: 'grok-4.5', agentSdk: 'opencode' },
+      selectedModelByProvider: {}
+    }
+    expect(
+      resolveSessionCreation({ settings: stampedXai, mode: 'build', defaultAgentSdk: 'opencode' })
+        .model.modelID
+    ).toBe('grok-4.5')
+
+    // A per-SDK map entry is trusted provenance even when unstamped — the
+    // user selected this xAI model FOR opencode from opencode's own catalog.
+    const perSdkXai: ModelResolutionSettings = {
+      selectedModelByProvider: {
+        opencode: { providerID: 'xai', modelID: 'grok-4-fast' }
+      }
+    }
+    expect(
+      resolveSessionCreation({ settings: perSdkXai, mode: 'build', defaultAgentSdk: 'opencode' })
+        .model.modelID
+    ).toBe('grok-4-fast')
+  })
 })

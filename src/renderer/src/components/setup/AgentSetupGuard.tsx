@@ -17,6 +17,7 @@ export function AgentSetupGuard(): React.JSX.Element | null {
     opencode: boolean
     claude: boolean
     codex: boolean
+    grok: boolean
   } | null>(null)
 
   useEffect(() => {
@@ -31,11 +32,12 @@ export function AgentSetupGuard(): React.JSX.Element | null {
 
         setDetectedSdks(result)
 
-        const { opencode, claude, codex } = result
-        const found: Array<'opencode' | 'claude-code' | 'codex'> = []
+        const { opencode, claude, codex, grok } = result
+        const found: Array<'opencode' | 'claude-code' | 'codex' | 'grok-cli'> = []
         if (opencode) found.push('opencode')
         if (claude) found.push('claude-code')
         if (codex) found.push('codex')
+        if (grok) found.push('grok-cli')
 
         if (found.length === 0) {
           setStatus('none-found')

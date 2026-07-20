@@ -135,7 +135,42 @@ export function resolveBoardChatAgentSdk(
   const sdk = defaultAgentSdk ?? 'opencode'
   if (sdk === 'terminal') return 'opencode'
   if (sdk === 'claude-code-cli') return 'claude-code'
+  // grok-cli is terminal-backed with no SDK sibling — board chat needs a
+  // streaming implementer, so fall back to opencode.
+  if (sdk === 'grok-cli') return 'opencode'
   return sdk
+}
+
+/**
+ * Board chat runs through the streaming implementers only, but the session's
+ * SDK is re-derived downstream from `model?.agentSdk` — a CLI-stamped model
+ * would flip the board-assistant session to a provider whose prompt API
+ * rejects it. claude-code-cli models share claude-code's catalog, so they are
+ * restamped; grok-cli has no streaming sibling, so those candidates are
+ * skipped in favor of the next one — including UNSTAMPED grok models (the
+ * legacy global selectedModel can hold xai/grok-4.5 with no agentSdk field),
+ * which in Hive are only reachable through the grok-cli catalog and cannot
+ * be served by the streaming implementers.
+ */
+function coerceBoardChatModel(
+  model: SelectedModel | null | undefined,
+  opts?: { trustedGrokProvenance?: boolean }
+): SelectedModel | null {
+  if (!model) return null
+  if (model.agentSdk === 'grok-cli') return null
+  // Unstamped grok models are ambiguous provenance (the legacy global
+  // selectedModel) and skipped; an explicit non-grok stamp — or a per-SDK
+  // map hit flagged by the caller — is trusted: OpenCode's own catalog may
+  // expose xAI models the user selected FOR opencode.
+  if (
+    !model.agentSdk &&
+    !opts?.trustedGrokProvenance &&
+    (model.providerID === 'xai' || model.modelID.toLowerCase().startsWith('grok'))
+  ) {
+    return null
+  }
+  if (model.agentSdk === 'claude-code-cli') return { ...model, agentSdk: 'claude-code' }
+  return model
 }
 
 export function resolveBoardChatDefaultModel(
@@ -146,11 +181,23 @@ export function resolveBoardChatDefaultModel(
   agentSdkOverride?: 'opencode' | 'claude-code' | 'codex' | null
 ): SelectedModel | null {
   const agentSdk = agentSdkOverride ?? resolveBoardChatAgentSdk(settings.defaultAgentSdk)
-  return (
-    settings.getModelForMode('ask') ??
-    resolveModelForSdk(agentSdk, settings) ??
-    settings.selectedModel
-  )
+  // A resolveModelForSdk hit backed by the per-SDK map is trusted provenance
+  // even when unstamped (the map only falls back to the legacy global when
+  // it is empty, so a non-null result with an entry for this SDK IS that
+  // entry — a model the user selected FOR this SDK).
+  const perSdkTrusted = !!settings.selectedModelByProvider?.[agentSdk]
+  const candidates: Array<{ model: SelectedModel | null | undefined; trusted: boolean }> = [
+    { model: settings.getModelForMode('ask'), trusted: false },
+    { model: resolveModelForSdk(agentSdk, settings), trusted: perSdkTrusted },
+    { model: settings.selectedModel, trusted: false }
+  ]
+  for (const candidate of candidates) {
+    const usable = coerceBoardChatModel(candidate.model, {
+      trustedGrokProvenance: candidate.trusted
+    })
+    if (usable) return usable
+  }
+  return null
 }
 
 const BOARD_RULES_TAG_RE = /<board-assistant-rules>[\s\S]*?<\/board-assistant-rules>/gi
@@ -906,7 +953,8 @@ export const useBoardChatStore = create<BoardChatState>((set, get) => ({
           successfulProjectIds.push(batch.projectId)
           return
         }
-        const message = result.reason instanceof Error ? result.reason.message : String(result.reason)
+        const message =
+          result.reason instanceof Error ? result.reason.message : String(result.reason)
         failures.push(`${batch.projectName}: ${message}`)
       })
 

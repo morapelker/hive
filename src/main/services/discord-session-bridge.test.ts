@@ -664,6 +664,72 @@ describe('DiscordSessionBridge managed sessions', () => {
     )
   })
 
+  it('keeps a per-SDK OpenCode xAI model when falling back from unregistered grok-cli', async () => {
+    const { db, bridge } = setupBridge()
+    // OpenCode's own catalog can expose xAI models; a selection made FOR
+    // opencode is stored unstamped in the per-SDK map and must survive the
+    // grok-leakage filter on the fallback path.
+    setAppSettings(db, {
+      defaultAgentSdk: 'grok-cli',
+      selectedModelByProvider: {
+        opencode: { providerID: 'xai', modelID: 'grok-4.5' }
+      }
+    })
+    bridge.setAgentSdkManager({
+      getImplementer: vi.fn(() => {
+        throw new Error('Unknown agent SDK: "grok-cli"')
+      })
+    } as never)
+
+    await bridge.handleUserMessage(userMessage(makeChannel(), 'grok default route'))
+
+    expect(db.createdSessions[0]).toEqual(
+      expect.objectContaining({
+        agent_sdk: 'opencode',
+        model_provider_id: 'xai',
+        model_id: 'grok-4.5'
+      })
+    )
+  })
+
+  it('replaces the model when a grok-tagged mode default re-lands on grok-cli during fallback', async () => {
+    const { db, bridge } = setupBridge()
+    // The grok-tagged mode default re-applies during the opencode re-resolve
+    // (the configured default SDK is still opencode) and passes the shared
+    // coherence guard as a valid grok-cli pair — its model exists only in the
+    // grok-cli catalog, so the bridge must substitute the hard fallback.
+    setAppSettings(db, {
+      defaultAgentSdk: 'opencode',
+      defaultModels: {
+        plan: { providerID: 'xai', modelID: 'grok-4.5', agentSdk: 'grok-cli' }
+      }
+    })
+    bridge.setAgentSdkManager({
+      getImplementer: vi.fn(() => {
+        throw new Error('Unknown agent SDK: "grok-cli"')
+      })
+    } as never)
+
+    await bridge.setWorktreeMode(
+      {
+        worktreeId: 'worktree-1',
+        projectId: 'project-1',
+        worktreePath: '/repo/project/worktree'
+      },
+      'plan'
+    )
+    await bridge.handleUserMessage(userMessage(makeChannel(), 'grok plan default'))
+
+    expect(db.createdSessions[0]).toEqual(
+      expect.objectContaining({
+        agent_sdk: 'opencode',
+        mode: 'plan',
+        model_provider_id: 'anthropic',
+        model_id: 'claude-opus-4-5-20251101'
+      })
+    )
+  })
+
   it('clears a managed session by aborting, disconnecting, unlinking, and dropping later stream events', async () => {
     const { db, bridge, openCode, emit } = setupBridge()
     const channel = makeChannel()

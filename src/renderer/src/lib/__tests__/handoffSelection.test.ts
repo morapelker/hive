@@ -117,16 +117,62 @@ describe('resolveSessionCreationSelection', () => {
       variant: 'high'
     })
   })
+
+  it('rejects a foreign legacy-global default for grok sessions and falls back to the grok model', () => {
+    useSettingsStore.setState({
+      defaultAgentSdk: 'grok-cli',
+      // Legacy config: only a global selectedModel from another SDK, no
+      // per-provider entries. buildGrokCliPtySpawn would drop this model id,
+      // so stamping it on the session would desync badges from the CLI.
+      selectedModel: {
+        providerID: 'anthropic',
+        modelID: 'claude-opus-4-5-20251101',
+        variant: 'max'
+      },
+      selectedModelByProvider: {},
+      defaultModels: { build: null, plan: null, ask: null, review: null }
+    })
+
+    const selection = resolveSessionCreationSelection({})
+
+    expect(selection.agentSdk).toBe('grok-cli')
+    expect(selection.model).toMatchObject({
+      providerID: 'xai',
+      modelID: 'grok-4.5'
+    })
+
+    // The explicit-SDK create path (session-tab context menu) resolves through
+    // a different branch — it must apply the same grok-family filter.
+    const explicit = resolveSessionCreationSelection({ agentSdkOverride: 'grok-cli' })
+    expect(explicit.agentSdk).toBe('grok-cli')
+    expect(explicit.model).toMatchObject({
+      providerID: 'xai',
+      modelID: 'grok-4.5'
+    })
+  })
+
+  it('rejects a legacy grok global for explicit non-grok creates', () => {
+    useSettingsStore.setState({
+      defaultAgentSdk: 'grok-cli',
+      // Only an unstamped legacy grok global configured: an explicit opencode
+      // create must not stamp it (opencode may fail to serve it; the badge
+      // would desync from what actually runs).
+      selectedModel: { providerID: 'xai', modelID: 'grok-4.5' },
+      selectedModelByProvider: {},
+      defaultModels: { build: null, plan: null, ask: null, review: null }
+    })
+
+    const selection = resolveSessionCreationSelection({ agentSdkOverride: 'opencode' })
+    expect(selection.agentSdk).toBe('opencode')
+    expect(selection.model?.providerID).not.toBe('xai')
+  })
 })
 
 describe('handoff provider visuals', () => {
   it('orders Claude Code second and Claude CLI last', () => {
-    expect(getAvailableHandoffAgentSdks({ opencode: true, claude: true, codex: true })).toEqual([
-      'opencode',
-      'claude-code',
-      'codex',
-      'claude-code-cli'
-    ])
+    expect(
+      getAvailableHandoffAgentSdks({ opencode: true, claude: true, codex: true, grok: false })
+    ).toEqual(['opencode', 'claude-code', 'codex', 'claude-code-cli'])
   })
 
   it('displays Claude Code without legacy wording', () => {

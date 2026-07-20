@@ -29,7 +29,7 @@ describe('HandoffModelPicker inside a modal dialog', () => {
       value: { success: true, providers: [] }
     })
     useSettingsStore.setState({
-      availableAgentSdks: { opencode: true, claude: true, codex: true },
+      availableAgentSdks: { opencode: true, claude: true, codex: true, grok: false },
       defaultAgentSdk: 'claude-code-cli',
       lastHandoffOverride: null,
       selectedModel: null,

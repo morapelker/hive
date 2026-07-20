@@ -3,6 +3,7 @@ import type { PermissionRequest } from '@shared/types/opencode'
 import { OPENCODE_STREAM_CHANNEL } from '@shared/opencode-events'
 import { applyModePrefix } from '@shared/agent-mode-prefixes'
 import {
+  FALLBACK_MODELS,
   normalizeAgentSdk,
   resolveSessionCreation,
   type ModelResolutionSettings,
@@ -1661,7 +1662,23 @@ export class DiscordSessionBridge {
         requestedSdk: resolved.agentSdk,
         error: error instanceof Error ? error.message : String(error)
       })
-      return { agentSdk: 'opencode', model: resolved.model }
+      // Re-resolve the model chain for opencode. When the re-resolution lands
+      // on opencode, the shared resolver has already enforced grok/model
+      // coherence (per-SDK xAI selections are trusted, legacy grok leakage
+      // stripped) — keep its model; OpenCode is a multi-provider runtime and
+      // deliberately keeps cross-SDK models it can serve (e.g. a codex mode
+      // default's gpt model). Only a grok-tagged mode default re-landing on
+      // grok-cli must be replaced: its grok model exists solely in the
+      // grok-cli catalog and passes the shared guard as a coherent pair.
+      const fallback = resolveSessionCreation({
+        settings: this.readModelSettings(),
+        mode,
+        defaultAgentSdk: 'opencode'
+      })
+      return {
+        agentSdk: 'opencode',
+        model: fallback.agentSdk === 'grok-cli' ? FALLBACK_MODELS.opencode : fallback.model
+      }
     }
   }
 

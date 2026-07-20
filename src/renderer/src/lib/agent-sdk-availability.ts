@@ -4,6 +4,7 @@ export interface AvailableAgentSdks {
   opencode: boolean
   claude: boolean
   codex: boolean
+  grok: boolean
 }
 
 /** Alias of the shared {@link AgentSdk} union, kept for this module's selection-focused naming. */
@@ -19,6 +20,8 @@ function getAgentSdkLabel(sdk: Exclude<SelectableAgentSdk, 'terminal'>): string 
       return 'Claude Code (CLI)'
     case 'codex':
       return 'Codex'
+    case 'grok-cli':
+      return 'Grok Build'
   }
 }
 
@@ -36,6 +39,8 @@ export function isAgentSdkAvailable(
       return availableAgentSdks.claude
     case 'codex':
       return availableAgentSdks.codex
+    case 'grok-cli':
+      return availableAgentSdks.grok
     case 'terminal':
       return true
   }

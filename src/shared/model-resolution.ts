@@ -22,7 +22,8 @@ export const FALLBACK_MODELS: Record<HandoffAgentSdk, SharedSelectedModel> = {
   opencode: { providerID: 'anthropic', modelID: 'claude-opus-4-5-20251101' },
   'claude-code': { providerID: 'anthropic', modelID: 'claude-opus-4-5-20251101' },
   'claude-code-cli': { providerID: 'anthropic', modelID: 'sonnet', variant: 'high' },
-  codex: { providerID: 'codex', modelID: 'gpt-5.5' }
+  codex: { providerID: 'codex', modelID: 'gpt-5.5' },
+  'grok-cli': { providerID: 'xai', modelID: 'grok-4.5', variant: 'high' }
 }
 
 export function getModeDefaultKey(mode: string | null | undefined): ModeDefaultKey {
@@ -33,7 +34,9 @@ export function getModeDefaultKey(mode: string | null | undefined): ModeDefaultK
 }
 
 export function normalizeAgentSdk(sdk: AgentSdk | string | null | undefined): HandoffAgentSdk {
-  if (sdk === 'claude-code' || sdk === 'claude-code-cli' || sdk === 'codex') return sdk
+  if (sdk === 'claude-code' || sdk === 'claude-code-cli' || sdk === 'codex' || sdk === 'grok-cli') {
+    return sdk
+  }
   return 'opencode'
 }
 
@@ -46,6 +49,11 @@ export function resolveModelForSdk(
   if (selected) return selected
   if (Object.keys(perProvider).length > 0) return null
   return settings.selectedModel ?? null
+}
+
+/** Grok-family by identity, independent of any agentSdk stamp. */
+function isGrokModel(model: SharedSelectedModel): boolean {
+  return model.providerID === 'xai' || model.modelID.toLowerCase().startsWith('grok')
 }
 
 export function resolveSessionCreation(opts: {
@@ -67,13 +75,37 @@ export function resolveSessionCreation(opts: {
     resolvedSdk = normalizeAgentSdk(modeDefault.agentSdk ?? requestedSdk)
   }
 
+  let fromPerSdkMap = false
   if (!model) {
     model = resolveModelForSdk(resolvedSdk, settings)
+    // A per-SDK map hit is trusted provenance even without an agentSdk stamp:
+    // resolveModelForSdk only falls back to the legacy global selectedModel
+    // when the map is empty, so a non-null result with a map entry for this
+    // SDK IS that entry.
+    fromPerSdkMap = !!model && !!settings.selectedModelByProvider?.[resolvedSdk]
   }
 
   // Deliberate divergence from renderer resolution: main has no model catalog or
   // worktree-history caches, so Discord substitutes the hard SDK fallback here.
   if (!model) {
+    model = FALLBACK_MODELS[resolvedSdk]
+  }
+
+  // Keep the SDK/model pair coherent: grok sessions run only grok-family
+  // models (the spawner drops anything else), and grok models cannot ride
+  // into another SDK — the legacy global selectedModel is unstamped and can
+  // leak either way. Trusted provenance passes: an explicit matching stamp,
+  // or a per-SDK map entry (OpenCode's own catalog can expose xAI models the
+  // user selected FOR opencode, stored unstamped).
+  if (resolvedSdk === 'grok-cli') {
+    if (!isGrokModel(model)) {
+      model = FALLBACK_MODELS['grok-cli']
+    }
+  } else if (
+    isGrokModel(model) &&
+    !fromPerSdkMap &&
+    (!model.agentSdk || model.agentSdk === 'grok-cli')
+  ) {
     model = FALLBACK_MODELS[resolvedSdk]
   }
 

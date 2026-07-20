@@ -91,7 +91,7 @@ if (typeof window !== 'undefined') {
     void (async () => {
       try {
         const [
-          { getEffectiveHandoffSelection },
+          { getEffectiveHandoffSelection, resolveModelForSdkDefault },
           { useSessionStore },
           { useKanbanStore },
           { startBackgroundSessionPrompt }
@@ -101,6 +101,20 @@ if (typeof window !== 'undefined') {
           import('./useKanbanStore'),
           import('@/lib/backgroundSessionStart')
         ])
+        // Telegram's CLI hook transport wires only claude-code-cli — grok
+        // replies and held questions/plans have no Telegram delivery path
+        // yet, so a grok implementor must not be created-and-reported as
+        // forwarded. Fall back to the OpenCode default instead.
+        const coerceTelegramSelection = <T extends { agentSdk: string; model: unknown }>(
+          selection: T
+        ): T =>
+          selection.agentSdk === 'grok-cli'
+            ? {
+                ...selection,
+                agentSdk: 'opencode',
+                model: resolveModelForSdkDefault('opencode')
+              }
+            : selection
         const session = await dbApi.session.get<TelegramHandoffSession>(payload.sessionId)
         if (!session) {
           toast.error('Could not start Telegram plan handoff')
@@ -119,7 +133,7 @@ if (typeof window !== 'undefined') {
           if (session.opencode_session_id) {
             await opencodeApi.abort(connection.path, session.opencode_session_id).catch(() => {})
           }
-          const selection = getEffectiveHandoffSelection({})
+          const selection = coerceTelegramSelection(getEffectiveHandoffSelection({}))
           const result = await sessionStore.createConnectionSession(
             payload.connectionId,
             selection.agentSdk,
@@ -180,7 +194,9 @@ if (typeof window !== 'undefined') {
         if (session.opencode_session_id) {
           await opencodeApi.abort(worktree.path, session.opencode_session_id).catch(() => {})
         }
-        const selection = getEffectiveHandoffSelection({ worktreeId: payload.worktreeId })
+        const selection = coerceTelegramSelection(
+          getEffectiveHandoffSelection({ worktreeId: payload.worktreeId })
+        )
         const result = await useSessionStore
           .getState()
           .createSession(payload.worktreeId, session.project_id, selection.agentSdk, 'build', {

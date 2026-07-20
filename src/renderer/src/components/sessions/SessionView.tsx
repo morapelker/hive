@@ -64,7 +64,7 @@ import {
   extractPlanTitle,
   normalizeFilename
 } from '@shared/types/branch-utils'
-import { supportsGoalMode } from '@shared/types/agent-sdk'
+import { isCliAgentSdk, supportsGoalMode } from '@shared/types/agent-sdk'
 import type { TokenInfo, SessionModelRef } from '@/stores/useContextStore'
 import {
   extractTokens,
@@ -6528,7 +6528,7 @@ export function SessionView({ sessionId, isVisible = true }: SessionViewProps): 
   // session updates no longer re-render this wrapper with a new object identity.
   const agentSdk = useSessionStore((state) => state.getSessionById(sessionId)?.agent_sdk ?? null)
 
-  if (agentSdk === 'claude-code-cli') {
+  if (isCliAgentSdk(agentSdk)) {
     return <ClaudeCliSessionView sessionId={sessionId} isVisible={isVisible} />
   }
 

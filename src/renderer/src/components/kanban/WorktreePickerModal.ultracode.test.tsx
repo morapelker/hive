@@ -114,7 +114,7 @@ const baseTicket: KanbanTicket = {
 
 function setupStores(): void {
   useSettingsStore.setState({
-    availableAgentSdks: { opencode: true, claude: true, codex: true },
+    availableAgentSdks: { opencode: true, claude: true, codex: true, grok: false },
     defaultAgentSdk: 'codex',
     selectedModel: null,
     // Mirrors the real user's settings: the build-mode default is a claude-code-cli model.

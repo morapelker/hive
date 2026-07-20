@@ -39,7 +39,7 @@ beforeAll(() => {
 beforeEach(() => {
   useSettingsStore.setState({
     defaultAgentSdk: 'codex',
-    availableAgentSdks: { opencode: true, claude: true, codex: true },
+    availableAgentSdks: { opencode: true, claude: true, codex: true, grok: false },
     selectedModel: null,
     selectedModelByProvider: {},
     defaultModels: null,

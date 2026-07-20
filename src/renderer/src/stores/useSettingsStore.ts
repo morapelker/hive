@@ -294,7 +294,7 @@ interface SettingsState extends AppSettings {
   customCommandsFileMtime: number | null
 
   // Cached SDK availability (non-persisted, re-detected each launch)
-  availableAgentSdks: { opencode: boolean; claude: boolean; codex: boolean } | null
+  availableAgentSdks: { opencode: boolean; claude: boolean; codex: boolean; grok: boolean } | null
 
   // Actions
   openSettings: (section?: string) => void
@@ -655,6 +655,7 @@ export const useSettingsStore = create<SettingsState>()(
         if (
           agentSdk !== 'terminal' &&
           agentSdk !== 'claude-code-cli' &&
+          agentSdk !== 'grok-cli' &&
           !options?.skipBackendPush
         ) {
           try {

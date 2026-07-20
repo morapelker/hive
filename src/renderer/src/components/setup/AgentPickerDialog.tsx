@@ -9,8 +9,8 @@ import {
 } from '@/components/ui/alert-dialog'
 
 interface AgentPickerDialogProps {
-  onSelect: (sdk: 'opencode' | 'claude-code' | 'codex') => void
-  availableSdks: { opencode: boolean; claude: boolean; codex: boolean }
+  onSelect: (sdk: 'opencode' | 'claude-code' | 'codex' | 'grok-cli') => void
+  availableSdks: { opencode: boolean; claude: boolean; codex: boolean; grok: boolean }
 }
 
 export function AgentPickerDialog({
@@ -70,6 +70,19 @@ export function AgentPickerDialog({
             >
               <div className="text-sm font-medium">Codex</div>
               <div className="text-xs text-muted-foreground mt-1">OpenAI&apos;s coding agent</div>
+            </button>
+          )}
+          {availableSdks.grok && (
+            <button
+              onClick={() => onSelect('grok-cli')}
+              className={cn(
+                'flex-1 px-4 py-3 rounded-lg border-2 border-border',
+                'hover:border-primary hover:bg-accent/50 transition-colors',
+                'text-center cursor-pointer'
+              )}
+            >
+              <div className="text-sm font-medium">Grok Build</div>
+              <div className="text-xs text-muted-foreground mt-1">xAI&apos;s coding agent</div>
             </button>
           )}
         </div>

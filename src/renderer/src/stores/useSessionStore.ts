@@ -9,7 +9,11 @@ import {
 } from './store-coordination'
 import { useSettingsStore } from './useSettingsStore'
 import { getUnavailableAgentSdkMessage } from '@/lib/agent-sdk-availability'
-import { resolveSessionCreationSelection } from '@/lib/handoffSelection'
+import {
+  dropForeignModelForSdk,
+  normalizeHandoffSdk,
+  resolveSessionCreationSelection
+} from '@/lib/handoffSelection'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { isWindows } from '@/lib/platform'
 import { systemApi } from '@/api/system-api'
@@ -17,7 +21,7 @@ import { dbApi } from '@/api/db-api'
 import { connectionApi } from '@/api/connection-api'
 import { terminalApi } from '@/api/terminal-api'
 import { opencodeApi } from '@/api/opencode-api'
-import { type AgentSdk, isTerminalBacked } from '@shared/types/agent-sdk'
+import { type AgentSdk, isCliAgentSdk, isTerminalBacked } from '@shared/types/agent-sdk'
 
 /**
  * Push the follow-up-message queue state for a session into the backend.
@@ -299,6 +303,11 @@ function findSessionInState(state: SessionState, sessionId: string): Session | n
 // therefore takes two presses, while returning from plan takes one. The
 // previous code sent a single press in both directions, which landed on
 // accept-edits (not plan) when entering plan mode.
+//
+// Grok Build's cycle is normal → plan → always-approve → normal, and Hive
+// grok sessions sit in always-approve during build (spawned with
+// --always-approve): entering plan is always-approve→normal→plan (2 presses)
+// and leaving is plan→always-approve (1 press) — the same press counts.
 export function syncClaudeCliPermissionModeIfNeeded(
   state: SessionState,
   sessionId: string,
@@ -306,7 +315,7 @@ export function syncClaudeCliPermissionModeIfNeeded(
   nextMode: SessionMode
 ): void {
   const session = findSessionInState(state, sessionId)
-  if (session?.agent_sdk !== 'claude-code-cli') return
+  if (!isCliAgentSdk(session?.agent_sdk)) return
   const wasPlanLike = previousMode === 'plan' || previousMode === 'super-plan'
   const isPlanLike = nextMode === 'plan' || nextMode === 'super-plan'
   if (wasPlanLike === isPlanLike) return
@@ -1522,7 +1531,16 @@ export const useSessionStore = create<SessionState>()(
 
         const newModeDefault = modeDefault ?? resolveModelForSdk(sessionSdk, settings)
         if (!newModeDefault) return
-        await get().setSessionModel(sessionId, newModeDefault, { skipGlobalUpdate: true })
+        // Grok/model coherence: the unstamped legacy global selectedModel (or
+        // an unstamped mode default) can be foreign to the session's SDK. A
+        // grok session must not get a claude/opencode model stamped on its
+        // row — buildGrokCliPtySpawn would drop it and the CLI would run its
+        // own default while badges/telemetry report the foreign model — and
+        // grok models must not ride into non-grok sessions. The mode still
+        // flips; the model stays.
+        const coherent = dropForeignModelForSdk(newModeDefault, normalizeHandoffSdk(sessionSdk))
+        if (!coherent) return
+        await get().setSessionModel(sessionId, coherent, { skipGlobalUpdate: true })
       },
 
       // Keep opencode_session_id in sync in-memory after connect/reconnect (scope-agnostic)

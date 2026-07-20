@@ -59,6 +59,7 @@ export interface AgentSdkDetectionResult {
   readonly opencode: boolean
   readonly claude: boolean
   readonly codex: boolean
+  readonly grok: boolean
 }
 
 const emptyParamsSchema = z.union([z.object({}).strict(), z.undefined(), z.null()])

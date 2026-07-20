@@ -18,8 +18,28 @@ import {
 } from './claude-cli-subagent-tracker'
 import { setClaudeCliPlanAutoApprove } from './claude-cli-plan-auto-approve'
 import { logClaudeBinaryVersion, resolveClaudeBinaryPath } from './claude-binary-resolver'
-import { buildClaudeCliPtySpawn } from './claude-cli-spawner'
+import { buildClaudeCliPtySpawn, type ClaudeCliPtySpawn } from './claude-cli-spawner'
 import { getCustomProviderById } from './custom-providers'
+import { logGrokBinaryVersion, resolveGrokBinaryPath } from './grok-binary-resolver'
+import { buildGrokCliPtySpawn } from './grok-cli-spawner'
+import {
+  buildGrokCliHookUrlBase,
+  clearAllGrokSessionTracking,
+  clearGrokSessionTracking,
+  ensureGrokHooksInstalled,
+  getGrokPlanState,
+  seedGrokSessionTracking,
+  setGrokSessionIdSink,
+  setGrokSessionModeProvider
+} from './grok-cli-hooks'
+import {
+  GROK_PROMPT_AFTER_TOGGLE_MS,
+  clearAllGrokCliTerminals,
+  registerGrokCliTerminal,
+  stampGrokModeToggle,
+  unregisterGrokCliTerminal
+} from './grok-input-pacing'
+import { isCliAgentSdk, isGrokCli } from '@shared/types/agent-sdk'
 import { externalizeGoalHandoffPlan } from './claude-cli-plan-handoff'
 import { reassertClaudeCliPromptSubmit, writeClaudeCliPrompt } from './claude-cli-pty-prompt'
 import { watchForClaudeSessionId, type ClaudeSessionWatchHandle } from './claude-session-watcher'
@@ -76,6 +96,184 @@ function armClaudePlanFollowupWatcher(sessionId: string): void {
       })
     })
   )
+}
+
+// Grok has no CLI flag that actually arms its plan mode (--permission-mode
+// plan is a Claude-compat no-op that additionally clobbers --always-approve),
+// so plan sessions are activated in the TUI: two Shift+Tab presses cycle
+// always-approve → normal → plan, and the pasted first prompt flips grok's
+// plan state Pending → Active.
+//
+// Nothing may be written before grok takes the TTY: pre-boot writes are
+// echoed raw by the line discipline (the user sees `^[[Z^[[200~…` gibberish)
+// and the keystrokes can be flushed. Readiness is detected from the PTY
+// output itself — grok's boot renders a burst of output and then goes quiet
+// once the composer is idle. The ceiling only waives the quiet-period wait
+// for a TUI that never stops rendering; it never waives having SEEN TUI
+// output — if grok never draws, nothing is ever written (a write could only
+// echo raw or corrupt whatever eventually starts).
+const GROK_PLAN_BOOT_QUIET_MS = 700
+const GROK_PLAN_BOOT_CEILING_MS = 10_000
+
+/**
+ * Which direction the mode toggles move grok before the prompt is pasted:
+ * 'enter-plan' cycles always-approve → normal → plan (two Shift+Tabs) to arm
+ * a fresh plan session; 'exit-plan' presses once (plan → always-approve) to
+ * leave a resume-restored plan session before a build prompt; null pastes
+ * without touching the mode.
+ */
+type GrokModeToggles = 'enter-plan' | 'exit-plan' | null
+
+const GROK_TOGGLE_KEYS: Record<Exclude<GrokModeToggles, null>, string> = {
+  'enter-plan': '\x1b[Z\x1b[Z',
+  'exit-plan': '\x1b[Z'
+}
+
+interface GrokPlanDelivery {
+  prompt: string | null
+  toggles: GrokModeToggles
+  quietTimer: NodeJS.Timeout | null
+  ceilingTimer: NodeJS.Timeout
+  removeData: () => void
+  /** True once escape-sequence-bearing PTY output proved the TUI is drawing. */
+  sawTuiOutput: boolean
+  /** True once the ceiling elapsed; the next TUI output delivers immediately. */
+  ceilingElapsed: boolean
+}
+
+const grokPlanDeliveries = new Map<string, GrokPlanDelivery>()
+
+function deliverGrokPlanActivation(sessionId: string): void {
+  const entry = grokPlanDeliveries.get(sessionId)
+  if (!entry) return
+  grokPlanDeliveries.delete(sessionId)
+  if (entry.quietTimer) clearTimeout(entry.quietTimer)
+  clearTimeout(entry.ceilingTimer)
+  entry.removeData()
+
+  if (!ptyService.has(sessionId)) return
+  if (entry.toggles) {
+    ptyService.write(sessionId, GROK_TOGGLE_KEYS[entry.toggles])
+    // A renderer prompt racing in behind these toggles must also wait out
+    // the settle window (writeCliTerminalPaced reads this stamp).
+    stampGrokModeToggle(sessionId)
+  }
+  const pending = entry.prompt
+  if (!pending) return
+  setTimeout(
+    () => {
+      const { delivered } = writeClaudeCliPrompt(sessionId, pending)
+      if (delivered) {
+        reassertClaudeCliPromptSubmit(sessionId)
+      }
+    },
+    entry.toggles ? GROK_PROMPT_AFTER_TOGGLE_MS : 0
+  )
+}
+
+function scheduleGrokPlanActivation(
+  sessionId: string,
+  prompt: string | null,
+  opts: { toggles: GrokModeToggles }
+): void {
+  const existing = grokPlanDeliveries.get(sessionId)
+  if (existing) {
+    // A racing prompt-carrying create call merges its prompt into the pending
+    // activation instead of pasting into a still-booting TUI.
+    if (prompt) existing.prompt = prompt
+    return
+  }
+
+  const entry: GrokPlanDelivery = {
+    prompt,
+    toggles: opts.toggles,
+    quietTimer: null,
+    sawTuiOutput: false,
+    ceilingElapsed: false,
+    ceilingTimer: setTimeout(() => {
+      if (entry.sawTuiOutput) {
+        // Output that never settles: stop waiting for quiet and deliver.
+        deliverGrokPlanActivation(sessionId)
+      } else {
+        // No TUI yet — writing now would hit a bare PTY. Deliver on the
+        // first real output instead (the entry is torn down with the PTY if
+        // grok never comes up).
+        entry.ceilingElapsed = true
+      }
+    }, GROK_PLAN_BOOT_CEILING_MS),
+    removeData: ptyService.onData(sessionId, (data) => {
+      // Pre-boot user keystrokes are echoed by the line discipline as plain
+      // text; only escape-sequence-bearing output (title OSC, alt-screen,
+      // TUI redraws) counts as evidence the TUI is up. Once seen, debounce:
+      // each output chunk pushes readiness out until rendering goes quiet.
+      if (!entry.sawTuiOutput) {
+        if (!data.includes('\x1b')) return
+        entry.sawTuiOutput = true
+        if (entry.ceilingElapsed) {
+          deliverGrokPlanActivation(sessionId)
+          return
+        }
+      }
+      if (entry.quietTimer) clearTimeout(entry.quietTimer)
+      entry.quietTimer = setTimeout(
+        () => deliverGrokPlanActivation(sessionId),
+        GROK_PLAN_BOOT_QUIET_MS
+      )
+    })
+  }
+  grokPlanDeliveries.set(sessionId, entry)
+}
+
+function cancelGrokPlanActivation(sessionId: string): void {
+  const entry = grokPlanDeliveries.get(sessionId)
+  if (entry) {
+    if (entry.quietTimer) clearTimeout(entry.quietTimer)
+    clearTimeout(entry.ceilingTimer)
+    entry.removeData()
+    grokPlanDeliveries.delete(sessionId)
+  }
+}
+
+let grokSessionIdSinkRegistered = false
+
+/**
+ * Persist grok session ids reported by the hook adapter (the grok analog of
+ * watchForClaudeSessionId): store on the session row (the claude_session_id
+ * column holds the CLI-native session id for every CLI provider) and notify
+ * the renderer over the same channel.
+ */
+function ensureGrokSessionIdSink(): void {
+  if (grokSessionIdSinkRegistered) return
+  grokSessionIdSinkRegistered = true
+
+  setGrokSessionIdSink((sessionId, grokSessionId) => {
+    try {
+      const db = getDatabase()
+      if (!db.getSession(sessionId)?.claude_session_id) {
+        db.updateSession(sessionId, { claude_session_id: grokSessionId })
+      }
+    } catch (error) {
+      log.warn('Failed to persist Grok CLI session id', {
+        sessionId,
+        error: error instanceof Error ? error.message : String(error)
+      })
+    }
+    void import('../desktop/backend-event-publisher')
+      .then(({ publishDesktopBackendEvent }) =>
+        publishDesktopBackendEvent(`terminal:claude-session-id:${sessionId}`, grokSessionId)
+      )
+      .catch(() => undefined)
+  })
+
+  // Lets the adapter reconcile mid-session plan/build switches made in Hive
+  // (setSessionMode only sends Shift+Tab keystrokes — no hook fires for them).
+  setGrokSessionModeProvider((sessionId) => {
+    try {
+      return getDatabase().getSession(sessionId)?.mode ?? null
+    } catch {
+      return null
+    }
+  })
 }
 
 function ensureClaudeCliStatusSubscription(): void {
@@ -153,7 +351,10 @@ export function destroyNodePtyTerminal(terminalId: string): void {
   closeClaudePlanFollowupWatcher(terminalId)
   clearClaudeCliInteractions(terminalId)
   clearClaudeCliSubagentTracking(terminalId)
+  clearGrokSessionTracking(terminalId)
+  cancelGrokPlanActivation(terminalId)
   claudeCliSessions.delete(terminalId)
+  unregisterGrokCliTerminal(terminalId)
   claudeCliWorktreeBasenames.delete(terminalId)
   claudeCliTranscriptSources.delete(terminalId)
   claudeCliLastStatus.delete(terminalId)
@@ -220,6 +421,8 @@ function attachNodePtyListeners(terminalId: string): void {
     if (claudeCliSessions.has(terminalId)) {
       clearClaudeCliInteractions(terminalId)
       clearClaudeCliSubagentTracking(terminalId)
+      clearGrokSessionTracking(terminalId)
+      cancelGrokPlanActivation(terminalId)
       setClaudeCliPlanAutoApprove(terminalId, false)
       publishClaudeCliStatus({
         sessionId: terminalId,
@@ -228,6 +431,7 @@ function attachNodePtyListeners(terminalId: string): void {
       })
       claudeCliSessions.delete(terminalId)
     }
+    unregisterGrokCliTerminal(terminalId)
     claudeCliWorktreeBasenames.delete(terminalId)
     claudeCliTranscriptSources.delete(terminalId)
     claudeCliLastStatus.delete(terminalId)
@@ -249,9 +453,10 @@ export async function createClaudeCliTerminal(
     if (!session) {
       return { success: false, error: 'Session not found' }
     }
-    if (session.agent_sdk !== 'claude-code-cli') {
-      return { success: false, error: 'Session is not a Claude Code CLI session' }
+    if (!isCliAgentSdk(session.agent_sdk)) {
+      return { success: false, error: 'Session is not a CLI agent session' }
     }
+    const isGrok = isGrokCli(session.agent_sdk)
 
     let worktreePath: string | null = null
     if (session.worktree_id) {
@@ -270,56 +475,117 @@ export async function createClaudeCliTerminal(
       pendingPrompt = externalizeGoalHandoffPlan(pendingPrompt, worktreePath)
     }
 
-    // Custom-provider sessions run a user-configured command (possibly a shell
-    // alias) through the login shell instead of the resolved claude binary, so
-    // PATH resolution and version logging don't apply to them. A deleted or
-    // blanked provider degrades to plain claude (matching the renderer launch
-    // paths) rather than permanently bricking the session's resumable
-    // transcript behind a hard error.
-    let customProviderCommand: string | null = null
-    if (session.custom_provider_id) {
-      // The wrapper spawns through a POSIX login shell ($SHELL -ilc) — Windows
-      // GUI apps have no SHELL and no /bin/zsh, so fail with a clear message
-      // instead of a broken spawn (and never silently switch to stock claude).
-      if (process.platform === 'win32') {
-        return {
-          success: false,
-          error: 'Custom providers are not supported on Windows yet'
-        }
-      }
-      const provider = getCustomProviderById(db, session.custom_provider_id)
-      if (provider?.command.trim()) {
-        customProviderCommand = provider.command
-      } else {
-        log.warn('Custom provider missing or blank; falling back to plain claude', {
-          sessionId,
-          customProviderId: session.custom_provider_id
-        })
-      }
-    }
-
-    let claudeBinary: string | null = null
-    if (!customProviderCommand) {
-      claudeBinary = resolveClaudeBinaryPath()
-      if (!claudeBinary) {
-        return { success: false, error: 'Claude binary not found on PATH' }
-      }
-      logClaudeBinaryVersion(claudeBinary)
-    }
-
     const alreadyExists = ptyService.has(sessionId)
     const { port } = await getClaudeHookServer()
     ensureClaudeCliStatusSubscription()
-    const hookSettingsJson = buildClaudeCliHookSettings(port, sessionId)
-    const spawn = buildClaudeCliPtySpawn({
-      session,
-      worktreePath,
-      pendingPrompt,
-      claudeBinary,
-      hookSettingsJson,
-      db,
-      customProviderCommand
-    })
+
+    let spawn: ClaudeCliPtySpawn
+    // Grok resume state, computed in the branch below (null = fresh session).
+    let grokResumedPlanState: ReturnType<typeof getGrokPlanState> | null = null
+    let grokBuildNeedsPlanExit = false
+    let grokPromptViaPaste = false
+    // Claude-only: set in the else-branch below; read by the log redaction.
+    let customProviderCommand: string | null = null
+    if (isGrok) {
+      const grokBinary = resolveGrokBinaryPath()
+      if (!grokBinary) {
+        return { success: false, error: 'Grok binary not found on PATH' }
+      }
+      logGrokBinaryVersion(grokBinary)
+      ensureGrokSessionIdSink()
+      if (!alreadyExists) {
+        // Seeding replaces live tracking (lastPreToolUse pairing, tracked
+        // permission mode) — a racing/repeat create call that reuses the PTY
+        // must not wipe an in-flight tool/permission sequence.
+        seedGrokSessionTracking(sessionId, session.claude_session_id, {
+          planMode: session.mode === 'plan' || session.mode === 'super-plan',
+          dbMode: session.mode
+        })
+      }
+      // Built promptless first: whether the prompt may ride as a spawn arg
+      // depends on grok's persisted plan state, which is read with this
+      // spawn's env (GROK_HOME can be Hive-configured).
+      spawn = buildGrokCliPtySpawn({
+        session,
+        worktreePath,
+        pendingPrompt: null,
+        grokBinary,
+        hookUrlBase: buildGrokCliHookUrlBase(port, sessionId),
+        db
+      })
+      // Grok has no --settings flag; hooks live in a static file under the
+      // GROK_HOME this spawn will actually run with (the user's Hive env vars
+      // can point it away from ~/.grok) that relays payloads to the URL
+      // carried in the spawn environment.
+      ensureGrokHooksInstalled(spawn.env)
+
+      const planLike = session.mode === 'plan' || session.mode === 'super-plan'
+      grokResumedPlanState = session.claude_session_id
+        ? getGrokPlanState(worktreePath, session.claude_session_id, spawn.env)
+        : null
+      // A build-mode resume whose grok session persisted an ACTIVE plan state
+      // (the Hive mode flipped while the PTY was down, so the Shift+Tab sync
+      // had nothing to write into) must toggle out of plan before the prompt,
+      // via the scheduler below — never as a spawn arg that would land as
+      // another planning turn.
+      grokBuildNeedsPlanExit = !planLike && grokResumedPlanState === 'active'
+      // A cmd.exe-wrapped shim spawn must never carry the prompt as an arg:
+      // cmd interprets metacharacters (& | %VAR%) even in quoted args, which
+      // both mangles ordinary prompts and lets untrusted ticket text execute
+      // commands. Deliver by readiness-gated paste instead (scheduler below).
+      grokPromptViaPaste = spawn.command === 'cmd.exe'
+      if (!planLike && !grokBuildNeedsPlanExit && !grokPromptViaPaste && pendingPrompt?.trim()) {
+        // Normal build spawn: restore the positional prompt.
+        spawn.args.push(pendingPrompt.trim())
+      }
+    } else {
+      // Custom-provider sessions run a user-configured command (possibly a shell
+      // alias) through the login shell instead of the resolved claude binary, so
+      // PATH resolution and version logging don't apply to them. A deleted or
+      // blanked provider degrades to plain claude (matching the renderer launch
+      // paths) rather than permanently bricking the session's resumable
+      // transcript behind a hard error.
+      if (session.custom_provider_id) {
+        // The wrapper spawns through a POSIX login shell ($SHELL -ilc) — Windows
+        // GUI apps have no SHELL and no /bin/zsh, so fail with a clear message
+        // instead of a broken spawn (and never silently switch to stock claude).
+        if (process.platform === 'win32') {
+          return {
+            success: false,
+            error: 'Custom providers are not supported on Windows yet'
+          }
+        }
+        const provider = getCustomProviderById(db, session.custom_provider_id)
+        if (provider?.command.trim()) {
+          customProviderCommand = provider.command
+        } else {
+          log.warn('Custom provider missing or blank; falling back to plain claude', {
+            sessionId,
+            customProviderId: session.custom_provider_id
+          })
+        }
+      }
+
+      let claudeBinary: string | null = null
+      if (!customProviderCommand) {
+        claudeBinary = resolveClaudeBinaryPath()
+        if (!claudeBinary) {
+          return { success: false, error: 'Claude binary not found on PATH' }
+        }
+        logClaudeBinaryVersion(claudeBinary)
+      }
+
+      const hookSettingsJson = buildClaudeCliHookSettings(port, sessionId)
+      spawn = buildClaudeCliPtySpawn({
+        session,
+        worktreePath,
+        pendingPrompt,
+        claudeBinary,
+        hookSettingsJson,
+        db,
+        customProviderCommand
+      })
+    }
 
     log.info('Creating Claude CLI PTY', {
       sessionId,
@@ -338,7 +604,9 @@ export async function createClaudeCliTerminal(
       })
     })
 
-    if (!session.claude_session_id) {
+    // Grok session ids arrive on hook payloads (via the sink registered
+    // above); the filesystem watcher below is claude-transcript-specific.
+    if (!session.claude_session_id && !isGrok) {
       claudeWatchers.get(sessionId)?.close()
       claudeWatchers.set(
         sessionId,
@@ -364,10 +632,15 @@ export async function createClaudeCliTerminal(
         })
       )
     }
-    claudeCliTranscriptSources.set(sessionId, {
-      worktreePath,
-      claudeSessionId: session.claude_session_id
-    })
+    if (!isGrok) {
+      // Feeds the plan-followup watcher, which reads claude transcript files;
+      // grok's plan followups arrive through hooks instead (UserPromptSubmit
+      // in plan mode → planning), so grok sessions never register a source.
+      claudeCliTranscriptSources.set(sessionId, {
+        worktreePath,
+        claudeSessionId: session.claude_session_id
+      })
+    }
 
     const { cols, rows } = ptyService.create(sessionId, {
       cwd: spawn.cwd,
@@ -375,23 +648,56 @@ export async function createClaudeCliTerminal(
       args: spawn.args,
       env: spawn.env
     })
-    if (alreadyExists && pendingPrompt) {
-      // ptyService.create reused the live PTY, so the spawn args (and the
-      // prompt riding on them) never reached claude. Inject it as a paste so
-      // a racing promptless create call can't strand the prompt.
-      const { delivered } = writeClaudeCliPrompt(sessionId, pendingPrompt)
-      if (delivered) {
-        // The paste can land before claude's TUI is input-ready, which buffers
-        // the text but drops the submitting CR — leaving the prompt sitting
-        // unsent. Re-assert Enter across the boot window so it actually submits.
-        reassertClaudeCliPromptSubmit(sessionId)
-      }
-      log.info('Claude CLI PTY already exists; injecting pending prompt', {
-        sessionId,
-        delivered
+    const grokPlanSession = isGrok && (session.mode === 'plan' || session.mode === 'super-plan')
+    if (grokPlanSession && !alreadyExists) {
+      // Fresh PTY for a grok plan session: activate plan mode with Shift+Tab
+      // keystrokes once the TUI boots, then paste the prompt (which flips
+      // grok's plan state Pending→Active). A resume restores grok's persisted
+      // plan state, so consult it: a session that is already Active must not
+      // be toggled (that would cycle it OUT of plan), but one whose plan was
+      // never armed — or was approved before the Hive mode flipped back to
+      // plan while the PTY was down — still needs the activation. When the
+      // state can't be read, err on not toggling.
+      scheduleGrokPlanActivation(sessionId, pendingPrompt, {
+        toggles:
+          grokResumedPlanState === null || grokResumedPlanState === 'inactive' ? 'enter-plan' : null
       })
+    } else if (grokBuildNeedsPlanExit && !alreadyExists) {
+      // Build-mode resume of a grok session whose persisted plan state is
+      // still Active: leave plan (one Shift+Tab, plan → always-approve)
+      // before delivering the prompt, or it would run as a planning turn.
+      scheduleGrokPlanActivation(sessionId, pendingPrompt, { toggles: 'exit-plan' })
+    } else if (grokPromptViaPaste && pendingPrompt && !alreadyExists) {
+      // cmd.exe-wrapped shim spawn: the prompt stayed off the command line
+      // (cmd metacharacter hazard) — paste it once the TUI is ready.
+      scheduleGrokPlanActivation(sessionId, pendingPrompt, { toggles: null })
+    } else if (alreadyExists && pendingPrompt) {
+      if (isGrok && grokPlanDeliveries.has(sessionId)) {
+        // The racing promptless call already scheduled the activation —
+        // merge the prompt into it rather than pasting into a booting TUI.
+        scheduleGrokPlanActivation(sessionId, pendingPrompt, { toggles: null })
+        log.info('Grok plan activation pending; merged prompt into it', { sessionId })
+      } else {
+        // ptyService.create reused the live PTY, so the spawn args (and the
+        // prompt riding on them) never reached claude. Inject it as a paste so
+        // a racing promptless create call can't strand the prompt.
+        const { delivered } = writeClaudeCliPrompt(sessionId, pendingPrompt)
+        if (delivered) {
+          // The paste can land before claude's TUI is input-ready, which buffers
+          // the text but drops the submitting CR — leaving the prompt sitting
+          // unsent. Re-assert Enter across the boot window so it actually submits.
+          reassertClaudeCliPromptSubmit(sessionId)
+        }
+        log.info('Claude CLI PTY already exists; injecting pending prompt', {
+          sessionId,
+          delivered
+        })
+      }
     }
     claudeCliSessions.add(sessionId)
+    if (isGrok) {
+      registerGrokCliTerminal(sessionId)
+    }
     // A restarted session must never inherit a stale interaction latch.
     clearClaudeCliInteractions(sessionId)
     // ...nor a stale subagent deferral/pending-notification set, which could
@@ -442,11 +748,19 @@ export function cleanupTerminals(): void {
   }
   claudePlanFollowupWatchers.clear()
   claudeCliSessions.clear()
+  clearAllGrokCliTerminals()
   claudeCliWorktreeBasenames.clear()
   claudeCliTranscriptSources.clear()
   claudeCliLastStatus.clear()
   clearAllClaudeCliInteractions()
   clearAllClaudeCliSubagentTracking()
+  clearAllGrokSessionTracking()
+  for (const sessionId of grokPlanDeliveries.keys()) {
+    cancelGrokPlanActivation(sessionId)
+  }
+  setGrokSessionIdSink(null)
+  setGrokSessionModeProvider(null)
+  grokSessionIdSinkRegistered = false
   unsubscribeClaudeCliStatus?.()
   unsubscribeClaudeCliStatus = null
   resetAllClaudeCliTitleState()

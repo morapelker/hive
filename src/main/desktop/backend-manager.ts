@@ -62,6 +62,7 @@ import {
   destroyNodePtyTerminal,
   handleClaudeCliTerminalInput
 } from '../services/terminal-pty-bridge'
+import { writeCliTerminalPaced } from '../services/grok-input-pacing'
 import { launchClaudeCliInTmux } from '../services/remote-tmux-launcher'
 import { claudeCliTelegramBridge } from '../services/claude-cli-telegram-bridge'
 import { claudeCliDiscordBridge } from '../services/claude-cli-discord-bridge'
@@ -2972,7 +2973,7 @@ const handleDesktopBackendCommand = (
         throw new Error('Terminal not found')
       }
       handleClaudeCliTerminalInput(message.payload.terminalId, message.payload.data)
-      ptyService.write(message.payload.terminalId, message.payload.data)
+      writeCliTerminalPaced(message.payload.terminalId, message.payload.data)
       sendDesktopBackendCommandResult(
         child,
         makeDesktopCommandResult(message.id, { ok: true, value: { success: true } }),

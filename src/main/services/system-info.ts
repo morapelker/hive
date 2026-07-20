@@ -10,6 +10,7 @@ export interface AgentSdkDetection {
   opencode: boolean
   claude: boolean
   codex: boolean
+  grok: boolean
 }
 
 export interface AppPaths {
@@ -39,7 +40,8 @@ export function detectAgentSdks(openCodeLaunchSpec: OpenCodeLaunchSpec | null): 
   return {
     opencode: openCodeLaunchSpec !== null,
     claude: check('claude'),
-    codex: !!resolvedCodexBinary && supportsCodexAppServer(resolvedCodexBinary)
+    codex: !!resolvedCodexBinary && supportsCodexAppServer(resolvedCodexBinary),
+    grok: check('grok')
   }
 }
 

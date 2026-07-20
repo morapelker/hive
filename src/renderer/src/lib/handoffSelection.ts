@@ -55,28 +55,67 @@ const SDK_DISPLAY_NAMES: Record<HandoffAgentSdk, string> = {
   opencode: 'OpenCode',
   'claude-code': 'Claude Code',
   'claude-code-cli': 'Claude Code (CLI)',
-  codex: 'Codex'
+  codex: 'Codex',
+  'grok-cli': 'Grok Build'
 }
 
 const FALLBACK_MODELS: Record<HandoffAgentSdk, SelectedModel> = {
   opencode: { providerID: 'anthropic', modelID: 'claude-opus-4-5-20251101' },
   'claude-code': { providerID: 'anthropic', modelID: 'claude-opus-4-5-20251101' },
   'claude-code-cli': { providerID: 'anthropic', modelID: 'sonnet', variant: 'high' },
-  codex: { providerID: 'codex', modelID: 'gpt-5.5' }
+  codex: { providerID: 'codex', modelID: 'gpt-5.5' },
+  'grok-cli': { providerID: 'xai', modelID: 'grok-4.5', variant: 'high' }
 }
 
 const modelCatalogCache = new Map<HandoffAgentSdk, ProviderModels[]>()
 const inflightModelCatalogRequests = new Map<HandoffAgentSdk, Promise<ProviderModels[]>>()
 
-function normalizeHandoffSdk(
-  sdk: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal' | null | undefined
+export function normalizeHandoffSdk(
+  sdk:
+    | 'opencode'
+    | 'claude-code'
+    | 'claude-code-cli'
+    | 'codex'
+    | 'grok-cli'
+    | 'terminal'
+    | null
+    | undefined
 ): HandoffAgentSdk {
-  if (sdk === 'claude-code' || sdk === 'claude-code-cli' || sdk === 'codex') return sdk
+  if (sdk === 'claude-code' || sdk === 'claude-code-cli' || sdk === 'codex' || sdk === 'grok-cli') {
+    return sdk
+  }
   return 'opencode'
 }
 
 function getModeDefaultKey(mode: 'build' | 'plan' | 'super-plan' | undefined): 'build' | 'plan' {
   return mode === 'plan' || mode === 'super-plan' ? 'plan' : 'build'
+}
+
+/**
+ * Grok runs only grok-family models: a foreign default leaking in from the
+ * legacy global selectedModel or a worktree's last-used model would be
+ * stamped on the session/badge while buildGrokCliPtySpawn drops it and the
+ * CLI runs its own default — discard it so the grok catalog/fallback wins.
+ */
+export function dropForeignModelForSdk(
+  model: SelectedModel | null,
+  agentSdk: HandoffAgentSdk
+): SelectedModel | null {
+  if (!model) return null
+  if (agentSdk === 'grok-cli') {
+    return model.modelID.toLowerCase().startsWith('grok') ? model : null
+  }
+  // Reverse direction: grok models exist only in the grok-cli catalog and
+  // cannot ride into another SDK from the unstamped legacy global
+  // selectedModel. A per-SDK map hit or an explicit non-grok stamp is
+  // trusted provenance (an xAI model the user selected FOR this SDK).
+  const grokFamily = model.providerID === 'xai' || model.modelID.toLowerCase().startsWith('grok')
+  if (!grokFamily) return model
+  if (model.agentSdk === 'grok-cli') return null
+  // Any stamp surviving the early return above is a non-grok stamp.
+  const trusted =
+    !!useSettingsStore.getState().selectedModelByProvider?.[agentSdk] || model.agentSdk != null
+  return trusted ? model : null
 }
 
 function buildModelSelection(
@@ -152,6 +191,8 @@ function resolveSessionSelection(opts: {
     model = getWorktreeFallbackModel(opts.worktreeId)
   }
 
+  model = dropForeignModelForSdk(model, resolvedSdk)
+
   const resolvedModel = buildModelSelection(model, resolvedSdk)
   const modelInfo = getModelInfoFromCache(resolvedSdk, resolvedModel)
 
@@ -192,7 +233,13 @@ export function getHandoffSdkDisplayName(
 export function getAvailableHandoffAgentSdks(
   availableAgentSdks?: AvailableAgentSdks | null
 ): HandoffAgentSdk[] {
-  const orderedSdks: HandoffAgentSdk[] = ['opencode', 'claude-code', 'codex', 'claude-code-cli']
+  const orderedSdks: HandoffAgentSdk[] = [
+    'opencode',
+    'claude-code',
+    'codex',
+    'claude-code-cli',
+    'grok-cli'
+  ]
   return orderedSdks.filter((sdk) => isAgentSdkAvailable(sdk, availableAgentSdks))
 }
 
@@ -243,8 +290,12 @@ export async function loadHandoffModelCatalog(
 }
 
 export function resolveModelForSdkDefault(agentSdk: HandoffAgentSdk): SelectedModel {
-  const configured = resolveModelForSdk(agentSdk)
-  return buildModelSelection(configured, agentSdk)
+  // dropForeignModelForSdk enforces SDK/model coherence in both directions
+  // (grok sessions get only grok models; grok models never leak elsewhere).
+  return buildModelSelection(
+    dropForeignModelForSdk(resolveModelForSdk(agentSdk), agentSdk),
+    agentSdk
+  )
 }
 
 export function resolveHandoffDefault(opts: { worktreeId?: string }): EffectiveHandoffSelection {
@@ -334,7 +385,10 @@ export function resolveSessionCreationSelection(opts: {
 
   if (opts.agentSdkOverride) {
     const resolvedAgentSdk = normalizeHandoffSdk(opts.agentSdkOverride)
-    const model = resolveModelForSdk(resolvedAgentSdk, settings)
+    const model = dropForeignModelForSdk(
+      resolveModelForSdk(resolvedAgentSdk, settings),
+      resolvedAgentSdk
+    )
     return {
       agentSdk: resolvedAgentSdk,
       model: buildModelSelection(model, resolvedAgentSdk)
