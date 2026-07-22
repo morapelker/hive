@@ -1648,12 +1648,12 @@ class MarkdownKanbanBackend implements KanbanBackend {
     const folders =
       config.layout === 'single-folder'
         ? [{ folder: resolveProjectPath(project.path, config.singleFolder), column: null }]
-        : (Object.entries(config.statusFolders) as Array<[KanbanTicketColumn, string]>).map(
-            ([column, folder]) => ({
+        : (Object.entries(config.statusFolders) as Array<[KanbanTicketColumn, string]>)
+            .filter(([, folder]) => folder?.trim())
+            .map(([column, folder]) => ({
               folder: resolveProjectPath(project.path, folder),
               column
-            })
-          )
+            }))
     for (const candidate of folders) {
       const canonicalFolder = await realpath(candidate.folder).catch(() => null)
       if (canonicalFolder === canonicalFileFolder) {
@@ -2132,7 +2132,10 @@ async function planSingleFolderToStatusFolders(
       const id = asString(parsed.frontmatter.id)
       validateKnownFrontmatter(parsed.frontmatter, id)
       const column = asColumn(parsed.frontmatter.column) ?? 'todo'
-      const targetFolder = nextConfig.statusFolders[column] ?? nextConfig.statusFolders.done
+      const configuredFolder = nextConfig.statusFolders[column]
+      const targetFolder = configuredFolder?.trim()
+        ? configuredFolder
+        : nextConfig.statusFolders.done
       moves.push({
         source,
         target: join(resolveProjectPath(project.path, targetFolder), entry.name)

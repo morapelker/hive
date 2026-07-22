@@ -428,6 +428,7 @@ const kanbanMarkdownStatusFoldersSchema = z
     todo: z.string(),
     in_progress: z.string(),
     review: z.string(),
+    merged: z.string().optional(),
     done: z.string()
   })
   .strict()
