@@ -74,6 +74,29 @@ const FALLBACK_MODELS: Record<HandoffAgentSdk, SelectedModel> = {
 const modelCatalogCache = new Map<HandoffAgentSdk, ProviderModels[]>()
 const inflightModelCatalogRequests = new Map<HandoffAgentSdk, Promise<ProviderModels[]>>()
 
+// The cache is a plain module Map, invisible to React. Components that resolve
+// display names during render (e.g. ticket model badges mounted before the
+// catalogs arrive) subscribe to this version so they re-render once a catalog
+// lands instead of waiting for an unrelated re-render.
+let modelCatalogCacheVersion = 0
+const modelCatalogCacheListeners = new Set<() => void>()
+
+function notifyModelCatalogCacheChanged(): void {
+  modelCatalogCacheVersion++
+  for (const listener of modelCatalogCacheListeners) listener()
+}
+
+export function subscribeModelCatalogCache(listener: () => void): () => void {
+  modelCatalogCacheListeners.add(listener)
+  return () => {
+    modelCatalogCacheListeners.delete(listener)
+  }
+}
+
+export function getModelCatalogCacheVersion(): number {
+  return modelCatalogCacheVersion
+}
+
 function normalizeHandoffSdk(
   sdk: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal' | null | undefined
 ): HandoffAgentSdk {
@@ -237,6 +260,7 @@ export function cacheHandoffModelCatalog(
 ): ProviderModels[] {
   const parsed = parseProviders(providerData)
   modelCatalogCache.set(agentSdk, parsed)
+  notifyModelCatalogCacheChanged()
   return parsed
 }
 
@@ -247,6 +271,7 @@ export function getCachedModelCatalog(agentSdk: HandoffAgentSdk): ProviderModels
 export function clearHandoffModelCatalogCache(): void {
   modelCatalogCache.clear()
   inflightModelCatalogRequests.clear()
+  notifyModelCatalogCacheChanged()
 }
 
 export async function loadHandoffModelCatalog(
@@ -275,6 +300,24 @@ export async function loadHandoffModelCatalog(
 
   inflightModelCatalogRequests.set(agentSdk, request)
   return request
+}
+
+/**
+ * Warm the model-catalog cache for every available SDK so model names resolve
+ * to their display form (e.g. "Fable 5" instead of "fable") without the user
+ * first opening a model picker. Deduped by catalog SDK — claude-code and
+ * claude-code-cli share one catalog, so only one fetch goes out for the pair.
+ */
+export async function preloadHandoffModelCatalogs(): Promise<void> {
+  const availableAgentSdks = useSettingsStore.getState().availableAgentSdks
+  const seenCatalogSdks = new Set<AgentSdk>()
+  const sdksToLoad = getAvailableHandoffAgentSdks(availableAgentSdks).filter((sdk) => {
+    const catalogSdk = toModelCatalogSdk(sdk)
+    if (seenCatalogSdks.has(catalogSdk)) return false
+    seenCatalogSdks.add(catalogSdk)
+    return true
+  })
+  await Promise.all(sdksToLoad.map((sdk) => loadHandoffModelCatalog(sdk)))
 }
 
 export function resolveModelForSdkDefault(agentSdk: HandoffAgentSdk): SelectedModel {

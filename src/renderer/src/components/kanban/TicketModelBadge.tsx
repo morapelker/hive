@@ -1,5 +1,11 @@
+import { useSyncExternalStore } from 'react'
 import { resolveModelIconAsset } from '@/components/worktrees/ModelIcon'
-import { getAvailableHandoffAgentSdks, getCachedModelCatalog } from '@/lib/handoffSelection'
+import {
+  getAvailableHandoffAgentSdks,
+  getCachedModelCatalog,
+  getModelCatalogCacheVersion,
+  subscribeModelCatalogCache
+} from '@/lib/handoffSelection'
 import { findModelInfo, getModelDisplayName, isUltraVariant } from '@/lib/parseProviders'
 import { cn } from '@/lib/utils'
 import type { KanbanTicket } from '../../../../main/db/types'
@@ -27,6 +33,10 @@ export function TicketModelBadge({
   ticket,
   className
 }: TicketModelBadgeProps): React.JSX.Element | null {
+  // Re-render when a model catalog lands so badges mounted before the launch
+  // preload finishes swap their raw slug for the pretty name.
+  useSyncExternalStore(subscribeModelCatalogCache, getModelCatalogCacheVersion)
+
   const { model_provider_id: providerId, model_id: modelId, model_variant: variant } = ticket
   if (!modelId) return null
 
