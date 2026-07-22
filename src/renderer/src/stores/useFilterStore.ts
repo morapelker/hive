@@ -24,13 +24,16 @@ export const COLON_COMMANDS: ColonCommand[] = [
 
 interface FilterState {
   activeLanguages: string[]
+  filterQuery: string
   addLanguage: (lang: string) => void
   removeLanguage: (lang: string) => void
+  setFilterQuery: (query: string) => void
   clearAll: () => void
 }
 
 export const useFilterStore = create<FilterState>()((set) => ({
   activeLanguages: [],
+  filterQuery: '',
   addLanguage: (lang) =>
     set((state) => ({
       activeLanguages: state.activeLanguages.includes(lang)
@@ -41,5 +44,6 @@ export const useFilterStore = create<FilterState>()((set) => ({
     set((state) => ({
       activeLanguages: state.activeLanguages.filter((l) => l !== lang)
     })),
-  clearAll: () => set({ activeLanguages: [] })
+  setFilterQuery: (query) => set({ filterQuery: query }),
+  clearAll: () => set({ activeLanguages: [], filterQuery: '' })
 }))

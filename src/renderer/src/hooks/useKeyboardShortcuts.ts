@@ -10,8 +10,10 @@ import {
   useKanbanStore,
   useVimModeStore,
   useConnectionStore,
-  useSpaceStore
+  useSpaceStore,
+  useFilterStore
 } from '@/stores'
+import { subsequenceMatch } from '@/lib/subsequence-match'
 import { useGitStore } from '@/stores/useGitStore'
 import { useShortcutStore } from '@/stores/useShortcutStore'
 import { useWorktreeStore, getOrderedProjectWorktrees } from '@/stores/useWorktreeStore'
@@ -268,13 +270,34 @@ function cycleProject(direction: 1 | -1): void {
   const { projects, selectedProjectId } = projectState
   const { connections, selectedConnectionId } = connectionState
 
-  // Respect the active Space filter so cycling stays within the visible
-  // sidebar list (mirrors ProjectList's space filtering)
+  // Respect the active Space, language, and text filters so cycling stays
+  // within the visible sidebar list (mirrors ProjectList's filtering)
   const { activeSpaceId, projectSpaceMap } = useSpaceStore.getState()
-  const visibleProjects =
+  const { activeLanguages, filterQuery } = useFilterStore.getState()
+  let visibleProjects =
     activeSpaceId === null
       ? projects
       : projects.filter((p) => projectSpaceMap[p.id]?.includes(activeSpaceId))
+  if (activeLanguages.length > 0) {
+    const langSet = new Set(activeLanguages)
+    visibleProjects = visibleProjects.filter((p) => p.language && langSet.has(p.language))
+  }
+  if (filterQuery.trim()) {
+    // Filter and sort by match score, mirroring ProjectList's display order
+    visibleProjects = visibleProjects
+      .map((p) => ({
+        project: p,
+        nameMatch: subsequenceMatch(filterQuery, p.name),
+        pathMatch: subsequenceMatch(filterQuery, p.path)
+      }))
+      .filter(({ nameMatch, pathMatch }) => nameMatch.matched || pathMatch.matched)
+      .sort((a, b) => {
+        const aScore = a.nameMatch.matched ? a.nameMatch.score : a.pathMatch.score + 1000
+        const bScore = b.nameMatch.matched ? b.nameMatch.score : b.pathMatch.score + 1000
+        return aScore - bScore
+      })
+      .map(({ project }) => project)
+  }
 
   // Unified sidebar order: connections section first, then projects
   type SidebarItem = { kind: 'connection' | 'project'; id: string }
