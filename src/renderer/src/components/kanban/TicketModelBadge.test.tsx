@@ -111,7 +111,7 @@ describe('TicketModelBadge', () => {
       />
     )
 
-    expect(screen.getByText('opus').closest('span')).toHaveClass('border-violet-500/60')
+    expect(screen.getByText('opus').closest('span')).toHaveClass('border-2', 'border-violet-500')
   })
 
   it('gives the chip a violet border for a codex ultra launch', () => {
@@ -121,7 +121,7 @@ describe('TicketModelBadge', () => {
       />
     )
 
-    expect(screen.getByText('gpt-5.6-sol').closest('span')).toHaveClass('border-violet-500/60')
+    expect(screen.getByText('gpt-5.6-sol').closest('span')).toHaveClass('border-2', 'border-violet-500')
   })
 
   it('keeps the border transparent for non-ultra variants', () => {
@@ -132,7 +132,7 @@ describe('TicketModelBadge', () => {
     )
 
     const badge = screen.getByText('opus').closest('span')
-    expect(badge).not.toHaveClass('border-violet-500/60')
+    expect(badge).not.toHaveClass('border-violet-500')
     expect(badge).toHaveClass('border-transparent')
   })
 

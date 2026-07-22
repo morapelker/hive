@@ -43,7 +43,6 @@ import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip
 import { Button } from '@/components/ui/button'
 import { NoteEditorModal } from './NoteEditorModal'
 import { MoveToProjectModal } from './MoveToProjectModal'
-import { isUltraVariant } from '@/lib/parseProviders'
 import { cn, parseColorQuad } from '@/lib/utils'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { opencodeApi } from '@/api/opencode-api'
@@ -598,9 +597,6 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     )
   )
 
-  // Ultra launches (ultracode / codex ultra) get a stand-out card treatment
-  const isUltraTicket = isUltraVariant(ticket.model_variant)
-
   // ── Border state computation ────────────────────────────────────
   const borderState = useMemo(() => {
     if (ticket.column !== 'in_progress') return 'default'
@@ -1030,11 +1026,6 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                   !isHighlightedAsBlocker && borderState === 'default' && 'border-border/60',
                   !isHighlightedAsBlocker && borderState === 'blue' && 'border-blue-500/60',
                   !isHighlightedAsBlocker && borderState === 'violet' && 'border-violet-500/60',
-                  // Ultra launches (ultracode/ultra) trade the strict border for a
-                  // violet ring + glow so they stand out among regular tickets
-                  isUltraTicket &&
-                    !isHighlightedAsBlocker &&
-                    'border-violet-500/70 ring-2 ring-violet-500/50 shadow-[0_0_16px_rgba(139,92,246,0.35)] hover:shadow-[0_0_20px_rgba(139,92,246,0.5)]',
                   // Left accent stripe for marks
                   ticket.mark === 'common' && 'border-l-4 !border-l-green-500',
                   ticket.mark === 'rare' && 'border-l-4 !border-l-blue-500',
