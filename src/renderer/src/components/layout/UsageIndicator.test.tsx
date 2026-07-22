@@ -563,7 +563,7 @@ describe('ProviderUsageBlock provider toggle', () => {
     expect(screen.queryByRole('button', { name: /show .* usage/i })).toBeNull()
   })
 
-  it('does not scroll back to the bottom when accounts load after the user scrolls up', async () => {
+  it('does not move the scroll position when accounts load after opening', async () => {
     const user = userEvent.setup()
     render(
       <ProviderUsageBlock
@@ -576,16 +576,13 @@ describe('ProviderUsageBlock provider toggle', () => {
     await user.hover(screen.getByTestId('usage-trigger-openai'))
     await screen.findByText('OpenAI API Usage')
 
-    const popover = screen.getByText('OpenAI API Usage').closest(
-      '[data-slot="hover-card-content"]'
-    ) as HTMLDivElement
-    Object.defineProperties(popover, {
+    const scroller = screen.getByTestId('usage-popover-scroll') as HTMLDivElement
+    Object.defineProperties(scroller, {
       scrollHeight: { configurable: true, value: 600 },
       clientHeight: { configurable: true, value: 200 }
     })
 
-    popover.scrollTop = 100
-    fireEvent.scroll(popover)
+    expect(scroller.scrollTop).toBe(0)
 
     act(() => {
       useUsageStore.setState((state) => ({
@@ -608,6 +605,120 @@ describe('ProviderUsageBlock provider toggle', () => {
       }))
     })
 
-    expect(popover.scrollTop).toBe(100)
+    expect(scroller.scrollTop).toBe(0)
+  })
+
+  it('preserves a user scroll position when accounts load', async () => {
+    const user = userEvent.setup()
+    render(
+      <ProviderUsageBlock
+        provider="openai"
+        isExplicitlySelected
+        toggleProviders={['openai']}
+      />
+    )
+
+    await user.hover(screen.getByTestId('usage-trigger-openai'))
+    await screen.findByText('OpenAI API Usage')
+
+    const scroller = screen.getByTestId('usage-popover-scroll') as HTMLDivElement
+    Object.defineProperties(scroller, {
+      scrollHeight: { configurable: true, value: 600 },
+      clientHeight: { configurable: true, value: 200 }
+    })
+
+    scroller.scrollTop = 100
+    fireEvent.scroll(scroller)
+
+    act(() => {
+      useUsageStore.setState((state) => ({
+        savedAccounts: {
+          ...state.savedAccounts,
+          openai: [
+            {
+              id: 'openai-loaded-account',
+              provider: 'openai',
+              email: 'loaded@example.com',
+              last_usage: sampleOpenAIUsage,
+              last_fetched_at: null,
+              status: 'ok',
+              last_error: null,
+              created_at: new Date().toISOString(),
+              plan: 'plus'
+            }
+          ]
+        }
+      }))
+    })
+
+    expect(scroller.scrollTop).toBe(100)
+  })
+
+  it('renders the active account first among multiple accounts', async () => {
+    const user = userEvent.setup()
+    useUsageStore.setState((state) => ({
+      savedAccounts: {
+        ...state.savedAccounts,
+        openai: [
+          {
+            id: 'openai-inactive',
+            provider: 'openai',
+            email: 'inactive@example.com',
+            last_usage: sampleOpenAIUsage,
+            last_fetched_at: null,
+            status: 'ok',
+            last_error: null,
+            created_at: new Date().toISOString(),
+            plan: 'plus'
+          },
+          {
+            id: 'openai-active',
+            provider: 'openai',
+            email: 'openai@example.com',
+            last_usage: sampleOpenAIUsage,
+            last_fetched_at: null,
+            status: 'ok',
+            last_error: null,
+            created_at: new Date().toISOString(),
+            plan: 'plus'
+          }
+        ]
+      }
+    }))
+
+    render(
+      <ProviderUsageBlock
+        provider="openai"
+        isExplicitlySelected
+        toggleProviders={['openai']}
+      />
+    )
+
+    await user.hover(screen.getByTestId('usage-trigger-openai'))
+    await screen.findByText('OpenAI API Usage')
+
+    const active = screen.getByText('openai@example.com')
+    const inactive = screen.getByText('inactive@example.com')
+    expect(
+      active.compareDocumentPosition(inactive) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+  })
+
+  it('keeps the provider toggle outside the scroll container', async () => {
+    const user = userEvent.setup()
+    render(
+      <ProviderUsageBlock
+        provider="openai"
+        isExplicitlySelected
+        toggleProviders={['anthropic', 'openai']}
+      />
+    )
+
+    await user.hover(screen.getByTestId('usage-trigger-openai'))
+    await screen.findByText('OpenAI API Usage')
+
+    const scroller = screen.getByTestId('usage-popover-scroll')
+    const toggle = screen.getByTestId('usage-provider-toggle')
+    expect(scroller.contains(toggle)).toBe(false)
   })
 })
