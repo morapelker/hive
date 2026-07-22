@@ -14,9 +14,10 @@ import { reportActiveAccountsSnapshot } from '@/lib/hive-account-report'
 import { fetchHiveAccountMembers, isHiveTelemetryEnabled } from '@/api/hive-enterprise/client'
 import { MemberAvatarStack, type AccountMemberInfo } from './MemberAvatarStack'
 import { cn } from '@/lib/utils'
-import { Loader2, RefreshCw, Timer } from 'lucide-react'
+import { Loader2, RefreshCw, Shuffle, Timer } from 'lucide-react'
 import { useAccountScheduleStore } from '@/stores/useAccountScheduleStore'
 import {
+  AutoSwitchControls,
   ScheduleSwitchForm,
   SchedulePendingSummary
 } from '@/components/accounts/ScheduleSwitchControls'
@@ -600,6 +601,7 @@ function ProviderUsagePopoverBody({ provider }: { provider: UsageProvider }): Re
   return (
     <div className="space-y-2">
       <div className="font-medium">{PROVIDER_META[provider].title}</div>
+      {savedAccounts.length > 1 && <AutoSwitchControls provider={provider} />}
       {savedAccountLoadError && (
         <div className="rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1 text-[10px] text-destructive">
           Saved accounts unavailable: {savedAccountLoadError}
@@ -682,6 +684,9 @@ export function ProviderUsageBlock({
   )
   const fetchEmail = useAccountStore((s) => s.fetchEmail)
   const hasPendingSchedule = useAccountScheduleStore((s) => s.schedules[provider] !== undefined)
+  const autoSwitchThreshold = useAccountScheduleStore(
+    (s) => s.autoSwitch[provider]?.thresholdPercent
+  )
 
   // Which provider the popover shows. The bottom toggle can point it at a
   // different provider than the hovered trigger; each open snaps it back.
@@ -755,12 +760,19 @@ export function ProviderUsageBlock({
                 )}
               />
             </button>
-            {hasPendingSchedule && (
+            {autoSwitchThreshold !== undefined ? (
+              <Shuffle
+                className="h-2.5 w-2.5 shrink-0 text-amber-500"
+                aria-label="Auto-switch armed"
+              >
+                <title>{`Auto-switching accounts at ${autoSwitchThreshold}% usage`}</title>
+              </Shuffle>
+            ) : hasPendingSchedule ? (
               <Timer
                 className="h-2.5 w-2.5 shrink-0 text-amber-500"
                 aria-label="Account switch scheduled"
               />
-            )}
+            ) : null}
             <div className="flex-1 space-y-0.5">
               <UsageRow
                 label="5h"

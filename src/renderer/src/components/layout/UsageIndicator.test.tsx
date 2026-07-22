@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { ProviderUsageBlock, UsageAccountRow } from './UsageIndicator'
 import { useAccountStore, useUsageStore } from '@/stores'
+import { useAccountScheduleStore } from '@/stores/useAccountScheduleStore'
 import type { AccountMemberInfo } from './MemberAvatarStack'
 import type { OpenAIUsageData, UsageData } from '@shared/types/usage'
 
@@ -702,6 +703,80 @@ describe('ProviderUsageBlock provider toggle', () => {
     expect(
       active.compareDocumentPosition(inactive) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy()
+  })
+
+  it('shows the auto-switch shuffle icon in the bar when armed, instead of the timer', () => {
+    useAccountScheduleStore.setState({
+      schedules: {},
+      autoSwitch: {
+        anthropic: { provider: 'anthropic', thresholdPercent: 90, createdAt: Date.now() }
+      }
+    })
+    render(
+      <ProviderUsageBlock
+        provider="anthropic"
+        isExplicitlySelected
+        toggleProviders={['anthropic']}
+      />
+    )
+
+    expect(screen.getByLabelText(/auto-switch armed/i)).toBeTruthy()
+    expect(screen.queryByLabelText(/account switch scheduled/i)).toBeNull()
+    useAccountScheduleStore.setState({ schedules: {}, autoSwitch: {} })
+  })
+
+  it('shows the auto-switch controls in the popover only with multiple saved accounts', async () => {
+    const user = userEvent.setup()
+    useAccountScheduleStore.setState({ schedules: {}, autoSwitch: {} })
+    useUsageStore.setState((state) => ({
+      savedAccounts: {
+        ...state.savedAccounts,
+        openai: [
+          {
+            id: 'openai-1',
+            provider: 'openai',
+            email: 'one@example.com',
+            last_usage: sampleOpenAIUsage,
+            last_fetched_at: null,
+            status: 'ok',
+            last_error: null,
+            created_at: new Date().toISOString(),
+            plan: 'plus'
+          },
+          {
+            id: 'openai-2',
+            provider: 'openai',
+            email: 'openai@example.com',
+            last_usage: sampleOpenAIUsage,
+            last_fetched_at: null,
+            status: 'ok',
+            last_error: null,
+            created_at: new Date().toISOString(),
+            plan: 'plus'
+          }
+        ]
+      }
+    }))
+
+    render(
+      <ProviderUsageBlock provider="openai" isExplicitlySelected toggleProviders={['openai']} />
+    )
+
+    await user.hover(screen.getByTestId('usage-trigger-openai'))
+    await screen.findByText('OpenAI API Usage')
+    expect(screen.getByTestId('auto-switch-controls')).toBeTruthy()
+  })
+
+  it('hides the auto-switch controls when only one account is saved', async () => {
+    const user = userEvent.setup()
+    useAccountScheduleStore.setState({ schedules: {}, autoSwitch: {} })
+    render(
+      <ProviderUsageBlock provider="openai" isExplicitlySelected toggleProviders={['openai']} />
+    )
+
+    await user.hover(screen.getByTestId('usage-trigger-openai'))
+    await screen.findByText('OpenAI API Usage')
+    expect(screen.queryByTestId('auto-switch-controls')).toBeNull()
   })
 
   it('keeps the provider toggle outside the scroll container', async () => {

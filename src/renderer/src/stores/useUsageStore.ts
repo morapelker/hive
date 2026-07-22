@@ -10,7 +10,8 @@ import type {
   AnthropicRateLimitState,
   OpenAIUsageData,
   UsageProvider,
-  SavedAccountDTO
+  SavedAccountDTO,
+  RefreshAllResultItem
 } from '@shared/types/usage'
 import { accountApi } from '@/api/account-api'
 import { usageApi } from '@/api/usage-api'
@@ -47,7 +48,9 @@ interface UsageState {
   switchingAccountIds: Set<string>
 
   loadSavedAccounts: (provider?: UsageProvider) => Promise<void>
-  refreshAllForProvider: (provider: UsageProvider) => Promise<void>
+  /** Resolves with the per-account fetch outcomes, or null when a sweep for
+   * the provider was already running (nothing was refreshed by this call). */
+  refreshAllForProvider: (provider: UsageProvider) => Promise<RefreshAllResultItem[] | null>
   refreshSavedAccount: (id: string, opts?: { userInitiated?: boolean }) => Promise<void>
   removeSavedAccount: (id: string) => Promise<void>
   /** Resolves true when the switch op succeeded (failures also toast). */
@@ -132,7 +135,7 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
 
   refreshAllForProvider: async (provider: UsageProvider) => {
     const state = get()
-    if (state.refreshingProviders[provider]) return
+    if (state.refreshingProviders[provider]) return null
 
     const accountIds = state.savedAccounts[provider].map((account) => account.id)
     set((current) => ({
@@ -141,8 +144,9 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
     }))
 
     try {
-      await usageApi.refreshAllForProvider(provider)
+      const results = await usageApi.refreshAllForProvider(provider)
       await get().loadSavedAccounts(provider)
+      return results
     } finally {
       set((current) => {
         const nextIds = new Set(current.refreshingAccountIds)

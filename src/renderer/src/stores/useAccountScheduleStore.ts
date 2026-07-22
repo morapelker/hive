@@ -1,7 +1,14 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
-import type { UsageProvider } from '@shared/types/usage'
+import type {
+  OpenAIUsageData,
+  RefreshAllResultItem,
+  SavedAccountDTO,
+  UsageData,
+  UsageProvider
+} from '@shared/types/usage'
 import { toast } from '@/lib/toast'
+import { getMaxUsagePercent, scoreAccountHeadroom } from '@/lib/auto-switch-score'
 import { useUsageStore, normalizeUsage } from './useUsageStore'
 import { useAccountStore } from './useAccountStore'
 
@@ -21,8 +28,24 @@ export interface ScheduledSwitch {
   notBefore?: number
 }
 
+/**
+ * Provider-global "keep me on whichever account has the most headroom" mode:
+ * when the ACTIVE account crosses thresholdPercent, refresh every saved
+ * account and hop to the best-scoring one — then stay armed for the next
+ * crossing. Mutually exclusive with a per-account ScheduledSwitch.
+ */
+export interface AutoSwitchConfig {
+  provider: UsageProvider
+  /** Utilization percent (0-100) at or above which the hop is triggered */
+  thresholdPercent: number
+  createdAt: number
+  /** Set after a failed attempt (or an empty candidate pool) — don't retry before this time */
+  notBefore?: number
+}
+
 interface AccountScheduleState {
   schedules: Partial<Record<UsageProvider, ScheduledSwitch>>
+  autoSwitch: Partial<Record<UsageProvider, AutoSwitchConfig>>
 
   scheduleByTime: (
     provider: UsageProvider,
@@ -37,6 +60,9 @@ interface AccountScheduleState {
     thresholdPercent: number
   ) => void
   cancelSchedule: (provider: UsageProvider) => void
+  /** Enable auto-switch (or update its threshold). Replaces any pending schedule. */
+  setAutoSwitch: (provider: UsageProvider, thresholdPercent: number) => void
+  disableAutoSwitch: (provider: UsageProvider) => void
   checkSchedules: () => Promise<void>
 }
 
@@ -75,6 +101,15 @@ function activeEmailFor(provider: UsageProvider): string | null {
   return provider === 'anthropic' ? state.anthropicEmail : state.openaiEmail
 }
 
+/** A saved account's cached usage in the common (anthropic-shaped) form. */
+function savedAccountUsage(provider: UsageProvider, account: SavedAccountDTO): UsageData | null {
+  if (!account.last_usage) return null
+  if (provider === 'anthropic') {
+    return normalizeUsage(provider, account.last_usage as UsageData, null)
+  }
+  return normalizeUsage(provider, null, account.last_usage as OpenAIUsageData)
+}
+
 // A due schedule whose switch attempt failed is retried, but not more often
 // than this — a persistently failing switch shouldn't toast every tick.
 const RETRY_DELAY_MS = 5 * 60_000
@@ -92,39 +127,48 @@ export const useAccountScheduleStore = create<AccountScheduleState>()(
   persist(
     (set, get) => ({
       schedules: {},
+      autoSwitch: {},
 
       scheduleByTime: (provider, accountId, email, delayMs) => {
-        set((state) => ({
-          schedules: {
-            ...state.schedules,
-            [provider]: {
-              provider,
-              accountId,
-              email,
-              mode: 'time' as const,
-              executeAt: Date.now() + delayMs,
-              thresholdPercent: null,
-              createdAt: Date.now()
+        set((state) => {
+          const { [provider]: _, ...autoRest } = state.autoSwitch
+          return {
+            autoSwitch: autoRest,
+            schedules: {
+              ...state.schedules,
+              [provider]: {
+                provider,
+                accountId,
+                email,
+                mode: 'time' as const,
+                executeAt: Date.now() + delayMs,
+                thresholdPercent: null,
+                createdAt: Date.now()
+              }
             }
           }
-        }))
+        })
       },
 
       scheduleByUsage: (provider, accountId, email, thresholdPercent) => {
-        set((state) => ({
-          schedules: {
-            ...state.schedules,
-            [provider]: {
-              provider,
-              accountId,
-              email,
-              mode: 'usage' as const,
-              executeAt: null,
-              thresholdPercent: Math.min(100, Math.max(1, Math.round(thresholdPercent))),
-              createdAt: Date.now()
+        set((state) => {
+          const { [provider]: _, ...autoRest } = state.autoSwitch
+          return {
+            autoSwitch: autoRest,
+            schedules: {
+              ...state.schedules,
+              [provider]: {
+                provider,
+                accountId,
+                email,
+                mode: 'usage' as const,
+                executeAt: null,
+                thresholdPercent: Math.min(100, Math.max(1, Math.round(thresholdPercent))),
+                createdAt: Date.now()
+              }
             }
           }
-        }))
+        })
       },
 
       cancelSchedule: (provider) => {
@@ -134,10 +178,131 @@ export const useAccountScheduleStore = create<AccountScheduleState>()(
         })
       },
 
+      setAutoSwitch: (provider, thresholdPercent) => {
+        set((state) => {
+          const { [provider]: _, ...scheduleRest } = state.schedules
+          return {
+            schedules: scheduleRest,
+            autoSwitch: {
+              ...state.autoSwitch,
+              [provider]: {
+                provider,
+                thresholdPercent: Math.min(100, Math.max(1, Math.round(thresholdPercent))),
+                createdAt: Date.now()
+              }
+            }
+          }
+        })
+      },
+
+      disableAutoSwitch: (provider) => {
+        set((state) => {
+          const { [provider]: _, ...rest } = state.autoSwitch
+          return { autoSwitch: rest }
+        })
+      },
+
       checkSchedules: async () => {
         for (const provider of PROVIDERS) {
+          if (executingProviders.has(provider)) continue
+
+          // Auto-switch mode is mutually exclusive with a per-account
+          // schedule — when armed, it owns this provider's evaluation.
+          const auto = get().autoSwitch[provider]
+          if (auto) {
+            if (auto.notBefore !== undefined && Date.now() < auto.notBefore) continue
+            const percent = getActiveUsagePercent(provider)
+            if (percent === null || percent < auto.thresholdPercent) continue
+
+            const backOff = (): void => {
+              set((state) => {
+                const current = state.autoSwitch[provider]
+                if (!current || current.createdAt !== auto.createdAt) return state
+                return {
+                  autoSwitch: {
+                    ...state.autoSwitch,
+                    [provider]: { ...current, notBefore: Date.now() + RETRY_DELAY_MS }
+                  }
+                }
+              })
+            }
+
+            executingProviders.add(provider)
+            try {
+              // Refresh every saved account so the pick is based on live
+              // numbers — and so we know which fetches actually succeeded.
+              let results: RefreshAllResultItem[] | null = null
+              let sweepFailed = false
+              try {
+                results = await useUsageStore.getState().refreshAllForProvider(provider)
+              } catch {
+                sweepFailed = true
+              }
+
+              // The sweep awaited an IPC round-trip — the user may have
+              // toggled auto-switch off (or re-armed it) in the meantime.
+              const latest = get().autoSwitch[provider]
+              if (!latest || latest.createdAt !== auto.createdAt) continue
+
+              if (sweepFailed) {
+                backOff()
+                continue
+              }
+              // Another sweep was already in flight: its numbers may be
+              // mid-write, so skip this round and re-evaluate next tick.
+              if (results === null) continue
+
+              const succeededIds = new Set(
+                results.filter((r) => r.success).map((r) => r.accountId)
+              )
+              const activeEmail = activeEmailFor(provider)
+              const now = Date.now()
+              // Eligible: the refresh succeeded, the token is valid, it's not
+              // the account we're leaving, and it isn't itself at/over the
+              // threshold (hopping there would immediately re-trigger).
+              const candidates = useUsageStore
+                .getState()
+                .savedAccounts[provider].filter(
+                  (a) =>
+                    succeededIds.has(a.id) &&
+                    a.status === 'ok' &&
+                    (activeEmail === null || a.email !== activeEmail)
+                )
+                .map((a) => ({ account: a, usage: savedAccountUsage(provider, a) }))
+                .filter((c): c is { account: SavedAccountDTO; usage: UsageData } => c.usage !== null)
+                .filter((c) => (getMaxUsagePercent(c.usage, now) ?? 0) < latest.thresholdPercent)
+
+              if (candidates.length === 0) {
+                toast.error(
+                  `Auto-switch: no other account below ${latest.thresholdPercent}% usage to switch to`
+                )
+                backOff()
+                continue
+              }
+
+              let best = candidates[0]
+              let bestScore = scoreAccountHeadroom(best.usage, now)
+              for (const candidate of candidates.slice(1)) {
+                const score = scoreAccountHeadroom(candidate.usage, now)
+                if (score > bestScore) {
+                  best = candidate
+                  bestScore = score
+                }
+              }
+
+              // switchAccount toasts success/failure itself. Success keeps the
+              // mode armed for the next crossing; failure backs off so a
+              // persistent problem doesn't retry (and toast) on every tick.
+              const switched = await useUsageStore.getState().switchAccount(best.account.id)
+              if (!switched) backOff()
+            } finally {
+              executingProviders.delete(provider)
+            }
+            continue
+          }
+
           const schedule = get().schedules[provider]
-          if (!schedule || executingProviders.has(provider)) continue
+          if (!schedule) continue
           if (schedule.notBefore !== undefined && Date.now() < schedule.notBefore) continue
 
           // Already on the target account (e.g. the user switched manually) —
@@ -244,7 +409,7 @@ export const useAccountScheduleStore = create<AccountScheduleState>()(
     {
       name: 'hive-account-switch-schedules',
       storage: createJSONStorage(() => localStorage),
-      partialize: (state) => ({ schedules: state.schedules })
+      partialize: (state) => ({ schedules: state.schedules, autoSwitch: state.autoSwitch })
     }
   )
 )
