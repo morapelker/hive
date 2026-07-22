@@ -133,45 +133,77 @@ function createNewSession(): void {
  */
 function cycleSession(direction: 1 | -1): void {
   const state = useSessionStore.getState()
-  const { activeSessionId, activeWorktreeId, activeConnectionId } = state
+  const { activeSessionId, activeWorktreeId, activeConnectionId, inlineConnectionSessionId } =
+    state
 
   // Determine scope: connection mode when a connection is active and no worktree is
   const isConnectionMode = !!activeConnectionId && !activeWorktreeId
   const scopeId = isConnectionMode ? activeConnectionId : activeWorktreeId
   if (!scopeId) return
 
-  const tabOrder = isConnectionMode
-    ? state.tabOrderByConnection.get(scopeId) || []
-    : state.tabOrderByWorktree.get(scopeId) || []
+  // Build the visible tab list in display order. In worktree mode, sticky
+  // connection tabs (connections containing this worktree) render before the
+  // worktree's own session tabs — mirror SessionTabs.
+  type Tab = { sessionId: string; inlineConnection: boolean }
+  const tabs: Tab[] = []
+  if (isConnectionMode) {
+    for (const id of state.tabOrderByConnection.get(scopeId) || []) {
+      tabs.push({ sessionId: id, inlineConnection: false })
+    }
+  } else {
+    const connections = useConnectionStore
+      .getState()
+      .connections.filter((c) => c.members.some((m) => m.worktree_id === scopeId))
+    for (const connection of connections) {
+      for (const id of state.tabOrderByConnection.get(connection.id) || []) {
+        tabs.push({ sessionId: id, inlineConnection: true })
+      }
+    }
+    for (const id of state.tabOrderByWorktree.get(scopeId) || []) {
+      tabs.push({ sessionId: id, inlineConnection: false })
+    }
+  }
 
   // Always leave any file/diff view so the session becomes visible,
   // even when there is only one session tab to "cycle" to.
   useFileViewerStore.getState().setActiveFile(null)
-  state.clearInlineConnectionSession()
 
-  if (tabOrder.length === 0) return
+  if (tabs.length === 0) return
 
-  const currentIndex = activeSessionId ? tabOrder.indexOf(activeSessionId) : -1
+  // Current position: an inline connection tab wins over the underlying
+  // worktree session it overlays.
+  const currentIndex =
+    !isConnectionMode && inlineConnectionSessionId
+      ? tabs.findIndex((t) => t.inlineConnection && t.sessionId === inlineConnectionSessionId)
+      : activeSessionId
+        ? tabs.findIndex((t) => !t.inlineConnection && t.sessionId === activeSessionId)
+        : -1
   // With a single tab, still select it when it isn't the active session
   // (e.g. cycling away from the Board tab); otherwise nothing to cycle to.
-  if (tabOrder.length === 1 && currentIndex === 0) return
+  if (tabs.length === 1 && currentIndex === 0) return
 
   const nextIndex =
     currentIndex === -1
       ? direction === 1
         ? 0
-        : tabOrder.length - 1
-      : (currentIndex + direction + tabOrder.length) % tabOrder.length
-  const nextSessionId = tabOrder[nextIndex]
-  if (!nextSessionId) return
+        : tabs.length - 1
+      : (currentIndex + direction + tabs.length) % tabs.length
+  const next = tabs[nextIndex]
+  if (!next) return
 
-  if (isConnectionMode) {
-    state.setActiveConnectionSession(nextSessionId)
+  if (next.inlineConnection) {
+    // Sticky connection tab viewed inline in worktree mode
+    state.setInlineConnectionSession(next.sessionId)
   } else {
-    state.setActiveSession(nextSessionId)
+    state.clearInlineConnectionSession()
+    if (isConnectionMode) {
+      state.setActiveConnectionSession(next.sessionId)
+    } else {
+      state.setActiveSession(next.sessionId)
+    }
   }
   // Match tab-click behavior: viewing the session clears its unread badge
-  useWorktreeStatusStore.getState().clearSessionStatus(nextSessionId)
+  useWorktreeStatusStore.getState().clearSessionStatus(next.sessionId)
 }
 
 /**
@@ -183,9 +215,11 @@ function cycleWorktree(direction: 1 | -1): void {
   const wtState = useWorktreeStore.getState()
   const { selectedWorktreeId, worktreesByProject, worktreeOrderByProject } = wtState
 
-  // Resolve project: from the selected worktree, or fall back to selected project
-  let projectId: string | null = null
-  if (selectedWorktreeId) {
+  // Resolve project: prefer the explicitly selected (highlighted) project so
+  // cycling follows the sidebar selection even when a worktree from another
+  // project is still active; fall back to the selected worktree's project.
+  let projectId: string | null = useProjectStore.getState().selectedProjectId
+  if (!projectId && selectedWorktreeId) {
     for (const [pid, worktrees] of worktreesByProject) {
       if (worktrees.some((w) => w.id === selectedWorktreeId)) {
         projectId = pid
@@ -193,7 +227,6 @@ function cycleWorktree(direction: 1 | -1): void {
       }
     }
   }
-  if (!projectId) projectId = useProjectStore.getState().selectedProjectId
   if (!projectId) return
 
   const ordered = getOrderedProjectWorktrees(worktreesByProject, worktreeOrderByProject, projectId)
