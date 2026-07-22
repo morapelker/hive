@@ -389,7 +389,7 @@ export function MergeOnDoneDialog() {
     } catch (err) {
       setArchiving(false)
       toast.error(
-        `Failed to move ticket to done: ${err instanceof Error ? err.message : String(err)}`
+        `Failed to move ticket: ${err instanceof Error ? err.message : String(err)}`
       )
       return
     }
@@ -414,8 +414,11 @@ export function MergeOnDoneDialog() {
       })
   }, [resolved, completeDoneMove])
 
+  // The dialog serves both the Done and the optional Merged column
+  const targetLabel = pendingDoneMove?.targetColumn === 'merged' ? 'Merged' : 'Done'
+
   const stepTitle: Record<Step, string> = {
-    loading: 'Moving to Done...',
+    loading: `Moving to ${targetLabel}...`,
     commit_base: 'Uncommitted changes on base',
     commit: 'Uncommitted changes',
     merge: 'Merge branch',
@@ -479,7 +482,7 @@ export function MergeOnDoneDialog() {
                   onClick={() => completeDoneMove()}
                   disabled={committingBase}
                 >
-                  Move to Done anyway
+                  Move to {targetLabel} anyway
                 </Button>
                 <Button
                   size="sm"
@@ -524,7 +527,7 @@ export function MergeOnDoneDialog() {
                   onClick={() => completeDoneMove()}
                   disabled={committing}
                 >
-                  Move to Done anyway
+                  Move to {targetLabel} anyway
                 </Button>
                 <Button
                   size="sm"
@@ -570,7 +573,7 @@ export function MergeOnDoneDialog() {
                   onClick={() => completeDoneMove()}
                   disabled={merging}
                 >
-                  Move to Done anyway
+                  Move to {targetLabel} anyway
                 </Button>
                 <Button size="sm" onClick={handleMerge} disabled={merging}>
                   {merging ? (

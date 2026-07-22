@@ -67,6 +67,7 @@ const COLUMN_TITLES: Record<ColumnType, string> = {
   todo: 'To Do',
   in_progress: 'In Progress',
   review: 'Review',
+  merged: 'Merged',
   done: 'Done'
 }
 
@@ -203,8 +204,11 @@ export function KanbanColumn({
   const shortTextMeasureRef = useRef<HTMLSpanElement>(null)
 
   const isDoneColumn = column === 'done'
+  const isMergedColumn = column === 'merged'
   const isTodoColumn = column === 'todo'
   const isInProgressColumn = column === 'in_progress'
+  // Done and Merged share date-sorted behavior (no manual reordering)
+  const isDateSortedColumn = isDoneColumn || isMergedColumn
   const isMultiProjectMode = !!connectionId || !!isPinnedMode
 
   // ── Multi-project helpers ─────────────────────────────────────────
@@ -365,13 +369,16 @@ export function KanbanColumn({
   )
 
   const handleArchiveAll = useCallback(async () => {
+    // When the Merged column is hidden, merged tickets display inside Done, so
+    // "Archive all" must archive them too (WYSIWYG with the confirm count)
+    const includeMerged = !useSettingsStore.getState().showMergedColumn
     try {
       if (isPinnedMode) {
         // In pinned mode, archive done tickets across all pinned-derived projects
         const projectIds = useKanbanStore.getState().getPinnedProjectIdsArray()
         let total = 0
         for (const pid of projectIds) {
-          total += await useKanbanStore.getState().archiveAllDone(pid)
+          total += await useKanbanStore.getState().archiveAllDone(pid, includeMerged)
         }
         toast.success(`Archived ${total} ticket${total !== 1 ? 's' : ''}`)
       } else if (connectionId) {
@@ -379,11 +386,11 @@ export function KanbanColumn({
         const projectIds = useKanbanStore.getState().getConnectionProjectIds(connectionId)
         let total = 0
         for (const pid of projectIds) {
-          total += await useKanbanStore.getState().archiveAllDone(pid)
+          total += await useKanbanStore.getState().archiveAllDone(pid, includeMerged)
         }
         toast.success(`Archived ${total} ticket${total !== 1 ? 's' : ''}`)
       } else {
-        const count = await useKanbanStore.getState().archiveAllDone(projectId)
+        const count = await useKanbanStore.getState().archiveAllDone(projectId, includeMerged)
         toast.success(`Archived ${count} ticket${count !== 1 ? 's' : ''}`)
       }
     } catch {
@@ -400,10 +407,21 @@ export function KanbanColumn({
 
   const handleDragOver = useCallback(
     (e: React.DragEvent) => {
-      // Done is date-sorted (newest first): reordering within it is disabled,
+      // Done/Merged are date-sorted (newest first): reordering within them is disabled,
       // and cross-column drops always land at the top regardless of cursor position
-      if (isDoneColumn) {
-        if (getKanbanDragData()?.sourceColumn === 'done') return
+      if (isDateSortedColumn) {
+        const sourceColumn = getKanbanDragData()?.sourceColumn
+        if (sourceColumn === column) return
+        // Folded merged cards render inside Done when the Merged column is
+        // hidden — dragging them within Done is a same-column no-op, not a
+        // promotion to done
+        if (
+          isDoneColumn &&
+          sourceColumn === 'merged' &&
+          !useSettingsStore.getState().showMergedColumn
+        ) {
+          return
+        }
         e.preventDefault()
         e.dataTransfer.dropEffect = 'move'
         setIsDragOver(true)
@@ -433,7 +451,7 @@ export function KanbanColumn({
       dropIndexRef.current = index
       setDropIndex(index)
     },
-    [tickets.length, isDoneColumn]
+    [tickets.length, isDateSortedColumn, column]
   )
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
@@ -470,6 +488,15 @@ export function KanbanColumn({
 
       if (sourceColumn !== column) {
         // ── Cross-column move ─────────────────────────────────
+        // Folded merged card dropped back on the visual Done list — no-op so
+        // merged-but-unverified work isn't silently marked done
+        if (
+          column === 'done' &&
+          sourceColumn === 'merged' &&
+          !useSettingsStore.getState().showMergedColumn
+        ) {
+          return
+        }
         const ticketProjectId = findTicketProjectId(ticketId, draggedProjectId)
         const simpleModeKey = isMultiProjectMode ? projectId : ticketProjectId
         const isSimpleMode =
@@ -524,8 +551,8 @@ export function KanbanColumn({
           }
         }
 
-        // Merge-on-done: intercept drops to Done for feature-branch worktrees
-        if (column === 'done') {
+        // Merge-on-done: intercept drops to Done/Merged for feature-branch worktrees
+        if (column === 'done' || column === 'merged') {
           const draggedTicket = findTicket(ticketId, ticketProjectId)
           if (draggedTicket?.worktree_id) {
             try {
@@ -566,7 +593,12 @@ export function KanbanColumn({
                         projectTicketsForColumn(ticketProjectId),
                         projectLocalDropIndex(ticketProjectId, targetIndex)
                       )
-                      store.setPendingDoneMove({ ticketId, projectId: ticketProjectId, sortOrder })
+                      store.setPendingDoneMove({
+                        ticketId,
+                        projectId: ticketProjectId,
+                        sortOrder,
+                        targetColumn: column
+                      })
                       return
                     }
                   }
@@ -597,8 +629,8 @@ export function KanbanColumn({
         }
       } else {
         // ── Same-column reorder ───────────────────────────────
-        // Done is always date-sorted — manual reordering is disabled
-        if (isDoneColumn) return
+        // Done/Merged are always date-sorted — manual reordering is disabled
+        if (isDateSortedColumn) return
         const ticketProjectId = findTicketProjectId(ticketId, draggedProjectId)
         const draggedKey = ticketKey(ticketProjectId, ticketId)
         const projectTickets = projectTicketsForColumn(ticketProjectId)
@@ -622,7 +654,7 @@ export function KanbanColumn({
       tickets.length,
       isInProgressColumn,
       isTodoColumn,
-      isDoneColumn,
+      isDateSortedColumn,
       isMultiProjectMode,
       projectId,
       findTicketProjectId,
