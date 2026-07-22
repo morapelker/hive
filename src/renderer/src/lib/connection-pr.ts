@@ -191,6 +191,7 @@ async function pushAttachedPRUpdates(assessment: MemberAssessment, prefix: strin
   const notifId = show({
     status: 'loading',
     message: `${prefix}Pushing updates to PR #${pr.number}...`,
+    branchName: assessment.branchName,
     worktreeId: assessment.worktreeId
   })
   try {
@@ -269,6 +270,7 @@ export async function createConnectionPRs(options: CreateConnectionPRsOptions): 
       const notifId = show({
         status: 'loading',
         message: `${prefix}Creating pull request...`,
+        branchName: assessment.branchName,
         worktreeId: assessment.worktreeId
       })
       await runCreatePRPipeline({

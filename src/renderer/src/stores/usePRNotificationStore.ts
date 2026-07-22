@@ -14,6 +14,8 @@ interface PRNotification {
   prUrl?: string
   prNumber?: number
   prTitle?: string
+  /** Source branch the PR is created from */
+  branchName?: string
   worktreeId?: string
   /** Render an Archive button for worktrees with nothing to PR */
   showArchiveButton?: boolean
