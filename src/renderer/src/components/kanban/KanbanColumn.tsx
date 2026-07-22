@@ -410,7 +410,18 @@ export function KanbanColumn({
       // Done/Merged are date-sorted (newest first): reordering within them is disabled,
       // and cross-column drops always land at the top regardless of cursor position
       if (isDateSortedColumn) {
-        if (getKanbanDragData()?.sourceColumn === column) return
+        const sourceColumn = getKanbanDragData()?.sourceColumn
+        if (sourceColumn === column) return
+        // Folded merged cards render inside Done when the Merged column is
+        // hidden — dragging them within Done is a same-column no-op, not a
+        // promotion to done
+        if (
+          isDoneColumn &&
+          sourceColumn === 'merged' &&
+          !useSettingsStore.getState().showMergedColumn
+        ) {
+          return
+        }
         e.preventDefault()
         e.dataTransfer.dropEffect = 'move'
         setIsDragOver(true)
@@ -477,6 +488,15 @@ export function KanbanColumn({
 
       if (sourceColumn !== column) {
         // ── Cross-column move ─────────────────────────────────
+        // Folded merged card dropped back on the visual Done list — no-op so
+        // merged-but-unverified work isn't silently marked done
+        if (
+          column === 'done' &&
+          sourceColumn === 'merged' &&
+          !useSettingsStore.getState().showMergedColumn
+        ) {
+          return
+        }
         const ticketProjectId = findTicketProjectId(ticketId, draggedProjectId)
         const simpleModeKey = isMultiProjectMode ? projectId : ticketProjectId
         const isSimpleMode =
