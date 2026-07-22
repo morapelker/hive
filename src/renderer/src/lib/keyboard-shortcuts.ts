@@ -101,15 +101,15 @@ export const DEFAULT_SHORTCUTS: ShortcutDefinition[] = [
   },
   {
     id: 'nav:next-project',
-    label: 'Next Project',
-    description: 'Switch to the next project in the sidebar',
+    label: 'Next Project/Connection',
+    description: 'Switch to the next connection or project in the sidebar',
     category: 'navigation',
     defaultBinding: { key: ']', modifiers: ['meta', 'alt'] }
   },
   {
     id: 'nav:previous-project',
-    label: 'Previous Project',
-    description: 'Switch to the previous project in the sidebar',
+    label: 'Previous Project/Connection',
+    description: 'Switch to the previous connection or project in the sidebar',
     category: 'navigation',
     defaultBinding: { key: '[', modifiers: ['meta', 'alt'] }
   },

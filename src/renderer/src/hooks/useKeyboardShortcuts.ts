@@ -8,7 +8,8 @@ import {
   useFileSearchStore,
   useSettingsStore,
   useKanbanStore,
-  useVimModeStore
+  useVimModeStore,
+  useConnectionStore
 } from '@/stores'
 import { useGitStore } from '@/stores/useGitStore'
 import { useShortcutStore } from '@/stores/useShortcutStore'
@@ -207,26 +208,48 @@ function cycleWorktree(direction: 1 | -1): void {
 }
 
 /**
- * Cycles to the next/previous project in the sidebar order and selects its
- * top worktree so the jump lands somewhere useful. Wraps around at the ends.
+ * Cycles to the next/previous item in the sidebar — connections first (as
+ * displayed above projects), then projects — as one unified list, wrapping
+ * around at the ends. Landing on a connection selects it; landing on a
+ * project selects it and its top worktree so the jump lands somewhere useful.
  */
 function cycleProject(direction: 1 | -1): void {
   const projectState = useProjectStore.getState()
+  const connectionState = useConnectionStore.getState()
   const { projects, selectedProjectId } = projectState
-  if (projects.length === 0) return
+  const { connections, selectedConnectionId } = connectionState
 
-  const currentIndex = selectedProjectId
-    ? projects.findIndex((p) => p.id === selectedProjectId)
-    : -1
+  // Unified sidebar order: connections section first, then projects
+  type SidebarItem = { kind: 'connection' | 'project'; id: string }
+  const items: SidebarItem[] = [
+    ...connections.map((c): SidebarItem => ({ kind: 'connection', id: c.id })),
+    ...projects.map((p): SidebarItem => ({ kind: 'project', id: p.id }))
+  ]
+  if (items.length === 0) return
+
+  // Current position: an explicitly selected connection wins (it clears
+  // worktree/project selection); otherwise the selected project.
+  const currentIndex = selectedConnectionId
+    ? items.findIndex((i) => i.kind === 'connection' && i.id === selectedConnectionId)
+    : selectedProjectId
+      ? items.findIndex((i) => i.kind === 'project' && i.id === selectedProjectId)
+      : -1
   const nextIndex =
     currentIndex === -1
       ? direction === 1
         ? 0
-        : projects.length - 1
-      : (currentIndex + direction + projects.length) % projects.length
-  const next = projects[nextIndex]
-  if (!next || next.id === selectedProjectId) return
+        : items.length - 1
+      : (currentIndex + direction + items.length) % items.length
+  const next = items[nextIndex]
+  if (!next || nextIndex === currentIndex) return
 
+  if (next.kind === 'connection') {
+    connectionState.selectConnection(next.id)
+    return
+  }
+
+  // Landing on a project: clear any connection selection and select the project
+  if (selectedConnectionId) connectionState.selectConnection(null)
   projectState.selectProject(next.id)
 
   // Select the project's top worktree (sidebar order) so the jump is useful
@@ -239,6 +262,7 @@ function cycleProject(direction: 1 | -1): void {
     const state = useWorktreeStore.getState()
     // Bail if the user has moved on to another project meanwhile
     if (useProjectStore.getState().selectedProjectId !== next.id) return
+    if (useConnectionStore.getState().selectedConnectionId) return
     const ordered = getOrderedProjectWorktrees(
       state.worktreesByProject,
       state.worktreeOrderByProject,
