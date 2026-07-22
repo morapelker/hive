@@ -11,6 +11,7 @@ import {
   getModelDisplayName,
   getModelVariantKeys,
   getVariantKeysForSdk,
+  isUltraVariant,
   parseProviders,
   ULTRACODE_VARIANT,
   type ModelInfo,
@@ -62,9 +63,7 @@ const ULTRACODE_TOOLTIP = 'xhigh effort + dynamic-workflow orchestration'
 
 /** ultracode and codex's `ultra` effort share the violet accent so both read as
  * special top-tier modes rather than just another effort level. */
-function isAccentVariant(variant: string): boolean {
-  return variant === ULTRACODE_VARIANT || variant === 'ultra'
-}
+const isAccentVariant = isUltraVariant
 
 /** Styling for a variant chip. Accent variants (ultracode, ultra) get a
  * distinct look so they read as the special modes they are. */

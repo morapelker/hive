@@ -93,6 +93,12 @@ export function getModelVariantKeys(model: Pick<ModelInfo, 'variants'>): string[
 /** CLI-only effort: enabled via the claude `--settings` JSON, not `--effort`. */
 export const ULTRACODE_VARIANT = 'ultracode'
 
+/** claude's `ultracode` and codex's `ultra` are the special top-tier launch
+ * modes; UI surfaces give them a shared violet accent. */
+export function isUltraVariant(variant: string | null | undefined): boolean {
+  return variant === ULTRACODE_VARIANT || variant === 'ultra'
+}
+
 /**
  * Variant keys to offer for a model under a given agent SDK. `claude-code-cli`
  * additionally offers `ultracode` — a CLI-only `--settings` mode — but only for
