@@ -9,13 +9,15 @@ import {
   useSettingsStore,
   useKanbanStore,
   useVimModeStore,
-  useConnectionStore
+  useConnectionStore,
+  useSpaceStore
 } from '@/stores'
 import { useGitStore } from '@/stores/useGitStore'
 import { useShortcutStore } from '@/stores/useShortcutStore'
 import { useWorktreeStore, getOrderedProjectWorktrees } from '@/stores/useWorktreeStore'
 import { useScriptStore, fireRunScript, killRunScript } from '@/stores/useScriptStore'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
+import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useTerminalTabStore } from '@/stores/useTerminalTabStore'
 import { useTerminalStore } from '@/stores/useTerminalStore'
 import { eventMatchesBinding, type KeyBinding } from '@/lib/keyboard-shortcuts'
@@ -147,9 +149,13 @@ function cycleSession(direction: 1 | -1): void {
   useFileViewerStore.getState().setActiveFile(null)
   state.clearInlineConnectionSession()
 
-  if (tabOrder.length < 2) return
+  if (tabOrder.length === 0) return
 
   const currentIndex = activeSessionId ? tabOrder.indexOf(activeSessionId) : -1
+  // With a single tab, still select it when it isn't the active session
+  // (e.g. cycling away from the Board tab); otherwise nothing to cycle to.
+  if (tabOrder.length === 1 && currentIndex === 0) return
+
   const nextIndex =
     currentIndex === -1
       ? direction === 1
@@ -164,6 +170,8 @@ function cycleSession(direction: 1 | -1): void {
   } else {
     state.setActiveSession(nextSessionId)
   }
+  // Match tab-click behavior: viewing the session clears its unread badge
+  useWorktreeStatusStore.getState().clearSessionStatus(nextSessionId)
 }
 
 /**
@@ -205,6 +213,8 @@ function cycleWorktree(direction: 1 | -1): void {
 
   useProjectStore.getState().selectProject(projectId)
   wtState.selectWorktree(next.id)
+  // Match mouse navigation: viewing the worktree clears its unread badge
+  useWorktreeStatusStore.getState().clearWorktreeUnread(next.id)
 }
 
 /**
@@ -219,11 +229,19 @@ function cycleProject(direction: 1 | -1): void {
   const { projects, selectedProjectId } = projectState
   const { connections, selectedConnectionId } = connectionState
 
+  // Respect the active Space filter so cycling stays within the visible
+  // sidebar list (mirrors ProjectList's space filtering)
+  const { activeSpaceId, projectSpaceMap } = useSpaceStore.getState()
+  const visibleProjects =
+    activeSpaceId === null
+      ? projects
+      : projects.filter((p) => projectSpaceMap[p.id]?.includes(activeSpaceId))
+
   // Unified sidebar order: connections section first, then projects
   type SidebarItem = { kind: 'connection' | 'project'; id: string }
   const items: SidebarItem[] = [
     ...connections.map((c): SidebarItem => ({ kind: 'connection', id: c.id })),
-    ...projects.map((p): SidebarItem => ({ kind: 'project', id: p.id }))
+    ...visibleProjects.map((p): SidebarItem => ({ kind: 'project', id: p.id }))
   ]
   if (items.length === 0) return
 
@@ -268,7 +286,10 @@ function cycleProject(direction: 1 | -1): void {
       state.worktreeOrderByProject,
       next.id
     )
-    if (ordered[0]) state.selectWorktree(ordered[0].id)
+    if (ordered[0]) {
+      state.selectWorktree(ordered[0].id)
+      useWorktreeStatusStore.getState().clearWorktreeUnread(ordered[0].id)
+    }
   })
 }
 
@@ -354,10 +375,16 @@ export function useKeyboardShortcuts(): void {
       // but allow Ctrl+Tab through for terminal tab cycling.
       const isXtermFocused = target.closest?.('.xterm') !== null
 
-      // Ctrl+[ is the Escape equivalent in terminals (and Vim). Never intercept
-      // it while the terminal is focused, even though meta-modifier bindings
-      // also match Ctrl on Windows/Linux.
-      if (isXtermFocused && event.ctrlKey && !event.metaKey && event.key === '[') {
+      // Ctrl+[ is the Escape equivalent in terminals (and Vim), and Ctrl+] is
+      // Vim's "jump to tag/definition". Never intercept them while the
+      // terminal is focused, even though meta-modifier bindings also match
+      // Ctrl on Windows/Linux.
+      if (
+        isXtermFocused &&
+        event.ctrlKey &&
+        !event.metaKey &&
+        (event.key === '[' || event.key === ']')
+      ) {
         return
       }
 
