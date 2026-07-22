@@ -125,6 +125,44 @@ function createNewSession(): void {
 }
 
 /**
+ * Cycles to the next/previous session tab in the current worktree or connection.
+ * Wraps around at the ends. Shared between session:next and session:previous shortcuts.
+ */
+function cycleSession(direction: 1 | -1): void {
+  const state = useSessionStore.getState()
+  const { activeSessionId, activeWorktreeId, activeConnectionId } = state
+
+  // Determine scope: connection mode when a connection is active and no worktree is
+  const isConnectionMode = !!activeConnectionId && !activeWorktreeId
+  const scopeId = isConnectionMode ? activeConnectionId : activeWorktreeId
+  if (!scopeId) return
+
+  const tabOrder = isConnectionMode
+    ? state.tabOrderByConnection.get(scopeId) || []
+    : state.tabOrderByWorktree.get(scopeId) || []
+  if (tabOrder.length < 2) return
+
+  const currentIndex = activeSessionId ? tabOrder.indexOf(activeSessionId) : -1
+  const nextIndex =
+    currentIndex === -1
+      ? direction === 1
+        ? 0
+        : tabOrder.length - 1
+      : (currentIndex + direction + tabOrder.length) % tabOrder.length
+  const nextSessionId = tabOrder[nextIndex]
+  if (!nextSessionId) return
+
+  // Leave any file/diff view so the session becomes visible
+  useFileViewerStore.getState().setActiveFile(null)
+  state.clearInlineConnectionSession()
+  if (isConnectionMode) {
+    state.setActiveConnectionSession(nextSessionId)
+  } else {
+    state.setActiveSession(nextSessionId)
+  }
+}
+
+/**
  * Checks whether any modal/dialog is currently open and closes it.
  * Returns `true` if a modal was closed, `false` otherwise.
  *
@@ -431,6 +469,22 @@ function getShortcutHandlers(
               toast.error(result.error || 'Failed to close session')
             }
           })
+      }
+    },
+    {
+      id: 'session:next',
+      binding: getEffectiveBinding('session:next'),
+      allowInInput: true,
+      handler: () => {
+        cycleSession(1)
+      }
+    },
+    {
+      id: 'session:previous',
+      binding: getEffectiveBinding('session:previous'),
+      allowInInput: true,
+      handler: () => {
+        cycleSession(-1)
       }
     },
     {

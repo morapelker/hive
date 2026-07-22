@@ -56,6 +56,20 @@ export const DEFAULT_SHORTCUTS: ShortcutDefinition[] = [
     defaultBinding: { key: 'Tab', modifiers: ['shift'] }
   },
   {
+    id: 'session:next',
+    label: 'Next Session',
+    description: 'Switch to the next session tab',
+    category: 'session',
+    defaultBinding: { key: ']', modifiers: ['meta'] }
+  },
+  {
+    id: 'session:previous',
+    label: 'Previous Session',
+    description: 'Switch to the previous session tab',
+    category: 'session',
+    defaultBinding: { key: '[', modifiers: ['meta'] }
+  },
+  {
     id: 'project:run',
     label: 'Run Project',
     description: 'Start or stop the project run script',
