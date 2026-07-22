@@ -1222,7 +1222,7 @@ export const useKanbanStore = create<KanbanState>()(
         await get().moveTicket(
           pending.ticketId,
           pending.projectId,
-          pending.targetColumn ?? 'done',
+          pending.targetColumn,
           pending.sortOrder
         )
       },

@@ -88,9 +88,15 @@ export function TicketPickerModal({
   const filteredTickets = useMemo(() => {
     let result = tickets
 
-    // Column filter (multi-select — show all if none selected)
+    // Column filter (multi-select — show all if none selected). When the
+    // Merged column is hidden, the board folds merged tickets into Done, so
+    // the Done filter must match them too (the Merged chip isn't shown).
     if (activeFilters.size > 0) {
-      result = result.filter((t) => activeFilters.has(t.column))
+      result = result.filter(
+        (t) =>
+          activeFilters.has(t.column) ||
+          (!showMergedColumn && t.column === 'merged' && activeFilters.has('done'))
+      )
     }
 
     // Search filter (case-insensitive by title)
@@ -100,7 +106,7 @@ export function TicketPickerModal({
     }
 
     return result
-  }, [tickets, activeFilters, searchQuery])
+  }, [tickets, activeFilters, searchQuery, showMergedColumn])
 
   // ── Handlers ────────────────────────────────────────────────────
   const toggleFilter = (column: KanbanTicketColumn) => {
