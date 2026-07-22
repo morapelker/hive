@@ -10,6 +10,7 @@ import {
 } from './codex-models'
 import { createLogger } from './logger'
 import { agentEventBus } from './agent-event-bus'
+import { scheduleSessionUsageReport } from './usage/session-usage-service'
 import { CodexAppServerManager, type CodexManagerEvent } from './codex-app-server-manager'
 import { mapCodexManagerEventToActivity } from './codex-activity-mapper'
 import { mapCodexEventToStreamEvents, contentStreamKindFromMethod } from './codex-event-mapper'
@@ -2519,6 +2520,9 @@ export class CodexImplementer implements AgentSdkImplementer {
       data: { status: statusPayload },
       statusPayload
     })
+    if (status === 'idle') {
+      scheduleSessionUsageReport(hiveSessionId, 'codex-idle')
+    }
   }
 
   // A goal-continuation turn is expected after this suppressed completion; if

@@ -10,6 +10,7 @@ import type { AgentSdkCapabilities, AgentSdkImplementer } from './agent-sdk-type
 import { CLAUDE_CODE_CAPABILITIES } from './agent-sdk-types'
 import type { DatabaseService } from '../db/database'
 import { readClaudeTranscript, translateEntry } from './claude-transcript-reader'
+import { scheduleSessionUsageReport } from './usage/session-usage-service'
 import { getUserEnvironmentVariables } from './env-vars'
 import { generateSessionTitle } from './claude-session-title'
 import { isUltracodeEffort, normalizeClaudeCliModel } from './claude-cli-spawner'
@@ -2450,6 +2451,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
 
     if (status === 'idle') {
       this.maybeNotifySessionComplete(hiveSessionId)
+      scheduleSessionUsageReport(hiveSessionId, 'claude-sdk-idle')
     }
   }
 
