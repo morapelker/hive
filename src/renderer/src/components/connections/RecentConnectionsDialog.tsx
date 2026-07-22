@@ -19,7 +19,7 @@ import {
   ContextMenuItem,
   ContextMenuTrigger
 } from '@/components/ui/context-menu'
-import { useConnectionStore } from '@/stores'
+import { useConnectionStore, useProjectStore } from '@/stores'
 import { connectionApi } from '@/api/connection-api'
 import { toast } from '@/lib/toast'
 import { formatRelativeTime } from '@/lib/format-utils'
@@ -39,6 +39,7 @@ export function RecentConnectionsDialog({
   onOpenChange
 }: RecentConnectionsDialogProps): React.JSX.Element {
   const quickCreateConnection = useConnectionStore((s) => s.quickCreateConnection)
+  const storeProjects = useProjectStore((s) => s.projects)
 
   const [entries, setEntries] = useState<RecentConnectionEntry[]>([])
   const [isLoading, setIsLoading] = useState(false)
@@ -89,16 +90,21 @@ export function RecentConnectionsDialog({
       })
   }, [open])
 
-  // Every project that appears in at least one recent connection
+  // Every project in the app (current name/path wins), plus any project that only
+  // survives inside a recent connection entry (e.g. since removed from the app) --
+  // so brand-new combinations are creatable, not just previously-used ones.
   const allProjects = useMemo(() => {
     const byId = new Map<string, RecentConnectionProject>()
+    for (const project of storeProjects) {
+      byId.set(project.id, { id: project.id, name: project.name, path: project.path })
+    }
     for (const entry of entries) {
       for (const project of entry.projects) {
         if (!byId.has(project.id)) byId.set(project.id, project)
       }
     }
     return Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name))
-  }, [entries])
+  }, [storeProjects, entries])
 
   // Same fuzzy matching + ranking as the sidebar project filter
   const filteredProjects = useMemo(() => {
@@ -443,13 +449,12 @@ export function RecentConnectionsDialog({
                 >
                   <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
                 </div>
-              ) : entries.length === 0 ? (
+              ) : entries.length === 0 && !showSelectionRow ? (
                 <div
                   className="px-4 py-8 text-center text-sm text-muted-foreground"
                   data-testid="recent-connections-empty"
                 >
-                  No recent connections yet. Create one by right-clicking a worktree and choosing
-                  Connect to…
+                  No recent connections yet. Select two or more projects on the left to create one.
                 </div>
               ) : displayEntries.length === 0 && !showSelectionRow ? (
                 <div

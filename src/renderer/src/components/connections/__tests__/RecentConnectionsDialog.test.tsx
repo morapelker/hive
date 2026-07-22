@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 
 import { RecentConnectionsDialog } from '../RecentConnectionsDialog'
 import { useConnectionStore } from '@/stores/useConnectionStore'
+import { useProjectStore } from '@/stores/useProjectStore'
 import type { RecentConnectionEntry } from '@shared/types/connection'
 
 vi.mock('@/api/connection-api', () => ({
@@ -40,6 +41,10 @@ const entries = [
   entry('e3', [beta, gamma])
 ]
 
+function setStoreProjects(projects: (typeof alpha)[]): void {
+  useProjectStore.setState({ projects } as never)
+}
+
 async function renderDialog(data: RecentConnectionEntry[] = entries): Promise<void> {
   vi.mocked(connectionApi.getRecentConnections).mockResolvedValue({
     success: true,
@@ -54,6 +59,7 @@ async function renderDialog(data: RecentConnectionEntry[] = entries): Promise<vo
 describe('RecentConnectionsDialog project filter panel', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    setStoreProjects([])
   })
 
   it('lists the unique projects from all entries in the project panel', async () => {
@@ -155,9 +161,68 @@ describe('RecentConnectionsDialog project filter panel', () => {
   })
 })
 
+describe('RecentConnectionsDialog all-projects panel', () => {
+  const delta = { id: 'proj-d', name: 'delta-cli', path: '/repo/delta-cli' }
+  const epsilon = { id: 'proj-e', name: 'epsilon-lib', path: '/repo/epsilon-lib' }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    setStoreProjects([])
+  })
+
+  it('lists app projects that appear in no recent connection', async () => {
+    setStoreProjects([alpha, delta])
+    await renderDialog()
+
+    const panel = screen.getByTestId('recent-connections-project-list')
+    expect(within(panel).getByText('delta-cli')).toBeInTheDocument()
+    // Entry-only projects remain listed alongside store projects, deduped
+    expect(within(panel).getAllByText('alpha-service')).toHaveLength(1)
+    expect(within(panel).getByText('beta-web')).toBeInTheDocument()
+  })
+
+  it('prefers the current app name over the recorded entry snapshot', async () => {
+    setStoreProjects([{ ...alpha, name: 'alpha-renamed' }])
+    await renderDialog()
+
+    const panel = screen.getByTestId('recent-connections-project-list')
+    expect(within(panel).getByText('alpha-renamed')).toBeInTheDocument()
+    expect(within(panel).queryByText('alpha-service')).not.toBeInTheDocument()
+  })
+
+  it('creates a connection from app projects never used together before', async () => {
+    const quickCreateConnection = vi.fn().mockResolvedValue('conn-2')
+    useConnectionStore.setState({ quickCreateConnection } as never)
+    setStoreProjects([delta, epsilon])
+    await renderDialog([])
+
+    await userEvent.click(screen.getByTestId('recent-connections-project-option-proj-d'))
+    await userEvent.click(screen.getByTestId('recent-connections-project-option-proj-e'))
+
+    // The zero-entries empty state must not hide the synthetic selection row
+    expect(screen.queryByTestId('recent-connections-empty')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('recent-connection-row-selected-combo'))
+    await userEvent.click(screen.getByTestId('recent-connections-create-button'))
+
+    await waitFor(() => expect(quickCreateConnection).toHaveBeenCalledWith([delta, epsilon]))
+  })
+
+  it('filters store projects with the same fuzzy matching as the sidebar', async () => {
+    setStoreProjects([delta, epsilon])
+    await renderDialog([])
+
+    await userEvent.type(screen.getByTestId('recent-connections-project-filter'), 'dcli')
+
+    const panel = screen.getByTestId('recent-connections-project-list')
+    expect(within(panel).getByText('delta-cli')).toBeInTheDocument()
+    expect(within(panel).queryByText('epsilon-lib')).not.toBeInTheDocument()
+  })
+})
+
 describe('RecentConnectionsDialog pinned selection row', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    setStoreProjects([])
   })
 
   it('does not show the selection row with fewer than 2 projects selected', async () => {
