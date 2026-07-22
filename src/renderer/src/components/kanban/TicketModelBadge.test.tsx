@@ -1,11 +1,11 @@
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TicketModelBadge } from './TicketModelBadge'
 import { cacheHandoffModelCatalog, clearHandoffModelCatalogCache } from '@/lib/handoffSelection'
 
 describe('TicketModelBadge', () => {
   afterEach(() => {
-    clearHandoffModelCatalogCache()
+    act(() => clearHandoffModelCatalogCache())
     vi.restoreAllMocks()
   })
 
@@ -102,6 +102,33 @@ describe('TicketModelBadge', () => {
 
     expect(screen.getByText('Claude Opus 4.5')).toBeInTheDocument()
     expect(screen.getByTitle('Claude Opus 4.5')).toBeInTheDocument()
+  })
+
+  it('upgrades an already-rendered raw slug once a catalog lands in the cache', () => {
+    render(
+      <TicketModelBadge
+        ticket={{ model_provider_id: 'anthropic', model_id: 'opus', model_variant: null }}
+      />
+    )
+
+    expect(screen.getByText('opus')).toBeInTheDocument()
+
+    act(() => {
+      cacheHandoffModelCatalog('claude-code', {
+        providers: [
+          {
+            id: 'anthropic',
+            name: 'Anthropic',
+            models: {
+              opus: { id: 'opus', name: 'Claude Opus 4.5' }
+            }
+          }
+        ]
+      })
+    })
+
+    expect(screen.queryByText('opus')).toBeNull()
+    expect(screen.getByText('Claude Opus 4.5')).toBeInTheDocument()
   })
 
   it('gives the chip a violet border for an ultracode launch', () => {
