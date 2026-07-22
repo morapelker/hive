@@ -67,6 +67,7 @@ const COLUMN_TITLES: Record<ColumnType, string> = {
   todo: 'To Do',
   in_progress: 'In Progress',
   review: 'Review',
+  merged: 'Merged',
   done: 'Done'
 }
 
@@ -203,8 +204,11 @@ export function KanbanColumn({
   const shortTextMeasureRef = useRef<HTMLSpanElement>(null)
 
   const isDoneColumn = column === 'done'
+  const isMergedColumn = column === 'merged'
   const isTodoColumn = column === 'todo'
   const isInProgressColumn = column === 'in_progress'
+  // Done and Merged share date-sorted behavior (no manual reordering)
+  const isDateSortedColumn = isDoneColumn || isMergedColumn
   const isMultiProjectMode = !!connectionId || !!isPinnedMode
 
   // ── Multi-project helpers ─────────────────────────────────────────
@@ -400,10 +404,10 @@ export function KanbanColumn({
 
   const handleDragOver = useCallback(
     (e: React.DragEvent) => {
-      // Done is date-sorted (newest first): reordering within it is disabled,
+      // Done/Merged are date-sorted (newest first): reordering within them is disabled,
       // and cross-column drops always land at the top regardless of cursor position
-      if (isDoneColumn) {
-        if (getKanbanDragData()?.sourceColumn === 'done') return
+      if (isDateSortedColumn) {
+        if (getKanbanDragData()?.sourceColumn === column) return
         e.preventDefault()
         e.dataTransfer.dropEffect = 'move'
         setIsDragOver(true)
@@ -433,7 +437,7 @@ export function KanbanColumn({
       dropIndexRef.current = index
       setDropIndex(index)
     },
-    [tickets.length, isDoneColumn]
+    [tickets.length, isDateSortedColumn, column]
   )
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
@@ -524,8 +528,8 @@ export function KanbanColumn({
           }
         }
 
-        // Merge-on-done: intercept drops to Done for feature-branch worktrees
-        if (column === 'done') {
+        // Merge-on-done: intercept drops to Done/Merged for feature-branch worktrees
+        if (column === 'done' || column === 'merged') {
           const draggedTicket = findTicket(ticketId, ticketProjectId)
           if (draggedTicket?.worktree_id) {
             try {
@@ -566,7 +570,12 @@ export function KanbanColumn({
                         projectTicketsForColumn(ticketProjectId),
                         projectLocalDropIndex(ticketProjectId, targetIndex)
                       )
-                      store.setPendingDoneMove({ ticketId, projectId: ticketProjectId, sortOrder })
+                      store.setPendingDoneMove({
+                        ticketId,
+                        projectId: ticketProjectId,
+                        sortOrder,
+                        targetColumn: column
+                      })
                       return
                     }
                   }
@@ -597,8 +606,8 @@ export function KanbanColumn({
         }
       } else {
         // ── Same-column reorder ───────────────────────────────
-        // Done is always date-sorted — manual reordering is disabled
-        if (isDoneColumn) return
+        // Done/Merged are always date-sorted — manual reordering is disabled
+        if (isDateSortedColumn) return
         const ticketProjectId = findTicketProjectId(ticketId, draggedProjectId)
         const draggedKey = ticketKey(ticketProjectId, ticketId)
         const projectTickets = projectTicketsForColumn(ticketProjectId)
@@ -622,7 +631,7 @@ export function KanbanColumn({
       tickets.length,
       isInProgressColumn,
       isTodoColumn,
-      isDoneColumn,
+      isDateSortedColumn,
       isMultiProjectMode,
       projectId,
       findTicketProjectId,

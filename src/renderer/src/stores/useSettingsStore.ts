@@ -86,6 +86,8 @@ export interface AppSettings {
   autoPinBaseWorktreeOnBoardPrompt: boolean
   /** Auto-create a kanban ticket on the first message of a manually-created session. */
   automaticallyCreateTicket: boolean
+  /** Show the optional Merged column on the board between Review and Done. */
+  showMergedColumn: boolean
 
   // Editor
   defaultEditor: EditorOption
@@ -212,6 +214,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   followUpTriggerColumn: 'done',
   autoPinBaseWorktreeOnBoardPrompt: false,
   automaticallyCreateTicket: false,
+  showMergedColumn: false,
   defaultEditor: 'vscode',
   customEditorCommand: '',
   defaultTerminal: 'terminal',
@@ -438,6 +441,7 @@ function extractSettings(state: SettingsState): AppSettings {
     followUpTriggerColumn: state.followUpTriggerColumn,
     autoPinBaseWorktreeOnBoardPrompt: state.autoPinBaseWorktreeOnBoardPrompt,
     automaticallyCreateTicket: state.automaticallyCreateTicket,
+    showMergedColumn: state.showMergedColumn,
     defaultEditor: state.defaultEditor,
     customEditorCommand: state.customEditorCommand,
     defaultTerminal: state.defaultTerminal,
@@ -805,6 +809,7 @@ export const useSettingsStore = create<SettingsState>()(
         followUpTriggerColumn: state.followUpTriggerColumn,
         autoPinBaseWorktreeOnBoardPrompt: state.autoPinBaseWorktreeOnBoardPrompt,
         automaticallyCreateTicket: state.automaticallyCreateTicket,
+        showMergedColumn: state.showMergedColumn,
         defaultEditor: state.defaultEditor,
         customEditorCommand: state.customEditorCommand,
         defaultTerminal: state.defaultTerminal,

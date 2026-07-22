@@ -527,10 +527,11 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     (isBusy || isAsking) && ticket.column === 'in_progress'
   )
 
-  // Accumulated total for done column
-  const doneTokenText = ticket.column === 'done' && ticket.total_tokens > 0
-    ? formatTokenCount(ticket.total_tokens)
-    : null
+  // Accumulated total for done/merged columns
+  const doneTokenText =
+    (ticket.column === 'done' || ticket.column === 'merged') && ticket.total_tokens > 0
+      ? formatTokenCount(ticket.total_tokens)
+      : null
 
   // Per-turn delta for active columns (unchanged)
   const turnTokenText = useSessionTokenDelta(

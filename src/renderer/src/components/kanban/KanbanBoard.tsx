@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { LayoutGroup, motion } from 'motion/react'
 import { Pin } from 'lucide-react'
 import { parseTicketKey, ticketKey, useKanbanStore } from '@/stores/useKanbanStore'
+import { useSettingsStore } from '@/stores/useSettingsStore'
 import { usePinnedStore } from '@/stores/usePinnedStore'
 import { useBoardChatStore } from '@/stores/useBoardChatStore'
 import { useSessionStore } from '@/stores/useSessionStore'
@@ -15,6 +16,10 @@ import { cardOccurrenceKeys } from '@/components/kanban/kanban-card-identity'
 import type { KanbanTicketColumn } from '../../../../main/db/types'
 
 const COLUMNS: KanbanTicketColumn[] = ['todo', 'in_progress', 'review', 'done']
+const COLUMNS_WITH_MERGED: KanbanTicketColumn[] = ['todo', 'in_progress', 'review', 'merged', 'done']
+
+const byUpdatedAtDesc = (a: { updated_at: string }, b: { updated_at: string }): number =>
+  b.updated_at.localeCompare(a.updated_at)
 
 interface KanbanBoardProps {
   projectId?: string
@@ -44,6 +49,7 @@ export function KanbanBoard({ projectId, connectionId, isPinnedMode }: KanbanBoa
     if (state.activeScopeKey === key) return state.status
     return state.snapshots[key]?.status ?? 'idle'
   })
+  const showMergedColumn = useSettingsStore((state) => state.showMergedColumn)
   const boardAssistantByProject = useSessionStore((state) => state.boardAssistantByProject)
   const createBoardAssistantSession = useSessionStore((s) => s.createBoardAssistantSession)
   const focusBoardAssistantSession = useSessionStore((s) => s.focusBoardAssistantSession)
@@ -346,14 +352,25 @@ export function KanbanBoard({ projectId, connectionId, isPinnedMode }: KanbanBoa
           >
             {(() => {
               const occurrenceCounts = new Map<string, number>()
-              return COLUMNS.map((column) => {
-                const tickets = isPinnedMode
+              const ticketsFor = (column: KanbanTicketColumn): ReturnType<typeof getTicketsByColumn> =>
+                isPinnedMode
                   ? getTicketsByColumnForPinned(column)
                   : isConnectionMode
                     ? getTicketsByColumnForConnection(connectionId, column)
                     : projectId
                       ? getTicketsByColumn(projectId, column)
                       : []
+              return (showMergedColumn ? COLUMNS_WITH_MERGED : COLUMNS).map((column) => {
+                let tickets = ticketsFor(column)
+
+                // When the Merged column is hidden, fold merged tickets into
+                // Done so they never disappear from the board
+                if (column === 'done' && !showMergedColumn) {
+                  const mergedTickets = ticketsFor('merged')
+                  if (mergedTickets.length > 0) {
+                    tickets = [...tickets, ...mergedTickets].sort(byUpdatedAtDesc)
+                  }
+                }
 
                 const archivedTickets = column === 'done'
                   ? isPinnedMode

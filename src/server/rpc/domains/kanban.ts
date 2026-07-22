@@ -201,7 +201,7 @@ export interface KanbanRpcService {
   ) => Effect.Effect<{ success: boolean; error?: string }, unknown, never>
 }
 
-const ticketColumnSchema = z.enum(['todo', 'in_progress', 'review', 'done'])
+const ticketColumnSchema = z.enum(['todo', 'in_progress', 'review', 'merged', 'done'])
 const sessionModeSchema = z.enum(['build', 'plan', 'super-plan'])
 const ticketMarkSchema = z.enum(['common', 'rare', 'epic', 'legendary'])
 

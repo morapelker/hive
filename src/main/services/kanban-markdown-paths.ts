@@ -96,6 +96,7 @@ export async function configuredFolders(
           config.statusFolders.todo,
           config.statusFolders.in_progress,
           config.statusFolders.review,
+          ...(config.statusFolders.merged ? [config.statusFolders.merged] : []),
           config.statusFolders.done
         ]
   const folders = paths.map((folder) => resolveProjectPath(project.path, folder))
@@ -113,7 +114,8 @@ export async function ensureFolder(
   const folder =
     config.layout === 'single-folder'
       ? config.singleFolder
-      : config.statusFolders[column]
+      : // merged has no dedicated folder unless configured — fall back to done
+        (config.statusFolders[column] ?? config.statusFolders.done)
   const resolved = resolveProjectPath(project.path, folder)
   await mkdir(resolved, { recursive: true })
   return resolved

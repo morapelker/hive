@@ -45,7 +45,7 @@ export interface BackupTicket {
   key: string // stable export-time key t1..tN for dependency edges
   title: string
   description: string | null
-  column: 'todo' | 'in_progress' | 'review' | 'done'
+  column: 'todo' | 'in_progress' | 'review' | 'merged' | 'done'
   sort_order: number
   mode: 'build' | 'plan' | 'super-plan' | null
   mark: string | null // 'common'|'rare'|'epic'|'legendary'

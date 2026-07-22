@@ -2990,7 +2990,7 @@ function ReviewModeContent({
   moveTicket: (
     ticketId: string,
     projectId: string,
-    column: 'todo' | 'in_progress' | 'review' | 'done',
+    column: 'todo' | 'in_progress' | 'review' | 'merged' | 'done',
     sortOrder: number
   ) => Promise<void>
   updateTicket: (ticketId: string, projectId: string, data: KanbanTicketUpdate) => Promise<void>
@@ -3317,7 +3317,8 @@ function ReviewModeContent({
             kanbanStore.setPendingDoneMove({
               ticketId: ticket.id,
               projectId: ticket.project_id,
-              sortOrder
+              sortOrder,
+              targetColumn: 'done'
             })
             return
           }

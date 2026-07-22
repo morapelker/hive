@@ -68,7 +68,13 @@ const HIVE_FRONTMATTER_FIELDS = new Set([
 ])
 
 const CARD_FILE_SIZE_LIMIT_BYTES = 1024 * 1024
-const VALID_COLUMNS = new Set<KanbanTicketColumn>(['todo', 'in_progress', 'review', 'done'])
+const VALID_COLUMNS = new Set<KanbanTicketColumn>([
+  'todo',
+  'in_progress',
+  'review',
+  'merged',
+  'done'
+])
 const VALID_MODES = new Set(['build', 'plan', 'super-plan'])
 const VALID_MARKS = new Set(['common', 'rare', 'epic', 'legendary'])
 
@@ -2126,7 +2132,7 @@ async function planSingleFolderToStatusFolders(
       const id = asString(parsed.frontmatter.id)
       validateKnownFrontmatter(parsed.frontmatter, id)
       const column = asColumn(parsed.frontmatter.column) ?? 'todo'
-      const targetFolder = nextConfig.statusFolders[column]
+      const targetFolder = nextConfig.statusFolders[column] ?? nextConfig.statusFolders.done
       moves.push({
         source,
         target: join(resolveProjectPath(project.path, targetFolder), entry.name)
@@ -2318,7 +2324,7 @@ function validateKnownFrontmatter(frontmatter: Frontmatter, ticketId: string | n
   if ('id' in frontmatter && !asString(frontmatter.id)) invalid('id', 'a non-empty string')
   if ('title' in frontmatter && !asString(frontmatter.title)) invalid('title', 'a non-empty string')
   if ('column' in frontmatter && !asColumn(frontmatter.column)) {
-    invalid('column', 'todo, in_progress, review, or done')
+    invalid('column', 'todo, in_progress, review, merged, or done')
   }
   if ('mode' in frontmatter && frontmatter.mode !== null && !asMode(frontmatter.mode)) {
     invalid('mode', 'build, plan, super-plan, or null')
