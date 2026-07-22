@@ -672,6 +672,19 @@ function getShortcutHandlers(
     },
 
     {
+      id: 'nav:toggle-project-expand',
+      binding: getEffectiveBinding('nav:toggle-project-expand'),
+      allowInInput: true,
+      handler: () => {
+        const { selectedProjectId, toggleProjectExpanded } = useProjectStore.getState()
+        if (!selectedProjectId) return
+        // Ensure the sidebar is visible so the toggle has a visible effect
+        const { leftSidebarCollapsed, setLeftSidebarCollapsed } = useLayoutStore.getState()
+        if (leftSidebarCollapsed) setLeftSidebarCollapsed(false)
+        toggleProjectExpanded(selectedProjectId)
+      }
+    },
+    {
       id: 'nav:next-worktree',
       binding: getEffectiveBinding('nav:next-worktree'),
       allowInInput: true,

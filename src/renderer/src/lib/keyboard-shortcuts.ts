@@ -114,6 +114,13 @@ export const DEFAULT_SHORTCUTS: ShortcutDefinition[] = [
     defaultBinding: { key: '[', modifiers: ['meta', 'alt'] }
   },
   {
+    id: 'nav:toggle-project-expand',
+    label: 'Expand/Collapse Project',
+    description: 'Expand or collapse the selected project in the sidebar',
+    category: 'navigation',
+    defaultBinding: { key: 'e', modifiers: ['meta', 'shift'] }
+  },
+  {
     id: 'nav:file-search',
     label: 'Search Files',
     description: 'Open the file search dialog',
