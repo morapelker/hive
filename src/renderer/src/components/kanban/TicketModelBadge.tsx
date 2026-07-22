@@ -1,6 +1,6 @@
 import { resolveModelIconAsset } from '@/components/worktrees/ModelIcon'
 import { getAvailableHandoffAgentSdks, getCachedModelCatalog } from '@/lib/handoffSelection'
-import { findModelInfo, getModelDisplayName } from '@/lib/parseProviders'
+import { findModelInfo, getModelDisplayName, isUltraVariant } from '@/lib/parseProviders'
 import { cn } from '@/lib/utils'
 import type { KanbanTicket } from '../../../../main/db/types'
 
@@ -38,7 +38,8 @@ export function TicketModelBadge({
     <span
       title={title}
       className={cn(
-        'inline-flex items-center gap-1 rounded-full bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground',
+        'inline-flex items-center gap-1 rounded-full border border-transparent bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground',
+        isUltraVariant(variant) && 'border-violet-500/60',
         className
       )}
     >

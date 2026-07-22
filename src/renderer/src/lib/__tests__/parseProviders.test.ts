@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { getVariantKeysForSdk, ULTRACODE_VARIANT } from '../parseProviders'
+import { getVariantKeysForSdk, isUltraVariant, ULTRACODE_VARIANT } from '../parseProviders'
 
 // Opus/Fable-tier models expose xhigh/max; Sonnet/Haiku cap at high.
 const opusLike = { variants: { low: {}, medium: {}, high: {}, xhigh: {}, max: {} } }
@@ -28,5 +28,19 @@ describe('getVariantKeysForSdk', () => {
 
   it('returns base variant keys unchanged when the model has no variants', () => {
     expect(getVariantKeysForSdk({}, 'claude-code-cli')).toEqual([])
+  })
+})
+
+describe('isUltraVariant', () => {
+  it('is true for the claude ultracode and codex ultra variants', () => {
+    expect(isUltraVariant(ULTRACODE_VARIANT)).toBe(true)
+    expect(isUltraVariant('ultra')).toBe(true)
+  })
+
+  it('is false for ordinary efforts and missing variants', () => {
+    expect(isUltraVariant('xhigh')).toBe(false)
+    expect(isUltraVariant('max')).toBe(false)
+    expect(isUltraVariant(null)).toBe(false)
+    expect(isUltraVariant(undefined)).toBe(false)
   })
 })
