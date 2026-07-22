@@ -252,6 +252,89 @@ describe('useAccountScheduleStore auto-switch', () => {
     expect(useAccountScheduleStore.getState().autoSwitch.anthropic).toBeUndefined()
   })
 
+  it('cools down after a successful switch so a lagging active-usage refresh cannot cause churn', async () => {
+    useAccountScheduleStore.getState().setAutoSwitch('anthropic', 90)
+
+    await useAccountScheduleStore.getState().checkSchedules()
+    expect(switchCalls()).toHaveLength(1)
+    expect(useAccountScheduleStore.getState().autoSwitch.anthropic?.notBefore).toBe(
+      Date.now() + 5 * 60_000
+    )
+
+    // The active usage still reads the OLD account's 92% (its refresh failed
+    // or is slow) — the cooldown must prevent an immediate second hop.
+    await useAccountScheduleStore.getState().checkSchedules()
+    expect(switchCalls()).toHaveLength(1)
+  })
+
+  it('does not sweep or switch while the active account cannot be identified', async () => {
+    useAccountStore.setState({ anthropicEmail: null, openaiEmail: null })
+    request.mockImplementation(async (method: string) => {
+      if (method === 'usageOps.refreshAllForProvider') return refreshResults
+      if (method === 'accountOps.listSaved') return refreshedAccounts
+      if (method === 'accountOps.switchAccount') return { success: true }
+      if (method === 'accountOps.getClaudeEmail') return null
+      return null
+    })
+    useAccountScheduleStore.getState().setAutoSwitch('anthropic', 90)
+
+    await useAccountScheduleStore.getState().checkSchedules()
+
+    // It tried to resolve the email, then gave up without touching accounts.
+    expect(calls('accountOps.getClaudeEmail').length).toBeGreaterThan(0)
+    expect(refreshAllCalls()).toHaveLength(0)
+    expect(switchCalls()).toHaveLength(0)
+    expect(useAccountScheduleStore.getState().autoSwitch.anthropic?.notBefore).toBe(
+      Date.now() + 5 * 60_000
+    )
+  })
+
+  it('recovers by fetching the email when the account store has none yet', async () => {
+    useAccountStore.setState({ anthropicEmail: null, openaiEmail: null })
+    request.mockImplementation(async (method: string) => {
+      if (method === 'usageOps.refreshAllForProvider') return refreshResults
+      if (method === 'accountOps.listSaved') return refreshedAccounts
+      if (method === 'accountOps.switchAccount') return { success: true }
+      if (method === 'accountOps.getClaudeEmail') return 'current@x.com'
+      if (method === 'usageOps.fetch') return { success: true, data: undefined }
+      return null
+    })
+    useAccountScheduleStore.getState().setAutoSwitch('anthropic', 90)
+
+    await useAccountScheduleStore.getState().checkSchedules()
+
+    expect(switchCalls()).toHaveLength(1)
+    expect(switchCalls()[0][1]).toEqual({ accountId: 'acc-2' })
+  })
+
+  it('never picks an account whose refreshed windows are all already expired', async () => {
+    const pastReset = new Date(Date.now() - 3_600_000).toISOString()
+    // acc-2 would win on score (expired windows read as full headroom), but
+    // its live usage is unknown — the pick must fall to acc-3.
+    refreshedAccounts = [
+      makeAccount('acc-1', 'current@x.com', makeUsage(0, 0)),
+      {
+        ...makeAccount('acc-2', 'best@x.com', null),
+        last_usage: {
+          five_hour: { utilization: 10, resets_at: pastReset },
+          seven_day: { utilization: 10, resets_at: pastReset }
+        }
+      },
+      makeAccount('acc-3', 'meh@x.com', makeUsage(60, 50))
+    ]
+    refreshResults = [
+      { accountId: 'acc-1', success: true },
+      { accountId: 'acc-2', success: true },
+      { accountId: 'acc-3', success: true }
+    ]
+    useAccountScheduleStore.getState().setAutoSwitch('anthropic', 90)
+
+    await useAccountScheduleStore.getState().checkSchedules()
+
+    expect(switchCalls()).toHaveLength(1)
+    expect(switchCalls()[0][1]).toEqual({ accountId: 'acc-3' })
+  })
+
   it('skips the round without backing off when a refresh sweep is already running', async () => {
     useUsageStore.setState({ refreshingProviders: { anthropic: true, openai: false } })
     useAccountScheduleStore.getState().setAutoSwitch('anthropic', 90)

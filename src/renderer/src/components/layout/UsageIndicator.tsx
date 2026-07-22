@@ -538,6 +538,7 @@ function ProviderUsagePopoverBody({ provider }: { provider: UsageProvider }): Re
   )
   const startLogin = useLoginStore((s) => s.startLogin)
   const isLoginActive = useLoginStore((s) => s.activeLogin !== null)
+  const autoSwitchArmed = useAccountScheduleStore((s) => s.autoSwitch[provider] !== undefined)
   const telemetryEnabled = useSettingsStore((s) => isHiveTelemetryEnabled(s))
   const {
     membersByAccount,
@@ -601,7 +602,9 @@ function ProviderUsagePopoverBody({ provider }: { provider: UsageProvider }): Re
   return (
     <div className="space-y-2">
       <div className="font-medium">{PROVIDER_META[provider].title}</div>
-      {savedAccounts.length > 1 && <AutoSwitchControls provider={provider} />}
+      {/* Armed state must always expose its own off switch — even when the
+          account list has shrunk below what auto-switch needs to operate. */}
+      {(savedAccounts.length > 1 || autoSwitchArmed) && <AutoSwitchControls provider={provider} />}
       {savedAccountLoadError && (
         <div className="rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1 text-[10px] text-destructive">
           Saved accounts unavailable: {savedAccountLoadError}

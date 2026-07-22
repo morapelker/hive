@@ -767,6 +767,27 @@ describe('ProviderUsageBlock provider toggle', () => {
     expect(screen.getByTestId('auto-switch-controls')).toBeTruthy()
   })
 
+  it('keeps the auto-switch controls visible while armed even with fewer than two accounts', async () => {
+    // Armed, then the alternate account disappears (removed or load failure):
+    // the only control that can disarm must not vanish with it.
+    const user = userEvent.setup()
+    useAccountScheduleStore.setState({
+      schedules: {},
+      autoSwitch: {
+        openai: { provider: 'openai', thresholdPercent: 90, createdAt: Date.now() }
+      }
+    })
+
+    render(
+      <ProviderUsageBlock provider="openai" isExplicitlySelected toggleProviders={['openai']} />
+    )
+
+    await user.hover(screen.getByTestId('usage-trigger-openai'))
+    await screen.findByText('OpenAI API Usage')
+    expect(screen.getByTestId('auto-switch-controls')).toBeTruthy()
+    useAccountScheduleStore.setState({ schedules: {}, autoSwitch: {} })
+  })
+
   it('hides the auto-switch controls when only one account is saved', async () => {
     const user = userEvent.setup()
     useAccountScheduleStore.setState({ schedules: {}, autoSwitch: {} })

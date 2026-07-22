@@ -229,6 +229,23 @@ export const useAccountScheduleStore = create<AccountScheduleState>()(
 
             executingProviders.add(provider)
             try {
+              // Without knowing which account is active we can't exclude it
+              // from the candidate pool (risking a pointless self-switch) —
+              // resolve the email first, fetching it if the store has none.
+              let activeEmail = activeEmailFor(provider)
+              if (activeEmail === null) {
+                await useAccountStore
+                  .getState()
+                  .fetchEmail(provider)
+                  .catch(() => {})
+                activeEmail = activeEmailFor(provider)
+              }
+              if (activeEmail === null) {
+                toast.error('Auto-switch: could not identify the active account')
+                backOff()
+                continue
+              }
+
               // Refresh every saved account so the pick is based on live
               // numbers — and so we know which fetches actually succeeded.
               let results: RefreshAllResultItem[] | null = null
@@ -255,22 +272,23 @@ export const useAccountScheduleStore = create<AccountScheduleState>()(
               const succeededIds = new Set(
                 results.filter((r) => r.success).map((r) => r.accountId)
               )
-              const activeEmail = activeEmailFor(provider)
               const now = Date.now()
               // Eligible: the refresh succeeded, the token is valid, it's not
-              // the account we're leaving, and it isn't itself at/over the
+              // the account we're leaving, its windows carry CURRENT data
+              // (all-expired resets right after a refresh means its live usage
+              // is unknown, not zero), and it isn't itself at/over the
               // threshold (hopping there would immediately re-trigger).
               const candidates = useUsageStore
                 .getState()
                 .savedAccounts[provider].filter(
-                  (a) =>
-                    succeededIds.has(a.id) &&
-                    a.status === 'ok' &&
-                    (activeEmail === null || a.email !== activeEmail)
+                  (a) => succeededIds.has(a.id) && a.status === 'ok' && a.email !== activeEmail
                 )
                 .map((a) => ({ account: a, usage: savedAccountUsage(provider, a) }))
                 .filter((c): c is { account: SavedAccountDTO; usage: UsageData } => c.usage !== null)
-                .filter((c) => (getMaxUsagePercent(c.usage, now) ?? 0) < latest.thresholdPercent)
+                .filter((c) => {
+                  const maxPercent = getMaxUsagePercent(c.usage, now)
+                  return maxPercent !== null && maxPercent < latest.thresholdPercent
+                })
 
               if (candidates.length === 0) {
                 toast.error(
@@ -290,11 +308,15 @@ export const useAccountScheduleStore = create<AccountScheduleState>()(
                 }
               }
 
-              // switchAccount toasts success/failure itself. Success keeps the
-              // mode armed for the next crossing; failure backs off so a
-              // persistent problem doesn't retry (and toast) on every tick.
-              const switched = await useUsageStore.getState().switchAccount(best.account.id)
-              if (!switched) backOff()
+              // switchAccount toasts success/failure itself, and the mode
+              // stays armed either way. Both outcomes pause re-evaluation:
+              // on failure so a persistent problem doesn't retry (and toast)
+              // every tick, and on success because the active-usage slot
+              // still holds the PREVIOUS account's numbers until the
+              // post-switch refresh lands — without the pause, a failed or
+              // slow refresh would re-trigger next tick and hop again.
+              await useUsageStore.getState().switchAccount(best.account.id)
+              backOff()
             } finally {
               executingProviders.delete(provider)
             }
