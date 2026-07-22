@@ -18,7 +18,7 @@ const TIME_PRESETS = [
   { label: '4h', ms: 4 * 60 * 60_000 }
 ]
 
-const USAGE_PRESETS = [50, 70, 90]
+const USAGE_PRESETS = [90, 95, 98]
 
 const presetButtonClass =
   'rounded-sm border border-border/60 px-1.5 py-0.5 text-[9px] font-medium text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground'
