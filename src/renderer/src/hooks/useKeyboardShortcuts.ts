@@ -192,7 +192,9 @@ function cycleSession(direction: 1 | -1): void {
   if (!next) return
 
   if (next.inlineConnection) {
-    // Sticky connection tab viewed inline in worktree mode
+    // Sticky connection tab viewed inline in worktree mode. Also clear any
+    // Board Assistant focus, which otherwise renders above inline sessions.
+    state.clearBoardAssistantFocus()
     state.setInlineConnectionSession(next.sessionId)
   } else {
     state.clearInlineConnectionSession()
@@ -202,8 +204,12 @@ function cycleSession(direction: 1 | -1): void {
       state.setActiveSession(next.sessionId)
     }
   }
-  // Match tab-click behavior: viewing the session clears its unread badge
-  useWorktreeStatusStore.getState().clearSessionStatus(next.sessionId)
+  // Match tab-click behavior: clear only the unread badge, preserving live
+  // statuses (working/planning/answering/permission) that still need action
+  const statusStore = useWorktreeStatusStore.getState()
+  if (statusStore.sessionStatuses[next.sessionId]?.status === 'unread') {
+    statusStore.clearSessionStatus(next.sessionId)
+  }
 }
 
 /**
