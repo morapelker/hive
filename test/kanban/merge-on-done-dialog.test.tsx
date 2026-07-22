@@ -202,7 +202,8 @@ describe('MergeOnDoneDialog', () => {
       pendingDoneMove: {
         ticketId: 'ticket-1',
         projectId: 'project-1',
-        sortOrder: 100
+        sortOrder: 100,
+        targetColumn: 'done' as const
       }
     })
     useGitStore.setState({ conflictsByWorktree: {} })
@@ -361,7 +362,8 @@ describe('MergeOnDoneDialog', () => {
         pendingDoneMove: {
           ticketId: 'ticket-2',
           projectId: 'project-1',
-          sortOrder: 200
+          sortOrder: 200,
+          targetColumn: 'done' as const
         }
       })
     })

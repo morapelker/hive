@@ -33,6 +33,8 @@ export type KanbanMarkdownConfig =
         todo: string
         in_progress: string
         review: string
+        /** Optional — merged cards fall back to the done folder when unset. */
+        merged?: string
         done: string
       }
     }
@@ -43,6 +45,8 @@ export type KanbanMarkdownConfig =
         todo: string
         in_progress: string
         review: string
+        /** Optional — merged cards fall back to the done folder when unset. */
+        merged?: string
         done: string
       }
     }
@@ -489,7 +493,7 @@ export interface SessionSearchOptions {
 }
 
 // Kanban ticket types
-export type KanbanTicketColumn = 'todo' | 'in_progress' | 'review' | 'done'
+export type KanbanTicketColumn = 'todo' | 'in_progress' | 'review' | 'merged' | 'done'
 export type TicketMark = 'common' | 'rare' | 'epic' | 'legendary'
 
 export interface KanbanTicket {

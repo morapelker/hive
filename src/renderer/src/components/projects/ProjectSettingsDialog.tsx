@@ -48,12 +48,12 @@ type MarkdownConfig =
   | {
       layout: 'single-folder'
       singleFolder: string
-      statusFolders?: { todo: string; in_progress: string; review: string; done: string }
+      statusFolders?: { todo: string; in_progress: string; review: string; merged?: string; done: string }
     }
   | {
       layout: 'status-folders'
       singleFolder?: string
-      statusFolders: { todo: string; in_progress: string; review: string; done: string }
+      statusFolders: { todo: string; in_progress: string; review: string; merged?: string; done: string }
     }
 
 const DEFAULT_MARKDOWN_FOLDERS = {
@@ -99,6 +99,8 @@ export function ProjectSettingsDialog({
   const [inProgressFolder, setInProgressFolder] = useState('docs/kanban/in-progress')
   const [reviewFolder, setReviewFolder] = useState('docs/kanban/review')
   const [doneFolder, setDoneFolder] = useState('docs/kanban/done')
+  // Optional Merged-column folder — no UI input yet; preserved across saves
+  const [mergedFolder, setMergedFolder] = useState<string | undefined>(undefined)
   const [kanbanConfigError, setKanbanConfigError] = useState<string | null>(null)
   const [canCreateKanbanFolders, setCanCreateKanbanFolders] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -167,6 +169,7 @@ export function ProjectSettingsDialog({
         )
         setReviewFolder(folderOrDefault(statusFolders.review, DEFAULT_MARKDOWN_FOLDERS.review))
         setDoneFolder(folderOrDefault(statusFolders.done, DEFAULT_MARKDOWN_FOLDERS.done))
+        setMergedFolder(statusFolders.merged?.trim() ? statusFolders.merged : undefined)
       })
       .catch(() => {
         if (cancelled) return
@@ -270,6 +273,7 @@ export function ProjectSettingsDialog({
             todo: folderOrDefault(todoFolder, DEFAULT_MARKDOWN_FOLDERS.todo),
             in_progress: folderOrDefault(inProgressFolder, DEFAULT_MARKDOWN_FOLDERS.inProgress),
             review: folderOrDefault(reviewFolder, DEFAULT_MARKDOWN_FOLDERS.review),
+            ...(mergedFolder ? { merged: mergedFolder } : {}),
             done: folderOrDefault(doneFolder, DEFAULT_MARKDOWN_FOLDERS.done)
           }
         }
@@ -280,6 +284,7 @@ export function ProjectSettingsDialog({
             todo: folderOrDefault(todoFolder, DEFAULT_MARKDOWN_FOLDERS.todo),
             in_progress: folderOrDefault(inProgressFolder, DEFAULT_MARKDOWN_FOLDERS.inProgress),
             review: folderOrDefault(reviewFolder, DEFAULT_MARKDOWN_FOLDERS.review),
+            ...(mergedFolder ? { merged: mergedFolder } : {}),
             done: folderOrDefault(doneFolder, DEFAULT_MARKDOWN_FOLDERS.done)
           }
         }

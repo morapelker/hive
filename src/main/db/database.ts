@@ -2980,14 +2980,22 @@ export class DatabaseService {
     return this.getKanbanTicket(id)
   }
 
-  archiveAllDoneKanbanTickets(projectId: string): number {
+  archiveAllDoneKanbanTickets(projectId: string, includeMerged = false): number {
     const db = this.getDb()
     const now = new Date().toISOString()
-    const result = db
-      .prepare(
-        'UPDATE kanban_tickets SET archived_at = ?, updated_at = ? WHERE project_id = ? AND "column" = ? AND archived_at IS NULL'
-      )
-      .run(now, now, projectId, 'done')
+    // includeMerged: when the Merged board column is hidden, merged tickets
+    // display inside Done, so "Archive all" must cover them too
+    const result = includeMerged
+      ? db
+          .prepare(
+            'UPDATE kanban_tickets SET archived_at = ?, updated_at = ? WHERE project_id = ? AND "column" IN (?, ?) AND archived_at IS NULL'
+          )
+          .run(now, now, projectId, 'done', 'merged')
+      : db
+          .prepare(
+            'UPDATE kanban_tickets SET archived_at = ?, updated_at = ? WHERE project_id = ? AND "column" = ? AND archived_at IS NULL'
+          )
+          .run(now, now, projectId, 'done')
     return result.changes
   }
 

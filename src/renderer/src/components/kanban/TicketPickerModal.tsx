@@ -11,6 +11,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { useKanbanStore } from '@/stores/useKanbanStore'
+import { useSettingsStore } from '@/stores/useSettingsStore'
 import type { KanbanTicket, KanbanTicketColumn } from '../../../../main/db/types'
 
 // ── Stable empty array to avoid infinite re-renders with Zustand ────
@@ -36,6 +37,7 @@ const COLUMNS: { key: KanbanTicketColumn; label: string; color: string; activeCo
   { key: 'todo', label: 'To Do', color: 'border-zinc-600 text-zinc-400', activeColor: 'border-zinc-400 bg-zinc-400/15 text-zinc-200' },
   { key: 'in_progress', label: 'In Progress', color: 'border-blue-600/50 text-blue-400/70', activeColor: 'border-blue-500 bg-blue-500/15 text-blue-300' },
   { key: 'review', label: 'Review', color: 'border-amber-600/50 text-amber-400/70', activeColor: 'border-amber-500 bg-amber-500/15 text-amber-300' },
+  { key: 'merged', label: 'Merged', color: 'border-purple-600/50 text-purple-400/70', activeColor: 'border-purple-500 bg-purple-500/15 text-purple-300' },
   { key: 'done', label: 'Done', color: 'border-emerald-600/50 text-emerald-400/70', activeColor: 'border-emerald-500 bg-emerald-500/15 text-emerald-300' }
 ]
 
@@ -65,6 +67,7 @@ export function TicketPickerModal({
   const [searchQuery, setSearchQuery] = useState('')
   const [activeFilters, setActiveFilters] = useState<Set<KanbanTicketColumn>>(new Set())
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const showMergedColumn = useSettingsStore((s) => s.showMergedColumn)
 
   // ── Store access ────────────────────────────────────────────────
   const tickets = useKanbanStore(
@@ -85,9 +88,15 @@ export function TicketPickerModal({
   const filteredTickets = useMemo(() => {
     let result = tickets
 
-    // Column filter (multi-select — show all if none selected)
+    // Column filter (multi-select — show all if none selected). When the
+    // Merged column is hidden, the board folds merged tickets into Done, so
+    // the Done filter must match them too (the Merged chip isn't shown).
     if (activeFilters.size > 0) {
-      result = result.filter((t) => activeFilters.has(t.column))
+      result = result.filter(
+        (t) =>
+          activeFilters.has(t.column) ||
+          (!showMergedColumn && t.column === 'merged' && activeFilters.has('done'))
+      )
     }
 
     // Search filter (case-insensitive by title)
@@ -97,7 +106,7 @@ export function TicketPickerModal({
     }
 
     return result
-  }, [tickets, activeFilters, searchQuery])
+  }, [tickets, activeFilters, searchQuery, showMergedColumn])
 
   // ── Handlers ────────────────────────────────────────────────────
   const toggleFilter = (column: KanbanTicketColumn) => {
@@ -178,7 +187,7 @@ export function TicketPickerModal({
 
         {/* Column filter chips */}
         <div className="flex gap-1.5 px-5 pb-3">
-          {COLUMNS.map((col) => (
+          {COLUMNS.filter((col) => col.key !== 'merged' || showMergedColumn).map((col) => (
             <button
               key={col.key}
               onClick={() => toggleFilter(col.key)}
