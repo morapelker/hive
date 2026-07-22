@@ -7,7 +7,6 @@ import {
 } from '@/api/hive-enterprise/client'
 import { reportActiveAccountsSnapshot } from '@/lib/hive-account-report'
 import { currentPromptIdBySession } from '@/lib/message-send-times'
-import { computeTokenFieldDelta } from '@/lib/token-baselines'
 import { isClaudeFamily } from '@shared/types/agent-sdk'
 import { useAccountStore } from '@/stores/useAccountStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
@@ -287,14 +286,16 @@ export function recordHivePromptIdleForSession(sessionId: string): void {
 
   const promptId = currentPromptIdBySession.get(sessionId)
   if (!promptId) return
-  const delta = computeTokenFieldDelta(sessionId)
   currentPromptIdBySession.delete(sessionId)
 
+  // Accurate token/cost accounting is reported by the main process's session
+  // usage reporter (ccusage-style transcript parsing); the idle event only
+  // closes the prompt row for duration tracking.
   void recordHivePromptIdle({
     promptId,
-    inputTokens: delta.input,
-    outputTokens: delta.output + delta.reasoning,
-    cacheReadTokens: delta.cacheRead,
-    cacheWriteTokens: delta.cacheWrite
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0
   })
 }

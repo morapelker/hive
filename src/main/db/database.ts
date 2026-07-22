@@ -804,6 +804,58 @@ export class DatabaseService {
     this.safeAddColumn('markdown_kanban_card_state', 'model_id', 'TEXT DEFAULT NULL')
     this.safeAddColumn('markdown_kanban_card_state', 'model_variant', 'TEXT DEFAULT NULL')
     this.safeAddColumn('markdown_kanban_card_state', 'variant_group_id', 'TEXT DEFAULT NULL')
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS session_usage_state (
+        hive_session_id TEXT PRIMARY KEY,
+        state_json TEXT NOT NULL,
+        last_reported_json TEXT DEFAULT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `)
+  }
+
+  // Session usage state (accurate cost/token reporting cursors + totals)
+  getSessionUsageState(
+    hiveSessionId: string
+  ): { stateJson: string; lastReportedJson: string | null } | null {
+    const db = this.getDb()
+    const row = db
+      .prepare(
+        'SELECT state_json, last_reported_json FROM session_usage_state WHERE hive_session_id = ?'
+      )
+      .get(hiveSessionId) as { state_json: string; last_reported_json: string | null } | undefined
+    return row ? { stateJson: row.state_json, lastReportedJson: row.last_reported_json } : null
+  }
+
+  setSessionUsageState(
+    hiveSessionId: string,
+    stateJson: string,
+    lastReportedJson: string | null
+  ): void {
+    const db = this.getDb()
+    db.prepare(
+      `INSERT INTO session_usage_state (hive_session_id, state_json, last_reported_json, updated_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(hive_session_id) DO UPDATE SET
+         state_json = excluded.state_json,
+         last_reported_json = excluded.last_reported_json,
+         updated_at = excluded.updated_at`
+    ).run(hiveSessionId, stateJson, lastReportedJson, new Date().toISOString())
+  }
+
+  /** Recent sessions eligible for the usage sweep (agent SDKs with local logs). */
+  listRecentUsageSessionIds(sinceIso: string): string[] {
+    const db = this.getDb()
+    const rows = db
+      .prepare(
+        `SELECT id FROM sessions
+         WHERE updated_at >= ?
+           AND agent_sdk IN ('claude-code', 'claude-code-cli', 'codex')
+         ORDER BY updated_at DESC`
+      )
+      .all(sinceIso) as Array<{ id: string }>
+    return rows.map((row) => row.id)
   }
 
   // Settings operations

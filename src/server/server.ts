@@ -14,6 +14,7 @@ import { warmUpGhosttyConfig } from '../main/services/ghostty-config-store'
 import { setGitEventPublisher } from '../main/services/git-events'
 import { setWorktreeEventPublisher } from '../main/services/worktree-events'
 import { cleanupWorktreeWatchers } from '../main/services/worktree-watcher'
+import { startSessionUsageSweep } from '../main/services/usage/session-usage-service'
 import {
   cleanupMarkdownKanbanWatchers,
   setMarkdownKanbanEventPublisher
@@ -41,6 +42,9 @@ export const startHiveServer = (
   Effect.gen(function* () {
     const config = yield* resolveServerConfig(input)
     getDatabase().init()
+    // Startup + periodic sweep: report any session usage accrued while the
+    // app was closed or whose stop event was missed (crash, quit race).
+    startSessionUsageSweep()
     // Read the Ghostty config once at boot so the macOS "access data from
     // other apps" prompt (its dir is TCC-protected) appears at app launch,
     // never mid-flow when a terminal mounts.

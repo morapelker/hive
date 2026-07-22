@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -163,17 +163,6 @@ function makeTranscript(text: string): string {
   const file = join(dir, 'transcript.jsonl')
   writeFileSync(file, text)
   return file
-}
-
-/**
- * Write a subagent transcript next to the main transcript, mirroring Claude's
- * on-disk layout: `<dir>/<sessionId>/subagents/agent-<id>.jsonl` for a main
- * transcript at `<dir>/<sessionId>.jsonl`.
- */
-function writeSubagentTranscript(transcriptPath: string, agentId: string, text: string): void {
-  const subagentsDir = join(transcriptPath.replace(/\.jsonl$/, ''), 'subagents')
-  mkdirSync(subagentsDir, { recursive: true })
-  writeFileSync(join(subagentsDir, `agent-${agentId}.jsonl`), text)
 }
 
 describe('Claude CLI Hive Enterprise telemetry', () => {
@@ -421,7 +410,7 @@ describe('Claude CLI Hive Enterprise telemetry', () => {
     expect(requestGraphql.mock.calls[0][0]).toBe('https://hive.tedooo.com/api/graphql')
   })
 
-  it('records idle token deltas on Stop for the active Claude CLI prompt', async () => {
+  it('closes the active prompt on Stop with zero token fields (usage flows through the session usage reporter)', async () => {
     const transcriptPath = makeTranscript(
       `${assistantLine({ input: 100, output: 5, cacheRead: 20, cacheWrite: 7 })}\n`
     )
@@ -464,190 +453,10 @@ describe('Claude CLI Hive Enterprise telemetry', () => {
       {
         input: {
           promptId,
-          inputTokens: 140,
-          outputTokens: 30,
-          cacheReadTokens: 25,
-          cacheWriteTokens: 9
-        }
-      }
-    ])
-  })
-
-  it('includes subagent transcript usage in idle token deltas', async () => {
-    const transcriptPath = makeTranscript(
-      `${assistantLine({ input: 100, output: 5, cacheRead: 20, cacheWrite: 7 })}\n`
-    )
-    const db = makeDb({
-      hiveEnterpriseServerUrl: 'https://enterprise.example.com',
-      hiveAuthToken: 'token-1',
-      hiveOrganizationId: 'org-1'
-    })
-
-    await handleClaudeCliHiveTelemetryHook(
-      'hive-session-1',
-      {
-        hook_event_name: 'UserPromptSubmit',
-        prompt: 'Fan out subagents',
-        transcript_path: transcriptPath
-      },
-      { db, requestGraphql }
-    )
-
-    // The turn spawns two Task subagents; their usage is written to separate
-    // transcripts under <sessionDir>/subagents/, never to the main transcript.
-    writeSubagentTranscript(
-      transcriptPath,
-      'a1',
-      [
-        assistantLine({ input: 50, output: 40, cacheRead: 1000, cacheWrite: 60 }),
-        assistantLine({ input: 10, output: 20, cacheRead: 2000, cacheWrite: 30 })
-      ].join('\n') + '\n'
-    )
-    writeSubagentTranscript(
-      transcriptPath,
-      'a2',
-      `${assistantLine({ input: 5, output: 15, cacheRead: 500, cacheWrite: 25 })}\n`
-    )
-    writeFileSync(
-      transcriptPath,
-      [
-        assistantLine({ input: 100, output: 5, cacheRead: 20, cacheWrite: 7 }),
-        assistantLine({ input: 140, output: 30, cacheRead: 25, cacheWrite: 9 })
-      ].join('\n') + '\n'
-    )
-
-    await handleClaudeCliHiveTelemetryHook(
-      'hive-session-1',
-      { hook_event_name: 'Stop', transcript_path: transcriptPath },
-      { db, requestGraphql }
-    )
-
-    expect(requestGraphql.mock.calls[1]).toEqual([
-      'https://enterprise.example.com/api/graphql',
-      'token-1',
-      expect.stringContaining('recordPromptIdle'),
-      {
-        input: {
-          promptId: SERVER_PROMPT_ID,
-          inputTokens: 140 + 50 + 10 + 5,
-          outputTokens: 30 + 40 + 20 + 15,
-          cacheReadTokens: 25 + 1000 + 2000 + 500,
-          cacheWriteTokens: 9 + 60 + 30 + 25
-        }
-      }
-    ])
-  })
-
-  it('excludes subagent usage from before the prompt via the start baseline', async () => {
-    const transcriptPath = makeTranscript(
-      `${assistantLine({ input: 100, output: 5, cacheRead: 20, cacheWrite: 7 })}\n`
-    )
-    // A subagent from a PREVIOUS prompt already exists at prompt start.
-    writeSubagentTranscript(
-      transcriptPath,
-      'old',
-      `${assistantLine({ input: 500, output: 400, cacheRead: 9000, cacheWrite: 300 })}\n`
-    )
-    const db = makeDb({
-      hiveEnterpriseServerUrl: 'https://enterprise.example.com',
-      hiveAuthToken: 'token-1',
-      hiveOrganizationId: 'org-1'
-    })
-
-    await handleClaudeCliHiveTelemetryHook(
-      'hive-session-1',
-      {
-        hook_event_name: 'UserPromptSubmit',
-        prompt: 'Continue',
-        transcript_path: transcriptPath
-      },
-      { db, requestGraphql }
-    )
-
-    writeFileSync(
-      transcriptPath,
-      [
-        assistantLine({ input: 100, output: 5, cacheRead: 20, cacheWrite: 7 }),
-        assistantLine({ input: 140, output: 30, cacheRead: 25, cacheWrite: 9 })
-      ].join('\n') + '\n'
-    )
-
-    await handleClaudeCliHiveTelemetryHook(
-      'hive-session-1',
-      { hook_event_name: 'Stop', transcript_path: transcriptPath },
-      { db, requestGraphql }
-    )
-
-    // Only this turn's main-transcript delta — the old subagent's usage was
-    // captured in the baseline and must not leak into this prompt's totals.
-    expect(requestGraphql.mock.calls[1]).toEqual([
-      'https://enterprise.example.com/api/graphql',
-      'token-1',
-      expect.stringContaining('recordPromptIdle'),
-      {
-        input: {
-          promptId: SERVER_PROMPT_ID,
-          inputTokens: 140,
-          outputTokens: 30,
-          cacheReadTokens: 25,
-          cacheWriteTokens: 9
-        }
-      }
-    ])
-  })
-
-  it('waits briefly for Claude to flush transcript usage before recording idle', async () => {
-    vi.useFakeTimers()
-    const transcriptPath = makeTranscript(
-      `${assistantLine({ input: 100, output: 5, cacheRead: 20, cacheWrite: 7 })}\n`
-    )
-    const db = makeDb({
-      hiveEnterpriseServerUrl: 'https://enterprise.example.com',
-      hiveAuthToken: 'token-1',
-      hiveOrganizationId: 'org-1'
-    })
-
-    await handleClaudeCliHiveTelemetryHook(
-      'hive-session-1',
-      {
-        hook_event_name: 'UserPromptSubmit',
-        prompt: 'Continue',
-        transcript_path: transcriptPath
-      },
-      { db, requestGraphql }
-    )
-    const promptId = SERVER_PROMPT_ID
-
-    setTimeout(() => {
-      writeFileSync(
-        transcriptPath,
-        [
-          assistantLine({ input: 100, output: 5, cacheRead: 20, cacheWrite: 7 }),
-          assistantLine({ input: 80, output: 22, cacheRead: 10, cacheWrite: 3 })
-        ].join('\n') + '\n'
-      )
-    }, 50)
-
-    const stopPromise = handleClaudeCliHiveTelemetryHook(
-      'hive-session-1',
-      { hook_event_name: 'Stop', transcript_path: transcriptPath },
-      { db, requestGraphql }
-    )
-
-    await vi.advanceTimersByTimeAsync(50)
-    await stopPromise
-
-    expect(requestGraphql.mock.calls[1]).toEqual([
-      'https://enterprise.example.com/api/graphql',
-      'token-1',
-      expect.stringContaining('recordPromptIdle'),
-      {
-        input: {
-          promptId,
-          inputTokens: 80,
-          outputTokens: 22,
-          cacheReadTokens: 10,
-          cacheWriteTokens: 3
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0
         }
       }
     ])
@@ -726,8 +535,8 @@ describe('Claude CLI Hive Enterprise telemetry', () => {
       ].join('\n') + '\n'
     )
 
-    // The final, passing Stop attributes the entire multi-turn usage delta to
-    // the real prompt's id and baseline.
+    // The final, passing Stop closes the real prompt's row (token accounting
+    // happens in the session usage reporter, not here).
     await handleClaudeCliHiveTelemetryHook(
       'hive-session-1',
       { hook_event_name: 'Stop', transcript_path: transcriptPath },
@@ -742,10 +551,10 @@ describe('Claude CLI Hive Enterprise telemetry', () => {
       {
         input: {
           promptId: SERVER_PROMPT_ID,
-          inputTokens: 140,
-          outputTokens: 30,
-          cacheReadTokens: 25,
-          cacheWriteTokens: 9
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0
         }
       }
     ])

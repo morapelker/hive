@@ -23,6 +23,7 @@ import type {
   WorktreeUpdate
 } from '../../../main/db'
 import type { RpcHandler } from '../router'
+import { scheduleSessionUsageReport } from '../../../main/services/usage/session-usage-service'
 
 export interface DbRpcService {
   readonly getSetting: (key: string) => Effect.Effect<string | null, unknown, never>
@@ -1352,7 +1353,13 @@ export const makeDbRpcHandlers = (
             try: () => sessionUpdateParamsSchema.parse(params),
             catch: (cause) => cause
           })
-          return yield* service.updateSession(id, data)
+          const updated = yield* service.updateSession(id, data)
+          // A session closed/completed from the UI is a stop path — capture
+          // any usage the transcript accrued since the last report.
+          if (data.status === 'completed') {
+            scheduleSessionUsageReport(id, 'session-completed')
+          }
+          return updated
         })
     ],
     [
