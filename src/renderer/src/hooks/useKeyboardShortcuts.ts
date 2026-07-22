@@ -140,6 +140,12 @@ function cycleSession(direction: 1 | -1): void {
   const tabOrder = isConnectionMode
     ? state.tabOrderByConnection.get(scopeId) || []
     : state.tabOrderByWorktree.get(scopeId) || []
+
+  // Always leave any file/diff view so the session becomes visible,
+  // even when there is only one session tab to "cycle" to.
+  useFileViewerStore.getState().setActiveFile(null)
+  state.clearInlineConnectionSession()
+
   if (tabOrder.length < 2) return
 
   const currentIndex = activeSessionId ? tabOrder.indexOf(activeSessionId) : -1
@@ -152,9 +158,6 @@ function cycleSession(direction: 1 | -1): void {
   const nextSessionId = tabOrder[nextIndex]
   if (!nextSessionId) return
 
-  // Leave any file/diff view so the session becomes visible
-  useFileViewerStore.getState().setActiveFile(null)
-  state.clearInlineConnectionSession()
   if (isConnectionMode) {
     state.setActiveConnectionSession(nextSessionId)
   } else {
@@ -326,6 +329,13 @@ export function useKeyboardShortcuts(): void {
       // Also skip bare Tab (no ctrl) since the terminal uses it for completion,
       // but allow Ctrl+Tab through for terminal tab cycling.
       const isXtermFocused = target.closest?.('.xterm') !== null
+
+      // Ctrl+[ is the Escape equivalent in terminals (and Vim). Never intercept
+      // it while the terminal is focused, even though meta-modifier bindings
+      // also match Ctrl on Windows/Linux.
+      if (isXtermFocused && event.ctrlKey && !event.metaKey && event.key === '[') {
+        return
+      }
 
       for (const { binding, handler, allowInInput } of shortcuts) {
         if (!binding) continue

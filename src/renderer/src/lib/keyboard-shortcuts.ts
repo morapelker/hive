@@ -289,6 +289,19 @@ const PUNCTUATION_CODE_MAP: Record<string, string> = {
 }
 
 /**
+ * Normalize a keyboard event into the canonical binding key.
+ * For shifted punctuation (e.g. Shift+] produces "}"), returns the unshifted
+ * character from the physical key code so bindings and conflict detection
+ * always compare canonical keys.
+ */
+export function normalizeEventKey(event: Pick<KeyboardEvent, 'key' | 'code' | 'shiftKey'>): string {
+  if (event.shiftKey && event.code && PUNCTUATION_CODE_MAP[event.code]) {
+    return PUNCTUATION_CODE_MAP[event.code]
+  }
+  return event.key.length === 1 ? event.key.toLowerCase() : event.key
+}
+
+/**
  * Derive the logical key from a physical key code, e.g. "KeyT" → "t",
  * "Digit1" → "1", "BracketRight" → "]".
  */
