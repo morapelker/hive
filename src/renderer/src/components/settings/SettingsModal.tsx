@@ -51,6 +51,7 @@ import { cn } from '@/lib/utils'
 const SECTIONS = [
   { id: 'appearance', label: 'Appearance', icon: Palette },
   { id: 'general', label: 'General', icon: Monitor },
+  { id: 'shortcuts', label: 'Shortcuts', icon: Keyboard },
   { id: 'accounts', label: 'Accounts', icon: Users },
   { id: 'custom-commands', label: 'Custom Commands', icon: Zap },
   { id: 'custom-providers', label: 'Custom Providers', icon: Bot },
@@ -67,7 +68,6 @@ const SECTIONS = [
   { id: 'privacy', label: 'Privacy', icon: Eye },
   { id: 'storage', label: 'Storage', icon: Database },
   { id: 'backup', label: 'Backup', icon: DatabaseBackup },
-  { id: 'shortcuts', label: 'Shortcuts', icon: Keyboard },
   { id: 'advanced', label: 'Advanced', icon: Wrench },
   { id: 'updates', label: 'Updates', icon: Download }
 ] as const
