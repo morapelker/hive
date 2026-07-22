@@ -1,5 +1,4 @@
-import { readdirSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { readFileSync } from 'node:fs'
 import { APP_SETTINGS_DB_KEY, DEFAULT_HIVE_ENTERPRISE_SERVER_URL } from '@shared/types/settings'
 import type { DatabaseService } from '../db/database'
 import { getDatabase } from '../db'
@@ -50,8 +49,6 @@ interface TokenCounters {
 
 interface ActivePrompt {
   promptId: string
-  transcriptPath: string | null
-  baseline: TokenCounters
 }
 
 interface PromptStartInput {
@@ -103,38 +100,6 @@ export interface ClaudeCliHiveTelemetryDeps {
 
 const log = createLogger({ component: 'HiveEnterpriseClaudeCliTelemetry' })
 const activePromptBySession = new Map<string, ActivePrompt>()
-const TRANSCRIPT_USAGE_FLUSH_POLL_MS = 50
-const TRANSCRIPT_USAGE_FLUSH_TIMEOUT_MS = 2000
-
-function zeroCounters(): TokenCounters {
-  return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
-}
-
-function addCounters(a: TokenCounters, b: TokenCounters): TokenCounters {
-  return {
-    input: a.input + b.input,
-    output: a.output + b.output,
-    cacheRead: a.cacheRead + b.cacheRead,
-    cacheWrite: a.cacheWrite + b.cacheWrite
-  }
-}
-
-function subtractCounters(current: TokenCounters, baseline: TokenCounters): TokenCounters {
-  return {
-    input: Math.max(0, current.input - baseline.input),
-    output: Math.max(0, current.output - baseline.output),
-    cacheRead: Math.max(0, current.cacheRead - baseline.cacheRead),
-    cacheWrite: Math.max(0, current.cacheWrite - baseline.cacheWrite)
-  }
-}
-
-function tokenTotal(counters: TokenCounters): number {
-  return counters.input + counters.output + counters.cacheRead + counters.cacheWrite
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
 
 function assistantUsage(value: unknown): TokenCounters | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
@@ -165,65 +130,6 @@ function readTranscript(path: string | null): string {
   } catch {
     return ''
   }
-}
-
-/**
- * Task subagents write their usage to separate transcripts under
- * `<sessionDir>/subagents/agent-*.jsonl` (nested subagents included, flat),
- * never to the main transcript — for a main transcript at
- * `<dir>/<sessionId>.jsonl` the session dir is `<dir>/<sessionId>/`.
- */
-function subagentTranscriptPaths(transcriptPath: string | null): string[] {
-  if (!transcriptPath || !transcriptPath.endsWith('.jsonl')) return []
-  const subagentsDir = join(transcriptPath.slice(0, -'.jsonl'.length), 'subagents')
-  try {
-    return readdirSync(subagentsDir)
-      .filter((name) => name.endsWith('.jsonl'))
-      .map((name) => join(subagentsDir, name))
-  } catch {
-    return []
-  }
-}
-
-/** Sum assistant usage across the main transcript and all subagent transcripts. */
-export function tokenCountersFromTranscriptFiles(transcriptPath: string | null): TokenCounters {
-  let total = tokenCountersFromClaudeTranscript(readTranscript(transcriptPath))
-  for (const subagentPath of subagentTranscriptPaths(transcriptPath)) {
-    total = addCounters(total, tokenCountersFromClaudeTranscript(readTranscript(subagentPath)))
-  }
-  return total
-}
-
-async function waitForTranscriptUsageDelta(
-  transcriptPath: string | null,
-  baseline: TokenCounters
-): Promise<TokenCounters> {
-  const attempts = Math.ceil(TRANSCRIPT_USAGE_FLUSH_TIMEOUT_MS / TRANSCRIPT_USAGE_FLUSH_POLL_MS)
-  let delta = zeroCounters()
-
-  for (let attempt = 0; attempt <= attempts; attempt++) {
-    delta = subtractCounters(tokenCountersFromTranscriptFiles(transcriptPath), baseline)
-    if (tokenTotal(delta) > 0 || !transcriptPath || attempt === attempts) {
-      return delta
-    }
-    await sleep(TRANSCRIPT_USAGE_FLUSH_POLL_MS)
-  }
-
-  return delta
-}
-
-export function tokenCountersFromClaudeTranscript(text: string): TokenCounters {
-  let total = zeroCounters()
-  for (const line of text.split('\n')) {
-    if (!line.trim()) continue
-    try {
-      const usage = assistantUsage(JSON.parse(line))
-      if (usage) total = addCounters(total, usage)
-    } catch {
-      // Ignore malformed transcript lines; Claude writes JSONL incrementally.
-    }
-  }
-  return total
 }
 
 export function lastAssistantContextLengthFromClaudeTranscript(text: string): number | null {
@@ -354,7 +260,7 @@ async function buildPromptStartInput(
   prompt: string,
   transcriptPath: string | null,
   now: Date
-): Promise<{ input: PromptStartInput; baseline: TokenCounters }> {
+): Promise<{ input: PromptStartInput }> {
   const session = db.getSession(sessionId)
   const worktree = session?.worktree_id ? db.getWorktree(session.worktree_id) : null
   const project: Project | null =
@@ -364,7 +270,6 @@ async function buildPromptStartInput(
   const accountEmail = await getClaudeAccountEmail().catch(() => null)
 
   return {
-    baseline: tokenCountersFromTranscriptFiles(transcriptPath),
     input: {
       prompt,
       sessionId,
@@ -403,7 +308,7 @@ async function recordStart(
   const token = resolveToken(settings)
   if (!endpoint || !token) return
 
-  const { input, baseline } = await buildPromptStartInput(
+  const { input } = await buildPromptStartInput(
     deps.db,
     sessionId,
     hook.prompt,
@@ -419,12 +324,12 @@ async function recordStart(
   reconcileStorePrompts(deps.db, responseStorePrompts(data, 'recordPromptStart'))
   const promptId = recordedPromptId(data)
   if (!promptId) return
-  activePromptBySession.set(sessionId, { promptId, transcriptPath, baseline })
+  activePromptBySession.set(sessionId, { promptId })
 }
 
 async function recordIdle(
   sessionId: string,
-  hook: ClaudeCliTelemetryHook,
+  _hook: ClaudeCliTelemetryHook,
   deps: Required<Pick<ClaudeCliHiveTelemetryDeps, 'db' | 'requestGraphql' | 'now'>>
 ): Promise<void> {
   const active = activePromptBySession.get(sessionId)
@@ -437,15 +342,15 @@ async function recordIdle(
   const token = resolveToken(settings)
   if (!endpoint || !token) return
 
-  const transcriptPath =
-    typeof hook.transcript_path === 'string' ? hook.transcript_path : active.transcriptPath
-  const delta = await waitForTranscriptUsageDelta(transcriptPath, active.baseline)
+  // Accurate token/cost accounting now flows through the session usage
+  // reporter (reportSessionUsage buckets parsed ccusage-style from the
+  // transcript); the idle event only closes the prompt row for duration.
   const input: PromptIdleInput = {
     promptId: active.promptId,
-    inputTokens: delta.input,
-    outputTokens: delta.output,
-    cacheReadTokens: delta.cacheRead,
-    cacheWriteTokens: delta.cacheWrite
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0
   }
 
   const data = await deps.requestGraphql(endpoint, token, RecordPromptIdleDocument, { input })
@@ -493,3 +398,20 @@ export async function handleClaudeCliHiveTelemetryHook(
 export function __resetClaudeCliHiveTelemetryForTests(): void {
   activePromptBySession.clear()
 }
+
+/**
+ * Resolve the Hive Enterprise GraphQL endpoint + bearer token from app
+ * settings, or null when enterprise telemetry is not configured/enabled.
+ * Shared with the session usage reporter.
+ */
+export function getHiveEnterpriseRequestContext(
+  db: DatabaseService
+): { endpoint: string; token: string } | null {
+  const settings = parseSettings(db)
+  if (!telemetryEnabled(settings)) return null
+  const endpoint = resolveEndpoint(settings)
+  const token = resolveToken(settings)
+  return endpoint && token ? { endpoint, token } : null
+}
+
+export { requestGraphql as requestHiveEnterpriseGraphql }

@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 40
+export const CURRENT_SCHEMA_VERSION = 41
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -681,5 +681,18 @@ DROP TABLE IF EXISTS diff_comments;`
          -- handled idempotently by safeAddColumn() in database.ts to avoid
          -- "duplicate column" errors.`,
     down: `-- SQLite cannot drop columns; this is a no-op for safety`
+  },
+  {
+    version: 41,
+    name: 'add_session_usage_state',
+    up: `
+      CREATE TABLE IF NOT EXISTS session_usage_state (
+        hive_session_id TEXT PRIMARY KEY,
+        state_json TEXT NOT NULL,
+        last_reported_json TEXT DEFAULT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `,
+    down: `DROP TABLE IF EXISTS session_usage_state;`
   }
 ]

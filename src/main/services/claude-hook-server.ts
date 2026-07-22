@@ -4,6 +4,7 @@ import { OPENCODE_STREAM_CHANNEL } from '@shared/opencode-events'
 import { createLogger } from './logger'
 import { cliHookTransportRouter } from './cli-hook-transport-router'
 import { handleClaudeCliHiveTelemetryHook } from './hive-enterprise-claude-cli-telemetry'
+import { scheduleSessionUsageReport } from './usage/session-usage-service'
 import { publishDesktopBackendEvent } from '../desktop/backend-event-publisher'
 import {
   clearAllClaudeCliInteractions,
@@ -201,6 +202,16 @@ function buildStatusMetadata(
 export function publishClaudeCliStatus(payload: ClaudeCliStatusPayload): void {
   if (lastStatusBySession.get(payload.sessionId) === payload.status) {
     return
+  }
+
+  // Every CLI stop path funnels through here as a 'completed' publish (Stop/
+  // SessionEnd hooks, deferred watchdog, user interrupt, pty exit) — the one
+  // choke point to trigger accurate usage reporting from the transcript.
+  if (payload.status === 'completed') {
+    scheduleSessionUsageReport(
+      payload.sessionId,
+      String(payload.metadata?.reason ?? 'claude-cli-completed')
+    )
   }
 
   lastStatusBySession.set(payload.sessionId, payload.status)
