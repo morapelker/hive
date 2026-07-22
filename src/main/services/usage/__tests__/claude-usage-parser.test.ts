@@ -208,6 +208,40 @@ describe('parseClaudeSessionIncrement', () => {
     expect(r.buckets).toEqual({})
   })
 
+  it('attributes a resumed giant session’s new prompt to its own hour, leaving prior days untouched (ccusage-style date bucketing)', async () => {
+    const f = join(dir, 's.jsonl')
+    // A large session with activity spread across two "yesterday" hours.
+    let giant = ''
+    for (let i = 0; i < 50; i++) {
+      giant += entry({ id: `y1-${i}`, input: 100, output: 10, ts: '2026-07-20T09:10:00Z' })
+      giant += entry({ id: `y2-${i}`, input: 200, output: 20, ts: '2026-07-20T15:45:00Z' })
+    }
+    writeFileSync(f, giant)
+    const r1 = await parseClaudeSessionIncrement([f], null)
+    const yesterday9 = { ...r1.buckets['claude-fable-5|2026-07-20T09:00:00.000Z'] }
+    const yesterday15 = { ...r1.buckets['claude-fable-5|2026-07-20T15:00:00.000Z'] }
+    expect(yesterday9.inputTokens).toBe(5000)
+    expect(yesterday15.inputTokens).toBe(10000)
+
+    // Resume the session "today" with a single prompt.
+    appendFileSync(f, entry({ id: 'today-1', input: 7, output: 3, ts: '2026-07-21T08:05:00Z' }))
+    const r2 = await parseClaudeSessionIncrement([f], r1.state)
+
+    // Yesterday's buckets are byte-identical — the resume adds ONLY a new
+    // bucket under today's hour, so date-ranged dashboards attribute the new
+    // prompt to today and nothing to yesterday.
+    expect(r2.buckets['claude-fable-5|2026-07-20T09:00:00.000Z']).toEqual(yesterday9)
+    expect(r2.buckets['claude-fable-5|2026-07-20T15:00:00.000Z']).toEqual(yesterday15)
+    expect(r2.buckets['claude-fable-5|2026-07-21T08:00:00.000Z']).toEqual({
+      inputTokens: 7,
+      outputTokens: 3,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      costUsd: 7 * IN + 3 * OUT
+    })
+    expect(Object.keys(r2.buckets)).toHaveLength(3)
+  })
+
   it('serializes state through JSON round-trip', async () => {
     const f = join(dir, 's.jsonl')
     writeFileSync(f, entry({ id: 'm1', input: 10, output: 1 }))

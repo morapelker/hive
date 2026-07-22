@@ -300,18 +300,24 @@ async function doReport(sessionId: string, deps: SessionUsageServiceDeps): Promi
     projectPath: project?.path ?? null,
     gitRemoteUrl,
     worktreeBranch: worktree?.branch_name ?? null,
-    buckets: Object.entries(rounded).map(([key, bucket]) => {
-      const separator = key.lastIndexOf('|')
-      return {
-        model: key.slice(0, separator),
-        bucketTs: key.slice(separator + 1),
-        inputTokens: bucket.inputTokens,
-        outputTokens: bucket.outputTokens,
-        cacheReadTokens: bucket.cacheReadTokens,
-        cacheWriteTokens: bucket.cacheWriteTokens,
-        costUsd: bucket.costUsd
-      }
-    })
+    // Newest-first: the server caps buckets per report, and older buckets are
+    // immutable and already stored from earlier reports — so if a months-long
+    // session ever exceeds the cap, truncation drops history the server
+    // already has, never today's usage.
+    buckets: Object.entries(rounded)
+      .map(([key, bucket]) => {
+        const separator = key.lastIndexOf('|')
+        return {
+          model: key.slice(0, separator),
+          bucketTs: key.slice(separator + 1),
+          inputTokens: bucket.inputTokens,
+          outputTokens: bucket.outputTokens,
+          cacheReadTokens: bucket.cacheReadTokens,
+          cacheWriteTokens: bucket.cacheWriteTokens,
+          costUsd: bucket.costUsd
+        }
+      })
+      .sort((a, b) => b.bucketTs.localeCompare(a.bucketTs))
   }
 
   try {

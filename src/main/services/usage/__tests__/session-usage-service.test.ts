@@ -169,6 +169,30 @@ describe('session usage service', () => {
     expect(savedState2.claude.files[transcript].offset).toBeGreaterThan(cursorAfterFirst)
   })
 
+  it('transmits buckets newest-first so server-side capping can only drop already-stored history', async () => {
+    const worktreePath = join(root, 'wt')
+    mkdirSync(worktreePath, { recursive: true })
+    writeTranscript(
+      worktreePath,
+      entry('old', 10, 1, '2026-07-19T10:05:00Z') +
+        entry('mid', 20, 2, '2026-07-20T18:05:00Z') +
+        entry('new', 30, 3, '2026-07-21T09:05:00Z')
+    )
+    const { db } = makeDb(worktreePath)
+    const reportMock = vi.fn().mockResolvedValue({ reportSessionUsage: { recorded: true } })
+
+    await flushSessionUsageReport('hive-1', { db, requestGraphql: withModelPrices(reportMock) })
+
+    const sent = reportMock.mock.calls[0][3].input.buckets.map(
+      (bucket: { bucketTs: string }) => bucket.bucketTs
+    )
+    expect(sent).toEqual([
+      '2026-07-21T09:00:00.000Z',
+      '2026-07-20T18:00:00.000Z',
+      '2026-07-19T10:00:00.000Z'
+    ])
+  })
+
   it('does not resend when nothing changed', async () => {
     const worktreePath = join(root, 'wt')
     mkdirSync(worktreePath, { recursive: true })
