@@ -201,7 +201,7 @@ export interface KanbanBackend {
   reorder(projectId: string, ticketId: string, sortOrder: number): Promise<void>
   delete(projectId: string, ticketId: string): Promise<boolean>
   archive(projectId: string, ticketId: string): Promise<KanbanTicket | null>
-  archiveAllDone(projectId: string): Promise<number>
+  archiveAllDone(projectId: string, includeMerged?: boolean): Promise<number>
   unarchive(projectId: string, ticketId: string): Promise<KanbanTicket | null>
   getBySession(sessionId: string): Promise<KanbanTicket[]>
   addTokens(projectId: string, ticketId: string, tokens: number): Promise<KanbanTicket | null>
@@ -325,8 +325,8 @@ class InternalKanbanBackend implements KanbanBackend {
     return getDatabase().archiveKanbanTicket(ticketId)
   }
 
-  async archiveAllDone(projectId: string): Promise<number> {
-    return getDatabase().archiveAllDoneKanbanTickets(projectId)
+  async archiveAllDone(projectId: string, includeMerged?: boolean): Promise<number> {
+    return getDatabase().archiveAllDoneKanbanTickets(projectId, includeMerged)
   }
 
   async unarchive(projectId: string, ticketId: string): Promise<KanbanTicket | null> {
@@ -836,11 +836,15 @@ class MarkdownKanbanBackend implements KanbanBackend {
     return this.get(projectId, ticketId)
   }
 
-  async archiveAllDone(projectId: string): Promise<number> {
+  async archiveAllDone(projectId: string, includeMerged?: boolean): Promise<number> {
     const index = await this.reloadIndex(projectId)
     const archivedIds = new Set(
       index.tickets
-        .filter((ticket) => ticket.column === 'done' && !ticket.archived_at)
+        .filter(
+          (ticket) =>
+            (ticket.column === 'done' || (includeMerged && ticket.column === 'merged')) &&
+            !ticket.archived_at
+        )
         .map((ticket) => ticket.id)
     )
     if (archivedIds.size === 0) return 0

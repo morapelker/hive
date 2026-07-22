@@ -369,13 +369,16 @@ export function KanbanColumn({
   )
 
   const handleArchiveAll = useCallback(async () => {
+    // When the Merged column is hidden, merged tickets display inside Done, so
+    // "Archive all" must archive them too (WYSIWYG with the confirm count)
+    const includeMerged = !useSettingsStore.getState().showMergedColumn
     try {
       if (isPinnedMode) {
         // In pinned mode, archive done tickets across all pinned-derived projects
         const projectIds = useKanbanStore.getState().getPinnedProjectIdsArray()
         let total = 0
         for (const pid of projectIds) {
-          total += await useKanbanStore.getState().archiveAllDone(pid)
+          total += await useKanbanStore.getState().archiveAllDone(pid, includeMerged)
         }
         toast.success(`Archived ${total} ticket${total !== 1 ? 's' : ''}`)
       } else if (connectionId) {
@@ -383,11 +386,11 @@ export function KanbanColumn({
         const projectIds = useKanbanStore.getState().getConnectionProjectIds(connectionId)
         let total = 0
         for (const pid of projectIds) {
-          total += await useKanbanStore.getState().archiveAllDone(pid)
+          total += await useKanbanStore.getState().archiveAllDone(pid, includeMerged)
         }
         toast.success(`Archived ${total} ticket${total !== 1 ? 's' : ''}`)
       } else {
-        const count = await useKanbanStore.getState().archiveAllDone(projectId)
+        const count = await useKanbanStore.getState().archiveAllDone(projectId, includeMerged)
         toast.success(`Archived ${count} ticket${count !== 1 ? 's' : ''}`)
       }
     } catch {

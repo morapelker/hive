@@ -4,7 +4,8 @@ import type { KanbanTicket } from '../../src/main/db/types'
 const apiMocks = vi.hoisted(() => ({
   kanbanApi: {
     ticket: {
-      move: vi.fn()
+      move: vi.fn(),
+      archiveAllDone: vi.fn()
     }
   },
   settingsApi: {
@@ -137,6 +138,34 @@ describe('merged column', () => {
 
     const ordered = useKanbanStore.getState().getTicketsForProject('proj-1')
     expect(ordered.map((t) => t.id)).toEqual(['r', 'm', 'd'])
+  })
+
+  test('archiveAllDone with includeMerged archives folded merged tickets too', async () => {
+    mockKanbanTicketApi.archiveAllDone.mockResolvedValue(2)
+    const done = makeTicket({ id: 'd', column: 'done' })
+    const merged = makeTicket({ id: 'm', column: 'merged' })
+    useKanbanStore.setState({ tickets: new Map([['proj-1', [done, merged]]]) })
+
+    const count = await useKanbanStore.getState().archiveAllDone('proj-1', true)
+
+    expect(count).toBe(2)
+    expect(mockKanbanTicketApi.archiveAllDone).toHaveBeenCalledWith('proj-1', true)
+    const tickets = useKanbanStore.getState().tickets.get('proj-1') ?? []
+    expect(tickets.every((t) => t.archived_at)).toBe(true)
+  })
+
+  test('archiveAllDone without includeMerged leaves merged tickets alone', async () => {
+    mockKanbanTicketApi.archiveAllDone.mockResolvedValue(1)
+    const done = makeTicket({ id: 'd', column: 'done' })
+    const merged = makeTicket({ id: 'm', column: 'merged' })
+    useKanbanStore.setState({ tickets: new Map([['proj-1', [done, merged]]]) })
+
+    const count = await useKanbanStore.getState().archiveAllDone('proj-1')
+
+    expect(count).toBe(1)
+    const tickets = useKanbanStore.getState().tickets.get('proj-1') ?? []
+    expect(tickets.find((t) => t.id === 'm')?.archived_at).toBeNull()
+    expect(tickets.find((t) => t.id === 'd')?.archived_at).toBeTruthy()
   })
 
   test('merged blockers satisfy dependents in both trigger modes', () => {

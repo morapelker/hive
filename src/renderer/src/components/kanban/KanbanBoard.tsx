@@ -283,13 +283,20 @@ export function KanbanBoard({ projectId, connectionId, isPinnedMode }: KanbanBoa
     return () => el.removeEventListener('scroll', handler)
   }, [computePaths])
 
+  // Archived merged tickets surface in Done's archive section too (the Merged
+  // column has no archive UI of its own)
+  const archivedDoneFor = (pid: string): ReturnType<typeof getArchivedTicketsByColumn> =>
+    [...getArchivedTicketsByColumn(pid, 'done'), ...getArchivedTicketsByColumn(pid, 'merged')].sort(
+      (a, b) => (b.archived_at ?? '').localeCompare(a.archived_at ?? '')
+    )
+
   // Aggregate archived tickets across all connection member projects for the done column
   const connectionArchivedDoneTickets = isConnectionMode
-    ? connectionProjectIds.flatMap((pid) => getArchivedTicketsByColumn(pid, 'done'))
+    ? connectionProjectIds.flatMap(archivedDoneFor)
     : undefined
 
   const pinnedArchivedDoneTickets = isPinnedMode
-    ? pinnedProjectIdsArray.flatMap((pid) => getArchivedTicketsByColumn(pid, 'done'))
+    ? pinnedProjectIdsArray.flatMap(archivedDoneFor)
     : undefined
   const invalidPlaceholders = isPinnedMode
     ? getInvalidPlaceholdersForPinned()
@@ -378,7 +385,7 @@ export function KanbanBoard({ projectId, connectionId, isPinnedMode }: KanbanBoa
                     : isConnectionMode
                       ? connectionArchivedDoneTickets
                       : projectId
-                        ? getArchivedTicketsByColumn(projectId, 'done')
+                        ? archivedDoneFor(projectId)
                         : undefined
                   : undefined
 

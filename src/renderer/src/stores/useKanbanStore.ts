@@ -252,7 +252,7 @@ interface KanbanState {
   toggleBoardView: () => void
   setSimpleMode: (projectId: string, enabled: boolean) => Promise<void>
   archiveTicket: (ticketId: string, projectId: string) => Promise<void>
-  archiveAllDone: (projectId: string) => Promise<number>
+  archiveAllDone: (projectId: string, includeMerged?: boolean) => Promise<number>
   unarchiveTicket: (ticketId: string, projectId: string) => Promise<void>
   detachWorktreeTickets: (worktreeId: string) => Promise<void>
   setShowArchived: (projectId: string, show: boolean) => void
@@ -706,7 +706,9 @@ export const useKanbanStore = create<KanbanState>()(
       },
 
       // ── archiveAllDone (optimistic) ────────────────────────────────
-      archiveAllDone: async (projectId: string): Promise<number> => {
+      // includeMerged: when the Merged column is hidden, merged tickets fold
+      // into Done, so "Archive all" covers them too
+      archiveAllDone: async (projectId: string, includeMerged?: boolean): Promise<number> => {
         const prev = get().tickets.get(projectId) ?? []
         const snapshot = prev.map((t) => ({ ...t }))
 
@@ -716,7 +718,10 @@ export const useKanbanStore = create<KanbanState>()(
         set((state) => {
           const next = new Map(state.tickets)
           const tickets = (next.get(projectId) ?? []).map((t) => {
-            if (t.column === 'done' && !t.archived_at) {
+            if (
+              (t.column === 'done' || (includeMerged && t.column === 'merged')) &&
+              !t.archived_at
+            ) {
               count++
               return { ...t, archived_at: now, updated_at: now }
             }
@@ -727,7 +732,7 @@ export const useKanbanStore = create<KanbanState>()(
         })
 
         try {
-          await kanban.ticket.archiveAllDone(projectId)
+          await kanban.ticket.archiveAllDone(projectId, includeMerged)
           return count
         } catch (err) {
           // Revert on failure

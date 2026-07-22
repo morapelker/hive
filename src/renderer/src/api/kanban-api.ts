@@ -70,8 +70,11 @@ export const kanbanApi = {
       getRendererRpcClient().request<boolean>('kanban.ticket.delete', { projectId, id }),
     archive: async <TResult>(projectId: string, id: string): Promise<TResult> =>
       getRendererRpcClient().request<TResult>('kanban.ticket.archive', { projectId, id }),
-    archiveAllDone: async (projectId: string): Promise<number> =>
-      getRendererRpcClient().request<number>('kanban.ticket.archiveAllDone', { projectId }),
+    archiveAllDone: async (projectId: string, includeMerged?: boolean): Promise<number> =>
+      getRendererRpcClient().request<number>('kanban.ticket.archiveAllDone', {
+        projectId,
+        ...(includeMerged !== undefined ? { includeMerged } : {})
+      }),
     unarchive: async <TResult>(projectId: string, id: string): Promise<TResult> =>
       getRendererRpcClient().request<TResult>('kanban.ticket.unarchive', { projectId, id }),
     detachWorktree: async (worktreeId: string): Promise<number> =>

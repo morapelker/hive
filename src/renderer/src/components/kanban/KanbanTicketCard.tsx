@@ -742,7 +742,9 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     useKanbanStore.getState().setHoveredBlockedTicketRef(null)
   }, [])
 
-  const isDone = ticket.column === 'done'
+  // Merged behaves like Done for archive/delete affordances — merged tickets
+  // are archivable and surface in Done's archived section
+  const isDone = ticket.column === 'done' || ticket.column === 'merged'
 
   // ── Context menu handlers ─────────────────────────────────────
   const handleDelete = useCallback(async () => {
