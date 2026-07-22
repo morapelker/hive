@@ -12,7 +12,7 @@ import {
 } from '@/stores'
 import { useGitStore } from '@/stores/useGitStore'
 import { useShortcutStore } from '@/stores/useShortcutStore'
-import { useWorktreeStore } from '@/stores/useWorktreeStore'
+import { useWorktreeStore, getOrderedProjectWorktrees } from '@/stores/useWorktreeStore'
 import { useScriptStore, fireRunScript, killRunScript } from '@/stores/useScriptStore'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { useTerminalTabStore } from '@/stores/useTerminalTabStore'
@@ -160,6 +160,89 @@ function cycleSession(direction: 1 | -1): void {
   } else {
     state.setActiveSession(nextSessionId)
   }
+}
+
+/**
+ * Cycles to the next/previous worktree within the currently selected project.
+ * Uses the sidebar display order (custom order, default worktree last) and
+ * wraps around at the ends.
+ */
+function cycleWorktree(direction: 1 | -1): void {
+  const wtState = useWorktreeStore.getState()
+  const { selectedWorktreeId, worktreesByProject, worktreeOrderByProject } = wtState
+
+  // Resolve project: from the selected worktree, or fall back to selected project
+  let projectId: string | null = null
+  if (selectedWorktreeId) {
+    for (const [pid, worktrees] of worktreesByProject) {
+      if (worktrees.some((w) => w.id === selectedWorktreeId)) {
+        projectId = pid
+        break
+      }
+    }
+  }
+  if (!projectId) projectId = useProjectStore.getState().selectedProjectId
+  if (!projectId) return
+
+  const ordered = getOrderedProjectWorktrees(worktreesByProject, worktreeOrderByProject, projectId)
+  if (ordered.length === 0) return
+
+  const currentIndex = selectedWorktreeId
+    ? ordered.findIndex((w) => w.id === selectedWorktreeId)
+    : -1
+  const nextIndex =
+    currentIndex === -1
+      ? direction === 1
+        ? 0
+        : ordered.length - 1
+      : (currentIndex + direction + ordered.length) % ordered.length
+  const next = ordered[nextIndex]
+  if (!next || next.id === selectedWorktreeId) return
+
+  useProjectStore.getState().selectProject(projectId)
+  wtState.selectWorktree(next.id)
+}
+
+/**
+ * Cycles to the next/previous project in the sidebar order and selects its
+ * top worktree so the jump lands somewhere useful. Wraps around at the ends.
+ */
+function cycleProject(direction: 1 | -1): void {
+  const projectState = useProjectStore.getState()
+  const { projects, selectedProjectId } = projectState
+  if (projects.length === 0) return
+
+  const currentIndex = selectedProjectId
+    ? projects.findIndex((p) => p.id === selectedProjectId)
+    : -1
+  const nextIndex =
+    currentIndex === -1
+      ? direction === 1
+        ? 0
+        : projects.length - 1
+      : (currentIndex + direction + projects.length) % projects.length
+  const next = projects[nextIndex]
+  if (!next || next.id === selectedProjectId) return
+
+  projectState.selectProject(next.id)
+
+  // Select the project's top worktree (sidebar order) so the jump is useful
+  const wtState = useWorktreeStore.getState()
+  const load =
+    wtState.worktreesByProject.has(next.id)
+      ? Promise.resolve()
+      : wtState.loadWorktrees(next.id) ?? Promise.resolve()
+  void Promise.resolve(load).then(() => {
+    const state = useWorktreeStore.getState()
+    // Bail if the user has moved on to another project meanwhile
+    if (useProjectStore.getState().selectedProjectId !== next.id) return
+    const ordered = getOrderedProjectWorktrees(
+      state.worktreesByProject,
+      state.worktreeOrderByProject,
+      next.id
+    )
+    if (ordered[0]) state.selectWorktree(ordered[0].id)
+  })
 }
 
 /**
@@ -575,6 +658,39 @@ function getShortcutHandlers(
           },
           leftSidebarCollapsed ? 100 : 0
         )
+      }
+    },
+
+    {
+      id: 'nav:next-worktree',
+      binding: getEffectiveBinding('nav:next-worktree'),
+      allowInInput: true,
+      handler: () => {
+        cycleWorktree(1)
+      }
+    },
+    {
+      id: 'nav:previous-worktree',
+      binding: getEffectiveBinding('nav:previous-worktree'),
+      allowInInput: true,
+      handler: () => {
+        cycleWorktree(-1)
+      }
+    },
+    {
+      id: 'nav:next-project',
+      binding: getEffectiveBinding('nav:next-project'),
+      allowInInput: true,
+      handler: () => {
+        cycleProject(1)
+      }
+    },
+    {
+      id: 'nav:previous-project',
+      binding: getEffectiveBinding('nav:previous-project'),
+      allowInInput: true,
+      handler: () => {
+        cycleProject(-1)
       }
     },
 

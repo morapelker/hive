@@ -191,7 +191,7 @@ function loadPersistedOrder(): Map<string, string[]> {
   return new Map()
 }
 
-function getOrderedProjectWorktrees(
+export function getOrderedProjectWorktrees(
   worktreesByProject: Map<string, Worktree[]>,
   worktreeOrderByProject: Map<string, string[]>,
   projectId: string

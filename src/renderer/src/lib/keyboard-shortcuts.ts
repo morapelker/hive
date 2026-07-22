@@ -86,6 +86,34 @@ export const DEFAULT_SHORTCUTS: ShortcutDefinition[] = [
 
   // Navigation shortcuts
   {
+    id: 'nav:next-worktree',
+    label: 'Next Worktree',
+    description: 'Switch to the next worktree in the current project',
+    category: 'navigation',
+    defaultBinding: { key: ']', modifiers: ['meta', 'shift'] }
+  },
+  {
+    id: 'nav:previous-worktree',
+    label: 'Previous Worktree',
+    description: 'Switch to the previous worktree in the current project',
+    category: 'navigation',
+    defaultBinding: { key: '[', modifiers: ['meta', 'shift'] }
+  },
+  {
+    id: 'nav:next-project',
+    label: 'Next Project',
+    description: 'Switch to the next project in the sidebar',
+    category: 'navigation',
+    defaultBinding: { key: ']', modifiers: ['meta', 'alt'] }
+  },
+  {
+    id: 'nav:previous-project',
+    label: 'Previous Project',
+    description: 'Switch to the previous project in the sidebar',
+    category: 'navigation',
+    defaultBinding: { key: '[', modifiers: ['meta', 'alt'] }
+  },
+  {
     id: 'nav:file-search',
     label: 'Search Files',
     description: 'Open the file search dialog',
@@ -244,23 +272,52 @@ export function deserializeBinding(serialized: string): KeyBinding {
   return { key, modifiers }
 }
 
+// Map physical-key codes for punctuation to their unshifted characters so
+// bindings like meta+shift+] or alt+[ can match via event.code.
+const PUNCTUATION_CODE_MAP: Record<string, string> = {
+  BracketLeft: '[',
+  BracketRight: ']',
+  Backquote: '`',
+  Backslash: '\\',
+  Semicolon: ';',
+  Quote: "'",
+  Comma: ',',
+  Period: '.',
+  Slash: '/',
+  Minus: '-',
+  Equal: '='
+}
+
+/**
+ * Derive the logical key from a physical key code, e.g. "KeyT" → "t",
+ * "Digit1" → "1", "BracketRight" → "]".
+ */
+function keyFromCode(code: string): string {
+  return (
+    PUNCTUATION_CODE_MAP[code] ??
+    code
+      .replace(/^Key/, '')
+      .replace(/^Digit/, '')
+      .toLowerCase()
+  )
+}
+
 /**
  * Check if a keyboard event matches a binding.
  * For cross-platform, treats both ctrl and meta as "command" when modifier is 'meta'.
  */
 export function eventMatchesBinding(event: KeyboardEvent, binding: KeyBinding): boolean {
-  // On macOS, Alt+key produces dead characters (e.g., Alt+T → †) so event.key
-  // won't match. Fall back to event.code (physical key) when alt is involved.
+  // On macOS, Alt+key produces dead characters (e.g., Alt+T → †) and
+  // Shift+punctuation produces the shifted character (e.g., Shift+] → }),
+  // so event.key won't match. Fall back to event.code (physical key).
   const altRequired = binding.modifiers.includes('alt')
   let keyMatches: boolean
   if (altRequired && event.altKey && event.code) {
-    const codeKey = event.code
-      .replace(/^Key/, '')
-      .replace(/^Digit/, '')
-      .toLowerCase()
-    keyMatches = codeKey === binding.key.toLowerCase()
+    keyMatches = keyFromCode(event.code) === binding.key.toLowerCase()
   } else {
-    keyMatches = event.key.toLowerCase() === binding.key.toLowerCase()
+    keyMatches =
+      event.key.toLowerCase() === binding.key.toLowerCase() ||
+      (!!event.code && event.shiftKey && keyFromCode(event.code) === binding.key.toLowerCase())
   }
   if (!keyMatches) return false
 
