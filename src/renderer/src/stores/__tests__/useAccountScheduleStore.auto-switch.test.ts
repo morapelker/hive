@@ -267,6 +267,32 @@ describe('useAccountScheduleStore auto-switch', () => {
     expect(switchCalls()).toHaveLength(1)
   })
 
+  it('seeds the active usage from the switched-to account so a dead refresh cannot re-trigger', async () => {
+    // The post-switch active-usage refresh stays broken (rate limited) — the
+    // slot must carry the NEW account's numbers, not the exhausted 92%, or
+    // every cooldown expiry would hop away from a perfectly healthy account.
+    request.mockImplementation(async (method: string) => {
+      if (method === 'usageOps.refreshAllForProvider') return refreshResults
+      if (method === 'accountOps.listSaved') return refreshedAccounts
+      if (method === 'accountOps.switchAccount') return { success: true }
+      if (method === 'accountOps.getClaudeEmail') return 'best@x.com'
+      if (method === 'usageOps.fetch') return { success: false, error: 'rate limited' }
+      return null
+    })
+    useAccountScheduleStore.getState().setAutoSwitch('anthropic', 90)
+
+    await useAccountScheduleStore.getState().checkSchedules()
+    expect(switchCalls()).toHaveLength(1)
+    expect(useUsageStore.getState().anthropicUsage).toEqual(
+      refreshedAccounts.find((a) => a.id === 'acc-2')?.last_usage
+    )
+
+    // Past the cooldown with the refresh still dead: no churn.
+    vi.setSystemTime(Date.now() + 5 * 60_000 + 1_000)
+    await useAccountScheduleStore.getState().checkSchedules()
+    expect(switchCalls()).toHaveLength(1)
+  })
+
   it('does not sweep or switch while the active account cannot be identified', async () => {
     useAccountStore.setState({ anthropicEmail: null, openaiEmail: null })
     request.mockImplementation(async (method: string) => {

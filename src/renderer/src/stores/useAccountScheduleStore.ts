@@ -309,13 +309,26 @@ export const useAccountScheduleStore = create<AccountScheduleState>()(
               }
 
               // switchAccount toasts success/failure itself, and the mode
-              // stays armed either way. Both outcomes pause re-evaluation:
-              // on failure so a persistent problem doesn't retry (and toast)
-              // every tick, and on success because the active-usage slot
-              // still holds the PREVIOUS account's numbers until the
-              // post-switch refresh lands — without the pause, a failed or
-              // slow refresh would re-trigger next tick and hop again.
-              await useUsageStore.getState().switchAccount(best.account.id)
+              // stays armed either way. Both outcomes pause re-evaluation so
+              // a persistent problem doesn't retry (and toast) every tick.
+              const switched = await useUsageStore.getState().switchAccount(best.account.id)
+              if (switched && best.account.last_usage) {
+                // Seed the active-usage slot from the account we just picked:
+                // until the post-switch refresh lands (it can fail or be rate
+                // limited indefinitely), the slot would otherwise keep the
+                // PREVIOUS account's exhausted numbers and hop away from a
+                // healthy account on every cooldown expiry. A successful
+                // refresh simply overwrites the seed with live data.
+                if (provider === 'anthropic') {
+                  useUsageStore.setState({
+                    anthropicUsage: best.account.last_usage as UsageData
+                  })
+                } else {
+                  useUsageStore.setState({
+                    openaiUsage: best.account.last_usage as OpenAIUsageData
+                  })
+                }
+              }
               backOff()
             } finally {
               executingProviders.delete(provider)
