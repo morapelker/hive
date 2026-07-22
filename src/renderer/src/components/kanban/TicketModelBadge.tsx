@@ -39,7 +39,8 @@ export function TicketModelBadge({
       title={title}
       className={cn(
         'inline-flex items-center gap-1 rounded-full border border-transparent bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground',
-        isUltraVariant(variant) && 'border-violet-500/60',
+        isUltraVariant(variant) &&
+          'border-violet-500/60 bg-violet-500/15 text-violet-600 dark:text-violet-300',
         className
       )}
     >
