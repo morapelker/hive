@@ -7,6 +7,7 @@ import {
   Info,
   X,
   ExternalLink,
+  GitBranch,
   GitMerge,
   Archive
 } from 'lucide-react'
@@ -52,6 +53,7 @@ function PRNotificationCard({
   prTitle,
   prUrl,
   prNumber,
+  branchName,
   worktreeId,
   showArchiveButton
 }: {
@@ -62,6 +64,7 @@ function PRNotificationCard({
   prTitle?: string
   prUrl?: string
   prNumber?: number
+  branchName?: string
   worktreeId?: string
   showArchiveButton?: boolean
 }): React.JSX.Element {
@@ -212,6 +215,15 @@ function PRNotificationCard({
       {/* Content */}
       <div className="flex-1 min-w-0 space-y-1">
         <p className="text-sm font-medium text-foreground leading-snug">{message}</p>
+        {branchName && (
+          <p
+            className="flex items-center gap-1 text-xs text-muted-foreground leading-snug"
+            title={branchName}
+          >
+            <GitBranch className="h-3 w-3 shrink-0" />
+            <span className="truncate font-mono">{branchName}</span>
+          </p>
+        )}
         {prTitle && (
           <p className="text-xs text-muted-foreground leading-snug line-clamp-2" title={prTitle}>
             {prTitle}
@@ -312,6 +324,7 @@ export function PRNotificationStack(): React.JSX.Element | null {
           prTitle={n.prTitle}
           prUrl={n.prUrl}
           prNumber={n.prNumber}
+          branchName={n.branchName}
           worktreeId={n.worktreeId}
           showArchiveButton={n.showArchiveButton}
         />
