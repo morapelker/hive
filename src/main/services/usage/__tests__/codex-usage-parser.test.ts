@@ -72,6 +72,24 @@ function sum(buckets: Record<string, { inputTokens: number; outputTokens: number
 }
 
 describe('parseCodexRolloutIncrement', () => {
+  it('reports changed=false when no new bytes were consumed', async () => {
+    const f = join(dir, 'rollout.jsonl')
+    writeFileSync(
+      f,
+      turnContext('gpt-5.6-sol') +
+        tokenCount({ ts: '2026-07-21T10:00:10Z', total: { input: 100, cached: 0, output: 5 } })
+    )
+    const r1 = await parseCodexRolloutIncrement(f, null)
+    expect(r1.changed).toBe(true)
+
+    const r2 = await parseCodexRolloutIncrement(f, JSON.parse(JSON.stringify(r1.state)) as CodexFileState)
+    expect(r2.changed).toBe(false)
+
+    appendFileSync(f, tokenCount({ ts: '2026-07-21T10:00:20Z', total: { input: 200, cached: 0, output: 9 } }))
+    const r3 = await parseCodexRolloutIncrement(f, r2.state)
+    expect(r3.changed).toBe(true)
+  })
+
   it('sums last_token_usage deltas, splitting cached input into cacheRead', async () => {
     const f = join(dir, 'rollout.jsonl')
     writeFileSync(

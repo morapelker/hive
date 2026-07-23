@@ -198,26 +198,31 @@ function processTokenCount(state: CodexFileState, timestamp: string, payload: Re
 export async function parseCodexRolloutIncrement(
   filePath: string,
   state: CodexFileState | null
-): Promise<{ state: CodexFileState; buckets: BucketMap }> {
-  let working: CodexFileState =
+): Promise<{ state: CodexFileState; buckets: BucketMap; changed: boolean }> {
+  const stored =
     state && typeof state === 'object' && state.buckets && typeof state.offset === 'number'
-      ? {
-          ...freshState(),
-          ...state,
-          pending: Array.isArray(state.pending) ? [...state.pending] : [],
-          buckets: { ...state.buckets }
-        }
-      : freshState()
+      ? state
+      : null
+  let changed = !stored
+  let working: CodexFileState = stored
+    ? {
+        ...freshState(),
+        ...stored,
+        pending: Array.isArray(stored.pending) ? [...stored.pending] : [],
+        buckets: { ...stored.buckets }
+      }
+    : freshState()
 
   let info
   try {
     info = await stat(filePath)
   } catch {
-    return { state: working, buckets: working.buckets }
+    return { state: working, buckets: working.buckets, changed }
   }
 
   if (info.size < working.offset) {
     working = freshState()
+    changed = true
   }
 
   if (!working.headChecked && info.size > 0) {
@@ -226,23 +231,24 @@ export async function parseCodexRolloutIncrement(
       const headText = head.toString('utf-8')
       working.forkMarker = headText.includes('thread_spawn') || headText.includes('forked_from_id')
       working.headChecked = true
+      changed = true
     }
   }
 
   if (info.size <= working.offset) {
     working.size = info.size
     working.mtimeMs = info.mtimeMs
-    return { state: working, buckets: working.buckets }
+    return { state: working, buckets: working.buckets, changed }
   }
 
   const buffer = await readRange(filePath, working.offset, info.size)
-  if (!buffer) return { state: working, buckets: working.buckets }
+  if (!buffer) return { state: working, buckets: working.buckets, changed }
 
   const lastNewline = buffer.lastIndexOf(0x0a)
   if (lastNewline < 0) {
     working.size = info.size
     working.mtimeMs = info.mtimeMs
-    return { state: working, buckets: working.buckets }
+    return { state: working, buckets: working.buckets, changed }
   }
 
   const chunk = buffer.subarray(0, lastNewline + 1)
@@ -285,5 +291,5 @@ export async function parseCodexRolloutIncrement(
   working.offset = working.offset + lastNewline + 1
   working.size = info.size
   working.mtimeMs = info.mtimeMs
-  return { state: working, buckets: working.buckets }
+  return { state: working, buckets: working.buckets, changed: true }
 }

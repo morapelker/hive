@@ -152,6 +152,22 @@ describe('parseClaudeSessionIncrement', () => {
     expect(sumBuckets(r2.buckets).outputTokens).toBe(2 + 3 + 99)
   })
 
+  it('reports changed=false when no new bytes were consumed', async () => {
+    const f = join(dir, 's.jsonl')
+    writeFileSync(f, entry({ id: 'm1', input: 100, output: 10 }))
+    const r1 = await parseClaudeSessionIncrement([f], null)
+    expect(r1.changed).toBe(true)
+
+    const r2 = await parseClaudeSessionIncrement([f], r1.state)
+    expect(r2.changed).toBe(false)
+    expect(r2.buckets).toEqual(r1.buckets)
+
+    appendFileSync(f, entry({ id: 'm2', input: 50, output: 5 }))
+    const r3 = await parseClaudeSessionIncrement([f], r2.state)
+    expect(r3.changed).toBe(true)
+    expect(sumBuckets(r3.buckets).inputTokens).toBe(150)
+  })
+
   it('does not consume a torn trailing line, then picks it up once completed', async () => {
     const f = join(dir, 's.jsonl')
     const full = entry({ id: 'm1', input: 10, output: 1 })

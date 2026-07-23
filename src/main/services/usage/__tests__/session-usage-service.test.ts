@@ -169,6 +169,39 @@ describe('session usage service', () => {
     expect(savedState2.claude.files[transcript].offset).toBeGreaterThan(cursorAfterFirst)
   })
 
+  it('includes subagent transcripts at any depth (Task agents + workflow agents)', async () => {
+    const worktreePath = join(root, 'wt')
+    mkdirSync(worktreePath, { recursive: true })
+    writeTranscript(worktreePath, entry('m1', 100, 10))
+    const projectDir = join(root, 'claude-config', 'projects', encodePath(worktreePath))
+    const subagentsDir = join(projectDir, 'claude-sess-1', 'subagents')
+    mkdirSync(join(subagentsDir, 'workflows', 'wf_123'), { recursive: true })
+    writeFileSync(join(subagentsDir, 'agent-direct.jsonl'), entry('m2', 200, 20))
+    writeFileSync(join(subagentsDir, 'workflows', 'wf_123', 'agent-wf.jsonl'), entry('m3', 400, 40))
+    const { db } = makeDb(worktreePath)
+    const requestGraphql = vi.fn().mockResolvedValue({ reportSessionUsage: { recorded: true } })
+    const deps = { db, requestGraphql: withModelPrices(requestGraphql) }
+
+    await flushSessionUsageReport('hive-1', deps)
+
+    expect(requestGraphql).toHaveBeenCalledTimes(1)
+    expect(requestGraphql.mock.calls[0][3].input.buckets[0]).toMatchObject({
+      inputTokens: 700,
+      outputTokens: 70
+    })
+
+    // A workflow agent file that appears later is picked up on the next stop.
+    mkdirSync(join(subagentsDir, 'workflows', 'wf_456'), { recursive: true })
+    writeFileSync(join(subagentsDir, 'workflows', 'wf_456', 'agent-late.jsonl'), entry('m4', 50, 5))
+    await flushSessionUsageReport('hive-1', deps)
+
+    expect(requestGraphql).toHaveBeenCalledTimes(2)
+    expect(requestGraphql.mock.calls[1][3].input.buckets[0]).toMatchObject({
+      inputTokens: 750,
+      outputTokens: 75
+    })
+  })
+
   it('transmits buckets newest-first so server-side capping can only drop already-stored history', async () => {
     const worktreePath = join(root, 'wt')
     mkdirSync(worktreePath, { recursive: true })
@@ -205,6 +238,53 @@ describe('session usage service', () => {
     await flushSessionUsageReport('hive-1', deps)
 
     expect(requestGraphql).toHaveBeenCalledTimes(1)
+  })
+
+  it('skips the state rewrite when nothing changed since the last report', async () => {
+    const worktreePath = join(root, 'wt')
+    mkdirSync(worktreePath, { recursive: true })
+    writeTranscript(worktreePath, entry('m1', 100, 10))
+    const { db } = makeDb(worktreePath)
+    const requestGraphql = vi.fn().mockResolvedValue({ reportSessionUsage: { recorded: true } })
+    const deps = { db, requestGraphql: withModelPrices(requestGraphql) }
+
+    await flushSessionUsageReport('hive-1', deps)
+    expect(requestGraphql).toHaveBeenCalledTimes(1)
+    const setState = db.setSessionUsageState as ReturnType<typeof vi.fn>
+    const writesAfterFirst = setState.mock.calls.length
+
+    // Sweep-equivalent flush with no file growth: no report, and no
+    // pointless reserialize+rewrite of the (potentially large) state row.
+    await flushSessionUsageReport('hive-1', deps)
+    expect(requestGraphql).toHaveBeenCalledTimes(1)
+    expect(setState.mock.calls.length).toBe(writesAfterFirst)
+  })
+
+  it('clears lastReported on a failed send so totals resend without new bytes', async () => {
+    const worktreePath = join(root, 'wt')
+    mkdirSync(worktreePath, { recursive: true })
+    const transcript = writeTranscript(worktreePath, entry('m1', 100, 10))
+    const { db, stateRows } = makeDb(worktreePath)
+    const requestGraphql = vi
+      .fn()
+      .mockResolvedValueOnce({ reportSessionUsage: { recorded: true } })
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockResolvedValue({ reportSessionUsage: { recorded: true } })
+    const deps = { db, requestGraphql: withModelPrices(requestGraphql) }
+
+    await flushSessionUsageReport('hive-1', deps)
+    appendFileSync(transcript, entry('m2', 50, 5))
+    await flushSessionUsageReport('hive-1', deps)
+    expect(stateRows.get('hive-1')!.lastReportedJson).toBeNull()
+
+    // No new bytes since the failure: the unchanged-skip must not swallow
+    // the pending resend of the already-parsed cumulative totals.
+    await flushSessionUsageReport('hive-1', deps)
+    expect(requestGraphql).toHaveBeenCalledTimes(3)
+    expect(requestGraphql.mock.calls[2][3].input.buckets[0]).toMatchObject({
+      inputTokens: 150,
+      outputTokens: 15
+    })
   })
 
   it('retries with the same cumulative totals after a failed send', async () => {

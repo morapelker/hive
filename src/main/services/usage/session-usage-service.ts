@@ -94,13 +94,26 @@ function claudeSessionIds(session: Session): string[] {
 }
 
 async function listSubagentFiles(transcriptPath: string): Promise<string[]> {
+  // Subagent transcripts nest arbitrarily deep (subagents/agent-*.jsonl for
+  // Task agents, subagents/workflows/wf_*/agent-*.jsonl for workflow agents),
+  // so walk recursively like ccusage does. Symlinked dirs are not followed.
   const subagentsDir = join(transcriptPath.slice(0, -'.jsonl'.length), 'subagents')
-  try {
-    const names = await readdir(subagentsDir)
-    return names.filter((name) => name.endsWith('.jsonl')).map((name) => join(subagentsDir, name))
-  } catch {
-    return []
+  const files: string[] = []
+  async function walk(dir: string): Promise<void> {
+    let entries
+    try {
+      entries = await readdir(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      const full = join(dir, entry.name)
+      if (entry.isDirectory()) await walk(full)
+      else if (entry.isFile() && entry.name.endsWith('.jsonl')) files.push(full)
+    }
   }
+  await walk(subagentsDir)
+  return files
 }
 
 /** Main transcript + subagent files for every known Claude session id, across cwd/realpath encodings. */
@@ -263,6 +276,10 @@ async function doReport(sessionId: string, deps: SessionUsageServiceDeps): Promi
     const files = [...new Set([...(stored?.claude ? Object.keys(stored.claude.files) : []), ...resolvedFiles])]
     if (files.length === 0) return
     const result = await parseClaudeSessionIncrement(files, stored?.claude ?? null)
+    // Nothing consumed past the stored cursors and the last send succeeded:
+    // skip the bucket recompute and the state rewrite entirely. (lastReported
+    // is cleared on send failure, so pending totals still get resent.)
+    if (!result.changed && lastReported) return
     buckets = result.buckets
     nextState = { provider, claude: result.state }
   } else {
@@ -275,6 +292,7 @@ async function doReport(sessionId: string, deps: SessionUsageServiceDeps): Promi
       if (!filePath) return
     }
     const result = await parseCodexRolloutIncrement(filePath, stored?.codex?.state ?? null)
+    if (!result.changed && lastReported) return
     buckets = result.buckets
     nextState = { provider, codex: { filePath, state: result.state } }
   }
@@ -330,13 +348,10 @@ async function doReport(sessionId: string, deps: SessionUsageServiceDeps): Promi
       costUsd: input.buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0).toFixed(4)
     })
   } catch (error) {
-    // Keep cursors (state) but not lastReported: the next stop/sweep resends
-    // the same cumulative totals — upsert semantics make that safe.
-    db.setSessionUsageState(
-      sessionId,
-      JSON.stringify(nextState),
-      lastReported ? JSON.stringify(lastReported) : null
-    )
+    // Keep cursors (state) but CLEAR lastReported: buckets only grow, so the
+    // stale snapshot can never re-match — null makes the next stop/sweep
+    // bypass the unchanged-skip and resend the cumulative totals.
+    db.setSessionUsageState(sessionId, JSON.stringify(nextState), null)
     log.warn('Failed to report session usage', {
       sessionId,
       error: error instanceof Error ? error.message : String(error)
