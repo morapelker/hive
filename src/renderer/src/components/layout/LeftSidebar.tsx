@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { useLayoutStore } from '@/stores/useLayoutStore'
 import { useProjectStore, useConnectionStore, useFilterStore, useSpaceStore } from '@/stores'
 import { useSettingsStore } from '@/stores/useSettingsStore'
@@ -27,9 +27,10 @@ export function LeftSidebar(): React.JSX.Element {
   const shouldShowUsageIndicator =
     usageIndicatorMode === 'current-agent' ||
     (usageIndicatorMode === 'specific-providers' && usageIndicatorProviders.length > 0)
-  const [filterQuery, setFilterQuery] = useState('')
-
-  // Filter store for language filters
+  // Filter store for language filters and the text filter query
+  // (in the store so keyboard navigation can respect the visible list)
+  const filterQuery = useFilterStore((s) => s.filterQuery)
+  const setFilterQuery = useFilterStore((s) => s.setFilterQuery)
   const activeLanguages = useFilterStore((s) => s.activeLanguages)
   const removeLanguage = useFilterStore((s) => s.removeLanguage)
   const clearAllFilters = useFilterStore((s) => s.clearAll)
@@ -46,10 +47,9 @@ export function LeftSidebar(): React.JSX.Element {
 
   const canFinalize = connectionModeSelectedIds.size >= 2
 
-  // Clear language filters on space switch
+  // Clear language filters and the text filter on space switch
   useEffect(() => {
     clearAllFilters()
-    setFilterQuery('')
   }, [activeSpaceId, clearAllFilters])
 
   // Escape key exits connection mode
