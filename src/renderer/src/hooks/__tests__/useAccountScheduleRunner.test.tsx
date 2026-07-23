@@ -85,7 +85,26 @@ describe('useAccountScheduleRunner usage refresh cadence', () => {
     expect(fetchUsageForProvider).toHaveBeenCalledWith('anthropic')
   })
 
-  it('refreshes every minute when usage is near an armed auto-switch threshold', async () => {
+  it('refreshes every 2 minutes in the last 10 points before an armed auto-switch threshold', async () => {
+    useAccountScheduleStore.setState({
+      autoSwitch: {
+        anthropic: { provider: 'anthropic', thresholdPercent: 90, createdAt: Date.now() }
+      }
+    })
+    renderHook(() => useAccountScheduleRunner())
+
+    await advance(90_000)
+    expect(fetchUsageForProvider).not.toHaveBeenCalled()
+
+    await advance(30_000)
+    expect(fetchUsageForProvider).toHaveBeenCalledTimes(1)
+
+    await advance(2 * 60_000)
+    expect(fetchUsageForProvider).toHaveBeenCalledTimes(2)
+  })
+
+  it('refreshes every minute in the last 3 points before an armed auto-switch threshold', async () => {
+    useUsageStore.setState({ anthropicUsage: makeUsage(88, 40) })
     useAccountScheduleStore.setState({
       autoSwitch: {
         anthropic: { provider: 'anthropic', thresholdPercent: 90, createdAt: Date.now() }
@@ -119,7 +138,7 @@ describe('useAccountScheduleRunner usage refresh cadence', () => {
     expect(fetchUsageForProvider).toHaveBeenCalledTimes(1)
   })
 
-  it('refreshes every minute when near a usage-mode scheduled switch threshold', async () => {
+  it('refreshes every 2 minutes when near a usage-mode scheduled switch threshold', async () => {
     useAccountScheduleStore.setState({
       schedules: {
         anthropic: {
@@ -134,6 +153,9 @@ describe('useAccountScheduleRunner usage refresh cadence', () => {
       }
     })
     renderHook(() => useAccountScheduleRunner())
+
+    await advance(60_000)
+    expect(fetchUsageForProvider).not.toHaveBeenCalled()
 
     await advance(60_000)
     expect(fetchUsageForProvider).toHaveBeenCalledTimes(1)

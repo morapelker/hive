@@ -10,12 +10,15 @@ const CHECK_INTERVAL_MS = 30_000
 // completes — long runs can burn through a window without ever going idle,
 // and usage-based scheduled switches need current numbers to fire mid-session.
 const SESSION_USAGE_REFRESH_MS = 5 * 60_000
-// Once utilization gets within this many percentage points of an armed
-// usage-based switch threshold, a 5-minute sampling gap can blow far past the
-// threshold before the switch fires — tighten to once per minute (still only
-// while a session is running for the provider).
+// Once utilization gets within these margins of an armed usage-based switch
+// threshold, a 5-minute sampling gap can blow far past the threshold before
+// the switch fires — tighten to every 2 minutes in the last 10 points and
+// every minute in the last 3 (still only while a session is running for the
+// provider).
 const NEAR_THRESHOLD_MARGIN_PERCENT = 10
-const NEAR_THRESHOLD_REFRESH_MS = 60_000
+const NEAR_THRESHOLD_REFRESH_MS = 2 * 60_000
+const IMMINENT_THRESHOLD_MARGIN_PERCENT = 3
+const IMMINENT_THRESHOLD_REFRESH_MS = 60_000
 
 /** Threshold of the armed usage-based switch (auto-switch or usage schedule), if any. */
 function armedUsageThresholdPercent(provider: UsageProvider): number | null {
@@ -33,6 +36,9 @@ function usageRefreshIntervalMs(provider: UsageProvider): number {
   const percent = getActiveUsagePercent(provider)
   if (percent === null || percent < threshold - NEAR_THRESHOLD_MARGIN_PERCENT) {
     return SESSION_USAGE_REFRESH_MS
+  }
+  if (percent >= threshold - IMMINENT_THRESHOLD_MARGIN_PERCENT) {
+    return IMMINENT_THRESHOLD_REFRESH_MS
   }
   return NEAR_THRESHOLD_REFRESH_MS
 }
