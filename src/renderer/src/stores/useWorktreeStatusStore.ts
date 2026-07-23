@@ -27,9 +27,17 @@ export type MergeConflictFlow =
   | { phase: 'running'; sessionId: string; seenBusy: boolean }
   | { phase: 'refreshing' }
 
+export interface SessionBackgroundWork {
+  runningShells: number
+  runningMonitors: number
+}
+
 interface WorktreeStatusState {
   // sessionId → status info (null means no status / cleared)
   sessionStatuses: Record<string, SessionStatusEntry | null>
+  // sessionId → live background shell/monitor counts (claude-cli only; entries
+  // are dropped when both counts reach zero)
+  backgroundWorkBySession: Record<string, SessionBackgroundWork>
   // worktreeId → epoch ms of last message activity
   lastMessageTimeByWorktree: Record<string, number>
   // worktreeId → sessionId for active review sessions
@@ -58,6 +66,7 @@ interface WorktreeStatusState {
       plan?: string
     }
   ) => void
+  setSessionBackgroundWork: (sessionId: string, work: SessionBackgroundWork) => void
   clearSessionStatus: (sessionId: string) => void
   clearWorktreeUnread: (worktreeId: string) => void
   getWorktreeStatus: (worktreeId: string) => SessionStatusType | null
@@ -77,6 +86,7 @@ interface WorktreeStatusState {
 
 export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => ({
   sessionStatuses: {},
+  backgroundWorkBySession: {},
   lastMessageTimeByWorktree: {},
   reviewSessionByWorktree: {},
   completedReviewSessionByWorktree: {},
@@ -140,6 +150,22 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
     } else if (status === 'working' || status === 'planning') {
       notifyKanbanSessionSync(sessionId, { type: 'session_working' })
     }
+  },
+
+  setSessionBackgroundWork: (sessionId: string, work: SessionBackgroundWork) => {
+    set((state) => {
+      if (work.runningShells === 0 && work.runningMonitors === 0) {
+        if (!(sessionId in state.backgroundWorkBySession)) return {}
+        const { [sessionId]: _, ...rest } = state.backgroundWorkBySession
+        return { backgroundWorkBySession: rest }
+      }
+      return {
+        backgroundWorkBySession: {
+          ...state.backgroundWorkBySession,
+          [sessionId]: work
+        }
+      }
+    })
   },
 
   clearSessionStatus: (sessionId: string) => {

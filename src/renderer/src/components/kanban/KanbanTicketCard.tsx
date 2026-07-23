@@ -33,7 +33,9 @@ import {
   FolderInput,
   FastForward,
   RadioTower,
-  Unplug
+  Unplug,
+  SquareTerminal,
+  Radar
 } from 'lucide-react'
 import { CheckeredFlagIcon } from './CheckeredFlagIcon'
 import { TicketModelBadge } from './TicketModelBadge'
@@ -454,6 +456,17 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
         if (!ticket.current_session_id) return false
         const entry = state.sessionStatuses[ticket.current_session_id]
         return entry?.status === 'working' || entry?.status === 'planning'
+      },
+      [ticket.current_session_id]
+    )
+  )
+
+  // ── Live background shells/monitors in the linked claude-cli session ──
+  const backgroundWork = useWorktreeStatusStore(
+    useCallback(
+      (state) => {
+        if (!ticket.current_session_id) return null
+        return state.backgroundWorkBySession[ticket.current_session_id] ?? null
       },
       [ticket.current_session_id]
     )
@@ -1072,7 +1085,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             </div>
 
             {/* Badges + progress row */}
-            {(hasAttachments || hasNote || worktreeName || queuedBranchLabel || projectTag || connectionName || ticket.plan_ready || isError || rightAlignedSlot || isArchived || isBlocked || blockingDiagnostic || isRunProcessAlive || ticket.github_pr_number || isCreatingPR || isForwardedToTelegram || ticket.goal_mode || ticket.auto_approve_plan || activeRemoteLaunch || showModelBadge) && (
+            {(hasAttachments || hasNote || worktreeName || queuedBranchLabel || projectTag || connectionName || ticket.plan_ready || isError || rightAlignedSlot || isArchived || isBlocked || blockingDiagnostic || isRunProcessAlive || ticket.github_pr_number || isCreatingPR || isForwardedToTelegram || ticket.goal_mode || ticket.auto_approve_plan || activeRemoteLaunch || showModelBadge || backgroundWork) && (
               <div className="mt-1.5 flex flex-wrap items-center gap-1">
                 {/* Archived badge */}
                 {isArchived && (
@@ -1121,6 +1134,44 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                     <GitBranch className="h-3 w-3" />
                     {queuedBranchLabel}
                   </span>
+                )}
+                {/* Running background shells in the linked claude-cli session */}
+                {backgroundWork && backgroundWork.runningShells > 0 && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span
+                        data-testid="kanban-ticket-running-shells"
+                        className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 text-[11px] font-medium text-emerald-500 cursor-help"
+                      >
+                        <SquareTerminal className="h-3 w-3" />
+                        {backgroundWork.runningShells}
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {backgroundWork.runningShells === 1
+                        ? '1 background shell running'
+                        : `${backgroundWork.runningShells} background shells running`}
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+                {/* Running monitors in the linked claude-cli session */}
+                {backgroundWork && backgroundWork.runningMonitors > 0 && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span
+                        data-testid="kanban-ticket-running-monitors"
+                        className="inline-flex items-center gap-1 rounded-full bg-cyan-500/10 border border-cyan-500/30 px-2 py-0.5 text-[11px] font-medium text-cyan-500 cursor-help"
+                      >
+                        <Radar className="h-3 w-3" />
+                        {backgroundWork.runningMonitors}
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {backgroundWork.runningMonitors === 1
+                        ? '1 monitor running'
+                        : `${backgroundWork.runningMonitors} monitors running`}
+                    </TooltipContent>
+                  </Tooltip>
                 )}
                 {/* Attachment badge */}
                 {hasAttachments && (

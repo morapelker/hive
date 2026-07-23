@@ -2,6 +2,8 @@ import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { KanbanTicketCard } from './KanbanTicketCard'
 import { useSettingsStore } from '@/stores/useSettingsStore'
+import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import type { KanbanTicket } from '../../../../main/db/types'
 
 const now = '2026-01-01T00:00:00.000Z'
@@ -105,5 +107,59 @@ describe('KanbanTicketCard model badge', () => {
 
     expect(screen.queryByRole('img', { name: 'Claude' })).toBeNull()
     expect(screen.queryByRole('img', { name: 'OpenAI' })).toBeNull()
+  })
+})
+
+describe('KanbanTicketCard background work badges', () => {
+  afterEach(() => {
+    cleanup()
+    useWorktreeStatusStore.setState({ backgroundWorkBySession: {} })
+  })
+
+  const linkedTicket: KanbanTicket = { ...baseTicket, current_session_id: 'session-1' }
+
+  it('renders shell and monitor count badges for the linked session', () => {
+    useWorktreeStatusStore.setState({
+      backgroundWorkBySession: { 'session-1': { runningShells: 2, runningMonitors: 1 } }
+    })
+
+    render(
+      <TooltipProvider>
+        <KanbanTicketCard ticket={linkedTicket} />
+      </TooltipProvider>
+    )
+
+    expect(screen.getByTestId('kanban-ticket-running-shells')).toHaveTextContent('2')
+    expect(screen.getByTestId('kanban-ticket-running-monitors')).toHaveTextContent('1')
+  })
+
+  it('renders only the badge whose count is non-zero', () => {
+    useWorktreeStatusStore.setState({
+      backgroundWorkBySession: { 'session-1': { runningShells: 1, runningMonitors: 0 } }
+    })
+
+    render(
+      <TooltipProvider>
+        <KanbanTicketCard ticket={linkedTicket} />
+      </TooltipProvider>
+    )
+
+    expect(screen.getByTestId('kanban-ticket-running-shells')).toHaveTextContent('1')
+    expect(screen.queryByTestId('kanban-ticket-running-monitors')).toBeNull()
+  })
+
+  it('renders no badges without counts or for other sessions', () => {
+    useWorktreeStatusStore.setState({
+      backgroundWorkBySession: { 'other-session': { runningShells: 3, runningMonitors: 3 } }
+    })
+
+    render(
+      <TooltipProvider>
+        <KanbanTicketCard ticket={linkedTicket} />
+      </TooltipProvider>
+    )
+
+    expect(screen.queryByTestId('kanban-ticket-running-shells')).toBeNull()
+    expect(screen.queryByTestId('kanban-ticket-running-monitors')).toBeNull()
   })
 })
