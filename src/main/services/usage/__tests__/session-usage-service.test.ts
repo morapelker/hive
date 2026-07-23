@@ -287,6 +287,40 @@ describe('session usage service', () => {
     })
   })
 
+  it('does not trust pre-upgrade rows: stale lastReported without the marker resends', async () => {
+    const worktreePath = join(root, 'wt')
+    mkdirSync(worktreePath, { recursive: true })
+    const transcript = writeTranscript(worktreePath, entry('m1', 100, 10))
+    const { db, stateRows } = makeDb(worktreePath)
+    const requestGraphql = vi.fn().mockResolvedValue({ reportSessionUsage: { recorded: true } })
+    const deps = { db, requestGraphql: withModelPrices(requestGraphql) }
+
+    await flushSessionUsageReport('hive-1', deps)
+    const staleLastReported = stateRows.get('hive-1')!.lastReportedJson
+    appendFileSync(transcript, entry('m2', 50, 5))
+    await flushSessionUsageReport('hive-1', deps)
+    expect(requestGraphql).toHaveBeenCalledTimes(2)
+
+    // Forge a row from the previous release's failure path: cursors already
+    // cover m2, lastReported still holds the m1-only snapshot, and the
+    // reportedOk marker does not exist yet.
+    const legacyState = JSON.parse(stateRows.get('hive-1')!.stateJson)
+    delete legacyState.reportedOk
+    stateRows.set('hive-1', {
+      stateJson: JSON.stringify(legacyState),
+      lastReportedJson: staleLastReported
+    })
+
+    // No new bytes — but the unverified row must take the compare path and
+    // resend the cumulative totals instead of being skipped forever.
+    await flushSessionUsageReport('hive-1', deps)
+    expect(requestGraphql).toHaveBeenCalledTimes(3)
+    expect(requestGraphql.mock.calls[2][3].input.buckets[0]).toMatchObject({
+      inputTokens: 150,
+      outputTokens: 15
+    })
+  })
+
   it('retries with the same cumulative totals after a failed send', async () => {
     const worktreePath = join(root, 'wt')
     mkdirSync(worktreePath, { recursive: true })

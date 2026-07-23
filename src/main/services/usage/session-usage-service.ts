@@ -48,6 +48,13 @@ interface StoredUsageState {
   claude?: ClaudeSessionState
   codex?: { filePath: string | null; state: CodexFileState | null }
   gitRemoteUrl?: string | null
+  /**
+   * True only when lastReportedJson is known to match this state's totals
+   * (set on successful send or a verified buckets-equal pass). Rows from
+   * releases before this marker may hold stale lastReported after a failed
+   * send — they must take the full compare path, never the unchanged-skip.
+   */
+  reportedOk?: boolean
 }
 
 export interface SessionUsageServiceDeps {
@@ -276,10 +283,12 @@ async function doReport(sessionId: string, deps: SessionUsageServiceDeps): Promi
     const files = [...new Set([...(stored?.claude ? Object.keys(stored.claude.files) : []), ...resolvedFiles])]
     if (files.length === 0) return
     const result = await parseClaudeSessionIncrement(files, stored?.claude ?? null)
-    // Nothing consumed past the stored cursors and the last send succeeded:
-    // skip the bucket recompute and the state rewrite entirely. (lastReported
-    // is cleared on send failure, so pending totals still get resent.)
-    if (!result.changed && lastReported) return
+    // Nothing consumed past the stored cursors and the stored row is verified
+    // (reportedOk: lastReported matches the state's totals): skip the bucket
+    // recompute and the state rewrite entirely. Send failures clear
+    // lastReported, and unverified pre-marker rows fall through to the full
+    // compare, so pending totals always get resent.
+    if (!result.changed && lastReported && stored?.reportedOk) return
     buckets = result.buckets
     nextState = { provider, claude: result.state }
   } else {
@@ -292,7 +301,7 @@ async function doReport(sessionId: string, deps: SessionUsageServiceDeps): Promi
       if (!filePath) return
     }
     const result = await parseCodexRolloutIncrement(filePath, stored?.codex?.state ?? null)
-    if (!result.changed && lastReported) return
+    if (!result.changed && lastReported && stored?.reportedOk) return
     buckets = result.buckets
     nextState = { provider, codex: { filePath, state: result.state } }
   }
@@ -300,6 +309,8 @@ async function doReport(sessionId: string, deps: SessionUsageServiceDeps): Promi
   const rounded = roundBuckets(buckets)
   if (bucketsEqual(lastReported, rounded)) {
     nextState.gitRemoteUrl = stored?.gitRemoteUrl ?? null
+    // Equality just proved lastReported reflects this state — mark verified.
+    nextState.reportedOk = true
     db.setSessionUsageState(sessionId, JSON.stringify(nextState), JSON.stringify(lastReported ?? {}))
     return
   }
@@ -340,6 +351,7 @@ async function doReport(sessionId: string, deps: SessionUsageServiceDeps): Promi
 
   try {
     await request(context.endpoint, context.token, ReportSessionUsageDocument, { input })
+    nextState.reportedOk = true
     db.setSessionUsageState(sessionId, JSON.stringify(nextState), JSON.stringify(rounded))
     log.info('Reported session usage', {
       sessionId,
