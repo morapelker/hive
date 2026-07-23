@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useUsageStore, resolveUsageProvider } from '@/stores/useUsageStore'
-import { useAccountScheduleStore } from '@/stores/useAccountScheduleStore'
+import { useAccountScheduleStore, getActiveUsagePercent } from '@/stores/useAccountScheduleStore'
 import type { UsageProvider } from '@shared/types/usage'
 
 const CHECK_INTERVAL_MS = 30_000
@@ -10,6 +10,32 @@ const CHECK_INTERVAL_MS = 30_000
 // completes — long runs can burn through a window without ever going idle,
 // and usage-based scheduled switches need current numbers to fire mid-session.
 const SESSION_USAGE_REFRESH_MS = 5 * 60_000
+// Once utilization gets within this many percentage points of an armed
+// usage-based switch threshold, a 5-minute sampling gap can blow far past the
+// threshold before the switch fires — tighten to once per minute (still only
+// while a session is running for the provider).
+const NEAR_THRESHOLD_MARGIN_PERCENT = 10
+const NEAR_THRESHOLD_REFRESH_MS = 60_000
+
+/** Threshold of the armed usage-based switch (auto-switch or usage schedule), if any. */
+function armedUsageThresholdPercent(provider: UsageProvider): number | null {
+  const { autoSwitch, schedules } = useAccountScheduleStore.getState()
+  const auto = autoSwitch[provider]
+  if (auto) return auto.thresholdPercent
+  const schedule = schedules[provider]
+  if (schedule?.mode === 'usage') return schedule.thresholdPercent
+  return null
+}
+
+function usageRefreshIntervalMs(provider: UsageProvider): number {
+  const threshold = armedUsageThresholdPercent(provider)
+  if (threshold === null) return SESSION_USAGE_REFRESH_MS
+  const percent = getActiveUsagePercent(provider)
+  if (percent === null || percent < threshold - NEAR_THRESHOLD_MARGIN_PERCENT) {
+    return SESSION_USAGE_REFRESH_MS
+  }
+  return NEAR_THRESHOLD_REFRESH_MS
+}
 
 function providersWithRunningSessions(): Set<UsageProvider> {
   const providers = new Set<UsageProvider>()
@@ -50,7 +76,7 @@ export function useAccountScheduleRunner(): void {
             ? usageStore.anthropicLastFetchedAt
             : usageStore.openaiLastFetchedAt
         const lastActivity = Math.max(lastFetchedAt ?? 0, lastAttemptAt[provider] ?? 0)
-        if (Date.now() - lastActivity >= SESSION_USAGE_REFRESH_MS) {
+        if (Date.now() - lastActivity >= usageRefreshIntervalMs(provider)) {
           lastAttemptAt[provider] = Date.now()
           // fetchUsageForProvider is silent on failure and debounce-safe, so a
           // flaky refresh never toasts every 5 minutes.
