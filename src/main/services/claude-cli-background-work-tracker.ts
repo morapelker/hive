@@ -110,6 +110,13 @@ function responseId(hook: ParsedClaudeHook, field: string): string | null {
   return typeof id === 'string' && id.length > 0 ? id : null
 }
 
+function canStartBackgroundWork(hook: ParsedClaudeHook): boolean {
+  return (
+    hook.hook_event_name === 'PostToolUse' &&
+    (hook.tool_name === 'Bash' || hook.tool_name === 'Monitor')
+  )
+}
+
 function observePostToolUse(work: SessionWork, hook: ParsedClaudeHook): void {
   switch (hook.tool_name) {
     case 'Bash': {
@@ -169,6 +176,12 @@ export function processClaudeCliBackgroundWorkHook(
   }
 
   const existing = sessions.get(sessionId)
+  // With nothing tracked, only a task START can change counts — every other
+  // event just removes/reconciles. Skip the transient state allocation this
+  // hot path (every tool use of every session) would otherwise churn through.
+  if (!existing && !canStartBackgroundWork(hook)) {
+    return null
+  }
   const before = counts(existing)
   const work = existing ?? getOrCreateWork(sessionId)
 

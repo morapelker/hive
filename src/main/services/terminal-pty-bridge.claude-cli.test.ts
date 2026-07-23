@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => {
     buildClaudeCliHookSettings: vi.fn(),
     getLastClaudeCliStatus: vi.fn(),
     publishClaudeCliStatus: vi.fn(),
+    resetClaudeCliBackgroundWork: vi.fn(),
     subscribeClaudeCliStatus: vi.fn(() => vi.fn()),
     clearClaudeCliInteractions: vi.fn(),
     clearAllClaudeCliInteractions: vi.fn(),
@@ -119,6 +120,7 @@ vi.mock('./claude-hook-server', () => ({
   buildClaudeCliHookSettings: mocks.buildClaudeCliHookSettings,
   getLastClaudeCliStatus: mocks.getLastClaudeCliStatus,
   publishClaudeCliStatus: mocks.publishClaudeCliStatus,
+  resetClaudeCliBackgroundWork: mocks.resetClaudeCliBackgroundWork,
   subscribeClaudeCliStatus: mocks.subscribeClaudeCliStatus
 }))
 
@@ -311,6 +313,22 @@ describe('Claude CLI terminal hook status wiring', () => {
       rows: 40
     })
     expect(mocks.ptyService.write).not.toHaveBeenCalled()
+  })
+
+  it('resets background-work counts when spawning a fresh Claude process', async () => {
+    mocks.ptyService.has.mockReturnValue(false)
+
+    await createClaudeCliTerminal('hive-session-1', {})
+
+    expect(mocks.resetClaudeCliBackgroundWork).toHaveBeenCalledWith('hive-session-1')
+  })
+
+  it('keeps background-work counts when reusing an already-running PTY', async () => {
+    mocks.ptyService.has.mockReturnValue(true)
+
+    await createClaudeCliTerminal('hive-session-1', {})
+
+    expect(mocks.resetClaudeCliBackgroundWork).not.toHaveBeenCalled()
   })
 
   it('does not register the old terminal:create IPC handler', () => {

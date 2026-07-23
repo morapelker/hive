@@ -407,8 +407,14 @@ export async function createClaudeCliTerminal(
     // ...nor a stale subagent deferral/pending-notification set, which could
     // otherwise swallow the next turn's Stop after a restart.
     clearClaudeCliSubagentTracking(sessionId)
-    // ...nor the previous process's background shell/monitor counts.
-    resetClaudeCliBackgroundWork(sessionId)
+    // ...nor a dead previous process's background shell/monitor counts. Only
+    // on a true (re)spawn: when the live PTY was reused above, its claude
+    // process — and its background tasks — are still running, and the
+    // Stop-snapshot reconciliation only prunes tracked ids (it never adopts),
+    // so a reset here could not self-heal until those tasks ended.
+    if (!alreadyExists) {
+      resetClaudeCliBackgroundWork(sessionId)
+    }
     claudeCliWorktreeBasenames.set(sessionId, path.basename(worktreePath))
     if (!pendingPrompt) {
       publishClaudeCliStatus({
