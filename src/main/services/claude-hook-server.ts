@@ -20,6 +20,15 @@ import {
   type ClaudeCliBackgroundTask
 } from './claude-cli-subagent-tracker'
 import {
+  clearAllClaudeCliBackgroundWork,
+  clearClaudeCliBackgroundWork,
+  processClaudeCliBackgroundWorkHook
+} from './claude-cli-background-work-tracker'
+import {
+  CLAUDE_CLI_BACKGROUND_WORK_CHANNEL,
+  type ClaudeCliBackgroundWorkPayload
+} from '@shared/types/claude-cli-background-work'
+import {
   clearAllClaudeCliPlanAutoApprove,
   consumeClaudeCliPlanAutoApprove,
   isClaudeCliPlanAutoApproveArmed,
@@ -42,7 +51,13 @@ export interface ParsedClaudeHook {
   tool_input?: {
     plan?: unknown
     questions?: unknown
+    /** Bash: true when the command was launched as a background shell. */
+    run_in_background?: unknown
+    /** TaskStop: the background task id being stopped. */
+    task_id?: unknown
   }
+  /** PostToolUse tool result (backgroundTaskId / taskId live here). */
+  tool_response?: unknown
   /** Final assistant message of the turn (Stop hook). Read both spellings: */
   assistant_message?: string
   last_assistant_message?: string
@@ -223,6 +238,24 @@ export function publishClaudeCliStatus(payload: ClaudeCliStatusPayload): void {
   )
 }
 
+function publishClaudeCliBackgroundWork(payload: ClaudeCliBackgroundWorkPayload): void {
+  void Promise.resolve(
+    publishDesktopBackendEvent(CLAUDE_CLI_BACKGROUND_WORK_CHANNEL, payload)
+  ).catch(() => undefined)
+}
+
+/**
+ * Drop a session's background-work counts and, if it had any, tell the
+ * renderer they are gone. For teardown paths that fire no SessionEnd hook
+ * (PTY exit, destroy, restart) — the CLI's background tasks die with the
+ * process, so the badge must not linger.
+ */
+export function resetClaudeCliBackgroundWork(sessionId: string): void {
+  if (clearClaudeCliBackgroundWork(sessionId)) {
+    publishClaudeCliBackgroundWork({ sessionId, runningShells: 0, runningMonitors: 0 })
+  }
+}
+
 /**
  * Read the most recently published live status for a Claude CLI session, or
  * undefined if none has been published in this process. Used to gate actions
@@ -312,6 +345,14 @@ async function handleHook(req: http.IncomingMessage, res: http.ServerResponse): 
             metadata: buildStatusMetadata(body, route.hookPath)
           }
         : null
+      // Live background shell/monitor counts for the kanban ticket badge.
+      // Independent of the status pipeline below: counting must see every
+      // hook (including ones the subagent gate swallows), and count changes
+      // ride a dedicated channel so the status dedup can't eat them.
+      const backgroundWork = processClaudeCliBackgroundWorkHook(route.sessionId, body)
+      if (backgroundWork) {
+        publishClaudeCliBackgroundWork({ sessionId: route.sessionId, ...backgroundWork })
+      }
       // Background Task subagents can keep running after the main agent's
       // Stop fires; the tracker decides whether this Stop is truly final
       // ('pass'), must be swallowed because work is still in flight
@@ -508,6 +549,7 @@ export async function closeClaudeHookServer(): Promise<void> {
     statusSubscribers.clear()
     clearAllClaudeCliInteractions()
     clearAllClaudeCliSubagentTracking()
+    clearAllClaudeCliBackgroundWork()
     clearAllClaudeCliPlanAutoApprove()
     setClaudeCliDeferredCompletionHandler(null)
     return
@@ -530,6 +572,7 @@ export async function closeClaudeHookServer(): Promise<void> {
   statusSubscribers.clear()
   clearAllClaudeCliInteractions()
   clearAllClaudeCliSubagentTracking()
+  clearAllClaudeCliBackgroundWork()
   clearAllClaudeCliPlanAutoApprove()
   setClaudeCliDeferredCompletionHandler(null)
 }

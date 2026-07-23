@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   onClaudeCliStatus: vi.fn(),
+  onClaudeCliBackgroundWork: vi.fn().mockReturnValue(() => {}),
+  setSessionBackgroundWork: vi.fn(),
   setClaudeCliPlanAutoApprove: vi.fn().mockResolvedValue({ success: true }),
   setSessionStatus: vi.fn(),
   setPendingPlan: vi.fn(),
@@ -35,7 +37,8 @@ vi.mock('@/stores/useWorktreeStatusStore', () => ({
   useWorktreeStatusStore: {
     getState: () => ({
       sessionStatuses: mocks.sessionStatuses,
-      setSessionStatus: mocks.setSessionStatus
+      setSessionStatus: mocks.setSessionStatus,
+      setSessionBackgroundWork: mocks.setSessionBackgroundWork
     })
   }
 }))
@@ -73,6 +76,7 @@ vi.mock('@/stores/useUsageStore', () => ({
 vi.mock('@/api/terminal-api', () => ({
   terminalApi: {
     onClaudeCliStatus: mocks.onClaudeCliStatus,
+    onClaudeCliBackgroundWork: mocks.onClaudeCliBackgroundWork,
     setClaudeCliPlanAutoApprove: mocks.setClaudeCliPlanAutoApprove
   }
 }))
@@ -758,5 +762,42 @@ describe('useClaudeCliStatusListener — usage refresh on completion', () => {
     })
 
     expect(mocks.fetchUsageForProvider).not.toHaveBeenCalled()
+  })
+})
+
+describe('useClaudeCliStatusListener — background work counts', () => {
+  beforeEach(() => {
+    mocks.onClaudeCliStatus.mockReturnValue(() => {})
+  })
+
+  it('routes background-work payloads into the store', () => {
+    let subscribed: ((payload: {
+      sessionId: string
+      runningShells: number
+      runningMonitors: number
+    }) => void) | null = null
+    mocks.onClaudeCliBackgroundWork.mockImplementation((callback) => {
+      subscribed = callback
+      return () => {}
+    })
+
+    renderHook(() => useClaudeCliStatusListener())
+
+    subscribed?.({ sessionId: 'hive-session-1', runningShells: 2, runningMonitors: 1 })
+
+    expect(mocks.setSessionBackgroundWork).toHaveBeenCalledWith('hive-session-1', {
+      runningShells: 2,
+      runningMonitors: 1
+    })
+  })
+
+  it('unsubscribes from background-work events on unmount', () => {
+    const unsubscribeBackgroundWork = vi.fn()
+    mocks.onClaudeCliBackgroundWork.mockReturnValue(unsubscribeBackgroundWork)
+
+    const { unmount } = renderHook(() => useClaudeCliStatusListener())
+    unmount()
+
+    expect(unsubscribeBackgroundWork).toHaveBeenCalledTimes(1)
   })
 })
