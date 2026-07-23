@@ -133,7 +133,10 @@ vi.mock('./claude-cli-interaction-ledger', () => ({
   clearAllClaudeCliInteractions: mocks.clearAllClaudeCliInteractions
 }))
 
-vi.mock('./claude-cli-subagent-tracker', () => ({
+// Spread the real module so transitive importers (claude-cli-background-work-tracker
+// named-imports isTaskNotificationPrompt from here) keep their exports working.
+vi.mock('./claude-cli-subagent-tracker', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./claude-cli-subagent-tracker')>()),
   clearClaudeCliSubagentTracking: mocks.clearClaudeCliSubagentTracking,
   clearAllClaudeCliSubagentTracking: mocks.clearAllClaudeCliSubagentTracking
 }))
