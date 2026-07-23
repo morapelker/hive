@@ -287,6 +287,48 @@ describe('session usage service', () => {
     })
   })
 
+  it('re-prices unchanged claude sessions after the price table changes', async () => {
+    const worktreePath = join(root, 'wt')
+    mkdirSync(worktreePath, { recursive: true })
+    writeTranscript(worktreePath, entry('m1', 100, 10))
+    const { db } = makeDb(worktreePath)
+    const requestGraphql = vi.fn().mockResolvedValue({ reportSessionUsage: { recorded: true } })
+
+    await flushSessionUsageReport('hive-1', { db, requestGraphql: withModelPrices(requestGraphql) })
+    expect(requestGraphql).toHaveBeenCalledTimes(1)
+    expect(requestGraphql.mock.calls[0][3].input.buckets[0].costUsd).toBeCloseTo(
+      100 * IN + 10 * OUT,
+      9
+    )
+
+    // Server publishes corrected prices (e.g. a model that was priceless at
+    // launch): the next refresh must re-price already-reported sessions even
+    // though no transcript bytes changed.
+    const repriced = JSON.parse(JSON.stringify(pricingFixture)) as Record<
+      string,
+      Record<string, number>
+    >
+    repriced['claude-fable-5'].output_cost_per_token = OUT * 2
+    __resetModelPricingLoaderForTests()
+    await flushSessionUsageReport('hive-1', {
+      db,
+      requestGraphql: withModelPrices(requestGraphql, {
+        pricesJson: JSON.stringify(repriced),
+        fetchedAt: '2026-07-22T00:00:00Z'
+      })
+    })
+
+    expect(requestGraphql).toHaveBeenCalledTimes(2)
+    expect(requestGraphql.mock.calls[1][3].input.buckets[0]).toMatchObject({
+      inputTokens: 100,
+      outputTokens: 10
+    })
+    expect(requestGraphql.mock.calls[1][3].input.buckets[0].costUsd).toBeCloseTo(
+      100 * IN + 10 * OUT * 2,
+      9
+    )
+  })
+
   it('does not trust pre-upgrade rows: stale lastReported without the marker resends', async () => {
     const worktreePath = join(root, 'wt')
     mkdirSync(worktreePath, { recursive: true })

@@ -1,6 +1,9 @@
+import { createHash } from 'crypto'
 import { createLogger } from '../logger'
 
 const log = createLogger({ component: 'UsagePricing' })
+
+let tableRevision = ''
 
 /**
  * Model pricing resolved from the server-provided LiteLLM price table. The
@@ -102,10 +105,20 @@ export function setModelPricingTable(rawPricing: RawPricingTable): void {
     if (!normalizedIndex.has(normalized)) normalizedIndex.set(normalized, pricing)
   }
   tableLoaded = entries.length > 0
+  tableRevision = createHash('sha256').update(JSON.stringify(rawPricing)).digest('hex').slice(0, 16)
 }
 
 export function hasModelPricingTable(): boolean {
   return tableLoaded
+}
+
+/**
+ * Fingerprint of the loaded table. Changes only when the server publishes
+ * different price content — reports verified under an older revision must
+ * re-price their totals.
+ */
+export function getModelPricingRevision(): string {
+  return tableRevision
 }
 
 function normalizeKey(key: string): string {

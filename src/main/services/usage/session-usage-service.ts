@@ -17,6 +17,7 @@ import {
   type ClaudeSessionState
 } from './claude-usage-parser'
 import { parseCodexRolloutIncrement, type CodexFileState } from './codex-usage-parser'
+import { getModelPricingRevision } from './pricing'
 import { ensureModelPricing } from './model-pricing-loader'
 
 /**
@@ -55,6 +56,12 @@ interface StoredUsageState {
    * send — they must take the full compare path, never the unchanged-skip.
    */
   reportedOk?: boolean
+  /**
+   * Price-table revision the totals were verified under. Claude costs are
+   * recomputed from tokens on every pass, so a changed table must invalidate
+   * the unchanged-skip and re-price even byte-identical transcripts.
+   */
+  pricesRev?: string
 }
 
 export interface SessionUsageServiceDeps {
@@ -284,11 +291,19 @@ async function doReport(sessionId: string, deps: SessionUsageServiceDeps): Promi
     if (files.length === 0) return
     const result = await parseClaudeSessionIncrement(files, stored?.claude ?? null)
     // Nothing consumed past the stored cursors and the stored row is verified
-    // (reportedOk: lastReported matches the state's totals): skip the bucket
-    // recompute and the state rewrite entirely. Send failures clear
-    // lastReported, and unverified pre-marker rows fall through to the full
-    // compare, so pending totals always get resent.
-    if (!result.changed && lastReported && stored?.reportedOk) return
+    // (reportedOk: lastReported matches the state's totals) under the current
+    // price table: skip the bucket recompute and the state rewrite entirely.
+    // Send failures clear lastReported, unverified pre-marker rows fall
+    // through to the full compare, and a price-table change re-prices the
+    // dedup entries even without new bytes.
+    if (
+      !result.changed &&
+      lastReported &&
+      stored?.reportedOk &&
+      stored.pricesRev === getModelPricingRevision()
+    ) {
+      return
+    }
     buckets = result.buckets
     nextState = { provider, claude: result.state }
   } else {
@@ -301,6 +316,8 @@ async function doReport(sessionId: string, deps: SessionUsageServiceDeps): Promi
       if (!filePath) return
     }
     const result = await parseCodexRolloutIncrement(filePath, stored?.codex?.state ?? null)
+    // No pricesRev gate here: codex costs are baked into the persisted state
+    // at parse time, so a recompute could not re-price them anyway.
     if (!result.changed && lastReported && stored?.reportedOk) return
     buckets = result.buckets
     nextState = { provider, codex: { filePath, state: result.state } }
@@ -311,6 +328,7 @@ async function doReport(sessionId: string, deps: SessionUsageServiceDeps): Promi
     nextState.gitRemoteUrl = stored?.gitRemoteUrl ?? null
     // Equality just proved lastReported reflects this state — mark verified.
     nextState.reportedOk = true
+    nextState.pricesRev = getModelPricingRevision()
     db.setSessionUsageState(sessionId, JSON.stringify(nextState), JSON.stringify(lastReported ?? {}))
     return
   }
@@ -352,6 +370,7 @@ async function doReport(sessionId: string, deps: SessionUsageServiceDeps): Promi
   try {
     await request(context.endpoint, context.token, ReportSessionUsageDocument, { input })
     nextState.reportedOk = true
+    nextState.pricesRev = getModelPricingRevision()
     db.setSessionUsageState(sessionId, JSON.stringify(nextState), JSON.stringify(rounded))
     log.info('Reported session usage', {
       sessionId,
