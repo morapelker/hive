@@ -14,9 +14,10 @@ import { reportActiveAccountsSnapshot } from '@/lib/hive-account-report'
 import { fetchHiveAccountMembers, isHiveTelemetryEnabled } from '@/api/hive-enterprise/client'
 import { MemberAvatarStack, type AccountMemberInfo } from './MemberAvatarStack'
 import { cn } from '@/lib/utils'
-import { Loader2, RefreshCw, Timer } from 'lucide-react'
+import { Loader2, RefreshCw, Shuffle, Timer } from 'lucide-react'
 import { useAccountScheduleStore } from '@/stores/useAccountScheduleStore'
 import {
+  AutoSwitchControls,
   ScheduleSwitchForm,
   SchedulePendingSummary
 } from '@/components/accounts/ScheduleSwitchControls'
@@ -490,7 +491,7 @@ function ProviderToggle({
 }): React.JSX.Element {
   return (
     <div
-      className="mt-2 flex justify-center border-t border-border/50 pt-2"
+      className="flex shrink-0 justify-center border-t border-border/50 px-4 py-2"
       data-testid="usage-provider-toggle"
     >
       <div className="inline-flex items-center gap-0.5 rounded-md border border-border/60 bg-background/40 p-0.5">
@@ -537,6 +538,7 @@ function ProviderUsagePopoverBody({ provider }: { provider: UsageProvider }): Re
   )
   const startLogin = useLoginStore((s) => s.startLogin)
   const isLoginActive = useLoginStore((s) => s.activeLogin !== null)
+  const autoSwitchArmed = useAccountScheduleStore((s) => s.autoSwitch[provider] !== undefined)
   const telemetryEnabled = useSettingsStore((s) => isHiveTelemetryEnabled(s))
   const {
     membersByAccount,
@@ -577,9 +579,9 @@ function ProviderUsagePopoverBody({ provider }: { provider: UsageProvider }): Re
           }
         ]
 
-  // With multiple accounts, the active one goes last and gets a purple border
-  // so it reads as "currently active" at a glance.
-  const orderedRows = [...accountRows].sort((a, b) => Number(a.isActive) - Number(b.isActive))
+  // With multiple accounts, the active one goes first (and gets a purple
+  // border) so it's visible at the popover's natural top scroll position.
+  const orderedRows = [...accountRows].sort((a, b) => Number(b.isActive) - Number(a.isActive))
   const highlightActive = accountRows.length > 1
 
   const membersFor = (rowEmail: string | null): AccountMemberInfo[] | undefined => {
@@ -600,6 +602,9 @@ function ProviderUsagePopoverBody({ provider }: { provider: UsageProvider }): Re
   return (
     <div className="space-y-2">
       <div className="font-medium">{PROVIDER_META[provider].title}</div>
+      {/* Armed state must always expose its own off switch — even when the
+          account list has shrunk below what auto-switch needs to operate. */}
+      {(savedAccounts.length > 1 || autoSwitchArmed) && <AutoSwitchControls provider={provider} />}
       {savedAccountLoadError && (
         <div className="rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1 text-[10px] text-destructive">
           Saved accounts unavailable: {savedAccountLoadError}
@@ -682,11 +687,13 @@ export function ProviderUsageBlock({
   )
   const fetchEmail = useAccountStore((s) => s.fetchEmail)
   const hasPendingSchedule = useAccountScheduleStore((s) => s.schedules[provider] !== undefined)
+  const autoSwitchThreshold = useAccountScheduleStore(
+    (s) => s.autoSwitch[provider]?.thresholdPercent
+  )
 
   // Which provider the popover shows. The bottom toggle can point it at a
   // different provider than the hovered trigger; each open snaps it back.
   const [viewedProvider, setViewedProvider] = useState<UsageProvider>(provider)
-  const viewedSavedAccountsCount = useUsageStore((s) => s.savedAccounts[viewedProvider].length)
 
   const usage = normalizeUsage(provider, anthropicUsage, openaiUsage)
 
@@ -708,40 +715,8 @@ export function ProviderUsageBlock({
   }
 
   const handleOpenChange = (open: boolean): void => {
-    if (open) {
-      shouldPinPopoverToBottomRef.current = true
-      setViewedProvider(provider)
-    }
+    if (open) setViewedProvider(provider)
   }
-
-  // The active account sorts last, so open the popover scrolled to the bottom
-  // to keep it in view when many accounts overflow the max height.
-  const popoverRef = useRef<HTMLDivElement | null>(null)
-  const shouldPinPopoverToBottomRef = useRef(true)
-  const scrollPopoverToBottom = useCallback((node: HTMLDivElement | null): void => {
-    popoverRef.current = node
-    if (node && shouldPinPopoverToBottomRef.current) node.scrollTop = node.scrollHeight
-  }, [])
-
-  const handlePopoverScroll = (event: React.UIEvent<HTMLDivElement>): void => {
-    const node = event.currentTarget
-    const distanceFromBottom = node.scrollHeight - node.clientHeight - node.scrollTop
-    shouldPinPopoverToBottomRef.current = distanceFromBottom <= 1
-  }
-
-  const handleProviderSelect = (nextProvider: UsageProvider): void => {
-    shouldPinPopoverToBottomRef.current = true
-    setViewedProvider(nextProvider)
-  }
-
-  // Saved accounts load async on open and can land after the popover mounts,
-  // growing the content past the initial scroll position. Keep following the
-  // bottom only until the user scrolls away; otherwise the update can move a
-  // Switch button between pointer-down and pointer-up and cancel the click.
-  useEffect(() => {
-    const node = popoverRef.current
-    if (node && shouldPinPopoverToBottomRef.current) node.scrollTop = node.scrollHeight
-  }, [viewedProvider, viewedSavedAccountsCount])
 
   useEffect(() => {
     loadSavedAccounts(provider).catch(() => {})
@@ -788,12 +763,19 @@ export function ProviderUsageBlock({
                 )}
               />
             </button>
-            {hasPendingSchedule && (
+            {autoSwitchThreshold !== undefined ? (
+              <Shuffle
+                className="h-2.5 w-2.5 shrink-0 text-amber-500"
+                aria-label="Auto-switch armed"
+              >
+                <title>{`Auto-switching accounts at ${autoSwitchThreshold}% usage`}</title>
+              </Shuffle>
+            ) : hasPendingSchedule ? (
               <Timer
                 className="h-2.5 w-2.5 shrink-0 text-amber-500"
                 aria-label="Account switch scheduled"
               />
-            )}
+            ) : null}
             <div className="flex-1 space-y-0.5">
               <UsageRow
                 label="5h"
@@ -812,19 +794,19 @@ export function ProviderUsageBlock({
         </div>
       </HoverCardTrigger>
       <HoverCardContent
-        ref={scrollPopoverToBottom}
         side="top"
         sideOffset={8}
         collisionPadding={8}
-        className="w-72 max-w-[min(18rem,calc(100vw-2rem))] max-h-(--radix-hover-card-content-available-height) overflow-y-auto"
-        onScroll={handlePopoverScroll}
+        className="flex w-72 max-w-[min(18rem,calc(100vw-2rem))] max-h-(--radix-hover-card-content-available-height) flex-col p-0"
       >
-        <ProviderUsagePopoverBody provider={viewedProvider} />
+        <div className="flex-1 overflow-y-auto p-4" data-testid="usage-popover-scroll">
+          <ProviderUsagePopoverBody provider={viewedProvider} />
+        </div>
         {toggleProviders.length > 1 && (
           <ProviderToggle
             providers={toggleProviders}
             viewedProvider={viewedProvider}
-            onSelect={handleProviderSelect}
+            onSelect={setViewedProvider}
           />
         )}
       </HoverCardContent>

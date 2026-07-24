@@ -39,9 +39,9 @@ interface EffectiveModel {
  * yet: explicit config model -> per-SDK resolution -> hard SDK fallback.
  */
 function resolveEffectiveModel(entry: LaunchModelConfig): EffectiveModel {
-  // Custom providers own their model (baked into the command) — badge with the
-  // provider's display name rather than a claude model that won't actually run.
-  const customBadge = resolveCustomProviderBadge(entry.customProviderId)
+  // Custom providers: badge with the chosen declared model when there is one,
+  // else the provider's display name — never a claude model that won't run.
+  const customBadge = resolveCustomProviderBadge(entry.customProviderId, entry.model)
   if (customBadge) return customBadge
   const resolved = entry.model ?? resolveModelForSdk(entry.sdk) ?? FALLBACK_MODELS[entry.sdk]
   return {

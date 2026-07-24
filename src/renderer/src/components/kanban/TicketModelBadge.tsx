@@ -1,6 +1,12 @@
+import { useSyncExternalStore } from 'react'
 import { resolveModelIconAsset } from '@/components/worktrees/ModelIcon'
-import { getAvailableHandoffAgentSdks, getCachedModelCatalog } from '@/lib/handoffSelection'
-import { findModelInfo, getModelDisplayName } from '@/lib/parseProviders'
+import {
+  getAvailableHandoffAgentSdks,
+  getCachedModelCatalog,
+  getModelCatalogCacheVersion,
+  subscribeModelCatalogCache
+} from '@/lib/handoffSelection'
+import { findModelInfo, getModelDisplayName, isUltraVariant } from '@/lib/parseProviders'
 import { cn } from '@/lib/utils'
 import type { KanbanTicket } from '../../../../main/db/types'
 
@@ -27,6 +33,10 @@ export function TicketModelBadge({
   ticket,
   className
 }: TicketModelBadgeProps): React.JSX.Element | null {
+  // Re-render when a model catalog lands so badges mounted before the launch
+  // preload finishes swap their raw slug for the pretty name.
+  useSyncExternalStore(subscribeModelCatalogCache, getModelCatalogCacheVersion)
+
   const { model_provider_id: providerId, model_id: modelId, model_variant: variant } = ticket
   if (!modelId) return null
 
@@ -38,7 +48,8 @@ export function TicketModelBadge({
     <span
       title={title}
       className={cn(
-        'inline-flex items-center gap-1 rounded-full bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground',
+        'inline-flex items-center gap-1 rounded-full border border-transparent bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground',
+        isUltraVariant(variant) && 'border-2 border-violet-500',
         className
       )}
     >

@@ -5,7 +5,13 @@ import { useProjectStore } from '@/stores/useProjectStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useUsageStore, resolveDefaultUsageProvider } from '@/stores/useUsageStore'
 import { resolveModelForSdk, useSettingsStore } from '@/stores/useSettingsStore'
-import { findCustomProvider } from '@shared/types/custom-provider'
+import {
+  CUSTOM_MODEL_PROVIDER_ID,
+  findCustomProvider,
+  getCustomProviderModelDisplayName,
+  matchCustomProviderModel
+} from '@shared/types/custom-provider'
+import { resolveCustomProviderSelectedModel } from '@/lib/handoffSelection'
 import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
 import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
 import { snapshotTokenBaseline } from '@/lib/token-baselines'
@@ -124,20 +130,34 @@ export function resolveBadgeModel(
 }
 
 /**
- * Badge for a custom-provider launch: the provider's command decides the real
- * model (often via alias flags), so the session row's resolved claude model
- * would mislead — stamp the provider's display name instead. Returns null when
- * the id doesn't reference a known provider.
+ * Badge for a custom-provider launch. With a chosen declared model, stamp its
+ * display name (+ effort) — that is what actually runs. Otherwise the
+ * provider's command decides the real model (often via alias flags), so the
+ * session row's resolved claude model would mislead — stamp the provider's
+ * display name instead. Returns null when the id doesn't reference a known
+ * provider.
  */
 export function resolveCustomProviderBadge(
-  customProviderId: string | null | undefined
-): { providerID: string; modelID: string; variant: null } | null {
+  customProviderId: string | null | undefined,
+  model?: { providerID: string; modelID: string; variant?: string | null } | null
+): { providerID: string; modelID: string; variant: string | null } | null {
   if (!customProviderId) return null
   const provider = findCustomProvider(
     useSettingsStore.getState().customProviders,
     customProviderId
   )
   if (!provider) return null
+  const declaredModel =
+    model?.providerID === CUSTOM_MODEL_PROVIDER_ID
+      ? matchCustomProviderModel(provider.models, model.modelID)
+      : null
+  if (declaredModel) {
+    return {
+      providerID: CUSTOM_MODEL_PROVIDER_ID,
+      modelID: getCustomProviderModelDisplayName(declaredModel),
+      variant: model?.variant ?? null
+    }
+  }
   return { providerID: 'custom', modelID: provider.name || 'Custom Provider', variant: null }
 }
 
@@ -235,7 +255,23 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
 
     // 2. Create session
     const customProviderId = resolveLaunchCustomProviderId(sdk, spec.modelConfig.customProviderId)
-    const modelOverride = model ? { ...model, agentSdk: sdk } : undefined
+    // Custom-provider models can go stale between queueing and launch: a
+    // deleted provider degrades to plain claude and must drop the model too (a
+    // proxy slug could fuzzy-match a wrong --model on stock claude), and a
+    // renamed slug re-resolves to the provider's current default. Scoped to
+    // claude-code-cli — 'custom' is also a legal opencode catalog provider id.
+    let effectiveConfigModel: { providerID: string; modelID: string; variant?: string } | null =
+      model
+    if (sdk === 'claude-code-cli' && model?.providerID === CUSTOM_MODEL_PROVIDER_ID) {
+      const provider = findCustomProvider(
+        useSettingsStore.getState().customProviders,
+        customProviderId
+      )
+      effectiveConfigModel = provider ? resolveCustomProviderSelectedModel(provider, model) : null
+    }
+    const modelOverride = effectiveConfigModel
+      ? { ...effectiveConfigModel, agentSdk: sdk }
+      : undefined
     const cliPendingPrompt =
       sdk === 'claude-code-cli'
         ? composeLaunchPrompt(prompt, spec.mode, sdk, goalMode, goalSuccessCriteria, {
@@ -277,9 +313,9 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
       .setSessionStatus(sessionId, isPlanLike(spec.mode) ? 'planning' : 'working')
 
     // 4. Apply model override
-    const effectiveModel = model ?? undefined
-    if (model) {
-      await useSessionStore.getState().setSessionModel(sessionId, model)
+    const effectiveModel = effectiveConfigModel ?? undefined
+    if (effectiveConfigModel) {
+      await useSessionStore.getState().setSessionModel(sessionId, effectiveConfigModel)
     }
 
     // 5. Update ticket: clear pending config (via extras), set session + worktree,
@@ -288,7 +324,9 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
     //    a stale multi-launch group) — the multi-model orchestrator overrides
     //    it back via ticketUpdateExtras, which must win, hence the field
     //    ordering below.
-    const badge = resolveCustomProviderBadge(customProviderId) ?? resolveBadgeModel(spec.modelConfig, session)
+    const badge =
+      resolveCustomProviderBadge(customProviderId, effectiveConfigModel) ??
+      resolveBadgeModel(spec.modelConfig, session)
     await useKanbanStore.getState().updateTicket(spec.ticketId, spec.projectId, {
       current_session_id: sessionId,
       worktree_id: worktreeId,

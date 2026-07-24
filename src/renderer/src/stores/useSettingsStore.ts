@@ -86,6 +86,8 @@ export interface AppSettings {
   autoPinBaseWorktreeOnBoardPrompt: boolean
   /** Auto-create a kanban ticket on the first message of a manually-created session. */
   automaticallyCreateTicket: boolean
+  /** Show the optional Merged column on the board between Review and Done. */
+  showMergedColumn: boolean
 
   // Editor
   defaultEditor: EditorOption
@@ -212,6 +214,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   followUpTriggerColumn: 'done',
   autoPinBaseWorktreeOnBoardPrompt: false,
   automaticallyCreateTicket: false,
+  showMergedColumn: false,
   defaultEditor: 'vscode',
   customEditorCommand: '',
   defaultTerminal: 'terminal',
@@ -438,6 +441,7 @@ function extractSettings(state: SettingsState): AppSettings {
     followUpTriggerColumn: state.followUpTriggerColumn,
     autoPinBaseWorktreeOnBoardPrompt: state.autoPinBaseWorktreeOnBoardPrompt,
     automaticallyCreateTicket: state.automaticallyCreateTicket,
+    showMergedColumn: state.showMergedColumn,
     defaultEditor: state.defaultEditor,
     customEditorCommand: state.customEditorCommand,
     defaultTerminal: state.defaultTerminal,
@@ -805,6 +809,7 @@ export const useSettingsStore = create<SettingsState>()(
         followUpTriggerColumn: state.followUpTriggerColumn,
         autoPinBaseWorktreeOnBoardPrompt: state.autoPinBaseWorktreeOnBoardPrompt,
         automaticallyCreateTicket: state.automaticallyCreateTicket,
+        showMergedColumn: state.showMergedColumn,
         defaultEditor: state.defaultEditor,
         customEditorCommand: state.customEditorCommand,
         defaultTerminal: state.defaultTerminal,
@@ -875,9 +880,15 @@ if (typeof window !== 'undefined') {
     const typedData = data as {
       commandFilter?: CommandFilterSettings
       customProjectCommands?: unknown
+      hiveAuthToken?: unknown
     }
     if (typedData.commandFilter) {
       useSettingsStore.setState({ commandFilter: typedData.commandFilter })
+    }
+    // Main persists a rotated Hive Enterprise token (e.g. during a share-link
+    // claim); sync it here so a later full-blob save doesn't restore the stale one.
+    if (typeof typedData.hiveAuthToken === 'string' && typedData.hiveAuthToken) {
+      useSettingsStore.setState({ hiveAuthToken: typedData.hiveAuthToken })
     }
     if (Array.isArray(typedData.customProjectCommands)) {
       const validCommands: CustomProjectCommand[] = []

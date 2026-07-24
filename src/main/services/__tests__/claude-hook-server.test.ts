@@ -1075,3 +1075,130 @@ describe('plan auto-approve', () => {
     expect(isClaudeCliPlanAutoApproveArmed('hive-session-close')).toBe(false)
   })
 })
+
+describe('background shell/monitor counts (HTTP round-trip)', () => {
+  const SESSION = 'hive-session-bg'
+
+  function backgroundBashHook(taskId: string): Record<string, unknown> {
+    return {
+      hook_event_name: 'PostToolUse',
+      tool_name: 'Bash',
+      tool_input: { command: 'sleep 300', run_in_background: true },
+      tool_response: { stdout: '', stderr: '', backgroundTaskId: taskId }
+    }
+  }
+
+  function backgroundWorkCalls(): unknown[][] {
+    return backendManagerMocks.publishDesktopBackendEvent.mock.calls.filter(
+      ([channel]) => channel === 'claude-cli:background-work'
+    )
+  }
+
+  it('publishes count changes for background Bash starts and TaskStop kills', async () => {
+    const { port } = await getClaudeHookServer()
+    backendManagerMocks.publishDesktopBackendEvent.mockResolvedValue(true)
+
+    await postHook(port, SESSION, 'tool', backgroundBashHook('bshell1'))
+    await vi.waitFor(() => {
+      expect(backendManagerMocks.publishDesktopBackendEvent).toHaveBeenCalledWith(
+        'claude-cli:background-work',
+        { sessionId: SESSION, runningShells: 1, runningMonitors: 0 }
+      )
+    })
+
+    await postHook(port, SESSION, 'tool', {
+      hook_event_name: 'PostToolUse',
+      tool_name: 'Monitor',
+      tool_response: { taskId: 'bmon1', timeoutMs: 300000, persistent: false }
+    })
+    await vi.waitFor(() => {
+      expect(backendManagerMocks.publishDesktopBackendEvent).toHaveBeenCalledWith(
+        'claude-cli:background-work',
+        { sessionId: SESSION, runningShells: 1, runningMonitors: 1 }
+      )
+    })
+
+    await postHook(port, SESSION, 'tool', {
+      hook_event_name: 'PostToolUse',
+      tool_name: 'TaskStop',
+      tool_input: { task_id: 'bshell1' },
+      tool_response: { message: 'Successfully stopped task: bshell1', task_id: 'bshell1' }
+    })
+    await vi.waitFor(() => {
+      expect(backendManagerMocks.publishDesktopBackendEvent).toHaveBeenCalledWith(
+        'claude-cli:background-work',
+        { sessionId: SESSION, runningShells: 0, runningMonitors: 1 }
+      )
+    })
+  })
+
+  it('does not publish for foreground tool use', async () => {
+    const { port } = await getClaudeHookServer()
+    backendManagerMocks.publishDesktopBackendEvent.mockResolvedValue(true)
+
+    await postHook(port, SESSION, 'tool', {
+      hook_event_name: 'PostToolUse',
+      tool_name: 'Bash',
+      tool_input: { command: 'ls' },
+      tool_response: { stdout: 'ok' }
+    })
+    // Flush: the later status publish proves the hook was fully processed.
+    await vi.waitFor(() => {
+      expect(backendManagerMocks.publishDesktopBackendEvent).toHaveBeenCalledWith(
+        'claude-cli:status',
+        expect.objectContaining({ sessionId: SESSION })
+      )
+    })
+
+    expect(backgroundWorkCalls()).toEqual([])
+  })
+
+  it('zeroes counts from a Stop background_tasks snapshot and terminal notifications', async () => {
+    const { port } = await getClaudeHookServer()
+    backendManagerMocks.publishDesktopBackendEvent.mockResolvedValue(true)
+
+    await postHook(port, SESSION, 'tool', backgroundBashHook('bshell1'))
+    await postHook(port, SESSION, 'tool', backgroundBashHook('bshell2'))
+
+    // bshell1 finished mid-turn (no hook fired): the Stop snapshot only lists bshell2.
+    await postHook(port, SESSION, 'stop', {
+      hook_event_name: 'Stop',
+      last_assistant_message: 'done',
+      background_tasks: [{ id: 'bshell2', type: 'shell', status: 'running' }]
+    })
+    await vi.waitFor(() => {
+      expect(backendManagerMocks.publishDesktopBackendEvent).toHaveBeenCalledWith(
+        'claude-cli:background-work',
+        { sessionId: SESSION, runningShells: 1, runningMonitors: 0 }
+      )
+    })
+
+    // bshell2 ends via its task-notification resume turn.
+    await postHook(port, SESSION, 'start', {
+      hook_event_name: 'UserPromptSubmit',
+      prompt:
+        '<task-notification>\n<task-id>bshell2</task-id>\n<status>completed</status>\n<summary>Background command "x" completed (exit code 0)</summary>\n</task-notification>'
+    })
+    await vi.waitFor(() => {
+      expect(backendManagerMocks.publishDesktopBackendEvent).toHaveBeenCalledWith(
+        'claude-cli:background-work',
+        { sessionId: SESSION, runningShells: 0, runningMonitors: 0 }
+      )
+    })
+  })
+
+  it('zeroes counts when the session ends', async () => {
+    const { port } = await getClaudeHookServer()
+    backendManagerMocks.publishDesktopBackendEvent.mockResolvedValue(true)
+
+    await postHook(port, SESSION, 'tool', backgroundBashHook('bshell1'))
+    await postHook(port, SESSION, 'session', { hook_event_name: 'SessionEnd' })
+
+    await vi.waitFor(() => {
+      expect(backendManagerMocks.publishDesktopBackendEvent).toHaveBeenCalledWith(
+        'claude-cli:background-work',
+        { sessionId: SESSION, runningShells: 0, runningMonitors: 0 }
+      )
+    })
+  })
+})

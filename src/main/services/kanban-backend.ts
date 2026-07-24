@@ -68,7 +68,13 @@ const HIVE_FRONTMATTER_FIELDS = new Set([
 ])
 
 const CARD_FILE_SIZE_LIMIT_BYTES = 1024 * 1024
-const VALID_COLUMNS = new Set<KanbanTicketColumn>(['todo', 'in_progress', 'review', 'done'])
+const VALID_COLUMNS = new Set<KanbanTicketColumn>([
+  'todo',
+  'in_progress',
+  'review',
+  'merged',
+  'done'
+])
 const VALID_MODES = new Set(['build', 'plan', 'super-plan'])
 const VALID_MARKS = new Set(['common', 'rare', 'epic', 'legendary'])
 
@@ -195,7 +201,7 @@ export interface KanbanBackend {
   reorder(projectId: string, ticketId: string, sortOrder: number): Promise<void>
   delete(projectId: string, ticketId: string): Promise<boolean>
   archive(projectId: string, ticketId: string): Promise<KanbanTicket | null>
-  archiveAllDone(projectId: string): Promise<number>
+  archiveAllDone(projectId: string, includeMerged?: boolean): Promise<number>
   unarchive(projectId: string, ticketId: string): Promise<KanbanTicket | null>
   getBySession(sessionId: string): Promise<KanbanTicket[]>
   addTokens(projectId: string, ticketId: string, tokens: number): Promise<KanbanTicket | null>
@@ -319,8 +325,8 @@ class InternalKanbanBackend implements KanbanBackend {
     return getDatabase().archiveKanbanTicket(ticketId)
   }
 
-  async archiveAllDone(projectId: string): Promise<number> {
-    return getDatabase().archiveAllDoneKanbanTickets(projectId)
+  async archiveAllDone(projectId: string, includeMerged?: boolean): Promise<number> {
+    return getDatabase().archiveAllDoneKanbanTickets(projectId, includeMerged)
   }
 
   async unarchive(projectId: string, ticketId: string): Promise<KanbanTicket | null> {
@@ -830,11 +836,15 @@ class MarkdownKanbanBackend implements KanbanBackend {
     return this.get(projectId, ticketId)
   }
 
-  async archiveAllDone(projectId: string): Promise<number> {
+  async archiveAllDone(projectId: string, includeMerged?: boolean): Promise<number> {
     const index = await this.reloadIndex(projectId)
     const archivedIds = new Set(
       index.tickets
-        .filter((ticket) => ticket.column === 'done' && !ticket.archived_at)
+        .filter(
+          (ticket) =>
+            (ticket.column === 'done' || (includeMerged && ticket.column === 'merged')) &&
+            !ticket.archived_at
+        )
         .map((ticket) => ticket.id)
     )
     if (archivedIds.size === 0) return 0
@@ -1642,12 +1652,12 @@ class MarkdownKanbanBackend implements KanbanBackend {
     const folders =
       config.layout === 'single-folder'
         ? [{ folder: resolveProjectPath(project.path, config.singleFolder), column: null }]
-        : (Object.entries(config.statusFolders) as Array<[KanbanTicketColumn, string]>).map(
-            ([column, folder]) => ({
+        : (Object.entries(config.statusFolders) as Array<[KanbanTicketColumn, string]>)
+            .filter(([, folder]) => folder?.trim())
+            .map(([column, folder]) => ({
               folder: resolveProjectPath(project.path, folder),
               column
-            })
-          )
+            }))
     for (const candidate of folders) {
       const canonicalFolder = await realpath(candidate.folder).catch(() => null)
       if (canonicalFolder === canonicalFileFolder) {
@@ -2126,7 +2136,10 @@ async function planSingleFolderToStatusFolders(
       const id = asString(parsed.frontmatter.id)
       validateKnownFrontmatter(parsed.frontmatter, id)
       const column = asColumn(parsed.frontmatter.column) ?? 'todo'
-      const targetFolder = nextConfig.statusFolders[column]
+      const configuredFolder = nextConfig.statusFolders[column]
+      const targetFolder = configuredFolder?.trim()
+        ? configuredFolder
+        : nextConfig.statusFolders.done
       moves.push({
         source,
         target: join(resolveProjectPath(project.path, targetFolder), entry.name)
@@ -2318,7 +2331,7 @@ function validateKnownFrontmatter(frontmatter: Frontmatter, ticketId: string | n
   if ('id' in frontmatter && !asString(frontmatter.id)) invalid('id', 'a non-empty string')
   if ('title' in frontmatter && !asString(frontmatter.title)) invalid('title', 'a non-empty string')
   if ('column' in frontmatter && !asColumn(frontmatter.column)) {
-    invalid('column', 'todo, in_progress, review, or done')
+    invalid('column', 'todo, in_progress, review, merged, or done')
   }
   if ('mode' in frontmatter && frontmatter.mode !== null && !asMode(frontmatter.mode)) {
     invalid('mode', 'build, plan, super-plan, or null')

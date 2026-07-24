@@ -19,7 +19,7 @@ import {
   ContextMenuItem,
   ContextMenuTrigger
 } from '@/components/ui/context-menu'
-import { useConnectionStore } from '@/stores'
+import { useConnectionStore, useProjectStore } from '@/stores'
 import { connectionApi } from '@/api/connection-api'
 import { toast } from '@/lib/toast'
 import { formatRelativeTime } from '@/lib/format-utils'
@@ -30,11 +30,16 @@ interface RecentConnectionsDialogProps {
   onOpenChange: (open: boolean) => void
 }
 
+// Row id for the pinned "create from selected projects" row, which has no
+// backing recent-connection entry.
+const SELECTED_COMBO_ID = '__selected-projects__'
+
 export function RecentConnectionsDialog({
   open,
   onOpenChange
 }: RecentConnectionsDialogProps): React.JSX.Element {
   const quickCreateConnection = useConnectionStore((s) => s.quickCreateConnection)
+  const storeProjects = useProjectStore((s) => s.projects)
 
   const [entries, setEntries] = useState<RecentConnectionEntry[]>([])
   const [isLoading, setIsLoading] = useState(false)
@@ -85,16 +90,21 @@ export function RecentConnectionsDialog({
       })
   }, [open])
 
-  // Every project that appears in at least one recent connection
+  // Every project in the app (current name/path wins), plus any project that only
+  // survives inside a recent connection entry (e.g. since removed from the app) --
+  // so brand-new combinations are creatable, not just previously-used ones.
   const allProjects = useMemo(() => {
     const byId = new Map<string, RecentConnectionProject>()
+    for (const project of storeProjects) {
+      byId.set(project.id, { id: project.id, name: project.name, path: project.path })
+    }
     for (const entry of entries) {
       for (const project of entry.projects) {
         if (!byId.has(project.id)) byId.set(project.id, project)
       }
     }
     return Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name))
-  }, [entries])
+  }, [storeProjects, entries])
 
   // Same fuzzy matching + ranking as the sidebar project filter
   const filteredProjects = useMemo(() => {
@@ -149,13 +159,43 @@ export function RecentConnectionsDialog({
     )
   }, [entries, filter, selectedProjectIds])
 
+  // The recent connection whose project set is exactly the selection, if any
+  const exactSelectionEntry = useMemo(() => {
+    if (selectedProjects.length < 2) return null
+    return (
+      entries.find(
+        (entry) =>
+          entry.projects.length === selectedProjects.length &&
+          entry.projects.every((p) => selectedProjectIds.has(p.id))
+      ) ?? null
+    )
+  }, [entries, selectedProjects, selectedProjectIds])
+
+  // With 2+ projects selected, the first row is always exactly that combination:
+  // the matching recent entry pinned to the top (exempt from the text filter),
+  // or a synthetic row that creates a brand-new connection from the selection.
+  const showSelectionRow = selectedProjects.length >= 2 && !exactSelectionEntry
+
+  const displayEntries = useMemo(() => {
+    if (!exactSelectionEntry) return filteredEntries
+    return [
+      exactSelectionEntry,
+      ...filteredEntries.filter((entry) => entry.id !== exactSelectionEntry.id)
+    ]
+  }, [filteredEntries, exactSelectionEntry])
+
   // The Create handler resolves against `entries`, so a selected row hidden by
   // the filter would still be creatable invisibly -- drop the selection instead.
   useEffect(() => {
-    if (selectedId && !filteredEntries.some((entry) => entry.id === selectedId)) {
+    if (!selectedId) return
+    if (selectedId === SELECTED_COMBO_ID) {
+      if (!showSelectionRow) setSelectedId(null)
+      return
+    }
+    if (!displayEntries.some((entry) => entry.id === selectedId)) {
       setSelectedId(null)
     }
-  }, [filteredEntries, selectedId])
+  }, [displayEntries, selectedId, showSelectionRow])
 
   // Focus the note input when it appears (deferred to run after the context menu closes)
   useEffect(() => {
@@ -175,19 +215,22 @@ export function RecentConnectionsDialog({
   }, [])
 
   const handleCreate = useCallback(async () => {
-    const entry = entries.find((e) => e.id === selectedId)
-    if (!entry) return
+    const projects =
+      selectedId === SELECTED_COMBO_ID
+        ? selectedProjects
+        : entries.find((e) => e.id === selectedId)?.projects
+    if (!projects || projects.length === 0) return
 
     setIsCreating(true)
     try {
-      const id = await quickCreateConnection(entry.projects)
+      const id = await quickCreateConnection(projects)
       if (id) {
         onOpenChange(false)
       }
     } finally {
       setIsCreating(false)
     }
-  }, [entries, selectedId, quickCreateConnection, onOpenChange])
+  }, [entries, selectedId, selectedProjects, quickCreateConnection, onOpenChange])
 
   const persistNote = useCallback(async (entryId: string, raw: string | null) => {
     const normalized = raw && raw.trim() ? raw.trim() : null
@@ -406,15 +449,14 @@ export function RecentConnectionsDialog({
                 >
                   <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
                 </div>
-              ) : entries.length === 0 ? (
+              ) : entries.length === 0 && !showSelectionRow ? (
                 <div
                   className="px-4 py-8 text-center text-sm text-muted-foreground"
                   data-testid="recent-connections-empty"
                 >
-                  No recent connections yet. Create one by right-clicking a worktree and choosing
-                  Connect to…
+                  No recent connections yet. Select two or more projects on the left to create one.
                 </div>
-              ) : filteredEntries.length === 0 ? (
+              ) : displayEntries.length === 0 && !showSelectionRow ? (
                 <div
                   className="px-4 py-8 text-center text-sm text-muted-foreground"
                   data-testid="recent-connections-no-match"
@@ -423,7 +465,25 @@ export function RecentConnectionsDialog({
                 </div>
               ) : (
                 <div className="py-1">
-                  {filteredEntries.map((entry) =>
+                  {showSelectionRow && (
+                    <button
+                      className={cn(
+                        'flex flex-col w-full px-3 py-2 text-sm text-left',
+                        'bg-primary/10 hover:bg-primary/15 transition-colors',
+                        selectedId === SELECTED_COMBO_ID && 'bg-primary/20'
+                      )}
+                      onClick={() => setSelectedId(SELECTED_COMBO_ID)}
+                      data-testid="recent-connection-row-selected-combo"
+                    >
+                      <span className="truncate">
+                        {selectedProjects.map((p) => p.name).join(' + ')}
+                      </span>
+                      <span className="text-xs text-muted-foreground truncate">
+                        New connection from selected projects
+                      </span>
+                    </button>
+                  )}
+                  {displayEntries.map((entry) =>
                     editingNoteId === entry.id ? (
                       <div
                         key={entry.id}
@@ -452,7 +512,13 @@ export function RecentConnectionsDialog({
                             className={cn(
                               'flex flex-col w-full px-3 py-2 text-sm text-left',
                               'hover:bg-accent/50 transition-colors',
-                              selectedId === entry.id && 'bg-accent/30'
+                              selectedId === entry.id && 'bg-accent/30',
+                              // The pinned exact-selection entry is special in the
+                              // same way as the synthetic row -- tint it to match
+                              entry.id === exactSelectionEntry?.id &&
+                                (selectedId === entry.id
+                                  ? 'bg-primary/20 hover:bg-primary/20'
+                                  : 'bg-primary/10 hover:bg-primary/15')
                             )}
                             onClick={() => setSelectedId(entry.id)}
                             data-testid={`recent-connection-row-${entry.id}`}

@@ -76,7 +76,10 @@ export interface KanbanRpcService {
     projectId: string,
     id: string
   ) => Effect.Effect<KanbanTicket | null, unknown, never>
-  readonly archiveAllDoneTickets: (projectId: string) => Effect.Effect<number, unknown, never>
+  readonly archiveAllDoneTickets: (
+    projectId: string,
+    includeMerged?: boolean
+  ) => Effect.Effect<number, unknown, never>
   readonly unarchiveTicket: (
     projectId: string,
     id: string
@@ -201,7 +204,7 @@ export interface KanbanRpcService {
   ) => Effect.Effect<{ success: boolean; error?: string }, unknown, never>
 }
 
-const ticketColumnSchema = z.enum(['todo', 'in_progress', 'review', 'done'])
+const ticketColumnSchema = z.enum(['todo', 'in_progress', 'review', 'merged', 'done'])
 const sessionModeSchema = z.enum(['build', 'plan', 'super-plan'])
 const ticketMarkSchema = z.enum(['common', 'rare', 'epic', 'legendary'])
 
@@ -309,6 +312,12 @@ const getTicketsByProjectParamsSchema = z
   })
   .strict()
 const projectIdParamsSchema = z.object({ projectId: z.string() }).strict()
+const archiveAllDoneParamsSchema = z
+  .object({
+    projectId: z.string(),
+    includeMerged: z.boolean().optional()
+  })
+  .strict()
 const markdownFileParamsSchema = z
   .object({
     projectId: z.string(),
@@ -428,6 +437,7 @@ const kanbanMarkdownStatusFoldersSchema = z
     todo: z.string(),
     in_progress: z.string(),
     review: z.string(),
+    merged: z.string().optional(),
     done: z.string()
   })
   .strict()
@@ -572,11 +582,11 @@ export const makeLiveKanbanRpcService = (): KanbanRpcService => ({
       },
       catch: (cause) => cause
     }),
-  archiveAllDoneTickets: (projectId) =>
+  archiveAllDoneTickets: (projectId, includeMerged) =>
     Effect.tryPromise({
       try: async () => {
         const { getKanbanBackendForProject } = await import('../../../main/services/kanban-backend')
-        return getKanbanBackendForProject(projectId).archiveAllDone(projectId)
+        return getKanbanBackendForProject(projectId).archiveAllDone(projectId, includeMerged)
       },
       catch: (cause) => cause
     }),
@@ -1162,11 +1172,11 @@ export const makeKanbanRpcHandlers = (
       'kanban.ticket.archiveAllDone',
       (params) =>
         Effect.gen(function* () {
-          const { projectId } = yield* Effect.try({
-            try: () => projectIdParamsSchema.parse(params),
+          const { projectId, includeMerged } = yield* Effect.try({
+            try: () => archiveAllDoneParamsSchema.parse(params),
             catch: (cause) => cause
           })
-          return yield* service.archiveAllDoneTickets(projectId)
+          return yield* service.archiveAllDoneTickets(projectId, includeMerged)
         })
     ],
     [

@@ -281,6 +281,7 @@ export function CreatePRModal({ worktreeId, worktreePath }: CreatePRModalProps):
     const notifId = usePRNotificationStore.getState().show({
       status: 'loading',
       message: 'Creating pull request...',
+      branchName: branchInfo?.name,
       worktreeId
     })
 

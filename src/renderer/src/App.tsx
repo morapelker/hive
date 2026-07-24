@@ -5,6 +5,7 @@ import { DesktopWindowEscapeChrome } from '@/components/layout/DesktopWindowEsca
 import { ErrorBoundary } from '@/components/error'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { reportActiveAccountsSnapshot } from '@/lib/hive-account-report'
+import { preloadHandoffModelCatalogs } from '@/lib/handoffSelection'
 import { initPlatform } from '@/lib/platform'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useTipStore } from '@/stores/useTipStore'
@@ -21,6 +22,9 @@ function App(): React.JSX.Element {
     initPlatform().then(() => {
       // Load seen tips from DB so the tip system knows which tips to skip
       useTipStore.getState().loadSeenTips()
+      // Warm the model catalogs so ticket badges show pretty model names
+      // immediately instead of raw slugs until a model picker is opened
+      void preloadHandoffModelCatalogs()
       setReady(true)
     })
   }, [])

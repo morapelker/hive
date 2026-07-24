@@ -5,6 +5,7 @@ import {
   getClaudeHookServer,
   getLastClaudeCliStatus,
   publishClaudeCliStatus,
+  resetClaudeCliBackgroundWork,
   subscribeClaudeCliStatus,
   type ClaudeCliStatusPayload
 } from './claude-hook-server'
@@ -16,10 +17,12 @@ import {
   clearAllClaudeCliSubagentTracking,
   clearClaudeCliSubagentTracking
 } from './claude-cli-subagent-tracker'
+import { clearAllClaudeCliBackgroundWork } from './claude-cli-background-work-tracker'
 import { setClaudeCliPlanAutoApprove } from './claude-cli-plan-auto-approve'
 import { logClaudeBinaryVersion, resolveClaudeBinaryPath } from './claude-binary-resolver'
 import { buildClaudeCliPtySpawn } from './claude-cli-spawner'
 import { getCustomProviderById } from './custom-providers'
+import type { CustomProviderModel } from '@shared/types/custom-provider'
 import { externalizeGoalHandoffPlan } from './claude-cli-plan-handoff'
 import { reassertClaudeCliPromptSubmit, writeClaudeCliPrompt } from './claude-cli-pty-prompt'
 import { watchForClaudeSessionId, type ClaudeSessionWatchHandle } from './claude-session-watcher'
@@ -153,6 +156,7 @@ export function destroyNodePtyTerminal(terminalId: string): void {
   closeClaudePlanFollowupWatcher(terminalId)
   clearClaudeCliInteractions(terminalId)
   clearClaudeCliSubagentTracking(terminalId)
+  resetClaudeCliBackgroundWork(terminalId)
   claudeCliSessions.delete(terminalId)
   claudeCliWorktreeBasenames.delete(terminalId)
   claudeCliTranscriptSources.delete(terminalId)
@@ -220,6 +224,9 @@ function attachNodePtyListeners(terminalId: string): void {
     if (claudeCliSessions.has(terminalId)) {
       clearClaudeCliInteractions(terminalId)
       clearClaudeCliSubagentTracking(terminalId)
+      // The CLI process just died, taking its background shells/monitors with
+      // it (survivors are orphans reported only to a future session).
+      resetClaudeCliBackgroundWork(terminalId)
       setClaudeCliPlanAutoApprove(terminalId, false)
       publishClaudeCliStatus({
         sessionId: terminalId,
@@ -277,6 +284,7 @@ export async function createClaudeCliTerminal(
     // paths) rather than permanently bricking the session's resumable
     // transcript behind a hard error.
     let customProviderCommand: string | null = null
+    let customProviderModels: CustomProviderModel[] | null = null
     if (session.custom_provider_id) {
       // The wrapper spawns through a POSIX login shell ($SHELL -ilc) — Windows
       // GUI apps have no SHELL and no /bin/zsh, so fail with a clear message
@@ -290,6 +298,7 @@ export async function createClaudeCliTerminal(
       const provider = getCustomProviderById(db, session.custom_provider_id)
       if (provider?.command.trim()) {
         customProviderCommand = provider.command
+        customProviderModels = provider.models ?? null
       } else {
         log.warn('Custom provider missing or blank; falling back to plain claude', {
           sessionId,
@@ -318,7 +327,8 @@ export async function createClaudeCliTerminal(
       claudeBinary,
       hookSettingsJson,
       db,
-      customProviderCommand
+      customProviderCommand,
+      customProviderModels
     })
 
     log.info('Creating Claude CLI PTY', {
@@ -397,6 +407,14 @@ export async function createClaudeCliTerminal(
     // ...nor a stale subagent deferral/pending-notification set, which could
     // otherwise swallow the next turn's Stop after a restart.
     clearClaudeCliSubagentTracking(sessionId)
+    // ...nor a dead previous process's background shell/monitor counts. Only
+    // on a true (re)spawn: when the live PTY was reused above, its claude
+    // process — and its background tasks — are still running, and the
+    // Stop-snapshot reconciliation only prunes tracked ids (it never adopts),
+    // so a reset here could not self-heal until those tasks ended.
+    if (!alreadyExists) {
+      resetClaudeCliBackgroundWork(sessionId)
+    }
     claudeCliWorktreeBasenames.set(sessionId, path.basename(worktreePath))
     if (!pendingPrompt) {
       publishClaudeCliStatus({
@@ -447,6 +465,7 @@ export function cleanupTerminals(): void {
   claudeCliLastStatus.clear()
   clearAllClaudeCliInteractions()
   clearAllClaudeCliSubagentTracking()
+  clearAllClaudeCliBackgroundWork()
   unsubscribeClaudeCliStatus?.()
   unsubscribeClaudeCliStatus = null
   resetAllClaudeCliTitleState()

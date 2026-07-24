@@ -11,6 +11,13 @@ import type {
 import type { ServerEvent } from '@shared/rpc/protocol'
 import type { Envelope } from '@shared/types/ipc-envelope'
 import type { GhosttyTerminalConfig } from '@shared/types/terminal'
+import {
+  CLAUDE_CLI_BACKGROUND_WORK_CHANNEL,
+  isClaudeCliBackgroundWorkPayload,
+  type ClaudeCliBackgroundWorkPayload
+} from '@shared/types/claude-cli-background-work'
+
+export type { ClaudeCliBackgroundWorkPayload }
 
 export type ClaudeCliSessionStatusType =
   | 'working'
@@ -147,6 +154,16 @@ export const terminalApi = {
     return getRendererRpcClient().subscribe('claude-cli:status', (event: ServerEvent) => {
       if (isClaudeCliStatusPayload(event.payload)) callback(event.payload)
     })
+  },
+  onClaudeCliBackgroundWork: (
+    callback: (payload: ClaudeCliBackgroundWorkPayload) => void
+  ): (() => void) => {
+    return getRendererRpcClient().subscribe(
+      CLAUDE_CLI_BACKGROUND_WORK_CHANNEL,
+      (event: ServerEvent) => {
+        if (isClaudeCliBackgroundWorkPayload(event.payload)) callback(event.payload)
+      }
+    )
   },
   ghosttyPasteText: async (terminalId: string, text: string): Promise<Envelope<void>> => {
     await getRendererRpcClient().request<void>('terminalOps.ghosttyPasteText', { terminalId, text })

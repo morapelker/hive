@@ -1,6 +1,12 @@
 import { isAgentSdkAvailable, type AvailableAgentSdks } from './agent-sdk-availability'
 import { type AgentSdk, supportsGoalMode, toModelCatalogSdk } from '@shared/types/agent-sdk'
-import { findCustomProvider } from '@shared/types/custom-provider'
+import {
+  CUSTOM_MODEL_PROVIDER_ID,
+  findCustomProvider,
+  getCustomProviderModelDisplayName,
+  resolveCustomProviderModelSelection,
+  type CustomClaudeProvider
+} from '@shared/types/custom-provider'
 import { HANDOFF_PLAN_PROMPT_HEADER } from '@shared/agent-mode-prefixes'
 import {
   findModelInfo,
@@ -67,6 +73,29 @@ const FALLBACK_MODELS: Record<HandoffAgentSdk, SelectedModel> = {
 
 const modelCatalogCache = new Map<HandoffAgentSdk, ProviderModels[]>()
 const inflightModelCatalogRequests = new Map<HandoffAgentSdk, Promise<ProviderModels[]>>()
+
+// The cache is a plain module Map, invisible to React. Components that resolve
+// display names during render (e.g. ticket model badges mounted before the
+// catalogs arrive) subscribe to this version so they re-render once a catalog
+// lands instead of waiting for an unrelated re-render.
+let modelCatalogCacheVersion = 0
+const modelCatalogCacheListeners = new Set<() => void>()
+
+function notifyModelCatalogCacheChanged(): void {
+  modelCatalogCacheVersion++
+  for (const listener of modelCatalogCacheListeners) listener()
+}
+
+export function subscribeModelCatalogCache(listener: () => void): () => void {
+  modelCatalogCacheListeners.add(listener)
+  return () => {
+    modelCatalogCacheListeners.delete(listener)
+  }
+}
+
+export function getModelCatalogCacheVersion(): number {
+  return modelCatalogCacheVersion
+}
 
 function normalizeHandoffSdk(
   sdk: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal' | null | undefined
@@ -175,6 +204,35 @@ function getModelInfoFromCache(
   return findModelInfo(providers, model.providerID, model.modelID)
 }
 
+/**
+ * Resolve a candidate model/effort against a custom provider's declared models
+ * into the `SelectedModel` shape that rides overrides, launch configs, and the
+ * session row (`providerID: 'custom'`, `modelID: <slug>`, `variant: <effort>`).
+ * Only candidates already carrying the 'custom' marker count — a legacy stock
+ * stamp like anthropic/sonnet must not accidentally match a declared slug
+ * named after a stock alias. Invalid or non-custom candidates degrade to the
+ * provider's default (first model/effort); null when the provider declares no
+ * launchable models — the command keeps owning the model, as before this
+ * feature.
+ */
+export function resolveCustomProviderSelectedModel(
+  provider: CustomClaudeProvider,
+  candidate?: { providerID?: string; modelID?: string | null; variant?: string | null } | null
+): SelectedModel | null {
+  const isCustomCandidate = candidate?.providerID === CUSTOM_MODEL_PROVIDER_ID
+  const selection = resolveCustomProviderModelSelection(
+    provider,
+    isCustomCandidate ? candidate?.modelID : null,
+    isCustomCandidate ? candidate?.variant : null
+  )
+  if (!selection) return null
+  return {
+    providerID: CUSTOM_MODEL_PROVIDER_ID,
+    modelID: selection.model.slug.trim(),
+    variant: selection.effort ?? undefined
+  }
+}
+
 export function getHandoffSdkDisplayName(
   agentSdk: HandoffAgentSdk,
   customProviderId?: string | null
@@ -202,6 +260,7 @@ export function cacheHandoffModelCatalog(
 ): ProviderModels[] {
   const parsed = parseProviders(providerData)
   modelCatalogCache.set(agentSdk, parsed)
+  notifyModelCatalogCacheChanged()
   return parsed
 }
 
@@ -212,6 +271,7 @@ export function getCachedModelCatalog(agentSdk: HandoffAgentSdk): ProviderModels
 export function clearHandoffModelCatalogCache(): void {
   modelCatalogCache.clear()
   inflightModelCatalogRequests.clear()
+  notifyModelCatalogCacheChanged()
 }
 
 export async function loadHandoffModelCatalog(
@@ -242,6 +302,24 @@ export async function loadHandoffModelCatalog(
   return request
 }
 
+/**
+ * Warm the model-catalog cache for every available SDK so model names resolve
+ * to their display form (e.g. "Fable 5" instead of "fable") without the user
+ * first opening a model picker. Deduped by catalog SDK — claude-code and
+ * claude-code-cli share one catalog, so only one fetch goes out for the pair.
+ */
+export async function preloadHandoffModelCatalogs(): Promise<void> {
+  const availableAgentSdks = useSettingsStore.getState().availableAgentSdks
+  const seenCatalogSdks = new Set<AgentSdk>()
+  const sdksToLoad = getAvailableHandoffAgentSdks(availableAgentSdks).filter((sdk) => {
+    const catalogSdk = toModelCatalogSdk(sdk)
+    if (seenCatalogSdks.has(catalogSdk)) return false
+    seenCatalogSdks.add(catalogSdk)
+    return true
+  })
+  await Promise.all(sdksToLoad.map((sdk) => loadHandoffModelCatalog(sdk)))
+}
+
 export function resolveModelForSdkDefault(agentSdk: HandoffAgentSdk): SelectedModel {
   const configured = resolveModelForSdk(agentSdk)
   return buildModelSelection(configured, agentSdk)
@@ -268,6 +346,35 @@ export function getEffectiveHandoffSelection(opts: {
   if (override.customProviderId) {
     const provider = findCustomProvider(settings.customProviders, override.customProviderId)
     if (!provider || !provider.command.trim()) return fallback
+    const providerName = provider.name || 'Custom Provider'
+    // Resolve the remembered model/effort against the provider's declared
+    // models — a slug/effort the user has since removed degrades to the
+    // provider default rather than riding along stale. Only overrides already
+    // carrying the 'custom' marker count as a remembered pick: a legacy
+    // override's stock stamp (anthropic/sonnet) must not accidentally match a
+    // declared slug named after a stock alias.
+    const isCustomOverrideModel = override.providerID === CUSTOM_MODEL_PROVIDER_ID
+    const selection = resolveCustomProviderModelSelection(
+      provider,
+      isCustomOverrideModel ? override.modelID : null,
+      isCustomOverrideModel ? override.variant : null
+    )
+    if (selection) {
+      return {
+        agentSdk: override.agentSdk,
+        customProviderId: provider.id,
+        model: {
+          providerID: CUSTOM_MODEL_PROVIDER_ID,
+          modelID: selection.model.slug.trim(),
+          variant: selection.effort ?? undefined
+        },
+        display: {
+          sdkName: providerName,
+          modelName: getCustomProviderModelDisplayName(selection.model),
+          variant: selection.effort ?? undefined
+        }
+      }
+    }
     const model: SelectedModel = {
       providerID: override.providerID,
       modelID: override.modelID,
@@ -278,9 +385,10 @@ export function getEffectiveHandoffSelection(opts: {
       customProviderId: provider.id,
       model,
       display: {
-        // The provider's command decides the real model — show only the name.
-        sdkName: provider.name || 'Custom Provider',
-        modelName: provider.name || 'Custom Provider',
+        // No declared models: the provider's command decides the real model —
+        // show only the name.
+        sdkName: providerName,
+        modelName: providerName,
         variant: undefined
       }
     }
@@ -316,6 +424,8 @@ export function resolveSessionCreationSelection(opts: {
   agentSdkOverride?: AgentSdk
   initialMode?: 'build' | 'plan' | 'super-plan'
   modelOverride?: SelectedModel
+  /** claude-code-cli only: resolve the model from this provider's declared list. */
+  customProviderId?: string | null
 }): {
   agentSdk: AgentSdk
   model: SelectedModel | null
@@ -328,8 +438,29 @@ export function resolveSessionCreationSelection(opts: {
     return { agentSdk, model: null }
   }
 
-  if (opts.modelOverride) {
-    return { agentSdk, model: opts.modelOverride }
+  // Custom-provider sessions must never be stamped with a stock-claude model:
+  // once the spawner passes --model for declared models, a stale claude value
+  // would only be dead weight (it can't match a declared slug), and a declared
+  // provider needs its default model stamped even when no override rides in.
+  if (opts.customProviderId && agentSdk === 'claude-code-cli') {
+    const provider = findCustomProvider(settings.customProviders, opts.customProviderId)
+    if (provider) {
+      const model = resolveCustomProviderSelectedModel(provider, opts.modelOverride)
+      return { agentSdk, model }
+    }
+  }
+  // A custom-shaped override that reaches here has lost its provider (deleted,
+  // degraded, or a dangling id) — never leak the proxy slug into stock-claude
+  // resolution. Scoped to claude-code-cli: 'custom' is also a legal opencode
+  // catalog provider id and must pass through untouched for other SDKs.
+  const modelOverride =
+    agentSdk === 'claude-code-cli' &&
+    opts.modelOverride?.providerID === CUSTOM_MODEL_PROVIDER_ID
+      ? undefined
+      : opts.modelOverride
+
+  if (modelOverride) {
+    return { agentSdk, model: modelOverride }
   }
 
   if (opts.agentSdkOverride) {

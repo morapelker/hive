@@ -1,6 +1,7 @@
 import { GraphQLClient } from 'graphql-request'
 import { useSettingsStore, type AppSettings } from '@/stores/useSettingsStore'
 import {
+  CreateAccountShareDocument,
   ListAccountMembersDocument,
   MeDocument,
   RecordPromptIdleDocument,
@@ -167,6 +168,28 @@ export async function fetchHiveAccountMembers(): Promise<
     console.warn('[HiveEnterprise] listAccountMembers failed:', error)
     return null
   }
+}
+
+export interface CreatedAccountShare {
+  token: string
+  expiresAt: string
+}
+
+/**
+ * Store an already-encrypted account payload as a one-time share on the
+ * hive-enterprise server. The encryption key must NOT be passed here — it
+ * belongs only in the generated hive:// link. Throws when the Hive Enterprise
+ * token is not configured (share links require a connected server).
+ */
+export async function createHiveAccountShare(
+  provider: 'anthropic' | 'openai',
+  encryptedPayload: string
+): Promise<CreatedAccountShare> {
+  const data = await requestWithRefresh<
+    { createAccountShare: CreatedAccountShare },
+    { provider: string; encryptedPayload: string }
+  >(CreateAccountShareDocument, { provider, encryptedPayload })
+  return data.createAccountShare
 }
 
 export async function completeHiveEnterpriseLogin(token: string): Promise<void> {

@@ -1,11 +1,17 @@
 import type { Session } from '../db/types'
+import {
+  CUSTOM_MODEL_PROVIDER_ID,
+  matchCustomProviderModel,
+  resolveCustomProviderEffort,
+  type CustomProviderModel
+} from '@shared/types/custom-provider'
 import { getUserEnvironmentVariables } from './env-vars'
 import type { DatabaseService } from '../db/database'
 
 export interface ClaudeCliPtySpawnInput {
   session: Pick<
     Session,
-    'mode' | 'model_id' | 'model_variant' | 'claude_session_id'
+    'mode' | 'model_provider_id' | 'model_id' | 'model_variant' | 'claude_session_id'
   >
   worktreePath: string
   pendingPrompt?: string | null
@@ -17,9 +23,17 @@ export interface ClaudeCliPtySpawnInput {
    * A custom provider's launch command (may be a shell alias or a full command
    * line with env prefixes). When set, the spawn runs through the user's
    * interactive login shell so aliases resolve, and Hive's --model/--effort
-   * flags are suppressed — the command itself decides the model.
+   * flags are suppressed — the command itself decides the model — unless the
+   * session's model matches one the provider declares (customProviderModels).
    */
   customProviderCommand?: string | null
+  /**
+   * The custom provider's declared models. When the session's `model_id`
+   * matches a declared slug, that slug is passed verbatim as `--model` (and the
+   * declared effort as `--effort`) after the command, overriding alias-baked
+   * flags via claude's last-flag-wins semantics.
+   */
+  customProviderModels?: CustomProviderModel[] | null
 }
 
 export interface ClaudeCliPtySpawn {
@@ -92,17 +106,46 @@ export function buildClaudeCliPtySpawn(input: ClaudeCliPtySpawnInput): ClaudeCli
 
   // Custom providers own their model selection (often baked into the command
   // as an alias flag) — a Hive-side --model/--effort appended after the alias's
-  // own flags would win and silently override it.
-  const model = customCommand ? null : normalizeClaudeCliModel(input.session.model_id)
+  // own flags would win and silently override it. Exception: when the provider
+  // declares models and this session carries one of their slugs, the user
+  // explicitly picked it, so pass it verbatim (last-flag-wins is now desired).
+  // Stale stock-claude values in model_id (pre-feature sessions) never match a
+  // declared slug and stay suppressed.
+  // The slug match additionally requires the 'custom' marker: legacy sessions
+  // carry stock stamps (model_provider_id 'anthropic', model_id 'sonnet'), and
+  // a provider later declaring a slug named like a stock alias must not start
+  // overriding the alias-baked model on their respawn.
+  const customModel =
+    customCommand && input.session.model_provider_id === CUSTOM_MODEL_PROVIDER_ID
+      ? matchCustomProviderModel(input.customProviderModels, input.session.model_id)
+      : null
+  // A custom-provider session whose provider was deleted/blanked degrades to
+  // plain claude with its proxy slug still in model_id — never let that slug
+  // reach normalizeClaudeCliModel, whose substring matching could turn e.g.
+  // 'kimi-sonnet' into a real --model sonnet on stock claude.
+  const orphanedCustomModel =
+    !customCommand && input.session.model_provider_id === CUSTOM_MODEL_PROVIDER_ID
+  const model = customCommand
+    ? (customModel?.slug.trim() ?? null)
+    : orphanedCustomModel
+      ? null
+      : normalizeClaudeCliModel(input.session.model_id)
   if (model) {
     args.push('--model', model)
   }
 
   // Ultracode is Hive-injected claude settings — suppress it for custom
-  // providers along with --model/--effort; the model picker is hidden for
-  // them, so a remembered ultracode variant would ride along invisibly.
-  const ultracode = customCommand ? false : isUltracodeEffort(input.session.model_variant)
-  const effort = customCommand ? null : normalizeClaudeCliEffort(input.session.model_variant)
+  // providers along with --model/--effort; it is never offered for provider
+  // models, so a remembered ultracode variant would ride along invisibly.
+  const ultracode =
+    customCommand || orphanedCustomModel ? false : isUltracodeEffort(input.session.model_variant)
+  const effort = customCommand
+    ? customModel
+      ? normalizeClaudeCliEffort(resolveCustomProviderEffort(customModel, input.session.model_variant))
+      : null
+    : orphanedCustomModel
+      ? null
+      : normalizeClaudeCliEffort(input.session.model_variant)
   if (effort) {
     args.push('--effort', effort)
   }

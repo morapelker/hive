@@ -201,6 +201,19 @@ export function useClaudeCliStatusListener(): void {
       worktreeStatus.setSessionStatus(sessionId, status, metadata)
     })
 
-    return unsubscribe
+    // Live background shell/monitor counts for the kanban ticket badges —
+    // pure store writes, deliberately outside the status state machine above.
+    const unsubscribeBackgroundWork = terminalApi.onClaudeCliBackgroundWork(
+      ({ sessionId, runningShells, runningMonitors }) => {
+        useWorktreeStatusStore
+          .getState()
+          .setSessionBackgroundWork(sessionId, { runningShells, runningMonitors })
+      }
+    )
+
+    return () => {
+      unsubscribe()
+      unsubscribeBackgroundWork()
+    }
   }, [])
 }

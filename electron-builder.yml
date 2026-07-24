@@ -7,6 +7,12 @@ files:
   - out/**/*
   - resources/**/*
 
+# hive:// deep links (account share links etc.)
+protocols:
+  - name: Hive
+    schemes:
+      - hive
+
 # Native .node binaries cannot be loaded from inside an ASAR archive.
 # This extracts them to app.asar.unpacked/ at build time.
 asarUnpack:

@@ -10,12 +10,14 @@ import {
   type HandoffSelectionOverride
 } from '@/lib/handoffSelection'
 import {
+  buildCustomProviderCatalog,
   findModelInfo,
   getFirstModelInfo,
   getModelDisplayName,
   getModelVariantKeys,
   type ProviderModels
 } from '@/lib/parseProviders'
+import { findCustomProvider } from '@shared/types/custom-provider'
 import { cn } from '@/lib/utils'
 import { isWindows } from '@/lib/platform'
 import { Button } from '@/components/ui/button'
@@ -136,7 +138,9 @@ export function HandoffModelPicker({
     setPickedCustomProviderId(effective.customProviderId ?? null)
     setPickedModel(effective.model)
 
-    if (effective.customProviderId) return // custom providers have no model catalog
+    // Custom providers have no SDK model catalog to load — their declared
+    // models (already resolved into effective.model) come from settings.
+    if (effective.customProviderId) return
 
     void ensureProviders(effective.agentSdk).then((providers) => {
       if (!active) return
@@ -148,9 +152,19 @@ export function HandoffModelPicker({
     }
   }, [open, worktreeId, ensureProviders, resolveModelForCatalog])
 
+  // The picked custom provider's declared models, synthesized into the same
+  // catalog shape the SDK dropdown/chips consume. Empty when the provider
+  // declares none — then the command owns the model (legacy pill below).
+  const customProviderCatalog = useMemo(() => {
+    if (!pickedCustomProviderId) return null
+    const provider = findCustomProvider(customProviders, pickedCustomProviderId)
+    return provider ? buildCustomProviderCatalog(provider) : []
+  }, [pickedCustomProviderId, customProviders])
+
   const currentProviders = useMemo(
-    () => providersBySdk[pickedSdk] ?? getCachedModelCatalog(pickedSdk) ?? [],
-    [pickedSdk, providersBySdk]
+    () =>
+      customProviderCatalog ?? providersBySdk[pickedSdk] ?? getCachedModelCatalog(pickedSdk) ?? [],
+    [customProviderCatalog, pickedSdk, providersBySdk]
   )
   const currentModelInfo = pickedModel
     ? findModelInfo(currentProviders, pickedModel.providerID, pickedModel.modelID)
@@ -184,13 +198,19 @@ export function HandoffModelPicker({
     (customProviderId: string) => {
       setPickedSdk('claude-code-cli')
       setPickedCustomProviderId(customProviderId)
-      // The provider's command decides the real model — persist the cli default
-      // only to satisfy the override's model shape.
-      const model = resolveModelForSdkDefault('claude-code-cli')
+      const provider = findCustomProvider(customProviders, customProviderId)
+      const catalog = provider ? buildCustomProviderCatalog(provider) : []
+      const firstDeclared = getFirstModelInfo(catalog)
+      // Providers with declared models default to the first one (honoring a
+      // remembered effort); without any, the command decides the real model —
+      // persist the cli default only to satisfy the override's model shape.
+      const model = firstDeclared
+        ? buildModelFromInfo(firstDeclared)
+        : resolveModelForSdkDefault('claude-code-cli')
       setPickedModel(model)
       persistOverride('claude-code-cli', model, customProviderId)
     },
-    [persistOverride]
+    [customProviders, persistOverride]
   )
 
   const handleSelectModel = useCallback(
@@ -198,9 +218,9 @@ export function HandoffModelPicker({
       const info = findModelInfo(currentProviders, model.providerID, model.modelID)
       const nextModel = info ? buildModelFromInfo(info, model.variant) : model
       setPickedModel(nextModel)
-      persistOverride(pickedSdk, nextModel)
+      persistOverride(pickedSdk, nextModel, pickedCustomProviderId)
     },
-    [currentProviders, persistOverride, pickedSdk]
+    [currentProviders, persistOverride, pickedSdk, pickedCustomProviderId]
   )
 
   const handleConfirm = useCallback(() => {
@@ -285,7 +305,7 @@ export function HandoffModelPicker({
               </DropdownMenuContent>
             </DropdownMenu>
 
-            {pickedCustomProviderId ? (
+            {pickedCustomProviderId && currentProviders.length === 0 ? (
               <div
                 className="flex h-8 items-center rounded-full border border-border bg-muted/30 px-3 text-xs text-muted-foreground"
                 title="The provider's command decides the model"
@@ -342,7 +362,7 @@ export function HandoffModelPicker({
             )}
           </div>
 
-          {variantKeys.length > 0 && pickedModel && !pickedCustomProviderId && (
+          {variantKeys.length > 0 && pickedModel && (
             <div className="flex flex-wrap gap-1.5">
               {variantKeys.map((variant) => {
                 const active = pickedModel.variant === variant
@@ -353,7 +373,7 @@ export function HandoffModelPicker({
                     onClick={() => {
                       const nextModel = { ...pickedModel, variant }
                       setPickedModel(nextModel)
-                      persistOverride(pickedSdk, nextModel)
+                      persistOverride(pickedSdk, nextModel, pickedCustomProviderId)
                     }}
                     className={cn(
                       'rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-wide transition-colors',

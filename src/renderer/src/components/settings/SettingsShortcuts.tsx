@@ -5,6 +5,7 @@ import {
   shortcutCategoryLabels,
   shortcutCategoryOrder,
   formatBinding,
+  normalizeEventKey,
   type KeyBinding,
   type ModifierKey,
   type ShortcutCategory,
@@ -55,7 +56,9 @@ export function SettingsShortcuts(): React.JSX.Element {
       }
 
       const binding: KeyBinding = {
-        key: e.key.length === 1 ? e.key.toLowerCase() : e.key,
+        // Normalize shifted punctuation (Shift+] → "]") so stored bindings and
+        // conflict detection always use canonical keys
+        key: normalizeEventKey(e),
         modifiers
       }
 

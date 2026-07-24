@@ -1,11 +1,11 @@
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TicketModelBadge } from './TicketModelBadge'
 import { cacheHandoffModelCatalog, clearHandoffModelCatalogCache } from '@/lib/handoffSelection'
 
 describe('TicketModelBadge', () => {
   afterEach(() => {
-    clearHandoffModelCatalogCache()
+    act(() => clearHandoffModelCatalogCache())
     vi.restoreAllMocks()
   })
 
@@ -102,6 +102,65 @@ describe('TicketModelBadge', () => {
 
     expect(screen.getByText('Claude Opus 4.5')).toBeInTheDocument()
     expect(screen.getByTitle('Claude Opus 4.5')).toBeInTheDocument()
+  })
+
+  it('upgrades an already-rendered raw slug once a catalog lands in the cache', () => {
+    render(
+      <TicketModelBadge
+        ticket={{ model_provider_id: 'anthropic', model_id: 'opus', model_variant: null }}
+      />
+    )
+
+    expect(screen.getByText('opus')).toBeInTheDocument()
+
+    act(() => {
+      cacheHandoffModelCatalog('claude-code', {
+        providers: [
+          {
+            id: 'anthropic',
+            name: 'Anthropic',
+            models: {
+              opus: { id: 'opus', name: 'Claude Opus 4.5' }
+            }
+          }
+        ]
+      })
+    })
+
+    expect(screen.queryByText('opus')).toBeNull()
+    expect(screen.getByText('Claude Opus 4.5')).toBeInTheDocument()
+  })
+
+  it('gives the chip a violet border for an ultracode launch', () => {
+    render(
+      <TicketModelBadge
+        ticket={{ model_provider_id: 'claude-code', model_id: 'opus', model_variant: 'ultracode' }}
+      />
+    )
+
+    expect(screen.getByText('opus').closest('span')).toHaveClass('border-2', 'border-violet-500')
+  })
+
+  it('gives the chip a violet border for a codex ultra launch', () => {
+    render(
+      <TicketModelBadge
+        ticket={{ model_provider_id: 'codex', model_id: 'gpt-5.6-sol', model_variant: 'ultra' }}
+      />
+    )
+
+    expect(screen.getByText('gpt-5.6-sol').closest('span')).toHaveClass('border-2', 'border-violet-500')
+  })
+
+  it('keeps the border transparent for non-ultra variants', () => {
+    render(
+      <TicketModelBadge
+        ticket={{ model_provider_id: 'claude-code', model_id: 'opus', model_variant: 'xhigh' }}
+      />
+    )
+
+    const badge = screen.getByText('opus').closest('span')
+    expect(badge).not.toHaveClass('border-violet-500')
+    expect(badge).toHaveClass('border-transparent')
   })
 
   it('applies the passed className to the chip', () => {

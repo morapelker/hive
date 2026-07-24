@@ -122,13 +122,17 @@ const COLUMN_ORDER: Record<KanbanTicketColumn, number> = {
   todo: 0,
   in_progress: 1,
   review: 2,
-  done: 3
+  merged: 3,
+  done: 4
 }
 
-// Done ignores manual sort_order — always newest first (updated_at ≈ when the
-// ticket entered Done, since moving a ticket bumps updated_at)
+// Done and Merged ignore manual sort_order — always newest first (updated_at ≈
+// when the ticket entered the column, since moving a ticket bumps updated_at)
 const byUpdatedAtDesc = (a: KanbanTicket, b: KanbanTicket): number =>
   b.updated_at.localeCompare(a.updated_at)
+
+export const isDateSortedColumn = (column: KanbanTicketColumn): boolean =>
+  column === 'done' || column === 'merged'
 
 function findTicketByRef(
   ticketsByProject: Map<string, KanbanTicket[]>,
@@ -206,11 +210,12 @@ interface KanbanState {
   showArchivedByProject: Record<string, boolean>
   markdownDiagnostics: Map<string, MarkdownCardDiagnostic[]>
   markdownPlaceholders: Map<string, MarkdownCardPlaceholder[]>
-  /** Pending "move to done" data — set when a feature-branch ticket is dropped on Done, triggering the merge dialog */
+  /** Pending "move to done/merged" data — set when a feature-branch ticket is dropped on Done or Merged, triggering the merge dialog */
   pendingDoneMove: {
     ticketId: string
     projectId: string
     sortOrder: number
+    targetColumn: 'merged' | 'done'
   } | null
   /** Ephemeral board focus target used by the header Telegram toggle. */
   boardTelegramTarget: BoardTelegramTarget | null
@@ -247,11 +252,16 @@ interface KanbanState {
   toggleBoardView: () => void
   setSimpleMode: (projectId: string, enabled: boolean) => Promise<void>
   archiveTicket: (ticketId: string, projectId: string) => Promise<void>
-  archiveAllDone: (projectId: string) => Promise<number>
+  archiveAllDone: (projectId: string, includeMerged?: boolean) => Promise<number>
   unarchiveTicket: (ticketId: string, projectId: string) => Promise<void>
   detachWorktreeTickets: (worktreeId: string) => Promise<void>
   setShowArchived: (projectId: string, show: boolean) => void
-  setPendingDoneMove: (data: { ticketId: string; projectId: string; sortOrder: number }) => void
+  setPendingDoneMove: (data: {
+    ticketId: string
+    projectId: string
+    sortOrder: number
+    targetColumn: 'merged' | 'done'
+  }) => void
   clearPendingDoneMove: () => void
   completeDoneMove: () => Promise<void>
 
@@ -696,7 +706,9 @@ export const useKanbanStore = create<KanbanState>()(
       },
 
       // ── archiveAllDone (optimistic) ────────────────────────────────
-      archiveAllDone: async (projectId: string): Promise<number> => {
+      // includeMerged: when the Merged column is hidden, merged tickets fold
+      // into Done, so "Archive all" covers them too
+      archiveAllDone: async (projectId: string, includeMerged?: boolean): Promise<number> => {
         const prev = get().tickets.get(projectId) ?? []
         const snapshot = prev.map((t) => ({ ...t }))
 
@@ -706,7 +718,10 @@ export const useKanbanStore = create<KanbanState>()(
         set((state) => {
           const next = new Map(state.tickets)
           const tickets = (next.get(projectId) ?? []).map((t) => {
-            if (t.column === 'done' && !t.archived_at) {
+            if (
+              (t.column === 'done' || (includeMerged && t.column === 'merged')) &&
+              !t.archived_at
+            ) {
               count++
               return { ...t, archived_at: now, updated_at: now }
             }
@@ -717,7 +732,7 @@ export const useKanbanStore = create<KanbanState>()(
         })
 
         try {
-          await kanban.ticket.archiveAllDone(projectId)
+          await kanban.ticket.archiveAllDone(projectId, includeMerged)
           return count
         } catch (err) {
           // Revert on failure
@@ -858,6 +873,7 @@ export const useKanbanStore = create<KanbanState>()(
           const triggerColumn = useSettingsStore.getState().followUpTriggerColumn
           if (
             column === 'done' ||
+            column === 'merged' ||
             (triggerColumn === 'review' && column === 'review' && movedTicket?.mode === 'build')
           ) {
             const { dependencyMap, tickets: allTickets } = get()
@@ -950,11 +966,12 @@ export const useKanbanStore = create<KanbanState>()(
           for (const ticket of tickets) {
             if (ticket.current_session_id !== sessionId) continue
 
-            // 'done' is a terminal column: once a user marks a ticket done, no
-            // session event may auto-move it back. This matters on app
-            // relaunch/focus, when a still-active session re-emits its status
-            // (e.g. an `idle` replay → session_completed) for a done ticket.
-            // Each column-moving branch below guards on `column !== 'done'`.
+            // 'done' and 'merged' are terminal columns: once a user moves a
+            // ticket there, no session event may auto-move it back. This
+            // matters on app relaunch/focus, when a still-active session
+            // re-emits its status (e.g. an `idle` replay → session_completed)
+            // for a done/merged ticket. Each column-moving branch below guards
+            // on those columns.
             switch (event.type) {
               case 'session_completed': {
                 // Plan tickets: surface the finished plan for the review UI.
@@ -966,7 +983,11 @@ export const useKanbanStore = create<KanbanState>()(
                 // The session finished → its progress bar is gone. Any non-terminal
                 // ticket must advance to review regardless of mode/plan state (board
                 // invariant: in_progress ⇔ a running progress bar). Move is idempotent.
-                if (ticket.column !== 'review' && ticket.column !== 'done') {
+                if (
+                  ticket.column !== 'review' &&
+                  ticket.column !== 'done' &&
+                  ticket.column !== 'merged'
+                ) {
                   get()
                     .moveTicket(ticket.id, projectId, 'review', ticket.sort_order)
                     .catch(() => {})
@@ -1002,7 +1023,11 @@ export const useKanbanStore = create<KanbanState>()(
                 // ...and move any non-terminal ticket to review. A build ticket can
                 // land here when its completion is rerouted to plan_ready by a stale
                 // lastSendMode, so the move must not be gated on mode.
-                if (ticket.column !== 'review' && ticket.column !== 'done') {
+                if (
+                  ticket.column !== 'review' &&
+                  ticket.column !== 'done' &&
+                  ticket.column !== 'merged'
+                ) {
                   get()
                     .moveTicket(ticket.id, projectId, 'review', ticket.sort_order)
                     .catch(() => {})
@@ -1019,7 +1044,11 @@ export const useKanbanStore = create<KanbanState>()(
                     .updateTicket(ticket.id, projectId, { plan_ready: false })
                     .catch(() => {})
                 }
-                if (ticket.column !== 'in_progress' && ticket.column !== 'done') {
+                if (
+                  ticket.column !== 'in_progress' &&
+                  ticket.column !== 'done' &&
+                  ticket.column !== 'merged'
+                ) {
                   get()
                     .moveTicket(ticket.id, projectId, 'in_progress', ticket.sort_order)
                     .catch(() => {})
@@ -1195,7 +1224,12 @@ export const useKanbanStore = create<KanbanState>()(
         const pending = get().pendingDoneMove
         if (!pending) return
         set({ pendingDoneMove: null })
-        await get().moveTicket(pending.ticketId, pending.projectId, 'done', pending.sortOrder)
+        await get().moveTicket(
+          pending.ticketId,
+          pending.projectId,
+          pending.targetColumn,
+          pending.sortOrder
+        )
       },
 
       // ── getTicketsForProject ─────────────────────────────────────
@@ -1213,7 +1247,7 @@ export const useKanbanStore = create<KanbanState>()(
         const tickets = get().tickets.get(projectId) ?? []
         return tickets
           .filter((t) => t.column === column && !t.archived_at)
-          .sort(column === 'done' ? byUpdatedAtDesc : (a, b) => a.sort_order - b.sort_order)
+          .sort(isDateSortedColumn(column) ? byUpdatedAtDesc : (a, b) => a.sort_order - b.sort_order)
       },
 
       // ── getArchivedTicketsByColumn ─────────────────────────────────
@@ -1317,7 +1351,7 @@ export const useKanbanStore = create<KanbanState>()(
       ): KanbanTicket[] => {
         const projectIds = get().getConnectionProjectIds(connectionId)
         const merged = projectIds.flatMap((pid) => get().getTicketsByColumn(pid, column))
-        merged.sort(column === 'done' ? byUpdatedAtDesc : (a, b) => a.sort_order - b.sort_order)
+        merged.sort(isDateSortedColumn(column) ? byUpdatedAtDesc : (a, b) => a.sort_order - b.sort_order)
         return merged
       },
 
@@ -1399,7 +1433,7 @@ export const useKanbanStore = create<KanbanState>()(
       getTicketsByColumnForPinned: (column: KanbanTicketColumn): KanbanTicket[] => {
         const projectIds = [...usePinnedStore.getState().pinnedProjectIds]
         const merged = projectIds.flatMap((pid) => get().getTicketsByColumn(pid, column))
-        merged.sort(column === 'done' ? byUpdatedAtDesc : (a, b) => a.sort_order - b.sort_order)
+        merged.sort(isDateSortedColumn(column) ? byUpdatedAtDesc : (a, b) => a.sort_order - b.sort_order)
         return merged
       },
 

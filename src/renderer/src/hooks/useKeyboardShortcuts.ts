@@ -8,13 +8,18 @@ import {
   useFileSearchStore,
   useSettingsStore,
   useKanbanStore,
-  useVimModeStore
+  useVimModeStore,
+  useConnectionStore,
+  useSpaceStore,
+  useFilterStore
 } from '@/stores'
+import { subsequenceMatch } from '@/lib/subsequence-match'
 import { useGitStore } from '@/stores/useGitStore'
 import { useShortcutStore } from '@/stores/useShortcutStore'
-import { useWorktreeStore } from '@/stores/useWorktreeStore'
+import { useWorktreeStore, getOrderedProjectWorktrees } from '@/stores/useWorktreeStore'
 import { useScriptStore, fireRunScript, killRunScript } from '@/stores/useScriptStore'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
+import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useTerminalTabStore } from '@/stores/useTerminalTabStore'
 import { useTerminalStore } from '@/stores/useTerminalStore'
 import { eventMatchesBinding, type KeyBinding } from '@/lib/keyboard-shortcuts'
@@ -125,6 +130,232 @@ function createNewSession(): void {
 }
 
 /**
+ * Cycles to the next/previous session tab in the current worktree or connection.
+ * Wraps around at the ends. Shared between session:next and session:previous shortcuts.
+ */
+function cycleSession(direction: 1 | -1): void {
+  const state = useSessionStore.getState()
+  const { activeSessionId, activeWorktreeId, activeConnectionId, inlineConnectionSessionId } =
+    state
+
+  // Determine scope: connection mode when a connection is active and no worktree is
+  const isConnectionMode = !!activeConnectionId && !activeWorktreeId
+  const scopeId = isConnectionMode ? activeConnectionId : activeWorktreeId
+  if (!scopeId) return
+
+  // Build the visible tab list in display order. In worktree mode, sticky
+  // connection tabs (connections containing this worktree) render before the
+  // worktree's own session tabs — mirror SessionTabs.
+  type Tab = { sessionId: string; inlineConnection: boolean }
+  const tabs: Tab[] = []
+  if (isConnectionMode) {
+    for (const id of state.tabOrderByConnection.get(scopeId) || []) {
+      tabs.push({ sessionId: id, inlineConnection: false })
+    }
+  } else {
+    const connections = useConnectionStore
+      .getState()
+      .connections.filter((c) => c.members.some((m) => m.worktree_id === scopeId))
+    for (const connection of connections) {
+      for (const id of state.tabOrderByConnection.get(connection.id) || []) {
+        tabs.push({ sessionId: id, inlineConnection: true })
+      }
+    }
+    for (const id of state.tabOrderByWorktree.get(scopeId) || []) {
+      tabs.push({ sessionId: id, inlineConnection: false })
+    }
+  }
+
+  // Always leave any file/diff view so the session becomes visible,
+  // even when there is only one session tab to "cycle" to.
+  useFileViewerStore.getState().setActiveFile(null)
+
+  if (tabs.length === 0) return
+
+  // Current position: an inline connection tab wins over the underlying
+  // worktree session it overlays.
+  const currentIndex =
+    !isConnectionMode && inlineConnectionSessionId
+      ? tabs.findIndex((t) => t.inlineConnection && t.sessionId === inlineConnectionSessionId)
+      : activeSessionId
+        ? tabs.findIndex((t) => !t.inlineConnection && t.sessionId === activeSessionId)
+        : -1
+  // With a single tab, still select it when it isn't the active session
+  // (e.g. cycling away from the Board tab); otherwise nothing to cycle to.
+  if (tabs.length === 1 && currentIndex === 0) return
+
+  const nextIndex =
+    currentIndex === -1
+      ? direction === 1
+        ? 0
+        : tabs.length - 1
+      : (currentIndex + direction + tabs.length) % tabs.length
+  const next = tabs[nextIndex]
+  if (!next) return
+
+  if (next.inlineConnection) {
+    // Sticky connection tab viewed inline in worktree mode. Also clear any
+    // Board Assistant focus, which otherwise renders above inline sessions.
+    state.clearBoardAssistantFocus()
+    state.setInlineConnectionSession(next.sessionId)
+  } else {
+    state.clearInlineConnectionSession()
+    if (isConnectionMode) {
+      state.setActiveConnectionSession(next.sessionId)
+    } else {
+      state.setActiveSession(next.sessionId)
+    }
+  }
+  // Match tab-click behavior: clear only the unread badge, preserving live
+  // statuses (working/planning/answering/permission) that still need action
+  const statusStore = useWorktreeStatusStore.getState()
+  if (statusStore.sessionStatuses[next.sessionId]?.status === 'unread') {
+    statusStore.clearSessionStatus(next.sessionId)
+  }
+}
+
+/**
+ * Cycles to the next/previous worktree within the currently selected project.
+ * Uses the sidebar display order (custom order, default worktree last) and
+ * wraps around at the ends.
+ */
+function cycleWorktree(direction: 1 | -1): void {
+  const wtState = useWorktreeStore.getState()
+  const { selectedWorktreeId, worktreesByProject, worktreeOrderByProject } = wtState
+
+  // Resolve project: prefer the explicitly selected (highlighted) project so
+  // cycling follows the sidebar selection even when a worktree from another
+  // project is still active; fall back to the selected worktree's project.
+  let projectId: string | null = useProjectStore.getState().selectedProjectId
+  if (!projectId && selectedWorktreeId) {
+    for (const [pid, worktrees] of worktreesByProject) {
+      if (worktrees.some((w) => w.id === selectedWorktreeId)) {
+        projectId = pid
+        break
+      }
+    }
+  }
+  if (!projectId) return
+
+  const ordered = getOrderedProjectWorktrees(worktreesByProject, worktreeOrderByProject, projectId)
+  if (ordered.length === 0) return
+
+  const currentIndex = selectedWorktreeId
+    ? ordered.findIndex((w) => w.id === selectedWorktreeId)
+    : -1
+  const nextIndex =
+    currentIndex === -1
+      ? direction === 1
+        ? 0
+        : ordered.length - 1
+      : (currentIndex + direction + ordered.length) % ordered.length
+  const next = ordered[nextIndex]
+  if (!next || next.id === selectedWorktreeId) return
+
+  useProjectStore.getState().selectProject(projectId)
+  wtState.selectWorktree(next.id)
+  // Match mouse navigation: viewing the worktree clears its unread badge
+  useWorktreeStatusStore.getState().clearWorktreeUnread(next.id)
+}
+
+/**
+ * Cycles to the next/previous item in the sidebar — connections first (as
+ * displayed above projects), then projects — as one unified list, wrapping
+ * around at the ends. Landing on a connection selects it; landing on a
+ * project selects it and its top worktree so the jump lands somewhere useful.
+ */
+function cycleProject(direction: 1 | -1): void {
+  const projectState = useProjectStore.getState()
+  const connectionState = useConnectionStore.getState()
+  const { projects, selectedProjectId } = projectState
+  const { connections, selectedConnectionId } = connectionState
+
+  // Respect the active Space, language, and text filters so cycling stays
+  // within the visible sidebar list (mirrors ProjectList's filtering)
+  const { activeSpaceId, projectSpaceMap } = useSpaceStore.getState()
+  const { activeLanguages, filterQuery } = useFilterStore.getState()
+  let visibleProjects =
+    activeSpaceId === null
+      ? projects
+      : projects.filter((p) => projectSpaceMap[p.id]?.includes(activeSpaceId))
+  if (activeLanguages.length > 0) {
+    const langSet = new Set(activeLanguages)
+    visibleProjects = visibleProjects.filter((p) => p.language && langSet.has(p.language))
+  }
+  if (filterQuery.trim()) {
+    // Filter and sort by match score, mirroring ProjectList's display order
+    visibleProjects = visibleProjects
+      .map((p) => ({
+        project: p,
+        nameMatch: subsequenceMatch(filterQuery, p.name),
+        pathMatch: subsequenceMatch(filterQuery, p.path)
+      }))
+      .filter(({ nameMatch, pathMatch }) => nameMatch.matched || pathMatch.matched)
+      .sort((a, b) => {
+        const aScore = a.nameMatch.matched ? a.nameMatch.score : a.pathMatch.score + 1000
+        const bScore = b.nameMatch.matched ? b.nameMatch.score : b.pathMatch.score + 1000
+        return aScore - bScore
+      })
+      .map(({ project }) => project)
+  }
+
+  // Unified sidebar order: connections section first, then projects
+  type SidebarItem = { kind: 'connection' | 'project'; id: string }
+  const items: SidebarItem[] = [
+    ...connections.map((c): SidebarItem => ({ kind: 'connection', id: c.id })),
+    ...visibleProjects.map((p): SidebarItem => ({ kind: 'project', id: p.id }))
+  ]
+  if (items.length === 0) return
+
+  // Current position: an explicitly selected connection wins (it clears
+  // worktree/project selection); otherwise the selected project.
+  const currentIndex = selectedConnectionId
+    ? items.findIndex((i) => i.kind === 'connection' && i.id === selectedConnectionId)
+    : selectedProjectId
+      ? items.findIndex((i) => i.kind === 'project' && i.id === selectedProjectId)
+      : -1
+  const nextIndex =
+    currentIndex === -1
+      ? direction === 1
+        ? 0
+        : items.length - 1
+      : (currentIndex + direction + items.length) % items.length
+  const next = items[nextIndex]
+  if (!next || nextIndex === currentIndex) return
+
+  if (next.kind === 'connection') {
+    connectionState.selectConnection(next.id)
+    return
+  }
+
+  // Landing on a project: clear any connection selection and select the project
+  if (selectedConnectionId) connectionState.selectConnection(null)
+  projectState.selectProject(next.id)
+
+  // Select the project's top worktree (sidebar order) so the jump is useful
+  const wtState = useWorktreeStore.getState()
+  const load =
+    wtState.worktreesByProject.has(next.id)
+      ? Promise.resolve()
+      : wtState.loadWorktrees(next.id) ?? Promise.resolve()
+  void Promise.resolve(load).then(() => {
+    const state = useWorktreeStore.getState()
+    // Bail if the user has moved on to another project meanwhile
+    if (useProjectStore.getState().selectedProjectId !== next.id) return
+    if (useConnectionStore.getState().selectedConnectionId) return
+    const ordered = getOrderedProjectWorktrees(
+      state.worktreesByProject,
+      state.worktreeOrderByProject,
+      next.id
+    )
+    if (ordered[0]) {
+      state.selectWorktree(ordered[0].id)
+      useWorktreeStatusStore.getState().clearWorktreeUnread(ordered[0].id)
+    }
+  })
+}
+
+/**
  * Checks whether any modal/dialog is currently open and closes it.
  * Returns `true` if a modal was closed, `false` otherwise.
  *
@@ -205,6 +436,19 @@ export function useKeyboardShortcuts(): void {
       // Also skip bare Tab (no ctrl) since the terminal uses it for completion,
       // but allow Ctrl+Tab through for terminal tab cycling.
       const isXtermFocused = target.closest?.('.xterm') !== null
+
+      // Ctrl+[ is the Escape equivalent in terminals (and Vim), and Ctrl+] is
+      // Vim's "jump to tag/definition". Never intercept them while the
+      // terminal is focused, even though meta-modifier bindings also match
+      // Ctrl on Windows/Linux.
+      if (
+        isXtermFocused &&
+        event.ctrlKey &&
+        !event.metaKey &&
+        (event.key === '[' || event.key === ']')
+      ) {
+        return
+      }
 
       for (const { binding, handler, allowInInput } of shortcuts) {
         if (!binding) continue
@@ -434,6 +678,22 @@ function getShortcutHandlers(
       }
     },
     {
+      id: 'session:next',
+      binding: getEffectiveBinding('session:next'),
+      allowInInput: true,
+      handler: () => {
+        cycleSession(1)
+      }
+    },
+    {
+      id: 'session:previous',
+      binding: getEffectiveBinding('session:previous'),
+      allowInInput: true,
+      handler: () => {
+        cycleSession(-1)
+      }
+    },
+    {
       id: 'session:mode-toggle',
       binding: getEffectiveBinding('session:mode-toggle'),
       allowInInput: true, // Tab should work even in inputs
@@ -521,6 +781,52 @@ function getShortcutHandlers(
           },
           leftSidebarCollapsed ? 100 : 0
         )
+      }
+    },
+
+    {
+      id: 'nav:toggle-project-expand',
+      binding: getEffectiveBinding('nav:toggle-project-expand'),
+      allowInInput: true,
+      handler: () => {
+        const { selectedProjectId, toggleProjectExpanded } = useProjectStore.getState()
+        if (!selectedProjectId) return
+        // Ensure the sidebar is visible so the toggle has a visible effect
+        const { leftSidebarCollapsed, setLeftSidebarCollapsed } = useLayoutStore.getState()
+        if (leftSidebarCollapsed) setLeftSidebarCollapsed(false)
+        toggleProjectExpanded(selectedProjectId)
+      }
+    },
+    {
+      id: 'nav:next-worktree',
+      binding: getEffectiveBinding('nav:next-worktree'),
+      allowInInput: true,
+      handler: () => {
+        cycleWorktree(1)
+      }
+    },
+    {
+      id: 'nav:previous-worktree',
+      binding: getEffectiveBinding('nav:previous-worktree'),
+      allowInInput: true,
+      handler: () => {
+        cycleWorktree(-1)
+      }
+    },
+    {
+      id: 'nav:next-project',
+      binding: getEffectiveBinding('nav:next-project'),
+      allowInInput: true,
+      handler: () => {
+        cycleProject(1)
+      }
+    },
+    {
+      id: 'nav:previous-project',
+      binding: getEffectiveBinding('nav:previous-project'),
+      allowInInput: true,
+      handler: () => {
+        cycleProject(-1)
       }
     },
 
