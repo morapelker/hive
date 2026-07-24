@@ -26,15 +26,13 @@ export function DesktopWindowEscapeChrome({
 
   // macOS traffic lights / Windows titleBarOverlay already provide close.
   if (isMac() || isWindows()) {
-    if (boot) return dragStrip
-    if (muted) return <div className="h-12 bg-muted" />
+    if (boot || muted) return dragStrip
     return null
   }
 
   const bridge = window.desktopBridge
   if (typeof bridge?.windowClose !== 'function') {
-    if (boot) return dragStrip
-    if (muted) return <div className="h-12 bg-muted" />
+    if (boot || muted) return dragStrip
     return null
   }
 
