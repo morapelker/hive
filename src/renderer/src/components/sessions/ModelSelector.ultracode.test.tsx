@@ -12,7 +12,7 @@ const PROVIDERS = [
     id: 'claude-code',
     name: 'Claude Code',
     models: {
-      opus: { id: 'opus', name: 'Opus 4.8', variants: { low: {}, medium: {}, high: {}, xhigh: {}, max: {} } },
+      opus: { id: 'opus', name: 'Opus 5', variants: { low: {}, medium: {}, high: {}, xhigh: {}, max: {} } },
       sonnet: { id: 'sonnet', name: 'Sonnet 4.6', variants: { low: {}, medium: {}, high: {} } }
     }
   }

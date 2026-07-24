@@ -23,7 +23,7 @@ const PROVIDERS = [
     models: {
       opus: {
         id: 'opus',
-        name: 'Opus 4.8',
+        name: 'Opus 5',
         variants: { low: {}, medium: {}, high: {}, xhigh: {}, max: {} }
       },
       sonnet: { id: 'sonnet', name: 'Sonnet 4.6', variants: { low: {}, medium: {}, high: {} } }
