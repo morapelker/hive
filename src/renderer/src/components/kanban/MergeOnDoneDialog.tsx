@@ -47,6 +47,7 @@ interface ResolvedState {
   baseUncommittedStats: { filesChanged: number; insertions: number; deletions: number }
   baseDirty: boolean
   branchStats: BranchStats
+  alreadyMerged: boolean
 }
 
 export function MergeOnDoneDialog() {
@@ -168,11 +169,9 @@ export function MergeOnDoneDialog() {
           commitsAhead: branchStatResult.commitsAhead
         }
 
-        // If no diffs at all, just move to done
-        if (!hasUncommitted && branchStats.commitsAhead === 0) {
-          await completeDoneMove()
-          return
-        }
+        // No diffs at all means the branch already landed on base — skip the
+        // commit/merge steps but still offer the archive/keep choice
+        const alreadyMerged = !hasUncommitted && branchStats.commitsAhead === 0
 
         // Get project path for archive step
         const project = await dbApi.project.get<MergeProject>(featureWorktree.project_id)
@@ -190,11 +189,14 @@ export function MergeOnDoneDialog() {
           uncommittedStats,
           baseUncommittedStats,
           baseDirty,
-          branchStats
+          branchStats,
+          alreadyMerged
         })
         setCommitMessage(ticket.title)
         setBaseCommitMessage('')
-        setStep(baseDirty ? 'commit_base' : hasUncommitted ? 'commit' : 'merge')
+        setStep(
+          alreadyMerged ? 'archive' : baseDirty ? 'commit_base' : hasUncommitted ? 'commit' : 'merge'
+        )
       } catch (err) {
         if (!cancelled) {
           toast.error(`Failed to check branch: ${err instanceof Error ? err.message : String(err)}`)
@@ -591,7 +593,7 @@ export function MergeOnDoneDialog() {
         {step === 'archive' && resolved && (
           <div className="flex flex-col gap-3 py-2">
             <p className="text-xs text-muted-foreground">
-              Merge successful! Archive the{' '}
+              {resolved.alreadyMerged ? 'Branch already merged.' : 'Merge successful!'} Archive the{' '}
               <code className="bg-muted px-1 rounded">{resolved.featureBranch}</code> worktree?
             </p>
             <div className="flex items-center justify-between">

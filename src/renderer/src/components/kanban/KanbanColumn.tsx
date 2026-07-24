@@ -588,7 +588,14 @@ export function KanbanColumn({
                       return
                     }
 
-                    if (hasUncommitted || commitsAhead > 0) {
+                    // Review/Merged → Done drops with an already-merged branch
+                    // skip the merge steps but still get the archive/keep prompt
+                    const archivePromptOnly =
+                      column === 'done' &&
+                      (sourceColumn === 'review' || sourceColumn === 'merged') &&
+                      worktree.status === 'active'
+
+                    if (hasUncommitted || commitsAhead > 0 || archivePromptOnly) {
                       const sortOrder = store.computeSortOrder(
                         projectTicketsForColumn(ticketProjectId),
                         projectLocalDropIndex(ticketProjectId, targetIndex)
