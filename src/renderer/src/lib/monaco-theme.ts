@@ -1,71 +1,14 @@
 import type { editor } from 'monaco-editor'
+import { resolveCssColor } from '@/lib/css-color'
 
 export const HIVE_THEME_NAME = 'hive-dark'
 
-/**
- * Create a Monaco editor theme that matches Hive's CSS variable-based dark UI.
- * Falls back to sensible dark defaults when CSS variables aren't available.
- */
-function getCssVar(name: string, fallback: string): string {
-  if (typeof document === 'undefined') return fallback
-  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
-  return value || fallback
-}
-
-/**
- * Convert an HSL CSS variable value to a hex color for Monaco.
- * Handles formats like "260 15% 8%" or "hsl(260 15% 8%)".
- */
-function hslToHex(hslStr: string): string {
-  const cleaned = hslStr.replace(/hsl\(|\)/g, '').trim()
-  const parts = cleaned.split(/[\s,]+/).map((p) => parseFloat(p))
-  if (parts.length < 3 || parts.some(isNaN)) return ''
-
-  const h = parts[0] / 360
-  const s = parts[1] / 100
-  const l = parts[2] / 100
-
-  const hue2rgb = (p: number, q: number, t: number): number => {
-    if (t < 0) t += 1
-    if (t > 1) t -= 1
-    if (t < 1 / 6) return p + (q - p) * 6 * t
-    if (t < 1 / 2) return q
-    if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6
-    return p
-  }
-
-  let r: number, g: number, b: number
-  if (s === 0) {
-    r = g = b = l
-  } else {
-    const q = l < 0.5 ? l * (1 + s) : l + s - l * s
-    const p = 2 * l - q
-    r = hue2rgb(p, q, h + 1 / 3)
-    g = hue2rgb(p, q, h)
-    b = hue2rgb(p, q, h - 1 / 3)
-  }
-
-  const toHex = (c: number): string =>
-    Math.round(c * 255)
-      .toString(16)
-      .padStart(2, '0')
-  return `#${toHex(r)}${toHex(g)}${toHex(b)}`
-}
-
-function resolveColor(cssVarName: string, fallbackHex: string): string {
-  const raw = getCssVar(cssVarName, '')
-  if (!raw) return fallbackHex
-  if (raw.startsWith('#')) return raw
-  const hex = hslToHex(raw)
-  return hex || fallbackHex
-}
-
 export function createHiveThemeData(): editor.IStandaloneThemeData {
-  const bg = resolveColor('--background', '#09090b')
-  const fg = resolveColor('--foreground', '#fafafa')
-  const mutedFg = resolveColor('--muted-foreground', '#71717a')
-  const border = resolveColor('--border', '#27272a')
-  const cardBg = resolveColor('--card', '#0a0a0c')
+  const bg = resolveCssColor('--background', '#09090b')
+  const fg = resolveCssColor('--foreground', '#fafafa')
+  const mutedFg = resolveCssColor('--muted-foreground', '#71717a')
+  const border = resolveCssColor('--border', '#27272a')
+  const cardBg = resolveCssColor('--card', '#0a0a0c')
 
   return {
     base: 'vs-dark',

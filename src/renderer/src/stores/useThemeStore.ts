@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { THEME_PRESETS, THEME_CSS_PROPERTIES, DEFAULT_THEME_ID, getThemeById } from '@/lib/themes'
 import type { ThemePreset } from '@/lib/themes'
+import { scheduleTitleBarOverlaySync } from '@/lib/desktop-chrome'
 import { dbApi } from '@/api/db-api'
 
 const THEME_SETTING_KEY = 'selected_theme'
@@ -29,6 +30,8 @@ function applyThemePreset(preset: ThemePreset): void {
       root.style.setProperty(`--${key}`, value)
     }
   }
+
+  scheduleTitleBarOverlaySync()
 }
 
 // ---------------------------------------------------------------------------

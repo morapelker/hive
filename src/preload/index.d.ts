@@ -51,6 +51,15 @@ declare global {
       getLocalEnvironmentBootstrap: () => Promise<LocalEnvironmentBootstrap | null>
       getPathForFile: (file: File) => string
       startHiveEnterpriseLogin: (serverUrl: string) => Promise<{ token: string }>
+      /** Linux-only: handlers registered only when process.platform === 'linux'. */
+      windowMinimize?: () => Promise<void>
+      /** Linux-only: handlers registered only when process.platform === 'linux'. */
+      windowMaximize?: () => Promise<void>
+      windowClose: () => Promise<void>
+      /** Linux-only: handlers registered only when process.platform === 'linux'. */
+      windowIsMaximized?: () => Promise<boolean>
+      setTitleBarOverlay?: (options: { color: string; symbolColor: string }) => Promise<void>
+      onWindowMaximizedChanged: (callback: (isMaximized: boolean) => void) => () => void
     }
   }
 

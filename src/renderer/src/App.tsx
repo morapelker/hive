@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { isHiveTelemetryEnabled, refreshHiveEnterpriseOrg } from '@/api/hive-enterprise/client'
 import { AppLayout } from '@/components/layout'
+import { DesktopWindowEscapeChrome } from '@/components/layout/DesktopWindowEscapeChrome'
 import { ErrorBoundary } from '@/components/error'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { reportActiveAccountsSnapshot } from '@/lib/hive-account-report'
@@ -36,7 +37,7 @@ function App(): React.JSX.Element {
     void reportActiveAccountsSnapshot()
   }, [hiveAuthToken, hiveOrganizationId, settingsLoading])
 
-  if (!ready) return <div />
+  if (!ready) return <DesktopWindowEscapeChrome boot />
 
   return (
     <ErrorBoundary componentName="App">

@@ -1,5 +1,7 @@
 import { useEffect, useState, useMemo, useRef } from 'react'
-import { isMac } from '@/lib/platform'
+import { isMac, isWindows } from '@/lib/platform'
+import { WindowChromeControls } from '@/components/layout/WindowChromeControls'
+import { scheduleTitleBarOverlaySync, windowsCaptionPaddingRight } from '@/lib/desktop-chrome'
 import {
   PanelRightClose,
   PanelRightOpen,
@@ -213,6 +215,10 @@ export function Header(): React.JSX.Element {
 
   const showFixConflictsButton = hasConflicts || isFixConflictsLoading
 
+  useEffect(() => {
+    scheduleTitleBarOverlaySync()
+  }, [])
+
   return (
     <header
       className="h-12 border-b bg-background flex items-center justify-between px-4 flex-shrink-0 select-none"
@@ -354,7 +360,12 @@ export function Header(): React.JSX.Element {
       <div className="flex-1" />
       <div
         className="flex items-center gap-2"
-        style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+        style={
+          {
+            WebkitAppRegion: 'no-drag',
+            ...(isWindows() ? { paddingRight: windowsCaptionPaddingRight } : {})
+          } as React.CSSProperties
+        }
       >
         {/* Connection PR button — creates one PR per connected project with changes */}
         {isConnectionMode && connectionHasGitHubMember && (
@@ -800,6 +811,7 @@ export function Header(): React.JSX.Element {
             <PanelRightClose className="h-4 w-4" />
           )}
         </Button>
+        <WindowChromeControls />
       </div>
     </header>
   )

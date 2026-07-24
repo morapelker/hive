@@ -1,0 +1,59 @@
+import { X } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
+import { isMac, isWindows } from '@/lib/platform'
+
+type DesktopWindowEscapeChromeProps = {
+  /** Pre-ready strip: drag always; close only on Linux frameless. */
+  boot?: boolean
+  /** Error-boundary strip: muted bar when escape chrome is unavailable. */
+  muted?: boolean
+}
+
+export function DesktopWindowEscapeChrome({
+  boot = false,
+  muted = false
+}: DesktopWindowEscapeChromeProps): React.JSX.Element | null {
+  const barClass = cn('h-12 border-b shrink-0 select-none', muted ? 'bg-muted' : 'bg-background')
+
+  const dragStrip = (
+    <div
+      className={barClass}
+      style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
+      data-testid="desktop-window-escape-chrome"
+    />
+  )
+
+  // macOS traffic lights / Windows titleBarOverlay already provide close.
+  if (isMac() || isWindows()) {
+    if (boot || muted) return dragStrip
+    return null
+  }
+
+  const bridge = window.desktopBridge
+  if (typeof bridge?.windowClose !== 'function') {
+    if (boot || muted) return dragStrip
+    return null
+  }
+
+  return (
+    <div
+      className={cn(barClass, 'flex items-center justify-end')}
+      style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
+      data-testid="desktop-window-escape-chrome"
+    >
+      <div className="flex items-center" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-12 w-12 rounded-none hover:bg-red-600 hover:text-white"
+          onClick={() => void bridge.windowClose()}
+          title="Close"
+          data-testid="window-escape-close"
+        >
+          <X className="h-4 w-4" />
+        </Button>
+      </div>
+    </div>
+  )
+}

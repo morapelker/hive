@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { Header } from './Header'
+import { DesktopWindowEscapeChrome } from './DesktopWindowEscapeChrome'
 import { LeftSidebar } from './LeftSidebar'
 import { MainPane } from './MainPane'
 import { RightSidebar } from './RightSidebar'
@@ -270,7 +271,7 @@ export function AppLayout({ children }: AppLayoutProps): React.JSX.Element {
           className="h-screen flex flex-col bg-background text-foreground"
           data-testid="app-layout"
         >
-          <ErrorBoundary componentName="Header" fallback={<div className="h-12 bg-muted" />}>
+          <ErrorBoundary componentName="Header" fallback={<DesktopWindowEscapeChrome muted />}>
             <Header />
           </ErrorBoundary>
           <div className="flex-1 flex min-h-0" data-testid="layout-content">

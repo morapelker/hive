@@ -5,7 +5,24 @@ const desktopBridge = {
   getLocalEnvironmentBootstrap: async () => decodeLocalEnvironmentBootstrapArg(process.argv),
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),
   startHiveEnterpriseLogin: (serverUrl: string): Promise<{ token: string }> =>
-    ipcRenderer.invoke('hive-enterprise:start-login', { serverUrl })
+    ipcRenderer.invoke('hive-enterprise:start-login', { serverUrl }),
+  windowMinimize: (): Promise<void> => ipcRenderer.invoke('window:minimize'),
+  windowMaximize: (): Promise<void> => ipcRenderer.invoke('window:maximize'),
+  windowClose: (): Promise<void> => ipcRenderer.invoke('window:close'),
+  windowIsMaximized: (): Promise<boolean> => ipcRenderer.invoke('window:isMaximized'),
+  setTitleBarOverlay: (options: {
+    color: string
+    symbolColor: string
+  }): Promise<void> => ipcRenderer.invoke('window:setTitleBarOverlay', options),
+  onWindowMaximizedChanged: (callback: (isMaximized: boolean) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, isMaximized: boolean): void => {
+      callback(isMaximized)
+    }
+    ipcRenderer.on('window:maximized-changed', listener)
+    return () => {
+      ipcRenderer.removeListener('window:maximized-changed', listener)
+    }
+  }
 }
 
 // Force 100% zoom — Ghostty's native NSView overlay requires 1:1 CSS-to-AppKit

@@ -1,7 +1,6 @@
 import { loadShellEnv } from './services/shell-env'
-import { app, shell, BrowserWindow, Menu, screen, webContents } from 'electron'
+import { app, shell, BrowserWindow, Menu, webContents } from 'electron'
 import { join } from 'path'
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { electronApp, is } from '@electron-toolkit/utils'
 import { getDatabase, closeDatabase } from './db'
 import {
@@ -36,6 +35,12 @@ import {
 import { buildMenu, shutdownMenu } from './menu'
 import { createLogger } from './services/logger'
 import { wireHeadlessSignalShutdown } from './services/headless-shutdown'
+import {
+  getMainWindowChromeOptions,
+  loadWindowBounds,
+  registerWindowChromeHandlers,
+  wireWindowChromeEvents
+} from './window-chrome'
 import { emitWindowFocused } from './services/app-events'
 import { notificationService } from './services/notification-service'
 import { updaterService } from './services/updater'
@@ -232,61 +237,6 @@ const isLogMode = cliArgs.includes('--log')
 const isHeadless = cliArgs.includes('--headless') || process.env.HIVE_HEADLESS === '1'
 wireHeadlessSignalShutdown({ app, isHeadless })
 
-interface WindowBounds {
-  x: number
-  y: number
-  width: number
-  height: number
-  isMaximized?: boolean
-}
-
-const BOUNDS_FILE = join(app.getPath('userData'), 'window-bounds.json')
-
-function loadWindowBounds(): WindowBounds | null {
-  try {
-    if (existsSync(BOUNDS_FILE)) {
-      const data = readFileSync(BOUNDS_FILE, 'utf-8')
-      const bounds = JSON.parse(data) as WindowBounds
-
-      // Validate that the bounds are still valid (screen might have changed)
-      const displays = screen.getAllDisplays()
-      const isOnScreen = displays.some((display) => {
-        const { x, y, width, height } = display.bounds
-        return (
-          bounds.x >= x &&
-          bounds.y >= y &&
-          bounds.x + bounds.width <= x + width &&
-          bounds.y + bounds.height <= y + height
-        )
-      })
-
-      if (isOnScreen) {
-        return bounds
-      }
-    }
-  } catch {
-    // Ignore errors, use defaults
-  }
-  return null
-}
-
-function saveWindowBounds(window: BrowserWindow): void {
-  try {
-    const bounds = window.getBounds()
-    const isMaximized = window.isMaximized()
-
-    // Ensure directory exists
-    const dir = app.getPath('userData')
-    if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true })
-    }
-
-    writeFileSync(BOUNDS_FILE, JSON.stringify({ ...bounds, isMaximized }))
-  } catch {
-    // Ignore save errors
-  }
-}
-
 let mainWindow: BrowserWindow | null = null
 const wiredWindows = new WeakSet<BrowserWindow>()
 let allowHeadlessDockActivation = false
@@ -316,12 +266,7 @@ function createWindow(backendBootstrap?: LocalEnvironmentBootstrap | null): void
     minHeight: 600,
     show: false,
     autoHideMenuBar: true,
-    ...(process.platform === 'darwin'
-      ? {
-          titleBarStyle: 'hiddenInset' as const,
-          trafficLightPosition: { x: 15, y: 10 }
-        }
-      : {}),
+    ...getMainWindowChromeOptions(),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -378,10 +323,7 @@ function createWindow(backendBootstrap?: LocalEnvironmentBootstrap | null): void
   })
 
   // Save window bounds on resize and move
-  const createdWindow = mainWindow
-  mainWindow.on('resize', () => saveWindowBounds(createdWindow))
-  mainWindow.on('move', () => saveWindowBounds(createdWindow))
-  mainWindow.on('close', () => saveWindowBounds(createdWindow))
+  wireWindowChromeEvents(mainWindow)
   mainWindow.on('closed', () => {
     mainWindow = null
   })
@@ -547,6 +489,7 @@ app
     // Register desktop-side integrations that back server desktop commands.
     log.info('Registering desktop integrations')
     registerDesktopBridgeHandlers()
+    registerWindowChromeHandlers(() => mainWindow)
     configurePetWindow({ getMainWindow: () => mainWindow, headless: isHeadless })
     initTicketProviderManager([new GitHubProvider(), new JiraProvider()])
 
