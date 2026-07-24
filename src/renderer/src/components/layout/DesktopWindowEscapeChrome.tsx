@@ -1,11 +1,10 @@
 import { X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { windowsCaptionPaddingRight } from '@/lib/desktop-chrome'
 import { cn } from '@/lib/utils'
 import { isMac, isWindows } from '@/lib/platform'
 
 type DesktopWindowEscapeChromeProps = {
-  /** Pre-ready strip: drag always, close when bridge exists. */
+  /** Pre-ready strip: drag always; close only on Linux frameless. */
   boot?: boolean
   /** Error-boundary strip: muted bar when escape chrome is unavailable. */
   muted?: boolean
@@ -25,7 +24,8 @@ export function DesktopWindowEscapeChrome({
     />
   )
 
-  if (isMac()) {
+  // macOS traffic lights / Windows titleBarOverlay already provide close.
+  if (isMac() || isWindows()) {
     if (boot) return dragStrip
     if (muted) return <div className="h-12 bg-muted" />
     return null
@@ -44,15 +44,7 @@ export function DesktopWindowEscapeChrome({
       style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
       data-testid="desktop-window-escape-chrome"
     >
-      <div
-        className="flex items-center"
-        style={
-          {
-            WebkitAppRegion: 'no-drag',
-            ...(isWindows() ? { paddingRight: windowsCaptionPaddingRight } : {})
-          } as React.CSSProperties
-        }
-      >
+      <div className="flex items-center" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
         <Button
           variant="ghost"
           size="icon"
