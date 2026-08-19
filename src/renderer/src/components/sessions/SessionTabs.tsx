@@ -30,7 +30,8 @@ import {
   FileSearch,
   GitPullRequest,
   RadioTower,
-  Star
+  Star,
+  LayoutGrid
 } from 'lucide-react'
 import { KanbanIcon } from '@/components/kanban/KanbanIcon'
 import { useSessionStore, BOARD_TAB_ID } from '@/stores/useSessionStore'
@@ -677,6 +678,12 @@ export function SessionTabs(): React.JSX.Element | null {
   const closeBoardAssistantSession = useSessionStore((s) => s.closeBoardAssistantSession)
   const focusBoardAssistantSession = useSessionStore((s) => s.focusBoardAssistantSession)
 
+  // Tiled in-progress sessions tab state
+  const tiledSessionsTab = useSessionStore((state) => state.tiledSessionsTab)
+  const isTiledSessionsActive = useSessionStore((state) => state.isTiledSessionsActive)
+  const focusTiledSessions = useSessionStore((s) => s.focusTiledSessions)
+  const closeTiledSessions = useSessionStore((s) => s.closeTiledSessions)
+
   // Determine whether we are in connection mode or worktree mode
   const isConnectionMode = !!selectedConnectionId && !selectedWorktreeId
 
@@ -1252,8 +1259,14 @@ export function SessionTabs(): React.JSX.Element | null {
     }
   }, [vimModeEnabled, vimMode, sessionHints, setSessionHints, clearSessionHints])
 
-  // Don't render if nothing is selected AND no orphaned sessions
-  if (!selectedWorktreeId && !selectedConnectionId && orphanedSessions.size === 0) {
+  // Don't render if nothing is selected AND no orphaned sessions AND no tiled
+  // tab (a pinned board can open the tiled-sessions tab without a selection)
+  if (
+    !selectedWorktreeId &&
+    !selectedConnectionId &&
+    orphanedSessions.size === 0 &&
+    !tiledSessionsTab
+  ) {
     return null
   }
 
@@ -1540,6 +1553,7 @@ export function SessionTabs(): React.JSX.Element | null {
               onClick={() => {
                 useFileViewerStore.getState().clearActiveViews()
                 useSessionStore.getState().setActivePinnedSession(null)
+                useSessionStore.getState().deactivateTiledSessions()
               }}
               className={tabClass(!isFileTabActive && !activePinnedSessionId)}
             >
@@ -1605,6 +1619,37 @@ export function SessionTabs(): React.JSX.Element | null {
           </div>
         ) : (
           renderSessionTabs()
+        )}
+
+        {/* Tiled in-progress sessions tab — shared across both modes */}
+        {tiledSessionsTab && (
+          <button
+            className={tabClass(isTiledSessionsActive && !isFileTabActive)}
+            onClick={() => {
+              useFileViewerStore.getState().clearActiveViews()
+              clearInlineConnectionSession()
+              focusTiledSessions()
+            }}
+            title={`In Progress — ${tiledSessionsTab.scopeLabel}`}
+            data-testid="tiled-sessions-tab"
+          >
+            <LayoutGrid className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
+            <span className="truncate flex-1">In Progress · {tiledSessionsTab.scopeLabel}</span>
+            {isTiledSessionsActive && !isFileTabActive && <div className={TAB_UNDERLINE_CLASS} />}
+            {/* Close button */}
+            <span
+              className="ml-1 shrink-0 rounded-sm p-0.5 opacity-0 group-hover:opacity-100 hover:bg-accent transition-opacity"
+              onClick={(e) => {
+                e.stopPropagation()
+                closeTiledSessions()
+              }}
+              role="button"
+              tabIndex={-1}
+              data-testid="tiled-sessions-tab-close"
+            >
+              <X className="h-3 w-3" />
+            </span>
+          </button>
         )}
 
         {/* File viewer tabs — always rendered, shared across both modes */}

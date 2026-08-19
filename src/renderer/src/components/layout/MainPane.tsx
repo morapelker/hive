@@ -29,6 +29,7 @@ import { useClaudeCliSessionPortal } from '@/contexts/ClaudeCliSessionPortalCont
 import { KanbanBoard } from '@/components/kanban/KanbanBoard'
 import { KanbanIcon } from '@/components/kanban/KanbanIcon'
 import { BoardAssistantView } from '@/components/kanban/BoardAssistantView'
+import { TiledSessionsView } from '@/components/sessions/TiledSessionsView'
 import { PRNotificationStack } from '@/components/pr/PRNotificationStack'
 import { MainPaneTerminalPanel } from './MainPaneTerminalPanel'
 
@@ -107,6 +108,8 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
   const closedTerminalSessionIds = useSessionStore((state) => state.closedTerminalSessionIds)
   const activePinnedSessionId = useSessionStore((state) => state.activePinnedSessionId)
   const activeBoardAssistantProjectId = useSessionStore((state) => state.activeBoardAssistantProjectId)
+  const tiledSessionsTab = useSessionStore((state) => state.tiledSessionsTab)
+  const isTiledSessionsActive = useSessionStore((state) => state.isTiledSessionsActive)
   const isBoardViewActive = useKanbanStore((state) => state.isBoardViewActive)
   const isPinnedBoardActive = useKanbanStore((state) => state.isPinnedBoardActive)
   const connectionsLoaded = useConnectionStore((state) => state.loaded)
@@ -234,6 +237,13 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
     useSessionStore.getState().acknowledgeClosedTerminals(closedTerminalSessionIds)
   }, [closedTerminalSessionIds])
 
+  // Mirror the mounted set into the session store — the tiled-sessions
+  // snapshot uses it to decide whether a terminal-backed session is already
+  // running (tiling a non-mounted terminal session would spawn its process).
+  useEffect(() => {
+    useSessionStore.getState().setMountedTerminalMirror(mountedTerminalSessionIds)
+  }, [mountedTerminalSessionIds])
+
   // Determine which terminal session is currently visible (if any).
   // A terminal is visible when it's the active session AND no diff/file/loading overlay is on top.
   const visibleTerminalId = useMemo(() => {
@@ -246,7 +256,12 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
     // When the board, pinned board, or board assistant is occupying the main
     // pane, hide all stateful terminal sessions — otherwise the always-mounted
     // terminal would render as flex-1 alongside the board and split the pane.
-    if (isBoardViewActive || isPinnedBoardActive || activeBoardAssistantProjectId) {
+    if (
+      isBoardViewActive ||
+      isPinnedBoardActive ||
+      activeBoardAssistantProjectId ||
+      isTiledSessionsActive
+    ) {
       return null
     }
 
@@ -278,7 +293,8 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
     getAgentSdk,
     isBoardViewActive,
     isPinnedBoardActive,
-    activeBoardAssistantProjectId
+    activeBoardAssistantProjectId,
+    isTiledSessionsActive
   ])
 
   const handleCloseDiff = useCallback(() => {
@@ -299,6 +315,13 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
     // Board assistant tab is active — render BoardAssistantView in main pane
     if (activeBoardAssistantProjectId && !activeFilePath && !activeDiff && !contextEditorWorktreeId) {
       return <BoardAssistantView key={activeBoardAssistantProjectId} projectId={activeBoardAssistantProjectId} />
+    }
+
+    // Tiled in-progress sessions tab is active — render the grid.
+    // Placed above the board branches: the board's persisted active flags stay
+    // true while the tiled tab temporarily takes the pane.
+    if (isTiledSessionsActive && tiledSessionsTab && !activeFilePath && !activeDiff && !contextEditorWorktreeId) {
+      return <TiledSessionsView tab={tiledSessionsTab} />
     }
 
     // Sticky-tab board mode: render board when BOARD_TAB_ID is the active session
@@ -488,7 +511,7 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
       data-testid="main-pane"
     >
       <PRNotificationStack />
-      {(selectedWorktreeId || selectedConnectionId) && <SessionTabs />}
+      {(selectedWorktreeId || selectedConnectionId || tiledSessionsTab != null) && <SessionTabs />}
       <div className="flex-1 flex flex-col min-h-0">
         {renderContent()}
         {/* Always-mounted terminal sessions — kept alive to preserve PTY state across tab switches */}

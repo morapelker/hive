@@ -1204,7 +1204,15 @@ export const useKanbanStore = create<KanbanState>()(
 
       // ── toggleBoardView ──────────────────────────────────────────
       toggleBoardView: () => {
-        set((state) => ({ isBoardViewActive: !state.isBoardViewActive }))
+        // If the tiled-sessions tab holds the pane, the user's intent is
+        // "show the board": deactivate the tiled tab and force the board ON
+        // (toggling would flip an already-true persisted flag to false with
+        // no visible change). Dynamic import avoids a store dependency cycle.
+        void import('./useSessionStore').then(({ useSessionStore }) => {
+          const wasTiled = useSessionStore.getState().isTiledSessionsActive
+          if (wasTiled) useSessionStore.getState().deactivateTiledSessions()
+          set((state) => ({ isBoardViewActive: wasTiled ? true : !state.isBoardViewActive }))
+        })
       },
 
       // ── setTransitionSort ────────────────────────────────────────
@@ -1741,7 +1749,12 @@ export const useKanbanStore = create<KanbanState>()(
 
       // ── togglePinnedBoard ────────────────────────────────────────
       togglePinnedBoard: () => {
-        set((state) => ({ isPinnedBoardActive: !state.isPinnedBoardActive }))
+        // Same intent resolution as toggleBoardView (see comment there).
+        void import('./useSessionStore').then(({ useSessionStore }) => {
+          const wasTiled = useSessionStore.getState().isTiledSessionsActive
+          if (wasTiled) useSessionStore.getState().deactivateTiledSessions()
+          set((state) => ({ isPinnedBoardActive: wasTiled ? true : !state.isPinnedBoardActive }))
+        })
       },
 
       // ── loadTicketsForPinnedProjects ─────────────────────────────

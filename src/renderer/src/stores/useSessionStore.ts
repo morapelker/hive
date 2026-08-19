@@ -110,6 +110,28 @@ export interface PendingPlan {
   toolUseID: string
 }
 
+// One tile in the tiled in-progress sessions view. Snapshot data resolved at
+// open time (ticket titles, project names, session identity, running state).
+export interface TiledSessionTile {
+  /** Tickets represented by this tile (several tickets can share one session) */
+  ticketIds: string[]
+  /** Joined ticket title(s) — always shown on the tile */
+  title: string
+  projectId: string
+  /** Project name — set on multi-project boards (pinned/connection), null otherwise */
+  projectName: string | null
+  sessionId: string | null
+  agentSdk: AgentSdk | null
+  /** Whether the session can be tiled live (chat: active; terminal-backed: PTY mounted) */
+  isRunning: boolean
+}
+
+export interface TiledSessionsTab {
+  /** Board scope the snapshot was taken from — shown in the tab title */
+  scopeLabel: string
+  tiles: TiledSessionTile[]
+}
+
 export interface CodexThreadGoal {
   threadId: string
   objective: string
@@ -123,7 +145,7 @@ export interface CodexThreadGoal {
 }
 
 // Session type matching the database schema
-interface Session {
+export interface Session {
   id: string
   worktree_id: string | null
   project_id: string
@@ -200,6 +222,16 @@ interface SessionState {
   // Board assistant state — project-scoped, one per project
   boardAssistantByProject: Map<string, Session>
   activeBoardAssistantProjectId: string | null
+
+  // Tiled in-progress sessions tab — snapshot taken when the user clicks the
+  // tile button on a board's In Progress column header. Not persisted.
+  tiledSessionsTab: TiledSessionsTab | null
+  isTiledSessionsActive: boolean
+  // Mirror of MainPane's mountedTerminalSessionIds — terminal-backed sessions
+  // whose views (and thus PTYs) were mounted this run and not closed. Used to
+  // decide whether a terminal-backed session is "already running" (tiling a
+  // non-mounted terminal session would spawn its process).
+  mountedTerminalMirror: Set<string>
 
   // Actions
   acknowledgeClosedTerminals: (ids: Set<string>) => void
@@ -304,6 +336,13 @@ interface SessionState {
   ) => Promise<{ success: boolean; session?: Session; error?: string }>
   closeBoardAssistantSession: (projectId: string) => Promise<{ success: boolean; error?: string }>
   focusBoardAssistantSession: (projectId: string) => void
+
+  // Tiled sessions tab actions
+  openTiledSessions: (tab: TiledSessionsTab) => void
+  focusTiledSessions: () => void
+  deactivateTiledSessions: () => void
+  closeTiledSessions: () => void
+  setMountedTerminalMirror: (ids: readonly string[]) => void
   clearBoardAssistantFocus: () => void
 
   // Connection session actions
@@ -421,6 +460,10 @@ export const useSessionStore = create<SessionState>()(
       // Board assistant state
       boardAssistantByProject: new Map(),
       activeBoardAssistantProjectId: null,
+
+      tiledSessionsTab: null,
+      isTiledSessionsActive: false,
+      mountedTerminalMirror: new Set<string>(),
 
       acknowledgeClosedTerminals: (ids: Set<string>) => {
         set((state) => {
@@ -559,9 +602,15 @@ export const useSessionStore = create<SessionState>()(
               }
             }
 
-            // Set active session if none selected and sessions exist
+            // Set active session if none selected and sessions exist.
+            // Skip while the tiled-sessions tab holds the pane — it nulls
+            // activeSessionId on purpose; restoring here would fight it.
             let activeSessionId = state.activeSessionId
-            if (state.activeWorktreeId === worktreeId && !activeSessionId) {
+            if (
+              state.activeWorktreeId === worktreeId &&
+              !activeSessionId &&
+              !state.isTiledSessionsActive
+            ) {
               // Try to restore persisted active session
               const persistedSessionId = state.activeSessionByWorktree[worktreeId]
               const boardMode = useSettingsStore.getState().boardMode
@@ -1309,6 +1358,7 @@ export const useSessionStore = create<SessionState>()(
           set((state) => ({
             activeSessionId: sessionId,
             activeBoardAssistantProjectId: null,
+            isTiledSessionsActive: sessionId ? false : state.isTiledSessionsActive,
             activeSessionByWorktree: {
               ...state.activeSessionByWorktree,
               [worktreeId]: sessionId
@@ -1318,13 +1368,18 @@ export const useSessionStore = create<SessionState>()(
           set((state) => ({
             activeSessionId: sessionId,
             activeBoardAssistantProjectId: null,
+            isTiledSessionsActive: sessionId ? false : state.isTiledSessionsActive,
             activeSessionByConnection: {
               ...state.activeSessionByConnection,
               [connectionId]: sessionId
             }
           }))
         } else {
-          set({ activeSessionId: sessionId, activeBoardAssistantProjectId: null })
+          set((state) => ({
+            activeSessionId: sessionId,
+            activeBoardAssistantProjectId: null,
+            isTiledSessionsActive: sessionId ? false : state.isTiledSessionsActive
+          }))
         }
       },
 
@@ -1338,7 +1393,8 @@ export const useSessionStore = create<SessionState>()(
           activeWorktreeId: worktreeId,
           activeConnectionId: null,
           inlineConnectionSessionId: null,
-          activeBoardAssistantProjectId: null
+          activeBoardAssistantProjectId: null,
+          isTiledSessionsActive: false
         })
 
         if (worktreeId) {
@@ -2180,7 +2236,8 @@ export const useSessionStore = create<SessionState>()(
               // Clear other active states so the board assistant view shows
               activeSessionId: null,
               activePinnedSessionId: null,
-              inlineConnectionSessionId: null
+              inlineConnectionSessionId: null,
+              isTiledSessionsActive: false
             }
           })
 
@@ -2301,7 +2358,8 @@ export const useSessionStore = create<SessionState>()(
           // Clear other active states so the board assistant view shows
           activeSessionId: null,
           activePinnedSessionId: null,
-          inlineConnectionSessionId: null
+          inlineConnectionSessionId: null,
+          isTiledSessionsActive: false
         })
       },
 
@@ -2309,10 +2367,92 @@ export const useSessionStore = create<SessionState>()(
         set({ activeBoardAssistantProjectId: null })
       },
 
+      // ─── Tiled in-progress sessions tab ─────────────────────────────────
+      // Opens (or replaces) the tiled-sessions tab with a fresh snapshot and
+      // activates it. Mirrors focusBoardAssistantSession: activating a tab
+      // kind means setting its own flag AND clearing every competing flag.
+      openTiledSessions: (tab: TiledSessionsTab) => {
+        // Clear file/diff/context overlays so the tiled view takes the pane
+        import('./useFileViewerStore').then(({ useFileViewerStore }) => {
+          useFileViewerStore.getState().clearActiveViews()
+        })
+        set({
+          tiledSessionsTab: tab,
+          isTiledSessionsActive: true,
+          activeSessionId: null,
+          activePinnedSessionId: null,
+          inlineConnectionSessionId: null,
+          activeBoardAssistantProjectId: null
+        })
+      },
+
+      // Re-activate an existing tiled tab (tab strip click)
+      focusTiledSessions: () => {
+        if (!get().tiledSessionsTab) return
+        set({
+          isTiledSessionsActive: true,
+          activeSessionId: null,
+          activePinnedSessionId: null,
+          inlineConnectionSessionId: null,
+          activeBoardAssistantProjectId: null
+        })
+      },
+
+      // Deactivate without closing — a rival tab/view took the pane.
+      deactivateTiledSessions: () => {
+        set({ isTiledSessionsActive: false })
+      },
+
+      // Close the tiled tab. If it was active, restore the previously active
+      // session for the current scope (same restore as closeBoardAssistantSession).
+      closeTiledSessions: () => {
+        set((state) => {
+          if (!state.isTiledSessionsActive) {
+            return { tiledSessionsTab: null, isTiledSessionsActive: false }
+          }
+          const worktreeId = state.activeWorktreeId
+          const connectionId = state.activeConnectionId
+          const boardMode = useSettingsStore.getState().boardMode
+          const scopeSessions = worktreeId
+            ? state.sessionsByWorktree.get(worktreeId)
+            : connectionId
+              ? state.sessionsByConnection.get(connectionId)
+              : null
+          let restoredSessionId =
+            (worktreeId ? state.activeSessionByWorktree[worktreeId] : null) ??
+            (connectionId ? state.activeSessionByConnection[connectionId] : null) ??
+            null
+          // The persisted entry can be stale (session closed while the tiled
+          // tab was open) — validate it, then fall back like closeSession does.
+          const restoredIsValid =
+            restoredSessionId === BOARD_TAB_ID
+              ? boardMode === 'sticky-tab'
+              : !!restoredSessionId && !!scopeSessions?.some((sess) => sess.id === restoredSessionId)
+          if (!restoredIsValid) {
+            restoredSessionId =
+              boardMode === 'sticky-tab' && (worktreeId || connectionId)
+                ? BOARD_TAB_ID
+                : (scopeSessions?.[0]?.id ?? null)
+          }
+          return {
+            tiledSessionsTab: null,
+            isTiledSessionsActive: false,
+            activeSessionId: restoredSessionId
+          }
+        })
+      },
+
+      setMountedTerminalMirror: (ids: readonly string[]) => {
+        set({ mountedTerminalMirror: new Set(ids) })
+      },
+
       // ─── Inline connection session actions ─────────────────────────────
 
       setInlineConnectionSession: (sessionId: string | null) => {
-        set({ inlineConnectionSessionId: sessionId })
+        set((state) => ({
+          inlineConnectionSessionId: sessionId,
+          isTiledSessionsActive: sessionId ? false : state.isTiledSessionsActive
+        }))
       },
 
       clearInlineConnectionSession: () => {
@@ -2411,7 +2551,11 @@ export const useSessionStore = create<SessionState>()(
 
             // Set active session if in connection context
             let activeSessionId = state.activeSessionId
-            if (state.activeConnectionId === connectionId && !activeSessionId) {
+            if (
+              state.activeConnectionId === connectionId &&
+              !activeSessionId &&
+              !state.isTiledSessionsActive
+            ) {
               const persistedSessionId = state.activeSessionByConnection[connectionId]
               const boardMode = useSettingsStore.getState().boardMode
 
@@ -2577,13 +2721,17 @@ export const useSessionStore = create<SessionState>()(
         if (sessionId && connectionId) {
           set((state) => ({
             activeSessionId: sessionId,
+            isTiledSessionsActive: false,
             activeSessionByConnection: {
               ...state.activeSessionByConnection,
               [connectionId]: sessionId
             }
           }))
         } else {
-          set({ activeSessionId: sessionId })
+          set((state) => ({
+            activeSessionId: sessionId,
+            isTiledSessionsActive: sessionId ? false : state.isTiledSessionsActive
+          }))
         }
       },
 
@@ -2593,7 +2741,7 @@ export const useSessionStore = create<SessionState>()(
 
         if (connectionId === state.activeConnectionId) return
 
-        set({ activeConnectionId: connectionId, activeWorktreeId: null })
+        set({ activeConnectionId: connectionId, activeWorktreeId: null, isTiledSessionsActive: false })
 
         if (connectionId) {
           const existingSessions = (state.sessionsByConnection.get(connectionId) || []).filter(
@@ -2769,7 +2917,10 @@ export const useSessionStore = create<SessionState>()(
       },
 
       setActivePinnedSession: (sessionId: string | null) => {
-        set({ activePinnedSessionId: sessionId })
+        set((state) => ({
+          activePinnedSessionId: sessionId,
+          isTiledSessionsActive: sessionId ? false : state.isTiledSessionsActive
+        }))
       },
 
       loadPinnedSessions: async (worktreeId: string) => {
@@ -2812,6 +2963,24 @@ declare global {
     __hive_useSessionStore__?: typeof useSessionStore
   }
 }
+
+// ─── Tiled-sessions activation invariant ────────────────────────────────────
+// The tiled tab occupies the main pane only while nothing else claims it.
+// Individual activators (setActiveSession & co.) clear the flag explicitly,
+// but several code paths write activeSessionId directly (reopenSession,
+// createSession autoFocus, closeOtherSessions, openOrphanedSession, ...).
+// This subscription is the safety net: any transition to a non-null
+// activeSessionId while the tiled tab is active deactivates it, so two views
+// can never claim the pane at once.
+useSessionStore.subscribe((state, prevState) => {
+  if (
+    state.isTiledSessionsActive &&
+    state.activeSessionId !== null &&
+    state.activeSessionId !== prevState.activeSessionId
+  ) {
+    useSessionStore.setState({ isTiledSessionsActive: false })
+  }
+})
 
 if (import.meta.env.DEV && typeof window !== 'undefined') {
   window.__hive_useSessionStore__ = useSessionStore
