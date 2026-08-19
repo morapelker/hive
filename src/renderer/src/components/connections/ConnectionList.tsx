@@ -43,7 +43,10 @@ export function ConnectionList(): React.JSX.Element | null {
   const filterActive = !!filterQuery.trim() || activeLanguages.length > 0 || activeSpaceId !== null
 
   const visibleConnections = useMemo(() => {
-    if (!filterActive) return connections
+    // Instances of a saved-connection project live under that project in the
+    // sidebar — the generic Connections section only shows ad-hoc connections.
+    const adHocConnections = connections.filter((c) => !c.saved_project_id)
+    if (!filterActive) return adHocConnections
     const matchingProjectIds = new Set(
       filterProjects(projects, {
         filterQuery,
@@ -52,7 +55,7 @@ export function ConnectionList(): React.JSX.Element | null {
         projectSpaceMap
       }).map((fp) => fp.project.id)
     )
-    return connections.filter((connection) =>
+    return adHocConnections.filter((connection) =>
       connection.members?.some((m) => matchingProjectIds.has(m.project_id))
     )
   }, [

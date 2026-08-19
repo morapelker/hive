@@ -1,4 +1,5 @@
 import type { ConnectionWithMembers, RecentConnectionEntry } from '@shared/types/connection'
+import type { Project } from '@shared/types/project'
 import { getRendererRpcClient } from './rpc-client'
 
 type ConnectionGetResult = {
@@ -55,15 +56,30 @@ type ConnectionMutationResult = {
   error?: string
 }
 
+type ConnectionSaveAsProjectResult = {
+  success: boolean
+  project?: Project
+  connection?: ConnectionWithMembers
+  error?: string
+}
+
 export const connectionApi = {
   addMember: async (connectionId: string, worktreeId: string): Promise<ConnectionAddMemberResult> =>
     getRendererRpcClient().request<ConnectionAddMemberResult>('connectionOps.addMember', {
       connectionId,
       worktreeId
     }),
-  create: async (worktreeIds: string[]): Promise<ConnectionCreateResult> =>
+  create: async (
+    worktreeIds: string[],
+    opts?: { savedProjectId?: string }
+  ): Promise<ConnectionCreateResult> =>
     getRendererRpcClient().request<ConnectionCreateResult>('connectionOps.create', {
-      worktreeIds
+      worktreeIds,
+      ...(opts?.savedProjectId ? { savedProjectId: opts.savedProjectId } : {})
+    }),
+  saveAsProject: async (connectionId: string): Promise<ConnectionSaveAsProjectResult> =>
+    getRendererRpcClient().request<ConnectionSaveAsProjectResult>('connectionOps.saveAsProject', {
+      connectionId
     }),
   delete: async (connectionId: string): Promise<{ success: boolean; error?: string }> =>
     getRendererRpcClient().request<{ success: boolean; error?: string }>('connectionOps.delete', {

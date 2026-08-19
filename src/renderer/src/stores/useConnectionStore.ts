@@ -27,6 +27,8 @@ interface Connection {
   status: 'active' | 'archived'
   path: string
   color: string | null
+  /** Saved-connection project this connection is an instance of (null/absent = ad-hoc). */
+  saved_project_id?: string | null
   created_at: string
   updated_at: string
   members: ConnectionMemberEnriched[]
@@ -50,14 +52,19 @@ interface ConnectionState {
 
   // Actions
   loadConnections: () => Promise<void>
-  createConnection: (worktreeIds: string[]) => Promise<string | null>
+  createConnection: (
+    worktreeIds: string[],
+    opts?: { savedProjectId?: string }
+  ) => Promise<string | null>
   deleteConnection: (connectionId: string) => Promise<void>
   addMember: (connectionId: string, worktreeId: string) => Promise<void>
   removeMember: (connectionId: string, worktreeId: string) => Promise<void>
   updateConnectionMembers: (connectionId: string, desiredWorktreeIds: string[]) => Promise<boolean>
   quickCreateConnection: (
-    projects: { id: string; path: string; name: string }[]
+    projects: { id: string; path: string; name: string }[],
+    opts?: { savedProjectId?: string }
   ) => Promise<string | null>
+  saveConnectionAsProject: (connectionId: string) => Promise<string | null>
   selectConnection: (id: string | null) => void
 
   // Rename
@@ -105,9 +112,9 @@ export const useConnectionStore = create<ConnectionState>()(
         }
       },
 
-      createConnection: async (worktreeIds: string[]) => {
+      createConnection: async (worktreeIds: string[], opts?: { savedProjectId?: string }) => {
         try {
-          const result = await connectionApi.create(worktreeIds)
+          const result = await connectionApi.create(worktreeIds, opts)
           if (!result.success || !result.connection) {
             toast.error(`Failed to create connection: ${result.error || 'Unknown error'}`)
             return null
@@ -275,7 +282,10 @@ export const useConnectionStore = create<ConnectionState>()(
         }
       },
 
-      quickCreateConnection: async (projects: { id: string; path: string; name: string }[]) => {
+      quickCreateConnection: async (
+        projects: { id: string; path: string; name: string }[],
+        opts?: { savedProjectId?: string }
+      ) => {
         if (projects.length < 2) {
           return null
         }
@@ -334,7 +344,10 @@ export const useConnectionStore = create<ConnectionState>()(
           fireSetupScript(project.id, worktree.id, worktree.path)
         }
 
-        const connectionId = await get().createConnection(created.map((c) => c.worktree.id))
+        const connectionId = await get().createConnection(
+          created.map((c) => c.worktree.id),
+          opts
+        )
         if (!connectionId) {
           // createConnection already surfaced its own error toast — just undo the worktrees.
           await rollback()
@@ -342,6 +355,51 @@ export const useConnectionStore = create<ConnectionState>()(
         }
 
         return connectionId
+      },
+
+      saveConnectionAsProject: async (connectionId: string) => {
+        try {
+          const result = await connectionApi.saveAsProject(connectionId)
+          if (!result.success || !result.project) {
+            toast.error(result.error || 'Failed to save connection as project')
+            return null
+          }
+          const project = result.project
+
+          // Mirror the linked connection locally (it becomes the project's first instance)
+          if (result.connection) {
+            const updated = result.connection
+            set((state) => ({
+              connections: state.connections.map((c) => (c.id === connectionId ? updated : c))
+            }))
+          } else {
+            set((state) => ({
+              connections: state.connections.map((c) =>
+                c.id === connectionId ? { ...c, saved_project_id: project.id } : c
+              )
+            }))
+          }
+
+          // Insert + select the new project (dynamic import avoids a store cycle)
+          const { useProjectStore } = await import('./useProjectStore')
+          const projectStore = useProjectStore.getState()
+          useProjectStore.setState((state) => ({
+            projects: [project, ...state.projects],
+            expandedProjectIds: new Set([...state.expandedProjectIds, project.id])
+          }))
+          projectStore.selectProject(project.id)
+          // Board-first entity: clear connection selection so its board shows
+          get().selectConnection(null)
+          const { useWorktreeStore } = await import('./useWorktreeStore')
+          useWorktreeStore.getState().selectWorktreeOnly(null)
+
+          toast.success(`Saved "${project.name}" as a project`)
+          return project.id
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          toast.error(`Failed to save connection as project: ${message}`)
+          return null
+        }
       },
 
       renameConnection: async (connectionId: string, customName: string | null) => {

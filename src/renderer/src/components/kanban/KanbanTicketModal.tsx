@@ -1642,7 +1642,13 @@ function EditModeContent({
       if (action === 'send') {
         // Launch with the just-saved content so the prompt never lags the edit
         const launchTicket: KanbanTicket = { ...ticket, ...data }
-        if (sendConnectionId) void quickLaunchTicketOnConnection(launchTicket, sendConnectionId)
+        // Connection-project tickets always launch through the connection-project
+        // pipeline (new worktree per member project) — quickLaunchTicket delegates.
+        const ticketProjectKind = useProjectStore
+          .getState()
+          .projects.find((p) => p.id === ticket.project_id)?.kind
+        if (ticketProjectKind === 'connection') void quickLaunchTicket(launchTicket)
+        else if (sendConnectionId) void quickLaunchTicketOnConnection(launchTicket, sendConnectionId)
         else void quickLaunchTicket(launchTicket)
       }
     },

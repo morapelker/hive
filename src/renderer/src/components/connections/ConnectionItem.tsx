@@ -5,6 +5,7 @@ import {
   Code,
   Copy,
   ExternalLink,
+  FolderPlus,
   Link,
   MoreHorizontal,
   Pencil,
@@ -93,6 +94,8 @@ interface Connection {
   status: 'active' | 'archived'
   path: string
   color: string | null
+  /** Saved-connection project this connection is an instance of (null/absent = ad-hoc). */
+  saved_project_id?: string | null
   created_at: string
   updated_at: string
   members: ConnectionMemberEnriched[]
@@ -147,6 +150,23 @@ export function ConnectionItem({
   const selectConnection = useConnectionStore((s) => s.selectConnection)
   const deleteConnection = useConnectionStore((s) => s.deleteConnection)
   const renameConnection = useConnectionStore((s) => s.renameConnection)
+  const saveConnectionAsProject = useConnectionStore((s) => s.saveConnectionAsProject)
+
+  // "Save as Project" needs >=2 distinct member projects and an unsaved connection
+  const distinctMemberProjectCount = new Set(
+    (connection.members || []).map((m) => m.project_id)
+  ).size
+  const canSaveAsProject = !connection.saved_project_id && distinctMemberProjectCount >= 2
+  const [isSavingAsProject, setIsSavingAsProject] = useState(false)
+  const handleSaveAsProject = useCallback(async (): Promise<void> => {
+    if (isSavingAsProject) return
+    setIsSavingAsProject(true)
+    try {
+      await saveConnectionAsProject(connection.id)
+    } finally {
+      setIsSavingAsProject(false)
+    }
+  }, [isSavingAsProject, saveConnectionAsProject, connection.id])
 
   // Pinned state
   const isPinned = usePinnedStore((s) => s.pinnedConnectionIds.has(connection.id))
@@ -446,6 +466,12 @@ export function ConnectionItem({
         {isPinned ? <PinOff className="h-4 w-4 mr-2" /> : <Pin className="h-4 w-4 mr-2" />}
         {isPinned ? 'Unpin' : 'Pin'}
       </ContextMenuItem>
+      {canSaveAsProject && (
+        <ContextMenuItem onClick={handleSaveAsProject} disabled={isSavingAsProject}>
+          <FolderPlus className="h-4 w-4 mr-2" />
+          Save as Project
+        </ContextMenuItem>
+      )}
       <ContextMenuSeparator />
       <ContextMenuItem onClick={handleOpenInTerminal}>
         <Terminal className="h-4 w-4 mr-2" />
@@ -626,6 +652,12 @@ export function ConnectionItem({
                       )}
                       {isPinned ? 'Unpin' : 'Pin'}
                     </DropdownMenuItem>
+                    {canSaveAsProject && (
+                      <DropdownMenuItem onClick={handleSaveAsProject} disabled={isSavingAsProject}>
+                        <FolderPlus className="h-4 w-4 mr-2" />
+                        Save as Project
+                      </DropdownMenuItem>
+                    )}
                     <DropdownMenuSeparator />
                     <DropdownMenuItem onClick={handleOpenInTerminal}>
                       <Terminal className="h-4 w-4 mr-2" />

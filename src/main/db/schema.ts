@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 43
+export const CURRENT_SCHEMA_VERSION = 44
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -719,5 +719,13 @@ DROP TABLE IF EXISTS diff_comments;`
       );
     `,
     down: `DROP TABLE IF EXISTS favorite_tickets;`
+  },
+  {
+    version: 44,
+    name: 'add_connection_projects',
+    up: `-- NOTE: ALTER TABLE for projects.kind, projects.member_project_ids and
+         -- connections.saved_project_id is handled idempotently by
+         -- ensureConnectionTables() in database.ts to avoid "duplicate column" errors.`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
   }
 ]

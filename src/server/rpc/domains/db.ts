@@ -472,7 +472,23 @@ export const makeLiveDbRpcService = (): DbRpcService => ({
     Effect.tryPromise({
       try: async () => {
         const { getDatabase } = await import('../../../main/db')
-        return getDatabase().deleteProject(id)
+        const db = getDatabase()
+        const project = db.getProject(id)
+        const deleted = db.deleteProject(id)
+        // Connection projects own a dedicated symlink dir under
+        // ~/.hive/connection-projects — clean it up so it doesn't leak.
+        if (deleted && project?.kind === 'connection') {
+          const { deleteConnectionDir, getConnectionProjectsBaseDir } =
+            await import('../../../main/services/connection-service')
+          if (project.path.startsWith(getConnectionProjectsBaseDir())) {
+            try {
+              deleteConnectionDir(project.path)
+            } catch {
+              // Directory cleanup is best-effort.
+            }
+          }
+        }
+        return deleted
       },
       catch: (cause) => cause
     }),

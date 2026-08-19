@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import {
   Hammer,
+  Link,
   Map,
   Plus,
   GitBranch,
@@ -71,6 +72,12 @@ import {
 } from '@shared/types/remote-launch'
 import { FALLBACK_MODELS } from '@shared/model-resolution'
 import { runMultiModelLaunch, type MultiModelLaunchPlan } from '@/lib/multi-model-launch'
+import { computeWorktreeNameSets, getMemberProjects } from '@/lib/connection-project'
+import {
+  launchTicketOnConnectionProject,
+  quickLaunchTicketOnConnectionProject,
+  type ConnectionProjectLaunchTarget
+} from '@/lib/connection-project-launch'
 import {
   launchTicketWithModel,
   resolveBadgeModel,
@@ -331,6 +338,14 @@ export function resolveQuickLaunchModel(): { sdk: PickerAgentSdk; model: Selecte
 export async function quickLaunchTicket(ticket: KanbanTicket): Promise<boolean> {
   const projectId = ticket.project_id
   const settings = useSettingsStore.getState()
+
+  // Connection-project tickets have no worktrees of their own — quick launch
+  // creates a fresh worktree in EACH member project and connects them.
+  const ticketProject = useProjectStore.getState().projects.find((p) => p.id === projectId)
+  if (ticketProject?.kind === 'connection') {
+    return quickLaunchTicketOnConnectionProject(ticket)
+  }
+
   const { sdk, model } = resolveQuickLaunchModel()
 
   const worktrees = useWorktreeStore.getState().worktreesByProject.get(projectId) ?? []
@@ -722,6 +737,61 @@ export function WorktreePickerModal({
     useCallback((state) => state.projects.find((p) => p.id === projectId) ?? null, [projectId])
   )
 
+  // ── Connection-project mode (projects.kind === 'connection') ─────
+  // The board project is a saved connection: instead of picking a worktree,
+  // the ticket launches into a connection INSTANCE (new worktrees in every
+  // member project, an existing same-name worktree set, or a live instance).
+  const isConnectionProjectMode = !isConnectionMode && project?.kind === 'connection'
+  const [connTarget, setConnTarget] = useState<ConnectionProjectLaunchTarget>({ type: 'new' })
+  const allProjects = useProjectStore((state) => state.projects)
+  const memberProjects = useMemo(
+    () => (isConnectionProjectMode && project ? getMemberProjects(project) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [isConnectionProjectMode, project, allProjects]
+  )
+  const allConnections = useConnectionStore((state) => state.connections)
+  const instanceConnections = useMemo(
+    () =>
+      isConnectionProjectMode
+        ? allConnections.filter((c) => c.saved_project_id === projectId)
+        : [],
+    [isConnectionProjectMode, allConnections, projectId]
+  )
+  // Recompute name sets whenever any member project's worktrees (re)load
+  const worktreesByProjectMap = useWorktreeStore((state) => state.worktreesByProject)
+  const worktreeNameSets = useMemo(() => {
+    if (!isConnectionProjectMode || memberProjects.length < 2) return []
+    const sets = computeWorktreeNameSets(memberProjects)
+    // Hide sets whose exact worktree set is already materialized as an instance
+    const instanceSets = instanceConnections.map(
+      (c) => new Set(c.members.map((m) => m.worktree_id))
+    )
+    return sets.filter((set) => {
+      const ids = set.worktrees.map((w) => w.worktreeId)
+      return !instanceSets.some(
+        (instance) => instance.size === ids.length && ids.every((id) => instance.has(id))
+      )
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isConnectionProjectMode, memberProjects, instanceConnections, worktreesByProjectMap])
+
+  // If the picked target's referent disappears while the modal is open (an
+  // instance deleted, a name-set's worktree archived), fall back to "New".
+  useEffect(() => {
+    if (!open || !isConnectionProjectMode) return
+    if (
+      connTarget.type === 'existing-connection' &&
+      !instanceConnections.some((c) => c.id === connTarget.connectionId)
+    ) {
+      setConnTarget({ type: 'new' })
+    } else if (
+      connTarget.type === 'name-set' &&
+      !worktreeNameSets.some((s) => s.name === connTarget.nameSet.name)
+    ) {
+      setConnTarget({ type: 'new' })
+    }
+  }, [open, isConnectionProjectMode, connTarget, instanceConnections, worktreeNameSets])
+
   const defaultBranchName = useMemo(() => {
     const defaultWt = worktrees.find((w) => w.is_default)
     return defaultWt?.branch_name ?? 'main'
@@ -786,7 +856,7 @@ export function WorktreePickerModal({
   // which doesn't exist on a remote host — remote launches always run stock
   // claude-code-cli, and connection sessions don't support custom providers.
   const effectiveCustomProviderId =
-    !runOnRemote && !isConnectionMode && agentSdk === 'claude-code-cli'
+    !runOnRemote && !isConnectionMode && !isConnectionProjectMode && agentSdk === 'claude-code-cli'
       ? selectedCustomProviderId
       : null
 
@@ -807,6 +877,7 @@ export function WorktreePickerModal({
     !!teleport?.url &&
     !!teleport?.bootstrapToken &&
     !connectionId &&
+    !isConnectionProjectMode &&
     !preAssignOnly &&
     !saveConfigOnly
 
@@ -825,7 +896,8 @@ export function WorktreePickerModal({
   // worktree in the normal or save-config flows (an existing worktree hosts one
   // session; connection/pre-assign never multi-launch, and a remote launch
   // always runs a single claude-code-cli session).
-  const extraRowsVisible = isNewWorktree && !isConnectionMode && !preAssignOnly && !runOnRemote
+  const extraRowsVisible =
+    isNewWorktree && !isConnectionMode && !isConnectionProjectMode && !preAssignOnly && !runOnRemote
   const isMultiModel = extraRowsVisible && extraModelRows.length > 0
   // Goal mode needs EVERY launched SDK to support it — row 1 (already gated
   // below via agentSdk) plus every visible extra row.
@@ -850,7 +922,8 @@ export function WorktreePickerModal({
   // ── Lazy branch loading ────────────────────────────────────────
   useEffect(() => {
     // branches.length guard: only fetch once per modal-open cycle (reset clears branches on close)
-    if (!isNewWorktree || !project?.path || branches.length > 0) return
+    // Connection projects have no git repo at project.path — no branches to list.
+    if (!isNewWorktree || !project?.path || isConnectionProjectMode || branches.length > 0) return
     setBranchesLoading(true)
     gitApi
       .listBranchesWithStatus(project.path)
@@ -904,12 +977,20 @@ export function WorktreePickerModal({
       // id of a previously FAILED launch for this ticket (see
       // _failedRemoteLaunchIdByTicket); otherwise it gets a new one.
       launchIdRef.current = _failedRemoteLaunchIdByTicket[ticket.id] ?? crypto.randomUUID()
-      // Refresh worktree list from git so the picker shows current state
-      if (project?.path) {
+      setConnTarget({ type: 'new' })
+      if (isConnectionProjectMode && project) {
+        // Load each member project's worktrees so name sets + default branches resolve
+        const loadWorktrees = useWorktreeStore.getState().loadWorktrees
+        for (const member of getMemberProjects(project)) {
+          void loadWorktrees(member.id)
+        }
+      } else if (project?.path) {
+        // Refresh worktree list from git so the picker shows current state
         syncWorktrees(projectId, project.path, { force: true })
       }
     }
-  }, [open, ticket, projectId, project?.path, syncWorktrees])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, ticket, projectId, project?.path, isConnectionProjectMode, syncWorktrees])
 
   // ── Apply the ticket's stored goal once the switch is available ──
   // Fires immediately when the default SDK supports goal mode, or later when
@@ -1228,7 +1309,9 @@ export function WorktreePickerModal({
   const canSend =
     (isConnectionMode
       ? !isSending
-      : (selectedWorktreeId !== null || isNewWorktree) && !isSending) &&
+      : isConnectionProjectMode
+        ? !isSending && (connTarget.type !== 'new' || memberProjects.length >= 2)
+        : (selectedWorktreeId !== null || isNewWorktree) && !isSending) &&
     goalCriteriaValid &&
     !remoteSendBlocked
 
@@ -1568,6 +1651,105 @@ export function WorktreePickerModal({
         setIsSending(false)
       }
       return // Don't fall through to worktree logic
+    }
+
+    // ── Connection-project mode path ──────────────────────────────
+    // Launch into a connection instance: new worktrees in every member
+    // project, an existing same-name worktree set, or a live instance.
+    if (isConnectionProjectMode && project) {
+      try {
+        const effectiveModel = selectedModel ?? autoResolvedModel ?? null
+        const launchModel = effectiveModel
+          ? {
+              providerID: effectiveModel.providerID,
+              modelID: effectiveModel.modelID,
+              variant: effectiveModel.variant
+            }
+          : null
+
+        // Save & Queue: serialize a connection-shaped config; auto-launch
+        // replays it through quickLaunchTicketOnConnectionProject.
+        if (saveConfigOnly) {
+          const pendingWorktree =
+            connTarget.type === 'existing-connection'
+              ? { type: 'connection-existing' as const, connectionId: connTarget.connectionId }
+              : connTarget.type === 'name-set'
+                ? {
+                    type: 'connection-worktrees' as const,
+                    worktreeIds: connTarget.nameSet.worktrees.map((w) => w.worktreeId)
+                  }
+                : { type: 'connection-new' as const }
+          const pendingConfig = {
+            worktree: pendingWorktree,
+            prompt: promptText.trim() || buildPrompt(mode, ticket),
+            mode,
+            // Only an EXPLICIT pick is frozen into the queue — null re-resolves
+            // the default model at auto-launch time (same as the worktree path).
+            model: selectedModel
+              ? {
+                  providerID: selectedModel.providerID,
+                  modelID: selectedModel.modelID,
+                  variant: selectedModel.variant
+                }
+              : null,
+            sdk: agentSdk,
+            codexFastMode,
+            goalMode,
+            goalSuccessCriteria: goalMode ? goalCriteria.trim() : null,
+            customProviderId: null
+          }
+          const sortOrder = useKanbanStore
+            .getState()
+            .computeSortOrder(
+              useKanbanStore.getState().getTicketsByColumn(projectId, 'in_progress'),
+              0
+            )
+          await updateTicket(ticket.id, projectId, {
+            pending_launch_config: JSON.stringify(pendingConfig),
+            column: 'in_progress',
+            sort_order: sortOrder,
+            mode,
+            goal_mode: goalMode,
+            goal_success_criteria: goalMode ? goalCriteria.trim() : null,
+            model_provider_id: null,
+            model_id: null,
+            model_variant: null,
+            variant_group_id: null
+          })
+          onSendComplete?.()
+          onOpenChange(false)
+          toast.success('Launch config saved — will auto-launch when dependencies resolve')
+          return
+        }
+
+        const result = await launchTicketOnConnectionProject({
+          ticket,
+          savedProject: project,
+          target: connTarget,
+          options: {
+            mode,
+            sdk: agentSdk,
+            model: launchModel,
+            codexFastMode,
+            promptText,
+            goalMode,
+            goalSuccessCriteria: goalMode ? goalCriteria.trim() : null
+          }
+        })
+        if (!result.success) {
+          toast.error(result.error || 'Failed to start session')
+          return
+        }
+        onSendComplete?.()
+        onOpenChange(false)
+        toast.success('Session started')
+        return
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Failed to start session')
+        return
+      } finally {
+        setIsSending(false)
+      }
     }
 
     try {
@@ -1995,6 +2177,8 @@ export function WorktreePickerModal({
     composedGoalPrompt,
     isConnectionMode,
     connectionId,
+    isConnectionProjectMode,
+    connTarget,
     isRemoteLaunchActive,
     remotePhase,
     resolvedSourceBranch,
@@ -2074,7 +2258,9 @@ export function WorktreePickerModal({
               ? 'Pre-assign a worktree to'
               : isConnectionMode
                 ? 'Start a session for'
-                : 'Pick a worktree for'}{' '}
+                : isConnectionProjectMode
+                  ? 'Pick a workspace for'
+                  : 'Pick a worktree for'}{' '}
             <span className="font-medium text-foreground">{ticket.title}</span>
           </DialogDescription>
           {/* Build/Plan chip toggle — below description to avoid overlapping the X close button */}
@@ -2126,8 +2312,120 @@ export function WorktreePickerModal({
         </DialogHeader>
 
         <div className="space-y-5">
-          {/* ── Worktree list (hidden in connection mode) ────── */}
-          {!isConnectionMode && (
+          {/* ── Connection-project target list ─────────────────── */}
+          {isConnectionProjectMode && (
+            <div className="space-y-2">
+              <label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                Workspace
+              </label>
+              <div
+                data-testid="connection-target-list"
+                className="max-h-[200px] overflow-y-auto rounded-lg border border-border/60"
+              >
+                {/* "New worktree in each project" — always at top */}
+                <button
+                  data-testid="connection-target-new"
+                  type="button"
+                  onClick={() => setConnTarget({ type: 'new' })}
+                  disabled={memberProjects.length < 2}
+                  className={cn(
+                    'flex w-full items-center gap-3 px-3.5 py-2.5 text-sm transition-colors',
+                    'border-b border-border/40 last:border-b-0',
+                    'hover:bg-muted/30 disabled:opacity-50',
+                    connTarget.type === 'new' && 'bg-secondary ring-1 ring-inset ring-border'
+                  )}
+                >
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-secondary text-foreground">
+                    <Plus className="h-3.5 w-3.5" />
+                  </span>
+                  <span className="min-w-0 flex-1 text-left">
+                    <span className="block font-medium text-foreground">
+                      New worktree in each project
+                    </span>
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {memberProjects.map((m) => m.name).join(' + ') || 'No member projects'}
+                      {worktreeNamePreview ? ` — ${worktreeNamePreview}` : ''}
+                    </span>
+                  </span>
+                </button>
+
+                {/* Existing connection instances of this project */}
+                {instanceConnections.map((conn) => {
+                  const isSelected =
+                    connTarget.type === 'existing-connection' && connTarget.connectionId === conn.id
+                  const memberNames = [...new Set(conn.members.map((m) => m.worktree_name))]
+                  return (
+                    <button
+                      key={conn.id}
+                      data-testid={`connection-target-instance-${conn.id}`}
+                      type="button"
+                      onClick={() =>
+                        setConnTarget({ type: 'existing-connection', connectionId: conn.id })
+                      }
+                      className={cn(
+                        'flex w-full items-center gap-3 px-3.5 py-2.5 text-sm transition-colors',
+                        'border-b border-border/40 last:border-b-0',
+                        'hover:bg-muted/30',
+                        isSelected && 'bg-secondary ring-1 ring-inset ring-border'
+                      )}
+                    >
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-muted/40 text-muted-foreground">
+                        <Link className="h-3.5 w-3.5" />
+                      </span>
+                      <span className="min-w-0 flex-1 text-left">
+                        <span className="block truncate font-medium text-foreground">
+                          {conn.custom_name || conn.name}
+                        </span>
+                        <span className="block truncate text-xs text-muted-foreground">
+                          {memberNames.join(' · ')}
+                        </span>
+                      </span>
+                    </button>
+                  )
+                })}
+
+                {/* Same-name worktree sets across all member projects */}
+                {worktreeNameSets.map((set) => {
+                  const isSelected =
+                    connTarget.type === 'name-set' && connTarget.nameSet.name === set.name
+                  return (
+                    <button
+                      key={set.name}
+                      data-testid={`connection-target-nameset-${set.name}`}
+                      type="button"
+                      onClick={() => setConnTarget({ type: 'name-set', nameSet: set })}
+                      className={cn(
+                        'flex w-full items-center gap-3 px-3.5 py-2.5 text-sm transition-colors',
+                        'border-b border-border/40 last:border-b-0',
+                        'hover:bg-muted/30',
+                        isSelected && 'bg-secondary ring-1 ring-inset ring-border'
+                      )}
+                    >
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-muted/40 text-muted-foreground">
+                        <GitBranch className="h-3.5 w-3.5" />
+                      </span>
+                      <span className="min-w-0 flex-1 text-left">
+                        <span className="block truncate font-medium text-foreground">
+                          {set.name}
+                        </span>
+                        <span className="block truncate text-xs text-muted-foreground">
+                          exists in all {memberProjects.length} projects
+                        </span>
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+              {memberProjects.length < 2 && (
+                <p className="text-xs text-destructive">
+                  This connection project needs at least 2 existing member projects to launch.
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* ── Worktree list (hidden in connection + connection-project modes) ────── */}
+          {!isConnectionMode && !isConnectionProjectMode && (
             <div className="space-y-2">
               <label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
                 Worktree

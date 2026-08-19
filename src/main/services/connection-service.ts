@@ -37,6 +37,30 @@ export function createConnectionDir(name: string): string {
   return dirPath
 }
 
+const CONNECTION_PROJECTS_DIR_NAME = 'connection-projects'
+
+/**
+ * Base directory for saved-connection PROJECT dirs. Deliberately separate from
+ * the per-connection symlink dirs (~/.hive/connections) so deleting a live
+ * connection can never rm a project's directory out from under it.
+ */
+export function getConnectionProjectsBaseDir(): string {
+  const homeDir = homedir()
+  return join(homeDir, '.hive', CONNECTION_PROJECTS_DIR_NAME)
+}
+
+export function createConnectionProjectDir(name: string): string {
+  const base = getConnectionProjectsBaseDir()
+  if (!existsSync(base)) {
+    mkdirSync(base, { recursive: true })
+    log.info('Created connection-projects base directory', { path: base })
+  }
+  const dirPath = join(base, name)
+  mkdirSync(dirPath, { recursive: true })
+  log.info('Created connection project directory', { name, path: dirPath })
+  return dirPath
+}
+
 export function deleteConnectionDir(connectionPath: string): void {
   if (existsSync(connectionPath)) {
     rmSync(connectionPath, { recursive: true, force: true })

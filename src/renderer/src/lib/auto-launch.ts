@@ -24,7 +24,12 @@ export interface PendingLaunchModelEntry {
 }
 
 interface PendingLaunchConfig {
-  worktree: { type: 'new'; sourceBranch: string } | { type: 'existing'; worktreeId: string }
+  worktree:
+    | { type: 'new'; sourceBranch: string }
+    | { type: 'existing'; worktreeId: string }
+    | { type: 'connection-new' }
+    | { type: 'connection-existing'; connectionId: string }
+    | { type: 'connection-worktrees'; worktreeIds: string[] }
   prompt: string
   mode: AutoLaunchMode
   model: { providerID: string; modelID: string; variant?: string } | null
@@ -69,6 +74,41 @@ export async function autoLaunchTicket(ticket: AutoLaunchTicket): Promise<void> 
   const project = useProjectStore.getState().projects.find((p) => p.id === ticket.project_id)
   if (!project) {
     console.error('Project not found for auto-launch:', ticket.project_id)
+    return
+  }
+
+  // Connection-project tickets launch into a connection instance (new
+  // worktrees, a specific worktree set, or a live instance) — the connection
+  // pipeline owns everything.
+  if (
+    config.worktree.type === 'connection-new' ||
+    config.worktree.type === 'connection-existing' ||
+    config.worktree.type === 'connection-worktrees'
+  ) {
+    const { quickLaunchTicketOnConnectionProject } = await import(
+      '@/lib/connection-project-launch'
+    )
+    const target =
+      config.worktree.type === 'connection-existing'
+        ? ({ type: 'existing-connection', connectionId: config.worktree.connectionId } as const)
+        : config.worktree.type === 'connection-worktrees'
+          ? ({ type: 'worktree-set', worktreeIds: config.worktree.worktreeIds } as const)
+          : ({ type: 'new' } as const)
+    const ok = await quickLaunchTicketOnConnectionProject(
+      { id: ticket.id, project_id: ticket.project_id, title: ticket.title },
+      {
+        mode: config.mode,
+        sdk: config.sdk,
+        model: config.model,
+        codexFastMode: config.codexFastMode,
+        promptText: config.prompt,
+        goalMode: configGoalMode,
+        goalSuccessCriteria: configGoalSuccessCriteria
+      },
+      target
+    )
+    // quickLaunchTicketOnConnectionProject reports its own success/failure toasts.
+    void ok
     return
   }
 

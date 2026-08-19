@@ -118,6 +118,26 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
   const selectedProjectPath = useProjectStore((state) =>
     state.projects.find((p) => p.id === state.selectedProjectId)?.path ?? ''
   )
+  // Connection projects (saved connections) are board-first: selecting one
+  // shows its own kanban board instead of the welcome screen.
+  const selectedProjectKind = useProjectStore(
+    (state) => state.projects.find((p) => p.id === state.selectedProjectId)?.kind ?? 'git'
+  )
+  // When the selected connection is an INSTANCE of a saved-connection project,
+  // its board is the saved project's own board (not the member aggregate).
+  const selectedConnectionSavedProjectId = useConnectionStore(
+    (state) =>
+      state.connections.find((c) => c.id === state.selectedConnectionId)?.saved_project_id ?? null
+  )
+  const savedBoardProjectExists = useProjectStore(
+    (state) =>
+      !!selectedConnectionSavedProjectId &&
+      state.projects.some((p) => p.id === selectedConnectionSavedProjectId)
+  )
+  const connectionBoardProjectId =
+    selectedConnectionSavedProjectId && savedBoardProjectExists
+      ? selectedConnectionSavedProjectId
+      : null
 
   // Subscribe to session maps so terminal list stays reactive
   const sessionsByWorktree = useSessionStore((state) => state.sessionsByWorktree)
@@ -311,8 +331,12 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
       if (selectedProjectId && !selectedConnectionId) {
         return <KanbanBoard projectId={selectedProjectId} projectPath={selectedProjectPath} />
       }
-      // Connection mode: show connection board
+      // Connection mode: show connection board (instances of a saved-connection
+      // project show the saved project's own board instead of the aggregate)
       if (selectedConnectionId && connectionsLoaded) {
+        if (connectionBoardProjectId) {
+          return <KanbanBoard projectId={connectionBoardProjectId} />
+        }
         return <KanbanBoard connectionId={selectedConnectionId} />
       }
       // No project selected: empty state
@@ -342,8 +366,11 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
       return <KanbanBoard projectId={selectedProjectId} projectPath={selectedProjectPath} />
     }
 
-    // Board view — connection-level
+    // Board view — connection-level (saved-project instances show the saved board)
     if (isBoardViewActive && selectedConnectionId && connectionsLoaded && !activeFilePath && !activeDiff && !contextEditorWorktreeId) {
+      if (connectionBoardProjectId) {
+        return <KanbanBoard projectId={connectionBoardProjectId} />
+      }
       return <KanbanBoard connectionId={selectedConnectionId} />
     }
 
@@ -357,6 +384,20 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
           </div>
         </div>
       )
+    }
+
+    // Connection project selected with no worktree/connection: board-first —
+    // its own kanban board IS the main content (there are no sessions to show).
+    if (
+      !selectedWorktreeId &&
+      !selectedConnectionId &&
+      selectedProjectId &&
+      selectedProjectKind === 'connection' &&
+      !activeFilePath &&
+      !activeDiff &&
+      !contextEditorWorktreeId
+    ) {
+      return <KanbanBoard projectId={selectedProjectId} />
     }
 
     // No worktree or connection selected - show welcome message

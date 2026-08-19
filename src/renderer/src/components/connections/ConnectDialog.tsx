@@ -71,6 +71,8 @@ export function ConnectDialog({
     for (const project of projects) {
       // Skip the source worktree's project
       if (project.id === sourceProjectId) continue
+      // Connection projects have no worktrees of their own
+      if (project.kind === 'connection') continue
 
       const worktrees = worktreesByProject.get(project.id) || []
       const activeWorktrees = worktrees.filter((w) => w.status === 'active')
