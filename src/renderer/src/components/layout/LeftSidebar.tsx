@@ -36,7 +36,7 @@ import {
   NAV_LABEL,
   NAV_LIST,
   NAV_ROW,
-  NAV_ROW_ACTIVE,
+  NAV_ROW_ACTIVE_PRIMARY,
   NAV_ROW_INACTIVE,
   SIDEBAR_HEADER,
   SIDEBAR_HEADER_ACTIONS,
@@ -68,7 +68,7 @@ function SidebarNavRow({
       type="button"
       onClick={onClick}
       aria-current={active ? 'page' : undefined}
-      className={cn(NAV_ROW, active ? NAV_ROW_ACTIVE : NAV_ROW_INACTIVE)}
+      className={cn(NAV_ROW, active ? NAV_ROW_ACTIVE_PRIMARY : NAV_ROW_INACTIVE)}
       data-testid={testId}
       title={shortcut ? `${label} (${shortcut})` : undefined}
     >
@@ -81,9 +81,7 @@ function SidebarNavRow({
         <kbd
           className={cn(
             'shrink-0 font-sans text-[11px] font-medium tracking-wide',
-            active
-              ? 'text-worktree-sidebar-accent-foreground/50'
-              : 'text-worktree-sidebar-foreground/35'
+            active ? 'text-current opacity-55' : 'text-worktree-sidebar-foreground/35'
           )}
         >
           {shortcut}
@@ -129,8 +127,8 @@ export function LeftSidebar(): React.JSX.Element {
   const exitConnectionMode = useConnectionStore((s) => s.exitConnectionMode)
   const finalizeConnection = useConnectionStore((s) => s.finalizeConnection)
 
-  // Nav row — Pinned Board toggle (same behavior as the PinnedList header
-  // button: clear file/diff overlays before showing the board, then toggle).
+  // Nav row — Pinned Board toggle (clear file/diff overlays before showing
+  // the board, then toggle).
   const isPinnedBoardActive = useKanbanStore((s) => s.isPinnedBoardActive)
   const togglePinnedBoard = useKanbanStore((s) => s.togglePinnedBoard)
 

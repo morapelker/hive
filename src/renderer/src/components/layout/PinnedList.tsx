@@ -9,7 +9,6 @@ import {
   ExternalLink,
   Figma,
   GitBranchPlus,
-  KanbanSquare,
   Link,
   MoreHorizontal,
   Pencil,
@@ -56,8 +55,6 @@ import {
 } from '@/stores'
 import { HintBadge } from '@/components/ui/HintBadge'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { useKanbanStore } from '@/stores/useKanbanStore'
-import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { useScriptStore } from '@/stores/useScriptStore'
 import { useGitStore } from '@/stores/useGitStore'
 import { toast, gitToast, clipboardToast } from '@/lib/toast'
@@ -87,7 +84,6 @@ import {
   CARD_TITLE_ROW,
   CARD_TITLE_ROW_LEFT,
   MICRO_BADGE_PRIMARY,
-  SECTION_HEADER_ACTION_BUTTON,
   SECTION_HEADER_ICON,
   SidebarAgentRow,
   SidebarSectionHeader,
@@ -115,8 +111,6 @@ export function PinnedList(): React.JSX.Element | null {
   const pinnedWorktreeIds = usePinnedStore((s) => s.pinnedWorktreeIds)
   const pinnedConnectionIds = usePinnedStore((s) => s.pinnedConnectionIds)
   const loaded = usePinnedStore((s) => s.loaded)
-  const isPinnedBoardActive = useKanbanStore((s) => s.isPinnedBoardActive)
-  const togglePinnedBoard = useKanbanStore((s) => s.togglePinnedBoard)
 
   // Load pinned items on mount
   useEffect(() => {
@@ -145,39 +139,6 @@ export function PinnedList(): React.JSX.Element | null {
         icon={<Pin className={SECTION_HEADER_ICON} />}
         label="Pinned"
         count={items.length}
-        actions={
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation()
-                  if (!isPinnedBoardActive) {
-                    const fileStore = useFileViewerStore.getState()
-                    fileStore.setActiveFile(null)
-                    fileStore.clearActiveDiff()
-                    fileStore.closeContextEditor()
-                  }
-                  togglePinnedBoard()
-                }}
-                // data-state=open keeps the orca hover cluster revealed while the board is
-                // active (spread so an inactive button keeps Radix Tooltip's own data-state)
-                {...(isPinnedBoardActive ? { 'data-state': 'open' } : {})}
-                aria-pressed={isPinnedBoardActive}
-                className={cn(
-                  SECTION_HEADER_ACTION_BUTTON,
-                  'inline-flex items-center justify-center',
-                  isPinnedBoardActive && 'bg-accent text-foreground'
-                )}
-              >
-                <KanbanSquare className="size-3.5" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="right" sideOffset={4}>
-              Pinned Projects Board
-            </TooltipContent>
-          </Tooltip>
-        }
       />
       {items.map((item) =>
         item.kind === 'worktree' ? (

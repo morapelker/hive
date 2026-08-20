@@ -131,6 +131,9 @@ export const NAV_ROW_GROUP_INNER_BUTTON =
   'flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left'
 /** SidebarNav.tsx:109 */
 export const NAV_ROW_ACTIVE = 'bg-worktree-sidebar-accent text-worktree-sidebar-accent-foreground'
+/** Active nav row tinted with the AI action accent (violet) instead of the neutral sidebar accent. */
+export const NAV_ROW_ACTIVE_PRIMARY =
+  'bg-violet-500/15 text-violet-600 dark:bg-violet-400/15 dark:text-violet-300'
 /** SidebarNav.tsx:110 */
 export const NAV_ROW_INACTIVE =
   'text-worktree-sidebar-foreground/60 hover:bg-worktree-sidebar-foreground/8'
