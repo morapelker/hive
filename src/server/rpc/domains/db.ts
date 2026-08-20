@@ -474,6 +474,14 @@ export const makeLiveDbRpcService = (): DbRpcService => ({
         const { getDatabase } = await import('../../../main/db')
         const db = getDatabase()
         const project = db.getProject(id)
+        // Connection projects: take down the base instance (the only path allowed
+        // to) BEFORE the row goes — the FK would otherwise null saved_project_id
+        // and leave an undeletable orphan connection behind.
+        if (project?.kind === 'connection') {
+          const { deleteBaseInstanceForProjectOp } =
+            await import('../../../main/services/connection-ops')
+          await deleteBaseInstanceForProjectOp(db, id)
+        }
         const deleted = db.deleteProject(id)
         // Connection projects own a dedicated symlink dir under
         // ~/.hive/connection-projects — clean it up so it doesn't leak.

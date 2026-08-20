@@ -86,6 +86,7 @@ import {
   CARD_TITLE_IS_UNREAD,
   CARD_TITLE_ROW,
   CARD_TITLE_ROW_LEFT,
+  MICRO_BADGE_PRIMARY,
   SECTION_HEADER_ACTION_BUTTON,
   SECTION_HEADER_ICON,
   SidebarAgentRow,
@@ -94,6 +95,7 @@ import {
   getFlushWorktreeCardPaddingLeft,
   type AgentDotState
 } from '@/components/sidebar'
+import { baseInstanceLabel, isBaseInstance } from '@/lib/connection-project'
 import { ArchiveConfirmDialog } from '@/components/worktrees/ArchiveConfirmDialog'
 import { AddAttachmentDialog } from '@/components/worktrees/AddAttachmentDialog'
 import { ManageConnectionWorktreesDialog } from '@/components/connections/ManageConnectionWorktreesDialog'
@@ -1098,11 +1100,17 @@ function PinnedConnectionItem({
     ...new Set(connection.members?.map((m: { project_name: string }) => m.project_name) || [])
   ].join(' + ')
 
+  // Base instance of a connection project (twin of a default worktree): shows its
+  // member branches, and is never renamed/reshaped/deleted from here.
+  const isBase = isBaseInstance(connection)
+
   // Display logic: custom name takes priority over project names
   const hasCustomName = !!connection.custom_name
-  const displayName = hasCustomName
-    ? connection.custom_name!
-    : projectNames || connection.name || 'Connection'
+  const displayName = isBase
+    ? baseInstanceLabel(connection.members)
+    : hasCustomName
+      ? connection.custom_name!
+      : projectNames || connection.name || 'Connection'
 
   const displayStatus = statusLabel(connectionStatus)
   const isUnread = connectionStatus === 'unread'
@@ -1114,14 +1122,18 @@ function PinnedConnectionItem({
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const connectionMenuItems = (MenuItem: any, MenuSeparator: any): React.JSX.Element => (
     <>
-      <MenuItem onClick={handleManageWorktrees}>
-        <Settings2 className="h-4 w-4 mr-2" />
-        Connection Worktrees
-      </MenuItem>
-      <MenuItem onClick={handleStartRename}>
-        <Pencil className="h-4 w-4 mr-2" />
-        Rename
-      </MenuItem>
+      {!isBase && (
+        <>
+          <MenuItem onClick={handleManageWorktrees}>
+            <Settings2 className="h-4 w-4 mr-2" />
+            Connection Worktrees
+          </MenuItem>
+          <MenuItem onClick={handleStartRename}>
+            <Pencil className="h-4 w-4 mr-2" />
+            Rename
+          </MenuItem>
+        </>
+      )}
       <MenuItem onClick={handleUnpin}>
         <PinOff className="h-4 w-4 mr-2" />
         Unpin
@@ -1143,14 +1155,18 @@ function PinnedConnectionItem({
         <Copy className="h-4 w-4 mr-2" />
         Copy Path
       </MenuItem>
-      <MenuSeparator />
-      <MenuItem
-        onClick={handleDelete}
-        className="text-destructive focus:text-destructive focus:bg-destructive/10"
-      >
-        <Trash2 className="h-4 w-4 mr-2" />
-        Delete
-      </MenuItem>
+      {!isBase && (
+        <>
+          <MenuSeparator />
+          <MenuItem
+            onClick={handleDelete}
+            className="text-destructive focus:text-destructive focus:bg-destructive/10"
+          >
+            <Trash2 className="h-4 w-4 mr-2" />
+            Delete
+          </MenuItem>
+        </>
+      )}
     </>
   )
   /* eslint-enable @typescript-eslint/no-explicit-any */
@@ -1235,9 +1251,19 @@ function PinnedConnectionItem({
                   ) : (
                     <span
                       className={isUnread ? CARD_TITLE_IS_UNREAD : CARD_TITLE_IS_DIM}
-                      title={displayName}
+                      // Base rows all read "main" — qualify the hover with the member projects
+                      title={isBase && projectNames ? `${projectNames} — ${displayName}` : displayName}
                     >
                       {displayName}
+                    </span>
+                  )}
+                  {isBase && !isRenaming && (
+                    <span
+                      className={MICRO_BADGE_PRIMARY}
+                      title="Base connection (default worktree of every member project)"
+                      data-connection-base-badge=""
+                    >
+                      primary
                     </span>
                   )}
                 </div>
@@ -1280,7 +1306,7 @@ function PinnedConnectionItem({
                   <SidebarAgentRow
                     leading={<AgentStateDot state={statusToDotState(connectionStatus)} size="sm" />}
                     label={<span data-testid="pinned-status-text">{displayStatus}</span>}
-                    secondary={hasCustomName && projectNames ? projectNames : undefined}
+                    secondary={(hasCustomName || isBase) && projectNames ? projectNames : undefined}
                   />
                 </div>
               )}

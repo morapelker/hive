@@ -72,7 +72,14 @@ import {
 } from '@shared/types/remote-launch'
 import { FALLBACK_MODELS } from '@shared/model-resolution'
 import { runMultiModelLaunch, type MultiModelLaunchPlan } from '@/lib/multi-model-launch'
-import { computeWorktreeNameSets, getMemberProjects } from '@/lib/connection-project'
+import {
+  baseInstanceLabel,
+  computeWorktreeNameSets,
+  getMemberProjects,
+  isBaseInstance,
+  sortInstancesBaseLast
+} from '@/lib/connection-project'
+import { MICRO_BADGE_PRIMARY } from '@/components/sidebar'
 import {
   launchTicketOnConnectionProject,
   quickLaunchTicketOnConnectionProject,
@@ -753,7 +760,7 @@ export function WorktreePickerModal({
   const instanceConnections = useMemo(
     () =>
       isConnectionProjectMode
-        ? allConnections.filter((c) => c.saved_project_id === projectId)
+        ? sortInstancesBaseLast(allConnections.filter((c) => c.saved_project_id === projectId))
         : [],
     [isConnectionProjectMode, allConnections, projectId]
   )
@@ -2353,7 +2360,9 @@ export function WorktreePickerModal({
                 {instanceConnections.map((conn) => {
                   const isSelected =
                     connTarget.type === 'existing-connection' && connTarget.connectionId === conn.id
+                  const isBase = isBaseInstance(conn)
                   const memberNames = [...new Set(conn.members.map((m) => m.worktree_name))]
+                  const memberProjectNames = [...new Set(conn.members.map((m) => m.project_name))]
                   return (
                     <button
                       key={conn.id}
@@ -2373,11 +2382,22 @@ export function WorktreePickerModal({
                         <Link className="h-3.5 w-3.5" />
                       </span>
                       <span className="min-w-0 flex-1 text-left">
-                        <span className="block truncate font-medium text-foreground">
-                          {conn.custom_name || conn.name}
+                        <span className="flex items-center gap-1.5 font-medium text-foreground">
+                          <span className="truncate">
+                            {isBase ? baseInstanceLabel(conn.members) : conn.custom_name || conn.name}
+                          </span>
+                          {isBase && (
+                            <span
+                              className={MICRO_BADGE_PRIMARY}
+                              title="Base connection (default worktree of every member project)"
+                              data-connection-base-badge=""
+                            >
+                              primary
+                            </span>
+                          )}
                         </span>
                         <span className="block truncate text-xs text-muted-foreground">
-                          {memberNames.join(' · ')}
+                          {isBase ? memberProjectNames.join(' + ') : memberNames.join(' · ')}
                         </span>
                       </span>
                     </button>

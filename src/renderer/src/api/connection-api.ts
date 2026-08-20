@@ -60,6 +60,8 @@ type ConnectionSaveAsProjectResult = {
   success: boolean
   project?: Project
   connection?: ConnectionWithMembers
+  /** The new project's base instance (member default worktrees), when created. */
+  baseConnection?: ConnectionWithMembers
   error?: string
 }
 

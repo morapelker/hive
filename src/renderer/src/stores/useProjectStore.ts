@@ -253,11 +253,16 @@ export const useProjectStore = create<ProjectState>()(
               }
             })
             // Deleting a connection project detaches its instances server-side
-            // (connections.saved_project_id → NULL). Reload so they reappear in
-            // the Connections section instead of vanishing until next launch.
+            // (connections.saved_project_id → NULL) and takes its base instance
+            // down. Reload so they reappear in the Connections section instead of
+            // vanishing until next launch, then refetch pinned state so a pinned
+            // base / instance no longer scopes the removed project onto the
+            // pinned board.
             if (removed?.kind === 'connection') {
               import('./useConnectionStore')
                 .then(({ useConnectionStore }) => useConnectionStore.getState().loadConnections())
+                .then(() => import('./usePinnedStore'))
+                .then(({ usePinnedStore }) => usePinnedStore.getState().loadPinned())
                 .catch(() => {})
             }
           }

@@ -699,6 +699,7 @@ export class DatabaseService {
       'saved_project_id',
       'TEXT DEFAULT NULL REFERENCES projects(id) ON DELETE SET NULL'
     )
+    this.safeAddColumn('connections', 'is_base', 'INTEGER NOT NULL DEFAULT 0')
     this.safeAddColumn('projects', 'kanban_simple_mode', 'INTEGER NOT NULL DEFAULT 0')
     this.safeAddColumn('projects', 'kanban_storage_mode', "TEXT NOT NULL DEFAULT 'internal'")
     this.safeAddColumn('projects', 'kanban_markdown_config', 'TEXT DEFAULT NULL')
@@ -2288,13 +2289,14 @@ export class DatabaseService {
       pinned: 0,
       status: 'active',
       saved_project_id: data.saved_project_id ?? null,
+      is_base: data.is_base ? 1 : 0,
       created_at: now,
       updated_at: now
     }
 
     db.prepare(
-      `INSERT INTO connections (id, name, custom_name, path, color, status, saved_project_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO connections (id, name, custom_name, path, color, status, saved_project_id, is_base, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       connection.id,
       connection.name,
@@ -2303,6 +2305,7 @@ export class DatabaseService {
       connection.color,
       connection.status,
       connection.saved_project_id,
+      connection.is_base,
       connection.created_at,
       connection.updated_at
     )
@@ -2392,6 +2395,10 @@ export class DatabaseService {
       updates.push('saved_project_id = ?')
       values.push(data.saved_project_id)
     }
+    if (data.is_base !== undefined) {
+      updates.push('is_base = ?')
+      values.push(data.is_base ? 1 : 0)
+    }
 
     values.push(id)
     db.prepare(`UPDATE connections SET ${updates.join(', ')} WHERE id = ?`).run(...values)
@@ -2403,6 +2410,40 @@ export class DatabaseService {
     const db = this.getDb()
     const result = db.prepare('DELETE FROM connections WHERE id = ?').run(id)
     return result.changes > 0
+  }
+
+  /**
+   * Demote base instances that lost their project (saved_project_id nulled by the
+   * FK when a project row was deleted by a path that could not take the base
+   * down first, e.g. an older build). They become ordinary, deletable connections.
+   * Returns the number of rows repaired.
+   */
+  clearOrphanedBaseFlags(): number {
+    const db = this.getDb()
+    const result = db
+      .prepare(
+        `UPDATE connections SET is_base = 0, updated_at = ?
+         WHERE is_base = 1 AND saved_project_id IS NULL`
+      )
+      .run(new Date().toISOString())
+    return result.changes
+  }
+
+  /**
+   * The BASE instance of a connection project (connections.is_base = 1 linked via
+   * saved_project_id) — the connection-project twin of a project's default worktree.
+   */
+  getBaseConnectionForProject(projectId: string): ConnectionWithMembers | null {
+    const db = this.getDb()
+    const row = db
+      .prepare(
+        `SELECT * FROM connections
+         WHERE saved_project_id = ? AND is_base = 1 AND status = 'active'
+         ORDER BY created_at ASC LIMIT 1`
+      )
+      .get(projectId) as Connection | undefined
+    if (!row) return null
+    return this.getConnection(row.id)
   }
 
   createConnectionMember(data: ConnectionMemberCreate): ConnectionMember {

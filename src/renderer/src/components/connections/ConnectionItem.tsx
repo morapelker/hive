@@ -62,11 +62,13 @@ import {
   CARD_TITLE_ROW,
   CARD_TITLE_ROW_LEFT,
   CARD_TITLE_UNREAD,
+  MICRO_BADGE_PRIMARY,
   SidebarAgentRow,
   WorkspaceCardSurface,
   getFlushWorktreeCardPaddingLeft,
   type AgentDotState
 } from '@/components/sidebar'
+import { baseInstanceLabel, isBaseInstance } from '@/lib/connection-project'
 import { ArchiveConfirmDialog } from '@/components/worktrees/ArchiveConfirmDialog'
 import type { DiffStatFile } from '@/components/worktrees/DirtyFilesConfirmDialog'
 import { toast, clipboardToast } from '@/lib/toast'
@@ -96,6 +98,8 @@ interface Connection {
   color: string | null
   /** Saved-connection project this connection is an instance of (null/absent = ad-hoc). */
   saved_project_id?: string | null
+  /** 1 = base instance of a connection project (members = each member project's default worktree). */
+  is_base?: number
   created_at: string
   updated_at: string
   members: ConnectionMemberEnriched[]
@@ -194,6 +198,10 @@ export function ConnectionItem({
   const vimModeEnabled = useSettingsStore((s) => s.vimModeEnabled)
 
   const isSelected = selectedConnectionId === connection.id
+
+  // Base instance of a connection project — the twin of a default worktree:
+  // fixed members, never archived/deleted/renamed, labelled by its branches.
+  const isBase = isBaseInstance(connection)
 
   // Derive display status text (state colour lives in the orca AgentStateDot glyphs)
   const displayStatus =
@@ -446,22 +454,29 @@ export function ConnectionItem({
       branch: m.worktree_branch
     })) || []
 
-  // Display logic: custom name takes priority over project names
+  // Display logic: the base instance shows its member branches ("main"), else
+  // custom name takes priority over project names
   const hasCustomName = !!connection.custom_name
-  const displayName = hasCustomName
-    ? connection.custom_name!
-    : projectNames || connection.name || 'Connection'
+  const displayName = isBase
+    ? baseInstanceLabel(connection.members)
+    : hasCustomName
+      ? connection.custom_name!
+      : projectNames || connection.name || 'Connection'
 
   const menuItems = (
     <>
-      <ContextMenuItem onClick={handleManageWorktrees}>
-        <Settings2 className="h-4 w-4 mr-2" />
-        Connection Worktrees
-      </ContextMenuItem>
-      <ContextMenuItem onClick={handleStartRename}>
-        <Pencil className="h-4 w-4 mr-2" />
-        Rename
-      </ContextMenuItem>
+      {!isBase && (
+        <>
+          <ContextMenuItem onClick={handleManageWorktrees}>
+            <Settings2 className="h-4 w-4 mr-2" />
+            Connection Worktrees
+          </ContextMenuItem>
+          <ContextMenuItem onClick={handleStartRename}>
+            <Pencil className="h-4 w-4 mr-2" />
+            Rename
+          </ContextMenuItem>
+        </>
+      )}
       <ContextMenuItem onClick={handleTogglePin}>
         {isPinned ? <PinOff className="h-4 w-4 mr-2" /> : <Pin className="h-4 w-4 mr-2" />}
         {isPinned ? 'Unpin' : 'Pin'}
@@ -489,22 +504,26 @@ export function ConnectionItem({
         <Copy className="h-4 w-4 mr-2" />
         Copy Path
       </ContextMenuItem>
-      <ContextMenuSeparator />
-      <ContextMenuItem
-        onClick={handleArchiveAll}
-        disabled={isArchivingAll}
-        className="text-destructive focus:text-destructive focus:bg-destructive/10"
-      >
-        <Archive className="h-4 w-4 mr-2" />
-        Archive All
-      </ContextMenuItem>
-      <ContextMenuItem
-        onClick={handleDelete}
-        className="text-destructive focus:text-destructive focus:bg-destructive/10"
-      >
-        <Trash2 className="h-4 w-4 mr-2" />
-        Delete
-      </ContextMenuItem>
+      {!isBase && (
+        <>
+          <ContextMenuSeparator />
+          <ContextMenuItem
+            onClick={handleArchiveAll}
+            disabled={isArchivingAll}
+            className="text-destructive focus:text-destructive focus:bg-destructive/10"
+          >
+            <Archive className="h-4 w-4 mr-2" />
+            Archive All
+          </ContextMenuItem>
+          <ContextMenuItem
+            onClick={handleDelete}
+            className="text-destructive focus:text-destructive focus:bg-destructive/10"
+          >
+            <Trash2 className="h-4 w-4 mr-2" />
+            Delete
+          </ContextMenuItem>
+        </>
+      )}
     </>
   )
 
@@ -516,6 +535,7 @@ export function ConnectionItem({
       style={{ paddingLeft: getFlushWorktreeCardPaddingLeft(0) }}
       onClick={handleClick}
       data-testid={`connection-item-${connection.id}`}
+      data-connection-base={isBase ? '' : undefined}
     >
       <div className={cn(CARD_PARENT_ROW, CARD_PARENT_ROW_ALIGN)}>
         <StatusLane status={connectionStatus} />
@@ -612,6 +632,18 @@ export function ConnectionItem({
                 </div>
               )}
 
+              {/* Base-instance micro badge — the connection-project twin of the
+                  default worktree's "primary" badge */}
+              {isBase && !isRenaming && (
+                <span
+                  className={MICRO_BADGE_PRIMARY}
+                  title="Base connection (default worktree of every member project)"
+                  data-connection-base-badge=""
+                >
+                  primary
+                </span>
+              )}
+
               <div className={CARD_TITLE_ACTIONS}>
                 {/* Hint badge */}
                 {hint && vimModeEnabled && vimMode === 'normal' && (
@@ -636,14 +668,18 @@ export function ConnectionItem({
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent className="w-52" align="end">
-                    <DropdownMenuItem onClick={handleManageWorktrees}>
-                      <Settings2 className="h-4 w-4 mr-2" />
-                      Connection Worktrees
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={handleStartRename}>
-                      <Pencil className="h-4 w-4 mr-2" />
-                      Rename
-                    </DropdownMenuItem>
+                    {!isBase && (
+                      <>
+                        <DropdownMenuItem onClick={handleManageWorktrees}>
+                          <Settings2 className="h-4 w-4 mr-2" />
+                          Connection Worktrees
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={handleStartRename}>
+                          <Pencil className="h-4 w-4 mr-2" />
+                          Rename
+                        </DropdownMenuItem>
+                      </>
+                    )}
                     <DropdownMenuItem onClick={handleTogglePin}>
                       {isPinned ? (
                         <PinOff className="h-4 w-4 mr-2" />
@@ -675,22 +711,26 @@ export function ConnectionItem({
                       <Copy className="h-4 w-4 mr-2" />
                       Copy Path
                     </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      onClick={handleArchiveAll}
-                      disabled={isArchivingAll}
-                      className="text-destructive focus:text-destructive focus:bg-destructive/10"
-                    >
-                      <Archive className="h-4 w-4 mr-2" />
-                      Archive All
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={handleDelete}
-                      className="text-destructive focus:text-destructive focus:bg-destructive/10"
-                    >
-                      <Trash2 className="h-4 w-4 mr-2" />
-                      Delete
-                    </DropdownMenuItem>
+                    {!isBase && (
+                      <>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          onClick={handleArchiveAll}
+                          disabled={isArchivingAll}
+                          className="text-destructive focus:text-destructive focus:bg-destructive/10"
+                        >
+                          <Archive className="h-4 w-4 mr-2" />
+                          Archive All
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={handleDelete}
+                          className="text-destructive focus:text-destructive focus:bg-destructive/10"
+                        >
+                          <Trash2 className="h-4 w-4 mr-2" />
+                          Delete
+                        </DropdownMenuItem>
+                      </>
+                    )}
                   </DropdownMenuContent>
                 </DropdownMenu>
               </div>
@@ -717,7 +757,7 @@ export function ConnectionItem({
         <ContextMenuTrigger asChild>
           <TooltipTrigger asChild>{mainContent}</TooltipTrigger>
         </ContextMenuTrigger>
-        {hasCustomName && projectDetails.length > 0 && (
+        {(hasCustomName || isBase) && projectDetails.length > 0 && (
           <TooltipContent side="right" sideOffset={8} className="max-w-xs">
             <div className="space-y-1">
               {projectDetails.map((detail, idx) => (

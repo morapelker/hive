@@ -8,6 +8,8 @@ export interface Connection {
   pinned: number
   /** Saved-connection project this connection is an instance of (null/absent = ad-hoc connection). */
   saved_project_id?: string | null
+  /** 1 = base instance of a connection project (members = each member project's default worktree). */
+  is_base?: number
   created_at: string
   updated_at: string
 }

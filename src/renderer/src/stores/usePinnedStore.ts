@@ -3,6 +3,7 @@ import { toast } from '@/lib/toast'
 import { useWorktreeStore } from './useWorktreeStore'
 import { dbApi } from '@/api/db-api'
 import { connectionApi } from '@/api/connection-api'
+import { resolveConnectionSavedProjectId } from './store-coordination'
 
 interface PinnedState {
   pinnedWorktreeIds: Set<string>
@@ -39,6 +40,16 @@ function findProjectIdForWorktree(worktreeId: string): string | undefined {
   return undefined
 }
 
+/**
+ * The connection project (projects.kind === 'connection') a pinned connection is
+ * an instance of — pinning any instance scopes that project's board onto the
+ * pinned board, exactly like pinning any worktree does for a git project.
+ * Resolved through store-coordination (registered by useConnectionStore).
+ */
+function findSavedProjectIdForConnection(connectionId: string): string | undefined {
+  return resolveConnectionSavedProjectId(connectionId) ?? undefined
+}
+
 export const usePinnedStore = create<PinnedState>()((set, get) => ({
   pinnedWorktreeIds: new Set<string>(),
   pinnedConnectionIds: new Set<string>(),
@@ -69,6 +80,10 @@ export const usePinnedStore = create<PinnedState>()((set, get) => ({
 
       // Derive project IDs directly from the fetched pinned worktrees (which have project_id)
       const projectIds = new Set(pinnedWorktrees.map((wt) => wt.project_id))
+      // ...plus the connection projects whose instances are pinned
+      for (const connection of pinnedConnections) {
+        if (connection.saved_project_id) projectIds.add(connection.saved_project_id)
+      }
 
       set({
         pinnedWorktreeIds: worktreeIds,
@@ -122,10 +137,13 @@ export const usePinnedStore = create<PinnedState>()((set, get) => ({
   pinConnection: async (id: string) => {
     const result = await connectionApi.setPinned(id, true)
     if (result.success) {
+      const savedProjectId = findSavedProjectIdForConnection(id)
       set((state) => {
         const next = new Set(state.pinnedConnectionIds)
         next.add(id)
-        return { pinnedConnectionIds: next }
+        const nextProjectIds = new Set(state.pinnedProjectIds)
+        if (savedProjectId) nextProjectIds.add(savedProjectId)
+        return { pinnedConnectionIds: next, pinnedProjectIds: nextProjectIds }
       })
     } else {
       toast.error(result.error || 'Failed to pin connection')
@@ -135,10 +153,18 @@ export const usePinnedStore = create<PinnedState>()((set, get) => ({
   unpinConnection: async (id: string) => {
     const result = await connectionApi.setPinned(id, false)
     if (result.success) {
+      const savedProjectId = findSavedProjectIdForConnection(id)
       set((state) => {
         const next = new Set(state.pinnedConnectionIds)
         next.delete(id)
-        return { pinnedConnectionIds: next }
+        const nextProjectIds = new Set(state.pinnedProjectIds)
+        if (savedProjectId) {
+          const projectStillPinned = [...next].some(
+            (cid) => findSavedProjectIdForConnection(cid) === savedProjectId
+          )
+          if (!projectStillPinned) nextProjectIds.delete(savedProjectId)
+        }
+        return { pinnedConnectionIds: next, pinnedProjectIds: nextProjectIds }
       })
     } else {
       toast.error(result.error || 'Failed to unpin connection')
@@ -163,11 +189,21 @@ export const usePinnedStore = create<PinnedState>()((set, get) => ({
   },
 
   removeConnection: (id: string) => {
+    // Resolve BEFORE the caller drops the connection from its store (callers
+    // invoke this first, so the lookup still sees the row).
+    const savedProjectId = findSavedProjectIdForConnection(id)
     set((state) => {
       if (!state.pinnedConnectionIds.has(id)) return state
       const next = new Set(state.pinnedConnectionIds)
       next.delete(id)
-      return { pinnedConnectionIds: next }
+      const nextProjectIds = new Set(state.pinnedProjectIds)
+      if (savedProjectId) {
+        const projectStillPinned = [...next].some(
+          (cid) => findSavedProjectIdForConnection(cid) === savedProjectId
+        )
+        if (!projectStillPinned) nextProjectIds.delete(savedProjectId)
+      }
+      return { pinnedConnectionIds: next, pinnedProjectIds: nextProjectIds }
     })
   },
 

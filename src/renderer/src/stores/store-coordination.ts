@@ -146,3 +146,21 @@ export function registerKanbanModelSync(fn: KanbanModelSyncFn): void {
 export function notifyKanbanModelSync(sessionId: string, model: KanbanModelSyncModel): void {
   _kanbanModelSync?.(sessionId, model)
 }
+
+// ── Pinned ↔ Connection: resolve a connection's saved (connection) project ──
+// usePinnedStore derives `pinnedProjectIds` from pinned connections too (an
+// instance of a connection project pins that project's board onto the pinned
+// board). The connection store registers the lookup so the pinned store never
+// imports it (useConnectionStore → useKanbanStore → usePinnedStore would cycle).
+type ConnectionSavedProjectResolver = (connectionId: string) => string | null | undefined
+
+let _resolveConnectionSavedProjectId: ConnectionSavedProjectResolver | null = null
+
+export function registerConnectionSavedProjectResolver(fn: ConnectionSavedProjectResolver): void {
+  _resolveConnectionSavedProjectId = fn
+}
+
+/** The connection project a connection is an instance of, or null (ad-hoc / unknown). */
+export function resolveConnectionSavedProjectId(connectionId: string): string | null {
+  return _resolveConnectionSavedProjectId?.(connectionId) ?? null
+}

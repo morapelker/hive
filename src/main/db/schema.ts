@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 44
+export const CURRENT_SCHEMA_VERSION = 45
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -726,6 +726,14 @@ DROP TABLE IF EXISTS diff_comments;`
     up: `-- NOTE: ALTER TABLE for projects.kind, projects.member_project_ids and
          -- connections.saved_project_id is handled idempotently by
          -- ensureConnectionTables() in database.ts to avoid "duplicate column" errors.`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
+  },
+  {
+    version: 45,
+    name: 'add_connection_base_instances',
+    up: `-- NOTE: ALTER TABLE for connections.is_base (the base instance of a
+         -- connection project, mirroring worktrees.is_default) is handled
+         -- idempotently by ensureConnectionTables() in database.ts.`,
     down: `-- SQLite cannot drop columns; this is a no-op for safety`
   }
 ]
