@@ -2318,7 +2318,10 @@ export function WorktreePickerModal({
           )}
         </DialogHeader>
 
-        <div className="space-y-5">
+        {/* min-w-0: DialogContent is a grid; without it, nowrap `truncate` rows
+            (long connection-project member lists) blow the track past the
+            dialog's 520px and push all content outside the border. */}
+        <div className="min-w-0 space-y-5">
           {/* ── Connection-project target list ─────────────────── */}
           {isConnectionProjectMode && (
             <div className="space-y-2">
