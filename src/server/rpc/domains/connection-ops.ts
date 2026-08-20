@@ -5,6 +5,7 @@ import {
   addConnectionMemberOp,
   createConnectionOp,
   deleteConnectionOp,
+  ensureConnectionProjectBaseInstancesOp,
   getAllConnectionsOp,
   getConnectionOp,
   getPinnedConnectionsOp,
@@ -105,6 +106,8 @@ export interface ConnectionOpsSaveAsProjectResult {
   readonly success: boolean
   readonly project?: Project
   readonly connection?: ConnectionWithMembers
+  /** The new project's base instance (member default worktrees), when created. */
+  readonly baseConnection?: ConnectionWithMembers
   readonly error?: string
 }
 
@@ -289,9 +292,15 @@ export const makeLiveConnectionOpsRpcService = (): ConnectionOpsRpcService => ({
       catch: (cause) => cause
     }),
   getAll: () =>
-    Effect.sync(() => {
-      const db = getDatabase()
-      return getAllConnectionsOp(db)
+    Effect.tryPromise({
+      try: async () => {
+        const db = getDatabase()
+        // Self-heal: connection projects saved before base instances existed
+        // (or whose base creation failed) get their base on the next listing.
+        await ensureConnectionProjectBaseInstancesOp(db)
+        return getAllConnectionsOp(db)
+      },
+      catch: (cause) => cause
     }),
   get: (connectionId) =>
     Effect.sync(() => {

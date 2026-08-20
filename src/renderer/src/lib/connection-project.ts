@@ -4,6 +4,7 @@
  * its own kanban board; each launch materializes a live `connections` row (an
  * "instance") linked back via connections.saved_project_id.
  */
+import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 
@@ -21,6 +22,56 @@ interface ProjectLike {
 
 export function isConnectionProject(project: ProjectLike | null | undefined): boolean {
   return project?.kind === 'connection'
+}
+
+// ── Base instance ──────────────────────────────────────────────────
+// A connection project's BASE instance (connections.is_base = 1) is the twin
+// of a git project's default worktree: each member project's default worktree
+// connected together. Always present, never archivable/deletable, fixed members.
+
+interface ConnectionInstanceLike {
+  id: string
+  saved_project_id?: string | null
+  is_base?: number
+}
+
+/**
+ * Base only while its connection project still exists — an is_base row whose
+ * saved_project_id was nulled is an orphan the backend heals on the next
+ * listing; until then it must behave like an ordinary (deletable) connection.
+ */
+export function isBaseInstance(connection: ConnectionInstanceLike | null | undefined): boolean {
+  return !!connection?.is_base && !!connection?.saved_project_id
+}
+
+type ConnectionRecord = ReturnType<typeof useConnectionStore.getState>['connections'][number]
+
+/** The base instance of a connection project from the connection store (null when not loaded/missing). */
+export function findBaseInstanceConnection(projectId: string): ConnectionRecord | null {
+  return (
+    useConnectionStore
+      .getState()
+      .connections.find((c) => c.saved_project_id === projectId && isBaseInstance(c)) ?? null
+  )
+}
+
+/**
+ * Sidebar/picker label for a base instance: the distinct member default branch
+ * names ("main", or "main + master"), mirroring how a default worktree shows its
+ * branch name rather than a connection-style "proj-a + proj-b".
+ */
+export function baseInstanceLabel(
+  members: ReadonlyArray<{ worktree_branch?: string | null }> | null | undefined
+): string {
+  const branches = [
+    ...new Set((members ?? []).map((m) => m.worktree_branch?.trim()).filter(Boolean))
+  ]
+  return branches.join(' + ') || 'main'
+}
+
+/** Order instances like worktrees: user instances first (input order), the base instance last. */
+export function sortInstancesBaseLast<T extends ConnectionInstanceLike>(instances: T[]): T[] {
+  return [...instances.filter((c) => !isBaseInstance(c)), ...instances.filter((c) => isBaseInstance(c))]
 }
 
 /** Parse the JSON member id list stored on a connection project row. */

@@ -98,9 +98,18 @@ export function getPinnedConnectionsOp(db: DatabaseService): ConnectionWithMembe
 export async function createConnectionOp(
   db: DatabaseService,
   worktreeIds: string[],
-  savedProjectId?: string | null
+  savedProjectId?: string | null,
+  options?: {
+    /**
+     * Create the BASE instance of a connection project (connections.is_base = 1):
+     * members are the member projects' default worktrees. Not recorded in
+     * connection history (it is a structural artifact, not a user launch).
+     */
+    isBase?: boolean
+  }
 ): Promise<{ success: boolean; connection?: ConnectionWithMembers; error?: string }> {
-  log.info('Creating connection', { worktreeCount: worktreeIds.length, savedProjectId })
+  const isBase = options?.isBase === true
+  log.info('Creating connection', { worktreeCount: worktreeIds.length, savedProjectId, isBase })
   try {
     // Use a short random ID for the directory name (avoids filesystem issues with special chars)
     const dirName = randomUUID().slice(0, 8)
@@ -117,7 +126,8 @@ export async function createConnectionOp(
       name: dirName,
       path: dirPath,
       color,
-      saved_project_id: savedProjectId ?? null
+      saved_project_id: savedProjectId ?? null,
+      is_base: isBase ? 1 : 0
     })
 
     // For each worktree, look up its data, derive symlink name, create symlink + member
@@ -156,10 +166,12 @@ export async function createConnectionOp(
       const derivedName = deriveConnectionName(enriched)
       db.updateConnection(connection.id, { name: derivedName })
       generateConnectionInstructions(dirPath, buildAgentsMdMembers(enriched))
-      recordConnectionHistory(
-        db,
-        enriched.members.map((m) => m.project_id)
-      )
+      if (!isBase) {
+        recordConnectionHistory(
+          db,
+          enriched.members.map((m) => m.project_id)
+        )
+      }
     }
 
     // Re-fetch to get the final state with derived name
@@ -177,18 +189,41 @@ export async function createConnectionOp(
   }
 }
 
+/** Error returned by every op that would delete or reshape a connection project's base instance. */
+export const BASE_INSTANCE_LOCKED_ERROR =
+  'The base connection of a connection project cannot be deleted or changed'
+
+/**
+ * A base instance is locked only while its connection project exists. An
+ * is_base row whose saved_project_id was nulled (project removed by a path that
+ * could not take the base down) is an orphan and must stay deletable — the
+ * next listing clears its flag (see ensureConnectionProjectBaseInstancesOp).
+ */
+export function isLockedBaseInstance(connection: {
+  is_base?: number | null
+  saved_project_id?: string | null
+}): boolean {
+  return !!connection.is_base && !!connection.saved_project_id
+}
+
 /**
  * Delete a connection (filesystem directory + DB record).
+ * The base instance of a connection project is refused unless `force` is set
+ * (only the connection project's own removal may take it down).
  */
 export async function deleteConnectionOp(
   db: DatabaseService,
-  connectionId: string
+  connectionId: string,
+  options?: { force?: boolean }
 ): Promise<{ success: boolean; error?: string }> {
   log.info('Deleting connection', { connectionId })
   try {
     const connection = db.getConnection(connectionId)
     if (!connection) {
       return { success: false, error: 'Connection not found' }
+    }
+    if (isLockedBaseInstance(connection) && !options?.force) {
+      return { success: false, error: BASE_INSTANCE_LOCKED_ERROR }
     }
 
     // Remove the filesystem directory (which contains the symlinks)
@@ -269,6 +304,9 @@ export async function addConnectionMemberOp(
     if (!connection) {
       return { success: false, error: 'Connection not found' }
     }
+    if (isLockedBaseInstance(connection)) {
+      return { success: false, error: BASE_INSTANCE_LOCKED_ERROR }
+    }
 
     const worktree = db.getWorktree(worktreeId)
     if (!worktree) {
@@ -340,6 +378,9 @@ export async function removeConnectionMemberOp(
     if (!connection) {
       return { success: false, error: 'Connection not found' }
     }
+    if (isLockedBaseInstance(connection)) {
+      return { success: false, error: BASE_INSTANCE_LOCKED_ERROR }
+    }
 
     // Find the member to get symlink name for removal
     const member = connection.members.find((m) => m.worktree_id === worktreeId)
@@ -399,6 +440,9 @@ export async function updateConnectionMembersOp(
     const connection = db.getConnection(connectionId)
     if (!connection) {
       return { success: false, error: 'Connection not found' }
+    }
+    if (isLockedBaseInstance(connection)) {
+      return { success: false, error: BASE_INSTANCE_LOCKED_ERROR }
     }
 
     const desired = [...new Set(worktreeIds)]
@@ -592,6 +636,8 @@ export async function saveConnectionAsProjectOp(
   success: boolean
   project?: Project
   connection?: ConnectionWithMembers
+  /** The project's base instance (default worktree of every member), when it could be created. */
+  baseConnection?: ConnectionWithMembers
   error?: string
 }> {
   log.info('Saving connection as project', { connectionId })
@@ -653,14 +699,23 @@ export async function saveConnectionAsProjectOp(
     // Link the source connection back to the saved project — it becomes the
     // project's first instance.
     db.updateConnection(connectionId, { saved_project_id: project.id })
+
+    // The project's base instance: each member project's default worktree
+    // connected together — the twin of a regular project's default worktree
+    // (always present, never archivable). Failure here must not fail the save;
+    // getAllConnectionsOp heals a missing base on the next listing. NOTE: this
+    // can PROMOTE the source itself (a connection already spanning the member
+    // default worktrees), so read the source back only afterwards.
+    const baseConnection = (await ensureBaseInstanceForConnectionProjectOp(db, project)) ?? undefined
     const updatedConnection = db.getConnection(connectionId) ?? undefined
 
     log.info('Connection saved as project', {
       connectionId,
       projectId: project.id,
-      memberCount: memberProjectIds.length
+      memberCount: memberProjectIds.length,
+      baseConnectionId: baseConnection?.id ?? null
     })
-    return { success: true, project, connection: updatedConnection }
+    return { success: true, project, connection: updatedConnection, baseConnection }
   } catch (error) {
     // Best-effort: don't leak the half-built project directory on failure.
     if (createdDirPath) {
@@ -675,6 +730,189 @@ export async function saveConnectionAsProjectOp(
       'Save connection as project failed',
       error instanceof Error ? error : new Error(message)
     )
+    return { success: false, error: message }
+  }
+}
+
+// ── Connection project base instances ─────────────────────────────────
+
+/** Parse projects.member_project_ids (JSON id array) defensively. */
+function parseMemberProjectIds(json: string | null | undefined): string[] {
+  if (!json) return []
+  try {
+    const parsed = JSON.parse(json)
+    return Array.isArray(parsed)
+      ? parsed.filter((id): id is string => typeof id === 'string' && id.length > 0)
+      : []
+  } catch {
+    return []
+  }
+}
+
+/**
+ * The worktree ids a connection project's base instance is made of: the active
+ * default worktree of every member project that still exists.
+ */
+export function resolveBaseInstanceWorktreeIds(db: DatabaseService, project: Project): string[] {
+  const ids: string[] = []
+  for (const memberId of parseMemberProjectIds(project.member_project_ids)) {
+    const defaultWorktree = db
+      .getWorktreesByProject(memberId)
+      .find((w) => w.is_default && w.status === 'active')
+    if (defaultWorktree) ids.push(defaultWorktree.id)
+  }
+  return ids
+}
+
+function sameWorktreeSet(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false
+  const set = new Set(a)
+  return b.every((id) => set.has(id))
+}
+
+/**
+ * Ensure a connection project has its base instance (connections.is_base = 1)
+ * over the member projects' CURRENT default worktrees:
+ * - an existing base whose member set still matches is returned as-is;
+ * - a stale base (a member project was removed, a default worktree changed) is
+ *   demoted to an ordinary instance — deletable again — and replaced;
+ * - an instance of the project that already spans exactly the default worktrees
+ *   (typically the saved source connection) is promoted instead of duplicated;
+ * - otherwise a new base connection is created.
+ * Returns null (after logging) when fewer than two member default worktrees
+ * resolve — the project is degenerate and has no base.
+ */
+export async function ensureBaseInstanceForConnectionProjectOp(
+  db: DatabaseService,
+  project: Project
+): Promise<ConnectionWithMembers | null> {
+  if (project.kind !== 'connection') return null
+  try {
+    const worktreeIds = resolveBaseInstanceWorktreeIds(db, project)
+    const existing = db.getBaseConnectionForProject(project.id)
+    if (existing) {
+      const memberIds = existing.members.map((m) => m.worktree_id)
+      if (worktreeIds.length >= 2 && sameWorktreeSet(memberIds, worktreeIds)) return existing
+      // Stale: keep the row (it may host sessions) but release the lock.
+      db.updateConnection(existing.id, { is_base: 0 })
+      log.warn('Demoted stale connection project base instance', {
+        projectId: project.id,
+        connectionId: existing.id,
+        members: memberIds.length,
+        expected: worktreeIds.length
+      })
+    }
+
+    if (worktreeIds.length < 2) {
+      log.warn('Connection project has fewer than 2 member default worktrees; skipping base', {
+        projectId: project.id,
+        resolved: worktreeIds.length
+      })
+      return null
+    }
+
+    // Promote an instance that already IS the default-worktree set (e.g. a
+    // connection over main + main that was saved as a project) — never
+    // materialize a byte-identical twin next to it.
+    const promotable = db
+      .getAllConnections()
+      .find(
+        (c) =>
+          c.saved_project_id === project.id &&
+          !c.is_base &&
+          sameWorktreeSet(
+            c.members.map((m) => m.worktree_id),
+            worktreeIds
+          )
+      )
+    if (promotable) {
+      db.updateConnection(promotable.id, { is_base: 1 })
+      log.info('Promoted existing instance to connection project base', {
+        projectId: project.id,
+        connectionId: promotable.id
+      })
+      return db.getConnection(promotable.id)
+    }
+
+    const result = await createConnectionOp(db, worktreeIds, project.id, { isBase: true })
+    if (!result.success || !result.connection) {
+      log.warn('Failed to create connection project base instance', {
+        projectId: project.id,
+        error: result.error
+      })
+      return null
+    }
+    log.info('Created connection project base instance', {
+      projectId: project.id,
+      connectionId: result.connection.id
+    })
+    return result.connection
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    log.warn('Ensure base instance failed', { projectId: project.id, error: message })
+    return null
+  }
+}
+
+/**
+ * Heal every connection project that lacks a base instance (projects saved
+ * before base instances existed, or whose base creation failed). Idempotent and
+ * never throws — safe to run on every connection listing.
+ */
+export async function ensureConnectionProjectBaseInstancesOp(db: DatabaseService): Promise<void> {
+  let projects: Project[]
+  try {
+    // Orphans first: is_base rows whose project is gone must become deletable.
+    const repaired = db.clearOrphanedBaseFlags()
+    if (repaired > 0) log.warn('Cleared orphaned connection base flags', { count: repaired })
+    projects = db.getAllProjects().filter((p) => p.kind === 'connection')
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    log.warn('Failed to enumerate connection projects for base healing', { error: message })
+    return
+  }
+  for (const project of projects) {
+    await ensureBaseInstanceForConnectionProjectOp(db, project)
+  }
+}
+
+/**
+ * Remove a connection project's base instance (dir + row). Called when the
+ * connection project itself is removed — the only path allowed to take the
+ * base down. Must run BEFORE the project row is deleted (the FK nulls
+ * saved_project_id on cascade, which would orphan an undeletable row).
+ */
+export async function deleteBaseInstanceForProjectOp(
+  db: DatabaseService,
+  projectId: string
+): Promise<{ success: boolean; error?: string }> {
+  let baseId: string | null = null
+  try {
+    const base = db.getBaseConnectionForProject(projectId)
+    if (!base) return { success: true }
+    baseId = base.id
+    const result = await deleteConnectionOp(db, base.id, { force: true })
+    if (!result.success) {
+      // Never leave a locked row behind: demote so it degrades to an ordinary
+      // connection once the FK nulls its saved_project_id.
+      db.updateConnection(base.id, { is_base: 0 })
+      log.warn('Base instance deletion failed; demoted instead', {
+        projectId,
+        connectionId: base.id,
+        error: result.error
+      })
+    }
+    return result
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (baseId) {
+      try {
+        db.updateConnection(baseId, { is_base: 0 })
+      } catch {
+        // Best-effort demotion only.
+      }
+    }
+    log.warn('Failed to delete connection project base instance', { projectId, error: message })
     return { success: false, error: message }
   }
 }

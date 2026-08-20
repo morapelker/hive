@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useConnectionStore } from '@/stores'
+import { sortInstancesBaseLast } from '@/lib/connection-project'
 import { ConnectionItem } from '@/components/connections/ConnectionItem'
 import { ManageConnectionWorktreesDialog } from '@/components/connections/ManageConnectionWorktreesDialog'
 
@@ -10,14 +11,15 @@ interface ConnectionInstanceListProps {
 /**
  * The expanded body of a connection project (projects.kind === 'connection')
  * in the sidebar: its live connection instances — one per active worktree set —
- * rendered with the same cards as the Connections section.
+ * rendered with the same cards as the Connections section. The base instance
+ * (member default worktrees) sits last, like a project's default worktree.
  */
 export function ConnectionInstanceList({
   projectId
 }: ConnectionInstanceListProps): React.JSX.Element {
   const connections = useConnectionStore((s) => s.connections)
   const instances = useMemo(
-    () => connections.filter((c) => c.saved_project_id === projectId),
+    () => sortInstancesBaseLast(connections.filter((c) => c.saved_project_id === projectId)),
     [connections, projectId]
   )
 

@@ -1,7 +1,11 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { toast } from '@/lib/toast'
-import { registerConnectionClear, clearWorktreeSelection } from './store-coordination'
+import {
+  registerConnectionClear,
+  registerConnectionSavedProjectResolver,
+  clearWorktreeSelection
+} from './store-coordination'
 import { useKanbanStore } from './useKanbanStore'
 import { connectionApi } from '@/api/connection-api'
 import { worktreeApi } from '@/api/worktree-api'
@@ -29,6 +33,8 @@ interface Connection {
   color: string | null
   /** Saved-connection project this connection is an instance of (null/absent = ad-hoc). */
   saved_project_id?: string | null
+  /** 1 = base instance of a connection project (members = each member project's default worktree). */
+  is_base?: number
   created_at: string
   updated_at: string
   members: ConnectionMemberEnriched[]
@@ -379,6 +385,28 @@ export const useConnectionStore = create<ConnectionState>()(
               )
             }))
           }
+          // The project's base instance (member default worktrees) — upsert without
+          // selecting. It may BE the source connection (a connection already spanning
+          // the member default worktrees is promoted rather than duplicated), so
+          // replace an existing row instead of skipping it.
+          const baseConnection = result.baseConnection
+          if (baseConnection) {
+            set((state) =>
+              state.connections.some((c) => c.id === baseConnection.id)
+                ? {
+                    connections: state.connections.map((c) =>
+                      c.id === baseConnection.id ? baseConnection : c
+                    )
+                  }
+                : { connections: [...state.connections, baseConnection] }
+            )
+          }
+          // The source connection may already be pinned: it is now an instance of
+          // the new project, so the pinned board scope must pick the project up.
+          const { usePinnedStore } = await import('./usePinnedStore')
+          if (usePinnedStore.getState().isConnectionPinned(connectionId)) {
+            void usePinnedStore.getState().loadPinned()
+          }
 
           // Insert + select the new project (dynamic import avoids a store cycle)
           const { useProjectStore } = await import('./useProjectStore')
@@ -497,3 +525,10 @@ export const useConnectionStore = create<ConnectionState>()(
 
 // Register the connection-clear callback so useWorktreeStore can call it synchronously
 registerConnectionClear(() => useConnectionStore.setState({ selectedConnectionId: null }))
+
+// Let usePinnedStore map pinned connections → their connection project (pinned board scope)
+registerConnectionSavedProjectResolver(
+  (connectionId) =>
+    useConnectionStore.getState().connections.find((c) => c.id === connectionId)
+      ?.saved_project_id ?? null
+)

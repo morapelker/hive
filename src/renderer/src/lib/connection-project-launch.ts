@@ -29,6 +29,7 @@ import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
 import { startHivePromptTelemetry } from '@/lib/hive-enterprise-telemetry'
 import { createPlanFile, exceedsGoalPromptLimit, planFilePrompt } from '@/lib/goal-plan-file'
 import { resolveBadgeModel } from '@/lib/ticket-launch'
+import { autoPinBaseWorktree } from '@/lib/auto-pin'
 import {
   PLAN_MODE_PREFIX,
   getSuperModePrefix,
@@ -38,7 +39,12 @@ import {
 } from '@/lib/constants'
 import { canonicalizeTicketTitle } from '@shared/types/branch-utils'
 import { FALLBACK_MODELS } from '@shared/model-resolution'
-import { getMemberProjects, type MemberProject, type WorktreeNameSet } from '@/lib/connection-project'
+import {
+  getMemberProjects,
+  isBaseInstance,
+  type MemberProject,
+  type WorktreeNameSet
+} from '@/lib/connection-project'
 import type { KanbanTicket, Session } from '../../../main/db/types'
 
 /** Minimal ticket shape the connection-project pipeline needs. */
@@ -395,12 +401,17 @@ export async function startTicketSessionOnConnectionInstance(args: {
       pending_launch_config: null
     })
 
-    // Name the instance after the ticket unless the user already renamed it
+    // Name the instance after the ticket unless the user already renamed it —
+    // never the base instance (it is the project's "main", like a default worktree).
     const connection = useConnectionStore.getState().connections.find((c) => c.id === connectionId)
     const ticketTitle = ticket.title.trim()
-    if (connection && !connection.custom_name && ticketTitle) {
+    if (connection && !isBaseInstance(connection) && !connection.custom_name && ticketTitle) {
       void useConnectionStore.getState().renameConnection(connectionId, ticketTitle)
     }
+
+    // Setting-gated auto-pin: pins the project's base instance so this board
+    // shows on the pinned board (the git-project paths pin the default worktree).
+    void autoPinBaseWorktree(savedProjectId)
 
     const usageProvider = resolveDefaultUsageProvider(sdk)
     if (usageProvider) {

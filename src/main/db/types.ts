@@ -429,6 +429,12 @@ export interface Connection {
   pinned: number // 0 = not pinned, 1 = pinned
   /** Saved-connection project this connection is an instance of (null/absent = ad-hoc connection). */
   saved_project_id?: string | null
+  /**
+   * 1 = the BASE instance of a connection project: its members are each member
+   * project's default worktree. Mirrors worktrees.is_default — it cannot be
+   * deleted/archived and its member set is fixed.
+   */
+  is_base?: number
   created_at: string
   updated_at: string
 }
@@ -439,6 +445,7 @@ export interface ConnectionCreate {
   color?: string | null
   custom_name?: string | null
   saved_project_id?: string | null
+  is_base?: number
 }
 
 export interface ConnectionUpdate {
@@ -449,6 +456,7 @@ export interface ConnectionUpdate {
   status?: 'active' | 'archived'
   pinned?: number
   saved_project_id?: string | null
+  is_base?: number
 }
 
 export interface ConnectionMember {

@@ -1,11 +1,16 @@
 import { beforeEach, describe, expect, it } from 'vitest'
+import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import {
+  baseInstanceLabel,
   computeWorktreeNameSets,
+  findBaseInstanceConnection,
   getMemberProjects,
+  isBaseInstance,
   isConnectionProject,
-  parseMemberProjectIds
+  parseMemberProjectIds,
+  sortInstancesBaseLast
 } from './connection-project'
 
 const makeProject = (id: string, name: string, extra: Record<string, unknown> = {}) =>
@@ -124,5 +129,84 @@ describe('connection-project helpers', () => {
       worktreesByProject: new Map([['a', [makeWorktree('wa1', 'a', 'ticket-x')]]])
     })
     expect(computeWorktreeNameSets(members)).toEqual([])
+  })
+})
+
+describe('connection-project base instance helpers', () => {
+  const makeConnection = (
+    id: string,
+    extra: Record<string, unknown> = {}
+  ): { id: string; saved_project_id?: string | null; is_base?: number } =>
+    ({
+      id,
+      name: id,
+      custom_name: null,
+      status: 'active',
+      path: `/tmp/connections/${id}`,
+      color: null,
+      saved_project_id: 'saved',
+      is_base: 0,
+      created_at: '2026-01-01',
+      updated_at: '2026-01-01',
+      members: [],
+      ...extra
+    }) as never
+
+  beforeEach(() => {
+    useConnectionStore.setState({ connections: [] })
+  })
+
+  it('isBaseInstance requires the flag AND a live connection project', () => {
+    expect(isBaseInstance({ id: 'c', is_base: 1, saved_project_id: 'p' })).toBe(true)
+    expect(isBaseInstance({ id: 'c', is_base: 0, saved_project_id: 'p' })).toBe(false)
+    // Orphan: the project was removed, so the row is an ordinary connection again
+    expect(isBaseInstance({ id: 'c', is_base: 1, saved_project_id: null })).toBe(false)
+    expect(isBaseInstance({ id: 'c', is_base: 1 })).toBe(false)
+    expect(isBaseInstance({ id: 'c' })).toBe(false)
+    expect(isBaseInstance(null)).toBe(false)
+  })
+
+  it('findBaseInstanceConnection returns the base of the given project only', () => {
+    useConnectionStore.setState({
+      connections: [
+        makeConnection('inst'),
+        makeConnection('other-base', { saved_project_id: 'other', is_base: 1 }),
+        makeConnection('base', { is_base: 1 })
+      ] as never
+    })
+    expect(findBaseInstanceConnection('saved')?.id).toBe('base')
+    expect(findBaseInstanceConnection('other')?.id).toBe('other-base')
+    expect(findBaseInstanceConnection('missing')).toBeNull()
+  })
+
+  it('baseInstanceLabel joins the distinct member branches, falling back to "main"', () => {
+    expect(baseInstanceLabel([{ worktree_branch: 'main' }, { worktree_branch: 'main' }])).toBe('main')
+    expect(baseInstanceLabel([{ worktree_branch: 'main' }, { worktree_branch: 'master' }])).toBe(
+      'main + master'
+    )
+    expect(baseInstanceLabel([{ worktree_branch: '' }, { worktree_branch: null }])).toBe('main')
+    expect(baseInstanceLabel([])).toBe('main')
+    expect(baseInstanceLabel(undefined)).toBe('main')
+  })
+
+  it('sortInstancesBaseLast keeps user instances in order and moves the base to the end', () => {
+    const sorted = sortInstancesBaseLast([
+      makeConnection('base', { is_base: 1 }),
+      makeConnection('b'),
+      makeConnection('a')
+    ])
+    expect(sorted.map((c) => c.id)).toEqual(['b', 'a', 'base'])
+    expect(sortInstancesBaseLast([]).length).toBe(0)
+  })
+
+  it('an orphaned base (project removed) sorts and reads as an ordinary instance', () => {
+    const orphan = makeConnection('orphan', { is_base: 1, saved_project_id: null })
+    expect(isBaseInstance(orphan)).toBe(false)
+    expect(sortInstancesBaseLast([orphan, makeConnection('a')]).map((c) => c.id)).toEqual([
+      'orphan',
+      'a'
+    ])
+    useConnectionStore.setState({ connections: [orphan] as never })
+    expect(findBaseInstanceConnection('saved')).toBeNull()
   })
 })
