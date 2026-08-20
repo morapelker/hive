@@ -4,6 +4,7 @@ import { Pin } from 'lucide-react'
 import { byTransitionDesc, parseTicketKey, ticketKey, useKanbanStore } from '@/stores/useKanbanStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { usePinnedStore } from '@/stores/usePinnedStore'
+import { useProjectStore } from '@/stores/useProjectStore'
 import { useBoardChatStore } from '@/stores/useBoardChatStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useFavoriteTicketsStore } from '@/stores/useFavoriteTicketsStore'
@@ -117,6 +118,15 @@ export function KanbanBoard({ projectId, connectionId, isPinnedMode }: KanbanBoa
   useKanbanStore((state) => state.transitionSortByColumn)
 
   const isConnectionMode = !!connectionId
+  // Board of a saved-connection project (projects.kind === 'connection'):
+  // behaves like a normal single-project board, minus git-repo affordances.
+  const isConnectionProjectBoard = useProjectStore(
+    useCallback(
+      (state) =>
+        !!projectId && state.projects.find((p) => p.id === projectId)?.kind === 'connection',
+      [projectId]
+    )
+  )
   const connectionProjectIds = isConnectionMode && connectionId ? getConnectionProjectIds(connectionId) : []
   const pinnedProjectIdsArray = isPinnedMode ? getPinnedProjectIdsArray() : []
   const watchedProjectIds = isPinnedMode
@@ -558,13 +568,15 @@ export function KanbanBoard({ projectId, connectionId, isPinnedMode }: KanbanBoa
           )}
         >
           <BoardChatLauncher
-            disabled={Boolean(isPinnedMode) || !projectId}
+            disabled={Boolean(isPinnedMode) || !projectId || isConnectionProjectBoard}
             disabledReason={
               isPinnedMode
                 ? 'Board Assistant is not available on pinned multi-project boards yet.'
                 : !projectId
                   ? 'No project selected.'
-                  : undefined
+                  : isConnectionProjectBoard
+                    ? 'Board Assistant is not available on connection project boards yet.'
+                    : undefined
             }
             onClick={() => {
               if (!projectId) return

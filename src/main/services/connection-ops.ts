@@ -3,6 +3,7 @@ import { join } from 'path'
 import { createLogger } from './logger'
 import {
   createConnectionDir,
+  createConnectionProjectDir,
   createSymlink,
   removeSymlink,
   deleteConnectionDir,
@@ -11,7 +12,7 @@ import {
   generateConnectionColor
 } from './connection-service'
 import type { DatabaseService } from '../db/database'
-import type { ConnectionWithMembers } from '../db/types'
+import type { ConnectionWithMembers, Project } from '../db/types'
 import type { RecentConnectionEntry, RecentConnectionProject } from '../../shared/types/connection'
 
 const log = createLogger({ component: 'ConnectionOps' })
@@ -96,9 +97,10 @@ export function getPinnedConnectionsOp(db: DatabaseService): ConnectionWithMembe
  */
 export async function createConnectionOp(
   db: DatabaseService,
-  worktreeIds: string[]
+  worktreeIds: string[],
+  savedProjectId?: string | null
 ): Promise<{ success: boolean; connection?: ConnectionWithMembers; error?: string }> {
-  log.info('Creating connection', { worktreeCount: worktreeIds.length })
+  log.info('Creating connection', { worktreeCount: worktreeIds.length, savedProjectId })
   try {
     // Use a short random ID for the directory name (avoids filesystem issues with special chars)
     const dirName = randomUUID().slice(0, 8)
@@ -111,7 +113,12 @@ export async function createConnectionOp(
       .map((c) => c.color)
       .filter((c): c is string => c !== null)
     const color = generateConnectionColor(usedColors)
-    const connection = db.createConnection({ name: dirName, path: dirPath, color })
+    const connection = db.createConnection({
+      name: dirName,
+      path: dirPath,
+      color,
+      saved_project_id: savedProjectId ?? null
+    })
 
     // For each worktree, look up its data, derive symlink name, create symlink + member
     const existingSymlinkNames: string[] = []
@@ -564,6 +571,108 @@ export function setRecentConnectionNoteOp(
     const message = error instanceof Error ? error.message : String(error)
     log.error(
       'Set recent connection note failed',
+      error instanceof Error ? error : new Error(message)
+    )
+    return { success: false, error: message }
+  }
+}
+
+/**
+ * Promote a connection into a standalone "connection project": a projects row
+ * (kind='connection') that owns its own kanban board, listed in the sidebar's
+ * Projects section. The project's path is a dedicated directory of symlinks to
+ * the member project ROOTS (not the connection's worktrees) so it survives the
+ * source connection being deleted. The source connection is linked back via
+ * connections.saved_project_id and becomes the project's first "instance".
+ */
+export async function saveConnectionAsProjectOp(
+  db: DatabaseService,
+  connectionId: string
+): Promise<{
+  success: boolean
+  project?: Project
+  connection?: ConnectionWithMembers
+  error?: string
+}> {
+  log.info('Saving connection as project', { connectionId })
+  let createdDirPath: string | null = null
+  try {
+    const connection = db.getConnection(connectionId)
+    if (!connection) {
+      return { success: false, error: 'Connection not found' }
+    }
+    if (connection.saved_project_id) {
+      return { success: false, error: 'Connection is already saved as a project' }
+    }
+
+    // Distinct member project ids, in member order
+    const memberProjectIds = [...new Set(connection.members.map((m) => m.project_id))]
+    if (memberProjectIds.length < 2) {
+      return { success: false, error: 'Connection needs at least 2 projects to save as a project' }
+    }
+
+    const projects = memberProjectIds
+      .map((id) => db.getProject(id))
+      .filter((p): p is Project => p !== null)
+    if (projects.length !== memberProjectIds.length) {
+      return { success: false, error: 'A member project no longer exists' }
+    }
+
+    // Create the project directory with symlinks to each member project root
+    const dirName = randomUUID().slice(0, 8)
+    const dirPath = createConnectionProjectDir(dirName)
+    createdDirPath = dirPath
+    const existingSymlinkNames: string[] = []
+    const agentsMdMembers: {
+      symlinkName: string
+      projectName: string
+      branchName: string
+      worktreePath: string
+    }[] = []
+    for (const project of projects) {
+      const symlinkName = deriveSymlinkName(project.name, existingSymlinkNames)
+      existingSymlinkNames.push(symlinkName)
+      createSymlink(project.path, join(dirPath, symlinkName))
+      const defaultWorktree = db.getWorktreesByProject(project.id).find((w) => w.is_default)
+      agentsMdMembers.push({
+        symlinkName,
+        projectName: project.name,
+        branchName: defaultWorktree?.branch_name || 'default',
+        worktreePath: project.path
+      })
+    }
+    generateConnectionInstructions(dirPath, agentsMdMembers)
+
+    const name = connection.custom_name || deriveConnectionName(connection)
+    const project = db.createConnectionProject({
+      name,
+      path: dirPath,
+      member_project_ids: memberProjectIds
+    })
+
+    // Link the source connection back to the saved project — it becomes the
+    // project's first instance.
+    db.updateConnection(connectionId, { saved_project_id: project.id })
+    const updatedConnection = db.getConnection(connectionId) ?? undefined
+
+    log.info('Connection saved as project', {
+      connectionId,
+      projectId: project.id,
+      memberCount: memberProjectIds.length
+    })
+    return { success: true, project, connection: updatedConnection }
+  } catch (error) {
+    // Best-effort: don't leak the half-built project directory on failure.
+    if (createdDirPath) {
+      try {
+        deleteConnectionDir(createdDirPath)
+      } catch {
+        // Cleanup is best-effort only.
+      }
+    }
+    const message = error instanceof Error ? error.message : String(error)
+    log.error(
+      'Save connection as project failed',
       error instanceof Error ? error : new Error(message)
     )
     return { success: false, error: message }

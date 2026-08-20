@@ -415,7 +415,9 @@ async function buildBackupProject(
 
 async function exportBackup(deps: BackupOpsDeps): Promise<BackupExportResult> {
   try {
-    const projects = deps.db.getAllProjects()
+    // Connection projects (kind='connection') are machine-local composites of
+    // other projects — they have no git repo and are excluded from backups.
+    const projects = deps.db.getAllProjects().filter((p) => p.kind !== 'connection')
     const backupProjects: BackupFile['projects'] = []
     const warnings: string[] = []
     for (const project of projects) {
@@ -515,6 +517,7 @@ async function buildHiveRemoteMap(
 ): Promise<Map<string, { project: Project; rawRemote: string | null }>> {
   const map = new Map<string, { project: Project; rawRemote: string | null }>()
   for (const project of deps.db.getAllProjects()) {
+    if (project.kind === 'connection') continue
     const rawRemote = await getRemoteUrlSafe(deps, project.path)
     const normalized = normalizeGitRemoteUrl(rawRemote)
     if (normalized !== null && !map.has(normalized)) {

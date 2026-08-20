@@ -6,6 +6,8 @@ export interface Connection {
   path: string
   color: string | null
   pinned: number
+  /** Saved-connection project this connection is an instance of (null/absent = ad-hoc connection). */
+  saved_project_id?: string | null
   created_at: string
   updated_at: string
 }

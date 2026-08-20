@@ -692,6 +692,13 @@ export class DatabaseService {
     this.safeAddColumn('worktrees', 'github_pr_url', 'TEXT DEFAULT NULL')
     this.safeAddColumn('worktrees', 'teleported_to', 'TEXT DEFAULT NULL')
     this.safeAddColumn('connections', 'pinned', 'INTEGER NOT NULL DEFAULT 0')
+    this.safeAddColumn('projects', 'kind', "TEXT NOT NULL DEFAULT 'git'")
+    this.safeAddColumn('projects', 'member_project_ids', 'TEXT DEFAULT NULL')
+    this.safeAddColumn(
+      'connections',
+      'saved_project_id',
+      'TEXT DEFAULT NULL REFERENCES projects(id) ON DELETE SET NULL'
+    )
     this.safeAddColumn('projects', 'kanban_simple_mode', 'INTEGER NOT NULL DEFAULT 0')
     this.safeAddColumn('projects', 'kanban_storage_mode', "TEXT NOT NULL DEFAULT 'internal'")
     this.safeAddColumn('projects', 'kanban_markdown_config', 'TEXT DEFAULT NULL')
@@ -1113,6 +1120,36 @@ export class DatabaseService {
     )
 
     return project
+  }
+
+  /**
+   * Create a "connection project": a projects row with kind='connection' that owns a
+   * kanban board for a saved connection. It has NO default worktree and never points
+   * at a git repo — path is a dedicated symlink directory. detected_icon is set to
+   * 'none' so the renderer's favicon scan skips it.
+   */
+  createConnectionProject(data: {
+    name: string
+    path: string
+    member_project_ids: string[]
+  }): Project {
+    const db = this.getDb()
+    const now = new Date().toISOString()
+    // New projects get sort_order 0 (top), bump all others down
+    db.prepare('UPDATE projects SET sort_order = sort_order + 1').run()
+
+    const id = randomUUID()
+    const memberIdsJson = JSON.stringify(data.member_project_ids)
+    db.prepare(
+      `INSERT INTO projects (id, name, path, kind, member_project_ids, description, tags, language, setup_script, run_script, archive_script, worktree_create_script, custom_commands, custom_icon, detected_icon, auto_assign_port, sort_order, created_at, last_accessed_at)
+       VALUES (?, ?, ?, 'connection', ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'none', 0, 0, ?, ?)`
+    ).run(id, data.name, data.path, memberIdsJson, now, now)
+
+    const created = this.getProject(id)
+    if (!created) {
+      throw new Error('Failed to create connection project')
+    }
+    return created
   }
 
   getProject(id: string): Project | null {
@@ -2250,13 +2287,14 @@ export class DatabaseService {
       color: data.color ?? null,
       pinned: 0,
       status: 'active',
+      saved_project_id: data.saved_project_id ?? null,
       created_at: now,
       updated_at: now
     }
 
     db.prepare(
-      `INSERT INTO connections (id, name, custom_name, path, color, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO connections (id, name, custom_name, path, color, status, saved_project_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       connection.id,
       connection.name,
@@ -2264,6 +2302,7 @@ export class DatabaseService {
       connection.path,
       connection.color,
       connection.status,
+      connection.saved_project_id,
       connection.created_at,
       connection.updated_at
     )
@@ -2348,6 +2387,10 @@ export class DatabaseService {
     if (data.pinned !== undefined) {
       updates.push('pinned = ?')
       values.push(data.pinned)
+    }
+    if (data.saved_project_id !== undefined) {
+      updates.push('saved_project_id = ?')
+      values.push(data.saved_project_id)
     }
 
     values.push(id)

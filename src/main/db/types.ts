@@ -1,10 +1,17 @@
 import type { CustomProjectCommand } from '@shared/lib/custom-commands'
 import type { AgentSdk } from '@shared/types/agent-sdk'
 
+/** Project discriminator: 'git' = a regular repo project, 'connection' = a saved connection project. */
+export type ProjectKind = 'git' | 'connection'
+
 export interface Project {
   id: string
   name: string
   path: string
+  /** 'git' (default) or 'connection' (a saved connection promoted to a project). */
+  kind?: ProjectKind
+  /** connection projects only: JSON array of member project ids (creation order). */
+  member_project_ids?: string | null
   description: string | null
   tags: string | null // JSON array
   language: string | null
@@ -420,6 +427,8 @@ export interface Connection {
   color: string | null // JSON-serialised ConnectionColorQuad
   status: 'active' | 'archived'
   pinned: number // 0 = not pinned, 1 = pinned
+  /** Saved-connection project this connection is an instance of (null/absent = ad-hoc connection). */
+  saved_project_id?: string | null
   created_at: string
   updated_at: string
 }
@@ -429,6 +438,7 @@ export interface ConnectionCreate {
   path: string
   color?: string | null
   custom_name?: string | null
+  saved_project_id?: string | null
 }
 
 export interface ConnectionUpdate {
@@ -438,6 +448,7 @@ export interface ConnectionUpdate {
   color?: string | null
   status?: 'active' | 'archived'
   pinned?: number
+  saved_project_id?: string | null
 }
 
 export interface ConnectionMember {

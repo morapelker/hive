@@ -4,6 +4,7 @@ import {
   ChevronDown,
   Plus,
   Loader2,
+  Link,
   Pencil,
   Trash2,
   Copy,
@@ -49,6 +50,8 @@ import {
 } from '@/stores'
 import { HintBadge } from '@/components/ui/HintBadge'
 import { WorktreeList, BranchPickerDialog } from '@/components/worktrees'
+import { ConnectionInstanceList } from './ConnectionInstanceList'
+import { getMemberProjects } from '@/lib/connection-project'
 import { LanguageIcon } from './LanguageIcon'
 import { HighlightedText } from './HighlightedText'
 import {
@@ -79,6 +82,10 @@ interface Project {
   id: string
   name: string
   path: string
+  /** 'git' (default) or 'connection' (a saved connection promoted to a project). */
+  kind?: 'git' | 'connection'
+  /** connection projects only: JSON array of member project ids. */
+  member_project_ids?: string | null
   description: string | null
   tags: string | null
   language: string | null
@@ -145,6 +152,16 @@ export const ProjectItem = memo(function ProjectItem({
 
   const connectionModeActive = useConnectionStore((s) => s.connectionModeActive)
 
+  // ── Connection project (saved connection) ─────────────────────────
+  const isConnectionProject = project.kind === 'connection'
+  const instanceCount = useConnectionStore((s) =>
+    isConnectionProject
+      ? s.connections.reduce((n, c) => (c.saved_project_id === project.id ? n + 1 : n), 0)
+      : 0
+  )
+  const quickCreateConnection = useConnectionStore((s) => s.quickCreateConnection)
+  const [isCreatingInstance, setIsCreatingInstance] = useState(false)
+
   const projectSpaceIds = projectSpaceMap[project.id] ?? []
 
   const plusHint = useHintStore((s) => s.hintMap.get('plus:' + project.id))
@@ -180,6 +197,12 @@ export const ProjectItem = memo(function ProjectItem({
   const handleClick = (): void => {
     selectProject(project.id)
     toggleProjectExpanded(project.id)
+    if (isConnectionProject) {
+      // Board-first entity: clear worktree/connection selection so the
+      // project's own kanban board becomes the main-pane content.
+      useConnectionStore.getState().selectConnection(null)
+      useWorktreeStore.getState().selectWorktreeOnly(null)
+    }
   }
 
   const handleToggleExpand = (e: React.MouseEvent): void => {
@@ -242,7 +265,36 @@ export const ProjectItem = memo(function ProjectItem({
     toast.success('Project refreshed')
   }
 
+  const doCreateInstance = useCallback(async (): Promise<void> => {
+    if (isCreatingInstance) return
+    const memberProjects = getMemberProjects(project)
+    if (memberProjects.length < 2) {
+      toast.error('This connection project needs at least 2 existing member projects')
+      return
+    }
+    setIsCreatingInstance(true)
+    const loadingToastId = toast.loading('Creating connection worktrees...')
+    try {
+      const connectionId = await quickCreateConnection(memberProjects, {
+        savedProjectId: project.id
+      })
+      toast.dismiss(loadingToastId)
+      if (connectionId) {
+        toast.success('Connection created')
+      }
+    } catch (error) {
+      toast.dismiss(loadingToastId)
+      toast.error(error instanceof Error ? error.message : 'Failed to create connection')
+    } finally {
+      setIsCreatingInstance(false)
+    }
+  }, [isCreatingInstance, project, quickCreateConnection])
+
   const doCreateWorktree = useCallback(async (): Promise<void> => {
+    if (isConnectionProject) {
+      await doCreateInstance()
+      return
+    }
     if (isCreatingWorktree) return
 
     // Check if repo has any commits before attempting worktree creation
@@ -290,7 +342,7 @@ export const ProjectItem = memo(function ProjectItem({
         error instanceof Error ? error.message : 'Unknown error'
       )
     }
-  }, [isCreatingWorktree, createWorktree, project, autoPullBeforeWorktree])
+  }, [isConnectionProject, doCreateInstance, isCreatingWorktree, createWorktree, project, autoPullBeforeWorktree])
 
   const handleCreateWorktree = useCallback(
     async (e: React.MouseEvent): Promise<void> => {
@@ -370,7 +422,7 @@ export const ProjectItem = memo(function ProjectItem({
     !isEditing && !!plusHint && (inputFocused || (vimModeEnabled && vimMode === 'normal'))
   // Header actions are hover-revealed (orca ProjectHeaderActions); force them
   // visible while a hint badge targets the plus button or a worktree is being created.
-  const forceActionsVisible = showPlusHint || isCreatingWorktree
+  const forceActionsVisible = showPlusHint || isCreatingWorktree || isCreatingInstance
 
   return (
     // Orca group section (virtual-rows.ts): every non-first header carries the
@@ -419,11 +471,15 @@ export const ProjectItem = memo(function ProjectItem({
               {/* Title surface: 16px icon box + 13px semibold label (+ count pill) */}
               <div className={SECTION_HEADER_TITLE_SURFACE}>
                 <div className={cn(SECTION_HEADER_ICON_BOX, SECTION_TONE_NEUTRAL)}>
-                  <LanguageIcon
-                    language={project.language}
-                    customIcon={project.custom_icon}
-                    detectedIcon={project.detected_icon}
-                  />
+                  {isConnectionProject ? (
+                    <Link className="size-3.5 shrink-0 text-muted-foreground" />
+                  ) : (
+                    <LanguageIcon
+                      language={project.language}
+                      customIcon={project.custom_icon}
+                      detectedIcon={project.detected_icon}
+                    />
+                  )}
                 </div>
 
                 {isEditing ? (
@@ -451,11 +507,15 @@ export const ProjectItem = memo(function ProjectItem({
                           {project.name}
                         </span>
                       )}
-                      {worktreeCount > 0 && (
+                      {(isConnectionProject ? instanceCount : worktreeCount) > 0 && (
                         <SidebarCountPill
-                          count={worktreeCount}
+                          count={isConnectionProject ? instanceCount : worktreeCount}
                           className="tabular-nums"
-                          aria-label={`${worktreeCount} ${worktreeCount === 1 ? 'worktree' : 'worktrees'}`}
+                          aria-label={
+                            isConnectionProject
+                              ? `${instanceCount} ${instanceCount === 1 ? 'connection' : 'connections'}`
+                              : `${worktreeCount} ${worktreeCount === 1 ? 'worktree' : 'worktrees'}`
+                          }
                           data-testid={`project-worktree-count-${project.id}`}
                         />
                       )}
@@ -518,16 +578,20 @@ export const ProjectItem = memo(function ProjectItem({
                       SECTION_HEADER_ACTION_BUTTON,
                       forceActionsVisible && 'ml-0 max-w-5 opacity-100'
                     )}
-                    aria-label={`New worktree in ${project.name}`}
+                    aria-label={
+                      isConnectionProject
+                        ? `New connection in ${project.name}`
+                        : `New worktree in ${project.name}`
+                    }
                     onClick={handleCreateWorktree}
                     onContextMenu={(e) => {
                       e.preventDefault()
                       e.stopPropagation()
-                      setBranchPickerOpen(true)
+                      if (!isConnectionProject) setBranchPickerOpen(true)
                     }}
-                    disabled={isCreatingWorktree}
+                    disabled={isCreatingWorktree || isCreatingInstance}
                   >
-                    {isCreatingWorktree ? (
+                    {isCreatingWorktree || isCreatingInstance ? (
                       <Loader2 className="size-3 animate-spin" />
                     ) : (
                       <Plus className="size-3" />
@@ -552,24 +616,28 @@ export const ProjectItem = memo(function ProjectItem({
                 <Copy className="h-4 w-4 mr-2" />
                 Copy Path
               </ContextMenuItem>
-              <ContextMenuItem onClick={() => refreshLanguage(project.id)}>
-                <RefreshCw className="h-4 w-4 mr-2" />
-                Refresh Language
-              </ContextMenuItem>
-              <ContextMenuItem onClick={handleRefreshProject}>
-                <RefreshCw className="h-4 w-4 mr-2" />
-                Refresh Project
-              </ContextMenuItem>
-              <ContextMenuItem onClick={() => setBranchPickerOpen(true)}>
-                <GitBranch className="h-4 w-4 mr-2" />
-                New Workspace From...
-              </ContextMenuItem>
-              <ContextMenuItem
-                onClick={() => useProjectStore.getState().openProjectSettings(project.id)}
-              >
-                <Settings className="h-4 w-4 mr-2" />
-                Project Settings
-              </ContextMenuItem>
+              {!isConnectionProject && (
+                <>
+                  <ContextMenuItem onClick={() => refreshLanguage(project.id)}>
+                    <RefreshCw className="h-4 w-4 mr-2" />
+                    Refresh Language
+                  </ContextMenuItem>
+                  <ContextMenuItem onClick={handleRefreshProject}>
+                    <RefreshCw className="h-4 w-4 mr-2" />
+                    Refresh Project
+                  </ContextMenuItem>
+                  <ContextMenuItem onClick={() => setBranchPickerOpen(true)}>
+                    <GitBranch className="h-4 w-4 mr-2" />
+                    New Workspace From...
+                  </ContextMenuItem>
+                  <ContextMenuItem
+                    onClick={() => useProjectStore.getState().openProjectSettings(project.id)}
+                  >
+                    <Settings className="h-4 w-4 mr-2" />
+                    Project Settings
+                  </ContextMenuItem>
+                </>
+              )}
               {spaces.length > 0 && (
                 <>
                   <ContextMenuSub>
@@ -615,8 +683,14 @@ export const ProjectItem = memo(function ProjectItem({
       </div>
 
       {/* Worktree list — orca surface inset for a depth-0 project group is 0;
-          the 6px header→card gap comes from the group's flex gap. */}
-      {isExpanded && <WorktreeList project={project} />}
+          the 6px header→card gap comes from the group's flex gap.
+          Connection projects list their live connection instances instead. */}
+      {isExpanded &&
+        (isConnectionProject ? (
+          <ConnectionInstanceList projectId={project.id} />
+        ) : (
+          <WorktreeList project={project} />
+        ))}
 
       {/* Branch Picker Dialog */}
       <BranchPickerDialog
@@ -639,7 +713,14 @@ export const ProjectItem = memo(function ProjectItem({
                 <p className="font-mono text-xs bg-muted rounded px-2 py-1 break-all">
                   {project.path}
                 </p>
-                <p>Your files on disk will not be affected.</p>
+                {isConnectionProject ? (
+                  <p>
+                    Its board, tickets and sessions will be deleted. Member projects, worktrees and
+                    files on disk will not be affected; its connections become regular connections.
+                  </p>
+                ) : (
+                  <p>Your files on disk will not be affected.</p>
+                )}
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>

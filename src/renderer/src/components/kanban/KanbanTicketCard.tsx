@@ -1021,6 +1021,14 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   const isSimpleTicket = ticket.current_session_id === null
   const isFlowTicket = ticket.current_session_id !== null
   const isTodo = ticket.column === 'todo'
+  // Connection-project tickets have no single worktree — the assign/pre-assign
+  // worktree flows don't apply to them.
+  const isConnectionProjectTicket = useProjectStore(
+    useCallback(
+      (state) => state.projects.find((p) => p.id === ticket.project_id)?.kind === 'connection',
+      [ticket.project_id]
+    )
+  )
 
   const handleUnassignWorktree = useCallback(async () => {
     try {
@@ -1708,7 +1716,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
           ) : (
             <>
           {/* Todo tickets without worktree: pre-assign */}
-          {isSimpleTicket && isTodo && !ticket.worktree_id && (
+          {isSimpleTicket && isTodo && !ticket.worktree_id && !isConnectionProjectTicket && (
             <ContextMenuItem
               data-testid="ctx-assign-worktree"
               onClick={() => setShowPreAssignPicker(true)}
@@ -1742,7 +1750,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
           )}
 
           {/* Non-todo simple tickets: full assign flow (existing behavior) */}
-          {isSimpleTicket && !isTodo && (
+          {isSimpleTicket && !isTodo && !isConnectionProjectTicket && (
             <ContextMenuItem
               data-testid="ctx-assign-worktree"
               onClick={() => setShowWorktreePicker(true)}

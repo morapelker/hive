@@ -2619,7 +2619,10 @@ export const useSessionStore = create<SessionState>()(
             return { success: false, error: result.error || 'Connection has no members' }
           }
 
-          const projectId = result.connection.members[0].project_id
+          // Instances of a saved-connection project attribute their sessions to the
+          // saved project (its board/history), falling back to the first member.
+          const projectId =
+            result.connection.saved_project_id ?? result.connection.members[0].project_id
 
           const { agentSdk: defaultAgentSdk, model: defaultModel } =
             resolveSessionCreationSelection({

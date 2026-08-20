@@ -1,9 +1,15 @@
 import type { CustomProjectCommand } from '@shared/lib/custom-commands'
 
+export type ProjectKind = 'git' | 'connection'
+
 export interface Project {
   id: string
   name: string
   path: string
+  /** 'git' (default) or 'connection' (a saved connection promoted to a project). */
+  kind?: ProjectKind
+  /** connection projects only: JSON array of member project ids (creation order). */
+  member_project_ids?: string | null
   description: string | null
   tags: string | null
   language: string | null

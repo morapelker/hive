@@ -11,6 +11,10 @@ interface Project {
   id: string
   name: string
   path: string
+  /** 'git' (default) or 'connection' (a saved connection promoted to a project). */
+  kind?: 'git' | 'connection'
+  /** connection projects only: JSON array of member project ids (creation order). */
+  member_project_ids?: string | null
   description: string | null
   tags: string | null
   language: string | null
@@ -211,6 +215,31 @@ export const useProjectStore = create<ProjectState>()(
       // Remove a project
       removeProject: async (id: string) => {
         try {
+          const removed = get().projects.find((p) => p.id === id)
+          // Connection projects: close active sessions on their instance
+          // connections BEFORE the DB cascade deletes the session rows —
+          // otherwise the agent processes keep running orphaned.
+          if (removed?.kind === 'connection') {
+            try {
+              const [{ useConnectionStore }, { useSessionStore }] = await Promise.all([
+                import('./useConnectionStore'),
+                import('./useSessionStore')
+              ])
+              const instances = useConnectionStore
+                .getState()
+                .connections.filter((c) => c.saved_project_id === id)
+              for (const instance of instances) {
+                const sessions = await dbApi.session.getActiveByConnection<{ id: string }>(
+                  instance.id
+                )
+                for (const session of sessions) {
+                  await useSessionStore.getState().closeSession(session.id, { stopRemote: true })
+                }
+              }
+            } catch {
+              // Best-effort — removal proceeds even if a session close fails.
+            }
+          }
           const success = await dbApi.project.delete(id)
           if (success) {
             set((state) => {
@@ -223,6 +252,14 @@ export const useProjectStore = create<ProjectState>()(
                 editingProjectId: state.editingProjectId === id ? null : state.editingProjectId
               }
             })
+            // Deleting a connection project detaches its instances server-side
+            // (connections.saved_project_id → NULL). Reload so they reappear in
+            // the Connections section instead of vanishing until next launch.
+            if (removed?.kind === 'connection') {
+              import('./useConnectionStore')
+                .then(({ useConnectionStore }) => useConnectionStore.getState().loadConnections())
+                .catch(() => {})
+            }
           }
           return success
         } catch {

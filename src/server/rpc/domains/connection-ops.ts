@@ -12,12 +12,14 @@ import {
   removeConnectionMemberOp,
   removeWorktreeFromAllConnectionsOp,
   renameConnectionOp,
+  saveConnectionAsProjectOp,
   setConnectionPinnedOp,
   setRecentConnectionNoteOp,
   updateConnectionMembersOp
 } from '../../../main/services/connection-ops'
 import { telemetryService } from '../../../main/services/telemetry-service'
 import type { ConnectionWithMembers, RecentConnectionEntry } from '../../../shared/types/connection'
+import type { Project } from '../../../shared/types/project'
 import type { RpcHandler } from '../router'
 
 export interface ConnectionOpsCreateResult {
@@ -99,10 +101,22 @@ export interface ConnectionOpsSetRecentNoteResult {
   readonly error?: string
 }
 
+export interface ConnectionOpsSaveAsProjectResult {
+  readonly success: boolean
+  readonly project?: Project
+  readonly connection?: ConnectionWithMembers
+  readonly error?: string
+}
+
 export interface ConnectionOpsRpcService {
   readonly create: (
-    worktreeIds: string[]
+    worktreeIds: string[],
+    savedProjectId?: string | null
   ) => Effect.Effect<ConnectionOpsCreateResult, unknown, never>
+  /** Optional so fully-enumerated test mocks keep compiling (same pattern as WorktreeOps getContext?). */
+  readonly saveAsProject?: (
+    connectionId: string
+  ) => Effect.Effect<ConnectionOpsSaveAsProjectResult, unknown, never>
   readonly addMember: (
     connectionId: string,
     worktreeId: string
@@ -146,7 +160,12 @@ export interface ConnectionOpsRpcService {
 }
 
 const emptyParamsSchema = z.union([z.object({}).strict(), z.undefined(), z.null()])
-const createParamsSchema = z.object({ worktreeIds: z.array(z.string().min(1)) }).strict()
+const createParamsSchema = z
+  .object({
+    worktreeIds: z.array(z.string().min(1)),
+    savedProjectId: z.string().min(1).optional()
+  })
+  .strict()
 const connectionIdParamsSchema = z.object({ connectionId: z.string().min(1) }).strict()
 const connectionPathParamsSchema = z.object({ connectionPath: z.string().min(1) }).strict()
 const worktreeIdParamsSchema = z.object({ worktreeId: z.string().min(1) }).strict()
@@ -182,13 +201,25 @@ const setRecentNoteParamsSchema = z
   .strict()
 
 export const makeLiveConnectionOpsRpcService = (): ConnectionOpsRpcService => ({
-  create: (worktreeIds) =>
+  create: (worktreeIds, savedProjectId) =>
     Effect.tryPromise({
       try: async () => {
         const db = getDatabase()
-        const result = await createConnectionOp(db, worktreeIds)
+        const result = await createConnectionOp(db, worktreeIds, savedProjectId)
         if (result.success) {
           telemetryService.track('connection_created')
+        }
+        return result
+      },
+      catch: (cause) => cause
+    }),
+  saveAsProject: (connectionId) =>
+    Effect.tryPromise({
+      try: async () => {
+        const db = getDatabase()
+        const result = await saveConnectionAsProjectOp(db, connectionId)
+        if (result.success) {
+          telemetryService.track('connection_saved_as_project')
         }
         return result
       },
@@ -300,11 +331,30 @@ export const makeConnectionOpsRpcHandlers = (
       'connectionOps.create',
       (params) =>
         Effect.gen(function* () {
-          const { worktreeIds } = yield* Effect.try({
+          const { worktreeIds, savedProjectId } = yield* Effect.try({
             try: () => createParamsSchema.parse(params),
             catch: (cause) => cause
           })
-          return yield* service.create(worktreeIds)
+          // Only pass savedProjectId when present so existing single-arg
+          // call-shape expectations (test spies) stay intact.
+          return yield* (savedProjectId !== undefined
+            ? service.create(worktreeIds, savedProjectId)
+            : service.create(worktreeIds))
+        })
+    ],
+    [
+      'connectionOps.saveAsProject',
+      (params) =>
+        Effect.gen(function* () {
+          const { connectionId } = yield* Effect.try({
+            try: () => connectionIdParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          const saveAsProject = service.saveAsProject
+          if (!saveAsProject) {
+            return yield* Effect.fail(new Error('saveAsProject not supported'))
+          }
+          return yield* saveAsProject(connectionId)
         })
     ],
     [

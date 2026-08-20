@@ -96,6 +96,8 @@ export function RecentConnectionsDialog({
   const allProjects = useMemo(() => {
     const byId = new Map<string, RecentConnectionProject>()
     for (const project of storeProjects) {
+      // Connection projects can't be members of a connection themselves
+      if (project.kind === 'connection') continue
       byId.set(project.id, { id: project.id, name: project.name, path: project.path })
     }
     for (const entry of entries) {
