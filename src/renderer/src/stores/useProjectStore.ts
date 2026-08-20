@@ -331,10 +331,17 @@ export const useProjectStore = create<ProjectState>()(
       selectProject: (id: string | null, options?: ProjectSelectionOptions) => {
         set({ selectedProjectId: id })
         if (id) {
-          // Close pinned board when navigating to a specific project
+          // Close pinned board when navigating to a specific project — unless
+          // that project is already in the pinned scope (its tickets are on the
+          // pinned board, so staying there shows them). Dynamic import avoids a
+          // static store dependency cycle.
           const kanbanState = useKanbanStore.getState()
           if (!options?.preservePinnedBoard && kanbanState.isPinnedBoardActive) {
-            kanbanState.togglePinnedBoard()
+            void import('./usePinnedStore').then(({ usePinnedStore }) => {
+              if (!usePinnedStore.getState().pinnedProjectIds.has(id)) {
+                useKanbanStore.getState().closePinnedBoard()
+              }
+            })
           }
           // Touch project to update last_accessed_at
           get().touchProject(id)

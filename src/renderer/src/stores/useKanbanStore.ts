@@ -334,6 +334,8 @@ interface KanbanState {
   // ── Pinned board accessors ──────────────────────────────────────────
   isPinnedBoardActive: boolean
   togglePinnedBoard: () => void
+  /** Close the pinned board unconditionally (navigation intent) — idempotent, unlike togglePinnedBoard. */
+  closePinnedBoard: () => void
   loadTicketsForPinnedProjects: () => Promise<void>
   getTicketsByColumnForPinned: (column: KanbanTicketColumn) => KanbanTicket[]
   getInvalidPlaceholdersForPinned: () => MarkdownCardPlaceholder[]
@@ -1755,6 +1757,14 @@ export const useKanbanStore = create<KanbanState>()(
           if (wasTiled) useSessionStore.getState().deactivateTiledSessions()
           set((state) => ({ isPinnedBoardActive: wasTiled ? true : !state.isPinnedBoardActive }))
         })
+      },
+
+      // ── closePinnedBoard ─────────────────────────────────────────
+      // Sidebar navigation closes the board by setting the flag directly:
+      // togglePinnedBoard is async (dynamic import) and tiled-aware, so two
+      // queued "close" toggles cancel out and leave the board active.
+      closePinnedBoard: () => {
+        set((state) => (state.isPinnedBoardActive ? { isPinnedBoardActive: false } : state))
       },
 
       // ── loadTicketsForPinnedProjects ─────────────────────────────
