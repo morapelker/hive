@@ -39,6 +39,70 @@ const EMPTY_AGGREGATE: SiblingAggregate = {
  * read against `.getState()`, which is safe because all of its inputs are subscribed
  * to above, so the enclosing useMemo re-runs whenever any of them changes.
  */
+/**
+ * Connection-project twin of {@link useSiblingAggregate}: aggregates status
+ * counts across the sibling connection instances of a connection project
+ * (connections.saved_project_id === projectId), excluding the given instance
+ * (the pinned base). Buckets and skip rules match the worktree aggregate;
+ * per-instance status comes from `getConnectionStatus(...)`, whose inputs
+ * (sessionStatuses, sessionsByConnection) are subscribed to below.
+ */
+export function useConnectionInstanceAggregate(
+  projectId: string | null | undefined,
+  excludeConnectionId: string
+): SiblingAggregate {
+  const connections = useConnectionStore((s) => s.connections)
+  const sessionStatuses = useWorktreeStatusStore((s) => s.sessionStatuses)
+  const sessionsByConnection = useSessionStore((s) => s.sessionsByConnection)
+
+  return useMemo<SiblingAggregate>(() => {
+    if (!projectId) return EMPTY_AGGREGATE
+
+    const working: string[] = []
+    const ready: string[] = []
+    const waiting: string[] = []
+
+    for (const c of connections) {
+      if (c.saved_project_id !== projectId) continue
+      if (c.id === excludeConnectionId) continue
+
+      const status = useWorktreeStatusStore.getState().getConnectionStatus(c.id)
+      if (!status) continue
+
+      const projectNames = [...new Set(c.members.map((m) => m.project_name))].join(' + ')
+      const displayName = c.custom_name || projectNames || c.name || 'Connection'
+
+      switch (status) {
+        case 'working':
+        case 'planning':
+          working.push(displayName)
+          break
+        case 'completed':
+          ready.push(displayName)
+          break
+        case 'answering':
+        case 'permission':
+        case 'command_approval':
+        case 'plan_ready':
+          waiting.push(displayName)
+          break
+        // unread + idle (null) are intentionally skipped
+        default:
+          break
+      }
+    }
+
+    return {
+      working: { count: working.length, names: working },
+      ready: { count: ready.length, names: ready },
+      waiting: { count: waiting.length, names: waiting }
+    }
+    // `sessionStatuses` and `sessionsByConnection` feed getConnectionStatus()
+    // via `.getState()` — listed so their changes recompute the aggregate.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, excludeConnectionId, connections, sessionStatuses, sessionsByConnection])
+}
+
 export function useSiblingAggregate(
   projectId: string,
   excludeWorktreeId: string

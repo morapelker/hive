@@ -95,7 +95,12 @@ import { baseInstanceLabel, isBaseInstance } from '@/lib/connection-project'
 import { ArchiveConfirmDialog } from '@/components/worktrees/ArchiveConfirmDialog'
 import { AddAttachmentDialog } from '@/components/worktrees/AddAttachmentDialog'
 import { ManageConnectionWorktreesDialog } from '@/components/connections/ManageConnectionWorktreesDialog'
-import { useSiblingAggregate, type SiblingBucket } from '@/hooks/useSiblingAggregate'
+import {
+  useSiblingAggregate,
+  useConnectionInstanceAggregate,
+  type SiblingAggregate,
+  type SiblingBucket
+} from '@/hooks/useSiblingAggregate'
 import { useGhosttySuppression } from '@/hooks'
 import { systemApi } from '@/api/system-api'
 import { dbApi } from '@/api/db-api'
@@ -856,7 +861,24 @@ function SiblingCountChips({
   projectId: string
   excludeId: string
 }): React.JSX.Element | null {
-  const { working, ready, waiting } = useSiblingAggregate(projectId, excludeId)
+  const aggregate = useSiblingAggregate(projectId, excludeId)
+  return <AggregateChips aggregate={aggregate} />
+}
+
+/** Same chips for a pinned base connection: siblings are the connection project's other instances. */
+function ConnectionInstanceChips({
+  projectId,
+  excludeConnectionId
+}: {
+  projectId: string | null | undefined
+  excludeConnectionId: string
+}): React.JSX.Element | null {
+  const aggregate = useConnectionInstanceAggregate(projectId, excludeConnectionId)
+  return <AggregateChips aggregate={aggregate} />
+}
+
+function AggregateChips({ aggregate }: { aggregate: SiblingAggregate }): React.JSX.Element | null {
+  const { working, ready, waiting } = aggregate
 
   if (working.count === 0 && ready.count === 0 && waiting.count === 0) return null
 
@@ -933,6 +955,12 @@ function PinnedConnectionItem({
   const isSelected = selectedConnectionId === connectionId
 
   const connection = useConnectionStore((s) => s.connections.find((c) => c.id === connectionId))
+
+  // The connection project this instance belongs to (null for ad-hoc connections)
+  const savedProjectId = connection?.saved_project_id ?? null
+  const connectionProject = useProjectStore((s) =>
+    savedProjectId ? (s.projects.find((p) => p.id === savedProjectId) ?? null) : null
+  )
 
   const hint = useHintStore((s) => s.hintMap.get(`pinned-conn:${connectionId}`))
   const hintMode = useHintStore((s) => s.mode)
@@ -1072,6 +1100,10 @@ function PinnedConnectionItem({
     : hasCustomName
       ? connection.custom_name!
       : projectNames || connection.name || 'Connection'
+
+  // Pinned base rows read "project › main" (like pinned worktrees' "project ›
+  // branch") so it's clear which connection project the card belongs to.
+  const baseProjectName = isBase ? (connectionProject?.name ?? null) : null
 
   const displayStatus = statusLabel(connectionStatus)
   const isUnread = connectionStatus === 'unread'
@@ -1215,7 +1247,14 @@ function PinnedConnectionItem({
                       // Base rows all read "main" — qualify the hover with the member projects
                       title={isBase && projectNames ? `${projectNames} — ${displayName}` : displayName}
                     >
-                      {displayName}
+                      {baseProjectName ? (
+                        <>
+                          {baseProjectName} <span className="text-muted-foreground">›</span>{' '}
+                          {displayName}
+                        </>
+                      ) : (
+                        displayName
+                      )}
                     </span>
                   )}
                   {isBase && !isRenaming && (
@@ -1268,6 +1307,14 @@ function PinnedConnectionItem({
                     leading={<AgentStateDot state={statusToDotState(connectionStatus)} size="sm" />}
                     label={<span data-testid="pinned-status-text">{displayStatus}</span>}
                     secondary={(hasCustomName || isBase) && projectNames ? projectNames : undefined}
+                    trailing={
+                      isBase ? (
+                        <ConnectionInstanceChips
+                          projectId={savedProjectId}
+                          excludeConnectionId={connectionId}
+                        />
+                      ) : undefined
+                    }
                   />
                 </div>
               )}
