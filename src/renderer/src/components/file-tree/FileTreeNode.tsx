@@ -1,8 +1,11 @@
 import { useCallback, memo, useMemo } from 'react'
 import { ChevronRight, Link } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useFileTabState } from '@/hooks/useFileTabState'
 import { FileIcon } from './FileIcon'
 import { GitStatusIndicator, type GitStatusCode } from './GitStatusIndicator'
+import { OpenTabIndicator } from './OpenTabIndicator'
+import { activeTabRowClass } from './open-tab-classes'
 import { FileContextMenu } from './FileContextMenu'
 import { ContextMenuTrigger } from '@/components/ui/context-menu'
 
@@ -120,12 +123,15 @@ export const VirtualFileTreeNode = memo(function VirtualFileTreeNode({
   // Get git status for this node
   const gitStatus = useMemo(() => getNodeGitStatus(node, gitStatusMap), [node, gitStatusMap])
 
+  const tabState = useFileTabState(node.isDirectory ? null : node.path)
+
   const nodeContent = (
     <div
       className={cn(
-        'flex items-center py-0.5 px-1 rounded-sm cursor-pointer',
+        'relative flex items-center py-0.5 px-1 rounded-sm cursor-pointer',
         'hover:bg-accent/50 transition-colors',
-        'focus:outline-none focus:bg-accent/50'
+        'focus:outline-none focus:bg-accent/50',
+        activeTabRowClass(tabState)
       )}
       style={{ paddingLeft: `${depth * 12 + 4}px` }}
       onClick={handleClick}
@@ -134,8 +140,10 @@ export const VirtualFileTreeNode = memo(function VirtualFileTreeNode({
       role="treeitem"
       aria-expanded={node.isDirectory ? isExpanded : undefined}
       aria-selected={false}
-      aria-label={`${node.isSymlink ? 'Symlinked ' : ''}${node.isDirectory ? 'Folder' : 'File'}: ${node.name}${gitStatus ? `, ${gitStatus.staged ? 'staged' : 'modified'}` : ''}`}
+      aria-label={`${node.isSymlink ? 'Symlinked ' : ''}${node.isDirectory ? 'Folder' : 'File'}: ${node.name}${gitStatus ? `, ${gitStatus.staged ? 'staged' : 'modified'}` : ''}${tabState ? `, ${tabState}` : ''}`}
     >
+      <OpenTabIndicator state={tabState} />
+
       {/* Expand/collapse chevron for directories */}
       {node.isDirectory ? (
         <ChevronRight

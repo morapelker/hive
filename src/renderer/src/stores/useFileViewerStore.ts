@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { isWindows } from '@/lib/platform'
 
 export interface FileViewerTab {
   type: 'file'
@@ -37,6 +38,102 @@ export interface ActiveDiff {
   scrollToLine?: number
   scrollTrigger?: number
   prReviewWorktreeId?: string
+}
+
+function diffTabKey(diff: { filePath: string; staged: boolean; compareBranch?: string }): string {
+  return diff.compareBranch
+    ? `diff:${diff.filePath}:branch:${diff.compareBranch}`
+    : `diff:${diff.filePath}:${diff.staged ? 'staged' : 'unstaged'}`
+}
+
+/**
+ * A diff tab keeps its file path split in two, so only the store knows how to join it.
+ * Git reports slash separated relative paths, so on Windows they need converting to
+ * get a native path, the same shape the file lists and "Copy Absolute Path" expect.
+ *
+ * Worktree paths are stored canonical, see canonicalProjectPath in project-ops, so
+ * joining here gives the same string the backend gets from path.join.
+ */
+export function diffTabAbsolutePath(diff: { worktreePath: string; filePath: string }): string {
+  const separator = isWindows() ? '\\' : '/'
+  const filePath = isWindows() ? diff.filePath.replace(/\//g, separator) : diff.filePath
+  // A worktree at the filesystem root already ends in a separator, and path.join on
+  // the backend side does not double it either.
+  const { worktreePath } = diff
+  const prefix = worktreePath.endsWith(separator) ? worktreePath : worktreePath + separator
+  return `${prefix}${filePath}`
+}
+
+/** The file a tab shows, as an absolute path. Null for tabs that show no file. */
+export function tabAbsolutePath(tab: TabEntry): string | null {
+  if (tab.type === 'file') return tab.path
+  if (tab.type === 'diff') return diffTabAbsolutePath(tab)
+  return null
+}
+
+/**
+ * Row paths come from path.join on the backend, which resolves dot segments and
+ * repeated separators. Paths joined here keep whatever the worktree path had, and
+ * worktrees stored before those paths were canonicalized can still carry a "..".
+ *
+ * Doing the same lexical work here is the right comparison, because the rows were
+ * produced lexically too. This is only for comparing: what a lexically resolved path
+ * opens can differ from the original when a ".." crosses a symlink, which is why the
+ * path a project is stored under goes through realpath instead. See project-ops.
+ *
+ * Kept local because the renderer has no path module and also runs in the browser.
+ */
+function comparableFilePath(path: string, windows: boolean): string {
+  // Only Windows can spell a separator two ways: on macOS and Linux a backslash
+  // is a normal filename character, so `a\b.ts` and `a/b.ts` differ there.
+  const slashed = windows ? path.replace(/\\/g, '/') : path
+
+  // Split off the part ".." must never climb past: the server and share of a UNC
+  // path, or a drive letter, which can sit right in front of a relative path as
+  // in C:foo. Without this, ".." would eat the root and paths stop matching.
+  let root = ''
+  let rest = slashed
+  if (windows) {
+    const unc = slashed.match(/^\/\/[^/]+\/[^/]+/)
+    if (unc) {
+      root = unc[0]
+      rest = slashed.slice(root.length)
+    } else if (/^[a-zA-Z]:/.test(slashed)) {
+      root = slashed.slice(0, 2)
+      rest = slashed.slice(2)
+    }
+  }
+
+  const absolute = rest.startsWith('/')
+  const segments: string[] = []
+
+  for (const segment of rest.split('/')) {
+    if (segment === '' || segment === '.') continue
+    if (segment === '..') {
+      if (segments.length && segments[segments.length - 1] !== '..') {
+        segments.pop()
+      } else if (!absolute) {
+        // A relative path keeps a leading "..", including a drive relative one like
+        // C:..\repo, which path.join keeps too. Only an absolute path drops it,
+        // because there is nothing above the root.
+        segments.push('..')
+      }
+      continue
+    }
+    segments.push(segment)
+  }
+
+  const joined = root + (absolute ? '/' : '') + segments.join('/')
+  // Windows treats casing as insignificant, including the drive letter. Everywhere
+  // else `a.ts` and `A.ts` can be two different files.
+  return windows ? joined.toLowerCase() : joined
+}
+
+/** Same file? Forgives every spelling difference that means the same path. */
+export function isSameFilePath(a: string, b: string): boolean {
+  if (a === b) return true
+  const windows = isWindows()
+  return comparableFilePath(a, windows) === comparableFilePath(b, windows)
 }
 
 interface FileViewerState {
@@ -209,9 +306,7 @@ export const useFileViewerStore = create<FileViewerState>((set, get) => ({
       set({ activeDiff: null })
       return
     }
-    const tabKey = diff.compareBranch
-      ? `diff:${diff.filePath}:branch:${diff.compareBranch}`
-      : `diff:${diff.filePath}:${diff.staged ? 'staged' : 'unstaged'}`
+    const tabKey = diffTabKey(diff)
     set((state) => {
       const openFiles = new Map(state.openFiles)
       openFiles.set(tabKey, {

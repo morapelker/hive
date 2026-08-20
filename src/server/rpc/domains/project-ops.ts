@@ -1,10 +1,14 @@
-import { existsSync, readdirSync, statSync } from 'node:fs'
-import { basename, join } from 'node:path'
+import { existsSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
 import { Effect } from 'effect'
 import { z } from 'zod'
 import { isDesktopCommandResult, makeDesktopCommandRequest } from '../../../shared/desktop-command'
 import type { SuggestionItem } from '../../../shared/types/setup-suggestions'
 import type { RpcHandler } from '../router'
+import {
+  isValidDirectory,
+  isGitRepository as isGitRepositoryPath
+} from '../../../shared/fs-path-checks'
 
 export interface ProjectOpsRpcService {
   readonly openDirectoryDialog: () => Effect.Effect<string | null, unknown, never>
@@ -81,23 +85,6 @@ const INVALID_PROJECT_NAME_PATTERN = /[/\\:*?"<>|]/
 // Windows device names; folders with these names fail or misbehave on Windows.
 const WINDOWS_RESERVED_NAME_PATTERN = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i
 
-const isValidDirectory = (path: string): boolean => {
-  try {
-    return existsSync(path) && statSync(path).isDirectory()
-  } catch {
-    return false
-  }
-}
-
-const isGitRepositoryPath = (path: string): boolean => {
-  try {
-    const gitPath = join(path, '.git')
-    return existsSync(gitPath) && statSync(gitPath).isDirectory()
-  } catch {
-    return false
-  }
-}
-
 export const makeLiveProjectOpsRpcService = (): ProjectOpsRpcService => ({
   openDirectoryDialog: () =>
     Effect.tryPromise({
@@ -129,28 +116,15 @@ export const makeLiveProjectOpsRpcService = (): ProjectOpsRpcService => ({
       try: () => isGitRepositoryPath(path),
       catch: () => false
     }),
+  // Delegates so the path a project is stored under is canonicalized in exactly one
+  // place. A second copy here drifted out of step with the service once already.
   validateProject: (path) =>
-    Effect.sync(() => {
-      if (!isValidDirectory(path)) {
-        return {
-          success: false,
-          error: 'The selected path is not a valid directory.'
-        }
-      }
-
-      if (!isGitRepositoryPath(path)) {
-        return {
-          success: false,
-          error:
-            'The selected folder is not a Git repository. Please select a folder containing a .git directory.'
-        }
-      }
-
-      return {
-        success: true,
-        path,
-        name: basename(path)
-      }
+    Effect.tryPromise({
+      try: async () => {
+        const { validateProject } = await import('../../../main/services/project-ops')
+        return validateProject(path)
+      },
+      catch: (cause) => cause
     }),
   detectLanguage: (projectPath) =>
     Effect.tryPromise({

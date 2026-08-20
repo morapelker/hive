@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { Plus, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { TAB_ACTIVE_SURFACE_CLASS, TAB_UNDERLINE_CLASS } from '@/lib/tab-styles'
 import { useLayoutStore } from '@/stores/useLayoutStore'
 import { useTerminalTabActions } from '@/hooks/useTerminalTabActions'
 import {
@@ -110,7 +111,7 @@ export function TerminalTabsHorizontal({
               className={cn(
                 'group h-full text-[11px] px-3 rounded-none transition-colors relative flex items-center gap-1.5',
                 isTerminalActive && tab.id === activeTabId
-                  ? 'text-foreground bg-[color-mix(in_srgb,var(--foreground)_6%,var(--card))]'
+                  ? cn('text-foreground', TAB_ACTIVE_SURFACE_CLASS)
                   : 'text-muted-foreground hover:text-foreground'
               )}
             >
@@ -166,7 +167,7 @@ export function TerminalTabsHorizontal({
 
               {/* Active underline */}
               {isTerminalActive && tab.id === activeTabId && (
-                <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[color-mix(in_srgb,var(--foreground)_60%,var(--card))]" />
+                <span className={TAB_UNDERLINE_CLASS} />
               )}
             </button>
           </ContextMenuTrigger>

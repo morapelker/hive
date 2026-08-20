@@ -35,8 +35,11 @@ import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useDiffCommentStore } from '@/stores/useDiffCommentStore'
 import { projectApi } from '@/api/project-api'
+import { useFileTabState } from '@/hooks/useFileTabState'
 import { FileIcon } from './FileIcon'
 import { GitStatusIndicator } from './GitStatusIndicator'
+import { OpenTabIndicator } from './OpenTabIndicator'
+import { activeTabRowClass } from './open-tab-classes'
 import { GitCommitForm } from '@/components/git/GitCommitForm'
 import { GitPushPull } from '@/components/git/GitPushPull'
 
@@ -488,11 +491,11 @@ export function ChangesView({
       if (!memberWorktreePath) return
       const isNewFile = file.status === '?' || file.status === 'A'
       if (isNewFile) {
-        const fullPath = `${memberWorktreePath}/${file.relativePath}`
+        // file.path is already absolute and native, so no hand-built join here.
         const fileName = file.relativePath.split('/').pop() || file.relativePath
         const contextId = useConnectionStore.getState().selectedConnectionId
         if (contextId) {
-          useFileViewerStore.getState().openFile(fullPath, fileName, contextId)
+          useFileViewerStore.getState().openFile(file.path, fileName, contextId)
         }
       } else {
         useFileViewerStore.getState().setActiveDiff({
@@ -924,14 +927,20 @@ const FileRow = memo(function FileRow({
   const fileName = file.relativePath.split('/').pop() || file.relativePath
   const ext = fileName.includes('.') ? '.' + fileName.split('.').pop() : null
 
+  const tabState = useFileTabState(file.path)
+
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
         <div
-          className="flex items-center gap-1.5 px-2 py-0.5 hover:bg-accent/30 group cursor-pointer"
+          className={cn(
+            'relative flex items-center gap-1.5 px-2 py-0.5 hover:bg-accent/30 group cursor-pointer',
+            activeTabRowClass(tabState)
+          )}
           onClick={() => onViewDiff(file)}
           data-testid={`changes-file-${file.relativePath}`}
         >
+          <OpenTabIndicator state={tabState} />
           {onStageToggle ? (
             <div className="relative h-3.5 w-3.5 flex-shrink-0">
               <FileIcon

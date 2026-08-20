@@ -23,6 +23,7 @@ import type {
   TeleportRemoteReceiveResult
 } from '../../../main/services/teleport-remote-client'
 import type { RpcHandler } from '../router'
+import { requireSuccess } from '../../../shared/operation-result'
 
 const execFileAsync = promisify(execFile)
 
@@ -141,10 +142,6 @@ const failStep = (step: string, error: unknown): TeleportStartResult => ({
   step,
   error: errorMessage(error)
 })
-
-function requireSuccess(result: { success: boolean; error?: string }, fallback: string): void {
-  if (!result.success) throw new Error(result.error || fallback)
-}
 
 function discordChannelUrl(guildId: string, channelId: string): string {
   return `https://discord.com/channels/${guildId}/${channelId}`

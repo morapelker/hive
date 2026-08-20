@@ -1,10 +1,13 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo, memo } from 'react'
 import { RefreshCw, ChevronDown, Search, GitBranch } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useGitStore } from '@/stores/useGitStore'
-import { useFileViewerStore } from '@/stores/useFileViewerStore'
+import { useFileViewerStore, diffTabAbsolutePath } from '@/stores/useFileViewerStore'
+import { useFileTabState } from '@/hooks/useFileTabState'
 import { FileIcon } from './FileIcon'
 import { GitStatusIndicator, type GitStatusCode } from './GitStatusIndicator'
+import { OpenTabIndicator } from './OpenTabIndicator'
+import { activeTabRowClass } from './open-tab-classes'
 import { gitApi } from '@/api/git-api'
 
 interface BranchDiffViewProps {
@@ -288,30 +291,14 @@ export function BranchDiffView({ worktreePath }: BranchDiffViewProps): React.JSX
         </div>
       ) : (
         <div className="flex-1 overflow-y-auto">
-          {files.map((file) => {
-            const fileName = file.relativePath.split('/').pop() || file.relativePath
-            const ext = fileName.includes('.') ? '.' + fileName.split('.').pop() : null
-
-            return (
-              <div
-                key={file.relativePath}
-                className="flex items-center gap-1.5 px-2 py-0.5 hover:bg-accent/30 cursor-pointer"
-                onClick={() => handleFileClick(file)}
-                data-testid={`branch-diff-file-${file.relativePath}`}
-              >
-                <FileIcon
-                  name={fileName}
-                  extension={ext}
-                  isDirectory={false}
-                  className="h-3.5 w-3.5"
-                />
-                <span className="text-xs truncate flex-1" title={file.relativePath}>
-                  {file.relativePath}
-                </span>
-                <GitStatusIndicator status={toGitStatusCode(file.status)} className="mr-1" />
-              </div>
-            )
-          })}
+          {files.map((file) => (
+            <BranchDiffFileRow
+              key={file.relativePath}
+              file={file}
+              worktreePath={worktreePath}
+              onClick={handleFileClick}
+            />
+          ))}
         </div>
       )}
 
@@ -337,3 +324,41 @@ export function BranchDiffView({ worktreePath }: BranchDiffViewProps): React.JSX
     </div>
   )
 }
+
+interface BranchDiffFileRowProps {
+  file: BranchDiffFile
+  worktreePath: string
+  onClick: (file: BranchDiffFile) => void
+}
+
+// Memoized because this list is not virtualized: without it every row re-renders
+// whenever a tab opens or closes.
+const BranchDiffFileRow = memo(function BranchDiffFileRow({
+  file,
+  worktreePath,
+  onClick
+}: BranchDiffFileRowProps): React.JSX.Element {
+  const fileName = file.relativePath.split('/').pop() || file.relativePath
+  const ext = fileName.includes('.') ? '.' + fileName.split('.').pop() : null
+  const tabState = useFileTabState(
+    diffTabAbsolutePath({ worktreePath, filePath: file.relativePath })
+  )
+
+  return (
+    <div
+      className={cn(
+        'relative flex items-center gap-1.5 px-2 py-0.5 hover:bg-accent/30 cursor-pointer',
+        activeTabRowClass(tabState)
+      )}
+      onClick={() => onClick(file)}
+      data-testid={`branch-diff-file-${file.relativePath}`}
+    >
+      <OpenTabIndicator state={tabState} />
+      <FileIcon name={fileName} extension={ext} isDirectory={false} className="h-3.5 w-3.5" />
+      <span className="text-xs truncate flex-1" title={file.relativePath}>
+        {file.relativePath}
+      </span>
+      <GitStatusIndicator status={toGitStatusCode(file.status)} className="mr-1" />
+    </div>
+  )
+})

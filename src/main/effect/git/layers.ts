@@ -16,12 +16,10 @@ import { classifyGitError } from './classifier'
 import { GitUnknown, type GitError } from './errors'
 import { Git } from './service'
 import type { BreedType, GitBranchDiffFile, GitDiffStatFile, GitFileStatus } from './types'
+import { normalizeBranchDisplayName } from '@shared/git-output'
 
 const execFileAsync = promisify(execFile)
 type GitOperation = 'merge' | 'rebase' | 'cherry-pick' | 'apply'
-
-const normalizeBranchDisplayName = (branchName: string): string =>
-  branchName.startsWith('remotes/') ? branchName.replace(/^remotes\//, '') : branchName
 
 export const resolveGitWorktreesDir = (
   projectName: string,

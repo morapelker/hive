@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { X, ChevronUp, ChevronDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { TAB_ACTIVE_SURFACE_CLASS, TAB_UNDERLINE_INSET_CLASS } from '@/lib/tab-styles'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useGitStore } from '@/stores/useGitStore'
@@ -69,7 +70,7 @@ export function FileSidebar({
           className={cn(
             'h-full px-2.5 text-[11px] font-medium rounded-none transition-colors relative',
             activeTab === 'changes'
-              ? 'text-foreground bg-[color-mix(in_srgb,var(--foreground)_6%,var(--card))]'
+              ? cn('text-foreground', TAB_ACTIVE_SURFACE_CLASS)
               : 'text-muted-foreground hover:text-foreground'
           )}
           onClick={() => setActiveTab('changes')}
@@ -81,15 +82,13 @@ export function FileSidebar({
           ) : (
             'Changes'
           )}
-          {activeTab === 'changes' && (
-            <div className="absolute bottom-0 left-2 right-2 h-0.5 bg-[color-mix(in_srgb,var(--foreground)_60%,var(--card))]" />
-          )}
+          {activeTab === 'changes' && <div className={TAB_UNDERLINE_INSET_CLASS} />}
         </button>
         <button
           className={cn(
             'h-full px-2.5 text-[11px] font-medium rounded-none transition-colors relative',
             activeTab === 'files'
-              ? 'text-foreground bg-[color-mix(in_srgb,var(--foreground)_6%,var(--card))]'
+              ? cn('text-foreground', TAB_ACTIVE_SURFACE_CLASS)
               : 'text-muted-foreground hover:text-foreground'
           )}
           onClick={() => setActiveTab('files')}
@@ -101,15 +100,13 @@ export function FileSidebar({
           ) : (
             'Files'
           )}
-          {activeTab === 'files' && (
-            <div className="absolute bottom-0 left-2 right-2 h-0.5 bg-[color-mix(in_srgb,var(--foreground)_60%,var(--card))]" />
-          )}
+          {activeTab === 'files' && <div className={TAB_UNDERLINE_INSET_CLASS} />}
         </button>
         <button
           className={cn(
             'h-full px-2.5 text-[11px] font-medium rounded-none transition-colors relative',
             activeTab === 'diffs'
-              ? 'text-foreground bg-[color-mix(in_srgb,var(--foreground)_6%,var(--card))]'
+              ? cn('text-foreground', TAB_ACTIVE_SURFACE_CLASS)
               : 'text-muted-foreground hover:text-foreground'
           )}
           onClick={() => setActiveTab('diffs')}
@@ -121,16 +118,14 @@ export function FileSidebar({
           ) : (
             'Diffs'
           )}
-          {activeTab === 'diffs' && (
-            <div className="absolute bottom-0 left-2 right-2 h-0.5 bg-[color-mix(in_srgb,var(--foreground)_60%,var(--card))]" />
-          )}
+          {activeTab === 'diffs' && <div className={TAB_UNDERLINE_INSET_CLASS} />}
         </button>
         {hasAttachedPR && (
           <button
             className={cn(
               'h-full px-2.5 text-[11px] font-medium rounded-none transition-colors relative',
               activeTab === 'comments'
-                ? 'text-foreground bg-[color-mix(in_srgb,var(--foreground)_6%,var(--card))]'
+                ? cn('text-foreground', TAB_ACTIVE_SURFACE_CLASS)
                 : 'text-muted-foreground hover:text-foreground'
             )}
             onClick={() => setActiveTab('comments')}
@@ -142,9 +137,7 @@ export function FileSidebar({
             ) : (
               'Comments'
             )}
-            {activeTab === 'comments' && (
-              <div className="absolute bottom-0 left-2 right-2 h-0.5 bg-[color-mix(in_srgb,var(--foreground)_60%,var(--card))]" />
-            )}
+            {activeTab === 'comments' && <div className={TAB_UNDERLINE_INSET_CLASS} />}
           </button>
         )}
         <div className="flex-1" />

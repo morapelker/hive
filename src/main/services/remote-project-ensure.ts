@@ -9,10 +9,7 @@ import { execGit } from './git-exec'
 import { cloneRepository, deriveProjectNameFromGitUrl } from './git-repository'
 import { createProjectWithDefaultWorktree } from './project-ops'
 import { syncWorktreesOp } from './worktree-ops'
-
-function requireSuccess(result: { success: boolean; error?: string }, fallback: string): void {
-  if (!result.success) throw new Error(result.error || fallback)
-}
+import { requireSuccess } from '@shared/operation-result'
 
 function uniquePath(basePath: string): string {
   if (!existsSync(basePath)) return basePath
