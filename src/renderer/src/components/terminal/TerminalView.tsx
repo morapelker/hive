@@ -110,6 +110,16 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
   const effectiveVisibleRef = useRef(effectiveVisible)
   effectiveVisibleRef.current = effectiveVisible
 
+  // True when this terminal is portalled into the tiled-sessions grid, where
+  // several terminals are visible at once. Focus-sensitive behaviors
+  // (autofocus-on-visible, the 'edit:paste' IPC broadcast) scope themselves to
+  // grid tiles only, so single-terminal layouts (including the always-visible
+  // bottom/sidebar terminal panel) keep their existing behavior.
+  const isInTiledGrid = useCallback(
+    (): boolean => !!containerRef.current?.closest('[data-tiled-sessions-grid]'),
+    []
+  )
+
   const shiftEnterAsNewlineRef = useRef(shiftEnterAsNewline ?? false)
   shiftEnterAsNewlineRef.current = shiftEnterAsNewline ?? false
 
@@ -124,6 +134,10 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
         }
       },
       focus: () => {
+        // Grid tiles never steal focus programmatically — the user clicks the
+        // tile they want to type into (covers ClaudeCliSessionView's own
+        // visibility focus timer too).
+        if (isInTiledGrid()) return
         backendRef.current?.focus()
       },
       clear: () => {
@@ -172,6 +186,11 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
       if (backend && backend.type === 'xterm') {
         ;(backend as XtermBackend).fit()
       }
+      if (isInTiledGrid()) {
+        // Grid tiles don't fight over focus — the user clicks the tile they
+        // want to type into.
+        return
+      }
       if (backend?.type === 'ghostty' && hasFocusedEditableElement()) {
         return
       }
@@ -196,6 +215,12 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
     if (!effectiveVisible) return
 
     const cleanup = systemApi.onEditPaste((text) => {
+      // Grid tiles receive the broadcast only when focused, so a paste can't
+      // land in every visible tile at once. Terminals outside the grid keep
+      // their existing behavior.
+      if (isInTiledGrid() && !containerRef.current?.contains(document.activeElement)) {
+        return
+      }
       if (activeBackendTypeRef.current === 'ghostty') {
         terminalApi.ghosttyPasteText(terminalId, text).then(unwrapEnvelope)
       } else if (activeBackendTypeRef.current === 'xterm') {

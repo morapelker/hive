@@ -1,7 +1,8 @@
 import { useState, useCallback, useRef, useLayoutEffect } from 'react'
 import { motion } from 'motion/react'
-import { AlertTriangle, ArrowDownWideNarrow, ChevronRight, ChevronDown, FileText, Plus, Zap, Archive } from 'lucide-react'
+import { AlertTriangle, ArrowDownWideNarrow, ChevronRight, ChevronDown, FileText, LayoutGrid, Plus, Zap, Archive } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { openTiledInProgressSessions } from '@/lib/tiled-sessions'
 import { toast } from '@/lib/toast'
 import { lastSendMode } from '@/lib/message-send-times'
 import { Switch } from '@/components/ui/switch'
@@ -909,28 +910,55 @@ export function KanbanColumn({
                 ON (default) = flow mode: automated worktree picker on drop.
                 OFF = simple mode: direct drop, no modal. */}
             {isInProgressColumn && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div ref={toggleRef} className="ml-auto flex shrink-0 items-center gap-1.5">
-                    {transitionSortButton}
-                    <Zap
+              <div ref={toggleRef} className="ml-auto flex shrink-0 items-center gap-1.5">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      data-testid="tile-in-progress-button"
+                      disabled={tickets.length === 0}
+                      onClick={() =>
+                        void openTiledInProgressSessions(
+                          { projectId, connectionId, isPinnedMode },
+                          tickets
+                        )
+                      }
                       className={cn(
-                        'h-3 w-3',
-                        !isSimpleMode ? 'text-amber-500' : 'text-muted-foreground/50'
+                        'flex h-6 w-6 items-center justify-center rounded-md transition-colors',
+                        tickets.length === 0
+                          ? 'cursor-default text-muted-foreground/30'
+                          : 'text-muted-foreground/50 hover:text-muted-foreground hover:bg-accent'
                       )}
-                    />
-                    <Switch
-                      data-testid="simple-mode-toggle"
-                      size="sm"
-                      checked={!isSimpleMode}
-                      onCheckedChange={(checked) => handleSimpleModeToggle(!checked)}
-                    />
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent side="top" sideOffset={8}>
-                  Send to agent when dragged to this column
-                </TooltipContent>
-              </Tooltip>
+                    >
+                      <LayoutGrid className="h-3.5 w-3.5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" sideOffset={8}>
+                    Tile all In Progress sessions in a grid
+                  </TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      {transitionSortButton}
+                      <Zap
+                        className={cn(
+                          'h-3 w-3',
+                          !isSimpleMode ? 'text-amber-500' : 'text-muted-foreground/50'
+                        )}
+                      />
+                      <Switch
+                        data-testid="simple-mode-toggle"
+                        size="sm"
+                        checked={!isSimpleMode}
+                        onCheckedChange={(checked) => handleSimpleModeToggle(!checked)}
+                      />
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" sideOffset={8}>
+                    Send to agent when dragged to this column
+                  </TooltipContent>
+                </Tooltip>
+              </div>
             )}
 
             {/* Archive toggle — right of title, vertically centered */}

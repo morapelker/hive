@@ -313,7 +313,12 @@ export function ClaudeCliSessionView({
   const pendingPlan = useSessionStore((state) => state.pendingPlans.get(sessionId) ?? null)
   const { getTarget, revision: portalRevision } = useClaudeCliSessionPortal()
   void portalRevision
-  const isMountedInTicketModal = !!getTarget(sessionId)
+  // A portal target can be the ticket modal's slot OR a tiled-sessions grid
+  // tile; modal-specific behavior (question sidebar suppression, handoff
+  // navigation back to the board) must not apply to tiles.
+  const portalTarget = getTarget(sessionId)
+  const isMountedInTicketModal =
+    !!portalTarget && !portalTarget.hasAttribute('data-tiled-sessions-slot')
   const sessionRecord = useSessionStore((state) => state.getSessionById(sessionId))
 
   // While Telegram forwarding is active, AskUserQuestion is intercepted by the
