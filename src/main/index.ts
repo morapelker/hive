@@ -499,6 +499,7 @@ app
     const claudeImpl = new ClaudeCodeImplementer()
     claudeImpl.setDatabaseService(getDatabase())
     claudeImpl.setClaudeBinaryPath(claudeBinaryPath)
+    claudeImpl.setHeadless(isHeadless)
     setRouterClaudeBinaryPath(claudeBinaryPath)
     openCodeService.setOpenCodeLaunchSpec(openCodeLaunchSpec)
     setRouterOpenCodeLaunchSpec(openCodeLaunchSpec)

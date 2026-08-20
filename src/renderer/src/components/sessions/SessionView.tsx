@@ -45,6 +45,7 @@ import { ScrollToBottomFab } from './ScrollToBottomFab'
 import { PlanReadyImplementFab } from './PlanReadyImplementFab'
 import { SavePlanAsFileModal } from './SavePlanAsFileModal'
 import { IndeterminateProgressBar } from './IndeterminateProgressBar'
+import { BackgroundWorkIndicator } from './BackgroundWorkIndicator'
 import { TaskListWidget } from './TaskListWidget'
 import { GoalStatusWidget } from './GoalStatusWidget'
 import { ClaudeCliSessionView } from './ClaudeCliSessionView'
@@ -57,6 +58,7 @@ import type { FlatFile } from '@/lib/file-search-utils'
 import { useSessionStore } from '@/stores/useSessionStore'
 import type { CodexThreadGoal } from '@/stores/useSessionStore'
 import {
+  countBackgroundWork,
   markNextWorkingStatusExplicit,
   useWorktreeStatusStore
 } from '@/stores/useWorktreeStatusStore'
@@ -741,6 +743,15 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
     isStreamingRef.current = isStreaming
   }, [isStreaming])
   const [isCompacting, setIsCompacting] = useState(false)
+  // Background subagents keep working after the turn's result, and their output
+  // goes to their own transcript. Without this the composer looks idle for
+  // minutes until their follow-up turn lands.
+  const backgroundWorkCount = useWorktreeStatusStore(
+    useCallback(
+      (state) => countBackgroundWork(state.backgroundWorkBySession[sessionId]),
+      [sessionId]
+    )
+  )
   const {
     runs: bashRuns,
     isRunning: isBashRunning,
@@ -6575,7 +6586,10 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
                 </span>
               </div>
               <div className="flex items-center gap-1.5">
-                {isStreaming && (
+                {/* Background work outlives the turn's result, so the bar has to
+                    survive it too: it is the only thing still running. */}
+                <BackgroundWorkIndicator sessionId={sessionId} />
+                {(isStreaming || backgroundWorkCount > 0) && (
                   <IndeterminateProgressBar
                     mode={mode}
                     isAsking={!!activeQuestion}

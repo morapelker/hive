@@ -60,8 +60,9 @@ export interface SessionBackgroundWork {
 interface WorktreeStatusState {
   // sessionId → status info (null means no status / cleared)
   sessionStatuses: Record<string, SessionStatusEntry | null>
-  // sessionId → live background shell/monitor counts (claude-cli only; entries
-  // are dropped when both counts reach zero)
+  // sessionId → live background subagent/shell/monitor counts, reported by both
+  // the claude-cli hook path and the Claude SDK path (entries are dropped when
+  // all counts reach zero)
   backgroundWorkBySession: Record<string, SessionBackgroundWork>
   // worktreeId → epoch ms of last message activity
   lastMessageTimeByWorktree: Record<string, number>
@@ -491,6 +492,16 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
     return worktreeId in get().reviewSessionByWorktree
   }
 }))
+
+/**
+ * Total live background work (subagents, shells, monitors). Activity indicators
+ * that must outlive a turn's result read this, since background work keeps
+ * going after it.
+ */
+export function countBackgroundWork(work: SessionBackgroundWork | undefined): number {
+  if (!work) return 0
+  return work.runningSubagents + work.runningShells + work.runningMonitors
+}
 
 declare global {
   interface Window {
