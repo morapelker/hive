@@ -505,11 +505,10 @@ export const useConnectionStore = create<ConnectionState>()(
         if (id) {
           // Deconflict: clear worktree selection synchronously (same tick)
           clearWorktreeSelection()
-          // Close pinned board when entering connection mode (matches worktree behavior)
-          const kanbanState = useKanbanStore.getState()
-          if (kanbanState.isPinnedBoardActive) {
-            kanbanState.togglePinnedBoard()
-          }
+          // Close pinned board when entering connection mode (matches worktree
+          // behavior); idempotent close, not a toggle, so it can't race other
+          // queued closes back to active.
+          useKanbanStore.getState().closePinnedBoard()
         }
       }
     }),

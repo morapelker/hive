@@ -27,7 +27,11 @@ vi.mock('./useWorktreeStore', () => ({
 }))
 vi.mock('./useKanbanStore', () => ({
   useKanbanStore: {
-    getState: vi.fn(() => ({ isPinnedBoardActive: false, togglePinnedBoard: vi.fn() }))
+    getState: vi.fn(() => ({
+      isPinnedBoardActive: false,
+      togglePinnedBoard: vi.fn(),
+      closePinnedBoard: vi.fn()
+    }))
   }
 }))
 

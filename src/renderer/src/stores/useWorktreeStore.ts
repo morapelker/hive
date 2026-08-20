@@ -256,10 +256,9 @@ function applyWorktreeSelectionEffects(
   }
 
   if (options.closePinnedBoard) {
-    const kanbanState = useKanbanStore.getState()
-    if (kanbanState.isPinnedBoardActive) {
-      kanbanState.togglePinnedBoard()
-    }
+    // Idempotent close — a toggle here races the one queued by selectProject
+    // (both async), and two queued toggles cancel out.
+    useKanbanStore.getState().closePinnedBoard()
   }
 
   if (options.preserveProjectId) {
