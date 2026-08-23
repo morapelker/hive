@@ -1,35 +1,18 @@
-import { useState, useEffect, useCallback, useRef, useMemo, memo } from 'react'
-import { RefreshCw, ChevronDown, Search, GitBranch } from 'lucide-react'
+import { useState, useEffect, useCallback } from 'react'
+import { RefreshCw } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useGitStore } from '@/stores/useGitStore'
-import { useFileViewerStore, diffTabAbsolutePath } from '@/stores/useFileViewerStore'
-import { useFileTabState } from '@/hooks/useFileTabState'
-import { FileIcon } from './FileIcon'
-import { GitStatusIndicator, type GitStatusCode } from './GitStatusIndicator'
-import { OpenTabIndicator } from './OpenTabIndicator'
-import { activeTabRowClass } from './open-tab-classes'
+import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { gitApi } from '@/api/git-api'
+import {
+  BranchDiffFileRow,
+  BranchSelectDropdown,
+  type BranchDiffFile,
+  type BranchInfo
+} from './branch-diff-shared'
 
 interface BranchDiffViewProps {
   worktreePath: string | null
-}
-
-interface BranchDiffFile {
-  relativePath: string
-  status: string
-}
-
-interface BranchInfo {
-  name: string
-  isRemote: boolean
-  isCheckedOut: boolean
-  worktreePath?: string
-}
-
-const KNOWN_STATUS_CODES: GitStatusCode[] = ['M', 'A', 'D', '?', 'C', '']
-
-function toGitStatusCode(raw: string): GitStatusCode {
-  return KNOWN_STATUS_CODES.includes(raw as GitStatusCode) ? (raw as GitStatusCode) : 'M'
 }
 
 export function BranchDiffView({ worktreePath }: BranchDiffViewProps): React.JSX.Element {
@@ -43,10 +26,6 @@ export function BranchDiffView({ worktreePath }: BranchDiffViewProps): React.JSX
   const [isLoadingFiles, setIsLoadingFiles] = useState(false)
   const [diffError, setDiffError] = useState<string | null>(null)
   const [isLoadingBranches, setIsLoadingBranches] = useState(false)
-  const [dropdownOpen, setDropdownOpen] = useState(false)
-  const [searchFilter, setSearchFilter] = useState('')
-  const dropdownRef = useRef<HTMLDivElement>(null)
-  const searchInputRef = useRef<HTMLInputElement>(null)
 
   // Load branches
   const loadBranches = useCallback(async () => {
@@ -110,32 +89,10 @@ export function BranchDiffView({ worktreePath }: BranchDiffViewProps): React.JSX
     return cleanup
   }, [worktreePath, selectedBranch, loadDiffFiles])
 
-  // Close dropdown on outside click
-  useEffect(() => {
-    if (!dropdownOpen) return
-    function handleClickOutside(e: MouseEvent): void {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-        setDropdownOpen(false)
-        setSearchFilter('')
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [dropdownOpen])
-
-  // Focus search when dropdown opens
-  useEffect(() => {
-    if (dropdownOpen && searchInputRef.current) {
-      searchInputRef.current.focus()
-    }
-  }, [dropdownOpen])
-
   const handleSelectBranch = useCallback(
     (branch: string) => {
       if (!worktreePath) return
       setSelectedDiffBranch(worktreePath, branch)
-      setDropdownOpen(false)
-      setSearchFilter('')
     },
     [worktreePath, setSelectedDiffBranch]
   )
@@ -160,15 +117,6 @@ export function BranchDiffView({ worktreePath }: BranchDiffViewProps): React.JSX
     await Promise.all([loadBranches(), loadDiffFiles()])
   }, [loadBranches, loadDiffFiles])
 
-  // Split branches into local-first, remote-second, filtered by search
-  const filteredBranches = useMemo(() => {
-    const lower = searchFilter.toLowerCase()
-    const filtered = branches.filter((b) => b.name.toLowerCase().includes(lower))
-    const local = filtered.filter((b) => !b.isRemote)
-    const remote = filtered.filter((b) => b.isRemote)
-    return { local, remote }
-  }, [branches, searchFilter])
-
   if (!worktreePath) {
     return <div className="p-4 text-sm text-muted-foreground text-center">No worktree selected</div>
   }
@@ -176,101 +124,12 @@ export function BranchDiffView({ worktreePath }: BranchDiffViewProps): React.JSX
   return (
     <div className="flex flex-col h-full" data-testid="branch-diff-view">
       {/* Branch selector */}
-      <div className="px-2 py-1.5 border-b border-border relative" ref={dropdownRef}>
-        <button
-          type="button"
-          className={cn(
-            'flex items-center gap-1.5 w-full px-2 py-1 text-xs rounded',
-            'border border-border bg-background hover:bg-accent/50 transition-colors'
-          )}
-          onClick={() => setDropdownOpen((prev) => !prev)}
-          disabled={isLoadingBranches}
-        >
-          <GitBranch className="h-3 w-3 text-muted-foreground shrink-0" />
-          <span className="truncate flex-1 text-left">
-            {selectedBranch || 'Select branch to compare...'}
-          </span>
-          <ChevronDown
-            className={cn(
-              'h-3 w-3 text-muted-foreground shrink-0 transition-transform',
-              dropdownOpen && 'rotate-180'
-            )}
-          />
-        </button>
-
-        {dropdownOpen && (
-          <div className="absolute left-0 right-0 mt-1 mx-2 z-50 rounded-[11px] border border-black/14 dark:border-white/14 bg-[rgba(255,255,255,0.82)] dark:bg-[rgba(0,0,0,0.72)] backdrop-blur-2xl shadow-[0_16px_36px_rgba(0,0,0,0.24),inset_0_1px_0_rgba(255,255,255,0.04)] max-h-64 flex flex-col overflow-hidden">
-            {/* Search input */}
-            <div className="flex items-center gap-1.5 px-2 py-1.5 border-b border-border">
-              <Search className="h-3 w-3 text-muted-foreground shrink-0" />
-              <input
-                ref={searchInputRef}
-                type="text"
-                className="flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground"
-                placeholder="Filter branches..."
-                value={searchFilter}
-                onChange={(e) => setSearchFilter(e.target.value)}
-              />
-            </div>
-
-            {/* Branch list */}
-            <div className="overflow-y-auto flex-1">
-              {filteredBranches.local.length > 0 && (
-                <div>
-                  <div className="px-2 py-1 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
-                    Local
-                  </div>
-                  {filteredBranches.local.map((branch) => (
-                    <button
-                      key={branch.name}
-                      type="button"
-                      className={cn(
-                        'flex items-center gap-1.5 w-full px-2 py-1 text-xs hover:bg-black/6 dark:hover:bg-white/8',
-                        branch.name === selectedBranch && 'bg-accent text-accent-foreground'
-                      )}
-                      onClick={() => handleSelectBranch(branch.name)}
-                    >
-                      <span className="truncate">{branch.name}</span>
-                      {branch.isCheckedOut && (
-                        <span className="text-[10px] text-muted-foreground ml-auto shrink-0">
-                          current
-                        </span>
-                      )}
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              {filteredBranches.remote.length > 0 && (
-                <div>
-                  <div className="px-2 py-1 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
-                    Remote
-                  </div>
-                  {filteredBranches.remote.map((branch) => (
-                    <button
-                      key={branch.name}
-                      type="button"
-                      className={cn(
-                        'flex items-center gap-1.5 w-full px-2 py-1 text-xs hover:bg-black/6 dark:hover:bg-white/8',
-                        branch.name === selectedBranch && 'bg-accent text-accent-foreground'
-                      )}
-                      onClick={() => handleSelectBranch(branch.name)}
-                    >
-                      <span className="truncate">{branch.name}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              {filteredBranches.local.length === 0 && filteredBranches.remote.length === 0 && (
-                <div className="px-2 py-3 text-xs text-muted-foreground text-center">
-                  No branches found
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
+      <BranchSelectDropdown
+        branches={branches}
+        selectedBranch={selectedBranch}
+        onSelect={handleSelectBranch}
+        disabled={isLoadingBranches}
+      />
 
       {/* File list */}
       {!selectedBranch ? (
@@ -324,41 +183,3 @@ export function BranchDiffView({ worktreePath }: BranchDiffViewProps): React.JSX
     </div>
   )
 }
-
-interface BranchDiffFileRowProps {
-  file: BranchDiffFile
-  worktreePath: string
-  onClick: (file: BranchDiffFile) => void
-}
-
-// Memoized because this list is not virtualized: without it every row re-renders
-// whenever a tab opens or closes.
-const BranchDiffFileRow = memo(function BranchDiffFileRow({
-  file,
-  worktreePath,
-  onClick
-}: BranchDiffFileRowProps): React.JSX.Element {
-  const fileName = file.relativePath.split('/').pop() || file.relativePath
-  const ext = fileName.includes('.') ? '.' + fileName.split('.').pop() : null
-  const tabState = useFileTabState(
-    diffTabAbsolutePath({ worktreePath, filePath: file.relativePath })
-  )
-
-  return (
-    <div
-      className={cn(
-        'relative flex items-center gap-1.5 px-2 py-0.5 hover:bg-accent/30 cursor-pointer',
-        activeTabRowClass(tabState)
-      )}
-      onClick={() => onClick(file)}
-      data-testid={`branch-diff-file-${file.relativePath}`}
-    >
-      <OpenTabIndicator state={tabState} />
-      <FileIcon name={fileName} extension={ext} isDirectory={false} className="h-3.5 w-3.5" />
-      <span className="text-xs truncate flex-1" title={file.relativePath}>
-        {file.relativePath}
-      </span>
-      <GitStatusIndicator status={toGitStatusCode(file.status)} className="mr-1" />
-    </div>
-  )
-})

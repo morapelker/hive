@@ -8,6 +8,7 @@ import { useGitStore } from '@/stores/useGitStore'
 import { FileTree } from './FileTree'
 import { ChangesView } from './ChangesView'
 import { BranchDiffView } from './BranchDiffView'
+import { ConnectionBranchDiffView } from './ConnectionBranchDiffView'
 import { PrReviewViewer } from '@/components/pr-review/PrReviewViewer'
 
 interface ConnectionMemberInfo {
@@ -174,7 +175,11 @@ export function FileSidebar({
               connectionMembers={connectionMembers}
             />
           ) : activeTab === 'diffs' ? (
-            <BranchDiffView worktreePath={worktreePath} />
+            isConnectionMode ? (
+              <ConnectionBranchDiffView members={connectionMembers ?? []} />
+            ) : (
+              <BranchDiffView worktreePath={worktreePath} />
+            )
           ) : (
             <FileTree
               worktreePath={worktreePath}

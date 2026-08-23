@@ -40,9 +40,19 @@ export interface ActiveDiff {
   prReviewWorktreeId?: string
 }
 
-function diffTabKey(diff: { filePath: string; staged: boolean; compareBranch?: string }): string {
+/**
+ * Branch-compare diffs carry the worktree in their key: a connection opens them
+ * for several repos at once, and two members often share a relative path
+ * (package.json, README.md), which must not collapse into one tab.
+ */
+function diffTabKey(diff: {
+  worktreePath: string
+  filePath: string
+  staged: boolean
+  compareBranch?: string
+}): string {
   return diff.compareBranch
-    ? `diff:${diff.filePath}:branch:${diff.compareBranch}`
+    ? `diff:${diff.worktreePath}:${diff.filePath}:branch:${diff.compareBranch}`
     : `diff:${diff.filePath}:${diff.staged ? 'staged' : 'unstaged'}`
 }
 
