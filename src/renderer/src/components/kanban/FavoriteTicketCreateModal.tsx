@@ -2,10 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Braces, Search, Target, X } from 'lucide-react'
 import type { Project } from '@shared/types/project'
 import type { FavoriteTicket } from '../../../../main/db/types'
-import {
-  extractPlaceholderNames,
-  substitutePlaceholders
-} from '@shared/lib/ticket-placeholders'
+import { extractPlaceholderNames, substitutePlaceholders } from '@shared/lib/ticket-placeholders'
 import { useProjectStore } from '@/stores'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { subsequenceMatch } from '@/lib/subsequence-match'
@@ -164,7 +161,10 @@ export function FavoriteTicketCreateModal({
         className={cn(hasPlaceholderInputs ? 'sm:max-w-2xl' : 'sm:max-w-md')}
         data-testid="favorite-ticket-create-modal"
       >
-        <DialogHeader>
+        {/* min-w-0: grid items default to min-width:auto, so an unbreakable
+            project name/title would widen the track past the overflow-hidden
+            dialog and clip the whole body */}
+        <DialogHeader className="min-w-0">
           <DialogTitle className="truncate">{favorite?.title ?? 'Create ticket'}</DialogTitle>
           <DialogDescription>
             {hasPlaceholderInputs
@@ -173,7 +173,12 @@ export function FavoriteTicketCreateModal({
           </DialogDescription>
         </DialogHeader>
 
-        <div className={cn('flex gap-4 min-h-0', hasPlaceholderInputs && 'sm:flex-row flex-col')}>
+        <div
+          className={cn(
+            'flex gap-4 min-h-0 min-w-0',
+            hasPlaceholderInputs && 'sm:flex-row flex-col'
+          )}
+        >
           {/* Project picker */}
           <div className="flex-1 min-w-0 space-y-3">
             <div className="relative flex items-center">
@@ -200,7 +205,7 @@ export function FavoriteTicketCreateModal({
               )}
             </div>
 
-            <div className="max-h-72 overflow-y-auto -mx-1 px-1">
+            <div className="max-h-72 overflow-y-auto overflow-x-hidden -mx-1 px-1">
               {filtered.length === 0 ? (
                 <div className="text-xs text-muted-foreground text-center py-6">
                   {projects.length === 0 ? 'No projects' : 'No matching projects'}
@@ -249,7 +254,7 @@ export function FavoriteTicketCreateModal({
 
           {/* Placeholder inputs */}
           {hasPlaceholderInputs && (
-            <div className="sm:w-64 shrink-0 space-y-3 sm:border-l sm:border-border sm:pl-4">
+            <div className="sm:w-64 min-w-0 shrink-0 space-y-3 sm:border-l sm:border-border sm:pl-4">
               <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground">
                 <Braces className="h-3.5 w-3.5" />
                 Placeholders
@@ -285,7 +290,7 @@ export function FavoriteTicketCreateModal({
               {favorite?.goal_mode && favorite.goal_success_criteria && (
                 <div className="flex items-start gap-1.5 rounded-md border border-border/50 bg-muted/20 px-2 py-1.5 text-xs text-muted-foreground">
                   <Target className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                  <span className="line-clamp-3 break-words">
+                  <span className="min-w-0 line-clamp-3 break-words [overflow-wrap:anywhere]">
                     Goal: {favorite.goal_success_criteria}
                   </span>
                 </div>
