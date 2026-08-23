@@ -174,17 +174,42 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
       state.savedAccounts[p].some((account) => account.id === id)
     )
     const userInitiated = opts?.userInitiated ?? false
-    const account = provider
-      ? state.savedAccounts[provider].find((a) => a.id === id)
-      : undefined
+    const account = provider ? state.savedAccounts[provider].find((a) => a.id === id) : undefined
 
     set((current) => ({
       refreshingAccountIds: new Set([...current.refreshingAccountIds, id])
     }))
     try {
       const result = await usageApi.fetchForAccount(id, userInitiated)
+      if (result.success && result.data && provider && account) {
+        // The bottom usage bar reads the provider's live usage, not the saved
+        // account row — when the refreshed account is the active one, mirror
+        // the fresh data so both views agree.
+        const accountState = useAccountStore.getState()
+        const activeEmail =
+          provider === 'anthropic' ? accountState.anthropicEmail : accountState.openaiEmail
+        if (activeEmail !== null && activeEmail === account.email) {
+          if (provider === 'anthropic') {
+            set({
+              anthropicUsage: result.data as UsageData,
+              anthropicLastError: null,
+              anthropicLastRetryAfter: null,
+              anthropicLastFetchedAt: Date.now()
+            })
+          } else {
+            set({
+              openaiUsage: result.data as OpenAIUsageData,
+              openaiLastError: null,
+              openaiLastFetchedAt: Date.now()
+            })
+          }
+        }
+      }
       if (result.needsLogin && userInitiated && provider) {
-        useLoginStore.getState().startLogin(provider, account?.email).catch(() => {})
+        useLoginStore
+          .getState()
+          .startLogin(provider, account?.email)
+          .catch(() => {})
       } else if (!result.success && userInitiated) {
         toast.error(
           `${providerLabel(provider ?? 'anthropic')} account refresh failed: ${result.error ?? 'Unknown error'}`
@@ -192,7 +217,9 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
       }
     } catch (err) {
       if (userInitiated) {
-        toast.error(`${providerLabel(provider ?? 'anthropic')} account refresh failed: ${errorMessage(err)}`)
+        toast.error(
+          `${providerLabel(provider ?? 'anthropic')} account refresh failed: ${errorMessage(err)}`
+        )
       }
     } finally {
       // Reload in its own catch so a reload hiccup after a SUCCESSFUL fetch
@@ -213,9 +240,7 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
     const provider = (['anthropic', 'openai'] as UsageProvider[]).find((p) =>
       state.savedAccounts[p].some((account) => account.id === id)
     )
-    const account = provider
-      ? state.savedAccounts[provider].find((a) => a.id === id)
-      : undefined
+    const account = provider ? state.savedAccounts[provider].find((a) => a.id === id) : undefined
 
     set((current) => ({
       removingAccountIds: new Set([...current.removingAccountIds, id])
@@ -242,9 +267,7 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
     const provider = (['anthropic', 'openai'] as UsageProvider[]).find((p) =>
       state.savedAccounts[p].some((account) => account.id === id)
     )
-    const account = provider
-      ? state.savedAccounts[provider].find((a) => a.id === id)
-      : undefined
+    const account = provider ? state.savedAccounts[provider].find((a) => a.id === id) : undefined
 
     set((current) => ({
       switchingAccountIds: new Set([...current.switchingAccountIds, id])
@@ -509,10 +532,7 @@ function resolveCustomProviderUsage(
   customProviderId: string | null | undefined
 ): UsageProvider | null | undefined {
   if (!customProviderId) return undefined
-  const provider = findCustomProvider(
-    useSettingsStore.getState().customProviders,
-    customProviderId
-  )
+  const provider = findCustomProvider(useSettingsStore.getState().customProviders, customProviderId)
   if (!provider || !provider.command.trim()) return undefined
   return customProviderUsageToUsageProvider(provider.usageProvider)
 }
@@ -540,7 +560,9 @@ export function resolveDefaultUsageProvider(
   return 'anthropic'
 }
 
-function hasUsageWindow(value: unknown): value is { utilization: number; resets_at: string | null } {
+function hasUsageWindow(
+  value: unknown
+): value is { utilization: number; resets_at: string | null } {
   if (typeof value !== 'object' || value === null) return false
   const record = value as Record<string, unknown>
   // resets_at is legitimately null (or absent) for a window with no active
