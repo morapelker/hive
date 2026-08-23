@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SavedAccountDTO } from '@shared/types/usage'
 import { resetRendererRpcClientForTests, setRendererRpcClient } from '@/api/rpc-client'
 import { useUsageStore, type UsageData } from '@/stores/useUsageStore'
+import { useAccountStore } from '@/stores/useAccountStore'
 import { toast } from '@/lib/toast'
 
 vi.mock('@/lib/toast', () => ({
@@ -151,7 +152,9 @@ describe('useUsageStore', () => {
     await useUsageStore.getState().forceRefreshProvider('anthropic')
 
     expect(request.mock.calls.filter(([method]) => method === 'usageOps.fetch')).toHaveLength(0)
-    expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/^Rate limited — retry in \d+s$/))
+    expect(toast.error).toHaveBeenCalledWith(
+      expect.stringMatching(/^Rate limited — retry in \d+s$/)
+    )
   })
 
   it('clears Anthropic errors and advances debounce after a successful fetch', async () => {
@@ -216,6 +219,43 @@ describe('useUsageStore', () => {
     await useUsageStore.getState().refreshSavedAccount('acc-1', { userInitiated: true })
 
     expect(toast.error).not.toHaveBeenCalled()
+  })
+
+  it('mirrors a popover refresh of the ACTIVE account into the live usage bar', async () => {
+    useAccountStore.setState({ anthropicEmail: 'a@b.com' })
+    useUsageStore.setState({
+      anthropicUsage: null,
+      savedAccounts: { anthropic: [anthropicAccount('acc-1', 'a@b.com')], openai: [] }
+    } as Partial<ReturnType<typeof useUsageStore.getState>>)
+    request.mockImplementation(async (method: string) => {
+      if (method === 'usageOps.fetchForAccount')
+        return { success: true, status: 'ok', data: sampleUsage }
+      if (method === 'accountOps.listSaved') return []
+      return null
+    })
+
+    await useUsageStore.getState().refreshSavedAccount('acc-1', { userInitiated: true })
+
+    expect(usageState().anthropicUsage).toEqual(sampleUsage)
+    expect(usageState().anthropicLastFetchedAt).toBe(Date.now())
+  })
+
+  it('does not touch the live usage bar when refreshing a NON-active account', async () => {
+    useAccountStore.setState({ anthropicEmail: 'a@b.com' })
+    useUsageStore.setState({
+      anthropicUsage: null,
+      savedAccounts: { anthropic: [anthropicAccount('acc-2', 'other@b.com')], openai: [] }
+    } as Partial<ReturnType<typeof useUsageStore.getState>>)
+    request.mockImplementation(async (method: string) => {
+      if (method === 'usageOps.fetchForAccount')
+        return { success: true, status: 'ok', data: sampleUsage }
+      if (method === 'accountOps.listSaved') return []
+      return null
+    })
+
+    await useUsageStore.getState().refreshSavedAccount('acc-2', { userInitiated: true })
+
+    expect(usageState().anthropicUsage).toBeNull()
   })
 
   it('toasts switch success even when a post-switch reload fails', async () => {
