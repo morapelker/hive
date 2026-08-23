@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Globe, ChevronUp, ChevronDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { TAB_ACTIVE_SURFACE_CLASS, TAB_UNDERLINE_INSET_CLASS } from '@/lib/tab-styles'
 import { isMac, isLinux } from '@/lib/platform'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useLayoutStore } from '@/stores/useLayoutStore'
@@ -118,7 +119,7 @@ export function BottomPanel({
               onClick={() => setActiveTab(tab.id)}
               className={`h-full px-2.5 text-[11px] font-medium rounded-none transition-colors relative ${
                 resolvedTab === tab.id
-                  ? 'text-foreground bg-[color-mix(in_srgb,var(--foreground)_6%,var(--card))]'
+                  ? `text-foreground ${TAB_ACTIVE_SURFACE_CLASS}`
                   : 'text-muted-foreground hover:text-foreground'
               }`}
               data-testid={`bottom-panel-tab-${tab.id}`}
@@ -132,9 +133,7 @@ export function BottomPanel({
               ) : (
                 tab.label
               )}
-              {resolvedTab === tab.id && (
-                <span className="absolute bottom-0 left-2 right-2 h-0.5 bg-[color-mix(in_srgb,var(--foreground)_60%,var(--card))]" />
-              )}
+              {resolvedTab === tab.id && <span className={TAB_UNDERLINE_INSET_CLASS} />}
             </button>
           ))}
           {terminalPosition === 'sidebar' && !isConnectionMode && selectedWorktreeId && (

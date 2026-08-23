@@ -1,5 +1,5 @@
 import { spawn, execFile, type ChildProcess } from 'node:child_process'
-import { existsSync, statSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -9,6 +9,7 @@ import { z } from 'zod'
 import { GITHUB_CLONE_PROGRESS_CHANNEL, type GithubCloneProgressEvent } from '@shared/github-events'
 import type { EventBus } from '../../events/event-bus'
 import type { RpcHandler } from '../router'
+import { isValidDirectory } from '../../../shared/fs-path-checks'
 
 export interface GithubRepo {
   readonly nameWithOwner: string
@@ -97,14 +98,6 @@ const GH_REPOS_ENDPOINT =
   'user/repos?per_page=100&affiliation=owner,collaborator,organization_member&sort=pushed'
 const GH_REPOS_JQ =
   '.[] | {nameWithOwner: .full_name, description: .description, isPrivate: .private, updatedAt: .pushed_at}'
-
-const isValidDirectory = (path: string): boolean => {
-  try {
-    return existsSync(path) && statSync(path).isDirectory()
-  } catch {
-    return false
-  }
-}
 
 const describeGhError = (error: unknown): string => {
   const message = error instanceof Error ? error.message : String(error)

@@ -450,13 +450,6 @@ export class GitService {
 }
 
 /**
- * Remove git's remote branch prefix for UI display.
- */
-export function normalizeBranchDisplayName(branchName: string): string {
-  return branchName.startsWith('remotes/') ? branchName.replace(/^remotes\//, '') : branchName
-}
-
-/**
  * Convert a session title into a safe git branch name.
  */
 export function canonicalizeBranchName(title: string): string {
@@ -474,6 +467,7 @@ export function canonicalizeBranchName(title: string): string {
 
 // Re-export from shared so backend callers can still import from git-service
 export { canonicalizeTicketTitle } from '@shared/types/branch-utils'
+export { normalizeBranchDisplayName, parseWorktreeForBranch } from '@shared/git-output'
 
 /**
  * Check if a branch name is an auto-generated name (breed or legacy city name).
@@ -565,31 +559,6 @@ export async function autoRenameWorktreeBranch(
     db.updateWorktree(worktreeId, { branch_renamed: 1 })
     return { renamed: false, error: renameResult.error }
   }
-}
-
-/**
- * Parse `git worktree list --porcelain` output to find the worktree path
- * for a given branch name.
- *
- * Porcelain format:
- *   worktree /path/to/worktree
- *   HEAD abc123
- *   branch refs/heads/main
- *   (blank line)
- */
-export function parseWorktreeForBranch(porcelainOutput: string, branchName: string): string | null {
-  const blocks = porcelainOutput.trim().split('\n\n')
-  for (const block of blocks) {
-    const lines = block.split('\n')
-    let path = ''
-    let branch = ''
-    for (const line of lines) {
-      if (line.startsWith('worktree ')) path = line.slice('worktree '.length)
-      if (line.startsWith('branch refs/heads/')) branch = line.slice('branch refs/heads/'.length)
-    }
-    if (branch === branchName && path) return path
-  }
-  return null
 }
 
 /**

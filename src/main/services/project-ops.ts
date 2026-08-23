@@ -1,12 +1,5 @@
 import { app } from 'electron'
-import {
-  existsSync,
-  statSync,
-  writeFileSync,
-  mkdirSync,
-  unlinkSync,
-  readdirSync
-} from 'fs'
+import { existsSync, writeFileSync, mkdirSync, unlinkSync, readdirSync } from 'fs'
 import { join, basename, extname } from 'path'
 import { createLogger } from './logger'
 import { getDatabase } from '../db'
@@ -17,6 +10,7 @@ import {
   getProjectIconDataUrl,
   removeProjectIcon
 } from './project-icons'
+import { isValidDirectory, isGitRepository, tryCanonicalPath } from '../../shared/fs-path-checks'
 
 export {
   detectProjectLanguage,
@@ -27,6 +21,7 @@ export {
 export { detectSetupSuggestions } from './setup-script-suggester'
 export { loadLanguageIcons } from './language-icons'
 export { cloneRepository, deriveProjectNameFromGitUrl, initRepository } from './git-repository'
+export { isValidDirectory, isGitRepository } from '../../shared/fs-path-checks'
 
 const log = createLogger({ component: 'ProjectOps' })
 
@@ -52,29 +47,6 @@ function ensureIconDir(): void {
 }
 
 /**
- * Check if a directory is a git repository by looking for .git folder
- */
-export function isGitRepository(path: string): boolean {
-  try {
-    const gitPath = join(path, '.git')
-    return existsSync(gitPath) && statSync(gitPath).isDirectory()
-  } catch {
-    return false
-  }
-}
-
-/**
- * Check if a path is a valid directory
- */
-export function isValidDirectory(path: string): boolean {
-  try {
-    return existsSync(path) && statSync(path).isDirectory()
-  } catch {
-    return false
-  }
-}
-
-/**
  * Validate a project path: checks it is a valid directory and a git repository.
  * Returns project info on success.
  */
@@ -84,6 +56,10 @@ export function validateProject(path: string): {
   name?: string
   error?: string
 } {
+  // Check the path as given first. realpath resolves ".." lexically on macOS, so for
+  // a path whose ".." crosses a symlink it can hand back a directory the filesystem
+  // would never open, and storing that would point the project at another repository.
+  // The filesystem's own answer for the original path is the thing to trust.
   if (!isValidDirectory(path)) {
     return {
       success: false,
@@ -91,7 +67,19 @@ export function validateProject(path: string): {
     }
   }
 
-  if (!isGitRepository(path)) {
+  // Then canonicalize, because everything downstream joins onto the stored path with
+  // path.join, which drops dot segments and repeated separators, so a raw path like
+  // /repo/../repo would stop matching the paths built from it.
+  const canonical = tryCanonicalPath(path)
+
+  if (!canonical || !isValidDirectory(canonical)) {
+    return {
+      success: false,
+      error: 'The selected path is not a valid directory.'
+    }
+  }
+
+  if (!isGitRepository(canonical)) {
     return {
       success: false,
       error:
@@ -101,8 +89,10 @@ export function validateProject(path: string): {
 
   return {
     success: true,
-    path: path,
-    name: basename(path)
+    path: canonical,
+    // Name from what the user picked, not from the canonical path. Adding a repo
+    // through a named symlink should keep that name, not the symlink's target.
+    name: basename(path) || basename(canonical)
   }
 }
 

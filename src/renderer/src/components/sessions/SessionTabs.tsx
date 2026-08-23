@@ -37,8 +37,10 @@ import { KanbanIcon } from '@/components/kanban/KanbanIcon'
 import { useSessionStore, BOARD_TAB_ID } from '@/stores/useSessionStore'
 import { useShallow } from 'zustand/react/shallow'
 import { isWindows } from '@/lib/platform'
+import { TAB_ACTIVE_SURFACE_CLASS, TAB_UNDERLINE_CLASS } from '@/lib/tab-styles'
 import {
   useFileViewerStore,
+  diffTabAbsolutePath,
   type FileViewerTab,
   type DiffTab,
   type ContextTab
@@ -103,15 +105,11 @@ function tabClass(isActive: boolean, ...extra: Array<string | false | null | und
     'group relative flex items-center gap-1.5 h-full px-2.5 text-[12px] tracking-[0.01em] cursor-pointer select-none whitespace-nowrap',
     'min-w-[88px] w-[180px] max-w-[200px] border-r border-border transition-colors',
     isActive
-      ? 'bg-[color-mix(in_srgb,var(--foreground)_6%,var(--card))] text-foreground'
+      ? cn(TAB_ACTIVE_SURFACE_CLASS, 'text-foreground')
       : 'bg-card text-muted-foreground hover:text-foreground',
     ...extra
   )
 }
-
-/** Orca active-tab 2px bottom bar */
-const TAB_UNDERLINE_CLASS =
-  'absolute bottom-0 left-0 right-0 h-0.5 bg-[color-mix(in_srgb,var(--foreground)_60%,var(--card))]'
 
 /** Orca `.tab-plus` strip affordance (create / scroll buttons on the tab bar) */
 const TAB_STRIP_BUTTON_CLASS =
@@ -457,7 +455,7 @@ function DiffTabItem({
   onCloseOthers,
   onCloseToRight
 }: DiffTabItemProps): React.JSX.Element {
-  const absolutePath = `${tab.worktreePath}/${tab.filePath}`
+  const absolutePath = diffTabAbsolutePath(tab)
 
   return (
     <ContextMenu>
