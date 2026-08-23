@@ -42,6 +42,7 @@ import { OpenTabIndicator } from './OpenTabIndicator'
 import { activeTabRowClass } from './open-tab-classes'
 import { GitCommitForm } from '@/components/git/GitCommitForm'
 import { GitPushPull } from '@/components/git/GitPushPull'
+import { ConnectionPushPull } from '@/components/git/ConnectionPushPull'
 
 interface ConnectionMemberInfo {
   worktree_path: string
@@ -606,6 +607,9 @@ export function ChangesView({
             )
           })}
         </div>
+
+        {/* Push/Pull across all member repos */}
+        <ConnectionPushPull members={connectionMembers ?? []} />
       </div>
     )
   }
