@@ -22437,11 +22437,11 @@ describe('renderer API cleanup', () => {
     const effectStart = source.indexOf(
       '  // Listen for git status changes to auto-refresh file list'
     )
-    const closeDropdownStart = source.indexOf('  // Close dropdown on outside click', effectStart)
-    const effectSource = source.slice(effectStart, closeDropdownStart)
+    const selectHandlerStart = source.indexOf('  const handleSelectBranch = useCallback(', effectStart)
+    const effectSource = source.slice(effectStart, selectHandlerStart)
 
     expect(effectStart).toBeGreaterThan(-1)
-    expect(closeDropdownStart).toBeGreaterThan(effectStart)
+    expect(selectHandlerStart).toBeGreaterThan(effectStart)
     expect(source).toContain("import { gitApi } from '@/api/git-api'")
     expect(effectSource).toContain('if (!worktreePath || !selectedBranch) return')
     expect(effectSource).toContain('const cleanup = gitApi.onStatusChanged((event) => {')

@@ -63,6 +63,12 @@ vi.mock('./MainPaneTerminalPanel', () => ({
   MainPaneTerminalPanel: () => null
 }))
 
+vi.mock('@/components/diff/MonacoDiffView', () => ({
+  default: ({ worktreePath, compareBranch }: { worktreePath: string; compareBranch?: string }) => (
+    <div data-testid="monaco-diff-view" data-worktree={worktreePath} data-branch={compareBranch} />
+  )
+}))
+
 const initialConnectionState = useConnectionStore.getState()
 const initialFileViewerState = useFileViewerStore.getState()
 const initialKanbanState = useKanbanStore.getState()
@@ -337,6 +343,29 @@ describe('MainPane terminal activation gating', () => {
     renderMainPane()
 
     expect(screen.getByTestId('session-view-conn-session-1')).toBeTruthy()
+  })
+
+  it('renders a member branch diff while a connection (no worktree) is selected', async () => {
+    setupMainPaneState()
+    useWorktreeStore.setState({ selectedWorktreeId: null })
+    useConnectionStore.setState({ selectedConnectionId: 'connection-1', loaded: true })
+    useFileViewerStore.getState().setActiveDiff({
+      worktreePath: '/repo/member-a',
+      filePath: 'src/index.ts',
+      fileName: 'index.ts',
+      staged: false,
+      isUntracked: false,
+      compareBranch: 'main'
+    })
+
+    renderMainPane()
+
+    const diff = await screen.findByTestId('monaco-diff-view')
+    expect(diff.getAttribute('data-worktree')).toBe('/repo/member-a')
+    expect(diff.getAttribute('data-branch')).toBe('main')
+    expect(useFileViewerStore.getState().activeFilePath).toBe(
+      'diff:/repo/member-a:src/index.ts:branch:main'
+    )
   })
 
   it('unmounts a latched session when its tab is closed', () => {
