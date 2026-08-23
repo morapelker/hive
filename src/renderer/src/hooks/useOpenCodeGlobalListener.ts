@@ -5,7 +5,8 @@ import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useGitStore } from '@/stores/useGitStore'
 import {
   markNextWorkingStatusExplicit,
-  useWorktreeStatusStore
+  useWorktreeStatusStore,
+  type SessionBackgroundWork
 } from '@/stores/useWorktreeStatusStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useQuestionStore } from '@/stores/useQuestionStore'
@@ -330,6 +331,19 @@ export function useOpenCodeGlobalListener(): void {
 
       if (event.type === 'session.rate_limit') {
         useUsageStore.getState().setAnthropicRateLimit(event.data as AnthropicRateLimitInfo)
+        return
+      }
+
+      // Live background work of a Claude SDK session. Same counts the claude-cli
+      // path publishes, so the same store entry and badges cover both. The event
+      // carries the full set, so it also reports the drop back to zero.
+      if (event.type === 'session.background_work') {
+        const data = event.data as Partial<SessionBackgroundWork> | undefined
+        useWorktreeStatusStore.getState().setSessionBackgroundWork(sessionId, {
+          runningShells: data?.runningShells ?? 0,
+          runningMonitors: data?.runningMonitors ?? 0,
+          runningSubagents: data?.runningSubagents ?? 0
+        })
         return
       }
 
