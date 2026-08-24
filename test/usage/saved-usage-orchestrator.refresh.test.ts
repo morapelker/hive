@@ -498,6 +498,64 @@ describe('refreshAllForProvider', () => {
       expect.objectContaining({ status: 'error' })
     )
   })
+
+  it('skips the network fetch for fresh-ok accounts when maxAgeMs is given, still reporting success', async () => {
+    mocks.listClaudeAccounts.mockResolvedValue([
+      claudeAccount({ num: '1', email: 'a@example.com' }),
+      claudeAccount({ num: '2', email: 'b@example.com' })
+    ])
+    // row-a was fetched seconds ago (pre-warmed); row-b's cache is old.
+    const rowA = savedRow({
+      id: 'row-a',
+      email: 'a@example.com',
+      last_fetched_at: new Date(Date.now() - 5_000).toISOString()
+    })
+    const rowB = savedRow({
+      id: 'row-b',
+      email: 'b@example.com',
+      last_fetched_at: new Date(Date.now() - 10 * 60_000).toISOString()
+    })
+    mocks.db.getSavedUsageAccountsByProvider.mockReturnValue([rowA, rowB])
+    mocks.db.getSavedUsageAccountById.mockImplementation((id: string) =>
+      id === 'row-a' ? rowA : id === 'row-b' ? rowB : null
+    )
+    mocks.readClaudeEffectiveBlob.mockResolvedValue({
+      raw: '{}',
+      parsed: { accessToken: 'access', refreshToken: 'refresh', expiresAt: Date.now() + 3_600_000 }
+    })
+    mocks.fetchClaudeUsage.mockResolvedValue({ success: true, data: usageData() })
+
+    const results = await refreshAllForProvider('anthropic', undefined, { maxAgeMs: 60_000 })
+
+    expect(results).toEqual([
+      { accountId: 'row-a', success: true },
+      { accountId: 'row-b', success: true, error: undefined, retryAfter: undefined }
+    ])
+    // Only the stale row hit the network.
+    expect(mocks.fetchClaudeUsage).toHaveBeenCalledTimes(1)
+    expect(mocks.fetchClaudeUsage.mock.calls[0][1]).toMatchObject({ accountId: 'row-b' })
+  })
+
+  it('does not fresh-skip non-ok accounts even when recently fetched', async () => {
+    mocks.listClaudeAccounts.mockResolvedValue([claudeAccount({ num: '1', email: 'a@example.com' })])
+    const rowA = savedRow({
+      id: 'row-a',
+      email: 'a@example.com',
+      status: 'error',
+      last_fetched_at: new Date(Date.now() - 5_000).toISOString()
+    })
+    mocks.db.getSavedUsageAccountsByProvider.mockReturnValue([rowA])
+    mocks.db.getSavedUsageAccountById.mockReturnValue(rowA)
+    mocks.readClaudeEffectiveBlob.mockResolvedValue({
+      raw: '{}',
+      parsed: { accessToken: 'access', refreshToken: 'refresh', expiresAt: Date.now() + 3_600_000 }
+    })
+    mocks.fetchClaudeUsage.mockResolvedValue({ success: true, data: usageData() })
+
+    await refreshAllForProvider('anthropic', undefined, { maxAgeMs: 60_000 })
+
+    expect(mocks.fetchClaudeUsage).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('removeSavedAccount', () => {

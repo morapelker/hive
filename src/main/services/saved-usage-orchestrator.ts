@@ -539,9 +539,27 @@ export async function fetchForSavedAccount(
   })
 }
 
+export interface RefreshAllOptions {
+  /**
+   * Skip the network fetch for accounts whose cached usage is 'ok' and was
+   * fetched within this window — they still count as refreshed successes in
+   * the result list. Lets a pre-warmed sweep (auto-switch keeps candidates
+   * fresh while usage is near the threshold) make the trigger-time sweep
+   * near-instant instead of a serial fetch of every account.
+   */
+  maxAgeMs?: number
+}
+
+function isFreshOkAccount(account: SavedAccountDTO, maxAgeMs: number): boolean {
+  if (account.status !== 'ok' || !account.last_fetched_at) return false
+  const fetchedAtMs = Date.parse(account.last_fetched_at)
+  return !Number.isNaN(fetchedAtMs) && Date.now() - fetchedAtMs <= maxAgeMs
+}
+
 export async function refreshAllForProvider(
   provider: UsageProvider,
-  excludeAccountIds?: string[]
+  excludeAccountIds?: string[],
+  options: RefreshAllOptions = {}
 ): Promise<RefreshAllResultItem[]> {
   const allAccounts = await listSavedAccounts(provider)
   const excluded = new Set(excludeAccountIds ?? [])
@@ -555,12 +573,23 @@ export async function refreshAllForProvider(
     batchId,
     accountCount: accounts.length,
     accountIds: accounts.map((account) => account.id),
+    maxAgeMs: options.maxAgeMs,
     skippedAccountIds: allAccounts
       .filter((account) => excluded.has(account.id))
       .map((account) => account.id)
   })
 
   for (const account of accounts) {
+    if (options.maxAgeMs !== undefined && isFreshOkAccount(account, options.maxAgeMs)) {
+      results.push({ accountId: account.id, success: true })
+      log.info('refreshAllForProvider account fresh-skip', {
+        provider,
+        batchId,
+        accountId: account.id,
+        lastFetchedAt: account.last_fetched_at
+      })
+      continue
+    }
     log.info('refreshAllForProvider account start', { provider, batchId, accountId: account.id })
     try {
       const result = await fetchForSavedAccount(account.id, {

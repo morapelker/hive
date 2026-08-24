@@ -19,7 +19,8 @@ const apiMocks = vi.hoisted(() => ({
     onSettingsUpdated: vi.fn()
   },
   worktreeApi: {
-    onBranchRenamed: vi.fn()
+    onBranchRenamed: vi.fn(),
+    onWorktreeCreated: vi.fn()
   }
 }))
 
@@ -52,6 +53,7 @@ describe('useOpenCodeGlobalListener rate-limit events', () => {
     apiMocks.dbApi.setting.set.mockResolvedValue(true)
     apiMocks.settingsApi.onSettingsUpdated.mockReturnValue(vi.fn())
     apiMocks.worktreeApi.onBranchRenamed.mockReturnValue(vi.fn())
+    apiMocks.worktreeApi.onWorktreeCreated.mockReturnValue(vi.fn())
     apiMocks.opencodeApi.onStream.mockImplementation(
       (listener: (event: OpenCodeStreamEvent) => void) => {
         streamListener = listener
@@ -99,6 +101,9 @@ describe('useOpenCodeGlobalListener rate-limit events', () => {
       },
       updatedAt: Date.now()
     })
-    expect(useUsageStore.getState().anthropicLastFetchedAt).toBe(Date.now())
+    // The event must NOT masquerade as a usage fetch: bumping the fetch
+    // timestamp would extend the debounce and suppress the very refresh that
+    // reveals the account is exhausted.
+    expect(useUsageStore.getState().anthropicLastFetchedAt).toBeNull()
   })
 })

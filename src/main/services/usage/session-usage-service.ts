@@ -131,7 +131,7 @@ async function listSubagentFiles(transcriptPath: string): Promise<string[]> {
 }
 
 /** Main transcript + subagent files for every known Claude session id, across cwd/realpath encodings. */
-async function resolveClaudeFiles(db: DatabaseService, session: Session): Promise<string[]> {
+export async function resolveClaudeFiles(db: DatabaseService, session: Session): Promise<string[]> {
   const cwd = resolveSessionCwd(db, session)
   if (!cwd) return []
   const projectsDir = resolveProjectsDir()

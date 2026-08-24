@@ -52,13 +52,20 @@ interface UsageState {
    * the provider was already running (nothing was refreshed by this call). */
   refreshAllForProvider: (
     provider: UsageProvider,
-    excludeAccountIds?: string[]
+    excludeAccountIds?: string[],
+    opts?: { maxAgeMs?: number }
   ) => Promise<RefreshAllResultItem[] | null>
   refreshSavedAccount: (id: string, opts?: { userInitiated?: boolean }) => Promise<void>
   removeSavedAccount: (id: string) => Promise<void>
   /** Resolves true when the switch op succeeded (failures also toast). */
   switchAccount: (id: string) => Promise<boolean>
-  fetchUsageForProvider: (provider: UsageProvider) => Promise<void>
+  /** opts.minIntervalMs overrides the 3-minute debounce floor (still never
+   * fetching more often than the given interval) — used by the burn-rate
+   * predictor and rate-limit events for targeted early refreshes. */
+  fetchUsageForProvider: (
+    provider: UsageProvider,
+    opts?: { minIntervalMs?: number }
+  ) => Promise<void>
   forceRefreshProvider: (provider: UsageProvider) => Promise<void>
   setActiveProvider: (provider: UsageProvider) => void
   setAnthropicRateLimit: (info: AnthropicRateLimitInfo) => void
@@ -69,6 +76,11 @@ interface UsageState {
 // this debounce puts under the scheduled refresh cadence.
 export const USAGE_FETCH_DEBOUNCE_MS = 180_000 // 3 minutes
 const DEBOUNCE_MS = USAGE_FETCH_DEBOUNCE_MS
+
+// Floor for predictor/rate-limit-event driven early refreshes: they may
+// bypass the 3-minute debounce, but never hit the usage endpoint more often
+// than this.
+export const EARLY_USAGE_REFRESH_FLOOR_MS = 30_000
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
@@ -139,7 +151,11 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
     }
   },
 
-  refreshAllForProvider: async (provider: UsageProvider, excludeAccountIds?: string[]) => {
+  refreshAllForProvider: async (
+    provider: UsageProvider,
+    excludeAccountIds?: string[],
+    opts?: { maxAgeMs?: number }
+  ) => {
     const state = get()
     if (state.refreshingProviders[provider]) return null
 
@@ -153,7 +169,11 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
     }))
 
     try {
-      const results = await usageApi.refreshAllForProvider(provider, excludeAccountIds)
+      const results = await usageApi.refreshAllForProvider(
+        provider,
+        excludeAccountIds,
+        opts?.maxAgeMs
+      )
       await get().loadSavedAccounts(provider)
       return results
     } finally {
@@ -280,6 +300,12 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
         // SUCCESSFUL switch can't reach the catch below and mis-toast a
         // 'Switch failed'.
         toast.success(`Switched to ${account?.email ?? 'account'}`)
+        if (provider === 'anthropic') {
+          // The rate-limit overlay (and its rejected=100% signal) belongs to
+          // the account we just left — clearing it stops an immediate
+          // re-trigger against the fresh account.
+          set({ anthropicRateLimit: null })
+        }
         if (provider) {
           await useAccountStore
             .getState()
@@ -309,12 +335,13 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
     return false
   },
 
-  fetchUsageForProvider: async (provider: UsageProvider) => {
+  fetchUsageForProvider: async (provider: UsageProvider, opts?: { minIntervalMs?: number }) => {
     const state = get()
+    const minIntervalMs = opts?.minIntervalMs ?? DEBOUNCE_MS
 
     if (provider === 'anthropic') {
       if (state.anthropicIsLoading) return
-      if (state.anthropicLastFetchedAt && Date.now() - state.anthropicLastFetchedAt < DEBOUNCE_MS)
+      if (state.anthropicLastFetchedAt && Date.now() - state.anthropicLastFetchedAt < minIntervalMs)
         return
 
       set({ anthropicIsLoading: true, anthropicLastError: null })
@@ -349,7 +376,8 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
       }
     } else {
       if (state.openaiIsLoading) return
-      if (state.openaiLastFetchedAt && Date.now() - state.openaiLastFetchedAt < DEBOUNCE_MS) return
+      if (state.openaiLastFetchedAt && Date.now() - state.openaiLastFetchedAt < minIntervalMs)
+        return
 
       set({ openaiIsLoading: true, openaiLastError: null })
       let succeeded = false
@@ -501,10 +529,18 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
       }
 
       return {
-        anthropicRateLimit: next.fiveHour || next.sevenDay ? next : null,
-        anthropicLastFetchedAt: now
+        anthropicRateLimit: next.fiveHour || next.sevenDay ? next : null
       }
     })
+    // A warning/rejected event means the polled snapshot is behind reality —
+    // pull a fresh one now (floored, so an event storm can't hammer the
+    // endpoint) instead of extending the debounce and flying blind. The
+    // fresh percent is what lets the auto-switcher fire before/at exhaustion.
+    if (info.status !== 'allowed') {
+      get()
+        .fetchUsageForProvider('anthropic', { minIntervalMs: EARLY_USAGE_REFRESH_FLOOR_MS })
+        .catch(() => {})
+    }
   },
 
   fetchUsage: async () => {

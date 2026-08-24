@@ -276,6 +276,93 @@ describe('useUsageStore', () => {
     expect(toast.error).not.toHaveBeenCalled()
   })
 
+  it('honors a minIntervalMs override to bypass the 3-minute debounce, but not below the floor', async () => {
+    request.mockImplementation(async (method: string) => {
+      if (method === 'usageOps.fetch') return { success: true, data: sampleUsage }
+      if (method === 'accountOps.listSaved') return []
+      return null
+    })
+    // Fetched 60s ago: the default debounce (3 min) blocks…
+    useUsageStore.setState({ anthropicLastFetchedAt: Date.now() - 60_000 })
+    await useUsageStore.getState().fetchUsageForProvider('anthropic')
+    expect(request).not.toHaveBeenCalledWith('usageOps.fetch', expect.anything())
+
+    // …a 30s floor lets the early refresh through…
+    await useUsageStore.getState().fetchUsageForProvider('anthropic', { minIntervalMs: 30_000 })
+    expect(request).toHaveBeenCalledWith('usageOps.fetch', expect.anything())
+
+    // …but a fetch 10s old stays blocked even with the floored override.
+    request.mockClear()
+    useUsageStore.setState({ anthropicLastFetchedAt: Date.now() - 10_000 })
+    await useUsageStore.getState().fetchUsageForProvider('anthropic', { minIntervalMs: 30_000 })
+    expect(request).not.toHaveBeenCalledWith('usageOps.fetch', expect.anything())
+  })
+
+  it('pulls a floored early refresh on warning/rejected rate-limit events, never on allowed', async () => {
+    request.mockImplementation(async (method: string) => {
+      if (method === 'usageOps.fetch') return { success: true, data: sampleUsage }
+      if (method === 'accountOps.listSaved') return []
+      return null
+    })
+    // Last fetch 2 minutes ago — inside the normal debounce.
+    useUsageStore.setState({ anthropicLastFetchedAt: Date.now() - 120_000 })
+
+    useUsageStore.getState().setAnthropicRateLimit({
+      status: 'allowed',
+      resetsAt: Math.floor(Date.now() / 1000) + 3_600,
+      rateLimitType: 'five_hour'
+    })
+    await vi.runOnlyPendingTimersAsync()
+    expect(request).not.toHaveBeenCalledWith('usageOps.fetch', expect.anything())
+
+    useUsageStore.getState().setAnthropicRateLimit({
+      status: 'allowed_warning',
+      resetsAt: Math.floor(Date.now() / 1000) + 3_600,
+      rateLimitType: 'five_hour'
+    })
+    await vi.runOnlyPendingTimersAsync()
+    expect(request).toHaveBeenCalledWith('usageOps.fetch', expect.anything())
+  })
+
+  it('clears the anthropic rate-limit overlay on a successful switch', async () => {
+    useUsageStore.setState({
+      savedAccounts: {
+        anthropic: [
+          {
+            id: 'acc-1',
+            provider: 'anthropic',
+            email: 'a@b.com',
+            last_usage: null,
+            last_fetched_at: null,
+            status: 'ok',
+            last_error: null,
+            created_at: new Date().toISOString(),
+            plan: null
+          }
+        ],
+        openai: []
+      },
+      anthropicRateLimit: {
+        fiveHour: {
+          status: 'rejected',
+          resetsAt: Math.floor(Date.now() / 1000) + 1_800
+        },
+        updatedAt: Date.now()
+      }
+    } as Partial<ReturnType<typeof useUsageStore.getState>>)
+    request.mockImplementation(async (method: string) => {
+      if (method === 'accountOps.switchAccount') return { success: true }
+      if (method === 'accountOps.getClaudeEmail') return 'a@b.com'
+      if (method === 'accountOps.listSaved') return []
+      if (method === 'usageOps.fetch') return { success: true, data: sampleUsage }
+      return null
+    })
+
+    await useUsageStore.getState().switchAccount('acc-1')
+
+    expect(useUsageStore.getState().anthropicRateLimit).toBeNull()
+  })
+
   it('merges Anthropic rate-limit windows and drops stale windows', () => {
     useUsageStore.getState().setAnthropicRateLimit({
       status: 'allowed_warning',

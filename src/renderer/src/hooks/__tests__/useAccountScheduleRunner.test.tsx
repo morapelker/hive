@@ -1,8 +1,14 @@
 import { act, cleanup, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { useAccountScheduleRunner } from '../useAccountScheduleRunner'
+import {
+  useAccountScheduleRunner,
+  __resetAccountScheduleRunnerForTests
+} from '../useAccountScheduleRunner'
 import { useAccountScheduleStore } from '@/stores/useAccountScheduleStore'
+import { useAccountStore } from '@/stores/useAccountStore'
+import { usageApi } from '@/api/usage-api'
+import type { SavedAccountDTO } from '@shared/types/usage'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useUsageStore } from '@/stores/useUsageStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
@@ -16,6 +22,19 @@ function makeUsage(fiveHour: number, sevenDay: number): UsageData {
     seven_day: { utilization: sevenDay, resets_at: futureReset }
   }
 }
+
+vi.mock('@/api/usage-api', () => ({
+  usageApi: {
+    getClaudeTokenTally: vi.fn().mockResolvedValue({
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      sessionCount: 0,
+      sampledAt: 0
+    })
+  }
+}))
 
 const runningSession = { id: 'session-1', agent_sdk: 'claude-code' } as unknown as Session
 
@@ -31,6 +50,10 @@ describe('useAccountScheduleRunner usage refresh cadence', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-07-16T10:00:00.000Z'))
+    // lastAttemptAt + predictor state live at module scope in the runner —
+    // without this, one test's fetch attempt suppresses the next test's
+    // (clock-reset) cadence expectations.
+    __resetAccountScheduleRunnerForTests()
 
     fetchUsageForProvider = vi.fn().mockResolvedValue(undefined)
     checkSchedules = vi.fn().mockResolvedValue(undefined)
@@ -82,7 +105,8 @@ describe('useAccountScheduleRunner usage refresh cadence', () => {
 
     await advance(60_000)
     expect(fetchUsageForProvider).toHaveBeenCalledTimes(1)
-    expect(fetchUsageForProvider).toHaveBeenCalledWith('anthropic')
+    // The default cadence keeps the store's own debounce as the floor.
+    expect(fetchUsageForProvider).toHaveBeenCalledWith('anthropic', { minIntervalMs: 180_000 })
   })
 
   it('refreshes every 2 minutes in the last 10 points before an armed auto-switch threshold', async () => {
@@ -98,6 +122,9 @@ describe('useAccountScheduleRunner usage refresh cadence', () => {
 
     await advance(30_000)
     expect(fetchUsageForProvider).toHaveBeenCalledTimes(1)
+    // Tightened cadences override the 3-minute debounce, or they'd be
+    // silently vetoed by the store and never actually fetch.
+    expect(fetchUsageForProvider).toHaveBeenCalledWith('anthropic', { minIntervalMs: 120_000 })
 
     await advance(2 * 60_000)
     expect(fetchUsageForProvider).toHaveBeenCalledTimes(2)
@@ -117,6 +144,7 @@ describe('useAccountScheduleRunner usage refresh cadence', () => {
 
     await advance(30_000)
     expect(fetchUsageForProvider).toHaveBeenCalledTimes(1)
+    expect(fetchUsageForProvider).toHaveBeenCalledWith('anthropic', { minIntervalMs: 60_000 })
 
     await advance(60_000)
     expect(fetchUsageForProvider).toHaveBeenCalledTimes(2)
@@ -159,6 +187,142 @@ describe('useAccountScheduleRunner usage refresh cadence', () => {
 
     await advance(60_000)
     expect(fetchUsageForProvider).toHaveBeenCalledTimes(1)
+  })
+
+  const setTallyTokens = (inputTokens: number): void => {
+    vi.mocked(usageApi.getClaudeTokenTally).mockResolvedValue({
+      inputTokens,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      sessionCount: 1,
+      sampledAt: 0
+    })
+  }
+
+  it('pulls an early floored refresh when the disk burn rate projects crossing the threshold before the next poll', async () => {
+    useAccountScheduleStore.setState({
+      autoSwitch: {
+        anthropic: { provider: 'anthropic', thresholdPercent: 90, createdAt: Date.now() }
+      }
+    })
+    useUsageStore.setState({ anthropicUsage: makeUsage(80, 40) })
+
+    // Mount tick (t=0): first tally sample + anchor at 80% / 10M tokens.
+    setTallyTokens(10_000_000)
+    renderHook(() => useAccountScheduleRunner())
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+
+    // A real fetch lands (85% at 12M tokens): the next tick anchors it and
+    // calibrates 5 points per 2M tokens.
+    setTallyTokens(12_000_000)
+    useUsageStore.setState({
+      anthropicUsage: makeUsage(85, 40),
+      anthropicLastFetchedAt: Date.now() + 30_000
+    })
+    await advance(30_000)
+    expect(fetchUsageForProvider).not.toHaveBeenCalled()
+
+    // 2M more tokens in 30s: estimated ≈90% now and far past it by the next
+    // scheduled poll → the predictor pulls a real sample at the 30s floor.
+    setTallyTokens(14_000_000)
+    await advance(30_000)
+    expect(fetchUsageForProvider).toHaveBeenCalledTimes(1)
+    expect(fetchUsageForProvider).toHaveBeenCalledWith('anthropic', { minIntervalMs: 30_000 })
+  })
+
+  it('does not early-refresh while the burn rate stays flat', async () => {
+    useAccountScheduleStore.setState({
+      autoSwitch: {
+        anthropic: { provider: 'anthropic', thresholdPercent: 90, createdAt: Date.now() }
+      }
+    })
+    useUsageStore.setState({ anthropicUsage: makeUsage(80, 40) })
+
+    setTallyTokens(10_000_000)
+    renderHook(() => useAccountScheduleRunner())
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    setTallyTokens(12_000_000)
+    useUsageStore.setState({
+      anthropicUsage: makeUsage(85, 40),
+      anthropicLastFetchedAt: Date.now() + 30_000
+    })
+    await advance(30_000)
+
+    // Barely any tokens burned since the fetch: projection stays below 90.
+    setTallyTokens(12_050_000)
+    await advance(30_000)
+    expect(fetchUsageForProvider).not.toHaveBeenCalled()
+  })
+
+  const savedAccount = (id: string, email: string, fiveHour: number): SavedAccountDTO => ({
+    id,
+    provider: 'anthropic',
+    email,
+    last_usage: makeUsage(fiveHour, 10),
+    last_fetched_at: new Date().toISOString(),
+    status: 'ok',
+    last_error: null,
+    created_at: new Date().toISOString(),
+    plan: null
+  })
+
+  it('pre-warms auto-switch candidates inside the near-threshold margin', async () => {
+    const refreshAllForProvider = vi.fn().mockResolvedValue([])
+    useAccountStore.setState({ anthropicEmail: 'current@x.com' } as Partial<
+      ReturnType<typeof useAccountStore.getState>
+    >)
+    useUsageStore.setState({
+      refreshAllForProvider,
+      savedAccountsLoaded: { anthropic: true, openai: false },
+      savedAccounts: {
+        anthropic: [
+          savedAccount('acc-1', 'current@x.com', 85),
+          savedAccount('acc-2', 'other@x.com', 10)
+        ],
+        openai: []
+      }
+    })
+    useAccountScheduleStore.setState({
+      autoSwitch: {
+        anthropic: { provider: 'anthropic', thresholdPercent: 90, createdAt: Date.now() }
+      }
+    })
+    renderHook(() => useAccountScheduleRunner())
+
+    await advance(30_000)
+    expect(refreshAllForProvider).toHaveBeenCalledWith('anthropic', ['acc-1'], {
+      maxAgeMs: 150_000
+    })
+  })
+
+  it('does not pre-warm while usage is still below the near-threshold margin', async () => {
+    const refreshAllForProvider = vi.fn().mockResolvedValue([])
+    useUsageStore.setState({
+      anthropicUsage: makeUsage(70, 40),
+      refreshAllForProvider,
+      savedAccountsLoaded: { anthropic: true, openai: false },
+      savedAccounts: {
+        anthropic: [
+          savedAccount('acc-1', 'current@x.com', 70),
+          savedAccount('acc-2', 'other@x.com', 10)
+        ],
+        openai: []
+      }
+    })
+    useAccountScheduleStore.setState({
+      autoSwitch: {
+        anthropic: { provider: 'anthropic', thresholdPercent: 90, createdAt: Date.now() }
+      }
+    })
+    renderHook(() => useAccountScheduleRunner())
+
+    await advance(60_000)
+    expect(refreshAllForProvider).not.toHaveBeenCalled()
   })
 
   it('never refreshes near the threshold when no session is running', async () => {

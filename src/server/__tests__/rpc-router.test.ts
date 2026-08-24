@@ -4901,6 +4901,15 @@ describe('rpc router', () => {
     const router = makeRpcRouter({
       eventBus: makeEventBus(),
       usageOps: {
+        getClaudeTokenTally: () =>
+          Effect.succeed({
+            inputTokens: 0,
+            outputTokens: 0,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            sessionCount: 0,
+            sampledAt: 0
+          }),
         fetchOpenai: () => Effect.succeed({ success: false, error: 'unused' }),
         fetchForAccount: () => Effect.succeed({ success: false, status: 'error' }),
         refreshAllForProvider: () => Effect.succeed([]),
@@ -4933,6 +4942,15 @@ describe('rpc router', () => {
     const router = makeRpcRouter({
       eventBus: makeEventBus(),
       usageOps: {
+        getClaudeTokenTally: () =>
+          Effect.succeed({
+            inputTokens: 0,
+            outputTokens: 0,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            sessionCount: 0,
+            sampledAt: 0
+          }),
         fetchOpenai: () => Effect.succeed({ success: false, error: 'unused' }),
         fetchForAccount: () => Effect.succeed({ success: false, status: 'error' }),
         refreshAllForProvider: () => Effect.succeed([]),
@@ -4985,6 +5003,15 @@ describe('rpc router', () => {
     const router = makeRpcRouter({
       eventBus: makeEventBus(),
       usageOps: {
+        getClaudeTokenTally: () =>
+          Effect.succeed({
+            inputTokens: 0,
+            outputTokens: 0,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            sessionCount: 0,
+            sampledAt: 0
+          }),
         fetch: () => Effect.succeed({ success: false, error: 'unused' }),
         fetchForAccount: () => Effect.succeed({ success: false, status: 'error' }),
         refreshAllForProvider: () => Effect.succeed([]),
@@ -5017,6 +5044,15 @@ describe('rpc router', () => {
     const router = makeRpcRouter({
       eventBus: makeEventBus(),
       usageOps: {
+        getClaudeTokenTally: () =>
+          Effect.succeed({
+            inputTokens: 0,
+            outputTokens: 0,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            sessionCount: 0,
+            sampledAt: 0
+          }),
         fetch: () => Effect.succeed({ success: false, error: 'unused' }),
         fetchForAccount: () => Effect.succeed({ success: false, status: 'error' }),
         refreshAllForProvider: () => Effect.succeed([]),
@@ -5057,6 +5093,15 @@ describe('rpc router', () => {
     const router = makeRpcRouter({
       eventBus: makeEventBus(),
       usageOps: {
+        getClaudeTokenTally: () =>
+          Effect.succeed({
+            inputTokens: 0,
+            outputTokens: 0,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            sessionCount: 0,
+            sampledAt: 0
+          }),
         fetch: () => Effect.succeed({ success: false, error: 'unused' }),
         fetchOpenai: () => Effect.succeed({ success: false, error: 'unused' }),
         fetchForAccount: (accountId) =>
@@ -5089,6 +5134,15 @@ describe('rpc router', () => {
     const router = makeRpcRouter({
       eventBus: makeEventBus(),
       usageOps: {
+        getClaudeTokenTally: () =>
+          Effect.succeed({
+            inputTokens: 0,
+            outputTokens: 0,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            sessionCount: 0,
+            sampledAt: 0
+          }),
         fetch: () => Effect.succeed({ success: false, error: 'unused' }),
         fetchOpenai: () => Effect.succeed({ success: false, error: 'unused' }),
         fetchForAccount: (accountId) =>
@@ -5121,6 +5175,15 @@ describe('rpc router', () => {
     const router = makeRpcRouter({
       eventBus: makeEventBus(),
       usageOps: {
+        getClaudeTokenTally: () =>
+          Effect.succeed({
+            inputTokens: 0,
+            outputTokens: 0,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            sessionCount: 0,
+            sampledAt: 0
+          }),
         fetch: () => Effect.succeed({ success: false, error: 'unused' }),
         fetchOpenai: () => Effect.succeed({ success: false, error: 'unused' }),
         fetchForAccount: (accountId, userInitiated) =>
@@ -5152,6 +5215,15 @@ describe('rpc router', () => {
     const router = makeRpcRouter({
       eventBus: makeEventBus(),
       usageOps: {
+        getClaudeTokenTally: () =>
+          Effect.succeed({
+            inputTokens: 0,
+            outputTokens: 0,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            sessionCount: 0,
+            sampledAt: 0
+          }),
         fetch: () => Effect.succeed({ success: false, error: 'unused' }),
         fetchOpenai: () => Effect.succeed({ success: false, error: 'unused' }),
         fetchForAccount: () => Effect.succeed({ success: false, status: 'error' }),
@@ -5184,6 +5256,15 @@ describe('rpc router', () => {
     const router = makeRpcRouter({
       eventBus: makeEventBus(),
       usageOps: {
+        getClaudeTokenTally: () =>
+          Effect.succeed({
+            inputTokens: 0,
+            outputTokens: 0,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            sessionCount: 0,
+            sampledAt: 0
+          }),
         fetch: () => Effect.succeed({ success: false, error: 'unused' }),
         fetchOpenai: () => Effect.succeed({ success: false, error: 'unused' }),
         fetchForAccount: () => Effect.succeed({ success: false, status: 'error' }),
