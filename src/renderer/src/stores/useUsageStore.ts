@@ -30,6 +30,12 @@ interface UsageState {
   anthropicLastError: string | null
   anthropicLastRetryAfter: number | null
   anthropicRateLimit: AnthropicRateLimitState | null
+  /** Increments ONLY when anthropicUsage was set from a live usage fetch of
+   * the active account. Lets the burn-rate predictor distinguish real fetch
+   * data (anchors + calibrates) from seeded/mirrored cache data (re-anchors
+   * without calibrating) — timestamps can't: a failed fetch's retryAfter
+   * back-dates anthropicLastFetchedAt without any new data. */
+  anthropicUsageFetchSeq: number
 
   openaiUsage: OpenAIUsageData | null
   openaiLastFetchedAt: number | null
@@ -101,6 +107,7 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
   anthropicLastError: null,
   anthropicLastRetryAfter: null,
   anthropicRateLimit: null,
+  anthropicUsageFetchSeq: 0,
 
   openaiUsage: null,
   openaiLastFetchedAt: null,
@@ -210,12 +217,13 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
           provider === 'anthropic' ? accountState.anthropicEmail : accountState.openaiEmail
         if (activeEmail !== null && activeEmail === account.email) {
           if (provider === 'anthropic') {
-            set({
+            set((current) => ({
               anthropicUsage: result.data as UsageData,
               anthropicLastError: null,
               anthropicLastRetryAfter: null,
-              anthropicLastFetchedAt: Date.now()
-            })
+              anthropicLastFetchedAt: Date.now(),
+              anthropicUsageFetchSeq: current.anthropicUsageFetchSeq + 1
+            }))
           } else {
             set({
               openaiUsage: result.data as OpenAIUsageData,
@@ -349,11 +357,12 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
       try {
         const result = await usageApi.fetch()
         if (result.success) {
-          set({
+          set((current) => ({
             anthropicUsage: result.data ?? null,
             anthropicLastError: null,
-            anthropicLastRetryAfter: null
-          })
+            anthropicLastRetryAfter: null,
+            anthropicUsageFetchSeq: current.anthropicUsageFetchSeq + 1
+          }))
           succeeded = true
           get()
             .loadSavedAccounts(provider)
@@ -424,11 +433,12 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
       try {
         const result = await usageApi.fetch()
         if (result.success) {
-          set({
+          set((current) => ({
             anthropicUsage: result.data ?? null,
             anthropicLastError: null,
-            anthropicLastRetryAfter: null
-          })
+            anthropicLastRetryAfter: null,
+            anthropicUsageFetchSeq: current.anthropicUsageFetchSeq + 1
+          }))
           succeeded = true
           get()
             .loadSavedAccounts(provider)

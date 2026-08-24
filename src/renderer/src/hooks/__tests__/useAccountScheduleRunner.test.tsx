@@ -220,7 +220,8 @@ describe('useAccountScheduleRunner usage refresh cadence', () => {
     setTallyTokens(12_000_000)
     useUsageStore.setState({
       anthropicUsage: makeUsage(85, 40),
-      anthropicLastFetchedAt: Date.now() + 30_000
+      anthropicLastFetchedAt: Date.now() + 30_000,
+      anthropicUsageFetchSeq: 1
     })
     await advance(30_000)
     expect(fetchUsageForProvider).not.toHaveBeenCalled()
@@ -251,7 +252,8 @@ describe('useAccountScheduleRunner usage refresh cadence', () => {
     setTallyTokens(12_000_000)
     useUsageStore.setState({
       anthropicUsage: makeUsage(85, 40),
-      anthropicLastFetchedAt: Date.now() + 30_000
+      anthropicLastFetchedAt: Date.now() + 30_000,
+      anthropicUsageFetchSeq: 1
     })
     await advance(30_000)
     expect(fetchUsageForProvider).not.toHaveBeenCalled()
@@ -265,6 +267,41 @@ describe('useAccountScheduleRunner usage refresh cadence', () => {
     await advance(30_000)
     expect(fetchUsageForProvider).toHaveBeenCalledTimes(1)
     expect(fetchUsageForProvider).toHaveBeenCalledWith('anthropic', { minIntervalMs: 30_000 })
+  })
+
+  it('does not treat a post-switch seed as a fetch even when a retryAfter timestamp change coincides', async () => {
+    useAccountScheduleStore.setState({
+      autoSwitch: {
+        anthropic: { provider: 'anthropic', thresholdPercent: 90, createdAt: Date.now() }
+      }
+    })
+    useUsageStore.setState({ anthropicUsage: makeUsage(80, 40) })
+
+    setTallyTokens(10_000_000)
+    renderHook(() => useAccountScheduleRunner())
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+
+    // Between ticks BOTH a switch seeds anthropicUsage from another
+    // account's cache (usage object changes, fetch seq does NOT) and a
+    // failed fetch's retryAfter back-dates anthropicLastFetchedAt. Were the
+    // timestamp taken as fetch evidence, the seed would calibrate against
+    // the previous account's anchor and arm the predictor on garbage.
+    setTallyTokens(12_000_000)
+    useUsageStore.setState({
+      anthropicUsage: makeUsage(85, 40),
+      anthropicLastFetchedAt: Date.now() + 30_000 - 40_000
+    })
+    await advance(30_000)
+
+    // Heavy burn afterwards: an (invalid) calibration would now fire an
+    // early refresh — a correctly uncalibrated predictor stays quiet.
+    setTallyTokens(14_000_000)
+    await advance(30_000)
+    expect(fetchUsageForProvider).not.toHaveBeenCalledWith('anthropic', {
+      minIntervalMs: 30_000
+    })
   })
 
   it('does not early-refresh while the burn rate stays flat', async () => {
@@ -283,7 +320,8 @@ describe('useAccountScheduleRunner usage refresh cadence', () => {
     setTallyTokens(12_000_000)
     useUsageStore.setState({
       anthropicUsage: makeUsage(85, 40),
-      anthropicLastFetchedAt: Date.now() + 30_000
+      anthropicLastFetchedAt: Date.now() + 30_000,
+      anthropicUsageFetchSeq: 1
     })
     await advance(30_000)
 

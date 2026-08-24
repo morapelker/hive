@@ -127,14 +127,14 @@ export function nextUsageRefreshAt(provider: UsageProvider): number | null {
 const predictor = createPredictorState()
 let tallyInFlight = false
 let lastAnchoredUsage: unknown = null
-let lastAnchoredFetchedAt: number | null = null
+let lastAnchoredFetchSeq: number | null = null
 
 /** Test hook: predictor + attempt bookkeeping live at module scope. */
 export function __resetAccountScheduleRunnerForTests(): void {
   resetPredictorState(predictor)
   tallyInFlight = false
   lastAnchoredUsage = null
-  lastAnchoredFetchedAt = null
+  lastAnchoredFetchSeq = null
   delete lastAttemptAt.anthropic
   delete lastAttemptAt.openai
 }
@@ -144,7 +144,7 @@ async function maintainBurnRatePredictor(): Promise<void> {
   if (threshold === null) {
     resetPredictorState(predictor)
     lastAnchoredUsage = null
-    lastAnchoredFetchedAt = null
+    lastAnchoredFetchSeq = null
     return
   }
   if (!providersWithRunningSessions().has('anthropic')) return
@@ -167,19 +167,19 @@ async function maintainBurnRatePredictor(): Promise<void> {
 
   // Fresh usage DATA landed since the last anchor (a successful fetch or a
   // post-switch seed replaced the usage object): re-baseline the estimate —
-  // and calibrate percent-per-token when both this and the previous anchor
-  // came with an advanced fetch timestamp (i.e. real fetches). A
-  // lastFetchedAt change WITHOUT new usage data (a failed fetch's retryAfter
-  // back-dates the debounce timestamp) must not anchor: the percent is stale
-  // while the tally is current, so anchoring would silently absorb the burn
-  // since the last real fetch.
+  // and calibrate percent-per-token only when the data came from real
+  // fetches, which is what anthropicUsageFetchSeq counts. Timestamps are NOT
+  // evidence: a failed fetch's retryAfter back-dates anthropicLastFetchedAt
+  // with no new data, and a post-switch seed replaces the usage object with
+  // another account's cache — either (or both at once) must re-anchor
+  // without calibrating, or the estimate blends two accounts' percents.
   const usageStore = useUsageStore.getState()
   if (usageStore.anthropicUsage !== lastAnchoredUsage) {
-    const fromFetch = usageStore.anthropicLastFetchedAt !== lastAnchoredFetchedAt
+    const fromFetch = usageStore.anthropicUsageFetchSeq !== lastAnchoredFetchSeq
     recordAnchor(predictor, { percent, weighted, at: now }, { fromFetch })
     lastAnchoredUsage = usageStore.anthropicUsage
   }
-  lastAnchoredFetchedAt = usageStore.anthropicLastFetchedAt
+  lastAnchoredFetchSeq = usageStore.anthropicUsageFetchSeq
 
   const nextAt = nextUsageRefreshAt('anthropic')
   if (nextAt === null) return
