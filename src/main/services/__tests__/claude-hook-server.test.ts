@@ -105,6 +105,11 @@ describe('mapHookEventToStatus', () => {
     ],
     ['Stop maps to completed', { hook_event_name: 'Stop' }, 'completed'],
     [
+      'StopFailure maps to completed',
+      { hook_event_name: 'StopFailure', error: 'server_error' },
+      'completed'
+    ],
+    [
       'PreToolUse ExitPlanMode maps to plan_ready',
       { hook_event_name: 'PreToolUse', tool_name: 'ExitPlanMode' },
       'plan_ready'
@@ -195,6 +200,17 @@ describe('buildClaudeCliHookSettings', () => {
         ],
         Stop: [
           {
+            hooks: [
+              {
+                type: 'http',
+                url: 'http://127.0.0.1:34819/hook/hive-session-1/stop'
+              }
+            ]
+          }
+        ],
+        StopFailure: [
+          {
+            matcher: '*',
             hooks: [
               {
                 type: 'http',
@@ -422,6 +438,137 @@ describe('ClaudeHookServer HTTP round-trip', () => {
         metadata: { hookEventName: 'Stop', hookPath: 'stop' }
       }
     )
+  })
+
+  it('publishes an api-error event and a completed status for StopFailure', async () => {
+    const { port } = await getClaudeHookServer()
+
+    await postHook(port, 'hive-session-1', 'stop', {
+      hook_event_name: 'StopFailure',
+      error: 'server_error',
+      error_details: '500 Internal Server Error',
+      last_assistant_message: 'API Error: 500 Internal server error.'
+    })
+
+    await vi.waitFor(() => {
+      expect(backendManagerMocks.publishDesktopBackendEvent).toHaveBeenCalledWith(
+        'claude-cli:api-error',
+        {
+          sessionId: 'hive-session-1',
+          error: 'server_error',
+          errorDetails: '500 Internal Server Error',
+          lastAssistantMessage: 'API Error: 500 Internal server error.'
+        }
+      )
+      expect(backendManagerMocks.publishDesktopBackendEvent).toHaveBeenCalledWith(
+        'claude-cli:status',
+        {
+          sessionId: 'hive-session-1',
+          status: 'completed',
+          metadata: { hookEventName: 'StopFailure', hookPath: 'stop', apiError: 'server_error' }
+        }
+      )
+    })
+  })
+
+  it('still publishes the api-error event when the completed status is dedup-swallowed', async () => {
+    const { port } = await getClaudeHookServer()
+
+    await postHook(port, 'hive-session-1', 'stop', { hook_event_name: 'Stop' })
+    await vi.waitFor(() => {
+      expect(backendManagerMocks.publishDesktopBackendEvent).toHaveBeenCalledWith(
+        'claude-cli:status',
+        expect.objectContaining({ sessionId: 'hive-session-1', status: 'completed' })
+      )
+    })
+
+    await postHook(port, 'hive-session-1', 'stop', {
+      hook_event_name: 'StopFailure',
+      error: 'overloaded'
+    })
+
+    await vi.waitFor(() => {
+      expect(backendManagerMocks.publishDesktopBackendEvent).toHaveBeenCalledWith(
+        'claude-cli:api-error',
+        { sessionId: 'hive-session-1', error: 'overloaded' }
+      )
+    })
+    // The status publish itself is dedup-swallowed: still just the one from Stop.
+    const statusCalls = backendManagerMocks.publishDesktopBackendEvent.mock.calls.filter(
+      ([channel]) => channel === 'claude-cli:status'
+    )
+    expect(statusCalls).toHaveLength(1)
+  })
+
+  it('ignores subagent-scoped StopFailure for both channels', async () => {
+    const { port } = await getClaudeHookServer()
+
+    const response = await postHook(port, 'hive-session-1', 'stop', {
+      hook_event_name: 'StopFailure',
+      error: 'server_error',
+      agent_id: 'agent-1'
+    })
+
+    expect(response).toEqual({ status: 200, text: '{}' })
+    await new Promise((resolve) => setTimeout(resolve, 25))
+    expect(backendManagerMocks.publishDesktopBackendEvent).not.toHaveBeenCalled()
+  })
+
+  it('surfaces a StopFailure immediately even while background subagents are running', async () => {
+    const { port } = await getClaudeHookServer()
+
+    await postHook(port, 'hive-session-1', 'stop', {
+      hook_event_name: 'StopFailure',
+      error: 'rate_limit',
+      background_tasks: [{ id: 'agent-1', type: 'subagent', status: 'running' }]
+    })
+
+    await vi.waitFor(() => {
+      expect(backendManagerMocks.publishDesktopBackendEvent).toHaveBeenCalledWith(
+        'claude-cli:status',
+        {
+          sessionId: 'hive-session-1',
+          status: 'completed',
+          metadata: { hookEventName: 'StopFailure', hookPath: 'stop', apiError: 'rate_limit' }
+        }
+      )
+    })
+  })
+
+  it('keeps a blocked subagent question latched through a StopFailure with running subagents', async () => {
+    const { port } = await getClaudeHookServer()
+
+    await postHook(port, 'hive-session-1', 'tool', {
+      hook_event_name: 'PreToolUse',
+      tool_name: 'AskUserQuestion'
+    })
+    await vi.waitFor(() => {
+      expect(backendManagerMocks.publishDesktopBackendEvent).toHaveBeenCalledWith(
+        'claude-cli:status',
+        expect.objectContaining({ sessionId: 'hive-session-1', status: 'answering' })
+      )
+    })
+
+    await postHook(port, 'hive-session-1', 'stop', {
+      hook_event_name: 'StopFailure',
+      error: 'rate_limit',
+      background_tasks: [{ id: 'agent-1', type: 'subagent', status: 'running' }]
+    })
+
+    // The api-error event still fires, but the answering latch survives — no
+    // 'completed' publish while the subagent is genuinely blocked on its
+    // question.
+    await vi.waitFor(() => {
+      expect(backendManagerMocks.publishDesktopBackendEvent).toHaveBeenCalledWith(
+        'claude-cli:api-error',
+        expect.objectContaining({ sessionId: 'hive-session-1', error: 'rate_limit' })
+      )
+    })
+    expect(hasBlockingClaudeCliInteraction('hive-session-1')).toBe(true)
+    const statusCalls = backendManagerMocks.publishDesktopBackendEvent.mock.calls.filter(
+      ([channel]) => channel === 'claude-cli:status'
+    )
+    expect(statusCalls).toHaveLength(1)
   })
 
   it('keeps a pending question surfaced through unrelated sub-agent hooks until answered', async () => {

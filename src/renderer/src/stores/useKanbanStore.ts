@@ -527,7 +527,11 @@ export const useKanbanStore = create<KanbanState>()(
             // asking/no-status, so we don't yank not-yet-started or actively-
             // running sessions out of in_progress.
             if (status !== 'completed' && status !== 'plan_ready') continue
-            if (isPlanLike(ticket.mode) && !ticket.plan_ready) {
+            // An API-errored completion produced no plan — move to review
+            // (needs attention) but never flag plan_ready, matching the
+            // session_error path this reconcile stands in for.
+            const apiErrored = Boolean(statuses[ticket.current_session_id]?.apiError)
+            if (isPlanLike(ticket.mode) && !ticket.plan_ready && !apiErrored) {
               get().updateTicket(ticket.id, projectId, { plan_ready: true }).catch(() => {})
             }
             get().moveTicket(ticket.id, projectId, 'review', ticket.sort_order).catch(() => {})

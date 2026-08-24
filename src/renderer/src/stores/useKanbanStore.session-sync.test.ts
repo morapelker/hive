@@ -232,6 +232,22 @@ describe('reconcileFinishedSessions — recovers dropped finish moves on load', 
     expect(kanbanApi.ticket.move).toHaveBeenCalledWith(PROJECT_ID, 'ticket-1', 'review', 0)
   })
 
+  it('moves an API-errored in_progress plan ticket to review without flagging plan_ready', async () => {
+    seed(makeTicket({ column: 'in_progress', mode: 'plan', plan_ready: false }))
+    useWorktreeStatusStore.setState({
+      sessionStatuses: {
+        [SESSION_ID]: { status: 'completed', timestamp: 0, apiError: 'server_error' }
+      }
+    })
+
+    useKanbanStore.getState().reconcileFinishedSessions(PROJECT_ID)
+    await flush()
+
+    expect(columnOf('ticket-1')).toBe('review')
+    expect(kanbanApi.ticket.move).toHaveBeenCalledWith(PROJECT_ID, 'ticket-1', 'review', 0)
+    expect(kanbanApi.ticket.update).not.toHaveBeenCalled()
+  })
+
   it('does not move when the session has no status', async () => {
     seed(makeTicket({ column: 'in_progress', mode: 'build' }))
     setSessionStatus(SESSION_ID, null)
@@ -347,6 +363,103 @@ describe('syncTicketWithSession — explicit follow-up reopens done/merged ticke
     await flush()
 
     expect(columnOf('ticket-1')).toBe('merged')
+    expect(kanbanApi.ticket.move).not.toHaveBeenCalled()
+  })
+})
+
+describe('sessionApiErrors — error mark lifecycle', () => {
+  afterEach(() => {
+    useWorktreeStatusStore.setState({ sessionApiErrors: {} })
+  })
+
+  it('keeps the error through completed/unread statuses, clears on a hook-evidenced relaunch', () => {
+    const store = useWorktreeStatusStore.getState()
+    store.setSessionApiError(SESSION_ID, 'server_error')
+    store.setSessionStatus(SESSION_ID, 'completed', { apiError: 'server_error' })
+    expect(useWorktreeStatusStore.getState().sessionApiErrors[SESSION_ID]).toBe('server_error')
+
+    store.setSessionStatus(SESSION_ID, 'unread')
+    expect(useWorktreeStatusStore.getState().sessionApiErrors[SESSION_ID]).toBe('server_error')
+
+    store.setSessionStatus(SESSION_ID, 'working', { hookEventName: 'UserPromptSubmit' })
+    expect(useWorktreeStatusStore.getState().sessionApiErrors[SESSION_ID]).toBeUndefined()
+  })
+
+  it('clears on a planning relaunch detected as a plan followup', () => {
+    const store = useWorktreeStatusStore.getState()
+    store.setSessionApiError(SESSION_ID, 'rate_limit')
+    store.setSessionStatus(SESSION_ID, 'planning', { reason: 'claude_cli_plan_followup' })
+    expect(useWorktreeStatusStore.getState().sessionApiErrors[SESSION_ID]).toBeUndefined()
+  })
+
+  it('survives an optimistic pre-send working write (no hook evidence yet)', () => {
+    const store = useWorktreeStatusStore.getState()
+    store.setSessionApiError(SESSION_ID, 'overloaded')
+    store.setSessionStatus(SESSION_ID, 'working')
+    expect(useWorktreeStatusStore.getState().sessionApiErrors[SESSION_ID]).toBe('overloaded')
+  })
+
+  it('survives a failed-relaunch rollback (clearSessionStatus)', () => {
+    const store = useWorktreeStatusStore.getState()
+    store.setSessionApiError(SESSION_ID, 'authentication_failed')
+    // Modal relaunch: optimistic working write, then the send fails and rolls back.
+    store.setSessionStatus(SESSION_ID, 'working')
+    store.clearSessionStatus(SESSION_ID)
+    expect(useWorktreeStatusStore.getState().sessionApiErrors[SESSION_ID]).toBe(
+      'authentication_failed'
+    )
+  })
+
+  it('survives clearWorktreeUnread even though the completed status entry is nulled', async () => {
+    const { useSessionStore } = await import('./useSessionStore')
+    const sessionsByWorktree = new Map([
+      ['wt-1', [{ id: SESSION_ID }]]
+    ]) as unknown as ReturnType<typeof useSessionStore.getState>['sessionsByWorktree']
+    useSessionStore.setState({ sessionsByWorktree })
+    try {
+      const store = useWorktreeStatusStore.getState()
+      store.setSessionApiError(SESSION_ID, 'server_error')
+      store.setSessionStatus(SESSION_ID, 'completed', { apiError: 'server_error' })
+
+      store.clearWorktreeUnread('wt-1')
+
+      expect(useWorktreeStatusStore.getState().sessionStatuses[SESSION_ID]).toBeNull()
+      expect(useWorktreeStatusStore.getState().sessionApiErrors[SESSION_ID]).toBe('server_error')
+    } finally {
+      useSessionStore.setState({ sessionsByWorktree: new Map() })
+    }
+  })
+})
+
+describe('setSessionStatus — API-errored completions dispatch session_error', () => {
+  it('moves an in_progress plan ticket to review without flagging plan_ready', async () => {
+    seed(makeTicket({ column: 'in_progress', mode: 'plan', plan_ready: false }))
+
+    useWorktreeStatusStore.getState().setSessionStatus(SESSION_ID, 'completed', {
+      hookEventName: 'StopFailure',
+      apiError: 'server_error'
+    })
+    await flush()
+
+    expect(columnOf('ticket-1')).toBe('review')
+    const ticket = useKanbanStore
+      .getState()
+      .tickets.get(PROJECT_ID)
+      ?.find((t) => t.id === 'ticket-1')
+    expect(ticket?.plan_ready).toBe(false)
+    expect(kanbanApi.ticket.update).not.toHaveBeenCalled()
+  })
+
+  it('leaves a done ticket untouched on an API-errored completion', async () => {
+    seed(makeTicket({ column: 'done', mode: 'build' }))
+
+    useWorktreeStatusStore.getState().setSessionStatus(SESSION_ID, 'completed', {
+      hookEventName: 'StopFailure',
+      apiError: 'rate_limit'
+    })
+    await flush()
+
+    expect(columnOf('ticket-1')).toBe('done')
     expect(kanbanApi.ticket.move).not.toHaveBeenCalled()
   })
 })

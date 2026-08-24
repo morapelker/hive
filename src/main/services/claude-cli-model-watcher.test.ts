@@ -133,6 +133,27 @@ describe('handleClaudeCliModelChangeHook', () => {
     )
   })
 
+  it('consumes the transcript at a StopFailure boundary (API-error turn end)', () => {
+    const db = makeDb(makeSession())
+    writeFileSync(transcriptPath, assistantLine('claude-fable-5'))
+    handleClaudeCliModelChangeHook(SESSION_ID, stopHook(), { db })
+
+    // A usage-limit degrade lands mid-turn, then the turn dies with an API
+    // error — StopFailure is the only turn boundary that fires.
+    appendFileSync(
+      transcriptPath,
+      assistantLine('claude-sonnet-5-20250929') +
+        assistantLine('<synthetic>', { isApiErrorMessage: true })
+    )
+    handleClaudeCliModelChangeHook(
+      SESSION_ID,
+      { hook_event_name: 'StopFailure', transcript_path: transcriptPath },
+      { db }
+    )
+
+    expect(db.updateSession).toHaveBeenCalledWith(SESSION_ID, { model_id: 'sonnet' })
+  })
+
   it('detects an opening-turn safety fallback (empty transcript baseline, first line differs)', () => {
     // The ticket case: a session launched on fable whose very first prompt
     // triggers a safety degrade to opus 4.8. SessionStart baselines the still

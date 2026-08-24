@@ -462,6 +462,45 @@ describe('Claude CLI Hive Enterprise telemetry', () => {
     ])
   })
 
+  it('closes the active prompt on StopFailure (API-error turn end fires instead of Stop)', async () => {
+    const transcriptPath = makeTranscript(
+      `${assistantLine({ input: 100, output: 5, cacheRead: 20, cacheWrite: 7 })}\n`
+    )
+    const db = makeDb({
+      hiveEnterpriseServerUrl: 'https://enterprise.example.com',
+      hiveAuthToken: 'token-1',
+      hiveOrganizationId: 'org-1'
+    })
+
+    await handleClaudeCliHiveTelemetryHook(
+      'hive-session-1',
+      {
+        hook_event_name: 'UserPromptSubmit',
+        prompt: 'Continue',
+        transcript_path: transcriptPath
+      },
+      { db, requestGraphql }
+    )
+
+    await handleClaudeCliHiveTelemetryHook(
+      'hive-session-1',
+      { hook_event_name: 'StopFailure', transcript_path: transcriptPath },
+      { db, requestGraphql }
+    )
+
+    expect(requestGraphql).toHaveBeenCalledTimes(2)
+    expect(requestGraphql.mock.calls[1][2]).toEqual(expect.stringContaining('recordPromptIdle'))
+    expect(requestGraphql.mock.calls[1][3]).toEqual({
+      input: {
+        promptId: SERVER_PROMPT_ID,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0
+      }
+    })
+  })
+
   it('ignores a task-notification UserPromptSubmit, recording no active prompt', async () => {
     const db = makeDb({
       hiveEnterpriseServerUrl: 'https://enterprise.example.com',

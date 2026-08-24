@@ -16,8 +16,13 @@ import {
   isClaudeCliBackgroundWorkPayload,
   type ClaudeCliBackgroundWorkPayload
 } from '@shared/types/claude-cli-background-work'
+import {
+  CLAUDE_CLI_API_ERROR_CHANNEL,
+  isClaudeCliApiErrorPayload,
+  type ClaudeCliApiErrorPayload
+} from '@shared/types/claude-cli-api-error'
 
-export type { ClaudeCliBackgroundWorkPayload }
+export type { ClaudeCliBackgroundWorkPayload, ClaudeCliApiErrorPayload }
 
 export type ClaudeCliSessionStatusType =
   | 'working'
@@ -39,6 +44,7 @@ export interface ClaudeCliStatusPayload {
     readonly toolName?: string
     readonly plan?: string
     readonly taskNotification?: boolean
+    readonly apiError?: string
   }
 }
 
@@ -164,6 +170,13 @@ export const terminalApi = {
         if (isClaudeCliBackgroundWorkPayload(event.payload)) callback(event.payload)
       }
     )
+  },
+  onClaudeCliApiError: (
+    callback: (payload: ClaudeCliApiErrorPayload) => void
+  ): (() => void) => {
+    return getRendererRpcClient().subscribe(CLAUDE_CLI_API_ERROR_CHANNEL, (event: ServerEvent) => {
+      if (isClaudeCliApiErrorPayload(event.payload)) callback(event.payload)
+    })
   },
   ghosttyPasteText: async (terminalId: string, text: string): Promise<Envelope<void>> => {
     await getRendererRpcClient().request<void>('terminalOps.ghosttyPasteText', { terminalId, text })

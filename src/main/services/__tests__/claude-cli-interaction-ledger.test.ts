@@ -19,6 +19,7 @@ interface HookStep {
   status: SessionStatusType | null
   plan?: string
   prompt?: string
+  backgroundTasks?: Array<{ id?: string; type?: string; status?: string }>
 }
 
 function buildHook(step: HookStep): ParsedClaudeHook {
@@ -27,6 +28,7 @@ function buildHook(step: HookStep): ParsedClaudeHook {
   if (step.id) hook.tool_use_id = step.id
   if (step.plan) hook.tool_input = { plan: step.plan }
   if (step.prompt !== undefined) hook.prompt = step.prompt
+  if (step.backgroundTasks) hook.background_tasks = step.backgroundTasks
   return hook
 }
 
@@ -70,6 +72,40 @@ describe('passthrough when no interactions pending', () => {
     expect(
       statuses(process({ event: 'PostToolUse', tool: 'AskUserQuestion', status: 'working' }))
     ).toEqual(['working'])
+  })
+})
+
+describe('StopFailure turn boundary (API-error turn end)', () => {
+  it('resets a latched question and publishes the completion', () => {
+    process({ event: 'PreToolUse', tool: 'AskUserQuestion', status: 'answering' })
+    expect(hasBlockingClaudeCliInteraction(SESSION)).toBe(true)
+
+    expect(statuses(process({ event: 'StopFailure', status: 'completed' }))).toEqual(['completed'])
+    expect(hasBlockingClaudeCliInteraction(SESSION)).toBe(false)
+  })
+
+  it('preserves a latch when background subagents are still running (a blocked subagent owns it)', () => {
+    process({ event: 'PreToolUse', tool: 'AskUserQuestion', status: 'answering' })
+
+    const publishes = process({
+      event: 'StopFailure',
+      status: 'completed',
+      backgroundTasks: [{ id: 'agent-1', type: 'subagent', status: 'running' }]
+    })
+    expect(publishes).toEqual([])
+    expect(hasBlockingClaudeCliInteraction(SESSION)).toBe(true)
+  })
+
+  it('resets a stale latch when the snapshot shows no running subagent work', () => {
+    process({ event: 'PreToolUse', tool: 'AskUserQuestion', status: 'answering' })
+
+    const publishes = process({
+      event: 'StopFailure',
+      status: 'completed',
+      backgroundTasks: [{ id: 'shell-1', type: 'shell', status: 'running' }]
+    })
+    expect(statuses(publishes)).toEqual(['completed'])
+    expect(hasBlockingClaudeCliInteraction(SESSION)).toBe(false)
   })
 })
 
