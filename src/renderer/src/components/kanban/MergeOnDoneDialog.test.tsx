@@ -285,3 +285,104 @@ describe('MergeOnDoneDialog — connection member queue', () => {
     expect(screen.queryByText(/Branch already merged/)).toBeNull()
   })
 })
+
+describe('MergeOnDoneDialog — connection-project member queue (offerArchive)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    moveTicketMock.mockResolvedValue(undefined)
+    archiveWorktreeMock.mockResolvedValue({ success: true })
+    mockAlreadyMergedBranch()
+    setupStores()
+    useKanbanStore.setState({
+      tickets: new Map([['project-1', [{ ...ticket, worktree_id: null }]]]),
+      pendingDoneMove: {
+        ticketId: 'ticket-1',
+        projectId: 'project-1',
+        sortOrder: 5,
+        targetColumn: 'done',
+        worktreeId: 'worktree-1',
+        worktreeProjectId: 'project-1',
+        remainingWorktrees: [{ worktreeId: 'worktree-next', projectId: 'project-2' }],
+        offerArchive: true
+      }
+    })
+  })
+
+  afterEach(() => {
+    cleanup()
+    useKanbanStore.setState({ pendingDoneMove: null })
+  })
+
+  it('offers the archive/keep step for an already-merged member', async () => {
+    render(<MergeOnDoneDialog />)
+
+    expect(await screen.findByText(/Branch already merged/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Archive' })).toBeTruthy()
+    expect(moveTicketMock).not.toHaveBeenCalled()
+  })
+
+  it('offers the archive/keep step after a successful merge', async () => {
+    gitApiMocks.branchDiffShortStat.mockResolvedValue({
+      success: true,
+      filesChanged: 2,
+      insertions: 10,
+      deletions: 3,
+      commitsAhead: 1
+    })
+    gitApiMocks.getRemoteUrl.mockResolvedValue({ url: null })
+    gitApiMocks.merge.mockResolvedValue({ success: true })
+
+    render(<MergeOnDoneDialog />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Merge' }))
+
+    expect(await screen.findByText(/Merge successful/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Archive' })).toBeTruthy()
+    // Queue must not advance until the archive/keep choice is made
+    expect(useKanbanStore.getState().pendingDoneMove?.worktreeId).toBe('worktree-1')
+  })
+
+  it('Archive archives the member worktree and advances the queue', async () => {
+    render(<MergeOnDoneDialog />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Archive' }))
+
+    await waitFor(() =>
+      expect(archiveWorktreeMock).toHaveBeenCalledWith(
+        'worktree-1',
+        '/repo/feature',
+        'feature',
+        '/repo/main'
+      )
+    )
+    const next = useKanbanStore.getState().pendingDoneMove
+    expect(next?.worktreeId).toBe('worktree-next')
+    // offerArchive must survive queue advancement so later members get the prompt
+    expect(next?.offerArchive).toBe(true)
+    expect(moveTicketMock).not.toHaveBeenCalled()
+  })
+
+  it('Keep advances the queue without archiving, then moves after the last member', async () => {
+    useKanbanStore.setState({
+      pendingDoneMove: {
+        ticketId: 'ticket-1',
+        projectId: 'project-1',
+        sortOrder: 5,
+        targetColumn: 'done',
+        worktreeId: 'worktree-1',
+        worktreeProjectId: 'project-1',
+        remainingWorktrees: [],
+        offerArchive: true
+      }
+    })
+
+    render(<MergeOnDoneDialog />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Keep' }))
+
+    await waitFor(() =>
+      expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5)
+    )
+    expect(archiveWorktreeMock).not.toHaveBeenCalled()
+  })
+})

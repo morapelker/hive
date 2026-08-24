@@ -156,6 +156,36 @@ describe('buildConnectionMergeQueue', () => {
     expect(queue).toEqual([{ worktreeId: 'wt-ahead', projectId: 'proj-1' }])
   })
 
+  it('includeAlreadyMerged queues clean members too, but still skips on-base ones', async () => {
+    connectionApiMocks.get.mockResolvedValue({
+      success: true,
+      connection: {
+        id: 'conn-1',
+        members: [
+          { worktree_id: 'wt-clean', project_id: 'proj-1' },
+          { worktree_id: 'wt-on-base', project_id: 'proj-2' }
+        ]
+      }
+    })
+    dbApiMocks.worktree.get.mockImplementation(async (id: string) => {
+      if (id === 'wt-clean') return worktree({ id: 'wt-clean' })
+      if (id === 'wt-on-base') return worktree({ id: 'wt-on-base', branch_name: 'main' })
+      return null
+    })
+    dbApiMocks.worktree.getActiveByProject.mockResolvedValue([mainWorktree])
+    gitApiMocks.hasUncommittedChanges.mockResolvedValue(false)
+    gitApiMocks.branchDiffShortStat.mockResolvedValue({
+      success: true,
+      filesChanged: 0,
+      insertions: 0,
+      deletions: 0,
+      commitsAhead: 0
+    })
+
+    const queue = await buildConnectionMergeQueue('conn-1', { includeAlreadyMerged: true })
+    expect(queue).toEqual([{ worktreeId: 'wt-clean', projectId: 'proj-1' }])
+  })
+
   it('skips members whose base worktree is missing', async () => {
     connectionApiMocks.get.mockResolvedValue({
       success: true,

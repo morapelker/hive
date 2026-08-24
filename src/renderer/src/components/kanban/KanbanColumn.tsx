@@ -38,6 +38,7 @@ import {
 } from '@/stores/useKanbanStore'
 import type { MarkdownCardPlaceholder } from '@/stores/useKanbanStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
+import { useProjectStore } from '@/stores/useProjectStore'
 import { useUsageStore, resolveDefaultUsageProvider } from '@/stores/useUsageStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { isBlockerSatisfied } from '@/lib/blocker-utils'
@@ -679,7 +680,20 @@ export function KanbanColumn({
                 draggedTicket.current_session_id
               )
               if (ticketConnectionId) {
-                const mergeQueue = await buildConnectionMergeQueue(ticketConnectionId)
+                // Connection-PROJECT tickets mimic single-project behavior:
+                // each member worktree gets the archive/keep step, and
+                // Review/Merged → Done drops queue already-merged members
+                // too (the archivePromptOnly analog above)
+                const offerArchive =
+                  useProjectStore.getState().projects.find((p) => p.id === ticketProjectId)
+                    ?.kind === 'connection'
+                const archivePromptOnly =
+                  offerArchive &&
+                  column === 'done' &&
+                  (sourceColumn === 'review' || sourceColumn === 'merged')
+                const mergeQueue = await buildConnectionMergeQueue(ticketConnectionId, {
+                  includeAlreadyMerged: archivePromptOnly
+                })
                 if (mergeQueue.length > 0) {
                   const [firstTarget, ...restTargets] = mergeQueue
                   const sortOrder = store.computeSortOrder(
@@ -693,7 +707,8 @@ export function KanbanColumn({
                     targetColumn: column,
                     worktreeId: firstTarget.worktreeId,
                     worktreeProjectId: firstTarget.projectId,
-                    remainingWorktrees: restTargets
+                    remainingWorktrees: restTargets,
+                    offerArchive
                   })
                   return
                 }

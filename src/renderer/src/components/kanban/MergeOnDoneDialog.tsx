@@ -207,9 +207,11 @@ export function MergeOnDoneDialog() {
         // commit/merge steps but still offer the archive/keep choice
         const alreadyMerged = !hasUncommitted && branchStats.commitsAhead === 0
 
-        // Connection members never get the archive prompt — archiving would
-        // tear the worktree out of the connection (symlink + membership)
-        if (pending.worktreeId && alreadyMerged) {
+        // Plain-connection members never get the archive prompt — archiving
+        // would tear the worktree out of a connection the user still needs.
+        // Connection-PROJECT members (offerArchive) fall through to it so the
+        // instance's worktrees can be archived like any feature worktree.
+        if (pending.worktreeId && alreadyMerged && !pending.offerArchive) {
           await completeDoneMove({
             ticketId: pending.ticketId,
             projectId: pending.projectId,
@@ -417,9 +419,9 @@ export function MergeOnDoneDialog() {
       }
 
       toast.success('Branch merged successfully')
-      // Connection members advance the queue instead of offering the
-      // destructive archive step (see init)
-      if (pendingDoneMove.worktreeId) {
+      // Plain-connection members advance the queue instead of offering the
+      // destructive archive step; connection-project members get it (see init)
+      if (pendingDoneMove.worktreeId && !pendingDoneMove.offerArchive) {
         await completeDoneMove(pendingIdentity)
         return
       }

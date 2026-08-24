@@ -216,6 +216,12 @@ export interface PendingDoneMove {
   worktreeProjectId?: string
   /** Connection flow: member worktrees still to merge after the current one */
   remainingWorktrees?: { worktreeId: string; projectId: string }[]
+  /**
+   * Connection-project flow: offer the archive/keep step for each member
+   * worktree (plain connections skip it — archiving would tear a worktree
+   * out of a connection the user still needs).
+   */
+  offerArchive?: boolean
 }
 
 // ── State interface ────────────────────────────────────────────────────
@@ -1601,7 +1607,8 @@ export const useKanbanStore = create<KanbanState>()(
               targetColumn: pending.targetColumn,
               worktreeId: nextWorktree.worktreeId,
               worktreeProjectId: nextWorktree.projectId,
-              remainingWorktrees: restWorktrees
+              remainingWorktrees: restWorktrees,
+              offerArchive: pending.offerArchive
             }
           })
           return

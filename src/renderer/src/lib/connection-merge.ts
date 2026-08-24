@@ -34,9 +34,14 @@ export async function resolveTicketConnectionId(
  * deleted or archived connection yields an empty queue (nothing to merge);
  * an unverifiable member (DB/git failure) rejects so callers can abort the
  * move instead of treating unchecked work as clean.
+ *
+ * `includeAlreadyMerged` also queues clean members so each still gets the
+ * archive/keep step — the connection-project analog of the single-project
+ * archive-prompt-only path on Review/Merged → Done drops.
  */
 export async function buildConnectionMergeQueue(
-  connectionId: string
+  connectionId: string,
+  opts?: { includeAlreadyMerged?: boolean }
 ): Promise<ConnectionMergeTarget[]> {
   const result = await connectionApi.get(connectionId)
   if (!result.success || !result.connection) {
@@ -78,7 +83,7 @@ export async function buildConnectionMergeQueue(
         )
       }
 
-      if (hasUncommitted || branchStatResult.commitsAhead > 0) {
+      if (hasUncommitted || branchStatResult.commitsAhead > 0 || opts?.includeAlreadyMerged) {
         return { worktreeId: worktree.id, projectId: member.project_id }
       }
       return null

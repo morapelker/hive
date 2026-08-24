@@ -70,6 +70,7 @@ import { useCommandApprovalStore } from '@/stores/useCommandApprovalStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useSettingsStore, resolveModelForSdk } from '@/stores/useSettingsStore'
 import { isBlockerSatisfied } from '@/lib/blocker-utils'
+import { buildConnectionMergeQueue, resolveTicketConnectionId } from '@/lib/connection-merge'
 import { useGitStore } from '@/stores/useGitStore'
 import { notifyKanbanSessionSync } from '@/stores/store-coordination'
 import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
@@ -3490,6 +3491,41 @@ function ReviewModeContent({
               projectId: ticket.project_id,
               sortOrder,
               targetColumn: 'done'
+            })
+            return
+          }
+        }
+      } catch {
+        // Fall through to normal move on error
+      }
+    } else if (ticket.current_session_id) {
+      // Connection tickets have no worktree_id — queue the merge flow once
+      // per member worktree, mirroring the board drop path. Connection-PROJECT
+      // tickets also get the archive/keep step for each member (and queue
+      // already-merged members so the prompt still shows).
+      try {
+        const connectionId = await resolveTicketConnectionId(ticket.current_session_id)
+        if (connectionId) {
+          const offerArchive =
+            useProjectStore.getState().projects.find((p) => p.id === ticket.project_id)?.kind ===
+            'connection'
+          const mergeQueue = await buildConnectionMergeQueue(connectionId, {
+            includeAlreadyMerged: offerArchive
+          })
+          if (mergeQueue.length > 0) {
+            const [firstTarget, ...restTargets] = mergeQueue
+            const kanbanStore = useKanbanStore.getState()
+            const doneTickets = kanbanStore.getTicketsByColumn(ticket.project_id, 'done')
+            const sortOrder = kanbanStore.computeSortOrder(doneTickets, doneTickets.length)
+            kanbanStore.setPendingDoneMove({
+              ticketId: ticket.id,
+              projectId: ticket.project_id,
+              sortOrder,
+              targetColumn: 'done',
+              worktreeId: firstTarget.worktreeId,
+              worktreeProjectId: firstTarget.projectId,
+              remainingWorktrees: restTargets,
+              offerArchive
             })
             return
           }
