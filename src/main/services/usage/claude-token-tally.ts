@@ -9,6 +9,7 @@ import {
   type CustomClaudeProvider
 } from '@shared/types/custom-provider'
 import { createLogger } from '../logger'
+import { getLastClaudeSwitchAt } from './claude-switch-epoch'
 import { resolveClaudeFiles } from './session-usage-service'
 import { parseClaudeSessionIncrement, type ClaudeSessionState } from './claude-usage-parser'
 import type { ClaudeTokenTally } from '@shared/types/usage'
@@ -86,12 +87,21 @@ async function computeTally(deps: ClaudeTokenTallyDeps): Promise<ClaudeTokenTall
   // sessions, and letting them consume cap slots could push out the local
   // Claude sessions whose burn the predictor needs to see.
   const customProviders = loadCustomProviders(db)
+  // Sessions created before the last account switch were spawned with the
+  // previous account's credentials — their burn belongs to that account,
+  // not the one whose utilization the predictor is estimating (same rule
+  // the renderer applies to rate-limit events).
+  const switchEpoch = getLastClaudeSwitchAt()
   const sessions: Session[] = []
   for (const id of db.listRecentUsageSessionIds(since)) {
     if (sessions.length >= MAX_TRACKED_SESSIONS) break
     const session = db.getSession(id)
     if (!session || !isClaudeSdk(session.agent_sdk) || session.remote_launch) continue
     if (!isAnthropicAttributed(session, customProviders)) continue
+    if (switchEpoch !== null) {
+      const createdAt = Date.parse(session.created_at)
+      if (!Number.isNaN(createdAt) && createdAt < switchEpoch) continue
+    }
     sessions.push(session)
   }
 

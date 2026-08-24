@@ -56,6 +56,8 @@ describe('useUsageStore', () => {
       anthropicLastError: null,
       anthropicRateLimit: null,
       anthropicRateLimitRefreshAttemptAt: null,
+      anthropicAccountSwitchedAt: null,
+      anthropicUsageFromFetch: false,
       openaiUsage: null,
       openaiLastFetchedAt: null,
       openaiIsLoading: false,
@@ -485,6 +487,39 @@ describe('useUsageStore', () => {
     // The pre-switch usage object no longer describes the live account —
     // it must not pass for fetch data (predictor calibration baseline).
     expect(useUsageStore.getState().anthropicUsageFromFetch).toBe(false)
+  })
+
+  it('discards a usage fetch that resolves after an account switch happened mid-flight', async () => {
+    const staleUsage: UsageData = {
+      five_hour: { utilization: 99, resets_at: '2026-05-14T12:00:00.000Z' },
+      seven_day: { utilization: 90, resets_at: '2026-05-15T12:00:00.000Z' }
+    }
+    const seededUsage: UsageData = {
+      five_hour: { utilization: 5, resets_at: '2026-05-14T12:00:00.000Z' },
+      seven_day: { utilization: 3, resets_at: '2026-05-15T12:00:00.000Z' }
+    }
+    request.mockImplementation(async (method: string) => {
+      if (method === 'usageOps.fetch') {
+        // A switch (and its seed) completes while this request is in flight.
+        useUsageStore.setState({
+          anthropicAccountSwitchedAt: Date.now(),
+          anthropicUsage: seededUsage,
+          anthropicUsageFromFetch: false
+        })
+        return { success: true, data: staleUsage }
+      }
+      if (method === 'accountOps.listSaved') return []
+      return null
+    })
+
+    await useUsageStore.getState().fetchUsageForProvider('anthropic')
+
+    // The response describes the account we just left — it must not clobber
+    // the seed, restore fetch provenance, or advance the debounce.
+    expect(useUsageStore.getState().anthropicUsage).toBe(seededUsage)
+    expect(useUsageStore.getState().anthropicUsageFromFetch).toBe(false)
+    expect(useUsageStore.getState().anthropicLastFetchedAt).toBeNull()
+    expect(useUsageStore.getState().anthropicIsLoading).toBe(false)
   })
 
   it('merges Anthropic rate-limit windows and drops stale windows', () => {

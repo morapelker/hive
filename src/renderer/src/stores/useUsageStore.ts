@@ -387,8 +387,13 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
 
       set({ anthropicIsLoading: true, anthropicLastError: null })
       let succeeded = false
+      // Guard against a switch completing while this request is in flight:
+      // the response then describes the account we just LEFT, and applying
+      // it would restore the old account's numbers as live fetch data.
+      const switchEpoch = get().anthropicAccountSwitchedAt
       try {
         const result = await usageApi.fetch()
+        if (get().anthropicAccountSwitchedAt !== switchEpoch) return
         if (result.success) {
           set({
             anthropicUsage: result.data ?? null,
@@ -463,8 +468,13 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
 
       set({ anthropicIsLoading: true, anthropicLastError: null })
       let succeeded = false
+      // Guard against a switch completing while this request is in flight:
+      // the response then describes the account we just LEFT, and applying
+      // it would restore the old account's numbers as live fetch data.
+      const switchEpoch = get().anthropicAccountSwitchedAt
       try {
         const result = await usageApi.fetch()
+        if (get().anthropicAccountSwitchedAt !== switchEpoch) return
         if (result.success) {
           set({
             anthropicUsage: result.data ?? null,
