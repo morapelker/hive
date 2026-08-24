@@ -330,7 +330,33 @@ export function useOpenCodeGlobalListener(): void {
       }
 
       if (event.type === 'session.rate_limit') {
-        useUsageStore.getState().setAnthropicRateLimit(event.data as AnthropicRateLimitInfo)
+        // Rate-limit events come exclusively from the claude-code SDK
+        // stream, and the SDK captures credentials PER QUERY (each prompt
+        // launches a fresh sdk.query()) — so what identifies the account a
+        // rejection belongs to is when the current TURN started, not when
+        // the session row was created (a resumed old session's new turns
+        // run on the freshly switched-to account). A turn begun before the
+        // last switch ran on the previous account: storing its rejection
+        // would mark the new account as exhausted and re-trigger the
+        // auto-switch. Events without an attributable running turn are
+        // discarded post-switch — conservative, and it self-heals on the
+        // session's next prompt.
+        const rateLimitInfo = event.data as AnthropicRateLimitInfo
+        const switchedAt = useUsageStore.getState().anthropicAccountSwitchedAt
+        if (switchedAt !== null) {
+          // Prefer the query-start stamp from the main process — it marks
+          // the exact credential-capture moment and is immutable, unlike
+          // status timestamps (rewritten when a permission/question/plan
+          // resolution restores the running status mid-query).
+          const statusEntry = useWorktreeStatusStore.getState().sessionStatuses[sessionId]
+          const turnStartedAt =
+            rateLimitInfo.queryStartedAt ??
+            (statusEntry?.status === 'working' || statusEntry?.status === 'planning'
+              ? statusEntry.timestamp
+              : null)
+          if (turnStartedAt === null || turnStartedAt < switchedAt) return
+        }
+        useUsageStore.getState().setAnthropicRateLimit(rateLimitInfo)
         return
       }
 

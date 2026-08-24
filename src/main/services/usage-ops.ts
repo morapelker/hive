@@ -1,10 +1,12 @@
 import type {
+  ClaudeTokenTally,
   FetchForAccountResult,
   OpenAIUsageResult,
   RefreshAllResultItem,
   UsageProvider,
   UsageResult
 } from '@shared/types/usage'
+import { getClaudeTokenTally } from './usage/claude-token-tally'
 import {
   captureLiveAccountFromFetch,
   fetchForSavedAccount,
@@ -163,7 +165,13 @@ export async function fetchForAccountOp(
 
 export async function refreshAllForProviderOp(
   provider: UsageProvider,
-  excludeAccountIds?: string[]
+  excludeAccountIds?: string[],
+  maxAgeMs?: number
 ): Promise<RefreshAllResultItem[]> {
-  return refreshAllForProvider(provider, excludeAccountIds)
+  return refreshAllForProvider(provider, excludeAccountIds, { maxAgeMs })
+}
+
+/** Disk-derived cumulative token totals for the burn-rate predictor. */
+export async function getClaudeTokenTallyOp(): Promise<ClaudeTokenTally> {
+  return getClaudeTokenTally()
 }

@@ -1,4 +1,5 @@
 import type {
+  ClaudeTokenTally,
   FetchForAccountResult,
   OpenAIUsageResult,
   RefreshAllResultItem,
@@ -14,12 +15,16 @@ export const usageApi = {
     getRendererRpcClient().request<OpenAIUsageResult>('usageOps.fetchOpenai', {}),
   refreshAllForProvider: async (
     provider: UsageProvider,
-    excludeAccountIds?: string[]
+    excludeAccountIds?: string[],
+    maxAgeMs?: number
   ): Promise<RefreshAllResultItem[]> =>
     getRendererRpcClient().request<RefreshAllResultItem[]>('usageOps.refreshAllForProvider', {
       provider,
-      ...(excludeAccountIds ? { excludeAccountIds } : {})
+      ...(excludeAccountIds ? { excludeAccountIds } : {}),
+      ...(maxAgeMs !== undefined ? { maxAgeMs } : {})
     }),
+  getClaudeTokenTally: async (): Promise<ClaudeTokenTally> =>
+    getRendererRpcClient().request<ClaudeTokenTally>('usageOps.getClaudeTokenTally', {}),
   fetchForAccount: async (
     accountId: string,
     userInitiated?: boolean

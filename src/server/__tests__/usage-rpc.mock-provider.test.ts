@@ -276,7 +276,7 @@ describe('usage ops RPC mocked provider', () => {
       })
     )
 
-    expect(refreshAllForProvider).toHaveBeenCalledWith('openai', undefined)
+    expect(refreshAllForProvider).toHaveBeenCalledWith('openai', undefined, undefined)
     expect(response).toEqual({
       id: 'usage-refresh-all-for-provider-1',
       ok: true,
@@ -300,7 +300,7 @@ describe('usage ops RPC mocked provider', () => {
       })
     )
 
-    expect(refreshAllForProvider).toHaveBeenCalledWith('anthropic', ['account-1', 'account-2'])
+    expect(refreshAllForProvider).toHaveBeenCalledWith('anthropic', ['account-1', 'account-2'], undefined)
     expect(response).toEqual({
       id: 'usage-refresh-all-for-provider-exclude',
       ok: true,
