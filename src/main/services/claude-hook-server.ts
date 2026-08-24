@@ -33,6 +33,10 @@ import {
   type ClaudeCliBackgroundWorkPayload
 } from '@shared/types/claude-cli-background-work'
 import {
+  CLAUDE_CLI_API_ERROR_CHANNEL,
+  type ClaudeCliApiErrorPayload
+} from '@shared/types/claude-cli-api-error'
+import {
   clearAllClaudeCliPlanAutoApprove,
   consumeClaudeCliPlanAutoApprove,
   isClaudeCliPlanAutoApproveArmed,
@@ -62,9 +66,12 @@ export interface ParsedClaudeHook {
   }
   /** PostToolUse tool result (backgroundTaskId / taskId live here). */
   tool_response?: unknown
-  /** Final assistant message of the turn (Stop hook). Read both spellings: */
+  /** Final assistant message of the turn (Stop/StopFailure hooks). Read both spellings: */
   assistant_message?: string
   last_assistant_message?: string
+  /** StopFailure: structured API-error classification (server_error, rate_limit, …). */
+  error?: string
+  error_details?: string
   /** Present on subagent-scoped hooks (SubagentStart/SubagentStop, subagent-scoped Stop). */
   agent_id?: string
   agent_type?: string
@@ -82,6 +89,8 @@ export interface ClaudeCliStatusPayload {
     toolName?: string
     plan?: string
     taskNotification?: boolean
+    /** StopFailure: the turn ended with this API-error classification. */
+    apiError?: string
   }
 }
 
@@ -122,6 +131,15 @@ export function buildClaudeCliHookSettings(port: number, hiveSessionId: string):
       ],
       Stop: [
         {
+          hooks: [{ type: 'http', url: hookUrl(port, hiveSessionId, 'stop') }]
+        }
+      ],
+      // Fires instead of Stop when the turn ends because of an API error
+      // (claude v2.1.241+). Without it a failed turn leaves the session
+      // "working" forever — no Stop ever arrives.
+      StopFailure: [
+        {
+          matcher: '*',
           hooks: [{ type: 'http', url: hookUrl(port, hiveSessionId, 'stop') }]
         }
       ],
@@ -171,6 +189,9 @@ export function mapHookEventToStatus(hook: ParsedClaudeHook): SessionStatusType 
     case 'SessionStart':
     case 'SessionEnd':
     case 'Stop':
+    // An API error ends the turn just like a Stop; the error classification
+    // rides the status metadata + the dedicated api-error channel.
+    case 'StopFailure':
       return 'completed'
     case 'UserPromptSubmit':
       return hook.permission_mode === 'plan' ? 'planning' : 'working'
@@ -219,6 +240,10 @@ function buildStatusMetadata(
 
   if (hook.hook_event_name === 'UserPromptSubmit' && isTaskNotificationPrompt(hook.prompt)) {
     metadata.taskNotification = true
+  }
+
+  if (hook.hook_event_name === 'StopFailure') {
+    metadata.apiError = typeof hook.error === 'string' ? hook.error : 'unknown'
   }
 
   return metadata
@@ -368,6 +393,27 @@ async function handleHook(req: http.IncomingMessage, res: http.ServerResponse): 
       if (backgroundWork) {
         publishClaudeCliBackgroundWork({ sessionId: route.sessionId, ...backgroundWork })
       }
+      // API errors end the turn as StopFailure instead of Stop. The structured
+      // classification rides its own channel so the status dedup can't eat it
+      // (e.g. when a watchdog already published 'completed' for this turn).
+      // Subagent-scoped failures (agent_id set) are not a main-turn failure.
+      if (body.hook_event_name === 'StopFailure' && !body.agent_id) {
+        const apiError: ClaudeCliApiErrorPayload = {
+          sessionId: route.sessionId,
+          error: typeof body.error === 'string' ? body.error : 'unknown'
+        }
+        if (typeof body.error_details === 'string') apiError.errorDetails = body.error_details
+        const lastMessage = body.last_assistant_message ?? body.assistant_message
+        if (typeof lastMessage === 'string') apiError.lastAssistantMessage = lastMessage
+        log.warn('Claude CLI turn ended with an API error', {
+          sessionId: route.sessionId,
+          error: apiError.error,
+          errorDetails: apiError.errorDetails
+        })
+        void Promise.resolve(
+          publishDesktopBackendEvent(CLAUDE_CLI_API_ERROR_CHANNEL, apiError)
+        ).catch(() => undefined)
+      }
       // Background Task subagents can keep running after the main agent's
       // Stop fires; the tracker decides whether this Stop is truly final
       // ('pass'), must be swallowed because work is still in flight
@@ -431,7 +477,13 @@ async function handleHook(req: http.IncomingMessage, res: http.ServerResponse): 
       // transport the session went idle while background work is in flight.
       if (!bypassTransport) {
         owned = cliHookTransportRouter.routeHook(route.sessionId, body, res, {
-          suppressIdle: gate.kind !== 'pass'
+          // Also suppress idle when a StopFailure preserved a background
+          // subagent's latched question/permission (the ledger kept it) —
+          // the session is still blocked awaiting input, not idle.
+          suppressIdle:
+            gate.kind !== 'pass' ||
+            (body.hook_event_name === 'StopFailure' &&
+              hasBlockingClaudeCliInteraction(route.sessionId))
         })
       }
 

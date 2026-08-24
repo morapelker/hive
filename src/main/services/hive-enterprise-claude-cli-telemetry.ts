@@ -363,7 +363,15 @@ export async function handleClaudeCliHiveTelemetryHook(
   deps: ClaudeCliHiveTelemetryDeps = {}
 ): Promise<void> {
   try {
-    if (hook.hook_event_name !== 'UserPromptSubmit' && hook.hook_event_name !== 'Stop') return
+    if (
+      hook.hook_event_name !== 'UserPromptSubmit' &&
+      hook.hook_event_name !== 'Stop' &&
+      // API-error turn end: fires instead of Stop, must still close the
+      // active prompt row or the next turn inherits its duration.
+      hook.hook_event_name !== 'StopFailure'
+    ) {
+      return
+    }
 
     const resolvedDeps = {
       db: deps.db ?? getDatabase(),

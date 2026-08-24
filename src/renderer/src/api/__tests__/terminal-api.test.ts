@@ -252,6 +252,40 @@ describe('terminalApi', () => {
     expect(callback).toHaveBeenCalledWith(payload)
   })
 
+  it('subscribes to Claude CLI api-error events through the renderer RPC client', () => {
+    const request = vi.fn()
+    const unsubscribe = vi.fn()
+    const subscribe = vi.fn(
+      (_channel: string, _listener: (event: ServerEvent) => void): (() => void) => unsubscribe
+    )
+    const callback = vi.fn()
+    const payload = {
+      sessionId: 'session-1',
+      error: 'server_error',
+      errorDetails: '500 Internal Server Error',
+      lastAssistantMessage: 'API Error: 500 Internal server error.'
+    } as const
+
+    setRendererRpcClient({ request, subscribe })
+
+    expect(terminalApi.onClaudeCliApiError(callback)).toBe(unsubscribe)
+    expect(subscribe).toHaveBeenCalledWith('claude-cli:api-error', expect.any(Function))
+
+    const listener = subscribe.mock.calls[0]?.[1]
+    listener?.({ channel: 'claude-cli:api-error', payload })
+    listener?.({
+      channel: 'claude-cli:api-error',
+      payload: { sessionId: 'session-1' }
+    })
+    listener?.({
+      channel: 'claude-cli:api-error',
+      payload: { sessionId: 'session-1', error: 42 }
+    })
+
+    expect(callback).toHaveBeenCalledTimes(1)
+    expect(callback).toHaveBeenCalledWith(payload)
+  })
+
   it('routes ghosttyPasteText through the renderer RPC client', async () => {
     const request = vi.fn().mockResolvedValue(undefined)
     const subscribe = vi.fn()

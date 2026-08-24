@@ -230,6 +230,19 @@ export function processClaudeCliSubagentHook(
     return { kind: 'pass' }
   }
 
+  if (event === 'StopFailure') {
+    // An API error ended the turn (StopFailure fires instead of Stop). Never
+    // defer, even with background subagents in flight: the failure must
+    // surface immediately, and a later task-notification resume flips the
+    // session back to working on its own.
+    if (hook.agent_id) {
+      rearm(sessionId)
+      return { kind: 'subagent_scoped' }
+    }
+    clearClaudeCliSubagentTracking(sessionId)
+    return { kind: 'pass' }
+  }
+
   if (event === 'Stop' && hook.agent_id) {
     rearm(sessionId)
     return { kind: 'subagent_scoped' }

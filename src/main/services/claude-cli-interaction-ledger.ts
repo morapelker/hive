@@ -44,8 +44,15 @@ const ledgers = new Map<string, Map<string, BlockingEntry>>()
 
 // Turn boundaries: a new prompt or a finished/started session invalidates any
 // interaction the hooks failed to resolve explicitly (e.g. a permission denied
-// in the TUI, which fires no per-tool hook).
-const RESET_EVENTS = new Set(['UserPromptSubmit', 'Stop', 'SessionStart', 'SessionEnd'])
+// in the TUI, which fires no per-tool hook). StopFailure is the API-error twin
+// of Stop — it fires instead of Stop, so it is a turn boundary too.
+const RESET_EVENTS = new Set([
+  'UserPromptSubmit',
+  'Stop',
+  'StopFailure',
+  'SessionStart',
+  'SessionEnd'
+])
 
 function entrySize(entry: BlockingEntry): number {
   return entry.toolUseIds.size + entry.count
@@ -155,6 +162,23 @@ export function processClaudeCliHook(
   const isTaskNotificationResume = event === 'UserPromptSubmit' && isTaskNotificationPrompt(hook.prompt)
 
   if (RESET_EVENTS.has(event) && !isTaskNotificationResume) {
+    // A main-turn API error (StopFailure) with background subagents still
+    // running: any latched question/permission belongs to a live subagent
+    // that remains blocked on it. Preserve the latch and suppress the
+    // completion — mirroring the deferred-Stop watchdog's
+    // hasBlockingClaudeCliInteraction guard. Without running subagent work
+    // the latch can only be stale (the main agent cannot hit an API error
+    // while blocked on its own dialog), so the normal reset applies.
+    if (
+      event === 'StopFailure' &&
+      (ledgers.get(sessionId)?.size ?? 0) > 0 &&
+      (hook.background_tasks ?? []).some(
+        (task) =>
+          (task.type === 'subagent' || task.type === 'workflow') && task.status === 'running'
+      )
+    ) {
+      return []
+    }
     ledgers.delete(sessionId)
     return mapped ? [mapped] : []
   }

@@ -4,6 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
   onClaudeCliStatus: vi.fn(),
   onClaudeCliBackgroundWork: vi.fn().mockReturnValue(() => {}),
+  onClaudeCliApiError: vi.fn().mockReturnValue(() => {}),
+  toastError: vi.fn(),
+  setSessionApiError: vi.fn(),
   setSessionBackgroundWork: vi.fn(),
   setClaudeCliPlanAutoApprove: vi.fn().mockResolvedValue({ success: true }),
   setSessionStatus: vi.fn(),
@@ -14,7 +17,7 @@ const mocks = vi.hoisted(() => ({
   setSelectedTicketId: vi.fn(),
   fetchUsageForProvider: vi.fn(),
   resolveUsageProvider: vi.fn().mockReturnValue('anthropic'),
-  sessionById: new Map<string, { id: string; agent_sdk: string }>(),
+  sessionById: new Map<string, { id: string; agent_sdk: string; name?: string }>(),
   lastSendMode: new Map<string, 'plan' | 'build'>(),
   modeBySession: new Map<string, 'build' | 'plan' | 'super-plan'>(),
   sessionStatuses: {} as Record<string, { status: string } | null>,
@@ -38,6 +41,7 @@ vi.mock('@/stores/useWorktreeStatusStore', () => ({
     getState: () => ({
       sessionStatuses: mocks.sessionStatuses,
       setSessionStatus: mocks.setSessionStatus,
+      setSessionApiError: mocks.setSessionApiError,
       setSessionBackgroundWork: mocks.setSessionBackgroundWork
     })
   }
@@ -77,7 +81,14 @@ vi.mock('@/api/terminal-api', () => ({
   terminalApi: {
     onClaudeCliStatus: mocks.onClaudeCliStatus,
     onClaudeCliBackgroundWork: mocks.onClaudeCliBackgroundWork,
+    onClaudeCliApiError: mocks.onClaudeCliApiError,
     setClaudeCliPlanAutoApprove: mocks.setClaudeCliPlanAutoApprove
+  }
+}))
+
+vi.mock('@/lib/toast', () => ({
+  toast: {
+    error: mocks.toastError
   }
 }))
 
@@ -119,6 +130,7 @@ type SubscribedPayload = {
     toolName?: string
     plan?: string
     taskNotification?: boolean
+    apiError?: string
   }
 }
 
@@ -137,6 +149,9 @@ describe('useClaudeCliStatusListener', () => {
       return unsubscribe
     })
     unsubscribe.mockClear()
+    mocks.onClaudeCliApiError.mockReset()
+    mocks.onClaudeCliApiError.mockReturnValue(() => {})
+    mocks.toastError.mockClear()
     mocks.setClaudeCliPlanAutoApprove.mockClear()
     mocks.setSessionStatus.mockClear()
     mocks.setPendingPlan.mockClear()
@@ -806,5 +821,106 @@ describe('useClaudeCliStatusListener — background work counts', () => {
     unmount()
 
     expect(unsubscribeBackgroundWork).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('useClaudeCliStatusListener — API errors', () => {
+  type ApiErrorPayload = {
+    sessionId: string
+    error: string
+    errorDetails?: string
+    lastAssistantMessage?: string
+  }
+
+  let subscribedApiError: ((payload: ApiErrorPayload) => void) | null = null
+  let subscribedStatus: ((payload: SubscribedPayload) => void) | null = null
+
+  beforeEach(() => {
+    subscribedStatus = null
+    mocks.onClaudeCliStatus.mockReturnValue(() => {})
+    mocks.toastError.mockClear()
+    mocks.setSessionStatus.mockClear()
+    mocks.setSessionApiError.mockClear()
+    mocks.sessionById.clear()
+    mocks.lastSendMode.clear()
+    subscribedApiError = null
+    mocks.onClaudeCliApiError.mockImplementation((callback: (payload: ApiErrorPayload) => void) => {
+      subscribedApiError = callback
+      return () => {}
+    })
+  })
+
+  it('raises an error toast with the classification, session name, and rendered message', () => {
+    mocks.sessionById.set('hive-session-1', {
+      id: 'hive-session-1',
+      agent_sdk: 'claude-code-cli',
+      name: 'My session'
+    })
+
+    renderHook(() => useClaudeCliStatusListener())
+
+    subscribedApiError?.({
+      sessionId: 'hive-session-1',
+      error: 'server_error',
+      errorDetails: '500 Internal Server Error',
+      lastAssistantMessage: 'API Error: 500 Internal server error.'
+    })
+
+    expect(mocks.toastError).toHaveBeenCalledWith(
+      'Claude API error (internal server error) in "My session"',
+      {
+        description: 'API Error: 500 Internal server error.',
+        duration: 8000
+      }
+    )
+    expect(mocks.setSessionApiError).toHaveBeenCalledWith('hive-session-1', 'server_error')
+  })
+
+  it('falls back to a bare title for unknown classifications and unnamed sessions', () => {
+    renderHook(() => useClaudeCliStatusListener())
+
+    subscribedApiError?.({
+      sessionId: 'hive-session-1',
+      error: 'unknown'
+    })
+
+    expect(mocks.toastError).toHaveBeenCalledWith('Claude API error', {
+      description: undefined,
+      duration: 8000
+    })
+  })
+
+  it('unsubscribes from api-error events on unmount', () => {
+    const unsubscribeApiError = vi.fn()
+    mocks.onClaudeCliApiError.mockReturnValue(unsubscribeApiError)
+
+    const { unmount } = renderHook(() => useClaudeCliStatusListener())
+    unmount()
+
+    expect(unsubscribeApiError).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not rewrite a StopFailure completion to plan_ready in plan mode', () => {
+    mocks.onClaudeCliStatus.mockImplementation(
+      (callback: (payload: SubscribedPayload) => void) => {
+        subscribedStatus = callback
+        return () => {}
+      }
+    )
+    mocks.lastSendMode.set('hive-session-1', 'plan')
+
+    renderHook(() => useClaudeCliStatusListener())
+
+    subscribedStatus?.({
+      sessionId: 'hive-session-1',
+      status: 'completed',
+      metadata: { hookEventName: 'StopFailure', hookPath: 'stop', apiError: 'server_error' }
+    })
+
+    expect(mocks.setSessionStatus).toHaveBeenCalledWith('hive-session-1', 'completed', {
+      hookEventName: 'StopFailure',
+      hookPath: 'stop',
+      apiError: 'server_error'
+    })
   })
 })
