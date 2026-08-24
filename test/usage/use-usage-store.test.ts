@@ -568,6 +568,37 @@ describe('useUsageStore', () => {
     expect(useUsageStore.getState().anthropicIsLoading).toBe(false)
   })
 
+  it('treats an external identity change like a switch, unless an internal switch just fired', () => {
+    useUsageStore.setState({
+      anthropicRateLimit: {
+        fiveHour: { status: 'rejected', resetsAt: Math.floor(Date.now() / 1000) + 1_800 },
+        updatedAt: Date.now()
+      },
+      anthropicUsageFromFetch: true,
+      anthropicLastRetryAfter: 120,
+      anthropicLastFetchedAt: Date.now() - 60_000,
+      anthropicAccountSwitchedAt: null
+    } as Partial<ReturnType<typeof useUsageStore.getState>>)
+
+    useUsageStore.getState().noteExternalAnthropicAccountSwitch()
+
+    const state = useUsageStore.getState()
+    expect(state.anthropicRateLimit).toBeNull()
+    expect(state.anthropicUsageFromFetch).toBe(false)
+    expect(state.anthropicLastRetryAfter).toBeNull()
+    expect(state.anthropicLastFetchedAt).toBeNull()
+    expect(state.anthropicAccountSwitchedAt).toBe(Date.now())
+
+    // A fresh INTERNAL switch's own email refresh must not re-invalidate.
+    useUsageStore.setState({
+      anthropicUsageFromFetch: true,
+      anthropicLastFetchedAt: Date.now()
+    })
+    useUsageStore.getState().noteExternalAnthropicAccountSwitch()
+    expect(useUsageStore.getState().anthropicUsageFromFetch).toBe(true)
+    expect(useUsageStore.getState().anthropicLastFetchedAt).not.toBeNull()
+  })
+
   it('merges Anthropic rate-limit windows and drops stale windows', () => {
     useUsageStore.getState().setAnthropicRateLimit({
       status: 'allowed_warning',

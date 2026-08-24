@@ -370,9 +370,25 @@ export function useAccountScheduleRunner(): void {
       }
     })
 
+    // An external `claude login` changes the live identity without any
+    // Hive-initiated switch — observable only as the active email moving
+    // between two non-null values. It carries the same invalidation
+    // semantics as an internal switch (rate-limit overlay, usage provenance,
+    // fetch gates, attribution epoch).
+    const unsubscribeAccounts = useAccountStore.subscribe((state, prevState) => {
+      if (
+        prevState.anthropicEmail !== null &&
+        state.anthropicEmail !== null &&
+        prevState.anthropicEmail !== state.anthropicEmail
+      ) {
+        useUsageStore.getState().noteExternalAnthropicAccountSwitch()
+      }
+    })
+
     return () => {
       clearInterval(interval)
       unsubscribe()
+      unsubscribeAccounts()
     }
   }, [])
 }

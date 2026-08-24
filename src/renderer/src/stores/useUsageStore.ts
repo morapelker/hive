@@ -87,6 +87,10 @@ interface UsageState {
   forceRefreshProvider: (provider: UsageProvider) => Promise<void>
   setActiveProvider: (provider: UsageProvider) => void
   setAnthropicRateLimit: (info: AnthropicRateLimitInfo) => void
+  /** Called when the active Anthropic identity changed hands OUTSIDE a
+   * Hive-initiated switch (external `claude login` observed via an email
+   * change). Applies the same invalidation an internal switch does. */
+  noteExternalAnthropicAccountSwitch: () => void
   fetchUsage: () => Promise<void>
 }
 
@@ -665,6 +669,22 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
           .catch(() => {})
       }
     }
+  },
+
+  noteExternalAnthropicAccountSwitch: () => {
+    // An internal switch just marked the epoch and its own email refresh is
+    // what surfaced the change — don't re-mark, or the post-switch fetch's
+    // provenance (and its freshly cleared gates) would be wiped again.
+    const lastSwitch = get().anthropicAccountSwitchedAt
+    if (lastSwitch !== null && Date.now() - lastSwitch < 5_000) return
+    set({
+      anthropicRateLimit: null,
+      anthropicAccountSwitchedAt: Date.now(),
+      anthropicUsageFromFetch: false,
+      anthropicLastRetryAfter: null,
+      anthropicLastFetchedAt: null,
+      anthropicEarlyRefreshAttemptAt: null
+    })
   },
 
   fetchUsage: async () => {

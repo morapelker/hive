@@ -743,6 +743,24 @@ describe('useAccountScheduleRunner usage refresh cadence', () => {
     expect(fetchUsageForProvider).toHaveBeenCalledWith('anthropic', { minIntervalMs: 120_000 })
   })
 
+  it('marks an external identity change (email moved between accounts) as a switch', async () => {
+    useAccountStore.setState({ anthropicEmail: 'first@x.com' } as Partial<
+      ReturnType<typeof useAccountStore.getState>
+    >)
+    renderHook(() => useAccountScheduleRunner())
+
+    // Initial identification (null -> value) is not a switch.
+    expect(useUsageStore.getState().anthropicAccountSwitchedAt).toBeNull()
+
+    // An email moving between two accounts IS one — external `claude login`.
+    await act(async () => {
+      useAccountStore.setState({ anthropicEmail: 'second@x.com' } as Partial<
+        ReturnType<typeof useAccountStore.getState>
+      >)
+    })
+    expect(useUsageStore.getState().anthropicAccountSwitchedAt).toBe(Date.now())
+  })
+
   it('never refreshes near the threshold when no session is running', async () => {
     useWorktreeStatusStore.setState({ sessionStatuses: {} })
     useAccountScheduleStore.setState({
