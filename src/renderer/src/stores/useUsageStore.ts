@@ -219,9 +219,16 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
     set((current) => ({
       refreshingAccountIds: new Set([...current.refreshingAccountIds, id])
     }))
+    // Guards the live-usage mirror below: a switch completing while this
+    // request is in flight means the response may describe an account that
+    // is no longer active — and the active-email read alone can miss that
+    // (the post-switch email refresh is itself async).
+    const switchEpoch = get().anthropicAccountSwitchedAt
     try {
       const result = await usageApi.fetchForAccount(id, userInitiated)
-      if (result.success && result.data && provider && account) {
+      const switchedMidFlight =
+        provider === 'anthropic' && get().anthropicAccountSwitchedAt !== switchEpoch
+      if (result.success && result.data && provider && account && !switchedMidFlight) {
         // The bottom usage bar reads the provider's live usage, not the saved
         // account row — when the refreshed account is the active one, mirror
         // the fresh data so both views agree.

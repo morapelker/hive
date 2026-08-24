@@ -38,7 +38,6 @@ import {
   type ClaudeUsageOverride
 } from './usage-service'
 import { jwtExpMs, parseCodexIdToken } from './jwt-utils'
-import { markClaudeAccountSwitch } from './usage/claude-switch-epoch'
 import type {
   FetchForAccountResult,
   OpenAIUsageData,
@@ -223,9 +222,6 @@ export async function switchAccount(
         const account = await findClaudeStoreAccount(row.email)
         if (!account) return { success: false, error: 'account no longer in store' }
         await switchClaudeAccount(account.num, account.email)
-        // Sessions spawned before this moment carry the previous account's
-        // credentials — the burn-rate tally partitions on this epoch.
-        markClaudeAccountSwitch()
       } else {
         const account = await findCodexStoreAccount(row.email)
         if (!account) return { success: false, error: 'account no longer in store' }

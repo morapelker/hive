@@ -9,7 +9,6 @@ import {
   type CustomClaudeProvider
 } from '@shared/types/custom-provider'
 import { createLogger } from '../logger'
-import { getLastClaudeSwitchAt } from './claude-switch-epoch'
 import { resolveClaudeFiles } from './session-usage-service'
 import { parseClaudeSessionIncrement, type ClaudeSessionState } from './claude-usage-parser'
 import type { ClaudeTokenTally } from '@shared/types/usage'
@@ -87,21 +86,23 @@ async function computeTally(deps: ClaudeTokenTallyDeps): Promise<ClaudeTokenTall
   // sessions, and letting them consume cap slots could push out the local
   // Claude sessions whose burn the predictor needs to see.
   const customProviders = loadCustomProviders(db)
-  // Sessions created before the last account switch were spawned with the
-  // previous account's credentials — their burn belongs to that account,
-  // not the one whose utilization the predictor is estimating (same rule
-  // the renderer applies to rate-limit events).
-  const switchEpoch = getLastClaudeSwitchAt()
+  // Deliberately NO account-switch partition here. Credential attribution is
+  // per SDK query (claude-code re-reads credentials every prompt) or per
+  // process (claude-code-cli, including resume respawns), which this process
+  // cannot observe — a session-level cutoff would wrongly exclude resumed
+  // sessions' post-switch burn, the dominant workload. The error asymmetry
+  // decides it: over-counting another account's burn at worst fires a
+  // harmless 30s-floored early sample, while under-counting misses the
+  // threshold crossing this predictor exists to catch. Cross-account
+  // CALIBRATION is prevented renderer-side (the predictor hard-resets on
+  // every switch), so misattributed tokens can bias a rate estimate but
+  // never anchor one account's percent against another's tokens ratio.
   const sessions: Session[] = []
   for (const id of db.listRecentUsageSessionIds(since)) {
     if (sessions.length >= MAX_TRACKED_SESSIONS) break
     const session = db.getSession(id)
     if (!session || !isClaudeSdk(session.agent_sdk) || session.remote_launch) continue
     if (!isAnthropicAttributed(session, customProviders)) continue
-    if (switchEpoch !== null) {
-      const createdAt = Date.parse(session.created_at)
-      if (!Number.isNaN(createdAt) && createdAt < switchEpoch) continue
-    }
     sessions.push(session)
   }
 

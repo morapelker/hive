@@ -330,46 +330,28 @@ export function useOpenCodeGlobalListener(): void {
       }
 
       if (event.type === 'session.rate_limit') {
-        // Sessions created before the last account switch still hold the
-        // PREVIOUS account's credentials (read at spawn) — their rejections
-        // describe that account, and storing them would mark the freshly
-        // switched-to account as exhausted and re-trigger the auto-switch.
+        // Rate-limit events come exclusively from the claude-code SDK
+        // stream, and the SDK captures credentials PER QUERY (each prompt
+        // launches a fresh sdk.query()) — so what identifies the account a
+        // rejection belongs to is when the current TURN started, not when
+        // the session row was created (a resumed old session's new turns
+        // run on the freshly switched-to account). A turn begun before the
+        // last switch ran on the previous account: storing its rejection
+        // would mark the new account as exhausted and re-trigger the
+        // auto-switch. Events without an attributable running turn are
+        // discarded post-switch — conservative, and it self-heals on the
+        // session's next prompt.
         const rateLimitInfo = event.data as AnthropicRateLimitInfo
         const switchedAt = useUsageStore.getState().anthropicAccountSwitchedAt
-        if (switchedAt === null) {
-          useUsageStore.getState().setAnthropicRateLimit(rateLimitInfo)
-          return
+        if (switchedAt !== null) {
+          const statusEntry = useWorktreeStatusStore.getState().sessionStatuses[sessionId]
+          const turnStartedAt =
+            statusEntry?.status === 'working' || statusEntry?.status === 'planning'
+              ? statusEntry.timestamp
+              : null
+          if (turnStartedAt === null || turnStartedAt < switchedAt) return
         }
-        const sessionState = useSessionStore.getState()
-        const session = [
-          ...[...sessionState.sessionsByWorktree.values()].flat(),
-          ...[...sessionState.sessionsByConnection.values()].flat()
-        ].find((s) => s.id === sessionId)
-        if (session) {
-          const createdAt = Date.parse(session.created_at)
-          if (Number.isNaN(createdAt) || createdAt < switchedAt) return
-          useUsageStore.getState().setAnthropicRateLimit(rateLimitInfo)
-          return
-        }
-        // Not in the loaded maps — resolve from the DB before accepting.
-        // Post-switch, an event that cannot be attributed to a post-switch
-        // session is discarded: falling through would let a still-running
-        // pre-switch session mark the fresh account as exhausted.
-        void (async () => {
-          try {
-            const dbSession = await dbApi.session.get<{ created_at?: string }>(sessionId)
-            const createdAt = dbSession?.created_at ? Date.parse(dbSession.created_at) : NaN
-            // Re-read the epoch AFTER the await: another switch may have
-            // completed during the DB lookup, and a session created between
-            // the two switches must be judged against the newest one.
-            const latestSwitchedAt =
-              useUsageStore.getState().anthropicAccountSwitchedAt ?? switchedAt
-            if (Number.isNaN(createdAt) || createdAt < latestSwitchedAt) return
-            useUsageStore.getState().setAnthropicRateLimit(rateLimitInfo)
-          } catch {
-            // Unresolvable post-switch event: discard.
-          }
-        })()
+        useUsageStore.getState().setAnthropicRateLimit(rateLimitInfo)
         return
       }
 

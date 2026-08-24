@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useUsageStore } from '@/stores/useUsageStore'
 import { useSessionStore } from '@/stores/useSessionStore'
-import type { Session } from '@shared/types/session'
+import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import type { OpenCodeStreamEvent } from '@shared/types/opencode'
 
 const apiMocks = vi.hoisted(() => ({
@@ -76,6 +76,9 @@ describe('useOpenCodeGlobalListener rate-limit events', () => {
       sessionsByWorktree: new Map(),
       sessionsByConnection: new Map()
     } as Partial<ReturnType<typeof useSessionStore.getState>>)
+    useWorktreeStatusStore.setState({
+      sessionStatuses: {}
+    } as Partial<ReturnType<typeof useWorktreeStatusStore.getState>>)
   })
 
   afterEach(() => {
@@ -118,47 +121,7 @@ describe('useOpenCodeGlobalListener rate-limit events', () => {
     expect(useUsageStore.getState().anthropicLastFetchedAt).toBeNull()
   })
 
-  it('ignores rate-limit events from sessions created before the last account switch', async () => {
-    const { useOpenCodeGlobalListener } = await import('@/hooks/useOpenCodeGlobalListener')
-    function ListenerHarness(): null {
-      useOpenCodeGlobalListener()
-      return null
-    }
-
-    // session-old was spawned (with the previous account's credentials)
-    // before the switch; session-new after it.
-    const oldSession = {
-      id: 'session-old',
-      created_at: new Date(Date.now() - 60_000).toISOString()
-    } as unknown as Session
-    const newSession = {
-      id: 'session-new',
-      created_at: new Date(Date.now() + 5_000).toISOString()
-    } as unknown as Session
-    useSessionStore.setState({
-      sessionsByWorktree: new Map([['wt-1', [oldSession, newSession]]]),
-      sessionsByConnection: new Map()
-    } as Partial<ReturnType<typeof useSessionStore.getState>>)
-    useUsageStore.setState({
-      anthropicAccountSwitchedAt: Date.now()
-    } as Partial<ReturnType<typeof useUsageStore.getState>>)
-
-    render(<ListenerHarness />)
-
-    const data = {
-      status: 'rejected',
-      resetsAt: Math.floor(Date.now() / 1000) + 1_800,
-      rateLimitType: 'five_hour' as const
-    }
-    streamListener?.({ type: 'session.rate_limit', sessionId: 'session-old', data })
-    // The zombie session's rejection describes the account we left.
-    expect(useUsageStore.getState().anthropicRateLimit).toBeNull()
-
-    streamListener?.({ type: 'session.rate_limit', sessionId: 'session-new', data })
-    expect(useUsageStore.getState().anthropicRateLimit?.fiveHour?.status).toBe('rejected')
-  })
-
-  it('resolves unknown sessions from the DB post-switch and discards unresolvable events', async () => {
+  it('attributes events by TURN start: pre-switch or unknown turns are dropped, post-switch turns accepted', async () => {
     const { useOpenCodeGlobalListener } = await import('@/hooks/useOpenCodeGlobalListener')
     function ListenerHarness(): null {
       useOpenCodeGlobalListener()
@@ -175,59 +138,28 @@ describe('useOpenCodeGlobalListener rate-limit events', () => {
       rateLimitType: 'five_hour' as const
     }
 
-    // Unknown everywhere (DB returns null): discarded — falling through
-    // would let a still-running pre-switch session poison the new account.
-    streamListener?.({ type: 'session.rate_limit', sessionId: 'session-ghost', data })
-    await vi.runOnlyPendingTimersAsync()
+    // No attributable running turn: discarded (self-heals next prompt).
+    streamListener?.({ type: 'session.rate_limit', sessionId: 'session-idle', data })
     expect(useUsageStore.getState().anthropicRateLimit).toBeNull()
 
-    // Known to the DB as created BEFORE the switch: discarded.
-    apiMocks.dbApi.session.get.mockResolvedValue({
-      created_at: new Date(Date.now() - 60_000).toISOString()
-    })
-    streamListener?.({ type: 'session.rate_limit', sessionId: 'session-db-old', data })
-    await vi.runOnlyPendingTimersAsync()
-    expect(useUsageStore.getState().anthropicRateLimit).toBeNull()
-
-    // Known to the DB as created AFTER the switch: accepted.
-    apiMocks.dbApi.session.get.mockResolvedValue({
-      created_at: new Date(Date.now() + 5_000).toISOString()
-    })
-    streamListener?.({ type: 'session.rate_limit', sessionId: 'session-db-new', data })
-    await vi.runOnlyPendingTimersAsync()
-    expect(useUsageStore.getState().anthropicRateLimit?.fiveHour?.status).toBe('rejected')
-  })
-
-  it('re-checks the switch epoch after the DB lookup so a mid-await switch still rejects the event', async () => {
-    const { useOpenCodeGlobalListener } = await import('@/hooks/useOpenCodeGlobalListener')
-    function ListenerHarness(): null {
-      useOpenCodeGlobalListener()
-      return null
-    }
-    useUsageStore.setState({
-      anthropicAccountSwitchedAt: Date.now() - 60_000
-    } as Partial<ReturnType<typeof useUsageStore.getState>>)
-    render(<ListenerHarness />)
-
-    // The session was created AFTER the captured switch epoch — but while
-    // the DB lookup is in flight, ANOTHER switch completes. Judged against
-    // the stale epoch the event would poison the newest account.
-    apiMocks.dbApi.session.get.mockImplementation(async () => {
-      useUsageStore.setState({
-        anthropicAccountSwitchedAt: Date.now() + 10_000
-      } as Partial<ReturnType<typeof useUsageStore.getState>>)
-      return { created_at: new Date(Date.now() - 30_000).toISOString() }
-    })
-    streamListener?.({
-      type: 'session.rate_limit',
-      sessionId: 'session-mid-switch',
-      data: {
-        status: 'rejected',
-        resetsAt: Math.floor(Date.now() / 1000) + 1_800,
-        rateLimitType: 'five_hour' as const
+    // A turn that began BEFORE the switch captured the previous account's
+    // credentials at query start — even in a session created long ago.
+    useWorktreeStatusStore.setState({
+      sessionStatuses: {
+        'session-old-turn': { status: 'working', timestamp: Date.now() - 60_000 }
       }
-    })
-    await vi.runOnlyPendingTimersAsync()
+    } as Partial<ReturnType<typeof useWorktreeStatusStore.getState>>)
+    streamListener?.({ type: 'session.rate_limit', sessionId: 'session-old-turn', data })
     expect(useUsageStore.getState().anthropicRateLimit).toBeNull()
+
+    // A turn begun AFTER the switch runs on the new account — a resumed
+    // pre-switch session's fresh sdk.query() included. Its rejection is real.
+    useWorktreeStatusStore.setState({
+      sessionStatuses: {
+        'session-new-turn': { status: 'working', timestamp: Date.now() + 5_000 }
+      }
+    } as Partial<ReturnType<typeof useWorktreeStatusStore.getState>>)
+    streamListener?.({ type: 'session.rate_limit', sessionId: 'session-new-turn', data })
+    expect(useUsageStore.getState().anthropicRateLimit?.fiveHour?.status).toBe('rejected')
   })
 })

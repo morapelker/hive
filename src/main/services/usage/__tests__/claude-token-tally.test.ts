@@ -5,10 +5,6 @@ import { join } from 'path'
 import type { DatabaseService } from '../../../db/database'
 import { encodePath } from '../../claude-transcript-reader'
 import { getClaudeTokenTally, __resetClaudeTokenTallyForTests } from '../claude-token-tally'
-import {
-  markClaudeAccountSwitch,
-  __resetClaudeSwitchEpochForTests
-} from '../claude-switch-epoch'
 
 let root: string
 let prevConfigDir: string | undefined
@@ -93,7 +89,6 @@ beforeEach(() => {
   prevConfigDir = process.env.CLAUDE_CONFIG_DIR
   process.env.CLAUDE_CONFIG_DIR = join(root, 'claude-config')
   __resetClaudeTokenTallyForTests()
-  __resetClaudeSwitchEpochForTests()
 })
 
 afterEach(() => {
@@ -244,35 +239,6 @@ describe('getClaudeTokenTally', () => {
       { id: 'hive-1', agentSdk: 'claude-code-cli', claudeSessionId: 'claude-sess-1' }
     ]
     const db = makeDb(worktreePath, sessions)
-
-    const tally = await getClaudeTokenTally({ db })
-    expect(tally.inputTokens).toBe(100)
-    expect(tally.sessionCount).toBe(1)
-  })
-
-  it('excludes sessions created before the last account switch', async () => {
-    const worktreePath = join(root, 'wt')
-    mkdirSync(worktreePath, { recursive: true })
-    writeFileSync(transcriptPath(worktreePath, 'claude-sess-old'), entry('m1', 1_000, 100))
-    writeFileSync(transcriptPath(worktreePath, 'claude-sess-new'), entry('m2', 100, 10))
-
-    markClaudeAccountSwitch()
-    const db = makeDb(worktreePath, [
-      // Spawned before the switch: burns the PREVIOUS account.
-      {
-        id: 'hive-old',
-        agentSdk: 'claude-code-cli',
-        claudeSessionId: 'claude-sess-old',
-        createdAt: new Date(Date.now() - 60_000).toISOString()
-      },
-      // Spawned after the switch: burns the active account.
-      {
-        id: 'hive-new',
-        agentSdk: 'claude-code-cli',
-        claudeSessionId: 'claude-sess-new',
-        createdAt: new Date(Date.now() + 60_000).toISOString()
-      }
-    ])
 
     const tally = await getClaudeTokenTally({ db })
     expect(tally.inputTokens).toBe(100)
