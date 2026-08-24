@@ -182,6 +182,27 @@ describe('CliHookHoldCore', () => {
     expect(transport2.some((event) => event.type === 'session.idle')).toBe(true)
   })
 
+  it('StopFailure emits idle with the rendered API-error text as the final message', () => {
+    const { core, transport } = makeCore()
+    core.register(SESSION)
+    const res = makeRes()
+
+    const owned = core.onHook(
+      SESSION,
+      {
+        hook_event_name: 'StopFailure',
+        last_assistant_message: 'API Error: 500 Internal server error.'
+      },
+      res
+    )
+
+    expect(owned).toBe(false)
+    expect(transport.find((event) => event.type === 'message.updated')).toMatchObject({
+      data: { role: 'assistant', content: 'API Error: 500 Internal server error.' }
+    })
+    expect(transport.some((event) => event.type === 'session.idle')).toBe(true)
+  })
+
   it('emitSessionIdle(sessionId, text) emits message.updated then session.idle', () => {
     const { core, transport } = makeCore()
 

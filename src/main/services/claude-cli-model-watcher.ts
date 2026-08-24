@@ -91,7 +91,15 @@ const BASELINE_TAIL_BYTES = 512 * 1024
 
 // A model switch only becomes visible when the next assistant line is written,
 // so per-turn boundaries are the natural (and cheap) polling points.
-const MODEL_HOOK_EVENTS = new Set(['SessionStart', 'UserPromptSubmit', 'Stop', 'SessionEnd'])
+// StopFailure is the API-error twin of Stop — same turn boundary (the
+// synthetic '<synthetic>' model on API-error lines is filtered below).
+const MODEL_HOOK_EVENTS = new Set([
+  'SessionStart',
+  'UserPromptSubmit',
+  'Stop',
+  'StopFailure',
+  'SessionEnd'
+])
 
 // Mirrors the claude-cli catalog in claude-code-implementer.ts: sonnet/haiku
 // effort tops out at 'high'; only fable/opus offer xhigh/max. A degrade must

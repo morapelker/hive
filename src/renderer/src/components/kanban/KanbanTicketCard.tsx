@@ -511,6 +511,19 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     )
   )
 
+  // ── API-error classification from the linked session's last turn ──
+  // Cleared by the store when the session is relaunched; a fresh launch
+  // rewrites current_session_id, which re-keys this selector.
+  const sessionApiError = useWorktreeStatusStore(
+    useCallback(
+      (state) => {
+        if (!ticket.current_session_id) return null
+        return state.sessionApiErrors[ticket.current_session_id] ?? null
+      },
+      [ticket.current_session_id]
+    )
+  )
+
   // ── Live background shells/monitors in the linked claude-cli session ──
   const backgroundWork = useWorktreeStatusStore(
     useCallback(
@@ -653,7 +666,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     )
   )
 
-  const isError = sessionStatus === 'error'
+  const isError = sessionStatus === 'error' || sessionApiError !== null
   const hasAttachments = ticket.attachments.length > 0
   // Surface the model on cards that are part of a multi-model duplicate
   // group — for single-model launches the name is noise, unless the user
@@ -1158,15 +1171,18 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                   (isBlocked || blockingDiagnostic) && 'opacity-60',
                   // Highlighted as a blocker of the currently hovered ticket
                   isHighlightedAsBlocker && 'border-dashed !border-amber-500/70 ring-1 ring-amber-500/30',
-                  !isHighlightedAsBlocker && borderState === 'default' && 'border-border',
+                  // API-errored session: full red perimeter, overriding mode
+                  // rails and mark stripes until the session is relaunched
+                  !isHighlightedAsBlocker && isError && '!border-red-500/70 ring-1 ring-red-500/25',
+                  !isHighlightedAsBlocker && !isError && borderState === 'default' && 'border-border',
                   // Mode cue lives in a 2px left rail; the perimeter stays neutral
-                  !isHighlightedAsBlocker && borderState === 'blue' && 'border-border border-l-2 !border-l-blue-500/60',
-                  !isHighlightedAsBlocker && borderState === 'violet' && 'border-border border-l-2 !border-l-violet-500/60',
+                  !isHighlightedAsBlocker && !isError && borderState === 'blue' && 'border-border border-l-2 !border-l-blue-500/60',
+                  !isHighlightedAsBlocker && !isError && borderState === 'violet' && 'border-border border-l-2 !border-l-violet-500/60',
                   // Left accent stripe for marks
-                  ticket.mark === 'common' && 'border-l-2 !border-l-green-500',
-                  ticket.mark === 'rare' && 'border-l-2 !border-l-blue-500',
-                  ticket.mark === 'epic' && 'border-l-2 !border-l-pink-500',
-                  ticket.mark === 'legendary' && 'border-l-2 !border-l-orange-500'
+                  !isError && ticket.mark === 'common' && 'border-l-2 !border-l-green-500',
+                  !isError && ticket.mark === 'rare' && 'border-l-2 !border-l-blue-500',
+                  !isError && ticket.mark === 'epic' && 'border-l-2 !border-l-pink-500',
+                  !isError && ticket.mark === 'legendary' && 'border-l-2 !border-l-orange-500'
                 )}
               >
             {/* Title + top-right indicators */}
@@ -1472,7 +1488,15 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
 
                 {/* Error badge */}
                 {isError && (
-                  <span className={cn(ticketPillBaseClass, 'border-red-500/30 bg-red-500/10 text-red-500')}>
+                  <span
+                    data-testid="kanban-ticket-error-badge"
+                    title={
+                      sessionApiError
+                        ? `Claude API error: ${sessionApiError.replace(/_/g, ' ')}`
+                        : undefined
+                    }
+                    className={cn(ticketPillBaseClass, 'border-red-500/30 bg-red-500/10 text-red-500')}
+                  >
                     <AlertCircle className="h-2.5 w-2.5" />
                     Error
                   </span>

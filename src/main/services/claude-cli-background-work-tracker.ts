@@ -125,10 +125,12 @@ function responseId(hook: ParsedClaudeHook, field: string): string | null {
 
 function canStartBackgroundWork(hook: ParsedClaudeHook): boolean {
   if (hook.hook_event_name === 'SubagentStart') return true
-  // Stop/SubagentStop snapshots can adopt background subagents this process
-  // never saw start (e.g. hooks lost mid-flight).
+  // Stop/StopFailure/SubagentStop snapshots can adopt background subagents
+  // this process never saw start (e.g. hooks lost mid-flight).
   if (
-    (hook.hook_event_name === 'Stop' || hook.hook_event_name === 'SubagentStop') &&
+    (hook.hook_event_name === 'Stop' ||
+      hook.hook_event_name === 'StopFailure' ||
+      hook.hook_event_name === 'SubagentStop') &&
     (hook.background_tasks ?? []).some(
       (task) => task.type === 'subagent' && task.status === 'running'
     )
@@ -201,7 +203,11 @@ function reconcileWithSnapshot(work: SessionWork, hook: ParsedClaudeHook): void 
   // parent workflow task does) yet outlive main-agent turns. A SubagentStop's
   // snapshot proves nothing about sibling foreground agents, so it never
   // prunes.
-  if (hook.hook_event_name === 'Stop' && !hook.agent_id && !runningWorkflow) {
+  if (
+    (hook.hook_event_name === 'Stop' || hook.hook_event_name === 'StopFailure') &&
+    !hook.agent_id &&
+    !runningWorkflow
+  ) {
     for (const id of work.subagents) {
       if (!runningSubagents.has(id)) work.subagents.delete(id)
     }
@@ -247,7 +253,7 @@ export function processClaudeCliBackgroundWorkHook(
       // re-adopted it after its SubagentStop.
       work.subagents.delete(id)
     }
-  } else if (event === 'Stop' || event === 'SubagentStop') {
+  } else if (event === 'Stop' || event === 'StopFailure' || event === 'SubagentStop') {
     reconcileWithSnapshot(work, hook)
     // Delete after reconciling: a background subagent's own SubagentStop
     // still self-lists it as 'running' (result not yet consumed), and the

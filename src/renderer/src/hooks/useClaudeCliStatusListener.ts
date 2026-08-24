@@ -9,6 +9,7 @@ import { lastSendMode } from '@/lib/message-send-times'
 import { notifyKanbanSessionSync } from '@/stores/store-coordination'
 import { isPlanLike } from '@/lib/constants'
 import { isHandoffPickerOpenForSession } from '@/lib/handoff-ui-state'
+import { toast } from '@/lib/toast'
 
 type ClaudeCliStatusMetadata = {
   reason?: string
@@ -17,6 +18,21 @@ type ClaudeCliStatusMetadata = {
   toolName?: string
   plan?: string
   taskNotification?: boolean
+  apiError?: string
+}
+
+// StopFailure `error` classifications → user-facing labels. Unlisted values
+// (including 'unknown') fall back to the bare "Claude API error" title.
+const CLAUDE_API_ERROR_LABELS: Record<string, string> = {
+  rate_limit: 'rate limited',
+  overloaded: 'servers overloaded',
+  authentication_failed: 'authentication failed',
+  oauth_org_not_allowed: 'organization not allowed',
+  billing_error: 'billing error',
+  invalid_request: 'invalid request',
+  model_not_found: 'model not found',
+  server_error: 'internal server error',
+  max_output_tokens: 'max output tokens exceeded'
 }
 
 function closeLinkedTicketModal(sessionId: string): void {
@@ -212,9 +228,30 @@ export function useClaudeCliStatusListener(): void {
       }
     )
 
+    // A claude-cli turn that ended with an API error (StopFailure hook). The
+    // status pipeline above already flips the session to 'completed'; this is
+    // the user-facing alert with the structured classification, plus the
+    // per-session error mark the linked kanban ticket renders (red border +
+    // Error badge) until the session is relaunched.
+    const unsubscribeApiError = terminalApi.onClaudeCliApiError(
+      ({ sessionId, error, errorDetails, lastAssistantMessage }) => {
+        useWorktreeStatusStore.getState().setSessionApiError(sessionId, error)
+        const sessionName = useSessionStore.getState().getSessionById(sessionId)?.name
+        const label = CLAUDE_API_ERROR_LABELS[error]
+        toast.error(
+          `Claude API error${label ? ` (${label})` : ''}${sessionName ? ` in "${sessionName}"` : ''}`,
+          {
+            description: lastAssistantMessage ?? errorDetails,
+            duration: 8000
+          }
+        )
+      }
+    )
+
     return () => {
       unsubscribe()
       unsubscribeBackgroundWork()
+      unsubscribeApiError()
     }
   }, [])
 }

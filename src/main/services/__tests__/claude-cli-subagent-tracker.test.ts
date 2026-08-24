@@ -97,6 +97,42 @@ describe('deferring a Stop with running background subagents', () => {
   })
 })
 
+describe('StopFailure (API-error turn end)', () => {
+  it('passes even with running background subagents (never defers)', () => {
+    expect(
+      process(
+        { event: 'StopFailure', backgroundTasks: [bgTask('a')] },
+        buildMapped(SESSION, 'completed')
+      )
+    ).toEqual({ kind: 'pass' })
+    expect(isClaudeCliCompletionDeferred(SESSION)).toBe(false)
+  })
+
+  it('clears an existing deferral so the watchdog never fires', () => {
+    vi.useFakeTimers()
+    const handler = vi.fn().mockReturnValue(true)
+    setClaudeCliDeferredCompletionHandler(handler)
+
+    process({ event: 'Stop', backgroundTasks: [bgTask('a')] }, buildMapped(SESSION, 'completed'))
+    expect(isClaudeCliCompletionDeferred(SESSION)).toBe(true)
+
+    expect(process({ event: 'StopFailure' }, buildMapped(SESSION, 'completed'))).toEqual({
+      kind: 'pass'
+    })
+    expect(isClaudeCliCompletionDeferred(SESSION)).toBe(false)
+
+    vi.advanceTimersByTime(SUBAGENT_WATCHDOG_TIMEOUT_MS)
+    expect(handler).not.toHaveBeenCalled()
+  })
+
+  it('a subagent-scoped StopFailure is never a session completion', () => {
+    expect(process({ event: 'StopFailure', agentId: 'agent-1' })).toEqual({
+      kind: 'subagent_scoped'
+    })
+    expect(isClaudeCliCompletionDeferred(SESSION)).toBe(false)
+  })
+})
+
 describe('full happy path (real trace replay)', () => {
   it('defers, drains via notification, then completes on a clean Stop', () => {
     expect(

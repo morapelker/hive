@@ -44,6 +44,8 @@ export interface SessionStatusEntry {
   hookPath?: string
   toolName?: string
   plan?: string
+  /** The turn ended with this Claude API error classification (StopFailure). */
+  apiError?: string
 }
 
 export type MergeConflictFlow =
@@ -60,6 +62,14 @@ export interface SessionBackgroundWork {
 interface WorktreeStatusState {
   // sessionId → status info (null means no status / cleared)
   sessionStatuses: Record<string, SessionStatusEntry | null>
+  // sessionId → API-error classification from the session's last turn
+  // (claude-cli StopFailure). Kept separate from sessionStatuses so the
+  // error mark on the linked kanban ticket survives unread-clearing, status
+  // dedup, and failed-relaunch rollbacks; cleared only when a new turn
+  // verifiably starts (working/planning with UserPromptSubmit hook evidence
+  // or a plan-followup), and a fresh launch re-keys current_session_id so
+  // stale entries are never rendered.
+  sessionApiErrors: Record<string, string>
   // sessionId → live background subagent/shell/monitor counts, reported by both
   // the claude-cli hook path and the Claude SDK path (entries are dropped when
   // all counts reach zero)
@@ -91,8 +101,10 @@ interface WorktreeStatusState {
       toolName?: string
       plan?: string
       taskNotification?: boolean
+      apiError?: string
     }
   ) => void
+  setSessionApiError: (sessionId: string, error: string) => void
   setSessionBackgroundWork: (sessionId: string, work: SessionBackgroundWork) => void
   clearSessionStatus: (sessionId: string) => void
   clearWorktreeUnread: (worktreeId: string) => void
@@ -113,6 +125,7 @@ interface WorktreeStatusState {
 
 export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => ({
   sessionStatuses: {},
+  sessionApiErrors: {},
   backgroundWorkBySession: {},
   lastMessageTimeByWorktree: {},
   reviewSessionByWorktree: {},
@@ -134,6 +147,7 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
       toolName?: string
       plan?: string
       taskNotification?: boolean
+      apiError?: string
     }
   ) => {
     set((state) => {
@@ -142,6 +156,23 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
           ...state.sessionStatuses,
           [sessionId]: status ? { status, timestamp: Date.now(), ...metadata } : null
         }
+      }
+
+      // The session's API-error mark clears only when a new turn actually
+      // starts: a working/planning publish carrying UserPromptSubmit hook
+      // evidence (or the transcript watcher's plan-followup reason). The
+      // modal's optimistic pre-send 'working' writes and their failure
+      // rollbacks (clearSessionStatus) leave it intact — a relaunch that
+      // never reached claude must not strip the mark. Launching a fresh
+      // session re-keys the ticket's current_session_id instead.
+      if (
+        state.sessionApiErrors[sessionId] !== undefined &&
+        (status === 'working' || status === 'planning') &&
+        (metadata?.hookEventName === 'UserPromptSubmit' ||
+          metadata?.reason === 'claude_cli_plan_followup')
+      ) {
+        const { [sessionId]: _dropped, ...rest } = state.sessionApiErrors
+        next.sessionApiErrors = rest
       }
 
       // Auto-clear review session when its session completes or is cleared
@@ -167,12 +198,19 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
 
     // ── Kanban coordination: notify kanban store of relevant status changes ──
     if (status === 'completed') {
-      const mode = lastSendMode.get(sessionId) as 'build' | 'plan' | undefined
-      notifyKanbanSessionSync(sessionId, {
-        type: 'session_completed',
-        sessionMode: mode,
-        tokenDelta: metadata?.tokenDelta
-      })
+      if (metadata?.apiError) {
+        // The turn ended with a Claude API error (StopFailure), not a real
+        // completion: session_error moves an in_progress ticket to review
+        // without flagging plan_ready — no plan was produced.
+        notifyKanbanSessionSync(sessionId, { type: 'session_error' })
+      } else {
+        const mode = lastSendMode.get(sessionId) as 'build' | 'plan' | undefined
+        notifyKanbanSessionSync(sessionId, {
+          type: 'session_completed',
+          sessionMode: mode,
+          tokenDelta: metadata?.tokenDelta
+        })
+      }
     } else if (status === 'plan_ready') {
       notifyKanbanSessionSync(sessionId, { type: 'plan_ready' })
     } else if (status === 'working' || status === 'planning') {
@@ -229,7 +267,16 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
     })
   },
 
+  setSessionApiError: (sessionId: string, error: string) => {
+    set((state) => ({
+      sessionApiErrors: { ...state.sessionApiErrors, [sessionId]: error }
+    }))
+  },
+
   clearSessionStatus: (sessionId: string) => {
+    // Deliberately keeps sessionApiErrors: this is also the failure-rollback
+    // path of modal relaunches, and a relaunch that never started a turn must
+    // not strip the error mark.
     set((state) => ({
       sessionStatuses: {
         ...state.sessionStatuses,
@@ -325,9 +372,12 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
     // If the last message was sent in plan mode and the session completed,
     // show "Plan ready". Otherwise show normal "Ready".
     if (hasCompleted) {
-      const completedInPlan = sessions.some(
-        (s) => sessionStatuses[s.id]?.status === 'completed' && lastSendMode.get(s.id) === 'plan'
-      )
+      const completedInPlan = sessions.some((s) => {
+        const entry = sessionStatuses[s.id]
+        // An API-errored turn end (apiError set) produced no plan — never
+        // derive "Plan ready" from it.
+        return entry?.status === 'completed' && !entry.apiError && lastSendMode.get(s.id) === 'plan'
+      })
       return completedInPlan ? 'plan_ready' : 'completed'
     }
 
@@ -373,9 +423,12 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
     if (hasPlanReady) return 'plan_ready'
 
     if (hasCompleted) {
-      const completedInPlan = sessions.some(
-        (s) => sessionStatuses[s.id]?.status === 'completed' && lastSendMode.get(s.id) === 'plan'
-      )
+      const completedInPlan = sessions.some((s) => {
+        const entry = sessionStatuses[s.id]
+        // An API-errored turn end (apiError set) produced no plan — never
+        // derive "Plan ready" from it.
+        return entry?.status === 'completed' && !entry.apiError && lastSendMode.get(s.id) === 'plan'
+      })
       return completedInPlan ? 'plan_ready' : 'completed'
     }
 

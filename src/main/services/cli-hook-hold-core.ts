@@ -88,7 +88,10 @@ export class CliHookHoldCore {
     if (event === 'PreToolUse' && body.tool_name === 'ExitPlanMode') {
       return this.holdPlan(sessionId, body, res)
     }
-    if (event === 'Stop') {
+    // StopFailure is the API-error turn end (fires instead of Stop); its
+    // last_assistant_message is the rendered "API Error: …" text, so the
+    // transport user still learns how the turn ended.
+    if (event === 'Stop' || event === 'StopFailure') {
       if (!ctx?.suppressIdle) this.emitIdle(sessionId, body)
       return false
     }
