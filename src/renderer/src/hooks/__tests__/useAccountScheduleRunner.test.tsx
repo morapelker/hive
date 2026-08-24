@@ -678,6 +678,33 @@ describe('useAccountScheduleRunner usage refresh cadence', () => {
     expect(refreshAllForProvider).not.toHaveBeenCalled()
   })
 
+  it('does not burn a runner attempt on a fetch the pending Retry-After would no-op', async () => {
+    useAccountScheduleStore.setState({
+      autoSwitch: {
+        anthropic: { provider: 'anthropic', thresholdPercent: 90, createdAt: Date.now() }
+      }
+    })
+    // Near-threshold cadence (120s). A 429 with retryAfter 125 back-dated
+    // lastFetchedAt so the deadline sits 125s out: the cadence-due tick at
+    // 90s must NOT record an attempt (the fetch would no-op under the full
+    // debounce) — the sample belongs to the first post-deadline tick.
+    useUsageStore.setState({
+      anthropicUsage: makeUsage(85, 40),
+      anthropicLastRetryAfter: 125,
+      anthropicLastFetchedAt: Date.now() - 55_000
+    })
+    renderHook(() => useAccountScheduleRunner())
+
+    await advance(120_000)
+    expect(fetchUsageForProvider).not.toHaveBeenCalled()
+
+    // First tick past the 125s deadline (180s since the synthetic fetch
+    // timestamp): the sample goes through.
+    await advance(30_000)
+    expect(fetchUsageForProvider).toHaveBeenCalledTimes(1)
+    expect(fetchUsageForProvider).toHaveBeenCalledWith('anthropic', { minIntervalMs: 120_000 })
+  })
+
   it('never refreshes near the threshold when no session is running', async () => {
     useWorktreeStatusStore.setState({ sessionStatuses: {} })
     useAccountScheduleStore.setState({

@@ -103,6 +103,31 @@ function providersWithRunningSessions(): Set<UsageProvider> {
 const lastAttemptAt: Partial<Record<UsageProvider, number>> = {}
 
 /**
+ * Mirrors fetchUsageForProvider's own gates (in-flight fetch; the full
+ * debounce while an anthropic Retry-After is pending). Attempts that would
+ * no-op must not advance lastAttemptAt: recording one postpones the NEXT
+ * attempt by a whole interval, e.g. a 125s Retry-After hit at the 90s tick
+ * would defer the sample to 210s instead of the first post-deadline tick.
+ */
+function fetchWouldNoOp(provider: UsageProvider, minIntervalMs: number): boolean {
+  const usageStore = useUsageStore.getState()
+  if (provider === 'anthropic') {
+    if (usageStore.anthropicIsLoading) return true
+    const floorMs =
+      usageStore.anthropicLastRetryAfter !== null ? USAGE_FETCH_DEBOUNCE_MS : minIntervalMs
+    return (
+      usageStore.anthropicLastFetchedAt !== null &&
+      Date.now() - usageStore.anthropicLastFetchedAt < floorMs
+    )
+  }
+  if (usageStore.openaiIsLoading) return true
+  return (
+    usageStore.openaiLastFetchedAt !== null &&
+    Date.now() - usageStore.openaiLastFetchedAt < minIntervalMs
+  )
+}
+
+/**
  * When the runner will next fetch usage for `provider`, or null when no
  * refresh is scheduled (no running session for that provider). Mirrors the
  * tick's gating — interval since last fetch/attempt — floored by the store's
@@ -230,6 +255,7 @@ async function maintainBurnRatePredictor(): Promise<void> {
     lastAttemptAt.anthropic ?? 0
   )
   if (now - lastActivity < EARLY_USAGE_REFRESH_FLOOR_MS) return
+  if (fetchWouldNoOp('anthropic', EARLY_USAGE_REFRESH_FLOOR_MS)) return
   lastAttemptAt.anthropic = now
   usageStore
     .fetchUsageForProvider('anthropic', { minIntervalMs: EARLY_USAGE_REFRESH_FLOOR_MS })
@@ -296,16 +322,15 @@ export function useAccountScheduleRunner(): void {
             : usageStore.openaiLastFetchedAt
         const lastActivity = Math.max(lastFetchedAt ?? 0, lastAttemptAt[provider] ?? 0)
         const intervalMs = usageRefreshIntervalMs(provider)
-        if (Date.now() - lastActivity >= intervalMs) {
+        const minIntervalMs = Math.min(USAGE_FETCH_DEBOUNCE_MS, intervalMs)
+        if (Date.now() - lastActivity >= intervalMs && !fetchWouldNoOp(provider, minIntervalMs)) {
           lastAttemptAt[provider] = Date.now()
           // fetchUsageForProvider is silent on failure and debounce-safe, so a
           // flaky refresh never toasts every 5 minutes. The near/imminent
           // cadences pass themselves as the debounce floor — a tightened
           // cadence must actually fetch, not be vetoed by the 3-minute default.
           usageStore
-            .fetchUsageForProvider(provider, {
-              minIntervalMs: Math.min(USAGE_FETCH_DEBOUNCE_MS, intervalMs)
-            })
+            .fetchUsageForProvider(provider, { minIntervalMs })
             .catch(() => {})
         }
       }
