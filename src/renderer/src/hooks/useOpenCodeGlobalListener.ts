@@ -359,7 +359,12 @@ export function useOpenCodeGlobalListener(): void {
           try {
             const dbSession = await dbApi.session.get<{ created_at?: string }>(sessionId)
             const createdAt = dbSession?.created_at ? Date.parse(dbSession.created_at) : NaN
-            if (Number.isNaN(createdAt) || createdAt < switchedAt) return
+            // Re-read the epoch AFTER the await: another switch may have
+            // completed during the DB lookup, and a session created between
+            // the two switches must be judged against the newest one.
+            const latestSwitchedAt =
+              useUsageStore.getState().anthropicAccountSwitchedAt ?? switchedAt
+            if (Number.isNaN(createdAt) || createdAt < latestSwitchedAt) return
             useUsageStore.getState().setAnthropicRateLimit(rateLimitInfo)
           } catch {
             // Unresolvable post-switch event: discard.

@@ -382,6 +382,36 @@ describe('useUsageStore', () => {
     expect(fetchCalls()).toBe(2)
   })
 
+  it('does not burn the event attempt slot when the fetch floor would no-op anyway', async () => {
+    request.mockImplementation(async (method: string) => {
+      if (method === 'usageOps.fetch') return { success: true, data: sampleUsage }
+      if (method === 'accountOps.listSaved') return []
+      return null
+    })
+    const fetchCalls = (): number =>
+      request.mock.calls.filter(([m]) => m === 'usageOps.fetch').length
+    const reject = (): void =>
+      useUsageStore.getState().setAnthropicRateLimit({
+        status: 'rejected',
+        resetsAt: Math.floor(Date.now() / 1000) + 1_800,
+        rateLimitType: 'five_hour'
+      })
+
+    // An event 29s after a successful fetch: inside the fetch floor, so no
+    // request — and crucially no attempt recorded (it would be a no-op).
+    useUsageStore.setState({ anthropicLastFetchedAt: Date.now() - 29_000 })
+    reject()
+    await vi.runOnlyPendingTimersAsync()
+    expect(fetchCalls()).toBe(0)
+
+    // 2s later the fetch floor is open: the next event fetches immediately
+    // instead of waiting out an attempt slot burned by the no-op above.
+    vi.setSystemTime(Date.now() + 2_000)
+    reject()
+    await vi.runOnlyPendingTimersAsync()
+    expect(fetchCalls()).toBe(1)
+  })
+
   it('clears the anthropic rate-limit overlay on a successful switch', async () => {
     useUsageStore.setState({
       savedAccounts: {

@@ -901,7 +901,7 @@ export class DatabaseService {
         `SELECT id FROM sessions
          WHERE (updated_at >= ? OR status = 'active')
            AND agent_sdk IN ('claude-code', 'claude-code-cli', 'codex')
-         ORDER BY updated_at DESC`
+         ORDER BY (status = 'active') DESC, updated_at DESC`
       )
       .all(sinceIso) as Array<{ id: string }>
     return rows.map((row) => row.id)

@@ -575,8 +575,18 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
     // otherwise retry on every single event.
     if (info.status !== 'allowed') {
       const nowMs = Date.now()
-      const lastAttempt = get().anthropicRateLimitRefreshAttemptAt
-      if (lastAttempt === null || nowMs - lastAttempt >= EARLY_USAGE_REFRESH_FLOOR_MS) {
+      const { anthropicRateLimitRefreshAttemptAt: lastAttempt, anthropicLastFetchedAt } = get()
+      // Only record an attempt when the fetch's own floor would let it
+      // through — an event landing just inside that floor would otherwise
+      // burn the attempt slot on a guaranteed no-op and defer the next real
+      // sample by up to another full floor while usage is climbing.
+      const fetchGateOpen =
+        anthropicLastFetchedAt === null ||
+        nowMs - anthropicLastFetchedAt >= EARLY_USAGE_REFRESH_FLOOR_MS
+      if (
+        fetchGateOpen &&
+        (lastAttempt === null || nowMs - lastAttempt >= EARLY_USAGE_REFRESH_FLOOR_MS)
+      ) {
         set({ anthropicRateLimitRefreshAttemptAt: nowMs })
         get()
           .fetchUsageForProvider('anthropic', { minIntervalMs: EARLY_USAGE_REFRESH_FLOOR_MS })

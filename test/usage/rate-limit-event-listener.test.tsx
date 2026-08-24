@@ -197,4 +197,37 @@ describe('useOpenCodeGlobalListener rate-limit events', () => {
     await vi.runOnlyPendingTimersAsync()
     expect(useUsageStore.getState().anthropicRateLimit?.fiveHour?.status).toBe('rejected')
   })
+
+  it('re-checks the switch epoch after the DB lookup so a mid-await switch still rejects the event', async () => {
+    const { useOpenCodeGlobalListener } = await import('@/hooks/useOpenCodeGlobalListener')
+    function ListenerHarness(): null {
+      useOpenCodeGlobalListener()
+      return null
+    }
+    useUsageStore.setState({
+      anthropicAccountSwitchedAt: Date.now() - 60_000
+    } as Partial<ReturnType<typeof useUsageStore.getState>>)
+    render(<ListenerHarness />)
+
+    // The session was created AFTER the captured switch epoch — but while
+    // the DB lookup is in flight, ANOTHER switch completes. Judged against
+    // the stale epoch the event would poison the newest account.
+    apiMocks.dbApi.session.get.mockImplementation(async () => {
+      useUsageStore.setState({
+        anthropicAccountSwitchedAt: Date.now() + 10_000
+      } as Partial<ReturnType<typeof useUsageStore.getState>>)
+      return { created_at: new Date(Date.now() - 30_000).toISOString() }
+    })
+    streamListener?.({
+      type: 'session.rate_limit',
+      sessionId: 'session-mid-switch',
+      data: {
+        status: 'rejected',
+        resetsAt: Math.floor(Date.now() / 1000) + 1_800,
+        rateLimitType: 'five_hour' as const
+      }
+    })
+    await vi.runOnlyPendingTimersAsync()
+    expect(useUsageStore.getState().anthropicRateLimit).toBeNull()
+  })
 })

@@ -76,5 +76,9 @@ describe('listRecentUsageSessionIds', () => {
     expect(ids).toContain(recentDone)
     expect(ids).not.toContain(staleDone)
     expect(ids).not.toContain(activeWrongSdk)
+    // Active sessions sort first so a downstream cap (the burn-rate tally
+    // keeps at most 40) can never evict a still-burning session in favor of
+    // more recently touched finished ones.
+    expect(ids.indexOf(activeStale)).toBeLessThan(ids.indexOf(recentDone))
   })
 })
