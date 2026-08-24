@@ -2945,6 +2945,18 @@ const handleDesktopBackendCommand = (
     return undefined
   }
 
+  if (message.command === 'terminalGetLiveIds') {
+    sendDesktopBackendCommandResult(
+      child,
+      makeDesktopCommandResult(message.id, {
+        ok: true,
+        value: { terminalIds: ptyService.getIds() }
+      }),
+      log
+    )
+    return undefined
+  }
+
   if (message.command === 'terminalDestroy') {
     try {
       destroyNodePtyTerminal(message.payload.terminalId)

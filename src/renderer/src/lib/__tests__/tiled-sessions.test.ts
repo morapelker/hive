@@ -1,6 +1,14 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { KanbanTicket } from '../../../../main/db/types'
 import { computeGridLayout, openTiledInProgressSessions } from '../tiled-sessions'
+
+const terminalApiMocks = vi.hoisted(() => ({
+  getLiveTerminalIds: vi.fn<() => Promise<string[]>>().mockResolvedValue([])
+}))
+
+vi.mock('@/api/terminal-api', () => ({
+  terminalApi: terminalApiMocks
+}))
 import { useSessionStore, type Session } from '@/stores/useSessionStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useProjectStore } from '@/stores/useProjectStore'
@@ -91,6 +99,8 @@ describe('openTiledInProgressSessions', () => {
     useKanbanStore.setState(initialKanbanState, true)
     useProjectStore.setState(initialProjectState, true)
     usePinnedStore.setState(initialPinnedState, true)
+    terminalApiMocks.getLiveTerminalIds.mockClear()
+    terminalApiMocks.getLiveTerminalIds.mockResolvedValue([])
   })
 
   it('builds a snapshot for a single-project board (no project names on tiles)', async () => {
@@ -164,6 +174,54 @@ describe('openTiledInProgressSessions', () => {
     expect(byTitle.get('CLI idle')?.isRunning).toBe(false)
     expect(byTitle.get('No session')?.sessionId).toBeNull()
     expect(byTitle.get('No session')?.isRunning).toBe(false)
+  })
+
+  it('marks a terminal-backed session running when its PTY is alive in the backend but not mounted', async () => {
+    useProjectStore.setState({ projects: [{ id: 'p1', name: 'Acme' }] as never })
+    useKanbanStore.setState({
+      tickets: new Map([
+        [
+          'p1',
+          [
+            makeTicket({
+              id: 't-cli-bg',
+              title: 'CLI background',
+              current_session_id: 's-cli-bg',
+              sort_order: 0
+            }),
+            makeTicket({
+              id: 't-cli-dead',
+              title: 'CLI dead',
+              current_session_id: 's-cli-dead',
+              sort_order: 1
+            })
+          ]
+        ]
+      ])
+    })
+    useSessionStore.setState({
+      sessionsByWorktree: new Map([
+        [
+          'wt1',
+          [
+            makeSession({ id: 's-cli-bg', agent_sdk: 'claude-code-cli' }),
+            makeSession({ id: 's-cli-dead', agent_sdk: 'claude-code-cli' })
+          ]
+        ]
+      ]),
+      // Neither session was activated in this renderer lifetime
+      mountedTerminalMirror: new Set()
+    })
+    // ...but the backend still holds a live PTY for one of them (e.g. window
+    // reloaded while the agent kept working)
+    terminalApiMocks.getLiveTerminalIds.mockResolvedValue(['s-cli-bg'])
+
+    await openTiledInProgressSessions({ projectId: 'p1' })
+
+    const tiles = useSessionStore.getState().tiledSessionsTab?.tiles ?? []
+    const byTitle = new Map(tiles.map((t) => [t.title, t]))
+    expect(byTitle.get('CLI background')?.isRunning).toBe(true)
+    expect(byTitle.get('CLI dead')?.isRunning).toBe(false)
   })
 
   it('merges tickets sharing one session into a single tile', async () => {

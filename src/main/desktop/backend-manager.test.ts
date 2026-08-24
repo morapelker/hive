@@ -70,7 +70,8 @@ const scriptRunnerMocks = vi.hoisted(() => ({
 const ptyServiceMocks = vi.hoisted(() => ({
   has: vi.fn(),
   resize: vi.fn(),
-  write: vi.fn()
+  write: vi.fn(),
+  getIds: vi.fn(() => [] as string[])
 }))
 
 const ghosttyServiceMocks = vi.hoisted(() => ({
@@ -177,7 +178,8 @@ vi.mock('../services/pty-service', () => ({
   ptyService: {
     has: ptyServiceMocks.has,
     resize: ptyServiceMocks.resize,
-    write: ptyServiceMocks.write
+    write: ptyServiceMocks.write,
+    getIds: ptyServiceMocks.getIds
   }
 }))
 
@@ -3675,6 +3677,37 @@ describe('desktop backend manager', () => {
       makeDesktopCommandResult('terminal-create-claude-cli-1', {
         ok: true,
         value: { success: true, cols: 120, rows: 32 }
+      }),
+      expect.any(Function)
+    )
+  })
+
+  it('answers backend terminalGetLiveIds commands with the live PTY ids', async () => {
+    const child = new FakeChildProcess()
+    ptyServiceMocks.getIds.mockReturnValue(['session-live-1', 'session-live-2'])
+
+    await startDesktopBackend(
+      {
+        executablePath: '/electron',
+        entryPath: '/app/server.js',
+        cwd: '/app',
+        baseDir: mkdtempSync(join(tmpdir(), 'hive-backend-manager-')),
+        port: 0
+      },
+      {
+        spawnProcess: vi.fn(() => child as never),
+        fetch: vi.fn(async () => new Response('{}', { status: 200 })),
+        logger: makeLogger()
+      }
+    )
+
+    child.emit('message', makeDesktopCommandRequest('terminal-get-live-ids-1', 'terminalGetLiveIds'))
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(child.send).toHaveBeenCalledWith(
+      makeDesktopCommandResult('terminal-get-live-ids-1', {
+        ok: true,
+        value: { terminalIds: ['session-live-1', 'session-live-2'] }
       }),
       expect.any(Function)
     )
