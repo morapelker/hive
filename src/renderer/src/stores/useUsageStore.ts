@@ -575,14 +575,22 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
     // otherwise retry on every single event.
     if (info.status !== 'allowed') {
       const nowMs = Date.now()
-      const { anthropicRateLimitRefreshAttemptAt: lastAttempt, anthropicLastFetchedAt } = get()
-      // Only record an attempt when the fetch's own floor would let it
-      // through — an event landing just inside that floor would otherwise
-      // burn the attempt slot on a guaranteed no-op and defer the next real
-      // sample by up to another full floor while usage is climbing.
+      const {
+        anthropicRateLimitRefreshAttemptAt: lastAttempt,
+        anthropicLastFetchedAt,
+        anthropicLastRetryAfter,
+        anthropicIsLoading
+      } = get()
+      // Only record an attempt when the fetch itself would actually run —
+      // mirroring ALL of its gates (the Retry-After path enforces the full
+      // debounce, and an in-flight fetch no-ops). Burning the attempt slot
+      // on a guaranteed no-op would defer the next real sample by up to
+      // another full floor while usage is climbing.
+      const fetchFloorMs =
+        anthropicLastRetryAfter !== null ? DEBOUNCE_MS : EARLY_USAGE_REFRESH_FLOOR_MS
       const fetchGateOpen =
-        anthropicLastFetchedAt === null ||
-        nowMs - anthropicLastFetchedAt >= EARLY_USAGE_REFRESH_FLOOR_MS
+        !anthropicIsLoading &&
+        (anthropicLastFetchedAt === null || nowMs - anthropicLastFetchedAt >= fetchFloorMs)
       if (
         fetchGateOpen &&
         (lastAttempt === null || nowMs - lastAttempt >= EARLY_USAGE_REFRESH_FLOOR_MS)

@@ -388,6 +388,49 @@ describe('useAccountScheduleRunner usage refresh cadence', () => {
     })
   })
 
+  it('resets calibration on an account switch even when the seed was overwritten unobserved', async () => {
+    useAccountScheduleStore.setState({
+      autoSwitch: {
+        anthropic: { provider: 'anthropic', thresholdPercent: 90, createdAt: Date.now() }
+      }
+    })
+    useUsageStore.setState({ anthropicUsage: makeUsage(80, 40) })
+
+    // Calibrate on the FIRST account (5 pts / 2M tokens).
+    setTallyTokens(10_000_000)
+    renderHook(() => useAccountScheduleRunner())
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    setTallyTokens(12_000_000)
+    useUsageStore.setState({
+      anthropicUsage: makeUsage(85, 40),
+      anthropicUsageFromFetch: true,
+      anthropicLastFetchedAt: Date.now() + 30_000
+    })
+    await advance(30_000)
+
+    // A switch happens and its seed is immediately overwritten by the
+    // post-switch live refresh (fromFetch: true) — the predictor never sees
+    // a non-fetch usage object, only the switch timestamp reveals the hop.
+    useUsageStore.setState({
+      anthropicAccountSwitchedAt: Date.now(),
+      anthropicUsage: makeUsage(85, 40),
+      anthropicUsageFromFetch: true,
+      anthropicLastFetchedAt: Date.now() + 60_000
+    })
+    setTallyTokens(13_000_000)
+    await advance(30_000)
+
+    // Heavy burn on the NEW account: the old account's calibration must not
+    // arm an early refresh — it describes different plan limits.
+    setTallyTokens(15_000_000)
+    await advance(30_000)
+    expect(fetchUsageForProvider).not.toHaveBeenCalledWith('anthropic', {
+      minIntervalMs: 30_000
+    })
+  })
+
   it('does not early-refresh while the burn rate stays flat', async () => {
     useAccountScheduleStore.setState({
       autoSwitch: {
@@ -484,6 +527,36 @@ describe('useAccountScheduleRunner usage refresh cadence', () => {
 
     await advance(60_000)
     expect(refreshAllForProvider).not.toHaveBeenCalled()
+  })
+
+  it('rechecks schedules even when the pre-warm sweep fails', async () => {
+    const refreshAllForProvider = vi.fn().mockRejectedValue(new Error('ipc down'))
+    useAccountStore.setState({ anthropicEmail: 'current@x.com' } as Partial<
+      ReturnType<typeof useAccountStore.getState>
+    >)
+    useUsageStore.setState({
+      refreshAllForProvider,
+      savedAccountsLoaded: { anthropic: true, openai: false },
+      savedAccounts: {
+        anthropic: [
+          savedAccount('acc-1', 'current@x.com', 85),
+          savedAccount('acc-2', 'other@x.com', 10)
+        ],
+        openai: []
+      }
+    })
+    useAccountScheduleStore.setState({
+      autoSwitch: {
+        anthropic: { provider: 'anthropic', thresholdPercent: 90, createdAt: Date.now() }
+      }
+    })
+    renderHook(() => useAccountScheduleRunner())
+
+    await advance(30_000)
+    expect(refreshAllForProvider).toHaveBeenCalled()
+    // A failed sweep still cleared the refreshing flag with nothing else
+    // subscribed to it — the settle-time recheck must fire regardless.
+    expect(checkSchedules.mock.calls.length).toBe(2 + refreshAllForProvider.mock.calls.length)
   })
 
   it('does not pre-warm while usage is still below the near-threshold margin', async () => {

@@ -127,12 +127,14 @@ export function nextUsageRefreshAt(provider: UsageProvider): number | null {
 const predictor = createPredictorState()
 let tallyInFlight = false
 let lastAnchoredUsage: unknown = null
+let lastSeenSwitchedAt: number | null = null
 
 /** Test hook: predictor + attempt bookkeeping live at module scope. */
 export function __resetAccountScheduleRunnerForTests(): void {
   resetPredictorState(predictor)
   tallyInFlight = false
   lastAnchoredUsage = null
+  lastSeenSwitchedAt = null
   delete lastAttemptAt.anthropic
   delete lastAttemptAt.openai
 }
@@ -144,6 +146,19 @@ async function maintainBurnRatePredictor(): Promise<void> {
     lastAnchoredUsage = null
     return
   }
+  // Any account switch invalidates everything the predictor knows — the
+  // anchor's percent and the calibration ratio describe the OLD account's
+  // limits. Detect it via the switch timestamp rather than the seeded usage
+  // object: a switch that happens while the predictor is idle can have its
+  // seed replaced by the post-switch live refresh before any tick observes
+  // it, which would silently carry the old calibration onto the new account.
+  const switchedAt = useUsageStore.getState().anthropicAccountSwitchedAt
+  if (switchedAt !== lastSeenSwitchedAt) {
+    resetPredictorState(predictor)
+    lastAnchoredUsage = null
+    lastSeenSwitchedAt = switchedAt
+  }
+
   if (!providersWithRunningSessions().has('anthropic')) return
   const percent = getActiveUsagePercent('anthropic')
   if (percent === null || percent < threshold - PREDICTOR_BAND_PERCENT) return
@@ -246,6 +261,9 @@ function prewarmAutoSwitchCandidates(): void {
     // switch would wait out the rest of the tick interval.
     void usageStore
       .refreshAllForProvider(provider, exclusions, { maxAgeMs: PREWARM_MAX_AGE_MS })
+      .catch(() => {}) // a failed sweep still cleared the refreshing flag —
+      // the recheck below must run on BOTH outcomes, or a threshold crossing
+      // that landed mid-sweep waits out the rest of the tick interval.
       .then(() => useAccountScheduleStore.getState().checkSchedules())
       .catch(() => {})
   }

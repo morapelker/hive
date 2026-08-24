@@ -412,6 +412,39 @@ describe('useUsageStore', () => {
     expect(fetchCalls()).toBe(1)
   })
 
+  it('does not burn the event attempt slot inside a pending Retry-After window', async () => {
+    request.mockImplementation(async (method: string) => {
+      if (method === 'usageOps.fetch') return { success: true, data: sampleUsage }
+      if (method === 'accountOps.listSaved') return []
+      return null
+    })
+    const fetchCalls = (): number =>
+      request.mock.calls.filter(([m]) => m === 'usageOps.fetch').length
+    const reject = (): void =>
+      useUsageStore.getState().setAnthropicRateLimit({
+        status: 'rejected',
+        resetsAt: Math.floor(Date.now() / 1000) + 1_800,
+        rateLimitType: 'five_hour'
+      })
+
+    // Retry-After pending: the fetch enforces the FULL debounce (deadline in
+    // 20s), so this event must not record an attempt on a guaranteed no-op.
+    useUsageStore.setState({
+      anthropicLastRetryAfter: 120,
+      anthropicLastFetchedAt: Date.now() - 160_000
+    })
+    reject()
+    await vi.runOnlyPendingTimersAsync()
+    expect(fetchCalls()).toBe(0)
+
+    // 25s later the server deadline has passed: the next event fetches
+    // immediately instead of waiting out a wasted attempt slot.
+    vi.setSystemTime(Date.now() + 25_000)
+    reject()
+    await vi.runOnlyPendingTimersAsync()
+    expect(fetchCalls()).toBe(1)
+  })
+
   it('clears the anthropic rate-limit overlay on a successful switch', async () => {
     useUsageStore.setState({
       savedAccounts: {
