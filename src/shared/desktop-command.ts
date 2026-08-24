@@ -63,6 +63,7 @@ export type DesktopCommandName =
   | 'terminalDestroy'
   | 'terminalWrite'
   | 'terminalCreateClaudeCli'
+  | 'terminalGetLiveIds'
   | 'remoteLaunchClaudeTmux'
   | 'terminalGhosttyInit'
   | 'terminalGhosttyIsAvailable'
@@ -409,6 +410,11 @@ export type DiscordClaudeCliQuestionReplyPayload = TelegramClaudeCliQuestionRepl
 export type DiscordClaudeCliQuestionRejectPayload = TelegramClaudeCliQuestionRejectPayload
 export type DiscordClaudeCliPlanReplyPayload = TelegramClaudeCliPlanReplyPayload
 export type DiscordClaudeCliReplyResult = TelegramClaudeCliReplyResult
+
+/** IDs of terminals whose PTY is currently alive in the Electron main process. */
+export interface TerminalLiveIdsResult {
+  readonly terminalIds: readonly string[]
+}
 
 export interface TerminalGhosttyAvailabilityResult {
   readonly available: boolean
@@ -945,6 +951,7 @@ export type DesktopCommandRequest =
   | TerminalDestroyDesktopCommandRequest
   | TerminalWriteDesktopCommandRequest
   | TerminalCreateClaudeCliDesktopCommandRequest
+  | TerminalGetLiveIdsDesktopCommandRequest
   | RemoteLaunchClaudeTmuxDesktopCommandRequest
   | TerminalGhosttyInitDesktopCommandRequest
   | TerminalGhosttyIsAvailableDesktopCommandRequest
@@ -1381,6 +1388,12 @@ export interface TerminalCreateClaudeCliDesktopCommandRequest {
   readonly id: string
   readonly command: 'terminalCreateClaudeCli'
   readonly payload: TerminalCreateClaudeCliPayload
+}
+
+export interface TerminalGetLiveIdsDesktopCommandRequest {
+  readonly type: typeof DESKTOP_COMMAND_REQUEST_TYPE
+  readonly id: string
+  readonly command: 'terminalGetLiveIds'
 }
 
 export interface RemoteLaunchClaudeTmuxDesktopCommandRequest {
@@ -2008,6 +2021,10 @@ export function makeDesktopCommandRequest(
   command: 'terminalCreateClaudeCli',
   payload: TerminalCreateClaudeCliPayload
 ): TerminalCreateClaudeCliDesktopCommandRequest
+export function makeDesktopCommandRequest(
+  id: string,
+  command: 'terminalGetLiveIds'
+): TerminalGetLiveIdsDesktopCommandRequest
 export function makeDesktopCommandRequest(
   id: string,
   command: 'remoteLaunchClaudeTmux',
@@ -2893,6 +2910,14 @@ export function makeDesktopCommandRequest(
     } as TerminalCreateClaudeCliDesktopCommandRequest
   }
 
+  if (command === 'terminalGetLiveIds') {
+    return {
+      type: DESKTOP_COMMAND_REQUEST_TYPE,
+      id,
+      command
+    } as TerminalGetLiveIdsDesktopCommandRequest
+  }
+
   if (command === 'remoteLaunchClaudeTmux') {
     if (!payload) {
       throw new Error('Missing remoteLaunchClaudeTmux payload')
@@ -3583,6 +3608,7 @@ export const isDesktopCommandRequest = (value: unknown): value is DesktopCommand
       (value.command === 'terminalWrite' && isTerminalWritePayload(value.payload)) ||
       (value.command === 'terminalCreateClaudeCli' &&
         isTerminalCreateClaudeCliPayload(value.payload)) ||
+      value.command === 'terminalGetLiveIds' ||
       (value.command === 'remoteLaunchClaudeTmux' &&
         isRemoteLaunchClaudeTmuxPayload(value.payload)) ||
       value.command === 'terminalGhosttyInit' ||

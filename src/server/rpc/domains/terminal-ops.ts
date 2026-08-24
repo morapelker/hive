@@ -13,7 +13,8 @@ import {
   type TerminalGhosttyFocusDiagnosticsResult,
   type TerminalGhosttyKeyEvent,
   type TerminalGhosttyRect,
-  type TerminalGhosttyInitResult
+  type TerminalGhosttyInitResult,
+  type TerminalLiveIdsResult
 } from '../../../shared/desktop-command'
 import type { GhosttyTerminalConfig } from '../../../shared/types/terminal'
 import type { RpcHandler } from '../router'
@@ -88,6 +89,8 @@ export interface TerminalOpsRpcService {
   readonly write: (terminalId: string, data: string) => Effect.Effect<void, unknown>
   readonly resize: (terminalId: string, cols: number, rows: number) => Effect.Effect<void, unknown>
   readonly destroy: (terminalId: string) => Effect.Effect<void, unknown>
+  /** IDs of terminals whose PTY is alive right now (local process + desktop main). */
+  readonly getLiveTerminalIds?: () => Effect.Effect<TerminalLiveIdsResult, unknown>
 }
 
 const emptyParamsSchema = z.union([z.object({}).strict(), z.undefined(), z.null()])
@@ -332,6 +335,13 @@ const isTerminalGhosttyAvailabilityResult = (
   typeof value.initialized === 'boolean' &&
   'platform' in value &&
   typeof value.platform === 'string'
+
+const isTerminalLiveIdsResult = (value: unknown): value is TerminalLiveIdsResult =>
+  typeof value === 'object' &&
+  value !== null &&
+  'terminalIds' in value &&
+  Array.isArray(value.terminalIds) &&
+  value.terminalIds.every((id) => typeof id === 'string')
 
 const isTerminalGhosttyCreateSurfaceResult = (
   value: unknown
@@ -1152,6 +1162,52 @@ const requestDesktopTerminalCreateClaudeCli = (
   })
 }
 
+/**
+ * Ask the Electron main process which PTYs are alive. Fail-soft: any
+ * transport error/timeout resolves to an empty list — callers merge this
+ * with the local ptyService, so a miss degrades to "not visible", never an
+ * error.
+ */
+const requestDesktopTerminalGetLiveIds = (): Promise<TerminalLiveIdsResult> => {
+  const send = process.send
+  if (!send) return Promise.resolve({ terminalIds: [] })
+
+  const id = `terminal-get-live-ids-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  const command = 'terminalGetLiveIds'
+
+  return new Promise<TerminalLiveIdsResult>((resolve) => {
+    let settled = false
+    const cleanup = (): void => {
+      clearTimeout(timeout)
+      process.off('message', onMessage)
+    }
+    const finish = (value: TerminalLiveIdsResult): void => {
+      if (settled) return
+      settled = true
+      cleanup()
+      resolve(value)
+    }
+    const timeout = setTimeout(() => {
+      finish({ terminalIds: [] })
+    }, 5_000)
+
+    const onMessage = (message: unknown): void => {
+      if (!isDesktopCommandResult(message) || message.id !== id) return
+      if (message.ok && isTerminalLiveIdsResult(message.value)) {
+        finish(message.value)
+        return
+      }
+      finish({ terminalIds: [] })
+    }
+
+    process.on('message', onMessage)
+    send.call(process, makeDesktopCommandRequest(id, command), (error) => {
+      if (!error) return
+      finish({ terminalIds: [] })
+    })
+  })
+}
+
 const requestDesktopTerminalSetClaudeCliPlanAutoApprove = (
   sessionId: string,
   enabled: boolean
@@ -1531,6 +1587,18 @@ export const makeLiveTerminalOpsRpcService = (eventBus?: EventBus): TerminalOpsR
         if (!result.success) throw new Error(result.error ?? 'Failed to destroy terminal')
       },
       catch: (cause) => cause
+    }),
+  getLiveTerminalIds: () =>
+    Effect.tryPromise({
+      try: async () => {
+        // PTYs live locally in single-process mode and in the Electron main
+        // process in desktop mode — merge both so either topology answers.
+        const remote = await requestDesktopTerminalGetLiveIds()
+        return {
+          terminalIds: Array.from(new Set([...ptyService.getIds(), ...remote.terminalIds]))
+        }
+      },
+      catch: (cause) => cause
     })
 })
 
@@ -1814,6 +1882,18 @@ export const makeTerminalOpsRpcHandlers = (
             catch: (cause) => cause
           })
           return yield* service.destroy(parsed.terminalId)
+        })
+    ],
+    [
+      'terminalOps.getLiveTerminalIds',
+      (params) =>
+        Effect.gen(function* () {
+          yield* Effect.try({
+            try: () => emptyParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          return yield* (service.getLiveTerminalIds?.() ??
+            Effect.succeed({ terminalIds: [] as readonly string[] }))
         })
     ]
   ])

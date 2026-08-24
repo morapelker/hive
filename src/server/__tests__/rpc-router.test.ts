@@ -7165,6 +7165,48 @@ describe('rpc router', () => {
     expect(calls).toEqual(['getConfig'])
   })
 
+  it('handles terminalOps.getLiveTerminalIds through the terminal ops RPC domain', async () => {
+    const calls: string[] = []
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      terminalOps: {
+        getConfig: () => Effect.succeed({}),
+        create: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        createClaudeCli: () => Effect.succeed({ success: true, cols: 80, rows: 24 }),
+        setClaudeCliPlanAutoApprove: () => Effect.succeed({ success: true }),
+        ghosttyInit: () => Effect.succeed({ success: true, version: 'test' }),
+        ghosttyIsAvailable: () =>
+          Effect.succeed({ available: false, initialized: false, platform: 'linux' }),
+        ghosttyCreateSurface: () => Effect.succeed({ success: true, surfaceId: 1 }),
+        ghosttySetFrame: () => Effect.succeed(undefined),
+        ghosttySetSize: () => Effect.succeed(undefined),
+        write: () => Effect.succeed(undefined),
+        resize: () => Effect.succeed(undefined),
+        destroy: () => Effect.succeed(undefined),
+        getLiveTerminalIds: () =>
+          Effect.sync(() => {
+            calls.push('getLiveTerminalIds')
+            return { terminalIds: ['session-live'] }
+          })
+      }
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'terminal-live-ids-1',
+        method: 'terminalOps.getLiveTerminalIds',
+        params: {}
+      })
+    )
+
+    expect(response).toEqual({
+      id: 'terminal-live-ids-1',
+      ok: true,
+      value: { terminalIds: ['session-live'] }
+    })
+    expect(calls).toEqual(['getLiveTerminalIds'])
+  })
+
   it('validates terminalOps.getConfig params', async () => {
     const calls: string[] = []
     const router = makeRpcRouter({

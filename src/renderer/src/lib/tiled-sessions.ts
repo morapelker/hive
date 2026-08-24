@@ -1,6 +1,7 @@
 import type { KanbanTicket } from '../../../main/db/types'
 import { isTerminalBacked } from '@shared/types/agent-sdk'
 import { dbApi } from '@/api/db-api'
+import { terminalApi } from '@/api/terminal-api'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
@@ -113,6 +114,14 @@ export async function openTiledInProgressSessions(
   const isMultiProject = !!scope.connectionId || !!scope.isPinnedMode
   const projects = useProjectStore.getState().projects
 
+  // The renderer's mounted-terminal mirror only knows sessions activated in
+  // THIS renderer lifetime — a claude-cli PTY can be alive in the backend
+  // (e.g. after a window reload, or driven by hooks/subagents with its tab
+  // never opened) while the mirror misses it. Ask the backend for the ground
+  // truth and use the union. Fail-soft: on RPC failure this is empty and we
+  // degrade to the mirror-only behavior.
+  const livePtyIds = new Set(await terminalApi.getLiveTerminalIds())
+
   const tiles: TiledSessionTile[] = []
   const tileBySessionId = new Map<string, TiledSessionTile>()
 
@@ -134,13 +143,16 @@ export async function openTiledInProgressSessions(
 
     const agentSdk = session?.agent_sdk ?? null
     // Terminal-backed sessions spawn their process when their view mounts, so
-    // "running" means the view/PTY is already mounted this run. Chat sessions
+    // "running" means the view is already mounted this run OR the backend
+    // reports a live PTY for the session (mounting such a tile reattaches —
+    // ptyService.create reuses the live PTY, it never respawns). Chat sessions
     // don't spawn OS processes on mount — active status is enough.
     const isRunning =
       !!session &&
       session.status === 'active' &&
       (!isTerminalBacked(agentSdk) ||
-        useSessionStore.getState().mountedTerminalMirror.has(session.id))
+        useSessionStore.getState().mountedTerminalMirror.has(session.id) ||
+        livePtyIds.has(session.id))
 
     const tile: TiledSessionTile = {
       ticketIds: [ticket.id],

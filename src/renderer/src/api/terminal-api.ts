@@ -98,6 +98,22 @@ export const terminalApi = {
     }>('terminalOps.createClaudeCli', { sessionId, opts })
     return { success: true, value: result }
   },
+  /**
+   * IDs of sessions/terminals whose PTY is alive in the backend right now.
+   * Fail-soft: RPC errors resolve to an empty list so callers can treat the
+   * result as "known-live" rather than authoritative.
+   */
+  getLiveTerminalIds: async (): Promise<string[]> => {
+    try {
+      const result = await getRendererRpcClient().request<{ terminalIds: string[] }>(
+        'terminalOps.getLiveTerminalIds',
+        {}
+      )
+      return Array.isArray(result?.terminalIds) ? result.terminalIds : []
+    } catch {
+      return []
+    }
+  },
   setClaudeCliPlanAutoApprove: async (
     sessionId: string,
     enabled: boolean
