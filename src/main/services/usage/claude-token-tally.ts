@@ -29,8 +29,14 @@ const log = createLogger({ component: 'ClaudeTokenTally' })
 
 /** Sessions updated within this window are considered possibly-burning. */
 const ACTIVE_SESSION_WINDOW_MS = 6 * 3_600_000
-/** Hard cap on tracked sessions — newest first — to bound stat() fan-out. */
-const MAX_TRACKED_SESSIONS = 40
+/**
+ * Hard cap on tracked sessions (active first, then newest) to bound stat()
+ * fan-out. DB 'active' means "open", not "currently burning", so the cap is
+ * set well above any realistic open-session count — per-session cost is a
+ * handful of stat()s and the tally only runs while usage sits near an armed
+ * switch threshold.
+ */
+const MAX_TRACKED_SESSIONS = 120
 
 export interface ClaudeTokenTallyDeps {
   db?: DatabaseService

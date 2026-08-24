@@ -482,6 +482,9 @@ describe('useUsageStore', () => {
     await useUsageStore.getState().switchAccount('acc-1')
 
     expect(useUsageStore.getState().anthropicRateLimit).toBeNull()
+    // The pre-switch usage object no longer describes the live account —
+    // it must not pass for fetch data (predictor calibration baseline).
+    expect(useUsageStore.getState().anthropicUsageFromFetch).toBe(false)
   })
 
   it('merges Anthropic rate-limit windows and drops stale windows', () => {

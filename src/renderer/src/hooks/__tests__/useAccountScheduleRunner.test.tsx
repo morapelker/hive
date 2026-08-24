@@ -431,6 +431,49 @@ describe('useAccountScheduleRunner usage refresh cadence', () => {
     })
   })
 
+  it('does not calibrate the new account against a seedless switch\u2019s leftover usage object', async () => {
+    useAccountScheduleStore.setState({
+      autoSwitch: {
+        anthropic: { provider: 'anthropic', thresholdPercent: 90, createdAt: Date.now() }
+      }
+    })
+    useUsageStore.setState({ anthropicUsage: makeUsage(80, 40) })
+
+    setTallyTokens(10_000_000)
+    renderHook(() => useAccountScheduleRunner())
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+
+    // A manual/scheduled switch with NO seed: the usage object stays the old
+    // account's, but switchAccount cleared its from-fetch marker and bumped
+    // the switch timestamp (mirrored here as the store would).
+    useUsageStore.setState({
+      anthropicAccountSwitchedAt: Date.now(),
+      anthropicUsageFromFetch: false
+    })
+    setTallyTokens(12_000_000)
+    await advance(30_000)
+
+    // First fetch on the NEW account…
+    useUsageStore.setState({
+      anthropicUsage: makeUsage(85, 40),
+      anthropicUsageFromFetch: true,
+      anthropicLastFetchedAt: Date.now() + 60_000
+    })
+    setTallyTokens(13_000_000)
+    await advance(30_000)
+
+    // …followed by heavy burn: without a second same-account fetch there is
+    // no calibration, so nothing may fire — the old account's percent must
+    // not have served as a baseline.
+    setTallyTokens(15_000_000)
+    await advance(30_000)
+    expect(fetchUsageForProvider).not.toHaveBeenCalledWith('anthropic', {
+      minIntervalMs: 30_000
+    })
+  })
+
   it('does not early-refresh while the burn rate stays flat', async () => {
     useAccountScheduleStore.setState({
       autoSwitch: {

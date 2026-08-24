@@ -326,8 +326,17 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
           // the account we just left — clearing it stops an immediate
           // re-trigger against the fresh account. The switch timestamp lets
           // the event listener keep ignoring late events from sessions that
-          // still hold the previous account's credentials.
-          set({ anthropicRateLimit: null, anthropicAccountSwitchedAt: Date.now() })
+          // still hold the previous account's credentials. And the current
+          // usage object no longer describes the live account, so it must
+          // not pass for fetch data: a switch without a seed (manual,
+          // scheduled, or a target with no cached usage) would otherwise let
+          // the predictor anchor the OLD account's percent as a calibration
+          // baseline for the new account's first fetch.
+          set({
+            anthropicRateLimit: null,
+            anthropicAccountSwitchedAt: Date.now(),
+            anthropicUsageFromFetch: false
+          })
         }
         if (provider) {
           await useAccountStore
