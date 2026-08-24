@@ -3,6 +3,8 @@ import { render } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useUsageStore } from '@/stores/useUsageStore'
+import { useSessionStore } from '@/stores/useSessionStore'
+import type { Session } from '@shared/types/session'
 import type { OpenCodeStreamEvent } from '@shared/types/opencode'
 
 const apiMocks = vi.hoisted(() => ({
@@ -63,8 +65,13 @@ describe('useOpenCodeGlobalListener rate-limit events', () => {
 
     useUsageStore.setState({
       anthropicRateLimit: null,
-      anthropicLastFetchedAt: null
+      anthropicLastFetchedAt: null,
+      anthropicAccountSwitchedAt: null
     } as Partial<ReturnType<typeof useUsageStore.getState>>)
+    useSessionStore.setState({
+      sessionsByWorktree: new Map(),
+      sessionsByConnection: new Map()
+    } as Partial<ReturnType<typeof useSessionStore.getState>>)
   })
 
   afterEach(() => {
@@ -105,5 +112,45 @@ describe('useOpenCodeGlobalListener rate-limit events', () => {
     // timestamp would extend the debounce and suppress the very refresh that
     // reveals the account is exhausted.
     expect(useUsageStore.getState().anthropicLastFetchedAt).toBeNull()
+  })
+
+  it('ignores rate-limit events from sessions created before the last account switch', async () => {
+    const { useOpenCodeGlobalListener } = await import('@/hooks/useOpenCodeGlobalListener')
+    function ListenerHarness(): null {
+      useOpenCodeGlobalListener()
+      return null
+    }
+
+    // session-old was spawned (with the previous account's credentials)
+    // before the switch; session-new after it.
+    const oldSession = {
+      id: 'session-old',
+      created_at: new Date(Date.now() - 60_000).toISOString()
+    } as unknown as Session
+    const newSession = {
+      id: 'session-new',
+      created_at: new Date(Date.now() + 5_000).toISOString()
+    } as unknown as Session
+    useSessionStore.setState({
+      sessionsByWorktree: new Map([['wt-1', [oldSession, newSession]]]),
+      sessionsByConnection: new Map()
+    } as Partial<ReturnType<typeof useSessionStore.getState>>)
+    useUsageStore.setState({
+      anthropicAccountSwitchedAt: Date.now()
+    } as Partial<ReturnType<typeof useUsageStore.getState>>)
+
+    render(<ListenerHarness />)
+
+    const data = {
+      status: 'rejected',
+      resetsAt: Math.floor(Date.now() / 1000) + 1_800,
+      rateLimitType: 'five_hour' as const
+    }
+    streamListener?.({ type: 'session.rate_limit', sessionId: 'session-old', data })
+    // The zombie session's rejection describes the account we left.
+    expect(useUsageStore.getState().anthropicRateLimit).toBeNull()
+
+    streamListener?.({ type: 'session.rate_limit', sessionId: 'session-new', data })
+    expect(useUsageStore.getState().anthropicRateLimit?.fiveHour?.status).toBe('rejected')
   })
 })

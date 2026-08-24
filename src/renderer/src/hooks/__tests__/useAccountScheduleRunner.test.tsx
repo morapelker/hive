@@ -411,6 +411,11 @@ describe('useAccountScheduleRunner usage refresh cadence', () => {
     expect(refreshAllForProvider).toHaveBeenCalledWith('anthropic', ['acc-1'], {
       maxAgeMs: 150_000
     })
+    // Each settled pre-warm re-evaluates schedules (on top of the per-tick
+    // call), so a threshold crossing that landed mid-sweep — when the
+    // refreshing flag made checkSchedules skip its round — is caught as
+    // soon as the sweep ends instead of a full tick later.
+    expect(checkSchedules.mock.calls.length).toBe(2 + refreshAllForProvider.mock.calls.length)
   })
 
   it('does not pre-warm at/above the threshold — the due switch owns the sweep', async () => {

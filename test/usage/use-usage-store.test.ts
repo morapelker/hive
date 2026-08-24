@@ -298,6 +298,29 @@ describe('useUsageStore', () => {
     expect(request).not.toHaveBeenCalledWith('usageOps.fetch', expect.anything())
   })
 
+  it('keeps the Retry-After deadline authoritative over a shorter minIntervalMs', async () => {
+    request.mockImplementation(async (method: string) => {
+      if (method === 'usageOps.fetch') return { success: true, data: sampleUsage }
+      if (method === 'accountOps.listSaved') return []
+      return null
+    })
+    // A 429 with retryAfter 120 back-dated lastFetchedAt so the deadline is
+    // 120s away under the FULL debounce: fetchedAt = now - 180s + 120s.
+    useUsageStore.setState({
+      anthropicLastRetryAfter: 120,
+      anthropicLastFetchedAt: Date.now() - 60_000
+    })
+
+    // A 30s predictor floor must NOT slip past the server's deadline…
+    await useUsageStore.getState().fetchUsageForProvider('anthropic', { minIntervalMs: 30_000 })
+    expect(request).not.toHaveBeenCalledWith('usageOps.fetch', expect.anything())
+
+    // …but once the deadline has passed, the fetch goes through.
+    vi.setSystemTime(Date.now() + 121_000)
+    await useUsageStore.getState().fetchUsageForProvider('anthropic', { minIntervalMs: 30_000 })
+    expect(request).toHaveBeenCalledWith('usageOps.fetch', expect.anything())
+  })
+
   it('pulls a floored early refresh on warning/rejected rate-limit events, never on allowed', async () => {
     request.mockImplementation(async (method: string) => {
       if (method === 'usageOps.fetch') return { success: true, data: sampleUsage }

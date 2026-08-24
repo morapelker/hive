@@ -60,6 +60,13 @@ describe('calibration via recordAnchor', () => {
     expect(state.pointsPerToken).toBeNull()
   })
 
+  it('clears calibration on a seed anchor — the ratio belongs to the previous account', () => {
+    const state = calibrated()
+    expect(state.pointsPerToken).not.toBeNull()
+    recordAnchor(state, { percent: 20, weighted: 13_000_000, at: T0 + 180_000 }, { fromFetch: false })
+    expect(state.pointsPerToken).toBeNull()
+  })
+
   it('rejects percent deltas that are negative, tiny, or implausibly large', () => {
     for (const delta of [-5, 0.2, 60]) {
       const state = createPredictorState()

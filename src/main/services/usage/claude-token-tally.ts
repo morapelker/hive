@@ -1,6 +1,13 @@
 import { getDatabase } from '../../db'
 import type { DatabaseService } from '../../db/database'
 import type { Session } from '../../db/types'
+import { APP_SETTINGS_DB_KEY } from '@shared/types/settings'
+import {
+  customProviderUsageToUsageProvider,
+  findCustomProvider,
+  sanitizeCustomProviders,
+  type CustomClaudeProvider
+} from '@shared/types/custom-provider'
 import { createLogger } from '../logger'
 import { resolveClaudeFiles } from './session-usage-service'
 import { parseClaudeSessionIncrement, type ClaudeSessionState } from './claude-usage-parser'
@@ -41,6 +48,30 @@ function isClaudeSdk(agentSdk: string | null | undefined): boolean {
   return agentSdk === 'claude-code' || agentSdk === 'claude-code-cli'
 }
 
+function loadCustomProviders(db: DatabaseService): CustomClaudeProvider[] {
+  try {
+    const raw = db.getSetting(APP_SETTINGS_DB_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as { customProviders?: unknown }
+    return sanitizeCustomProviders(parsed.customProviders)
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Mirrors the renderer's resolveUsageProvider attribution: a custom-provider
+ * session configured with usageProvider 'openai' or 'none' does not burn the
+ * Anthropic account, so its transcripts must not feed the Anthropic
+ * burn-rate calibration. A deleted or blank-command provider degrades to
+ * plain claude (anthropic) at spawn — count those.
+ */
+function isAnthropicAttributed(session: Session, providers: CustomClaudeProvider[]): boolean {
+  const provider = findCustomProvider(providers, session.custom_provider_id)
+  if (!provider || !provider.command.trim()) return true
+  return customProviderUsageToUsageProvider(provider.usageProvider) === 'anthropic'
+}
+
 async function computeTally(deps: ClaudeTokenTallyDeps): Promise<ClaudeTokenTally> {
   const db = deps.db ?? getDatabase()
   const since = new Date(Date.now() - ACTIVE_SESSION_WINDOW_MS).toISOString()
@@ -48,11 +79,13 @@ async function computeTally(deps: ClaudeTokenTallyDeps): Promise<ClaudeTokenTall
   // Filter BEFORE capping: the recent list mixes in Codex and remote-launch
   // sessions, and letting them consume cap slots could push out the local
   // Claude sessions whose burn the predictor needs to see.
+  const customProviders = loadCustomProviders(db)
   const sessions: Session[] = []
   for (const id of db.listRecentUsageSessionIds(since)) {
     if (sessions.length >= MAX_TRACKED_SESSIONS) break
     const session = db.getSession(id)
     if (!session || !isClaudeSdk(session.agent_sdk) || session.remote_launch) continue
+    if (!isAnthropicAttributed(session, customProviders)) continue
     sessions.push(session)
   }
 

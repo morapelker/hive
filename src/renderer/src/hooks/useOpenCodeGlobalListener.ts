@@ -330,6 +330,20 @@ export function useOpenCodeGlobalListener(): void {
       }
 
       if (event.type === 'session.rate_limit') {
+        // Sessions created before the last account switch still hold the
+        // PREVIOUS account's credentials (read at spawn) — their rejections
+        // describe that account, and storing them would mark the freshly
+        // switched-to account as exhausted and re-trigger the auto-switch.
+        const switchedAt = useUsageStore.getState().anthropicAccountSwitchedAt
+        if (switchedAt !== null) {
+          const sessionState = useSessionStore.getState()
+          const session = [
+            ...[...sessionState.sessionsByWorktree.values()].flat(),
+            ...[...sessionState.sessionsByConnection.values()].flat()
+          ].find((s) => s.id === sessionId)
+          const createdAt = session ? Date.parse(session.created_at) : NaN
+          if (!Number.isNaN(createdAt) && createdAt < switchedAt) return
+        }
         useUsageStore.getState().setAnthropicRateLimit(event.data as AnthropicRateLimitInfo)
         return
       }

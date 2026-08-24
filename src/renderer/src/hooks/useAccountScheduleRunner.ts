@@ -232,9 +232,14 @@ function prewarmAutoSwitchCandidates(): void {
     const exclusions = computeSweepExclusions(provider, auto.thresholdPercent, activeEmail)
     // Fresh rows are skipped server-side, so ticking this every 30s costs a
     // round-trip when everything is warm and only re-fetches candidates
-    // whose cache aged past the pre-warm window.
+    // whose cache aged past the pre-warm window. Re-evaluate schedules once
+    // the sweep settles: a usage update crossing the threshold MID-sweep
+    // finds the provider refreshing and skips its round, and nothing else
+    // subscribes to the refreshing→idle transition — without this the due
+    // switch would wait out the rest of the tick interval.
     void usageStore
       .refreshAllForProvider(provider, exclusions, { maxAgeMs: PREWARM_MAX_AGE_MS })
+      .then(() => useAccountScheduleStore.getState().checkSchedules())
       .catch(() => {})
   }
 }

@@ -133,6 +133,12 @@ export function recordAnchor(
           : state.pointsPerToken * (1 - CALIBRATION_EMA_ALPHA) + ratio * CALIBRATION_EMA_ALPHA
     }
   }
+  // A non-fetch anchor is a post-switch seed: the calibration ratio maps
+  // tokens to the PREVIOUS account's utilization, and plan limits differ per
+  // account — carrying it over would mispredict (dangerously, underpredict
+  // when hopping to a smaller plan). Drop it and recalibrate from the next
+  // two real fetches on the new account.
+  if (!opts.fromFetch) state.pointsPerToken = null
   state.anchor = { ...anchor, fromFetch: opts.fromFetch }
   // Burn before the anchor is already reflected in the anchored percent —
   // keeping older samples would let a past burst inflate the forward slope

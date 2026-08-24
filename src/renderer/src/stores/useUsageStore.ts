@@ -38,6 +38,10 @@ interface UsageState {
    * timestamps (which retryAfter back-dating corrupts) or counters (which
    * fetches outside the predictor's observation window desynchronize). */
   anthropicUsageFromFetch: boolean
+  /** Epoch ms of the last successful anthropic account switch. Sessions
+   * created before this hold the PREVIOUS account's credentials — their
+   * rate-limit events must not be attributed to the current account. */
+  anthropicAccountSwitchedAt: number | null
 
   openaiUsage: OpenAIUsageData | null
   openaiLastFetchedAt: number | null
@@ -110,6 +114,7 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
   anthropicLastRetryAfter: null,
   anthropicRateLimit: null,
   anthropicUsageFromFetch: false,
+  anthropicAccountSwitchedAt: null,
 
   openaiUsage: null,
   openaiLastFetchedAt: null,
@@ -313,8 +318,10 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
         if (provider === 'anthropic') {
           // The rate-limit overlay (and its rejected=100% signal) belongs to
           // the account we just left — clearing it stops an immediate
-          // re-trigger against the fresh account.
-          set({ anthropicRateLimit: null })
+          // re-trigger against the fresh account. The switch timestamp lets
+          // the event listener keep ignoring late events from sessions that
+          // still hold the previous account's credentials.
+          set({ anthropicRateLimit: null, anthropicAccountSwitchedAt: Date.now() })
         }
         if (provider) {
           await useAccountStore
@@ -351,7 +358,16 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
 
     if (provider === 'anthropic') {
       if (state.anthropicIsLoading) return
-      if (state.anthropicLastFetchedAt && Date.now() - state.anthropicLastFetchedAt < minIntervalMs)
+      // A pending Retry-After deadline was encoded against the FULL debounce
+      // (retryAfterFetchedAt back-dates lastFetchedAt so that
+      // fetchedAt + DEBOUNCE_MS = deadline) — a shorter predictor/rate-limit
+      // floor must not cut it open, or we hammer an endpoint that just told
+      // us to wait.
+      const effectiveMinMs = state.anthropicLastRetryAfter !== null ? DEBOUNCE_MS : minIntervalMs
+      if (
+        state.anthropicLastFetchedAt &&
+        Date.now() - state.anthropicLastFetchedAt < effectiveMinMs
+      )
         return
 
       set({ anthropicIsLoading: true, anthropicLastError: null })

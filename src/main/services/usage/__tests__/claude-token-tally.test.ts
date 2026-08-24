@@ -39,11 +39,17 @@ interface SessionRowSpec {
   agentSdk: string
   claudeSessionId: string | null
   remoteLaunch?: number | null
+  customProviderId?: string | null
 }
 
-function makeDb(worktreePath: string, sessions: SessionRowSpec[]): DatabaseService {
+function makeDb(
+  worktreePath: string,
+  sessions: SessionRowSpec[],
+  settingsJson: string | null = null
+): DatabaseService {
   return {
     listRecentUsageSessionIds: vi.fn(() => sessions.map((s) => s.id)),
+    getSetting: vi.fn(() => settingsJson),
     getSession: vi.fn((id: string) => {
       const spec = sessions.find((s) => s.id === id)
       if (!spec) return null
@@ -55,6 +61,7 @@ function makeDb(worktreePath: string, sessions: SessionRowSpec[]): DatabaseServi
         agent_sdk: spec.agentSdk,
         claude_session_id: spec.claudeSessionId,
         opencode_session_id: null,
+        custom_provider_id: spec.customProviderId ?? null,
         remote_launch: spec.remoteLaunch ?? null
       }
     }),
@@ -171,6 +178,47 @@ describe('getClaudeTokenTally', () => {
     // Session no longer listed as recent: its tokens leave the tally.
     sessions.length = 0
     expect((await getClaudeTokenTally({ db })).inputTokens).toBe(0)
+  })
+
+  it('excludes custom-provider sessions attributed to openai/none, keeps anthropic and degraded ones', async () => {
+    const worktreePath = join(root, 'wt')
+    mkdirSync(worktreePath, { recursive: true })
+    writeFileSync(transcriptPath(worktreePath, 'claude-sess-1'), entry('m1', 100, 10))
+    writeFileSync(transcriptPath(worktreePath, 'claude-sess-2'), entry('m2', 1_000, 100))
+    writeFileSync(transcriptPath(worktreePath, 'claude-sess-3'), entry('m3', 10_000, 1_000))
+
+    const settingsJson = JSON.stringify({
+      customProviders: [
+        { id: 'cp-openai', name: 'GPT wrapper', command: 'gptcli', usageProvider: 'openai' },
+        { id: 'cp-blank', name: 'Broken', command: '   ', usageProvider: 'openai' }
+      ]
+    })
+    const db = makeDb(
+      worktreePath,
+      [
+        // Plain claude session: counted.
+        { id: 'hive-1', agentSdk: 'claude-code-cli', claudeSessionId: 'claude-sess-1' },
+        // Custom provider attributed to openai: excluded.
+        {
+          id: 'hive-2',
+          agentSdk: 'claude-code-cli',
+          claudeSessionId: 'claude-sess-2',
+          customProviderId: 'cp-openai'
+        },
+        // Blank-command provider degrades to plain claude at spawn: counted.
+        {
+          id: 'hive-3',
+          agentSdk: 'claude-code-cli',
+          claudeSessionId: 'claude-sess-3',
+          customProviderId: 'cp-blank'
+        }
+      ],
+      settingsJson
+    )
+
+    const tally = await getClaudeTokenTally({ db })
+    expect(tally.inputTokens).toBe(10_100)
+    expect(tally.sessionCount).toBe(2)
   })
 
   it('does not let ineligible sessions consume the tracking cap', async () => {
