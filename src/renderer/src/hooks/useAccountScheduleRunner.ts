@@ -127,14 +127,12 @@ export function nextUsageRefreshAt(provider: UsageProvider): number | null {
 const predictor = createPredictorState()
 let tallyInFlight = false
 let lastAnchoredUsage: unknown = null
-let lastAnchoredFetchSeq: number | null = null
 
 /** Test hook: predictor + attempt bookkeeping live at module scope. */
 export function __resetAccountScheduleRunnerForTests(): void {
   resetPredictorState(predictor)
   tallyInFlight = false
   lastAnchoredUsage = null
-  lastAnchoredFetchSeq = null
   delete lastAttemptAt.anthropic
   delete lastAttemptAt.openai
 }
@@ -144,7 +142,6 @@ async function maintainBurnRatePredictor(): Promise<void> {
   if (threshold === null) {
     resetPredictorState(predictor)
     lastAnchoredUsage = null
-    lastAnchoredFetchSeq = null
     return
   }
   if (!providersWithRunningSessions().has('anthropic')) return
@@ -167,19 +164,23 @@ async function maintainBurnRatePredictor(): Promise<void> {
 
   // Fresh usage DATA landed since the last anchor (a successful fetch or a
   // post-switch seed replaced the usage object): re-baseline the estimate —
-  // and calibrate percent-per-token only when the data came from real
-  // fetches, which is what anthropicUsageFetchSeq counts. Timestamps are NOT
-  // evidence: a failed fetch's retryAfter back-dates anthropicLastFetchedAt
-  // with no new data, and a post-switch seed replaces the usage object with
-  // another account's cache — either (or both at once) must re-anchor
-  // without calibrating, or the estimate blends two accounts' percents.
+  // and calibrate percent-per-token only when the CURRENT usage object came
+  // from a live fetch, which the store records as anthropicUsageFromFetch at
+  // write time. Deliberately not inferred from history: a failed fetch's
+  // retryAfter back-dates anthropicLastFetchedAt with no new data, and
+  // fetches landing while the predictor is idle (below the band) would
+  // desynchronize any counter the runner tried to keep — the flag rides on
+  // the object itself, so a post-switch seed can never be mistaken for a
+  // fetch no matter what happened in between.
   const usageStore = useUsageStore.getState()
   if (usageStore.anthropicUsage !== lastAnchoredUsage) {
-    const fromFetch = usageStore.anthropicUsageFetchSeq !== lastAnchoredFetchSeq
-    recordAnchor(predictor, { percent, weighted, at: now }, { fromFetch })
+    recordAnchor(
+      predictor,
+      { percent, weighted, at: now },
+      { fromFetch: usageStore.anthropicUsageFromFetch }
+    )
     lastAnchoredUsage = usageStore.anthropicUsage
   }
-  lastAnchoredFetchSeq = usageStore.anthropicUsageFetchSeq
 
   const nextAt = nextUsageRefreshAt('anthropic')
   if (nextAt === null) return

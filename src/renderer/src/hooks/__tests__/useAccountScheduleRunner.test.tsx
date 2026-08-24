@@ -76,6 +76,9 @@ describe('useAccountScheduleRunner usage refresh cadence', () => {
     useUsageStore.setState({
       ...initialUsageState,
       anthropicUsage: makeUsage(85, 40),
+      // The pre-existing usage snapshot came from a real fetch, as it would
+      // in the app — seed tests override this explicitly.
+      anthropicUsageFromFetch: true,
       anthropicLastFetchedAt: Date.now(),
       fetchUsageForProvider
     })
@@ -221,7 +224,7 @@ describe('useAccountScheduleRunner usage refresh cadence', () => {
     useUsageStore.setState({
       anthropicUsage: makeUsage(85, 40),
       anthropicLastFetchedAt: Date.now() + 30_000,
-      anthropicUsageFetchSeq: 1
+      anthropicUsageFromFetch: true
     })
     await advance(30_000)
     expect(fetchUsageForProvider).not.toHaveBeenCalled()
@@ -253,7 +256,7 @@ describe('useAccountScheduleRunner usage refresh cadence', () => {
     useUsageStore.setState({
       anthropicUsage: makeUsage(85, 40),
       anthropicLastFetchedAt: Date.now() + 30_000,
-      anthropicUsageFetchSeq: 1
+      anthropicUsageFromFetch: true
     })
     await advance(30_000)
     expect(fetchUsageForProvider).not.toHaveBeenCalled()
@@ -284,19 +287,57 @@ describe('useAccountScheduleRunner usage refresh cadence', () => {
     })
 
     // Between ticks BOTH a switch seeds anthropicUsage from another
-    // account's cache (usage object changes, fetch seq does NOT) and a
-    // failed fetch's retryAfter back-dates anthropicLastFetchedAt. Were the
-    // timestamp taken as fetch evidence, the seed would calibrate against
-    // the previous account's anchor and arm the predictor on garbage.
+    // account's cache (usage object changes with anthropicUsageFromFetch
+    // false) and a failed fetch's retryAfter back-dates
+    // anthropicLastFetchedAt. Were timestamps or counters taken as fetch
+    // evidence, the seed would calibrate against the previous account's
+    // anchor and arm the predictor on garbage.
     setTallyTokens(12_000_000)
     useUsageStore.setState({
       anthropicUsage: makeUsage(85, 40),
+      anthropicUsageFromFetch: false,
       anthropicLastFetchedAt: Date.now() + 30_000 - 40_000
     })
     await advance(30_000)
 
     // Heavy burn afterwards: an (invalid) calibration would now fire an
     // early refresh — a correctly uncalibrated predictor stays quiet.
+    setTallyTokens(14_000_000)
+    await advance(30_000)
+    expect(fetchUsageForProvider).not.toHaveBeenCalledWith('anthropic', {
+      minIntervalMs: 30_000
+    })
+  })
+
+  it('does not mistake a seed for a fetch even when a real fetch landed while the predictor was below the band', async () => {
+    useAccountScheduleStore.setState({
+      autoSwitch: {
+        anthropic: { provider: 'anthropic', thresholdPercent: 90, createdAt: Date.now() }
+      }
+    })
+    // Below the predictor band (90 - 15 = 75): the predictor is idle and
+    // observes none of what follows.
+    useUsageStore.setState({ anthropicUsage: makeUsage(60, 40) })
+    setTallyTokens(10_000_000)
+    renderHook(() => useAccountScheduleRunner())
+    await advance(30_000)
+
+    // A real fetch lands (still below the band)…
+    useUsageStore.setState({
+      anthropicUsage: makeUsage(70, 40),
+      anthropicUsageFromFetch: true,
+      anthropicLastFetchedAt: Date.now() + 30_000
+    })
+    // …then a switch seeds another account's cache, jumping into the band.
+    useUsageStore.setState({
+      anthropicUsage: makeUsage(85, 40),
+      anthropicUsageFromFetch: false
+    })
+    setTallyTokens(12_000_000)
+    await advance(30_000)
+
+    // Heavy burn: had the seed been (mis)calibrated as a fetch, the
+    // predictor would fire an early refresh now.
     setTallyTokens(14_000_000)
     await advance(30_000)
     expect(fetchUsageForProvider).not.toHaveBeenCalledWith('anthropic', {
@@ -321,7 +362,7 @@ describe('useAccountScheduleRunner usage refresh cadence', () => {
     useUsageStore.setState({
       anthropicUsage: makeUsage(85, 40),
       anthropicLastFetchedAt: Date.now() + 30_000,
-      anthropicUsageFetchSeq: 1
+      anthropicUsageFromFetch: true
     })
     await advance(30_000)
 

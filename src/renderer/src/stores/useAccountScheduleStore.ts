@@ -397,7 +397,10 @@ export const useAccountScheduleStore = create<AccountScheduleState>()(
                 // refresh simply overwrites the seed with live data.
                 if (provider === 'anthropic') {
                   useUsageStore.setState({
-                    anthropicUsage: best.account.last_usage as UsageData
+                    anthropicUsage: best.account.last_usage as UsageData,
+                    // Seeded cache, not live data: the burn-rate predictor
+                    // must re-anchor on it without calibrating.
+                    anthropicUsageFromFetch: false
                   })
                 } else {
                   useUsageStore.setState({
