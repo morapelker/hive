@@ -174,6 +174,17 @@ async function maintainBurnRatePredictor(): Promise<void> {
     tallyInFlight = false
   }
 
+  // A switch (and even its immediate live refresh) can complete while the
+  // disk scan is pending — anchoring now would pair the new account's usage
+  // with the old account's predictor state. Re-check and start clean.
+  const switchedAfterScan = useUsageStore.getState().anthropicAccountSwitchedAt
+  if (switchedAfterScan !== lastSeenSwitchedAt) {
+    resetPredictorState(predictor)
+    lastAnchoredUsage = null
+    lastSeenSwitchedAt = switchedAfterScan
+    return
+  }
+
   const now = Date.now()
   recordTallySample(predictor, { at: now, weighted })
 

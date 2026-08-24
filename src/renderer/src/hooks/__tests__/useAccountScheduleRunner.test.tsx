@@ -474,6 +474,57 @@ describe('useAccountScheduleRunner usage refresh cadence', () => {
     })
   })
 
+  it('resets instead of anchoring when a switch completes during the disk scan', async () => {
+    useAccountScheduleStore.setState({
+      autoSwitch: {
+        anthropic: { provider: 'anthropic', thresholdPercent: 90, createdAt: Date.now() }
+      }
+    })
+    useUsageStore.setState({ anthropicUsage: makeUsage(80, 40) })
+
+    // Calibrate on the first account.
+    setTallyTokens(10_000_000)
+    renderHook(() => useAccountScheduleRunner())
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    setTallyTokens(12_000_000)
+    useUsageStore.setState({
+      anthropicUsage: makeUsage(85, 40),
+      anthropicUsageFromFetch: true,
+      anthropicLastFetchedAt: Date.now() + 30_000
+    })
+    await advance(30_000)
+
+    // The next tally resolves AFTER a switch + its live refresh completed
+    // mid-scan: the tick must reset, not anchor the new account's usage
+    // against the old account's calibration.
+    vi.mocked(usageApi.getClaudeTokenTally).mockImplementation(async () => {
+      useUsageStore.setState({
+        anthropicAccountSwitchedAt: Date.now(),
+        anthropicUsage: makeUsage(85, 40),
+        anthropicUsageFromFetch: true,
+        anthropicLastFetchedAt: Date.now()
+      })
+      return {
+        inputTokens: 13_000_000,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        sessionCount: 1,
+        sampledAt: 0
+      }
+    })
+    await advance(30_000)
+
+    // Heavy burn afterwards: the wiped calibration must keep it quiet.
+    setTallyTokens(15_000_000)
+    await advance(60_000)
+    expect(fetchUsageForProvider).not.toHaveBeenCalledWith('anthropic', {
+      minIntervalMs: 30_000
+    })
+  })
+
   it('does not early-refresh while the burn rate stays flat', async () => {
     useAccountScheduleStore.setState({
       autoSwitch: {

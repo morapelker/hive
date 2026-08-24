@@ -162,4 +162,53 @@ describe('useOpenCodeGlobalListener rate-limit events', () => {
     streamListener?.({ type: 'session.rate_limit', sessionId: 'session-new-turn', data })
     expect(useUsageStore.getState().anthropicRateLimit?.fiveHour?.status).toBe('rejected')
   })
+
+  it('prefers the immutable queryStartedAt stamp over the mutable status timestamp', async () => {
+    const { useOpenCodeGlobalListener } = await import('@/hooks/useOpenCodeGlobalListener')
+    function ListenerHarness(): null {
+      useOpenCodeGlobalListener()
+      return null
+    }
+    useUsageStore.setState({
+      anthropicAccountSwitchedAt: Date.now()
+    } as Partial<ReturnType<typeof useUsageStore.getState>>)
+    render(<ListenerHarness />)
+
+    // A pre-switch query blocked on a permission and was restored after the
+    // switch: the status timestamp reads post-switch, but the stamped query
+    // start is pre-switch — the query still runs on the OLD credentials.
+    useWorktreeStatusStore.setState({
+      sessionStatuses: {
+        'session-restored': { status: 'working', timestamp: Date.now() + 5_000 }
+      }
+    } as Partial<ReturnType<typeof useWorktreeStatusStore.getState>>)
+    streamListener?.({
+      type: 'session.rate_limit',
+      sessionId: 'session-restored',
+      data: {
+        status: 'rejected',
+        resetsAt: Math.floor(Date.now() / 1000) + 1_800,
+        rateLimitType: 'five_hour' as const,
+        queryStartedAt: Date.now() - 60_000
+      }
+    })
+    expect(useUsageStore.getState().anthropicRateLimit).toBeNull()
+
+    // And a stamped post-switch query is accepted even when the status
+    // entry is missing entirely.
+    useWorktreeStatusStore.setState({
+      sessionStatuses: {}
+    } as Partial<ReturnType<typeof useWorktreeStatusStore.getState>>)
+    streamListener?.({
+      type: 'session.rate_limit',
+      sessionId: 'session-stamped-new',
+      data: {
+        status: 'rejected',
+        resetsAt: Math.floor(Date.now() / 1000) + 1_800,
+        rateLimitType: 'five_hour' as const,
+        queryStartedAt: Date.now() + 5_000
+      }
+    })
+    expect(useUsageStore.getState().anthropicRateLimit?.fiveHour?.status).toBe('rejected')
+  })
 })

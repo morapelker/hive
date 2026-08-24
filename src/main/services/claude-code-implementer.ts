@@ -654,6 +654,10 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         }
       }
 
+      // Credentials are captured when the query launches — rate-limit events
+      // from this query describe whichever account was live at THIS moment,
+      // and the renderer's account-switch attribution keys on it.
+      const queryStartedAt = Date.now()
       log.info('Prompt: calling sdk.query()', {
         model: options.model,
         effort: options.effort,
@@ -720,7 +724,10 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
             this.sendToRenderer('opencode:stream', {
               type: 'session.rate_limit',
               sessionId: session.hiveSessionId,
-              data: info
+              // queryStartedAt = when this query captured its credentials;
+              // an immutable turn-start (status timestamps get rewritten on
+              // permission/plan restores mid-query).
+              data: { ...(info as Record<string, unknown>), queryStartedAt }
             })
             return
           }

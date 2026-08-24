@@ -50,6 +50,10 @@ export interface AnthropicRateLimitInfo {
   rateLimitType: AnthropicRateLimitType
   isUsingOverage?: boolean
   overageStatus?: string
+  /** Epoch ms at which the emitting SDK query launched (= when it captured
+   * its credentials). Stamped by the main process; used to attribute the
+   * event to the account that was live at query start. */
+  queryStartedAt?: number
 }
 
 export interface AnthropicRateLimitWindow {

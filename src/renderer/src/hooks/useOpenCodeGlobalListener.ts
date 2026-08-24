@@ -344,11 +344,16 @@ export function useOpenCodeGlobalListener(): void {
         const rateLimitInfo = event.data as AnthropicRateLimitInfo
         const switchedAt = useUsageStore.getState().anthropicAccountSwitchedAt
         if (switchedAt !== null) {
+          // Prefer the query-start stamp from the main process — it marks
+          // the exact credential-capture moment and is immutable, unlike
+          // status timestamps (rewritten when a permission/question/plan
+          // resolution restores the running status mid-query).
           const statusEntry = useWorktreeStatusStore.getState().sessionStatuses[sessionId]
           const turnStartedAt =
-            statusEntry?.status === 'working' || statusEntry?.status === 'planning'
+            rateLimitInfo.queryStartedAt ??
+            (statusEntry?.status === 'working' || statusEntry?.status === 'planning'
               ? statusEntry.timestamp
-              : null
+              : null)
           if (turnStartedAt === null || turnStartedAt < switchedAt) return
         }
         useUsageStore.getState().setAnthropicRateLimit(rateLimitInfo)
