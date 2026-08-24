@@ -55,6 +55,7 @@ describe('useUsageStore', () => {
       anthropicIsLoading: false,
       anthropicLastError: null,
       anthropicRateLimit: null,
+      anthropicRateLimitRefreshAttemptAt: null,
       openaiUsage: null,
       openaiLastFetchedAt: null,
       openaiIsLoading: false,
@@ -345,6 +346,40 @@ describe('useUsageStore', () => {
     })
     await vi.runOnlyPendingTimersAsync()
     expect(request).toHaveBeenCalledWith('usageOps.fetch', expect.anything())
+  })
+
+  it('floors event-driven refresh ATTEMPTS so a failing endpoint is not retried on every event', async () => {
+    request.mockImplementation(async (method: string) => {
+      if (method === 'usageOps.fetch') return { success: false, error: 'network down' }
+      if (method === 'accountOps.listSaved') return []
+      return null
+    })
+    const fetchCalls = (): number =>
+      request.mock.calls.filter(([m]) => m === 'usageOps.fetch').length
+
+    const reject = (): void =>
+      useUsageStore.getState().setAnthropicRateLimit({
+        status: 'rejected',
+        resetsAt: Math.floor(Date.now() / 1000) + 1_800,
+        rateLimitType: 'five_hour'
+      })
+
+    // First event attempts a fetch; it FAILS, so lastFetchedAt stays null…
+    reject()
+    await vi.runOnlyPendingTimersAsync()
+    expect(fetchCalls()).toBe(1)
+
+    // …and an immediate event storm must not retry before the 30s floor.
+    reject()
+    reject()
+    await vi.runOnlyPendingTimersAsync()
+    expect(fetchCalls()).toBe(1)
+
+    // After the floor elapses, the next event may try again.
+    vi.setSystemTime(Date.now() + 31_000)
+    reject()
+    await vi.runOnlyPendingTimersAsync()
+    expect(fetchCalls()).toBe(2)
   })
 
   it('clears the anthropic rate-limit overlay on a successful switch', async () => {

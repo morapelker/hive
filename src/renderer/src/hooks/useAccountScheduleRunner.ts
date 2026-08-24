@@ -174,12 +174,19 @@ async function maintainBurnRatePredictor(): Promise<void> {
   // fetch no matter what happened in between.
   const usageStore = useUsageStore.getState()
   if (usageStore.anthropicUsage !== lastAnchoredUsage) {
-    recordAnchor(
-      predictor,
-      { percent, weighted, at: now },
-      { fromFetch: usageStore.anthropicUsageFromFetch }
-    )
-    lastAnchoredUsage = usageStore.anthropicUsage
+    // Re-read the percent AFTER the tally await: a fetch completing during
+    // the disk scan replaced the usage object, and anchoring the new object
+    // at the pre-await percent would bake a stale baseline in for good
+    // (lastAnchoredUsage advances, so the correct percent never anchors).
+    const anchorPercent = getActiveUsagePercent('anthropic')
+    if (anchorPercent !== null) {
+      recordAnchor(
+        predictor,
+        { percent: anchorPercent, weighted, at: now },
+        { fromFetch: usageStore.anthropicUsageFromFetch }
+      )
+      lastAnchoredUsage = usageStore.anthropicUsage
+    }
   }
 
   const nextAt = nextUsageRefreshAt('anthropic')

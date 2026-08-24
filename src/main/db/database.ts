@@ -889,13 +889,17 @@ export class DatabaseService {
     ).run(hiveSessionId, stateJson, lastReportedJson, new Date().toISOString())
   }
 
-  /** Recent sessions eligible for the usage sweep (agent SDKs with local logs). */
+  /** Recent sessions eligible for the usage sweep (agent SDKs with local logs).
+   * Active sessions stay eligible regardless of row recency: a long-running
+   * CLI session can burn tokens for hours without any Hive-side DB mutation,
+   * and aging it out would blind the burn-rate tally to exactly the workload
+   * it protects. */
   listRecentUsageSessionIds(sinceIso: string): string[] {
     const db = this.getDb()
     const rows = db
       .prepare(
         `SELECT id FROM sessions
-         WHERE updated_at >= ?
+         WHERE (updated_at >= ? OR status = 'active')
            AND agent_sdk IN ('claude-code', 'claude-code-cli', 'codex')
          ORDER BY updated_at DESC`
       )

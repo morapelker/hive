@@ -272,6 +272,49 @@ describe('useAccountScheduleRunner usage refresh cadence', () => {
     expect(fetchUsageForProvider).toHaveBeenCalledWith('anthropic', { minIntervalMs: 30_000 })
   })
 
+  it('anchors at the percent read AFTER the tally await when a fetch lands mid-scan', async () => {
+    useAccountScheduleStore.setState({
+      autoSwitch: {
+        anthropic: { provider: 'anthropic', thresholdPercent: 90, createdAt: Date.now() }
+      }
+    })
+    useUsageStore.setState({ anthropicUsage: makeUsage(80, 40) })
+
+    setTallyTokens(10_000_000)
+    renderHook(() => useAccountScheduleRunner())
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+
+    // The next tally resolves AFTER a usage fetch completes mid-scan: the
+    // anchor must pair the new usage object with its fresh 85%, not with
+    // the 80% read before the await (which would zero the calibration delta
+    // and permanently skip the correct baseline).
+    vi.mocked(usageApi.getClaudeTokenTally).mockImplementation(async () => {
+      useUsageStore.setState({
+        anthropicUsage: makeUsage(85, 40),
+        anthropicUsageFromFetch: true,
+        anthropicLastFetchedAt: Date.now()
+      })
+      return {
+        inputTokens: 12_000_000,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        sessionCount: 1,
+        sampledAt: 0
+      }
+    })
+    await advance(30_000)
+    expect(fetchUsageForProvider).not.toHaveBeenCalled()
+
+    // Calibration only exists if the anchor used the post-await 85% —
+    // with it, this burn projects past the threshold and fires early.
+    setTallyTokens(14_000_000)
+    await advance(30_000)
+    expect(fetchUsageForProvider).toHaveBeenCalledWith('anthropic', { minIntervalMs: 30_000 })
+  })
+
   it('does not treat a post-switch seed as a fetch even when a retryAfter timestamp change coincides', async () => {
     useAccountScheduleStore.setState({
       autoSwitch: {

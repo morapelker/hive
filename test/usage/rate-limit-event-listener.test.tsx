@@ -12,6 +12,9 @@ const apiMocks = vi.hoisted(() => ({
     setting: {
       get: vi.fn(),
       set: vi.fn()
+    },
+    session: {
+      get: vi.fn()
     }
   },
   opencodeApi: {
@@ -53,6 +56,7 @@ describe('useOpenCodeGlobalListener rate-limit events', () => {
     vi.clearAllMocks()
     apiMocks.dbApi.setting.get.mockResolvedValue(null)
     apiMocks.dbApi.setting.set.mockResolvedValue(true)
+    apiMocks.dbApi.session.get.mockResolvedValue(null)
     apiMocks.settingsApi.onSettingsUpdated.mockReturnValue(vi.fn())
     apiMocks.worktreeApi.onBranchRenamed.mockReturnValue(vi.fn())
     apiMocks.worktreeApi.onWorktreeCreated.mockReturnValue(vi.fn())
@@ -151,6 +155,46 @@ describe('useOpenCodeGlobalListener rate-limit events', () => {
     expect(useUsageStore.getState().anthropicRateLimit).toBeNull()
 
     streamListener?.({ type: 'session.rate_limit', sessionId: 'session-new', data })
+    expect(useUsageStore.getState().anthropicRateLimit?.fiveHour?.status).toBe('rejected')
+  })
+
+  it('resolves unknown sessions from the DB post-switch and discards unresolvable events', async () => {
+    const { useOpenCodeGlobalListener } = await import('@/hooks/useOpenCodeGlobalListener')
+    function ListenerHarness(): null {
+      useOpenCodeGlobalListener()
+      return null
+    }
+    useUsageStore.setState({
+      anthropicAccountSwitchedAt: Date.now()
+    } as Partial<ReturnType<typeof useUsageStore.getState>>)
+    render(<ListenerHarness />)
+
+    const data = {
+      status: 'rejected',
+      resetsAt: Math.floor(Date.now() / 1000) + 1_800,
+      rateLimitType: 'five_hour' as const
+    }
+
+    // Unknown everywhere (DB returns null): discarded — falling through
+    // would let a still-running pre-switch session poison the new account.
+    streamListener?.({ type: 'session.rate_limit', sessionId: 'session-ghost', data })
+    await vi.runOnlyPendingTimersAsync()
+    expect(useUsageStore.getState().anthropicRateLimit).toBeNull()
+
+    // Known to the DB as created BEFORE the switch: discarded.
+    apiMocks.dbApi.session.get.mockResolvedValue({
+      created_at: new Date(Date.now() - 60_000).toISOString()
+    })
+    streamListener?.({ type: 'session.rate_limit', sessionId: 'session-db-old', data })
+    await vi.runOnlyPendingTimersAsync()
+    expect(useUsageStore.getState().anthropicRateLimit).toBeNull()
+
+    // Known to the DB as created AFTER the switch: accepted.
+    apiMocks.dbApi.session.get.mockResolvedValue({
+      created_at: new Date(Date.now() + 5_000).toISOString()
+    })
+    streamListener?.({ type: 'session.rate_limit', sessionId: 'session-db-new', data })
+    await vi.runOnlyPendingTimersAsync()
     expect(useUsageStore.getState().anthropicRateLimit?.fiveHour?.status).toBe('rejected')
   })
 })

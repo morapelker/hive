@@ -42,6 +42,11 @@ interface UsageState {
    * created before this hold the PREVIOUS account's credentials — their
    * rate-limit events must not be attributed to the current account. */
   anthropicAccountSwitchedAt: number | null
+  /** Last time a rate-limit EVENT triggered a refresh attempt. Floors the
+   * event-driven trigger by attempt (not success): during an event storm
+   * with a failing endpoint, lastFetchedAt never advances, and gating on it
+   * alone would retry on every event. */
+  anthropicRateLimitRefreshAttemptAt: number | null
 
   openaiUsage: OpenAIUsageData | null
   openaiLastFetchedAt: number | null
@@ -115,6 +120,7 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
   anthropicRateLimit: null,
   anthropicUsageFromFetch: false,
   anthropicAccountSwitchedAt: null,
+  anthropicRateLimitRefreshAttemptAt: null,
 
   openaiUsage: null,
   openaiLastFetchedAt: null,
@@ -564,10 +570,18 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
     // pull a fresh one now (floored, so an event storm can't hammer the
     // endpoint) instead of extending the debounce and flying blind. The
     // fresh percent is what lets the auto-switcher fire before/at exhaustion.
+    // The floor gates on ATTEMPT time: failed fetches never advance
+    // lastFetchedAt, and an event storm against a failing endpoint would
+    // otherwise retry on every single event.
     if (info.status !== 'allowed') {
-      get()
-        .fetchUsageForProvider('anthropic', { minIntervalMs: EARLY_USAGE_REFRESH_FLOOR_MS })
-        .catch(() => {})
+      const nowMs = Date.now()
+      const lastAttempt = get().anthropicRateLimitRefreshAttemptAt
+      if (lastAttempt === null || nowMs - lastAttempt >= EARLY_USAGE_REFRESH_FLOOR_MS) {
+        set({ anthropicRateLimitRefreshAttemptAt: nowMs })
+        get()
+          .fetchUsageForProvider('anthropic', { minIntervalMs: EARLY_USAGE_REFRESH_FLOOR_MS })
+          .catch(() => {})
+      }
     }
   },
 

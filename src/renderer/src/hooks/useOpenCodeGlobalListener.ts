@@ -334,17 +334,37 @@ export function useOpenCodeGlobalListener(): void {
         // PREVIOUS account's credentials (read at spawn) — their rejections
         // describe that account, and storing them would mark the freshly
         // switched-to account as exhausted and re-trigger the auto-switch.
+        const rateLimitInfo = event.data as AnthropicRateLimitInfo
         const switchedAt = useUsageStore.getState().anthropicAccountSwitchedAt
-        if (switchedAt !== null) {
-          const sessionState = useSessionStore.getState()
-          const session = [
-            ...[...sessionState.sessionsByWorktree.values()].flat(),
-            ...[...sessionState.sessionsByConnection.values()].flat()
-          ].find((s) => s.id === sessionId)
-          const createdAt = session ? Date.parse(session.created_at) : NaN
-          if (!Number.isNaN(createdAt) && createdAt < switchedAt) return
+        if (switchedAt === null) {
+          useUsageStore.getState().setAnthropicRateLimit(rateLimitInfo)
+          return
         }
-        useUsageStore.getState().setAnthropicRateLimit(event.data as AnthropicRateLimitInfo)
+        const sessionState = useSessionStore.getState()
+        const session = [
+          ...[...sessionState.sessionsByWorktree.values()].flat(),
+          ...[...sessionState.sessionsByConnection.values()].flat()
+        ].find((s) => s.id === sessionId)
+        if (session) {
+          const createdAt = Date.parse(session.created_at)
+          if (Number.isNaN(createdAt) || createdAt < switchedAt) return
+          useUsageStore.getState().setAnthropicRateLimit(rateLimitInfo)
+          return
+        }
+        // Not in the loaded maps — resolve from the DB before accepting.
+        // Post-switch, an event that cannot be attributed to a post-switch
+        // session is discarded: falling through would let a still-running
+        // pre-switch session mark the fresh account as exhausted.
+        void (async () => {
+          try {
+            const dbSession = await dbApi.session.get<{ created_at?: string }>(sessionId)
+            const createdAt = dbSession?.created_at ? Date.parse(dbSession.created_at) : NaN
+            if (Number.isNaN(createdAt) || createdAt < switchedAt) return
+            useUsageStore.getState().setAnthropicRateLimit(rateLimitInfo)
+          } catch {
+            // Unresolvable post-switch event: discard.
+          }
+        })()
         return
       }
 
