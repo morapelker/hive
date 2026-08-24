@@ -42,11 +42,12 @@ interface UsageState {
    * created before this hold the PREVIOUS account's credentials — their
    * rate-limit events must not be attributed to the current account. */
   anthropicAccountSwitchedAt: number | null
-  /** Last time a rate-limit EVENT triggered a refresh attempt. Floors the
-   * event-driven trigger by attempt (not success): during an event storm
-   * with a failing endpoint, lastFetchedAt never advances, and gating on it
-   * alone would retry on every event. */
-  anthropicRateLimitRefreshAttemptAt: number | null
+  /** Last time ANY early-refresh trigger (rate-limit event or the burn-rate
+   * predictor) attempted a fetch. One shared timestamp floors all early
+   * paths together: during a failure storm lastFetchedAt never advances,
+   * and per-path floors would let the paths pair up requests under the
+   * advertised 30s endpoint floor. */
+  anthropicEarlyRefreshAttemptAt: number | null
 
   openaiUsage: OpenAIUsageData | null
   openaiLastFetchedAt: number | null
@@ -120,7 +121,7 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
   anthropicRateLimit: null,
   anthropicUsageFromFetch: false,
   anthropicAccountSwitchedAt: null,
-  anthropicRateLimitRefreshAttemptAt: null,
+  anthropicEarlyRefreshAttemptAt: null,
 
   openaiUsage: null,
   openaiLastFetchedAt: null,
@@ -231,7 +232,13 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
       if (result.success && result.data && provider && account && !switchedMidFlight) {
         // The bottom usage bar reads the provider's live usage, not the saved
         // account row — when the refreshed account is the active one, mirror
-        // the fresh data so both views agree.
+        // the fresh data so both views agree. Re-read the LIVE identity
+        // first: the cached email can lag an external `claude login`
+        // performed outside Hive, which no switch epoch covers.
+        await useAccountStore
+          .getState()
+          .fetchEmail(provider)
+          .catch(() => {})
         const accountState = useAccountStore.getState()
         const activeEmail =
           provider === 'anthropic' ? accountState.anthropicEmail : accountState.openaiEmail
@@ -349,7 +356,7 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
             anthropicUsageFromFetch: false,
             anthropicLastRetryAfter: null,
             anthropicLastFetchedAt: null,
-            anthropicRateLimitRefreshAttemptAt: null
+            anthropicEarlyRefreshAttemptAt: null
           })
         }
         if (provider) {
@@ -633,7 +640,7 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
     if (info.status !== 'allowed') {
       const nowMs = Date.now()
       const {
-        anthropicRateLimitRefreshAttemptAt: lastAttempt,
+        anthropicEarlyRefreshAttemptAt: lastAttempt,
         anthropicLastFetchedAt,
         anthropicLastRetryAfter,
         anthropicIsLoading
@@ -652,7 +659,7 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
         fetchGateOpen &&
         (lastAttempt === null || nowMs - lastAttempt >= EARLY_USAGE_REFRESH_FLOOR_MS)
       ) {
-        set({ anthropicRateLimitRefreshAttemptAt: nowMs })
+        set({ anthropicEarlyRefreshAttemptAt: nowMs })
         get()
           .fetchUsageForProvider('anthropic', { minIntervalMs: EARLY_USAGE_REFRESH_FLOOR_MS })
           .catch(() => {})

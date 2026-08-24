@@ -525,6 +525,44 @@ describe('useAccountScheduleRunner usage refresh cadence', () => {
     })
   })
 
+  it('shares the early-refresh attempt floor with the rate-limit event path', async () => {
+    useAccountScheduleStore.setState({
+      autoSwitch: {
+        anthropic: { provider: 'anthropic', thresholdPercent: 90, createdAt: Date.now() }
+      }
+    })
+    useUsageStore.setState({ anthropicUsage: makeUsage(80, 40) })
+
+    setTallyTokens(10_000_000)
+    renderHook(() => useAccountScheduleRunner())
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    setTallyTokens(12_000_000)
+    useUsageStore.setState({
+      anthropicUsage: makeUsage(85, 40),
+      anthropicUsageFromFetch: true,
+      anthropicLastFetchedAt: Date.now() + 30_000
+    })
+    await advance(30_000)
+
+    // A rate-limit event's FAILED refresh attempt 10s before this tick:
+    // lastFetchedAt is frozen, so only the shared attempt timestamp can stop
+    // the calibrated predictor from pairing a second request under the floor.
+    setTallyTokens(14_000_000)
+    useUsageStore.setState({
+      anthropicLastFetchedAt: Date.now() + 30_000 - 40_000,
+      anthropicEarlyRefreshAttemptAt: Date.now() + 30_000 - 10_000
+    })
+    await advance(30_000)
+    expect(fetchUsageForProvider).not.toHaveBeenCalled()
+
+    // Once the shared floor elapses, the predictor may fire.
+    setTallyTokens(16_000_000)
+    await advance(30_000)
+    expect(fetchUsageForProvider).toHaveBeenCalledWith('anthropic', { minIntervalMs: 30_000 })
+  })
+
   it('does not early-refresh while the burn rate stays flat', async () => {
     useAccountScheduleStore.setState({
       autoSwitch: {

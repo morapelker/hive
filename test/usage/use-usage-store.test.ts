@@ -55,7 +55,7 @@ describe('useUsageStore', () => {
       anthropicIsLoading: false,
       anthropicLastError: null,
       anthropicRateLimit: null,
-      anthropicRateLimitRefreshAttemptAt: null,
+      anthropicEarlyRefreshAttemptAt: null,
       anthropicAccountSwitchedAt: null,
       anthropicUsageFromFetch: false,
       openaiUsage: null,
@@ -233,6 +233,7 @@ describe('useUsageStore', () => {
     request.mockImplementation(async (method: string) => {
       if (method === 'usageOps.fetchForAccount')
         return { success: true, status: 'ok', data: sampleUsage }
+      if (method === 'accountOps.getClaudeEmail') return 'a@b.com'
       if (method === 'accountOps.listSaved') return []
       return null
     })
@@ -252,11 +253,33 @@ describe('useUsageStore', () => {
     request.mockImplementation(async (method: string) => {
       if (method === 'usageOps.fetchForAccount')
         return { success: true, status: 'ok', data: sampleUsage }
+      if (method === 'accountOps.getClaudeEmail') return 'a@b.com'
       if (method === 'accountOps.listSaved') return []
       return null
     })
 
     await useUsageStore.getState().refreshSavedAccount('acc-2', { userInitiated: true })
+
+    expect(usageState().anthropicUsage).toBeNull()
+  })
+
+  it('does not mirror when an external login changed the live identity mid-refresh', async () => {
+    // Cached email still says acc-1 is active, but the keychain (read fresh
+    // before mirroring) reveals an external `claude login` to someone else.
+    useAccountStore.setState({ anthropicEmail: 'a@b.com' })
+    useUsageStore.setState({
+      anthropicUsage: null,
+      savedAccounts: { anthropic: [anthropicAccount('acc-1', 'a@b.com')], openai: [] }
+    } as Partial<ReturnType<typeof useUsageStore.getState>>)
+    request.mockImplementation(async (method: string) => {
+      if (method === 'usageOps.fetchForAccount')
+        return { success: true, status: 'ok', data: sampleUsage }
+      if (method === 'accountOps.getClaudeEmail') return 'external@b.com'
+      if (method === 'accountOps.listSaved') return []
+      return null
+    })
+
+    await useUsageStore.getState().refreshSavedAccount('acc-1', { userInitiated: true })
 
     expect(usageState().anthropicUsage).toBeNull()
   })
@@ -486,7 +509,7 @@ describe('useUsageStore', () => {
     useUsageStore.setState({
       anthropicLastRetryAfter: 120,
       anthropicLastFetchedAt: Date.now() - 60_000,
-      anthropicRateLimitRefreshAttemptAt: Date.now()
+      anthropicEarlyRefreshAttemptAt: Date.now()
     })
 
     await useUsageStore.getState().switchAccount('acc-1')
@@ -498,7 +521,7 @@ describe('useUsageStore', () => {
     // The outgoing account's 429 deadline, debounce timestamp, and attempt
     // slot must not delay sampling the account we just switched to.
     expect(useUsageStore.getState().anthropicLastRetryAfter).toBeNull()
-    expect(useUsageStore.getState().anthropicRateLimitRefreshAttemptAt).toBeNull()
+    expect(useUsageStore.getState().anthropicEarlyRefreshAttemptAt).toBeNull()
   })
 
   it('discards a usage fetch that resolves after an account switch happened mid-flight', async () => {

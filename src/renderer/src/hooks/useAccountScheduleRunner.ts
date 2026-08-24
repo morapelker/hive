@@ -250,13 +250,19 @@ async function maintainBurnRatePredictor(): Promise<void> {
   ) {
     return
   }
+  // The early-refresh floor is SHARED with the rate-limit event trigger via
+  // the store's attempt timestamp — separate per-path floors would let the
+  // two paths pair up requests under the advertised 30s endpoint floor
+  // whenever fetches are failing (lastFetchedAt frozen).
   const lastActivity = Math.max(
     usageStore.anthropicLastFetchedAt ?? 0,
+    usageStore.anthropicEarlyRefreshAttemptAt ?? 0,
     lastAttemptAt.anthropic ?? 0
   )
   if (now - lastActivity < EARLY_USAGE_REFRESH_FLOOR_MS) return
   if (fetchWouldNoOp('anthropic', EARLY_USAGE_REFRESH_FLOOR_MS)) return
   lastAttemptAt.anthropic = now
+  useUsageStore.setState({ anthropicEarlyRefreshAttemptAt: now })
   usageStore
     .fetchUsageForProvider('anthropic', { minIntervalMs: EARLY_USAGE_REFRESH_FLOOR_MS })
     .catch(() => {})
@@ -329,9 +335,7 @@ export function useAccountScheduleRunner(): void {
           // flaky refresh never toasts every 5 minutes. The near/imminent
           // cadences pass themselves as the debounce floor — a tightened
           // cadence must actually fetch, not be vetoed by the 3-minute default.
-          usageStore
-            .fetchUsageForProvider(provider, { minIntervalMs })
-            .catch(() => {})
+          usageStore.fetchUsageForProvider(provider, { minIntervalMs }).catch(() => {})
         }
       }
       void maintainBurnRatePredictor()
