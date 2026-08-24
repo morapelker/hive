@@ -481,12 +481,24 @@ describe('useUsageStore', () => {
       return null
     })
 
+    // Give the outgoing account a pending Retry-After with its back-dated
+    // debounce timestamp — per-account state that must not gate the target.
+    useUsageStore.setState({
+      anthropicLastRetryAfter: 120,
+      anthropicLastFetchedAt: Date.now() - 60_000,
+      anthropicRateLimitRefreshAttemptAt: Date.now()
+    })
+
     await useUsageStore.getState().switchAccount('acc-1')
 
     expect(useUsageStore.getState().anthropicRateLimit).toBeNull()
     // The pre-switch usage object no longer describes the live account —
     // it must not pass for fetch data (predictor calibration baseline).
     expect(useUsageStore.getState().anthropicUsageFromFetch).toBe(false)
+    // The outgoing account's 429 deadline, debounce timestamp, and attempt
+    // slot must not delay sampling the account we just switched to.
+    expect(useUsageStore.getState().anthropicLastRetryAfter).toBeNull()
+    expect(useUsageStore.getState().anthropicRateLimitRefreshAttemptAt).toBeNull()
   })
 
   it('discards a usage fetch that resolves after an account switch happened mid-flight', async () => {
@@ -498,27 +510,38 @@ describe('useUsageStore', () => {
       five_hour: { utilization: 5, resets_at: '2026-05-14T12:00:00.000Z' },
       seven_day: { utilization: 3, resets_at: '2026-05-15T12:00:00.000Z' }
     }
+    const freshUsage: UsageData = {
+      five_hour: { utilization: 7, resets_at: '2026-05-14T12:00:00.000Z' },
+      seven_day: { utilization: 4, resets_at: '2026-05-15T12:00:00.000Z' }
+    }
+    let fetchCount = 0
     request.mockImplementation(async (method: string) => {
       if (method === 'usageOps.fetch') {
-        // A switch (and its seed) completes while this request is in flight.
-        useUsageStore.setState({
-          anthropicAccountSwitchedAt: Date.now(),
-          anthropicUsage: seededUsage,
-          anthropicUsageFromFetch: false
-        })
-        return { success: true, data: staleUsage }
+        fetchCount += 1
+        if (fetchCount === 1) {
+          // A switch (and its seed) completes while this request is in flight.
+          useUsageStore.setState({
+            anthropicAccountSwitchedAt: Date.now(),
+            anthropicUsage: seededUsage,
+            anthropicUsageFromFetch: false
+          })
+          return { success: true, data: staleUsage }
+        }
+        return { success: true, data: freshUsage }
       }
       if (method === 'accountOps.listSaved') return []
       return null
     })
 
     await useUsageStore.getState().fetchUsageForProvider('anthropic')
+    await vi.runOnlyPendingTimersAsync()
 
-    // The response describes the account we just left — it must not clobber
-    // the seed, restore fetch provenance, or advance the debounce.
-    expect(useUsageStore.getState().anthropicUsage).toBe(seededUsage)
-    expect(useUsageStore.getState().anthropicUsageFromFetch).toBe(false)
-    expect(useUsageStore.getState().anthropicLastFetchedAt).toBeNull()
+    // The stale response must not have been applied — and because the
+    // switch-time forceRefresh no-oped on our loading flag, discarding it
+    // hands the slot to a follow-up fetch of the NEW account.
+    expect(fetchCount).toBe(2)
+    expect(useUsageStore.getState().anthropicUsage).toBe(freshUsage)
+    expect(useUsageStore.getState().anthropicUsageFromFetch).toBe(true)
     expect(useUsageStore.getState().anthropicIsLoading).toBe(false)
   })
 

@@ -332,10 +332,17 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
           // scheduled, or a target with no cached usage) would otherwise let
           // the predictor anchor the OLD account's percent as a calibration
           // baseline for the new account's first fetch.
+          // All fetch gates are per-ACCOUNT state: the old account's 429
+          // Retry-After (and its back-dated debounce timestamp) or a burned
+          // event-attempt slot must not delay sampling the account we just
+          // switched to.
           set({
             anthropicRateLimit: null,
             anthropicAccountSwitchedAt: Date.now(),
-            anthropicUsageFromFetch: false
+            anthropicUsageFromFetch: false,
+            anthropicLastRetryAfter: null,
+            anthropicLastFetchedAt: null,
+            anthropicRateLimitRefreshAttemptAt: null
           })
         }
         if (provider) {
@@ -387,13 +394,17 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
 
       set({ anthropicIsLoading: true, anthropicLastError: null })
       let succeeded = false
+      let discardedStale = false
       // Guard against a switch completing while this request is in flight:
       // the response then describes the account we just LEFT, and applying
       // it would restore the old account's numbers as live fetch data.
       const switchEpoch = get().anthropicAccountSwitchedAt
       try {
         const result = await usageApi.fetch()
-        if (get().anthropicAccountSwitchedAt !== switchEpoch) return
+        if (get().anthropicAccountSwitchedAt !== switchEpoch) {
+          discardedStale = true
+          return
+        }
         if (result.success) {
           set({
             anthropicUsage: result.data ?? null,
@@ -420,6 +431,15 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
           anthropicIsLoading: false,
           ...(succeeded ? { anthropicLastFetchedAt: Date.now() } : {})
         })
+        // The switch's own forceRefreshProvider no-oped on our loading flag,
+        // and the discarded response applied nothing — refetch the NEW
+        // account now that the slot is free, or seeded/blank usage would
+        // linger until some other trigger fires.
+        if (discardedStale) {
+          get()
+            .fetchUsageForProvider('anthropic', { minIntervalMs: EARLY_USAGE_REFRESH_FLOOR_MS })
+            .catch(() => {})
+        }
       }
     } else {
       if (state.openaiIsLoading) return
@@ -468,13 +488,17 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
 
       set({ anthropicIsLoading: true, anthropicLastError: null })
       let succeeded = false
+      let discardedStale = false
       // Guard against a switch completing while this request is in flight:
       // the response then describes the account we just LEFT, and applying
       // it would restore the old account's numbers as live fetch data.
       const switchEpoch = get().anthropicAccountSwitchedAt
       try {
         const result = await usageApi.fetch()
-        if (get().anthropicAccountSwitchedAt !== switchEpoch) return
+        if (get().anthropicAccountSwitchedAt !== switchEpoch) {
+          discardedStale = true
+          return
+        }
         if (result.success) {
           set({
             anthropicUsage: result.data ?? null,
@@ -506,6 +530,13 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
           anthropicIsLoading: false,
           ...(succeeded ? { anthropicLastFetchedAt: Date.now() } : {})
         })
+        // See fetchUsageForProvider: a discarded stale response must hand
+        // its loading slot to a fresh fetch of the new account.
+        if (discardedStale) {
+          get()
+            .fetchUsageForProvider('anthropic', { minIntervalMs: EARLY_USAGE_REFRESH_FLOOR_MS })
+            .catch(() => {})
+        }
       }
     } else {
       if (state.openaiIsLoading) return
