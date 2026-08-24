@@ -177,6 +177,39 @@ describe('useAccountScheduleStore auto-switch', () => {
     expect(switchCalls()[0][1]).toEqual({ accountId: 'acc-2' })
   })
 
+  it('treats a live rejected rate-limit window as 100% and switches even when polled usage lags below the threshold', async () => {
+    // The polled snapshot is stale-low (the burn outran the poll), but the
+    // SDK already reported a rejected window — the switch must fire NOW.
+    useUsageStore.setState({
+      anthropicUsage: makeUsage(60, 40),
+      anthropicRateLimit: {
+        fiveHour: { status: 'rejected', resetsAt: Math.floor(Date.now() / 1000) + 1_800 },
+        updatedAt: Date.now()
+      }
+    })
+    useAccountScheduleStore.getState().setAutoSwitch('anthropic', 90)
+
+    await useAccountScheduleStore.getState().checkSchedules()
+
+    expect(switchCalls()).toHaveLength(1)
+    expect(switchCalls()[0][1]).toEqual({ accountId: 'acc-2' })
+  })
+
+  it('ignores a rejected rate-limit window whose reset is already in the past', async () => {
+    useUsageStore.setState({
+      anthropicUsage: makeUsage(60, 40),
+      anthropicRateLimit: {
+        fiveHour: { status: 'rejected', resetsAt: Math.floor(Date.now() / 1000) - 10 },
+        updatedAt: Date.now()
+      }
+    })
+    useAccountScheduleStore.getState().setAutoSwitch('anthropic', 90)
+
+    await useAccountScheduleStore.getState().checkSchedules()
+
+    expect(switchCalls()).toHaveLength(0)
+  })
+
   it('backs off with a toast when the sweep finds no account below the threshold', async () => {
     // Cached numbers still look viable, but the sweep reveals both
     // alternatives are over the threshold.
@@ -221,7 +254,8 @@ describe('useAccountScheduleStore auto-switch', () => {
     expect(refreshAllCalls()).toHaveLength(2)
     expect(refreshAllCalls()[1][1]).toEqual({
       provider: 'anthropic',
-      excludeAccountIds: ['acc-1', 'acc-2', 'acc-3']
+      excludeAccountIds: ['acc-1', 'acc-2', 'acc-3'],
+      maxAgeMs: 180_000
     })
     expect(toast.error).toHaveBeenCalledTimes(2)
     expect(useAccountScheduleStore.getState().autoSwitch.anthropic?.notBefore).toBe(
@@ -281,7 +315,8 @@ describe('useAccountScheduleStore auto-switch', () => {
     expect(refreshAllCalls()).toHaveLength(1)
     expect(refreshAllCalls()[0][1]).toEqual({
       provider: 'anthropic',
-      excludeAccountIds: ['acc-1', 'acc-3']
+      excludeAccountIds: ['acc-1', 'acc-3'],
+      maxAgeMs: 180_000
     })
     expect(switchCalls()).toHaveLength(1)
     expect(switchCalls()[0][1]).toEqual({ accountId: 'acc-2' })
@@ -314,7 +349,8 @@ describe('useAccountScheduleStore auto-switch', () => {
     expect(refreshAllCalls()).toHaveLength(1)
     expect(refreshAllCalls()[0][1]).toEqual({
       provider: 'anthropic',
-      excludeAccountIds: ['acc-1', 'acc-2']
+      excludeAccountIds: ['acc-1', 'acc-2'],
+      maxAgeMs: 180_000
     })
     expect(switchCalls()).toHaveLength(1)
     expect(switchCalls()[0][1]).toEqual({ accountId: 'acc-9' })
@@ -332,7 +368,7 @@ describe('useAccountScheduleStore auto-switch', () => {
     await useAccountScheduleStore.getState().checkSchedules()
 
     expect(refreshAllCalls()).toHaveLength(1)
-    expect(refreshAllCalls()[0][1]).toEqual({ provider: 'anthropic' })
+    expect(refreshAllCalls()[0][1]).toEqual({ provider: 'anthropic', maxAgeMs: 180_000 })
     expect(switchCalls()).toHaveLength(1)
     expect(switchCalls()[0][1]).toEqual({ accountId: 'acc-2' })
   })

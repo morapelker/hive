@@ -83,22 +83,40 @@ function isResetInPast(resetsAt: string | null | undefined): boolean {
 }
 
 /**
+ * 100 when the Claude SDK has reported a live rejected rate-limit window that
+ * hasn't reset yet — the account is provably exhausted even if the polled
+ * usage snapshot still says less. Cleared on account switch.
+ */
+function anthropicRejectedOverlay(): number | null {
+  const rateLimit = useUsageStore.getState().anthropicRateLimit
+  if (!rateLimit) return null
+  const nowSeconds = Date.now() / 1000
+  const rejected = [rateLimit.fiveHour, rateLimit.sevenDay].some(
+    (window) => window !== undefined && window.status === 'rejected' && window.resetsAt > nowSeconds
+  )
+  return rejected ? 100 : null
+}
+
+/**
  * Highest current utilization across ALL of the active account's usage bars
  * for the provider — 5h, 7d, and any scoped windows (Fable, etc.) — the
- * number a 'usage' schedule is compared against. Returns null when no fresh
- * usage data is available.
+ * number a 'usage' schedule is compared against. A live rejected rate-limit
+ * event counts as 100 (anthropic only). Returns null when no fresh usage
+ * data is available.
  */
 export function getActiveUsagePercent(provider: UsageProvider): number | null {
+  const overlay = provider === 'anthropic' ? anthropicRejectedOverlay() : null
   const state = useUsageStore.getState()
   const usage = normalizeUsage(provider, state.anthropicUsage, state.openaiUsage)
-  if (!usage) return null
+  if (!usage) return overlay
   const windows = [
     usage.five_hour,
     usage.seven_day,
     ...(usage.scoped ?? []).map((s) => ({ utilization: s.used_percent, resets_at: s.resets_at }))
   ].filter((w) => w && !isResetInPast(w.resets_at))
-  if (windows.length === 0) return null
-  return Math.max(...windows.map((w) => w.utilization))
+  if (windows.length === 0) return overlay
+  const max = Math.max(...windows.map((w) => w.utilization))
+  return overlay === null ? max : Math.max(max, overlay)
 }
 
 function activeEmailFor(provider: UsageProvider): string | null {
@@ -114,6 +132,37 @@ function savedAccountUsage(provider: UsageProvider, account: SavedAccountDTO): U
   }
   return normalizeUsage(provider, null, account.last_usage as OpenAIUsageData)
 }
+
+/**
+ * Saved-account ids a candidate sweep may skip: the active account (never a
+ * candidate) plus accounts whose cached usage PROVES they are at/over the
+ * threshold until a known future reset — refreshing those is a wasted
+ * request. Undefined before the first successful account-list load (nothing
+ * to prove non-viability from — callers fall back to the full sweep).
+ */
+export function computeSweepExclusions(
+  provider: UsageProvider,
+  thresholdPercent: number,
+  activeEmail: string | null
+): string[] | undefined {
+  const usageState = useUsageStore.getState()
+  if (!usageState.savedAccountsLoaded[provider]) return undefined
+  const nowMs = Date.now()
+  return usageState.savedAccounts[provider]
+    .filter((account) => {
+      if (activeEmail !== null && account.email === activeEmail) return true
+      const usage = savedAccountUsage(provider, account)
+      if (!usage) return false
+      return isProvablyAtOrAbove(usage, thresholdPercent, nowMs)
+    })
+    .map((account) => account.id)
+}
+
+// Cached rows at least this fresh count as already-refreshed during the
+// trigger-time candidate sweep (the runner pre-warms them while usage sits
+// near the threshold), collapsing the sweep to a DB read instead of a serial
+// fetch of every account right when the switch is urgent.
+export const TRIGGER_SWEEP_MAX_AGE_MS = 180_000
 
 // A due schedule whose switch attempt failed is retried, but not more often
 // than this — a persistently failing switch shouldn't toast every tick.
@@ -261,20 +310,11 @@ export const useAccountScheduleStore = create<AccountScheduleState>()(
               // active account is skipped (it is never a candidate). Before
               // the first successful account-list load there is nothing to
               // prove non-viability from — fall back to the full sweep.
-              const usageState = useUsageStore.getState()
-              let excludeAccountIds: string[] | undefined
-              if (usageState.savedAccountsLoaded[provider]) {
-                const saved = usageState.savedAccounts[provider]
-                const nowMs = Date.now()
-                excludeAccountIds = saved
-                  .filter((a) => {
-                    if (a.email === activeEmail) return true
-                    const usage = savedAccountUsage(provider, a)
-                    if (!usage) return false
-                    return isProvablyAtOrAbove(usage, auto.thresholdPercent, nowMs)
-                  })
-                  .map((a) => a.id)
-              }
+              const excludeAccountIds = computeSweepExclusions(
+                provider,
+                auto.thresholdPercent,
+                activeEmail
+              )
               // Even when every known account is excluded the (then refresh-
               // free) sweep still runs: the main process lists accounts from
               // the DB, so it refreshes anything this renderer hasn't seen
@@ -285,7 +325,9 @@ export const useAccountScheduleStore = create<AccountScheduleState>()(
               try {
                 results = await useUsageStore
                   .getState()
-                  .refreshAllForProvider(provider, excludeAccountIds)
+                  .refreshAllForProvider(provider, excludeAccountIds, {
+                    maxAgeMs: TRIGGER_SWEEP_MAX_AGE_MS
+                  })
               } catch {
                 sweepFailed = true
               }
@@ -355,7 +397,10 @@ export const useAccountScheduleStore = create<AccountScheduleState>()(
                 // refresh simply overwrites the seed with live data.
                 if (provider === 'anthropic') {
                   useUsageStore.setState({
-                    anthropicUsage: best.account.last_usage as UsageData
+                    anthropicUsage: best.account.last_usage as UsageData,
+                    // Seeded cache, not live data: the burn-rate predictor
+                    // must re-anchor on it without calibrating.
+                    anthropicUsageFromFetch: false
                   })
                 } else {
                   useUsageStore.setState({

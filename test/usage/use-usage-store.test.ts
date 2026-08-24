@@ -55,6 +55,9 @@ describe('useUsageStore', () => {
       anthropicIsLoading: false,
       anthropicLastError: null,
       anthropicRateLimit: null,
+      anthropicEarlyRefreshAttemptAt: null,
+      anthropicAccountSwitchedAt: null,
+      anthropicUsageFromFetch: false,
       openaiUsage: null,
       openaiLastFetchedAt: null,
       openaiIsLoading: false,
@@ -230,6 +233,7 @@ describe('useUsageStore', () => {
     request.mockImplementation(async (method: string) => {
       if (method === 'usageOps.fetchForAccount')
         return { success: true, status: 'ok', data: sampleUsage }
+      if (method === 'accountOps.getClaudeEmail') return 'a@b.com'
       if (method === 'accountOps.listSaved') return []
       return null
     })
@@ -249,11 +253,33 @@ describe('useUsageStore', () => {
     request.mockImplementation(async (method: string) => {
       if (method === 'usageOps.fetchForAccount')
         return { success: true, status: 'ok', data: sampleUsage }
+      if (method === 'accountOps.getClaudeEmail') return 'a@b.com'
       if (method === 'accountOps.listSaved') return []
       return null
     })
 
     await useUsageStore.getState().refreshSavedAccount('acc-2', { userInitiated: true })
+
+    expect(usageState().anthropicUsage).toBeNull()
+  })
+
+  it('does not mirror when an external login changed the live identity mid-refresh', async () => {
+    // Cached email still says acc-1 is active, but the keychain (read fresh
+    // before mirroring) reveals an external `claude login` to someone else.
+    useAccountStore.setState({ anthropicEmail: 'a@b.com' })
+    useUsageStore.setState({
+      anthropicUsage: null,
+      savedAccounts: { anthropic: [anthropicAccount('acc-1', 'a@b.com')], openai: [] }
+    } as Partial<ReturnType<typeof useUsageStore.getState>>)
+    request.mockImplementation(async (method: string) => {
+      if (method === 'usageOps.fetchForAccount')
+        return { success: true, status: 'ok', data: sampleUsage }
+      if (method === 'accountOps.getClaudeEmail') return 'external@b.com'
+      if (method === 'accountOps.listSaved') return []
+      return null
+    })
+
+    await useUsageStore.getState().refreshSavedAccount('acc-1', { userInitiated: true })
 
     expect(usageState().anthropicUsage).toBeNull()
   })
@@ -274,6 +300,303 @@ describe('useUsageStore', () => {
 
     expect(toast.success).toHaveBeenCalledWith('Switched to a@b.com')
     expect(toast.error).not.toHaveBeenCalled()
+  })
+
+  it('honors a minIntervalMs override to bypass the 3-minute debounce, but not below the floor', async () => {
+    request.mockImplementation(async (method: string) => {
+      if (method === 'usageOps.fetch') return { success: true, data: sampleUsage }
+      if (method === 'accountOps.listSaved') return []
+      return null
+    })
+    // Fetched 60s ago: the default debounce (3 min) blocks…
+    useUsageStore.setState({ anthropicLastFetchedAt: Date.now() - 60_000 })
+    await useUsageStore.getState().fetchUsageForProvider('anthropic')
+    expect(request).not.toHaveBeenCalledWith('usageOps.fetch', expect.anything())
+
+    // …a 30s floor lets the early refresh through…
+    await useUsageStore.getState().fetchUsageForProvider('anthropic', { minIntervalMs: 30_000 })
+    expect(request).toHaveBeenCalledWith('usageOps.fetch', expect.anything())
+
+    // …but a fetch 10s old stays blocked even with the floored override.
+    request.mockClear()
+    useUsageStore.setState({ anthropicLastFetchedAt: Date.now() - 10_000 })
+    await useUsageStore.getState().fetchUsageForProvider('anthropic', { minIntervalMs: 30_000 })
+    expect(request).not.toHaveBeenCalledWith('usageOps.fetch', expect.anything())
+  })
+
+  it('keeps the Retry-After deadline authoritative over a shorter minIntervalMs', async () => {
+    request.mockImplementation(async (method: string) => {
+      if (method === 'usageOps.fetch') return { success: true, data: sampleUsage }
+      if (method === 'accountOps.listSaved') return []
+      return null
+    })
+    // A 429 with retryAfter 120 back-dated lastFetchedAt so the deadline is
+    // 120s away under the FULL debounce: fetchedAt = now - 180s + 120s.
+    useUsageStore.setState({
+      anthropicLastRetryAfter: 120,
+      anthropicLastFetchedAt: Date.now() - 60_000
+    })
+
+    // A 30s predictor floor must NOT slip past the server's deadline…
+    await useUsageStore.getState().fetchUsageForProvider('anthropic', { minIntervalMs: 30_000 })
+    expect(request).not.toHaveBeenCalledWith('usageOps.fetch', expect.anything())
+
+    // …but once the deadline has passed, the fetch goes through.
+    vi.setSystemTime(Date.now() + 121_000)
+    await useUsageStore.getState().fetchUsageForProvider('anthropic', { minIntervalMs: 30_000 })
+    expect(request).toHaveBeenCalledWith('usageOps.fetch', expect.anything())
+  })
+
+  it('pulls a floored early refresh on warning/rejected rate-limit events, never on allowed', async () => {
+    request.mockImplementation(async (method: string) => {
+      if (method === 'usageOps.fetch') return { success: true, data: sampleUsage }
+      if (method === 'accountOps.listSaved') return []
+      return null
+    })
+    // Last fetch 2 minutes ago — inside the normal debounce.
+    useUsageStore.setState({ anthropicLastFetchedAt: Date.now() - 120_000 })
+
+    useUsageStore.getState().setAnthropicRateLimit({
+      status: 'allowed',
+      resetsAt: Math.floor(Date.now() / 1000) + 3_600,
+      rateLimitType: 'five_hour'
+    })
+    await vi.runOnlyPendingTimersAsync()
+    expect(request).not.toHaveBeenCalledWith('usageOps.fetch', expect.anything())
+
+    useUsageStore.getState().setAnthropicRateLimit({
+      status: 'allowed_warning',
+      resetsAt: Math.floor(Date.now() / 1000) + 3_600,
+      rateLimitType: 'five_hour'
+    })
+    await vi.runOnlyPendingTimersAsync()
+    expect(request).toHaveBeenCalledWith('usageOps.fetch', expect.anything())
+  })
+
+  it('floors event-driven refresh ATTEMPTS so a failing endpoint is not retried on every event', async () => {
+    request.mockImplementation(async (method: string) => {
+      if (method === 'usageOps.fetch') return { success: false, error: 'network down' }
+      if (method === 'accountOps.listSaved') return []
+      return null
+    })
+    const fetchCalls = (): number =>
+      request.mock.calls.filter(([m]) => m === 'usageOps.fetch').length
+
+    const reject = (): void =>
+      useUsageStore.getState().setAnthropicRateLimit({
+        status: 'rejected',
+        resetsAt: Math.floor(Date.now() / 1000) + 1_800,
+        rateLimitType: 'five_hour'
+      })
+
+    // First event attempts a fetch; it FAILS, so lastFetchedAt stays null…
+    reject()
+    await vi.runOnlyPendingTimersAsync()
+    expect(fetchCalls()).toBe(1)
+
+    // …and an immediate event storm must not retry before the 30s floor.
+    reject()
+    reject()
+    await vi.runOnlyPendingTimersAsync()
+    expect(fetchCalls()).toBe(1)
+
+    // After the floor elapses, the next event may try again.
+    vi.setSystemTime(Date.now() + 31_000)
+    reject()
+    await vi.runOnlyPendingTimersAsync()
+    expect(fetchCalls()).toBe(2)
+  })
+
+  it('does not burn the event attempt slot when the fetch floor would no-op anyway', async () => {
+    request.mockImplementation(async (method: string) => {
+      if (method === 'usageOps.fetch') return { success: true, data: sampleUsage }
+      if (method === 'accountOps.listSaved') return []
+      return null
+    })
+    const fetchCalls = (): number =>
+      request.mock.calls.filter(([m]) => m === 'usageOps.fetch').length
+    const reject = (): void =>
+      useUsageStore.getState().setAnthropicRateLimit({
+        status: 'rejected',
+        resetsAt: Math.floor(Date.now() / 1000) + 1_800,
+        rateLimitType: 'five_hour'
+      })
+
+    // An event 29s after a successful fetch: inside the fetch floor, so no
+    // request — and crucially no attempt recorded (it would be a no-op).
+    useUsageStore.setState({ anthropicLastFetchedAt: Date.now() - 29_000 })
+    reject()
+    await vi.runOnlyPendingTimersAsync()
+    expect(fetchCalls()).toBe(0)
+
+    // 2s later the fetch floor is open: the next event fetches immediately
+    // instead of waiting out an attempt slot burned by the no-op above.
+    vi.setSystemTime(Date.now() + 2_000)
+    reject()
+    await vi.runOnlyPendingTimersAsync()
+    expect(fetchCalls()).toBe(1)
+  })
+
+  it('does not burn the event attempt slot inside a pending Retry-After window', async () => {
+    request.mockImplementation(async (method: string) => {
+      if (method === 'usageOps.fetch') return { success: true, data: sampleUsage }
+      if (method === 'accountOps.listSaved') return []
+      return null
+    })
+    const fetchCalls = (): number =>
+      request.mock.calls.filter(([m]) => m === 'usageOps.fetch').length
+    const reject = (): void =>
+      useUsageStore.getState().setAnthropicRateLimit({
+        status: 'rejected',
+        resetsAt: Math.floor(Date.now() / 1000) + 1_800,
+        rateLimitType: 'five_hour'
+      })
+
+    // Retry-After pending: the fetch enforces the FULL debounce (deadline in
+    // 20s), so this event must not record an attempt on a guaranteed no-op.
+    useUsageStore.setState({
+      anthropicLastRetryAfter: 120,
+      anthropicLastFetchedAt: Date.now() - 160_000
+    })
+    reject()
+    await vi.runOnlyPendingTimersAsync()
+    expect(fetchCalls()).toBe(0)
+
+    // 25s later the server deadline has passed: the next event fetches
+    // immediately instead of waiting out a wasted attempt slot.
+    vi.setSystemTime(Date.now() + 25_000)
+    reject()
+    await vi.runOnlyPendingTimersAsync()
+    expect(fetchCalls()).toBe(1)
+  })
+
+  it('clears the anthropic rate-limit overlay on a successful switch', async () => {
+    useUsageStore.setState({
+      savedAccounts: {
+        anthropic: [
+          {
+            id: 'acc-1',
+            provider: 'anthropic',
+            email: 'a@b.com',
+            last_usage: null,
+            last_fetched_at: null,
+            status: 'ok',
+            last_error: null,
+            created_at: new Date().toISOString(),
+            plan: null
+          }
+        ],
+        openai: []
+      },
+      anthropicRateLimit: {
+        fiveHour: {
+          status: 'rejected',
+          resetsAt: Math.floor(Date.now() / 1000) + 1_800
+        },
+        updatedAt: Date.now()
+      }
+    } as Partial<ReturnType<typeof useUsageStore.getState>>)
+    request.mockImplementation(async (method: string) => {
+      if (method === 'accountOps.switchAccount') return { success: true }
+      if (method === 'accountOps.getClaudeEmail') return 'a@b.com'
+      if (method === 'accountOps.listSaved') return []
+      if (method === 'usageOps.fetch') return { success: true, data: sampleUsage }
+      return null
+    })
+
+    // Give the outgoing account a pending Retry-After with its back-dated
+    // debounce timestamp — per-account state that must not gate the target.
+    useUsageStore.setState({
+      anthropicLastRetryAfter: 120,
+      anthropicLastFetchedAt: Date.now() - 60_000,
+      anthropicEarlyRefreshAttemptAt: Date.now()
+    })
+
+    await useUsageStore.getState().switchAccount('acc-1')
+
+    expect(useUsageStore.getState().anthropicRateLimit).toBeNull()
+    // The pre-switch usage object no longer describes the live account —
+    // it must not pass for fetch data (predictor calibration baseline).
+    expect(useUsageStore.getState().anthropicUsageFromFetch).toBe(false)
+    // The outgoing account's 429 deadline, debounce timestamp, and attempt
+    // slot must not delay sampling the account we just switched to.
+    expect(useUsageStore.getState().anthropicLastRetryAfter).toBeNull()
+    expect(useUsageStore.getState().anthropicEarlyRefreshAttemptAt).toBeNull()
+  })
+
+  it('discards a usage fetch that resolves after an account switch happened mid-flight', async () => {
+    const staleUsage: UsageData = {
+      five_hour: { utilization: 99, resets_at: '2026-05-14T12:00:00.000Z' },
+      seven_day: { utilization: 90, resets_at: '2026-05-15T12:00:00.000Z' }
+    }
+    const seededUsage: UsageData = {
+      five_hour: { utilization: 5, resets_at: '2026-05-14T12:00:00.000Z' },
+      seven_day: { utilization: 3, resets_at: '2026-05-15T12:00:00.000Z' }
+    }
+    const freshUsage: UsageData = {
+      five_hour: { utilization: 7, resets_at: '2026-05-14T12:00:00.000Z' },
+      seven_day: { utilization: 4, resets_at: '2026-05-15T12:00:00.000Z' }
+    }
+    let fetchCount = 0
+    request.mockImplementation(async (method: string) => {
+      if (method === 'usageOps.fetch') {
+        fetchCount += 1
+        if (fetchCount === 1) {
+          // A switch (and its seed) completes while this request is in flight.
+          useUsageStore.setState({
+            anthropicAccountSwitchedAt: Date.now(),
+            anthropicUsage: seededUsage,
+            anthropicUsageFromFetch: false
+          })
+          return { success: true, data: staleUsage }
+        }
+        return { success: true, data: freshUsage }
+      }
+      if (method === 'accountOps.listSaved') return []
+      return null
+    })
+
+    await useUsageStore.getState().fetchUsageForProvider('anthropic')
+    await vi.runOnlyPendingTimersAsync()
+
+    // The stale response must not have been applied — and because the
+    // switch-time forceRefresh no-oped on our loading flag, discarding it
+    // hands the slot to a follow-up fetch of the NEW account.
+    expect(fetchCount).toBe(2)
+    expect(useUsageStore.getState().anthropicUsage).toBe(freshUsage)
+    expect(useUsageStore.getState().anthropicUsageFromFetch).toBe(true)
+    expect(useUsageStore.getState().anthropicIsLoading).toBe(false)
+  })
+
+  it('treats an external identity change like a switch, unless an internal switch just fired', () => {
+    useUsageStore.setState({
+      anthropicRateLimit: {
+        fiveHour: { status: 'rejected', resetsAt: Math.floor(Date.now() / 1000) + 1_800 },
+        updatedAt: Date.now()
+      },
+      anthropicUsageFromFetch: true,
+      anthropicLastRetryAfter: 120,
+      anthropicLastFetchedAt: Date.now() - 60_000,
+      anthropicAccountSwitchedAt: null
+    } as Partial<ReturnType<typeof useUsageStore.getState>>)
+
+    useUsageStore.getState().noteExternalAnthropicAccountSwitch()
+
+    const state = useUsageStore.getState()
+    expect(state.anthropicRateLimit).toBeNull()
+    expect(state.anthropicUsageFromFetch).toBe(false)
+    expect(state.anthropicLastRetryAfter).toBeNull()
+    expect(state.anthropicLastFetchedAt).toBeNull()
+    expect(state.anthropicAccountSwitchedAt).toBe(Date.now())
+
+    // A fresh INTERNAL switch's own email refresh must not re-invalidate.
+    useUsageStore.setState({
+      anthropicUsageFromFetch: true,
+      anthropicLastFetchedAt: Date.now()
+    })
+    useUsageStore.getState().noteExternalAnthropicAccountSwitch()
+    expect(useUsageStore.getState().anthropicUsageFromFetch).toBe(true)
+    expect(useUsageStore.getState().anthropicLastFetchedAt).not.toBeNull()
   })
 
   it('merges Anthropic rate-limit windows and drops stale windows', () => {

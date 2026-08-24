@@ -30,6 +30,24 @@ interface UsageState {
   anthropicLastError: string | null
   anthropicLastRetryAfter: number | null
   anthropicRateLimit: AnthropicRateLimitState | null
+  /** True when the CURRENT anthropicUsage object was produced by a live
+   * usage fetch of the active account; false when it was seeded from a saved
+   * account's cache (post-switch). A property of the object itself — not of
+   * event ordering — so the burn-rate predictor can decide "anchor and
+   * calibrate" vs "re-anchor only" without inferring history from
+   * timestamps (which retryAfter back-dating corrupts) or counters (which
+   * fetches outside the predictor's observation window desynchronize). */
+  anthropicUsageFromFetch: boolean
+  /** Epoch ms of the last successful anthropic account switch. Sessions
+   * created before this hold the PREVIOUS account's credentials — their
+   * rate-limit events must not be attributed to the current account. */
+  anthropicAccountSwitchedAt: number | null
+  /** Last time ANY early-refresh trigger (rate-limit event or the burn-rate
+   * predictor) attempted a fetch. One shared timestamp floors all early
+   * paths together: during a failure storm lastFetchedAt never advances,
+   * and per-path floors would let the paths pair up requests under the
+   * advertised 30s endpoint floor. */
+  anthropicEarlyRefreshAttemptAt: number | null
 
   openaiUsage: OpenAIUsageData | null
   openaiLastFetchedAt: number | null
@@ -52,16 +70,27 @@ interface UsageState {
    * the provider was already running (nothing was refreshed by this call). */
   refreshAllForProvider: (
     provider: UsageProvider,
-    excludeAccountIds?: string[]
+    excludeAccountIds?: string[],
+    opts?: { maxAgeMs?: number }
   ) => Promise<RefreshAllResultItem[] | null>
   refreshSavedAccount: (id: string, opts?: { userInitiated?: boolean }) => Promise<void>
   removeSavedAccount: (id: string) => Promise<void>
   /** Resolves true when the switch op succeeded (failures also toast). */
   switchAccount: (id: string) => Promise<boolean>
-  fetchUsageForProvider: (provider: UsageProvider) => Promise<void>
+  /** opts.minIntervalMs overrides the 3-minute debounce floor (still never
+   * fetching more often than the given interval) — used by the burn-rate
+   * predictor and rate-limit events for targeted early refreshes. */
+  fetchUsageForProvider: (
+    provider: UsageProvider,
+    opts?: { minIntervalMs?: number }
+  ) => Promise<void>
   forceRefreshProvider: (provider: UsageProvider) => Promise<void>
   setActiveProvider: (provider: UsageProvider) => void
   setAnthropicRateLimit: (info: AnthropicRateLimitInfo) => void
+  /** Called when the active Anthropic identity changed hands OUTSIDE a
+   * Hive-initiated switch (external `claude login` observed via an email
+   * change). Applies the same invalidation an internal switch does. */
+  noteExternalAnthropicAccountSwitch: () => void
   fetchUsage: () => Promise<void>
 }
 
@@ -69,6 +98,11 @@ interface UsageState {
 // this debounce puts under the scheduled refresh cadence.
 export const USAGE_FETCH_DEBOUNCE_MS = 180_000 // 3 minutes
 const DEBOUNCE_MS = USAGE_FETCH_DEBOUNCE_MS
+
+// Floor for predictor/rate-limit-event driven early refreshes: they may
+// bypass the 3-minute debounce, but never hit the usage endpoint more often
+// than this.
+export const EARLY_USAGE_REFRESH_FLOOR_MS = 30_000
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
@@ -89,6 +123,9 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
   anthropicLastError: null,
   anthropicLastRetryAfter: null,
   anthropicRateLimit: null,
+  anthropicUsageFromFetch: false,
+  anthropicAccountSwitchedAt: null,
+  anthropicEarlyRefreshAttemptAt: null,
 
   openaiUsage: null,
   openaiLastFetchedAt: null,
@@ -139,7 +176,11 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
     }
   },
 
-  refreshAllForProvider: async (provider: UsageProvider, excludeAccountIds?: string[]) => {
+  refreshAllForProvider: async (
+    provider: UsageProvider,
+    excludeAccountIds?: string[],
+    opts?: { maxAgeMs?: number }
+  ) => {
     const state = get()
     if (state.refreshingProviders[provider]) return null
 
@@ -153,7 +194,11 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
     }))
 
     try {
-      const results = await usageApi.refreshAllForProvider(provider, excludeAccountIds)
+      const results = await usageApi.refreshAllForProvider(
+        provider,
+        excludeAccountIds,
+        opts?.maxAgeMs
+      )
       await get().loadSavedAccounts(provider)
       return results
     } finally {
@@ -179,12 +224,25 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
     set((current) => ({
       refreshingAccountIds: new Set([...current.refreshingAccountIds, id])
     }))
+    // Guards the live-usage mirror below: a switch completing while this
+    // request is in flight means the response may describe an account that
+    // is no longer active — and the active-email read alone can miss that
+    // (the post-switch email refresh is itself async).
+    const switchEpoch = get().anthropicAccountSwitchedAt
     try {
       const result = await usageApi.fetchForAccount(id, userInitiated)
-      if (result.success && result.data && provider && account) {
+      const switchedMidFlight =
+        provider === 'anthropic' && get().anthropicAccountSwitchedAt !== switchEpoch
+      if (result.success && result.data && provider && account && !switchedMidFlight) {
         // The bottom usage bar reads the provider's live usage, not the saved
         // account row — when the refreshed account is the active one, mirror
-        // the fresh data so both views agree.
+        // the fresh data so both views agree. Re-read the LIVE identity
+        // first: the cached email can lag an external `claude login`
+        // performed outside Hive, which no switch epoch covers.
+        await useAccountStore
+          .getState()
+          .fetchEmail(provider)
+          .catch(() => {})
         const accountState = useAccountStore.getState()
         const activeEmail =
           provider === 'anthropic' ? accountState.anthropicEmail : accountState.openaiEmail
@@ -194,7 +252,8 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
               anthropicUsage: result.data as UsageData,
               anthropicLastError: null,
               anthropicLastRetryAfter: null,
-              anthropicLastFetchedAt: Date.now()
+              anthropicLastFetchedAt: Date.now(),
+              anthropicUsageFromFetch: true
             })
           } else {
             set({
@@ -280,6 +339,30 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
         // SUCCESSFUL switch can't reach the catch below and mis-toast a
         // 'Switch failed'.
         toast.success(`Switched to ${account?.email ?? 'account'}`)
+        if (provider === 'anthropic') {
+          // The rate-limit overlay (and its rejected=100% signal) belongs to
+          // the account we just left — clearing it stops an immediate
+          // re-trigger against the fresh account. The switch timestamp lets
+          // the event listener keep ignoring late events from sessions that
+          // still hold the previous account's credentials. And the current
+          // usage object no longer describes the live account, so it must
+          // not pass for fetch data: a switch without a seed (manual,
+          // scheduled, or a target with no cached usage) would otherwise let
+          // the predictor anchor the OLD account's percent as a calibration
+          // baseline for the new account's first fetch.
+          // All fetch gates are per-ACCOUNT state: the old account's 429
+          // Retry-After (and its back-dated debounce timestamp) or a burned
+          // event-attempt slot must not delay sampling the account we just
+          // switched to.
+          set({
+            anthropicRateLimit: null,
+            anthropicAccountSwitchedAt: Date.now(),
+            anthropicUsageFromFetch: false,
+            anthropicLastRetryAfter: null,
+            anthropicLastFetchedAt: null,
+            anthropicEarlyRefreshAttemptAt: null
+          })
+        }
         if (provider) {
           await useAccountStore
             .getState()
@@ -309,23 +392,43 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
     return false
   },
 
-  fetchUsageForProvider: async (provider: UsageProvider) => {
+  fetchUsageForProvider: async (provider: UsageProvider, opts?: { minIntervalMs?: number }) => {
     const state = get()
+    const minIntervalMs = opts?.minIntervalMs ?? DEBOUNCE_MS
 
     if (provider === 'anthropic') {
       if (state.anthropicIsLoading) return
-      if (state.anthropicLastFetchedAt && Date.now() - state.anthropicLastFetchedAt < DEBOUNCE_MS)
+      // A pending Retry-After deadline was encoded against the FULL debounce
+      // (retryAfterFetchedAt back-dates lastFetchedAt so that
+      // fetchedAt + DEBOUNCE_MS = deadline) — a shorter predictor/rate-limit
+      // floor must not cut it open, or we hammer an endpoint that just told
+      // us to wait.
+      const effectiveMinMs = state.anthropicLastRetryAfter !== null ? DEBOUNCE_MS : minIntervalMs
+      if (
+        state.anthropicLastFetchedAt &&
+        Date.now() - state.anthropicLastFetchedAt < effectiveMinMs
+      )
         return
 
       set({ anthropicIsLoading: true, anthropicLastError: null })
       let succeeded = false
+      let discardedStale = false
+      // Guard against a switch completing while this request is in flight:
+      // the response then describes the account we just LEFT, and applying
+      // it would restore the old account's numbers as live fetch data.
+      const switchEpoch = get().anthropicAccountSwitchedAt
       try {
         const result = await usageApi.fetch()
+        if (get().anthropicAccountSwitchedAt !== switchEpoch) {
+          discardedStale = true
+          return
+        }
         if (result.success) {
           set({
             anthropicUsage: result.data ?? null,
             anthropicLastError: null,
-            anthropicLastRetryAfter: null
+            anthropicLastRetryAfter: null,
+            anthropicUsageFromFetch: true
           })
           succeeded = true
           get()
@@ -346,10 +449,20 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
           anthropicIsLoading: false,
           ...(succeeded ? { anthropicLastFetchedAt: Date.now() } : {})
         })
+        // The switch's own forceRefreshProvider no-oped on our loading flag,
+        // and the discarded response applied nothing — refetch the NEW
+        // account now that the slot is free, or seeded/blank usage would
+        // linger until some other trigger fires.
+        if (discardedStale) {
+          get()
+            .fetchUsageForProvider('anthropic', { minIntervalMs: EARLY_USAGE_REFRESH_FLOOR_MS })
+            .catch(() => {})
+        }
       }
     } else {
       if (state.openaiIsLoading) return
-      if (state.openaiLastFetchedAt && Date.now() - state.openaiLastFetchedAt < DEBOUNCE_MS) return
+      if (state.openaiLastFetchedAt && Date.now() - state.openaiLastFetchedAt < minIntervalMs)
+        return
 
       set({ openaiIsLoading: true, openaiLastError: null })
       let succeeded = false
@@ -393,13 +506,23 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
 
       set({ anthropicIsLoading: true, anthropicLastError: null })
       let succeeded = false
+      let discardedStale = false
+      // Guard against a switch completing while this request is in flight:
+      // the response then describes the account we just LEFT, and applying
+      // it would restore the old account's numbers as live fetch data.
+      const switchEpoch = get().anthropicAccountSwitchedAt
       try {
         const result = await usageApi.fetch()
+        if (get().anthropicAccountSwitchedAt !== switchEpoch) {
+          discardedStale = true
+          return
+        }
         if (result.success) {
           set({
             anthropicUsage: result.data ?? null,
             anthropicLastError: null,
-            anthropicLastRetryAfter: null
+            anthropicLastRetryAfter: null,
+            anthropicUsageFromFetch: true
           })
           succeeded = true
           get()
@@ -425,6 +548,13 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
           anthropicIsLoading: false,
           ...(succeeded ? { anthropicLastFetchedAt: Date.now() } : {})
         })
+        // See fetchUsageForProvider: a discarded stale response must hand
+        // its loading slot to a fresh fetch of the new account.
+        if (discardedStale) {
+          get()
+            .fetchUsageForProvider('anthropic', { minIntervalMs: EARLY_USAGE_REFRESH_FLOOR_MS })
+            .catch(() => {})
+        }
       }
     } else {
       if (state.openaiIsLoading) return
@@ -501,9 +631,59 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
       }
 
       return {
-        anthropicRateLimit: next.fiveHour || next.sevenDay ? next : null,
-        anthropicLastFetchedAt: now
+        anthropicRateLimit: next.fiveHour || next.sevenDay ? next : null
       }
+    })
+    // A warning/rejected event means the polled snapshot is behind reality —
+    // pull a fresh one now (floored, so an event storm can't hammer the
+    // endpoint) instead of extending the debounce and flying blind. The
+    // fresh percent is what lets the auto-switcher fire before/at exhaustion.
+    // The floor gates on ATTEMPT time: failed fetches never advance
+    // lastFetchedAt, and an event storm against a failing endpoint would
+    // otherwise retry on every single event.
+    if (info.status !== 'allowed') {
+      const nowMs = Date.now()
+      const {
+        anthropicEarlyRefreshAttemptAt: lastAttempt,
+        anthropicLastFetchedAt,
+        anthropicLastRetryAfter,
+        anthropicIsLoading
+      } = get()
+      // Only record an attempt when the fetch itself would actually run —
+      // mirroring ALL of its gates (the Retry-After path enforces the full
+      // debounce, and an in-flight fetch no-ops). Burning the attempt slot
+      // on a guaranteed no-op would defer the next real sample by up to
+      // another full floor while usage is climbing.
+      const fetchFloorMs =
+        anthropicLastRetryAfter !== null ? DEBOUNCE_MS : EARLY_USAGE_REFRESH_FLOOR_MS
+      const fetchGateOpen =
+        !anthropicIsLoading &&
+        (anthropicLastFetchedAt === null || nowMs - anthropicLastFetchedAt >= fetchFloorMs)
+      if (
+        fetchGateOpen &&
+        (lastAttempt === null || nowMs - lastAttempt >= EARLY_USAGE_REFRESH_FLOOR_MS)
+      ) {
+        set({ anthropicEarlyRefreshAttemptAt: nowMs })
+        get()
+          .fetchUsageForProvider('anthropic', { minIntervalMs: EARLY_USAGE_REFRESH_FLOOR_MS })
+          .catch(() => {})
+      }
+    }
+  },
+
+  noteExternalAnthropicAccountSwitch: () => {
+    // An internal switch just marked the epoch and its own email refresh is
+    // what surfaced the change — don't re-mark, or the post-switch fetch's
+    // provenance (and its freshly cleared gates) would be wiped again.
+    const lastSwitch = get().anthropicAccountSwitchedAt
+    if (lastSwitch !== null && Date.now() - lastSwitch < 5_000) return
+    set({
+      anthropicRateLimit: null,
+      anthropicAccountSwitchedAt: Date.now(),
+      anthropicUsageFromFetch: false,
+      anthropicLastRetryAfter: null,
+      anthropicLastFetchedAt: null,
+      anthropicEarlyRefreshAttemptAt: null
     })
   },
 

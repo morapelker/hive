@@ -50,6 +50,10 @@ export interface AnthropicRateLimitInfo {
   rateLimitType: AnthropicRateLimitType
   isUsingOverage?: boolean
   overageStatus?: string
+  /** Epoch ms at which the emitting SDK query launched (= when it captured
+   * its credentials). Stamped by the main process; used to attribute the
+   * event to the account that was live at query start. */
+  queryStartedAt?: number
 }
 
 export interface AnthropicRateLimitWindow {
@@ -137,4 +141,22 @@ export interface LoginStatusDTO {
   state: LoginState
   email: string | null
   error: string | null
+}
+
+/**
+ * Cumulative on-disk token totals across recent local Claude sessions
+ * (main transcripts + subagent files), parsed incrementally ccusage-style.
+ * Used by the renderer's burn-rate predictor to estimate utilization between
+ * usage-endpoint polls — absolute numbers are only meaningful as deltas
+ * against earlier tallies from the same app run.
+ */
+export interface ClaudeTokenTally {
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  /** Number of sessions that contributed at least one transcript file. */
+  sessionCount: number
+  /** Server-clock epoch ms at which the tally was computed. */
+  sampledAt: number
 }

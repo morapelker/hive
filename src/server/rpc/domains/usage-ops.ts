@@ -1,6 +1,7 @@
 import { Effect } from 'effect'
 import { z } from 'zod'
 import type {
+  ClaudeTokenTally,
   FetchForAccountResult,
   OpenAIUsageResult,
   RefreshAllResultItem,
@@ -11,6 +12,7 @@ import {
   fetchForAccountOp,
   fetchOpenAIUsageOp,
   fetchUsageOp,
+  getClaudeTokenTallyOp,
   refreshAllForProviderOp
 } from '../../../main/services/usage-ops'
 import type { RpcHandler } from '../router'
@@ -24,8 +26,10 @@ export interface UsageOpsRpcService {
   ) => Effect.Effect<FetchForAccountResult, unknown, never>
   readonly refreshAllForProvider: (
     provider: UsageProvider,
-    excludeAccountIds?: string[]
+    excludeAccountIds?: string[],
+    maxAgeMs?: number
   ) => Effect.Effect<RefreshAllResultItem[], unknown, never>
+  readonly getClaudeTokenTally: () => Effect.Effect<ClaudeTokenTally, unknown, never>
 }
 
 const emptyParamsSchema = z.union([z.object({}).strict(), z.undefined(), z.null()])
@@ -35,7 +39,8 @@ const fetchForAccountParamsSchema = z
 const refreshAllForProviderParamsSchema = z
   .object({
     provider: z.enum(['anthropic', 'openai']),
-    excludeAccountIds: z.array(z.string()).optional()
+    excludeAccountIds: z.array(z.string()).optional(),
+    maxAgeMs: z.number().int().positive().optional()
   })
   .strict()
 
@@ -55,9 +60,14 @@ export const makeLiveUsageOpsRpcService = (): UsageOpsRpcService => ({
       try: () => fetchForAccountOp(accountId, userInitiated),
       catch: (cause) => cause
     }),
-  refreshAllForProvider: (provider, excludeAccountIds) =>
+  refreshAllForProvider: (provider, excludeAccountIds, maxAgeMs) =>
     Effect.tryPromise({
-      try: () => refreshAllForProviderOp(provider, excludeAccountIds),
+      try: () => refreshAllForProviderOp(provider, excludeAccountIds, maxAgeMs),
+      catch: (cause) => cause
+    }),
+  getClaudeTokenTally: () =>
+    Effect.tryPromise({
+      try: () => getClaudeTokenTallyOp(),
       catch: (cause) => cause
     })
 })
@@ -103,11 +113,22 @@ export const makeUsageOpsRpcHandlers = (
       'usageOps.refreshAllForProvider',
       (params) =>
         Effect.gen(function* () {
-          const { provider, excludeAccountIds } = yield* Effect.try({
+          const { provider, excludeAccountIds, maxAgeMs } = yield* Effect.try({
             try: () => refreshAllForProviderParamsSchema.parse(params),
             catch: (cause) => cause
           })
-          return yield* service.refreshAllForProvider(provider, excludeAccountIds)
+          return yield* service.refreshAllForProvider(provider, excludeAccountIds, maxAgeMs)
+        })
+    ],
+    [
+      'usageOps.getClaudeTokenTally',
+      (params) =>
+        Effect.gen(function* () {
+          yield* Effect.try({
+            try: () => emptyParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          return yield* service.getClaudeTokenTally()
         })
     ]
   ])
