@@ -165,20 +165,21 @@ async function maintainBurnRatePredictor(): Promise<void> {
   const now = Date.now()
   recordTallySample(predictor, { at: now, weighted })
 
-  // Fresh usage landed since the last anchor (a real fetch advanced
-  // lastFetchedAt, or a post-switch seed replaced the usage object):
-  // re-baseline the estimate — and calibrate percent-per-token when both
-  // this and the previous anchor came from real fetches.
+  // Fresh usage DATA landed since the last anchor (a successful fetch or a
+  // post-switch seed replaced the usage object): re-baseline the estimate —
+  // and calibrate percent-per-token when both this and the previous anchor
+  // came with an advanced fetch timestamp (i.e. real fetches). A
+  // lastFetchedAt change WITHOUT new usage data (a failed fetch's retryAfter
+  // back-dates the debounce timestamp) must not anchor: the percent is stale
+  // while the tally is current, so anchoring would silently absorb the burn
+  // since the last real fetch.
   const usageStore = useUsageStore.getState()
-  if (
-    usageStore.anthropicUsage !== lastAnchoredUsage ||
-    usageStore.anthropicLastFetchedAt !== lastAnchoredFetchedAt
-  ) {
+  if (usageStore.anthropicUsage !== lastAnchoredUsage) {
     const fromFetch = usageStore.anthropicLastFetchedAt !== lastAnchoredFetchedAt
     recordAnchor(predictor, { percent, weighted, at: now }, { fromFetch })
     lastAnchoredUsage = usageStore.anthropicUsage
-    lastAnchoredFetchedAt = usageStore.anthropicLastFetchedAt
   }
+  lastAnchoredFetchedAt = usageStore.anthropicLastFetchedAt
 
   const nextAt = nextUsageRefreshAt('anthropic')
   if (nextAt === null) return
@@ -216,6 +217,10 @@ function prewarmAutoSwitchCandidates(): void {
     if (percent === null || percent < auto.thresholdPercent - NEAR_THRESHOLD_MARGIN_PERCENT) {
       continue
     }
+    // At/above the threshold the switch is due NOW: checkSchedules' own
+    // trigger-time sweep owns the provider, and a pre-warm started in the
+    // same tick would mark it refreshing and make that sweep skip its round.
+    if (percent >= auto.thresholdPercent) continue
     const usageStore = useUsageStore.getState()
     if (usageStore.refreshingProviders[provider]) continue
     if (!usageStore.savedAccountsLoaded[provider]) continue
@@ -263,11 +268,15 @@ export function useAccountScheduleRunner(): void {
         }
       }
       void maintainBurnRatePredictor()
-      prewarmAutoSwitchCandidates()
+      // A due switch's trigger-time sweep starts synchronously inside
+      // checkSchedules — running it BEFORE the pre-warm lets the pre-warm's
+      // refreshing-guard yield to it (never the other way around, which
+      // would starve the urgent switch round after round).
       useAccountScheduleStore
         .getState()
         .checkSchedules()
         .catch(() => {})
+      prewarmAutoSwitchCandidates()
     }
 
     tick()

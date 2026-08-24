@@ -233,6 +233,40 @@ describe('useAccountScheduleRunner usage refresh cadence', () => {
     expect(fetchUsageForProvider).toHaveBeenCalledWith('anthropic', { minIntervalMs: 30_000 })
   })
 
+  it('ignores a lastFetchedAt bump without new usage data (retryAfter back-dating) instead of anchoring stale percent', async () => {
+    useAccountScheduleStore.setState({
+      autoSwitch: {
+        anthropic: { provider: 'anthropic', thresholdPercent: 90, createdAt: Date.now() }
+      }
+    })
+    useUsageStore.setState({ anthropicUsage: makeUsage(80, 40) })
+
+    setTallyTokens(10_000_000)
+    renderHook(() => useAccountScheduleRunner())
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+
+    // Real fetch lands: calibrates 5 points per 2M tokens at 85% / 12M.
+    setTallyTokens(12_000_000)
+    useUsageStore.setState({
+      anthropicUsage: makeUsage(85, 40),
+      anthropicLastFetchedAt: Date.now() + 30_000
+    })
+    await advance(30_000)
+    expect(fetchUsageForProvider).not.toHaveBeenCalled()
+
+    // A FAILED fetch with retryAfter back-dates anthropicLastFetchedAt
+    // without touching anthropicUsage. Were this treated as a fetch anchor,
+    // the predictor would re-baseline 85% against the newer 13M tally and
+    // lose both the burn since the real fetch and its slope window.
+    setTallyTokens(13_000_000)
+    useUsageStore.setState({ anthropicLastFetchedAt: Date.now() + 30_000 - 40_000 })
+    await advance(30_000)
+    expect(fetchUsageForProvider).toHaveBeenCalledTimes(1)
+    expect(fetchUsageForProvider).toHaveBeenCalledWith('anthropic', { minIntervalMs: 30_000 })
+  })
+
   it('does not early-refresh while the burn rate stays flat', async () => {
     useAccountScheduleStore.setState({
       autoSwitch: {
@@ -298,6 +332,31 @@ describe('useAccountScheduleRunner usage refresh cadence', () => {
     expect(refreshAllForProvider).toHaveBeenCalledWith('anthropic', ['acc-1'], {
       maxAgeMs: 150_000
     })
+  })
+
+  it('does not pre-warm at/above the threshold — the due switch owns the sweep', async () => {
+    const refreshAllForProvider = vi.fn().mockResolvedValue([])
+    useUsageStore.setState({
+      anthropicUsage: makeUsage(92, 40),
+      refreshAllForProvider,
+      savedAccountsLoaded: { anthropic: true, openai: false },
+      savedAccounts: {
+        anthropic: [
+          savedAccount('acc-1', 'current@x.com', 92),
+          savedAccount('acc-2', 'other@x.com', 10)
+        ],
+        openai: []
+      }
+    })
+    useAccountScheduleStore.setState({
+      autoSwitch: {
+        anthropic: { provider: 'anthropic', thresholdPercent: 90, createdAt: Date.now() }
+      }
+    })
+    renderHook(() => useAccountScheduleRunner())
+
+    await advance(60_000)
+    expect(refreshAllForProvider).not.toHaveBeenCalled()
   })
 
   it('does not pre-warm while usage is still below the near-threshold margin', async () => {

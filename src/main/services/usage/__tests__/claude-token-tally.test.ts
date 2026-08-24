@@ -173,6 +173,28 @@ describe('getClaudeTokenTally', () => {
     expect((await getClaudeTokenTally({ db })).inputTokens).toBe(0)
   })
 
+  it('does not let ineligible sessions consume the tracking cap', async () => {
+    const worktreePath = join(root, 'wt')
+    mkdirSync(worktreePath, { recursive: true })
+    writeFileSync(transcriptPath(worktreePath, 'claude-sess-1'), entry('m1', 100, 10))
+
+    // 60 codex rows ahead of the one local Claude session: a cap applied
+    // before filtering would truncate the list and drop the Claude session.
+    const sessions: SessionRowSpec[] = [
+      ...Array.from({ length: 60 }, (_, i) => ({
+        id: `hive-codex-${i}`,
+        agentSdk: 'codex',
+        claudeSessionId: null
+      })),
+      { id: 'hive-1', agentSdk: 'claude-code-cli', claudeSessionId: 'claude-sess-1' }
+    ]
+    const db = makeDb(worktreePath, sessions)
+
+    const tally = await getClaudeTokenTally({ db })
+    expect(tally.inputTokens).toBe(100)
+    expect(tally.sessionCount).toBe(1)
+  })
+
   it('single-flights concurrent calls', async () => {
     const worktreePath = join(root, 'wt')
     mkdirSync(worktreePath, { recursive: true })

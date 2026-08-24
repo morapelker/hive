@@ -550,10 +550,45 @@ export interface RefreshAllOptions {
   maxAgeMs?: number
 }
 
+/**
+ * True when any window of the cached usage has a reset time that already
+ * elapsed. Such a cache no longer reflects reality no matter how recently it
+ * was fetched (the account may have gone from exhausted to wide open), and
+ * downstream consumers (the auto-switch candidate filter) discard reset-past
+ * windows — a fresh-skip here would leave the account unelectable.
+ */
+function hasElapsedResetWindow(usage: UsageData | OpenAIUsageData | null): boolean {
+  if (!usage) return false
+  const now = Date.now()
+
+  const anthropic = usage as Partial<UsageData>
+  const anthropicWindows = [
+    anthropic.five_hour,
+    anthropic.seven_day,
+    ...(anthropic.scoped ?? [])
+  ]
+  for (const window of anthropicWindows) {
+    if (!window) continue
+    const resetsAt = (window as { resets_at?: string | null }).resets_at
+    if (typeof resetsAt !== 'string') continue
+    const resetMs = Date.parse(resetsAt)
+    if (!Number.isNaN(resetMs) && resetMs < now) return true
+  }
+
+  const openai = usage as Partial<OpenAIUsageData>
+  const openaiWindows = [openai.rate_limit?.primary_window, openai.rate_limit?.secondary_window]
+  for (const window of openaiWindows) {
+    if (window && typeof window.reset_at === 'number' && window.reset_at * 1000 < now) return true
+  }
+
+  return false
+}
+
 function isFreshOkAccount(account: SavedAccountDTO, maxAgeMs: number): boolean {
   if (account.status !== 'ok' || !account.last_fetched_at) return false
   const fetchedAtMs = Date.parse(account.last_fetched_at)
-  return !Number.isNaN(fetchedAtMs) && Date.now() - fetchedAtMs <= maxAgeMs
+  if (Number.isNaN(fetchedAtMs) || Date.now() - fetchedAtMs > maxAgeMs) return false
+  return !hasElapsedResetWindow(account.last_usage)
 }
 
 export async function refreshAllForProvider(

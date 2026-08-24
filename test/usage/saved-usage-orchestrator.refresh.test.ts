@@ -504,11 +504,16 @@ describe('refreshAllForProvider', () => {
       claudeAccount({ num: '1', email: 'a@example.com' }),
       claudeAccount({ num: '2', email: 'b@example.com' })
     ])
-    // row-a was fetched seconds ago (pre-warmed); row-b's cache is old.
+    // row-a was fetched seconds ago (pre-warmed) and its windows have not
+    // reset yet; row-b's cache is old.
     const rowA = savedRow({
       id: 'row-a',
       email: 'a@example.com',
-      last_fetched_at: new Date(Date.now() - 5_000).toISOString()
+      last_fetched_at: new Date(Date.now() - 5_000).toISOString(),
+      last_usage_json: JSON.stringify({
+        five_hour: { utilization: 10, resets_at: new Date(Date.now() + 3_600_000).toISOString() },
+        seven_day: { utilization: 20, resets_at: new Date(Date.now() + 86_400_000).toISOString() }
+      })
     })
     const rowB = savedRow({
       id: 'row-b',
@@ -534,6 +539,33 @@ describe('refreshAllForProvider', () => {
     // Only the stale row hit the network.
     expect(mocks.fetchClaudeUsage).toHaveBeenCalledTimes(1)
     expect(mocks.fetchClaudeUsage.mock.calls[0][1]).toMatchObject({ accountId: 'row-b' })
+  })
+
+  it('does not fresh-skip a recently-fetched account whose cached usage window has already reset', async () => {
+    mocks.listClaudeAccounts.mockResolvedValue([claudeAccount({ num: '1', email: 'a@example.com' })])
+    // Fetched 5s ago, but the cached 5h window's reset elapsed since — the
+    // account may have gone from exhausted to wide open, and the candidate
+    // filter discards reset-past windows, so the cache MUST be refetched.
+    const rowA = savedRow({
+      id: 'row-a',
+      email: 'a@example.com',
+      last_fetched_at: new Date(Date.now() - 5_000).toISOString(),
+      last_usage_json: JSON.stringify({
+        five_hour: { utilization: 95, resets_at: new Date(Date.now() - 1_000).toISOString() },
+        seven_day: { utilization: 20, resets_at: new Date(Date.now() + 3_600_000).toISOString() }
+      })
+    })
+    mocks.db.getSavedUsageAccountsByProvider.mockReturnValue([rowA])
+    mocks.db.getSavedUsageAccountById.mockReturnValue(rowA)
+    mocks.readClaudeEffectiveBlob.mockResolvedValue({
+      raw: '{}',
+      parsed: { accessToken: 'access', refreshToken: 'refresh', expiresAt: Date.now() + 3_600_000 }
+    })
+    mocks.fetchClaudeUsage.mockResolvedValue({ success: true, data: usageData() })
+
+    await refreshAllForProvider('anthropic', undefined, { maxAgeMs: 60_000 })
+
+    expect(mocks.fetchClaudeUsage).toHaveBeenCalledTimes(1)
   })
 
   it('does not fresh-skip non-ok accounts even when recently fetched', async () => {

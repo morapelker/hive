@@ -1,5 +1,6 @@
 import { getDatabase } from '../../db'
 import type { DatabaseService } from '../../db/database'
+import type { Session } from '../../db/types'
 import { createLogger } from '../logger'
 import { resolveClaudeFiles } from './session-usage-service'
 import { parseClaudeSessionIncrement, type ClaudeSessionState } from './claude-usage-parser'
@@ -44,10 +45,15 @@ async function computeTally(deps: ClaudeTokenTallyDeps): Promise<ClaudeTokenTall
   const db = deps.db ?? getDatabase()
   const since = new Date(Date.now() - ACTIVE_SESSION_WINDOW_MS).toISOString()
 
-  const sessionIds: string[] = []
+  // Filter BEFORE capping: the recent list mixes in Codex and remote-launch
+  // sessions, and letting them consume cap slots could push out the local
+  // Claude sessions whose burn the predictor needs to see.
+  const sessions: Session[] = []
   for (const id of db.listRecentUsageSessionIds(since)) {
-    if (sessionIds.length >= MAX_TRACKED_SESSIONS) break
-    sessionIds.push(id)
+    if (sessions.length >= MAX_TRACKED_SESSIONS) break
+    const session = db.getSession(id)
+    if (!session || !isClaudeSdk(session.agent_sdk) || session.remote_launch) continue
+    sessions.push(session)
   }
 
   const totals: ClaudeTokenTally = {
@@ -60,9 +66,8 @@ async function computeTally(deps: ClaudeTokenTallyDeps): Promise<ClaudeTokenTall
   }
 
   const seen = new Set<string>()
-  for (const sessionId of sessionIds) {
-    const session = db.getSession(sessionId)
-    if (!session || !isClaudeSdk(session.agent_sdk) || session.remote_launch) continue
+  for (const session of sessions) {
+    const sessionId = session.id
 
     let files: string[]
     try {
