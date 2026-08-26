@@ -10,6 +10,7 @@ import {
 } from '@/stores'
 import { useScriptStore } from '@/stores/useScriptStore'
 import { useRecentStore } from '@/stores/useRecentStore'
+import { useSidebarHoverHighlight } from '@/hooks'
 import { useGitStore } from '@/stores/useGitStore'
 import { ModelIcon } from '@/components/worktrees/ModelIcon'
 import { PulseAnimation } from '@/components/worktrees/PulseAnimation'
@@ -123,6 +124,7 @@ export function RecentList(): React.JSX.Element | null {
 // ── Worktree item ──────────────────────────────────────────────
 
 function RecentWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.Element | null {
+  const sidebarHover = useSidebarHoverHighlight('worktree', worktreeId)
   const selectedWorktreeId = useWorktreeStore((s) => s.selectedWorktreeId)
   const selectWorktree = useWorktreeStore((s) => s.selectWorktree)
   const selectProject = useProjectStore((s) => s.selectProject)
@@ -176,6 +178,8 @@ function RecentWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
       className="group/worktree-card"
       style={{ paddingLeft: getFlushWorktreeCardPaddingLeft(0) }}
       onClick={handleClick}
+      onMouseEnter={sidebarHover.onMouseEnter}
+      onMouseLeave={sidebarHover.onMouseLeave}
       data-testid={`recent-worktree-${worktreeId}`}
     >
       <div className={cn(CARD_PARENT_ROW, CARD_PARENT_ROW_ALIGN)}>
@@ -229,6 +233,7 @@ function RecentConnectionItem({
 }: {
   connectionId: string
 }): React.JSX.Element | null {
+  const sidebarHover = useSidebarHoverHighlight('connection', connectionId)
   const selectedConnectionId = useConnectionStore((s) => s.selectedConnectionId)
   const selectConnection = useConnectionStore((s) => s.selectConnection)
 
@@ -258,6 +263,8 @@ function RecentConnectionItem({
       className="group/worktree-card"
       style={{ paddingLeft: getFlushWorktreeCardPaddingLeft(0) }}
       onClick={handleClick}
+      onMouseEnter={sidebarHover.onMouseEnter}
+      onMouseLeave={sidebarHover.onMouseLeave}
       data-testid={`recent-connection-${connectionId}`}
     >
       <div className={cn(CARD_PARENT_ROW, CARD_PARENT_ROW_ALIGN)}>

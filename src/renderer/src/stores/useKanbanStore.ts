@@ -39,6 +39,13 @@ export interface TicketRef {
 
 export type TicketKey = string
 
+// Sidebar entity currently under the pointer. Board cards linked to it get a
+// highlight ring (see `isTicketLinkedToSidebarTarget`).
+export type SidebarHoverTarget =
+  | { kind: 'project'; id: string }
+  | { kind: 'worktree'; id: string }
+  | { kind: 'connection'; id: string }
+
 export interface MarkdownCardPlaceholder {
   projectId: string
   filePath: string
@@ -361,6 +368,10 @@ interface KanbanState {
   dependencyMode: { active: boolean; sourceTicketId: string | null; sourceProjectId?: string | null } | null
   hoveredBlockedTicketKey: TicketKey | null
 
+  // ── Sidebar hover → board highlight ────────────────────────────────
+  hoveredSidebarTarget: SidebarHoverTarget | null
+  setHoveredSidebarTarget: (target: SidebarHoverTarget | null) => void
+
   // ── Dependency actions ─────────────────────────────────────────────
   loadDependencies: (projectId: string) => Promise<void>
   addDependency: (dependent: TicketRef, blocker: TicketRef) => Promise<{ success: boolean; error?: string }>
@@ -412,6 +423,7 @@ export const useKanbanStore = create<KanbanState>()(
       dependencyMap: new Map(),
       dependencyMode: null,
       hoveredBlockedTicketKey: null,
+      hoveredSidebarTarget: null,
 
       // ── setSelectedTicketId ────────────────────────────────────────
       setSelectedTicketId: (_id: null) => {
@@ -2039,6 +2051,14 @@ export const useKanbanStore = create<KanbanState>()(
       // ── setHoveredBlockedTicketRef ──────────────────────────────────
       setHoveredBlockedTicketRef: (ref: TicketRef | null) => {
         set({ hoveredBlockedTicketKey: ref ? ticketRefKey(ref) : null })
+      },
+
+      // ── setHoveredSidebarTarget ─────────────────────────────────────
+      setHoveredSidebarTarget: (target: SidebarHoverTarget | null) => {
+        const current = get().hoveredSidebarTarget
+        if (current === target) return
+        if (current && target && current.kind === target.kind && current.id === target.id) return
+        set({ hoveredSidebarTarget: target })
       }
     }),
     {
