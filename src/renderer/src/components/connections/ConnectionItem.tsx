@@ -42,6 +42,7 @@ import {
   useWorktreeStore
 } from '@/stores'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
+import { useSidebarHoverHighlight } from '@/hooks'
 import { HintBadge } from '@/components/ui/HintBadge'
 import {
   AGENT_LIST,
@@ -150,6 +151,7 @@ export function ConnectionItem({
   connection,
   onManageWorktrees
 }: ConnectionItemProps): React.JSX.Element {
+  const sidebarHover = useSidebarHoverHighlight('connection', connection.id)
   const selectedConnectionId = useConnectionStore((s) => s.selectedConnectionId)
   const selectConnection = useConnectionStore((s) => s.selectConnection)
   const deleteConnection = useConnectionStore((s) => s.deleteConnection)
@@ -534,6 +536,8 @@ export function ConnectionItem({
       className="group/worktree-card"
       style={{ paddingLeft: getFlushWorktreeCardPaddingLeft(0) }}
       onClick={handleClick}
+      onMouseEnter={sidebarHover.onMouseEnter}
+      onMouseLeave={sidebarHover.onMouseLeave}
       data-testid={`connection-item-${connection.id}`}
       data-connection-base={isBase ? '' : undefined}
     >

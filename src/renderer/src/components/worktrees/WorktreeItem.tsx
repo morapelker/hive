@@ -61,7 +61,7 @@ import { useScriptStore } from '@/stores/useScriptStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { toast, gitToast, clipboardToast } from '@/lib/toast'
 import { formatRelativeTime } from '@/lib/format-utils'
-import { useGhosttySuppression } from '@/hooks'
+import { useGhosttySuppression, useSidebarHoverHighlight } from '@/hooks'
 import { PulseAnimation } from './PulseAnimation'
 import { ModelIcon } from './ModelIcon'
 import { ArchiveConfirmDialog } from './ArchiveConfirmDialog'
@@ -162,6 +162,7 @@ export const WorktreeItem = memo(function WorktreeItem({
   onDrop,
   onDragEnd
 }: WorktreeItemProps): React.JSX.Element {
+  const sidebarHover = useSidebarHoverHighlight('worktree', worktree.id)
   const selectWorktree = useWorktreeStore((s) => s.selectWorktree)
   const archiveWorktree = useWorktreeStore((s) => s.archiveWorktree)
   const unbranchWorktree = useWorktreeStore((s) => s.unbranchWorktree)
@@ -680,6 +681,8 @@ export const WorktreeItem = memo(function WorktreeItem({
           )}
           style={{ paddingLeft: WORKTREE_CARD_PADDING_LEFT }}
           onClick={handleClick}
+          onMouseEnter={sidebarHover.onMouseEnter}
+          onMouseLeave={sidebarHover.onMouseLeave}
           data-testid={`worktree-item-${worktree.id}`}
         >
           <div className={cn(CARD_PARENT_ROW, CARD_PARENT_ROW_ALIGN)}>
@@ -741,6 +744,8 @@ export const WorktreeItem = memo(function WorktreeItem({
           onDrop={onDrop ? (e) => onDrop(e, worktree.id) : undefined}
           onDragEnd={onDragEnd}
           onClick={handleClick}
+          onMouseEnter={sidebarHover.onMouseEnter}
+          onMouseLeave={sidebarHover.onMouseLeave}
           data-testid={`worktree-item-${worktree.id}`}
         >
           <div className={CARD_HOVER_TRIGGER} data-worktree-card-hover-trigger="">

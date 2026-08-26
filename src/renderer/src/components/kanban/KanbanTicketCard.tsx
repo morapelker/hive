@@ -50,6 +50,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip
 import { NoteEditorModal } from './NoteEditorModal'
 import { MoveToProjectModal } from './MoveToProjectModal'
 import { cn, parseColorQuad } from '@/lib/utils'
+import { isTicketLinkedToSidebarTarget } from '@/lib/sidebar-hover-highlight'
 import { extractSnippet, normalizeSearchText, stripMarkdown } from '@/lib/board-search'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { opencodeApi } from '@/api/opencode-api'
@@ -269,6 +270,58 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
       return blockers?.has(currentTicketKey) ?? false
     }, [currentTicketKey])
   )
+
+  // ── Sidebar hover → board highlight ─────────────────────────────
+  // True while a sidebar project/worktree card is hovered and this ticket
+  // belongs to that project / runs (or is queued to run) on that worktree.
+  const isLinkedToHoveredSidebarProjectOrWorktree = useKanbanStore(
+    useCallback(
+      (state) =>
+        isTicketLinkedToSidebarTarget(
+          {
+            project_id: ticket.project_id,
+            worktree_id: ticket.worktree_id,
+            pending_launch_config: ticket.pending_launch_config
+          },
+          state.hoveredSidebarTarget
+        ),
+      [ticket.project_id, ticket.worktree_id, ticket.pending_launch_config]
+    )
+  )
+  const hoveredSidebarConnectionId = useKanbanStore((state) =>
+    state.hoveredSidebarTarget?.kind === 'connection' ? state.hoveredSidebarTarget.id : null
+  )
+  // A hovered connection links tickets whose session runs inside it …
+  const isLinkedToHoveredSidebarConnectionSession = useSessionStore(
+    useCallback(
+      (state) => {
+        if (!hoveredSidebarConnectionId || !ticket.current_session_id) return false
+        return (
+          state.sessionsByConnection
+            .get(hoveredSidebarConnectionId)
+            ?.some((s) => s.id === ticket.current_session_id) ?? false
+        )
+      },
+      [hoveredSidebarConnectionId, ticket.current_session_id]
+    )
+  )
+  // … and tickets running on one of its member worktrees
+  const isLinkedToHoveredSidebarConnectionMember = useConnectionStore(
+    useCallback(
+      (state) => {
+        if (!hoveredSidebarConnectionId || !ticket.worktree_id) return false
+        const connection = state.connections.find((c) => c.id === hoveredSidebarConnectionId)
+        return connection?.members.some((m) => m.worktree_id === ticket.worktree_id) ?? false
+      },
+      [hoveredSidebarConnectionId, ticket.worktree_id]
+    )
+  )
+  const isSidebarHoverHighlighted =
+    isLinkedToHoveredSidebarProjectOrWorktree ||
+    isLinkedToHoveredSidebarConnectionSession ||
+    isLinkedToHoveredSidebarConnectionMember
+  // Either hover highlight owns the perimeter; other border cues yield to it
+  const hasHoverHighlight = isHighlightedAsBlocker || isSidebarHoverHighlighted
 
   const isBlocked = !isSimpleMode && unresolvedBlockerCount > 0
 
@@ -1155,6 +1208,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                 data-ticket-id={ticket.id}
                 data-project-id={ticket.project_id}
                 data-ticket-key={domTicketKey}
+                data-sidebar-hover-highlight={isSidebarHoverHighlighted ? '' : undefined}
                 draggable={!isArchived && !blockingDiagnostic}
                 onDragStart={handleDragStart}
                 onDragEnd={handleDragEnd}
@@ -1171,18 +1225,22 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                   (isBlocked || blockingDiagnostic) && 'opacity-60',
                   // Highlighted as a blocker of the currently hovered ticket
                   isHighlightedAsBlocker && 'border-dashed !border-amber-500/70 ring-1 ring-amber-500/30',
+                  // Linked to the sidebar project/worktree/connection under the pointer
+                  !isHighlightedAsBlocker &&
+                    isSidebarHoverHighlighted &&
+                    '!border-sky-400 ring-2 ring-sky-400/70 bg-sky-400/10',
                   // API-errored session: full red perimeter, overriding mode
                   // rails and mark stripes until the session is relaunched
-                  !isHighlightedAsBlocker && isError && '!border-red-500/70 ring-1 ring-red-500/25',
-                  !isHighlightedAsBlocker && !isError && borderState === 'default' && 'border-border',
+                  !hasHoverHighlight && isError && '!border-red-500/70 ring-1 ring-red-500/25',
+                  !hasHoverHighlight && !isError && borderState === 'default' && 'border-border',
                   // Mode cue lives in a 2px left rail; the perimeter stays neutral
-                  !isHighlightedAsBlocker && !isError && borderState === 'blue' && 'border-border border-l-2 !border-l-blue-500/60',
-                  !isHighlightedAsBlocker && !isError && borderState === 'violet' && 'border-border border-l-2 !border-l-violet-500/60',
+                  !hasHoverHighlight && !isError && borderState === 'blue' && 'border-border border-l-2 !border-l-blue-500/60',
+                  !hasHoverHighlight && !isError && borderState === 'violet' && 'border-border border-l-2 !border-l-violet-500/60',
                   // Left accent stripe for marks
-                  !isError && ticket.mark === 'common' && 'border-l-2 !border-l-green-500',
-                  !isError && ticket.mark === 'rare' && 'border-l-2 !border-l-blue-500',
-                  !isError && ticket.mark === 'epic' && 'border-l-2 !border-l-pink-500',
-                  !isError && ticket.mark === 'legendary' && 'border-l-2 !border-l-orange-500'
+                  !isError && !isSidebarHoverHighlighted && ticket.mark === 'common' && 'border-l-2 !border-l-green-500',
+                  !isError && !isSidebarHoverHighlighted && ticket.mark === 'rare' && 'border-l-2 !border-l-blue-500',
+                  !isError && !isSidebarHoverHighlighted && ticket.mark === 'epic' && 'border-l-2 !border-l-pink-500',
+                  !isError && !isSidebarHoverHighlighted && ticket.mark === 'legendary' && 'border-l-2 !border-l-orange-500'
                 )}
               >
             {/* Title + top-right indicators */}

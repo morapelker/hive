@@ -77,6 +77,7 @@ import {
 import { gitToast } from '@/lib/toast'
 import { projectApi } from '@/api/project-api'
 import { worktreeApi } from '@/api/worktree-api'
+import { useSidebarHoverHighlight } from '@/hooks'
 
 interface Project {
   id: string
@@ -128,6 +129,7 @@ export const ProjectItem = memo(function ProjectItem({
   onDrop,
   onDragEnd
 }: ProjectItemProps): React.JSX.Element {
+  const sidebarHover = useSidebarHoverHighlight('project', project.id)
   // Narrow selectors (primitives/booleans) so this item only re-renders when its
   // own slice of state changes — not on every project/worktree store mutation.
   const selectProject = useProjectStore((s) => s.selectProject)
@@ -456,6 +458,8 @@ export const ProjectItem = memo(function ProjectItem({
               onDrop={connectionModeActive || !onDrop ? undefined : (e) => onDrop(e, project.id)}
               onDragEnd={connectionModeActive ? undefined : onDragEnd}
               onClick={handleClick}
+              onMouseEnter={sidebarHover.onMouseEnter}
+              onMouseLeave={sidebarHover.onMouseLeave}
               data-testid={`project-item-${project.id}`}
             >
               {/* Project Hint Badge (visible in vim normal mode, leading the title) */}

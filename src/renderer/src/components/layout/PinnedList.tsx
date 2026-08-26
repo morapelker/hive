@@ -101,7 +101,7 @@ import {
   type SiblingAggregate,
   type SiblingBucket
 } from '@/hooks/useSiblingAggregate'
-import { useGhosttySuppression } from '@/hooks'
+import { useGhosttySuppression, useSidebarHoverHighlight } from '@/hooks'
 import { systemApi } from '@/api/system-api'
 import { dbApi } from '@/api/db-api'
 import { worktreeApi } from '@/api/worktree-api'
@@ -215,6 +215,7 @@ function StatusLane({ status }: { status: string | null }): React.JSX.Element {
 // ── Worktree item ──────────────────────────────────────────────
 
 function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.Element | null {
+  const sidebarHover = useSidebarHoverHighlight('worktree', worktreeId)
   const selectedWorktreeId = useWorktreeStore((s) => s.selectedWorktreeId)
   const selectWorktree = useWorktreeStore((s) => s.selectWorktree)
   const archiveWorktree = useWorktreeStore((s) => s.archiveWorktree)
@@ -665,6 +666,8 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
           className="group/worktree-card"
           style={{ paddingLeft: getFlushWorktreeCardPaddingLeft(0) }}
           onClick={handleClick}
+          onMouseEnter={sidebarHover.onMouseEnter}
+          onMouseLeave={sidebarHover.onMouseLeave}
           data-testid={`pinned-worktree-${worktreeId}`}
         >
           <div className={cn(CARD_PARENT_ROW, CARD_PARENT_ROW_ALIGN)}>
@@ -945,6 +948,7 @@ function PinnedConnectionItem({
 }: {
   connectionId: string
 }): React.JSX.Element | null {
+  const sidebarHover = useSidebarHoverHighlight('connection', connectionId)
   const selectedConnectionId = useConnectionStore((s) => s.selectedConnectionId)
   const selectConnection = useConnectionStore((s) => s.selectConnection)
   const deleteConnection = useConnectionStore((s) => s.deleteConnection)
@@ -1173,6 +1177,8 @@ function PinnedConnectionItem({
           className="group/worktree-card"
           style={{ paddingLeft: getFlushWorktreeCardPaddingLeft(0) }}
           onClick={handleClick}
+          onMouseEnter={sidebarHover.onMouseEnter}
+          onMouseLeave={sidebarHover.onMouseLeave}
           data-testid={`pinned-connection-${connectionId}`}
         >
           <div className={cn(CARD_PARENT_ROW, CARD_PARENT_ROW_ALIGN)}>
