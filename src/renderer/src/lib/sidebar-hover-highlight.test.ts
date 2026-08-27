@@ -13,19 +13,37 @@ describe('isTicketLinkedToSidebarTarget', () => {
     expect(isTicketLinkedToSidebarTarget(ticket, { kind: 'project', id: 'p2' })).toBe(false)
   })
 
-  it('matches tickets running on the hovered worktree', () => {
-    expect(isTicketLinkedToSidebarTarget(ticket, { kind: 'worktree', id: 'wt1' })).toBe(true)
-    expect(isTicketLinkedToSidebarTarget(ticket, { kind: 'worktree', id: 'wt2' })).toBe(false)
+  it('matches every ticket of the hovered worktree’s project, regardless of branch', () => {
+    const otherBranch = { project_id: 'p1', worktree_id: 'wt2', pending_launch_config: null }
+    expect(
+      isTicketLinkedToSidebarTarget(otherBranch, { kind: 'worktree', id: 'wt1', projectId: 'p1' })
+    ).toBe(true)
+    expect(
+      isTicketLinkedToSidebarTarget(ticket, { kind: 'worktree', id: 'wt1', projectId: 'p2' })
+    ).toBe(false)
   })
 
-  it('matches tickets queued to launch on the hovered worktree', () => {
+  it('falls back to exact worktree matching when the project is unresolved', () => {
+    expect(
+      isTicketLinkedToSidebarTarget(ticket, { kind: 'worktree', id: 'wt1', projectId: null })
+    ).toBe(true)
+    expect(
+      isTicketLinkedToSidebarTarget(ticket, { kind: 'worktree', id: 'wt2', projectId: null })
+    ).toBe(false)
+  })
+
+  it('matches tickets queued to launch on the hovered worktree when the project is unresolved', () => {
     const queued = {
       project_id: 'p1',
       worktree_id: null,
       pending_launch_config: JSON.stringify({ worktree: { type: 'existing', worktreeId: 'wt9' } })
     }
-    expect(isTicketLinkedToSidebarTarget(queued, { kind: 'worktree', id: 'wt9' })).toBe(true)
-    expect(isTicketLinkedToSidebarTarget(queued, { kind: 'worktree', id: 'wt1' })).toBe(false)
+    expect(
+      isTicketLinkedToSidebarTarget(queued, { kind: 'worktree', id: 'wt9', projectId: null })
+    ).toBe(true)
+    expect(
+      isTicketLinkedToSidebarTarget(queued, { kind: 'worktree', id: 'wt1', projectId: null })
+    ).toBe(false)
   })
 
   it('leaves connection targets to the caller', () => {

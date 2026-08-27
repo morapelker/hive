@@ -41,6 +41,41 @@ export type EmbeddedTerminalBackend = 'xterm' | 'ghostty'
 export type TerminalPosition = 'sidebar' | 'bottom'
 export type MergeConflictMode = 'build' | 'plan' | 'always-ask'
 export type FollowUpTriggerColumn = 'review' | 'done'
+/**
+ * What a board prompt auto-pins so the project's tickets show on the pinned
+ * board: nothing, the project's root/base worktree (or base connection
+ * instance), or the worktree/instance the session was actually sent on.
+ */
+export type AutoPinMode = 'off' | 'root-branch' | 'current-branch'
+export const AUTO_PIN_MODES: readonly AutoPinMode[] = ['off', 'root-branch', 'current-branch']
+export function isAutoPinMode(value: unknown): value is AutoPinMode {
+  return (AUTO_PIN_MODES as readonly unknown[]).includes(value)
+}
+/** Pre-3-way boolean setting; migrated to `autoPinOnBoardPrompt` on load. */
+const LEGACY_AUTO_PIN_KEY = 'autoPinBaseWorktreeOnBoardPrompt'
+
+/**
+ * Migrate a persisted settings blob from the legacy
+ * `autoPinBaseWorktreeOnBoardPrompt` boolean to the 3-way `autoPinOnBoardPrompt`
+ * mode. `true` meant "pin the project's root/base worktree" → 'root-branch';
+ * `false` → 'off'. A user's explicit new-key choice always wins over the legacy
+ * key, and an unrecognized new-key value is dropped so the default applies.
+ * Pure: returns the input untouched when there is nothing to migrate.
+ */
+export function migrateLegacyAutoPinSetting<T extends Record<string, unknown>>(persisted: T): T {
+  const hasLegacy = LEGACY_AUTO_PIN_KEY in persisted
+  const hasNew = 'autoPinOnBoardPrompt' in persisted
+  if (!hasLegacy && (!hasNew || isAutoPinMode(persisted.autoPinOnBoardPrompt))) return persisted
+
+  const { [LEGACY_AUTO_PIN_KEY]: legacy, autoPinOnBoardPrompt, ...rest } = persisted
+  const migrated: Record<string, unknown> = rest
+  if (isAutoPinMode(autoPinOnBoardPrompt)) {
+    migrated.autoPinOnBoardPrompt = autoPinOnBoardPrompt
+  } else if (hasLegacy) {
+    migrated.autoPinOnBoardPrompt = legacy === true ? 'root-branch' : 'off'
+  }
+  return migrated as T
+}
 
 // Re-exported from the shared single source of truth (see @shared/types/agent-sdk)
 // so existing `import { AgentSdk } from '@/stores/useSettingsStore'` sites keep working.
@@ -83,7 +118,7 @@ export interface AppSettings {
   mergeConflictMode: MergeConflictMode
   boardMode: 'toggle' | 'sticky-tab'
   followUpTriggerColumn: FollowUpTriggerColumn
-  autoPinBaseWorktreeOnBoardPrompt: boolean
+  autoPinOnBoardPrompt: AutoPinMode
   /** Auto-create a kanban ticket on the first message of a manually-created session. */
   automaticallyCreateTicket: boolean
   /** Show the optional Merged column on the board between Review and Done. */
@@ -216,7 +251,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   mergeConflictMode: 'always-ask',
   boardMode: 'sticky-tab',
   followUpTriggerColumn: 'done',
-  autoPinBaseWorktreeOnBoardPrompt: false,
+  autoPinOnBoardPrompt: 'off',
   automaticallyCreateTicket: false,
   showMergedColumn: false,
   defaultEditor: 'vscode',
@@ -365,7 +400,8 @@ async function loadSettingsFromDatabase(): Promise<AppSettings | null> {
 
       const value = await dbApi.setting.get(APP_SETTINGS_DB_KEY)
       if (value) {
-        const parsed = JSON.parse(value)
+        // Legacy autoPinBaseWorktreeOnBoardPrompt boolean → autoPinOnBoardPrompt mode
+        const parsed = migrateLegacyAutoPinSetting(JSON.parse(value))
         const result = {
           ...DEFAULT_SETTINGS,
           ...parsed,
@@ -446,7 +482,7 @@ function extractSettings(state: SettingsState): AppSettings {
     mergeConflictMode: state.mergeConflictMode,
     boardMode: state.boardMode,
     followUpTriggerColumn: state.followUpTriggerColumn,
-    autoPinBaseWorktreeOnBoardPrompt: state.autoPinBaseWorktreeOnBoardPrompt,
+    autoPinOnBoardPrompt: state.autoPinOnBoardPrompt,
     automaticallyCreateTicket: state.automaticallyCreateTicket,
     showMergedColumn: state.showMergedColumn,
     defaultEditor: state.defaultEditor,
@@ -805,6 +841,13 @@ export const useSettingsStore = create<SettingsState>()(
     {
       name: 'hive-settings',
       storage: createJSONStorage(() => localStorage),
+      // Same legacy autoPin migration as the settings DB path, so the ~200ms
+      // window before loadFromDatabase resolves (and a missing DB row, which
+      // is then seeded from this hydrated state) never regress a user's choice.
+      merge: (persisted, current) => ({
+        ...current,
+        ...migrateLegacyAutoPinSetting((persisted ?? {}) as Record<string, unknown>)
+      }),
       partialize: (state) => ({
         autoStartSession: state.autoStartSession,
         autoPullBeforeWorktree: state.autoPullBeforeWorktree,
@@ -817,7 +860,7 @@ export const useSettingsStore = create<SettingsState>()(
         mergeConflictMode: state.mergeConflictMode,
         boardMode: state.boardMode,
         followUpTriggerColumn: state.followUpTriggerColumn,
-        autoPinBaseWorktreeOnBoardPrompt: state.autoPinBaseWorktreeOnBoardPrompt,
+        autoPinOnBoardPrompt: state.autoPinOnBoardPrompt,
         automaticallyCreateTicket: state.automaticallyCreateTicket,
         showMergedColumn: state.showMergedColumn,
         defaultEditor: state.defaultEditor,

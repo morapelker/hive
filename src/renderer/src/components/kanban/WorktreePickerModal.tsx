@@ -43,7 +43,7 @@ import { CodexFastToggle } from '@/components/sessions/CodexFastToggle'
 import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
 import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
 import { snapshotTokenBaseline } from '@/lib/token-baselines'
-import { autoPinBaseWorktree } from '@/lib/auto-pin'
+import { autoPinForBoardPrompt } from '@/lib/auto-pin'
 import {
   PLAN_MODE_PREFIX,
   getSuperModePrefix,
@@ -386,7 +386,7 @@ export async function quickLaunchTicket(ticket: KanbanTicket): Promise<boolean> 
     return false
   }
 
-  void autoPinBaseWorktree(projectId)
+  // Auto-pin happened inside launchTicketWithModel once the worktree existed.
   if (useSettingsStore.getState().boardMode === 'sticky-tab') {
     const { BOARD_TAB_ID } = await import('@/stores/useSessionStore')
     useSessionStore.getState().setActiveSession(BOARD_TAB_ID)
@@ -474,7 +474,7 @@ export async function quickLaunchTicketOnConnection(
       void useConnectionStore.getState().renameConnection(connectionId, ticketTitle)
     }
 
-    void autoPinBaseWorktree(ticket.project_id)
+    void autoPinForBoardPrompt({ projectId: ticket.project_id, connectionId })
 
     const usageProvider = resolveDefaultUsageProvider(agentSdk)
     if (usageProvider) {
@@ -1553,7 +1553,7 @@ export function WorktreePickerModal({
           void useConnectionStore.getState().renameConnection(connectionId, ticketTitle)
         }
 
-        void autoPinBaseWorktree(ticket.project_id)
+        void autoPinForBoardPrompt({ projectId: ticket.project_id, connectionId })
 
         // Trigger usage refresh so the board shows up-to-date usage (debounced in store)
         const connUsageProvider = resolveDefaultUsageProvider(agentSdk)
@@ -1889,9 +1889,8 @@ export function WorktreePickerModal({
         return
       }
 
-      void autoPinBaseWorktree(projectId)
-
       // ── Multi-model launch: hand off to the background orchestrator ──
+      // (auto-pin runs inside launchTicketWithModel per created worktree)
       // It owns EVERYTHING after this point — worktree creation, ticket
       // duplication, all ticket updates, and the per-SDK prompt composition — so
       // the modal creates/mutates nothing here and closes immediately (no spinner).
@@ -1947,6 +1946,10 @@ export function WorktreePickerModal({
         setIsSending(false)
         return
       }
+
+      // Setting-gated auto-pin so the ticket shows on the pinned board — now
+      // that the worktree exists, 'current-branch' mode can pin it directly.
+      void autoPinForBoardPrompt({ projectId, worktreeId })
 
       // Resolve the worktree record once — needed for plan-file creation and
       // the OpenCode connect below. Newly created worktrees are already in the

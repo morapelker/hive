@@ -43,7 +43,9 @@ export type TicketKey = string
 // highlight ring (see `isTicketLinkedToSidebarTarget`).
 export type SidebarHoverTarget =
   | { kind: 'project'; id: string }
-  | { kind: 'worktree'; id: string }
+  // Worktree hover highlights project-wide: `projectId` is the owning project,
+  // resolved at hover time (null when the worktree store can't resolve it).
+  | { kind: 'worktree'; id: string; projectId: string | null }
   | { kind: 'connection'; id: string }
 
 export interface MarkdownCardPlaceholder {
@@ -2057,7 +2059,16 @@ export const useKanbanStore = create<KanbanState>()(
       setHoveredSidebarTarget: (target: SidebarHoverTarget | null) => {
         const current = get().hoveredSidebarTarget
         if (current === target) return
-        if (current && target && current.kind === target.kind && current.id === target.id) return
+        if (
+          current &&
+          target &&
+          current.kind === target.kind &&
+          current.id === target.id &&
+          (current.kind === 'worktree' ? current.projectId : null) ===
+            (target.kind === 'worktree' ? target.projectId : null)
+        ) {
+          return
+        }
         set({ hoveredSidebarTarget: target })
       }
     }),
@@ -2157,11 +2168,16 @@ registerKanbanAutoCreateTicket(({ sessionId, rawPrompt }) => {
         created_from_session: true
       })
 
-      // Mirror the manual-open behavior: when auto-pin is enabled, pin the
-      // project's root/base worktree so the auto-created ticket shows on the
-      // pinned board. No-op unless `autoPinBaseWorktreeOnBoardPrompt` is on.
-      const { autoPinBaseWorktree } = await import('@/lib/auto-pin')
-      void autoPinBaseWorktree(session.project_id)
+      // Mirror the manual-open behavior: pin per the auto-pin setting (the
+      // project's root/base worktree, or the session's own worktree /
+      // connection instance) so the auto-created ticket shows on the pinned
+      // board. No-op when `autoPinOnBoardPrompt` is 'off'.
+      const { autoPinForBoardPrompt } = await import('@/lib/auto-pin')
+      void autoPinForBoardPrompt({
+        projectId: session.project_id,
+        worktreeId: session.worktree_id,
+        connectionId: session.connection_id
+      })
     } catch {
       // Best-effort — never disrupt the user's send/prompt flow.
     }

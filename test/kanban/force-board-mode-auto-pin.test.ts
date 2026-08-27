@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { autoPinBaseWorktree } from '@/lib/auto-pin'
+import { autoPinForBoardPrompt, resolveAutoPinMode } from '@/lib/auto-pin'
 import { isForceBoardMode } from '@/api/hive-enterprise/client'
 
 let mockSettings: Record<string, unknown> = {}
@@ -26,72 +26,98 @@ vi.mock('@/stores/usePinnedStore', () => ({
 }))
 
 const mockGetDefaultWorktree = vi.fn()
+const mockWorktreesByProject = new Map<string, { id: string }[]>([
+  ['project-1', [{ id: 'base-worktree-1' }, { id: 'feature-worktree-1' }]]
+])
 
 vi.mock('@/stores/useWorktreeStore', () => ({
   useWorktreeStore: {
     getState: () => ({
+      worktreesByProject: mockWorktreesByProject,
       getDefaultWorktree: mockGetDefaultWorktree,
       loadWorktrees: vi.fn().mockResolvedValue(undefined)
     })
   }
 }))
 
+const policyOn = {
+  hiveAuthToken: 'token-1',
+  hiveOrganizationId: 'org-1',
+  hiveOrganizationForceBoardMode: true
+}
+const policyOff = {
+  hiveAuthToken: null,
+  hiveOrganizationId: null,
+  hiveOrganizationForceBoardMode: false
+}
+
 describe('isForceBoardMode', () => {
   it('is false unless logged in to an org with the policy enabled', () => {
-    const enabled = {
-      hiveAuthToken: 'token-1',
-      hiveOrganizationId: 'org-1',
-      hiveOrganizationForceBoardMode: true
-    }
-    expect(isForceBoardMode(enabled)).toBe(true)
-    expect(isForceBoardMode({ ...enabled, hiveAuthToken: null })).toBe(false)
-    expect(isForceBoardMode({ ...enabled, hiveOrganizationId: null })).toBe(false)
-    expect(isForceBoardMode({ ...enabled, hiveOrganizationForceBoardMode: false })).toBe(false)
+    expect(isForceBoardMode(policyOn)).toBe(true)
+    expect(isForceBoardMode({ ...policyOn, hiveAuthToken: null })).toBe(false)
+    expect(isForceBoardMode({ ...policyOn, hiveOrganizationId: null })).toBe(false)
+    expect(isForceBoardMode({ ...policyOn, hiveOrganizationForceBoardMode: false })).toBe(false)
   })
 })
 
-describe('autoPinBaseWorktree under org Force board mode', () => {
+describe('resolveAutoPinMode under org Force board mode', () => {
+  it('forces root-branch whatever the local mode is', () => {
+    for (const mode of ['off', 'root-branch', 'current-branch'] as const) {
+      expect(resolveAutoPinMode({ ...policyOn, autoPinOnBoardPrompt: mode })).toBe('root-branch')
+    }
+  })
+
+  it('passes the local mode through when the policy is off', () => {
+    for (const mode of ['off', 'root-branch', 'current-branch'] as const) {
+      expect(resolveAutoPinMode({ ...policyOff, autoPinOnBoardPrompt: mode })).toBe(mode)
+    }
+  })
+})
+
+describe('autoPinForBoardPrompt under org Force board mode', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockIsWorktreePinned.mockReturnValue(false)
     mockGetDefaultWorktree.mockReturnValue({ id: 'base-worktree-1' })
-    mockSettings = {
-      autoPinBaseWorktreeOnBoardPrompt: false,
-      hiveAuthToken: null,
-      hiveOrganizationId: null,
-      hiveOrganizationForceBoardMode: false
-    }
+    mockSettings = { autoPinOnBoardPrompt: 'off', ...policyOff }
   })
 
   it('does not pin when the local setting is off and the policy is off', async () => {
-    await autoPinBaseWorktree('project-1')
+    await autoPinForBoardPrompt({ projectId: 'project-1' })
 
     expect(mockPinWorktree).not.toHaveBeenCalled()
   })
 
-  it('pins even with the local setting off when the policy is on', async () => {
-    mockSettings = {
-      autoPinBaseWorktreeOnBoardPrompt: false,
-      hiveAuthToken: 'token-1',
-      hiveOrganizationId: 'org-1',
-      hiveOrganizationForceBoardMode: true
-    }
+  it('pins the base worktree with the local setting off when the policy is on', async () => {
+    mockSettings = { autoPinOnBoardPrompt: 'off', ...policyOn }
 
-    await autoPinBaseWorktree('project-1')
+    await autoPinForBoardPrompt({ projectId: 'project-1' })
 
     expect(mockPinWorktree).toHaveBeenCalledWith('base-worktree-1')
   })
 
-  it('still pins from the local setting alone', async () => {
-    mockSettings = {
-      autoPinBaseWorktreeOnBoardPrompt: true,
-      hiveAuthToken: null,
-      hiveOrganizationId: null,
-      hiveOrganizationForceBoardMode: false
-    }
+  it("pins the base worktree (not the session's) even in current-branch mode when the policy is on", async () => {
+    mockSettings = { autoPinOnBoardPrompt: 'current-branch', ...policyOn }
 
-    await autoPinBaseWorktree('project-1')
+    await autoPinForBoardPrompt({ projectId: 'project-1', worktreeId: 'feature-worktree-1' })
+
+    expect(mockPinWorktree).toHaveBeenCalledTimes(1)
+    expect(mockPinWorktree).toHaveBeenCalledWith('base-worktree-1')
+  })
+
+  it('still pins from the local setting alone', async () => {
+    mockSettings = { autoPinOnBoardPrompt: 'root-branch', ...policyOff }
+
+    await autoPinForBoardPrompt({ projectId: 'project-1' })
 
     expect(mockPinWorktree).toHaveBeenCalledWith('base-worktree-1')
+  })
+
+  it("pins the session's worktree in current-branch mode when the policy is off", async () => {
+    mockSettings = { autoPinOnBoardPrompt: 'current-branch', ...policyOff }
+
+    await autoPinForBoardPrompt({ projectId: 'project-1', worktreeId: 'feature-worktree-1' })
+
+    expect(mockPinWorktree).toHaveBeenCalledWith('feature-worktree-1')
   })
 })

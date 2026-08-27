@@ -43,7 +43,7 @@ describe('SettingsGeneral merged column toggle', () => {
       autoPullBeforeWorktree: true,
       boardMode: 'sticky-tab',
       followUpTriggerColumn: 'done',
-      autoPinBaseWorktreeOnBoardPrompt: false,
+      autoPinOnBoardPrompt: 'off',
       automaticallyCreateTicket: false,
       showMergedColumn: false,
       vimModeEnabled: false,

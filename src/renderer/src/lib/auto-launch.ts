@@ -1,6 +1,5 @@
 import { useProjectStore } from '@/stores/useProjectStore'
 import { toast } from '@/lib/toast'
-import { autoPinBaseWorktree } from '@/lib/auto-pin'
 import { launchTicketWithModel, type LaunchModelConfig } from '@/lib/ticket-launch'
 import { runMultiModelLaunch } from '@/lib/multi-model-launch'
 import type { HandoffAgentSdk } from '@shared/types/agent-sdk'
@@ -112,10 +111,8 @@ export async function autoLaunchTicket(ticket: AutoLaunchTicket): Promise<void> 
     return
   }
 
-  // Pin the base worktree once per batch (not per model — a future multi-launch
-  // must not re-pin for every model it spawns).
-  void autoPinBaseWorktree(ticket.project_id)
-
+  // Auto-pin happens inside launchTicketWithModel once each worktree exists
+  // ('current-branch' mode pins the launched worktree, not the base).
   const entries = resolveModelEntries(config)
 
   // Multiple models + a brand-new worktree: one worktree + duplicated ticket

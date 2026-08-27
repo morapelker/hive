@@ -19,10 +19,6 @@ vi.mock('@/lib/multi-model-launch', () => ({
   runMultiModelLaunch: vi.fn()
 }))
 
-vi.mock('@/lib/auto-pin', () => ({
-  autoPinBaseWorktree: vi.fn()
-}))
-
 const initialProjectState = useProjectStore.getState()
 
 function setupProject(): void {
