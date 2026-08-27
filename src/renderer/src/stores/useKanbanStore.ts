@@ -43,7 +43,9 @@ export type TicketKey = string
 // highlight ring (see `isTicketLinkedToSidebarTarget`).
 export type SidebarHoverTarget =
   | { kind: 'project'; id: string }
-  | { kind: 'worktree'; id: string }
+  // Worktree hover highlights project-wide: `projectId` is the owning project,
+  // resolved at hover time (null when the worktree store can't resolve it).
+  | { kind: 'worktree'; id: string; projectId: string | null }
   | { kind: 'connection'; id: string }
 
 export interface MarkdownCardPlaceholder {
@@ -2057,7 +2059,16 @@ export const useKanbanStore = create<KanbanState>()(
       setHoveredSidebarTarget: (target: SidebarHoverTarget | null) => {
         const current = get().hoveredSidebarTarget
         if (current === target) return
-        if (current && target && current.kind === target.kind && current.id === target.id) return
+        if (
+          current &&
+          target &&
+          current.kind === target.kind &&
+          current.id === target.id &&
+          (current.kind === 'worktree' ? current.projectId : null) ===
+            (target.kind === 'worktree' ? target.projectId : null)
+        ) {
+          return
+        }
         set({ hoveredSidebarTarget: target })
       }
     }),

@@ -28,6 +28,10 @@ export function isTicketLinkedToSidebarTarget(
     case 'project':
       return ticket.project_id === target.id
     case 'worktree':
+      // Worktree hover is worktree-agnostic: highlight every ticket of the
+      // owning project. Fall back to exact worktree matching only when the
+      // project could not be resolved.
+      if (target.projectId) return ticket.project_id === target.projectId
       return ticket.worktree_id === target.id || getQueuedWorktreeId(ticket) === target.id
     default:
       return false

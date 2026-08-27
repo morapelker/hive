@@ -3,6 +3,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useSidebarHoverHighlight } from '../useSidebarHoverHighlight'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useSessionStore } from '@/stores/useSessionStore'
+import { useWorktreeStore } from '@/stores/useWorktreeStore'
+
+type WorktreesByProject = ReturnType<typeof useWorktreeStore.getState>['worktreesByProject']
 
 describe('useSidebarHoverHighlight', () => {
   afterEach(() => {
@@ -12,6 +15,7 @@ describe('useSidebarHoverHighlight', () => {
       isPinnedBoardActive: false
     })
     useSessionStore.setState({ sessionsByConnection: new Map() })
+    useWorktreeStore.setState({ worktreesByProject: new Map() })
     vi.restoreAllMocks()
   })
 
@@ -19,10 +23,28 @@ describe('useSidebarHoverHighlight', () => {
     const { result } = renderHook(() => useSidebarHoverHighlight('worktree', 'wt1'))
 
     act(() => result.current.onMouseEnter())
-    expect(useKanbanStore.getState().hoveredSidebarTarget).toEqual({ kind: 'worktree', id: 'wt1' })
+    expect(useKanbanStore.getState().hoveredSidebarTarget).toEqual({
+      kind: 'worktree',
+      id: 'wt1',
+      projectId: null
+    })
 
     act(() => result.current.onMouseLeave())
     expect(useKanbanStore.getState().hoveredSidebarTarget).toBeNull()
+  })
+
+  it('resolves the worktree’s project so the highlight is worktree-agnostic', () => {
+    useWorktreeStore.setState({
+      worktreesByProject: new Map([['p1', [{ id: 'wt1' }]]]) as unknown as WorktreesByProject
+    })
+    const { result } = renderHook(() => useSidebarHoverHighlight('worktree', 'wt1'))
+
+    act(() => result.current.onMouseEnter())
+    expect(useKanbanStore.getState().hoveredSidebarTarget).toEqual({
+      kind: 'worktree',
+      id: 'wt1',
+      projectId: 'p1'
+    })
   })
 
   it('does not clear a target set by a different card', () => {

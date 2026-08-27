@@ -77,14 +77,27 @@ describe('KanbanTicketCard sidebar hover highlight', () => {
     expect(card).not.toHaveAttribute(HIGHLIGHT_ATTR)
   })
 
-  it('highlights the ticket while its worktree is hovered (pinned board)', () => {
+  it('highlights all of the project’s tickets while any of its worktrees is hovered', () => {
+    // Ticket runs on wt-1, but hovering a *different* branch of the same
+    // project still highlights it (worktree-agnostic highlight).
     render(<KanbanTicketCard ticket={{ ...baseTicket, worktree_id: 'wt-1' }} isPinnedMode />)
     const card = screen.getByTestId('kanban-ticket-ticket-1')
 
-    hover({ kind: 'worktree', id: 'wt-1' })
+    hover({ kind: 'worktree', id: 'wt-2', projectId: 'project-1' })
     expect(card).toHaveAttribute(HIGHLIGHT_ATTR)
 
-    hover({ kind: 'worktree', id: 'wt-2' })
+    hover({ kind: 'worktree', id: 'wt-2', projectId: 'project-2' })
+    expect(card).not.toHaveAttribute(HIGHLIGHT_ATTR)
+  })
+
+  it('falls back to exact worktree matching when the project is unresolved', () => {
+    render(<KanbanTicketCard ticket={{ ...baseTicket, worktree_id: 'wt-1' }} isPinnedMode />)
+    const card = screen.getByTestId('kanban-ticket-ticket-1')
+
+    hover({ kind: 'worktree', id: 'wt-1', projectId: null })
+    expect(card).toHaveAttribute(HIGHLIGHT_ATTR)
+
+    hover({ kind: 'worktree', id: 'wt-2', projectId: null })
     expect(card).not.toHaveAttribute(HIGHLIGHT_ATTR)
   })
 
@@ -126,7 +139,7 @@ describe('KanbanTicketCard sidebar hover highlight', () => {
 
     hover({ kind: 'connection', id: 'conn-1' })
     expect(card).not.toHaveAttribute(HIGHLIGHT_ATTR)
-    hover({ kind: 'worktree', id: 'other' })
+    hover({ kind: 'worktree', id: 'other', projectId: 'other-project' })
     expect(card).not.toHaveAttribute(HIGHLIGHT_ATTR)
   })
 })
