@@ -41,7 +41,7 @@ function baseState(overrides: Record<string, unknown> = {}): Record<string, unkn
     autoPullBeforeWorktree: true,
     boardMode: 'sticky-tab',
     followUpTriggerColumn: 'done',
-    autoPinBaseWorktreeOnBoardPrompt: false,
+    autoPinOnBoardPrompt: 'off',
     automaticallyCreateTicket: false,
     showMergedColumn: false,
     vimModeEnabled: false,
@@ -72,24 +72,47 @@ describe('SettingsGeneral under org Force board mode', () => {
     mockSettingsState = baseState()
   })
 
-  it('keeps both toggles interactive when the policy is off', async () => {
+  it('keeps both controls interactive when the policy is off', async () => {
     const { SettingsGeneral } = await import('@/components/settings/SettingsGeneral')
     render(<SettingsGeneral />)
 
     const autoStart = screen.getByTestId('auto-start-session-toggle')
-    const autoPin = screen.getByTestId('auto-pin-base-worktree-toggle')
+    const off = screen.getByTestId('auto-pin-mode-off')
+    const rootBranch = screen.getByTestId('auto-pin-mode-root-branch')
+    const currentBranch = screen.getByTestId('auto-pin-mode-current-branch')
 
     expect(autoStart).toHaveAttribute('aria-checked', 'true')
     expect(autoStart).not.toBeDisabled()
-    expect(autoPin).toHaveAttribute('aria-checked', 'false')
-    expect(autoPin).not.toBeDisabled()
+    expect(off).toHaveAttribute('aria-checked', 'true')
+    expect(rootBranch).toHaveAttribute('aria-checked', 'false')
+    expect(currentBranch).toHaveAttribute('aria-checked', 'false')
+    for (const button of [off, rootBranch, currentBranch]) {
+      expect(button).not.toBeDisabled()
+    }
 
-    await userEvent.click(autoPin)
-    expect(mockUpdateSetting).toHaveBeenCalledWith('autoPinBaseWorktreeOnBoardPrompt', true)
+    await userEvent.click(rootBranch)
+    expect(mockUpdateSetting).toHaveBeenCalledWith('autoPinOnBoardPrompt', 'root-branch')
+    await userEvent.click(currentBranch)
+    expect(mockUpdateSetting).toHaveBeenCalledWith('autoPinOnBoardPrompt', 'current-branch')
   })
 
-  it('locks auto-start off and auto-pin on when the policy is on', async () => {
+  it('reflects the persisted auto-pin mode', async () => {
+    mockSettingsState = baseState({ autoPinOnBoardPrompt: 'current-branch' })
+    const { SettingsGeneral } = await import('@/components/settings/SettingsGeneral')
+    render(<SettingsGeneral />)
+
+    expect(screen.getByTestId('auto-pin-mode-off')).toHaveAttribute('aria-checked', 'false')
+    expect(screen.getByTestId('auto-pin-mode-root-branch')).toHaveAttribute('aria-checked', 'false')
+    expect(screen.getByTestId('auto-pin-mode-current-branch')).toHaveAttribute(
+      'aria-checked',
+      'true'
+    )
+  })
+
+  it('locks auto-start off and auto-pin to Root branch when the policy is on', async () => {
     mockSettingsState = baseState({
+      // A local 'current-branch' choice is overridden, not just 'off'
+      autoPinOnBoardPrompt: 'current-branch',
       hiveAuthToken: 'token-1',
       hiveOrganizationId: 'org-1',
       hiveOrganizationForceBoardMode: true
@@ -98,18 +121,27 @@ describe('SettingsGeneral under org Force board mode', () => {
     render(<SettingsGeneral />)
 
     const autoStart = screen.getByTestId('auto-start-session-toggle')
-    const autoPin = screen.getByTestId('auto-pin-base-worktree-toggle')
+    const off = screen.getByTestId('auto-pin-mode-off')
+    const rootBranch = screen.getByTestId('auto-pin-mode-root-branch')
+    const currentBranch = screen.getByTestId('auto-pin-mode-current-branch')
 
     expect(autoStart).toHaveAttribute('aria-checked', 'false')
     expect(autoStart).toBeDisabled()
-    expect(autoPin).toHaveAttribute('aria-checked', 'true')
-    expect(autoPin).toBeDisabled()
+    expect(off).toHaveAttribute('aria-checked', 'false')
+    expect(rootBranch).toHaveAttribute('aria-checked', 'true')
+    expect(currentBranch).toHaveAttribute('aria-checked', 'false')
+    for (const button of [off, rootBranch, currentBranch]) {
+      expect(button).toBeDisabled()
+    }
 
     expect(screen.getByText('Disabled by your organization (Force board mode)')).toBeInTheDocument()
-    expect(screen.getByText('Enabled by your organization (Force board mode)')).toBeInTheDocument()
+    expect(
+      screen.getByText('Set to Root branch by your organization (Force board mode)')
+    ).toBeInTheDocument()
 
     await userEvent.click(autoStart)
-    await userEvent.click(autoPin)
+    await userEvent.click(off)
+    await userEvent.click(currentBranch)
     expect(mockUpdateSetting).not.toHaveBeenCalled()
   })
 })

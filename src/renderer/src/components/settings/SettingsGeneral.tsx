@@ -11,6 +11,14 @@ import claudeIcon from '@/assets/model-icons/claude.svg'
 import openaiIcon from '@/assets/model-icons/openai.svg'
 import { isAgentSdkAvailable } from '@/lib/agent-sdk-availability'
 import { isForceBoardMode } from '@/api/hive-enterprise/client'
+import { resolveAutoPinMode } from '@/lib/auto-pin'
+import type { AutoPinMode } from '@/stores/useSettingsStore'
+
+const AUTO_PIN_MODE_OPTIONS: { value: AutoPinMode; label: string; testId: string }[] = [
+  { value: 'off', label: 'Off', testId: 'auto-pin-mode-off' },
+  { value: 'root-branch', label: 'Root branch', testId: 'auto-pin-mode-root-branch' },
+  { value: 'current-branch', label: 'Current branch', testId: 'auto-pin-mode-current-branch' }
+]
 
 export function SettingsGeneral(): React.JSX.Element {
   const { setTheme } = useThemeStore()
@@ -20,7 +28,6 @@ export function SettingsGeneral(): React.JSX.Element {
     warnBeforeQuitting,
     boardMode,
     followUpTriggerColumn,
-    autoPinBaseWorktreeOnBoardPrompt,
     automaticallyCreateTicket,
     showMergedColumn,
     vimModeEnabled,
@@ -40,9 +47,10 @@ export function SettingsGeneral(): React.JSX.Element {
     setActiveSection
   } = useSettingsStore()
   const { resetToDefaults: resetShortcuts } = useShortcutStore()
-  // Org "Force board mode" policy overrides auto-start (off) and auto-pin (on);
-  // both toggles are locked while it is active.
+  // Org "Force board mode" policy overrides auto-start (off) and auto-pin
+  // (Root branch); both controls are locked while it is active.
   const forceBoardMode = useSettingsStore(isForceBoardMode)
+  const autoPinMode = useSettingsStore(resolveAutoPinMode)
 
   const handleResetAll = (): void => {
     resetToDefaults()
@@ -226,39 +234,37 @@ export function SettingsGeneral(): React.JSX.Element {
       </div>
 
       {/* Auto-pin project on board prompts */}
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <label className="text-sm font-medium">Auto-pin project on board prompts</label>
-          <p className="text-xs text-muted-foreground">
-            {forceBoardMode
-              ? 'Enabled by your organization (Force board mode)'
-              : "When a board action sends a prompt for a ticket, automatically pin the project's base worktree so its tickets appear on the pinned board."}
-          </p>
+      <div className="space-y-2">
+        <label className="text-sm font-medium">Auto-pin project on board prompts</label>
+        <p className="text-xs text-muted-foreground">
+          {forceBoardMode
+            ? 'Set to Root branch by your organization (Force board mode)'
+            : 'When a board action sends a prompt for a ticket, automatically pin the project so its tickets appear on the pinned board. Root branch pins the base worktree; Current branch pins the worktree the session was sent on.'}
+        </p>
+        <div className="flex gap-2" role="radiogroup" data-testid="auto-pin-mode">
+          {AUTO_PIN_MODE_OPTIONS.map((option) => {
+            const selected = autoPinMode === option.value
+            return (
+              <button
+                key={option.value}
+                role="radio"
+                aria-checked={selected}
+                disabled={forceBoardMode}
+                onClick={() => updateSetting('autoPinOnBoardPrompt', option.value)}
+                className={cn(
+                  'px-3 py-1.5 rounded-md text-[13px] border transition-colors',
+                  selected
+                    ? 'bg-primary text-primary-foreground border-primary'
+                    : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50',
+                  forceBoardMode && 'cursor-not-allowed opacity-50'
+                )}
+                data-testid={option.testId}
+              >
+                {option.label}
+              </button>
+            )
+          })}
         </div>
-        <button
-          role="switch"
-          aria-checked={forceBoardMode ? true : autoPinBaseWorktreeOnBoardPrompt}
-          disabled={forceBoardMode}
-          onClick={() =>
-            updateSetting('autoPinBaseWorktreeOnBoardPrompt', !autoPinBaseWorktreeOnBoardPrompt)
-          }
-          className={cn(
-            'relative inline-flex h-5 w-9 shrink-0 rounded-full border-2 border-transparent transition-colors',
-            forceBoardMode
-              ? 'bg-primary cursor-not-allowed opacity-50'
-              : autoPinBaseWorktreeOnBoardPrompt
-                ? 'bg-primary cursor-pointer'
-                : 'bg-muted cursor-pointer'
-          )}
-          data-testid="auto-pin-base-worktree-toggle"
-        >
-          <span
-            className={cn(
-              'pointer-events-none block h-4 w-4 rounded-full bg-background ring-0 transition-transform',
-              forceBoardMode || autoPinBaseWorktreeOnBoardPrompt ? 'translate-x-4' : 'translate-x-0'
-            )}
-          />
-        </button>
       </div>
 
       {/* Automatically create ticket */}

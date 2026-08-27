@@ -136,7 +136,7 @@ const apiMocks = vi.hoisted(() => ({
     startHivePromptTelemetry: vi.fn()
   },
   autoPin: {
-    autoPinBaseWorktree: vi.fn().mockResolvedValue(undefined)
+    autoPinForBoardPrompt: vi.fn().mockResolvedValue(undefined)
   },
   claudeCliPortal: {
     registerTarget: vi.fn(() => vi.fn())
@@ -449,7 +449,11 @@ describe('Plan review followup dispatch', () => {
         undefined
       )
     })
-    expect(apiMocks.autoPin.autoPinBaseWorktree).toHaveBeenCalledWith('proj-1')
+    expect(apiMocks.autoPin.autoPinForBoardPrompt).toHaveBeenCalledWith({
+      projectId: 'proj-1',
+      worktreeId: 'wt-1',
+      connectionId: null
+    })
     expect(apiMocks.hiveTelemetry.startHivePromptTelemetry).toHaveBeenCalledWith({
       sessionId: 'session-1',
       prompt: 'Please add error handling to step 2',
@@ -558,7 +562,11 @@ describe('Plan review followup dispatch', () => {
         undefined
       )
     })
-    expect(apiMocks.autoPin.autoPinBaseWorktree).toHaveBeenCalledWith('proj-1')
+    expect(apiMocks.autoPin.autoPinForBoardPrompt).toHaveBeenCalledWith({
+      projectId: 'proj-1',
+      worktreeId: null,
+      connectionId: 'conn-1'
+    })
     expect(apiMocks.hiveTelemetry.startHivePromptTelemetry).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionId: 'session-conn-old',
@@ -605,7 +613,11 @@ describe('Plan review followup dispatch', () => {
     expect(apiMocks.terminalApi.createClaudeCli).not.toHaveBeenCalled()
     expect(mockOpencodeOps.reconnect).not.toHaveBeenCalled()
     expect(mockOpencodeOps.prompt).not.toHaveBeenCalled()
-    expect(apiMocks.autoPin.autoPinBaseWorktree).toHaveBeenCalledWith('proj-1')
+    expect(apiMocks.autoPin.autoPinForBoardPrompt).toHaveBeenCalledWith({
+      projectId: 'proj-1',
+      worktreeId: 'wt-1',
+      connectionId: null
+    })
     expect(apiMocks.hiveTelemetry.startHivePromptTelemetry).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionId: 'session-1',
@@ -737,7 +749,11 @@ describe('Plan review followup dispatch', () => {
     })
 
     const outboundPrompt = mockOpencodeOps.prompt.mock.calls.at(-1)?.[2]?.[0]?.text
-    expect(apiMocks.autoPin.autoPinBaseWorktree).toHaveBeenCalledWith('proj-1')
+    expect(apiMocks.autoPin.autoPinForBoardPrompt).toHaveBeenCalledWith({
+      projectId: 'proj-1',
+      worktreeId: 'wt-1',
+      connectionId: null
+    })
     expect(apiMocks.hiveTelemetry.startHivePromptTelemetry).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionId: 'session-1',

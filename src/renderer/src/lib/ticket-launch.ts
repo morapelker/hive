@@ -12,6 +12,7 @@ import {
   matchCustomProviderModel
 } from '@shared/types/custom-provider'
 import { resolveCustomProviderSelectedModel } from '@/lib/handoffSelection'
+import { autoPinForBoardPrompt } from '@/lib/auto-pin'
 import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
 import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
 import { snapshotTokenBaseline } from '@/lib/token-baselines'
@@ -230,6 +231,13 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
       worktreeId = spec.worktree.worktreeId
     }
     createdWorktreeId = worktreeId
+
+    // Setting-gated auto-pin so the ticket shows on the pinned board. Fired
+    // here (not by callers) because 'current-branch' mode needs the worktree
+    // the session is sent on, which only exists from this point. Idempotent,
+    // so a multi-model batch re-running this per model is a no-op in
+    // 'root-branch' mode and pins each model's worktree in 'current-branch'.
+    void autoPinForBoardPrompt({ projectId: spec.projectId, worktreeId })
 
     // Resolve the worktree record once — needed for plan-file creation and the
     // OpenCode connect below. Newly created worktrees are already in the store.

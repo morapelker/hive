@@ -119,7 +119,7 @@ import { submitShortcutLabel } from '@/lib/shortcut-labels'
 import { quickLaunchTicket, quickLaunchTicketOnConnection } from './WorktreePickerModal'
 import type { KanbanTicket, KanbanTicketUpdate, Session, Worktree } from '../../../../main/db/types'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
-import { autoPinBaseWorktree } from '@/lib/auto-pin'
+import { autoPinForBoardPrompt } from '@/lib/auto-pin'
 import {
   registerHivePromptHandoff,
   startHivePromptTelemetry
@@ -144,13 +144,17 @@ function completionSendMode(mode: FollowUpMode): 'build' | 'plan' {
 }
 
 function recordSuccessfulFollowupSideEffects(
-  session: { project_id: string; worktree_id: string | null },
+  session: { project_id: string; worktree_id: string | null; connection_id?: string | null },
   sessionId: string,
   prompt: string,
   followUpMode: FollowUpMode,
   model?: ReturnType<typeof resolveSessionModel>
 ): void {
-  void autoPinBaseWorktree(session.project_id)
+  void autoPinForBoardPrompt({
+    projectId: session.project_id,
+    worktreeId: session.worktree_id,
+    connectionId: session.connection_id ?? null
+  })
   startHivePromptTelemetry({
     sessionId,
     prompt,

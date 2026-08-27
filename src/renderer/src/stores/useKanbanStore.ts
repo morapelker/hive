@@ -2168,11 +2168,16 @@ registerKanbanAutoCreateTicket(({ sessionId, rawPrompt }) => {
         created_from_session: true
       })
 
-      // Mirror the manual-open behavior: when auto-pin is enabled, pin the
-      // project's root/base worktree so the auto-created ticket shows on the
-      // pinned board. No-op unless `autoPinBaseWorktreeOnBoardPrompt` is on.
-      const { autoPinBaseWorktree } = await import('@/lib/auto-pin')
-      void autoPinBaseWorktree(session.project_id)
+      // Mirror the manual-open behavior: pin per the auto-pin setting (the
+      // project's root/base worktree, or the session's own worktree /
+      // connection instance) so the auto-created ticket shows on the pinned
+      // board. No-op when `autoPinOnBoardPrompt` is 'off'.
+      const { autoPinForBoardPrompt } = await import('@/lib/auto-pin')
+      void autoPinForBoardPrompt({
+        projectId: session.project_id,
+        worktreeId: session.worktree_id,
+        connectionId: session.connection_id
+      })
     } catch {
       // Best-effort — never disrupt the user's send/prompt flow.
     }

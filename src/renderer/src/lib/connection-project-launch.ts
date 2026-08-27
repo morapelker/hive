@@ -29,7 +29,7 @@ import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
 import { startHivePromptTelemetry } from '@/lib/hive-enterprise-telemetry'
 import { createPlanFile, exceedsGoalPromptLimit, planFilePrompt } from '@/lib/goal-plan-file'
 import { resolveBadgeModel } from '@/lib/ticket-launch'
-import { autoPinBaseWorktree } from '@/lib/auto-pin'
+import { autoPinForBoardPrompt } from '@/lib/auto-pin'
 import {
   PLAN_MODE_PREFIX,
   getSuperModePrefix,
@@ -409,9 +409,10 @@ export async function startTicketSessionOnConnectionInstance(args: {
       void useConnectionStore.getState().renameConnection(connectionId, ticketTitle)
     }
 
-    // Setting-gated auto-pin: pins the project's base instance so this board
-    // shows on the pinned board (the git-project paths pin the default worktree).
-    void autoPinBaseWorktree(savedProjectId)
+    // Setting-gated auto-pin so this board shows on the pinned board: the
+    // project's base instance, or in 'current-branch' mode the instance the
+    // session was sent on (the git-project paths pin worktrees the same way).
+    void autoPinForBoardPrompt({ projectId: savedProjectId, connectionId })
 
     const usageProvider = resolveDefaultUsageProvider(sdk)
     if (usageProvider) {
