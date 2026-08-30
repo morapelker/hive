@@ -828,24 +828,56 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
         return
       }
 
-      // Cmd+click (Mac) / Ctrl+click (Win/Linux) — select attached worktree
-      if ((e.metaKey || e.ctrlKey) && ticket.worktree_id && !isArchived) {
-        e.preventDefault()
-        recordBoardTelegramTarget()
-        const selectionOptions = isPinnedMode ? { preservePinnedBoard: true } : undefined
-        useWorktreeStore.getState().selectWorktree(ticket.worktree_id, selectionOptions)
-        useProjectStore.getState().selectProject(ticket.project_id, selectionOptions)
-        useWorktreeStatusStore.getState().clearWorktreeUnread(ticket.worktree_id)
-        return
-      }
+      // Cmd+click (Mac) / Ctrl+click (Win/Linux) — select attached worktree;
+      // cmd+shift+click — select the project's base worktree instead. Tickets
+      // without a live worktree (never assigned, or the worktree was archived,
+      // which detaches the ticket) fall back to the base worktree too.
+      if (e.metaKey || e.ctrlKey) {
+        const selectTicketWorktree = (): boolean => {
+          const state = useWorktreeStore.getState()
+          const attached =
+            !e.shiftKey && ticket.worktree_id
+              ? (state.worktreesByProject
+                  .get(ticket.project_id)
+                  ?.find((w) => w.id === ticket.worktree_id) ?? null)
+              : null
+          const target = attached ?? state.getDefaultWorktree(ticket.project_id)
+          if (!target) return false
+          if (attached) recordBoardTelegramTarget()
+          const selectionOptions = isPinnedMode ? { preservePinnedBoard: true } : undefined
+          state.selectWorktree(target.id, selectionOptions)
+          useProjectStore.getState().selectProject(ticket.project_id, selectionOptions)
+          useWorktreeStatusStore.getState().clearWorktreeUnread(target.id)
+          return true
+        }
 
-      // Cmd+click on a connection ticket — select the connection in the
-      // sidebar (same as ConnectionItem.handleClick), don't open the session
-      const ticketConnectionId = connectionId ?? connectionSession?.connectionId
-      if ((e.metaKey || e.ctrlKey) && ticketConnectionId && !isArchived) {
-        e.preventDefault()
-        useConnectionStore.getState().selectConnection(ticketConnectionId)
-        return
+        if (selectTicketWorktree()) {
+          e.preventDefault()
+          return
+        }
+
+        // Cmd+click on a connection ticket — select the connection in the
+        // sidebar (same as ConnectionItem.handleClick), don't open the session
+        const ticketConnectionId = connectionId ?? connectionSession?.connectionId
+        if (ticketConnectionId) {
+          e.preventDefault()
+          useConnectionStore.getState().selectConnection(ticketConnectionId)
+          return
+        }
+
+        // Git project with no worktrees in the store — they may just not be
+        // loaded yet (e.g. a pinned board for a never-selected project)
+        const project = useProjectStore.getState().projects.find((p) => p.id === ticket.project_id)
+        if (project && project.kind !== 'connection') {
+          e.preventDefault()
+          void useWorktreeStore
+            .getState()
+            .loadWorktrees(ticket.project_id)
+            .then(() => {
+              selectTicketWorktree()
+            })
+          return
+        }
       }
 
       useKanbanStore.getState().setSelectedTicketRef({
@@ -853,7 +885,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
         ticketId: ticket.id
       })
     },
-    [ticket.id, ticket.worktree_id, ticket.project_id, isArchived, isPinnedMode, connectionId, connectionSession, recordBoardTelegramTarget, blockingDiagnostic]
+    [ticket.id, ticket.worktree_id, ticket.project_id, isPinnedMode, connectionId, connectionSession, recordBoardTelegramTarget, blockingDiagnostic]
   )
 
   // ── Right-button drag into In Progress — start immediately with the
