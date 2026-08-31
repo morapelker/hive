@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 45
+export const CURRENT_SCHEMA_VERSION = 46
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -734,6 +734,14 @@ DROP TABLE IF EXISTS diff_comments;`
     up: `-- NOTE: ALTER TABLE for connections.is_base (the base instance of a
          -- connection project, mirroring worktrees.is_default) is handled
          -- idempotently by ensureConnectionTables() in database.ts.`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
+  },
+  {
+    version: 46,
+    name: 'add_ticket_unread',
+    up: `-- NOTE: ALTER TABLE for kanban_tickets.unread and
+         -- markdown_kanban_card_state.unread is handled idempotently by
+         -- safeAddColumn() in database.ts to avoid "duplicate column" errors.`,
     down: `-- SQLite cannot drop columns; this is a no-op for safety`
   }
 ]

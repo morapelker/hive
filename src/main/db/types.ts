@@ -548,6 +548,8 @@ export interface KanbanTicket {
   created_from_session: boolean
   /** One-shot: auto-approve the next claude-cli ExitPlanMode plan, then self-clears. */
   auto_approve_plan: boolean
+  /** Set when the ticket enters the review column; cleared on open or on leaving review. */
+  unread: boolean
   model_provider_id: string | null
   model_id: string | null
   model_variant: string | null
@@ -599,6 +601,7 @@ export interface KanbanTicketUpdate {
   goal_success_criteria?: string | null
   note?: string | null
   auto_approve_plan?: boolean
+  unread?: boolean
   model_provider_id?: string | null
   model_id?: string | null
   model_variant?: string | null
