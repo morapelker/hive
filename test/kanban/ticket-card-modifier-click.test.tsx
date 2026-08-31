@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '../utils/render'
 import { KanbanTicketCard } from '@/components/kanban/KanbanTicketCard'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useGitStore } from '@/stores/useGitStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
@@ -8,7 +9,7 @@ import { usePinnedStore } from '@/stores/usePinnedStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useQuestionStore } from '@/stores/useQuestionStore'
 import { useScriptStore } from '@/stores/useScriptStore'
-import { useSessionStore } from '@/stores/useSessionStore'
+import { useSessionStore, type Session } from '@/stores/useSessionStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { resetRendererRpcClientForTests, setRendererRpcClient } from '@/api/rpc-client'
@@ -17,6 +18,8 @@ import type { KanbanTicket } from '../../src/main/db/types'
 type Worktree = NonNullable<
   ReturnType<ReturnType<(typeof useWorktreeStore)['getState']>['getDefaultWorktree']>
 >
+type Connection = ReturnType<(typeof useConnectionStore)['getState']>['connections'][number]
+type Project = ReturnType<(typeof useProjectStore)['getState']>['projects'][number]
 
 vi.mock('@/api/settings-api', () => ({
   settingsApi: {
@@ -148,6 +151,59 @@ function makeWorktree(overrides: Partial<Worktree> = {}): Worktree {
     github_pr_url: null,
     ...overrides
   }
+}
+
+function makeConnection(overrides: Partial<Connection> = {}): Connection {
+  return {
+    id: 'conn-live',
+    name: 'alpha + beta',
+    custom_name: null,
+    status: 'active',
+    path: '/tmp/conn-live',
+    color: null,
+    saved_project_id: 'proj-conn',
+    is_base: 0,
+    created_at: '2026-04-16T00:00:00.000Z',
+    updated_at: '2026-04-16T00:00:00.000Z',
+    members: [],
+    ...overrides
+  } as Connection
+}
+
+// A connection project ('proj-conn') with a live instance ('conn-live', running
+// session 'sess-conn') and its base instance ('conn-base' — each member
+// project's default worktree)
+function seedConnectionProject(): void {
+  useProjectStore.setState((state) => ({
+    projects: [
+      ...state.projects,
+      {
+        id: 'proj-conn',
+        name: 'Connection Project',
+        path: '/tmp/proj-conn',
+        kind: 'connection',
+        member_project_ids: '["proj-1"]'
+      } as unknown as Project
+    ]
+  }))
+  useConnectionStore.setState({
+    connections: [
+      makeConnection({ id: 'conn-base', is_base: 1 }),
+      makeConnection({ id: 'conn-live' })
+    ]
+  })
+  useSessionStore.setState({
+    sessionsByConnection: new Map([['conn-live', [{ id: 'sess-conn' } as unknown as Session]]])
+  })
+}
+
+function makeConnectionTicket(overrides: Partial<KanbanTicket> = {}): KanbanTicket {
+  return makeTicket({
+    project_id: 'proj-conn',
+    worktree_id: null,
+    current_session_id: 'sess-conn',
+    ...overrides
+  })
 }
 
 function seedStores(): void {
@@ -357,6 +413,76 @@ describe('ticket card modifier clicks', () => {
 
     await waitFor(() => {
       expect(useWorktreeStore.getState().selectedWorktreeId).toBe('wt-base')
+    })
+    expect(useKanbanStore.getState().selectedTicketRef).toBeNull()
+  })
+
+  test('cmd-click on a connection project ticket selects its live instance', () => {
+    seedConnectionProject()
+    // TooltipProvider: a live connection session renders a connection badge tooltip
+    render(
+      <TooltipProvider>
+        <KanbanTicketCard ticket={makeConnectionTicket()} />
+      </TooltipProvider>
+    )
+
+    fireEvent.click(screen.getByTestId('kanban-ticket-ticket-1'), { metaKey: true })
+
+    expect(useConnectionStore.getState().selectedConnectionId).toBe('conn-live')
+    expect(useKanbanStore.getState().selectedTicketRef).toBeNull()
+  })
+
+  test('cmd-shift-click on a connection project ticket selects the base instance', () => {
+    seedConnectionProject()
+    render(
+      <TooltipProvider>
+        <KanbanTicketCard ticket={makeConnectionTicket()} />
+      </TooltipProvider>
+    )
+
+    fireEvent.click(screen.getByTestId('kanban-ticket-ticket-1'), {
+      metaKey: true,
+      shiftKey: true
+    })
+
+    expect(useConnectionStore.getState().selectedConnectionId).toBe('conn-base')
+    expect(useKanbanStore.getState().selectedTicketRef).toBeNull()
+  })
+
+  test('cmd-click falls back to the base instance when the connection instance is gone', () => {
+    // Archiving a connection instance removes its sessions, so the ticket no
+    // longer resolves to a live connection
+    seedConnectionProject()
+    useSessionStore.setState({ sessionsByConnection: new Map() })
+    render(<KanbanTicketCard ticket={makeConnectionTicket()} />)
+
+    fireEvent.click(screen.getByTestId('kanban-ticket-ticket-1'), { metaKey: true })
+
+    expect(useConnectionStore.getState().selectedConnectionId).toBe('conn-base')
+    expect(useKanbanStore.getState().selectedTicketRef).toBeNull()
+  })
+
+  test('cmd-shift-click loads connections first when none are in the store', async () => {
+    seedConnectionProject()
+    useConnectionStore.setState({ connections: [] })
+    request.mockImplementation(async (method: string) => {
+      if (method === 'connectionOps.getAll') {
+        return { success: true, connections: [makeConnection({ id: 'conn-base', is_base: 1 })] }
+      }
+      if (method === 'db.project.touch') return true
+      if (method === 'db.worktree.touch') return undefined
+      if (method === 'db.worktree.getActiveByProject') return []
+      return null
+    })
+    render(<KanbanTicketCard ticket={makeConnectionTicket()} />)
+
+    fireEvent.click(screen.getByTestId('kanban-ticket-ticket-1'), {
+      metaKey: true,
+      shiftKey: true
+    })
+
+    await waitFor(() => {
+      expect(useConnectionStore.getState().selectedConnectionId).toBe('conn-base')
     })
     expect(useKanbanStore.getState().selectedTicketRef).toBeNull()
   })

@@ -105,6 +105,7 @@ import { parseTicketKey, setKanbanDragData, ticketKey, ticketTransitionTime, use
 import type { TicketKey } from '@/stores/useKanbanStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { isBlockerSatisfied } from '@/lib/blocker-utils'
+import { findBaseInstanceConnection } from '@/lib/connection-project'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useProjectIconUrl } from '@/components/projects/LanguageIcon'
@@ -857,18 +858,41 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
         }
 
         // Cmd+click on a connection ticket — select the connection in the
-        // sidebar (same as ConnectionItem.handleClick), don't open the session
-        const ticketConnectionId = connectionId ?? connectionSession?.connectionId
+        // sidebar (same as ConnectionItem.handleClick), don't open the session;
+        // cmd+shift+click on a connection project ticket — select the project's
+        // base instance (each member project's default worktree) instead, the
+        // twin of the base-worktree behavior above. Tickets whose instance is
+        // gone (archived) fall back to the base instance too.
+        const liveConnectionId = e.shiftKey
+          ? null
+          : (connectionId ?? connectionSession?.connectionId)
+        const ticketConnectionId =
+          liveConnectionId ?? findBaseInstanceConnection(ticket.project_id)?.id
         if (ticketConnectionId) {
           e.preventDefault()
           useConnectionStore.getState().selectConnection(ticketConnectionId)
           return
         }
 
+        const project = useProjectStore.getState().projects.find((p) => p.id === ticket.project_id)
+
+        // Connection project whose connections aren't in the store — they may
+        // just not be loaded yet (e.g. a pinned board before any connection UI)
+        if (project?.kind === 'connection') {
+          e.preventDefault()
+          void useConnectionStore
+            .getState()
+            .loadConnections()
+            .then(() => {
+              const base = findBaseInstanceConnection(ticket.project_id)
+              if (base) useConnectionStore.getState().selectConnection(base.id)
+            })
+          return
+        }
+
         // Git project with no worktrees in the store — they may just not be
         // loaded yet (e.g. a pinned board for a never-selected project)
-        const project = useProjectStore.getState().projects.find((p) => p.id === ticket.project_id)
-        if (project && project.kind !== 'connection') {
+        if (project) {
           e.preventDefault()
           void useWorktreeStore
             .getState()
