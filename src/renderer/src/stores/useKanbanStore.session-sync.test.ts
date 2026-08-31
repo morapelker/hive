@@ -58,6 +58,7 @@ function makeTicket(overrides: Partial<KanbanTicket> = {}): KanbanTicket {
     note: null,
     created_from_session: true,
     auto_approve_plan: false,
+    unread: false,
     model_provider_id: null,
     model_id: null,
     model_variant: null,
@@ -699,6 +700,7 @@ describe('reconcileFinishedSessions — recovers explicit reopens missed while u
         column: 'merged',
         mode: 'plan',
         auto_approve_plan: true,
+        unread: false,
         current_session_id: sessionId
       })
     )
