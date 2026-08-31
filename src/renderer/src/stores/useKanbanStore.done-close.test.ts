@@ -74,6 +74,7 @@ function makeTicket(overrides: Partial<KanbanTicket> = {}): KanbanTicket {
     note: null,
     created_from_session: true,
     auto_approve_plan: false,
+    unread: false,
     model_provider_id: null,
     model_id: null,
     model_variant: null,

@@ -37,6 +37,7 @@ const baseTicket: KanbanTicket = {
   note: null,
   created_from_session: false,
   auto_approve_plan: false,
+  unread: false,
   model_provider_id: null,
   model_id: null,
   model_variant: null,
@@ -132,6 +133,24 @@ describe('KanbanTicketCard transition age', () => {
     )
 
     expect(screen.getByTestId('ticket-transition-age')).toHaveTextContent('5m')
+  })
+})
+
+describe('KanbanTicketCard unread indicator', () => {
+  afterEach(() => {
+    cleanup()
+  })
+
+  it('renders the unread dot for an unread review ticket', () => {
+    render(<KanbanTicketCard ticket={{ ...baseTicket, column: 'review', unread: true }} />)
+
+    expect(screen.getByTestId('ticket-unread-dot')).toBeInTheDocument()
+  })
+
+  it('renders no dot for a read ticket', () => {
+    render(<KanbanTicketCard ticket={{ ...baseTicket, column: 'review', unread: false }} />)
+
+    expect(screen.queryByTestId('ticket-unread-dot')).toBeNull()
   })
 })
 

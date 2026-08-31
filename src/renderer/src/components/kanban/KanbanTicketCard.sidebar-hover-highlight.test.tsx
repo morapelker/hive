@@ -39,6 +39,7 @@ const baseTicket: KanbanTicket = {
   note: null,
   created_from_session: false,
   auto_approve_plan: false,
+  unread: false,
   model_provider_id: null,
   model_id: null,
   model_variant: null,

@@ -279,6 +279,8 @@ interface KanbanState {
   ) => Promise<KanbanTicket | null>
   convertMarkdownPlaceholder: (projectId: string, filePath: string) => Promise<KanbanTicket>
   updateTicket: (ticketId: string, projectId: string, data: KanbanTicketUpdate) => Promise<void>
+  /** Clear a ticket's unread flag (no-op when it isn't unread). */
+  markTicketRead: (ticketId: string, projectId: string) => void
   deleteTicket: (ticketId: string, projectId: string) => Promise<void>
   moveTicketToProject: (
     ticketId: string,
@@ -434,6 +436,8 @@ export const useKanbanStore = create<KanbanState>()(
 
       setSelectedTicketRef: (ref: TicketRef | null) => {
         set({ selectedTicketId: ref?.ticketId ?? null, selectedTicketRef: ref })
+        // Opening the ticket detail (from any route) marks it read
+        if (ref) get().markTicketRead(ref.ticketId, ref.projectId)
       },
 
       setBoardTelegramTarget: (target: BoardTelegramTarget | null) => {
@@ -684,7 +688,14 @@ export const useKanbanStore = create<KanbanState>()(
                   column_changed_at:
                     data.column !== undefined && data.column !== t.column
                       ? updatedAt
-                      : t.column_changed_at
+                      : t.column_changed_at,
+                  // Mirror the backend rule: entering review marks unread,
+                  // leaving clears it; an explicit data.unread wins
+                  unread:
+                    data.unread ??
+                    (data.column !== undefined && data.column !== t.column
+                      ? data.column === 'review'
+                      : t.unread)
                 }
               : t
           )
@@ -703,6 +714,17 @@ export const useKanbanStore = create<KanbanState>()(
           })
           throw err
         }
+      },
+
+      // ── markTicketRead ───────────────────────────────────────────
+      markTicketRead: (ticketId: string, projectId: string) => {
+        const ticket = get()
+          .tickets.get(projectId)
+          ?.find((t) => t.id === ticketId)
+        if (!ticket?.unread) return
+        get()
+          .updateTicket(ticketId, projectId, { unread: false })
+          .catch(() => {})
       },
 
       // ── deleteTicket (optimistic) ────────────────────────────────
@@ -1023,7 +1045,8 @@ export const useKanbanStore = create<KanbanState>()(
                   column,
                   sort_order: sortOrder,
                   updated_at: movedAt,
-                  column_changed_at: t.column === column ? t.column_changed_at : movedAt
+                  column_changed_at: t.column === column ? t.column_changed_at : movedAt,
+                  unread: t.column === column ? t.unread : column === 'review'
                 }
               : t
           )

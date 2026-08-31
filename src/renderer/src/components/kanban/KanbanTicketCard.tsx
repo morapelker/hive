@@ -829,6 +829,10 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
         return
       }
 
+      // Any tap on the card marks it read (cmd+click paths open the session,
+      // the plain path opens the detail modal)
+      useKanbanStore.getState().markTicketRead(ticket.id, ticket.project_id)
+
       // Cmd+click (Mac) / Ctrl+click (Win/Linux) — select attached worktree;
       // cmd+shift+click — select the project's base worktree instead. Tickets
       // without a live worktree (never assigned, or the worktree was archived,
@@ -952,8 +956,10 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
       useWorktreeStore.getState().selectWorktree(ticket.worktree_id, selectionOptions)
       useProjectStore.getState().selectProject(ticket.project_id, selectionOptions)
       useWorktreeStatusStore.getState().clearWorktreeUnread(ticket.worktree_id)
+      useKanbanStore.getState().markTicketRead(ticket.id, ticket.project_id)
     },
     [
+      ticket.id,
       ticket.worktree_id,
       ticket.project_id,
       isArchived,
@@ -1099,6 +1105,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   const handleJumpToSession = useCallback(() => {
     if (!ticket.current_session_id) return
     const kanbanStore = useKanbanStore.getState()
+    kanbanStore.markTicketRead(ticket.id, ticket.project_id)
     if (kanbanStore.isBoardViewActive) kanbanStore.toggleBoardView()
     if (kanbanStore.isPinnedBoardActive) kanbanStore.togglePinnedBoard()
     if (connectionId) {
@@ -1126,11 +1133,12 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
         useSessionStore.getState().setActiveSession(ticket.current_session_id)
       }
     }
-  }, [ticket.current_session_id, ticket.worktree_id, ticket.project_id, connectionId, connectionSession, isPinnedMode])
+  }, [ticket.current_session_id, ticket.id, ticket.worktree_id, ticket.project_id, connectionId, connectionSession, isPinnedMode])
 
   const handleGoToReview = useCallback(() => {
     if (!completedReviewSessionId) return
     const kanbanStore = useKanbanStore.getState()
+    kanbanStore.markTicketRead(ticket.id, ticket.project_id)
     if (kanbanStore.isBoardViewActive) kanbanStore.toggleBoardView()
     if (kanbanStore.isPinnedBoardActive) kanbanStore.togglePinnedBoard()
     if (ticket.worktree_id) {
@@ -1138,7 +1146,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
       useSessionStore.getState().setActiveWorktree(ticket.worktree_id)
     }
     useSessionStore.getState().setActiveSession(completedReviewSessionId)
-  }, [completedReviewSessionId, ticket.worktree_id])
+  }, [completedReviewSessionId, ticket.worktree_id, ticket.id, ticket.project_id])
 
   const isSimpleTicket = ticket.current_session_id === null
   const isFlowTicket = ticket.current_session_id !== null
@@ -1301,7 +1309,20 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
               >
             {/* Title + top-right indicators */}
             <div className="flex items-start justify-between gap-2">
-              <p className="text-[13px] font-medium leading-[1.4] text-foreground min-w-0 flex-1 break-words">
+              {ticket.unread && (
+                <span
+                  data-testid="ticket-unread-dot"
+                  title="Unread — just moved to review"
+                  className="mt-[6px] h-1.5 w-1.5 shrink-0 rounded-full bg-foreground/70"
+                />
+              )}
+              <p
+                className={cn(
+                  'text-[13px] leading-[1.4] text-foreground min-w-0 flex-1 break-words',
+                  // Unread (just landed in review): bold until opened
+                  ticket.unread ? 'font-bold' : 'font-medium'
+                )}
+              >
                 <HighlightedText text={ticket.title} normQuery={normQuery} />
               </p>
               <div className="flex items-center gap-1.5 shrink-0">

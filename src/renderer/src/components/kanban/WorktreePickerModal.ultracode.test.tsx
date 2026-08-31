@@ -94,6 +94,7 @@ const baseTicket: KanbanTicket = {
   pending_launch_config: null,
   created_from_session: false,
   auto_approve_plan: false,
+  unread: false,
   attachments: [],
   archived_at: null,
   external_provider: null,

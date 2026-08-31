@@ -386,6 +386,7 @@ export class DatabaseService {
       note: (row.note as string) ?? null,
       created_from_session: row.created_from_session === 1,
       auto_approve_plan: row.auto_approve_plan === 1,
+      unread: row.unread === 1,
       model_provider_id: (row.model_provider_id as string) ?? null,
       model_id: (row.model_id as string) ?? null,
       model_variant: (row.model_variant as string) ?? null,
@@ -715,6 +716,7 @@ export class DatabaseService {
     this.safeAddColumn('kanban_tickets', 'goal_success_criteria', 'TEXT DEFAULT NULL')
     this.safeAddColumn('kanban_tickets', 'created_from_session', 'INTEGER NOT NULL DEFAULT 0')
     this.safeAddColumn('kanban_tickets', 'auto_approve_plan', 'INTEGER NOT NULL DEFAULT 0')
+    this.safeAddColumn('kanban_tickets', 'unread', 'INTEGER NOT NULL DEFAULT 0')
     this.safeAddColumn('kanban_tickets', 'model_provider_id', 'TEXT DEFAULT NULL')
     this.safeAddColumn('kanban_tickets', 'model_id', 'TEXT DEFAULT NULL')
     this.safeAddColumn('kanban_tickets', 'model_variant', 'TEXT DEFAULT NULL')
@@ -849,6 +851,7 @@ export class DatabaseService {
     this.safeAddColumn('markdown_kanban_card_state', 'variant_group_id', 'TEXT DEFAULT NULL')
     this.safeAddColumn('markdown_kanban_card_state', 'column_changed_at', 'TEXT DEFAULT NULL')
     this.safeAddColumn('markdown_kanban_card_state', 'last_known_column', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('markdown_kanban_card_state', 'unread', 'INTEGER NOT NULL DEFAULT 0')
 
     db.exec(`
       CREATE TABLE IF NOT EXISTS session_usage_state (
@@ -3063,6 +3066,17 @@ export class DatabaseService {
       updates.push('auto_approve_plan = ?')
       values.push(data.auto_approve_plan ? 1 : 0)
     }
+    // Entering review marks the ticket unread; leaving review clears it. An
+    // explicit unread in the update (opening the ticket clears it) wins.
+    const derivedUnread =
+      data.column !== undefined && data.column !== existing.column
+        ? data.column === 'review'
+        : undefined
+    const unreadValue = data.unread ?? derivedUnread
+    if (unreadValue !== undefined) {
+      updates.push('unread = ?')
+      values.push(unreadValue ? 1 : 0)
+    }
     if (data.model_provider_id !== undefined) {
       updates.push('model_provider_id = ?')
       values.push(data.model_provider_id)
@@ -3251,8 +3265,8 @@ export class DatabaseService {
     const now = new Date().toISOString()
     if (column !== existing.column) {
       db.prepare(
-        'UPDATE kanban_tickets SET "column" = ?, sort_order = ?, updated_at = ?, column_changed_at = ? WHERE id = ?'
-      ).run(column, sortOrder, now, now, id)
+        'UPDATE kanban_tickets SET "column" = ?, sort_order = ?, updated_at = ?, column_changed_at = ?, unread = ? WHERE id = ?'
+      ).run(column, sortOrder, now, now, column === 'review' ? 1 : 0, id)
     } else {
       db.prepare(
         'UPDATE kanban_tickets SET "column" = ?, sort_order = ?, updated_at = ? WHERE id = ?'
