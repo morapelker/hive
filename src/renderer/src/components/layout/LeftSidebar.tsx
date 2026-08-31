@@ -102,6 +102,7 @@ export function LeftSidebar(): React.JSX.Element {
   // Filter store for language filters and the text filter query
   // (in the store so keyboard navigation can respect the visible list)
   const filterQuery = useFilterStore((s) => s.filterQuery)
+  const debouncedFilterQuery = useFilterStore((s) => s.debouncedFilterQuery)
   const setFilterQuery = useFilterStore((s) => s.setFilterQuery)
   const activeLanguages = useFilterStore((s) => s.activeLanguages)
   const removeLanguage = useFilterStore((s) => s.removeLanguage)
@@ -310,7 +311,7 @@ export function LeftSidebar(): React.JSX.Element {
             <ConnectionList />
             <ProjectList
               onAddProject={handleAddProject}
-              filterQuery={filterQuery}
+              filterQuery={debouncedFilterQuery}
               activeLanguages={activeLanguages}
             />
           </div>
