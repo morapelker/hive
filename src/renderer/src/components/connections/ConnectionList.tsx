@@ -35,7 +35,7 @@ export function ConnectionList(): React.JSX.Element | null {
   const connectionModeActive = useConnectionStore((s) => s.connectionModeActive)
 
   // Sidebar filter: a connection matches iff at least one of its projects matches
-  const filterQuery = useFilterStore((s) => s.filterQuery)
+  const filterQuery = useFilterStore((s) => s.debouncedFilterQuery)
   const activeLanguages = useFilterStore((s) => s.activeLanguages)
   const projects = useProjectStore((s) => s.projects)
   const activeSpaceId = useSpaceStore((s) => s.activeSpaceId)
