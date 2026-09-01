@@ -300,6 +300,24 @@ describeIf('database migration safety', () => {
     db.close()
   })
 
+  it('supports the project trust_check_done flag end-to-end on a fresh database', () => {
+    const db = new DatabaseService(makeDbPath())
+    db.init()
+
+    expect(columnNames(db, 'projects')).toEqual(expect.arrayContaining(['trust_check_done']))
+
+    const project = db.createProject({ name: 'Project', path: makeDbPath() })
+    expect(project.trust_check_done).toBe(false)
+
+    db.updateProjectTrustCheck(project.id, true)
+    expect(db.getProject(project.id)?.trust_check_done).toBe(true)
+
+    db.updateProjectTrustCheck(project.id, false)
+    expect(db.getProject(project.id)?.trust_check_done).toBe(false)
+
+    db.close()
+  })
+
   it('supports the multi-model ticket columns end-to-end on a fresh database', () => {
     const db = new DatabaseService(makeDbPath())
     db.init()

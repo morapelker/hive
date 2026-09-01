@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => {
     clearAllClaudeCliInteractions: vi.fn(),
     clearClaudeCliSubagentTracking: vi.fn(),
     clearAllClaudeCliSubagentTracking: vi.fn(),
+    ensureProjectTrustCheck: vi.fn(async () => {}),
     ptyService: {
       has: vi.fn(() => false),
       create: vi.fn(() => ({ cols: 120, rows: 40 })),
@@ -98,6 +99,10 @@ vi.mock('./claude-binary-resolver', () => ({
 
 vi.mock('./claude-cli-plan-handoff', () => ({
   externalizeGoalHandoffPlan: vi.fn((prompt: string) => prompt)
+}))
+
+vi.mock('./claude-trust', () => ({
+  ensureProjectTrustCheck: mocks.ensureProjectTrustCheck
 }))
 
 // Keep the real writeClaudeCliPrompt (bracketed paste) but stub the timer-based
@@ -183,9 +188,11 @@ function setupDb(session: Session = makeSession()): void {
     getSession: vi.fn(() => session),
     getWorktree: vi.fn(() => ({ path: '/repo/worktree' })),
     getConnection: vi.fn(() => ({ path: '/repo/connection' })),
+    getProject: vi.fn(() => ({ id: session.project_id, path: '/repo', kind: 'git' })),
     getSetting: vi.fn(() => null),
     getSessionByClaudeSessionId: vi.fn(() => null),
-    updateSession: vi.fn()
+    updateSession: vi.fn(),
+    updateProjectTrustCheck: vi.fn()
   })
 }
 
@@ -245,6 +252,21 @@ describe('Claude CLI terminal hook status wiring', () => {
       'Implement the plan'
     ])
     expect(mocks.publishClaudeCliStatus).not.toHaveBeenCalled()
+  })
+
+  it('runs the project trust pre-flight before spawning the PTY', async () => {
+    const result = await createClaudeCliTerminal('hive-session-1', {
+      pendingPrompt: 'Implement the plan'
+    })
+
+    expect(result.success).toBe(true)
+    expect(mocks.ensureProjectTrustCheck).toHaveBeenCalledWith(
+      mocks.getDatabase.mock.results.at(-1)!.value,
+      'project-1'
+    )
+    const trustOrder = mocks.ensureProjectTrustCheck.mock.invocationCallOrder[0]
+    const spawnOrder = mocks.ptyService.create.mock.invocationCallOrder[0]
+    expect(trustOrder).toBeLessThan(spawnOrder)
   })
 
   it('injects the pending prompt into an already-running PTY instead of dropping it', async () => {

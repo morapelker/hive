@@ -25,6 +25,7 @@ import {
 import { setClaudeCliPlanAutoApprove } from './claude-cli-plan-auto-approve'
 import { logClaudeBinaryVersion, resolveClaudeBinaryPath } from './claude-binary-resolver'
 import { buildClaudeCliPtySpawn } from './claude-cli-spawner'
+import { ensureProjectTrustCheck } from './claude-trust'
 import { getCustomProviderById } from './custom-providers'
 import type { CustomProviderModel } from '@shared/types/custom-provider'
 import { externalizeGoalHandoffPlan } from './claude-cli-plan-handoff'
@@ -323,6 +324,11 @@ export async function createClaudeCliTerminal(
     }
 
     const alreadyExists = ptyService.has(sessionId)
+    // The claude CLI stalls a fresh spawn on its folder-trust dialog (which
+    // would swallow an argv prompt behind an interactive question), so make
+    // sure the project root is trusted in ~/.claude.json before the PTY starts.
+    // One config check per project — afterwards this is a single DB read.
+    await ensureProjectTrustCheck(db, session.project_id)
     const { port } = await getClaudeHookServer()
     ensureClaudeCliStatusSubscription()
     const hookSettingsJson = buildClaudeCliHookSettings(port, sessionId)

@@ -106,9 +106,10 @@ export function resolveDatabasePath(options?: {
   return join(homeDir, '.hive', 'hive.db')
 }
 
-type ProjectRow = Omit<Project, 'auto_assign_port' | 'custom_commands'> & {
+type ProjectRow = Omit<Project, 'auto_assign_port' | 'custom_commands' | 'trust_check_done'> & {
   auto_assign_port: number | boolean
   custom_commands: string | null
+  trust_check_done?: number | boolean
 }
 
 type CompactionWorkerSuccess = CompactionResult & { ok: true }
@@ -341,6 +342,7 @@ export class DatabaseService {
     return {
       ...row,
       auto_assign_port: Boolean(row.auto_assign_port),
+      trust_check_done: Boolean(row.trust_check_done),
       custom_commands: this.parseProjectCustomCommands(row.custom_commands)
     } as Project
   }
@@ -702,6 +704,7 @@ export class DatabaseService {
     )
     this.safeAddColumn('connections', 'is_base', 'INTEGER NOT NULL DEFAULT 0')
     this.safeAddColumn('projects', 'kanban_simple_mode', 'INTEGER NOT NULL DEFAULT 0')
+    this.safeAddColumn('projects', 'trust_check_done', 'INTEGER NOT NULL DEFAULT 0')
     this.safeAddColumn('projects', 'kanban_storage_mode', "TEXT NOT NULL DEFAULT 'internal'")
     this.safeAddColumn('projects', 'kanban_markdown_config', 'TEXT DEFAULT NULL')
     this.safeAddColumn('projects', 'custom_commands', 'TEXT DEFAULT NULL')
@@ -3487,6 +3490,11 @@ export class DatabaseService {
       enabled ? 1 : 0,
       projectId
     )
+  }
+
+  updateProjectTrustCheck(projectId: string, done: boolean): void {
+    const db = this.getDb()
+    db.prepare('UPDATE projects SET trust_check_done = ? WHERE id = ?').run(done ? 1 : 0, projectId)
   }
 
   // Ticket followup message operations
