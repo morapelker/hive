@@ -11,7 +11,8 @@ import { getImageMimeType } from '@shared/types/file-utils'
 import { detectForgeRemote, extractPullRequestUrl, parsePullRequestNumber, pullRequestHeadRef } from '@shared/git-forge'
 import { glabCreateMergeRequest } from '../../services/gitlab-cli'
 import { selectUniqueBreedName } from '../../services/breed-names'
-import { normalizeWorktreePath } from '../../services/path-utils'
+import { createLogger } from '../../services/logger'
+import { isSameOrAncestorPath, normalizeWorktreePath } from '../../services/path-utils'
 import { classifyGitError } from './classifier'
 import { GitUnknown, type GitError } from './errors'
 import { Git } from './service'
@@ -20,6 +21,8 @@ import { normalizeBranchDisplayName } from '@shared/git-output'
 
 const execFileAsync = promisify(execFile)
 type GitOperation = 'merge' | 'rebase' | 'cherry-pick' | 'apply'
+
+const log = createLogger({ component: 'GitWorktreeOps' })
 
 export const resolveGitWorktreesDir = (
   projectName: string,
@@ -268,10 +271,20 @@ const cleanupFailedWorktreeCreate = async (
     // registered may have been pre-existing user data.
     try {
       if (existsSync(worktreePath)) {
+        log.warn('Deleting worktree directory from disk (failed-create cleanup)', {
+          worktreePath,
+          branchName,
+          trigger: 'failed-create-cleanup'
+        })
         rmSync(worktreePath, { recursive: true, force: true })
+        log.info('Deleted worktree directory from disk', { worktreePath, outcome: 'deleted' })
       }
-    } catch {
-      // Best-effort.
+    } catch (error) {
+      log.error(
+        'Failed to delete worktree directory during failed-create cleanup',
+        error instanceof Error ? error : undefined,
+        { worktreePath, outcome: 'failed' }
+      )
     }
   }
   try {
@@ -283,6 +296,128 @@ const cleanupFailedWorktreeCreate = async (
     await git.raw(['branch', '-D', branchName])
   } catch {
     // Branch may not have been created, or may already be gone.
+  }
+}
+
+/**
+ * Decides whether the rmSync fallback in worktree remove/archive may delete
+ * `worktreePath` after `git worktree remove --force` failed.
+ *
+ * git refuses to remove a path for many reasons — the most important being
+ * that the path is a *main* working tree (e.g. a user's real project
+ * checkout, or their home directory if it happens to contain a .git). The
+ * fallback must therefore never treat an arbitrary failure as "stale
+ * worktree dir, just delete it". Deletion is allowed only when ALL hold:
+ *
+ *  - the path is strictly inside Hive's managed worktree root
+ *    (~/.hive-worktrees) — anything outside it is never rm-rf'ed by a
+ *    fallback;
+ *  - the path is not the repo itself, not an ancestor of it, and not the
+ *    home directory or an ancestor of it;
+ *  - the path is registered as a *linked* worktree of the repo (a non-first
+ *    `worktree <path>` entry in `git worktree list --porcelain`), mirroring
+ *    the conservative pattern in cleanupFailedWorktreeCreate.
+ *
+ * Anything else must surface the original git error to the user instead.
+ */
+const assessWorktreeDeleteSafety = async (
+  git: SimpleGit,
+  repoPath: string,
+  worktreePath: string
+): Promise<{ allowed: true } | { allowed: false; reason: string }> => {
+  const path = normalizeWorktreePath(worktreePath)
+  const repo = normalizeWorktreePath(repoPath)
+  const home = normalizeWorktreePath(homedir())
+
+  if (isSameOrAncestorPath(path, repo)) {
+    return { allowed: false, reason: 'path is the repository checkout or an ancestor of it' }
+  }
+  if (isSameOrAncestorPath(path, home)) {
+    return { allowed: false, reason: 'path is the home directory or an ancestor of it' }
+  }
+  const managedRoot = normalizeWorktreePath(join(homedir(), '.hive-worktrees'))
+  if (path === managedRoot || !isSameOrAncestorPath(managedRoot, path)) {
+    return { allowed: false, reason: 'path is outside the managed worktree root (~/.hive-worktrees)' }
+  }
+
+  let linkedWorktreePaths: string[]
+  try {
+    const list = await git.raw(['worktree', 'list', '--porcelain'])
+    const entries = list
+      .split('\n')
+      .filter((line) => line.startsWith('worktree '))
+      .map((line) => line.slice('worktree '.length))
+    // The first entry is always the main working tree; only later entries
+    // are linked worktrees that may be deleted.
+    linkedWorktreePaths = entries.slice(1)
+  } catch {
+    return { allowed: false, reason: 'could not verify worktree registration (git worktree list failed)' }
+  }
+  if (!linkedWorktreePaths.some((linked) => normalizeWorktreePath(linked) === path)) {
+    return { allowed: false, reason: 'path is not registered as a linked worktree of this repository' }
+  }
+  return { allowed: true }
+}
+
+/**
+ * Shared removal flow for the `remove` and `archive` operations. Attempts
+ * `git worktree remove --force`; on failure, either prunes a stale
+ * registration (directory already gone — nothing on disk to lose), deletes
+ * the directory when assessWorktreeDeleteSafety allows it, or rethrows the
+ * original git error so the user sees why removal was refused. Every disk
+ * deletion is logged before it executes so incidents are diagnosable from
+ * ~/.hive/logs/.
+ */
+const removeWorktreeGuarded = async (
+  git: SimpleGit,
+  repoPath: string,
+  worktreePath: string
+): Promise<void> => {
+  try {
+    await git.raw(['worktree', 'remove', worktreePath, '--force'])
+    return
+  } catch (error) {
+    const gitError = error instanceof Error ? error.message : String(error)
+    if (!existsSync(worktreePath)) {
+      log.warn('git worktree remove failed for a missing directory; pruning stale registration', {
+        repoPath,
+        worktreePath,
+        gitError
+      })
+      await git.raw(['worktree', 'prune'])
+      return
+    }
+    const verdict = await assessWorktreeDeleteSafety(git, repoPath, worktreePath)
+    if (!verdict.allowed) {
+      log.error(
+        'Refusing rmSync fallback after git worktree remove failed',
+        error instanceof Error ? error : undefined,
+        { repoPath, worktreePath, reason: verdict.reason, gitError }
+      )
+      throw error
+    }
+    log.warn('Deleting worktree directory from disk (rmSync fallback)', {
+      repoPath,
+      worktreePath,
+      trigger: 'worktree-remove-fallback',
+      gitError
+    })
+    try {
+      rmSync(worktreePath, { recursive: true, force: true })
+      log.info('Deleted worktree directory from disk', {
+        repoPath,
+        worktreePath,
+        outcome: 'deleted'
+      })
+    } catch (rmError) {
+      log.error('rmSync fallback failed', rmError instanceof Error ? rmError : undefined, {
+        repoPath,
+        worktreePath,
+        outcome: 'failed'
+      })
+      throw error
+    }
+    await git.raw(['worktree', 'prune'])
   }
 }
 
@@ -771,23 +906,13 @@ const make = Effect.gen(function* () {
         }),
       remove: (repoPath, worktreePath) =>
         writeOp(repoPath, `git worktree remove ${worktreePath}`, async (git) => {
-          try {
-            await git.raw(['worktree', 'remove', worktreePath, '--force'])
-          } catch {
-            if (existsSync(worktreePath)) rmSync(worktreePath, { recursive: true, force: true })
-            await git.raw(['worktree', 'prune'])
-          }
+          await removeWorktreeGuarded(git, repoPath, worktreePath)
           return { success: true as const }
         }),
       archive: (repoPath, worktreePath, branchName) =>
         Effect.gen(function* () {
           const removeResult = yield* writeOp(repoPath, `git worktree remove ${worktreePath}`, async (git) => {
-            try {
-              await git.raw(['worktree', 'remove', worktreePath, '--force'])
-            } catch {
-              if (existsSync(worktreePath)) rmSync(worktreePath, { recursive: true, force: true })
-              await git.raw(['worktree', 'prune'])
-            }
+            await removeWorktreeGuarded(git, repoPath, worktreePath)
             return { success: true as const }
           })
           if (!removeResult.success) return removeResult
