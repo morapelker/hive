@@ -23,6 +23,9 @@ export interface Project {
   worktree_create_script: string | null
   custom_commands: CustomProjectCommand[] | null
   auto_assign_port: boolean
+  /** True once the claude CLI folder-trust pre-flight verified/stamped this
+   * project's root in ~/.claude.json (so later launches skip the file check). */
+  trust_check_done?: boolean
   kanban_storage_mode?: KanbanStorageMode
   kanban_markdown_config?: string | null
   sort_order: number

@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 46
+export const CURRENT_SCHEMA_VERSION = 47
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -741,6 +741,13 @@ DROP TABLE IF EXISTS diff_comments;`
     name: 'add_ticket_unread',
     up: `-- NOTE: ALTER TABLE for kanban_tickets.unread and
          -- markdown_kanban_card_state.unread is handled idempotently by
+         -- safeAddColumn() in database.ts to avoid "duplicate column" errors.`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
+  },
+  {
+    version: 47,
+    name: 'add_project_trust_check',
+    up: `-- NOTE: ALTER TABLE for projects.trust_check_done is handled idempotently by
          -- safeAddColumn() in database.ts to avoid "duplicate column" errors.`,
     down: `-- SQLite cannot drop columns; this is a no-op for safety`
   }

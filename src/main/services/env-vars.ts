@@ -1,7 +1,10 @@
 import { APP_SETTINGS_DB_KEY } from '@shared/types/settings'
-import type { DatabaseService } from '../db/database'
 
-export function getUserEnvironmentVariables(db: DatabaseService | null): Record<string, string> {
+export function getUserEnvironmentVariables(
+  db: {
+    getSetting(key: string): string | null
+  } | null
+): Record<string, string> {
   if (!db) return {}
   try {
     const raw = db.getSetting(APP_SETTINGS_DB_KEY)
