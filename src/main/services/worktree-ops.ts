@@ -1,5 +1,6 @@
-import { existsSync } from 'fs'
-import { basename } from 'path'
+import { existsSync, statSync } from 'fs'
+import { homedir } from 'os'
+import { basename, join } from 'path'
 import { Effect, Layer } from 'effect'
 
 import { APP_SETTINGS_DB_KEY } from '@shared/types/settings'
@@ -13,7 +14,7 @@ import { type BreedType } from './breed-names'
 import { emitGitBranchChanged } from './git-events'
 import { createGitService, isAutoNamedBranch } from './git-service'
 import { createLogger } from './logger'
-import { normalizeWorktreePath } from './path-utils'
+import { isSameOrAncestorPath, normalizeWorktreePath } from './path-utils'
 import { assignPort, releasePort } from './port-registry'
 import { scriptRunner } from './script-runner'
 import { emitWorktreeBranchRenamed } from './worktree-events'
@@ -96,6 +97,43 @@ export interface SimpleResult {
 
 function getImportedWorktreeName(branch: string, worktreePath: string): string {
   return branch || basename(worktreePath)
+}
+
+/**
+ * Sanity check before auto-importing a path from `git worktree list` into the
+ * DB as a Hive worktree. Once imported, the path becomes deletable through
+ * the UI, so a bad entry (a home directory, a real project checkout, an
+ * ancestor of the project) must never get in. Returns a human-readable
+ * refusal reason, or null when the import is safe.
+ *
+ * A linked worktree always has a `.git` *file* pointing at the parent repo;
+ * a `.git` directory means the path is the main working tree of some other
+ * repository (the incident case: a stray ~/.git made the home directory look
+ * like a worktree) and must never be imported.
+ */
+export function getWorktreeImportRefusalReason(
+  worktreePath: string,
+  projectPath: string
+): string | null {
+  const path = normalizeWorktreePath(worktreePath)
+  const project = normalizeWorktreePath(projectPath)
+  const home = normalizeWorktreePath(homedir())
+
+  if (isSameOrAncestorPath(path, home)) {
+    return 'path is the user home directory or an ancestor of it'
+  }
+  if (isSameOrAncestorPath(path, project)) {
+    return 'path is the project path or an ancestor of it'
+  }
+  try {
+    if (statSync(join(worktreePath, '.git')).isDirectory()) {
+      return 'path is a main working tree of another repository (.git is a directory)'
+    }
+  } catch {
+    // No .git entry at all: not a linked worktree checkout on disk.
+    return 'path has no .git entry (not a linked worktree)'
+  }
+  return null
 }
 
 export function getBreedType(db: DatabaseService): BreedType {
@@ -328,6 +366,17 @@ export const syncWorktreesOpEffect = (
             projectId: params.projectId,
             path: gitWorktree.path,
             branch: gitWorktree.branch
+          })
+          continue
+        }
+
+        const refusalReason = getWorktreeImportRefusalReason(gitWorktree.path, params.projectPath)
+        if (refusalReason) {
+          log.warn('Refusing to import unsafe git worktree path during sync', {
+            projectId: params.projectId,
+            path: gitWorktree.path,
+            branch: gitWorktree.branch,
+            reason: refusalReason
           })
           continue
         }
