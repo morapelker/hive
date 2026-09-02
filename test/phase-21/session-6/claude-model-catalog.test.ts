@@ -70,11 +70,11 @@ describe('ClaudeCodeImplementer model catalog', () => {
     })
   })
 
-  it('getModelInfo returns correct metadata for Fable 5', async () => {
+  it('getModelInfo returns correct metadata for Fable 5.1', async () => {
     const info = await impl.getModelInfo('any', 'fable')
     expect(info).toEqual({
       id: 'fable',
-      name: 'Fable 5',
+      name: 'Fable 5.1',
       limit: { context: 1000000, output: 32000 }
     })
   })

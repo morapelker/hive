@@ -81,7 +81,7 @@ const CLAUDE_OPUS_EFFORT_VARIANTS = { low: {}, medium: {}, high: {}, xhigh: {}, 
 const CLAUDE_MODELS = [
   {
     id: 'fable',
-    name: 'Fable 5',
+    name: 'Fable 5.1',
     limit: { context: 1000000, output: 32000 },
     variants: CLAUDE_OPUS_EFFORT_VARIANTS,
     defaultVariant: 'high'

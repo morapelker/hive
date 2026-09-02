@@ -304,7 +304,7 @@ export async function loadHandoffModelCatalog(
 
 /**
  * Warm the model-catalog cache for every available SDK so model names resolve
- * to their display form (e.g. "Fable 5" instead of "fable") without the user
+ * to their display form (e.g. "Fable 5.1" instead of "fable") without the user
  * first opening a model picker. Deduped by catalog SDK — claude-code and
  * claude-code-cli share one catalog, so only one fetch goes out for the pair.
  */
