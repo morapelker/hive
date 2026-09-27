@@ -66,6 +66,7 @@ scripts/*
 !scripts/dev-desktop.mjs
 !scripts/dev-web.mjs
 !scripts/probe-effect-logger.ts
+!scripts/crop-lottie.mjs
 
 .playwright-cli
 

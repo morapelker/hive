@@ -85,7 +85,7 @@ describe('pet Lottie rendering', () => {
     expect(pet.resolvedAssets.idle).toContain('french-bulldog')
     expect(pet.resolvedAssets.permission).toContain('french-bulldog')
     expect(pet.resolvedLottieAssets?.working).toContain('french-bulldog-run')
-    expect(pet.lottieScale?.working).toBe(1.3)
+    expect(pet.lottieScale?.working).toBe(1.45)
   })
 
   it('resolves static and working-state Lottie assets for the dachshund pet', () => {

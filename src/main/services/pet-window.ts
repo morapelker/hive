@@ -90,7 +90,7 @@ const FRENCH_BULLDOG_MANIFEST: PetManifest = {
     working: 'assets/french-bulldog-run.lottie'
   },
   lottieScale: {
-    working: 1.3
+    working: 1.45
   },
   defaultSize: 'M'
 }
