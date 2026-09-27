@@ -254,15 +254,18 @@ describe('Claude CLI terminal hook status wiring', () => {
     expect(mocks.publishClaudeCliStatus).not.toHaveBeenCalled()
   })
 
-  it('runs the project trust pre-flight before spawning the PTY', async () => {
+  it('runs the trust pre-flight for the project and its worktree before spawning the PTY', async () => {
     const result = await createClaudeCliTerminal('hive-session-1', {
       pendingPrompt: 'Implement the plan'
     })
 
     expect(result.success).toBe(true)
+    // The CLI keys trust by cwd, and the worktree lives outside the repo root —
+    // the pre-flight must see the worktree path, not just the project id.
     expect(mocks.ensureProjectTrustCheck).toHaveBeenCalledWith(
       mocks.getDatabase.mock.results.at(-1)!.value,
-      'project-1'
+      'project-1',
+      { worktreePath: '/repo/worktree' }
     )
     const trustOrder = mocks.ensureProjectTrustCheck.mock.invocationCallOrder[0]
     const spawnOrder = mocks.ptyService.create.mock.invocationCallOrder[0]

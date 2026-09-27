@@ -841,10 +841,12 @@ export async function createClaudeCliTerminal(
     if (!codex) {
       // The claude CLI stalls a fresh spawn on its folder-trust dialog (which
       // would swallow an argv prompt behind an interactive question), so make
-      // sure the project root is trusted in ~/.claude.json before the PTY starts.
-      // One config check per project — afterwards this is a single DB read.
-      // Codex gets its trust as a `-c projects=…` override in the spawn args.
-      await ensureProjectTrustCheck(db, session.project_id)
+      // sure both the project root and this session's worktree are trusted in
+      // ~/.claude.json before the PTY starts. The CLI keys trust by cwd (plus
+      // ancestors), and worktrees live outside the repo root, so the root
+      // alone doesn't cover them. Codex gets its trust as a `-c projects=…`
+      // override in the spawn args.
+      await ensureProjectTrustCheck(db, session.project_id, { worktreePath })
     }
     const { port } = await getClaudeHookServer()
     ensureClaudeCliStatusSubscription()
