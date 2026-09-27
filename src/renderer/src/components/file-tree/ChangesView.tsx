@@ -100,6 +100,14 @@ export function ChangesView({
   const fileStatusesByWorktree = useGitStore((state) => state.fileStatusesByWorktree)
   const branchInfoByWorktree = useGitStore((state) => state.branchInfoByWorktree)
 
+  // Connection git view: 'base' shows each member project's base branch instead
+  // of the connection's own worktrees (cmd+shift+click on a connection ticket)
+  const connectionGitView = useConnectionStore((s) => s.connectionGitView)
+  const handleShowConnectionBranches = useCallback(() => {
+    const { selectedConnectionId, selectConnection } = useConnectionStore.getState()
+    if (selectedConnectionId) selectConnection(selectedConnectionId)
+  }, [])
+
   // Diff comment attach-to-chat support
   const selectedWorktreeId = useWorktreeStore((s) => s.selectedWorktreeId)
   const diffComments = useDiffCommentStore(
@@ -529,6 +537,17 @@ export function ChangesView({
                 ? 'No changes'
                 : `${connectionSummary.totalFiles} file${connectionSummary.totalFiles === 1 ? '' : 's'} across ${connectionSummary.reposWithChanges} repo${connectionSummary.reposWithChanges === 1 ? '' : 's'}`}
             </span>
+            {connectionGitView === 'base' && (
+              <button
+                type="button"
+                className="ml-1 rounded border border-border bg-muted px-1 py-px text-[10px] text-muted-foreground hover:text-foreground"
+                onClick={handleShowConnectionBranches}
+                title="Showing each member project's base branch, not the connection's own worktrees. Click (or re-select the connection in the sidebar) to switch back."
+                data-testid="connection-changes-base-view"
+              >
+                base branches
+              </button>
+            )}
           </div>
           <Button
             variant="ghost"

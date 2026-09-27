@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { useGitStore } from '@/stores/useGitStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
-import { useConnectionStore } from '@/stores/useConnectionStore'
+import { getSelectedConnectionGitMembers } from '@/lib/connection-git-view'
 import { systemApi } from '@/api/system-api'
 import { gitApi } from '@/api/git-api'
 
@@ -29,16 +29,9 @@ function getActiveWorktreePaths(): string[] {
     return []
   }
 
-  // Connection mode — return all member worktree paths
-  const { selectedConnectionId, connections } = useConnectionStore.getState()
-  if (selectedConnectionId) {
-    const connection = connections.find((c) => c.id === selectedConnectionId)
-    if (connection) {
-      return connection.members.map((m) => m.worktree_path)
-    }
-  }
-
-  return []
+  // Connection mode — return all member worktree paths (git view aware: the
+  // 'base' view works on the members' default worktrees instead)
+  return getSelectedConnectionGitMembers()?.map((m) => m.worktree_path) ?? []
 }
 
 export function useWindowFocusRefresh(): void {

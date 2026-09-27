@@ -9,6 +9,7 @@ import { FileSidebar } from '@/components/file-tree'
 import { BottomPanel } from './BottomPanel'
 import { useTerminalPortal } from '@/contexts/TerminalPortalContext'
 import { useSettingsStore } from '@/stores/useSettingsStore'
+import { useConnectionGitMembers } from '@/hooks/useConnectionGitMembers'
 import { ErrorBoundary, ErrorFallback } from '@/components/error'
 import { cn } from '@/lib/utils'
 
@@ -27,6 +28,9 @@ export function RightSidebar(): React.JSX.Element {
     s.selectedConnectionId ? s.connections.find((c) => c.id === s.selectedConnectionId) : null
   )
   const isConnectionMode = !!selectedConnectionId && !selectedWorktreeId
+  // Git side of a connection: its own member worktrees, or the members' base
+  // branches in the 'base' git view (cmd+shift+click on a connection ticket).
+  const connectionGitMembers = useConnectionGitMembers()
 
   const { registerTarget } = useTerminalPortal()
   const terminalPosition = useSettingsStore((s) => s.terminalPosition)
@@ -139,7 +143,7 @@ export function RightSidebar(): React.JSX.Element {
             <FileSidebar
               worktreePath={selectedWorktreePath}
               isConnectionMode={isConnectionMode}
-              connectionMembers={selectedConnection?.members}
+              connectionMembers={connectionGitMembers}
               onClose={toggleRightSidebar}
               onFileClick={handleFileClick}
               className="flex-1 min-h-0"

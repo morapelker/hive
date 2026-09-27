@@ -3,6 +3,7 @@ import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useGitStore } from '@/stores/useGitStore'
 import { gitApi } from '@/api/git-api'
+import { useConnectionGitMembers } from './useConnectionGitMembers'
 
 /**
  * Watches all member worktree paths when a connection is selected.
@@ -10,23 +11,22 @@ import { gitApi } from '@/api/git-api'
  * This is the connection-mode counterpart to useWorktreeWatcher.
  * When a connection is active (selectedConnectionId set, selectedWorktreeId null),
  * it starts filesystem watchers on each member worktree so that git changes
- * are detected in real-time and the Changes view stays up to date.
+ * are detected in real-time and the Changes view stays up to date. Follows the
+ * connection git view, so the 'base' view watches the members' default
+ * worktrees instead.
  */
 export function useConnectionWatcher(): void {
   const selectedWorktreeId = useWorktreeStore((s) => s.selectedWorktreeId)
   const selectedConnectionId = useConnectionStore((s) => s.selectedConnectionId)
-  const connections = useConnectionStore((s) => s.connections)
+  const gitMembers = useConnectionGitMembers()
   const previousPathsRef = useRef<string[]>([])
 
   const isConnectionMode = !!selectedConnectionId && !selectedWorktreeId
 
-  // Resolve member worktree paths for the selected connection
-  const memberPaths = (() => {
-    if (!isConnectionMode || !selectedConnectionId) return []
-    const connection = connections.find((c) => c.id === selectedConnectionId)
-    if (!connection) return []
-    return connection.members.map((m) => m.worktree_path).sort()
-  })()
+  // Resolve member worktree paths for the selected connection (git view aware)
+  const memberPaths = isConnectionMode && gitMembers
+    ? gitMembers.map((m) => m.worktree_path).sort()
+    : []
 
   // Stable string key to detect changes
   const pathsKey = memberPaths.join('\n')

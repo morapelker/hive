@@ -125,6 +125,7 @@ import { useTimerTickStore } from '@/stores/useTimerTickStore'
 import { canToggleAutoApprovePlan } from '@/lib/plan-auto-approve'
 import { isAgentCli } from '@shared/types/agent-sdk'
 import { terminalApi } from '@/api/terminal-api'
+import { dbApi } from '@/api/db-api'
 import type { KanbanTicket, TicketMark } from '../../../../main/db/types'
 
 // ── Project tag color palette ──────────────────────────────────────
@@ -833,79 +834,125 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
       // the plain path opens the detail modal)
       useKanbanStore.getState().markTicketRead(ticket.id, ticket.project_id)
 
-      // Cmd+click (Mac) / Ctrl+click (Win/Linux) — select attached worktree;
-      // cmd+shift+click — select the project's base worktree instead. Tickets
-      // without a live worktree (never assigned, or the worktree was archived,
-      // which detaches the ticket) fall back to the base worktree too.
+      // Cmd+click (Mac) / Ctrl+click (Win/Linux) — select where the ticket
+      // runs; cmd+shift+click — its base branch(es) instead:
+      //
+      //   worktree ticket    cmd+click       → the attached worktree
+      //                      cmd+shift+click → the project's default worktree
+      //   connection ticket  cmd+click       → the connection it runs on
+      //                      cmd+shift+click → the same connection, with the
+      //                        git side (Changes / push / pull) on every member
+      //                        project's base branch — pull there, then re-tap
+      //                        the connection in the sidebar for its own
+      //                        branches again
+      //
+      // Tickets whose worktree/connection is gone (never launched, archived)
+      // fall back to the base target either way: the project's default
+      // worktree, or a connection project's base instance.
       if (e.metaKey || e.ctrlKey) {
-        const selectTicketWorktree = (): boolean => {
-          const state = useWorktreeStore.getState()
-          const attached =
-            !e.shiftKey && ticket.worktree_id
-              ? (state.worktreesByProject
-                  .get(ticket.project_id)
-                  ?.find((w) => w.id === ticket.worktree_id) ?? null)
-              : null
-          const target = attached ?? state.getDefaultWorktree(ticket.project_id)
-          if (!target) return false
-          if (attached) recordBoardTelegramTarget()
-          const selectionOptions = isPinnedMode ? { preservePinnedBoard: true } : undefined
-          state.selectWorktree(target.id, selectionOptions)
-          useProjectStore.getState().selectProject(ticket.project_id, selectionOptions)
-          useWorktreeStatusStore.getState().clearWorktreeUnread(target.id)
-          return true
-        }
-
-        if (selectTicketWorktree()) {
-          e.preventDefault()
-          return
-        }
-
-        // Cmd+click on a connection ticket — select the connection in the
-        // sidebar (same as ConnectionItem.handleClick), don't open the session;
-        // cmd+shift+click on a connection project ticket — select the project's
-        // base instance (each member project's default worktree) instead, the
-        // twin of the base-worktree behavior above. Tickets whose instance is
-        // gone (archived) fall back to the base instance too.
-        const liveConnectionId = e.shiftKey
-          ? null
-          : (connectionId ?? connectionSession?.connectionId)
-        const ticketConnectionId =
-          liveConnectionId ?? findBaseInstanceConnection(ticket.project_id)?.id
-        if (ticketConnectionId) {
-          e.preventDefault()
-          useConnectionStore.getState().selectConnection(ticketConnectionId)
-          return
-        }
-
+        const withBase = e.shiftKey
         const project = useProjectStore.getState().projects.find((p) => p.id === ticket.project_id)
-
-        // Connection project whose connections aren't in the store — they may
-        // just not be loaded yet (e.g. a pinned board before any connection UI)
-        if (project?.kind === 'connection') {
-          e.preventDefault()
-          void useConnectionStore
-            .getState()
-            .loadConnections()
-            .then(() => {
-              const base = findBaseInstanceConnection(ticket.project_id)
-              if (base) useConnectionStore.getState().selectConnection(base.id)
-            })
-          return
-        }
-
-        // Git project with no worktrees in the store — they may just not be
-        // loaded yet (e.g. a pinned board for a never-selected project)
         if (project) {
           e.preventDefault()
-          void useWorktreeStore
+          const isConnectionProjectTicket = project.kind === 'connection'
+          const selectionOptions = isPinnedMode ? { preservePinnedBoard: true } : undefined
+
+          const findAttachedWorktree = () =>
+            ticket.worktree_id
+              ? (useWorktreeStore
+                  .getState()
+                  .worktreesByProject.get(ticket.project_id)
+                  ?.find((w) => w.id === ticket.worktree_id) ?? null)
+              : null
+
+          // Worktree ticket: the attached worktree, or the project's default one
+          const selectTicketWorktree = (): boolean => {
+            const state = useWorktreeStore.getState()
+            const attached = withBase ? null : findAttachedWorktree()
+            const target = attached ?? state.getDefaultWorktree(ticket.project_id)
+            if (!target) return false
+            if (attached) recordBoardTelegramTarget()
+            state.selectWorktree(target.id, selectionOptions)
+            useProjectStore.getState().selectProject(ticket.project_id, selectionOptions)
+            useWorktreeStatusStore.getState().clearWorktreeUnread(target.id)
+            return true
+          }
+
+          // Connection ticket: the connection itself (same as
+          // ConnectionItem.handleClick), with the git side on the members'
+          // base branches when shift is held. Only a connection the store
+          // knows about can be selected.
+          const selectTicketConnection = (id: string): boolean => {
+            const store = useConnectionStore.getState()
+            if (!store.connections.some((c) => c.id === id)) return false
+            store.selectConnection(id, { gitView: withBase ? 'base' : 'connection' })
+            return true
+          }
+
+          // A connection project's base instance already IS every member's
+          // base branch, so it is the target with or without shift
+          const selectBaseInstance = (): boolean => {
+            const base = findBaseInstanceConnection(ticket.project_id)
+            if (!base) return false
+            useConnectionStore.getState().selectConnection(base.id)
+            return true
+          }
+
+          // The connection the ticket's session runs on, when the session is
+          // not loaded into the session store (connection sessions only load
+          // once their connection is opened)
+          const resolveSessionConnectionId = async (): Promise<string | null> => {
+            if (!ticket.current_session_id) return null
+            const session = await dbApi.session
+              .get<{ connection_id: string | null }>(ticket.current_session_id)
+              .catch(() => null)
+            return session?.connection_id ?? null
+          }
+
+          // Fast path — everything needed is already in the stores
+          const worktreesLoaded = useWorktreeStore
             .getState()
-            .loadWorktrees(ticket.project_id)
-            .then(() => {
+            .worktreesByProject.has(ticket.project_id)
+          if (!ticket.worktree_id || worktreesLoaded) {
+            // A live attached worktree makes this a worktree ticket, even on
+            // a connection board — that is where it runs
+            if (findAttachedWorktree()) {
               selectTicketWorktree()
-            })
+              return
+            }
+            const liveConnectionId = connectionId ?? connectionSession?.connectionId ?? null
+            if (liveConnectionId && selectTicketConnection(liveConnectionId)) return
+          }
+
+          // Slow path — load what is missing (a pinned board for a project
+          // that was never selected, a connection whose sessions were never
+          // opened, connections not loaded yet) and decide again
+          void (async () => {
+            if (ticket.worktree_id && !worktreesLoaded) {
+              await useWorktreeStore.getState().loadWorktrees(ticket.project_id)
+              if (findAttachedWorktree()) {
+                selectTicketWorktree()
+                return
+              }
+            }
+            if (!useConnectionStore.getState().loaded) {
+              await useConnectionStore.getState().loadConnections()
+            }
+            const liveConnectionId =
+              connectionId ?? connectionSession?.connectionId ?? (await resolveSessionConnectionId())
+            if (liveConnectionId && selectTicketConnection(liveConnectionId)) return
+            if (isConnectionProjectTicket) {
+              selectBaseInstance()
+              return
+            }
+            if (!useWorktreeStore.getState().worktreesByProject.has(ticket.project_id)) {
+              await useWorktreeStore.getState().loadWorktrees(ticket.project_id)
+            }
+            selectTicketWorktree()
+          })()
           return
         }
+        // Unknown project — nothing to select; fall through to the modal
       }
 
       useKanbanStore.getState().setSelectedTicketRef({
@@ -913,7 +960,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
         ticketId: ticket.id
       })
     },
-    [ticket.id, ticket.worktree_id, ticket.project_id, isPinnedMode, connectionId, connectionSession, recordBoardTelegramTarget, blockingDiagnostic]
+    [ticket.id, ticket.worktree_id, ticket.project_id, ticket.current_session_id, isPinnedMode, connectionId, connectionSession, recordBoardTelegramTarget, blockingDiagnostic]
   )
 
   // ── Right-button drag into In Progress — start immediately with the
