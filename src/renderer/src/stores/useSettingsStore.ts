@@ -184,6 +184,13 @@ export interface AppSettings {
 
   // Agent SDK
   defaultAgentSdk: AgentSdk
+  /**
+   * SDK of the model the user most recently picked or launched with anywhere
+   * in the app (session model selector, ticket picker, settings). New sessions
+   * and ticket launches default to this over `defaultAgentSdk` so "the last
+   * model I used" wins; cleared when `defaultAgentSdk` is changed explicitly.
+   */
+  lastUsedAgentSdk: HandoffAgentSdk | null
 
   // Custom claude-cli-based providers
   customProviders: CustomClaudeProvider[]
@@ -286,6 +293,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   usageIndicatorMode: 'current-agent',
   usageIndicatorProviders: [],
   defaultAgentSdk: 'opencode',
+  lastUsedAgentSdk: null,
   customProviders: [],
   stripAtMentions: true,
   codexFastMode: false,
@@ -520,6 +528,7 @@ function extractSettings(state: SettingsState): AppSettings {
     usageIndicatorMode: state.usageIndicatorMode,
     usageIndicatorProviders: state.usageIndicatorProviders,
     defaultAgentSdk: state.defaultAgentSdk,
+    lastUsedAgentSdk: state.lastUsedAgentSdk,
     customProviders: state.customProviders,
     stripAtMentions: state.stripAtMentions,
     codexFastMode: state.codexFastMode,
@@ -573,6 +582,24 @@ export function resolveModelForSdk(
   return s.selectedModel
 }
 
+/**
+ * The SDK new sessions and ticket launches should default to: the SDK of the
+ * model the user most recently used anywhere (`lastUsedAgentSdk`), falling back
+ * to the configured `defaultAgentSdk`. The bare terminal SDK has no models, so
+ * it degrades to opencode for model resolution, matching every picker.
+ *
+ * Accepts a state snapshot so it can run inside Zustand selectors; falls back
+ * to store.getState() when omitted.
+ */
+export function resolvePreferredAgentSdk(
+  state?: Pick<AppSettings, 'lastUsedAgentSdk' | 'defaultAgentSdk'>
+): HandoffAgentSdk {
+  const s = state ?? useSettingsStore.getState()
+  if (s.lastUsedAgentSdk) return s.lastUsedAgentSdk
+  const configured = s.defaultAgentSdk ?? 'opencode'
+  return configured === 'terminal' ? 'opencode' : configured
+}
+
 export const useSettingsStore = create<SettingsState>()(
   persist(
     (set, get) => ({
@@ -600,9 +627,15 @@ export const useSettingsStore = create<SettingsState>()(
         key: K,
         value: AppSettings[K]
       ): Promise<void> => {
-        set({ [key]: value } as Partial<SettingsState>)
+        // Explicitly choosing a default SDK must take effect immediately, so it
+        // also drops the remembered last-used SDK that would otherwise mask it.
+        const patch: Partial<SettingsState> =
+          key === 'defaultAgentSdk'
+            ? ({ [key]: value, lastUsedAgentSdk: null } as Partial<SettingsState>)
+            : ({ [key]: value } as Partial<SettingsState>)
+        set(patch)
         // Persist to database
-        const settings = extractSettings({ ...get(), [key]: value } as SettingsState)
+        const settings = extractSettings({ ...get(), ...patch } as SettingsState)
         const savePromise = saveToDatabase(settings)
         const fileSavePromise =
           key === 'customProjectCommands'
@@ -720,7 +753,13 @@ export const useSettingsStore = create<SettingsState>()(
         } else {
           delete current[agentSdk]
         }
-        set({ selectedModelByProvider: current })
+        // Picking a model for an SDK makes that SDK the one the user most
+        // recently used, so new sessions / ticket launches default to it.
+        // Clearing an entry says nothing about intent, so it leaves the
+        // last-used SDK alone.
+        const lastUsedAgentSdk =
+          model && agentSdk !== 'terminal' ? agentSdk : get().lastUsedAgentSdk
+        set({ selectedModelByProvider: current, lastUsedAgentSdk })
         // Push to backend only for SDKs with a structured implementer.
         if (
           !isTerminalBacked(agentSdk) &&
@@ -735,7 +774,8 @@ export const useSettingsStore = create<SettingsState>()(
         // Persist to app settings DB
         const settings = extractSettings({
           ...get(),
-          selectedModelByProvider: current
+          selectedModelByProvider: current,
+          lastUsedAgentSdk
         } as SettingsState)
         saveToDatabase(settings)
       },
@@ -906,6 +946,7 @@ export const useSettingsStore = create<SettingsState>()(
         usageIndicatorMode: state.usageIndicatorMode,
         usageIndicatorProviders: state.usageIndicatorProviders,
         defaultAgentSdk: state.defaultAgentSdk,
+        lastUsedAgentSdk: state.lastUsedAgentSdk,
         customProviders: state.customProviders,
         activeSection: state.activeSection,
         stripAtMentions: state.stripAtMentions,

@@ -14,7 +14,11 @@ import { isAgentCli } from '@shared/types/agent-sdk'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useSessionStore } from '@/stores/useSessionStore'
-import { useSettingsStore, resolveModelForSdk } from '@/stores/useSettingsStore'
+import {
+  useSettingsStore,
+  resolveModelForSdk,
+  resolvePreferredAgentSdk
+} from '@/stores/useSettingsStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useUsageStore, resolveDefaultUsageProvider } from '@/stores/useUsageStore'
 import { connectionApi } from '@/api/connection-api'
@@ -145,14 +149,13 @@ function composePromptForSdk(
     : fullPrompt
 }
 
-/** Default SDK + build-mode model, mirroring the picker's quick-launch resolution. */
+/** Last-used (else default) SDK + build-mode model, mirroring the picker's quick-launch resolution. */
 function resolveQuickModel(): {
   sdk: LaunchSdk
   model: { providerID: string; modelID: string; variant?: string }
 } {
   const settings = useSettingsStore.getState()
-  const rawSdk = settings.defaultAgentSdk ?? 'opencode'
-  const sdk: LaunchSdk = rawSdk === 'terminal' ? 'opencode' : rawSdk
+  const sdk: LaunchSdk = resolvePreferredAgentSdk(settings)
   const modeModel = settings.getModelForMode('build')
   if (modeModel && modeModel.agentSdk === sdk) {
     return {

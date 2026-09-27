@@ -18,6 +18,7 @@ import {
 } from './parseProviders'
 import {
   resolveModelForSdk,
+  resolvePreferredAgentSdk,
   useSettingsStore,
   type HandoffAgentSdk,
   type SelectedModel
@@ -158,10 +159,20 @@ function resolveSessionSelection(opts: {
   agentSdk?: AgentSdk
   mode?: 'build' | 'plan' | 'super-plan' | 'super-build'
   explicitSdk?: boolean
+  /**
+   * The SDK came from the user's last-used pick rather than the configured
+   * default: a mode default for a different SDK must not redirect the session.
+   */
+  lastUsedSdk?: boolean
 }): EffectiveHandoffSelection {
   // Discord mirrors the data-driven subset of this chain in src/shared/model-resolution.ts.
   const settings = useSettingsStore.getState()
-  const requestedSdk = normalizeHandoffSdk(opts.agentSdk ?? settings.defaultAgentSdk ?? 'opencode')
+  // No SDK requested: prefer the SDK the user most recently used anywhere over
+  // the configured default, and pin it like an explicit pick below.
+  const fromLastUsed = opts.lastUsedSdk || (!opts.agentSdk && !!settings.lastUsedAgentSdk)
+  const requestedSdk = opts.agentSdk
+    ? normalizeHandoffSdk(opts.agentSdk)
+    : resolvePreferredAgentSdk(settings)
   const configuredDefaultSdk = normalizeHandoffSdk(settings.defaultAgentSdk ?? 'opencode')
   let model: SelectedModel | null = null
   let resolvedSdk = requestedSdk
@@ -173,6 +184,12 @@ function resolveSessionSelection(opts: {
     const modeDefaultSdk = modeDefault.agentSdk ? normalizeHandoffSdk(modeDefault.agentSdk) : null
     if (opts.explicitSdk) {
       if (modeDefaultSdk === requestedSdk) {
+        model = modeDefault
+      }
+    } else if (fromLastUsed) {
+      // A legacy mode default (no SDK stamp) only reaches here when the
+      // last-used SDK is the configured default, so it still applies.
+      if (modeDefaultSdk === null || modeDefaultSdk === requestedSdk) {
         model = modeDefault
       }
     } else {
@@ -445,8 +462,14 @@ export function resolveSessionCreationSelection(opts: {
   model: SelectedModel | null
 } {
   const settings = useSettingsStore.getState()
-  const agentSdk =
-    opts.modelOverride?.agentSdk ?? opts.agentSdkOverride ?? settings.defaultAgentSdk ?? 'opencode'
+  // Nothing requested an SDK: the one the user most recently used wins over the
+  // configured default. A bare-terminal default has no model to remember and
+  // keeps yielding terminal sessions.
+  const requestedSdk = opts.modelOverride?.agentSdk ?? opts.agentSdkOverride
+  const agentSdk: AgentSdk =
+    requestedSdk ??
+    (settings.defaultAgentSdk === 'terminal' ? 'terminal' : resolvePreferredAgentSdk(settings))
+  const fromLastUsed = !requestedSdk && agentSdk !== 'terminal' && !!settings.lastUsedAgentSdk
 
   if (agentSdk === 'terminal') {
     return { agentSdk, model: null }
@@ -490,7 +513,8 @@ export function resolveSessionCreationSelection(opts: {
     worktreeId: opts.worktreeId,
     agentSdk,
     mode: opts.initialMode,
-    explicitSdk: opts.agentSdkOverride != null
+    explicitSdk: opts.agentSdkOverride != null,
+    lastUsedSdk: fromLastUsed
   })
   return { agentSdk: resolved.agentSdk, model: resolved.model }
 }

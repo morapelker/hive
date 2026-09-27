@@ -176,7 +176,8 @@ import { getSuperPlanModePrefix } from '@/lib/constants'
 // ── Import component under test ─────────────────────────────────────
 import {
   WorktreePickerModal,
-  _resetLastSourceBranch
+  _resetLastSourceBranch,
+  quickLaunchTicket
 } from '@/components/kanban/WorktreePickerModal'
 
 import type { KanbanTicket } from '../../../src/main/db/types'
@@ -412,6 +413,7 @@ describe('Session 9: Worktree Picker Modal', () => {
       useSettingsStore.setState({
         availableAgentSdks: { opencode: true, claude: true, codex: true },
         defaultAgentSdk: 'opencode',
+        lastUsedAgentSdk: null,
         defaultModels: {
           build: null,
           plan: null,
@@ -1584,6 +1586,106 @@ describe('Session 9: Worktree Picker Modal', () => {
     })
   })
 
+  describe('last-used SDK default', () => {
+    test('opens on the configured default SDK when no model has been used yet', () => {
+      act(() => {
+        useSettingsStore.setState({ defaultAgentSdk: 'codex', lastUsedAgentSdk: null })
+      })
+
+      render(
+        <WorktreePickerModal
+          ticket={defaultTicket}
+          projectId="proj-1"
+          open={true}
+          onOpenChange={() => {}}
+        />
+      )
+
+      expect(screen.getByTestId('sdk-toggle-codex')).toHaveAttribute('aria-pressed', 'true')
+      expect(screen.getByTestId('sdk-toggle-claude-code')).toHaveAttribute('aria-pressed', 'false')
+    })
+
+    test('opens on the last-used SDK instead of the configured default', () => {
+      // Regression: the user switched to Claude in a session, but dragging a
+      // ticket to In Progress still pre-selected the stale Codex default.
+      act(() => {
+        useSettingsStore.setState({ defaultAgentSdk: 'codex', lastUsedAgentSdk: 'claude-code' })
+      })
+
+      render(
+        <WorktreePickerModal
+          ticket={defaultTicket}
+          projectId="proj-1"
+          open={true}
+          onOpenChange={() => {}}
+        />
+      )
+
+      expect(screen.getByTestId('sdk-toggle-claude-code')).toHaveAttribute('aria-pressed', 'true')
+      expect(screen.getByTestId('sdk-toggle-codex')).toHaveAttribute('aria-pressed', 'false')
+    })
+
+    test('a build mode default for another SDK does not pull the picker back to it', () => {
+      act(() => {
+        useSettingsStore.setState({
+          defaultAgentSdk: 'codex',
+          lastUsedAgentSdk: 'claude-code',
+          defaultModels: {
+            build: { agentSdk: 'codex', providerID: 'codex', modelID: 'gpt-5.5', variant: 'high' },
+            plan: null,
+            ask: null,
+            review: null
+          }
+        })
+      })
+
+      render(
+        <WorktreePickerModal
+          ticket={defaultTicket}
+          projectId="proj-1"
+          open={true}
+          onOpenChange={() => {}}
+        />
+      )
+
+      expect(screen.getByTestId('sdk-toggle-claude-code')).toHaveAttribute('aria-pressed', 'true')
+      expect(screen.getByTestId('sdk-toggle-codex')).toHaveAttribute('aria-pressed', 'false')
+    })
+
+    test('launching a ticket records its SDK as the last-used SDK', async () => {
+      act(() => {
+        useSettingsStore.setState({
+          defaultAgentSdk: 'opencode',
+          lastUsedAgentSdk: null,
+          codexFastModeAccepted: true
+        })
+      })
+
+      render(
+        <WorktreePickerModal
+          ticket={defaultTicket}
+          projectId="proj-1"
+          open={true}
+          onOpenChange={() => {}}
+        />
+      )
+
+      fireEvent.click(screen.getByTestId('sdk-toggle-codex'))
+      fireEvent.click(screen.getByTestId('worktree-item-wt-1'))
+
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('wt-picker-send-btn'))
+      })
+
+      await waitFor(() => {
+        expect(mockDbSession.create).toHaveBeenCalledWith(
+          expect.objectContaining({ agent_sdk: 'codex' })
+        )
+      })
+      expect(useSettingsStore.getState().lastUsedAgentSdk).toBe('codex')
+    })
+  })
+
   describe('ticket-title worktree naming', () => {
     test('shows canonicalized ticket title preview by default (New worktree pre-selected)', () => {
       const ticket = makeTicket({ title: 'Add dark mode toggle' })
@@ -1676,6 +1778,62 @@ describe('Session 9: Worktree Picker Modal', () => {
           nameHint: 'add-keyboard-shortcuts-for-playi'
         })
       })
+    })
+  })
+})
+
+// ── quickLaunchTicket (right-button drag / Create & Send / Save & Send) ──
+describe('quickLaunchTicket last-used SDK', () => {
+  const ticket = makeTicket()
+  const worktrees = [
+    makeWorktree({ id: 'wt-1', name: 'feature-auth' }),
+    makeWorktree({ id: 'wt-default', name: '(no-worktree)', is_default: true, branch_name: 'main' })
+  ]
+
+  beforeEach(() => {
+    _resetLastSourceBranch()
+    act(() => {
+      useProjectStore.setState({ projects: [makeProject()] })
+      useKanbanStore.setState({ tickets: new Map([['proj-1', [ticket]]]) })
+      useWorktreeStore.setState({
+        worktreesByProject: new Map([['proj-1', worktrees]]),
+        selectedWorktreeId: null
+      })
+      useSessionStore.setState({
+        sessions: new Map(),
+        activeSessionId: null,
+        loadingSessions: new Set(),
+        closedTerminalSessionIds: new Set(),
+        inlineConnectionSessionId: null,
+        modeBySession: new Map()
+      })
+      useSettingsStore.setState({
+        availableAgentSdks: { opencode: true, claude: true, codex: true },
+        defaultAgentSdk: 'opencode',
+        lastUsedAgentSdk: null
+      })
+    })
+    vi.clearAllMocks()
+    resetApiMocks()
+  })
+
+  test('quick launch runs on the last-used SDK instead of the configured default', async () => {
+    act(() => {
+      useSettingsStore.setState({
+        defaultAgentSdk: 'opencode',
+        lastUsedAgentSdk: 'codex',
+        selectedModelByProvider: {
+          codex: { providerID: 'codex', modelID: 'gpt-5.5', variant: 'high' }
+        }
+      })
+    })
+
+    await quickLaunchTicket(ticket)
+
+    await waitFor(() => {
+      expect(mockDbSession.create).toHaveBeenCalledWith(
+        expect.objectContaining({ agent_sdk: 'codex' })
+      )
     })
   })
 })

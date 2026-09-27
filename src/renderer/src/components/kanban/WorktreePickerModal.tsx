@@ -33,7 +33,12 @@ import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
-import { useSettingsStore, resolveModelForSdk, type SelectedModel } from '@/stores/useSettingsStore'
+import {
+  useSettingsStore,
+  resolveModelForSdk,
+  resolvePreferredAgentSdk,
+  type SelectedModel
+} from '@/stores/useSettingsStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useUsageStore, resolveDefaultUsageProvider } from '@/stores/useUsageStore'
 import { useRemoteLaunchStore } from '@/stores/useRemoteLaunchStore'
@@ -326,14 +331,14 @@ function resolveRowDefaultModel(sdk: PickerAgentSdk, mode: PickerMode): Selected
 }
 
 /**
- * The SDK + model a right-button quick launch will run with: the app default
- * SDK (terminal degrades to opencode) and that SDK's build-mode default model.
- * Shared by `quickLaunchTicket` and the drag ghost's "launches with" chip so
- * what the overlay shows is exactly what gets launched.
+ * The SDK + model a right-button quick launch will run with: the SDK the user
+ * last used (falling back to the app default; terminal degrades to opencode)
+ * and that SDK's build-mode default model. Shared by `quickLaunchTicket` and
+ * the drag ghost's "launches with" chip so what the overlay shows is exactly
+ * what gets launched.
  */
 export function resolveQuickLaunchModel(): { sdk: PickerAgentSdk; model: SelectedModel } {
-  const rawSdk = useSettingsStore.getState().defaultAgentSdk ?? 'opencode'
-  const sdk: PickerAgentSdk = rawSdk === 'terminal' ? 'opencode' : rawSdk
+  const sdk: PickerAgentSdk = resolvePreferredAgentSdk()
   return { sdk, model: resolveRowDefaultModel(sdk, 'build') }
 }
 
@@ -843,20 +848,26 @@ export function WorktreePickerModal({
         : (rawCustomProviders ?? EMPTY_CUSTOM_PROVIDERS).filter((p) => p.command.trim()),
     [rawCustomProviders]
   )
-  const defaultAgentSdk = useSettingsStore((s) => s.defaultAgentSdk) ?? 'opencode'
+  // The SDK the picker opens on: whatever the user last used anywhere in the
+  // app, falling back to the configured default (terminal degrades to opencode).
+  const lastUsedAgentSdk = useSettingsStore((s) => s.lastUsedAgentSdk)
+  const defaultSdkNormalized = useSettingsStore((s) => resolvePreferredAgentSdk(s))
   const codexFastMode = useSettingsStore((s) => s.codexFastMode)
   const codexFastModeAccepted = useSettingsStore((s) => s.codexFastModeAccepted)
   const updateSetting = useSettingsStore((s) => s.updateSetting)
   const teleport = useSettingsStore((s) => s.teleport)
-  const defaultSdkNormalized = defaultAgentSdk === 'terminal' ? 'opencode' : defaultAgentSdk
   const baseAgentSdk = selectedSdk ?? defaultSdkNormalized
 
   const autoResolvedModel = useMemo(() => {
     const settings = useSettingsStore.getState()
     // Remote launches always run claude-code-cli — resolve against that SDK
     // regardless of what's actually selected, so a leftover default from a
-    // different SDK never leaks into the remote payload.
-    const effectiveSelectedSdk = runOnRemote ? 'claude-code-cli' : selectedSdk
+    // different SDK never leaks into the remote payload. A remembered
+    // last-used SDK pins the same way: a mode default configured for some
+    // other SDK must not drag the launch back to it.
+    const effectiveSelectedSdk = runOnRemote
+      ? 'claude-code-cli'
+      : (selectedSdk ?? lastUsedAgentSdk ?? null)
     // Priority 1: mode-specific default
     const modeModel = settings.getModelForMode(mode)
     if (modeModel && (!effectiveSelectedSdk || modeModel.agentSdk === effectiveSelectedSdk)) {
@@ -864,7 +875,7 @@ export function WorktreePickerModal({
     }
     // Priority 2: per-provider / global default
     return resolveModelForSdk(runOnRemote ? 'claude-code-cli' : baseAgentSdk) ?? null
-  }, [mode, baseAgentSdk, selectedSdk, runOnRemote])
+  }, [mode, baseAgentSdk, selectedSdk, lastUsedAgentSdk, runOnRemote])
 
   const agentSdk =
     selectedSdk ?? selectedModel?.agentSdk ?? autoResolvedModel?.agentSdk ?? baseAgentSdk
@@ -1469,6 +1480,14 @@ export function WorktreePickerModal({
         setIsSending(false)
       }
       return
+    }
+
+    // Launching with an SDK makes it the one the user most recently used, so
+    // the next ticket drag / new session opens on it (not the stale app
+    // default). Custom providers run under claude-code-cli but aren't a
+    // stock-SDK choice, so they leave the remembered SDK alone.
+    if (!effectiveCustomProviderId && agentSdk !== useSettingsStore.getState().lastUsedAgentSdk) {
+      void useSettingsStore.getState().updateSetting('lastUsedAgentSdk', agentSdk)
     }
 
     // ── Connection mode path ──────────────────────────────────────

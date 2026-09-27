@@ -117,6 +117,103 @@ describe('resolveSessionCreationSelection', () => {
       variant: 'high'
     })
   })
+
+  it('defaults a new session to the last-used SDK over the configured default', () => {
+    useSettingsStore.setState({
+      defaultAgentSdk: 'codex',
+      lastUsedAgentSdk: 'claude-code-cli',
+      selectedModel: null,
+      selectedModelByProvider: {
+        codex: { providerID: 'codex', modelID: 'gpt-5.5', variant: 'high' },
+        'claude-code-cli': { providerID: 'anthropic', modelID: 'sonnet', variant: 'high' }
+      },
+      defaultModels: null
+    })
+
+    const selection = resolveSessionCreationSelection({ initialMode: 'build' })
+
+    expect(selection.agentSdk).toBe('claude-code-cli')
+    expect(selection.model).toMatchObject({ providerID: 'anthropic', modelID: 'sonnet' })
+  })
+
+  it('does not let a mode default for another SDK override the last-used SDK', () => {
+    useSettingsStore.setState({
+      defaultAgentSdk: 'codex',
+      lastUsedAgentSdk: 'claude-code-cli',
+      selectedModel: null,
+      selectedModelByProvider: {
+        'claude-code-cli': { providerID: 'anthropic', modelID: 'sonnet', variant: 'high' }
+      },
+      defaultModels: {
+        build: { agentSdk: 'codex', providerID: 'codex', modelID: 'gpt-5.5', variant: 'xhigh' },
+        plan: null,
+        ask: null,
+        review: null
+      }
+    })
+
+    const selection = resolveSessionCreationSelection({ initialMode: 'build' })
+
+    expect(selection.agentSdk).toBe('claude-code-cli')
+    expect(selection.model).toMatchObject({ providerID: 'anthropic', modelID: 'sonnet' })
+  })
+
+  it('still applies a mode default that belongs to the last-used SDK', () => {
+    useSettingsStore.setState({
+      defaultAgentSdk: 'codex',
+      lastUsedAgentSdk: 'claude-code',
+      selectedModel: null,
+      selectedModelByProvider: {
+        'claude-code': { providerID: 'anthropic', modelID: 'sonnet', variant: 'high' }
+      },
+      defaultModels: {
+        build: {
+          agentSdk: 'claude-code',
+          providerID: 'anthropic',
+          modelID: 'claude-opus-4-5-20251101',
+          variant: 'max'
+        },
+        plan: null,
+        ask: null,
+        review: null
+      }
+    })
+
+    const selection = resolveSessionCreationSelection({ initialMode: 'build' })
+
+    expect(selection.agentSdk).toBe('claude-code')
+    expect(selection.model).toMatchObject({ modelID: 'claude-opus-4-5-20251101', variant: 'max' })
+  })
+
+  it('keeps the configured default when nothing has been used yet', () => {
+    useSettingsStore.setState({
+      defaultAgentSdk: 'codex',
+      lastUsedAgentSdk: null,
+      selectedModel: null,
+      selectedModelByProvider: {
+        codex: { providerID: 'codex', modelID: 'gpt-5.5', variant: 'high' }
+      },
+      defaultModels: null
+    })
+
+    const selection = resolveSessionCreationSelection({ initialMode: 'build' })
+
+    expect(selection.agentSdk).toBe('codex')
+  })
+
+  it('keeps yielding terminal sessions for a terminal default even with a last-used SDK', () => {
+    useSettingsStore.setState({
+      defaultAgentSdk: 'terminal',
+      lastUsedAgentSdk: 'claude-code-cli',
+      selectedModel: null,
+      selectedModelByProvider: {},
+      defaultModels: null
+    })
+
+    const selection = resolveSessionCreationSelection({ initialMode: 'build' })
+
+    expect(selection).toEqual({ agentSdk: 'terminal', model: null })
+  })
 })
 
 describe('handoff provider visuals', () => {
