@@ -300,13 +300,6 @@ interface KanbanState {
        * trigger).
        */
       skipCompletionEffects?: boolean
-      /**
-       * Entering review from a Claude CLI session whose turn ended without a
-       * detected completion (background tasks / scheduled wakeups pending,
-       * or no Stop hook at all): the card shows a "still waiting" mark in
-       * place of the unread dot until the real completion lands.
-       */
-      awaitingCompletion?: boolean
     }
   ) => Promise<void>
   reorderTicket: (ticketId: string, projectId: string, newSortOrder: number) => Promise<void>
@@ -559,24 +552,34 @@ export const useKanbanStore = create<KanbanState>()(
             // asking/no-status, so we don't yank not-yet-started or actively-
             // running sessions out of in_progress.
             if (status !== 'completed' && status !== 'plan_ready') continue
+            const entry = statuses[ticket.current_session_id]
             // An API-errored completion produced no plan — move to review
             // (needs attention) but never flag plan_ready, matching the
             // session_error path this reconcile stands in for.
-            const apiErrored = Boolean(statuses[ticket.current_session_id]?.apiError)
+            const apiErrored = Boolean(entry?.apiError)
+            // Same completion rule as the live session_completed path: a
+            // Claude CLI stop that was only a pause is not a finish. The
+            // ticket stays in progress, marked awaiting completion, and is
+            // advanced to review only once the real completion lands.
+            const completion = entry?.completion
+            if (
+              status === 'completed' &&
+              !apiErrored &&
+              completion !== undefined &&
+              !isClaudeCliCompletionDetected(completion)
+            ) {
+              if (!ticket.awaiting_completion) {
+                get()
+                  .updateTicket(ticket.id, projectId, { awaiting_completion: true })
+                  .catch(() => {})
+              }
+              continue
+            }
             if (isPlanLike(ticket.mode) && !ticket.plan_ready && !apiErrored) {
               get().updateTicket(ticket.id, projectId, { plan_ready: true }).catch(() => {})
             }
-            // Same completion rule as the live session_completed path: a
-            // Claude CLI stop that was only a pause leaves the ticket
-            // awaiting completion.
-            const completion = statuses[ticket.current_session_id]?.completion
             get()
-              .moveTicket(ticket.id, projectId, 'review', ticket.sort_order, {
-                awaitingCompletion:
-                  status === 'completed' &&
-                  completion !== undefined &&
-                  !isClaudeCliCompletionDetected(completion)
-              })
+              .moveTicket(ticket.id, projectId, 'review', ticket.sort_order)
               .catch(() => {})
           } else if (ticket.column === 'done' || ticket.column === 'merged') {
             // Recover an explicit follow-up or plan-approval reopen this
@@ -1053,7 +1056,7 @@ export const useKanbanStore = create<KanbanState>()(
         projectId: string,
         column: KanbanTicketColumn,
         sortOrder: number,
-        opts?: { skipCompletionEffects?: boolean; awaitingCompletion?: boolean }
+        opts?: { skipCompletionEffects?: boolean }
       ) => {
         const prev = get().tickets.get(projectId) ?? []
         const snapshot = prev.map((t) => ({ ...t }))
@@ -1062,7 +1065,6 @@ export const useKanbanStore = create<KanbanState>()(
         // bumps so transition-sorted columns place the ticket correctly right away)
         const moveStartedAtMs = Date.now()
         const movedAt = new Date(moveStartedAtMs).toISOString()
-        const awaitingCompletion = column === 'review' && opts?.awaitingCompletion === true
         set((state) => {
           const next = new Map(state.tickets)
           const tickets = (next.get(projectId) ?? []).map((t) =>
@@ -1074,10 +1076,9 @@ export const useKanbanStore = create<KanbanState>()(
                   updated_at: movedAt,
                   column_changed_at: t.column === column ? t.column_changed_at : movedAt,
                   unread: t.column === column ? t.unread : column === 'review',
-                  // Mirror the backend rule: only an entry to review can arm
-                  // awaiting_completion; any other column change drops it.
-                  awaiting_completion:
-                    t.column === column ? t.awaiting_completion : awaitingCompletion
+                  // Mirror the backend rule: a column change drops
+                  // awaiting_completion (only a paused in-progress session sets it).
+                  awaiting_completion: t.column === column ? t.awaiting_completion : false
                 }
               : t
           )
@@ -1092,13 +1093,7 @@ export const useKanbanStore = create<KanbanState>()(
         }
 
         try {
-          if (awaitingCompletion) {
-            await kanban.ticket.move(projectId, ticketId, column, sortOrder, {
-              awaitingCompletion: true
-            })
-          } else {
-            await kanban.ticket.move(projectId, ticketId, column, sortOrder)
-          }
+          await kanban.ticket.move(projectId, ticketId, column, sortOrder)
 
           // Entering the done column ends the ticket's work: close the attached
           // session so its agent process dies now and the tab is not restored on
@@ -1343,36 +1338,45 @@ export const useKanbanStore = create<KanbanState>()(
             // a done/merged ticket reopens it.
             switch (event.type) {
               case 'session_completed': {
-                // Plan tickets: surface the finished plan for the review UI.
-                if (isPlanLike(ticket.mode) && !ticket.plan_ready) {
-                  get()
-                    .updateTicket(ticket.id, projectId, { plan_ready: true })
-                    .catch(() => {})
-                }
                 // Claude CLI sessions say whether the turn ended with a real
                 // completion or a pause (background tasks / scheduled wakeups
                 // still pending, or no Stop hook at all). Other providers carry
-                // no signal, so their tickets are never flagged.
-                const awaitingCompletion =
+                // no signal, so their tickets are never held back.
+                const paused =
                   event.completion !== undefined && !isClaudeCliCompletionDetected(event.completion)
-                // The session finished → its progress bar is gone. Any non-terminal
-                // ticket must advance to review regardless of mode/plan state (board
-                // invariant: in_progress ⇔ a running progress bar). Move is idempotent.
-                if (
-                  ticket.column !== 'review' &&
-                  ticket.column !== 'done' &&
-                  ticket.column !== 'merged'
-                ) {
-                  get()
-                    .moveTicket(ticket.id, projectId, 'review', ticket.sort_order, {
-                      awaitingCompletion
-                    })
-                    .catch(() => {})
-                } else if (ticket.column === 'review' && ticket.awaiting_completion) {
-                  // Still in review from an earlier pause; the real completion
-                  // clears the "still waiting" mark and re-arms the unread dot
-                  // so the finish is noticed. A further pause changes nothing.
-                  if (!awaitingCompletion) {
+                if (paused) {
+                  // Not finished: the ticket stays in progress with the "still
+                  // waiting" hourglass where its progress bar was. No review
+                  // move — and so no push notification — until the real
+                  // completion lands. A repeated pause changes nothing.
+                  if (ticket.column === 'in_progress' && !ticket.awaiting_completion) {
+                    get()
+                      .updateTicket(ticket.id, projectId, { awaiting_completion: true })
+                      .catch(() => {})
+                  }
+                } else {
+                  // Plan tickets: surface the finished plan for the review UI.
+                  if (isPlanLike(ticket.mode) && !ticket.plan_ready) {
+                    get()
+                      .updateTicket(ticket.id, projectId, { plan_ready: true })
+                      .catch(() => {})
+                  }
+                  // The session finished → its progress bar is gone. Any non-terminal
+                  // ticket must advance to review regardless of mode/plan state (board
+                  // invariant: in_progress ⇔ a running progress bar or a paused one).
+                  // Move is idempotent; entering review drops awaiting_completion.
+                  if (
+                    ticket.column !== 'review' &&
+                    ticket.column !== 'done' &&
+                    ticket.column !== 'merged'
+                  ) {
+                    get()
+                      .moveTicket(ticket.id, projectId, 'review', ticket.sort_order)
+                      .catch(() => {})
+                  } else if (ticket.column === 'review' && ticket.awaiting_completion) {
+                    // A ticket an earlier version parked in review while paused:
+                    // the real completion clears the mark and re-arms the unread
+                    // dot so the finish is noticed.
                     get()
                       .updateTicket(ticket.id, projectId, {
                         awaiting_completion: false,
@@ -1534,6 +1538,14 @@ export const useKanbanStore = create<KanbanState>()(
                 if (ticket.plan_ready) {
                   get()
                     .updateTicket(ticket.id, projectId, { plan_ready: false })
+                    .catch(() => {})
+                }
+                // A resumed run (a background task's notification, a fired
+                // wakeup, a follow-up) ends a pause: the hourglass gives way to
+                // the progress bar again.
+                if (ticket.column === 'in_progress' && ticket.awaiting_completion) {
+                  get()
+                    .updateTicket(ticket.id, projectId, { awaiting_completion: false })
                     .catch(() => {})
                 }
                 // Archived tickets never reopen: clearing the column while

@@ -342,37 +342,37 @@ describeIf('database migration safety', () => {
     expect(reviewed?.unread).toBe(true)
     expect(reviewed?.awaiting_completion).toBe(false)
 
-    // Moving into review on a Claude CLI stop without a detected completion
-    // sets the flag; opening the ticket (unread → false) leaves it alone.
+    // A Claude CLI stop without a detected completion flags the in-progress
+    // ticket in place (it is not moved); a same-column reorder keeps the flag.
     db.moveKanbanTicket(ticket.id, 'in_progress', 0)
-    const awaiting = db.moveKanbanTicket(ticket.id, 'review', 0, { awaitingCompletion: true })
-    expect(awaiting?.unread).toBe(true)
-    expect(awaiting?.awaiting_completion).toBe(true)
-    const opened = db.updateKanbanTicket(ticket.id, { unread: false })
-    expect(opened?.awaiting_completion).toBe(true)
+    const paused = db.updateKanbanTicket(ticket.id, { awaiting_completion: true })
+    expect(paused?.column).toBe('in_progress')
+    expect(paused?.awaiting_completion).toBe(true)
+    expect(db.moveKanbanTicket(ticket.id, 'in_progress', 3)?.awaiting_completion).toBe(true)
 
-    // The real completion clears the flag and re-arms unread in one update.
-    const completed = db.updateKanbanTicket(ticket.id, {
-      awaiting_completion: false,
-      unread: true
-    })
-    expect(completed?.awaiting_completion).toBe(false)
-    expect(completed?.unread).toBe(true)
+    // The run resuming clears the flag in place.
+    const resumed = db.updateKanbanTicket(ticket.id, { awaiting_completion: false })
+    expect(resumed?.column).toBe('in_progress')
+    expect(resumed?.awaiting_completion).toBe(false)
 
-    // Any column change (move or update) drops the flag.
+    // Any column change (move or update) drops the flag: the real completion
+    // moves the ticket to review with only the unread dot.
     db.updateKanbanTicket(ticket.id, { awaiting_completion: true })
-    expect(db.moveKanbanTicket(ticket.id, 'done', 0)?.awaiting_completion).toBe(false)
-    db.moveKanbanTicket(ticket.id, 'review', 0, { awaitingCompletion: true })
-    expect(
-      db.updateKanbanTicket(ticket.id, { column: 'in_progress' })?.awaiting_completion
-    ).toBe(false)
+    const finished = db.moveKanbanTicket(ticket.id, 'review', 0)
+    expect(finished?.unread).toBe(true)
+    expect(finished?.awaiting_completion).toBe(false)
+    db.moveKanbanTicket(ticket.id, 'in_progress', 0)
+    db.updateKanbanTicket(ticket.id, { awaiting_completion: true })
+    expect(db.updateKanbanTicket(ticket.id, { column: 'review' })?.awaiting_completion).toBe(false)
     // …unless the ticket is not actually changing column (no-op update keeps it).
-    db.moveKanbanTicket(ticket.id, 'review', 0, { awaitingCompletion: true })
+    db.moveKanbanTicket(ticket.id, 'in_progress', 0)
+    db.updateKanbanTicket(ticket.id, { awaiting_completion: true })
     expect(db.updateKanbanTicket(ticket.id, { title: 'Renamed' })?.awaiting_completion).toBe(true)
-    // The flag only ever arms on entry to review.
+    // An explicit awaiting_completion on a column-changing update still wins.
     expect(
-      db.moveKanbanTicket(ticket.id, 'done', 0, { awaitingCompletion: true })?.awaiting_completion
-    ).toBe(false)
+      db.updateKanbanTicket(ticket.id, { column: 'review', awaiting_completion: true })
+        ?.awaiting_completion
+    ).toBe(true)
 
     db.close()
   })

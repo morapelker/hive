@@ -205,8 +205,7 @@ export interface KanbanBackend {
     projectId: string,
     ticketId: string,
     column: KanbanTicketColumn,
-    sortOrder: number,
-    options?: { awaitingCompletion?: boolean }
+    sortOrder: number
   ): Promise<KanbanTicket | null>
   reorder(projectId: string, ticketId: string, sortOrder: number): Promise<void>
   delete(projectId: string, ticketId: string): Promise<boolean>
@@ -309,12 +308,11 @@ class InternalKanbanBackend implements KanbanBackend {
     projectId: string,
     ticketId: string,
     column: KanbanTicketColumn,
-    sortOrder: number,
-    options?: { awaitingCompletion?: boolean }
+    sortOrder: number
   ): Promise<KanbanTicket | null> {
     const existing = await this.get(projectId, ticketId)
     if (!existing) return null
-    return getDatabase().moveKanbanTicket(ticketId, column, sortOrder, options)
+    return getDatabase().moveKanbanTicket(ticketId, column, sortOrder)
   }
 
   async reorder(projectId: string, ticketId: string, sortOrder: number): Promise<void> {
@@ -766,7 +764,8 @@ class MarkdownKanbanBackend implements KanbanBackend {
         // Entering review marks the ticket unread; leaving review clears it.
         // An explicit data.unread below wins over this derived value.
         runtimeUpdates.unread = data.column === 'review'
-        // Awaiting-completion never survives a column change on its own; an
+        // Awaiting-completion never survives a column change on its own (a
+        // paused session only ever arms it on an in-progress ticket); an
         // explicit data.awaiting_completion below wins.
         runtimeUpdates.awaiting_completion = false
       }
@@ -830,8 +829,7 @@ class MarkdownKanbanBackend implements KanbanBackend {
     projectId: string,
     ticketId: string,
     column: KanbanTicketColumn,
-    sortOrder: number,
-    options?: { awaitingCompletion?: boolean }
+    sortOrder: number
   ): Promise<KanbanTicket | null> {
     const card = await this.requireMutableCard(projectId, ticketId)
     const project = requireProject(projectId)
@@ -849,7 +847,9 @@ class MarkdownKanbanBackend implements KanbanBackend {
             column_changed_at: new Date().toISOString(),
             last_known_column: column,
             unread: column === 'review',
-            awaiting_completion: column === 'review' && options?.awaitingCompletion === true
+            // Only a paused in-progress session sets awaiting_completion; any
+            // column change drops it.
+            awaiting_completion: false
           }
         : { last_known_column: column },
       false
@@ -1632,7 +1632,7 @@ class MarkdownKanbanBackend implements KanbanBackend {
       // Out-of-app moves follow the same unread rule: entering review sets it,
       // leaving clears it. First sight keeps whatever was stored. An
       // out-of-app column change also drops awaiting_completion (only a
-      // session-driven entry to review can set it).
+      // paused session can set it, and only on an in-progress ticket).
       const firstSight = runtime.last_known_column === null
       const unread = firstSight ? runtime.unread : card.ticket.column === 'review'
       const awaitingCompletion = firstSight ? runtime.awaiting_completion : false

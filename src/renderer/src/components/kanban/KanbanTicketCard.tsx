@@ -634,24 +634,32 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   )
   const isAsking = isAskingFromQuestionStore || isAskingFromStatus
 
-  const rightAlignedSlot: 'conflicts' | 'busy' | 'reviewing' | 'completed-review' | null =
-    useMemo(() => {
-      if (!isArchived && hasConflicts && conflictTargetWorktreeId) return 'conflicts'
-      if ((isBusy || isAsking) && ticket.mode && !isBlocked) return 'busy'
-      if (isBeingReviewed) return 'reviewing'
-      if (completedReviewSessionId) return 'completed-review'
-      return null
-    }, [
-      completedReviewSessionId,
-      conflictTargetWorktreeId,
-      hasConflicts,
-      isArchived,
-      isAsking,
-      isBeingReviewed,
-      isBlocked,
-      isBusy,
-      ticket.mode
-    ])
+  // The Claude CLI session stopped without a completion message (background
+  // work or a scheduled wake-up still pending): the ticket stays in progress
+  // and the hourglass takes the progress bar's slot until the run resumes or
+  // the real completion lands. A live run (busy/asking) always wins.
+  const isAwaitingCompletion = ticket.column === 'in_progress' && ticket.awaiting_completion
+
+  const rightAlignedSlot:
+    'conflicts' | 'busy' | 'awaiting' | 'reviewing' | 'completed-review' | null = useMemo(() => {
+    if (!isArchived && hasConflicts && conflictTargetWorktreeId) return 'conflicts'
+    if ((isBusy || isAsking) && ticket.mode && !isBlocked) return 'busy'
+    if (isAwaitingCompletion) return 'awaiting'
+    if (isBeingReviewed) return 'reviewing'
+    if (completedReviewSessionId) return 'completed-review'
+    return null
+  }, [
+    completedReviewSessionId,
+    conflictTargetWorktreeId,
+    hasConflicts,
+    isArchived,
+    isAsking,
+    isAwaitingCompletion,
+    isBeingReviewed,
+    isBlocked,
+    isBusy,
+    ticket.mode
+  ])
   const hasRightAlignedStatus = rightAlignedSlot !== null
 
   const timerText = useSessionTimer(
@@ -1357,26 +1365,12 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
               >
             {/* Title + top-right indicators */}
             <div className="flex items-start justify-between gap-2">
-              {ticket.awaiting_completion ? (
-                // The Claude CLI session stopped without a completion message
-                // (background work or a scheduled wake-up still pending): the
-                // ticket is in review but not done yet. Takes the unread dot's
-                // slot until the real completion lands.
+              {ticket.unread && (
                 <span
-                  data-testid="ticket-awaiting-completion"
-                  title="Still waiting — the agent stopped without finishing (background work or a scheduled wake-up is pending)"
-                  className="mt-[3px] flex h-3 w-3 shrink-0 items-center justify-center text-amber-500"
-                >
-                  <Hourglass className="h-3 w-3" aria-label="Still waiting for the agent to finish" />
-                </span>
-              ) : (
-                ticket.unread && (
-                  <span
-                    data-testid="ticket-unread-dot"
-                    title="Unread — just moved to review"
-                    className="mt-[6px] h-1.5 w-1.5 shrink-0 rounded-full bg-foreground/70"
-                  />
-                )
+                  data-testid="ticket-unread-dot"
+                  title="Unread — just moved to review"
+                  className="mt-[6px] h-1.5 w-1.5 shrink-0 rounded-full bg-foreground/70"
+                />
               )}
               <p
                 className={cn(
@@ -1800,6 +1794,19 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                               Question
                             </span>
                           )}
+                        </span>
+                      )
+                    case 'awaiting':
+                      return (
+                        <span
+                          data-testid="ticket-awaiting-completion"
+                          title="Still waiting — the agent stopped without finishing (background work or a scheduled wake-up is pending)"
+                          className="ml-auto flex items-center text-amber-500"
+                        >
+                          <Hourglass
+                            className="h-3 w-3"
+                            aria-label="Still waiting for the agent to finish"
+                          />
                         </span>
                       )
                     case 'reviewing':

@@ -82,10 +82,13 @@ function getTicket(ticketId = 'ticket-1'): KanbanTicket {
 
 const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
 
-function completeSession(completion?: ClaudeCliCompletion): void {
+function completeSession(
+  completion?: ClaudeCliCompletion,
+  sessionMode: 'build' | 'plan' = 'build'
+): void {
   useKanbanStore.getState().syncTicketWithSession(SESSION_ID, {
     type: 'session_completed',
-    sessionMode: 'build',
+    sessionMode,
     ...(completion !== undefined ? { completion } : {})
   })
 }
@@ -101,9 +104,9 @@ afterEach(() => {
   useWorktreeStatusStore.setState({ sessionStatuses: {} })
 })
 
-describe('session_completed — entering review from a Claude CLI session', () => {
+describe('session_completed — a Claude CLI turn that ended without a detected completion', () => {
   it.each<ClaudeCliCompletion>(['waiting', 'none'])(
-    'moves to review flagged awaiting completion when the turn ended without a detected completion (%s)',
+    'keeps the ticket in progress, flagged awaiting completion, instead of moving it to review (%s)',
     async (completion) => {
       seed(makeTicket())
 
@@ -111,17 +114,91 @@ describe('session_completed — entering review from a Claude CLI session', () =
       await flush()
 
       const ticket = getTicket()
-      expect(ticket.column).toBe('review')
-      expect(ticket.unread).toBe(true)
+      expect(ticket.column).toBe('in_progress')
       expect(ticket.awaiting_completion).toBe(true)
-      expect(kanbanApi.ticket.move).toHaveBeenCalledWith(PROJECT_ID, 'ticket-1', 'review', 0, {
-        awaitingCompletion: true
+      expect(ticket.unread).toBe(false)
+      expect(kanbanApi.ticket.move).not.toHaveBeenCalled()
+      expect(kanbanApi.ticket.update).toHaveBeenCalledWith(PROJECT_ID, 'ticket-1', {
+        awaiting_completion: true
       })
+      // No column change → nothing for the push notifier to announce.
     }
   )
 
+  it('does not flag plan_ready on a paused plan ticket', async () => {
+    seed(makeTicket({ mode: 'plan' }))
+
+    completeSession('waiting', 'plan')
+    await flush()
+
+    expect(getTicket().column).toBe('in_progress')
+    expect(getTicket().plan_ready).toBe(false)
+    expect(getTicket().awaiting_completion).toBe(true)
+    expect(kanbanApi.ticket.update).not.toHaveBeenCalledWith(
+      PROJECT_ID,
+      'ticket-1',
+      expect.objectContaining({ plan_ready: true })
+    )
+  })
+
+  it('leaves an already-flagged ticket alone on a further pause', async () => {
+    seed(makeTicket({ awaiting_completion: true }))
+
+    completeSession('waiting')
+    await flush()
+
+    expect(getTicket().column).toBe('in_progress')
+    expect(getTicket().awaiting_completion).toBe(true)
+    expect(kanbanApi.ticket.update).not.toHaveBeenCalled()
+    expect(kanbanApi.ticket.move).not.toHaveBeenCalled()
+  })
+
+  it('never touches a ticket outside in_progress on a pause', async () => {
+    seed(makeTicket({ column: 'review', unread: true }))
+
+    completeSession('waiting')
+    await flush()
+
+    expect(getTicket().column).toBe('review')
+    expect(getTicket().awaiting_completion).toBe(false)
+    expect(kanbanApi.ticket.update).not.toHaveBeenCalled()
+    expect(kanbanApi.ticket.move).not.toHaveBeenCalled()
+  })
+
+  it('still accumulates the turn tokens while paused', async () => {
+    seed(makeTicket())
+
+    useKanbanStore.getState().syncTicketWithSession(SESSION_ID, {
+      type: 'session_completed',
+      sessionMode: 'build',
+      completion: 'waiting',
+      tokenDelta: 42
+    })
+    await flush()
+
+    expect(kanbanApi.ticket.addTokens).toHaveBeenCalledWith(PROJECT_ID, 'ticket-1', 42)
+  })
+
+  it('flags the ticket through the worktree status store when the claude-cli listener reports a pause', async () => {
+    seed(makeTicket())
+
+    useWorktreeStatusStore.getState().setSessionStatus(SESSION_ID, 'completed', {
+      hookEventName: 'Stop',
+      completion: 'waiting',
+      pendingTasks: 1,
+      pendingWakeups: 0
+    } as Parameters<ReturnType<typeof useWorktreeStatusStore.getState>['setSessionStatus']>[2])
+    await flush()
+
+    expect(getTicket().column).toBe('in_progress')
+    expect(getTicket().awaiting_completion).toBe(true)
+    expect(kanbanApi.ticket.move).not.toHaveBeenCalled()
+  })
+})
+
+describe('session_completed — a detected completion', () => {
   it.each<ClaudeCliCompletion>(['completed', 'unknown'])(
-    'moves to review with only the unread dot when the completion was detected (%s)',
+    'moves the ticket to review with only the unread dot (%s)',
     async (completion) => {
       seed(makeTicket())
 
@@ -136,6 +213,20 @@ describe('session_completed — entering review from a Claude CLI session', () =
     }
   )
 
+  it('moves a paused ticket to review and drops the flag when the real completion lands', async () => {
+    seed(makeTicket({ awaiting_completion: true }))
+
+    completeSession('completed')
+    await flush()
+
+    const ticket = getTicket()
+    expect(ticket.column).toBe('review')
+    expect(ticket.awaiting_completion).toBe(false)
+    expect(ticket.unread).toBe(true)
+    expect(kanbanApi.ticket.move).toHaveBeenCalledWith(PROJECT_ID, 'ticket-1', 'review', 0)
+    // This is the moment the push notifier hears about.
+  })
+
   it('never flags tickets of providers that carry no completion signal', async () => {
     seed(makeTicket())
 
@@ -147,24 +238,7 @@ describe('session_completed — entering review from a Claude CLI session', () =
     expect(kanbanApi.ticket.move).toHaveBeenCalledWith(PROJECT_ID, 'ticket-1', 'review', 0)
   })
 
-  it('flags the ticket through the worktree status store when the claude-cli listener reports a pause', async () => {
-    seed(makeTicket())
-
-    useWorktreeStatusStore.getState().setSessionStatus(SESSION_ID, 'completed', {
-      hookEventName: 'Stop',
-      completion: 'waiting',
-      pendingTasks: 1,
-      pendingWakeups: 0
-    } as Parameters<ReturnType<typeof useWorktreeStatusStore.getState>['setSessionStatus']>[2])
-    await flush()
-
-    expect(getTicket().column).toBe('review')
-    expect(getTicket().awaiting_completion).toBe(true)
-  })
-})
-
-describe('session_completed — a ticket already in review', () => {
-  it('clears the flag and re-arms unread when the real completion lands', async () => {
+  it('clears the flag and re-arms unread on a review ticket an earlier version parked while paused', async () => {
     seed(makeTicket({ column: 'review', unread: false, awaiting_completion: true }))
 
     completeSession('completed')
@@ -180,18 +254,6 @@ describe('session_completed — a ticket already in review', () => {
     expect(kanbanApi.ticket.move).not.toHaveBeenCalled()
   })
 
-  it('leaves a still-waiting ticket alone on a further pause', async () => {
-    seed(makeTicket({ column: 'review', unread: false, awaiting_completion: true }))
-
-    completeSession('waiting')
-    await flush()
-
-    expect(getTicket().awaiting_completion).toBe(true)
-    expect(getTicket().unread).toBe(false)
-    expect(kanbanApi.ticket.update).not.toHaveBeenCalled()
-    expect(kanbanApi.ticket.move).not.toHaveBeenCalled()
-  })
-
   it('does not re-arm unread on a replayed completion for a ticket that was never waiting', async () => {
     seed(makeTicket({ column: 'review', unread: false, awaiting_completion: false }))
 
@@ -204,8 +266,32 @@ describe('session_completed — a ticket already in review', () => {
   })
 })
 
-describe('flag lifecycle around column changes', () => {
-  it('drops the flag when the resumed session pulls the ticket back to in_progress', async () => {
+describe('flag lifecycle', () => {
+  it('drops the flag when the paused session resumes work', async () => {
+    seed(makeTicket({ awaiting_completion: true }))
+
+    useKanbanStore.getState().syncTicketWithSession(SESSION_ID, { type: 'session_working' })
+    await flush()
+
+    expect(getTicket().column).toBe('in_progress')
+    expect(getTicket().awaiting_completion).toBe(false)
+    expect(kanbanApi.ticket.update).toHaveBeenCalledWith(PROJECT_ID, 'ticket-1', {
+      awaiting_completion: false
+    })
+    expect(kanbanApi.ticket.move).not.toHaveBeenCalled()
+  })
+
+  it('does not write anything for a working session on an unflagged in-progress ticket', async () => {
+    seed(makeTicket())
+
+    useKanbanStore.getState().syncTicketWithSession(SESSION_ID, { type: 'session_working' })
+    await flush()
+
+    expect(kanbanApi.ticket.update).not.toHaveBeenCalled()
+    expect(kanbanApi.ticket.move).not.toHaveBeenCalled()
+  })
+
+  it('drops the flag when the resumed session pulls a parked review ticket back to in_progress', async () => {
     seed(makeTicket({ column: 'review', unread: true, awaiting_completion: true }))
 
     useKanbanStore.getState().syncTicketWithSession(SESSION_ID, { type: 'session_working' })
@@ -216,70 +302,98 @@ describe('flag lifecycle around column changes', () => {
     expect(getTicket().unread).toBe(false)
   })
 
-  it('only arms on entry to review, never on other moves', async () => {
-    seed(makeTicket({ column: 'review', awaiting_completion: true }))
+  it('any column move drops the flag', async () => {
+    seed(makeTicket({ awaiting_completion: true }))
 
-    await useKanbanStore
-      .getState()
-      .moveTicket('ticket-1', PROJECT_ID, 'done', 0, { awaitingCompletion: true })
+    await useKanbanStore.getState().moveTicket('ticket-1', PROJECT_ID, 'done', 0)
 
     expect(getTicket().awaiting_completion).toBe(false)
     expect(kanbanApi.ticket.move).toHaveBeenCalledWith(PROJECT_ID, 'ticket-1', 'done', 0)
   })
 
   it('a same-column move keeps the flag', async () => {
-    seed(makeTicket({ column: 'review', awaiting_completion: true }))
+    seed(makeTicket({ awaiting_completion: true }))
 
-    await useKanbanStore.getState().moveTicket('ticket-1', PROJECT_ID, 'review', 5)
+    await useKanbanStore.getState().moveTicket('ticket-1', PROJECT_ID, 'in_progress', 5)
 
     expect(getTicket().awaiting_completion).toBe(true)
   })
 
   it('updateTicket with a column change clears the flag unless set explicitly', async () => {
-    seed(makeTicket({ column: 'review', awaiting_completion: true }))
+    seed(makeTicket({ awaiting_completion: true }))
 
-    await useKanbanStore.getState().updateTicket('ticket-1', PROJECT_ID, { column: 'in_progress' })
+    await useKanbanStore.getState().updateTicket('ticket-1', PROJECT_ID, { column: 'review' })
     expect(getTicket().awaiting_completion).toBe(false)
 
     await useKanbanStore
       .getState()
-      .updateTicket('ticket-1', PROJECT_ID, { column: 'review', awaiting_completion: true })
+      .updateTicket('ticket-1', PROJECT_ID, { column: 'in_progress', awaiting_completion: true })
     expect(getTicket().awaiting_completion).toBe(true)
-  })
-
-  it('opening the ticket clears unread but keeps the flag', async () => {
-    seed(makeTicket({ column: 'review', unread: true, awaiting_completion: true }))
-
-    useKanbanStore.getState().markTicketRead('ticket-1', PROJECT_ID)
-    await flush()
-
-    expect(getTicket().unread).toBe(false)
-    expect(getTicket().awaiting_completion).toBe(true)
-    expect(kanbanApi.ticket.update).toHaveBeenCalledWith(PROJECT_ID, 'ticket-1', { unread: false })
   })
 })
 
 describe('reconcileFinishedSessions — recovers a paused finish on load', () => {
-  it('moves an in_progress ticket to review flagged awaiting completion when the stored completed status was a pause', async () => {
+  it('flags an in_progress ticket in place when the stored completed status was a pause', async () => {
     seed(makeTicket())
     useWorktreeStatusStore.setState({
-      sessionStatuses: { [SESSION_ID]: { status: 'completed', timestamp: 0, completion: 'waiting' } }
+      sessionStatuses: {
+        [SESSION_ID]: { status: 'completed', timestamp: 0, completion: 'waiting' }
+      }
+    })
+
+    useKanbanStore.getState().reconcileFinishedSessions(PROJECT_ID)
+    await flush()
+
+    expect(getTicket().column).toBe('in_progress')
+    expect(getTicket().awaiting_completion).toBe(true)
+    expect(kanbanApi.ticket.move).not.toHaveBeenCalled()
+    expect(kanbanApi.ticket.update).toHaveBeenCalledWith(PROJECT_ID, 'ticket-1', {
+      awaiting_completion: true
+    })
+  })
+
+  it('writes nothing when the paused ticket is already flagged', async () => {
+    seed(makeTicket({ awaiting_completion: true }))
+    useWorktreeStatusStore.setState({
+      sessionStatuses: {
+        [SESSION_ID]: { status: 'completed', timestamp: 0, completion: 'waiting' }
+      }
+    })
+
+    useKanbanStore.getState().reconcileFinishedSessions(PROJECT_ID)
+    await flush()
+
+    expect(kanbanApi.ticket.move).not.toHaveBeenCalled()
+    expect(kanbanApi.ticket.update).not.toHaveBeenCalled()
+  })
+
+  it('moves to review without the flag when the stored completion was detected', async () => {
+    seed(makeTicket({ awaiting_completion: true }))
+    useWorktreeStatusStore.setState({
+      sessionStatuses: {
+        [SESSION_ID]: { status: 'completed', timestamp: 0, completion: 'completed' }
+      }
     })
 
     useKanbanStore.getState().reconcileFinishedSessions(PROJECT_ID)
     await flush()
 
     expect(getTicket().column).toBe('review')
-    expect(getTicket().awaiting_completion).toBe(true)
-    expect(kanbanApi.ticket.move).toHaveBeenCalledWith(PROJECT_ID, 'ticket-1', 'review', 0, {
-      awaitingCompletion: true
-    })
+    expect(getTicket().awaiting_completion).toBe(false)
+    expect(kanbanApi.ticket.move).toHaveBeenCalledWith(PROJECT_ID, 'ticket-1', 'review', 0)
   })
 
-  it('moves without the flag when the stored completion was detected or absent', async () => {
+  it('moves an API-errored stop to review even though it carries no completion', async () => {
     seed(makeTicket())
     useWorktreeStatusStore.setState({
-      sessionStatuses: { [SESSION_ID]: { status: 'completed', timestamp: 0, completion: 'completed' } }
+      sessionStatuses: {
+        [SESSION_ID]: {
+          status: 'completed',
+          timestamp: 0,
+          completion: 'none',
+          apiError: 'rate_limit'
+        }
+      }
     })
 
     useKanbanStore.getState().reconcileFinishedSessions(PROJECT_ID)

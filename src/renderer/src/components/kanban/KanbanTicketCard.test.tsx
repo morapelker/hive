@@ -154,34 +154,57 @@ describe('KanbanTicketCard unread indicator', () => {
     expect(screen.queryByTestId('ticket-unread-dot')).toBeNull()
   })
 
-  it('renders the still-waiting mark instead of the dot while a Claude CLI completion is pending', () => {
-    render(
-      <KanbanTicketCard
-        ticket={{ ...baseTicket, column: 'review', unread: true, awaiting_completion: true }}
-      />
-    )
-
-    expect(screen.getByTestId('ticket-awaiting-completion')).toBeInTheDocument()
-    expect(screen.queryByTestId('ticket-unread-dot')).toBeNull()
-  })
-
-  it('keeps the still-waiting mark after the ticket was opened (unread cleared)', () => {
-    render(
-      <KanbanTicketCard
-        ticket={{ ...baseTicket, column: 'review', unread: false, awaiting_completion: true }}
-      />
-    )
-
-    expect(screen.getByTestId('ticket-awaiting-completion')).toBeInTheDocument()
-    expect(screen.queryByTestId('ticket-unread-dot')).toBeNull()
-  })
-
   it('renders no still-waiting mark once the completion landed', () => {
     render(
       <KanbanTicketCard
         ticket={{ ...baseTicket, column: 'review', unread: true, awaiting_completion: false }}
       />
     )
+
+    expect(screen.queryByTestId('ticket-awaiting-completion')).toBeNull()
+    expect(screen.getByTestId('ticket-unread-dot')).toBeInTheDocument()
+  })
+})
+
+describe('KanbanTicketCard still-waiting mark (paused Claude CLI session)', () => {
+  afterEach(() => {
+    cleanup()
+    useWorktreeStatusStore.setState({ sessionStatuses: {} })
+  })
+
+  const pausedTicket: KanbanTicket = {
+    ...baseTicket,
+    column: 'in_progress',
+    mode: 'build',
+    current_session_id: 'session-1',
+    awaiting_completion: true
+  }
+
+  it('renders the hourglass in the progress bar slot while the in-progress session is paused', () => {
+    useWorktreeStatusStore.setState({
+      sessionStatuses: { 'session-1': { status: 'completed', timestamp: 0, completion: 'waiting' } }
+    })
+
+    render(<KanbanTicketCard ticket={pausedTicket} />)
+
+    expect(screen.getByTestId('ticket-awaiting-completion')).toBeInTheDocument()
+    expect(screen.queryByTestId('kanban-ticket-progress')).toBeNull()
+    expect(screen.queryByTestId('ticket-unread-dot')).toBeNull()
+  })
+
+  it('shows the progress bar, not the hourglass, once the paused session is working again', () => {
+    useWorktreeStatusStore.setState({
+      sessionStatuses: { 'session-1': { status: 'working', timestamp: 0 } }
+    })
+
+    render(<KanbanTicketCard ticket={pausedTicket} />)
+
+    expect(screen.getByTestId('kanban-ticket-progress')).toBeInTheDocument()
+    expect(screen.queryByTestId('ticket-awaiting-completion')).toBeNull()
+  })
+
+  it('renders no hourglass for a ticket that was moved out of in_progress', () => {
+    render(<KanbanTicketCard ticket={{ ...pausedTicket, column: 'review', unread: true }} />)
 
     expect(screen.queryByTestId('ticket-awaiting-completion')).toBeNull()
     expect(screen.getByTestId('ticket-unread-dot')).toBeInTheDocument()

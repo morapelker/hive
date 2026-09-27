@@ -88,8 +88,7 @@ export interface KanbanRpcService {
     projectId: string,
     id: string,
     column: KanbanTicket['column'],
-    sortOrder: number,
-    options?: { awaitingCompletion?: boolean }
+    sortOrder: number
   ) => Effect.Effect<KanbanTicket | null, unknown, never>
   // Optional (like the other ticket methods below) so the 50+ existing test
   // mocks that construct a full `kanban:` service literal don't all need updating.
@@ -339,9 +338,7 @@ const moveTicketParamsSchema = z
     projectId: z.string(),
     id: z.string(),
     column: ticketColumnSchema,
-    sortOrder: z.number(),
-    /** Entering review from a Claude CLI session that stopped without a detected completion. */
-    awaitingCompletion: z.boolean().optional()
+    sortOrder: z.number()
   })
   .strict()
 const moveTicketToProjectParamsSchema = z
@@ -603,14 +600,11 @@ export const makeLiveKanbanRpcService = (): KanbanRpcService => ({
       },
       catch: (cause) => cause
     }),
-  moveTicket: (projectId, id, column, sortOrder, options) =>
+  moveTicket: (projectId, id, column, sortOrder) =>
     Effect.tryPromise({
       try: async () => {
         const { getKanbanBackendForProject } = await import('../../../main/services/kanban-backend')
-        const backend = getKanbanBackendForProject(projectId)
-        return options === undefined
-          ? backend.move(projectId, id, column, sortOrder)
-          : backend.move(projectId, id, column, sortOrder, options)
+        return getKanbanBackendForProject(projectId).move(projectId, id, column, sortOrder)
       },
       catch: (cause) => cause
     }),
@@ -1202,13 +1196,11 @@ export const makeKanbanRpcHandlers = (
       'kanban.ticket.move',
       (params) =>
         Effect.gen(function* () {
-          const { projectId, id, column, sortOrder, awaitingCompletion } = yield* Effect.try({
+          const { projectId, id, column, sortOrder } = yield* Effect.try({
             try: () => moveTicketParamsSchema.parse(params),
             catch: (cause) => cause
           })
-          return yield* (awaitingCompletion === undefined
-            ? service.moveTicket(projectId, id, column, sortOrder)
-            : service.moveTicket(projectId, id, column, sortOrder, { awaitingCompletion }))
+          return yield* service.moveTicket(projectId, id, column, sortOrder)
         })
     ],
     [

@@ -3175,7 +3175,8 @@ export class DatabaseService {
       values.push(unreadValue ? 1 : 0)
     }
     // Awaiting-completion never survives a column change on its own: only the
-    // session-sync path that moves a ticket into review sets it explicitly.
+    // session-sync path sets it explicitly, on an in-progress ticket whose
+    // Claude CLI session paused without a detected completion.
     const awaitingValue =
       data.awaiting_completion ?? (derivedUnread !== undefined ? false : undefined)
     if (awaitingValue !== undefined) {
@@ -3362,25 +3363,19 @@ export class DatabaseService {
     return this.getKanbanTicket(id)
   }
 
-  moveKanbanTicket(
-    id: string,
-    column: KanbanTicketColumn,
-    sortOrder: number,
-    options?: { awaitingCompletion?: boolean }
-  ): KanbanTicket | null {
+  moveKanbanTicket(id: string, column: KanbanTicketColumn, sortOrder: number): KanbanTicket | null {
     const db = this.getDb()
     const existing = this.getKanbanTicket(id)
     if (!existing) return null
 
     const now = new Date().toISOString()
     if (column !== existing.column) {
-      // Entering review marks the ticket unread; awaiting_completion is only
-      // ever set on entry to review (a Claude CLI session that stopped without
-      // a detected completion) and clears on any other column change.
-      const awaitingCompletion = column === 'review' && options?.awaitingCompletion === true
+      // Entering review marks the ticket unread. awaiting_completion (a Claude
+      // CLI session that paused on an in-progress ticket) never survives a
+      // column change — a real completion moves the ticket out of in_progress.
       db.prepare(
-        'UPDATE kanban_tickets SET "column" = ?, sort_order = ?, updated_at = ?, column_changed_at = ?, unread = ?, awaiting_completion = ? WHERE id = ?'
-      ).run(column, sortOrder, now, now, column === 'review' ? 1 : 0, awaitingCompletion ? 1 : 0, id)
+        'UPDATE kanban_tickets SET "column" = ?, sort_order = ?, updated_at = ?, column_changed_at = ?, unread = ?, awaiting_completion = 0 WHERE id = ?'
+      ).run(column, sortOrder, now, now, column === 'review' ? 1 : 0, id)
     } else {
       db.prepare(
         'UPDATE kanban_tickets SET "column" = ?, sort_order = ?, updated_at = ? WHERE id = ?'

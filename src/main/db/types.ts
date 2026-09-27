@@ -554,11 +554,12 @@ export interface KanbanTicket {
   /** Set when the ticket enters the review column; cleared on open or on leaving review. */
   unread: boolean
   /**
-   * Set when a Claude CLI session moved the ticket to review without a
-   * detected completion (its Stop reported pending background tasks or
-   * scheduled wakeups, or no Stop hook ended the turn at all). Cleared when a
-   * real completion lands or the ticket leaves review; opening the ticket
-   * leaves it alone — the agent is still expected to be woken again.
+   * Set on an in-progress ticket when its Claude CLI session stopped without
+   * a detected completion (its Stop reported pending background tasks or
+   * scheduled wakeups, or no Stop hook ended the turn at all). The ticket is
+   * not moved to review — the agent is still expected to be woken again — and
+   * its card shows an hourglass where the progress bar was. Cleared when the
+   * run resumes or on any column change (a real completion moves it to review).
    */
   awaiting_completion: boolean
   model_provider_id: string | null
