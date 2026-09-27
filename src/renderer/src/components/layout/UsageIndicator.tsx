@@ -19,6 +19,7 @@ import { cn } from '@/lib/utils'
 import { Loader2, RefreshCw, Shuffle, Timer } from 'lucide-react'
 import { useAccountScheduleStore } from '@/stores/useAccountScheduleStore'
 import { autoSwitchIneligibilityReason } from '@/lib/auto-switch-score'
+import { compareByResetTime } from '@/lib/usage-reset-order'
 import {
   AutoSwitchControls,
   ScheduleSwitchForm,
@@ -653,10 +654,14 @@ function ProviderUsagePopoverBody({ provider }: { provider: UsageProvider }): Re
         ]
 
   // With multiple accounts, the active one goes first (and gets a neutral
-  // ring) so it's visible at the popover's natural top scroll position.
-  const orderedRows = [...accountRows].sort((a, b) => Number(b.isActive) - Number(a.isActive))
-  const highlightActive = accountRows.length > 1
+  // ring) so it's visible at the popover's natural top scroll position. The
+  // rest are ordered by when they free up: soonest 7d reset first, then
+  // Fable, then 5h as tie-breakers.
   const nowMs = Date.now()
+  const orderedRows = [...accountRows].sort(
+    (a, b) => Number(b.isActive) - Number(a.isActive) || compareByResetTime(a.usage, b.usage, nowMs)
+  )
+  const highlightActive = accountRows.length > 1
 
   const membersFor = (rowEmail: string | null): AccountMemberInfo[] | undefined => {
     if (!telemetryEnabled) return undefined

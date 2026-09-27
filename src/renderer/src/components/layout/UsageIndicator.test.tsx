@@ -8,7 +8,7 @@ import { autoSwitchIneligibilityReason } from '@/lib/auto-switch-score'
 import { useAccountStore, useUsageStore } from '@/stores'
 import { useAccountScheduleStore } from '@/stores/useAccountScheduleStore'
 import type { AccountMemberInfo } from './MemberAvatarStack'
-import type { OpenAIUsageData, UsageData } from '@shared/types/usage'
+import type { OpenAIUsageData, SavedAccountDTO, UsageData } from '@shared/types/usage'
 import { nextUsageRefreshAt } from '@/hooks/useAccountScheduleRunner'
 
 // Default to "nothing scheduled" so the countdown stays hidden in the
@@ -964,6 +964,76 @@ describe('ProviderUsageBlock provider toggle', () => {
     expect(
       active.compareDocumentPosition(inactive) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy()
+  })
+
+  it('orders inactive accounts by soonest 7d reset, then Fable, then 5h', async () => {
+    const user = userEvent.setup()
+    const account = (id: string, email: string, last_usage: UsageData): SavedAccountDTO => ({
+      id,
+      provider: 'anthropic',
+      email,
+      last_usage,
+      last_fetched_at: null,
+      status: 'ok',
+      last_error: null,
+      created_at: new Date().toISOString(),
+      plan: null
+    })
+    const at = (hours: number): string =>
+      new Date(Date.now() + hours * 60 * 60 * 1000).toISOString()
+
+    useUsageStore.setState((state) => ({
+      savedAccounts: {
+        ...state.savedAccounts,
+        anthropic: [
+          account('late-7d', 'late-7d@example.com', {
+            five_hour: { utilization: 5, resets_at: at(1) },
+            seven_day: { utilization: 5, resets_at: at(120) }
+          }),
+          account('tie-late-fable', 'tie-late-fable@example.com', {
+            five_hour: { utilization: 5, resets_at: at(1) },
+            seven_day: { utilization: 5, resets_at: at(48) },
+            scoped: [{ label: 'Fable', used_percent: 5, resets_at: at(40) }]
+          }),
+          account('tie-soon-fable', 'tie-soon-fable@example.com', {
+            five_hour: { utilization: 5, resets_at: at(4) },
+            seven_day: { utilization: 5, resets_at: at(48) },
+            scoped: [{ label: 'Fable', used_percent: 5, resets_at: at(10) }]
+          }),
+          account('active', 'claude@example.com', {
+            five_hour: { utilization: 5, resets_at: at(4) },
+            seven_day: { utilization: 5, resets_at: at(160) }
+          }),
+          account('soon-7d', 'soon-7d@example.com', {
+            five_hour: { utilization: 5, resets_at: at(4) },
+            seven_day: { utilization: 5, resets_at: at(24) }
+          })
+        ]
+      }
+    }))
+
+    render(
+      <ProviderUsageBlock
+        provider="anthropic"
+        isExplicitlySelected
+        toggleProviders={['anthropic']}
+      />
+    )
+
+    await user.hover(screen.getByTestId('usage-trigger-anthropic'))
+    await screen.findByText('soon-7d@example.com')
+
+    const emails = screen
+      .getAllByText(/@example\.com$/)
+      .map((el) => el.textContent)
+      .filter((text) => text !== null && text.endsWith('@example.com'))
+    expect(emails).toEqual([
+      'claude@example.com',
+      'soon-7d@example.com',
+      'tie-soon-fable@example.com',
+      'tie-late-fable@example.com',
+      'late-7d@example.com'
+    ])
   })
 
   it('shows the auto-switch shuffle icon in the bar when armed, instead of the timer', () => {
