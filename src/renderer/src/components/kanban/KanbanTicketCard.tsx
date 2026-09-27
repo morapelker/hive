@@ -1800,7 +1800,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                       return (
                         <span
                           data-testid="ticket-awaiting-completion"
-                          title="Still waiting — the agent stopped without finishing (background work or a scheduled wake-up is pending)"
+                          title="Still waiting — the agent stopped without finishing (a subagent, workflow, monitor, or scheduled wake-up is pending)"
                           className="ml-auto flex items-center text-amber-500"
                         >
                           <Hourglass

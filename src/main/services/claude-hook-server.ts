@@ -27,6 +27,7 @@ import {
 import {
   clearAllClaudeCliBackgroundWork,
   clearClaudeCliBackgroundWork,
+  getClaudeCliMonitorTaskIds,
   processClaudeCliBackgroundWorkHook
 } from './claude-cli-background-work-tracker'
 import {
@@ -133,10 +134,12 @@ export interface ClaudeCliStatusPayload {
      * Absent on every other status publish (no Stop hook was involved).
      */
     completion?: ClaudeCliStopCompletionKind
-    /** Main-agent Stop: in-flight background tasks at stop time. */
+    /** Main-agent Stop: in-flight background tasks that hold the session open (non-shell, or Monitor). */
     pendingTasks?: number
     /** Main-agent Stop: scheduled wakeups at stop time. */
     pendingWakeups?: number
+    /** Main-agent Stop: background shells still running that were ignored for completion. */
+    ignoredShells?: number
   }
 }
 
@@ -267,6 +270,7 @@ function extractPlanText(hook: ParsedClaudeHook): string | undefined {
 }
 
 function buildStatusMetadata(
+  sessionId: string,
   hook: ParsedClaudeHook,
   hookPath: string,
   cli: CliHookFamily
@@ -280,14 +284,21 @@ function buildStatusMetadata(
     metadata.toolName = hook.tool_name
   }
 
-  // Completion vs pause: a main-agent Stop is the real end of the work only
-  // when claude reports nothing in flight and nothing scheduled. Codex hooks
-  // are adapted from a different lifecycle and never carry these arrays.
+  // Completion vs pause: a main-agent Stop is the real end of the work unless
+  // claude reports something that will wake it again — a subagent/workflow,
+  // a Monitor watch, or a scheduled wakeup. Plain background shells (dev
+  // servers the agent left running) do not hold the session open. Monitors
+  // are listed as shells on the body, so the tracker's monitor ids tell them
+  // apart. Codex hooks are adapted from a different lifecycle and never
+  // carry these arrays.
   if (cli === 'claude' && hook.hook_event_name === 'Stop' && !hook.agent_id) {
-    const completion = classifyClaudeCliStopCompletion(hook)
+    const completion = classifyClaudeCliStopCompletion(hook, {
+      monitorTaskIds: getClaudeCliMonitorTaskIds(sessionId)
+    })
     metadata.completion = completion.kind
     metadata.pendingTasks = completion.pendingTasks
     metadata.pendingWakeups = completion.pendingWakeups
+    metadata.ignoredShells = completion.ignoredShells
   }
 
   const plan = extractPlanText(hook)
@@ -677,7 +688,7 @@ function processCliHook(
         sessionId: route.sessionId,
         status,
         metadata: {
-          ...buildStatusMetadata(body, route.hookPath, route.cli),
+          ...buildStatusMetadata(route.sessionId, body, route.hookPath, route.cli),
           ...(options.reason ? { reason: options.reason } : {})
         }
       }

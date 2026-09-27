@@ -276,6 +276,16 @@ export function getClaudeCliBackgroundWorkCounts(sessionId: string): ClaudeCliBa
   return counts(sessions.get(sessionId))
 }
 
+/**
+ * Task ids this process saw start as Monitor watches (from their PostToolUse)
+ * and has not yet seen end. Stop bodies list monitors as `type: 'shell'`, so
+ * this is the only way the completion classifier can tell a Monitor (a real
+ * pause — it will wake the agent) from a background shell (ignored).
+ */
+export function getClaudeCliMonitorTaskIds(sessionId: string): ReadonlySet<string> {
+  return sessions.get(sessionId)?.monitors ?? new Set()
+}
+
 /** Drop a session's tracked work. Returns true when it had live counts (the
  * caller should publish zeros so the renderer badge clears). */
 export function clearClaudeCliBackgroundWork(sessionId: string): boolean {

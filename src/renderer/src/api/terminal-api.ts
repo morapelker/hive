@@ -50,6 +50,7 @@ export interface ClaudeCliStatusPayload {
     readonly completion?: ClaudeCliStopCompletionKind
     readonly pendingTasks?: number
     readonly pendingWakeups?: number
+    readonly ignoredShells?: number
   }
 }
 
