@@ -26,6 +26,11 @@ const apiMocks = vi.hoisted(() => ({
     hasUncommittedChanges: vi.fn(),
     branchDiffShortStat: vi.fn(),
     getDiffStat: vi.fn(),
+    getFileStatuses: vi.fn(),
+    getBranchDiffFiles: vi.fn(),
+    getBranchFileDiff: vi.fn(),
+    getDiff: vi.fn(),
+    onStatusChanged: vi.fn(() => () => {}),
     getRemoteUrl: vi.fn(),
     pull: vi.fn(),
     merge: vi.fn(),
@@ -189,6 +194,9 @@ describe('MergeOnDoneDialog', () => {
       success: true,
       files: []
     })
+    apiMocks.gitApi.getFileStatuses.mockResolvedValue({ success: true, files: [] })
+    apiMocks.gitApi.getBranchDiffFiles.mockResolvedValue({ success: true, files: [] })
+    apiMocks.gitApi.getBranchFileDiff.mockResolvedValue({ success: true, diff: '' })
     apiMocks.gitApi.getRemoteUrl.mockResolvedValue({ success: true, url: null, remote: null })
     apiMocks.gitApi.pull.mockResolvedValue({ success: true })
     apiMocks.gitApi.stageAll.mockResolvedValue({ success: true })

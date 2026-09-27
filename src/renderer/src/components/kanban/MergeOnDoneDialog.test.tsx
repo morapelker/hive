@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MergeOnDoneDialog } from './MergeOnDoneDialog'
 import { useKanbanStore } from '@/stores/useKanbanStore'
@@ -23,6 +23,11 @@ const gitApiMocks = vi.hoisted(() => ({
   hasUncommittedChanges: vi.fn(),
   branchDiffShortStat: vi.fn(),
   getDiffStat: vi.fn(),
+  getFileStatuses: vi.fn(),
+  getBranchDiffFiles: vi.fn(),
+  getBranchFileDiff: vi.fn(),
+  getDiff: vi.fn(),
+  onStatusChanged: vi.fn((_cb: (event: { worktreePath: string }) => void) => () => {}),
   stageAll: vi.fn(),
   commit: vi.fn(),
   merge: vi.fn(),
@@ -32,6 +37,15 @@ const gitApiMocks = vi.hoisted(() => ({
 
 vi.mock('@/api/git-api', () => ({
   gitApi: gitApiMocks
+}))
+
+// diff2html and the image loaders are exercised elsewhere; here the diff view
+// only needs to prove it received the patch
+vi.mock('@/components/diff/DiffViewer', () => ({
+  DiffViewer: ({ diff }: { diff: string }) => <pre data-testid="diff-viewer">{diff}</pre>
+}))
+vi.mock('@/components/diff/ImageDiffView', () => ({
+  ImageDiffView: () => <div data-testid="image-diff-view" />
 }))
 
 const now = '2026-01-01T00:00:00.000Z'
@@ -122,6 +136,11 @@ function mockAlreadyMergedBranch(): void {
     deletions: 0,
     commitsAhead: 0
   })
+  gitApiMocks.getBranchDiffFiles.mockResolvedValue({ success: true, files: [] })
+  gitApiMocks.getBranchFileDiff.mockResolvedValue({ success: true, diff: '' })
+  gitApiMocks.getDiffStat.mockResolvedValue({ success: true, files: [] })
+  gitApiMocks.getFileStatuses.mockResolvedValue({ success: true, files: [] })
+  gitApiMocks.getDiff.mockResolvedValue({ success: true, diff: '' })
 }
 
 describe('MergeOnDoneDialog — already-merged branch', () => {
@@ -386,5 +405,368 @@ describe('MergeOnDoneDialog — connection-project member queue (offerArchive)',
       expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5)
     )
     expect(archiveWorktreeMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('MergeOnDoneDialog — changed files', () => {
+  const branchFiles = [
+    { relativePath: 'src/app.ts', status: 'M', additions: 10, deletions: 3, binary: false },
+    { relativePath: 'src/new.ts', status: 'A', additions: 5, deletions: 0, binary: false },
+    { relativePath: 'assets/logo.bin', status: 'M', additions: 0, deletions: 0, binary: true },
+    {
+      relativePath: 'big/generated.json',
+      status: 'M',
+      additions: 2000,
+      deletions: 0,
+      binary: false
+    }
+  ]
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    moveTicketMock.mockResolvedValue(undefined)
+    archiveWorktreeMock.mockResolvedValue({ success: true })
+    mockAlreadyMergedBranch()
+    setupStores()
+    gitApiMocks.branchDiffShortStat.mockResolvedValue({
+      success: true,
+      filesChanged: 4,
+      insertions: 2015,
+      deletions: 3,
+      commitsAhead: 1
+    })
+    gitApiMocks.getBranchDiffFiles.mockResolvedValue({ success: true, files: branchFiles })
+    gitApiMocks.getBranchFileDiff.mockImplementation(
+      (_path: string, _branch: string, file: string) =>
+        Promise.resolve({ success: true, diff: `diff --git a/${file} b/${file}\n+changed` })
+    )
+  })
+
+  afterEach(() => {
+    cleanup()
+    useKanbanStore.setState({ pendingDoneMove: null })
+  })
+
+  it('lists every file that differs from the base branch in the merge step', async () => {
+    render(<MergeOnDoneDialog />)
+
+    expect(await screen.findByText('Merge branch')).toBeTruthy()
+    const rows = await screen.findAllByTestId('merge-file-row')
+    expect(rows.map((row) => row.getAttribute('data-path'))).toEqual([
+      'assets/logo.bin',
+      'big/generated.json',
+      'src/app.ts',
+      'src/new.ts'
+    ])
+    expect(gitApiMocks.getBranchDiffFiles).toHaveBeenCalledWith('/repo/feature', 'main')
+    expect(screen.getByTestId('merge-summary-commits').textContent).toBe('1 commit ahead')
+    expect(screen.getByTestId('merge-summary-files').textContent).toBe('4 files changed')
+    expect(screen.getByTestId('merge-summary-stats').textContent).toBe('+2015-3')
+    expect(screen.getByRole('button', { name: 'Merge' })).toBeEnabled()
+  })
+
+  it('opens a file diff inside the dialog and returns to the list', async () => {
+    render(<MergeOnDoneDialog />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /^src\/app\.ts,/ }))
+
+    const viewer = await screen.findByTestId('diff-viewer')
+    expect(viewer.textContent).toContain('diff --git a/src/app.ts b/src/app.ts')
+    expect(gitApiMocks.getBranchFileDiff).toHaveBeenCalledWith(
+      '/repo/feature',
+      'main',
+      'src/app.ts'
+    )
+    expect(screen.getByTestId('merge-diff-position').textContent).toBe('3 / 4')
+    // The decision stays one click away from the evidence
+    expect(screen.getByRole('button', { name: 'Merge' })).toBeTruthy()
+    expect(screen.queryByTestId('merge-file-list')).toBeNull()
+
+    fireEvent.click(screen.getByTestId('merge-diff-back'))
+
+    expect(await screen.findByTestId('merge-file-list')).toBeTruthy()
+    expect(screen.queryByTestId('merge-diff-view')).toBeNull()
+    expect(useKanbanStore.getState().pendingDoneMove).not.toBeNull()
+    expect(moveTicketMock).not.toHaveBeenCalled()
+  })
+
+  it('Escape backs out of the diff view and only closes the dialog from the list', async () => {
+    render(<MergeOnDoneDialog />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /^src\/app\.ts,/ }))
+    await screen.findByTestId('merge-diff-view')
+
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
+
+    expect(await screen.findByTestId('merge-file-list')).toBeTruthy()
+    expect(useKanbanStore.getState().pendingDoneMove).not.toBeNull()
+
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
+
+    await waitFor(() => expect(useKanbanStore.getState().pendingDoneMove).toBeNull())
+    expect(moveTicketMock).not.toHaveBeenCalled()
+  })
+
+  it('never fetches a patch for a binary file', async () => {
+    render(<MergeOnDoneDialog />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /^assets\/logo\.bin,/ }))
+
+    expect(await screen.findByTestId('merge-diff-binary')).toBeTruthy()
+    expect(gitApiMocks.getBranchFileDiff).not.toHaveBeenCalled()
+  })
+
+  it('waits for an explicit Load diff on very large files', async () => {
+    render(<MergeOnDoneDialog />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /^big\/generated\.json,/ }))
+
+    expect(await screen.findByTestId('merge-diff-load-large')).toBeTruthy()
+    expect(gitApiMocks.getBranchFileDiff).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Load diff' }))
+
+    expect(await screen.findByTestId('diff-viewer')).toBeTruthy()
+    expect(gitApiMocks.getBranchFileDiff).toHaveBeenCalledWith(
+      '/repo/feature',
+      'main',
+      'big/generated.json'
+    )
+  })
+
+  it('steps through files with previous/next without leaving the diff view', async () => {
+    render(<MergeOnDoneDialog />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /^src\/app\.ts,/ }))
+    await screen.findByTestId('diff-viewer')
+
+    fireEvent.click(screen.getByTestId('merge-diff-next'))
+
+    await waitFor(() =>
+      expect(gitApiMocks.getBranchFileDiff).toHaveBeenCalledWith(
+        '/repo/feature',
+        'main',
+        'src/new.ts'
+      )
+    )
+    expect(screen.getByTestId('merge-diff-position').textContent).toBe('4 / 4')
+    expect(screen.getByTestId('merge-diff-next')).toBeDisabled()
+
+    fireEvent.click(screen.getByTestId('merge-diff-prev'))
+    fireEvent.click(screen.getByTestId('merge-diff-prev'))
+
+    expect(await screen.findByTestId('merge-diff-load-large')).toBeTruthy()
+    expect(screen.getByTestId('merge-diff-position').textContent).toBe('2 / 4')
+  })
+
+  it('shows an inline error and keeps Merge available when the file list fails', async () => {
+    gitApiMocks.getBranchDiffFiles.mockResolvedValue({ success: false, error: 'boom' })
+
+    render(<MergeOnDoneDialog />)
+
+    const error = await screen.findByTestId('merge-file-list-error')
+    expect(error.textContent).toContain('boom')
+    expect(screen.getByRole('button', { name: 'Merge' })).toBeEnabled()
+    // Header falls back to the shortstat totals
+    expect(screen.getByTestId('merge-summary-files').textContent).toBe('4 files changed')
+  })
+
+  it('explains an empty list when the branch is ahead but its content matches base', async () => {
+    gitApiMocks.getBranchDiffFiles.mockResolvedValue({ success: true, files: [] })
+
+    render(<MergeOnDoneDialog />)
+
+    const empty = await screen.findByTestId('merge-file-list-empty')
+    expect(empty.textContent).toContain('No file differences against')
+    expect(empty.textContent).toContain('1 commit ahead')
+    expect(screen.getByTestId('merge-summary-files').textContent).toBe('0 files changed')
+  })
+
+  it('lists uncommitted files in the commit step and diffs them against HEAD', async () => {
+    gitApiMocks.hasUncommittedChanges.mockImplementation((path: string) =>
+      Promise.resolve(path === '/repo/feature')
+    )
+    gitApiMocks.getDiffStat.mockResolvedValue({
+      success: true,
+      files: [
+        { path: 'src/app.ts', additions: 2, deletions: 1, binary: false },
+        { path: 'notes.md', additions: 4, deletions: 0, binary: false }
+      ]
+    })
+    gitApiMocks.getFileStatuses.mockResolvedValue({
+      success: true,
+      files: [
+        { path: '/repo/feature/notes.md', relativePath: 'notes.md', status: '?', staged: false },
+        { path: '/repo/feature/src/app.ts', relativePath: 'src/app.ts', status: 'M', staged: true },
+        { path: '/repo/feature/src/app.ts', relativePath: 'src/app.ts', status: 'M', staged: false }
+      ]
+    })
+    gitApiMocks.getDiff.mockResolvedValue({
+      success: true,
+      diff: 'diff --git a/notes.md b/notes.md\n+new'
+    })
+
+    render(<MergeOnDoneDialog />)
+
+    expect(await screen.findByText('Uncommitted changes')).toBeTruthy()
+    const rows = await screen.findAllByTestId('merge-file-row')
+    expect(rows.map((row) => row.getAttribute('data-path'))).toEqual(['notes.md', 'src/app.ts'])
+    expect(screen.getByTestId('merge-summary-files').textContent).toBe('2 uncommitted files')
+    expect(screen.getByTestId('merge-summary-stats').textContent).toBe('+6-1')
+    expect(gitApiMocks.getBranchDiffFiles).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: /^notes\.md, Untracked/ }))
+    expect((await screen.findByTestId('diff-viewer')).textContent).toContain('+new')
+    expect(gitApiMocks.getDiff).toHaveBeenCalledWith('/repo/feature', 'notes.md', false, true)
+
+    fireEvent.click(screen.getByTestId('merge-diff-back'))
+    fireEvent.click(await screen.findByRole('button', { name: /^src\/app\.ts, Modified/ }))
+
+    await waitFor(() =>
+      expect(gitApiMocks.getBranchFileDiff).toHaveBeenCalledWith(
+        '/repo/feature',
+        'HEAD',
+        'src/app.ts'
+      )
+    )
+    expect(screen.getByRole('button', { name: 'Commit' })).toBeTruthy()
+  })
+
+  const manyFiles = Array.from({ length: 10 }, (_, i) => ({
+    relativePath: i < 5 ? `src/app${i}.ts` : `docs/page${i}.md`,
+    status: 'M',
+    additions: i + 1,
+    deletions: 0,
+    binary: false
+  }))
+
+  it('Escape clears the file filter before it closes the dialog', async () => {
+    gitApiMocks.getBranchDiffFiles.mockResolvedValue({ success: true, files: manyFiles })
+
+    render(<MergeOnDoneDialog />)
+
+    const filter = await screen.findByTestId('merge-file-filter')
+    fireEvent.change(filter, { target: { value: 'docs' } })
+    expect(screen.getAllByTestId('merge-file-row')).toHaveLength(5)
+
+    fireEvent.keyDown(filter, { key: 'Escape' })
+
+    await waitFor(() => expect(screen.getAllByTestId('merge-file-row')).toHaveLength(10))
+    expect((screen.getByTestId('merge-file-filter') as HTMLInputElement).value).toBe('')
+    expect(useKanbanStore.getState().pendingDoneMove).not.toBeNull()
+
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
+
+    await waitFor(() => expect(useKanbanStore.getState().pendingDoneMove).toBeNull())
+  })
+
+  it('keeps the filter and walks the filtered rows when a diff is open', async () => {
+    gitApiMocks.getBranchDiffFiles.mockResolvedValue({ success: true, files: manyFiles })
+
+    render(<MergeOnDoneDialog />)
+
+    fireEvent.change(await screen.findByTestId('merge-file-filter'), {
+      target: { value: 'docs' }
+    })
+    fireEvent.click(screen.getByRole('button', { name: /^docs\/page5\.md,/ }))
+
+    await screen.findByTestId('diff-viewer')
+    expect(screen.getByTestId('merge-diff-position').textContent).toBe('1 / 5')
+
+    fireEvent.click(screen.getByTestId('merge-diff-next'))
+    await waitFor(() =>
+      expect(gitApiMocks.getBranchFileDiff).toHaveBeenCalledWith(
+        '/repo/feature',
+        'main',
+        'docs/page6.md'
+      )
+    )
+
+    fireEvent.click(screen.getByTestId('merge-diff-back'))
+
+    const filter = await screen.findByTestId('merge-file-filter')
+    expect((filter as HTMLInputElement).value).toBe('docs')
+    expect(screen.getAllByTestId('merge-file-row')).toHaveLength(5)
+  })
+
+  it('refreshes the list and an open diff when the worktree status changes', async () => {
+    const listeners: Array<(event: { worktreePath: string }) => void> = []
+    gitApiMocks.onStatusChanged.mockImplementation(
+      (cb: (event: { worktreePath: string }) => void) => {
+        listeners.push(cb)
+        return () => {}
+      }
+    )
+
+    render(<MergeOnDoneDialog />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /^src\/app\.ts,/ }))
+    await screen.findByTestId('diff-viewer')
+    expect(gitApiMocks.getBranchFileDiff).toHaveBeenCalledTimes(1)
+    expect(gitApiMocks.getBranchDiffFiles).toHaveBeenCalledTimes(1)
+
+    gitApiMocks.getBranchFileDiff.mockResolvedValue({ success: true, diff: 'diff --git fresh' })
+    await act(async () => {
+      listeners.forEach((cb) => cb({ worktreePath: '/repo/feature' }))
+    })
+
+    await waitFor(() => expect(gitApiMocks.getBranchDiffFiles).toHaveBeenCalledTimes(2))
+    await waitFor(() =>
+      expect(screen.getByTestId('diff-viewer').textContent).toContain('diff --git fresh')
+    )
+    // Still in the merge step: the tree is clean
+    expect(screen.getByRole('button', { name: 'Merge' })).toBeTruthy()
+  })
+
+  it('goes back to the commit step when uncommitted changes appear before Merge', async () => {
+    gitApiMocks.hasUncommittedChanges
+      .mockResolvedValueOnce(false) // base, during init
+      .mockResolvedValueOnce(false) // feature, during init
+      .mockResolvedValue(true) // anything after: an agent wrote to the tree
+
+    render(<MergeOnDoneDialog />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Merge' }))
+
+    expect(await screen.findByText('Uncommitted changes')).toBeTruthy()
+    expect(gitApiMocks.merge).not.toHaveBeenCalled()
+    expect(useKanbanStore.getState().pendingDoneMove).not.toBeNull()
+  })
+
+  it('remembers Load diff consent through Back once the patch is cached', async () => {
+    render(<MergeOnDoneDialog />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /^big\/generated\.json,/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Load diff' }))
+    await screen.findByTestId('diff-viewer')
+
+    fireEvent.click(screen.getByTestId('merge-diff-back'))
+    fireEvent.click(await screen.findByRole('button', { name: /^big\/generated\.json,/ }))
+
+    expect(await screen.findByTestId('diff-viewer')).toBeTruthy()
+    expect(screen.queryByTestId('merge-diff-load-large')).toBeNull()
+    expect(gitApiMocks.getBranchFileDiff).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the loaded list on screen when a refresh fails', async () => {
+    const listeners: Array<(event: { worktreePath: string }) => void> = []
+    gitApiMocks.onStatusChanged.mockImplementation(
+      (cb: (event: { worktreePath: string }) => void) => {
+        listeners.push(cb)
+        return () => {}
+      }
+    )
+
+    render(<MergeOnDoneDialog />)
+    await screen.findAllByTestId('merge-file-row')
+
+    gitApiMocks.getBranchDiffFiles.mockResolvedValue({ success: false, error: 'lost git' })
+    await act(async () => {
+      listeners.forEach((cb) => cb({ worktreePath: '/repo/feature' }))
+    })
+
+    const strip = await screen.findByTestId('merge-file-list-refresh-error')
+    expect(strip.textContent).toContain('lost git')
+    expect(screen.getAllByTestId('merge-file-row')).toHaveLength(4)
   })
 })

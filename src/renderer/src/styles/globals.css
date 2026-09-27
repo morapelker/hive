@@ -210,7 +210,10 @@
       'rlig' 1,
       'calt' 1;
   }
-  pre, code, kbd, samp {
+  pre,
+  code,
+  kbd,
+  samp {
     font-family: var(--font-mono);
   }
 
@@ -287,6 +290,13 @@
 .diff-viewer .d2h-file-diff {
   overflow: hidden;
   position: relative;
+}
+
+/* Hosts that draw their own file header (the merge dialog) hide diff2html's.
+   Lives here rather than in a utility class: diff2html's stylesheet is
+   unlayered, so it would beat a layered Tailwind utility. */
+.diff-viewer.diff-viewer--bare .d2h-file-header {
+  display: none;
 }
 
 /* Dark mode overrides for diff2html — uses theme-aware CSS custom properties */
@@ -596,7 +606,7 @@
 
 /* Monaco decoration: outdated diff comment range highlight (yellow tint) */
 .diff-comment-range-highlight-outdated {
-  background-color: rgba(234, 179, 8, 0.10);
+  background-color: rgba(234, 179, 8, 0.1);
 }
 
 /* Monaco decoration: flash highlight when jumping to a comment — blue so the

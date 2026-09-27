@@ -1,15 +1,26 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { ticketKey, useKanbanStore } from '@/stores/useKanbanStore'
 import { useGitStore } from '@/stores/useGitStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle
+} from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { toast } from 'sonner'
 import { Loader2, GitMerge, GitCommit, Archive } from 'lucide-react'
 import { dbApi } from '@/api/db-api'
 import { gitApi } from '@/api/git-api'
+import { cn } from '@/lib/utils'
+import { ChangedFilesPanel, type ChangedFilesPanelHandle } from './merge-dialog/ChangedFilesPanel'
+import { ChangedFilesSummary, SummaryChip } from './merge-dialog/ChangedFilesSummary'
+import { useChangedFiles } from './merge-dialog/useChangedFiles'
+import type { ChangedFilesSource, ChangedFilesTotals } from './merge-dialog/changed-files'
 
 type Step = 'loading' | 'commit_base' | 'commit' | 'merge' | 'archive'
 
@@ -45,8 +56,6 @@ interface ResolvedState {
   ticketTitle: string
   projectPath: string
   projectName: string | null
-  uncommittedStats: { filesChanged: number; insertions: number; deletions: number }
-  baseUncommittedStats: { filesChanged: number; insertions: number; deletions: number }
   baseDirty: boolean
   branchStats: BranchStats
   alreadyMerged: boolean
@@ -80,6 +89,53 @@ export function MergeOnDoneDialog() {
   const [committing, setCommitting] = useState(false)
   const [merging, setMerging] = useState(false)
   const [archiving, setArchiving] = useState(false)
+
+  // The file list / diff drill-down owns its navigation state; the dialog
+  // only needs to ask it whether Escape was consumed (back / clear filter)
+  const panelRef = useRef<ChangedFilesPanelHandle>(null)
+
+  const inspecting = step === 'commit_base' || step === 'commit' || step === 'merge'
+
+  // Which change set the file list shows: the branch against its base in the
+  // merge step, the uncommitted changes of the relevant worktree otherwise
+  const changedSource = useMemo<ChangedFilesSource | null>(() => {
+    // `resolved`/`step` linger after the dialog closes; stop watching then
+    if (!resolved || !pendingDoneMove) return null
+    switch (step) {
+      case 'merge':
+        return {
+          kind: 'branch',
+          worktreePath: resolved.featureWorktreePath,
+          baseBranch: resolved.baseBranch
+        }
+      case 'commit':
+        return { kind: 'worktree', worktreePath: resolved.featureWorktreePath }
+      case 'commit_base':
+        return { kind: 'worktree', worktreePath: resolved.baseWorktreePath }
+      default:
+        return null
+    }
+  }, [resolved, step, pendingDoneMove])
+  const changed = useChangedFiles(changedSource)
+
+  // The merge step assumes a clean feature tree, but an agent may still be
+  // writing. Merge lands commits only, so new edits go through the commit
+  // step first — the same routing init applies when the dialog opens.
+  useEffect(() => {
+    if (step !== 'merge' || !resolved || !pendingDoneMove) return
+    const path = resolved.featureWorktreePath
+    let cancelled = false
+    const unsubscribe = gitApi.onStatusChanged((event) => {
+      if (event.worktreePath !== path) return
+      void gitApi.hasUncommittedChanges(path).then((dirty) => {
+        if (!cancelled && dirty) setStep('commit')
+      })
+    })
+    return () => {
+      cancelled = true
+      unsubscribe?.()
+    }
+  }, [step, resolved, pendingDoneMove])
 
   // Initialize when pendingDoneMove changes
   useEffect(() => {
@@ -165,32 +221,6 @@ export function MergeOnDoneDialog() {
 
         if (cancelled) return
 
-        // Get uncommitted diff stats for both worktrees if needed
-        const [featureDiffResult, baseDiffResult] = await Promise.all([
-          hasUncommitted ? gitApi.getDiffStat(featureWorktree.path) : Promise.resolve(null),
-          baseDirty ? gitApi.getDiffStat(baseWorktree.path) : Promise.resolve(null)
-        ])
-
-        let uncommittedStats = { filesChanged: 0, insertions: 0, deletions: 0 }
-        if (featureDiffResult?.success && featureDiffResult.files) {
-          uncommittedStats = {
-            filesChanged: featureDiffResult.files.length,
-            insertions: featureDiffResult.files.reduce((sum, f) => sum + f.additions, 0),
-            deletions: featureDiffResult.files.reduce((sum, f) => sum + f.deletions, 0)
-          }
-        }
-
-        let baseUncommittedStats = { filesChanged: 0, insertions: 0, deletions: 0 }
-        if (baseDiffResult?.success && baseDiffResult.files) {
-          baseUncommittedStats = {
-            filesChanged: baseDiffResult.files.length,
-            insertions: baseDiffResult.files.reduce((sum, f) => sum + f.additions, 0),
-            deletions: baseDiffResult.files.reduce((sum, f) => sum + f.deletions, 0)
-          }
-        }
-
-        if (cancelled) return
-
         if (!branchStatResult.success) {
           toast.warning(`Cannot verify merge status: ${branchStatResult.error ?? 'unknown error'}`)
           clearPendingDoneMove()
@@ -235,8 +265,6 @@ export function MergeOnDoneDialog() {
           ticketTitle: ticket.title,
           projectPath: project?.path ?? baseWorktree.path,
           projectName: project?.name ?? null,
-          uncommittedStats,
-          baseUncommittedStats,
           baseDirty,
           branchStats,
           alreadyMerged
@@ -244,7 +272,13 @@ export function MergeOnDoneDialog() {
         setCommitMessage(ticket.title)
         setBaseCommitMessage('')
         setStep(
-          alreadyMerged ? 'archive' : baseDirty ? 'commit_base' : hasUncommitted ? 'commit' : 'merge'
+          alreadyMerged
+            ? 'archive'
+            : baseDirty
+              ? 'commit_base'
+              : hasUncommitted
+                ? 'commit'
+                : 'merge'
         )
       } catch (err) {
         if (!cancelled) {
@@ -381,6 +415,14 @@ export function MergeOnDoneDialog() {
     if (!resolved || !pendingDoneMove) return
     setMerging(true)
     try {
+      // Last look before landing commits only: anything written since the
+      // step opened must be committed first (see the status watcher above)
+      if (await gitApi.hasUncommittedChanges(resolved.featureWorktreePath)) {
+        toast.warning('New uncommitted changes on the branch — commit them before merging')
+        setStep('commit')
+        return
+      }
+
       // Pull latest on base branch first (only if remote exists)
       const remoteResult = await gitApi.getRemoteUrl(resolved.baseWorktreePath)
       if (remoteResult.url) {
@@ -472,9 +514,7 @@ export function MergeOnDoneDialog() {
       await completeDoneMove(pendingIdentity)
     } catch (err) {
       setArchiving(false)
-      toast.error(
-        `Failed to move ticket: ${err instanceof Error ? err.message : String(err)}`
-      )
+      toast.error(`Failed to move ticket: ${err instanceof Error ? err.message : String(err)}`)
       return
     }
 
@@ -513,6 +553,63 @@ export function MergeOnDoneDialog() {
     archive: 'Archive worktree'
   }
 
+  // The three inspect steps share one footer; only the primary action differs
+  const primaryAction =
+    step === 'merge'
+      ? { label: 'Merge', Icon: GitMerge, onClick: handleMerge, busy: merging, disabled: merging }
+      : step === 'commit'
+        ? {
+            label: 'Commit',
+            Icon: GitCommit,
+            onClick: handleCommit,
+            busy: committing,
+            disabled: !commitMessage.trim() || committing
+          }
+        : {
+            label: 'Commit',
+            Icon: GitCommit,
+            onClick: handleCommitBase,
+            busy: committingBase,
+            disabled: !baseCommitMessage.trim() || committingBase
+          }
+
+  // Header totals until the file list has loaded (renames make the shortstat
+  // and the list disagree, so the list wins once it is there)
+  const branchTotals: ChangedFilesTotals | null =
+    step === 'merge' && resolved
+      ? {
+          files: resolved.branchStats.filesChanged,
+          additions: resolved.branchStats.insertions,
+          deletions: resolved.branchStats.deletions
+        }
+      : null
+
+  const emptyState = resolved ? (
+    step === 'merge' ? (
+      <>
+        <p>
+          No file differences against{' '}
+          <code className="bg-muted px-1 rounded">{resolved.baseBranch}</code>.
+        </p>
+        {resolved.branchStats.commitsAhead > 0 && (
+          <p className="text-[11px]">
+            The branch is {resolved.branchStats.commitsAhead} commit
+            {resolved.branchStats.commitsAhead !== 1 ? 's' : ''} ahead, but its content already
+            matches <code className="bg-muted px-1 rounded">{resolved.baseBranch}</code>.
+          </p>
+        )}
+      </>
+    ) : (
+      <p>
+        No uncommitted changes found in{' '}
+        <code className="bg-muted px-1 rounded">
+          {step === 'commit_base' ? resolved.baseBranch : resolved.featureBranch}
+        </code>
+        .
+      </p>
+    )
+  ) : null
+
   const stepIcon: Record<Step, React.ReactNode> = {
     loading: <Loader2 className="h-4 w-4 animate-spin" />,
     commit_base: <GitCommit className="h-4 w-4" />,
@@ -528,7 +625,19 @@ export function MergeOnDoneDialog() {
         if (!open) clearPendingDoneMove()
       }}
     >
-      <DialogContent className="max-w-md">
+      <DialogContent
+        className={cn(
+          inspecting
+            ? 'max-w-[720px] w-[calc(100vw-2rem)] h-[min(600px,85vh)] flex flex-col gap-3'
+            : 'max-w-md'
+        )}
+        onEscapeKeyDown={(event) => {
+          // Escape peels the innermost layer first: an open diff goes back to
+          // the list, a filter clears; only then does it close (Keep in Review)
+          if (panelRef.current?.handleEscape()) event.preventDefault()
+        }}
+        data-testid="merge-on-done-dialog"
+      >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-sm">
             {stepIcon[step]}
@@ -542,6 +651,30 @@ export function MergeOnDoneDialog() {
               </span>
             )}
           </DialogTitle>
+          {inspecting && resolved && (
+            <DialogDescription className="text-xs">
+              {step === 'merge' && (
+                <>
+                  Merge <code className="bg-muted px-1 rounded">{resolved.featureBranch}</code> into{' '}
+                  <code className="bg-muted px-1 rounded">{resolved.baseBranch}</code>
+                </>
+              )}
+              {step === 'commit' && (
+                <>
+                  Commit the changes on{' '}
+                  <code className="bg-muted px-1 rounded">{resolved.featureBranch}</code> before
+                  merging into <code className="bg-muted px-1 rounded">{resolved.baseBranch}</code>
+                </>
+              )}
+              {step === 'commit_base' && (
+                <>
+                  <code className="bg-muted px-1 rounded">{resolved.baseBranch}</code> has
+                  uncommitted changes. Commit them before merging{' '}
+                  <code className="bg-muted px-1 rounded">{resolved.featureBranch}</code>
+                </>
+              )}
+            </DialogDescription>
+          )}
         </DialogHeader>
 
         {step === 'loading' && (
@@ -551,111 +684,59 @@ export function MergeOnDoneDialog() {
           </div>
         )}
 
-        {step === 'commit_base' && resolved && (
-          <div className="flex flex-col gap-3 py-2">
-            <p className="text-xs text-muted-foreground">
-              <code className="bg-muted px-1 rounded">{resolved.baseBranch}</code> has uncommitted
-              changes: {resolved.baseUncommittedStats.filesChanged} files changed,{' '}
-              <span className="text-green-500">+{resolved.baseUncommittedStats.insertions}</span>{' '}
-              <span className="text-red-500">-{resolved.baseUncommittedStats.deletions}</span>
-            </p>
-            <Input
-              value={baseCommitMessage}
-              onChange={(e) => setBaseCommitMessage(e.target.value)}
-              placeholder="Commit message for base branch"
-            />
-            <div className="flex items-center justify-between">
-              <button
-                onClick={() => clearPendingDoneMove()}
-                className="text-xs text-muted-foreground hover:text-foreground"
+        {inspecting && resolved && (
+          <>
+            {step === 'merge' ? (
+              <ChangedFilesSummary
+                files={changed.files}
+                fallback={branchTotals}
+                fileLabel={(n) => `${n} file${n === 1 ? '' : 's'} changed`}
               >
-                Keep in Review
-              </button>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => completeDoneMove(pendingIdentity)}
-                  disabled={committingBase}
-                >
-                  Move to {targetLabel} anyway
-                </Button>
-                <Button
-                  size="sm"
-                  onClick={handleCommitBase}
-                  disabled={!baseCommitMessage.trim() || committingBase}
-                >
-                  {committingBase ? (
-                    <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                  ) : (
-                    <GitCommit className="h-3 w-3 mr-1" />
-                  )}
-                  Commit
-                </Button>
-              </div>
-            </div>
-          </div>
-        )}
+                <SummaryChip testId="merge-summary-commits">
+                  <GitCommit className="h-3 w-3" />
+                  {resolved.branchStats.commitsAhead} commit
+                  {resolved.branchStats.commitsAhead !== 1 ? 's' : ''} ahead
+                </SummaryChip>
+              </ChangedFilesSummary>
+            ) : (
+              <ChangedFilesSummary
+                files={changed.files}
+                fileLabel={(n) => `${n} uncommitted file${n === 1 ? '' : 's'}`}
+              />
+            )}
 
-        {step === 'commit' && resolved && (
-          <div className="flex flex-col gap-3 py-2">
-            <p className="text-xs text-muted-foreground">
-              {resolved.uncommittedStats.filesChanged} files changed,{' '}
-              <span className="text-green-500">+{resolved.uncommittedStats.insertions}</span>{' '}
-              <span className="text-red-500">-{resolved.uncommittedStats.deletions}</span>
-            </p>
-            <Input
-              value={commitMessage}
-              onChange={(e) => setCommitMessage(e.target.value)}
-              placeholder="Commit message"
-            />
-            <div className="flex items-center justify-between">
-              <button
-                onClick={() => clearPendingDoneMove()}
-                className="text-xs text-muted-foreground hover:text-foreground"
-              >
-                Keep in Review
-              </button>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => completeDoneMove(pendingIdentity)}
-                  disabled={committing}
-                >
-                  Move to {targetLabel} anyway
-                </Button>
-                <Button
-                  size="sm"
-                  onClick={handleCommit}
-                  disabled={!commitMessage.trim() || committing}
-                >
-                  {committing ? (
-                    <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                  ) : (
-                    <GitCommit className="h-3 w-3 mr-1" />
-                  )}
-                  Commit
-                </Button>
-              </div>
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-border/60 bg-muted/10">
+              <ChangedFilesPanel
+                // Remount per step and queue member so navigation starts fresh
+                key={`${step}:${pendingDoneMove?.ticketId ?? ''}:${pendingDoneMove?.worktreeId ?? ''}`}
+                ref={panelRef}
+                source={changedSource}
+                files={changed.files}
+                loading={changed.loading}
+                error={changed.error}
+                emptyState={emptyState}
+                onRetry={changed.reload}
+              />
             </div>
-          </div>
-        )}
 
-        {step === 'merge' && resolved && (
-          <div className="flex flex-col gap-3 py-2">
-            <p className="text-xs text-muted-foreground">
-              Merge <code className="bg-muted px-1 rounded">{resolved.featureBranch}</code> into{' '}
-              <code className="bg-muted px-1 rounded">{resolved.baseBranch}</code>
-            </p>
-            <p className="text-xs text-muted-foreground">
-              {resolved.branchStats.filesChanged} files changed,
-              <span className="text-green-500"> +{resolved.branchStats.insertions}</span>
-              <span className="text-red-500"> -{resolved.branchStats.deletions}</span>,{' '}
-              {resolved.branchStats.commitsAhead} commit
-              {resolved.branchStats.commitsAhead !== 1 ? 's' : ''} ahead
-            </p>
-            <div className="flex items-center justify-between">
+            {step === 'commit_base' && (
+              <Input
+                value={baseCommitMessage}
+                onChange={(e) => setBaseCommitMessage(e.target.value)}
+                placeholder="Commit message for base branch"
+                className="shrink-0"
+              />
+            )}
+            {step === 'commit' && (
+              <Input
+                value={commitMessage}
+                onChange={(e) => setCommitMessage(e.target.value)}
+                placeholder="Commit message"
+                className="shrink-0"
+              />
+            )}
+
+            <div className="flex shrink-0 items-center justify-between">
               <button
                 onClick={() => clearPendingDoneMove()}
                 className="text-xs text-muted-foreground hover:text-foreground"
@@ -667,21 +748,21 @@ export function MergeOnDoneDialog() {
                   variant="outline"
                   size="sm"
                   onClick={() => completeDoneMove(pendingIdentity)}
-                  disabled={merging}
+                  disabled={primaryAction.busy}
                 >
                   Move to {targetLabel} anyway
                 </Button>
-                <Button size="sm" onClick={handleMerge} disabled={merging}>
-                  {merging ? (
+                <Button size="sm" onClick={primaryAction.onClick} disabled={primaryAction.disabled}>
+                  {primaryAction.busy ? (
                     <Loader2 className="h-3 w-3 animate-spin mr-1" />
                   ) : (
-                    <GitMerge className="h-3 w-3 mr-1" />
+                    <primaryAction.Icon className="h-3 w-3 mr-1" />
                   )}
-                  Merge
+                  {primaryAction.label}
                 </Button>
               </div>
             </div>
-          </div>
+          </>
         )}
 
         {step === 'archive' && resolved && (
