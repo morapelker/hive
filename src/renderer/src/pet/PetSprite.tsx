@@ -76,6 +76,7 @@ export function PetSprite({
   const overlay = overlayForState(state)
   const lottieSrc = state === 'working' ? pet.resolvedLottieAssets?.working : undefined
   const lottieScale = state === 'working' ? (pet.lottieScale?.working ?? 1) : 1
+  const imageScale = pet.imageScale?.[state] ?? 1
   const activeAnimation = lottieSrc ? {} : animationForState(state, speed)
 
   return (
@@ -92,7 +93,9 @@ export function PetSprite({
     >
       <motion.span
         className={`pet-sprite pet-sprite-${state}`}
-        style={{ width: size, height: size }}
+        style={
+          { width: size, height: size, '--pet-image-scale': imageScale } as React.CSSProperties
+        }
         {...activeAnimation}
       >
         {state === 'plan_ready' && <span className="pet-glow" />}

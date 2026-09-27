@@ -1,0 +1,58 @@
+{
+  "id": "dachshund",
+  "name": "Dachshund",
+  "version": "1.0.0",
+  "author": "Hive",
+  "assets": {
+    "idle": "assets/dachshund.png",
+    "working": "assets/dachshund.png",
+    "question": "assets/dachshund.png",
+    "permission": "assets/dachshund.png",
+    "plan_ready": "assets/dachshund.png"
+  },
+  "lottieAssets": {
+    "working": "assets/dachshund-run.lottie"
+  },
+  "lottieScale": {
+    "working": 1.4
+  },
+  "imageScale": {
+    "idle": 1.4,
+    "working": 1.4,
+    "question": 1.4,
+    "permission": 1.4,
+    "plan_ready": 1.4
+  },
+  "animations": {
+    "idle": {
+      "type": "static",
+      "transform": "none",
+      "overlay": { "kind": "none" }
+    },
+    "working": {
+      "type": "loop",
+      "durationMs": 1600,
+      "transform": "none",
+      "overlay": { "kind": "none" }
+    },
+    "question": {
+      "type": "loop",
+      "durationMs": 1200,
+      "transform": "bounce",
+      "overlay": { "kind": "bubble", "symbol": "?", "tint": "#3b82f6" }
+    },
+    "permission": {
+      "type": "loop",
+      "durationMs": 800,
+      "transform": "bounce",
+      "overlay": { "kind": "bubble", "symbol": "!", "tint": "#ef4444" }
+    },
+    "plan_ready": {
+      "type": "loop",
+      "durationMs": 1600,
+      "transform": "pulse",
+      "overlay": { "kind": "glow", "symbol": "✓", "tint": "#22c55e" }
+    }
+  },
+  "defaultSize": "M"
+}

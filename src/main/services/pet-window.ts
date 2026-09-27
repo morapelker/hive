@@ -74,9 +74,60 @@ const CORGI_MANIFEST: PetManifest = {
   defaultSize: 'M'
 }
 
+const FRENCH_BULLDOG_MANIFEST: PetManifest = {
+  id: 'french-bulldog',
+  name: 'French Bulldog',
+  version: '1.0.0',
+  author: 'Tedooo OS',
+  assets: {
+    idle: 'assets/french-bulldog.png',
+    working: 'assets/french-bulldog.png',
+    question: 'assets/french-bulldog.png',
+    permission: 'assets/french-bulldog.png',
+    plan_ready: 'assets/french-bulldog.png'
+  },
+  lottieAssets: {
+    working: 'assets/french-bulldog-run.lottie'
+  },
+  lottieScale: {
+    working: 1.3
+  },
+  defaultSize: 'M'
+}
+
+const DACHSHUND_MANIFEST: PetManifest = {
+  id: 'dachshund',
+  name: 'Dachshund',
+  version: '1.0.0',
+  author: 'Tedooo OS',
+  assets: {
+    idle: 'assets/dachshund.png',
+    working: 'assets/dachshund.png',
+    question: 'assets/dachshund.png',
+    permission: 'assets/dachshund.png',
+    plan_ready: 'assets/dachshund.png'
+  },
+  lottieAssets: {
+    working: 'assets/dachshund-run.lottie'
+  },
+  lottieScale: {
+    working: 1.4
+  },
+  imageScale: {
+    idle: 1.4,
+    working: 1.4,
+    question: 1.4,
+    permission: 1.4,
+    plan_ready: 1.4
+  },
+  defaultSize: 'M'
+}
+
 const PET_MANIFESTS: Record<string, PetManifest> = {
   bee: BEE_MANIFEST,
-  corgi: CORGI_MANIFEST
+  corgi: CORGI_MANIFEST,
+  'french-bulldog': FRENCH_BULLDOG_MANIFEST,
+  dachshund: DACHSHUND_MANIFEST
 }
 
 const PET_SIZE_PX: Record<PetSize, number> = {

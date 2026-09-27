@@ -54,6 +54,11 @@ button {
   pointer-events: none;
 }
 
+.pet-sprite img {
+  transform: scale(var(--pet-image-scale, 1));
+  transform-origin: center;
+}
+
 .pet-lottie-stage {
   position: relative;
   display: block;

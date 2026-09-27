@@ -3,7 +3,7 @@ import type * as React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DotLottie } from '@lottiefiles/dotlottie-web'
 import type { LoadedPet, PetSettings } from '@shared/types/pet'
-import { getPet } from '@/pet/registry'
+import { getPet, listPets } from '@/pet/registry'
 import { PetSprite } from '@/pet/PetSprite'
 
 vi.mock('motion/react', () => ({
@@ -76,6 +76,72 @@ describe('pet Lottie rendering', () => {
     expect(pet.resolvedAssets.question).toContain('corgi-static')
     expect(pet.resolvedLottieAssets?.working).toContain('corgi-anim')
     expect(pet.lottieScale?.working).toBe(1.55)
+  })
+
+  it('resolves static and working-state Lottie assets for the French bulldog pet', () => {
+    const pet = getPet('french-bulldog')
+
+    expect(pet.name).toBe('French Bulldog')
+    expect(pet.resolvedAssets.idle).toContain('french-bulldog')
+    expect(pet.resolvedAssets.permission).toContain('french-bulldog')
+    expect(pet.resolvedLottieAssets?.working).toContain('french-bulldog-run')
+    expect(pet.lottieScale?.working).toBe(1.3)
+  })
+
+  it('resolves static and working-state Lottie assets for the dachshund pet', () => {
+    const pet = getPet('dachshund')
+
+    expect(pet.name).toBe('Dachshund')
+    expect(pet.resolvedAssets.idle).toContain('dachshund')
+    expect(pet.resolvedAssets.question).toContain('dachshund')
+    expect(pet.resolvedLottieAssets?.working).toContain('dachshund-run')
+    expect(pet.lottieScale?.working).toBe(1.4)
+    // The standing dachshund is a wide landscape image, so it is scaled up to
+    // match the running animation inside the square sprite box.
+    expect(pet.imageScale?.idle).toBe(1.4)
+  })
+
+  it('lists all four pets in the registry', () => {
+    expect(
+      listPets()
+        .map((pet) => pet.id)
+        .sort()
+    ).toEqual(['bee', 'corgi', 'dachshund', 'french-bulldog'].sort())
+  })
+
+  it('applies the manifest image scale to static states and falls back to 1', () => {
+    const { container, rerender } = render(
+      <PetSprite
+        pet={getPet('dachshund')}
+        state="idle"
+        settings={{ ...settings, petId: 'dachshund' }}
+        workingSessionCount={0}
+        onPointerDown={vi.fn()}
+        onMouseEnter={vi.fn()}
+        onMouseLeave={vi.fn()}
+        onClick={vi.fn()}
+        onContextMenu={vi.fn()}
+      />
+    )
+
+    expect(container.querySelector('.pet-sprite')).toHaveStyle({ '--pet-image-scale': '1.4' })
+    expect(container.querySelector('img')?.getAttribute('src')).toContain('dachshund')
+
+    rerender(
+      <PetSprite
+        pet={getPet('french-bulldog')}
+        state="idle"
+        settings={{ ...settings, petId: 'french-bulldog' }}
+        workingSessionCount={0}
+        onPointerDown={vi.fn()}
+        onMouseEnter={vi.fn()}
+        onMouseLeave={vi.fn()}
+        onClick={vi.fn()}
+        onContextMenu={vi.fn()}
+      />
+    )
+
+    expect(container.querySelector('.pet-sprite')).toHaveStyle({ '--pet-image-scale': '1' })
   })
 
   it('renders Lottie only for working and keeps other states on the PNG sprite', async () => {

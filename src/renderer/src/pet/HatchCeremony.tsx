@@ -17,6 +17,7 @@ export function HatchCeremony({
   onComplete: () => void
 }): React.JSX.Element {
   const size = SIZE_PX[settings.size]
+  const imageScale = pet.imageScale?.idle ?? 1
 
   return (
     <div className="hatch-root" style={{ width: size + 36, height: size + 36 }}>
@@ -37,8 +38,8 @@ export function HatchCeremony({
         alt=""
         draggable={false}
         style={{ width: size, height: size }}
-        initial={{ opacity: 0, y: 10, scale: 0.55 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
+        initial={{ opacity: 0, y: 10, scale: 0.55 * imageScale }}
+        animate={{ opacity: 1, y: 0, scale: imageScale }}
         transition={{ delay: 1.35, duration: 0.45, ease: 'easeOut' }}
         onAnimationComplete={onComplete}
       />
