@@ -2,6 +2,8 @@ import type {
   ClaudeTokenTally,
   FetchForAccountResult,
   OpenAIUsageResult,
+  OpenAIResetCredits,
+  OpenAIResetResult,
   RefreshAllResultItem,
   UsageResult,
   UsageProvider
@@ -9,6 +11,18 @@ import type {
 import { getRendererRpcClient } from './rpc-client'
 
 export const usageApi = {
+  listOpenaiResets: (accountId: string): Promise<OpenAIResetCredits> =>
+    getRendererRpcClient().request('usageOps.listOpenaiResets', { accountId }),
+  consumeOpenaiReset: (
+    accountId: string,
+    redeemRequestId: string,
+    creditId?: string
+  ): Promise<OpenAIResetResult> =>
+    getRendererRpcClient().request('usageOps.consumeOpenaiReset', {
+      accountId,
+      redeemRequestId,
+      ...(creditId ? { creditId } : {})
+    }),
   fetch: async (): Promise<UsageResult> =>
     getRendererRpcClient().request<UsageResult>('usageOps.fetch', {}),
   fetchOpenai: async (): Promise<OpenAIUsageResult> =>

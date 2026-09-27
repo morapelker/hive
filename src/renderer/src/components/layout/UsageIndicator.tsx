@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
+import { OpenAIResetControls, OpenAIResetDialog } from './OpenAIResetControls'
 import {
   useUsageStore,
   useAccountStore,
@@ -269,6 +270,7 @@ export interface UsageAccountRowProps {
   isLoginActive?: boolean
   highlightActive?: boolean
   onSwitch?: () => void
+  resetControls?: React.ReactNode
   onRefresh?: () => void
   onSignInAgain?: () => void
   members?: AccountMemberInfo[]
@@ -288,6 +290,7 @@ export function UsageAccountRow({
   highlightActive = false,
   onSwitch,
   onRefresh,
+  resetControls,
   onSignInAgain,
   members,
   membersLoading = false,
@@ -427,6 +430,7 @@ export function UsageAccountRow({
             </button>
           )}
           {row.isActive && provider && <RefreshCountdown provider={provider} />}
+          {resetControls}
         </div>
       )}
 
@@ -738,6 +742,19 @@ function ProviderUsagePopoverBody({ provider }: { provider: UsageProvider }): Re
                 ? () => refreshSavedAccount(row.id, { userInitiated: true })
                 : undefined
             }
+            resetControls={
+              provider === 'openai' && savedAccounts.some((a) => a.id === row.id) ? (
+                <OpenAIResetControls
+                  accountId={row.id}
+                  email={row.email ?? 'this account'}
+                  availableCount={
+                    (savedAccounts.find((a) => a.id === row.id)?.last_usage as OpenAIUsageData | null)
+                      ?.rate_limit_reset_credits?.available_count
+                  }
+                  refreshedAt={savedAccounts.find((a) => a.id === row.id)?.last_fetched_at}
+                />
+              ) : undefined
+            }
             onSignInAgain={() => startLogin(provider, row.email ?? undefined)}
             members={membersFor(row.email)}
             membersLoading={membersLoading}
@@ -993,6 +1010,7 @@ export function UsageIndicator(): React.JSX.Element | null {
 
   return (
     <div className="border-t border-border bg-worktree-sidebar" data-testid="usage-indicator">
+      <OpenAIResetDialog />
       {visibleProviders.map((provider, i) => (
         <React.Fragment key={provider}>
           {i > 0 && <div className="border-t border-border mx-3" />}
