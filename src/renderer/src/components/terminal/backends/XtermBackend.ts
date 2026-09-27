@@ -425,6 +425,22 @@ export class XtermBackend implements TerminalBackend {
     }
   }
 
+  /**
+   * Apply a new font size without recreating the terminal. xterm.js re-measures
+   * cells when `options.fontSize` changes, so a re-fit is enough to push the
+   * new grid size to the PTY. The last-synced guard is reset so the resize
+   * goes out even if the grid happens to land on the same cols/rows.
+   */
+  setFontSize(size: number): void {
+    if (!this.terminal) return
+    if (this.terminal.options.fontSize === size) return
+    this.ghosttyConfig.fontSize = size
+    this.terminal.options.fontSize = size
+    this.lastSyncedCols = 0
+    this.lastSyncedRows = 0
+    this.syncSizeToPty()
+  }
+
   /** Re-fit after visibility change */
   fit(): void {
     this.syncSizeToPty()

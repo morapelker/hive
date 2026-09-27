@@ -82,6 +82,12 @@ export interface TerminalBackend {
   /** Update the terminal theme at runtime (re-reads CSS variables) */
   updateTheme?(): void
 
+  /**
+   * Change the font size in place (xterm only — Ghostty bakes the size into
+   * the surface at creation, so the host recreates it instead).
+   */
+  setFontSize?(size: number): void
+
   /** Toggle backend visibility while keeping session state alive */
   setVisible?(visible: boolean): void
 

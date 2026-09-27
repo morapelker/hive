@@ -142,6 +142,11 @@ export interface AppSettings {
   defaultTerminal: TerminalOption
   customTerminalCommand: string
   embeddedTerminalBackend: EmbeddedTerminalBackend
+  /**
+   * Font size for every embedded terminal (bottom panel, sidebar, and the
+   * xterm-based Claude/Codex CLI session views). Named for the Ghostty
+   * backend it was added for; kept as-is so persisted values keep working.
+   */
   ghosttyFontSize: number
   ghosttyPromotionDismissed: boolean
   terminalPosition: TerminalPosition
