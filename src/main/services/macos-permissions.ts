@@ -14,25 +14,21 @@ import {
  * trigger: "Tedooo Code wants to access files in your Documents folder".
  *
  * Every claude / codex / terminal process is a descendant of the app bundle,
- * so macOS attributes its file access to Tedooo Code and asks the user once per
- * protected location (Desktop, Documents, Downloads, removable and network
- * volumes, cloud-synced folders, other apps' data). Nothing can grant those
- * from code. The one blanket switch is Full Disk Access, which only the user
+ * so macOS attributes its file access to Tedooo Code. Folder grants can persist,
+ * but access to other apps' protected data resets when the app quits.
+ * These grants cannot be enabled from code. Full Disk Access, which only the user
  * can flip in System Settings; these helpers report whether it is on and open
  * the right pane so they do not have to hunt for it.
  */
 
 /**
- * Files readable only with Full Disk Access. Opening one succeeds iff the
- * responsible app holds the grant. macOS never prompts for Full Disk Access,
- * so the probe is silent. A missing file says nothing about the grant and
- * falls through to the next candidate.
+ * Best-effort Full Disk Access probe. Use only TCC's own database: falling
+ * back to Safari or Messages data can itself request access to another app's
+ * data, and reading such a file does not prove a blanket Full Disk Access grant.
+ * A missing/unreadable database is conservatively reported as not granted.
  */
 const FULL_DISK_ACCESS_PROBE_PATHS: ReadonlyArray<ReadonlyArray<string>> = [
-  ['Library', 'Application Support', 'com.apple.TCC', 'TCC.db'],
-  ['Library', 'Safari', 'Bookmarks.plist'],
-  ['Library', 'Safari', 'History.db'],
-  ['Library', 'Messages', 'chat.db']
+  ['Library', 'Application Support', 'com.apple.TCC', 'TCC.db']
 ]
 
 /** Deep links into System Settings › Privacy & Security (Ventura and later). */

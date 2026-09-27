@@ -17,7 +17,7 @@ const PROTECTED_LOCATIONS = [
   'Desktop, Documents and Downloads',
   'External and network drives',
   'iCloud Drive and other synced folders',
-  "Other apps' data (Library/Containers)"
+  "Other apps' protected data"
 ]
 
 export function SettingsPermissions(): React.JSX.Element {
@@ -94,7 +94,7 @@ export function SettingsPermissions(): React.JSX.Element {
               <div className="min-w-0">
                 <label className="text-sm font-medium">Full Disk Access</label>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  One grant that replaces every &ldquo;Tedooo Code wants to access…&rdquo; prompt.
+                  Optional access to all protected files, including other apps’ data.
                 </p>
               </div>
               <span
@@ -124,7 +124,7 @@ export function SettingsPermissions(): React.JSX.Element {
 
             <p className="text-xs text-muted-foreground">
               Claude Code, Codex and the terminal run inside Tedooo Code, so macOS treats every file
-              they touch as Tedooo Code touching it and asks you once for each protected location:
+              they touch as Tedooo Code touching it. Access to these locations may prompt:
             </p>
             <ul className="list-disc pl-5 text-xs text-muted-foreground space-y-0.5">
               {PROTECTED_LOCATIONS.map((location) => (
@@ -132,10 +132,12 @@ export function SettingsPermissions(): React.JSX.Element {
               ))}
             </ul>
             <p className="text-xs text-muted-foreground">
-              Those answers cannot be given from inside the app. Full Disk Access covers all of them
-              at once: open System Settings, turn on <strong>Tedooo Code</strong> in the Full Disk
+              For &ldquo;data from other apps&rdquo;, Allow lasts only until Tedooo Code quits.
+              macOS can ask again after relaunch even if you previously allowed it. Avoiding those
+              files avoids that prompt. Full Disk Access covers these file-access categories at
+              once: open System Settings, turn on <strong>Tedooo Code</strong> in the Full Disk
               Access list (use <strong>+</strong> and pick it from Applications if it is not
-              listed), then restart sessions that are already running.
+              listed), then restart Tedooo Code.
             </p>
 
             <div className="flex flex-wrap gap-2 pt-1">
@@ -169,9 +171,8 @@ export function SettingsPermissions(): React.JSX.Element {
           <div className="space-y-2">
             <label className="text-sm font-medium">Folder-by-folder access</label>
             <p className="text-xs text-muted-foreground">
-              Prefer to keep answering per folder? macOS remembers each answer. If a session cannot
-              see a folder you already use, the prompt was probably dismissed with
-              &ldquo;Don&rsquo;t Allow&rdquo;: switch it back on under Files and Folders.
+              macOS remembers ordinary folder grants separately from temporary access to other apps’
+              data. If a session cannot see a folder, review its grant under Files and Folders.
             </p>
             <Button
               variant="outline"

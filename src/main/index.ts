@@ -438,9 +438,8 @@ app
     // Must run before any child process spawning (opencode, scripts, Claude Code SDK).
     loadShellEnv()
 
-    // Resolve the Ghostty config path now: its dir is TCC-protected on macOS,
-    // so the one "access data from other apps" prompt happens at launch, not
-    // mid-flow when the first Ghostty terminal surface initializes.
+    // Cache the XDG-only config path for native terminals without probing
+    // Ghostty's protected Application Support directory.
     if (process.platform === 'darwin') {
       getGhosttyConfigPathOnce()
     }

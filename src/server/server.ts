@@ -45,9 +45,8 @@ export const startHiveServer = (
     // Startup + periodic sweep: report any session usage accrued while the
     // app was closed or whose stop event was missed (crash, quit race).
     startSessionUsageSweep()
-    // Read the Ghostty config once at boot so the macOS "access data from
-    // other apps" prompt (its dir is TCC-protected) appears at app launch,
-    // never mid-flow when a terminal mounts.
+    // Cache the XDG config at boot. Protected Ghostty app data is read only
+    // when the user explicitly requests a re-sync in Settings.
     warmUpGhosttyConfig()
     const eventBus = makeEventBus()
 

@@ -296,8 +296,9 @@ export function SettingsTerminal(): React.JSX.Element {
             <div>
               <label className="text-sm font-medium">Ghostty config</label>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Fonts, colors, and shell are read from your Ghostty config once at app launch.
-                Edited your config? Re-sync to apply it without restarting.
+                At launch, settings are read from ~/.config/ghostty (or XDG_CONFIG_HOME). Re-sync
+                also imports Ghostty’s protected app settings for this app session; macOS may ask to
+                access data from other apps.
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -314,8 +315,8 @@ export function SettingsTerminal(): React.JSX.Element {
                 Re-sync now
               </button>
               <span className="text-xs text-muted-foreground">
-                Applies to newly opened terminals; the Ghostty backend picks it up after an app
-                restart.
+                Applies to newly opened standard terminals. The native Ghostty backend reads the XDG
+                config after an app restart.
               </span>
             </div>
           </div>

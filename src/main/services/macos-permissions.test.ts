@@ -23,18 +23,21 @@ describe('checkFullDiskAccess', () => {
     )
   })
 
-  it('skips probe files that do not exist and keeps looking', () => {
-    const readProbe = vi
-      .fn()
-      .mockImplementationOnce(() => {
-        throw errnoError('ENOENT')
+  it.each(['ENOENT', 'ENOTDIR', 'EACCES', 'EIO'])(
+    'does not fall back to other apps’ files when the TCC database returns %s',
+    (code) => {
+      const readProbe = vi.fn(() => {
+        throw errnoError(code)
       })
-      .mockImplementationOnce(() => undefined)
 
-    expect(checkFullDiskAccess({ platform: 'darwin', homeDirectory: HOME, readProbe })).toBe(true)
-    expect(readProbe).toHaveBeenCalledTimes(2)
-    expect(readProbe).toHaveBeenLastCalledWith(getFullDiskAccessProbePaths(HOME)[1])
-  })
+      expect(checkFullDiskAccess({ platform: 'darwin', homeDirectory: HOME, readProbe })).toBe(
+        false
+      )
+      expect(readProbe.mock.calls).toEqual([
+        [join(HOME, 'Library', 'Application Support', 'com.apple.TCC', 'TCC.db')]
+      ])
+    }
+  )
 
   it('is denied as soon as macOS refuses a read', () => {
     const readProbe = vi.fn(() => {
