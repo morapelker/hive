@@ -137,6 +137,7 @@
     "react-markdown": "^10.1.0",
     "react-syntax-highlighter": "^16.1.0",
     "remark-gfm": "^4.0.1",
+    "sherpa-onnx-node": "1.13.7",
     "simple-git": "^3.30.0",
     "sonner": "^1.7.1",
     "ulidx": "^2.4.1",

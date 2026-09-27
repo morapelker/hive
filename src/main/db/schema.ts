@@ -1,4 +1,28 @@
-export const CURRENT_SCHEMA_VERSION = 47
+export const CURRENT_SCHEMA_VERSION = 48
+
+/**
+ * Voice dictation history (v48): every transcript the local speech model produced, newest
+ * first by `created_at`. `text` is the delivered text (after AI cleanup and dictionary passes),
+ * `raw_text` the local transcript when it differed. CREATE TABLE IF NOT EXISTS, replayed by
+ * ensureVoiceHistoryTable() in database.ts.
+ */
+export const VOICE_HISTORY_TABLES_SQL = `
+  CREATE TABLE IF NOT EXISTS voice_history (
+    id           TEXT PRIMARY KEY,
+    text         TEXT NOT NULL,
+    raw_text     TEXT DEFAULT NULL,
+    duration_ms  INTEGER NOT NULL DEFAULT 0,
+    cleaned      INTEGER NOT NULL DEFAULT 0,
+    speech_model TEXT NOT NULL DEFAULT '',
+    created_at   TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_voice_history_created ON voice_history(created_at);
+`
+
+export const VOICE_HISTORY_TABLES_DROP_SQL = `
+  DROP INDEX IF EXISTS idx_voice_history_created;
+  DROP TABLE IF EXISTS voice_history;
+`
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -750,5 +774,13 @@ DROP TABLE IF EXISTS diff_comments;`
     up: `-- NOTE: ALTER TABLE for projects.trust_check_done is handled idempotently by
          -- safeAddColumn() in database.ts to avoid "duplicate column" errors.`,
     down: `-- SQLite cannot drop columns; this is a no-op for safety`
+  },
+  {
+    version: 48,
+    name: 'add_voice_history',
+    // Voice dictation history. CREATE TABLE IF NOT EXISTS, replayed by
+    // ensureVoiceHistoryTable() in database.ts.
+    up: VOICE_HISTORY_TABLES_SQL,
+    down: VOICE_HISTORY_TABLES_DROP_SQL
   }
 ]

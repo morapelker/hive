@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, statSync } from 'fs'
 import { randomUUID } from 'crypto'
 import { homedir } from 'os'
 import { Worker as NodeWorker } from 'node:worker_threads'
-import { MIGRATIONS } from './schema'
+import { MIGRATIONS, VOICE_HISTORY_TABLES_SQL } from './schema'
 import type {
   Project,
   ProjectCreate,
@@ -62,8 +62,15 @@ import type {
   SavedUsageAccount,
   SavedUsageAccountUpsert,
   SavedUsageAccountUsageUpdate,
-  SavedUsageProvider
+  SavedUsageProvider,
+  VoiceHistoryRow,
+  VoiceHistoryRowCreate
 } from './types'
+
+/** Escape `%`, `_` and `\` for a LIKE pattern used with `ESCAPE '\'`. */
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, (ch) => `\\${ch}`)
+}
 
 // Every other Hive process runs the server bundle as plain node
 // (ELECTRON_RUN_AS_NODE=1), so this is only true in the desktop main process.
@@ -581,6 +588,12 @@ export class DatabaseService {
     // exist. This handles partial migrations, merge conflicts, or version
     // skew between worktree builds.
     this.ensureConnectionTables()
+    this.ensureVoiceHistoryTable()
+  }
+
+  /** Idempotently ensure the voice dictation history table exists (repair for the v48 migration). */
+  private ensureVoiceHistoryTable(): void {
+    this.getDb().exec(VOICE_HISTORY_TABLES_SQL)
   }
 
   /**
@@ -935,6 +948,80 @@ export class DatabaseService {
   getAllSettings(): Setting[] {
     const db = this.getDb()
     return db.prepare('SELECT key, value FROM settings').all() as Setting[]
+  }
+
+  // Voice dictation history
+
+  private mapVoiceHistoryRow(row: Record<string, unknown>): VoiceHistoryRow {
+    return {
+      id: row.id as string,
+      text: row.text as string,
+      raw_text: (row.raw_text as string | null) ?? null,
+      duration_ms: (row.duration_ms as number) ?? 0,
+      cleaned: !!row.cleaned,
+      speech_model: (row.speech_model as string) ?? '',
+      created_at: row.created_at as string
+    }
+  }
+
+  addVoiceHistory(data: VoiceHistoryRowCreate): VoiceHistoryRow {
+    const db = this.getDb()
+    const row: VoiceHistoryRow = {
+      id: randomUUID(),
+      text: data.text,
+      raw_text: data.raw_text ?? null,
+      duration_ms: data.duration_ms ?? 0,
+      cleaned: data.cleaned ?? false,
+      speech_model: data.speech_model ?? '',
+      created_at: new Date().toISOString()
+    }
+    db.prepare(
+      `INSERT INTO voice_history (id, text, raw_text, duration_ms, cleaned, speech_model, created_at)
+       VALUES (@id, @text, @raw_text, @duration_ms, @cleaned, @speech_model, @created_at)`
+    ).run({ ...row, cleaned: row.cleaned ? 1 : 0 })
+    return row
+  }
+
+  /** Newest first. `query` filters on the delivered text (case-insensitive substring). */
+  listVoiceHistory(options: { limit: number; offset?: number; query?: string } = { limit: 20 }): VoiceHistoryRow[] {
+    const db = this.getDb()
+    const limit = Math.max(1, Math.min(500, Math.floor(options.limit)))
+    const offset = Math.max(0, Math.floor(options.offset ?? 0))
+    const query = options.query?.trim()
+    const rows = query
+      ? (db
+          .prepare(
+            `SELECT * FROM voice_history WHERE text LIKE @pattern ESCAPE '\\'
+             ORDER BY created_at DESC, rowid DESC LIMIT @limit OFFSET @offset`
+          )
+          .all({ pattern: `%${escapeLike(query)}%`, limit, offset }) as Record<string, unknown>[])
+      : (db
+          .prepare(
+            `SELECT * FROM voice_history ORDER BY created_at DESC, rowid DESC LIMIT @limit OFFSET @offset`
+          )
+          .all({ limit, offset }) as Record<string, unknown>[])
+    return rows.map((row) => this.mapVoiceHistoryRow(row))
+  }
+
+  countVoiceHistory(query?: string): number {
+    const db = this.getDb()
+    const trimmed = query?.trim()
+    const row = trimmed
+      ? (db
+          .prepare(`SELECT COUNT(*) AS count FROM voice_history WHERE text LIKE @pattern ESCAPE '\\'`)
+          .get({ pattern: `%${escapeLike(trimmed)}%` }) as { count: number })
+      : (db.prepare('SELECT COUNT(*) AS count FROM voice_history').get() as { count: number })
+    return row?.count ?? 0
+  }
+
+  deleteVoiceHistory(id: string): boolean {
+    const result = this.getDb().prepare('DELETE FROM voice_history WHERE id = ?').run(id)
+    return result.changes > 0
+  }
+
+  clearVoiceHistory(): number {
+    const result = this.getDb().prepare('DELETE FROM voice_history').run()
+    return result.changes
   }
 
   // Saved usage account operations

@@ -811,3 +811,24 @@ export interface DiffCommentUpdate {
   anchor_context_after?: string | null
   is_outdated?: boolean
 }
+
+// Voice dictation history (voice_history table)
+export interface VoiceHistoryRow {
+  id: string
+  /** Delivered text (after AI cleanup and dictionary passes). */
+  text: string
+  /** Local transcript when it differed from `text`. */
+  raw_text: string | null
+  duration_ms: number
+  cleaned: boolean
+  speech_model: string
+  created_at: string
+}
+
+export interface VoiceHistoryRowCreate {
+  text: string
+  raw_text?: string | null
+  duration_ms?: number
+  cleaned?: boolean
+  speech_model?: string
+}

@@ -6,6 +6,11 @@ import type { TeleportSettings } from '@shared/types/settings'
 import type { TelegramConfig } from '@shared/types/telegram'
 import type { UsageProvider } from '@shared/types/usage'
 import type { PetSettings } from '@shared/types/pet'
+import {
+  DEFAULT_VOICE_SETTINGS,
+  sanitizeVoiceSettings,
+  type VoiceSettings
+} from '@shared/types/voice'
 import type { AgentSdk, HandoffAgentSdk } from '@shared/types/agent-sdk'
 import type { CustomClaudeProvider } from '@shared/types/custom-provider'
 import { sanitizeCustomProviders } from '@shared/types/custom-provider'
@@ -224,6 +229,9 @@ export interface AppSettings {
   // Pet
   pet: PetSettings
 
+  // Voice dictation (hotkey → local speech model → paste)
+  voice: VoiceSettings
+
   // Advanced
   environmentVariables: Array<{ key: string; value: string }>
   customProjectCommands: CustomProjectCommand[]
@@ -324,6 +332,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     animationSpeed: 5,
     hasHatched: false
   },
+  voice: DEFAULT_VOICE_SETTINGS,
   environmentVariables: [],
   customProjectCommands: [],
   perfDiagnosticsEnabled: false,
@@ -416,7 +425,9 @@ async function loadSettingsFromDatabase(): Promise<AppSettings | null> {
             ...DEFAULT_SETTINGS.pet,
             ...(parsed.pet || {})
           },
-          teleport: parsed.teleport ?? null
+          teleport: parsed.teleport ?? null,
+          // Validate every voice field so pre-feature or hand-edited blobs get defaults
+          voice: sanitizeVoiceSettings(parsed.voice)
         }
 
         // Migrate legacy showUsageIndicator boolean
@@ -531,6 +542,7 @@ function extractSettings(state: SettingsState): AppSettings {
     telegramConfig: null,
     teleport: state.teleport,
     pet: state.pet,
+    voice: state.voice,
     environmentVariables: state.environmentVariables,
     customProjectCommands: state.customProjectCommands,
     perfDiagnosticsEnabled: state.perfDiagnosticsEnabled,
@@ -620,6 +632,13 @@ export const useSettingsStore = create<SettingsState>()(
           } else {
             petApi.hide().catch(() => {})
           }
+        }
+        // Voice dictation runs in the main process: hand it the new settings directly
+        // so it never has to race the async DB write.
+        if (key === 'voice') {
+          window.desktopBridge?.voice
+            ?.updateSettings(value as VoiceSettings)
+            .catch((error) => console.error('Failed to apply voice settings:', error))
         }
         // Handle board mode switching side effects
         if (key === 'boardMode') {
@@ -783,6 +802,7 @@ export const useSettingsStore = create<SettingsState>()(
         settingsApi.saveCustomCommandsFile(DEFAULT_SETTINGS.customProjectCommands).catch(() => {})
         petApi.updateSettings(DEFAULT_SETTINGS.pet)
         petApi.hide().catch(() => {})
+        window.desktopBridge?.voice?.updateSettings(DEFAULT_SETTINGS.voice).catch(() => {})
       },
 
       loadFromDatabase: async () => {
@@ -907,6 +927,7 @@ export const useSettingsStore = create<SettingsState>()(
         hiveOrganizationMinAppVersion: state.hiveOrganizationMinAppVersion,
         tipsEnabled: state.tipsEnabled,
         pet: state.pet,
+        voice: state.voice,
         environmentVariables: state.environmentVariables,
         customProjectCommands: state.customProjectCommands,
         perfDiagnosticsEnabled: state.perfDiagnosticsEnabled,

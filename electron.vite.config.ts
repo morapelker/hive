@@ -9,7 +9,10 @@ export default defineConfig({
     build: {
       rollupOptions: {
         input: {
-          index: resolve(__dirname, 'src/main/index.ts')
+          index: resolve(__dirname, 'src/main/index.ts'),
+          // Voice dictation speech engine — forked as an Electron utility process
+          // by src/main/voice/voice-engine.ts (out/main/voice-engine-worker.js).
+          'voice-engine-worker': resolve(__dirname, 'src/main/voice/voice-engine-worker.ts')
           // The server (`src/server/bin.ts`) is built separately via
           // electron.vite.server.config.ts so it can be electron-free — it runs
           // as its own Node process and must not contain `require('electron')`.
@@ -44,7 +47,8 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve(__dirname, 'src/renderer/index.html'),
-          pet: resolve(__dirname, 'src/renderer/pet.html')
+          pet: resolve(__dirname, 'src/renderer/pet.html'),
+          voiceHud: resolve(__dirname, 'src/renderer/voice-hud.html')
         }
       }
     }
