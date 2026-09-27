@@ -86,7 +86,11 @@ import {
   __resetClaudeCliSessionIdCaptureForTests,
   type ClaudeCliStatusPayload
 } from '../claude-hook-server'
-import { hasBlockingClaudeCliInteraction } from '../claude-cli-interaction-ledger'
+import {
+  hasBlockingClaudeCliInteraction,
+  holdClaudeCliInteraction,
+  releaseClaudeCliInteraction
+} from '../claude-cli-interaction-ledger'
 import { cliHookTransportRouter } from '../cli-hook-transport-router'
 import {
   isClaudeCliPlanAutoApproveArmed,
@@ -217,7 +221,7 @@ describe('codex hook route', () => {
     expect(usageMocks.scheduleSessionUsageReport).toHaveBeenCalledWith('s1', 'claude-cli-completed')
   })
 
-  it('maps request_user_input to the answering status and releases it on PostToolUse', async () => {
+  it('maps request_user_input to the answering status and leaves its release to the title', async () => {
     seedSession('s2', { claude_session_id: THREAD })
     const statuses = collectStatuses()
     const { port } = await getClaudeHookServer()
@@ -244,6 +248,8 @@ describe('codex hook route', () => {
       codexBody('PostToolUse', { tool_name: 'Bash', tool_use_id: 'zz', tool_input: {}, tool_response: '' })
     )
     expect(statuses.at(-1)?.status).toBe('answering')
+    // A Default-mode question is non-blocking: codex answers the tool call at
+    // once and keeps working. The PostToolUse must not release the question.
     await postCodexHook(
       port,
       's2',
@@ -255,8 +261,29 @@ describe('codex hook route', () => {
         tool_response: { answers: { a: 'pg' } }
       })
     )
-    expect(statuses.at(-1)?.status).toBe('working')
+    expect(statuses.at(-1)?.status).toBe('answering')
+    expect(hasBlockingClaudeCliInteraction('s2')).toBe(true)
+    await postCodexHook(
+      port,
+      's2',
+      'tool',
+      codexBody('PostToolUse', { tool_name: 'Bash', tool_use_id: 'zy', tool_input: {}, tool_response: '' })
+    )
+    expect(statuses.at(-1)?.status).toBe('answering')
+    // The turn's Stop is a turn boundary for the hook latch, but the title hold
+    // (placed by the PTY bridge while it says Action Required) keeps the
+    // question surfaced through it and through the next prompt.
+    holdClaudeCliInteraction('s2', 'codex-title')
+    await postCodexHook(port, 's2', 'stop', codexBody('Stop', { last_assistant_message: 'waiting' }))
+    expect(statuses.at(-1)?.status).toBe('answering')
+    await postCodexHook(port, 's2', 'start', codexBody('UserPromptSubmit', { prompt: 'meanwhile…' }))
+    expect(statuses.at(-1)?.status).toBe('answering')
+    expect(hasBlockingClaudeCliInteraction('s2')).toBe(true)
+    // Answered: the title drops Action Required and the bridge releases.
+    releaseClaudeCliInteraction('s2', 'codex-title')
     expect(hasBlockingClaudeCliInteraction('s2')).toBe(false)
+    await postCodexHook(port, 's2', 'stop', codexBody('Stop', { last_assistant_message: 'done' }))
+    expect(statuses.at(-1)?.status).toBe('completed')
   })
 
   it('never lets a transport hold a codex hook', async () => {

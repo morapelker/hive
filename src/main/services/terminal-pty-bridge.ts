@@ -12,7 +12,9 @@ import {
 } from './claude-hook-server'
 import {
   clearAllClaudeCliInteractions,
-  clearClaudeCliInteractions
+  clearClaudeCliInteractions,
+  holdClaudeCliInteraction,
+  releaseClaudeCliInteraction
 } from './claude-cli-interaction-ledger'
 import {
   clearAllClaudeCliSubagentTracking,
@@ -117,6 +119,8 @@ const codexLastPrompt = new Map<string, string>()
 const codexTurnWatchers = new Map<string, CodexTurnWatchHandle>()
 /** Codex sessions whose title currently reads `[ ! ] Action Required` (the TUI is blocked on the user). */
 const codexActionRequired = new Set<string>()
+/** The interaction-ledger hold placed while the title says Action Required. */
+const CODEX_TITLE_HOLD = 'codex-title'
 let unsubscribeCodexHookEvents: (() => void) | null = null
 
 /**
@@ -376,28 +380,37 @@ const CODEX_BLOCKING_STATUSES = new Set<SessionStatusType>(['answering', 'permis
  * The title's `[ ! ] Action Required` prefix is the one reliable signal codex
  * gives for the whole life of a question. Its `request_user_input` tool fires
  * a PreToolUse hook when the question opens (→ 'answering' through the
- * ledger), but the PostToolUse that should follow the answer is not dependable
- * (codex 0.154.0 was observed both sending and skipping it): when it is
- * skipped the turn resumes silently and the latched 'answering' would sit
- * until Stop. The TUI, however, swaps the title to Action Required while the
- * question view (or an approval / MCP elicitation) is open and restores the
- * run-state title the moment it closes, so the title is authoritative here:
+ * ledger), but the hooks say nothing dependable about the answer: in Default
+ * mode the question is non-blocking (codex's request_user_input handler sets
+ * `is_blocking` only in Plan mode), so the tool returns at once — its
+ * PostToolUse fires with the question still open (the adapter drops it), the
+ * turn keeps running through more tools and its Stop, and the answer arrives
+ * later as a new user message; in Plan mode the PostToolUse that should
+ * follow the answer was observed both sent and skipped (codex 0.154.0). The
+ * TUI, however, swaps the title to Action Required while a question is
+ * unanswered (or an approval / MCP elicitation is open) and restores the
+ * run-state title the moment it is resolved, so the title is authoritative:
  *
  *   · while it says Action Required, the session is 'answering' — asserted on
- *     every blink, so it also covers hooks that never ran, a Stop that fired
- *     while a non-blocking question stayed open, or an Escape mirrored to
- *     'completed' that only dismissed a sub-prompt. A hook-latched blocking
- *     status (a PermissionRequest's 'permission', a plan's 'plan_ready') is
- *     left alone;
- *   · when it stops saying so, an 'answering'/'permission' session is back to
- *     'working' and the ledger's stale latch is dropped (the Stop hook, or the
- *     Ready title below, then completes the turn as usual). 'plan_ready' is
- *     resolved by the plan pipeline (the implement prompt), never by the title.
+ *     every blink, so it also covers hooks that never ran or an Escape
+ *     mirrored to 'completed' that only dismissed a sub-prompt — and a hold is
+ *     placed on the interaction ledger so no hook of the still-running turn
+ *     (a later tool's PostToolUse, the turn's Stop, the next prompt) can
+ *     publish 'working'/'completed' over it: the ticket modal auto-closes on
+ *     answering → working, and before the hold every such hook dismissed it
+ *     until the next blink. A hook-latched blocking status (a
+ *     PermissionRequest's 'permission', a plan's 'plan_ready') is left alone;
+ *   · when it stops saying so, the hold is lifted, an 'answering'/'permission'
+ *     session is back to 'working' and the ledger's stale latch is dropped
+ *     (the Stop hook, or the Ready title below, then completes the turn as
+ *     usual). 'plan_ready' is resolved by the plan pipeline (the implement
+ *     prompt), never by the title.
  */
 function handleCodexActionRequired(sessionId: string, actionRequired: boolean): void {
   const last = getLastClaudeCliStatus(sessionId)
   if (actionRequired) {
     codexActionRequired.add(sessionId)
+    holdClaudeCliInteraction(sessionId, CODEX_TITLE_HOLD)
     if (last !== undefined && CODEX_BLOCKING_STATUSES.has(last)) return
     publishClaudeCliStatus({
       sessionId,
@@ -407,6 +420,7 @@ function handleCodexActionRequired(sessionId: string, actionRequired: boolean): 
     return
   }
   if (!codexActionRequired.delete(sessionId)) return
+  releaseClaudeCliInteraction(sessionId, CODEX_TITLE_HOLD)
   if (last !== 'answering' && last !== 'permission') return
   clearClaudeCliInteractions(sessionId)
   publishClaudeCliStatus({
@@ -510,7 +524,9 @@ function resetCodexSessionState(sessionId: string): void {
   codexWatchers.delete(sessionId)
   codexCliSessions.delete(sessionId)
   codexRunState.delete(sessionId)
-  codexActionRequired.delete(sessionId)
+  if (codexActionRequired.delete(sessionId)) {
+    releaseClaudeCliInteraction(sessionId, CODEX_TITLE_HOLD)
+  }
   codexThreadTitleApplied.delete(sessionId)
   codexResolvedPrefixes.delete(sessionId)
   codexLastPrompt.delete(sessionId)

@@ -9,10 +9,16 @@ import { readCodexPlanText } from './codex-cli-rollout'
  * tool_input, tool_use_id, tool_response, prompt, last_assistant_message,
  * agent_id/agent_type); the differences this module bridges:
  *
- * - Questions: codex asks through the `request_user_input` function tool
- *   (PreToolUse → blocks until answered in the TUI → PostToolUse). It becomes
- *   `AskUserQuestion` with the questions re-shaped to Claude's schema, so the
- *   ledger latches `answering` and releases it on PostToolUse.
+ * - Questions: codex asks through the `request_user_input` function tool. Its
+ *   PreToolUse becomes `AskUserQuestion` with the questions re-shaped to
+ *   Claude's schema, so the ledger latches `answering`. Its PostToolUse is
+ *   dropped: in Default mode the question is non-blocking, the tool returns
+ *   at once and the PostToolUse fires with the question still unanswered
+ *   (releasing the latch would publish 'working' mid-question); in Plan mode
+ *   it blocks, but the PostToolUse after the answer was observed both sent
+ *   and skipped. The `[ ! ] Action Required` terminal title spans the whole
+ *   life of a question in either mode, so the PTY bridge resolves it
+ *   (terminal-pty-bridge.ts, handleCodexActionRequired).
  * - Interrupt: codex has a dedicated hook for Esc/Ctrl+C (claude has none); it
  *   is a turn end, so it becomes a `Stop` tagged `user_interrupt`.
  * - Plan mode: codex has no ExitPlanMode tool and hook payloads never expose
@@ -207,8 +213,10 @@ export function adaptCodexCliHook(
     case 'PreToolUse':
     case 'PostToolUse':
     case 'PermissionRequest': {
-      const hook = baseHook(body, ctx)
       const toolName = str(body.tool_name)
+      // The question's end is the title's to report (see the module comment).
+      if (event === 'PostToolUse' && toolName === CODEX_REQUEST_USER_INPUT_TOOL) return []
+      const hook = baseHook(body, ctx)
       if (toolName === CODEX_REQUEST_USER_INPUT_TOOL) {
         hook.tool_name = 'AskUserQuestion'
         hook.tool_input = adaptCodexQuestionsInput(body.tool_input)

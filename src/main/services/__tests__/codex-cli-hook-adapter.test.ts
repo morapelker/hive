@@ -96,19 +96,27 @@ describe('adaptCodexCliHook', () => {
       ]
     })
 
-    const [post] = adaptCodexCliHook(
-      {
-        ...base,
-        hook_event_name: 'PostToolUse',
-        tool_name: 'request_user_input',
-        tool_use_id: 'call_1',
-        tool_input: { questions: [] },
-        tool_response: { answers: { q1: 'Postgres' } }
-      },
-      { planMode: false }
-    )
-    expect(post.hook.tool_name).toBe('AskUserQuestion')
-    expect(post.hook.tool_response).toEqual({ answers: { q1: 'Postgres' } })
+  })
+
+  it('drops the question PostToolUse in either mode (the title resolves a question)', () => {
+    // Default mode: the question is non-blocking, so this fires with the
+    // question still unanswered. Plan mode: it blocks, but the PostToolUse after
+    // the answer is not dependable. The Action Required title covers both.
+    for (const planMode of [false, true]) {
+      expect(
+        adaptCodexCliHook(
+          {
+            ...base,
+            hook_event_name: 'PostToolUse',
+            tool_name: 'request_user_input',
+            tool_use_id: 'call_1',
+            tool_input: { questions: [] },
+            tool_response: { answers: { q1: 'Postgres' } }
+          },
+          { planMode }
+        )
+      ).toEqual([])
+    }
   })
 
   it('passes other tools through with their input, id and response', () => {

@@ -22,6 +22,8 @@ const mocks = vi.hoisted(() => {
     subscribeClaudeCliStatus: vi.fn(() => vi.fn()),
     clearClaudeCliInteractions: vi.fn(),
     clearAllClaudeCliInteractions: vi.fn(),
+    holdClaudeCliInteraction: vi.fn(),
+    releaseClaudeCliInteraction: vi.fn(() => true),
     clearClaudeCliSubagentTracking: vi.fn(),
     clearAllClaudeCliSubagentTracking: vi.fn(),
     ensureProjectTrustCheck: vi.fn(async () => {}),
@@ -157,7 +159,9 @@ vi.mock('../desktop/backend-event-publisher', () => ({
 
 vi.mock('./claude-cli-interaction-ledger', () => ({
   clearClaudeCliInteractions: mocks.clearClaudeCliInteractions,
-  clearAllClaudeCliInteractions: mocks.clearAllClaudeCliInteractions
+  clearAllClaudeCliInteractions: mocks.clearAllClaudeCliInteractions,
+  holdClaudeCliInteraction: mocks.holdClaudeCliInteraction,
+  releaseClaudeCliInteraction: mocks.releaseClaudeCliInteraction
 }))
 
 vi.mock('./claude-cli-subagent-tracker', async (importOriginal) => ({
@@ -499,7 +503,10 @@ describe('Codex CLI terminal wiring', () => {
     // Exactly what codex 0.154.0 emits around a request_user_input question
     // (the blink alternates the prefix; spinner frames trail the thread items).
     mocks.getLastClaudeCliStatus.mockReturnValue('working')
+    mocks.holdClaudeCliInteraction.mockClear()
+    mocks.releaseClaudeCliInteraction.mockClear()
     emitPty(title(`Working | ${THREAD} ⠧`))
+    expect(mocks.holdClaudeCliInteraction).not.toHaveBeenCalled()
     emitPty(title(`[ ! ] Action Required | ${THREAD} ⠧`))
     expect(mocks.publishClaudeCliStatus).toHaveBeenCalledTimes(1)
     expect(mocks.publishClaudeCliStatus).toHaveBeenLastCalledWith({
@@ -507,6 +514,10 @@ describe('Codex CLI terminal wiring', () => {
       status: 'answering',
       metadata: { reason: 'codex_title_action_required' }
     })
+    // The ledger is held for as long as the title says so: a non-blocking
+    // question's turn keeps firing hooks (and its Stop) with the question open.
+    expect(mocks.holdClaudeCliInteraction).toHaveBeenCalledWith('codex-session-1', 'codex-title')
+    expect(mocks.releaseClaudeCliInteraction).not.toHaveBeenCalled()
     // Blinks while it already holds are no-ops; a blink after something else
     // moved the status (a Stop fired with the question still open) re-asserts.
     mocks.getLastClaudeCliStatus.mockReturnValue('answering')
@@ -524,6 +535,7 @@ describe('Codex CLI terminal wiring', () => {
     // Answered: no PostToolUse hook fires, the title just resumes the run state.
     mocks.publishClaudeCliStatus.mockClear()
     emitPty(title(`Working | ${THREAD} | Ask color preference ⠋`))
+    expect(mocks.releaseClaudeCliInteraction).toHaveBeenCalledWith('codex-session-1', 'codex-title')
     expect(mocks.clearClaudeCliInteractions).toHaveBeenCalledWith('codex-session-1')
     expect(mocks.publishClaudeCliStatus).toHaveBeenCalledTimes(1)
     expect(mocks.publishClaudeCliStatus).toHaveBeenLastCalledWith({
@@ -534,6 +546,19 @@ describe('Codex CLI terminal wiring', () => {
     // A plain Working title afterwards is not another release.
     emitPty(title(`Working | ${THREAD} | Ask color preference ⠙`))
     expect(mocks.publishClaudeCliStatus).toHaveBeenCalledTimes(1)
+    expect(mocks.releaseClaudeCliInteraction).toHaveBeenCalledTimes(1)
+  })
+
+  it('lifts the title hold when the codex process exits mid-question', async () => {
+    setupDb(makeSession({ claude_session_id: THREAD }))
+    await createClaudeCliTerminal('codex-session-1', {})
+    mocks.holdClaudeCliInteraction.mockClear()
+    mocks.releaseClaudeCliInteraction.mockClear()
+    mocks.getLastClaudeCliStatus.mockReturnValue('working')
+    emitPty(title(`[ ! ] Action Required | ${THREAD}`))
+    expect(mocks.holdClaudeCliInteraction).toHaveBeenCalledWith('codex-session-1', 'codex-title')
+    mocks.exitCallbacks.get('codex-session-1')?.(0)
+    expect(mocks.releaseClaudeCliInteraction).toHaveBeenCalledWith('codex-session-1', 'codex-title')
   })
 
   it('re-asserts answering after a Stop or an Escape moved the session off the question', async () => {
