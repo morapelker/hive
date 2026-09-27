@@ -2,6 +2,7 @@ import { motion } from 'motion/react'
 import type * as React from 'react'
 import type { LoadedPet, PetSettings, PetState } from '@shared/types/pet'
 import { DotLottieSprite } from './DotLottieSprite'
+import { sessionCounterSlots } from './sessionCounter'
 
 const SIZE_PX: Record<PetSettings['size'], number> = {
   S: 64,
@@ -72,9 +73,15 @@ export function PetSprite({
   onContextMenu: (event: React.MouseEvent<HTMLElement>) => void
 }): React.JSX.Element {
   const size = SIZE_PX[settings.size]
+  const variants = pet.resolvedWorkingLottieVariants
   const speed = workingAnimationSpeed(settings, workingSessionCount)
   const overlay = overlayForState(state)
-  const lottieSrc = state === 'working' ? pet.resolvedLottieAssets?.working : undefined
+  const variantIndex =
+    Math.min(Math.max(Math.floor(workingSessionCount), 1), variants?.length ?? 1) - 1
+  const lottieSrc =
+    state === 'working'
+      ? (variants?.[variantIndex] ?? pet.resolvedLottieAssets?.working)
+      : undefined
   const lottieScale = state === 'working' ? (pet.lottieScale?.working ?? 1) : 1
   const imageScale = pet.imageScale?.[state] ?? 1
   const activeAnimation = lottieSrc ? {} : animationForState(state, speed)
@@ -106,6 +113,7 @@ export function PetSprite({
             scale={lottieScale}
             size={size}
             speed={speed}
+            textSlots={sessionCounterSlots(pet.workingSessionCounter, workingSessionCount)}
             state={state}
           />
         ) : (

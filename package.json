@@ -46,6 +46,8 @@
     "build:server": "vite build --config vite.server.config.ts",
     "build:web": "vite build --config vite.web.config.ts",
     "preview": "electron-vite preview",
+    "preview:corgi": "vite --config vite.web.config.ts --open /corgi-preview.html",
+    "generate:corgi": "node scripts/generate-corgi-variants.mjs",
     "start": "electron-vite preview",
     "postinstall": "electron-builder install-app-deps",
     "build:unpack": "pnpm run build && electron-builder --dir",

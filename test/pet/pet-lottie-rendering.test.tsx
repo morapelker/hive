@@ -25,7 +25,10 @@ vi.mock('@lottiefiles/dotlottie-web', () => ({
       addEventListener: vi.fn(),
       destroy: vi.fn(),
       resize: vi.fn(),
-      setSpeed: vi.fn()
+      setSpeed: vi.fn(),
+      setTextSlot: vi.fn(),
+      resetSlot: vi.fn(),
+      isLoaded: true
     })),
     { setWasmUrl: vi.fn() }
   )
@@ -268,8 +271,220 @@ describe('pet Lottie rendering', () => {
     expect(container.querySelector('img')?.getAttribute('src')).toContain('corgi-static')
   })
 
-  it('caps the working Lottie speed at the configured animation speed', async () => {
+  it('resolves all five corgi styles in session-count order', () => {
     const pet = getPet('corgi')
+    expect(pet.resolvedWorkingLottieVariants).toHaveLength(5)
+    expect(pet.resolvedWorkingLottieVariants?.[0]).toBe(pet.resolvedLottieAssets?.working)
+    for (let level = 2; level <= 5; level++) {
+      expect(pet.resolvedWorkingLottieVariants?.[level - 1]).toContain(`corgi-level-${level}`)
+    }
+    expect(getPet('bee').resolvedWorkingLottieVariants).toBeUndefined()
+  })
+
+  it.each([false, true])(
+    'changes corgi styles independently of speed scaling (%s)',
+    async (scaling) => {
+      const pet = getPet('corgi')
+      const sprite = (
+        count: number,
+        speedEnabled = scaling,
+        state: 'working' | 'idle' = 'working'
+      ) => (
+        <PetSprite
+          pet={pet}
+          state={state}
+          settings={{
+            ...settings,
+            petId: 'corgi',
+            animationSpeedEnabled: speedEnabled,
+            animationSpeed: 2
+          }}
+          workingSessionCount={count}
+          onPointerDown={vi.fn()}
+          onMouseEnter={vi.fn()}
+          onMouseLeave={vi.fn()}
+          onClick={vi.fn()}
+          onContextMenu={vi.fn()}
+        />
+      )
+      const { rerender, container } = render(sprite(1))
+      await waitFor(() => expect(DotLottie).toHaveBeenCalledTimes(1))
+
+      let loads = 1
+      for (const count of [2, 3, 4, 5, 8, 2, 0]) {
+        const previousPlayer = vi.mocked(DotLottie).mock.results.at(-1)?.value
+        rerender(sprite(count))
+        if (count !== 8) loads++ // Five and eight share a style; keep that player alive.
+        await waitFor(() => expect(DotLottie).toHaveBeenCalledTimes(loads))
+        expect(fetch).toHaveBeenLastCalledWith(
+          pet.resolvedWorkingLottieVariants?.[Math.max(1, Math.min(count, 5)) - 1]
+        )
+        expect(vi.mocked(DotLottie).mock.calls.at(-1)?.[0]).toMatchObject({
+          speed: scaling ? Math.max(1, Math.min(count, 2)) : 1
+        })
+        expect(previousPlayer.destroy).toHaveBeenCalledTimes(count === 8 ? 0 : 1)
+      }
+
+      rerender(sprite(5, false))
+      loads++
+      await waitFor(() => expect(DotLottie).toHaveBeenCalledTimes(loads))
+      expect(fetch).toHaveBeenLastCalledWith(pet.resolvedWorkingLottieVariants?.[4])
+      expect(vi.mocked(DotLottie).mock.calls.at(-1)?.[0]).toMatchObject({ speed: 1 })
+
+      rerender(sprite(0, false, 'idle'))
+      expect(screen.queryByTestId('pet-lottie-working')).not.toBeInTheDocument()
+      expect(container.querySelector('img')?.src).toContain('corgi-static')
+    }
+  )
+
+  it.each([false, true])(
+    'updates the cape count without restarting with speed scaling %s',
+    async (scaling) => {
+      const listeners = new Map<string, () => void>()
+      const player = {
+        isLoaded: false,
+        addEventListener: vi.fn((event: string, listener: () => void) =>
+          listeners.set(event, listener)
+        ),
+        destroy: vi.fn(),
+        resize: vi.fn(),
+        setSpeed: vi.fn(),
+        setFrame: vi.fn(),
+        setTextSlot: vi.fn(),
+        resetSlot: vi.fn()
+      }
+      vi.mocked(DotLottie).mockImplementationOnce(() => player as unknown as DotLottie)
+      const sprite = (count: number, speedEnabled = scaling, maxSpeed = 2) => (
+        <PetSprite
+          pet={getPet('corgi')}
+          state="working"
+          settings={{
+            ...settings,
+            petId: 'corgi',
+            animationSpeedEnabled: speedEnabled,
+            animationSpeed: maxSpeed
+          }}
+          workingSessionCount={count}
+          onPointerDown={vi.fn()}
+          onMouseEnter={vi.fn()}
+          onMouseLeave={vi.fn()}
+          onClick={vi.fn()}
+          onContextMenu={vi.fn()}
+        />
+      )
+      const { rerender } = render(sprite(5))
+      await waitFor(() => expect(DotLottie).toHaveBeenCalledTimes(1))
+      rerender(sprite(7))
+      expect(vi.mocked(DotLottie).mock.calls[0]?.[0]).toMatchObject({ speed: scaling ? 2 : 1 })
+      expect(player.setTextSlot).not.toHaveBeenCalled()
+      player.isLoaded = true
+      listeners.get('load')?.()
+      expect(player.setTextSlot).toHaveBeenLastCalledWith('session-count', { t: '7', s: 90 })
+
+      for (const count of [8, 9, 10, 20, 123, 12345, 6]) {
+        rerender(sprite(count))
+        expect(player.setTextSlot).toHaveBeenLastCalledWith('session-count', {
+          t: String(count),
+          s: 90 * Math.min(1, 2 / String(count).length)
+        })
+      }
+      expect(player.setSpeed).toHaveBeenLastCalledWith(scaling ? 2 : 1)
+      // Changing playback settings must preserve the full count and the running player.
+      for (const [enabled, limit, expectedSpeed] of [
+        [true, 2, 2],
+        [true, 5, 5],
+        [false, 5, 1]
+      ] as const) {
+        rerender(sprite(20, enabled, limit))
+        expect(player.setSpeed).toHaveBeenLastCalledWith(expectedSpeed)
+        expect(player.setTextSlot).toHaveBeenLastCalledWith('session-count', { t: '20', s: 90 })
+      }
+      expect(fetch).toHaveBeenCalledTimes(1)
+      expect(DotLottie).toHaveBeenCalledTimes(1)
+      expect(player.destroy).not.toHaveBeenCalled()
+      // Seven on load, seven count changes, then twenty once. Speed-only
+      // updates must not reapply identical slots (the WASM core resets glyphs).
+      expect(player.setTextSlot).toHaveBeenCalledTimes(9)
+      expect(player.setFrame).not.toHaveBeenCalled()
+      expect(player.setSpeed).toHaveBeenLastCalledWith(1)
+    }
+  )
+
+  it('passes the working speed to the player constructor and re-applies it on load', async () => {
+    // `DotLottie#setSpeed` is a no-op until the WASM core has booted, so a
+    // speed that is only applied via setSpeed right after construction is
+    // silently dropped and the pet runs at 1x. The speed must be part of the
+    // constructor config and re-applied once the animation has loaded.
+    const listeners = new Map<string, () => void>()
+    vi.mocked(DotLottie).mockImplementationOnce(
+      () =>
+        ({
+          addEventListener: vi.fn((event: string, listener: () => void) => {
+            listeners.set(event, listener)
+          }),
+          destroy: vi.fn(),
+          resize: vi.fn(),
+          setSpeed: vi.fn()
+        }) as unknown as DotLottie
+    )
+    const pet = getPet('bee')
+
+    const { rerender } = render(
+      <PetSprite
+        pet={pet}
+        state="working"
+        settings={
+          {
+            ...settings,
+            petId: 'bee',
+            animationSpeed: 5,
+            animationSpeedEnabled: true
+          } as PetSettings
+        }
+        workingSessionCount={4}
+        onPointerDown={vi.fn()}
+        onMouseEnter={vi.fn()}
+        onMouseLeave={vi.fn()}
+        onClick={vi.fn()}
+        onContextMenu={vi.fn()}
+      />
+    )
+
+    await waitFor(() => expect(DotLottie).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(DotLottie).mock.calls[0]?.[0]).toMatchObject({ speed: 4 })
+    const player = vi.mocked(DotLottie).mock.results[0]?.value as {
+      setSpeed: ReturnType<typeof vi.fn>
+    }
+
+    // The session count changes while the core is still booting: the
+    // constructor speed is stale, so `load` must re-apply the latest one.
+    rerender(
+      <PetSprite
+        pet={pet}
+        state="working"
+        settings={
+          {
+            ...settings,
+            petId: 'bee',
+            animationSpeed: 5,
+            animationSpeedEnabled: true
+          } as PetSettings
+        }
+        workingSessionCount={5}
+        onPointerDown={vi.fn()}
+        onMouseEnter={vi.fn()}
+        onMouseLeave={vi.fn()}
+        onClick={vi.fn()}
+        onContextMenu={vi.fn()}
+      />
+    )
+    player.setSpeed.mockClear()
+    listeners.get('load')?.()
+    expect(player.setSpeed).toHaveBeenLastCalledWith(5)
+  })
+
+  it('caps the working Lottie speed at the configured animation speed', async () => {
+    const pet = getPet('bee')
 
     render(
       <PetSprite
@@ -278,7 +493,7 @@ describe('pet Lottie rendering', () => {
         settings={
           {
             ...settings,
-            petId: 'corgi',
+            petId: 'bee',
             animationSpeed: 2,
             animationSpeedEnabled: true
           } as PetSettings
@@ -293,11 +508,11 @@ describe('pet Lottie rendering', () => {
     )
 
     await waitFor(() => expect(DotLottie).toHaveBeenCalledTimes(1))
-    expect(vi.mocked(DotLottie).mock.results[0]?.value.setSpeed).toHaveBeenCalledWith(2)
+    expect(vi.mocked(DotLottie).mock.calls[0]?.[0]).toMatchObject({ speed: 2 })
   })
 
   it('keeps the working Lottie at 1x when animation speed scaling is disabled', async () => {
-    const pet = getPet('corgi')
+    const pet = getPet('bee')
 
     render(
       <PetSprite
@@ -306,7 +521,7 @@ describe('pet Lottie rendering', () => {
         settings={
           {
             ...settings,
-            petId: 'corgi',
+            petId: 'bee',
             animationSpeed: 5,
             animationSpeedEnabled: false
           } as PetSettings
@@ -321,11 +536,11 @@ describe('pet Lottie rendering', () => {
     )
 
     await waitFor(() => expect(DotLottie).toHaveBeenCalledTimes(1))
-    expect(vi.mocked(DotLottie).mock.results[0]?.value.setSpeed).toHaveBeenCalledWith(1)
+    expect(vi.mocked(DotLottie).mock.calls[0]?.[0]).toMatchObject({ speed: 1 })
   })
 
   it('caps enabled working Lottie speed at 5x', async () => {
-    const pet = getPet('corgi')
+    const pet = getPet('bee')
 
     render(
       <PetSprite
@@ -334,7 +549,7 @@ describe('pet Lottie rendering', () => {
         settings={
           {
             ...settings,
-            petId: 'corgi',
+            petId: 'bee',
             animationSpeed: 10,
             animationSpeedEnabled: true
           } as PetSettings
@@ -349,6 +564,6 @@ describe('pet Lottie rendering', () => {
     )
 
     await waitFor(() => expect(DotLottie).toHaveBeenCalledTimes(1))
-    expect(vi.mocked(DotLottie).mock.results[0]?.value.setSpeed).toHaveBeenCalledWith(5)
+    expect(vi.mocked(DotLottie).mock.calls[0]?.[0]).toMatchObject({ speed: 5 })
   })
 })

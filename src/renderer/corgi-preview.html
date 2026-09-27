@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Corgi · A little more super</title>
+    <link rel="icon" href="data:," />
+  </head>
+  <body>
+    <main>
+      <header>
+        <p class="eyebrow">TEDOOO CODE / PET STUDIO</p>
+        <h1>A little more super.</h1>
+        <p class="intro">
+          One familiar corgi. Twenty sessions of company.<br />From five onward, your cape keeps
+          count.
+        </p>
+      </header>
+      <section class="toolbar" aria-label="Preview controls">
+        <button id="play" type="button">Pause animations</button>
+        <label class="scrubber"
+          >Run cycle <input id="frame" type="range" min="0" max="59" value="0" /><output
+            id="frame-label"
+            >Live</output
+          ></label
+        >
+        <label
+          >Backdrop
+          <select id="backdrop">
+            <option value="light">Warm white</option>
+            <option value="dark">Midnight</option>
+            <option value="grid">Transparency grid</option>
+          </select></label
+        >
+        <span id="load-status" role="status">Loading animations…</span>
+      </section>
+      <section
+        id="gallery"
+        class="gallery"
+        aria-label="Corgi animations for one through twenty sessions"
+      ></section>
+      <section class="sizing">
+        <div>
+          <p class="eyebrow">ON YOUR DESKTOP</p>
+          <h2>Small pet. Big personality.</h2>
+          <p>Try the real pet renderer at each size. Type any count, including above 20.</p>
+        </div>
+        <div class="session-controls">
+          <label
+            >Active sessions <input id="sessions" type="range" min="0" max="20" value="20"
+          /></label>
+          <label
+            >Exact count <input id="session-count" type="number" min="0" step="1" value="20"
+          /></label>
+        </div>
+        <div class="speed-controls">
+          <label><input id="speed-enabled" type="checkbox" />Scale animation speed</label>
+          <label
+            >Max speed
+            <select id="speed-limit" disabled>
+              <option value="2">2×</option>
+              <option value="3">3×</option>
+              <option value="4">4×</option>
+              <option value="5" selected>5×</option>
+            </select>
+          </label>
+          <span>Styles always follow the session count.</span>
+        </div>
+        <div id="desktop-preview"></div>
+      </section>
+      <footer>
+        Original run cycle · Automatic styles · Optional speed scaling · A cape that keeps count
+      </footer>
+    </main>
+    <script type="module" src="./src/pet/preview/corgi-preview.tsx"></script>
+  </body>
+</html>
