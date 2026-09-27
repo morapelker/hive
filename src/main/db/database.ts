@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, statSync } from 'fs'
 import { randomUUID } from 'crypto'
 import { homedir } from 'os'
 import { Worker as NodeWorker } from 'node:worker_threads'
-import { MIGRATIONS } from './schema'
+import { MIGRATIONS, VOICE_HISTORY_TABLES_SQL } from './schema'
 import type {
   Project,
   ProjectCreate,
@@ -62,8 +62,15 @@ import type {
   SavedUsageAccount,
   SavedUsageAccountUpsert,
   SavedUsageAccountUsageUpdate,
-  SavedUsageProvider
+  SavedUsageProvider,
+  VoiceHistoryRow,
+  VoiceHistoryRowCreate
 } from './types'
+
+/** Escape `%`, `_` and `\` for a LIKE pattern used with `ESCAPE '\'`. */
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, (ch) => `\\${ch}`)
+}
 
 // Every other Hive process runs the server bundle as plain node
 // (ELECTRON_RUN_AS_NODE=1), so this is only true in the desktop main process.
@@ -389,6 +396,7 @@ export class DatabaseService {
       created_from_session: row.created_from_session === 1,
       auto_approve_plan: row.auto_approve_plan === 1,
       unread: row.unread === 1,
+      awaiting_completion: row.awaiting_completion === 1,
       model_provider_id: (row.model_provider_id as string) ?? null,
       model_id: (row.model_id as string) ?? null,
       model_variant: (row.model_variant as string) ?? null,
@@ -581,6 +589,12 @@ export class DatabaseService {
     // exist. This handles partial migrations, merge conflicts, or version
     // skew between worktree builds.
     this.ensureConnectionTables()
+    this.ensureVoiceHistoryTable()
+  }
+
+  /** Idempotently ensure the voice dictation history table exists (repair for the v48 migration). */
+  private ensureVoiceHistoryTable(): void {
+    this.getDb().exec(VOICE_HISTORY_TABLES_SQL)
   }
 
   /**
@@ -720,6 +734,7 @@ export class DatabaseService {
     this.safeAddColumn('kanban_tickets', 'created_from_session', 'INTEGER NOT NULL DEFAULT 0')
     this.safeAddColumn('kanban_tickets', 'auto_approve_plan', 'INTEGER NOT NULL DEFAULT 0')
     this.safeAddColumn('kanban_tickets', 'unread', 'INTEGER NOT NULL DEFAULT 0')
+    this.safeAddColumn('kanban_tickets', 'awaiting_completion', 'INTEGER NOT NULL DEFAULT 0')
     this.safeAddColumn('kanban_tickets', 'model_provider_id', 'TEXT DEFAULT NULL')
     this.safeAddColumn('kanban_tickets', 'model_id', 'TEXT DEFAULT NULL')
     this.safeAddColumn('kanban_tickets', 'model_variant', 'TEXT DEFAULT NULL')
@@ -855,6 +870,11 @@ export class DatabaseService {
     this.safeAddColumn('markdown_kanban_card_state', 'column_changed_at', 'TEXT DEFAULT NULL')
     this.safeAddColumn('markdown_kanban_card_state', 'last_known_column', 'TEXT DEFAULT NULL')
     this.safeAddColumn('markdown_kanban_card_state', 'unread', 'INTEGER NOT NULL DEFAULT 0')
+    this.safeAddColumn(
+      'markdown_kanban_card_state',
+      'awaiting_completion',
+      'INTEGER NOT NULL DEFAULT 0'
+    )
 
     db.exec(`
       CREATE TABLE IF NOT EXISTS session_usage_state (
@@ -906,7 +926,7 @@ export class DatabaseService {
       .prepare(
         `SELECT id FROM sessions
          WHERE (updated_at >= ? OR status = 'active')
-           AND agent_sdk IN ('claude-code', 'claude-code-cli', 'codex')
+           AND agent_sdk IN ('claude-code', 'claude-code-cli', 'codex', 'codex-cli')
          ORDER BY (status = 'active') DESC, updated_at DESC`
       )
       .all(sinceIso) as Array<{ id: string }>
@@ -935,6 +955,80 @@ export class DatabaseService {
   getAllSettings(): Setting[] {
     const db = this.getDb()
     return db.prepare('SELECT key, value FROM settings').all() as Setting[]
+  }
+
+  // Voice dictation history
+
+  private mapVoiceHistoryRow(row: Record<string, unknown>): VoiceHistoryRow {
+    return {
+      id: row.id as string,
+      text: row.text as string,
+      raw_text: (row.raw_text as string | null) ?? null,
+      duration_ms: (row.duration_ms as number) ?? 0,
+      cleaned: !!row.cleaned,
+      speech_model: (row.speech_model as string) ?? '',
+      created_at: row.created_at as string
+    }
+  }
+
+  addVoiceHistory(data: VoiceHistoryRowCreate): VoiceHistoryRow {
+    const db = this.getDb()
+    const row: VoiceHistoryRow = {
+      id: randomUUID(),
+      text: data.text,
+      raw_text: data.raw_text ?? null,
+      duration_ms: data.duration_ms ?? 0,
+      cleaned: data.cleaned ?? false,
+      speech_model: data.speech_model ?? '',
+      created_at: new Date().toISOString()
+    }
+    db.prepare(
+      `INSERT INTO voice_history (id, text, raw_text, duration_ms, cleaned, speech_model, created_at)
+       VALUES (@id, @text, @raw_text, @duration_ms, @cleaned, @speech_model, @created_at)`
+    ).run({ ...row, cleaned: row.cleaned ? 1 : 0 })
+    return row
+  }
+
+  /** Newest first. `query` filters on the delivered text (case-insensitive substring). */
+  listVoiceHistory(options: { limit: number; offset?: number; query?: string } = { limit: 20 }): VoiceHistoryRow[] {
+    const db = this.getDb()
+    const limit = Math.max(1, Math.min(500, Math.floor(options.limit)))
+    const offset = Math.max(0, Math.floor(options.offset ?? 0))
+    const query = options.query?.trim()
+    const rows = query
+      ? (db
+          .prepare(
+            `SELECT * FROM voice_history WHERE text LIKE @pattern ESCAPE '\\'
+             ORDER BY created_at DESC, rowid DESC LIMIT @limit OFFSET @offset`
+          )
+          .all({ pattern: `%${escapeLike(query)}%`, limit, offset }) as Record<string, unknown>[])
+      : (db
+          .prepare(
+            `SELECT * FROM voice_history ORDER BY created_at DESC, rowid DESC LIMIT @limit OFFSET @offset`
+          )
+          .all({ limit, offset }) as Record<string, unknown>[])
+    return rows.map((row) => this.mapVoiceHistoryRow(row))
+  }
+
+  countVoiceHistory(query?: string): number {
+    const db = this.getDb()
+    const trimmed = query?.trim()
+    const row = trimmed
+      ? (db
+          .prepare(`SELECT COUNT(*) AS count FROM voice_history WHERE text LIKE @pattern ESCAPE '\\'`)
+          .get({ pattern: `%${escapeLike(trimmed)}%` }) as { count: number })
+      : (db.prepare('SELECT COUNT(*) AS count FROM voice_history').get() as { count: number })
+    return row?.count ?? 0
+  }
+
+  deleteVoiceHistory(id: string): boolean {
+    const result = this.getDb().prepare('DELETE FROM voice_history WHERE id = ?').run(id)
+    return result.changes > 0
+  }
+
+  clearVoiceHistory(): number {
+    const result = this.getDb().prepare('DELETE FROM voice_history').run()
+    return result.changes
   }
 
   // Saved usage account operations
@@ -1393,6 +1487,18 @@ export class DatabaseService {
         "SELECT * FROM worktrees WHERE project_id = ? AND status = 'active' ORDER BY is_default ASC, last_accessed_at DESC"
       )
       .all(projectId) as Record<string, unknown>[]
+    return rows.map((row) => this.mapWorktreeRow(row))
+  }
+
+  // Every active worktree across all projects in one query. Feeds the sidebar's
+  // bulk hydrate so a project filter never needs a per-project round trip.
+  getAllActiveWorktrees(): Worktree[] {
+    const db = this.getDb()
+    const rows = db
+      .prepare(
+        "SELECT * FROM worktrees WHERE status = 'active' ORDER BY project_id ASC, is_default ASC, last_accessed_at DESC"
+      )
+      .all() as Record<string, unknown>[]
     return rows.map((row) => this.mapWorktreeRow(row))
   }
 
@@ -3080,6 +3186,15 @@ export class DatabaseService {
       updates.push('unread = ?')
       values.push(unreadValue ? 1 : 0)
     }
+    // Awaiting-completion never survives a column change on its own: only the
+    // session-sync path sets it explicitly, on an in-progress ticket whose
+    // Claude CLI session paused without a detected completion.
+    const awaitingValue =
+      data.awaiting_completion ?? (derivedUnread !== undefined ? false : undefined)
+    if (awaitingValue !== undefined) {
+      updates.push('awaiting_completion = ?')
+      values.push(awaitingValue ? 1 : 0)
+    }
     if (data.model_provider_id !== undefined) {
       updates.push('model_provider_id = ?')
       values.push(data.model_provider_id)
@@ -3267,8 +3382,11 @@ export class DatabaseService {
 
     const now = new Date().toISOString()
     if (column !== existing.column) {
+      // Entering review marks the ticket unread. awaiting_completion (a Claude
+      // CLI session that paused on an in-progress ticket) never survives a
+      // column change — a real completion moves the ticket out of in_progress.
       db.prepare(
-        'UPDATE kanban_tickets SET "column" = ?, sort_order = ?, updated_at = ?, column_changed_at = ?, unread = ? WHERE id = ?'
+        'UPDATE kanban_tickets SET "column" = ?, sort_order = ?, updated_at = ?, column_changed_at = ?, unread = ?, awaiting_completion = 0 WHERE id = ?'
       ).run(column, sortOrder, now, now, column === 'review' ? 1 : 0, id)
     } else {
       db.prepare(

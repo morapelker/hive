@@ -117,14 +117,155 @@ describe('resolveSessionCreationSelection', () => {
       variant: 'high'
     })
   })
+
+  it('defaults a new session to the SDK configured on the settings page', () => {
+    useSettingsStore.setState({
+      defaultAgentSdk: 'codex',
+      selectedModel: null,
+      selectedModelByProvider: {
+        codex: { providerID: 'codex', modelID: 'gpt-5.5', variant: 'high' },
+        'claude-code-cli': { providerID: 'anthropic', modelID: 'sonnet', variant: 'high' }
+      },
+      defaultModels: null
+    })
+
+    const selection = resolveSessionCreationSelection({ initialMode: 'build' })
+
+    expect(selection.agentSdk).toBe('codex')
+    expect(selection.model).toMatchObject({ providerID: 'codex', modelID: 'gpt-5.5' })
+  })
+
+  it('keeps the configured default model/effort after a session switched to another one', async () => {
+    // Regression: launching a ticket (or changing a session's model) used to
+    // rewrite the per-SDK default, so the next ticket inherited that
+    // model/effort. Only the settings page may change the default.
+    useSettingsStore.setState({
+      defaultAgentSdk: 'claude-code-cli',
+      selectedModel: null,
+      selectedModelByProvider: {
+        'claude-code-cli': { providerID: 'anthropic', modelID: 'sonnet', variant: 'high' }
+      },
+      defaultModels: null
+    })
+    const { useSessionStore } = await import('@/stores/useSessionStore')
+    useSessionStore.setState({
+      sessionsByWorktree: new Map([
+        [
+          'wt-1',
+          [
+            {
+              id: 'session-1',
+              worktree_id: 'wt-1',
+              agent_sdk: 'claude-code-cli',
+              model_provider_id: 'anthropic',
+              model_id: 'sonnet',
+              model_variant: 'high'
+            } as never
+          ]
+        ]
+      ])
+    })
+
+    await useSessionStore
+      .getState()
+      .setSessionModel('session-1', { providerID: 'anthropic', modelID: 'opus', variant: 'max' })
+
+    const selection = resolveSessionCreationSelection({ initialMode: 'build' })
+    expect(selection.model).toMatchObject({
+      providerID: 'anthropic',
+      modelID: 'sonnet',
+      variant: 'high'
+    })
+    expect(useSettingsStore.getState().selectedModelByProvider['claude-code-cli']).toEqual({
+      providerID: 'anthropic',
+      modelID: 'sonnet',
+      variant: 'high'
+    })
+  })
+
+  it('ignores a mode default for another SDK instead of redirecting the session', () => {
+    // Regression: default SDK claude-code-cli with Fable as the global model,
+    // but a Build mode default left over from Codex pulled every new session
+    // (and the ticket picker) over to Codex.
+    useSettingsStore.setState({
+      defaultAgentSdk: 'claude-code-cli',
+      selectedModel: null,
+      selectedModelByProvider: {
+        'claude-code-cli': { providerID: 'claude-code', modelID: 'fable', variant: 'high' }
+      },
+      defaultModels: {
+        build: { agentSdk: 'codex', providerID: 'codex', modelID: 'gpt-6-astra', variant: 'high' },
+        plan: null,
+        ask: null,
+        review: null
+      }
+    })
+
+    const selection = resolveSessionCreationSelection({ initialMode: 'build' })
+
+    expect(selection.agentSdk).toBe('claude-code-cli')
+    expect(selection.model).toMatchObject({
+      providerID: 'claude-code',
+      modelID: 'fable',
+      variant: 'high'
+    })
+  })
+
+  it('still applies a mode default that belongs to the default SDK', () => {
+    useSettingsStore.setState({
+      defaultAgentSdk: 'claude-code-cli',
+      selectedModel: null,
+      selectedModelByProvider: {
+        'claude-code-cli': { providerID: 'claude-code', modelID: 'fable', variant: 'high' }
+      },
+      defaultModels: {
+        build: {
+          agentSdk: 'claude-code-cli',
+          providerID: 'claude-code',
+          modelID: 'opus',
+          variant: 'max'
+        },
+        plan: null,
+        ask: null,
+        review: null
+      }
+    })
+
+    const selection = resolveSessionCreationSelection({ initialMode: 'build' })
+
+    expect(selection.agentSdk).toBe('claude-code-cli')
+    expect(selection.model).toMatchObject({ modelID: 'opus', variant: 'max' })
+  })
+
+  it('keeps yielding terminal sessions for a terminal default', () => {
+    useSettingsStore.setState({
+      defaultAgentSdk: 'terminal',
+      selectedModel: null,
+      selectedModelByProvider: {},
+      defaultModels: null
+    })
+
+    const selection = resolveSessionCreationSelection({ initialMode: 'build' })
+
+    expect(selection).toEqual({ agentSdk: 'terminal', model: null })
+  })
 })
 
 describe('handoff provider visuals', () => {
-  it('orders Claude Code second and Claude CLI last', () => {
+  it('orders Claude Code second and the CLIs last', () => {
     expect(getAvailableHandoffAgentSdks({ opencode: true, claude: true, codex: true })).toEqual([
       'opencode',
       'claude-code',
       'codex',
+      'claude-code-cli',
+      'codex-cli'
+    ])
+  })
+
+  it('hides both codex providers when codex is unavailable', () => {
+    expect(getAvailableHandoffAgentSdks({ opencode: true, claude: true, codex: false })).toEqual([
+      'opencode',
+      'claude-code',
       'claude-code-cli'
     ])
   })

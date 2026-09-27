@@ -46,8 +46,55 @@ declare global {
     updated_at: string
   }
 
+  interface VoiceDesktopBridge {
+    getStatus: () => Promise<import('../shared/types/voice').VoiceStatus>
+    updateSettings: (settings: import('../shared/types/voice').VoiceSettings) => Promise<void>
+    toggle: () => Promise<void>
+    cancel: () => Promise<void>
+    downloadModel: (modelId: string) => Promise<void>
+    cancelDownload: (modelId: string) => Promise<void>
+    deleteModel: (modelId: string) => Promise<void>
+    requestMicrophoneAccess: () => Promise<import('../shared/types/voice').VoiceMicPermission>
+    openMicrophoneSettings: () => Promise<void>
+    listHistory: (options: {
+      limit: number
+      offset?: number
+      query?: string
+    }) => Promise<import('../shared/types/voice').VoiceHistoryEntry[]>
+    countHistory: (query?: string) => Promise<number>
+    deleteHistory: (id: string) => Promise<boolean>
+    clearHistory: () => Promise<number>
+    onStatus: (callback: (status: import('../shared/types/voice').VoiceStatus) => void) => () => void
+    onResult: (
+      callback: (result: import('../shared/types/voice').VoiceDictationResult) => void
+    ) => () => void
+  }
+
+  interface VoiceHudBridge {
+    ready: () => void
+    clickStop: () => void
+    clickCancel: () => void
+    captureStarted: () => void
+    captureError: (message: string) => void
+    submitAudio: (payload: {
+      samples: Float32Array
+      sampleRate: number
+      durationMs: number
+    }) => Promise<void>
+    getSounds: () => Promise<{ start: Uint8Array | null; stop: Uint8Array | null }>
+    onState: (callback: (state: import('../shared/types/voice').VoiceHudState) => void) => () => void
+    onSound: (callback: (name: 'start' | 'stop') => void) => () => void
+    onCaptureStart: (callback: () => void) => () => void
+    onCaptureStop: (callback: () => void) => () => void
+    onCaptureCancel: (callback: () => void) => () => void
+  }
+
   interface Window {
     desktopBridge: {
+      /** Voice dictation (main window side). Undefined outside the Electron shell. */
+      voice?: VoiceDesktopBridge
+      /** Voice dictation (floating pill window side). */
+      voiceHud?: VoiceHudBridge
       getLocalEnvironmentBootstrap: () => Promise<LocalEnvironmentBootstrap | null>
       getPathForFile: (file: File) => string
       startHiveEnterpriseLogin: (serverUrl: string) => Promise<{ token: string }>

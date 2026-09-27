@@ -1,7 +1,72 @@
 import { contextBridge, ipcRenderer, webUtils, webFrame } from 'electron'
 import { decodeLocalEnvironmentBootstrapArg } from '../shared/desktop-bridge'
 
+const onMainEvent = <T>(channel: string, callback: (payload: T) => void): (() => void) => {
+  const listener = (_event: Electron.IpcRendererEvent, payload: T): void => {
+    callback(payload)
+  }
+  ipcRenderer.on(channel, listener)
+  return () => {
+    ipcRenderer.removeListener(channel, listener)
+  }
+}
+
+// Voice dictation is desktop-only (microphone, floating pill, paste into the
+// focused element), so it talks to the main process over Electron IPC rather
+// than the backend RPC. `voice` serves the main window; `voiceHud` the pill.
+const voice = {
+  getStatus: (): Promise<unknown> => ipcRenderer.invoke('voice:get-status'),
+  updateSettings: (settings: unknown): Promise<void> =>
+    ipcRenderer.invoke('voice:update-settings', settings),
+  toggle: (): Promise<void> => ipcRenderer.invoke('voice:toggle'),
+  cancel: (): Promise<void> => ipcRenderer.invoke('voice:cancel'),
+  downloadModel: (modelId: string): Promise<void> =>
+    ipcRenderer.invoke('voice:model:download', modelId),
+  cancelDownload: (modelId: string): Promise<void> =>
+    ipcRenderer.invoke('voice:model:cancel-download', modelId),
+  deleteModel: (modelId: string): Promise<void> =>
+    ipcRenderer.invoke('voice:model:delete', modelId),
+  requestMicrophoneAccess: (): Promise<string> => ipcRenderer.invoke('voice:mic:request'),
+  openMicrophoneSettings: (): Promise<void> => ipcRenderer.invoke('voice:mic:open-settings'),
+  listHistory: (options: { limit: number; offset?: number; query?: string }): Promise<unknown> =>
+    ipcRenderer.invoke('voice:history:list', options),
+  countHistory: (query?: string): Promise<number> =>
+    ipcRenderer.invoke('voice:history:count', query ?? ''),
+  deleteHistory: (id: string): Promise<boolean> => ipcRenderer.invoke('voice:history:delete', id),
+  clearHistory: (): Promise<number> => ipcRenderer.invoke('voice:history:clear'),
+  onStatus: (callback: (status: unknown) => void): (() => void) =>
+    onMainEvent('voice:status', callback),
+  onResult: (callback: (result: unknown) => void): (() => void) =>
+    onMainEvent('voice:result', callback)
+}
+
+const voiceHud = {
+  ready: (): void => ipcRenderer.send('voice:hud:ready'),
+  clickStop: (): void => ipcRenderer.send('voice:hud:click-stop'),
+  clickCancel: (): void => ipcRenderer.send('voice:hud:click-cancel'),
+  captureStarted: (): void => ipcRenderer.send('voice:hud:capture-started'),
+  captureError: (message: string): void => ipcRenderer.send('voice:hud:capture-error', message),
+  submitAudio: (payload: {
+    samples: Float32Array
+    sampleRate: number
+    durationMs: number
+  }): Promise<void> => ipcRenderer.invoke('voice:hud:audio', payload),
+  getSounds: (): Promise<unknown> => ipcRenderer.invoke('voice:hud:get-sounds'),
+  onState: (callback: (state: unknown) => void): (() => void) =>
+    onMainEvent('voice:hud:state', callback),
+  onSound: (callback: (name: string) => void): (() => void) =>
+    onMainEvent('voice:hud:sound', callback),
+  onCaptureStart: (callback: () => void): (() => void) =>
+    onMainEvent('voice:hud:capture-start', callback),
+  onCaptureStop: (callback: () => void): (() => void) =>
+    onMainEvent('voice:hud:capture-stop', callback),
+  onCaptureCancel: (callback: () => void): (() => void) =>
+    onMainEvent('voice:hud:capture-cancel', callback)
+}
+
 const desktopBridge = {
+  voice,
+  voiceHud,
   getLocalEnvironmentBootstrap: async () => decodeLocalEnvironmentBootstrapArg(process.argv),
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),
   startHiveEnterpriseLogin: (serverUrl: string): Promise<{ token: string }> =>

@@ -135,6 +135,7 @@ export function resolveBoardChatAgentSdk(
   const sdk = defaultAgentSdk ?? 'opencode'
   if (sdk === 'terminal') return 'opencode'
   if (sdk === 'claude-code-cli') return 'claude-code'
+  if (sdk === 'codex-cli') return 'codex'
   return sdk
 }
 
@@ -146,11 +147,11 @@ export function resolveBoardChatDefaultModel(
   agentSdkOverride?: 'opencode' | 'claude-code' | 'codex' | null
 ): SelectedModel | null {
   const agentSdk = agentSdkOverride ?? resolveBoardChatAgentSdk(settings.defaultAgentSdk)
-  return (
-    settings.getModelForMode('ask') ??
-    resolveModelForSdk(agentSdk, settings) ??
-    settings.selectedModel
-  )
+  // An /ask default picked for another SDK must not leak into this SDK's chat.
+  const askDefault = settings.getModelForMode('ask')
+  const applicableAskDefault =
+    askDefault && (!askDefault.agentSdk || askDefault.agentSdk === agentSdk) ? askDefault : null
+  return applicableAskDefault ?? resolveModelForSdk(agentSdk, settings) ?? settings.selectedModel
 }
 
 const BOARD_RULES_TAG_RE = /<board-assistant-rules>[\s\S]*?<\/board-assistant-rules>/gi

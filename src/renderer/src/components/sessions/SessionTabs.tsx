@@ -1464,6 +1464,11 @@ export function SessionTabs(): React.JSX.Element | null {
                     New Codex Session
                   </ContextMenuItem>
                 )}
+                {availableAgentSdks?.codex && (
+                  <ContextMenuItem onSelect={() => handleCreateSessionWithSdk('codex-cli')}>
+                    New Codex CLI Session
+                  </ContextMenuItem>
+                )}
                 {(availableAgentSdks?.opencode ||
                   availableAgentSdks?.claude ||
                   availableAgentSdks?.codex) && <ContextMenuSeparator />}

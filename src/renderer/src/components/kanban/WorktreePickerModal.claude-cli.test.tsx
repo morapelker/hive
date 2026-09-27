@@ -93,7 +93,7 @@ const initialProjectState = useProjectStore.getState()
 const initialUsageState = useUsageStore.getState()
 const initialWorktreeStatusState = useWorktreeStatusStore.getState()
 
-type TestAgentSdk = 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
+type TestAgentSdk = 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'codex-cli' | 'terminal'
 type TestSessionMode = 'build' | 'plan' | 'super-plan' | 'super-build'
 
 const baseTicket: KanbanTicket = {
@@ -113,6 +113,7 @@ const baseTicket: KanbanTicket = {
   created_from_session: false,
   auto_approve_plan: false,
   unread: false,
+  awaiting_completion: false,
   attachments: [],
   archived_at: null,
   external_provider: null,
@@ -339,7 +340,8 @@ async function renderAndSelectClaudeCli(ticket: KanbanTicket = baseTicket): Prom
     'OpenCode',
     'Claude Code',
     'Codex',
-    'Claude CLI'
+    'Claude CLI',
+    'Codex CLI'
   ])
   await userEvent.click(screen.getByTestId('sdk-toggle-claude-code-cli'))
 }
@@ -363,7 +365,8 @@ async function renderAndSelectClaudeCliForConnection(
     'OpenCode',
     'Claude Code',
     'Codex',
-    'Claude CLI'
+    'Claude CLI',
+    'Codex CLI'
   ])
   await userEvent.click(screen.getByTestId('sdk-toggle-claude-code-cli'))
 }

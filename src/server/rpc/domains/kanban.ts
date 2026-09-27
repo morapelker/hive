@@ -294,6 +294,7 @@ const kanbanTicketUpdateSchema = z
     archived_at: z.string().nullable().optional(),
     auto_approve_plan: z.boolean().optional(),
     unread: z.boolean().optional(),
+    awaiting_completion: z.boolean().optional(),
     model_provider_id: z.string().nullable().optional(),
     model_id: z.string().nullable().optional(),
     model_variant: z.string().nullable().optional(),

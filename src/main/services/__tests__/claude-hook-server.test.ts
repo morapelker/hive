@@ -435,7 +435,15 @@ describe('ClaudeHookServer HTTP round-trip', () => {
       {
         sessionId: 'hive-session-1',
         status: 'completed',
-        metadata: { hookEventName: 'Stop', hookPath: 'stop' }
+        metadata: {
+          hookEventName: 'Stop',
+          hookPath: 'stop',
+          // A Stop without background_tasks/session_crons cannot be classified.
+          completion: 'unknown',
+          pendingTasks: 0,
+          pendingWakeups: 0,
+          ignoredShells: 0
+        }
       }
     )
   })
@@ -1385,5 +1393,124 @@ describe('background shell/monitor counts (HTTP round-trip)', () => {
         { sessionId: SESSION, runningShells: 0, runningMonitors: 0, runningSubagents: 0 }
       )
     })
+  })
+})
+
+describe('Stop completion classification (HTTP round-trip)', () => {
+  function statusPublishes(): Array<{ status: string; metadata?: Record<string, unknown> }> {
+    return backendManagerMocks.publishDesktopBackendEvent.mock.calls
+      .filter(([channel]) => channel === 'claude-cli:status')
+      .map(([, payload]) => payload as { status: string; metadata?: Record<string, unknown> })
+  }
+
+  it('stamps a main-agent Stop as waiting while a Monitor or scheduled wakeup is pending, and completed once nothing will wake the agent', async () => {
+    const { port } = await getClaudeHookServer()
+
+    // A Monitor watch is still running: the turn ended, but claude will be
+    // woken again with a task notification — an intermediate stop. Stop
+    // bodies list monitors as `type: 'shell'`; the PostToolUse that started
+    // it is what lets the server tell it apart from an ignored shell.
+    await postHook(port, 'hive-session-1', 'tool', {
+      hook_event_name: 'PostToolUse',
+      tool_name: 'Monitor',
+      tool_response: { taskId: 'bmon1', timeoutMs: 3600000, persistent: false }
+    })
+    await postHook(port, 'hive-session-1', 'stop', {
+      hook_event_name: 'Stop',
+      last_assistant_message: 'Waiting for the build to finish',
+      background_tasks: [{ id: 'bmon1', type: 'shell', status: 'running' }],
+      session_crons: []
+    })
+    await vi.waitFor(() => expect(statusPublishes()).toHaveLength(2))
+    expect(statusPublishes()[1]).toMatchObject({
+      status: 'completed',
+      metadata: {
+        hookEventName: 'Stop',
+        completion: 'waiting',
+        pendingTasks: 1,
+        pendingWakeups: 0,
+        ignoredShells: 0
+      }
+    })
+
+    // The monitor fires and resumes the agent.
+    await postHook(port, 'hive-session-1', 'start', {
+      hook_event_name: 'UserPromptSubmit',
+      permission_mode: 'default',
+      prompt:
+        '<task-notification>\n<task-id>bmon1</task-id>\n<status>completed</status>\n</task-notification>'
+    })
+    await vi.waitFor(() => expect(statusPublishes()).toHaveLength(3))
+    expect(statusPublishes()[2].metadata).not.toHaveProperty('completion')
+
+    // A one-shot scheduled wakeup with nothing else in flight: still waiting.
+    await postHook(port, 'hive-session-1', 'stop', {
+      hook_event_name: 'Stop',
+      last_assistant_message: 'Will check back in a few minutes',
+      background_tasks: [],
+      session_crons: [{ id: '0512d868', schedule: '4 15 * * *', recurring: false, prompt: 'say WOKE' }]
+    })
+    await vi.waitFor(() => expect(statusPublishes()).toHaveLength(4))
+    expect(statusPublishes()[3]).toMatchObject({
+      status: 'completed',
+      metadata: { completion: 'waiting', pendingTasks: 0, pendingWakeups: 1 }
+    })
+
+    // The cron fires as an ordinary prompt, then the agent finishes for real
+    // — with a dev server it started still running in the background. That
+    // shell would never exit on its own, so it must not hold the ticket.
+    await postHook(port, 'hive-session-1', 'start', {
+      hook_event_name: 'UserPromptSubmit',
+      permission_mode: 'default',
+      prompt: 'say WOKE'
+    })
+    await postHook(port, 'hive-session-1', 'tool', {
+      hook_event_name: 'PostToolUse',
+      tool_name: 'Bash',
+      tool_input: { command: 'npx expo start', run_in_background: true },
+      tool_response: { stdout: '', stderr: '', backgroundTaskId: 'bmetro' }
+    })
+    await postHook(port, 'hive-session-1', 'stop', {
+      hook_event_name: 'Stop',
+      last_assistant_message: 'FINISHED',
+      background_tasks: [{ id: 'bmetro', type: 'shell', status: 'running', command: 'npx expo start' }],
+      session_crons: []
+    })
+    await vi.waitFor(() => expect(statusPublishes()).toHaveLength(6))
+    expect(statusPublishes()[5]).toMatchObject({
+      status: 'completed',
+      metadata: {
+        hookEventName: 'Stop',
+        completion: 'completed',
+        pendingTasks: 0,
+        pendingWakeups: 0,
+        ignoredShells: 1
+      }
+    })
+  })
+
+  it('stamps a legacy Stop (no arrays) as unknown and leaves StopFailure unclassified', async () => {
+    const { port } = await getClaudeHookServer()
+
+    await postHook(port, 'hive-session-legacy', 'stop', {
+      hook_event_name: 'Stop',
+      last_assistant_message: 'Done.'
+    })
+    await vi.waitFor(() => expect(statusPublishes()).toHaveLength(1))
+    expect(statusPublishes()[0].metadata).toMatchObject({
+      completion: 'unknown',
+      pendingTasks: 0,
+      pendingWakeups: 0
+    })
+
+    await postHook(port, 'hive-session-failure', 'stop', {
+      hook_event_name: 'StopFailure',
+      error: 'rate_limit',
+      background_tasks: [],
+      session_crons: []
+    })
+    await vi.waitFor(() => expect(statusPublishes()).toHaveLength(2))
+    expect(statusPublishes()[1]).toMatchObject({ status: 'completed' })
+    expect(statusPublishes()[1].metadata).not.toHaveProperty('completion')
   })
 })

@@ -96,7 +96,14 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
     (s) => s.embeddedTerminalBackend
   ) as EmbeddedTerminalBackend
   const effectiveBackendType = backendTypeOverride ?? embeddedTerminalBackend
+  // App-level terminal font size (Settings › Terminal). Applies to BOTH
+  // backends: the native Ghostty surface bakes it in at creation, and the
+  // xterm backend (used by every Claude/Codex CLI session, which force xterm)
+  // gets it via mount opts / setFontSize. It takes precedence over the
+  // `font-size` line in the user's Ghostty config file.
   const ghosttyFontSize = useSettingsStore((s) => s.ghosttyFontSize)
+  const ghosttyFontSizeRef = useRef(ghosttyFontSize)
+  ghosttyFontSizeRef.current = ghosttyFontSize
   const ghosttyOverlaySuppressed = useLayoutStore((s) => s.ghosttyOverlaySuppressed)
 
   const effectiveVisible = isVisible && !ghosttyOverlaySuppressed
@@ -317,6 +324,9 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
       // silently drop the terminal onto a proportional fallback font and
       // break cell metrics ("weird font" rendering).
       let resolvedFontFamily: string | undefined
+      const fontSize =
+        clampTerminalFontSize(ghosttyFontSizeRef.current || undefined) ??
+        clampTerminalFontSize(config.fontSize)
       if (backendType === 'xterm') {
         await ensureTerminalFontsLoaded()
         const ghosttyFamilies =
@@ -332,7 +342,9 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
         terminalApi.logClientDiagnostics('xterm-font-resolution', {
           terminalId,
           ghosttyFamilies: ghosttyFamilies ?? null,
-          ghosttyFontSize: config.fontSize ?? null,
+          ghosttyConfigFontSize: config.fontSize ?? null,
+          settingFontSize: ghosttyFontSizeRef.current ?? null,
+          appliedFontSize: fontSize ?? null,
           resolvedFontFamily: resolved.fontFamily,
           primary: resolved.primary,
           primaryResolved: resolved.primaryResolved,
@@ -363,7 +375,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
           terminalId,
           cwd,
           fontFamily: resolvedFontFamily ?? config.fontFamily,
-          fontSize: clampTerminalFontSize(config.fontSize),
+          fontSize,
           cursorStyle: config.cursorStyle,
           scrollback: config.scrollbackLimit,
           shell: config.shell,
@@ -437,13 +449,20 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(fu
     }
   }, [setupTerminal, effectiveBackendType])
 
-  // Restart the Ghostty terminal when font size changes so the new size takes effect.
-  // We track the previous value so the effect only fires on actual changes, not on mount.
+  // Apply font size changes at runtime. xterm updates in place (no PTY
+  // restart, so CLI sessions keep their scrollback); Ghostty bakes the size
+  // into the surface at creation, so it is recreated. We track the previous
+  // value so the effect only fires on actual changes, not on mount.
   const prevGhosttyFontSizeRef = useRef(ghosttyFontSize)
   useEffect(() => {
     if (prevGhosttyFontSizeRef.current === ghosttyFontSize) return
     prevGhosttyFontSizeRef.current = ghosttyFontSize
 
+    if (activeBackendTypeRef.current === 'xterm') {
+      const size = clampTerminalFontSize(ghosttyFontSize || undefined)
+      if (size !== undefined) backendRef.current?.setFontSize?.(size)
+      return
+    }
     if (activeBackendTypeRef.current !== 'ghostty') return
 
     // Recreate the surface with the new font size

@@ -18,6 +18,7 @@ import {
   type KanbanSessionEvent
 } from './store-coordination'
 import { CUSTOM_MODEL_PROVIDER_ID } from '@shared/types/custom-provider'
+import { isClaudeCliCompletionDetected } from '@shared/types/claude-cli-stop-completion'
 import { isPlanLike } from '../lib/constants'
 import { useConnectionStore } from './useConnectionStore'
 import { usePinnedStore } from './usePinnedStore'
@@ -226,11 +227,63 @@ export interface PendingDoneMove {
   /** Connection flow: member worktrees still to merge after the current one */
   remainingWorktrees?: { worktreeId: string; projectId: string }[]
   /**
+   * Connection flow: member worktrees whose merge hit conflicts earlier in
+   * this queue. The queue keeps going past them, but the ticket stays put
+   * once the last member finishes so the conflicts can be fixed first.
+   */
+  conflictedWorktrees?: { worktreeId: string; projectId: string }[]
+  /**
    * Connection-project flow: offer the archive/keep step for each member
    * worktree (plain connections skip it — archiving would tear a worktree
    * out of a connection the user still needs).
    */
   offerArchive?: boolean
+}
+
+/**
+ * Stale async completion (e.g. a merge resolving after the dialog was
+ * dismissed and another ticket set a new pending move) must not advance or
+ * move an unrelated pending state
+ */
+function pendingDoneMoveMatches(
+  pending: PendingDoneMove,
+  expected?: { ticketId: string; projectId: string; worktreeId?: string }
+): boolean {
+  return (
+    !expected ||
+    (expected.ticketId === pending.ticketId &&
+      expected.projectId === pending.projectId &&
+      expected.worktreeId === pending.worktreeId)
+  )
+}
+
+/**
+ * Connection flow: the pending move for the next member worktree, or null
+ * when the current member was the last one.
+ */
+function nextPendingDoneMove(
+  pending: PendingDoneMove,
+  conflictedWorktrees: NonNullable<PendingDoneMove['conflictedWorktrees']>
+): PendingDoneMove | null {
+  const [nextWorktree, ...restWorktrees] = pending.remainingWorktrees ?? []
+  if (!nextWorktree) return null
+  return {
+    ticketId: pending.ticketId,
+    projectId: pending.projectId,
+    sortOrder: pending.sortOrder,
+    targetColumn: pending.targetColumn,
+    worktreeId: nextWorktree.worktreeId,
+    worktreeProjectId: nextWorktree.projectId,
+    remainingWorktrees: restWorktrees,
+    offerArchive: pending.offerArchive,
+    ...(conflictedWorktrees.length > 0 ? { conflictedWorktrees } : {})
+  }
+}
+
+function toastConflictedDoneMove(count: number): void {
+  toast.warning(
+    `Merge conflicts in ${count} project${count !== 1 ? 's' : ''} — ticket not moved. Fix the conflicts and move it again.`
+  )
 }
 
 // ── State interface ────────────────────────────────────────────────────
@@ -322,6 +375,15 @@ interface KanbanState {
     projectId: string
     worktreeId?: string
   }) => Promise<void>
+  /**
+   * Connection flow: the current member's merge hit conflicts. Record it and
+   * advance to the next member instead of aborting the whole queue.
+   */
+  continueDoneMoveAfterConflict: (expected?: {
+    ticketId: string
+    projectId: string
+    worktreeId?: string
+  }) => void
 
   // ── Session coordination ────────────────────────────────────────────
   syncTicketWithSession: (sessionId: string, event: KanbanSessionEvent) => void
@@ -551,14 +613,35 @@ export const useKanbanStore = create<KanbanState>()(
             // asking/no-status, so we don't yank not-yet-started or actively-
             // running sessions out of in_progress.
             if (status !== 'completed' && status !== 'plan_ready') continue
+            const entry = statuses[ticket.current_session_id]
             // An API-errored completion produced no plan — move to review
             // (needs attention) but never flag plan_ready, matching the
             // session_error path this reconcile stands in for.
-            const apiErrored = Boolean(statuses[ticket.current_session_id]?.apiError)
+            const apiErrored = Boolean(entry?.apiError)
+            // Same completion rule as the live session_completed path: a
+            // Claude CLI stop that was only a pause is not a finish. The
+            // ticket stays in progress, marked awaiting completion, and is
+            // advanced to review only once the real completion lands.
+            const completion = entry?.completion
+            if (
+              status === 'completed' &&
+              !apiErrored &&
+              completion !== undefined &&
+              !isClaudeCliCompletionDetected(completion)
+            ) {
+              if (!ticket.awaiting_completion) {
+                get()
+                  .updateTicket(ticket.id, projectId, { awaiting_completion: true })
+                  .catch(() => {})
+              }
+              continue
+            }
             if (isPlanLike(ticket.mode) && !ticket.plan_ready && !apiErrored) {
               get().updateTicket(ticket.id, projectId, { plan_ready: true }).catch(() => {})
             }
-            get().moveTicket(ticket.id, projectId, 'review', ticket.sort_order).catch(() => {})
+            get()
+              .moveTicket(ticket.id, projectId, 'review', ticket.sort_order)
+              .catch(() => {})
           } else if (ticket.column === 'done' || ticket.column === 'merged') {
             // Recover an explicit follow-up or plan-approval reopen this
             // project missed while unloaded. Only while the session's run is
@@ -695,7 +778,14 @@ export const useKanbanStore = create<KanbanState>()(
                     data.unread ??
                     (data.column !== undefined && data.column !== t.column
                       ? data.column === 'review'
-                      : t.unread)
+                      : t.unread),
+                  // Likewise a column change drops awaiting_completion unless
+                  // the update sets it explicitly
+                  awaiting_completion:
+                    data.awaiting_completion ??
+                    (data.column !== undefined && data.column !== t.column
+                      ? false
+                      : t.awaiting_completion)
                 }
               : t
           )
@@ -1046,7 +1136,10 @@ export const useKanbanStore = create<KanbanState>()(
                   sort_order: sortOrder,
                   updated_at: movedAt,
                   column_changed_at: t.column === column ? t.column_changed_at : movedAt,
-                  unread: t.column === column ? t.unread : column === 'review'
+                  unread: t.column === column ? t.unread : column === 'review',
+                  // Mirror the backend rule: a column change drops
+                  // awaiting_completion (only a paused in-progress session sets it).
+                  awaiting_completion: t.column === column ? t.awaiting_completion : false
                 }
               : t
           )
@@ -1306,23 +1399,52 @@ export const useKanbanStore = create<KanbanState>()(
             // a done/merged ticket reopens it.
             switch (event.type) {
               case 'session_completed': {
-                // Plan tickets: surface the finished plan for the review UI.
-                if (isPlanLike(ticket.mode) && !ticket.plan_ready) {
-                  get()
-                    .updateTicket(ticket.id, projectId, { plan_ready: true })
-                    .catch(() => {})
-                }
-                // The session finished → its progress bar is gone. Any non-terminal
-                // ticket must advance to review regardless of mode/plan state (board
-                // invariant: in_progress ⇔ a running progress bar). Move is idempotent.
-                if (
-                  ticket.column !== 'review' &&
-                  ticket.column !== 'done' &&
-                  ticket.column !== 'merged'
-                ) {
-                  get()
-                    .moveTicket(ticket.id, projectId, 'review', ticket.sort_order)
-                    .catch(() => {})
+                // Claude CLI sessions say whether the turn ended with a real
+                // completion or a pause (background tasks / scheduled wakeups
+                // still pending, or no Stop hook at all). Other providers carry
+                // no signal, so their tickets are never held back.
+                const paused =
+                  event.completion !== undefined && !isClaudeCliCompletionDetected(event.completion)
+                if (paused) {
+                  // Not finished: the ticket stays in progress with the "still
+                  // waiting" hourglass where its progress bar was. No review
+                  // move — and so no push notification — until the real
+                  // completion lands. A repeated pause changes nothing.
+                  if (ticket.column === 'in_progress' && !ticket.awaiting_completion) {
+                    get()
+                      .updateTicket(ticket.id, projectId, { awaiting_completion: true })
+                      .catch(() => {})
+                  }
+                } else {
+                  // Plan tickets: surface the finished plan for the review UI.
+                  if (isPlanLike(ticket.mode) && !ticket.plan_ready) {
+                    get()
+                      .updateTicket(ticket.id, projectId, { plan_ready: true })
+                      .catch(() => {})
+                  }
+                  // The session finished → its progress bar is gone. Any non-terminal
+                  // ticket must advance to review regardless of mode/plan state (board
+                  // invariant: in_progress ⇔ a running progress bar or a paused one).
+                  // Move is idempotent; entering review drops awaiting_completion.
+                  if (
+                    ticket.column !== 'review' &&
+                    ticket.column !== 'done' &&
+                    ticket.column !== 'merged'
+                  ) {
+                    get()
+                      .moveTicket(ticket.id, projectId, 'review', ticket.sort_order)
+                      .catch(() => {})
+                  } else if (ticket.column === 'review' && ticket.awaiting_completion) {
+                    // A ticket an earlier version parked in review while paused:
+                    // the real completion clears the mark and re-arms the unread
+                    // dot so the finish is noticed.
+                    get()
+                      .updateTicket(ticket.id, projectId, {
+                        awaiting_completion: false,
+                        unread: true
+                      })
+                      .catch(() => {})
+                  }
                 }
                 // Accumulate token delta to ticket's persistent total
                 if (event.tokenDelta && event.tokenDelta > 0) {
@@ -1479,6 +1601,14 @@ export const useKanbanStore = create<KanbanState>()(
                     .updateTicket(ticket.id, projectId, { plan_ready: false })
                     .catch(() => {})
                 }
+                // A resumed run (a background task's notification, a fired
+                // wakeup, a follow-up) ends a pause: the hourglass gives way to
+                // the progress bar again.
+                if (ticket.column === 'in_progress' && ticket.awaiting_completion) {
+                  get()
+                    .updateTicket(ticket.id, projectId, { awaiting_completion: false })
+                    .catch(() => {})
+                }
                 // Archived tickets never reopen: clearing the column while
                 // archived_at persists would strand them (the archive UI only
                 // renders archived done/merged, so Unarchive would be lost).
@@ -1624,43 +1754,52 @@ export const useKanbanStore = create<KanbanState>()(
 
       completeDoneMove: async (expected) => {
         const pending = get().pendingDoneMove
-        if (!pending) return
-        // Stale async completion (e.g. a merge resolving after the dialog was
-        // dismissed and another ticket set a new pending move) must not
-        // advance or move an unrelated pending state
-        if (
-          expected &&
-          (expected.ticketId !== pending.ticketId ||
-            expected.projectId !== pending.projectId ||
-            expected.worktreeId !== pending.worktreeId)
-        ) {
-          return
-        }
+        if (!pending || !pendingDoneMoveMatches(pending, expected)) return
         // Connection flow: advance to the next member worktree before moving
         // the ticket — the move only happens after the last worktree finishes
-        const [nextWorktree, ...restWorktrees] = pending.remainingWorktrees ?? []
-        if (nextWorktree) {
-          set({
-            pendingDoneMove: {
-              ticketId: pending.ticketId,
-              projectId: pending.projectId,
-              sortOrder: pending.sortOrder,
-              targetColumn: pending.targetColumn,
-              worktreeId: nextWorktree.worktreeId,
-              worktreeProjectId: nextWorktree.projectId,
-              remainingWorktrees: restWorktrees,
-              offerArchive: pending.offerArchive
-            }
-          })
+        const conflictedWorktrees = pending.conflictedWorktrees ?? []
+        const next = nextPendingDoneMove(pending, conflictedWorktrees)
+        if (next) {
+          set({ pendingDoneMove: next })
           return
         }
         set({ pendingDoneMove: null })
+        // Earlier members hit conflicts — the queue ran to the end so every
+        // member got checked, but the ticket stays until they're resolved
+        if (conflictedWorktrees.length > 0) {
+          toastConflictedDoneMove(conflictedWorktrees.length)
+          return
+        }
         await get().moveTicket(
           pending.ticketId,
           pending.projectId,
           pending.targetColumn,
           pending.sortOrder
         )
+      },
+
+      continueDoneMoveAfterConflict: (expected) => {
+        const pending = get().pendingDoneMove
+        if (!pending || !pendingDoneMoveMatches(pending, expected)) return
+        const conflictedWorktrees = [
+          ...(pending.conflictedWorktrees ?? []),
+          ...(pending.worktreeId
+            ? [
+                {
+                  worktreeId: pending.worktreeId,
+                  projectId: pending.worktreeProjectId ?? pending.projectId
+                }
+              ]
+            : [])
+        ]
+        const next = nextPendingDoneMove(pending, conflictedWorktrees)
+        if (next) {
+          set({ pendingDoneMove: next })
+          return
+        }
+        // Last member — never move the ticket past unresolved conflicts
+        set({ pendingDoneMove: null })
+        toastConflictedDoneMove(conflictedWorktrees.length)
       },
 
       // ── getTicketsForProject ─────────────────────────────────────

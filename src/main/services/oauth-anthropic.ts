@@ -9,18 +9,27 @@ import type { Pkce } from './oauth-pkce'
 export const ANTHROPIC_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e'
 export const ANTHROPIC_TOKEN_URL = 'https://console.anthropic.com/v1/oauth/token'
 export const ANTHROPIC_AUTHORIZE_URL = 'https://claude.ai/oauth/authorize'
+/**
+ * Anthropic's hosted "copy this code" callback page. The interactive login
+ * flow (login-service.ts) passes its own loopback `http://localhost:<port>/callback`
+ * redirect instead — the same shape Claude Code uses — so this only serves as
+ * the default for callers that don't supply one.
+ */
 export const ANTHROPIC_REDIRECT_URI = 'https://console.anthropic.com/oauth/code/callback'
 export const ANTHROPIC_SCOPE = 'org:create_api_key user:profile user:inference'
 
 const REQUEST_TIMEOUT_MS = 10_000
 const BODY_SNIPPET_LENGTH = 500
 
-export function buildAnthropicAuthorizeUrl(pkce: Pkce): string {
+export function buildAnthropicAuthorizeUrl(
+  pkce: Pkce,
+  redirectUri: string = ANTHROPIC_REDIRECT_URI
+): string {
   const url = new URL(ANTHROPIC_AUTHORIZE_URL)
   url.searchParams.set('code', 'true')
   url.searchParams.set('client_id', ANTHROPIC_CLIENT_ID)
   url.searchParams.set('response_type', 'code')
-  url.searchParams.set('redirect_uri', ANTHROPIC_REDIRECT_URI)
+  url.searchParams.set('redirect_uri', redirectUri)
   url.searchParams.set('scope', ANTHROPIC_SCOPE)
   url.searchParams.set('code_challenge', pkce.challenge)
   url.searchParams.set('code_challenge_method', 'S256')
@@ -29,12 +38,22 @@ export function buildAnthropicAuthorizeUrl(pkce: Pkce): string {
 }
 
 export type AnthropicRefreshOutcome =
-  | { ok: true; result: { accessToken: string; refreshToken: string; expiresAt: number }; scope?: string }
+  | {
+      ok: true
+      result: { accessToken: string; refreshToken: string; expiresAt: number }
+      scope?: string
+    }
   | { ok: false; needsLogin: true; error: string }
 
-async function readCappedBody(response: Response): Promise<string> {
+/**
+ * Read the full response body. Do NOT cap this: successful token responses
+ * carry JWTs that easily exceed a few KB, and truncating them before
+ * `JSON.parse` fails the whole login with an "unexpected end of JSON" error.
+ * Error messages slice to `BODY_SNIPPET_LENGTH` at the call sites instead.
+ */
+async function readBody(response: Response): Promise<string> {
   try {
-    return (await response.text()).slice(0, 1024)
+    return await response.text()
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return `Failed to read response body: ${message}`
@@ -68,13 +87,15 @@ async function postJson(body: unknown): Promise<Response> {
  * `invalid_grant`; throws on any other failure (network error or other
  * non-2xx status).
  */
-export async function refreshAnthropicToken(refreshToken: string): Promise<AnthropicRefreshOutcome> {
+export async function refreshAnthropicToken(
+  refreshToken: string
+): Promise<AnthropicRefreshOutcome> {
   const response = await postJson({
     grant_type: 'refresh_token',
     refresh_token: refreshToken,
     client_id: ANTHROPIC_CLIENT_ID
   })
-  const body = await readCappedBody(response)
+  const body = await readBody(response)
 
   if (response.status === 401 || response.status === 400 || body.includes('invalid_grant')) {
     return {
@@ -85,7 +106,9 @@ export async function refreshAnthropicToken(refreshToken: string): Promise<Anthr
   }
 
   if (!response.ok) {
-    throw new Error(`Anthropic token refresh returned ${response.status}: ${body.slice(0, BODY_SNIPPET_LENGTH)}`)
+    throw new Error(
+      `Anthropic token refresh returned ${response.status}: ${body.slice(0, BODY_SNIPPET_LENGTH)}`
+    )
   }
 
   const data = JSON.parse(body) as {
@@ -103,7 +126,9 @@ export async function refreshAnthropicToken(refreshToken: string): Promise<Anthr
   }
 
   const rotatedRefreshToken =
-    typeof data.refresh_token === 'string' && data.refresh_token.length > 0 ? data.refresh_token : refreshToken
+    typeof data.refresh_token === 'string' && data.refresh_token.length > 0
+      ? data.refresh_token
+      : refreshToken
 
   return {
     ok: true,
@@ -124,24 +149,30 @@ export interface AnthropicTokenExchange {
   account?: { uuid?: string; emailAddress?: string }
 }
 
-/** Exchange an authorization code (from the interactive login flow) for tokens. */
+/**
+ * Exchange an authorization code (from the interactive login flow) for tokens.
+ * `redirectUri` must be the exact value the authorize URL was built with.
+ */
 export async function exchangeAnthropicCode(
   code: string,
   state: string,
-  pkce: Pkce
+  pkce: Pkce,
+  redirectUri: string = ANTHROPIC_REDIRECT_URI
 ): Promise<AnthropicTokenExchange> {
   const response = await postJson({
     grant_type: 'authorization_code',
     code,
     state,
-    redirect_uri: ANTHROPIC_REDIRECT_URI,
+    redirect_uri: redirectUri,
     client_id: ANTHROPIC_CLIENT_ID,
     code_verifier: pkce.verifier
   })
-  const body = await readCappedBody(response)
+  const body = await readBody(response)
 
   if (!response.ok) {
-    throw new Error(`Anthropic token exchange returned ${response.status}: ${body.slice(0, BODY_SNIPPET_LENGTH)}`)
+    throw new Error(
+      `Anthropic token exchange returned ${response.status}: ${body.slice(0, BODY_SNIPPET_LENGTH)}`
+    )
   }
 
   const data = JSON.parse(body) as {

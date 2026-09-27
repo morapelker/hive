@@ -10,10 +10,15 @@
  * project — so tickets/history attribute to the saved board.
  */
 import { useConnectionStore } from '@/stores/useConnectionStore'
+import { isAgentCli } from '@shared/types/agent-sdk'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useSessionStore } from '@/stores/useSessionStore'
-import { useSettingsStore, resolveModelForSdk } from '@/stores/useSettingsStore'
+import {
+  useSettingsStore,
+  resolveModelForSdk,
+  resolvePreferredAgentSdk
+} from '@/stores/useSettingsStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useUsageStore, resolveDefaultUsageProvider } from '@/stores/useUsageStore'
 import { connectionApi } from '@/api/connection-api'
@@ -54,7 +59,7 @@ export type ConnectionProjectTicket = Pick<KanbanTicket, 'id' | 'project_id' | '
 }
 
 type LaunchMode = 'build' | 'plan' | 'super-plan' | 'super-build'
-type LaunchSdk = 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex'
+type LaunchSdk = 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'codex-cli'
 
 export type ConnectionProjectLaunchTarget =
   | { type: 'new' }
@@ -130,7 +135,8 @@ function composePromptForSdk(
     options.claudeCli ||
     sessionAgentSdk === 'claude-code' ||
     sessionAgentSdk === 'codex' ||
-    sessionAgentSdk === 'claude-code-cli'
+    sessionAgentSdk === 'claude-code-cli' ||
+    sessionAgentSdk === 'codex-cli'
   const modePrefix = isSuperMode(mode)
     ? getSuperModePrefix(mode, sessionAgentSdk)
     : mode === 'plan' && !skipPrefix
@@ -149,8 +155,7 @@ function resolveQuickModel(): {
   model: { providerID: string; modelID: string; variant?: string }
 } {
   const settings = useSettingsStore.getState()
-  const rawSdk = settings.defaultAgentSdk ?? 'opencode'
-  const sdk: LaunchSdk = rawSdk === 'terminal' ? 'opencode' : rawSdk
+  const sdk: LaunchSdk = resolvePreferredAgentSdk(settings)
   const modeModel = settings.getModelForMode('build')
   if (modeModel && modeModel.agentSdk === sdk) {
     return {
@@ -333,7 +338,7 @@ export async function startTicketSessionOnConnectionInstance(args: {
     // Oversized goal prompts become a PLAN_{uuid}.md in the connection dir
     if (goalMode && goalCriteria && connectionPath) {
       const composed = composePromptForSdk(mode, sdk, promptText, goalMode, goalCriteria, {
-        claudeCli: sdk === 'claude-code-cli'
+        claudeCli: isAgentCli(sdk)
       })
       if (exceedsGoalPromptLimit(composed)) {
         const fileName = await createPlanFile(connectionPath, promptText.trim())
@@ -341,10 +346,9 @@ export async function startTicketSessionOnConnectionInstance(args: {
       }
     }
 
-    const cliPendingPrompt =
-      sdk === 'claude-code-cli'
-        ? composePromptForSdk(mode, sdk, promptText, goalMode, goalCriteria, { claudeCli: true })
-        : null
+    const cliPendingPrompt = isAgentCli(sdk)
+      ? composePromptForSdk(mode, sdk, promptText, goalMode, goalCriteria, { claudeCli: true })
+      : null
     const sessionResult = await useSessionStore
       .getState()
       .createConnectionSession(connectionId, sdk, mode, {
@@ -424,7 +428,7 @@ export async function startTicketSessionOnConnectionInstance(args: {
       useSessionStore.getState().setActiveSession(BOARD_TAB_ID)
     }
 
-    if (sessionAgentSdk === 'claude-code-cli') {
+    if (isAgentCli(sessionAgentSdk)) {
       const outboundPrompt =
         cliPendingPrompt ??
         composePromptForSdk(mode, sessionAgentSdk, promptText, goalMode, goalCriteria, {

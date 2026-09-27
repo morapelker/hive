@@ -10,6 +10,7 @@ vi.mock('../logger', () => ({
 
 import {
   ensureFolderTrustedInClaudeConfig,
+  ensureFoldersTrustedInClaudeConfig,
   ensureProjectTrustCheck,
   resolveClaudeConfigPath
 } from '../claude-trust'
@@ -143,6 +144,48 @@ describe('ensureFolderTrustedInClaudeConfig', () => {
   })
 })
 
+describe('ensureFoldersTrustedInClaudeConfig', () => {
+  it('trusts several folders in a single write', async () => {
+    await expect(
+      ensureFoldersTrustedInClaudeConfig(configPath, ['/repo/root', '/wt/root/feature'])
+    ).resolves.toBe(true)
+
+    expect(await readConfig()).toEqual({
+      projects: {
+        '/repo/root': { hasTrustDialogAccepted: true },
+        '/wt/root/feature': { hasTrustDialogAccepted: true }
+      }
+    })
+  })
+
+  it('does not rewrite the file when every folder is already trusted', async () => {
+    const original = `{"projects":{"/repo/root":{"hasTrustDialogAccepted":true},"/wt/a":{"hasTrustDialogAccepted":true}}}`
+    await writeFile(configPath, original)
+
+    await expect(
+      ensureFoldersTrustedInClaudeConfig(configPath, ['/repo/root', '/wt/a'])
+    ).resolves.toBe(true)
+
+    expect(await readFile(configPath, 'utf-8')).toBe(original)
+  })
+
+  it('only adds the folders that are missing', async () => {
+    await writeFile(
+      configPath,
+      JSON.stringify({ projects: { '/repo/root': { hasTrustDialogAccepted: true, lastCost: 1 } } })
+    )
+
+    await ensureFoldersTrustedInClaudeConfig(configPath, ['/repo/root', '/wt/a'])
+
+    expect(await readConfig()).toEqual({
+      projects: {
+        '/repo/root': { hasTrustDialogAccepted: true, lastCost: 1 },
+        '/wt/a': { hasTrustDialogAccepted: true }
+      }
+    })
+  })
+})
+
 describe('ensureProjectTrustCheck', () => {
   function makeDb(
     project: Project | null,
@@ -186,6 +229,55 @@ describe('ensureProjectTrustCheck', () => {
 
     await expect(readFile(configPath, 'utf-8')).rejects.toThrow()
     expect(db.updateProjectTrustCheck).not.toHaveBeenCalled()
+  })
+
+  it('trusts the worktree alongside the root — worktrees live outside the repo', async () => {
+    const db = makeDb(makeProject())
+
+    await ensureProjectTrustCheck(db, 'project-1', {
+      configPath,
+      worktreePath: '/home/dev/.hive-worktrees/project/project--feature'
+    })
+
+    expect(await readConfig()).toEqual({
+      projects: {
+        '/repo/root': { hasTrustDialogAccepted: true },
+        '/home/dev/.hive-worktrees/project/project--feature': { hasTrustDialogAccepted: true }
+      }
+    })
+    expect(db.updateProjectTrustCheck).toHaveBeenCalledWith('project-1', true)
+  })
+
+  it('still trusts a new worktree when the project is already stamped trust_check_done', async () => {
+    await writeFile(
+      configPath,
+      JSON.stringify({ projects: { '/repo/root': { hasTrustDialogAccepted: true } } })
+    )
+    const db = makeDb(makeProject({ trust_check_done: true }))
+
+    await ensureProjectTrustCheck(db, 'project-1', {
+      configPath,
+      worktreePath: '/home/dev/.hive-worktrees/project/project--feature'
+    })
+
+    expect(await readConfig()).toEqual({
+      projects: {
+        '/repo/root': { hasTrustDialogAccepted: true },
+        '/home/dev/.hive-worktrees/project/project--feature': { hasTrustDialogAccepted: true }
+      }
+    })
+    // The root stamp is already set; nothing to re-stamp.
+    expect(db.updateProjectTrustCheck).not.toHaveBeenCalled()
+  })
+
+  it('does not duplicate the root entry when the session runs in the repo root itself', async () => {
+    const db = makeDb(makeProject())
+
+    await ensureProjectTrustCheck(db, 'project-1', { configPath, worktreePath: '/repo/root' })
+
+    expect(await readConfig()).toEqual({
+      projects: { '/repo/root': { hasTrustDialogAccepted: true } }
+    })
   })
 
   it('does not stamp trust_check_done when the config could not be updated', async () => {

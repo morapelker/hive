@@ -6,7 +6,7 @@
  * SDKs apart were re-encoded as raw string comparisons (`=== 'claude-code-cli'`,
  * `=== 'terminal' || === 'claude-code-cli'`, etc.) across many files.
  *
- * Centralizing both means adding a 6th SDK is a single-point change here, and
+ * Centralizing both means adding a 7th SDK is a single-point change here, and
  * the intent of each comparison ("is this terminal-backed?", "does it share the
  * Claude model catalog?") is named rather than re-derived at each call site.
  *
@@ -19,13 +19,14 @@
  * The canonical list of agent-SDK identifiers. The {@link AgentSdk} type is
  * derived from this, and the zod schemas that validate IPC/DB payloads build on
  * it (`z.enum(AGENT_SDK_VALUES)`) — so the type and every runtime validator stay
- * in lockstep and adding a 6th SDK is a one-line change here.
+ * in lockstep and adding a 7th SDK is a one-line change here.
  */
 export const AGENT_SDK_VALUES = [
   'opencode',
   'claude-code',
   'claude-code-cli',
   'codex',
+  'codex-cli',
   'terminal'
 ] as const
 
@@ -41,13 +42,30 @@ export function isClaudeCli(sdk: MaybeSdk): boolean {
   return sdk === 'claude-code-cli'
 }
 
+/** The Codex CLI session type (terminal-backed Codex TUI, distinct from the app-server-driven `codex`). */
+export function isCodexCli(sdk: MaybeSdk): boolean {
+  return sdk === 'codex-cli'
+}
+
+/**
+ * The hook-instrumented agent CLIs (`claude-code-cli`, `codex-cli`): a TUI
+ * running in a PTY whose lifecycle Hive follows through the CLI's own hooks
+ * (status, questions, plans, session id capture, resume). Everything that is
+ * about "a CLI session in a terminal" — spawn/restart, prompt injection via
+ * the PTY, the ticket modal's terminal portal, kanban status sync — applies
+ * to both; only the spawner and hook payload adapter differ per CLI.
+ */
+export function isAgentCli(sdk: MaybeSdk): boolean {
+  return sdk === 'claude-code-cli' || sdk === 'codex-cli'
+}
+
 /**
  * Sessions whose UI is a live terminal surface rather than the OpenCode-style
- * streaming view: the bare `terminal` SDK and `claude-code-cli`. These share
+ * streaming view: the bare `terminal` SDK and the agent CLIs. These share
  * mount/teardown handling and must NOT be routed through the OpenCode IPC.
  */
 export function isTerminalBacked(sdk: MaybeSdk): boolean {
-  return sdk === 'terminal' || sdk === 'claude-code-cli'
+  return sdk === 'terminal' || isAgentCli(sdk)
 }
 
 /** Either Claude variant — the SDK-driven `claude-code` or the terminal-backed `claude-code-cli`. */
@@ -55,20 +73,53 @@ export function isClaudeFamily(sdk: MaybeSdk): boolean {
   return sdk === 'claude-code' || sdk === 'claude-code-cli'
 }
 
-/** SDKs whose CLI understands the `/goal` prompt prefix (persistent goal mode). */
-export function supportsGoalMode(sdk: MaybeSdk): boolean {
-  return sdk === 'codex' || sdk === 'claude-code-cli'
+/** Either Codex variant — the app-server-driven `codex` or the terminal-backed `codex-cli`. */
+export function isCodexFamily(sdk: MaybeSdk): boolean {
+  return sdk === 'codex' || sdk === 'codex-cli'
 }
 
 /**
- * Map an SDK to the one whose model catalog it uses. `claude-code-cli` has no
- * catalog of its own — it shares `claude-code`'s — so model-listing/selection
- * code should resolve through this rather than special-casing the CLI inline.
+ * SDKs whose CLI understands the `/goal` prompt prefix (persistent goal mode).
+ * The codex TUI only parses slash commands typed into its composer, so the
+ * codex-cli spawner delivers slash-prefixed prompts through the PTY rather
+ * than argv (see codex-cli-spawner.ts).
+ */
+export function supportsGoalMode(sdk: MaybeSdk): boolean {
+  return isCodexFamily(sdk) || sdk === 'claude-code-cli'
+}
+
+/**
+ * Map an SDK to the one whose model catalog it uses. The terminal-backed CLIs
+ * have no catalog of their own — `claude-code-cli` shares `claude-code`'s and
+ * `codex-cli` shares `codex`'s — so model-listing/selection code should
+ * resolve through this rather than special-casing the CLIs inline.
  * Overloaded so nullable inputs (optional IPC payload fields) pass `null` /
  * `undefined` through unchanged.
  */
 export function toModelCatalogSdk(sdk: AgentSdk): AgentSdk
 export function toModelCatalogSdk(sdk: AgentSdk | null | undefined): AgentSdk | null | undefined
 export function toModelCatalogSdk(sdk: AgentSdk | null | undefined): AgentSdk | null | undefined {
-  return sdk === 'claude-code-cli' ? 'claude-code' : sdk
+  if (sdk === 'claude-code-cli') return 'claude-code'
+  if (sdk === 'codex-cli') return 'codex'
+  return sdk
+}
+
+/** Human-readable name of an agent SDK, shared by pickers, badges and error messages. */
+export function getAgentSdkDisplayName(sdk: MaybeSdk): string {
+  switch (sdk) {
+    case 'opencode':
+      return 'OpenCode'
+    case 'claude-code':
+      return 'Claude Code'
+    case 'claude-code-cli':
+      return 'Claude Code (CLI)'
+    case 'codex':
+      return 'Codex'
+    case 'codex-cli':
+      return 'Codex (CLI)'
+    case 'terminal':
+      return 'Terminal'
+    default:
+      return typeof sdk === 'string' && sdk ? sdk : 'Agent'
+  }
 }

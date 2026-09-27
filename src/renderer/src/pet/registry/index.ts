@@ -35,6 +35,9 @@ for (const [manifestPath, manifest] of Object.entries(manifestModules)) {
   pets.set(manifest.id, {
     ...manifest,
     resolvedAssets,
+    resolvedWorkingLottieVariants: manifest.workingLottieVariants?.map(
+      (relativePath) => assetModules[`${baseDir}/${relativePath}`] ?? relativePath
+    ),
     resolvedLottieAssets: Object.keys(resolvedLottieAssets).length
       ? resolvedLottieAssets
       : undefined

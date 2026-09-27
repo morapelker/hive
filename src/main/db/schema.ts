@@ -1,4 +1,28 @@
-export const CURRENT_SCHEMA_VERSION = 47
+export const CURRENT_SCHEMA_VERSION = 50
+
+/**
+ * Voice dictation history (v48): every transcript the local speech model produced, newest
+ * first by `created_at`. `text` is the delivered text (after AI cleanup and dictionary passes),
+ * `raw_text` the local transcript when it differed. CREATE TABLE IF NOT EXISTS, replayed by
+ * ensureVoiceHistoryTable() in database.ts.
+ */
+export const VOICE_HISTORY_TABLES_SQL = `
+  CREATE TABLE IF NOT EXISTS voice_history (
+    id           TEXT PRIMARY KEY,
+    text         TEXT NOT NULL,
+    raw_text     TEXT DEFAULT NULL,
+    duration_ms  INTEGER NOT NULL DEFAULT 0,
+    cleaned      INTEGER NOT NULL DEFAULT 0,
+    speech_model TEXT NOT NULL DEFAULT '',
+    created_at   TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_voice_history_created ON voice_history(created_at);
+`
+
+export const VOICE_HISTORY_TABLES_DROP_SQL = `
+  DROP INDEX IF EXISTS idx_voice_history_created;
+  DROP TABLE IF EXISTS voice_history;
+`
 
 export const SCHEMA_SQL = `
 -- Projects table
@@ -749,6 +773,39 @@ DROP TABLE IF EXISTS diff_comments;`
     name: 'add_project_trust_check',
     up: `-- NOTE: ALTER TABLE for projects.trust_check_done is handled idempotently by
          -- safeAddColumn() in database.ts to avoid "duplicate column" errors.`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
+  },
+  {
+    version: 48,
+    name: 'add_voice_history',
+    // Voice dictation history. CREATE TABLE IF NOT EXISTS, replayed by
+    // ensureVoiceHistoryTable() in database.ts.
+    up: VOICE_HISTORY_TABLES_SQL,
+    down: VOICE_HISTORY_TABLES_DROP_SQL
+  },
+  {
+    version: 49,
+    name: 'add_session_native_id_indexes',
+    // Lookups by the provider's own session id (getSessionByOpenCodeSessionId /
+    // getSessionByClaudeSessionId) ran as full table scans; the usage sweep does
+    // thousands of them per pass on the main thread.
+    up: `
+      CREATE INDEX IF NOT EXISTS idx_sessions_opencode_session_id
+        ON sessions(opencode_session_id);
+      CREATE INDEX IF NOT EXISTS idx_sessions_claude_session_id
+        ON sessions(claude_session_id);
+    `,
+    down: `
+      DROP INDEX IF EXISTS idx_sessions_opencode_session_id;
+      DROP INDEX IF EXISTS idx_sessions_claude_session_id;
+    `
+  },
+  {
+    version: 50,
+    name: 'add_ticket_awaiting_completion',
+    up: `-- NOTE: ALTER TABLE for kanban_tickets.awaiting_completion and
+         -- markdown_kanban_card_state.awaiting_completion is handled idempotently
+         -- by safeAddColumn() in database.ts to avoid "duplicate column" errors.`,
     down: `-- SQLite cannot drop columns; this is a no-op for safety`
   }
 ]

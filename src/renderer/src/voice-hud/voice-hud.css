@@ -1,0 +1,105 @@
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
+body {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-app-region: no-drag;
+  font-family:
+    ui-rounded,
+    'SF Pro Rounded',
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    system-ui,
+    sans-serif;
+  cursor: default;
+}
+
+.voice-hud-root {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+}
+
+/* Wispelker's pill: black capsule, 16/10 padding, 1pt inset hairline. */
+.voice-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-radius: 9999px;
+  background: rgba(0, 0, 0, 0.88);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.1),
+    0 8px 24px rgba(0, 0, 0, 0.35);
+  white-space: nowrap;
+  animation: voice-pill-in 160ms ease-out;
+}
+
+@keyframes voice-pill-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.voice-pill--clickable {
+  cursor: pointer;
+}
+
+.voice-bars {
+  display: flex;
+  align-items: center;
+  gap: 2.5px;
+  height: 24px;
+}
+
+.voice-bar {
+  width: 3px;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.95);
+  height: 3px;
+  transition: height 80ms linear;
+}
+
+.voice-bar--processing {
+  background: rgba(255, 255, 255, 0.55);
+  transition: none;
+}
+
+.voice-text {
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 14px;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.voice-percent,
+.voice-timer {
+  font-variant-numeric: tabular-nums;
+}
+
+.voice-timer {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.voice-text--notice {
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

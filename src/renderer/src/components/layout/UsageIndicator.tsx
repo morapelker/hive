@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
+import { OpenAIResetControls, OpenAIResetDialog } from './OpenAIResetControls'
 import {
   useUsageStore,
   useAccountStore,
@@ -18,7 +19,8 @@ import { MemberAvatarStack, type AccountMemberInfo } from './MemberAvatarStack'
 import { cn } from '@/lib/utils'
 import { Loader2, RefreshCw, Shuffle, Timer } from 'lucide-react'
 import { useAccountScheduleStore } from '@/stores/useAccountScheduleStore'
-import { autoSwitchIneligibilityReason } from '@/lib/auto-switch-score'
+import { autoSwitchIneligibilityReason, isFableWindow } from '@/lib/auto-switch-score'
+import { compareByResetTime } from '@/lib/usage-reset-order'
 import {
   AutoSwitchControls,
   ScheduleSwitchForm,
@@ -30,6 +32,7 @@ import type {
   OpenAIUsageData,
   SavedAccountDTO,
   SavedUsageStatus,
+  ScopedUsageWindow,
   AnthropicRateLimitState,
   AnthropicRateLimitWindow,
   UsageData,
@@ -122,6 +125,13 @@ function getStatusLabel(status?: string): string | null {
   if (status === 'rejected') return 'blocked'
   if (status === 'allowed_warning') return 'warning'
   return null
+}
+
+const FABLE_LABEL = 'Fable'
+
+/** The per-model Fable window from the usage payload's scoped limits, if any. */
+function findFableWindow(usage: UsageData | null | undefined): ScopedUsageWindow | undefined {
+  return usage?.scoped?.find(isFableWindow)
 }
 
 function getRateLimitWindow(
@@ -268,6 +278,7 @@ export interface UsageAccountRowProps {
   isLoginActive?: boolean
   highlightActive?: boolean
   onSwitch?: () => void
+  resetControls?: React.ReactNode
   onRefresh?: () => void
   onSignInAgain?: () => void
   members?: AccountMemberInfo[]
@@ -287,6 +298,7 @@ export function UsageAccountRow({
   highlightActive = false,
   onSwitch,
   onRefresh,
+  resetControls,
   onSignInAgain,
   members,
   membersLoading = false,
@@ -426,6 +438,7 @@ export function UsageAccountRow({
             </button>
           )}
           {row.isActive && provider && <RefreshCountdown provider={provider} />}
+          {resetControls}
         </div>
       )}
 
@@ -587,6 +600,7 @@ function ProviderToggle({
 }
 
 function ProviderUsagePopoverBody({ provider }: { provider: UsageProvider }): React.JSX.Element {
+  const [rowOrders, setRowOrders] = useState<Partial<Record<UsageProvider, string[]>>>({})
   const anthropicUsage = useUsageStore((s) => s.anthropicUsage)
   const anthropicRateLimit = useUsageStore((s) => s.anthropicRateLimit)
   const openaiUsage = useUsageStore((s) => s.openaiUsage)
@@ -612,6 +626,7 @@ function ProviderUsagePopoverBody({ provider }: { provider: UsageProvider }): Re
     (s) => s.autoSwitch[provider]?.thresholdPercent
   )
   const autoSwitchArmed = autoSwitchThreshold !== undefined
+  const ignoreFable = useSettingsStore((s) => s.ignoreFableForAutoSwitch)
   const telemetryEnabled = useSettingsStore((s) => isHiveTelemetryEnabled(s))
   const {
     membersByAccount,
@@ -653,10 +668,47 @@ function ProviderUsagePopoverBody({ provider }: { provider: UsageProvider }): Re
         ]
 
   // With multiple accounts, the active one goes first (and gets a neutral
-  // ring) so it's visible at the popover's natural top scroll position.
-  const orderedRows = [...accountRows].sort((a, b) => Number(b.isActive) - Number(a.isActive))
-  const highlightActive = accountRows.length > 1
+  // ring) so it's visible at the popover's natural top scroll position. Then
+  // come the accounts that could be switched to (no auto-switch ineligibility
+  // reason), and finally the ones that can't be a switch target — expired,
+  // failing, or already at/over the armed threshold. Within each group rows
+  // are ordered by when they free up: soonest 7d reset first, then Fable,
+  // then 5h as tie-breakers.
   const nowMs = Date.now()
+  const ineligibleReasons = new Map(
+    accountRows.map((row) => [
+      row.id,
+      autoSwitchIneligibilityReason(row, autoSwitchThreshold, nowMs, ignoreFable)
+    ])
+  )
+  // Freeze IDs, not row data, so refreshes and account switches update the
+  // contents without moving rows. Remember each provider across toggle changes
+  // until this popover closes. Accounts discovered later are appended.
+  let rowOrder = rowOrders[provider]
+  if (!rowOrder) {
+    rowOrder = [...accountRows]
+      .sort(
+        (a, b) =>
+          Number(b.isActive) - Number(a.isActive) ||
+          Number(!!ineligibleReasons.get(a.id)) - Number(!!ineligibleReasons.get(b.id)) ||
+          compareByResetTime(a.usage, b.usage, nowMs)
+      )
+      .map((row) => row.id)
+    setRowOrders({ ...rowOrders, [provider]: rowOrder })
+  } else {
+    const knownIds = new Set(rowOrder)
+    const newIds = accountRows.filter((row) => !knownIds.has(row.id)).map((row) => row.id)
+    if (newIds.length > 0) {
+      rowOrder = [...rowOrder, ...newIds]
+      setRowOrders({ ...rowOrders, [provider]: rowOrder })
+    }
+  }
+  const rowsById = new Map(accountRows.map((row) => [row.id, row]))
+  const orderedRows = rowOrder.flatMap((id) => {
+    const row = rowsById.get(id)
+    return row ? [row] : []
+  })
+  const highlightActive = accountRows.length > 1
 
   const membersFor = (rowEmail: string | null): AccountMemberInfo[] | undefined => {
     if (!telemetryEnabled) return undefined
@@ -699,14 +751,23 @@ function ProviderUsagePopoverBody({ provider }: { provider: UsageProvider }): Re
                 ? () => refreshSavedAccount(row.id, { userInitiated: true })
                 : undefined
             }
+            resetControls={
+              provider === 'openai' && savedAccounts.some((a) => a.id === row.id) ? (
+                <OpenAIResetControls
+                  accountId={row.id}
+                  email={row.email ?? 'this account'}
+                  availableCount={
+                    (savedAccounts.find((a) => a.id === row.id)?.last_usage as OpenAIUsageData | null)
+                      ?.rate_limit_reset_credits?.available_count
+                  }
+                  refreshedAt={savedAccounts.find((a) => a.id === row.id)?.last_fetched_at}
+                />
+              ) : undefined
+            }
             onSignInAgain={() => startLogin(provider, row.email ?? undefined)}
             members={membersFor(row.email)}
             membersLoading={membersLoading}
-            autoSwitchIneligibleReason={autoSwitchIneligibilityReason(
-              row,
-              autoSwitchThreshold,
-              nowMs
-            )}
+            autoSwitchIneligibleReason={ineligibleReasons.get(row.id) ?? null}
           />
         ))
       ) : (
@@ -769,10 +830,12 @@ export function ProviderUsageBlock({
   const autoSwitchThreshold = useAccountScheduleStore(
     (s) => s.autoSwitch[provider]?.thresholdPercent
   )
+  const ignoreFable = useSettingsStore((s) => s.ignoreFableForAutoSwitch)
 
   // Which provider the popover shows. The bottom toggle can point it at a
   // different provider than the hovered trigger; each open snaps it back.
   const [viewedProvider, setViewedProvider] = useState<UsageProvider>(provider)
+  const [popoverSession, setPopoverSession] = useState(0)
 
   const usage = normalizeUsage(provider, anthropicUsage, openaiUsage)
 
@@ -794,7 +857,11 @@ export function ProviderUsageBlock({
   }
 
   const handleOpenChange = (open: boolean): void => {
-    if (open) setViewedProvider(provider)
+    if (open) {
+      setViewedProvider(provider)
+      // Reset even if the previous body's closing animation is still running.
+      setPopoverSession((session) => session + 1)
+    }
   }
 
   useEffect(() => {
@@ -815,6 +882,19 @@ export function ProviderUsageBlock({
     provider === 'anthropic' && usage
       ? getRateLimitWindow(anthropicRateLimit, 'seven_day')
       : undefined
+  // Third bar for the Fable model window, only once it has actually been
+  // used — an idle 0% Fable row would just be noise below the 7d bar. Hidden
+  // when the user ignores Fable for auto-switch (the popover still lists it).
+  const fableWindow = provider === 'anthropic' && !ignoreFable ? findFableWindow(usage) : undefined
+  const fable = fableWindow
+    ? usageWindowDisplay(
+        { utilization: fableWindow.used_percent, resets_at: fableWindow.resets_at },
+        'seven_day'
+      )
+    : undefined
+  const showFable = fable !== undefined && fable.percent > 0
+  // Widen every label so the three bars stay aligned when "Fable" is shown.
+  const triggerLabelClassName = showFable ? 'w-10' : undefined
 
   return (
     <HoverCard onOpenChange={handleOpenChange}>
@@ -861,13 +941,23 @@ export function ProviderUsageBlock({
                 percent={fiveHour.percent}
                 resetTime={fiveHour.resetTime}
                 rateLimit={fiveHourRateLimit}
+                labelClassName={triggerLabelClassName}
               />
               <UsageRow
                 label="7d"
                 percent={sevenDay.percent}
                 resetTime={sevenDay.resetTime}
                 rateLimit={sevenDayRateLimit}
+                labelClassName={triggerLabelClassName}
               />
+              {showFable && fable && (
+                <UsageRow
+                  label={FABLE_LABEL}
+                  percent={fable.percent}
+                  resetTime={fable.resetTime}
+                  labelClassName={triggerLabelClassName}
+                />
+              )}
             </div>
           </div>
         </div>
@@ -879,7 +969,7 @@ export function ProviderUsageBlock({
         className="flex w-72 max-w-[min(18rem,calc(100vw-2rem))] max-h-(--radix-hover-card-content-available-height) flex-col p-0"
       >
         <div className="flex-1 overflow-y-auto p-4" data-testid="usage-popover-scroll">
-          <ProviderUsagePopoverBody provider={viewedProvider} />
+          <ProviderUsagePopoverBody key={popoverSession} provider={viewedProvider} />
         </div>
         {toggleProviders.length > 1 && (
           <ProviderToggle
@@ -953,6 +1043,7 @@ export function UsageIndicator(): React.JSX.Element | null {
 
   return (
     <div className="border-t border-border bg-worktree-sidebar" data-testid="usage-indicator">
+      <OpenAIResetDialog />
       {visibleProviders.map((provider, i) => (
         <React.Fragment key={provider}>
           {i > 0 && <div className="border-t border-border mx-3" />}

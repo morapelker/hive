@@ -1,0 +1,387 @@
+{
+  "variant": "expandLoaded",
+  "size": 200,
+  "flags": {
+    "searchExpand": "loaded",
+    "highlightRuns": false,
+    "stableHintPrefix": false,
+    "narrowListSelectors": false
+  },
+  "warmReps": 5,
+  "expandedAtStart": 10,
+  "totalWorktrees": 420,
+  "mountRpc": {
+    "db.setting.get": 2,
+    "db.setting.set": 2,
+    "settingsOps.loadCustomCommandsFile": 1,
+    "telegramOps.getConfig": 1,
+    "petOps.updateSettings": 1,
+    "systemOps.detectAgentSdks": 1,
+    "projectOps.loadLanguageIcons": 1,
+    "gitOps.watchBranch": 21,
+    "gitOps.getBranchInfo": 21,
+    "db.worktree.getActiveByProject": 20,
+    "worktreeOps.sync": 10,
+    "db.worktree.update": 13
+  },
+  "cold": [
+    {
+      "query": "t",
+      "renderMs": 219.63087499999983,
+      "settleMs": 2.4727920000000267,
+      "profilerMs": 167.88259699998298,
+      "commits": 2,
+      "rpc": {},
+      "rpcTotal": 0,
+      "domNodes": 9361,
+      "mountedWorktreeLists": 10,
+      "visibleProjects": 200
+    },
+    {
+      "query": "te",
+      "renderMs": 147.705375,
+      "settleMs": 4.07854199999997,
+      "profilerMs": 99.53397699999914,
+      "commits": 2,
+      "rpc": {},
+      "rpcTotal": 0,
+      "domNodes": 11077,
+      "mountedWorktreeLists": 10,
+      "visibleProjects": 200
+    },
+    {
+      "query": "ted",
+      "renderMs": 78.56458399999997,
+      "settleMs": 4.027832999999873,
+      "profilerMs": 35.754702000027464,
+      "commits": 2,
+      "rpc": {
+        "gitOps.unwatchBranch": 10
+      },
+      "rpcTotal": 10,
+      "domNodes": 5290,
+      "mountedWorktreeLists": 7,
+      "visibleProjects": 90
+    },
+    {
+      "query": "tedo",
+      "renderMs": 40.0757500000002,
+      "settleMs": 4.005666999999903,
+      "profilerMs": 20.534177999987605,
+      "commits": 2,
+      "rpc": {},
+      "rpcTotal": 0,
+      "domNodes": 3269,
+      "mountedWorktreeLists": 6,
+      "visibleProjects": 53
+    },
+    {
+      "query": "ted",
+      "renderMs": 77.58591700000011,
+      "settleMs": 3.9744579999999132,
+      "profilerMs": 52.615448000020024,
+      "commits": 2,
+      "rpc": {},
+      "rpcTotal": 0,
+      "domNodes": 5290,
+      "mountedWorktreeLists": 7,
+      "visibleProjects": 90
+    },
+    {
+      "query": "te",
+      "renderMs": 262.5492079999999,
+      "settleMs": 2.7623750000002474,
+      "profilerMs": 179.99242200003118,
+      "commits": 2,
+      "rpc": {
+        "gitOps.watchBranch": 10
+      },
+      "rpcTotal": 10,
+      "domNodes": 11077,
+      "mountedWorktreeLists": 10,
+      "visibleProjects": 200
+    },
+    {
+      "query": "t",
+      "renderMs": 130.15716699999984,
+      "settleMs": 3.927375000000211,
+      "profilerMs": 73.53758900005005,
+      "commits": 2,
+      "rpc": {},
+      "rpcTotal": 0,
+      "domNodes": 9361,
+      "mountedWorktreeLists": 10,
+      "visibleProjects": 200
+    },
+    {
+      "query": "",
+      "renderMs": 133.39362500000016,
+      "settleMs": 5.0911669999995866,
+      "profilerMs": 95.64050499996074,
+      "commits": 2,
+      "rpc": {},
+      "rpcTotal": 0,
+      "domNodes": 4049,
+      "mountedWorktreeLists": 10,
+      "visibleProjects": 200
+    },
+    {
+      "query": "a",
+      "renderMs": 101.53112499999997,
+      "settleMs": 4.934958999999708,
+      "profilerMs": 77.34996699998692,
+      "commits": 2,
+      "rpc": {
+        "gitOps.unwatchBranch": 11
+      },
+      "rpcTotal": 11,
+      "domNodes": 4287,
+      "mountedWorktreeLists": 5,
+      "visibleProjects": 123
+    },
+    {
+      "query": "ap",
+      "renderMs": 29.6203330000003,
+      "settleMs": 4.62079199999971,
+      "profilerMs": 14.431803999993917,
+      "commits": 2,
+      "rpc": {
+        "gitOps.unwatchBranch": 5
+      },
+      "rpcTotal": 5,
+      "domNodes": 1586,
+      "mountedWorktreeLists": 2,
+      "visibleProjects": 47
+    },
+    {
+      "query": "",
+      "renderMs": 163.82891699999982,
+      "settleMs": 5.678667000000132,
+      "profilerMs": 131.8085709999541,
+      "commits": 2,
+      "rpc": {
+        "gitOps.watchBranch": 16
+      },
+      "rpcTotal": 16,
+      "domNodes": 4049,
+      "mountedWorktreeLists": 10,
+      "visibleProjects": 200
+    },
+    {
+      "query": "zqx",
+      "renderMs": 12.578791999999794,
+      "settleMs": 3.885917000000063,
+      "profilerMs": 0.32141799999953946,
+      "commits": 2,
+      "rpc": {
+        "gitOps.unwatchBranch": 21
+      },
+      "rpcTotal": 21,
+      "domNodes": 2,
+      "mountedWorktreeLists": 0,
+      "visibleProjects": 0
+    },
+    {
+      "query": "",
+      "renderMs": 169.44145899999967,
+      "settleMs": 5.387791000000107,
+      "profilerMs": 139.39879200000496,
+      "commits": 2,
+      "rpc": {
+        "gitOps.watchBranch": 21
+      },
+      "rpcTotal": 21,
+      "domNodes": 4049,
+      "mountedWorktreeLists": 10,
+      "visibleProjects": 200
+    }
+  ],
+  "warm": [
+    {
+      "query": "t",
+      "renderMs": 186.52237500000047,
+      "settleMs": 3.9939159999994445,
+      "profilerMs": 141.42800599978364,
+      "commits": 2,
+      "rpc": {},
+      "rpcTotal": 0,
+      "domNodes": 9361,
+      "mountedWorktreeLists": 10,
+      "visibleProjects": 200
+    },
+    {
+      "query": "te",
+      "renderMs": 124.06283300000086,
+      "settleMs": 3.954874999999447,
+      "profilerMs": 77.8549830001648,
+      "commits": 2,
+      "rpc": {},
+      "rpcTotal": 0,
+      "domNodes": 11077,
+      "mountedWorktreeLists": 10,
+      "visibleProjects": 200
+    },
+    {
+      "query": "ted",
+      "renderMs": 70.7041250000002,
+      "settleMs": 3.9695419999998194,
+      "profilerMs": 33.39474599999721,
+      "commits": 2,
+      "rpc": {
+        "gitOps.unwatchBranch": 10
+      },
+      "rpcTotal": 10,
+      "domNodes": 5290,
+      "mountedWorktreeLists": 7,
+      "visibleProjects": 90
+    },
+    {
+      "query": "tedo",
+      "renderMs": 39.6535829999998,
+      "settleMs": 3.9785409999994954,
+      "profilerMs": 21.54458400002568,
+      "commits": 2,
+      "rpc": {},
+      "rpcTotal": 0,
+      "domNodes": 3269,
+      "mountedWorktreeLists": 6,
+      "visibleProjects": 53
+    },
+    {
+      "query": "ted",
+      "renderMs": 74.22095799999988,
+      "settleMs": 3.908792000000176,
+      "profilerMs": 52.094213999987005,
+      "commits": 2,
+      "rpc": {},
+      "rpcTotal": 0,
+      "domNodes": 5290,
+      "mountedWorktreeLists": 7,
+      "visibleProjects": 90
+    },
+    {
+      "query": "te",
+      "renderMs": 175.8787080000002,
+      "settleMs": 4.003874999999425,
+      "profilerMs": 122.97534299997824,
+      "commits": 2,
+      "rpc": {
+        "gitOps.watchBranch": 10
+      },
+      "rpcTotal": 10,
+      "domNodes": 11077,
+      "mountedWorktreeLists": 10,
+      "visibleProjects": 200
+    },
+    {
+      "query": "t",
+      "renderMs": 121.64966600000025,
+      "settleMs": 3.9420829999999114,
+      "profilerMs": 70.17745600000217,
+      "commits": 2,
+      "rpc": {},
+      "rpcTotal": 0,
+      "domNodes": 9361,
+      "mountedWorktreeLists": 10,
+      "visibleProjects": 200
+    },
+    {
+      "query": "",
+      "renderMs": 133.95741599999928,
+      "settleMs": 3.890792000000147,
+      "profilerMs": 95.49953399995593,
+      "commits": 2,
+      "rpc": {},
+      "rpcTotal": 0,
+      "domNodes": 4049,
+      "mountedWorktreeLists": 10,
+      "visibleProjects": 200
+    },
+    {
+      "query": "a",
+      "renderMs": 99.97516700000051,
+      "settleMs": 3.9816249999994398,
+      "profilerMs": 75.33592299997963,
+      "commits": 2,
+      "rpc": {
+        "gitOps.unwatchBranch": 11
+      },
+      "rpcTotal": 11,
+      "domNodes": 4287,
+      "mountedWorktreeLists": 5,
+      "visibleProjects": 123
+    },
+    {
+      "query": "ap",
+      "renderMs": 29.435333999999784,
+      "settleMs": 3.9613329999992857,
+      "profilerMs": 12.935957999988204,
+      "commits": 2,
+      "rpc": {
+        "gitOps.unwatchBranch": 5
+      },
+      "rpcTotal": 5,
+      "domNodes": 1586,
+      "mountedWorktreeLists": 2,
+      "visibleProjects": 47
+    },
+    {
+      "query": "",
+      "renderMs": 160.58841699999994,
+      "settleMs": 4.115374999999403,
+      "profilerMs": 126.44415999992816,
+      "commits": 2,
+      "rpc": {
+        "gitOps.watchBranch": 16
+      },
+      "rpcTotal": 16,
+      "domNodes": 4049,
+      "mountedWorktreeLists": 10,
+      "visibleProjects": 200
+    },
+    {
+      "query": "zqx",
+      "renderMs": 12.37670800000069,
+      "settleMs": 3.9386249999997744,
+      "profilerMs": 0.21933199999966746,
+      "commits": 2,
+      "rpc": {
+        "gitOps.unwatchBranch": 21
+      },
+      "rpcTotal": 21,
+      "domNodes": 2,
+      "mountedWorktreeLists": 0,
+      "visibleProjects": 0
+    },
+    {
+      "query": "",
+      "renderMs": 172.0543749999997,
+      "settleMs": 4.03479200000038,
+      "profilerMs": 135.76702399985334,
+      "commits": 2,
+      "rpc": {
+        "gitOps.watchBranch": 21
+      },
+      "rpcTotal": 21,
+      "domNodes": 4049,
+      "mountedWorktreeLists": 10,
+      "visibleProjects": 200
+    }
+  ],
+  "unrelated": {
+    "hint pendingChar toggle": {
+      "ms": 80.33987499999967,
+      "commits": 1
+    },
+    "select another project": {
+      "ms": 1.1262920000008307,
+      "commits": 1
+    },
+    "worktree store: unrelated project reload": {
+      "ms": 1.674166000000696,
+      "commits": 2
+    }
+  },
+  "node": "v26.8.1",
+  "react": "19.2.8"
+}

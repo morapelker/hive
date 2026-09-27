@@ -1,10 +1,20 @@
 import { create } from 'zustand'
+import { isTerminalBacked } from '@shared/types/agent-sdk'
+import {
+  normalizeAgentSdk,
+  resolveModelForSdk as resolveSharedModelForSdk
+} from '@shared/model-resolution'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { APP_SETTINGS_DB_KEY, DEFAULT_HIVE_ENTERPRISE_SERVER_URL } from '@shared/types/settings'
 import type { TeleportSettings } from '@shared/types/settings'
 import type { TelegramConfig } from '@shared/types/telegram'
 import type { UsageProvider } from '@shared/types/usage'
 import type { PetSettings } from '@shared/types/pet'
+import {
+  DEFAULT_VOICE_SETTINGS,
+  sanitizeVoiceSettings,
+  type VoiceSettings
+} from '@shared/types/voice'
 import type { AgentSdk, HandoffAgentSdk } from '@shared/types/agent-sdk'
 import type { CustomClaudeProvider } from '@shared/types/custom-provider'
 import { sanitizeCustomProviders } from '@shared/types/custom-provider'
@@ -132,12 +142,27 @@ export interface AppSettings {
   defaultTerminal: TerminalOption
   customTerminalCommand: string
   embeddedTerminalBackend: EmbeddedTerminalBackend
+  /**
+   * Font size for every embedded terminal (bottom panel, sidebar, and the
+   * xterm-based Claude/Codex CLI session views). Named for the Ghostty
+   * backend it was added for; kept as-is so persisted values keep working.
+   */
   ghosttyFontSize: number
   ghosttyPromotionDismissed: boolean
   terminalPosition: TerminalPosition
 
   // Model
+  /**
+   * Global default model. Stamped with the `agentSdk` it was picked for; it
+   * only applies to that SDK (see `resolveModelForSdk`).
+   */
   selectedModel: SelectedModel | null
+  /**
+   * Default model + effort per agent SDK (Settings › Models › Provider
+   * Defaults). Whatever switches a session/ticket to an SDK — the ticket
+   * modal's provider toggle, the handoff picker, the model selector's provider
+   * pill — defaults to this SDK's entry.
+   */
   selectedModelByProvider: Record<string, SelectedModel>
   defaultModels: ModeDefaultModels | null
   /** Model + effort used for PR title/description generation (null = follow defaultAgentSdk). */
@@ -175,6 +200,8 @@ export interface AppSettings {
   // Usage indicator
   usageIndicatorMode: 'current-agent' | 'specific-providers'
   usageIndicatorProviders: UsageProvider[]
+  /** Leave the Fable window out of auto-switch decisions and the sidebar usage bars. */
+  ignoreFableForAutoSwitch: boolean
 
   // Agent SDK
   defaultAgentSdk: AgentSdk
@@ -222,6 +249,9 @@ export interface AppSettings {
 
   // Pet
   pet: PetSettings
+
+  // Voice dictation (hotkey → local speech model → paste)
+  voice: VoiceSettings
 
   // Advanced
   environmentVariables: Array<{ key: string; value: string }>
@@ -276,6 +306,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   showModelProvider: false,
   usageIndicatorMode: 'current-agent',
   usageIndicatorProviders: [],
+  ignoreFableForAutoSwitch: false,
   defaultAgentSdk: 'opencode',
   customProviders: [],
   stripAtMentions: true,
@@ -323,6 +354,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     animationSpeed: 5,
     hasHatched: false
   },
+  voice: DEFAULT_VOICE_SETTINGS,
   environmentVariables: [],
   customProjectCommands: [],
   perfDiagnosticsEnabled: false,
@@ -354,8 +386,7 @@ interface SettingsState extends AppSettings {
   ) => Promise<void>
   setSelectedModelForSdk: (
     agentSdk: AppSettings['defaultAgentSdk'],
-    model: SelectedModel | null,
-    options?: { skipBackendPush?: boolean }
+    model: SelectedModel | null
   ) => Promise<void>
   setModeDefaultModel: (
     mode: 'build' | 'plan' | 'ask' | 'review',
@@ -415,7 +446,9 @@ async function loadSettingsFromDatabase(): Promise<AppSettings | null> {
             ...DEFAULT_SETTINGS.pet,
             ...(parsed.pet || {})
           },
-          teleport: parsed.teleport ?? null
+          teleport: parsed.teleport ?? null,
+          // Validate every voice field so pre-feature or hand-edited blobs get defaults
+          voice: sanitizeVoiceSettings(parsed.voice)
         }
 
         // Migrate legacy showUsageIndicator boolean
@@ -507,6 +540,7 @@ function extractSettings(state: SettingsState): AppSettings {
     showModelProvider: state.showModelProvider,
     usageIndicatorMode: state.usageIndicatorMode,
     usageIndicatorProviders: state.usageIndicatorProviders,
+    ignoreFableForAutoSwitch: state.ignoreFableForAutoSwitch,
     defaultAgentSdk: state.defaultAgentSdk,
     customProviders: state.customProviders,
     stripAtMentions: state.stripAtMentions,
@@ -530,6 +564,7 @@ function extractSettings(state: SettingsState): AppSettings {
     telegramConfig: null,
     teleport: state.teleport,
     pet: state.pet,
+    voice: state.voice,
     environmentVariables: state.environmentVariables,
     customProjectCommands: state.customProjectCommands,
     perfDiagnosticsEnabled: state.perfDiagnosticsEnabled,
@@ -541,9 +576,11 @@ function extractSettings(state: SettingsState): AppSettings {
 }
 
 /**
- * Resolve the default model for a given agent SDK using the per-provider priority chain.
- * Priority: per-provider default → (legacy only) global selectedModel.
- * Returns null when per-provider defaults exist but none matches the requested SDK.
+ * The stored default model for an agent SDK: its provider default (Settings ›
+ * Models › Provider Defaults), else the global default when that belongs to
+ * the SDK. Returns null when nothing stored applies, so callers can layer the
+ * catalog / hard SDK fallback on top. The rules live in the shared resolver
+ * (`@shared/model-resolution`) so the main process resolves identically.
  *
  * Accepts an optional state snapshot so it can be used inside Zustand selectors
  * (where getState() must not be called). Falls back to store.getState() when omitted.
@@ -553,11 +590,28 @@ export function resolveModelForSdk(
   state?: Pick<AppSettings, 'selectedModelByProvider' | 'selectedModel'>
 ): SelectedModel | null {
   const s = state ?? useSettingsStore.getState()
-  const perProvider = s.selectedModelByProvider[agentSdk]
-  if (perProvider) return perProvider
-  // Legacy fallback only when per-provider feature not yet active (migration)
-  if (Object.keys(s.selectedModelByProvider).length > 0) return null
-  return s.selectedModel
+  return resolveSharedModelForSdk(normalizeAgentSdk(agentSdk), {
+    selectedModel: s.selectedModel,
+    selectedModelByProvider: s.selectedModelByProvider
+  }) as SelectedModel | null
+}
+
+/**
+ * The SDK new sessions and ticket launches default to: the `defaultAgentSdk`
+ * configured on the settings page, and only that. Launching a ticket or
+ * switching a session's model never changes it. The bare terminal SDK has no
+ * models, so it degrades to opencode for model resolution, matching every
+ * picker.
+ *
+ * Accepts a state snapshot so it can run inside Zustand selectors; falls back
+ * to store.getState() when omitted.
+ */
+export function resolvePreferredAgentSdk(
+  state?: Pick<AppSettings, 'defaultAgentSdk'>
+): HandoffAgentSdk {
+  const s = state ?? useSettingsStore.getState()
+  const configured = s.defaultAgentSdk ?? 'opencode'
+  return configured === 'terminal' ? 'opencode' : configured
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -620,6 +674,13 @@ export const useSettingsStore = create<SettingsState>()(
             petApi.hide().catch(() => {})
           }
         }
+        // Voice dictation runs in the main process: hand it the new settings directly
+        // so it never has to race the async DB write.
+        if (key === 'voice') {
+          window.desktopBridge?.voice
+            ?.updateSettings(value as VoiceSettings)
+            .catch((error) => console.error('Failed to apply voice settings:', error))
+        }
         // Handle board mode switching side effects
         if (key === 'boardMode') {
           // setTimeout ensures the state update completes before side effects run.
@@ -677,11 +738,14 @@ export const useSettingsStore = create<SettingsState>()(
           return get().setSelectedModelForSdk(agentSdk, model)
         }
         set({ selectedModel: model })
-        // Persist to backend (settings DB + opencode service)
-        try {
-          unwrapEnvelope(await opencodeApi.setModel(model))
-        } catch (error) {
-          console.error('Failed to persist model selection:', error)
+        // Push to the live service only for SDKs with a structured implementer
+        // (the terminal-backed CLIs read their model at spawn time).
+        if (!isTerminalBacked(model?.agentSdk)) {
+          try {
+            unwrapEnvelope(await opencodeApi.setModel(model))
+          } catch (error) {
+            console.error('Failed to persist model selection:', error)
+          }
         }
         // Always save to app settings (including null to clear)
         const settings = extractSettings({ ...get(), selectedModel: model } as SettingsState)
@@ -690,8 +754,7 @@ export const useSettingsStore = create<SettingsState>()(
 
       setSelectedModelForSdk: async (
         agentSdk: AppSettings['defaultAgentSdk'],
-        model: SelectedModel | null,
-        options?: { skipBackendPush?: boolean }
+        model: SelectedModel | null
       ) => {
         // null clears the per-SDK entry
         const current = { ...get().selectedModelByProvider }
@@ -702,11 +765,7 @@ export const useSettingsStore = create<SettingsState>()(
         }
         set({ selectedModelByProvider: current })
         // Push to backend only for SDKs with a structured implementer.
-        if (
-          agentSdk !== 'terminal' &&
-          agentSdk !== 'claude-code-cli' &&
-          !options?.skipBackendPush
-        ) {
+        if (!isTerminalBacked(agentSdk)) {
           try {
             unwrapEnvelope(await opencodeApi.setModel(model ? { ...model, agentSdk } : null))
           } catch (error) {
@@ -783,6 +842,7 @@ export const useSettingsStore = create<SettingsState>()(
         settingsApi.saveCustomCommandsFile(DEFAULT_SETTINGS.customProjectCommands).catch(() => {})
         petApi.updateSettings(DEFAULT_SETTINGS.pet)
         petApi.hide().catch(() => {})
+        window.desktopBridge?.voice?.updateSettings(DEFAULT_SETTINGS.voice).catch(() => {})
       },
 
       loadFromDatabase: async () => {
@@ -885,6 +945,7 @@ export const useSettingsStore = create<SettingsState>()(
         showModelProvider: state.showModelProvider,
         usageIndicatorMode: state.usageIndicatorMode,
         usageIndicatorProviders: state.usageIndicatorProviders,
+        ignoreFableForAutoSwitch: state.ignoreFableForAutoSwitch,
         defaultAgentSdk: state.defaultAgentSdk,
         customProviders: state.customProviders,
         activeSection: state.activeSection,
@@ -907,6 +968,7 @@ export const useSettingsStore = create<SettingsState>()(
         hiveOrganizationMinAppVersion: state.hiveOrganizationMinAppVersion,
         tipsEnabled: state.tipsEnabled,
         pet: state.pet,
+        voice: state.voice,
         environmentVariables: state.environmentVariables,
         customProjectCommands: state.customProjectCommands,
         perfDiagnosticsEnabled: state.perfDiagnosticsEnabled,

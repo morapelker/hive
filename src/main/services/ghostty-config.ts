@@ -42,7 +42,7 @@ const CURSOR_STYLE_MAP: Record<string, GhosttyConfig['cursorStyle']> = {
  * another app's data container: on macOS 14+ even an existsSync/stat there
  * triggers the TCC "access data from other apps" prompt attributed to Hive.
  * Callers must opt into them (includeAppSupport) — the ghostty-config-store
- * does so only at app launch and on explicit re-sync, never mid-flow.
+ * does so only on explicit user re-sync, never during automatic reads.
  */
 function findConfigFile(includeAppSupport: boolean): string | undefined {
   const home = homedir()

@@ -11,6 +11,8 @@ interface Project {
 
 interface WorktreeListProps {
   project: Project
+  /** Mounted by a text search: show what the store already has, never load/sync/watch. */
+  searchDriven?: boolean
 }
 
 // Projects whose worktrees have been loaded + git-synced at least once this
@@ -20,8 +22,12 @@ interface WorktreeListProps {
 // the UI jank: dozens of concurrent git ops + store updates blocking the main
 // thread for ~10s.
 const initializedProjects = new Set<string>()
+const EMPTY_PATHS: string[] = []
 
-export function WorktreeList({ project }: WorktreeListProps): React.JSX.Element {
+export function WorktreeList({
+  project,
+  searchDriven = false
+}: WorktreeListProps): React.JSX.Element {
   // Subscribe only to THIS project's slices so unrelated worktree-store updates
   // (other projects loading, isLoading toggles) don't re-render this list.
   const projectWorktrees = useWorktreeStore((s) => s.worktreesByProject.get(project.id))
@@ -46,7 +52,7 @@ export function WorktreeList({ project }: WorktreeListProps): React.JSX.Element 
     () => ({ projectId: project.id, projectPath: project.path }),
     [project.id, project.path]
   )
-  useSidebarBranchWatcher(worktreePaths, watcherProject)
+  useSidebarBranchWatcher(searchDriven ? EMPTY_PATHS : worktreePaths, watcherProject)
 
   // Drag state
   const [draggedWorktreeId, setDraggedWorktreeId] = useState<string | null>(null)
@@ -56,12 +62,13 @@ export function WorktreeList({ project }: WorktreeListProps): React.JSX.Element 
   // already holds the data, so we skip the work entirely. Explicit refresh and
   // worktree create/archive still force-update the store directly.
   useEffect(() => {
+    if (searchDriven) return
     if (initializedProjects.has(project.id)) return
     initializedProjects.add(project.id)
     loadWorktrees(project.id)
     // Sync with git state
     syncWorktrees(project.id, project.path)
-  }, [project.id, project.path, loadWorktrees, syncWorktrees])
+  }, [project.id, project.path, loadWorktrees, syncWorktrees, searchDriven])
 
   const handleDragStart = useCallback((e: React.DragEvent, worktreeId: string) => {
     setDraggedWorktreeId(worktreeId)

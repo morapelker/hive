@@ -16,11 +16,14 @@ const OPENAI_ORIGINATOR = 'codex_cli_rs'
 const REQUEST_TIMEOUT_MS = 10_000
 const BODY_SNIPPET_LENGTH = 500
 
-export function buildOpenAIAuthorizeUrl(pkce: Pkce): string {
+export function buildOpenAIAuthorizeUrl(
+  pkce: Pkce,
+  redirectUri: string = OPENAI_REDIRECT_URI
+): string {
   const url = new URL(OPENAI_AUTHORIZE_URL)
   url.searchParams.set('response_type', 'code')
   url.searchParams.set('client_id', OPENAI_CLIENT_ID)
-  url.searchParams.set('redirect_uri', OPENAI_REDIRECT_URI)
+  url.searchParams.set('redirect_uri', redirectUri)
   url.searchParams.set('scope', OPENAI_SCOPE)
   url.searchParams.set('code_challenge', pkce.challenge)
   url.searchParams.set('code_challenge_method', 'S256')
@@ -35,9 +38,15 @@ export type OpenAIRefreshOutcome =
   | { ok: true; result: { accessToken: string; refreshToken?: string; idToken?: string } }
   | { ok: false; needsLogin: true; error: string }
 
-async function readCappedBody(response: Response): Promise<string> {
+/**
+ * Read the full response body. Do NOT cap this: successful token responses
+ * carry JWTs that easily exceed a few KB, and truncating them before
+ * `JSON.parse` fails the whole login with an "unexpected end of JSON" error.
+ * Error messages slice to `BODY_SNIPPET_LENGTH` at the call sites instead.
+ */
+async function readBody(response: Response): Promise<string> {
   try {
-    return (await response.text()).slice(0, 1024)
+    return await response.text()
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return `Failed to read response body: ${message}`
@@ -77,7 +86,7 @@ export async function refreshOpenAIToken(refreshToken: string): Promise<OpenAIRe
     clearTimeout(timeout)
   }
 
-  const body = await readCappedBody(response)
+  const body = await readBody(response)
 
   if (response.status === 401 || response.status === 400 || body.includes('invalid_grant')) {
     return {
@@ -88,7 +97,9 @@ export async function refreshOpenAIToken(refreshToken: string): Promise<OpenAIRe
   }
 
   if (!response.ok) {
-    throw new Error(`OpenAI token refresh returned ${response.status}: ${body.slice(0, BODY_SNIPPET_LENGTH)}`)
+    throw new Error(
+      `OpenAI token refresh returned ${response.status}: ${body.slice(0, BODY_SNIPPET_LENGTH)}`
+    )
   }
 
   const data = JSON.parse(body) as {
@@ -106,21 +117,28 @@ export async function refreshOpenAIToken(refreshToken: string): Promise<OpenAIRe
     result: {
       accessToken: data.access_token,
       refreshToken:
-        typeof data.refresh_token === 'string' && data.refresh_token.length > 0 ? data.refresh_token : undefined,
-      idToken: typeof data.id_token === 'string' && data.id_token.length > 0 ? data.id_token : undefined
+        typeof data.refresh_token === 'string' && data.refresh_token.length > 0
+          ? data.refresh_token
+          : undefined,
+      idToken:
+        typeof data.id_token === 'string' && data.id_token.length > 0 ? data.id_token : undefined
     }
   }
 }
 
-/** Exchange an authorization code (from the interactive login flow) for tokens. */
+/**
+ * Exchange an authorization code (from the interactive login flow) for tokens.
+ * `redirectUri` must be the exact value the authorize URL was built with.
+ */
 export async function exchangeOpenAICode(
   code: string,
-  pkce: Pkce
+  pkce: Pkce,
+  redirectUri: string = OPENAI_REDIRECT_URI
 ): Promise<{ idToken: string; accessToken: string; refreshToken: string }> {
   const form = new URLSearchParams()
   form.set('grant_type', 'authorization_code')
   form.set('code', code)
-  form.set('redirect_uri', OPENAI_REDIRECT_URI)
+  form.set('redirect_uri', redirectUri)
   form.set('client_id', OPENAI_CLIENT_ID)
   form.set('code_verifier', pkce.verifier)
 
@@ -144,9 +162,11 @@ export async function exchangeOpenAICode(
     clearTimeout(timeout)
   }
 
-  const body = await readCappedBody(response)
+  const body = await readBody(response)
   if (!response.ok) {
-    throw new Error(`OpenAI token exchange returned ${response.status}: ${body.slice(0, BODY_SNIPPET_LENGTH)}`)
+    throw new Error(
+      `OpenAI token exchange returned ${response.status}: ${body.slice(0, BODY_SNIPPET_LENGTH)}`
+    )
   }
 
   const data = JSON.parse(body) as {
@@ -165,5 +185,9 @@ export async function exchangeOpenAICode(
     throw new Error('OpenAI token exchange: missing refresh_token in response')
   }
 
-  return { idToken: data.id_token, accessToken: data.access_token, refreshToken: data.refresh_token }
+  return {
+    idToken: data.id_token,
+    accessToken: data.access_token,
+    refreshToken: data.refresh_token
+  }
 }

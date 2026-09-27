@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events'
+import { isAgentCli } from '@shared/types/agent-sdk'
 import type { ServerResponse } from 'node:http'
 import type { OpenCodeStreamEvent } from '@shared/types/opencode'
 import { DISCORD_CLAUDE_CLI_EVENT_CHANNEL } from '@shared/discord-events'
@@ -141,7 +142,7 @@ class ClaudeCliDiscordBridge {
     try {
       const db = this.getDb()
       const session = db.getSession(sessionId)
-      if (session?.agent_sdk === 'claude-code-cli' && session.worktree_id) {
+      if (isAgentCli(session?.agent_sdk) && session?.worktree_id) {
         owned =
           !!db.getDiscordChannelResourceByWorktree(session.worktree_id) &&
           isDiscordModeEnabled(db)

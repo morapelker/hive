@@ -553,6 +553,15 @@ export interface KanbanTicket {
   auto_approve_plan: boolean
   /** Set when the ticket enters the review column; cleared on open or on leaving review. */
   unread: boolean
+  /**
+   * Set on an in-progress ticket when its Claude CLI session stopped without
+   * a detected completion (its Stop reported pending background tasks or
+   * scheduled wakeups, or no Stop hook ended the turn at all). The ticket is
+   * not moved to review — the agent is still expected to be woken again — and
+   * its card shows an hourglass where the progress bar was. Cleared when the
+   * run resumes or on any column change (a real completion moves it to review).
+   */
+  awaiting_completion: boolean
   model_provider_id: string | null
   model_id: string | null
   model_variant: string | null
@@ -605,6 +614,7 @@ export interface KanbanTicketUpdate {
   note?: string | null
   auto_approve_plan?: boolean
   unread?: boolean
+  awaiting_completion?: boolean
   model_provider_id?: string | null
   model_id?: string | null
   model_variant?: string | null
@@ -810,4 +820,25 @@ export interface DiffCommentUpdate {
   anchor_context_before?: string | null
   anchor_context_after?: string | null
   is_outdated?: boolean
+}
+
+// Voice dictation history (voice_history table)
+export interface VoiceHistoryRow {
+  id: string
+  /** Delivered text (after AI cleanup and dictionary passes). */
+  text: string
+  /** Local transcript when it differed from `text`. */
+  raw_text: string | null
+  duration_ms: number
+  cleaned: boolean
+  speech_model: string
+  created_at: string
+}
+
+export interface VoiceHistoryRowCreate {
+  text: string
+  raw_text?: string | null
+  duration_ms?: number
+  cleaned?: boolean
+  speech_model?: string
 }

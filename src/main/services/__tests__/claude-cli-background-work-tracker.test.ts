@@ -5,6 +5,7 @@ import {
   clearAllClaudeCliBackgroundWork,
   clearClaudeCliBackgroundWork,
   getClaudeCliBackgroundWorkCounts,
+  getClaudeCliMonitorTaskIds,
   MONITOR_TIMEOUT_EVENT,
   parseEndedTaskNotificationIds,
   processClaudeCliBackgroundWorkHook
@@ -113,6 +114,23 @@ describe('processClaudeCliBackgroundWorkHook', () => {
       runningSubagents: 0
     })
     expect(processClaudeCliBackgroundWorkHook(SESSION, failed)).toBeNull()
+  })
+
+  it('exposes live monitor ids (not shells) for the Stop completion classifier', () => {
+    expect(getClaudeCliMonitorTaskIds(SESSION).size).toBe(0)
+
+    processClaudeCliBackgroundWorkHook(SESSION, backgroundBashStart('bshell1'))
+    processClaudeCliBackgroundWorkHook(SESSION, monitorStart('bmon1'))
+    expect([...getClaudeCliMonitorTaskIds(SESSION)]).toEqual(['bmon1'])
+
+    const stop: ParsedClaudeHook = {
+      hook_event_name: 'PostToolUse',
+      tool_name: 'TaskStop',
+      tool_input: { task_id: 'bmon1' },
+      tool_response: { message: 'Successfully stopped task: bmon1', task_id: 'bmon1' }
+    }
+    processClaudeCliBackgroundWorkHook(SESSION, stop)
+    expect(getClaudeCliMonitorTaskIds(SESSION).size).toBe(0)
   })
 
   it('retires shells and monitors on TaskStop (which never notifies)', () => {

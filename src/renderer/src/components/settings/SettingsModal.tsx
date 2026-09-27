@@ -21,20 +21,25 @@ import {
   RadioTower,
   Building2,
   Users,
-  Bot
+  Bot,
+  Mic,
+  KeyRound
 } from 'lucide-react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { useSettingsStore } from '@/stores/useSettingsStore'
+import { isMac } from '@/lib/platform'
 import { SettingsAppearance } from './SettingsAppearance'
 import { SettingsGeneral } from './SettingsGeneral'
 import { SettingsAccounts } from './SettingsAccounts'
 import { SettingsModels } from './SettingsModels'
+import { SettingsVoice } from './SettingsVoice'
 import { SettingsEditor } from './SettingsEditor'
 import { SettingsTerminal } from './SettingsTerminal'
 import { SettingsShortcuts } from './SettingsShortcuts'
 import { SettingsUpdates } from './SettingsUpdates'
 import { SettingsSecurity } from './SettingsSecurity'
 import { SettingsPrivacy } from './SettingsPrivacy'
+import { SettingsPermissions } from './SettingsPermissions'
 import { SettingsIntegrations } from './SettingsIntegrations'
 import { SettingsTelegram } from './SettingsTelegram'
 import { SettingsDiscord } from './SettingsDiscord'
@@ -55,6 +60,7 @@ const SECTIONS = [
   { id: 'custom-commands', label: 'Custom Commands', icon: Zap },
   { id: 'custom-providers', label: 'Custom Providers', icon: Bot },
   { id: 'models', label: 'Models', icon: Sparkles },
+  { id: 'voice', label: 'Voice', icon: Mic },
   { id: 'pet', label: 'Pet', icon: Bug },
   { id: 'editor', label: 'Editor', icon: Code },
   { id: 'terminal', label: 'Terminal', icon: Terminal },
@@ -65,6 +71,8 @@ const SECTIONS = [
   { id: 'hive-enterprise', label: 'Hive Enterprise', icon: Building2 },
   { id: 'security', label: 'Security', icon: Shield },
   { id: 'privacy', label: 'Privacy', icon: Eye },
+  // macOS only: the privacy (TCC) prompts agent sessions trigger.
+  { id: 'permissions', label: 'Permissions', icon: KeyRound },
   { id: 'storage', label: 'Storage', icon: Database },
   { id: 'backup', label: 'Backup', icon: DatabaseBackup },
   { id: 'shortcuts', label: 'Shortcuts', icon: Keyboard },
@@ -104,25 +112,27 @@ export function SettingsModal(): React.JSX.Element {
               <DialogTitle className="text-[13px] font-semibold">Settings</DialogTitle>
             </div>
             <div className="flex flex-col gap-1 overflow-y-auto min-h-0">
-              {SECTIONS.map((section) => {
-                const Icon = section.icon
-                return (
-                  <button
-                    key={section.id}
-                    onClick={() => setActiveSection(section.id)}
-                    className={cn(
-                      'flex items-center gap-2 px-2 py-1.5 rounded-md text-[13px] tracking-[0.01em] transition-colors text-left shrink-0',
-                      activeSection === section.id
-                        ? 'bg-accent text-accent-foreground'
-                        : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'
-                    )}
-                    data-testid={`settings-nav-${section.id}`}
-                  >
-                    <Icon className="h-4 w-4" />
-                    {section.label}
-                  </button>
-                )
-              })}
+              {SECTIONS.filter((section) => section.id !== 'permissions' || isMac()).map(
+                (section) => {
+                  const Icon = section.icon
+                  return (
+                    <button
+                      key={section.id}
+                      onClick={() => setActiveSection(section.id)}
+                      className={cn(
+                        'flex items-center gap-2 px-2 py-1.5 rounded-md text-[13px] tracking-[0.01em] transition-colors text-left shrink-0',
+                        activeSection === section.id
+                          ? 'bg-accent text-accent-foreground'
+                          : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'
+                      )}
+                      data-testid={`settings-nav-${section.id}`}
+                    >
+                      <Icon className="h-4 w-4" />
+                      {section.label}
+                    </button>
+                  )
+                }
+              )}
             </div>
           </nav>
 
@@ -134,6 +144,7 @@ export function SettingsModal(): React.JSX.Element {
             {activeSection === 'custom-commands' && <SettingsCustomCommands />}
             {activeSection === 'custom-providers' && <SettingsCustomProviders />}
             {activeSection === 'models' && <SettingsModels />}
+            {activeSection === 'voice' && <SettingsVoice />}
             {activeSection === 'pet' && <SettingsPet />}
             {activeSection === 'editor' && <SettingsEditor />}
             {activeSection === 'terminal' && <SettingsTerminal />}
@@ -144,6 +155,7 @@ export function SettingsModal(): React.JSX.Element {
             {activeSection === 'hive-enterprise' && <SettingsHiveEnterprise />}
             {activeSection === 'security' && <SettingsSecurity />}
             {activeSection === 'privacy' && <SettingsPrivacy />}
+            {activeSection === 'permissions' && <SettingsPermissions />}
             {activeSection === 'storage' && <SettingsStorage />}
             {activeSection === 'backup' && <SettingsBackup />}
             {activeSection === 'shortcuts' && <SettingsShortcuts />}

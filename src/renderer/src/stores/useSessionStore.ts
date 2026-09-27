@@ -20,7 +20,7 @@ import { terminalApi } from '@/api/terminal-api'
 import { remoteLaunchApi } from '@/api/remote-launch-api'
 import { parseRemoteLaunch } from '@shared/types/remote-launch'
 import { opencodeApi } from '@/api/opencode-api'
-import { type AgentSdk, isTerminalBacked } from '@shared/types/agent-sdk'
+import { type AgentSdk, isAgentCli, isCodexCli, isTerminalBacked } from '@shared/types/agent-sdk'
 import { CUSTOM_MODEL_PROVIDER_ID } from '@shared/types/custom-provider'
 import { isSuperMode, toggleSuper } from '@shared/agent-mode-prefixes'
 
@@ -286,11 +286,7 @@ interface SessionState {
     mode: SessionMode,
     options?: { syncCliPermissionMode?: boolean; applyModeDefault?: boolean }
   ) => Promise<void>
-  setSessionModel: (
-    sessionId: string,
-    model: SelectedModel,
-    options?: { skipGlobalUpdate?: boolean }
-  ) => Promise<void>
+  setSessionModel: (sessionId: string, model: SelectedModel) => Promise<void>
   applyDetectedSessionModel: (
     sessionId: string,
     model: { modelId: string; modelVariant?: string }
@@ -412,12 +408,14 @@ export function syncClaudeCliPermissionModeIfNeeded(
   nextMode: SessionMode
 ): void {
   const session = findSessionInState(state, sessionId)
-  if (session?.agent_sdk !== 'claude-code-cli') return
+  if (!isAgentCli(session?.agent_sdk)) return
   const wasPlanLike = previousMode === 'plan' || previousMode === 'super-plan'
   const isPlanLike = nextMode === 'plan' || nextMode === 'super-plan'
   if (wasPlanLike === isPlanLike) return
 
-  const presses = isPlanLike ? 2 : 1
+  // The codex TUI has exactly two collaboration modes (Default ↔ Plan), so a
+  // single Shift+Tab toggles in either direction.
+  const presses = isCodexCli(session?.agent_sdk) ? 1 : isPlanLike ? 2 : 1
   for (let i = 0; i < presses; i++) {
     terminalApi.write(sessionId, '\x1b[Z')
   }
@@ -1709,11 +1707,7 @@ export const useSessionStore = create<SessionState>()(
       },
 
       // Set model for a specific session (per-session model selection, scope-agnostic)
-      setSessionModel: async (
-        sessionId: string,
-        model: SelectedModel,
-        options?: { skipGlobalUpdate?: boolean }
-      ) => {
+      setSessionModel: async (sessionId: string, model: SelectedModel) => {
         // Update local state immediately (search both maps)
         set((state) => {
           const newWorktreeSessionsMap = new Map(state.sessionsByWorktree)
@@ -1803,27 +1797,17 @@ export const useSessionStore = create<SessionState>()(
           console.error('Failed to push model to agent backend:', error)
         }
 
-        // Update per-provider last-used model so new worktrees inherit it.
-        // Skip when auto-applying mode defaults — those shouldn't rewrite global
-        // preferences — and for custom-provider models ('custom' marker on a
-        // cli session): a proxy slug must never become the stock claude-code-cli
-        // default. Other SDKs pass through — 'custom' is also a legal opencode
-        // catalog provider id.
+        // A session's model is scoped to that session (and its worktree below).
+        // It never rewrites the global per-SDK default: that default is only
+        // changed from the settings page, so sending a ticket or switching a
+        // session to another model/effort leaves new sessions and tickets on
+        // the configured default.
+
+        // Persist as the worktree's last-used model (only for worktree
+        // sessions; custom-provider slugs — 'custom' marker on a cli session —
+        // would leak into stock fallback chains)
         const isCustomProviderModel =
           model.providerID === CUSTOM_MODEL_PROVIDER_ID && agentSdk === 'claude-code-cli'
-        if (!options?.skipGlobalUpdate && !isCustomProviderModel) {
-          try {
-            const { useSettingsStore } = await import('./useSettingsStore')
-            useSettingsStore
-              .getState()
-              .setSelectedModelForSdk(agentSdk, model, { skipBackendPush: true })
-          } catch {
-            /* non-critical */
-          }
-        }
-
-        // Also persist as the worktree's last-used model (only for worktree
-        // sessions; custom-provider slugs would leak into stock fallback chains)
         const scope = findSessionScope(get(), sessionId)
         if (scope?.type === 'worktree' && !isCustomProviderModel) {
           try {
@@ -1844,8 +1828,8 @@ export const useSessionStore = create<SessionState>()(
       // or safety degradation, /model in the terminal). Main already persisted
       // the session row, so this only patches in-memory state — unlike
       // setSessionModel it must not write the DB, push to the agent backend,
-      // or rewrite global/worktree model preferences (a CLI-side degrade is
-      // not a user preference).
+      // or rewrite the worktree model preference (a CLI-side degrade is not a
+      // user preference).
       applyDetectedSessionModel: (sessionId, model) => {
         set((state) => {
           const newWorktreeSessionsMap = new Map(state.sessionsByWorktree)
@@ -1912,7 +1896,7 @@ export const useSessionStore = create<SessionState>()(
 
         const newModeDefault = modeDefault ?? resolveModelForSdk(sessionSdk, settings)
         if (!newModeDefault) return
-        await get().setSessionModel(sessionId, newModeDefault, { skipGlobalUpdate: true })
+        await get().setSessionModel(sessionId, newModeDefault)
       },
 
       // Keep opencode_session_id in sync in-memory after connect/reconnect (scope-agnostic)

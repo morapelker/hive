@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { isAgentCli } from '@shared/types/agent-sdk'
 import { LayoutGrid, MonitorOff, CircleSlash } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { computeGridLayout } from '@/lib/tiled-sessions'
@@ -97,7 +98,7 @@ function TileStatusDot({ sessionId }: { sessionId: string | null }): React.JSX.E
 }
 
 function SessionTile({ tile }: { tile: TiledSessionTile }): React.JSX.Element {
-  const isClaudeCli = tile.agentSdk === 'claude-code-cli'
+  const isClaudeCli = isAgentCli(tile.agentSdk)
   const isPlainTerminal = tile.agentSdk === 'terminal'
 
   // Live check on top of the snapshot: if the session is closed while the tab

@@ -73,6 +73,7 @@ export type UsageProvider = 'anthropic' | 'openai'
 export type SavedUsageStatus = 'ok' | 'stale' | 'error'
 
 export interface OpenAIUsageData {
+  rate_limit_reset_credits?: { available_count: number }
   plan_type: string
   rate_limit: {
     primary_window: {
@@ -89,6 +90,26 @@ export interface OpenAIUsageData {
     } | null
   }
   credits?: { has_credits: boolean; unlimited: boolean; balance: string | null }
+}
+
+export interface OpenAIResetCredit {
+  id: string
+  reset_type: string
+  status: string
+  granted_at: string
+  expires_at?: string | null
+  title?: string | null
+  description?: string | null
+}
+
+export interface OpenAIResetCredits {
+  available_count: number
+  credits: OpenAIResetCredit[]
+}
+
+export interface OpenAIResetResult {
+  code: 'reset' | 'already_redeemed' | 'nothing_to_reset' | 'no_credit'
+  windows_reset: number
 }
 
 export interface OpenAIUsageResult {

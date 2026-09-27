@@ -10,8 +10,10 @@ import { useKanbanStore } from './useKanbanStore'
 import { connectionApi } from '@/api/connection-api'
 import { worktreeApi } from '@/api/worktree-api'
 
+export type ConnectionGitView = 'connection' | 'base'
+
 // Connection types matching the database schema
-interface ConnectionMemberEnriched {
+export interface ConnectionMemberEnriched {
   id: string
   connection_id: string
   worktree_id: string
@@ -24,7 +26,7 @@ interface ConnectionMemberEnriched {
   project_name: string
 }
 
-interface Connection {
+export interface Connection {
   id: string
   name: string
   custom_name: string | null
@@ -49,6 +51,16 @@ interface ConnectionState {
 
   // UI State
   selectedConnectionId: string | null
+  /**
+   * What the git side (Changes / branch diff / push-pull) shows for the
+   * selected connection: 'connection' = the member worktrees the connection is
+   * made of; 'base' = each member project's default worktree (its base branch)
+   * instead, even though no connection actually combines them. Set by
+   * cmd+shift+click on a connection ticket; any plain selectConnection() (e.g.
+   * re-tapping the connection in the sidebar) returns to 'connection'.
+   * Not persisted.
+   */
+  connectionGitView: ConnectionGitView
 
   // Connection Mode (inline sidebar selection)
   connectionModeActive: boolean
@@ -71,7 +83,7 @@ interface ConnectionState {
     opts?: { savedProjectId?: string }
   ) => Promise<string | null>
   saveConnectionAsProject: (connectionId: string) => Promise<string | null>
-  selectConnection: (id: string | null) => void
+  selectConnection: (id: string | null, opts?: { gitView?: ConnectionGitView }) => void
 
   // Rename
   renameConnection: (connectionId: string, customName: string | null) => Promise<void>
@@ -92,6 +104,7 @@ export const useConnectionStore = create<ConnectionState>()(
       error: null,
       loaded: false,
       selectedConnectionId: null,
+      connectionGitView: 'connection',
 
       // Connection mode initial state
       connectionModeActive: false,
@@ -128,7 +141,8 @@ export const useConnectionStore = create<ConnectionState>()(
           const connection = result.connection
           set((state) => ({
             connections: [...state.connections, connection],
-            selectedConnectionId: connection.id
+            selectedConnectionId: connection.id,
+            connectionGitView: 'connection'
           }))
           // Deconflict: clear worktree selection synchronously (same tick)
           clearWorktreeSelection()
@@ -500,8 +514,13 @@ export const useConnectionStore = create<ConnectionState>()(
         }
       },
 
-      selectConnection: (id: string | null) => {
-        set({ selectedConnectionId: id })
+      selectConnection: (id: string | null, opts?: { gitView?: ConnectionGitView }) => {
+        // A plain (re)selection always lands on the connection's own branches;
+        // only an explicit gitView request shows the members' base branches.
+        set({
+          selectedConnectionId: id,
+          connectionGitView: id ? (opts?.gitView ?? 'connection') : 'connection'
+        })
         if (id) {
           // Deconflict: clear worktree selection synchronously (same tick)
           clearWorktreeSelection()
@@ -523,7 +542,9 @@ export const useConnectionStore = create<ConnectionState>()(
 )
 
 // Register the connection-clear callback so useWorktreeStore can call it synchronously
-registerConnectionClear(() => useConnectionStore.setState({ selectedConnectionId: null }))
+registerConnectionClear(() =>
+  useConnectionStore.setState({ selectedConnectionId: null, connectionGitView: 'connection' })
+)
 
 // Let usePinnedStore map pinned connections → their connection project (pinned board scope)
 registerConnectionSavedProjectResolver(

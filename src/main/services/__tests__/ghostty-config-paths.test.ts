@@ -2,6 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { parseGhosttyConfig, resolveGhosttyConfigPath } from '../ghostty-config'
+import {
+  clearGhosttyConfigMemo,
+  getGhosttyConfigPathOnce,
+  getGhosttyTerminalConfig,
+  warmUpGhosttyConfig
+} from '../ghostty-config-store'
 
 vi.mock('fs', () => ({
   existsSync: vi.fn(),
@@ -33,6 +39,7 @@ describe('ghostty config path resolution (TCC gating)', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    clearGhosttyConfigMemo()
     savedXdgConfigHome = process.env.XDG_CONFIG_HOME
     delete process.env.XDG_CONFIG_HOME
   })
@@ -56,6 +63,52 @@ describe('ghostty config path resolution (TCC gating)', () => {
       expect(String(call[0])).not.toContain('com.mitchellh.ghostty')
     }
     expect(readFileSyncMock).not.toHaveBeenCalled()
+  })
+
+  it('startup and terminal consumers never probe protected app data across launches', () => {
+    existsSyncMock.mockImplementation((path) => String(path).startsWith(APP_SUPPORT_DIR))
+
+    for (let launch = 0; launch < 2; launch++) {
+      clearGhosttyConfigMemo()
+      warmUpGhosttyConfig()
+      expect(getGhosttyTerminalConfig()).toEqual({})
+      expect(getGhosttyConfigPathOnce()).toBeUndefined()
+    }
+
+    expect(existsSyncMock).toHaveBeenCalled()
+    expect(
+      existsSyncMock.mock.calls.every(([path]) => !String(path).startsWith(APP_SUPPORT_DIR))
+    ).toBe(true)
+    expect(readFileSyncMock).not.toHaveBeenCalled()
+  })
+
+  it('imports protected config only on explicit re-sync and does not revisit it automatically', () => {
+    const appSupportConfig = join(APP_SUPPORT_DIR, 'config.ghostty')
+    existsSyncMock.mockImplementation((path) => path === appSupportConfig || path === XDG_CONFIG)
+    readFileSyncMock.mockImplementation((path) =>
+      path === appSupportConfig ? 'font-size = 15' : 'font-size = 11'
+    )
+
+    warmUpGhosttyConfig()
+    expect(getGhosttyTerminalConfig()).toEqual({ fontSize: 11 })
+    expect(getGhosttyConfigPathOnce()).toBe(XDG_CONFIG)
+    expect(getGhosttyTerminalConfig({ refresh: true })).toEqual({ fontSize: 15 })
+    expect(readFileSyncMock).toHaveBeenLastCalledWith(appSupportConfig, 'utf-8')
+
+    existsSyncMock.mockClear()
+    readFileSyncMock.mockClear()
+    expect(getGhosttyTerminalConfig()).toEqual({ fontSize: 15 })
+    expect(getGhosttyConfigPathOnce()).toBe(XDG_CONFIG)
+    expect(existsSyncMock).not.toHaveBeenCalled()
+    expect(readFileSyncMock).not.toHaveBeenCalled()
+
+    // A previous Allow or re-sync never opts the next launch into protected reads.
+    clearGhosttyConfigMemo()
+    warmUpGhosttyConfig()
+    expect(getGhosttyTerminalConfig()).toEqual({ fontSize: 11 })
+    expect(
+      existsSyncMock.mock.calls.every(([path]) => !String(path).startsWith(APP_SUPPORT_DIR))
+    ).toBe(true)
   })
 
   it('finds and parses the XDG config in default mode', () => {
@@ -83,9 +136,7 @@ describe('ghostty config path resolution (TCC gating)', () => {
 
   it('prefers the Application Support config when includeAppSupport is set', () => {
     const appSupportConfig = join(APP_SUPPORT_DIR, 'config.ghostty')
-    existsSyncMock.mockImplementation(
-      (path) => path === appSupportConfig || path === XDG_CONFIG
-    )
+    existsSyncMock.mockImplementation((path) => path === appSupportConfig || path === XDG_CONFIG)
 
     const resolved = resolveGhosttyConfigPath({ includeAppSupport: true })
 

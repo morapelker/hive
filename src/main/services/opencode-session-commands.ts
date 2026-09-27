@@ -9,7 +9,12 @@ import { CodexImplementer } from './codex-implementer'
 import { claudeCliTelegramBridge } from './claude-cli-telegram-bridge'
 import { claudeCliDiscordBridge } from './claude-cli-discord-bridge'
 import { toError } from './error-utils'
-import { isClaudeCli, isTerminalBacked } from '@shared/types/agent-sdk'
+import {
+  isAgentCli,
+  isTerminalBacked,
+  toModelCatalogSdk,
+  type AgentSdk
+} from '@shared/types/agent-sdk'
 
 const log = createLogger({ component: 'OpenCodeSessionCommands' })
 type PromptMessage =
@@ -29,7 +34,7 @@ const injectedWorktrees = new Set<string>()
 function resolveSdkId(
   dbService: DatabaseService,
   sessionId: string
-): 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal' | null {
+): AgentSdk | null {
   return (
     dbService.getAgentSdkForSession(sessionId) ?? dbService.getSession(sessionId)?.agent_sdk ?? null
   )
@@ -40,7 +45,7 @@ function resolveAgentSessionId(dbService: DatabaseService, sessionId: string): s
 }
 
 function toImplementerSdk(sdkId: AgentSdkId): AgentSdkId {
-  return sdkId === 'claude-code-cli' ? 'claude-code' : sdkId
+  return toModelCatalogSdk(sdkId)
 }
 
 export async function connectOpenCodeSession(
@@ -214,13 +219,13 @@ export async function promptOpenCodeSession(
           dbPath: dbService.getDbPath()
         })
       }
-      if (isClaudeCli(sdkId)) {
+      if (isAgentCli(sdkId)) {
         // Terminal-backed Claude: prompts go through the PTY (bracketed paste /
         // pending-prompt spawn), never the SDK implementer. Routing it there
         // would corrupt the claude-code implementer's session state.
         return {
           success: false,
-          error: 'claude-code-cli sessions receive prompts via the terminal, not the prompt API'
+          error: 'CLI sessions receive prompts via the terminal, not the prompt API'
         }
       }
       if (sdkId && sdkId !== 'opencode' && !isTerminalBacked(sdkId)) {
@@ -405,13 +410,13 @@ export async function refreshOpenCodeSessionFromThread(
 
 export async function listOpenCodeModels(
   opts?: {
-    agentSdk?: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
+    agentSdk?: AgentSdk
   },
   sdkManager?: AgentSdkManager
 ): Promise<{ success: boolean; providers: unknown; error?: string }> {
   log.info('OpenCode session models', { agentSdk: opts?.agentSdk })
   try {
-    const requestedSdk = opts?.agentSdk === 'claude-code-cli' ? 'claude-code' : opts?.agentSdk
+    const requestedSdk = toModelCatalogSdk(opts?.agentSdk)
     if (requestedSdk && requestedSdk !== 'opencode' && requestedSdk !== 'terminal' && sdkManager) {
       const impl = sdkManager.getImplementer(requestedSdk)
       if (impl) {
@@ -437,7 +442,7 @@ export async function setOpenCodeSelectedModel(
     providerID: string
     modelID: string
     variant?: string
-    agentSdk?: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
+    agentSdk?: AgentSdk
   } | null,
   sdkManager?: AgentSdkManager
 ): Promise<{ success: boolean; error?: string }> {
@@ -475,7 +480,7 @@ export async function setOpenCodeSelectedModel(
 export async function getOpenCodeModelInfo(
   worktreePath: string,
   modelId: string,
-  agentSdk?: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal',
+  agentSdk?: AgentSdk,
   sdkManager?: AgentSdkManager
 ): Promise<{
   success: boolean
@@ -484,7 +489,7 @@ export async function getOpenCodeModelInfo(
 }> {
   log.info('OpenCode session modelInfo', { worktreePath, modelId, agentSdk })
   try {
-    const requestedSdk = agentSdk === 'claude-code-cli' ? 'claude-code' : agentSdk
+    const requestedSdk = toModelCatalogSdk(agentSdk)
     if (requestedSdk && requestedSdk !== 'opencode' && requestedSdk !== 'terminal' && sdkManager) {
       const impl = sdkManager.getImplementer(requestedSdk)
       if (impl) {

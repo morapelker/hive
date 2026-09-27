@@ -126,6 +126,7 @@ interface MarkdownRuntimeState {
   plan_ready: boolean
   auto_approve_plan: boolean
   unread: boolean
+  awaiting_completion: boolean
   total_tokens: number
   pending_launch_config: string | null
   model_provider_id: string | null
@@ -159,6 +160,7 @@ function emptyRuntimeState(): MarkdownRuntimeState {
     plan_ready: false,
     auto_approve_plan: false,
     unread: false,
+    awaiting_completion: false,
     total_tokens: 0,
     pending_launch_config: null,
     model_provider_id: null,
@@ -762,6 +764,10 @@ class MarkdownKanbanBackend implements KanbanBackend {
         // Entering review marks the ticket unread; leaving review clears it.
         // An explicit data.unread below wins over this derived value.
         runtimeUpdates.unread = data.column === 'review'
+        // Awaiting-completion never survives a column change on its own (a
+        // paused session only ever arms it on an in-progress ticket); an
+        // explicit data.awaiting_completion below wins.
+        runtimeUpdates.awaiting_completion = false
       }
       runtimeUpdates.last_known_column = data.column
     }
@@ -783,6 +789,8 @@ class MarkdownKanbanBackend implements KanbanBackend {
     if (data.auto_approve_plan !== undefined)
       runtimeUpdates.auto_approve_plan = data.auto_approve_plan
     if (data.unread !== undefined) runtimeUpdates.unread = data.unread
+    if (data.awaiting_completion !== undefined)
+      runtimeUpdates.awaiting_completion = data.awaiting_completion
     if (data.pending_launch_config !== undefined)
       runtimeUpdates.pending_launch_config = data.pending_launch_config
     if (data.note !== undefined) runtimeUpdates.note = data.note
@@ -838,7 +846,10 @@ class MarkdownKanbanBackend implements KanbanBackend {
         ? {
             column_changed_at: new Date().toISOString(),
             last_known_column: column,
-            unread: column === 'review'
+            unread: column === 'review',
+            // Only a paused in-progress session sets awaiting_completion; any
+            // column change drops it.
+            awaiting_completion: false
           }
         : { last_known_column: column },
       false
@@ -1599,6 +1610,7 @@ class MarkdownKanbanBackend implements KanbanBackend {
       note: runtime.note,
       auto_approve_plan: runtime.auto_approve_plan,
       unread: runtime.unread,
+      awaiting_completion: runtime.awaiting_completion,
       model_provider_id: runtime.model_provider_id,
       model_id: runtime.model_id,
       model_variant: runtime.model_variant,
@@ -1618,11 +1630,26 @@ class MarkdownKanbanBackend implements KanbanBackend {
       const columnChangedAt =
         runtime.last_known_column === null ? runtime.column_changed_at : new Date().toISOString()
       // Out-of-app moves follow the same unread rule: entering review sets it,
-      // leaving clears it. First sight keeps whatever was stored.
-      const unread =
-        runtime.last_known_column === null ? runtime.unread : card.ticket.column === 'review'
-      this.recordSeenColumn(projectId, card.ticket.id, card.ticket.column, columnChangedAt, unread)
-      runtime = { ...runtime, column_changed_at: columnChangedAt, unread }
+      // leaving clears it. First sight keeps whatever was stored. An
+      // out-of-app column change also drops awaiting_completion (only a
+      // paused session can set it, and only on an in-progress ticket).
+      const firstSight = runtime.last_known_column === null
+      const unread = firstSight ? runtime.unread : card.ticket.column === 'review'
+      const awaitingCompletion = firstSight ? runtime.awaiting_completion : false
+      this.recordSeenColumn(
+        projectId,
+        card.ticket.id,
+        card.ticket.column,
+        columnChangedAt,
+        unread,
+        awaitingCompletion
+      )
+      runtime = {
+        ...runtime,
+        column_changed_at: columnChangedAt,
+        unread,
+        awaiting_completion: awaitingCompletion
+      }
     }
     const ticket: KanbanTicket = {
       ...card.ticket,
@@ -1632,6 +1659,7 @@ class MarkdownKanbanBackend implements KanbanBackend {
       plan_ready: runtime.plan_ready,
       auto_approve_plan: runtime.auto_approve_plan,
       unread: runtime.unread,
+      awaiting_completion: runtime.awaiting_completion,
       total_tokens: runtime.total_tokens,
       pending_launch_config: runtime.pending_launch_config,
       note: runtime.note,
@@ -1735,6 +1763,7 @@ class MarkdownKanbanBackend implements KanbanBackend {
           plan_ready: number
           auto_approve_plan: number
           unread: number
+          awaiting_completion: number
           total_tokens: number
           pending_launch_config: string | null
           model_provider_id: string | null
@@ -1757,6 +1786,7 @@ class MarkdownKanbanBackend implements KanbanBackend {
       plan_ready: row.plan_ready === 1,
       auto_approve_plan: row.auto_approve_plan === 1,
       unread: row.unread === 1,
+      awaiting_completion: row.awaiting_completion === 1,
       total_tokens: row.total_tokens ?? 0,
       pending_launch_config: row.pending_launch_config,
       model_provider_id: row.model_provider_id,
@@ -1818,6 +1848,10 @@ class MarkdownKanbanBackend implements KanbanBackend {
       updates.push('unread = ?')
       values.push(data.unread ? 1 : 0)
     }
+    if (data.awaiting_completion !== undefined) {
+      updates.push('awaiting_completion = ?')
+      values.push(data.awaiting_completion ? 1 : 0)
+    }
     if (data.pending_launch_config !== undefined) {
       updates.push('pending_launch_config = ?')
       values.push(data.pending_launch_config)
@@ -1865,15 +1899,16 @@ class MarkdownKanbanBackend implements KanbanBackend {
     cardId: string,
     column: string,
     columnChangedAt: string | null,
-    unread: boolean
+    unread: boolean,
+    awaitingCompletion: boolean
   ): void {
     this.ensureRuntime(projectId, cardId)
     getDatabase()
       .getRawDb()
       .prepare(
-        'UPDATE markdown_kanban_card_state SET last_known_column = ?, column_changed_at = ?, unread = ? WHERE project_id = ? AND card_id = ?'
+        'UPDATE markdown_kanban_card_state SET last_known_column = ?, column_changed_at = ?, unread = ?, awaiting_completion = ? WHERE project_id = ? AND card_id = ?'
       )
-      .run(column, columnChangedAt, unread ? 1 : 0, projectId, cardId)
+      .run(column, columnChangedAt, unread ? 1 : 0, awaitingCompletion ? 1 : 0, projectId, cardId)
   }
 
   private markRuntimeSeen(projectId: string, cardId: string, filePath: string): void {

@@ -23,7 +23,8 @@ const mainInclude = [
   'src/main/desktop/**/*.test.ts',
   'src/main/effect/**/*.test.ts',
   'src/main/ipc/**/*.test.ts',
-  'src/main/services/**/*.test.ts'
+  'src/main/services/**/*.test.ts',
+  'src/main/voice/**/*.test.ts'
 ]
 
 const overrideMainInclude: Plugin = {

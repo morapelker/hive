@@ -60,6 +60,7 @@ import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { QuickActions } from './QuickActions'
 import { HeaderTelegramToggle } from './HeaderTelegramToggle'
 import { HeaderDiscordToggle } from './HeaderDiscordToggle'
+import { HeaderVoiceToggle } from './HeaderVoiceToggle'
 import { useLifecycleActions } from '@/hooks/useLifecycleActions'
 import { usePinAndActivateSession } from '@/hooks/usePinAndActivateSession'
 import { useConflictFixFlow } from '@/hooks/useConflictFixFlow'
@@ -782,6 +783,7 @@ export function Header(): React.JSX.Element {
             </DropdownMenu>
           </Popover>
         )}
+        <HeaderVoiceToggle />
         {boardMode === 'toggle' && (
           <Tip
             tipId={kanbanIconSeen ? 'kanban-reenter' : 'kanban-icon'}

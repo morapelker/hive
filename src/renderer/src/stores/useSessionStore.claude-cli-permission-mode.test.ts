@@ -89,3 +89,27 @@ describe('setSessionMode — syncCliPermissionMode option', () => {
     expect(useSessionStore.getState().modeBySession.get('s1')).toBe('build')
   })
 })
+
+describe('syncClaudeCliPermissionModeIfNeeded — codex-cli', () => {
+  beforeEach(() => {
+    seedSession('codex-cli')
+  })
+
+  it('sends a single Shift+Tab in either direction (codex has exactly Default ↔ Plan)', () => {
+    const enter = mockWrite()
+    syncClaudeCliPermissionModeIfNeeded(useSessionStore.getState(), 's1', 'build', 'plan')
+    expect(enter).toHaveBeenCalledTimes(1)
+    expect(enter).toHaveBeenCalledWith('s1', SHIFT_TAB)
+
+    const leave = mockWrite()
+    syncClaudeCliPermissionModeIfNeeded(useSessionStore.getState(), 's1', 'super-plan', 'build')
+    expect(leave).toHaveBeenCalledTimes(1)
+  })
+
+  it('does nothing for non-CLI sessions', () => {
+    seedSession('codex')
+    const write = mockWrite()
+    syncClaudeCliPermissionModeIfNeeded(useSessionStore.getState(), 's1', 'build', 'plan')
+    expect(write).not.toHaveBeenCalled()
+  })
+})

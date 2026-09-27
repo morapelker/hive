@@ -14,11 +14,20 @@ vi.mock('../../../src/main/services/logger', () => ({
   })
 }))
 
+vi.mock('../../../src/main/services/agent-event-bus', () => ({
+  agentEventBus: { publish: vi.fn() }
+}))
+
+vi.mock('../../../src/main/desktop/backend-event-publisher', () => ({
+  publishDesktopBackendEvent: vi.fn()
+}))
+
 import {
   ClaudeCodeImplementer,
   type ClaudeSessionState,
   type ClaudeQuery
 } from '../../../src/main/services/claude-code-implementer'
+import { loadClaudeSDK } from '../../../src/main/services/claude-sdk-loader'
 
 function createMockQuery(overrides: Partial<ClaudeQuery> = {}): ClaudeQuery {
   return {
@@ -35,6 +44,7 @@ describe('ClaudeCodeImplementer – lifecycle (Session 3)', () => {
   let sessions: Map<string, ClaudeSessionState>
 
   beforeEach(() => {
+    vi.mocked(loadClaudeSDK).mockReset()
     impl = new ClaudeCodeImplementer()
     sessions = (impl as any).sessions
   })
@@ -130,6 +140,32 @@ describe('ClaudeCodeImplementer – lifecycle (Session 3)', () => {
       const key = (impl as any).getSessionKey('/proj', 'real-sid-1')
       const state = sessions.get(key)!
       expect(state.query).toBeNull()
+    })
+
+    it('reports busy while a turn is still starting, before the SDK query exists', async () => {
+      // The SDK never finishes loading: the turn has already been published as
+      // busy, but session.query is not assigned yet. Opening a ticket or
+      // focusing the session lands a reconnect in exactly this window, and an
+      // 'idle' answer here makes the renderer finalize a running turn.
+      vi.mocked(loadClaudeSDK).mockImplementation(() => new Promise(() => {}))
+      const { sessionId } = await impl.connect('/proj', 'hive-1')
+      void impl.prompt('/proj', sessionId, 'hello')
+      await new Promise((resolve) => setTimeout(resolve, 0))
+
+      const key = (impl as any).getSessionKey('/proj', sessionId)
+      expect(sessions.get(key)!.query).toBeNull()
+
+      const result = await impl.reconnect('/proj', sessionId, 'hive-1')
+      expect(result.sessionStatus).toBe('busy')
+    })
+
+    it('reports idle again once the turn has ended', async () => {
+      vi.mocked(loadClaudeSDK).mockRejectedValue(new Error('sdk failed to load'))
+      const { sessionId } = await impl.connect('/proj', 'hive-1')
+      await expect(impl.prompt('/proj', sessionId, 'hello')).rejects.toThrow('sdk failed to load')
+
+      const result = await impl.reconnect('/proj', sessionId, 'hive-1')
+      expect(result.sessionStatus).toBe('idle')
     })
 
     it('handles already-registered sessions by updating hiveSessionId', async () => {

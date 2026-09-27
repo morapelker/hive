@@ -77,11 +77,26 @@ let sweepTimer: NodeJS.Timeout | null = null
 let sweepStarted = false
 
 function providerForSession(session: Session): 'anthropic' | 'openai' | null {
-  if (session.agent_sdk === 'codex') return 'openai'
+  if (session.agent_sdk === 'codex' || session.agent_sdk === 'codex-cli') return 'openai'
   if (session.agent_sdk === 'claude-code' || session.agent_sdk === 'claude-code-cli') {
     return 'anthropic'
   }
   return null
+}
+
+/**
+ * The codex thread id of a session: the app-server provider stores it as the
+ * OpenCode-style agent session id, the terminal-backed codex-cli provider in
+ * the CLI-native `claude_session_id` slot (shared with claude-code-cli so the
+ * PTY resume/capture machinery is one code path).
+ */
+function codexThreadIdForSession(session: Session | null | undefined): string | null {
+  if (!session) return null
+  if (session.agent_sdk === 'codex-cli') {
+    const id = session.claude_session_id
+    return id && !id.startsWith('pending::') ? id : null
+  }
+  return session.opencode_session_id
 }
 
 function resolveSessionCwd(db: DatabaseService, session: Session): string | null {
@@ -307,7 +322,7 @@ async function doReport(sessionId: string, deps: SessionUsageServiceDeps): Promi
     buckets = result.buckets
     nextState = { provider, claude: result.state }
   } else {
-    const threadId = session.opencode_session_id
+    const threadId = codexThreadIdForSession(session)
     if (!threadId) return
     const sessionsDir = deps.codexSessionsDir ?? join(homedir(), '.codex', 'sessions')
     let filePath = stored?.codex?.filePath ?? null

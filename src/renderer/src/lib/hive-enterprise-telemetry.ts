@@ -7,7 +7,7 @@ import {
 } from '@/api/hive-enterprise/client'
 import { reportActiveAccountsSnapshot } from '@/lib/hive-account-report'
 import { currentPromptIdBySession } from '@/lib/message-send-times'
-import { isClaudeFamily } from '@shared/types/agent-sdk'
+import { isClaudeFamily, isCodexFamily } from '@shared/types/agent-sdk'
 import { useAccountStore } from '@/stores/useAccountStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useContextStore } from '@/stores/useContextStore'
@@ -100,7 +100,7 @@ export function resolveHivePromptAccountProvider(
   agentSdk: string | null | undefined
 ): HiveAccountProvider | null {
   if (isClaudeFamily(agentSdk)) return 'anthropic'
-  if (agentSdk === 'codex') return 'openai'
+  if (isCodexFamily(agentSdk)) return 'openai'
   return null
 }
 

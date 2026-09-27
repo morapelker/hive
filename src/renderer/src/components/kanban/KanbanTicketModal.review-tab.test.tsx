@@ -140,7 +140,7 @@ const worktree: Worktree = {
   last_accessed_at: now
 }
 
-function makeSession(agentSdk: string): Session {
+function makeSession(agentSdk: Session['agent_sdk']): Session {
   return {
     id: 'session-1',
     worktree_id: 'worktree-1',
@@ -194,6 +194,7 @@ const reviewTicket: KanbanTicket = {
   created_from_session: false,
   auto_approve_plan: false,
   unread: false,
+  awaiting_completion: false,
   model_provider_id: null,
   model_id: null,
   model_variant: null,

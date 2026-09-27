@@ -38,7 +38,8 @@ import {
   SquareTerminal,
   Radar,
   Bot,
-  Star
+  Star,
+  Hourglass
 } from 'lucide-react'
 import { CheckeredFlagIcon } from './CheckeredFlagIcon'
 import { HighlightedText } from './HighlightedText'
@@ -105,7 +106,8 @@ import { parseTicketKey, setKanbanDragData, ticketKey, ticketTransitionTime, use
 import type { TicketKey } from '@/stores/useKanbanStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { isBlockerSatisfied } from '@/lib/blocker-utils'
-import { findBaseInstanceConnection } from '@/lib/connection-project'
+import { findBaseInstanceConnection, isBaseInstance } from '@/lib/connection-project'
+import { setProjectBasePinned } from '@/lib/auto-pin'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useProjectIconUrl } from '@/components/projects/LanguageIcon'
@@ -123,8 +125,9 @@ import { useTicketRemoteLaunch } from '@/hooks/useTicketRemoteLaunch'
 import { formatTokenCount, formatTransitionAge } from '@/lib/format-utils'
 import { useTimerTickStore } from '@/stores/useTimerTickStore'
 import { canToggleAutoApprovePlan } from '@/lib/plan-auto-approve'
-import { isClaudeCli } from '@shared/types/agent-sdk'
+import { isAgentCli } from '@shared/types/agent-sdk'
 import { terminalApi } from '@/api/terminal-api'
+import { dbApi } from '@/api/db-api'
 import type { KanbanTicket, TicketMark } from '../../../../main/db/types'
 
 // ── Project tag color palette ──────────────────────────────────────
@@ -632,24 +635,32 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   )
   const isAsking = isAskingFromQuestionStore || isAskingFromStatus
 
-  const rightAlignedSlot: 'conflicts' | 'busy' | 'reviewing' | 'completed-review' | null =
-    useMemo(() => {
-      if (!isArchived && hasConflicts && conflictTargetWorktreeId) return 'conflicts'
-      if ((isBusy || isAsking) && ticket.mode && !isBlocked) return 'busy'
-      if (isBeingReviewed) return 'reviewing'
-      if (completedReviewSessionId) return 'completed-review'
-      return null
-    }, [
-      completedReviewSessionId,
-      conflictTargetWorktreeId,
-      hasConflicts,
-      isArchived,
-      isAsking,
-      isBeingReviewed,
-      isBlocked,
-      isBusy,
-      ticket.mode
-    ])
+  // The Claude CLI session stopped without a completion message (background
+  // work or a scheduled wake-up still pending): the ticket stays in progress
+  // and the hourglass takes the progress bar's slot until the run resumes or
+  // the real completion lands. A live run (busy/asking) always wins.
+  const isAwaitingCompletion = ticket.column === 'in_progress' && ticket.awaiting_completion
+
+  const rightAlignedSlot:
+    'conflicts' | 'busy' | 'awaiting' | 'reviewing' | 'completed-review' | null = useMemo(() => {
+    if (!isArchived && hasConflicts && conflictTargetWorktreeId) return 'conflicts'
+    if ((isBusy || isAsking) && ticket.mode && !isBlocked) return 'busy'
+    if (isAwaitingCompletion) return 'awaiting'
+    if (isBeingReviewed) return 'reviewing'
+    if (completedReviewSessionId) return 'completed-review'
+    return null
+  }, [
+    completedReviewSessionId,
+    conflictTargetWorktreeId,
+    hasConflicts,
+    isArchived,
+    isAsking,
+    isAwaitingCompletion,
+    isBeingReviewed,
+    isBlocked,
+    isBusy,
+    ticket.mode
+  ])
   const hasRightAlignedStatus = rightAlignedSlot !== null
 
   const timerText = useSessionTimer(
@@ -686,14 +697,6 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
         if (!ticket.worktree_id) return false
         return s.scriptStates[ticket.worktree_id]?.runRunning ?? false
       },
-      [ticket.worktree_id]
-    )
-  )
-
-  // ── Pin state for the assigned worktree ─────────────────────────
-  const isPinned = usePinnedStore(
-    useCallback(
-      (s) => (ticket.worktree_id ? s.pinnedWorktreeIds.has(ticket.worktree_id) : false),
       [ticket.worktree_id]
     )
   )
@@ -833,79 +836,125 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
       // the plain path opens the detail modal)
       useKanbanStore.getState().markTicketRead(ticket.id, ticket.project_id)
 
-      // Cmd+click (Mac) / Ctrl+click (Win/Linux) — select attached worktree;
-      // cmd+shift+click — select the project's base worktree instead. Tickets
-      // without a live worktree (never assigned, or the worktree was archived,
-      // which detaches the ticket) fall back to the base worktree too.
+      // Cmd+click (Mac) / Ctrl+click (Win/Linux) — select where the ticket
+      // runs; cmd+shift+click — its base branch(es) instead:
+      //
+      //   worktree ticket    cmd+click       → the attached worktree
+      //                      cmd+shift+click → the project's default worktree
+      //   connection ticket  cmd+click       → the connection it runs on
+      //                      cmd+shift+click → the same connection, with the
+      //                        git side (Changes / push / pull) on every member
+      //                        project's base branch — pull there, then re-tap
+      //                        the connection in the sidebar for its own
+      //                        branches again
+      //
+      // Tickets whose worktree/connection is gone (never launched, archived)
+      // fall back to the base target either way: the project's default
+      // worktree, or a connection project's base instance.
       if (e.metaKey || e.ctrlKey) {
-        const selectTicketWorktree = (): boolean => {
-          const state = useWorktreeStore.getState()
-          const attached =
-            !e.shiftKey && ticket.worktree_id
-              ? (state.worktreesByProject
-                  .get(ticket.project_id)
-                  ?.find((w) => w.id === ticket.worktree_id) ?? null)
-              : null
-          const target = attached ?? state.getDefaultWorktree(ticket.project_id)
-          if (!target) return false
-          if (attached) recordBoardTelegramTarget()
-          const selectionOptions = isPinnedMode ? { preservePinnedBoard: true } : undefined
-          state.selectWorktree(target.id, selectionOptions)
-          useProjectStore.getState().selectProject(ticket.project_id, selectionOptions)
-          useWorktreeStatusStore.getState().clearWorktreeUnread(target.id)
-          return true
-        }
-
-        if (selectTicketWorktree()) {
-          e.preventDefault()
-          return
-        }
-
-        // Cmd+click on a connection ticket — select the connection in the
-        // sidebar (same as ConnectionItem.handleClick), don't open the session;
-        // cmd+shift+click on a connection project ticket — select the project's
-        // base instance (each member project's default worktree) instead, the
-        // twin of the base-worktree behavior above. Tickets whose instance is
-        // gone (archived) fall back to the base instance too.
-        const liveConnectionId = e.shiftKey
-          ? null
-          : (connectionId ?? connectionSession?.connectionId)
-        const ticketConnectionId =
-          liveConnectionId ?? findBaseInstanceConnection(ticket.project_id)?.id
-        if (ticketConnectionId) {
-          e.preventDefault()
-          useConnectionStore.getState().selectConnection(ticketConnectionId)
-          return
-        }
-
+        const withBase = e.shiftKey
         const project = useProjectStore.getState().projects.find((p) => p.id === ticket.project_id)
-
-        // Connection project whose connections aren't in the store — they may
-        // just not be loaded yet (e.g. a pinned board before any connection UI)
-        if (project?.kind === 'connection') {
-          e.preventDefault()
-          void useConnectionStore
-            .getState()
-            .loadConnections()
-            .then(() => {
-              const base = findBaseInstanceConnection(ticket.project_id)
-              if (base) useConnectionStore.getState().selectConnection(base.id)
-            })
-          return
-        }
-
-        // Git project with no worktrees in the store — they may just not be
-        // loaded yet (e.g. a pinned board for a never-selected project)
         if (project) {
           e.preventDefault()
-          void useWorktreeStore
+          const isConnectionProjectTicket = project.kind === 'connection'
+          const selectionOptions = isPinnedMode ? { preservePinnedBoard: true } : undefined
+
+          const findAttachedWorktree = () =>
+            ticket.worktree_id
+              ? (useWorktreeStore
+                  .getState()
+                  .worktreesByProject.get(ticket.project_id)
+                  ?.find((w) => w.id === ticket.worktree_id) ?? null)
+              : null
+
+          // Worktree ticket: the attached worktree, or the project's default one
+          const selectTicketWorktree = (): boolean => {
+            const state = useWorktreeStore.getState()
+            const attached = withBase ? null : findAttachedWorktree()
+            const target = attached ?? state.getDefaultWorktree(ticket.project_id)
+            if (!target) return false
+            if (attached) recordBoardTelegramTarget()
+            state.selectWorktree(target.id, selectionOptions)
+            useProjectStore.getState().selectProject(ticket.project_id, selectionOptions)
+            useWorktreeStatusStore.getState().clearWorktreeUnread(target.id)
+            return true
+          }
+
+          // Connection ticket: the connection itself (same as
+          // ConnectionItem.handleClick), with the git side on the members'
+          // base branches when shift is held. Only a connection the store
+          // knows about can be selected.
+          const selectTicketConnection = (id: string): boolean => {
+            const store = useConnectionStore.getState()
+            if (!store.connections.some((c) => c.id === id)) return false
+            store.selectConnection(id, { gitView: withBase ? 'base' : 'connection' })
+            return true
+          }
+
+          // A connection project's base instance already IS every member's
+          // base branch, so it is the target with or without shift
+          const selectBaseInstance = (): boolean => {
+            const base = findBaseInstanceConnection(ticket.project_id)
+            if (!base) return false
+            useConnectionStore.getState().selectConnection(base.id)
+            return true
+          }
+
+          // The connection the ticket's session runs on, when the session is
+          // not loaded into the session store (connection sessions only load
+          // once their connection is opened)
+          const resolveSessionConnectionId = async (): Promise<string | null> => {
+            if (!ticket.current_session_id) return null
+            const session = await dbApi.session
+              .get<{ connection_id: string | null }>(ticket.current_session_id)
+              .catch(() => null)
+            return session?.connection_id ?? null
+          }
+
+          // Fast path — everything needed is already in the stores
+          const worktreesLoaded = useWorktreeStore
             .getState()
-            .loadWorktrees(ticket.project_id)
-            .then(() => {
+            .worktreesByProject.has(ticket.project_id)
+          if (!ticket.worktree_id || worktreesLoaded) {
+            // A live attached worktree makes this a worktree ticket, even on
+            // a connection board — that is where it runs
+            if (findAttachedWorktree()) {
               selectTicketWorktree()
-            })
+              return
+            }
+            const liveConnectionId = connectionId ?? connectionSession?.connectionId ?? null
+            if (liveConnectionId && selectTicketConnection(liveConnectionId)) return
+          }
+
+          // Slow path — load what is missing (a pinned board for a project
+          // that was never selected, a connection whose sessions were never
+          // opened, connections not loaded yet) and decide again
+          void (async () => {
+            if (ticket.worktree_id && !worktreesLoaded) {
+              await useWorktreeStore.getState().loadWorktrees(ticket.project_id)
+              if (findAttachedWorktree()) {
+                selectTicketWorktree()
+                return
+              }
+            }
+            if (!useConnectionStore.getState().loaded) {
+              await useConnectionStore.getState().loadConnections()
+            }
+            const liveConnectionId =
+              connectionId ?? connectionSession?.connectionId ?? (await resolveSessionConnectionId())
+            if (liveConnectionId && selectTicketConnection(liveConnectionId)) return
+            if (isConnectionProjectTicket) {
+              selectBaseInstance()
+              return
+            }
+            if (!useWorktreeStore.getState().worktreesByProject.has(ticket.project_id)) {
+              await useWorktreeStore.getState().loadWorktrees(ticket.project_id)
+            }
+            selectTicketWorktree()
+          })()
           return
         }
+        // Unknown project — nothing to select; fall through to the modal
       }
 
       useKanbanStore.getState().setSelectedTicketRef({
@@ -913,7 +962,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
         ticketId: ticket.id
       })
     },
-    [ticket.id, ticket.worktree_id, ticket.project_id, isPinnedMode, connectionId, connectionSession, recordBoardTelegramTarget, blockingDiagnostic]
+    [ticket.id, ticket.worktree_id, ticket.project_id, ticket.current_session_id, isPinnedMode, connectionId, connectionSession, recordBoardTelegramTarget, blockingDiagnostic]
   )
 
   // ── Right-button drag into In Progress — start immediately with the
@@ -1160,6 +1209,42 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     )
   )
 
+  // ── Pin state for the project's BASE (default worktree / base instance) ──
+  // Pinning any worktree of a project puts the whole project on the pinned
+  // board, so the ticket's pin action targets the project's base rather than
+  // the worktree the ticket happens to run on — it shows/hides every ticket of
+  // the project there.
+  const baseWorktreeId = useWorktreeStore(
+    useCallback(
+      (s) =>
+        isConnectionProjectTicket
+          ? null
+          : (s.worktreesByProject.get(ticket.project_id)?.find((w) => w.is_default)?.id ?? null),
+      [isConnectionProjectTicket, ticket.project_id]
+    )
+  )
+  const baseConnectionId = useConnectionStore(
+    useCallback(
+      (s) =>
+        isConnectionProjectTicket
+          ? (s.connections.find((c) => c.saved_project_id === ticket.project_id && isBaseInstance(c))
+              ?.id ?? null)
+          : null,
+      [isConnectionProjectTicket, ticket.project_id]
+    )
+  )
+  const isBasePinned = usePinnedStore(
+    useCallback(
+      (s) => {
+        if (baseWorktreeId) return s.pinnedWorktreeIds.has(baseWorktreeId)
+        if (baseConnectionId) return s.pinnedConnectionIds.has(baseConnectionId)
+        return false
+      },
+      [baseWorktreeId, baseConnectionId]
+    )
+  )
+  const baseLabel = isConnectionProjectTicket ? 'base instance' : 'base worktree'
+
   const handleUnassignWorktree = useCallback(async () => {
     try {
       await useKanbanStore.getState().updateTicket(ticket.id, ticket.project_id, {
@@ -1171,14 +1256,10 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     }
   }, [ticket.id, ticket.project_id])
 
-  const handleTogglePin = useCallback(async () => {
-    if (!ticket.worktree_id) return
-    if (isPinned) {
-      await usePinnedStore.getState().unpinWorktree(ticket.worktree_id)
-    } else {
-      await usePinnedStore.getState().pinWorktree(ticket.worktree_id)
-    }
-  }, [isPinned, ticket.worktree_id])
+  const handleToggleBasePin = useCallback(async () => {
+    const found = await setProjectBasePinned(ticket.project_id, !isBasePinned)
+    if (!found) toast.error(`No ${baseLabel} found for this project`)
+  }, [isBasePinned, ticket.project_id, baseLabel])
 
   const handleEditContext = useCallback(() => {
     if (!ticket.worktree_id) return
@@ -1239,7 +1320,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
       // Mirror the durable flag into the hook server's in-memory armed registry
       // when a claude-cli session is already live; sessions armed before they
       // exist are registered by the status listener on their first planning turn.
-      if (ticket.current_session_id && isClaudeCli(linkedSessionAgentSdk)) {
+      if (ticket.current_session_id && isAgentCli(linkedSessionAgentSdk)) {
         await terminalApi.setClaudeCliPlanAutoApprove(ticket.current_session_id, next)
       }
     } catch {
@@ -1740,6 +1821,19 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                           )}
                         </span>
                       )
+                    case 'awaiting':
+                      return (
+                        <span
+                          data-testid="ticket-awaiting-completion"
+                          title="Still waiting — the agent stopped without finishing (a subagent, workflow, monitor, or scheduled wake-up is pending)"
+                          className="ml-auto flex items-center text-amber-500"
+                        >
+                          <Hourglass
+                            className="h-3 w-3"
+                            aria-label="Still waiting for the agent to finish"
+                          />
+                        </span>
+                      )
                     case 'reviewing':
                       return (
                         <span data-testid="kanban-ticket-reviewing" className="ml-auto flex items-center gap-1.5">
@@ -1846,25 +1940,23 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
               )}
 
               {ticket.worktree_id && (
-                <>
-                  <ContextMenuItem
-                    data-testid="ctx-edit-context"
-                    onClick={handleEditContext}
-                    className="gap-2"
-                  >
-                    <FileText className="h-3.5 w-3.5" />
-                    Edit Context
-                  </ContextMenuItem>
-                  <ContextMenuItem
-                    data-testid="ctx-toggle-pin"
-                    onClick={handleTogglePin}
-                    className="gap-2"
-                  >
-                    {isPinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
-                    {isPinned ? 'Unpin worktree' : 'Pin worktree'}
-                  </ContextMenuItem>
-                </>
+                <ContextMenuItem
+                  data-testid="ctx-edit-context"
+                  onClick={handleEditContext}
+                  className="gap-2"
+                >
+                  <FileText className="h-3.5 w-3.5" />
+                  Edit Context
+                </ContextMenuItem>
               )}
+              <ContextMenuItem
+                data-testid="ctx-toggle-base-pin"
+                onClick={handleToggleBasePin}
+                className="gap-2"
+              >
+                {isBasePinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
+                {isBasePinned ? `Unpin ${baseLabel}` : `Pin ${baseLabel}`}
+              </ContextMenuItem>
 
               {!isFlowTicket && !ticket.worktree_id && (
                 <ContextMenuItem disabled className="text-muted-foreground text-xs">
@@ -1954,27 +2046,27 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             </>
           )}
 
-          {/* Worktree actions: edit context & pin/unpin (when worktree assigned) */}
+          {/* Edit context (when worktree assigned) */}
           {ticket.worktree_id && (
-            <>
-              <ContextMenuItem
-                data-testid="ctx-edit-context"
-                onClick={handleEditContext}
-                className="gap-2"
-              >
-                <FileText className="h-3.5 w-3.5" />
-                Edit Context
-              </ContextMenuItem>
-              <ContextMenuItem
-                data-testid="ctx-toggle-pin"
-                onClick={handleTogglePin}
-                className="gap-2"
-              >
-                {isPinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
-                {isPinned ? 'Unpin worktree' : 'Pin worktree'}
-              </ContextMenuItem>
-            </>
+            <ContextMenuItem
+              data-testid="ctx-edit-context"
+              onClick={handleEditContext}
+              className="gap-2"
+            >
+              <FileText className="h-3.5 w-3.5" />
+              Edit Context
+            </ContextMenuItem>
           )}
+
+          {/* Pin/unpin the project's base so its tickets show/hide on the pinned board */}
+          <ContextMenuItem
+            data-testid="ctx-toggle-base-pin"
+            onClick={handleToggleBasePin}
+            className="gap-2"
+          >
+            {isBasePinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
+            {isBasePinned ? `Unpin ${baseLabel}` : `Pin ${baseLabel}`}
+          </ContextMenuItem>
 
           {/* Update status on remote platform */}
           {isExternalTicket && (

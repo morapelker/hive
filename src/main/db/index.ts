@@ -54,5 +54,7 @@ export type {
   SavedUsageAccountUpsert,
   SavedUsageAccountUsageUpdate,
   SavedUsageProvider,
-  SavedUsageStatus
+  SavedUsageStatus,
+  VoiceHistoryRow,
+  VoiceHistoryRowCreate
 } from './types'

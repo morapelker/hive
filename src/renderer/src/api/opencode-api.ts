@@ -4,7 +4,7 @@ import { OPENCODE_STREAM_CHANNEL } from '@shared/opencode-events'
 import type { OpenCodeStreamEvent } from '@shared/types/opencode'
 import { getRendererRpcClient } from './rpc-client'
 
-type OpenCodeAgentSdk = 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
+type OpenCodeAgentSdk = 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'codex-cli' | 'terminal'
 
 export type OpenCodeSetModelInput = {
   readonly providerID: string

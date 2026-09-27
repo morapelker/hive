@@ -1,3 +1,5 @@
+import { toHighlightRuns } from '@/lib/highlight-runs'
+
 interface HighlightedTextProps {
   text: string
   indices: number[]
@@ -9,16 +11,15 @@ export function HighlightedText({
   indices,
   className
 }: HighlightedTextProps): React.JSX.Element {
-  const set = new Set(indices)
   return (
     <span className={className}>
-      {text.split('').map((char, i) =>
-        set.has(i) ? (
+      {toHighlightRuns(text, indices).map((run, i) =>
+        run.hit ? (
           <span key={i} className="text-foreground font-semibold">
-            {char}
+            {run.text}
           </span>
         ) : (
-          <span key={i}>{char}</span>
+          run.text
         )
       )}
     </span>

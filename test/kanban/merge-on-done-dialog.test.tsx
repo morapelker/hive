@@ -26,6 +26,11 @@ const apiMocks = vi.hoisted(() => ({
     hasUncommittedChanges: vi.fn(),
     branchDiffShortStat: vi.fn(),
     getDiffStat: vi.fn(),
+    getFileStatuses: vi.fn(),
+    getBranchDiffFiles: vi.fn(),
+    getBranchFileDiff: vi.fn(),
+    getDiff: vi.fn(),
+    onStatusChanged: vi.fn(() => () => {}),
     getRemoteUrl: vi.fn(),
     pull: vi.fn(),
     merge: vi.fn(),
@@ -189,6 +194,9 @@ describe('MergeOnDoneDialog', () => {
       success: true,
       files: []
     })
+    apiMocks.gitApi.getFileStatuses.mockResolvedValue({ success: true, files: [] })
+    apiMocks.gitApi.getBranchDiffFiles.mockResolvedValue({ success: true, files: [] })
+    apiMocks.gitApi.getBranchFileDiff.mockResolvedValue({ success: true, diff: '' })
     apiMocks.gitApi.getRemoteUrl.mockResolvedValue({ success: true, url: null, remote: null })
     apiMocks.gitApi.pull.mockResolvedValue({ success: true })
     apiMocks.gitApi.stageAll.mockResolvedValue({ success: true })
@@ -234,6 +242,123 @@ describe('MergeOnDoneDialog', () => {
     expect(
       useWorktreeStatusStore.getState().mergeConflictWorktreeByTicket['project-1:ticket-1']
     ).toBe('base-wt')
+  })
+
+  test('connection flow: a conflicted member advances the queue instead of aborting it', async () => {
+    useKanbanStore.setState({
+      tickets: new Map([['project-1', [makeTicket({ worktree_id: null })]]]),
+      pendingDoneMove: {
+        ticketId: 'ticket-1',
+        projectId: 'project-1',
+        sortOrder: 100,
+        targetColumn: 'merged',
+        worktreeId: 'feature-wt',
+        worktreeProjectId: 'project-1',
+        remainingWorktrees: [{ worktreeId: 'feature-wt-2', projectId: 'project-2' }]
+      }
+    })
+    merge.mockResolvedValue({
+      success: false,
+      error: 'Merge conflicts in 2 file(s). Resolve conflicts before continuing.',
+      conflicts: ['src/a.ts', 'src/b.ts']
+    })
+
+    render(<MergeOnDoneDialog />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /^merge$/i }))
+
+    await waitFor(() => {
+      expect(useKanbanStore.getState().pendingDoneMove?.worktreeId).toBe('feature-wt-2')
+    })
+    expect(toastError).toHaveBeenCalledWith(
+      'Merge conflicts in 2 files on Project — continuing with the next project'
+    )
+    expect(useKanbanStore.getState().pendingDoneMove?.conflictedWorktrees).toEqual([
+      { worktreeId: 'feature-wt', projectId: 'project-1' }
+    ])
+    expect(mergeAbort).not.toHaveBeenCalled()
+    expect(ticketMove).not.toHaveBeenCalled()
+    expect(useKanbanStore.getState().tickets.get('project-1')?.[0]?.column).toBe('review')
+    expect(useGitStore.getState().conflictsByWorktree['/repo/main']).toBe(true)
+    expect(
+      useWorktreeStatusStore.getState().mergeConflictWorktreeByTicket['project-1:ticket-1']
+    ).toBe('base-wt')
+  })
+
+  test('connection flow: a conflict on the last member ends the queue without moving the ticket', async () => {
+    useKanbanStore.setState({
+      tickets: new Map([['project-1', [makeTicket({ worktree_id: null })]]]),
+      pendingDoneMove: {
+        ticketId: 'ticket-1',
+        projectId: 'project-1',
+        sortOrder: 100,
+        targetColumn: 'merged',
+        worktreeId: 'feature-wt',
+        worktreeProjectId: 'project-1',
+        remainingWorktrees: [],
+        conflictedWorktrees: [{ worktreeId: 'feature-wt-0', projectId: 'project-0' }]
+      }
+    })
+    useWorktreeStatusStore.setState({
+      mergeConflictWorktreeByTicket: { 'project-1:ticket-1': 'base-wt-0' }
+    })
+    merge.mockResolvedValue({
+      success: false,
+      error: 'Merge conflicts in 1 file(s). Resolve conflicts before continuing.',
+      conflicts: ['src/file.ts']
+    })
+
+    render(<MergeOnDoneDialog />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /^merge$/i }))
+
+    await waitFor(() => {
+      expect(useKanbanStore.getState().pendingDoneMove).toBeNull()
+    })
+    expect(toastError).toHaveBeenCalledWith('Merge conflicts in 1 file on Project')
+    expect(toastWarning).toHaveBeenCalledWith(
+      'Merge conflicts in 2 projects — ticket not moved. Fix the conflicts and move it again.',
+      expect.anything()
+    )
+    expect(ticketMove).not.toHaveBeenCalled()
+    expect(useKanbanStore.getState().tickets.get('project-1')?.[0]?.column).toBe('review')
+    expect(useGitStore.getState().conflictsByWorktree['/repo/main']).toBe(true)
+    // The first conflicted member stays the ticket's conflict target
+    expect(
+      useWorktreeStatusStore.getState().mergeConflictWorktreeByTicket['project-1:ticket-1']
+    ).toBe('base-wt-0')
+  })
+
+  test('connection flow: a successful last merge still keeps the ticket when an earlier member conflicted', async () => {
+    useKanbanStore.setState({
+      tickets: new Map([['project-1', [makeTicket({ worktree_id: null })]]]),
+      pendingDoneMove: {
+        ticketId: 'ticket-1',
+        projectId: 'project-1',
+        sortOrder: 100,
+        targetColumn: 'merged',
+        worktreeId: 'feature-wt',
+        worktreeProjectId: 'project-1',
+        remainingWorktrees: [],
+        conflictedWorktrees: [{ worktreeId: 'feature-wt-0', projectId: 'project-0' }]
+      }
+    })
+    merge.mockResolvedValue({ success: true })
+
+    render(<MergeOnDoneDialog />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /^merge$/i }))
+
+    await waitFor(() => {
+      expect(useKanbanStore.getState().pendingDoneMove).toBeNull()
+    })
+    expect(toastSuccess).toHaveBeenCalledWith('Branch merged successfully')
+    expect(toastWarning).toHaveBeenCalledWith(
+      'Merge conflicts in 1 project — ticket not moved. Fix the conflicts and move it again.',
+      expect.anything()
+    )
+    expect(ticketMove).not.toHaveBeenCalled()
+    expect(useKanbanStore.getState().tickets.get('project-1')?.[0]?.column).toBe('review')
   })
 
   test('keeps ticket in review when merge fails without conflicts', async () => {

@@ -19,6 +19,9 @@ import { isTaskNotificationPrompt } from './claude-cli-subagent-tracker'
  * (PostToolUse → 'working') often carries the same status as a suppressed
  * intermediate publish, and would be dedup-swallowed if the latch lived
  * downstream (e.g. in the renderer store).
+ *
+ * Interactions the hooks cannot see through to the end (codex's non-blocking
+ * questions) are covered by external holds — see the section at the bottom.
  */
 
 type BlockingKind = 'answering' | 'permission' | 'plan_ready'
@@ -147,9 +150,20 @@ function releaseOne(entry: BlockingEntry, toolUseId: string | undefined): boolea
 /**
  * Apply a hook to the session's interaction ledger and return the status
  * payloads to publish, in order (0, 1, or 2 — a resolution followed by the
- * re-surfaced next pending interaction).
+ * re-surfaced next pending interaction). While an external hold is placed on
+ * the session (see holdClaudeCliInteraction) only blocking statuses get out.
  */
 export function processClaudeCliHook(
+  sessionId: string,
+  hook: ParsedClaudeHook,
+  mapped: ClaudeCliStatusPayload | null
+): ClaudeCliStatusPayload[] {
+  const publishes = applyClaudeCliHook(sessionId, hook, mapped)
+  if (!externalHolds.has(sessionId)) return publishes
+  return publishes.filter((payload) => BLOCKING_STATUSES.has(payload.status))
+}
+
+function applyClaudeCliHook(
   sessionId: string,
   hook: ParsedClaudeHook,
   mapped: ClaudeCliStatusPayload | null
@@ -216,14 +230,66 @@ export function processClaudeCliHook(
   return mapped ? [mapped] : []
 }
 
+/**
+ * Drop the hook-derived latches of a session. External holds are left in
+ * place: they belong to whoever observed the interaction (the codex title
+ * tracker) and end only when that observer releases them.
+ */
 export function clearClaudeCliInteractions(sessionId: string): void {
   ledgers.delete(sessionId)
 }
 
 export function clearAllClaudeCliInteractions(): void {
   ledgers.clear()
+  externalHolds.clear()
 }
 
 export function hasBlockingClaudeCliInteraction(sessionId: string): boolean {
-  return (ledgers.get(sessionId)?.size ?? 0) > 0
+  return (ledgers.get(sessionId)?.size ?? 0) > 0 || externalHolds.has(sessionId)
+}
+
+// ── External holds ───────────────────────────────────────────────────
+//
+// A blocking interaction observed outside the hook stream: codex's
+// `[ ! ] Action Required` terminal title, which stays on for the whole life
+// of a request_user_input question (terminal-pty-bridge.ts). Codex asks
+// non-blocking questions in Default mode — the tool returns at once, the turn
+// keeps running with the question open (more tool hooks, then Stop) and the
+// answer arrives later as a new user message — so the hook ledger alone
+// cannot keep 'answering' surfaced: its latch is a per-turn thing, reset by
+// Stop/UserPromptSubmit, and every unrelated hook after that reset would
+// publish 'working' (dismissing the ticket modal) until the next title blink
+// re-asserted 'answering'. A hold outlives turn boundaries: while one is
+// placed, processClaudeCliHook lets only blocking statuses through, whatever
+// the hook. Keyed per observer so distinct holders never release each other.
+
+const BLOCKING_STATUSES: ReadonlySet<SessionStatusType> = new Set<SessionStatusType>([
+  'answering',
+  'permission',
+  'plan_ready'
+])
+
+// sessionId → hold keys
+const externalHolds = new Map<string, Set<string>>()
+
+/** Idempotent: re-placing an existing hold is a no-op. */
+export function holdClaudeCliInteraction(sessionId: string, key: string): void {
+  let holds = externalHolds.get(sessionId)
+  if (!holds) {
+    holds = new Set()
+    externalHolds.set(sessionId, holds)
+  }
+  holds.add(key)
+}
+
+/** Returns whether the hold existed. */
+export function releaseClaudeCliInteraction(sessionId: string, key: string): boolean {
+  const holds = externalHolds.get(sessionId)
+  if (!holds?.delete(key)) return false
+  if (holds.size === 0) externalHolds.delete(sessionId)
+  return true
+}
+
+export function hasClaudeCliInteractionHold(sessionId: string): boolean {
+  return externalHolds.has(sessionId)
 }

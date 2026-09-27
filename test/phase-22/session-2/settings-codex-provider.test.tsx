@@ -70,9 +70,7 @@ describe('SettingsGeneral: Codex provider button', () => {
   })
 
   it('renders the Codex button', async () => {
-    const { SettingsGeneral } = await import(
-      '@/components/settings/SettingsGeneral'
-    )
+    const { SettingsGeneral } = await import('@/components/settings/SettingsGeneral')
     render(<SettingsGeneral />)
 
     const codexButton = screen.getByTestId('agent-sdk-codex')
@@ -81,9 +79,7 @@ describe('SettingsGeneral: Codex provider button', () => {
   })
 
   it('renders provider buttons in visual order with Claude Code before CLI', async () => {
-    const { SettingsGeneral } = await import(
-      '@/components/settings/SettingsGeneral'
-    )
+    const { SettingsGeneral } = await import('@/components/settings/SettingsGeneral')
     const { container } = render(<SettingsGeneral />)
 
     const buttons = Array.from(container.querySelectorAll('[data-testid^="agent-sdk-"]'))
@@ -92,14 +88,13 @@ describe('SettingsGeneral: Codex provider button', () => {
       'Claude Code',
       'Codex',
       'Terminal',
-      'Claude Code (CLI)'
+      'Claude Code (CLI)',
+      'Codex (CLI)'
     ])
   })
 
   it('clicking Codex button calls updateSetting with codex', async () => {
-    const { SettingsGeneral } = await import(
-      '@/components/settings/SettingsGeneral'
-    )
+    const { SettingsGeneral } = await import('@/components/settings/SettingsGeneral')
     render(<SettingsGeneral />)
 
     const codexButton = screen.getByTestId('agent-sdk-codex')
@@ -111,9 +106,7 @@ describe('SettingsGeneral: Codex provider button', () => {
   it('Codex button has active styling when defaultAgentSdk is codex', async () => {
     mockSettingsState.defaultAgentSdk = 'codex'
 
-    const { SettingsGeneral } = await import(
-      '@/components/settings/SettingsGeneral'
-    )
+    const { SettingsGeneral } = await import('@/components/settings/SettingsGeneral')
     render(<SettingsGeneral />)
 
     const codexButton = screen.getByTestId('agent-sdk-codex')
@@ -124,9 +117,7 @@ describe('SettingsGeneral: Codex provider button', () => {
   it('Codex button has inactive styling when another SDK is default', async () => {
     mockSettingsState.defaultAgentSdk = 'opencode'
 
-    const { SettingsGeneral } = await import(
-      '@/components/settings/SettingsGeneral'
-    )
+    const { SettingsGeneral } = await import('@/components/settings/SettingsGeneral')
     render(<SettingsGeneral />)
 
     const codexButton = screen.getByTestId('agent-sdk-codex')
@@ -141,9 +132,7 @@ describe('SettingsGeneral: Codex provider button', () => {
       codex: true
     }
 
-    const { SettingsGeneral } = await import(
-      '@/components/settings/SettingsGeneral'
-    )
+    const { SettingsGeneral } = await import('@/components/settings/SettingsGeneral')
     render(<SettingsGeneral />)
 
     const opencodeButton = screen.getByTestId('agent-sdk-opencode')

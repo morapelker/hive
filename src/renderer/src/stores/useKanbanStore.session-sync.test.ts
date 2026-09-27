@@ -59,6 +59,7 @@ function makeTicket(overrides: Partial<KanbanTicket> = {}): KanbanTicket {
     created_from_session: true,
     auto_approve_plan: false,
     unread: false,
+    awaiting_completion: false,
     model_provider_id: null,
     model_id: null,
     model_variant: null,
@@ -701,6 +702,7 @@ describe('reconcileFinishedSessions — recovers explicit reopens missed while u
         mode: 'plan',
         auto_approve_plan: true,
         unread: false,
+        awaiting_completion: false,
         current_session_id: sessionId
       })
     )

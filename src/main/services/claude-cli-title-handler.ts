@@ -4,6 +4,7 @@ import { autoRenameWorktreeBranch } from './git-service'
 import { createLogger } from './logger'
 import { publishDesktopBackendEvent } from '../desktop/backend-event-publisher'
 import { emitWorktreeBranchRenamed } from './worktree-events'
+import { isAgentCli } from '../../shared/types/agent-sdk'
 
 const log = createLogger({ component: 'ClaudeCliTitle' })
 
@@ -42,7 +43,7 @@ function stripSpinnerPrefix(title: string): string {
 
 // Boilerplate titles claude-cli emits before the meaningful one (case-insensitive,
 // compared after the spinner prefix is stripped).
-const BOILERPLATE_TITLES = new Set(['claude', 'claude code'])
+const BOILERPLATE_TITLES = new Set(['claude', 'claude code', 'codex'])
 
 const tailBuffers = new Map<string, string>()
 const appliedSessions = new Set<string>()
@@ -155,10 +156,10 @@ export async function applyClaudeCliTitle({
 }: ApplyClaudeCliTitleParams): Promise<void> {
   try {
     const session = db.getSession(sessionId)
-    if (!session || session.agent_sdk !== 'claude-code-cli') return
+    if (!session || !isAgentCli(session.agent_sdk)) return
 
     db.updateSession(sessionId, { name: title })
-    log.info('applied claude-cli title', { sessionId, title })
+    log.info('applied cli session title', { sessionId, agentSdk: session.agent_sdk, title })
 
     void publishDesktopBackendEvent(OPENCODE_STREAM_CHANNEL, {
       type: 'session.updated',

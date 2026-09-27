@@ -1,4 +1,5 @@
 import { useKanbanStore } from '@/stores/useKanbanStore'
+import { isAgentCli, isCodexCli } from '@shared/types/agent-sdk'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useProjectStore } from '@/stores/useProjectStore'
@@ -35,6 +36,11 @@ import type { HandoffAgentSdk } from '@shared/types/agent-sdk'
 import type { KanbanTicketUpdate } from '../../../main/db/types'
 
 type LaunchMode = 'build' | 'plan' | 'super-plan' | 'super-build'
+
+/** Short CLI name for launch errors ('Claude CLI' / 'Codex CLI'). */
+function cliDisplayName(sdk: string | null | undefined): string {
+  return isCodexCli(sdk) ? 'Codex CLI' : 'Claude CLI'
+}
 
 export interface LaunchModelConfig {
   sdk: HandoffAgentSdk
@@ -87,7 +93,8 @@ function composeLaunchPrompt(
     options.claudeCli ||
     sessionAgentSdk === 'claude-code' ||
     sessionAgentSdk === 'codex' ||
-    sessionAgentSdk === 'claude-code-cli'
+    sessionAgentSdk === 'claude-code-cli' ||
+    sessionAgentSdk === 'codex-cli'
   const modePrefix = isSuperMode(mode)
     ? getSuperModePrefix(mode, sessionAgentSdk)
     : mode === 'plan' && !skipPrefix
@@ -258,7 +265,7 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
     // "Implement PLAN_{uuid}.md" goal prompt instead (the /goal wrapper stays).
     if (goalMode && goalSuccessCriteria && worktree?.path) {
       const composed = composeLaunchPrompt(prompt, spec.mode, sdk, goalMode, goalSuccessCriteria, {
-        claudeCli: sdk === 'claude-code-cli'
+        claudeCli: isAgentCli(sdk)
       })
       if (exceedsGoalPromptLimit(composed)) {
         const fileName = await createPlanFile(worktree.path, prompt.trim())
@@ -285,12 +292,11 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
     const modelOverride = effectiveConfigModel
       ? { ...effectiveConfigModel, agentSdk: sdk }
       : undefined
-    const cliPendingPrompt =
-      sdk === 'claude-code-cli'
-        ? composeLaunchPrompt(prompt, spec.mode, sdk, goalMode, goalSuccessCriteria, {
-            claudeCli: true
-          })
-        : null
+    const cliPendingPrompt = isAgentCli(sdk)
+      ? composeLaunchPrompt(prompt, spec.mode, sdk, goalMode, goalSuccessCriteria, {
+          claudeCli: true
+        })
+      : null
     const createOptions = {
       autoFocus: false,
       ...(modelOverride ? { modelOverride } : {}),
@@ -359,7 +365,7 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
       useUsageStore.getState().fetchUsageForProvider(usageProvider)
     }
 
-    if (sessionAgentSdk === 'claude-code-cli') {
+    if (isAgentCli(sessionAgentSdk)) {
       const outboundPrompt =
         cliPendingPrompt ??
         composeLaunchPrompt(prompt, spec.mode, sessionAgentSdk, goalMode, goalSuccessCriteria, {
@@ -381,7 +387,7 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
       if (!result.success) {
         return {
           success: false,
-          error: result.error ?? 'Failed to start Claude CLI',
+          error: result.error ?? `Failed to start ${cliDisplayName(sessionAgentSdk)}`,
           sessionId,
           worktreeId
         }

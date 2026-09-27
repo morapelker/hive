@@ -24,7 +24,18 @@ export interface PetManifest {
   author?: string
   assets: Record<PetState, string>
   lottieAssets?: Partial<Record<PetState, string>>
+  /** Working animations for 1..N active sessions, capped at the last variant; independent of playback speed. */
+  workingLottieVariants?: string[]
+  /** Editable Lottie text slot showing the actual count, including beyond the last style. */
+  workingSessionCounter?: {
+    slotId: string
+    minSessions: number
+    fontSize: number
+    /** Longer counts shrink to fit; this does not cap the displayed number. */
+    fullSizeDigits: number
+  }
   lottieScale?: Partial<Record<PetState, number>>
+  imageScale?: Partial<Record<PetState, number>>
   animations?: Partial<
     Record<
       PetState,
@@ -42,6 +53,7 @@ export interface PetManifest {
 export interface LoadedPet extends PetManifest {
   resolvedAssets: Record<PetState, string>
   resolvedLottieAssets?: Partial<Record<PetState, string>>
+  resolvedWorkingLottieVariants?: string[]
 }
 
 export interface PetPosition {

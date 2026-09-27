@@ -1,7 +1,7 @@
 {
   "id": "corgi",
   "name": "Corgi",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "author": "Hive",
   "assets": {
     "idle": "assets/corgi-static.png",
@@ -12,6 +12,19 @@
   },
   "lottieAssets": {
     "working": "assets/corgi-anim.lottie"
+  },
+  "workingLottieVariants": [
+    "assets/corgi-anim.lottie",
+    "assets/corgi-level-2.lottie",
+    "assets/corgi-level-3.lottie",
+    "assets/corgi-level-4.lottie",
+    "assets/corgi-level-5.lottie"
+  ],
+  "workingSessionCounter": {
+    "slotId": "session-count",
+    "minSessions": 5,
+    "fontSize": 90,
+    "fullSizeDigits": 2
   },
   "lottieScale": {
     "working": 1.55

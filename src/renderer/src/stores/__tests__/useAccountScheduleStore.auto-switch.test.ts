@@ -7,6 +7,7 @@ import {
 } from '../useAccountScheduleStore'
 import { useUsageStore } from '../useUsageStore'
 import { useAccountStore } from '../useAccountStore'
+import { useSettingsStore } from '../useSettingsStore'
 import { toast } from '@/lib/toast'
 import type { RefreshAllResultItem, SavedAccountDTO, UsageData } from '@shared/types/usage'
 
@@ -103,6 +104,7 @@ describe('useAccountScheduleStore auto-switch', () => {
 
   afterEach(() => {
     resetRendererRpcClientForTests()
+    useSettingsStore.setState({ ignoreFableForAutoSwitch: false })
     vi.useRealTimers()
   })
 
@@ -261,6 +263,57 @@ describe('useAccountScheduleStore auto-switch', () => {
     expect(useAccountScheduleStore.getState().autoSwitch.anthropic?.notBefore).toBe(
       Date.now() + 5 * 60_000
     )
+  })
+
+  it('ignores the Fable window for triggering, eligibility and scoring when opted out', async () => {
+    const futureReset = new Date(Date.now() + 3 * 86_400_000).toISOString()
+    const withFable = (fiveHour: number, sevenDay: number, fable: number): UsageData => ({
+      ...makeUsage(fiveHour, sevenDay),
+      scoped: [{ label: 'Fable', used_percent: fable, resets_at: futureReset }]
+    })
+    // Active account: only Fable is over the threshold.
+    useUsageStore.setState({ anthropicUsage: withFable(10, 10, 100) })
+    useAccountScheduleStore.getState().setAutoSwitch('anthropic', 90)
+
+    // Fable-maxed candidate with the most 5h/7d headroom: only viable when Fable is ignored.
+    refreshedAccounts[1] = {
+      ...makeAccount('acc-2', 'best@x.com', null),
+      last_usage: withFable(0, 0, 100)
+    }
+    useUsageStore.setState({ savedAccounts: { anthropic: refreshedAccounts, openai: [] } })
+
+    useSettingsStore.setState({ ignoreFableForAutoSwitch: true })
+    await useAccountScheduleStore.getState().checkSchedules()
+    expect(refreshAllCalls()).toHaveLength(0)
+
+    // Now the 5h window crosses: the Fable-maxed account is neither excluded
+    // from the sweep nor from the candidates, and wins on 5h/7d headroom.
+    useUsageStore.setState({ anthropicUsage: withFable(92, 10, 100) })
+    await useAccountScheduleStore.getState().checkSchedules()
+    expect(refreshAllCalls()).toHaveLength(1)
+    expect(refreshAllCalls()[0][1]).toEqual({
+      provider: 'anthropic',
+      excludeAccountIds: ['acc-1'],
+      maxAgeMs: 180_000
+    })
+    expect(switchCalls()).toHaveLength(1)
+    expect(switchCalls()[0][1]).toEqual({ accountId: 'acc-2' })
+  })
+
+  it('still triggers on and excludes by the Fable window when not opted out', async () => {
+    const futureReset = new Date(Date.now() + 3 * 86_400_000).toISOString()
+    useUsageStore.setState({
+      anthropicUsage: {
+        ...makeUsage(10, 10),
+        scoped: [{ label: 'Fable', used_percent: 100, resets_at: futureReset }]
+      }
+    })
+    useAccountScheduleStore.getState().setAutoSwitch('anthropic', 90)
+
+    await useAccountScheduleStore.getState().checkSchedules()
+
+    expect(refreshAllCalls()).toHaveLength(1)
+    expect(switchCalls()[0][1]).toEqual({ accountId: 'acc-2' })
   })
 
   it('sweeps only accounts with the potential to be viable', async () => {

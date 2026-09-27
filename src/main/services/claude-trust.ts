@@ -40,12 +40,22 @@ export async function ensureFolderTrustedInClaudeConfig(
   configPath: string,
   folderPath: string
 ): Promise<boolean> {
-  const run = writeChain.then(() => ensureFolderTrusted(configPath, folderPath))
+  return ensureFoldersTrustedInClaudeConfig(configPath, [folderPath])
+}
+
+/** Multi-folder form of `ensureFolderTrustedInClaudeConfig`: one read-modify-write
+ * for all `folderPaths`, so a launch that needs both the repo root and its
+ * worktree trusted costs a single config rewrite. */
+export async function ensureFoldersTrustedInClaudeConfig(
+  configPath: string,
+  folderPaths: string[]
+): Promise<boolean> {
+  const run = writeChain.then(() => ensureFoldersTrusted(configPath, folderPaths))
   writeChain = run.catch(() => undefined)
   return run
 }
 
-async function ensureFolderTrusted(configPath: string, folderPath: string): Promise<boolean> {
+async function ensureFoldersTrusted(configPath: string, folderPaths: string[]): Promise<boolean> {
   let config: Record<string, unknown> = {}
   if (existsSync(configPath)) {
     let parsed: unknown
@@ -71,41 +81,62 @@ async function ensureFolderTrusted(configPath: string, folderPath: string): Prom
     !Array.isArray(config.projects)
       ? (config.projects as Record<string, unknown>)
       : {}
-  const entry =
-    typeof projects[folderPath] === 'object' && projects[folderPath] !== null
-      ? (projects[folderPath] as Record<string, unknown>)
-      : {}
-  if (entry.hasTrustDialogAccepted === true) {
+
+  const newlyTrusted: string[] = []
+  for (const folderPath of new Set(folderPaths)) {
+    const entry =
+      typeof projects[folderPath] === 'object' && projects[folderPath] !== null
+        ? (projects[folderPath] as Record<string, unknown>)
+        : {}
+    if (entry.hasTrustDialogAccepted === true) continue
+    projects[folderPath] = { ...entry, hasTrustDialogAccepted: true }
+    newlyTrusted.push(folderPath)
+  }
+  if (newlyTrusted.length === 0) {
     return true
   }
 
-  projects[folderPath] = { ...entry, hasTrustDialogAccepted: true }
   config.projects = projects
   await atomicWriteJson(configPath, config, { pretty: true })
-  log.info('Marked folder trusted in claude config', { configPath, folderPath })
+  log.info('Marked folders trusted in claude config', { configPath, folderPaths: newlyTrusted })
   return true
 }
 
 /**
- * One-time-per-project pre-flight before spawning a claude CLI session: make
- * sure the project's root path is trusted in ~/.claude.json so the CLI doesn't
+ * Pre-flight before spawning a claude CLI session: make sure every folder the
+ * CLI could resolve trust from is trusted in ~/.claude.json, so it doesn't
  * stall on the folder-trust dialog (which would swallow an argv prompt behind
- * an interactive question). Connection projects are skipped — their sessions
- * run against remote hosts, where the local config has no bearing. Once the
- * config is verified/updated the project is stamped `trust_check_done`, so
- * later launches cost a single DB read. Never throws: a failed pre-flight must
- * not block the session launch.
+ * an interactive question).
+ *
+ * The CLI keys trust by cwd and inherits it from ancestor directories only.
+ * Sessions run inside `~/.hive-worktrees/<project>/<branch>`, which is *not*
+ * under the repo root, so trusting the root alone still leaves the dialog up
+ * for every worktree (unless the user happens to have trusted `~` itself).
+ * The worktree path is therefore trusted on every launch — an already-trusted
+ * entry is a single config read with no rewrite. The repo root is checked once
+ * per project and then stamped `trust_check_done`.
+ *
+ * Connection projects are skipped — their sessions run against remote hosts,
+ * where the local config has no bearing. Never throws: a failed pre-flight
+ * must not block the session launch.
  */
 export async function ensureProjectTrustCheck(
   db: TrustCheckDb,
   projectId: string,
-  opts?: { configPath?: string }
+  opts?: { configPath?: string; worktreePath?: string | null }
 ): Promise<void> {
   try {
     const project = db.getProject(projectId)
     if (!project) return
     if ((project.kind ?? 'git') !== 'git') return
-    if (project.trust_check_done) return
+
+    const needsRootCheck = !project.trust_check_done
+    const folders: string[] = []
+    if (needsRootCheck) folders.push(project.path)
+    if (opts?.worktreePath && opts.worktreePath !== project.path) {
+      folders.push(opts.worktreePath)
+    }
+    if (folders.length === 0) return
 
     // The spawned CLI's env is process.env with the user's settings env vars
     // assigned on top (see pty-service/claude-cli-spawner) — resolve the config
@@ -113,8 +144,8 @@ export async function ensureProjectTrustCheck(
     const configPath =
       opts?.configPath ??
       resolveClaudeConfigPath({ ...process.env, ...getUserEnvironmentVariables(db) })
-    const trusted = await ensureFolderTrustedInClaudeConfig(configPath, project.path)
-    if (trusted) {
+    const trusted = await ensureFoldersTrustedInClaudeConfig(configPath, folders)
+    if (trusted && needsRootCheck) {
       db.updateProjectTrustCheck(project.id, true)
     }
   } catch (error) {

@@ -78,9 +78,8 @@ describe('Session 2: Project Filter', () => {
   // ---------------------------------------------------------------------------
   describe('HighlightedText', () => {
     test('renders highlighted characters at correct indices', async () => {
-      const { HighlightedText } = await import(
-        '../../../src/renderer/src/components/projects/HighlightedText'
-      )
+      const { HighlightedText } =
+        await import('../../../src/renderer/src/components/projects/HighlightedText')
       const { container } = render(
         React.createElement(HighlightedText, {
           text: 'hello',
@@ -88,22 +87,22 @@ describe('Session 2: Project Filter', () => {
         })
       )
 
+      // Highlighted characters render as runs: 'h', <e>, 'l', <l>, 'o'.
+      // Index 1 ('e') and index 3 ('l') are emphasized (orca: neutral foreground + semibold)
       const spans = container.querySelectorAll('span > span')
-      // Index 1 ('e') and index 3 ('l') should be emphasized (orca: neutral foreground + semibold)
-      expect(spans[1].className).toContain('font-semibold')
-      expect(spans[1].className).toContain('text-foreground')
-      expect(spans[3].className).toContain('font-semibold')
-      expect(spans[3].className).toContain('text-foreground')
-      // Others should not
-      expect(spans[0].className).not.toContain('font-semibold')
-      expect(spans[2].className).not.toContain('font-semibold')
-      expect(spans[4].className).not.toContain('font-semibold')
+      expect(spans).toHaveLength(2)
+      for (const span of Array.from(spans)) {
+        expect(span.className).toContain('font-semibold')
+        expect(span.className).toContain('text-foreground')
+      }
+      expect(Array.from(spans).map((span) => span.textContent)).toEqual(['e', 'l'])
+      // Unhighlighted characters stay plain text, and the full text is preserved
+      expect(container.textContent).toBe('hello')
     })
 
     test('renders all chars normal when indices empty', async () => {
-      const { HighlightedText } = await import(
-        '../../../src/renderer/src/components/projects/HighlightedText'
-      )
+      const { HighlightedText } =
+        await import('../../../src/renderer/src/components/projects/HighlightedText')
       const { container } = render(
         React.createElement(HighlightedText, {
           text: 'hello',
@@ -121,9 +120,8 @@ describe('Session 2: Project Filter', () => {
   // ---------------------------------------------------------------------------
   describe('ProjectFilter', () => {
     test('renders search input with placeholder', async () => {
-      const { ProjectFilter } = await import(
-        '../../../src/renderer/src/components/projects/ProjectFilter'
-      )
+      const { ProjectFilter } =
+        await import('../../../src/renderer/src/components/projects/ProjectFilter')
       render(
         React.createElement(ProjectFilter, {
           value: '',
@@ -138,9 +136,8 @@ describe('Session 2: Project Filter', () => {
 
     test('calls onChange on input', async () => {
       const onChange = vi.fn()
-      const { ProjectFilter } = await import(
-        '../../../src/renderer/src/components/projects/ProjectFilter'
-      )
+      const { ProjectFilter } =
+        await import('../../../src/renderer/src/components/projects/ProjectFilter')
       render(
         React.createElement(ProjectFilter, {
           value: '',
@@ -155,9 +152,8 @@ describe('Session 2: Project Filter', () => {
 
     test('Escape clears input', async () => {
       const onChange = vi.fn()
-      const { ProjectFilter } = await import(
-        '../../../src/renderer/src/components/projects/ProjectFilter'
-      )
+      const { ProjectFilter } =
+        await import('../../../src/renderer/src/components/projects/ProjectFilter')
       render(
         React.createElement(ProjectFilter, {
           value: 'test',
@@ -171,9 +167,8 @@ describe('Session 2: Project Filter', () => {
     })
 
     test('clear button visible when value is non-empty', async () => {
-      const { ProjectFilter } = await import(
-        '../../../src/renderer/src/components/projects/ProjectFilter'
-      )
+      const { ProjectFilter } =
+        await import('../../../src/renderer/src/components/projects/ProjectFilter')
       render(
         React.createElement(ProjectFilter, {
           value: 'test',
@@ -185,9 +180,8 @@ describe('Session 2: Project Filter', () => {
     })
 
     test('clear button not visible when value is empty', async () => {
-      const { ProjectFilter } = await import(
-        '../../../src/renderer/src/components/projects/ProjectFilter'
-      )
+      const { ProjectFilter } =
+        await import('../../../src/renderer/src/components/projects/ProjectFilter')
       render(
         React.createElement(ProjectFilter, {
           value: '',

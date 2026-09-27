@@ -2,7 +2,7 @@ import { Bug, Check } from 'lucide-react'
 import type { PetSettings, PetSize } from '@shared/types/pet'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import { listPets } from '@/pet/registry'
+import { getPet, listPets } from '@/pet/registry'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { petApi } from '@/api/pet-api'
 
@@ -16,6 +16,7 @@ export function SettingsPet(): React.JSX.Element {
   const { pet, updateSetting } = useSettingsStore()
   const pets = listPets()
   const animationSpeed = Math.min(Math.max(pet.animationSpeed, 2), 5)
+  const variantCount = getPet(pet.petId).workingLottieVariants?.length ?? 0
 
   const updatePet = (partial: Partial<PetSettings>): void => {
     updateSetting('pet', { ...pet, ...partial })
@@ -116,6 +117,16 @@ export function SettingsPet(): React.JSX.Element {
           data-testid="pet-opacity-slider"
         />
       </div>
+
+      {variantCount > 0 && (
+        <div className="space-y-2" data-testid="pet-animation-variants">
+          <p className="text-sm font-medium">Animation styles</p>
+          <p className="text-xs text-muted-foreground">
+            Automatically changes appearance with the active session count, up to {variantCount}{' '}
+            styles. This works whether speed scaling is on or off.
+          </p>
+        </div>
+      )}
 
       <div className="space-y-2">
         <label className="flex items-start gap-2 text-sm font-medium">

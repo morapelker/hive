@@ -1,4 +1,5 @@
 import { Effect } from 'effect'
+import { AGENT_SDK_VALUES } from '../../../shared/types/agent-sdk'
 import { z } from 'zod'
 import type {
   DiffComment,
@@ -89,6 +90,7 @@ export interface DbRpcService {
     pinned: boolean
   ) => Effect.Effect<{ success: boolean }, unknown, never>
   readonly getPinnedWorktrees: () => Effect.Effect<Worktree[], unknown, never>
+  readonly getAllActiveWorktrees: () => Effect.Effect<Worktree[], unknown, never>
   readonly createSession: (data: SessionCreate) => Effect.Effect<Session, unknown, never>
   readonly getSession: (id: string) => Effect.Effect<Session | null, unknown, never>
   readonly getSessionsByWorktree: (worktreeId: string) => Effect.Effect<Session[], unknown, never>
@@ -291,7 +293,7 @@ const worktreeIdParamsSchema = z.object({ worktreeId: z.string() }).strict()
 const worktreePinnedParamsSchema = z
   .object({ worktreeId: z.string(), pinned: z.boolean() })
   .strict()
-const agentSdkSchema = z.enum(['opencode', 'claude-code', 'claude-code-cli', 'codex', 'terminal'])
+const agentSdkSchema = z.enum(AGENT_SDK_VALUES)
 const sessionModeSchema = z.enum(['build', 'plan', 'super-plan', 'super-build'])
 const sessionTypeSchema = z.enum(['default', 'board-assistant'])
 const sessionCreateParamsSchema = z.object({
@@ -692,6 +694,14 @@ export const makeLiveDbRpcService = (): DbRpcService => ({
       try: async () => {
         const { getDatabase } = await import('../../../main/db')
         return getDatabase().getPinnedWorktrees()
+      },
+      catch: (cause) => cause
+    }),
+  getAllActiveWorktrees: () =>
+    Effect.tryPromise({
+      try: async () => {
+        const { getDatabase } = await import('../../../main/db')
+        return getDatabase().getAllActiveWorktrees()
       },
       catch: (cause) => cause
     }),
@@ -1312,6 +1322,17 @@ export const makeDbRpcHandlers = (
             catch: (cause) => cause
           })
           return yield* service.getPinnedWorktrees()
+        })
+    ],
+    [
+      'db.worktree.getAllActive',
+      (params) =>
+        Effect.gen(function* () {
+          yield* Effect.try({
+            try: () => emptyParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          return yield* service.getAllActiveWorktrees()
         })
     ],
     [

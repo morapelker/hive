@@ -33,6 +33,7 @@ import {
   cleanupOpenCode
 } from './services/opencode-session-commands'
 import { buildMenu, shutdownMenu } from './menu'
+import { disposeVoiceDictation, initVoiceDictation } from './voice/voice-ipc'
 import { createLogger } from './services/logger'
 import { wireHeadlessSignalShutdown } from './services/headless-shutdown'
 import {
@@ -437,9 +438,8 @@ app
     // Must run before any child process spawning (opencode, scripts, Claude Code SDK).
     loadShellEnv()
 
-    // Resolve the Ghostty config path now: its dir is TCC-protected on macOS,
-    // so the one "access data from other apps" prompt happens at launch, not
-    // mid-flow when the first Ghostty terminal surface initializes.
+    // Cache the XDG-only config path for native terminals without probing
+    // Ghostty's protected Application Support directory.
     if (process.platform === 'darwin') {
       getGhosttyConfigPathOnce()
     }
@@ -547,6 +547,10 @@ app
 
     const databaseService = getDatabase()
     telegramForwardingService.initialize({ db: databaseService, sdkManager })
+
+    // Voice dictation (hotkey → local speech model → paste). Off until enabled in Settings.
+    log.info('Initializing voice dictation')
+    initVoiceDictation({ db: databaseService, getMainWindow: () => mainWindow, headless: isHeadless })
 
     log.info('Initializing OpenCode desktop integration')
     setDesktopBackendOpenCodeConnectHandler((worktreePath, hiveSessionId) =>
@@ -839,6 +843,8 @@ wireQuitCleanup({
     { name: 'shutdownMenu', run: () => shutdownMenu() },
     // Destroy ambient pet overlay before tearing down app services
     { name: 'destroyPetWindow', run: () => destroyPetWindow() },
+    // Release the hotkey, the pill window and the speech engine worker
+    { name: 'voiceDictation', run: () => disposeVoiceDictation() },
     { name: 'perfDiagnostics', run: () => perfDiagnostics.cleanup() },
     { name: 'updaterService', run: () => updaterService.cleanup() },
     // Terminal PTYs and Ghostty runtime

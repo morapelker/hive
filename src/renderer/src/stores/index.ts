@@ -66,6 +66,7 @@ export {
   useAccountScheduleStore,
   describeSchedule,
   getActiveUsagePercent,
+  getAutoSwitchUsagePercent,
   type ScheduledSwitch,
   type ScheduleMode
 } from './useAccountScheduleStore'

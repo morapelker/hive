@@ -14,6 +14,7 @@ import type { AgentSdkDetection } from './system-info'
 import type { OpenCodeLaunchSpec } from './opencode-binary-resolver'
 import { createLogger } from './logger'
 import type { AgentSdkId } from './agent-sdk-types'
+import { toModelCatalogSdk } from '@shared/types/agent-sdk'
 import {
   SpawnFailed,
   SpawnNonZeroExit,
@@ -36,6 +37,10 @@ export interface GenerateTextOptions {
   effort?: string
   outputSchema?: string
   cwd?: string
+  /** Per-attempt wall-clock budget; defaults to 30 s. */
+  timeoutMs?: number
+  /** Extra attempts after the first failure; defaults to 1. */
+  maxRetries?: number
 }
 
 const CLAUDE_EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
@@ -101,6 +106,8 @@ export async function generateText(
   options: GenerateTextOptions = {}
 ): Promise<string | null> {
   const { modelOverride, effort, outputSchema, cwd } = options
+  const timeoutMs = options.timeoutMs ?? TIMEOUT_MS
+  const maxRetries = options.maxRetries ?? MAX_RETRIES
   const resolvedProvider = resolveProvider(provider)
   if (!resolvedProvider) {
     throw new Error(
@@ -113,7 +120,7 @@ export async function generateText(
   }
 
   let lastError: Error | null = null
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       const result = await generateWithProvider(
         resolvedProvider,
@@ -122,7 +129,8 @@ export async function generateText(
         modelOverride,
         effort,
         outputSchema,
-        cwd
+        cwd,
+        timeoutMs
       )
       if (result !== null) {
         log.info('Text generation succeeded', {
@@ -165,13 +173,15 @@ export async function generateText(
  * Resolve to an available provider, falling back if the requested one is unavailable.
  * Fallback order: claude-code -> codex -> opencode.
  */
+type TextGenerationSdk = Exclude<AgentSdkId, 'terminal' | 'claude-code-cli' | 'codex-cli'>
+
 function resolveProvider(provider: AgentSdkId): AgentSdkId | null {
   if (provider === 'terminal') return null
-  // claude-code-cli shares Claude's text-generation path
-  const requested = provider === 'claude-code-cli' ? 'claude-code' : provider
+  // The terminal-backed CLIs share their SDK sibling's text-generation path.
+  const requested = toModelCatalogSdk(provider) as TextGenerationSdk
 
   const sdks = getCachedSdkDetection()
-  const providerAvailable: Record<Exclude<AgentSdkId, 'terminal' | 'claude-code-cli'>, boolean> = {
+  const providerAvailable: Record<TextGenerationSdk, boolean> = {
     'claude-code': sdks.claude,
     codex: sdks.codex,
     opencode: sdks.opencode
@@ -179,7 +189,7 @@ function resolveProvider(provider: AgentSdkId): AgentSdkId | null {
 
   if (providerAvailable[requested]) return requested
 
-  const fallbackOrder: Exclude<AgentSdkId, 'terminal' | 'claude-code-cli'>[] = [
+  const fallbackOrder: TextGenerationSdk[] = [
     'claude-code',
     'codex',
     'opencode'
@@ -201,16 +211,26 @@ function generateWithProvider(
   modelOverride?: string,
   effort?: string,
   outputSchema?: string,
-  cwd?: string
+  cwd?: string,
+  timeoutMs: number = TIMEOUT_MS
 ): Promise<string | null> {
   switch (provider) {
     case 'claude-code':
     case 'claude-code-cli':
-      return generateWithClaude(prompt, systemPrompt, modelOverride, effort, cwd)
+      return generateWithClaude(prompt, systemPrompt, modelOverride, effort, cwd, timeoutMs)
     case 'codex':
-      return generateWithCodex(prompt, systemPrompt, modelOverride, effort, outputSchema, cwd)
+    case 'codex-cli':
+      return generateWithCodex(
+        prompt,
+        systemPrompt,
+        modelOverride,
+        effort,
+        outputSchema,
+        cwd,
+        timeoutMs
+      )
     case 'opencode':
-      return generateWithOpenCode(prompt, systemPrompt, modelOverride, cwd)
+      return generateWithOpenCode(prompt, systemPrompt, modelOverride, cwd, timeoutMs)
     case 'terminal':
       return Promise.resolve(null)
   }
@@ -224,12 +244,13 @@ async function generateWithClaude(
   systemPrompt: string,
   modelOverride?: string,
   effort?: string,
-  cwd?: string
+  cwd?: string,
+  timeoutMs: number = TIMEOUT_MS
 ): Promise<string | null> {
   const sdk = await loadClaudeSDK()
 
   const abortController = new AbortController()
-  const timeout = setTimeout(() => abortController.abort(), TIMEOUT_MS)
+  const timeout = setTimeout(() => abortController.abort(), timeoutMs)
   let streamedText = ''
 
   try {
@@ -297,7 +318,7 @@ async function generateWithClaude(
     // Convert AbortError from timeout into a clearer message
     if (err instanceof Error && (err.name === 'AbortError' || err.message.includes('aborted'))) {
       log.warn('Claude generation timed out', { error: err.message })
-      throw new Error(`AI content generation timed out after ${TIMEOUT_MS / 1000}s`)
+      throw new Error(`AI content generation timed out after ${Math.round(timeoutMs / 1000)}s`)
     }
     throw err
   } finally {
@@ -315,7 +336,8 @@ async function generateWithCodex(
   modelOverride?: string,
   effort?: string,
   outputSchema?: string,
-  cwd?: string
+  cwd?: string,
+  timeoutMs: number = TIMEOUT_MS
 ): Promise<string | null> {
   const resolvedBinary = resolveCodexBinaryPath()
   const binary = codexBinaryPath || resolvedBinary || 'codex'
@@ -345,13 +367,7 @@ async function generateWithCodex(
     }
     args.push('--output-last-message', outputFile, '-')
 
-    await spawnWithStdin(
-      binary,
-      args,
-      fullPrompt,
-      cwd,
-      spawnEnv
-    )
+    await spawnWithStdin(binary, args, fullPrompt, cwd, spawnEnv, timeoutMs)
     const output = await readFile(outputFile, 'utf-8')
     return output.trim() || null
   } finally {
@@ -379,7 +395,8 @@ async function generateWithOpenCode(
   prompt: string,
   systemPrompt: string,
   modelOverride?: string,
-  cwd?: string
+  cwd?: string,
+  timeoutMs: number = TIMEOUT_MS
 ): Promise<string | null> {
   const model = modelOverride ?? 'claude-haiku'
   const fullPrompt = `${systemPrompt}\n\n${prompt}`
@@ -388,7 +405,9 @@ async function generateWithOpenCode(
     'opencode',
     ['run', '--format', 'json', '--model', model],
     fullPrompt,
-    cwd
+    cwd,
+    undefined,
+    timeoutMs
   )
 
   // Parse newline-delimited JSON events, collecting text from "text" type events
@@ -419,7 +438,8 @@ function spawnWithStdin(
   args: string[],
   input: string,
   cwd?: string,
-  env?: NodeJS.ProcessEnv
+  env?: NodeJS.ProcessEnv,
+  timeoutMs: number = TIMEOUT_MS
 ): Promise<string> {
   return getRuntime()
     .runPromise(
@@ -428,7 +448,7 @@ function spawnWithStdin(
           command,
           args,
           stdin: input,
-          timeout: TIMEOUT_MS,
+          timeout: timeoutMs,
           maxOutputBytes: MAX_OUTPUT_SIZE,
           collectStderr: true,
           env: env ?? process.env,

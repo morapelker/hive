@@ -5,7 +5,10 @@ import {
   clearAllClaudeCliInteractions,
   clearClaudeCliInteractions,
   hasBlockingClaudeCliInteraction,
-  processClaudeCliHook
+  hasClaudeCliInteractionHold,
+  holdClaudeCliInteraction,
+  processClaudeCliHook,
+  releaseClaudeCliInteraction
 } from '../claude-cli-interaction-ledger'
 import type { ClaudeCliStatusPayload, ParsedClaudeHook } from '../claude-hook-server'
 import type { SessionStatusType } from '@shared/types/session-status'
@@ -381,5 +384,66 @@ describe('manual clears and session isolation', () => {
         process({ event: 'PostToolUse', tool: 'Read', status: 'working' }, 'other-session')
       )
     ).toEqual(['working'])
+  })
+})
+
+describe('external holds (codex non-blocking questions, the ticket-modal bug)', () => {
+  it('lets only blocking statuses through while a hold is placed, across turn boundaries', () => {
+    process({ event: 'UserPromptSubmit', status: 'working' })
+    process({ event: 'PreToolUse', tool: 'AskUserQuestion', id: 'q1', status: 'answering' })
+    // The title says Action Required: the question is open for the rest of the turn.
+    holdClaudeCliInteraction(SESSION, 'codex-title')
+    expect(hasBlockingClaudeCliInteraction(SESSION)).toBe(true)
+    // codex answers the tool call at once (Default mode) — nothing may reach 'working'.
+    expect(process({ event: 'PostToolUse', tool: 'AskUserQuestion', id: 'q1', status: 'working' })).toEqual([])
+    expect(process({ event: 'PostToolUse', tool: 'Bash', id: 'b1', status: 'working' })).toEqual([])
+    // The turn ends with the question still open: no 'completed' either…
+    expect(process({ event: 'Stop', status: 'completed' })).toEqual([])
+    // …nor 'working' for a prompt sent alongside the open question.
+    expect(process({ event: 'UserPromptSubmit', status: 'working' })).toEqual([])
+    // A blocking interaction raised meanwhile still surfaces.
+    expect(
+      statuses(process({ event: 'PermissionRequest', tool: 'Bash', id: 'b2', status: 'permission' }))
+    ).toEqual(['permission'])
+    expect(hasClaudeCliInteractionHold(SESSION)).toBe(true)
+  })
+
+  it('resumes passthrough once the hold is released', () => {
+    holdClaudeCliInteraction(SESSION, 'codex-title')
+    expect(process({ event: 'PostToolUse', tool: 'Bash', id: 'b1', status: 'working' })).toEqual([])
+    expect(releaseClaudeCliInteraction(SESSION, 'codex-title')).toBe(true)
+    expect(releaseClaudeCliInteraction(SESSION, 'codex-title')).toBe(false)
+    expect(hasClaudeCliInteractionHold(SESSION)).toBe(false)
+    expect(hasBlockingClaudeCliInteraction(SESSION)).toBe(false)
+    expect(statuses(process({ event: 'PostToolUse', tool: 'Bash', id: 'b2', status: 'working' }))).toEqual([
+      'working'
+    ])
+  })
+
+  it('is idempotent per key and keeps distinct holders apart', () => {
+    holdClaudeCliInteraction(SESSION, 'a')
+    holdClaudeCliInteraction(SESSION, 'a')
+    holdClaudeCliInteraction(SESSION, 'b')
+    expect(releaseClaudeCliInteraction(SESSION, 'a')).toBe(true)
+    expect(hasClaudeCliInteractionHold(SESSION)).toBe(true)
+    expect(process({ event: 'Stop', status: 'completed' })).toEqual([])
+    expect(releaseClaudeCliInteraction(SESSION, 'b')).toBe(true)
+    expect(hasClaudeCliInteractionHold(SESSION)).toBe(false)
+  })
+
+  it('survives clearClaudeCliInteractions (hook latches only) and is dropped by clearAll', () => {
+    holdClaudeCliInteraction(SESSION, 'codex-title')
+    process({ event: 'PreToolUse', tool: 'AskUserQuestion', id: 'q1', status: 'answering' })
+    clearClaudeCliInteractions(SESSION)
+    expect(hasClaudeCliInteractionHold(SESSION)).toBe(true)
+    expect(process({ event: 'PostToolUse', tool: 'Bash', id: 'b1', status: 'working' })).toEqual([])
+    clearAllClaudeCliInteractions()
+    expect(hasClaudeCliInteractionHold(SESSION)).toBe(false)
+    expect(hasBlockingClaudeCliInteraction(SESSION)).toBe(false)
+  })
+
+  it('keeps holds per session', () => {
+    holdClaudeCliInteraction(SESSION, 'codex-title')
+    expect(statuses(process({ event: 'Stop', status: 'completed' }, 'other'))).toEqual(['completed'])
   })
 })

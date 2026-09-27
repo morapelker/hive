@@ -58,6 +58,7 @@ vendor/
 scripts/*
 !scripts/generate-icon.py
 !scripts/release-canary.sh
+!scripts/codex-cli-pty-driver.py
 !scripts/release-github.sh
 !scripts/finalize.sh
 !scripts/release.sh
@@ -66,6 +67,9 @@ scripts/*
 !scripts/dev-desktop.mjs
 !scripts/dev-web.mjs
 !scripts/probe-effect-logger.ts
+!scripts/crop-lottie.mjs
+!scripts/generate-corgi-variants.mjs
+!scripts/generate-corgi-digits.py
 
 .playwright-cli
 

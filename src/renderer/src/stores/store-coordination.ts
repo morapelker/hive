@@ -10,6 +10,8 @@
  * state changes (select one + clear the other) happen in the same tick.
  */
 
+import type { ClaudeCliCompletion } from '@shared/types/claude-cli-stop-completion'
+
 let _clearWorktreeSelection: (() => void) | null = null
 let _clearConnectionSelection: (() => void) | null = null
 
@@ -52,6 +54,13 @@ export interface KanbanSessionEvent {
   explicitSend?: boolean
   /** Tokens consumed during the session — accumulated to the ticket's persistent total */
   tokenDelta?: number
+  /**
+   * For session_completed from a Claude CLI session: whether the turn ended
+   * with a detected completion (Stop with nothing pending), a pause (Stop
+   * with background tasks / scheduled wakeups still pending), or no Stop at
+   * all. Absent for every other provider — they have no such signal.
+   */
+  completion?: ClaudeCliCompletion
 }
 
 type KanbanSessionSyncFn = (sessionId: string, event: KanbanSessionEvent) => void

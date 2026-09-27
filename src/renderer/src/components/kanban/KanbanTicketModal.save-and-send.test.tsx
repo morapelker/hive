@@ -203,6 +203,7 @@ const todoTicket: KanbanTicket = {
   created_from_session: false,
   auto_approve_plan: false,
   unread: false,
+  awaiting_completion: false,
   model_provider_id: null,
   model_id: null,
   model_variant: null,

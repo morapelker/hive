@@ -356,28 +356,33 @@ describe('ticket card modifier clicks', () => {
     expect(useKanbanStore.getState().selectedTicketRef).toBeNull()
   })
 
-  test('cmd-click falls back to the base worktree when the ticket has no worktree', () => {
+  test('cmd-click falls back to the base worktree when the ticket has no worktree', async () => {
     // Archiving a worktree detaches its tickets, leaving worktree_id null
     render(<KanbanTicketCard ticket={makeTicket({ worktree_id: null })} />)
 
     fireEvent.click(screen.getByTestId('kanban-ticket-ticket-1'), { metaKey: true })
 
-    expect(useWorktreeStore.getState().selectedWorktreeId).toBe('wt-base')
+    // The fallback first checks whether the ticket runs on a connection
+    await waitFor(() => {
+      expect(useWorktreeStore.getState().selectedWorktreeId).toBe('wt-base')
+    })
     expect(useProjectStore.getState().selectedProjectId).toBe('proj-1')
     expect(useKanbanStore.getState().selectedTicketRef).toBeNull()
   })
 
-  test('cmd-click falls back to the base worktree when the attached worktree is gone', () => {
+  test('cmd-click falls back to the base worktree when the attached worktree is gone', async () => {
     // A stale worktree_id (e.g. the worktree was archived) no longer resolves
     render(<KanbanTicketCard ticket={makeTicket({ worktree_id: 'wt-archived' })} />)
 
     fireEvent.click(screen.getByTestId('kanban-ticket-ticket-1'), { metaKey: true })
 
-    expect(useWorktreeStore.getState().selectedWorktreeId).toBe('wt-base')
+    await waitFor(() => {
+      expect(useWorktreeStore.getState().selectedWorktreeId).toBe('wt-base')
+    })
     expect(useProjectStore.getState().selectedProjectId).toBe('proj-1')
   })
 
-  test('cmd-click and cmd-shift-click work on archived tickets', () => {
+  test('cmd-click and cmd-shift-click work on archived tickets', async () => {
     render(
       <KanbanTicketCard
         ticket={makeTicket({ worktree_id: null, archived_at: '2026-04-17T00:00:00.000Z' })}
@@ -386,14 +391,18 @@ describe('ticket card modifier clicks', () => {
     )
 
     fireEvent.click(screen.getByTestId('kanban-ticket-ticket-1'), { metaKey: true })
-    expect(useWorktreeStore.getState().selectedWorktreeId).toBe('wt-base')
+    await waitFor(() => {
+      expect(useWorktreeStore.getState().selectedWorktreeId).toBe('wt-base')
+    })
 
     useWorktreeStore.setState({ selectedWorktreeId: null })
     fireEvent.click(screen.getByTestId('kanban-ticket-ticket-1'), {
       metaKey: true,
       shiftKey: true
     })
-    expect(useWorktreeStore.getState().selectedWorktreeId).toBe('wt-base')
+    await waitFor(() => {
+      expect(useWorktreeStore.getState().selectedWorktreeId).toBe('wt-base')
+    })
     expect(useKanbanStore.getState().selectedTicketRef).toBeNull()
   })
 
@@ -432,7 +441,7 @@ describe('ticket card modifier clicks', () => {
     expect(useKanbanStore.getState().selectedTicketRef).toBeNull()
   })
 
-  test('cmd-shift-click on a connection project ticket selects the base instance', () => {
+  test('cmd-shift-click on a connection project ticket keeps its connection with the git side on base', () => {
     seedConnectionProject()
     render(
       <TooltipProvider>
@@ -445,11 +454,14 @@ describe('ticket card modifier clicks', () => {
       shiftKey: true
     })
 
-    expect(useConnectionStore.getState().selectedConnectionId).toBe('conn-base')
+    // The connection the ticket runs on stays selected; only its git view moves
+    // to the members' base branches.
+    expect(useConnectionStore.getState().selectedConnectionId).toBe('conn-live')
+    expect(useConnectionStore.getState().connectionGitView).toBe('base')
     expect(useKanbanStore.getState().selectedTicketRef).toBeNull()
   })
 
-  test('cmd-click falls back to the base instance when the connection instance is gone', () => {
+  test('cmd-click falls back to the base instance when the connection instance is gone', async () => {
     // Archiving a connection instance removes its sessions, so the ticket no
     // longer resolves to a live connection
     seedConnectionProject()
@@ -458,13 +470,15 @@ describe('ticket card modifier clicks', () => {
 
     fireEvent.click(screen.getByTestId('kanban-ticket-ticket-1'), { metaKey: true })
 
-    expect(useConnectionStore.getState().selectedConnectionId).toBe('conn-base')
+    await waitFor(() => {
+      expect(useConnectionStore.getState().selectedConnectionId).toBe('conn-base')
+    })
     expect(useKanbanStore.getState().selectedTicketRef).toBeNull()
   })
 
   test('cmd-shift-click loads connections first when none are in the store', async () => {
     seedConnectionProject()
-    useConnectionStore.setState({ connections: [] })
+    useConnectionStore.setState({ connections: [], loaded: false })
     request.mockImplementation(async (method: string) => {
       if (method === 'connectionOps.getAll') {
         return { success: true, connections: [makeConnection({ id: 'conn-base', is_base: 1 })] }

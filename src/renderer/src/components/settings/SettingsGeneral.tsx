@@ -39,6 +39,7 @@ export function SettingsGeneral(): React.JSX.Element {
     showModelProvider,
     usageIndicatorMode,
     usageIndicatorProviders,
+    ignoreFableForAutoSwitch,
     defaultAgentSdk,
     availableAgentSdks,
     stripAtMentions,
@@ -71,6 +72,7 @@ export function SettingsGeneral(): React.JSX.Element {
   const claudeAvailable = isAgentSdkAvailable('claude-code', availableAgentSdks)
   const claudeCliAvailable = isAgentSdkAvailable('claude-code-cli', availableAgentSdks)
   const codexAvailable = isAgentSdkAvailable('codex', availableAgentSdks)
+  const codexCliAvailable = isAgentSdkAvailable('codex-cli', availableAgentSdks)
 
   return (
     <div className="space-y-6">
@@ -592,6 +594,34 @@ export function SettingsGeneral(): React.JSX.Element {
         </p>
       </div>
 
+      {/* Ignore Fable usage for auto-switch */}
+      <div className="flex items-center justify-between">
+        <div>
+          <label className="text-sm font-medium">Ignore Fable usage for auto-switch</label>
+          <p className="text-xs text-muted-foreground">
+            Auto-switch disregards the Fable window when deciding when and where to switch, and the
+            Fable bar is hidden from the sidebar (it still shows in the usage popover)
+          </p>
+        </div>
+        <button
+          role="switch"
+          aria-checked={ignoreFableForAutoSwitch}
+          onClick={() => updateSetting('ignoreFableForAutoSwitch', !ignoreFableForAutoSwitch)}
+          className={cn(
+            'relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors',
+            ignoreFableForAutoSwitch ? 'bg-primary' : 'bg-muted'
+          )}
+          data-testid="ignore-fable-for-auto-switch-toggle"
+        >
+          <span
+            className={cn(
+              'pointer-events-none block h-4 w-4 rounded-full bg-background ring-0 transition-transform',
+              ignoreFableForAutoSwitch ? 'translate-x-4' : 'translate-x-0'
+            )}
+          />
+        </button>
+      </div>
+
       {/* Default Agent SDK */}
       <div className="space-y-2">
         <label className="text-sm font-medium">AI Provider</label>
@@ -668,9 +698,27 @@ export function SettingsGeneral(): React.JSX.Element {
           >
             Claude Code (CLI)
           </button>
+          <button
+            onClick={() => updateSetting('defaultAgentSdk', 'codex-cli')}
+            disabled={!codexCliAvailable}
+            className={cn(
+              'px-3 py-1.5 rounded-md text-[13px] border transition-colors disabled:opacity-50 disabled:cursor-not-allowed',
+              defaultAgentSdk === 'codex-cli'
+                ? 'bg-primary text-primary-foreground border-primary'
+                : 'bg-muted/50 text-muted-foreground border-border hover:bg-accent/50'
+            )}
+            data-testid="agent-sdk-codex-cli"
+            title={!codexCliAvailable ? 'Codex CLI is not currently available' : undefined}
+          >
+            Codex (CLI)
+          </button>
         </div>
         {availableAgentSdks &&
-          (!opencodeAvailable || !claudeAvailable || !claudeCliAvailable || !codexAvailable) && (
+          (!opencodeAvailable ||
+            !claudeAvailable ||
+            !claudeCliAvailable ||
+            !codexAvailable ||
+            !codexCliAvailable) && (
             <p className="text-xs text-muted-foreground/70 italic">
               Unavailable providers are disabled until their CLI is installed and launchable from
               Hive.

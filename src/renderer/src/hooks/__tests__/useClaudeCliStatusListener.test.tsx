@@ -924,3 +924,97 @@ describe('useClaudeCliStatusListener — API errors', () => {
     })
   })
 })
+
+describe('useClaudeCliStatusListener — completion detection stamping', () => {
+  let subscribedCallbackForCompletion: ((payload: SubscribedPayload) => void) | null = null
+
+  beforeEach(() => {
+    subscribedCallbackForCompletion = null
+    mocks.setSessionStatus.mockClear()
+    mocks.sessionById.clear()
+    mocks.lastSendMode.clear()
+    mocks.sessionStatuses = {}
+    mocks.kanbanState = { selectedTicketId: null, tickets: new Map() }
+    mocks.onClaudeCliStatus.mockReset()
+    mocks.onClaudeCliStatus.mockImplementation((callback: (payload: SubscribedPayload) => void) => {
+      subscribedCallbackForCompletion = callback
+      return vi.fn()
+    })
+  })
+
+  it('passes a Stop-hook classification through untouched', () => {
+    mocks.sessionById.set('hive-session-1', { id: 'hive-session-1', agent_sdk: 'claude-code-cli' })
+    renderHook(() => useClaudeCliStatusListener())
+
+    subscribedCallbackForCompletion?.({
+      sessionId: 'hive-session-1',
+      status: 'completed',
+      metadata: {
+        hookEventName: 'Stop',
+        hookPath: 'stop',
+        completion: 'waiting',
+        pendingTasks: 1,
+        pendingWakeups: 0
+      } as SubscribedPayload['metadata']
+    })
+
+    expect(mocks.setSessionStatus).toHaveBeenCalledWith('hive-session-1', 'completed', {
+      hookEventName: 'Stop',
+      hookPath: 'stop',
+      completion: 'waiting',
+      pendingTasks: 1,
+      pendingWakeups: 0
+    })
+  })
+
+  it('stamps a claude-cli completed status that did not come from a Stop hook as "none"', () => {
+    mocks.sessionById.set('hive-session-1', { id: 'hive-session-1', agent_sdk: 'claude-code-cli' })
+    renderHook(() => useClaudeCliStatusListener())
+
+    subscribedCallbackForCompletion?.({
+      sessionId: 'hive-session-1',
+      status: 'completed',
+      metadata: { reason: 'user_interrupt' }
+    })
+
+    expect(mocks.setSessionStatus).toHaveBeenCalledWith('hive-session-1', 'completed', {
+      reason: 'user_interrupt',
+      completion: 'none'
+    })
+  })
+
+  it('leaves codex-cli and unknown sessions unstamped, and never stamps non-completed statuses', () => {
+    mocks.sessionById.set('codex-session', { id: 'codex-session', agent_sdk: 'codex-cli' })
+    mocks.sessionById.set('claude-session', { id: 'claude-session', agent_sdk: 'claude-code-cli' })
+    renderHook(() => useClaudeCliStatusListener())
+
+    subscribedCallbackForCompletion?.({
+      sessionId: 'codex-session',
+      status: 'completed',
+      metadata: { hookEventName: 'Stop', hookPath: 'stop' }
+    })
+    expect(mocks.setSessionStatus).toHaveBeenLastCalledWith('codex-session', 'completed', {
+      hookEventName: 'Stop',
+      hookPath: 'stop'
+    })
+
+    subscribedCallbackForCompletion?.({
+      sessionId: 'unknown-session',
+      status: 'completed',
+      metadata: { reason: 'pty_exit' }
+    })
+    expect(mocks.setSessionStatus).toHaveBeenLastCalledWith('unknown-session', 'completed', {
+      reason: 'pty_exit'
+    })
+
+    subscribedCallbackForCompletion?.({
+      sessionId: 'claude-session',
+      status: 'working',
+      metadata: { hookEventName: 'UserPromptSubmit', hookPath: 'start' }
+    })
+    expect(mocks.setSessionStatus).toHaveBeenLastCalledWith('claude-session', 'working', {
+      hookEventName: 'UserPromptSubmit',
+      hookPath: 'start'
+    })
+  })
+})

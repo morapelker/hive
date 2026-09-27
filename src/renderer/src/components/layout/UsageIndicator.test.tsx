@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -7,8 +7,9 @@ import { ProviderUsageBlock, UsageAccountRow } from './UsageIndicator'
 import { autoSwitchIneligibilityReason } from '@/lib/auto-switch-score'
 import { useAccountStore, useUsageStore } from '@/stores'
 import { useAccountScheduleStore } from '@/stores/useAccountScheduleStore'
+import { useSettingsStore } from '@/stores/useSettingsStore'
 import type { AccountMemberInfo } from './MemberAvatarStack'
-import type { OpenAIUsageData, UsageData } from '@shared/types/usage'
+import type { OpenAIUsageData, SavedAccountDTO, UsageData } from '@shared/types/usage'
 import { nextUsageRefreshAt } from '@/hooks/useAccountScheduleRunner'
 
 // Default to "nothing scheduled" so the countdown stays hidden in the
@@ -809,6 +810,111 @@ describe('ProviderUsageBlock provider toggle', () => {
     expect(screen.queryByText('Claude API Usage')).toBeNull()
   })
 
+  it('shows a third Fable bar in the trigger when the Fable window is above 0%', () => {
+    useUsageStore.setState({
+      anthropicUsage: {
+        ...sampleUsage,
+        scoped: [{ label: 'Fable', used_percent: 42, resets_at: inOneDay() }]
+      }
+    })
+    render(
+      <ProviderUsageBlock
+        provider="anthropic"
+        isExplicitlySelected
+        toggleProviders={['anthropic']}
+      />
+    )
+
+    const trigger = screen.getByTestId('usage-trigger-anthropic')
+    expect(within(trigger).getByText('Fable')).toBeTruthy()
+    expect(within(trigger).getByText('42%')).toBeTruthy()
+  })
+
+  it('hides the Fable bar in the trigger but keeps it in the popover when Fable is ignored', async () => {
+    const user = userEvent.setup()
+    useSettingsStore.setState({ ignoreFableForAutoSwitch: true })
+    useUsageStore.setState({
+      anthropicUsage: {
+        ...sampleUsage,
+        scoped: [{ label: 'Fable', used_percent: 42, resets_at: inOneDay() }]
+      }
+    })
+    try {
+      render(
+        <ProviderUsageBlock
+          provider="anthropic"
+          isExplicitlySelected
+          toggleProviders={['anthropic']}
+        />
+      )
+
+      const trigger = screen.getByTestId('usage-trigger-anthropic')
+      expect(within(trigger).queryByText('Fable')).toBeNull()
+
+      await user.hover(trigger)
+      const popover = await screen.findByTestId('usage-popover-scroll')
+      expect(within(popover).getByText('Fable')).toBeTruthy()
+    } finally {
+      useSettingsStore.setState({ ignoreFableForAutoSwitch: false })
+    }
+  })
+
+  it('hides the Fable bar in the trigger when the Fable window is at 0%', () => {
+    useUsageStore.setState({
+      anthropicUsage: {
+        ...sampleUsage,
+        scoped: [{ label: 'Fable', used_percent: 0, resets_at: null }]
+      }
+    })
+    render(
+      <ProviderUsageBlock
+        provider="anthropic"
+        isExplicitlySelected
+        toggleProviders={['anthropic']}
+      />
+    )
+
+    expect(within(screen.getByTestId('usage-trigger-anthropic')).queryByText('Fable')).toBeNull()
+  })
+
+  it('hides the Fable bar in the trigger when the Fable window reset in the past', () => {
+    useUsageStore.setState({
+      anthropicUsage: {
+        ...sampleUsage,
+        scoped: [{ label: 'Fable', used_percent: 80, resets_at: oneHourAgo() }]
+      }
+    })
+    render(
+      <ProviderUsageBlock
+        provider="anthropic"
+        isExplicitlySelected
+        toggleProviders={['anthropic']}
+      />
+    )
+
+    expect(within(screen.getByTestId('usage-trigger-anthropic')).queryByText('Fable')).toBeNull()
+  })
+
+  it('does not show a Fable bar in the trigger for other scoped models', () => {
+    useUsageStore.setState({
+      anthropicUsage: {
+        ...sampleUsage,
+        scoped: [{ label: 'Opus', used_percent: 60, resets_at: inOneDay() }]
+      }
+    })
+    render(
+      <ProviderUsageBlock
+        provider="anthropic"
+        isExplicitlySelected
+        toggleProviders={['anthropic']}
+      />
+    )
+
+    const trigger = screen.getByTestId('usage-trigger-anthropic')
+    expect(within(trigger).queryByText('Fable')).toBeNull()
+    expect(within(trigger).queryByText('Opus')).toBeNull()
+  })
+
   it('hides the toggle when only one provider is visible', async () => {
     const user = userEvent.setup()
     render(
@@ -964,6 +1070,278 @@ describe('ProviderUsageBlock provider toggle', () => {
     expect(
       active.compareDocumentPosition(inactive) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy()
+  })
+
+  it('orders inactive accounts by soonest 7d reset, then Fable, then 5h', async () => {
+    const user = userEvent.setup()
+    const account = (id: string, email: string, last_usage: UsageData): SavedAccountDTO => ({
+      id,
+      provider: 'anthropic',
+      email,
+      last_usage,
+      last_fetched_at: null,
+      status: 'ok',
+      last_error: null,
+      created_at: new Date().toISOString(),
+      plan: null
+    })
+    const at = (hours: number): string =>
+      new Date(Date.now() + hours * 60 * 60 * 1000).toISOString()
+
+    useUsageStore.setState((state) => ({
+      savedAccounts: {
+        ...state.savedAccounts,
+        anthropic: [
+          account('late-7d', 'late-7d@example.com', {
+            five_hour: { utilization: 5, resets_at: at(1) },
+            seven_day: { utilization: 5, resets_at: at(120) }
+          }),
+          account('tie-late-fable', 'tie-late-fable@example.com', {
+            five_hour: { utilization: 5, resets_at: at(1) },
+            seven_day: { utilization: 5, resets_at: at(48) },
+            scoped: [{ label: 'Fable', used_percent: 5, resets_at: at(40) }]
+          }),
+          account('tie-soon-fable', 'tie-soon-fable@example.com', {
+            five_hour: { utilization: 5, resets_at: at(4) },
+            seven_day: { utilization: 5, resets_at: at(48) },
+            scoped: [{ label: 'Fable', used_percent: 5, resets_at: at(10) }]
+          }),
+          account('active', 'claude@example.com', {
+            five_hour: { utilization: 5, resets_at: at(4) },
+            seven_day: { utilization: 5, resets_at: at(160) }
+          }),
+          account('soon-7d', 'soon-7d@example.com', {
+            five_hour: { utilization: 5, resets_at: at(4) },
+            seven_day: { utilization: 5, resets_at: at(24) }
+          })
+        ]
+      }
+    }))
+
+    render(
+      <ProviderUsageBlock
+        provider="anthropic"
+        isExplicitlySelected
+        toggleProviders={['anthropic']}
+      />
+    )
+
+    await user.hover(screen.getByTestId('usage-trigger-anthropic'))
+    await screen.findByText('soon-7d@example.com')
+
+    const emails = screen
+      .getAllByText(/@example\.com$/)
+      .map((el) => el.textContent)
+      .filter((text) => text !== null && text.endsWith('@example.com'))
+    expect(emails).toEqual([
+      'claude@example.com',
+      'soon-7d@example.com',
+      'tie-soon-fable@example.com',
+      'tie-late-fable@example.com',
+      'late-7d@example.com'
+    ])
+  })
+
+  it('puts potential auto-switch targets above ineligible accounts, each by 7d reset', async () => {
+    const user = userEvent.setup()
+    const account = (
+      id: string,
+      email: string,
+      last_usage: UsageData,
+      status: SavedAccountDTO['status'] = 'ok'
+    ): SavedAccountDTO => ({
+      id,
+      provider: 'anthropic',
+      email,
+      last_usage,
+      last_fetched_at: null,
+      status,
+      last_error: null,
+      created_at: new Date().toISOString(),
+      plan: null
+    })
+    const at = (hours: number): string =>
+      new Date(Date.now() + hours * 60 * 60 * 1000).toISOString()
+    const usageAt = (utilization: number, sevenDayHours: number): UsageData => ({
+      five_hour: { utilization, resets_at: at(1) },
+      seven_day: { utilization, resets_at: at(sevenDayHours) }
+    })
+
+    useAccountScheduleStore.setState({
+      schedules: {},
+      autoSwitch: {
+        anthropic: { provider: 'anthropic', thresholdPercent: 80, createdAt: Date.now() }
+      }
+    })
+    useUsageStore.setState((state) => ({
+      savedAccounts: {
+        ...state.savedAccounts,
+        anthropic: [
+          // Over threshold but frees up soonest: must still sit below every target.
+          account('over-soon', 'over-soon@example.com', usageAt(90, 12)),
+          account('target-late', 'target-late@example.com', usageAt(10, 96)),
+          account('expired', 'expired@example.com', usageAt(10, 6), 'stale'),
+          account('active', 'claude@example.com', usageAt(95, 160)),
+          account('target-soon', 'target-soon@example.com', usageAt(10, 48)),
+          account('over-late', 'over-late@example.com', usageAt(85, 120))
+        ]
+      }
+    }))
+
+    try {
+      render(
+        <ProviderUsageBlock
+          provider="anthropic"
+          isExplicitlySelected
+          toggleProviders={['anthropic']}
+        />
+      )
+
+      await user.hover(screen.getByTestId('usage-trigger-anthropic'))
+      await screen.findByText('target-soon@example.com')
+
+      const emails = screen
+        .getAllByText(/@example\.com$/)
+        .map((el) => el.textContent)
+        .filter((text) => text !== null && text.endsWith('@example.com'))
+      expect(emails).toEqual([
+        'claude@example.com',
+        'target-soon@example.com',
+        'target-late@example.com',
+        'expired@example.com',
+        'over-soon@example.com',
+        'over-late@example.com'
+      ])
+    } finally {
+      useAccountScheduleStore.setState({ schedules: {}, autoSwitch: {} })
+    }
+  })
+
+  describe('popover row order', () => {
+    const initialScheduleState = useAccountScheduleStore.getState()
+    const account = (id: string, hours: number, utilization = 10): SavedAccountDTO => ({
+      id,
+      provider: 'anthropic',
+      email: `${id}@example.com`,
+      last_usage: {
+        five_hour: { utilization, resets_at: inOneHour() },
+        seven_day: {
+          utilization,
+          resets_at: new Date(Date.now() + hours * 60 * 60 * 1000).toISOString()
+        }
+      },
+      last_fetched_at: null,
+      status: 'ok',
+      last_error: null,
+      created_at: new Date().toISOString(),
+      plan: null
+    })
+    const setAccounts = (accounts: SavedAccountDTO[]): void => {
+      act(() => {
+        useUsageStore.setState((state) => ({
+          savedAccounts: { ...state.savedAccounts, anthropic: accounts }
+        }))
+      })
+    }
+    const emails = (): (string | null)[] =>
+      within(screen.getByTestId('usage-popover-scroll'))
+        .getAllByText(/@example\.com$/)
+        .map((el) => el.textContent)
+
+    beforeEach(() => {
+      useAccountScheduleStore.setState({ schedules: {}, autoSwitch: {} })
+      setAccounts([account('late', 96), account('claude', 160), account('soon', 24)])
+    })
+
+    afterEach(() => {
+      cleanup()
+      useAccountScheduleStore.setState(initialScheduleState, true)
+    })
+
+    it('keeps live rows in place through refreshes, provider toggles and switches, then sorts on reopen', async () => {
+      const user = userEvent.setup()
+      render(
+        <ProviderUsageBlock
+          provider="anthropic"
+          isExplicitlySelected
+          toggleProviders={['anthropic', 'openai']}
+        />
+      )
+      const trigger = screen.getByTestId('usage-trigger-anthropic')
+      await user.hover(trigger)
+      await screen.findByText('soon@example.com')
+      const initialOrder = ['claude@example.com', 'soon@example.com', 'late@example.com']
+      expect(emails()).toEqual(initialOrder)
+
+      // A refresh reverses the reset-time ranking and the store's array order.
+      setAccounts([account('late', 12), account('soon', 120, 95), account('claude', 160)])
+      expect(emails()).toEqual(initialOrder)
+      expect(within(screen.getByTestId('usage-popover-scroll')).getAllByText('95%')).toHaveLength(2)
+
+      act(() => {
+        useAccountScheduleStore.setState({
+          autoSwitch: {
+            anthropic: { provider: 'anthropic', thresholdPercent: 80, createdAt: Date.now() }
+          }
+        })
+        useAccountStore.setState({ anthropicEmail: 'late@example.com' })
+      })
+      expect(emails()).toEqual(initialOrder)
+      expect(screen.queryByRole('button', { name: 'Switch to late@example.com' })).toBeNull()
+      expect(screen.getByTestId('auto-switch-ineligible-overlay').parentElement).toHaveTextContent(
+        'soon@example.com'
+      )
+
+      await user.click(screen.getByRole('button', { name: 'Show OpenAI usage' }))
+      expect(emails()).toEqual(['openai@example.com'])
+      await user.click(screen.getByRole('button', { name: 'Show Claude usage' }))
+      expect(emails()).toEqual(initialOrder)
+
+      await user.unhover(screen.getByText('Claude API Usage'))
+      await waitFor(() => expect(screen.queryByText('Claude API Usage')).toBeNull())
+      await user.hover(trigger)
+      await screen.findByText('Claude API Usage')
+      expect(emails()).toEqual(['late@example.com', 'claude@example.com', 'soon@example.com'])
+    })
+
+    it('appends newly loaded accounts and preserves their positions through later refreshes and removals', async () => {
+      const user = userEvent.setup()
+      render(
+        <ProviderUsageBlock
+          provider="anthropic"
+          isExplicitlySelected
+          toggleProviders={['anthropic']}
+        />
+      )
+      await user.hover(screen.getByTestId('usage-trigger-anthropic'))
+      await screen.findByText('soon@example.com')
+
+      setAccounts([
+        account('new', 1),
+        account('late', 96),
+        account('claude', 160),
+        account('soon', 24)
+      ])
+      expect(emails()).toEqual([
+        'claude@example.com',
+        'soon@example.com',
+        'late@example.com',
+        'new@example.com'
+      ])
+
+      setAccounts([
+        account('newer', 1),
+        account('new', 2),
+        account('late', 12),
+        account('claude', 160)
+      ])
+      expect(emails()).toEqual([
+        'claude@example.com',
+        'late@example.com',
+        'new@example.com',
+        'newer@example.com'
+      ])
+    })
   })
 
   it('shows the auto-switch shuffle icon in the bar when armed, instead of the timer', () => {

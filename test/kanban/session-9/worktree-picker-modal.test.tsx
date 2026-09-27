@@ -176,7 +176,9 @@ import { getSuperPlanModePrefix } from '@/lib/constants'
 // ── Import component under test ─────────────────────────────────────
 import {
   WorktreePickerModal,
-  _resetLastSourceBranch
+  _resetLastSourceBranch,
+  quickLaunchTicket,
+  resolveQuickLaunchModel
 } from '@/components/kanban/WorktreePickerModal'
 
 import type { KanbanTicket } from '../../../src/main/db/types'
@@ -591,7 +593,9 @@ describe('Session 9: Worktree Picker Modal', () => {
     expect(document.activeElement).toBe(textarea)
   })
 
-  test('Tab to plan mode reflects a cross-SDK mode default in the provider segment', async () => {
+  test('Tab to plan mode ignores a plan mode default that belongs to another SDK', async () => {
+    // A mode default for another SDK must never flip the picker's SDK on its
+    // own: the launch stays on the configured default (opencode here).
     act(() => {
       useSettingsStore.setState({
         defaultAgentSdk: 'opencode',
@@ -624,12 +628,11 @@ describe('Session 9: Worktree Picker Modal', () => {
     fireEvent.keyDown(modal, { key: 'Tab' })
 
     await waitFor(() => {
-      expect(screen.getByTestId('sdk-toggle-claude-code')).toHaveClass('bg-primary')
+      expect(screen.getByTestId('wt-picker-mode-toggle')).toHaveAttribute('data-mode', 'plan')
     })
-    expect(screen.getByTestId('sdk-toggle-opencode')).not.toHaveClass('bg-primary')
-    await waitFor(() => {
-      expect(screen.getByTestId('model-selector')).toHaveTextContent('opus-4.5')
-    })
+    expect(screen.getByTestId('sdk-toggle-opencode')).toHaveClass('bg-primary')
+    expect(screen.getByTestId('sdk-toggle-claude-code')).not.toHaveClass('bg-primary')
+    expect(screen.getByTestId('model-selector')).not.toHaveTextContent('opus-4.5')
   })
 
   test('Tab still toggles mode when prompt textarea is already focused', () => {
@@ -1584,6 +1587,104 @@ describe('Session 9: Worktree Picker Modal', () => {
     })
   })
 
+  describe('configured default SDK', () => {
+    test('opens on the SDK configured on the settings page', () => {
+      act(() => {
+        useSettingsStore.setState({ defaultAgentSdk: 'codex' })
+      })
+
+      render(
+        <WorktreePickerModal
+          ticket={defaultTicket}
+          projectId="proj-1"
+          open={true}
+          onOpenChange={() => {}}
+        />
+      )
+
+      expect(screen.getByTestId('sdk-toggle-codex')).toHaveAttribute('aria-pressed', 'true')
+      expect(screen.getByTestId('sdk-toggle-claude-code')).toHaveAttribute('aria-pressed', 'false')
+    })
+
+    test('a build mode default for another SDK does not pull the picker off the default SDK', () => {
+      // Regression: default SDK claude-code with a Codex build default left
+      // over from earlier opened every ticket on Codex.
+      act(() => {
+        useSettingsStore.setState({
+          defaultAgentSdk: 'claude-code',
+          selectedModelByProvider: {
+            'claude-code': { providerID: 'claude-code', modelID: 'fable', variant: 'high' }
+          },
+          defaultModels: {
+            build: { agentSdk: 'codex', providerID: 'codex', modelID: 'gpt-5.5', variant: 'high' },
+            plan: null,
+            ask: null,
+            review: null
+          }
+        })
+      })
+
+      render(
+        <WorktreePickerModal
+          ticket={defaultTicket}
+          projectId="proj-1"
+          open={true}
+          onOpenChange={() => {}}
+        />
+      )
+
+      expect(screen.getByTestId('sdk-toggle-claude-code')).toHaveAttribute('aria-pressed', 'true')
+      expect(screen.getByTestId('sdk-toggle-codex')).toHaveAttribute('aria-pressed', 'false')
+      expect(resolveQuickLaunchModel()).toEqual({
+        sdk: 'claude-code',
+        model: { providerID: 'claude-code', modelID: 'fable', variant: 'high' }
+      })
+    })
+
+    test('launching a ticket with another SDK/model does not change the global defaults', async () => {
+      // Regression: sending a ticket used to make its SDK + model/effort the
+      // default for the next ticket. Defaults only change from the settings page.
+      const opencodeDefault = {
+        providerID: 'anthropic',
+        modelID: 'claude-sonnet-4',
+        variant: 'high'
+      }
+      act(() => {
+        useSettingsStore.setState({
+          defaultAgentSdk: 'opencode',
+          selectedModelByProvider: { opencode: opencodeDefault },
+          codexFastModeAccepted: true
+        })
+      })
+
+      render(
+        <WorktreePickerModal
+          ticket={defaultTicket}
+          projectId="proj-1"
+          open={true}
+          onOpenChange={() => {}}
+        />
+      )
+
+      fireEvent.click(screen.getByTestId('sdk-toggle-codex'))
+      fireEvent.click(screen.getByTestId('worktree-item-wt-1'))
+
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('wt-picker-send-btn'))
+      })
+
+      await waitFor(() => {
+        expect(mockDbSession.create).toHaveBeenCalledWith(
+          expect.objectContaining({ agent_sdk: 'codex' })
+        )
+      })
+      const settings = useSettingsStore.getState()
+      expect(settings.defaultAgentSdk).toBe('opencode')
+      expect(settings.selectedModelByProvider).toEqual({ opencode: opencodeDefault })
+      expect(resolveQuickLaunchModel().sdk).toBe('opencode')
+    })
+  })
+
   describe('ticket-title worktree naming', () => {
     test('shows canonicalized ticket title preview by default (New worktree pre-selected)', () => {
       const ticket = makeTicket({ title: 'Add dark mode toggle' })
@@ -1676,6 +1777,60 @@ describe('Session 9: Worktree Picker Modal', () => {
           nameHint: 'add-keyboard-shortcuts-for-playi'
         })
       })
+    })
+  })
+})
+
+// ── quickLaunchTicket (right-button drag / Create & Send / Save & Send) ──
+describe('quickLaunchTicket default SDK', () => {
+  const ticket = makeTicket()
+  const worktrees = [
+    makeWorktree({ id: 'wt-1', name: 'feature-auth' }),
+    makeWorktree({ id: 'wt-default', name: '(no-worktree)', is_default: true, branch_name: 'main' })
+  ]
+
+  beforeEach(() => {
+    _resetLastSourceBranch()
+    act(() => {
+      useProjectStore.setState({ projects: [makeProject()] })
+      useKanbanStore.setState({ tickets: new Map([['proj-1', [ticket]]]) })
+      useWorktreeStore.setState({
+        worktreesByProject: new Map([['proj-1', worktrees]]),
+        selectedWorktreeId: null
+      })
+      useSessionStore.setState({
+        sessions: new Map(),
+        activeSessionId: null,
+        loadingSessions: new Set(),
+        closedTerminalSessionIds: new Set(),
+        inlineConnectionSessionId: null,
+        modeBySession: new Map()
+      })
+      useSettingsStore.setState({
+        availableAgentSdks: { opencode: true, claude: true, codex: true },
+        defaultAgentSdk: 'opencode'
+      })
+    })
+    vi.clearAllMocks()
+    resetApiMocks()
+  })
+
+  test('quick launch runs on the configured default SDK', async () => {
+    act(() => {
+      useSettingsStore.setState({
+        defaultAgentSdk: 'codex',
+        selectedModelByProvider: {
+          codex: { providerID: 'codex', modelID: 'gpt-5.5', variant: 'high' }
+        }
+      })
+    })
+
+    await quickLaunchTicket(ticket)
+
+    await waitFor(() => {
+      expect(mockDbSession.create).toHaveBeenCalledWith(
+        expect.objectContaining({ agent_sdk: 'codex' })
+      )
     })
   })
 })

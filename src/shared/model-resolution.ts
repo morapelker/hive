@@ -22,7 +22,8 @@ export const FALLBACK_MODELS: Record<HandoffAgentSdk, SharedSelectedModel> = {
   opencode: { providerID: 'anthropic', modelID: 'claude-opus-4-5-20251101' },
   'claude-code': { providerID: 'anthropic', modelID: 'claude-opus-4-5-20251101' },
   'claude-code-cli': { providerID: 'anthropic', modelID: 'sonnet', variant: 'high' },
-  codex: { providerID: 'codex', modelID: 'gpt-5.5' }
+  codex: { providerID: 'codex', modelID: 'gpt-5.5' },
+  'codex-cli': { providerID: 'codex', modelID: 'gpt-5.5', variant: 'high' }
 }
 
 export function getModeDefaultKey(mode: string | null | undefined): ModeDefaultKey {
@@ -33,19 +34,46 @@ export function getModeDefaultKey(mode: string | null | undefined): ModeDefaultK
 }
 
 export function normalizeAgentSdk(sdk: AgentSdk | string | null | undefined): HandoffAgentSdk {
-  if (sdk === 'claude-code' || sdk === 'claude-code-cli' || sdk === 'codex') return sdk
+  if (
+    sdk === 'claude-code' ||
+    sdk === 'claude-code-cli' ||
+    sdk === 'codex' ||
+    sdk === 'codex-cli'
+  )
+    return sdk
   return 'opencode'
 }
 
+/**
+ * The model an SDK defaults to, from the user's stored preferences only (no
+ * catalog or hard fallback — callers layer those on top).
+ *
+ * Priority:
+ * 1. The provider default stored for this SDK (Settings › Models › Provider
+ *    Defaults). Codex CLI inherits Codex's pick until it has its own, since
+ *    the two share a catalog and account.
+ * 2. The global default model, when it belongs to this SDK. The settings page
+ *    stamps it with the `agentSdk` it was picked for, and it only applies to
+ *    that SDK (model catalogs are not portable). An unstamped one predates the
+ *    stamp: it was picked for whatever SDK was the default at the time, so it
+ *    only applies while no provider default exists at all (legacy behavior).
+ */
 export function resolveModelForSdk(
   sdk: HandoffAgentSdk,
   settings: ModelResolutionSettings
 ): SharedSelectedModel | null {
   const perProvider = settings.selectedModelByProvider ?? {}
-  const selected = perProvider[sdk]
+  const selected = perProvider[sdk] ?? (sdk === 'codex-cli' ? perProvider.codex : undefined)
   if (selected) return selected
-  if (Object.keys(perProvider).length > 0) return null
-  return settings.selectedModel ?? null
+
+  const global = settings.selectedModel ?? null
+  if (!global) return null
+  if (global.agentSdk) {
+    const globalSdk = normalizeAgentSdk(global.agentSdk)
+    const applies = globalSdk === sdk || (sdk === 'codex-cli' && globalSdk === 'codex')
+    return applies ? global : null
+  }
+  return Object.values(perProvider).some(Boolean) ? null : global
 }
 
 export function resolveSessionCreation(opts: {
@@ -58,13 +86,19 @@ export function resolveSessionCreation(opts: {
     opts.defaultAgentSdk ?? settings.defaultAgentSdk ?? 'opencode'
   )
   const configuredDefaultSdk = normalizeAgentSdk(settings.defaultAgentSdk ?? 'opencode')
-  let resolvedSdk: HandoffAgentSdk = requestedSdk
+  const resolvedSdk: HandoffAgentSdk = requestedSdk
   let model: SharedSelectedModel | null = null
 
+  // Mirrors the renderer: a mode default only supplies a model for the SDK it
+  // belongs to. One tagged for another SDK is ignored rather than redirecting
+  // the session, so the configured default SDK stays in charge.
   const modeDefault = settings.defaultModels?.[getModeDefaultKey(opts.mode)]
-  if (modeDefault && requestedSdk === configuredDefaultSdk) {
+  if (
+    modeDefault &&
+    requestedSdk === configuredDefaultSdk &&
+    (!modeDefault.agentSdk || normalizeAgentSdk(modeDefault.agentSdk) === requestedSdk)
+  ) {
     model = modeDefault
-    resolvedSdk = normalizeAgentSdk(modeDefault.agentSdk ?? requestedSdk)
   }
 
   if (!model) {

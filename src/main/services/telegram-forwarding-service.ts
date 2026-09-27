@@ -19,7 +19,7 @@ import {
   type TelegramClaudeCliReplyResult,
   type TelegramClaudeCliSessionPayload
 } from '@shared/desktop-command'
-import { isClaudeCli } from '@shared/types/agent-sdk'
+import { isAgentCli } from '@shared/types/agent-sdk'
 import { openCodeService } from './opencode-service'
 import { ClaudeCodeImplementer } from './claude-code-implementer'
 import { CodexImplementer } from './codex-implementer'
@@ -414,7 +414,7 @@ export class TelegramForwardingService {
     // Claude CLI sessions have no SDK implementer to route answers to; the bridge
     // intercepts their hooks instead. Only intercept while forwarding is enabled.
     const session = this.db?.getSession(params.sessionId)
-    if (session && isClaudeCli(session.agent_sdk)) {
+    if (session && isAgentCli(session.agent_sdk)) {
       claudeCliTelegramBridge.register(params.sessionId)
       await this.requestClaudeCliDesktopCommand('telegramClaudeCliRegister', {
         sessionId: params.sessionId
@@ -953,7 +953,7 @@ export class TelegramForwardingService {
     const sessionId = this.state?.sessionId
     if (!sessionId) return false
     const session = this.db?.getSession(sessionId)
-    return !!session && isClaudeCli(session.agent_sdk)
+    return !!session && isAgentCli(session.agent_sdk)
   }
 
   private async requestClaudeCliDesktopCommand(
@@ -1181,7 +1181,7 @@ export class TelegramForwardingService {
     if (!session) throw new Error('Active session not found')
 
     // CLI sessions have no implementer; inject the prompt straight into the PTY.
-    if (isClaudeCli(session.agent_sdk)) {
+    if (isAgentCli(session.agent_sdk)) {
       const { delivered } = writeClaudeCliPrompt(state.sessionId, text)
       // No live PTY yet — keep it queued for the next idle flush (best-effort).
       if (!delivered) state.pendingQueuedPrompt = text

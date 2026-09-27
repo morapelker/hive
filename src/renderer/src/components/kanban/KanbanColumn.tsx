@@ -40,7 +40,7 @@ import type { MarkdownCardPlaceholder } from '@/stores/useKanbanStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useUsageStore, resolveDefaultUsageProvider } from '@/stores/useUsageStore'
-import { useSettingsStore } from '@/stores/useSettingsStore'
+import { useSettingsStore, resolvePreferredAgentSdk } from '@/stores/useSettingsStore'
 import { isBlockerSatisfied } from '@/lib/blocker-utils'
 import { buildConnectionMergeQueue, resolveTicketConnectionId } from '@/lib/connection-merge'
 import type {
@@ -732,7 +732,7 @@ export function KanbanColumn({
 
         // Trigger usage refresh when simple-mode drops a ticket into In Progress
         if (column === 'in_progress') {
-          const sdk = useSettingsStore.getState().defaultAgentSdk ?? 'opencode'
+          const sdk = resolvePreferredAgentSdk(useSettingsStore.getState())
           const usageProvider = resolveDefaultUsageProvider(sdk)
           if (usageProvider) useUsageStore.getState().fetchUsageForProvider(usageProvider)
         }

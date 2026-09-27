@@ -1,4 +1,5 @@
 import { memo } from 'react'
+import { isAgentCli } from '@shared/types/agent-sdk'
 import { cn } from '@/lib/utils'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { Tip } from '@/components/ui/Tip'
@@ -15,7 +16,7 @@ export const SuperToggle = memo(function SuperToggle({
   const session = useSessionStore((state) => state.getSessionById(sessionId))
   const hasPendingPrompt = useSessionStore((state) => state.pendingMessages.has(sessionId))
 
-  const disabled = session?.agent_sdk === 'claude-code-cli' && !hasPendingPrompt
+  const disabled = isAgentCli(session?.agent_sdk) && !hasPendingPrompt
   const isOn = mode === 'super-plan' || mode === 'super-build'
 
   return (

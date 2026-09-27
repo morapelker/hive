@@ -1,18 +1,10 @@
 // @vitest-environment node
-import { mkdtemp, rm } from 'fs/promises'
-import { tmpdir } from 'os'
-import { join } from 'path'
+import { request as httpRequest } from 'http'
+import { createServer, type Server } from 'net'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type {
-  BrowserContextLike,
-  FrameLike,
-  LoginBrowserLauncher,
-  PageLike,
-  RouteLike
-} from '../../src/main/services/login-service'
+import type { LoginUrlOpener } from '../../src/main/services/login-service'
 
 const mocks = vi.hoisted(() => ({
-  homeDir: '/tmp/hive-login-service-test',
   db: {
     getSavedUsageAccountByProviderEmail: vi.fn()
   },
@@ -23,11 +15,6 @@ const mocks = vi.hoisted(() => ({
   listSavedAccounts: vi.fn(),
   fetchForSavedAccount: vi.fn()
 }))
-
-vi.mock('os', async () => {
-  const actual = await vi.importActual<typeof import('os')>('os')
-  return { ...actual, homedir: () => mocks.homeDir }
-})
 
 vi.mock('../../src/main/services/logger', () => ({
   createLogger: () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() })
@@ -64,94 +51,106 @@ vi.mock('../../src/main/services/saved-usage-orchestrator', () => ({
   fetchForSavedAccount: mocks.fetchForSavedAccount
 }))
 
-async function importFresh(): Promise<typeof import('../../src/main/services/login-service')> {
+type LoginServiceModule = typeof import('../../src/main/services/login-service')
+
+/**
+ * Each test gets a fresh module (fresh `currentSession`). Every module the
+ * suite loads is tracked so `afterEach` can cancel whatever it left behind —
+ * otherwise a stray callback server would outlive the test.
+ */
+const loadedModules: LoginServiceModule[] = []
+
+async function importFresh(): Promise<LoginServiceModule> {
   vi.resetModules()
-  return import('../../src/main/services/login-service')
+  const mod = await import('../../src/main/services/login-service')
+  // Never bind the real Claude Code / Codex CLI ports from a test run.
+  mod.setLoginCallbackPortsForTests({ anthropic: 0, openai: 0 })
+  loadedModules.push(mod)
+  return mod
 }
 
-/** In-memory fake for BrowserContextLike/PageLike, small enough to exercise every capture path. */
-function createFakeDriver(): {
-  launcher: LoginBrowserLauncher
-  close: ReturnType<typeof vi.fn>
-  gotoCalls: string[]
-  launchProfileDirs: string[]
-  triggerRoute: (url: string) => Promise<{ fulfill: ReturnType<typeof vi.fn>; continue: ReturnType<typeof vi.fn> }>
-  triggerFrameNavigated: (url: string) => void
-  triggerClose: () => void
-} {
-  const routeHandlers: Array<(route: RouteLike) => void | Promise<void>> = []
-  const closeHandlers: Array<() => void> = []
-  const gotoCalls: string[] = []
-  const launchProfileDirs: string[] = []
-  let closed = false
-  let frameNavigatedHandler: ((frame: FrameLike) => void) | null = null
-  let currentFrameUrl = ''
-
-  const mainFrame: FrameLike = { url: () => currentFrameUrl }
-
-  const page: PageLike = {
-    goto: vi.fn(async (url: string) => {
-      gotoCalls.push(url)
-      currentFrameUrl = url
-    }),
-    on: vi.fn((event: 'framenavigated', handler: (frame: FrameLike) => void) => {
-      if (event === 'framenavigated') frameNavigatedHandler = handler
-    }),
-    mainFrame: () => mainFrame
-  }
-
-  const close = vi.fn(async () => {
-    if (closed) return
-    closed = true
-    for (const handler of closeHandlers) handler()
+/** A fake browser: records the authorize URLs it was asked to open. */
+function createFakeOpener(): { opener: LoginUrlOpener; openedUrls: string[] } {
+  const openedUrls: string[] = []
+  const opener: LoginUrlOpener = vi.fn(async (url: string) => {
+    openedUrls.push(url)
   })
+  return { opener, openedUrls }
+}
 
-  const context: BrowserContextLike = {
-    pages: vi.fn(() => [page]),
-    newPage: vi.fn(async () => page),
-    route: vi.fn(async (_glob: string, handler: (route: RouteLike) => void | Promise<void>) => {
-      routeHandlers.push(handler)
-    }),
-    on: vi.fn((event: 'close', handler: () => void) => {
-      if (event === 'close') closeHandlers.push(handler)
-    }),
-    close
-  }
+/** The authorize URL's `redirect_uri` is our loopback callback URL. */
+function redirectUriOf(authorizeUrl: string): string {
+  const redirectUri = new URL(authorizeUrl).searchParams.get('redirect_uri')
+  if (!redirectUri) throw new Error('authorize URL has no redirect_uri')
+  return redirectUri
+}
 
-  const launcher: LoginBrowserLauncher = vi.fn(async (profileDir: string) => {
-    launchProfileDirs.push(profileDir)
-    return context
-  })
+function stateOf(authorizeUrl: string): string {
+  const state = new URL(authorizeUrl).searchParams.get('state')
+  if (!state) throw new Error('authorize URL has no state')
+  return state
+}
 
-  return {
-    launcher,
-    close,
-    gotoCalls,
-    launchProfileDirs,
-    async triggerRoute(url: string) {
-      const fulfill = vi.fn(async () => {})
-      const cont = vi.fn(async () => {})
-      const route: RouteLike = {
-        request: () => ({ url: () => url }),
-        fulfill,
-        continue: cont
+interface HttpReply {
+  status: number
+  body: string
+}
+
+/**
+ * Plain Node http client (not fetch/undici, whose internal timers the fake
+ * clock would freeze). `localhost` in the redirect URI is what the browser
+ * sees; the server listens on 127.0.0.1, so hit that directly.
+ */
+function httpGet(url: string): Promise<HttpReply> {
+  const target = new URL(url)
+  return new Promise((resolve, reject) => {
+    const req = httpRequest(
+      {
+        host: '127.0.0.1',
+        port: Number(target.port),
+        path: target.pathname + target.search,
+        method: 'GET'
+      },
+      (res) => {
+        const chunks: Buffer[] = []
+        res.on('data', (chunk: Buffer) => chunks.push(chunk))
+        res.on('end', () =>
+          resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString('utf8') })
+        )
+        res.on('error', reject)
       }
-      const handler = routeHandlers[routeHandlers.length - 1]
-      if (!handler) throw new Error('no route handler registered yet')
-      await handler(route)
-      return { fulfill, continue: cont }
-    },
-    triggerFrameNavigated(url: string) {
-      currentFrameUrl = url
-      frameNavigatedHandler?.(mainFrame)
-    },
-    triggerClose() {
-      for (const handler of closeHandlers) handler()
-    }
+    )
+    req.on('error', reject)
+    req.end()
+  })
+}
+
+/** Follows the provider's redirect to our callback with the given query. */
+async function hitCallback(authorizeUrl: string, query: Record<string, string>): Promise<HttpReply> {
+  const url = new URL(redirectUriOf(authorizeUrl))
+  for (const [key, value] of Object.entries(query)) url.searchParams.set(key, value)
+  return httpGet(url.toString())
+}
+
+async function isPortClosed(url: string): Promise<boolean> {
+  try {
+    await httpGet(url)
+    return false
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ECONNREFUSED'
   }
 }
 
-/** Advances the fake clock in small steps, letting real microtasks/fs I/O interleave, until `predicate` holds. */
+/** Occupies a loopback port so the login service finds it busy. */
+async function occupyPort(): Promise<{ port: number; server: Server }> {
+  const server = createServer()
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const address = server.address()
+  if (!address || typeof address === 'string') throw new Error('no address')
+  return { port: address.port, server }
+}
+
+/** Advances the fake clock in small steps, letting real microtasks/socket I/O interleave, until `predicate` holds. */
 async function pumpUntil(predicate: () => boolean, maxIterations = 400): Promise<void> {
   for (let i = 0; i < maxIterations; i++) {
     if (predicate()) return
@@ -172,9 +171,8 @@ function createDeferred<T>(): { promise: Promise<T>; resolve: (value: T) => void
 }
 
 describe('login-service', () => {
-  beforeEach(async () => {
+  beforeEach(() => {
     vi.resetAllMocks()
-    mocks.homeDir = await mkdtemp(join(tmpdir(), 'hive-login-service-'))
     mocks.db.getSavedUsageAccountByProviderEmail.mockReturnValue(null)
     mocks.listSavedAccounts.mockResolvedValue([])
     mocks.fetchForSavedAccount.mockResolvedValue({ success: true, status: 'ok' })
@@ -198,44 +196,47 @@ describe('login-service', () => {
   })
 
   afterEach(async () => {
+    // Tear down any callback server a test left listening.
+    for (const mod of loadedModules.splice(0)) {
+      mod.resetLoginServiceForTests()
+      mod.setLoginUrlOpenerForTests(null)
+      mod.setLoginCallbackPortsForTests(null)
+    }
+    await vi.runOnlyPendingTimersAsync()
     vi.useRealTimers()
-    await rm(mocks.homeDir, { recursive: true, force: true })
   })
 
   it('runs the full happy path for an Anthropic login: launching -> waiting -> exchanging -> done', async () => {
-    const driver = createFakeDriver()
-    const { loginStart, loginStatus, setLoginBrowserLauncherForTests } = await importFresh()
-    setLoginBrowserLauncherForTests(driver.launcher)
+    const { opener, openedUrls } = createFakeOpener()
+    const { loginStart, loginStatus, setLoginUrlOpenerForTests } = await importFresh()
+    setLoginUrlOpenerForTests(opener)
 
     const { loginId } = await loginStart('anthropic', 'user@example.com')
     expect(loginStatus(loginId).state).toBe('launching')
+    // The email hint is surfaced to the renderer right away.
+    expect(loginStatus(loginId).email).toBe('user@example.com')
 
     await pumpUntil(() => loginStatus(loginId).state === 'waiting')
-    expect(driver.launchProfileDirs).toEqual([
-      join(mocks.homeDir, '.ccswitch', 'profiles', 'claude-user@example.com')
-    ])
+    await pumpUntil(() => openedUrls.length === 1)
 
-    const gotoUrl = driver.gotoCalls[0]
-    expect(gotoUrl.startsWith('https://claude.ai/oauth/authorize')).toBe(true)
-    const state = new URL(gotoUrl).searchParams.get('state')
-    expect(state).toBeTruthy()
+    const authorizeUrl = openedUrls[0]
+    expect(authorizeUrl.startsWith('https://claude.ai/oauth/authorize')).toBe(true)
+    const redirectUri = redirectUriOf(authorizeUrl)
+    expect(redirectUri).toMatch(/^http:\/\/localhost:\d+\/callback$/)
+    const state = stateOf(authorizeUrl)
 
-    const { fulfill, continue: cont } = await driver.triggerRoute(
-      `https://console.anthropic.com/oauth/code/callback?code=abc123&state=${state}`
-    )
-    expect(cont).not.toHaveBeenCalled()
-    expect(fulfill).toHaveBeenCalledWith({
-      status: 200,
-      contentType: 'text/html',
-      body: expect.stringContaining('Signed in')
-    })
+    const reply = await hitCallback(authorizeUrl, { code: 'abc123', state })
+    expect(reply.status).toBe(200)
+    expect(reply.body).toContain('Signed in')
 
     await pumpUntil(() => loginStatus(loginId).state === 'done')
 
+    // The exchange must echo the exact redirect URI the authorize URL used.
     expect(mocks.exchangeAnthropicCode).toHaveBeenCalledWith(
       'abc123',
       state,
-      expect.objectContaining({ state })
+      expect.objectContaining({ state }),
+      redirectUri
     )
     expect(mocks.addClaudeAccount).toHaveBeenCalledWith(
       'user@example.com',
@@ -259,22 +260,15 @@ describe('login-service', () => {
     expect(status.email).toBe('user@example.com')
     expect(status.error).toBeNull()
 
-    // Fire-and-forget cache refresh — resolved from the row the DB lookup returns.
-    mocks.db.getSavedUsageAccountByProviderEmail.mockReturnValue({ id: 'row-1' })
-
-    // Context stays open ~1.5s so the user sees the Signed-in page.
-    expect(driver.close).not.toHaveBeenCalled()
-    await vi.advanceTimersByTimeAsync(1500)
-    expect(driver.close).toHaveBeenCalledTimes(1)
-    // The close listener must not flip a terminal state.
-    expect(loginStatus(loginId).state).toBe('done')
+    // The callback server is torn down once the login succeeds.
+    await pumpUntil(() => loginStatus(loginId).state === 'done')
+    expect(await isPortClosed(redirectUri)).toBe(true)
 
     // The 30-minute waiting timeout is cancelled once a login succeeds — it
-    // must not re-fire (or double-close) as time passes.
-    // A 'done' session stays queryable comfortably before the 5-minute GC
-    // mark (leaving margin for the pumpUntil polling jitter above)...
-    await vi.advanceTimersByTimeAsync(5 * 60 * 1000 - 1500 - 5000)
-    expect(driver.close).toHaveBeenCalledTimes(1)
+    // must not re-fire as time passes. A 'done' session stays queryable
+    // comfortably before the 5-minute GC mark (leaving margin for the
+    // pumpUntil polling jitter above)...
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000 - 5000)
     expect(loginStatus(loginId).state).toBe('done')
     expect(loginStatus(loginId).error).toBeNull()
 
@@ -285,151 +279,258 @@ describe('login-service', () => {
   })
 
   it('resolves the cache row id via getSavedUsageAccountByProviderEmail and fires fetchForSavedAccount', async () => {
-    const driver = createFakeDriver()
+    const { opener, openedUrls } = createFakeOpener()
     mocks.db.getSavedUsageAccountByProviderEmail.mockReturnValue({ id: 'row-42' })
-    const { loginStart, loginStatus, setLoginBrowserLauncherForTests } = await importFresh()
-    setLoginBrowserLauncherForTests(driver.launcher)
+    const { loginStart, loginStatus, setLoginUrlOpenerForTests } = await importFresh()
+    setLoginUrlOpenerForTests(opener)
 
     const { loginId } = await loginStart('anthropic', 'user@example.com')
-    await pumpUntil(() => loginStatus(loginId).state === 'waiting')
-    const state = new URL(driver.gotoCalls[0]).searchParams.get('state')
-    await driver.triggerRoute(`https://console.anthropic.com/oauth/code/callback?code=abc123&state=${state}`)
+    await pumpUntil(() => openedUrls.length === 1)
+    await hitCallback(openedUrls[0], { code: 'abc123', state: stateOf(openedUrls[0]) })
     await pumpUntil(() => loginStatus(loginId).state === 'done')
 
     expect(mocks.fetchForSavedAccount).toHaveBeenCalledWith('row-42')
   })
 
   it('lowercases the addCodexAccount email before the cache lookup, and swallows a rejected fetch', async () => {
-    const driver = createFakeDriver()
+    const { opener, openedUrls } = createFakeOpener()
     mocks.addCodexAccount.mockResolvedValue({ accountKey: 'user-1::acct-1', email: 'User@Example.com' })
     mocks.db.getSavedUsageAccountByProviderEmail.mockReturnValue({ id: 'row-99' })
     mocks.fetchForSavedAccount.mockRejectedValue(new Error('network blip'))
 
-    const { loginStart, loginStatus, setLoginBrowserLauncherForTests } = await importFresh()
-    setLoginBrowserLauncherForTests(driver.launcher)
+    const { loginStart, loginStatus, setLoginUrlOpenerForTests } = await importFresh()
+    setLoginUrlOpenerForTests(opener)
 
-    const { loginId } = await loginStart('openai', 'codex@example.com')
-    await pumpUntil(() => loginStatus(loginId).state === 'waiting')
-    const state = new URL(driver.gotoCalls[0]).searchParams.get('state')
-    await driver.triggerRoute(`http://localhost:1455/auth/callback?code=xyz789&state=${state}`)
+    const { loginId } = await loginStart('openai')
+    await pumpUntil(() => openedUrls.length === 1)
+    await hitCallback(openedUrls[0], { code: 'codex-code', state: stateOf(openedUrls[0]) })
     await pumpUntil(() => loginStatus(loginId).state === 'done')
 
-    // The orchestrator upserts rows with lowercased emails — the lookup must
-    // match that, even though addCodexAccount returned a mixed-case email.
     expect(mocks.db.getSavedUsageAccountByProviderEmail).toHaveBeenCalledWith(
       'openai',
       'user@example.com'
     )
     expect(mocks.fetchForSavedAccount).toHaveBeenCalledWith('row-99')
-
-    // A rejected fire-and-forget fetch must not crash the flow or leave an
-    // unhandled rejection.
-    await vi.advanceTimersByTimeAsync(0)
+    // The status keeps the email as the store returned it.
+    expect(loginStatus(loginId).email).toBe('User@Example.com')
     expect(loginStatus(loginId).state).toBe('done')
   })
 
   it('runs the full happy path for an OpenAI (Codex) login', async () => {
-    const driver = createFakeDriver()
-    mocks.db.getSavedUsageAccountByProviderEmail.mockReturnValue({ id: 'row-2' })
-    const { loginStart, loginStatus, setLoginBrowserLauncherForTests } = await importFresh()
-    setLoginBrowserLauncherForTests(driver.launcher)
+    const { opener, openedUrls } = createFakeOpener()
+    const { loginStart, loginStatus, setLoginUrlOpenerForTests } = await importFresh()
+    setLoginUrlOpenerForTests(opener)
 
-    const { loginId } = await loginStart('openai', 'codex@example.com')
+    const { loginId } = await loginStart('openai')
     await pumpUntil(() => loginStatus(loginId).state === 'waiting')
-    expect(driver.launchProfileDirs).toEqual([
-      join(mocks.homeDir, '.ccswitch', 'profiles', 'codex-codex@example.com')
-    ])
+    await pumpUntil(() => openedUrls.length === 1)
 
-    const gotoUrl = driver.gotoCalls[0]
-    expect(gotoUrl.startsWith('https://auth.openai.com/oauth/authorize')).toBe(true)
-    const state = new URL(gotoUrl).searchParams.get('state')
+    const authorizeUrl = openedUrls[0]
+    expect(authorizeUrl.startsWith('https://auth.openai.com/oauth/authorize')).toBe(true)
+    const redirectUri = redirectUriOf(authorizeUrl)
+    expect(redirectUri).toMatch(/^http:\/\/localhost:\d+\/auth\/callback$/)
+    const state = stateOf(authorizeUrl)
 
-    const { fulfill } = await driver.triggerRoute(
-      `http://localhost:1455/auth/callback?code=xyz789&state=${state}`
-    )
-    expect(fulfill).toHaveBeenCalled()
+    const reply = await hitCallback(authorizeUrl, { code: 'codex-code', state })
+    expect(reply.status).toBe(200)
+    expect(reply.body).toContain('Signed in')
 
     await pumpUntil(() => loginStatus(loginId).state === 'done')
 
-    expect(mocks.exchangeOpenAICode).toHaveBeenCalledWith('xyz789', expect.objectContaining({ state }))
-    expect(mocks.addCodexAccount).toHaveBeenCalledWith('id-token', 'openai-access-token', 'openai-refresh-token')
-    expect(mocks.listSavedAccounts).toHaveBeenCalledWith('openai')
-    expect(mocks.fetchForSavedAccount).toHaveBeenCalledWith('row-2')
+    expect(mocks.exchangeOpenAICode).toHaveBeenCalledWith(
+      'codex-code',
+      expect.objectContaining({ state }),
+      redirectUri
+    )
+    expect(mocks.addCodexAccount).toHaveBeenCalledWith(
+      'id-token',
+      'openai-access-token',
+      'openai-refresh-token'
+    )
     expect(loginStatus(loginId).email).toBe('codex@example.com')
   })
 
-  it('captures the code via the framenavigated fallback when routing never fires', async () => {
-    const driver = createFakeDriver()
-    const { loginStart, loginStatus, setLoginBrowserLauncherForTests } = await importFresh()
-    setLoginBrowserLauncherForTests(driver.launcher)
+  it('uses the real Codex CLI callback (port 1455, /auth/callback) for OpenAI by default', async () => {
+    const { opener, openedUrls } = createFakeOpener()
+    const { loginStart, loginStatus, setLoginUrlOpenerForTests, setLoginCallbackPortsForTests } =
+      await importFresh()
+    setLoginUrlOpenerForTests(opener)
+    setLoginCallbackPortsForTests(null)
 
-    const { loginId } = await loginStart('anthropic', 'user@example.com')
-    await pumpUntil(() => loginStatus(loginId).state === 'waiting')
-    const state = new URL(driver.gotoCalls[0]).searchParams.get('state')
+    const { loginId } = await loginStart('openai')
+    await pumpUntil(() => loginStatus(loginId).state !== 'launching')
 
-    driver.triggerFrameNavigated(`https://console.anthropic.com/oauth/code/callback?code=abc123&state=${state}`)
-    await pumpUntil(() => loginStatus(loginId).state === 'done')
-
-    expect(mocks.exchangeAnthropicCode).toHaveBeenCalledWith('abc123', state, expect.any(Object))
-    expect(loginStatus(loginId).email).toBe('user@example.com')
+    if (loginStatus(loginId).state === 'failed') {
+      // Something else on this machine (a real Codex sign-in) already owns
+      // 1455 — that's the documented failure, and the message names the port.
+      expect(loginStatus(loginId).error).toContain('1455')
+      return
+    }
+    await pumpUntil(() => openedUrls.length === 1)
+    expect(redirectUriOf(openedUrls[0])).toBe('http://localhost:1455/auth/callback')
   })
 
-  it('ignores a redirect that matches the glob but not the exact redirect prefix', async () => {
-    const driver = createFakeDriver()
-    const { loginStart, loginStatus, setLoginBrowserLauncherForTests } = await importFresh()
-    setLoginBrowserLauncherForTests(driver.launcher)
+  it('prefers the configured Anthropic port and echoes it in the redirect URI', async () => {
+    const { port, server } = await occupyPort()
+    await new Promise<void>((resolve) => server.close(() => resolve()))
 
-    const { loginId } = await loginStart('openai', 'user@example.com')
-    await pumpUntil(() => loginStatus(loginId).state === 'waiting')
+    const { opener, openedUrls } = createFakeOpener()
+    const { loginStart, setLoginUrlOpenerForTests, setLoginCallbackPortsForTests } =
+      await importFresh()
+    setLoginUrlOpenerForTests(opener)
+    setLoginCallbackPortsForTests({ anthropic: port, openai: 0 })
 
-    const { fulfill, continue: cont } = await driver.triggerRoute(
-      'https://evil.example.com/auth/callback?code=abc123&state=whatever'
-    )
+    await loginStart('anthropic')
+    await pumpUntil(() => openedUrls.length === 1)
+    expect(redirectUriOf(openedUrls[0])).toBe(`http://localhost:${port}/callback`)
+  })
 
-    expect(cont).toHaveBeenCalledTimes(1)
-    expect(fulfill).not.toHaveBeenCalled()
-    expect(loginStatus(loginId).state).toBe('waiting')
-    expect(mocks.exchangeOpenAICode).not.toHaveBeenCalled()
+  it('falls back to an OS-assigned port for Anthropic when the preferred port is busy', async () => {
+    const { port, server } = await occupyPort()
+    try {
+      const { opener, openedUrls } = createFakeOpener()
+      const { loginStart, loginStatus, setLoginUrlOpenerForTests, setLoginCallbackPortsForTests } =
+        await importFresh()
+      setLoginUrlOpenerForTests(opener)
+      setLoginCallbackPortsForTests({ anthropic: port, openai: 0 })
 
-    // The framenavigated fallback applies the same prefix check.
-    driver.triggerFrameNavigated('https://evil.example.com/auth/callback?code=abc123&state=whatever')
+      const { loginId } = await loginStart('anthropic')
+      await pumpUntil(() => openedUrls.length === 1)
+
+      const redirectUri = redirectUriOf(openedUrls[0])
+      expect(redirectUri).toMatch(/^http:\/\/localhost:\d+\/callback$/)
+      expect(new URL(redirectUri).port).not.toBe(String(port))
+      expect(loginStatus(loginId).state).toBe('waiting')
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+    }
+  })
+
+  it('fails an OpenAI login when port 1455 is busy instead of redirecting somewhere it cannot hear', async () => {
+    const { port, server } = await occupyPort()
+    try {
+      const { opener, openedUrls } = createFakeOpener()
+      const { loginStart, loginStatus, setLoginUrlOpenerForTests, setLoginCallbackPortsForTests } =
+        await importFresh()
+      setLoginUrlOpenerForTests(opener)
+      setLoginCallbackPortsForTests({ anthropic: 0, openai: port })
+
+      const { loginId } = await loginStart('openai')
+      await pumpUntil(() => loginStatus(loginId).state === 'failed')
+
+      expect(loginStatus(loginId).error).toContain('Port 1455 is in use')
+      expect(openedUrls).toEqual([])
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+    }
+  })
+
+  it('answers 404 for any other path and keeps waiting', async () => {
+    const { opener, openedUrls } = createFakeOpener()
+    const { loginStart, loginStatus, setLoginUrlOpenerForTests } = await importFresh()
+    setLoginUrlOpenerForTests(opener)
+
+    const { loginId } = await loginStart('anthropic')
+    await pumpUntil(() => openedUrls.length === 1)
+    const state = stateOf(openedUrls[0])
+    const base = new URL(redirectUriOf(openedUrls[0]))
+
+    const reply = await httpGet(`${base.origin}/elsewhere?code=abc123&state=${state}`)
+    expect(reply.status).toBe(404)
     await vi.advanceTimersByTimeAsync(20)
+
     expect(loginStatus(loginId).state).toBe('waiting')
-    expect(mocks.exchangeOpenAICode).not.toHaveBeenCalled()
+    expect(mocks.exchangeAnthropicCode).not.toHaveBeenCalled()
+  })
+
+  it('ignores a callback without a code and keeps waiting', async () => {
+    const { opener, openedUrls } = createFakeOpener()
+    const { loginStart, loginStatus, setLoginUrlOpenerForTests } = await importFresh()
+    setLoginUrlOpenerForTests(opener)
+
+    const { loginId } = await loginStart('anthropic')
+    await pumpUntil(() => openedUrls.length === 1)
+
+    const reply = await hitCallback(openedUrls[0], { state: stateOf(openedUrls[0]) })
+    expect(reply.status).toBe(400)
+    await vi.advanceTimersByTimeAsync(20)
+
+    expect(loginStatus(loginId).state).toBe('waiting')
+    expect(mocks.exchangeAnthropicCode).not.toHaveBeenCalled()
+  })
+
+  it('serves the signed-in page again on a duplicate callback without a second exchange', async () => {
+    const deferred = createDeferred<never>()
+    mocks.exchangeAnthropicCode.mockReturnValue(deferred.promise)
+    const { opener, openedUrls } = createFakeOpener()
+    const { loginStart, loginStatus, setLoginUrlOpenerForTests } = await importFresh()
+    setLoginUrlOpenerForTests(opener)
+
+    const { loginId } = await loginStart('anthropic')
+    await pumpUntil(() => openedUrls.length === 1)
+    const state = stateOf(openedUrls[0])
+
+    await hitCallback(openedUrls[0], { code: 'abc123', state })
+    expect(loginStatus(loginId).state).toBe('exchanging')
+
+    // The user reloads the tab while the exchange is still in flight.
+    const reply = await hitCallback(openedUrls[0], { code: 'abc123', state })
+    expect(reply.status).toBe(200)
+    expect(reply.body).toContain('Signed in')
+    expect(mocks.exchangeAnthropicCode).toHaveBeenCalledTimes(1)
   })
 
   it('fails on a PKCE state mismatch and never calls the token exchange', async () => {
-    const driver = createFakeDriver()
-    const { loginStart, loginStatus, setLoginBrowserLauncherForTests } = await importFresh()
-    setLoginBrowserLauncherForTests(driver.launcher)
+    const { opener, openedUrls } = createFakeOpener()
+    const { loginStart, loginStatus, setLoginUrlOpenerForTests } = await importFresh()
+    setLoginUrlOpenerForTests(opener)
 
-    const { loginId } = await loginStart('anthropic', 'user@example.com')
-    await pumpUntil(() => loginStatus(loginId).state === 'waiting')
+    const { loginId } = await loginStart('anthropic')
+    await pumpUntil(() => openedUrls.length === 1)
+    const redirectUri = redirectUriOf(openedUrls[0])
 
-    await driver.triggerRoute(
-      'https://console.anthropic.com/oauth/code/callback?code=abc123&state=totally-wrong-state'
-    )
+    await hitCallback(openedUrls[0], { code: 'abc123', state: 'wrong-state' })
     await pumpUntil(() => loginStatus(loginId).state === 'failed')
 
     expect(loginStatus(loginId).error).toBe('State mismatch — please retry')
     expect(mocks.exchangeAnthropicCode).not.toHaveBeenCalled()
-    expect(mocks.addClaudeAccount).not.toHaveBeenCalled()
-    expect(driver.close).toHaveBeenCalledTimes(1)
+    // A failed login tears its server down too.
+    await vi.advanceTimersByTimeAsync(1500)
+    expect(await isPortClosed(redirectUri)).toBe(true)
   })
 
   it('fails when the provider redirect carries an error query param', async () => {
-    const driver = createFakeDriver()
-    const { loginStart, loginStatus, setLoginBrowserLauncherForTests } = await importFresh()
-    setLoginBrowserLauncherForTests(driver.launcher)
+    const { opener, openedUrls } = createFakeOpener()
+    const { loginStart, loginStatus, setLoginUrlOpenerForTests } = await importFresh()
+    setLoginUrlOpenerForTests(opener)
 
-    const { loginId } = await loginStart('anthropic', 'user@example.com')
-    await pumpUntil(() => loginStatus(loginId).state === 'waiting')
+    const { loginId } = await loginStart('anthropic')
+    await pumpUntil(() => openedUrls.length === 1)
 
-    await driver.triggerRoute('https://console.anthropic.com/oauth/code/callback?error=access_denied')
+    const reply = await hitCallback(openedUrls[0], {
+      error: 'access_denied',
+      state: stateOf(openedUrls[0])
+    })
+    expect(reply.status).toBe(200)
+    expect(reply.body).toContain('Sign-in failed')
+    expect(reply.body).toContain('access_denied')
+
     await pumpUntil(() => loginStatus(loginId).state === 'failed')
-
     expect(loginStatus(loginId).error).toBe('Provider returned error: access_denied')
     expect(mocks.exchangeAnthropicCode).not.toHaveBeenCalled()
+  })
+
+  it('escapes provider error text before rendering it in the callback page', async () => {
+    const { opener, openedUrls } = createFakeOpener()
+    const { loginStart, setLoginUrlOpenerForTests } = await importFresh()
+    setLoginUrlOpenerForTests(opener)
+
+    await loginStart('anthropic')
+    await pumpUntil(() => openedUrls.length === 1)
+
+    const reply = await hitCallback(openedUrls[0], { error: '<script>alert(1)</script>' })
+    expect(reply.body).not.toContain('<script>')
+    expect(reply.body).toContain('&lt;script&gt;')
   })
 
   it('fails when no account email is returned from the Anthropic exchange', async () => {
@@ -439,54 +540,42 @@ describe('login-service', () => {
       expiresAt: 1,
       account: { uuid: 'uuid-1' }
     })
-    const driver = createFakeDriver()
-    const { loginStart, loginStatus, setLoginBrowserLauncherForTests } = await importFresh()
-    setLoginBrowserLauncherForTests(driver.launcher)
+    const { opener, openedUrls } = createFakeOpener()
+    const { loginStart, loginStatus, setLoginUrlOpenerForTests } = await importFresh()
+    setLoginUrlOpenerForTests(opener)
 
-    const { loginId } = await loginStart('anthropic', 'user@example.com')
-    await pumpUntil(() => loginStatus(loginId).state === 'waiting')
-    const state = new URL(driver.gotoCalls[0]).searchParams.get('state')
-    await driver.triggerRoute(`https://console.anthropic.com/oauth/code/callback?code=abc123&state=${state}`)
+    const { loginId } = await loginStart('anthropic')
+    await pumpUntil(() => openedUrls.length === 1)
+    await hitCallback(openedUrls[0], { code: 'abc123', state: stateOf(openedUrls[0]) })
     await pumpUntil(() => loginStatus(loginId).state === 'failed')
 
     expect(loginStatus(loginId).error).toBe('Login succeeded but no account email was returned')
     expect(mocks.addClaudeAccount).not.toHaveBeenCalled()
   })
 
-  it('fails when the browser window is closed before login completes', async () => {
-    const driver = createFakeDriver()
-    const { loginStart, loginStatus, setLoginBrowserLauncherForTests } = await importFresh()
-    setLoginBrowserLauncherForTests(driver.launcher)
+  it('cancels a non-terminal login and tears down the callback server', async () => {
+    const { opener, openedUrls } = createFakeOpener()
+    const { loginStart, loginStatus, loginCancel, setLoginUrlOpenerForTests } = await importFresh()
+    setLoginUrlOpenerForTests(opener)
 
     const { loginId } = await loginStart('anthropic', 'user@example.com')
-    await pumpUntil(() => loginStatus(loginId).state === 'waiting')
-
-    driver.triggerClose()
-    await pumpUntil(() => loginStatus(loginId).state === 'failed')
-
-    expect(loginStatus(loginId).error).toBe('Browser closed before login completed')
-  })
-
-  it('cancels a non-terminal login; the resulting close does not overwrite the cancelled state', async () => {
-    const driver = createFakeDriver()
-    const { loginStart, loginStatus, loginCancel, setLoginBrowserLauncherForTests } = await importFresh()
-    setLoginBrowserLauncherForTests(driver.launcher)
-
-    const { loginId } = await loginStart('anthropic', 'user@example.com')
-    await pumpUntil(() => loginStatus(loginId).state === 'waiting')
+    await pumpUntil(() => openedUrls.length === 1)
+    const redirectUri = redirectUriOf(openedUrls[0])
+    expect(await isPortClosed(redirectUri)).toBe(false)
 
     const result = await loginCancel(loginId)
 
     expect(result).toBe(true)
-    expect(driver.close).toHaveBeenCalledTimes(1)
-    // Our fake context.close() synchronously fires the 'close' listener — it must not
-    // have overwritten the terminal 'cancelled' state set before close() was called.
     expect(loginStatus(loginId).state).toBe('cancelled')
     expect(loginStatus(loginId).error).toBeNull()
+    // A redirect landing after the cancel finds nobody listening — it can
+    // never resurrect the flow into 'exchanging'/'done'.
+    await vi.advanceTimersByTimeAsync(1500)
+    expect(await isPortClosed(redirectUri)).toBe(true)
+    expect(mocks.exchangeAnthropicCode).not.toHaveBeenCalled()
   })
 
   it('a cancel that lands during the in-flight token exchange is not clobbered back to done', async () => {
-    const driver = createFakeDriver()
     const deferred = createDeferred<{
       accessToken: string
       refreshToken: string
@@ -496,24 +585,21 @@ describe('login-service', () => {
     }>()
     mocks.exchangeAnthropicCode.mockReturnValue(deferred.promise)
 
-    const { loginStart, loginStatus, loginCancel, setLoginBrowserLauncherForTests } = await importFresh()
-    setLoginBrowserLauncherForTests(driver.launcher)
+    const { opener, openedUrls } = createFakeOpener()
+    const { loginStart, loginStatus, loginCancel, setLoginUrlOpenerForTests } = await importFresh()
+    setLoginUrlOpenerForTests(opener)
 
     const { loginId } = await loginStart('anthropic', 'user@example.com')
-    await pumpUntil(() => loginStatus(loginId).state === 'waiting')
-    const state = new URL(driver.gotoCalls[0]).searchParams.get('state')
+    await pumpUntil(() => openedUrls.length === 1)
 
-    await driver.triggerRoute(
-      `https://console.anthropic.com/oauth/code/callback?code=abc123&state=${state}`
-    )
-    // The route handler runs extractAndHandle -> exchange() synchronously up
+    await hitCallback(openedUrls[0], { code: 'abc123', state: stateOf(openedUrls[0]) })
+    // The request handler runs extractAndHandle -> exchange() synchronously up
     // to the awaited (still-pending) token exchange call.
     expect(loginStatus(loginId).state).toBe('exchanging')
 
     const cancelled = await loginCancel(loginId)
     expect(cancelled).toBe(true)
     expect(loginStatus(loginId).state).toBe('cancelled')
-    expect(driver.close).toHaveBeenCalledTimes(1)
 
     // Now let the in-flight exchange resolve — it must NOT overwrite the
     // already-terminal 'cancelled' state back to 'done'.
@@ -531,42 +617,30 @@ describe('login-service', () => {
     expect(mocks.addClaudeAccount).toHaveBeenCalled()
     expect(loginStatus(loginId).state).toBe('cancelled')
     expect(loginStatus(loginId).error).toBeNull()
-    // No second close from the (skipped) success path.
-    expect(driver.close).toHaveBeenCalledTimes(1)
   })
 
-  it('ignores a capture callback that fires after the login was cancelled (no post-cancel exchange)', async () => {
-    const driver = createFakeDriver()
-    const { loginStart, loginStatus, loginCancel, setLoginBrowserLauncherForTests } =
-      await importFresh()
-    setLoginBrowserLauncherForTests(driver.launcher)
+  it('cancels while the browser is still being opened without leaving a server behind', async () => {
+    let openedUrl: string | null = null
+    const neverResolves = new Promise<void>(() => {})
+    const { loginStart, loginStatus, loginCancel, setLoginUrlOpenerForTests } = await importFresh()
+    setLoginUrlOpenerForTests((url) => {
+      openedUrl = url
+      return neverResolves
+    })
 
-    const { loginId } = await loginStart('anthropic', 'user@example.com')
-    await pumpUntil(() => loginStatus(loginId).state === 'waiting')
-    const state = new URL(driver.gotoCalls[0]).searchParams.get('state')
+    const { loginId } = await loginStart('anthropic')
+    await pumpUntil(() => openedUrl !== null)
+    expect(loginStatus(loginId).state).toBe('waiting')
 
-    const cancelled = await loginCancel(loginId)
-    expect(cancelled).toBe(true)
-    expect(loginStatus(loginId).state).toBe('cancelled')
-
-    // A late framenavigated callback (a redirect landing after the cancel) must
-    // NOT resurrect the flow into 'exchanging'/'done'.
-    driver.triggerFrameNavigated(
-      `https://console.anthropic.com/oauth/code/callback?code=abc123&state=${state}`
-    )
-    await vi.advanceTimersByTimeAsync(20)
-
-    expect(loginStatus(loginId).state).toBe('cancelled')
-    expect(loginStatus(loginId).error).toBeNull()
-    expect(mocks.exchangeAnthropicCode).not.toHaveBeenCalled()
+    expect(await loginCancel(loginId)).toBe(true)
+    await vi.advanceTimersByTimeAsync(1500)
+    expect(await isPortClosed(redirectUriOf(openedUrl!))).toBe(true)
   })
 
-  it('times out even while still launching (a hung Chrome launch does not block future logins)', async () => {
-    // A launcher that never resolves keeps the session in 'launching' forever
-    // unless the overall timeout also covers that state.
-    const neverResolves = new Promise<never>(() => {})
-    const { loginStart, loginStatus, setLoginBrowserLauncherForTests } = await importFresh()
-    setLoginBrowserLauncherForTests(() => neverResolves)
+  it('times out even while the browser is still being opened (a hung opener does not block future logins)', async () => {
+    const neverResolves = new Promise<void>(() => {})
+    const { loginStart, loginStatus, setLoginUrlOpenerForTests } = await importFresh()
+    setLoginUrlOpenerForTests(() => neverResolves)
 
     const { loginId } = await loginStart('anthropic', 'user@example.com')
     expect(loginStatus(loginId).state).toBe('launching')
@@ -583,146 +657,121 @@ describe('login-service', () => {
   })
 
   it('loginCancel returns false once the session is already terminal', async () => {
-    const driver = createFakeDriver()
-    const { loginStart, loginStatus, loginCancel, setLoginBrowserLauncherForTests } = await importFresh()
-    setLoginBrowserLauncherForTests(driver.launcher)
+    const { opener, openedUrls } = createFakeOpener()
+    const { loginStart, loginStatus, loginCancel, setLoginUrlOpenerForTests } = await importFresh()
+    setLoginUrlOpenerForTests(opener)
 
-    const { loginId } = await loginStart('anthropic', 'user@example.com')
-    await pumpUntil(() => loginStatus(loginId).state === 'waiting')
-    await loginCancel(loginId)
-    expect(loginStatus(loginId).state).toBe('cancelled')
+    const { loginId } = await loginStart('anthropic')
+    await pumpUntil(() => openedUrls.length === 1)
+    await hitCallback(openedUrls[0], { code: 'abc123', state: stateOf(openedUrls[0]) })
+    await pumpUntil(() => loginStatus(loginId).state === 'done')
 
     expect(await loginCancel(loginId)).toBe(false)
+    expect(loginStatus(loginId).state).toBe('done')
   })
 
   it('throws when a login is already in progress', async () => {
-    const driver = createFakeDriver()
-    const { loginStart, setLoginBrowserLauncherForTests } = await importFresh()
-    setLoginBrowserLauncherForTests(driver.launcher)
+    const { opener } = createFakeOpener()
+    const { loginStart, loginCancel, setLoginUrlOpenerForTests } = await importFresh()
+    setLoginUrlOpenerForTests(opener)
 
-    const first = loginStart('anthropic', 'user@example.com')
-    await expect(loginStart('openai', 'other@example.com')).rejects.toThrow(
-      'A login is already in progress'
-    )
-    await first
+    const { loginId } = await loginStart('anthropic')
+    await expect(loginStart('openai')).rejects.toThrow('A login is already in progress')
+    await loginCancel(loginId)
   })
 
   it('lets a new loginStart supersede a terminal session; the old loginId 404s', async () => {
-    const driver = createFakeDriver()
-    const { loginStart, loginStatus, setLoginBrowserLauncherForTests } = await importFresh()
-    setLoginBrowserLauncherForTests(driver.launcher)
+    const { opener, openedUrls } = createFakeOpener()
+    const { loginStart, loginStatus, loginCancel, setLoginUrlOpenerForTests } = await importFresh()
+    setLoginUrlOpenerForTests(opener)
 
-    const { loginId: firstId } = await loginStart('anthropic', 'user@example.com')
-    await pumpUntil(() => loginStatus(firstId).state === 'waiting')
-    const state = new URL(driver.gotoCalls[0]).searchParams.get('state')
-    await driver.triggerRoute(`https://console.anthropic.com/oauth/code/callback?code=abc123&state=${state}`)
-    await pumpUntil(() => loginStatus(firstId).state === 'done')
+    const { loginId: first } = await loginStart('anthropic')
+    await pumpUntil(() => openedUrls.length === 1)
+    await loginCancel(first)
+    expect(loginStatus(first).state).toBe('cancelled')
 
-    const driver2 = createFakeDriver()
-    setLoginBrowserLauncherForTests(driver2.launcher)
-    const { loginId: secondId } = await loginStart('openai', 'other@example.com')
-
-    expect(() => loginStatus(firstId)).toThrow('login session not found')
-    expect(loginStatus(secondId).state).toBe('launching')
+    const { loginId: second } = await loginStart('openai')
+    expect(second).not.toBe(first)
+    expect(() => loginStatus(first)).toThrow('login session not found')
+    expect(loginStatus(second).provider).toBe('openai')
+    await loginCancel(second)
   })
 
   it('GCs a terminal session after 5 minutes if no new login starts', async () => {
-    const driver = createFakeDriver()
-    const { loginStart, loginStatus, loginCancel, setLoginBrowserLauncherForTests } = await importFresh()
-    setLoginBrowserLauncherForTests(driver.launcher)
+    const { opener, openedUrls } = createFakeOpener()
+    const { loginStart, loginStatus, loginCancel, setLoginUrlOpenerForTests, isLoginActive } =
+      await importFresh()
+    setLoginUrlOpenerForTests(opener)
 
-    const { loginId } = await loginStart('anthropic', 'user@example.com')
-    await pumpUntil(() => loginStatus(loginId).state === 'waiting')
+    const { loginId } = await loginStart('anthropic')
+    await pumpUntil(() => openedUrls.length === 1)
     await loginCancel(loginId)
     expect(loginStatus(loginId).state).toBe('cancelled')
 
-    await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
-
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000 - 1)
+    expect(loginStatus(loginId).state).toBe('cancelled')
+    await vi.advanceTimersByTimeAsync(2)
     expect(() => loginStatus(loginId)).toThrow('login session not found')
+    expect(isLoginActive()).toBe(false)
   })
 
-  it('fails with a timeout after 30 minutes of waiting, and closes the context', async () => {
-    const driver = createFakeDriver()
-    const { loginStart, loginStatus, setLoginBrowserLauncherForTests } = await importFresh()
-    setLoginBrowserLauncherForTests(driver.launcher)
+  it('fails with a timeout after 30 minutes of waiting, and closes the callback server', async () => {
+    const { opener, openedUrls } = createFakeOpener()
+    const { loginStart, loginStatus, setLoginUrlOpenerForTests } = await importFresh()
+    setLoginUrlOpenerForTests(opener)
 
-    const { loginId } = await loginStart('anthropic', 'user@example.com')
-    await pumpUntil(() => loginStatus(loginId).state === 'waiting')
+    const { loginId } = await loginStart('anthropic')
+    await pumpUntil(() => openedUrls.length === 1)
+    const redirectUri = redirectUriOf(openedUrls[0])
 
     await vi.advanceTimersByTimeAsync(30 * 60 * 1000)
 
     expect(loginStatus(loginId).state).toBe('failed')
     expect(loginStatus(loginId).error).toBe('Login timed out')
-    expect(driver.close).toHaveBeenCalledTimes(1)
+    expect(await isPortClosed(redirectUri)).toBe(true)
   })
 
-  it('maps a chrome-missing launch error to a friendly failed state', async () => {
-    const { loginStart, loginStatus, setLoginBrowserLauncherForTests } = await importFresh()
-    setLoginBrowserLauncherForTests(async () => {
-      throw new Error(
-        `Chromium distribution 'chrome' is not found at /Applications/Google Chrome.app\nRun "npx patchright install chrome"`
-      )
+  it('fails with the opener error when the browser cannot be opened', async () => {
+    let openedUrl: string | null = null
+    const { loginStart, loginStatus, setLoginUrlOpenerForTests } = await importFresh()
+    setLoginUrlOpenerForTests(async (url) => {
+      openedUrl = url
+      throw new Error('LSOpenURLsWithRole() failed with error -10814')
     })
 
-    const { loginId } = await loginStart('anthropic', 'user@example.com')
+    const { loginId } = await loginStart('anthropic')
     await pumpUntil(() => loginStatus(loginId).state === 'failed')
 
     expect(loginStatus(loginId).error).toBe(
-      'Google Chrome is required for sign-in. Please install Chrome and try again.'
+      'Could not open the browser for sign-in: LSOpenURLsWithRole() failed with error -10814'
     )
-  })
-
-  it('surfaces other launch failures with their raw message', async () => {
-    const { loginStart, loginStatus, setLoginBrowserLauncherForTests } = await importFresh()
-    setLoginBrowserLauncherForTests(async () => {
-      throw new Error('boom: some other launch failure')
-    })
-
-    const { loginId } = await loginStart('anthropic', 'user@example.com')
-    await pumpUntil(() => loginStatus(loginId).state === 'failed')
-
-    expect(loginStatus(loginId).error).toBe('boom: some other launch failure')
+    await vi.advanceTimersByTimeAsync(1500)
+    expect(await isPortClosed(redirectUriOf(openedUrl!))).toBe(true)
   })
 
   it('throws on non-macOS platforms', async () => {
-    const originalPlatform = process.platform
-    Object.defineProperty(process, 'platform', { configurable: true, value: 'linux' })
+    const original = process.platform
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true })
     try {
       const { loginStart } = await importFresh()
       await expect(loginStart('anthropic')).rejects.toThrow(
         'Account sign-in is only supported on macOS'
       )
     } finally {
-      Object.defineProperty(process, 'platform', { configurable: true, value: originalPlatform })
+      Object.defineProperty(process, 'platform', { value: original, configurable: true })
     }
   })
 
-  it('uses the "-new" scratch profile when no email hint is given', async () => {
-    const driver = createFakeDriver()
-    const { loginStart, loginStatus, setLoginBrowserLauncherForTests } = await importFresh()
-    setLoginBrowserLauncherForTests(driver.launcher)
-
-    const { loginId } = await loginStart('anthropic')
-    await pumpUntil(() => loginStatus(loginId).state === 'waiting')
-
-    expect(driver.launchProfileDirs).toEqual([
-      join(mocks.homeDir, '.ccswitch', 'profiles', 'claude-new')
-    ])
-  })
-
   it('isLoginActive reflects whether the current session is non-terminal', async () => {
-    const driver = createFakeDriver()
-    const { loginStart, loginStatus, loginCancel, isLoginActive, setLoginBrowserLauncherForTests } =
-      await importFresh()
+    const { opener, openedUrls } = createFakeOpener()
+    const { loginStart, loginCancel, isLoginActive, setLoginUrlOpenerForTests } = await importFresh()
+    setLoginUrlOpenerForTests(opener)
+
     expect(isLoginActive()).toBe(false)
-    setLoginBrowserLauncherForTests(driver.launcher)
-
-    const { loginId } = await loginStart('anthropic', 'user@example.com')
+    const { loginId } = await loginStart('anthropic')
     expect(isLoginActive()).toBe(true)
-
-    await pumpUntil(() => loginStatus(loginId).state === 'waiting')
+    await pumpUntil(() => openedUrls.length === 1)
     expect(isLoginActive()).toBe(true)
-
     await loginCancel(loginId)
     expect(isLoginActive()).toBe(false)
   })

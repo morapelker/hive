@@ -1,0 +1,58 @@
+{
+  "id": "french-bulldog",
+  "name": "French Bulldog",
+  "version": "1.0.0",
+  "author": "Hive",
+  "assets": {
+    "idle": "assets/french-bulldog.png",
+    "working": "assets/french-bulldog.png",
+    "question": "assets/french-bulldog.png",
+    "permission": "assets/french-bulldog.png",
+    "plan_ready": "assets/french-bulldog.png"
+  },
+  "lottieAssets": {
+    "working": "assets/french-bulldog-run.lottie"
+  },
+  "lottieScale": {
+    "working": 1.45
+  },
+  "imageScale": {
+    "idle": 1,
+    "working": 1,
+    "question": 1,
+    "permission": 1,
+    "plan_ready": 1
+  },
+  "animations": {
+    "idle": {
+      "type": "static",
+      "transform": "none",
+      "overlay": { "kind": "none" }
+    },
+    "working": {
+      "type": "loop",
+      "durationMs": 1800,
+      "transform": "none",
+      "overlay": { "kind": "none" }
+    },
+    "question": {
+      "type": "loop",
+      "durationMs": 1200,
+      "transform": "bounce",
+      "overlay": { "kind": "bubble", "symbol": "?", "tint": "#3b82f6" }
+    },
+    "permission": {
+      "type": "loop",
+      "durationMs": 800,
+      "transform": "bounce",
+      "overlay": { "kind": "bubble", "symbol": "!", "tint": "#ef4444" }
+    },
+    "plan_ready": {
+      "type": "loop",
+      "durationMs": 1600,
+      "transform": "pulse",
+      "overlay": { "kind": "glow", "symbol": "✓", "tint": "#22c55e" }
+    }
+  },
+  "defaultSize": "M"
+}

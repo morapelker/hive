@@ -318,6 +318,65 @@ describeIf('database migration safety', () => {
     db.close()
   })
 
+  it('supports the ticket awaiting_completion flag end-to-end on a fresh database', () => {
+    const db = new DatabaseService(makeDbPath())
+    db.init()
+
+    expect(columnNames(db, 'kanban_tickets')).toEqual(
+      expect.arrayContaining(['awaiting_completion'])
+    )
+    expect(columnNames(db, 'markdown_kanban_card_state')).toEqual(
+      expect.arrayContaining(['awaiting_completion'])
+    )
+
+    const project = db.createProject({ name: 'Project', path: makeDbPath() })
+    const ticket = db.createKanbanTicket({
+      project_id: project.id,
+      title: 'Ticket',
+      column: 'in_progress'
+    })
+    expect(ticket.awaiting_completion).toBe(false)
+
+    // A plain move into review marks unread only.
+    const reviewed = db.moveKanbanTicket(ticket.id, 'review', 0)
+    expect(reviewed?.unread).toBe(true)
+    expect(reviewed?.awaiting_completion).toBe(false)
+
+    // A Claude CLI stop without a detected completion flags the in-progress
+    // ticket in place (it is not moved); a same-column reorder keeps the flag.
+    db.moveKanbanTicket(ticket.id, 'in_progress', 0)
+    const paused = db.updateKanbanTicket(ticket.id, { awaiting_completion: true })
+    expect(paused?.column).toBe('in_progress')
+    expect(paused?.awaiting_completion).toBe(true)
+    expect(db.moveKanbanTicket(ticket.id, 'in_progress', 3)?.awaiting_completion).toBe(true)
+
+    // The run resuming clears the flag in place.
+    const resumed = db.updateKanbanTicket(ticket.id, { awaiting_completion: false })
+    expect(resumed?.column).toBe('in_progress')
+    expect(resumed?.awaiting_completion).toBe(false)
+
+    // Any column change (move or update) drops the flag: the real completion
+    // moves the ticket to review with only the unread dot.
+    db.updateKanbanTicket(ticket.id, { awaiting_completion: true })
+    const finished = db.moveKanbanTicket(ticket.id, 'review', 0)
+    expect(finished?.unread).toBe(true)
+    expect(finished?.awaiting_completion).toBe(false)
+    db.moveKanbanTicket(ticket.id, 'in_progress', 0)
+    db.updateKanbanTicket(ticket.id, { awaiting_completion: true })
+    expect(db.updateKanbanTicket(ticket.id, { column: 'review' })?.awaiting_completion).toBe(false)
+    // …unless the ticket is not actually changing column (no-op update keeps it).
+    db.moveKanbanTicket(ticket.id, 'in_progress', 0)
+    db.updateKanbanTicket(ticket.id, { awaiting_completion: true })
+    expect(db.updateKanbanTicket(ticket.id, { title: 'Renamed' })?.awaiting_completion).toBe(true)
+    // An explicit awaiting_completion on a column-changing update still wins.
+    expect(
+      db.updateKanbanTicket(ticket.id, { column: 'review', awaiting_completion: true })
+        ?.awaiting_completion
+    ).toBe(true)
+
+    db.close()
+  })
+
   it('supports the multi-model ticket columns end-to-end on a fresh database', () => {
     const db = new DatabaseService(makeDbPath())
     db.init()

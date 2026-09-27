@@ -142,11 +142,11 @@ describe('TicketModelBadge', () => {
   it('gives the chip a violet border for a codex ultra launch', () => {
     render(
       <TicketModelBadge
-        ticket={{ model_provider_id: 'codex', model_id: 'gpt-5.6-sol', model_variant: 'ultra' }}
+        ticket={{ model_provider_id: 'codex', model_id: 'gpt-6-sol', model_variant: 'ultra' }}
       />
     )
 
-    expect(screen.getByText('gpt-5.6-sol').closest('span')).toHaveClass(
+    expect(screen.getByText('gpt-6-sol').closest('span')).toHaveClass(
       'border-2',
       'border-violet-500'
     )

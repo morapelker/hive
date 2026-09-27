@@ -1,0 +1,16 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' blob:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; media-src 'self' blob:; connect-src 'self' blob: data: http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:*"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Voice dictation</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/voice-hud-main.tsx"></script>
+  </body>
+</html>

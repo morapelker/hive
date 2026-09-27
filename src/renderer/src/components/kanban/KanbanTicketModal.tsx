@@ -1,4 +1,5 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
+import { isAgentCli } from '@shared/types/agent-sdk'
 import { useShallow } from 'zustand/react/shallow'
 import {
   Eye,
@@ -482,7 +483,7 @@ async function sendFollowupToSession(opts: {
   // Resolve model AFTER setSessionMode (which may have applied a mode-specific default)
   const model = resolveSessionModel(opts.sessionId, result.session)
 
-  if (session.agent_sdk === 'claude-code-cli') {
+  if (isAgentCli(session.agent_sdk)) {
     // The follow-up may target a session closed when its ticket entered Done.
     // Reactivate BEFORE delivering: this serializes behind any in-flight
     // close via the lifecycle lock (delivering first could hand the prompt to
@@ -498,7 +499,7 @@ async function sendFollowupToSession(opts: {
         await terminalApi.createClaudeCli(opts.sessionId, { pendingPrompt: fullPrompt })
       )
       if (!createResult.success) {
-        throw new Error(createResult.error ?? 'Failed to start Claude CLI session')
+        throw new Error(createResult.error ?? 'Failed to start CLI session')
       }
     }
     recordSuccessfulFollowupSideEffects(
@@ -964,7 +965,7 @@ function KanbanTicketModalContent({
   }, [sessionRecord?.worktree_id])
 
   const effectiveSession = sessionRecord ?? dbSessionInfo?.session ?? null
-  const isClaudeCli = effectiveSession?.agent_sdk === 'claude-code-cli'
+  const isClaudeCli = isAgentCli(effectiveSession?.agent_sdk)
   const currentWorktreeSessionStatus = useWorktreeStatusStore(
     useCallback(
       (state) =>
@@ -2107,7 +2108,7 @@ function PlanReviewModeContent({
   const dropZoneRef = useRef<HTMLDivElement>(null)
 
   const isConnectionSession = !!sessionRecord?.connection_id
-  const isClaudeCliPlanSession = sessionRecord?.agent_sdk === 'claude-code-cli'
+  const isClaudeCliPlanSession = isAgentCli(sessionRecord?.agent_sdk)
   const hasWorkingContext = !!(sessionRecord?.worktree_id || sessionRecord?.connection_id)
 
   const [slashCommands, setSlashCommands] = useState<{ name: string }[]>([])
@@ -2525,7 +2526,7 @@ function PlanReviewModeContent({
           })
 
           prepareTicketBuildSession(newSessionId, handoffGoalMode)
-          if (newSession.agent_sdk === 'claude-code-cli') {
+          if (isAgentCli(newSession.agent_sdk)) {
             registerHivePromptHandoff(sessionId, newSessionId)
             sessionStore.setPendingMessage(newSessionId, handoffPrompt)
           }
@@ -2533,7 +2534,7 @@ function PlanReviewModeContent({
           const boardMode = useSettingsStore.getState().boardMode
           if (boardMode === 'sticky-tab') {
             sessionStore.setActiveSession(BOARD_TAB_ID)
-          } else if (newSession.agent_sdk !== 'claude-code-cli') {
+          } else if (!isAgentCli(newSession.agent_sdk)) {
             sessionStore.setActiveConnection(sessionRecord.connection_id)
             sessionStore.setActiveConnectionSession(newSessionId)
           }
@@ -2541,7 +2542,7 @@ function PlanReviewModeContent({
           onClose()
           void (async () => {
             await setModePromise
-            if (newSession.agent_sdk === 'claude-code-cli') {
+            if (isAgentCli(newSession.agent_sdk)) {
               bumpWorktreeLastMessage({ connectionId: sessionRecord.connection_id })
               const cliResult = unwrapEnvelope(
                 await terminalApi.createClaudeCli(newSessionId, {
@@ -2549,7 +2550,7 @@ function PlanReviewModeContent({
                 })
               )
               if (!cliResult.success) {
-                throw new Error(cliResult.error ?? 'Failed to start Claude CLI handoff')
+                throw new Error(cliResult.error ?? 'Failed to start CLI handoff')
               }
               if (handoffPrompt) {
                 sessionStore.dequeuePendingMessage(newSessionId)
@@ -2615,7 +2616,7 @@ function PlanReviewModeContent({
         }
 
         prepareTicketBuildSession(newSessionId, handoffGoalMode)
-        if (newSession.agent_sdk === 'claude-code-cli') {
+        if (isAgentCli(newSession.agent_sdk)) {
           registerHivePromptHandoff(sessionId, newSessionId)
           sessionStore.setPendingMessage(newSessionId, handoffPrompt)
         }
@@ -2623,7 +2624,7 @@ function PlanReviewModeContent({
         const boardMode = useSettingsStore.getState().boardMode
         if (boardMode === 'sticky-tab') {
           sessionStore.setActiveSession(BOARD_TAB_ID)
-        } else if (newSession.agent_sdk !== 'claude-code-cli') {
+        } else if (!isAgentCli(newSession.agent_sdk)) {
           sessionStore.setActiveWorktree(worktreeId)
           sessionStore.setActiveSession(newSessionId)
         }
@@ -2631,7 +2632,7 @@ function PlanReviewModeContent({
         onClose()
         void (async () => {
           await setModePromise
-          if (newSession.agent_sdk === 'claude-code-cli') {
+          if (isAgentCli(newSession.agent_sdk)) {
             bumpWorktreeLastMessage({ worktreeId })
             const cliResult = unwrapEnvelope(
               await terminalApi.createClaudeCli(newSessionId, {
@@ -2639,7 +2640,7 @@ function PlanReviewModeContent({
               })
             )
             if (!cliResult.success) {
-              throw new Error(cliResult.error ?? 'Failed to start Claude CLI handoff')
+              throw new Error(cliResult.error ?? 'Failed to start CLI handoff')
             }
             if (handoffPrompt) {
               sessionStore.dequeuePendingMessage(newSessionId)
@@ -3175,7 +3176,7 @@ function ReviewModeContent({
     () => (ticket.worktree_id ? findWorktreeById(ticket.worktree_id) : null),
     [ticket.worktree_id]
   )
-  const isClaudeCliSession = sessionRecord?.agent_sdk === 'claude-code-cli'
+  const isClaudeCliSession = isAgentCli(sessionRecord?.agent_sdk)
   const [followUpText, setFollowUpText] = useState('')
   const [followUpMode, setFollowUpMode] = useState<FollowUpMode>('build')
   const [isSending, setIsSending] = useState(false)

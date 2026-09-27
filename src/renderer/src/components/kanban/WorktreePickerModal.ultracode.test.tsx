@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { WorktreePickerModal, _resetLastSourceBranch } from './WorktreePickerModal'
@@ -95,6 +95,7 @@ const baseTicket: KanbanTicket = {
   created_from_session: false,
   auto_approve_plan: false,
   unread: false,
+  awaiting_completion: false,
   attachments: [],
   archived_at: null,
   external_provider: null,
@@ -124,7 +125,12 @@ function setupStores(): void {
       'claude-code-cli': { providerID: 'claude-code', modelID: 'opus', variant: 'xhigh' }
     },
     defaultModels: {
-      build: { agentSdk: 'claude-code-cli', providerID: 'claude-code', modelID: 'opus', variant: 'high' },
+      build: {
+        agentSdk: 'claude-code-cli',
+        providerID: 'claude-code',
+        modelID: 'opus',
+        variant: 'high'
+      },
       plan: null,
       ask: null,
       review: null
@@ -255,15 +261,26 @@ describe('WorktreePickerModal ultracode chip (real ModelSelector)', () => {
       />
     )
 
-    await userEvent.click(screen.getByTestId('sdk-toggle-claude-code-cli'))
+    // The picker opens on the configured default SDK (Codex): a build default
+    // stamped for Claude CLI no longer switches it, so pick Claude CLI explicitly.
+    fireEvent.click(screen.getByTestId('sdk-toggle-claude-code-cli'))
+    await waitFor(() =>
+      expect(screen.getByTestId('sdk-toggle-claude-code-cli')).toHaveAttribute(
+        'aria-pressed',
+        'true'
+      )
+    )
 
     // Open the model picker dropdown (the pill trigger).
     await userEvent.click(await screen.findByTestId('model-selector'))
 
-    await waitFor(() => expect(screen.getByTestId('variant-chips-opus')).toBeInTheDocument())
-
-    const opusChips = screen.getByTestId('variant-chips-opus')
-    expect(within(opusChips).getByTestId('variant-chip-ultracode')).toBeInTheDocument()
+    // Switching SDK reloads the catalog asynchronously: wait for the Claude
+    // CLI chips (which include ultracode), not just the first render.
+    await waitFor(() =>
+      expect(
+        within(screen.getByTestId('variant-chips-opus')).getByTestId('variant-chip-ultracode')
+      ).toBeInTheDocument()
+    )
 
     const sonnetChips = screen.getByTestId('variant-chips-sonnet')
     expect(within(sonnetChips).queryByTestId('variant-chip-ultracode')).toBeNull()

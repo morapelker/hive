@@ -18,6 +18,7 @@ import {
 } from './parseProviders'
 import {
   resolveModelForSdk,
+  resolvePreferredAgentSdk,
   useSettingsStore,
   type HandoffAgentSdk,
   type SelectedModel
@@ -61,14 +62,16 @@ const SDK_DISPLAY_NAMES: Record<HandoffAgentSdk, string> = {
   opencode: 'OpenCode',
   'claude-code': 'Claude Code',
   'claude-code-cli': 'Claude Code (CLI)',
-  codex: 'Codex'
+  codex: 'Codex',
+  'codex-cli': 'Codex (CLI)'
 }
 
 const FALLBACK_MODELS: Record<HandoffAgentSdk, SelectedModel> = {
   opencode: { providerID: 'anthropic', modelID: 'claude-opus-4-5-20251101' },
   'claude-code': { providerID: 'anthropic', modelID: 'claude-opus-4-5-20251101' },
   'claude-code-cli': { providerID: 'anthropic', modelID: 'sonnet', variant: 'high' },
-  codex: { providerID: 'codex', modelID: 'gpt-5.5' }
+  codex: { providerID: 'codex', modelID: 'gpt-5.5' },
+  'codex-cli': { providerID: 'codex', modelID: 'gpt-5.5', variant: 'high' }
 }
 
 const modelCatalogCache = new Map<HandoffAgentSdk, ProviderModels[]>()
@@ -98,9 +101,15 @@ export function getModelCatalogCacheVersion(): number {
 }
 
 function normalizeHandoffSdk(
-  sdk: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal' | null | undefined
+  sdk: AgentSdk | null | undefined
 ): HandoffAgentSdk {
-  if (sdk === 'claude-code' || sdk === 'claude-code-cli' || sdk === 'codex') return sdk
+  if (
+    sdk === 'claude-code' ||
+    sdk === 'claude-code-cli' ||
+    sdk === 'codex' ||
+    sdk === 'codex-cli'
+  )
+    return sdk
   return 'opencode'
 }
 
@@ -153,23 +162,26 @@ function resolveSessionSelection(opts: {
 }): EffectiveHandoffSelection {
   // Discord mirrors the data-driven subset of this chain in src/shared/model-resolution.ts.
   const settings = useSettingsStore.getState()
-  const requestedSdk = normalizeHandoffSdk(opts.agentSdk ?? settings.defaultAgentSdk ?? 'opencode')
+  // No SDK requested: use the default configured on the settings page.
+  const requestedSdk = opts.agentSdk
+    ? normalizeHandoffSdk(opts.agentSdk)
+    : resolvePreferredAgentSdk(settings)
   const configuredDefaultSdk = normalizeHandoffSdk(settings.defaultAgentSdk ?? 'opencode')
   let model: SelectedModel | null = null
-  let resolvedSdk = requestedSdk
+  // The SDK is settled here: a mode default may only supply a model that
+  // belongs to it. A mode default picked for another SDK is ignored rather
+  // than redirecting the session, so the configured default SDK (or the
+  // explicit pick) stays in charge.
+  const resolvedSdk = requestedSdk
 
   const modeDefault = settings.getModelForMode(getModeDefaultKey(opts.mode))
-  // Session creation can pass an explicit SDK; in that case the mode default may only
-  // supply a model that already belongs to the requested SDK.
   if (modeDefault && (modeDefault.agentSdk || requestedSdk === configuredDefaultSdk)) {
     const modeDefaultSdk = modeDefault.agentSdk ? normalizeHandoffSdk(modeDefault.agentSdk) : null
-    if (opts.explicitSdk) {
-      if (modeDefaultSdk === requestedSdk) {
-        model = modeDefault
-      }
-    } else {
+    // A legacy mode default (no SDK stamp) belongs to the configured default
+    // SDK and only applies when the SDK was not picked explicitly.
+    const applies = modeDefaultSdk ? modeDefaultSdk === requestedSdk : !opts.explicitSdk
+    if (applies) {
       model = modeDefault
-      resolvedSdk = modeDefaultSdk ?? requestedSdk
     }
   }
 
@@ -250,7 +262,13 @@ export function getHandoffSdkDisplayName(
 export function getAvailableHandoffAgentSdks(
   availableAgentSdks?: AvailableAgentSdks | null
 ): HandoffAgentSdk[] {
-  const orderedSdks: HandoffAgentSdk[] = ['opencode', 'claude-code', 'codex', 'claude-code-cli']
+  const orderedSdks: HandoffAgentSdk[] = [
+    'opencode',
+    'claude-code',
+    'codex',
+    'claude-code-cli',
+    'codex-cli'
+  ]
   return orderedSdks.filter((sdk) => isAgentSdkAvailable(sdk, availableAgentSdks))
 }
 
@@ -431,7 +449,9 @@ export function resolveSessionCreationSelection(opts: {
   model: SelectedModel | null
 } {
   const settings = useSettingsStore.getState()
-  const agentSdk =
+  // Nothing requested an SDK: fall back to the default configured on the
+  // settings page. Ticket launches and session model changes never rewrite it.
+  const agentSdk: AgentSdk =
     opts.modelOverride?.agentSdk ?? opts.agentSdkOverride ?? settings.defaultAgentSdk ?? 'opencode'
 
   if (agentSdk === 'terminal') {

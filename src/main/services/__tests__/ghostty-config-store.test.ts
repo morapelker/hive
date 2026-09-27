@@ -30,7 +30,7 @@ describe('ghostty config store', () => {
     expect(first).toEqual({ fontFamily: 'TX-02' })
     expect(second).toEqual({ fontFamily: 'TX-02' })
     expect(parseGhosttyConfigMock).toHaveBeenCalledTimes(1)
-    expect(parseGhosttyConfigMock).toHaveBeenCalledWith({ includeAppSupport: true })
+    expect(parseGhosttyConfigMock).toHaveBeenCalledWith({ includeAppSupport: false })
   })
 
   it('re-reads from disk on refresh and updates the memo', () => {
@@ -40,6 +40,7 @@ describe('ghostty config store', () => {
     parseGhosttyConfigMock.mockReturnValueOnce({ fontSize: 15 })
     const refreshed = getGhosttyTerminalConfig({ refresh: true })
 
+    expect(parseGhosttyConfigMock).toHaveBeenLastCalledWith({ includeAppSupport: true })
     expect(refreshed).toEqual({ fontSize: 15 })
     expect(parseGhosttyConfigMock).toHaveBeenCalledTimes(2)
 
@@ -55,7 +56,7 @@ describe('ghostty config store', () => {
     expect(getGhosttyConfigPathOnce()).toBeUndefined()
 
     expect(resolveGhosttyConfigPathMock).toHaveBeenCalledTimes(1)
-    expect(resolveGhosttyConfigPathMock).toHaveBeenCalledWith({ includeAppSupport: true })
+    expect(resolveGhosttyConfigPathMock).toHaveBeenCalledWith({ includeAppSupport: false })
   })
 
   it('re-resolves the config path on refresh', () => {
@@ -66,6 +67,7 @@ describe('ghostty config store', () => {
     expect(getGhosttyConfigPathOnce({ refresh: true })).toBe('/new/config')
     expect(getGhosttyConfigPathOnce()).toBe('/new/config')
     expect(resolveGhosttyConfigPathMock).toHaveBeenCalledTimes(2)
+    expect(resolveGhosttyConfigPathMock).toHaveBeenLastCalledWith({ includeAppSupport: false })
   })
 
   it('warms up both the path and config memos so later calls never hit disk', () => {
@@ -74,6 +76,8 @@ describe('ghostty config store', () => {
 
     warmUpGhosttyConfig()
 
+    expect(parseGhosttyConfigMock).toHaveBeenCalledWith({ includeAppSupport: false })
+    expect(resolveGhosttyConfigPathMock).toHaveBeenCalledWith({ includeAppSupport: false })
     parseGhosttyConfigMock.mockClear()
     resolveGhosttyConfigPathMock.mockClear()
 

@@ -29,7 +29,7 @@ import {
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 import { extractPlanTitle, normalizeFilename } from '@shared/types/branch-utils'
-import { supportsGoalMode } from '@shared/types/agent-sdk'
+import { isAgentCli, supportsGoalMode } from '@shared/types/agent-sdk'
 import '@xterm/xterm/css/xterm.css'
 import '@/styles/xterm.css'
 
@@ -81,7 +81,7 @@ async function startTicketModalHandoffSession(opts: {
   connectionId?: string | null
   worktreePath?: string | null
 }): Promise<void> {
-  if (opts.agentSdk === 'claude-code-cli') {
+  if (isAgentCli(opts.agentSdk)) {
     bumpWorktreeLastMessage({
       worktreeId: opts.worktreeId,
       connectionId: opts.connectionId
@@ -92,7 +92,7 @@ async function startTicketModalHandoffSession(opts: {
       })
     )
     if (!result.success) {
-      throw new Error(result.error ?? 'Failed to start Claude CLI handoff')
+      throw new Error(result.error ?? 'Failed to start CLI handoff')
     }
     if (opts.handoffPrompt) {
       useSessionStore.getState().dequeuePendingMessage(opts.sessionId)

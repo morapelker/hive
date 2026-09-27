@@ -6,7 +6,12 @@ import {
   type NotificationNavigatePayload
 } from '@shared/notification-events'
 import type { ServerEvent } from '@shared/rpc/protocol'
-import type { SystemAppPaths } from '@shared/system-types'
+import type {
+  MacosPermissionStatus,
+  MacosPrivacyPane,
+  OpenMacosPrivacySettingsResult,
+  SystemAppPaths
+} from '@shared/system-types'
 import {
   CLOSE_SESSION_SHORTCUT_CHANNEL,
   FILE_SEARCH_SHORTCUT_CHANNEL,
@@ -152,5 +157,19 @@ export const systemApi = {
       url,
       customCommand
     })
+  },
+  getMacosPermissions: async (): Promise<MacosPermissionStatus> => {
+    return getRendererRpcClient().request<MacosPermissionStatus>(
+      'systemOps.getMacosPermissions',
+      {}
+    )
+  },
+  openMacosPrivacySettings: async (
+    pane: MacosPrivacyPane
+  ): Promise<OpenMacosPrivacySettingsResult> => {
+    return getRendererRpcClient().request<OpenMacosPrivacySettingsResult>(
+      'systemOps.openMacosPrivacySettings',
+      { pane }
+    )
   }
 }

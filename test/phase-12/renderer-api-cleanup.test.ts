@@ -216,7 +216,7 @@ describe('renderer API cleanup', () => {
       const exportedApiName = `${domain.replace(/Ops$/, '')}Api`
 
       expect(source).toContain(`export const ${exportedApiName}`)
-      expect(source).toContain("getRendererRpcClient().request")
+      expect(source).toContain('getRendererRpcClient().request')
       expect(source).not.toContain(`window.${domain}`)
     }
   })
@@ -909,7 +909,9 @@ describe('renderer API cleanup', () => {
     expect(rendererDesktopBridgeSource).toContain(
       'readonly getLocalEnvironmentBootstrap: () => Promise<LocalEnvironmentBootstrap | null>'
     )
-    expect(rendererDesktopBridgeSource).toContain('readonly getPathForFile?: (file: File) => string')
+    expect(rendererDesktopBridgeSource).toContain(
+      'readonly getPathForFile?: (file: File) => string'
+    )
     expect(preloadTypesSource).toContain(
       'getLocalEnvironmentBootstrap: () => Promise<LocalEnvironmentBootstrap | null>'
     )
@@ -958,9 +960,7 @@ describe('renderer API cleanup', () => {
     ).toBe(false)
     expect(fs.existsSync(path.resolve(__dirname, '../../src/main/ipc/index.ts'))).toBe(false)
     expect(fs.existsSync(path.resolve(__dirname, '../../src/main/ipc/.gitkeep'))).toBe(false)
-    expect(
-      fs.existsSync(path.resolve(__dirname, './migrated-ipc-handlers.test.ts'))
-    ).toBe(true)
+    expect(fs.existsSync(path.resolve(__dirname, './migrated-ipc-handlers.test.ts'))).toBe(true)
   })
 
   it('keeps server-imported git service worktree path helpers off Electron app APIs', () => {
@@ -1170,7 +1170,9 @@ describe('renderer API cleanup', () => {
 
     expect(fallbackStart).toBeGreaterThan(-1)
     expect(fallbackEnd).toBeGreaterThan(fallbackStart)
-    expect(fallbackSource).toContain("if (!payload) throw new Error('Missing setKeepAwake payload')")
+    expect(fallbackSource).toContain(
+      "if (!payload) throw new Error('Missing setKeepAwake payload')"
+    )
     expect(fallbackSource).toContain('return Promise.resolve(undefined as A)')
     expect(fallbackSource).not.toContain('power-save-blocker')
     expect(fallbackSource).not.toContain('setKeepAwake(')
@@ -1188,7 +1190,9 @@ describe('renderer API cleanup', () => {
 
     expect(fallbackStart).toBeGreaterThan(-1)
     expect(fallbackEnd).toBeGreaterThan(fallbackStart)
-    expect(fallbackSource).toContain("if (!payload) throw new Error('Missing updateMenuState payload')")
+    expect(fallbackSource).toContain(
+      "if (!payload) throw new Error('Missing updateMenuState payload')"
+    )
     expect(fallbackSource).toContain('return Promise.resolve(undefined as A)')
     expect(fallbackSource).not.toContain("import('../../../main/menu')")
     expect(fallbackSource).not.toContain('updateMenuState(payload')
@@ -1233,7 +1237,9 @@ describe('renderer API cleanup', () => {
     expect(source).not.toContain("from 'electron'")
     expect(source).not.toContain("import('electron')")
     expect(source).toContain('readonly openExternal?: (url: string) => Promise<void>')
-    expect(source).toContain("return { success: false, error: 'No external URL opener is available' }")
+    expect(source).toContain(
+      "return { success: false, error: 'No external URL opener is available' }"
+    )
     expect(source).toContain('await deps.openExternal(url)')
     expect(source).not.toContain('electronShell')
     expect(desktopSource).toContain('openExternal: shell.openExternal')
@@ -1254,8 +1260,12 @@ describe('renderer API cleanup', () => {
     expect(source).not.toContain('electronClipboard')
     expect(source).toContain('readonly clipboard?: ClipboardWriter')
     expect(source).toContain("return { success: false, error: 'No clipboard writer is available' }")
-    expect(desktopSource).toContain("import { app, BrowserWindow, clipboard, dialog, shell } from 'electron'")
-    expect(desktopSource).toContain('openInApp(message.payload.appName, message.payload.path, { clipboard })')
+    expect(desktopSource).toContain(
+      "import { app, BrowserWindow, clipboard, dialog, shell } from 'electron'"
+    )
+    expect(desktopSource).toContain(
+      'openInApp(message.payload.appName, message.payload.path, { clipboard })'
+    )
   })
 
   it('provides a browser-mode dev server script that binds to a free loopback port', () => {
@@ -1287,13 +1297,13 @@ describe('renderer API cleanup', () => {
     )
 
     expect(packageJson.scripts?.['dev:web']).toBe('node scripts/dev-web.mjs')
-    expect(devWebSource).toContain("HIVE_SERVER_PORT: serverPort")
+    expect(devWebSource).toContain('HIVE_SERVER_PORT: serverPort')
     expect(devWebSource).toContain("ELECTRON_RUN_AS_NODE: '1'")
     expect(devWebSource).toContain("HIVE_SERVER_MODE: 'browser'")
-    expect(devWebSource).toContain("HIVE_DESKTOP_BOOTSTRAP_TOKEN: bootstrapToken")
-    expect(devWebSource).toContain("VITE_HIVE_BOOTSTRAP_TOKEN: bootstrapToken")
-    expect(devWebSource).toContain("VITE_HIVE_HTTP_BASE_URL: ready.httpBaseUrl")
-    expect(devWebSource).toContain("VITE_HIVE_WS_BASE_URL: ready.wsBaseUrl")
+    expect(devWebSource).toContain('HIVE_DESKTOP_BOOTSTRAP_TOKEN: bootstrapToken')
+    expect(devWebSource).toContain('VITE_HIVE_BOOTSTRAP_TOKEN: bootstrapToken')
+    expect(devWebSource).toContain('VITE_HIVE_HTTP_BASE_URL: ready.httpBaseUrl')
+    expect(devWebSource).toContain('VITE_HIVE_WS_BASE_URL: ready.wsBaseUrl')
     expect(devWebSource).toContain("'vite', '--config', 'vite.web.config.ts'")
     expect(viteConfigSource).toContain("root: resolve(__dirname, 'src/renderer')")
     expect(viteConfigSource).toContain("'@shared': resolve(__dirname, 'src/shared')")
@@ -1322,7 +1332,9 @@ describe('renderer API cleanup', () => {
     )
 
     expect(playwrightConfigSource).toContain("testDir: './test/e2e'")
-    expect(smokeSource).toContain('browser mode loads, authenticates, reads settings, and lists projects')
+    expect(smokeSource).toContain(
+      'browser mode loads, authenticates, reads settings, and lists projects'
+    )
     expect(smokeSource).toContain('HIVE_DESKTOP_BOOTSTRAP_TOKEN: bootstrapToken')
     expect(smokeSource).toContain("ELECTRON_RUN_AS_NODE: '1'")
     expect(smokeSource).toContain('VITE_HIVE_BOOTSTRAP_TOKEN: bootstrapToken')
@@ -1345,7 +1357,9 @@ describe('renderer API cleanup', () => {
       'utf-8'
     )
 
-    expect(smokeSource).toContain('electron mode starts the desktop backend, opens renderer, and reads settings')
+    expect(smokeSource).toContain(
+      'electron mode starts the desktop backend, opens renderer, and reads settings'
+    )
     expect(smokeSource).toContain('_electron as electron')
     expect(smokeSource).toContain("args: ['out/main/index.js', '--no-sandbox', '--disable-gpu']")
     expect(smokeSource).toContain('window.desktopBridge?.getLocalEnvironmentBootstrap')
@@ -1372,10 +1386,7 @@ describe('renderer API cleanup', () => {
   })
 
   it('allows the main renderer to test user-configured teleport remotes', () => {
-    const html = fs.readFileSync(
-      path.resolve(__dirname, '../../src/renderer/index.html'),
-      'utf-8'
-    )
+    const html = fs.readFileSync(path.resolve(__dirname, '../../src/renderer/index.html'), 'utf-8')
     const csp = html.match(/content="([^"]*connect-src[^"]*)"/)?.[1] ?? ''
     const tokens = csp.split(/\s+/)
 
@@ -2490,9 +2501,7 @@ describe('renderer API cleanup', () => {
 
     expect(createApiStart).toBeGreaterThan(-1)
     expect(createApiEnd).toBeGreaterThan(createApiStart)
-    expect(createApiSource).toContain(
-      "}>('terminalOps.create', { terminalId, cwd, shell })"
-    )
+    expect(createApiSource).toContain("}>('terminalOps.create', { terminalId, cwd, shell })")
     expect(createApiSource).toContain('return { success: true, value: result }')
     expect(createApiSource).not.toContain('window.terminalOps')
 
@@ -2503,18 +2512,22 @@ describe('renderer API cleanup', () => {
     )
     expect(createServiceStart).toBeGreaterThan(-1)
     expect(createServiceEnd).toBeGreaterThan(createServiceStart)
-    expect(createServiceSource).toContain('ptyService.create(terminalId, { cwd, shell: shell || undefined })')
+    expect(createServiceSource).toContain(
+      'ptyService.create(terminalId, { cwd, shell: shell || undefined })'
+    )
     expect(createServiceSource).toContain('attachBackendPtyListeners(eventBus, terminalId)')
     expect(createServiceSource).not.toContain('requestDesktop')
     expect(createServiceSource).not.toContain('BrowserWindow')
 
     expect(terminalOpsSource).toContain(
-      "publishTerminalEvent(eventBus, `terminal:data:${terminalId}`, buffered)"
+      'publishTerminalEvent(eventBus, `terminal:data:${terminalId}`, buffered)'
     )
     expect(terminalOpsSource).toContain(
-      "publishTerminalEvent(eventBus, `terminal:exit:${terminalId}`, code)"
+      'publishTerminalEvent(eventBus, `terminal:exit:${terminalId}`, code)'
     )
-    expect(terminalApiTestSource).toContain("expect(request).toHaveBeenCalledWith('terminalOps.create'")
+    expect(terminalApiTestSource).toContain(
+      "expect(request).toHaveBeenCalledWith('terminalOps.create'"
+    )
     expect(routerTestSource).toContain(
       "it('handles terminalOps.create through the terminal ops RPC domain'"
     )
@@ -2558,15 +2571,15 @@ describe('renderer API cleanup', () => {
 
     expect(writeApiStart).toBeGreaterThan(-1)
     expect(writeApiEnd).toBeGreaterThan(writeApiStart)
-    expect(writeApiSource).toContain(
-      ".request<void>('terminalOps.write', { terminalId, data })"
-    )
+    expect(writeApiSource).toContain(".request<void>('terminalOps.write', { terminalId, data })")
     expect(writeApiSource).toContain('.catch(() => undefined)')
     expect(writeApiSource).not.toContain('window.terminalOps')
 
     expect(terminalOpsSource).toContain("'terminalOps.write'")
     expect(terminalOpsSource).toContain('writeParamsSchema.parse(params)')
-    expect(terminalOpsSource).toContain('return yield* service.write(parsed.terminalId, parsed.data)')
+    expect(terminalOpsSource).toContain(
+      'return yield* service.write(parsed.terminalId, parsed.data)'
+    )
     expect(writeServiceStart).toBeGreaterThan(-1)
     expect(writeServiceEnd).toBeGreaterThan(writeServiceStart)
     expect(writeServiceSource).toContain('if (ptyService.has(terminalId))')
@@ -2577,7 +2590,9 @@ describe('renderer API cleanup', () => {
     expect(terminalApiTestSource).toContain(
       "it('routes write through the renderer RPC client without returning a promise'"
     )
-    expect(terminalApiTestSource).toContain("expect(request).toHaveBeenCalledWith('terminalOps.write'")
+    expect(terminalApiTestSource).toContain(
+      "expect(request).toHaveBeenCalledWith('terminalOps.write'"
+    )
     expect(terminalApiTestSource).toContain("it('swallows write request rejections'")
     expect(routerTestSource).toContain(
       "it('handles terminalOps.write through the terminal ops RPC domain'"
@@ -2760,7 +2775,9 @@ describe('renderer API cleanup', () => {
     expect(onDataApiSource).toContain(
       'return getRendererRpcClient().subscribe(`terminal:data:${terminalId}`, (event: ServerEvent) => {'
     )
-    expect(onDataApiSource).toContain("if (typeof event.payload === 'string') callback(event.payload)")
+    expect(onDataApiSource).toContain(
+      "if (typeof event.payload === 'string') callback(event.payload)"
+    )
     expect(onDataApiSource).not.toContain('window.terminalOps')
 
     expect(attachStart).toBeGreaterThan(-1)
@@ -2768,7 +2785,7 @@ describe('renderer API cleanup', () => {
     expect(attachSource).toContain('ptyService.onData(terminalId, (data) => {')
     expect(attachSource).toContain('dataBuffers.set(terminalId, existing ? existing + data : data)')
     expect(attachSource).toContain(
-      "publishTerminalEvent(eventBus, `terminal:data:${terminalId}`, buffered)"
+      'publishTerminalEvent(eventBus, `terminal:data:${terminalId}`, buffered)'
     )
     expect(attachSource).not.toContain('webContents.send')
     expect(attachSource).not.toContain('BrowserWindow')
@@ -2789,9 +2806,7 @@ describe('renderer API cleanup', () => {
       "it('delivers terminal data events over dynamic subscribed WebSocket channels'"
     )
     expect(subscriptionsTestSource).toContain("const channel = 'terminal:data:terminal-1'")
-    expect(hiveClientTestSource).toContain(
-      "client.subscribe(\n      'terminal:data:terminal-1',"
-    )
+    expect(hiveClientTestSource).toContain("client.subscribe(\n      'terminal:data:terminal-1',")
   })
 
   it('keeps terminal exit on renderer subscriptions and backend-published WS events', () => {
@@ -2833,7 +2848,9 @@ describe('renderer API cleanup', () => {
     expect(onExitApiSource).toContain(
       'return getRendererRpcClient().subscribe(`terminal:exit:${terminalId}`, (event: ServerEvent) => {'
     )
-    expect(onExitApiSource).toContain("if (typeof event.payload === 'number') callback(event.payload)")
+    expect(onExitApiSource).toContain(
+      "if (typeof event.payload === 'number') callback(event.payload)"
+    )
     expect(onExitApiSource).not.toContain('window.terminalOps')
 
     expect(attachStart).toBeGreaterThan(-1)
@@ -2852,9 +2869,7 @@ describe('renderer API cleanup', () => {
     expect(terminalApiTestSource).toContain(
       "expect(subscribe).toHaveBeenCalledWith('terminal:exit:terminal-1', expect.any(Function))"
     )
-    expect(terminalOpsTestSource).toContain(
-      "{ channel: 'terminal:exit:terminal-1', payload: 7 }"
-    )
+    expect(terminalOpsTestSource).toContain("{ channel: 'terminal:exit:terminal-1', payload: 7 }")
     expect(subscriptionsTestSource).toContain(
       "it('delivers terminal exit events over dynamic subscribed WebSocket channels'"
     )
@@ -3051,10 +3066,7 @@ describe('renderer API cleanup', () => {
     )
     expect(
       fs.existsSync(
-        path.resolve(
-          __dirname,
-          '../../src/main/ipc/__tests__/terminal-handlers.claude-cli.test.ts'
-        )
+        path.resolve(__dirname, '../../src/main/ipc/__tests__/terminal-handlers.claude-cli.test.ts')
       )
     ).toBe(false)
     expect(
@@ -3290,7 +3302,9 @@ describe('renderer API cleanup', () => {
     expect(terminalOpsSource).toContain("const command = 'terminalGhosttyIsAvailable'")
     expect(terminalOpsSource).toContain('makeDesktopCommandRequest(id, command')
     expect(terminalOpsSource).toContain('Desktop command transport is not available')
-    expect(desktopManagerSource).toContain("import { ghosttyService } from '../services/ghostty-service'")
+    expect(desktopManagerSource).toContain(
+      "import { ghosttyService } from '../services/ghostty-service'"
+    )
     expect(desktopManagerSource).toContain("message.command === 'terminalGhosttyInit'")
     expect(desktopManagerSource).toContain("message.command === 'terminalGhosttyCreateSurface'")
     expect(desktopManagerSource).toContain("message.command === 'terminalGhosttyShutdown'")
@@ -3681,7 +3695,9 @@ describe('renderer API cleanup', () => {
     expect(preloadSource).not.toContain("contextBridge.exposeInMainWorld('projectOps'")
     expect(preloadSource).not.toContain('window.projectOps = projectOps')
     expect(preloadTypesSource).not.toContain('projectOps:')
-    expect(preloadTypesSource).not.toContain('openDirectoryDialog: () => Promise<Envelope<string | null>>')
+    expect(preloadTypesSource).not.toContain(
+      'openDirectoryDialog: () => Promise<Envelope<string | null>>'
+    )
     expect(preloadTypesSource).not.toContain('detectSetupSuggestions: (')
     expect(preloadTypesSource).not.toContain('getAbsoluteIconDataUrl: (')
     expect(preloadTypesSource).not.toContain('../shared/types/setup-suggestions')
@@ -3822,10 +3838,7 @@ describe('renderer API cleanup', () => {
       'utf-8'
     )
     const preloadDesktopBridgeStart = preloadTypesSource.indexOf('desktopBridge: {')
-    const preloadDesktopBridgeEnd = preloadTypesSource.indexOf(
-      '\n  }',
-      preloadDesktopBridgeStart
-    )
+    const preloadDesktopBridgeEnd = preloadTypesSource.indexOf('\n  }', preloadDesktopBridgeStart)
     const preloadDesktopBridgeSource = preloadTypesSource.slice(
       preloadDesktopBridgeStart,
       preloadDesktopBridgeEnd
@@ -3885,10 +3898,7 @@ describe('renderer API cleanup', () => {
       'utf-8'
     )
     const preloadDesktopBridgeStart = preloadTypesSource.indexOf('desktopBridge: {')
-    const preloadDesktopBridgeEnd = preloadTypesSource.indexOf(
-      '\n  }',
-      preloadDesktopBridgeStart
-    )
+    const preloadDesktopBridgeEnd = preloadTypesSource.indexOf('\n  }', preloadDesktopBridgeStart)
     const preloadDesktopBridgeSource = preloadTypesSource.slice(
       preloadDesktopBridgeStart,
       preloadDesktopBridgeEnd
@@ -3940,10 +3950,7 @@ describe('renderer API cleanup', () => {
       'utf-8'
     )
     const preloadDesktopBridgeStart = preloadTypesSource.indexOf('desktopBridge: {')
-    const preloadDesktopBridgeEnd = preloadTypesSource.indexOf(
-      '\n  }',
-      preloadDesktopBridgeStart
-    )
+    const preloadDesktopBridgeEnd = preloadTypesSource.indexOf('\n  }', preloadDesktopBridgeStart)
     const preloadDesktopBridgeSource = preloadTypesSource.slice(
       preloadDesktopBridgeStart,
       preloadDesktopBridgeEnd
@@ -3995,10 +4002,7 @@ describe('renderer API cleanup', () => {
       'utf-8'
     )
     const preloadDesktopBridgeStart = preloadTypesSource.indexOf('desktopBridge: {')
-    const preloadDesktopBridgeEnd = preloadTypesSource.indexOf(
-      '\n  }',
-      preloadDesktopBridgeStart
-    )
+    const preloadDesktopBridgeEnd = preloadTypesSource.indexOf('\n  }', preloadDesktopBridgeStart)
     const preloadDesktopBridgeSource = preloadTypesSource.slice(
       preloadDesktopBridgeStart,
       preloadDesktopBridgeEnd
@@ -4020,8 +4024,12 @@ describe('renderer API cleanup', () => {
     expect(handlerSource).not.toContain('handlers.getAppPaths()')
     expect(desktopBridgeTypeSource).not.toContain('readonly getAppPaths?:')
     expect(systemApiSource).not.toContain('bridge?.getAppPaths')
-    expect(systemApiSource).not.toContain("import type { DesktopAppPaths } from '@shared/desktop-bridge'")
-    expect(systemApiSource).toContain("import type { SystemAppPaths } from '@shared/system-types'")
+    expect(systemApiSource).not.toContain(
+      "import type { DesktopAppPaths } from '@shared/desktop-bridge'"
+    )
+    expect(systemApiSource).toMatch(
+      /import type \{[^}]*\bSystemAppPaths\b[^}]*\} from '@shared\/system-types'/
+    )
     expect(systemApiSource).toContain(
       "return getRendererRpcClient().request<SystemAppPaths>('systemOps.getAppPaths', {})"
     )
@@ -4064,10 +4072,7 @@ describe('renderer API cleanup', () => {
       'utf-8'
     )
     const preloadDesktopBridgeStart = preloadTypesSource.indexOf('desktopBridge: {')
-    const preloadDesktopBridgeEnd = preloadTypesSource.indexOf(
-      '\n  }',
-      preloadDesktopBridgeStart
-    )
+    const preloadDesktopBridgeEnd = preloadTypesSource.indexOf('\n  }', preloadDesktopBridgeStart)
     const preloadDesktopBridgeSource = preloadTypesSource.slice(
       preloadDesktopBridgeStart,
       preloadDesktopBridgeEnd
@@ -4123,10 +4128,7 @@ describe('renderer API cleanup', () => {
       'utf-8'
     )
     const preloadDesktopBridgeStart = preloadTypesSource.indexOf('desktopBridge: {')
-    const preloadDesktopBridgeEnd = preloadTypesSource.indexOf(
-      '\n  }',
-      preloadDesktopBridgeStart
-    )
+    const preloadDesktopBridgeEnd = preloadTypesSource.indexOf('\n  }', preloadDesktopBridgeStart)
     const preloadDesktopBridgeSource = preloadTypesSource.slice(
       preloadDesktopBridgeStart,
       preloadDesktopBridgeEnd
@@ -4176,10 +4178,7 @@ describe('renderer API cleanup', () => {
       'utf-8'
     )
     const preloadDesktopBridgeStart = preloadTypesSource.indexOf('desktopBridge: {')
-    const preloadDesktopBridgeEnd = preloadTypesSource.indexOf(
-      '\n  }',
-      preloadDesktopBridgeStart
-    )
+    const preloadDesktopBridgeEnd = preloadTypesSource.indexOf('\n  }', preloadDesktopBridgeStart)
     const preloadDesktopBridgeSource = preloadTypesSource.slice(
       preloadDesktopBridgeStart,
       preloadDesktopBridgeEnd
@@ -4285,10 +4284,7 @@ describe('renderer API cleanup', () => {
       'utf-8'
     )
     const preloadDesktopBridgeStart = preloadTypesSource.indexOf('desktopBridge: {')
-    const preloadDesktopBridgeEnd = preloadTypesSource.indexOf(
-      '\n  }',
-      preloadDesktopBridgeStart
-    )
+    const preloadDesktopBridgeEnd = preloadTypesSource.indexOf('\n  }', preloadDesktopBridgeStart)
     const preloadDesktopBridgeSource = preloadTypesSource.slice(
       preloadDesktopBridgeStart,
       preloadDesktopBridgeEnd
@@ -5559,8 +5555,12 @@ describe('renderer API cleanup', () => {
       'delivers script output events over dynamic subscribed WebSocket channels'
     )
     expect(subscriptionTestSource).toContain("const channel = 'script:run:worktree-1'")
-    expect(subscriptionTestSource).toContain("payload = { type: 'output', data: 'hello from script' }")
-    expect(scriptRunnerSource).toContain('setEventPublisher(publisher: ScriptEventPublisher | null)')
+    expect(subscriptionTestSource).toContain(
+      "payload = { type: 'output', data: 'hello from script' }"
+    )
+    expect(scriptRunnerSource).toContain(
+      'setEventPublisher(publisher: ScriptEventPublisher | null)'
+    )
     expect(scriptRunnerSource).toContain('this.eventPublisher?.(eventKey, event)')
     expect(scriptRunnerSource).not.toContain('webContents.send(eventKey')
   })
@@ -5589,10 +5589,12 @@ describe('renderer API cleanup', () => {
 
     expect(terminalOpsSource).toContain('const dataBuffers = new Map<string, string>()')
     expect(terminalOpsSource).toContain('const flushScheduled = new Set<string>()')
-    expect(terminalOpsSource).toContain('dataBuffers.set(terminalId, existing ? existing + data : data)')
+    expect(terminalOpsSource).toContain(
+      'dataBuffers.set(terminalId, existing ? existing + data : data)'
+    )
     expect(terminalOpsSource).toContain('setImmediate(() => {')
     expect(terminalOpsSource).toContain(
-      "publishTerminalEvent(eventBus, `terminal:data:${terminalId}`, buffered)"
+      'publishTerminalEvent(eventBus, `terminal:data:${terminalId}`, buffered)'
     )
     expect(terminalOpsSource).not.toContain(
       'publishTerminalEvent(eventBus, `terminal:data:${terminalId}`, data)'
@@ -5616,9 +5618,13 @@ describe('renderer API cleanup', () => {
       'private outputFlushTimers: Map<string, NodeJS.Timeout> = new Map()'
     )
     expect(scriptRunnerSource).toContain('private static readonly OUTPUT_FLUSH_MS = 16')
-    expect(scriptRunnerSource).toContain('this.outputBuffers.set(eventKey, existing ? existing + data : data)')
+    expect(scriptRunnerSource).toContain(
+      'this.outputBuffers.set(eventKey, existing ? existing + data : data)'
+    )
     expect(scriptRunnerSource).toContain('this.scheduleOutputFlush(eventKey)')
-    expect(scriptRunnerSource).toContain("this.sendEvent(eventKey, { type: 'output', data: buffered })")
+    expect(scriptRunnerSource).toContain(
+      "this.sendEvent(eventKey, { type: 'output', data: buffered })"
+    )
     expect(scriptRunnerSource).toContain('this.queueOutput(eventKey, chunk.toString())')
 
     expect(terminalOpsTestSource).toContain(
@@ -5649,9 +5655,9 @@ describe('renderer API cleanup', () => {
     expect(scriptRunnerSource).not.toContain('mainWindow.webContents.send(eventKey')
     expect(scriptRunnerSource).not.toContain('BrowserWindow')
     expect(scriptRunnerSource).not.toContain('setMainWindow')
-    expect(
-      fs.existsSync(path.resolve(__dirname, '../../src/main/ipc/script-handlers.ts'))
-    ).toBe(false)
+    expect(fs.existsSync(path.resolve(__dirname, '../../src/main/ipc/script-handlers.ts'))).toBe(
+      false
+    )
     expect(scriptCleanupSource).toContain('export function cleanupScripts')
     expect(mainSource).toContain("from './services/script-cleanup'")
     expect(mainSource).not.toContain('registerScriptHandlers')
@@ -6241,9 +6247,9 @@ describe('renderer API cleanup', () => {
       'utf-8'
     )
 
-    expect(
-      fs.existsSync(path.resolve(__dirname, '../../src/main/ipc/file-tree-handlers.ts'))
-    ).toBe(false)
+    expect(fs.existsSync(path.resolve(__dirname, '../../src/main/ipc/file-tree-handlers.ts'))).toBe(
+      false
+    )
     expect(
       fs.existsSync(path.resolve(__dirname, '../../src/main/ipc/file-tree-handlers.test.ts'))
     ).toBe(false)
@@ -7137,7 +7143,9 @@ describe('renderer API cleanup', () => {
     expect(preloadSource).not.toContain('window.gitOps = gitOps')
     expect(preloadTypesSource).not.toContain('gitOps:')
     expect(preloadTypesSource).not.toContain('getFileStatuses: (worktreePath: string)')
-    expect(preloadTypesSource).not.toContain('onStatusChanged: (callback: (event: GitStatusChangedEvent)')
+    expect(preloadTypesSource).not.toContain(
+      'onStatusChanged: (callback: (event: GitStatusChangedEvent)'
+    )
     expect(preloadTypesSource).not.toContain('getBranchFileDiff: (')
     expect(preloadTypesSource).not.toContain('interface GitDiffStatFile')
     expect(preloadTypesSource).not.toContain('interface GitFileStatus')
@@ -7153,9 +7161,9 @@ describe('renderer API cleanup', () => {
       'utf-8'
     )
 
-    expect(
-      fs.existsSync(path.resolve(__dirname, '../../src/main/ipc/opencode-handlers.ts'))
-    ).toBe(false)
+    expect(fs.existsSync(path.resolve(__dirname, '../../src/main/ipc/opencode-handlers.ts'))).toBe(
+      false
+    )
     expect(opencodeCommandsSource).toContain('export async function connectOpenCodeSession')
     expect(opencodeCommandsSource).toContain('export async function cleanupOpenCode')
     expect(opencodeCommandsSource).not.toContain('IPC: opencode')
@@ -7588,7 +7596,9 @@ describe('renderer API cleanup', () => {
       'utf-8'
     )
 
-    expect(source).toContain("import { agentEventBus } from '../../../src/main/services/agent-event-bus'")
+    expect(source).toContain(
+      "import { agentEventBus } from '../../../src/main/services/agent-event-bus'"
+    )
     expect(source).toContain('agentEventBus.subscribe((event) => events.push(event))')
     expect(source).not.toContain('openCodeService.setMainWindow')
     expect(source).not.toContain('webContents: { send')
@@ -7711,7 +7721,9 @@ describe('renderer API cleanup', () => {
     for (const method of requiredMethods) {
       expect(rpcDomainSource).toContain(`readonly ${method}:`)
       expect(rpcDomainSource).toContain(`'opencodeOps.${method}'`)
-      expect(mockedProviderTestSource).toContain(`routes opencodeOps.${method} to the injected provider service`)
+      expect(mockedProviderTestSource).toContain(
+        `routes opencodeOps.${method} to the injected provider service`
+      )
       expect(mockedProviderTestSource).toContain(
         `validates opencodeOps.${method} params before calling the provider service`
       )
@@ -7736,7 +7748,9 @@ describe('renderer API cleanup', () => {
       expect(rpcDomainSource).toContain(`readonly ${method}:`)
       expect(rpcDomainSource).toContain(`const ${method}ParamsSchema = z`)
       expect(rpcDomainSource).toContain(`'opencodeOps.${method}'`)
-      expect(mockedProviderTestSource).toContain(`routes opencodeOps.${method} to the injected provider service`)
+      expect(mockedProviderTestSource).toContain(
+        `routes opencodeOps.${method} to the injected provider service`
+      )
       expect(mockedProviderTestSource).toContain(
         `validates opencodeOps.${method} params before calling the provider service`
       )
@@ -7761,7 +7775,9 @@ describe('renderer API cleanup', () => {
       expect(rpcDomainSource).toContain(`readonly ${method}:`)
       expect(rpcDomainSource).toContain(`const ${method}ParamsSchema = z`)
       expect(rpcDomainSource).toContain(`'opencodeOps.${method}'`)
-      expect(mockedProviderTestSource).toContain(`routes opencodeOps.${method} to the injected provider service`)
+      expect(mockedProviderTestSource).toContain(
+        `routes opencodeOps.${method} to the injected provider service`
+      )
       expect(mockedProviderTestSource).toContain(
         `validates opencodeOps.${method} params before calling the provider service`
       )
@@ -7786,7 +7802,9 @@ describe('renderer API cleanup', () => {
       expect(rpcDomainSource).toContain(`readonly ${method}:`)
       expect(rpcDomainSource).toContain(`const ${method}ParamsSchema = z`)
       expect(rpcDomainSource).toContain(`'opencodeOps.${method}'`)
-      expect(mockedProviderTestSource).toContain(`routes opencodeOps.${method} to the injected provider service`)
+      expect(mockedProviderTestSource).toContain(
+        `routes opencodeOps.${method} to the injected provider service`
+      )
       expect(mockedProviderTestSource).toContain(
         `validates opencodeOps.${method} params before calling the provider service`
       )
@@ -7835,12 +7853,16 @@ describe('renderer API cleanup', () => {
 
     expect(testNames).toContain('agent-rpc.mock-provider.test.ts')
     expect(mockedProviderTestSource).toContain("describe('agent RPC mocked provider'")
-    expect(mockedProviderTestSource).toContain("import type { OpenCodeOpsRpcService } from '../rpc/domains/opencode-ops'")
+    expect(mockedProviderTestSource).toContain(
+      "import type { OpenCodeOpsRpcService } from '../rpc/domains/opencode-ops'"
+    )
     expect(mockedProviderTestSource).toContain('makeRpcRouter({')
     expect(mockedProviderTestSource).toContain('opencodeOps: service')
 
     for (const method of requiredMethods) {
-      expect(mockedProviderTestSource).toContain(`routes opencodeOps.${method} to the injected provider service`)
+      expect(mockedProviderTestSource).toContain(
+        `routes opencodeOps.${method} to the injected provider service`
+      )
       expect(mockedProviderTestSource).toContain(
         `validates opencodeOps.${method} params before calling the provider service`
       )
@@ -7913,13 +7935,17 @@ describe('renderer API cleanup', () => {
     expect(rpcDomainSource).toContain('export interface GitOpsRpcService')
     expect(rpcDomainSource).toContain('export const makeGitOpsRpcHandlers')
     expect(mockedProviderTestSource).toContain("describe('git ops RPC mocked provider'")
-    expect(mockedProviderTestSource).toContain("import type { GitOpsRpcService } from '../rpc/domains/git-ops'")
+    expect(mockedProviderTestSource).toContain(
+      "import type { GitOpsRpcService } from '../rpc/domains/git-ops'"
+    )
     expect(mockedProviderTestSource).toContain('gitOps: service')
 
     for (const method of requiredMethods) {
       expect(rpcDomainSource).toContain(`readonly ${method}:`)
       expect(rpcDomainSource).toContain(`'gitOps.${method}'`)
-      expect(mockedProviderTestSource).toContain(`routes gitOps.${method} to the injected provider service`)
+      expect(mockedProviderTestSource).toContain(
+        `routes gitOps.${method} to the injected provider service`
+      )
       expect(mockedProviderTestSource).toContain(
         `validates gitOps.${method} params before calling the provider service`
       )
@@ -8684,12 +8710,17 @@ describe('renderer API cleanup', () => {
 
   it('keeps notification queued-state tests on systemApi mocks instead of window system globals', () => {
     const source = fs.readFileSync(
-      path.resolve(__dirname, '../../test/phase-23/session-1/notification-queued-suppression.test.ts'),
+      path.resolve(
+        __dirname,
+        '../../test/phase-23/session-1/notification-queued-suppression.test.ts'
+      ),
       'utf-8'
     )
 
     expect(source).toContain("vi.mock('@/api/system-api'")
-    expect(source).toContain('const mockSetSessionQueuedState = vi.mocked(systemApi.setSessionQueuedState)')
+    expect(source).toContain(
+      'const mockSetSessionQueuedState = vi.mocked(systemApi.setSessionQueuedState)'
+    )
     expect(source).toContain("describe('Phase 23 · Session 1: Zustand queue → systemApi push'")
     expect(source).not.toContain('window.systemOps')
     expect(source).not.toContain('window.db')
@@ -9801,7 +9832,7 @@ describe('renderer API cleanup', () => {
     expect(serverFunctionStart).toBeGreaterThan(-1)
     expect(serverFunctionEnd).toBeGreaterThan(serverFunctionStart)
     expect(serverFunctionSource).toContain("const command = 'updaterGetVersion'")
-    expect(serverFunctionSource).toContain("makeDesktopCommandRequest(id, command)")
+    expect(serverFunctionSource).toContain('makeDesktopCommandRequest(id, command)')
     expect(serverFunctionSource).not.toContain("import('electron')")
     expect(serverFunctionSource).not.toContain('app.getVersion')
   })
@@ -10078,7 +10109,9 @@ describe('renderer API cleanup', () => {
       false
     )
     expect(
-      fs.existsSync(path.resolve(__dirname, '../../src/main/ipc/__tests__/updater-handlers.test.ts'))
+      fs.existsSync(
+        path.resolve(__dirname, '../../src/main/ipc/__tests__/updater-handlers.test.ts')
+      )
     ).toBe(false)
     expect(mainSource).not.toContain('registerUpdaterHandlers')
     expect(ipcIndexSource).not.toContain('registerUpdaterHandlers')
@@ -10657,7 +10690,9 @@ describe('renderer API cleanup', () => {
     expect(noTransportStart).toBeGreaterThan(-1)
     expect(showNoopIndex).toBeGreaterThan(noTransportStart)
     expect(helperSource).not.toContain("return import('../../../main/services/pet-window')")
-    expect(helperSource).toContain("if (command === 'showPet') return makeDesktopCommandRequest(id, 'showPet')")
+    expect(helperSource).toContain(
+      "if (command === 'showPet') return makeDesktopCommandRequest(id, 'showPet')"
+    )
   })
 
   it('keeps petOps.hide no-transport fallback from importing the Electron pet window', () => {
@@ -10835,8 +10870,12 @@ describe('renderer API cleanup', () => {
       'utf-8'
     )
     const defaultSettingsStart = source.indexOf('const DEFAULT_PET_SETTINGS: PetSettings = {')
-    const defaultStart = source.indexOf('const makeDefaultPetConfigResult = (): GetPetConfigResult => ({')
-    const helperStart = source.indexOf('const requestGetPetConfigCommand = (): Promise<GetPetConfigResult> => {')
+    const defaultStart = source.indexOf(
+      'const makeDefaultPetConfigResult = (): GetPetConfigResult => ({'
+    )
+    const helperStart = source.indexOf(
+      'const requestGetPetConfigCommand = (): Promise<GetPetConfigResult> => {'
+    )
     const helperEnd = source.indexOf('\nconst requestGetCurrentPetStatusCommand', helperStart)
     const helperSource = source.slice(helperStart, helperEnd)
     const noTransportStart = helperSource.indexOf("if (typeof send !== 'function') {")
@@ -10846,7 +10885,9 @@ describe('renderer API cleanup', () => {
     expect(defaultSettingsStart).toBeGreaterThan(-1)
     expect(source.slice(defaultSettingsStart, defaultStart)).toContain("petId: 'bee'")
     expect(defaultStart).toBeGreaterThan(defaultSettingsStart)
-    expect(source.slice(defaultStart, helperStart)).toContain('settings: { ...fallbackPetSettings }')
+    expect(source.slice(defaultStart, helperStart)).toContain(
+      'settings: { ...fallbackPetSettings }'
+    )
     expect(source.slice(defaultStart, helperStart)).toContain("working: 'assets/honey-bee.lottie'")
     expect(helperStart).toBeGreaterThan(defaultStart)
     expect(helperEnd).toBeGreaterThan(helperStart)
@@ -10893,7 +10934,9 @@ describe('renderer API cleanup', () => {
       path.resolve(__dirname, '../../src/server/rpc/domains/pet-ops.ts'),
       'utf-8'
     )
-    const fallbackStart = source.indexOf('const applyFallbackPetSettings = (partial: Partial<PetSettings>): void => {')
+    const fallbackStart = source.indexOf(
+      'const applyFallbackPetSettings = (partial: Partial<PetSettings>): void => {'
+    )
     const helperStart = source.indexOf(
       'const requestUpdatePetSettingsCommand = (payload: UpdatePetSettingsPayload): Promise<void> => {'
     )
@@ -10925,8 +10968,12 @@ describe('renderer API cleanup', () => {
       path.resolve(__dirname, '../../src/server/rpc/domains/pet-ops.ts'),
       'utf-8'
     )
-    const fallbackStart = source.indexOf('const applyFallbackPetSettings = (partial: Partial<PetSettings>): void => {')
-    const helperStart = source.indexOf('const requestMarkPetHatchedCommand = (): Promise<void> => {')
+    const fallbackStart = source.indexOf(
+      'const applyFallbackPetSettings = (partial: Partial<PetSettings>): void => {'
+    )
+    const helperStart = source.indexOf(
+      'const requestMarkPetHatchedCommand = (): Promise<void> => {'
+    )
     const helperEnd = source.indexOf('\nexport const __testing', helperStart)
     const helperSource =
       helperEnd === -1 ? source.slice(helperStart) : source.slice(helperStart, helperEnd)
@@ -11220,9 +11267,7 @@ describe('renderer API cleanup', () => {
     expect(petWindowSource).not.toContain("import('../desktop/backend-manager')")
     expect(petWindowSource).not.toContain("import('../desktop/backend-event-publisher')")
     expect(petWindowSource).not.toContain('publishDesktopBackendEvent(PET_STATUS_CHANNEL')
-    expect(petWindowSource).not.toContain(
-      'publishDesktopBackendEvent(PET_SETTINGS_UPDATED_CHANNEL'
-    )
+    expect(petWindowSource).not.toContain('publishDesktopBackendEvent(PET_SETTINGS_UPDATED_CHANNEL')
     expect(petWindowSource).not.toContain('publishDesktopBackendEvent(PET_JUMP_TO_WORKTREE_CHANNEL')
     expect(petWindowSource).not.toContain('webContents.send')
 
@@ -11693,7 +11738,9 @@ describe('renderer API cleanup', () => {
     expect(preloadSource).not.toContain('window.petOps = petOps')
     expect(preloadTypesSource).not.toContain('petOps:')
     expect(preloadTypesSource).not.toContain('show: () => Promise<Envelope<void>>')
-    expect(preloadTypesSource).not.toContain('getCurrentStatus: () => Promise<Envelope<PetStatusPayload>>')
+    expect(preloadTypesSource).not.toContain(
+      'getCurrentStatus: () => Promise<Envelope<PetStatusPayload>>'
+    )
     expect(preloadTypesSource).not.toContain('onJumpToWorktree: (')
   })
 
@@ -12203,9 +12250,13 @@ describe('renderer API cleanup', () => {
     expect(preloadSource).not.toContain("contextBridge.exposeInMainWorld('settingsOps'")
     expect(preloadSource).not.toContain('window.settingsOps = settingsOps')
     expect(preloadTypesSource).not.toContain('settingsOps:')
-    expect(preloadTypesSource).not.toContain('detectEditors: () => Promise<Envelope<DetectedApp[]>>')
+    expect(preloadTypesSource).not.toContain(
+      'detectEditors: () => Promise<Envelope<DetectedApp[]>>'
+    )
     expect(preloadTypesSource).not.toContain('openWithTerminal: (')
-    expect(preloadTypesSource).not.toContain('onSettingsUpdated: (callback: (data: unknown) => void)')
+    expect(preloadTypesSource).not.toContain(
+      'onSettingsUpdated: (callback: (data: unknown) => void)'
+    )
     expect(preloadTypesSource).not.toContain('interface DetectedApp')
   })
 
@@ -12237,9 +12288,9 @@ describe('renderer API cleanup', () => {
       'utf-8'
     )
 
-    expect(
-      fs.existsSync(path.resolve(__dirname, '../../src/main/ipc/settings-handlers.ts'))
-    ).toBe(false)
+    expect(fs.existsSync(path.resolve(__dirname, '../../src/main/ipc/settings-handlers.ts'))).toBe(
+      false
+    )
     expect(settingsOpenersSource).toContain('export function openPathWithEditor')
     expect(settingsOpenersSource).toContain('export function openPathWithTerminal')
     expect(settingsOpenersSource).toContain('export function getAllSettingsMap')
@@ -12717,10 +12768,7 @@ describe('renderer API cleanup', () => {
       'utf-8'
     )
     const preloadDesktopBridgeStart = preloadTypesSource.indexOf('desktopBridge: {')
-    const preloadDesktopBridgeEnd = preloadTypesSource.indexOf(
-      '\n  }',
-      preloadDesktopBridgeStart
-    )
+    const preloadDesktopBridgeEnd = preloadTypesSource.indexOf('\n  }', preloadDesktopBridgeStart)
     const preloadDesktopBridgeSource = preloadTypesSource.slice(
       preloadDesktopBridgeStart,
       preloadDesktopBridgeEnd
@@ -12922,10 +12970,7 @@ describe('renderer API cleanup', () => {
       'utf-8'
     )
     const preloadDesktopBridgeStart = preloadTypesSource.indexOf('desktopBridge: {')
-    const preloadDesktopBridgeEnd = preloadTypesSource.indexOf(
-      '\n  }',
-      preloadDesktopBridgeStart
-    )
+    const preloadDesktopBridgeEnd = preloadTypesSource.indexOf('\n  }', preloadDesktopBridgeStart)
     const preloadDesktopBridgeSource = preloadTypesSource.slice(
       preloadDesktopBridgeStart,
       preloadDesktopBridgeEnd
@@ -13007,10 +13052,7 @@ describe('renderer API cleanup', () => {
       'utf-8'
     )
     const preloadDesktopBridgeStart = preloadTypesSource.indexOf('desktopBridge: {')
-    const preloadDesktopBridgeEnd = preloadTypesSource.indexOf(
-      '\n  }',
-      preloadDesktopBridgeStart
-    )
+    const preloadDesktopBridgeEnd = preloadTypesSource.indexOf('\n  }', preloadDesktopBridgeStart)
     const preloadDesktopBridgeSource = preloadTypesSource.slice(
       preloadDesktopBridgeStart,
       preloadDesktopBridgeEnd
@@ -13087,10 +13129,7 @@ describe('renderer API cleanup', () => {
       'utf-8'
     )
     const preloadDesktopBridgeStart = preloadTypesSource.indexOf('desktopBridge: {')
-    const preloadDesktopBridgeEnd = preloadTypesSource.indexOf(
-      '\n  }',
-      preloadDesktopBridgeStart
-    )
+    const preloadDesktopBridgeEnd = preloadTypesSource.indexOf('\n  }', preloadDesktopBridgeStart)
     const preloadDesktopBridgeSource = preloadTypesSource.slice(
       preloadDesktopBridgeStart,
       preloadDesktopBridgeEnd
@@ -13167,10 +13206,7 @@ describe('renderer API cleanup', () => {
       'utf-8'
     )
     const preloadDesktopBridgeStart = preloadTypesSource.indexOf('desktopBridge: {')
-    const preloadDesktopBridgeEnd = preloadTypesSource.indexOf(
-      '\n  }',
-      preloadDesktopBridgeStart
-    )
+    const preloadDesktopBridgeEnd = preloadTypesSource.indexOf('\n  }', preloadDesktopBridgeStart)
     const preloadDesktopBridgeSource = preloadTypesSource.slice(
       preloadDesktopBridgeStart,
       preloadDesktopBridgeEnd
@@ -13249,10 +13285,7 @@ describe('renderer API cleanup', () => {
       'utf-8'
     )
     const preloadDesktopBridgeStart = preloadTypesSource.indexOf('desktopBridge: {')
-    const preloadDesktopBridgeEnd = preloadTypesSource.indexOf(
-      '\n  }',
-      preloadDesktopBridgeStart
-    )
+    const preloadDesktopBridgeEnd = preloadTypesSource.indexOf('\n  }', preloadDesktopBridgeStart)
     const preloadDesktopBridgeSource = preloadTypesSource.slice(
       preloadDesktopBridgeStart,
       preloadDesktopBridgeEnd
@@ -13324,10 +13357,7 @@ describe('renderer API cleanup', () => {
       'utf-8'
     )
     const preloadDesktopBridgeStart = preloadTypesSource.indexOf('desktopBridge: {')
-    const preloadDesktopBridgeEnd = preloadTypesSource.indexOf(
-      '\n  }',
-      preloadDesktopBridgeStart
-    )
+    const preloadDesktopBridgeEnd = preloadTypesSource.indexOf('\n  }', preloadDesktopBridgeStart)
     const preloadDesktopBridgeSource = preloadTypesSource.slice(
       preloadDesktopBridgeStart,
       preloadDesktopBridgeEnd
@@ -13399,10 +13429,7 @@ describe('renderer API cleanup', () => {
       'utf-8'
     )
     const preloadDesktopBridgeStart = preloadTypesSource.indexOf('desktopBridge: {')
-    const preloadDesktopBridgeEnd = preloadTypesSource.indexOf(
-      '\n  }',
-      preloadDesktopBridgeStart
-    )
+    const preloadDesktopBridgeEnd = preloadTypesSource.indexOf('\n  }', preloadDesktopBridgeStart)
     const preloadDesktopBridgeSource = preloadTypesSource.slice(
       preloadDesktopBridgeStart,
       preloadDesktopBridgeEnd
@@ -14629,7 +14656,9 @@ describe('renderer API cleanup', () => {
     expect(functionStart).toBeGreaterThan(-1)
     expect(functionEnd).toBeGreaterThan(functionStart)
     expect(source).not.toContain("import type { DesktopAppPaths } from '@shared/desktop-bridge'")
-    expect(source).toContain("import type { SystemAppPaths } from '@shared/system-types'")
+    expect(source).toMatch(
+      /import type \{[^}]*\bSystemAppPaths\b[^}]*\} from '@shared\/system-types'/
+    )
     expect(functionSource).not.toContain('const bridge = getDesktopBridge()')
     expect(functionSource).not.toContain('bridge?.getAppPaths')
     expect(functionSource).not.toContain('return bridge.getAppPaths()')
@@ -14718,10 +14747,7 @@ describe('renderer API cleanup', () => {
       'utf-8'
     )
     const preloadDesktopBridgeStart = preloadTypesSource.indexOf('desktopBridge: {')
-    const preloadDesktopBridgeEnd = preloadTypesSource.indexOf(
-      '\n  }',
-      preloadDesktopBridgeStart
-    )
+    const preloadDesktopBridgeEnd = preloadTypesSource.indexOf('\n  }', preloadDesktopBridgeStart)
     const preloadDesktopBridgeSource = preloadTypesSource.slice(
       preloadDesktopBridgeStart,
       preloadDesktopBridgeEnd
@@ -16010,9 +16036,7 @@ describe('renderer API cleanup', () => {
       path.resolve(__dirname, '../../src/renderer/src/stores/useSessionStore.ts'),
       'utf-8'
     )
-    const reopenConnectionSessionStart = source.indexOf(
-      'reopenConnectionSession: async ('
-    )
+    const reopenConnectionSessionStart = source.indexOf('reopenConnectionSession: async (')
     const setActiveSessionStart = source.indexOf(
       'setActiveSession: (sessionId: string | null)',
       reopenConnectionSessionStart
@@ -20182,7 +20206,8 @@ describe('renderer API cleanup', () => {
       'utf-8'
     )
     const connectionStart = source.indexOf('if (isConnectionMode && connectionId) {')
-    const cliStart = source.indexOf("if (sessionAgentSdk === 'claude-code-cli') {", connectionStart)
+    // Claude CLI and Codex CLI share the terminal-backed path
+    const cliStart = source.indexOf('if (isAgentCli(sessionAgentSdk)) {', connectionStart)
     const openCodeStart = source.indexOf('// Connect to opencode using connection path', cliStart)
     const cliSource = source.slice(cliStart, openCodeStart)
 
@@ -20256,10 +20281,8 @@ describe('renderer API cleanup', () => {
       'utf-8'
     )
     const worktreeBranchStart = source.indexOf('// Close modal immediately')
-    const cliStart = source.indexOf(
-      "if (sessionAgentSdk === 'claude-code-cli') {",
-      worktreeBranchStart
-    )
+    // Claude CLI and Codex CLI share the terminal-backed path
+    const cliStart = source.indexOf('if (isAgentCli(sessionAgentSdk)) {', worktreeBranchStart)
     const openCodeStart = source.indexOf(
       '// ── Start the OpenCode session in the background',
       cliStart
@@ -20602,11 +20625,14 @@ describe('renderer API cleanup', () => {
 
   it('keeps git store metadata loading tests off direct legacy window API composition', () => {
     const source = fs.readFileSync(
-      path.resolve(__dirname, '../../src/renderer/src/stores/__tests__/useGitStore.git-loads.test.ts'),
+      path.resolve(
+        __dirname,
+        '../../src/renderer/src/stores/__tests__/useGitStore.git-loads.test.ts'
+      ),
       'utf-8'
     )
 
-    expect(source).toContain("setRendererRpcClient({ request, subscribe: vi.fn() })")
+    expect(source).toContain('setRendererRpcClient({ request, subscribe: vi.fn() })')
     expect(source).toContain("method === 'gitOps.getBranchInfo'")
     expect(source).toContain("method === 'db.worktree.attachPR'")
     expect(source).toContain("'kanban.ticket.clearPR'")
@@ -21246,7 +21272,7 @@ describe('renderer API cleanup', () => {
     expect(source).toContain("import { dbApi } from '@/api/db-api'")
     expect(source).toContain('type MergeWorktree = {')
     expect(featureLookupSource).toContain(
-      'const featureWorktree = await dbApi.worktree.get<MergeWorktree>(ticket.worktree_id)'
+      'const featureWorktree = await dbApi.worktree.get<MergeWorktree>(mergeWorktreeId)'
     )
     expect(featureLookupSource).not.toContain('db.worktree.get(ticket.worktree_id)')
   })
@@ -21547,8 +21573,12 @@ describe('renderer API cleanup', () => {
     expect(backendManagerSource).not.toContain('unwatchGitBranch')
     expect(gitOpsSource).toContain("return import('../../../main/services/worktree-watcher')")
     expect(gitOpsSource).toContain("return import('../../../main/services/branch-watcher')")
-    expect(gitOpsSource).toContain("if (command === 'watchGitWorktree') await watchWorktree(worktreePath)")
-    expect(gitOpsSource).toContain("if (command === 'watchGitBranch') await watchBranch(worktreePath)")
+    expect(gitOpsSource).toContain(
+      "if (command === 'watchGitWorktree') await watchWorktree(worktreePath)"
+    )
+    expect(gitOpsSource).toContain(
+      "if (command === 'watchGitBranch') await watchBranch(worktreePath)"
+    )
     expect(gitOpsSource).not.toContain("makeDesktopCommandRequest(id, 'watchGitWorktree'")
     expect(gitOpsSource).not.toContain("makeDesktopCommandRequest(id, 'unwatchGitWorktree'")
     expect(gitOpsSource).not.toContain("makeDesktopCommandRequest(id, 'watchGitBranch'")
@@ -22179,47 +22209,38 @@ describe('renderer API cleanup', () => {
   })
 
   it('routes MergeOnDoneDialog feature diff stat through gitApi', () => {
+    // The dialog's changed-files panel owns the diff stats (merge-dialog/changed-files.ts)
     const source = fs.readFileSync(
-      path.resolve(__dirname, '../../src/renderer/src/components/kanban/MergeOnDoneDialog.tsx'),
+      path.resolve(
+        __dirname,
+        '../../src/renderer/src/components/kanban/merge-dialog/changed-files.ts'
+      ),
       'utf-8'
     )
-    const diffStatStart = source.indexOf(
-      '// Get uncommitted diff stats for both worktrees if needed'
-    )
-    const statsStart = source.indexOf(
-      'let uncommittedStats = { filesChanged: 0, insertions: 0, deletions: 0 }',
-      diffStatStart
-    )
-    const diffStatSource = source.slice(diffStatStart, statsStart)
 
-    expect(diffStatStart).toBeGreaterThan(-1)
-    expect(statsStart).toBeGreaterThan(diffStatStart)
     expect(source).toContain("import { gitApi } from '@/api/git-api'")
-    expect(diffStatSource).toContain('gitApi.getDiffStat(featureWorktree.path)')
-    expect(diffStatSource).not.toContain('window.gitOps.getDiffStat(featureWorktree.path)')
+    expect(source).toContain('gitApi.getDiffStat(source.worktreePath)')
+    expect(source).not.toContain('window.gitOps.getDiffStat')
   })
 
   it('routes MergeOnDoneDialog base diff stat through gitApi', () => {
-    const source = fs.readFileSync(
+    const dialogSource = fs.readFileSync(
       path.resolve(__dirname, '../../src/renderer/src/components/kanban/MergeOnDoneDialog.tsx'),
       'utf-8'
     )
-    const diffStatStart = source.indexOf(
-      '// Get uncommitted diff stats for both worktrees if needed'
+    const changedFilesSource = fs.readFileSync(
+      path.resolve(
+        __dirname,
+        '../../src/renderer/src/components/kanban/merge-dialog/changed-files.ts'
+      ),
+      'utf-8'
     )
-    const statsStart = source.indexOf(
-      'let uncommittedStats = { filesChanged: 0, insertions: 0, deletions: 0 }',
-      diffStatStart
-    )
-    const diffStatSource = source.slice(diffStatStart, statsStart)
 
-    expect(diffStatStart).toBeGreaterThan(-1)
-    expect(statsStart).toBeGreaterThan(diffStatStart)
-    expect(source).toContain("import { gitApi } from '@/api/git-api'")
-    expect(diffStatSource).toContain('gitApi.getDiffStat(featureWorktree.path)')
-    expect(diffStatSource).toContain('gitApi.getDiffStat(baseWorktree.path)')
-    expect(diffStatSource).not.toContain('window.gitOps')
-    expect(diffStatSource).not.toContain('unwrapEnvelope')
+    expect(dialogSource).toContain("import { gitApi } from '@/api/git-api'")
+    expect(changedFilesSource).toContain('gitApi.getDiffStat(source.worktreePath)')
+    expect(dialogSource).not.toContain('window.gitOps')
+    expect(changedFilesSource).not.toContain('window.gitOps')
+    expect(changedFilesSource).not.toContain('unwrapEnvelope')
   })
 
   it('routes MergeOnDoneDialog remote check through gitApi', () => {
@@ -22433,7 +22454,10 @@ describe('renderer API cleanup', () => {
     const effectStart = source.indexOf(
       '  // Listen for git status changes to auto-refresh file list'
     )
-    const selectHandlerStart = source.indexOf('  const handleSelectBranch = useCallback(', effectStart)
+    const selectHandlerStart = source.indexOf(
+      '  const handleSelectBranch = useCallback(',
+      effectStart
+    )
     const effectSource = source.slice(effectStart, selectHandlerStart)
 
     expect(effectStart).toBeGreaterThan(-1)

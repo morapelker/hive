@@ -98,6 +98,7 @@ const baseTicket: KanbanTicket = {
   created_from_session: false,
   auto_approve_plan: false,
   unread: false,
+  awaiting_completion: false,
   attachments: [],
   archived_at: null,
   external_provider: null,
@@ -145,7 +146,9 @@ function makeSession(overrides: Partial<Session> = {}): Session {
 function setupStores(): void {
   useSettingsStore.setState({
     availableAgentSdks: { opencode: true, claude: true, codex: true },
-    defaultAgentSdk: 'codex',
+    // The build mode default below only applies to its own SDK, so that SDK
+    // must be the configured default for the picker to open on it.
+    defaultAgentSdk: 'claude-code-cli',
     selectedModel: null,
     selectedModelByProvider: {
       'claude-code-cli': { providerID: 'claude-code', modelID: 'opus', variant: 'xhigh' }
