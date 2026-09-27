@@ -13,7 +13,7 @@ describe('model-resolution: codex-cli', () => {
     expect(
       resolveModelForSdk('codex-cli', { selectedModelByProvider: { codex: codexPick } })
     ).toEqual(codexPick)
-    const own = { providerID: 'codex', modelID: 'gpt-5.6-luna', variant: 'medium' }
+    const own = { providerID: 'codex', modelID: 'gpt-6-luna', variant: 'medium' }
     expect(
       resolveModelForSdk('codex-cli', {
         selectedModelByProvider: { codex: codexPick, 'codex-cli': own }
@@ -46,7 +46,7 @@ describe('model-resolution: codex-cli', () => {
   })
 
   it('prefers the provider default over a global default stamped for the same SDK', () => {
-    const providerPick = { providerID: 'codex', modelID: 'gpt-5.6-luna', variant: 'medium' }
+    const providerPick = { providerID: 'codex', modelID: 'gpt-6-luna', variant: 'medium' }
     expect(
       resolveModelForSdk('codex', {
         selectedModel: { providerID: 'codex', modelID: 'gpt-5.5', agentSdk: 'codex' },

@@ -172,19 +172,19 @@ describe('buildCodexCliPtySpawn', () => {
   })
 
   it('pre-acknowledges a deprecated model\'s migration prompt so the launch is not blocked', () => {
-    expect(buildCodexModelMigrationOverride('gpt-5.4-mini', 'gpt-5.6-luna')).toBe(
-      'notice.model_migrations={"gpt-5.4-mini"="gpt-5.6-luna"}'
+    expect(buildCodexModelMigrationOverride('gpt-5.4-mini', 'gpt-6-luna')).toBe(
+      'notice.model_migrations={"gpt-5.4-mini"="gpt-6-luna"}'
     )
     expect(buildCodexModelMigrationOverride('gpt-5.5', null)).toBeNull()
     const spawn = buildCodexCliPtySpawn({
       session: makeSession({ model_id: 'gpt-5.4-mini' }),
       worktreePath: '/repo/wt',
-      readModelUpgradeTarget: (model) => (model === 'gpt-5.4-mini' ? 'gpt-5.6-luna' : null)
+      readModelUpgradeTarget: (model) => (model === 'gpt-5.4-mini' ? 'gpt-6-luna' : null)
     })
     const at = spawn.args.indexOf('gpt-5.4-mini')
     expect(spawn.args[at - 1]).toBe('-m')
     expect(spawn.args[at + 1]).toBe('-c')
-    expect(spawn.args[at + 2]).toBe('notice.model_migrations={"gpt-5.4-mini"="gpt-5.6-luna"}')
+    expect(spawn.args[at + 2]).toBe('notice.model_migrations={"gpt-5.4-mini"="gpt-6-luna"}')
   })
 
   it('drops unknown efforts and models, and defaults the binary to `codex`', () => {

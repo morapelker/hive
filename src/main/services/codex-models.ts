@@ -36,8 +36,8 @@ export const CODEX_MODELS: CodexModelInfo[] = [
     defaultVariant: 'high'
   },
   {
-    id: 'gpt-5.6-sol',
-    name: 'GPT-5.6 Sol',
+    id: 'gpt-6-sol',
+    name: 'GPT-6 Sol',
     limit: { context: 372000, output: 32000 },
     variants: CODEX_EFFORT_VARIANTS_ULTRA,
     defaultVariant: 'high'
@@ -50,8 +50,8 @@ export const CODEX_MODELS: CodexModelInfo[] = [
     defaultVariant: 'high'
   },
   {
-    id: 'gpt-5.6-luna',
-    name: 'GPT-5.6 Luna',
+    id: 'gpt-6-luna',
+    name: 'GPT-6 Luna',
     limit: { context: 372000, output: 32000 },
     variants: CODEX_EFFORT_VARIANTS_MAX,
     defaultVariant: 'high'
@@ -144,9 +144,14 @@ export function getCodexModelInfo(
 export const CODEX_MODEL_ALIASES: Record<string, string> = {
   '6-astra': 'gpt-6-astra',
   'gpt-6': 'gpt-6-astra',
-  '5.6-sol': 'gpt-5.6-sol',
+  '6-sol': 'gpt-6-sol',
+  '6-luna': 'gpt-6-luna',
   '5.6-terra': 'gpt-5.6-terra',
-  '5.6-luna': 'gpt-5.6-luna',
+  // Sol and Luna moved from gpt-5.6 to gpt-6; keep persisted selections working.
+  '5.6-sol': 'gpt-6-sol',
+  'gpt-5.6-sol': 'gpt-6-sol',
+  '5.6-luna': 'gpt-6-luna',
+  'gpt-5.6-luna': 'gpt-6-luna',
   '5.5': 'gpt-5.5',
   '5.4': 'gpt-5.4',
   '5.3': 'gpt-5.3-codex',
