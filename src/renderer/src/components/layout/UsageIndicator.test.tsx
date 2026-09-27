@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -1109,6 +1109,133 @@ describe('ProviderUsageBlock provider toggle', () => {
     } finally {
       useAccountScheduleStore.setState({ schedules: {}, autoSwitch: {} })
     }
+  })
+
+  describe('popover row order', () => {
+    const initialScheduleState = useAccountScheduleStore.getState()
+    const account = (id: string, hours: number, utilization = 10): SavedAccountDTO => ({
+      id,
+      provider: 'anthropic',
+      email: `${id}@example.com`,
+      last_usage: {
+        five_hour: { utilization, resets_at: inOneHour() },
+        seven_day: {
+          utilization,
+          resets_at: new Date(Date.now() + hours * 60 * 60 * 1000).toISOString()
+        }
+      },
+      last_fetched_at: null,
+      status: 'ok',
+      last_error: null,
+      created_at: new Date().toISOString(),
+      plan: null
+    })
+    const setAccounts = (accounts: SavedAccountDTO[]): void => {
+      act(() => {
+        useUsageStore.setState((state) => ({
+          savedAccounts: { ...state.savedAccounts, anthropic: accounts }
+        }))
+      })
+    }
+    const emails = (): (string | null)[] =>
+      within(screen.getByTestId('usage-popover-scroll'))
+        .getAllByText(/@example\.com$/)
+        .map((el) => el.textContent)
+
+    beforeEach(() => {
+      useAccountScheduleStore.setState({ schedules: {}, autoSwitch: {} })
+      setAccounts([account('late', 96), account('claude', 160), account('soon', 24)])
+    })
+
+    afterEach(() => {
+      cleanup()
+      useAccountScheduleStore.setState(initialScheduleState, true)
+    })
+
+    it('keeps live rows in place through refreshes, provider toggles and switches, then sorts on reopen', async () => {
+      const user = userEvent.setup()
+      render(
+        <ProviderUsageBlock
+          provider="anthropic"
+          isExplicitlySelected
+          toggleProviders={['anthropic', 'openai']}
+        />
+      )
+      const trigger = screen.getByTestId('usage-trigger-anthropic')
+      await user.hover(trigger)
+      await screen.findByText('soon@example.com')
+      const initialOrder = ['claude@example.com', 'soon@example.com', 'late@example.com']
+      expect(emails()).toEqual(initialOrder)
+
+      // A refresh reverses the reset-time ranking and the store's array order.
+      setAccounts([account('late', 12), account('soon', 120, 95), account('claude', 160)])
+      expect(emails()).toEqual(initialOrder)
+      expect(within(screen.getByTestId('usage-popover-scroll')).getAllByText('95%')).toHaveLength(2)
+
+      act(() => {
+        useAccountScheduleStore.setState({
+          autoSwitch: {
+            anthropic: { provider: 'anthropic', thresholdPercent: 80, createdAt: Date.now() }
+          }
+        })
+        useAccountStore.setState({ anthropicEmail: 'late@example.com' })
+      })
+      expect(emails()).toEqual(initialOrder)
+      expect(screen.queryByRole('button', { name: 'Switch to late@example.com' })).toBeNull()
+      expect(screen.getByTestId('auto-switch-ineligible-overlay').parentElement).toHaveTextContent(
+        'soon@example.com'
+      )
+
+      await user.click(screen.getByRole('button', { name: 'Show OpenAI usage' }))
+      expect(emails()).toEqual(['openai@example.com'])
+      await user.click(screen.getByRole('button', { name: 'Show Claude usage' }))
+      expect(emails()).toEqual(initialOrder)
+
+      await user.unhover(screen.getByText('Claude API Usage'))
+      await waitFor(() => expect(screen.queryByText('Claude API Usage')).toBeNull())
+      await user.hover(trigger)
+      await screen.findByText('Claude API Usage')
+      expect(emails()).toEqual(['late@example.com', 'claude@example.com', 'soon@example.com'])
+    })
+
+    it('appends newly loaded accounts and preserves their positions through later refreshes and removals', async () => {
+      const user = userEvent.setup()
+      render(
+        <ProviderUsageBlock
+          provider="anthropic"
+          isExplicitlySelected
+          toggleProviders={['anthropic']}
+        />
+      )
+      await user.hover(screen.getByTestId('usage-trigger-anthropic'))
+      await screen.findByText('soon@example.com')
+
+      setAccounts([
+        account('new', 1),
+        account('late', 96),
+        account('claude', 160),
+        account('soon', 24)
+      ])
+      expect(emails()).toEqual([
+        'claude@example.com',
+        'soon@example.com',
+        'late@example.com',
+        'new@example.com'
+      ])
+
+      setAccounts([
+        account('newer', 1),
+        account('new', 2),
+        account('late', 12),
+        account('claude', 160)
+      ])
+      expect(emails()).toEqual([
+        'claude@example.com',
+        'late@example.com',
+        'new@example.com',
+        'newer@example.com'
+      ])
+    })
   })
 
   it('shows the auto-switch shuffle icon in the bar when armed, instead of the timer', () => {

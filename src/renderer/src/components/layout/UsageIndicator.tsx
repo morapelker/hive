@@ -588,6 +588,7 @@ function ProviderToggle({
 }
 
 function ProviderUsagePopoverBody({ provider }: { provider: UsageProvider }): React.JSX.Element {
+  const [rowOrders, setRowOrders] = useState<Partial<Record<UsageProvider, string[]>>>({})
   const anthropicUsage = useUsageStore((s) => s.anthropicUsage)
   const anthropicRateLimit = useUsageStore((s) => s.anthropicRateLimit)
   const openaiUsage = useUsageStore((s) => s.openaiUsage)
@@ -667,12 +668,33 @@ function ProviderUsagePopoverBody({ provider }: { provider: UsageProvider }): Re
       autoSwitchIneligibilityReason(row, autoSwitchThreshold, nowMs)
     ])
   )
-  const orderedRows = [...accountRows].sort(
-    (a, b) =>
-      Number(b.isActive) - Number(a.isActive) ||
-      Number(!!ineligibleReasons.get(a.id)) - Number(!!ineligibleReasons.get(b.id)) ||
-      compareByResetTime(a.usage, b.usage, nowMs)
-  )
+  // Freeze IDs, not row data, so refreshes and account switches update the
+  // contents without moving rows. Remember each provider across toggle changes
+  // until this popover closes. Accounts discovered later are appended.
+  let rowOrder = rowOrders[provider]
+  if (!rowOrder) {
+    rowOrder = [...accountRows]
+      .sort(
+        (a, b) =>
+          Number(b.isActive) - Number(a.isActive) ||
+          Number(!!ineligibleReasons.get(a.id)) - Number(!!ineligibleReasons.get(b.id)) ||
+          compareByResetTime(a.usage, b.usage, nowMs)
+      )
+      .map((row) => row.id)
+    setRowOrders({ ...rowOrders, [provider]: rowOrder })
+  } else {
+    const knownIds = new Set(rowOrder)
+    const newIds = accountRows.filter((row) => !knownIds.has(row.id)).map((row) => row.id)
+    if (newIds.length > 0) {
+      rowOrder = [...rowOrder, ...newIds]
+      setRowOrders({ ...rowOrders, [provider]: rowOrder })
+    }
+  }
+  const rowsById = new Map(accountRows.map((row) => [row.id, row]))
+  const orderedRows = rowOrder.flatMap((id) => {
+    const row = rowsById.get(id)
+    return row ? [row] : []
+  })
   const highlightActive = accountRows.length > 1
 
   const membersFor = (rowEmail: string | null): AccountMemberInfo[] | undefined => {
@@ -786,6 +808,7 @@ export function ProviderUsageBlock({
   // Which provider the popover shows. The bottom toggle can point it at a
   // different provider than the hovered trigger; each open snaps it back.
   const [viewedProvider, setViewedProvider] = useState<UsageProvider>(provider)
+  const [popoverSession, setPopoverSession] = useState(0)
 
   const usage = normalizeUsage(provider, anthropicUsage, openaiUsage)
 
@@ -807,7 +830,11 @@ export function ProviderUsageBlock({
   }
 
   const handleOpenChange = (open: boolean): void => {
-    if (open) setViewedProvider(provider)
+    if (open) {
+      setViewedProvider(provider)
+      // Reset even if the previous body's closing animation is still running.
+      setPopoverSession((session) => session + 1)
+    }
   }
 
   useEffect(() => {
@@ -892,7 +919,7 @@ export function ProviderUsageBlock({
         className="flex w-72 max-w-[min(18rem,calc(100vw-2rem))] max-h-(--radix-hover-card-content-available-height) flex-col p-0"
       >
         <div className="flex-1 overflow-y-auto p-4" data-testid="usage-popover-scroll">
-          <ProviderUsagePopoverBody provider={viewedProvider} />
+          <ProviderUsagePopoverBody key={popoverSession} provider={viewedProvider} />
         </div>
         {toggleProviders.length > 1 && (
           <ProviderToggle
