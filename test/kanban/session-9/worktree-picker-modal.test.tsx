@@ -593,7 +593,9 @@ describe('Session 9: Worktree Picker Modal', () => {
     expect(document.activeElement).toBe(textarea)
   })
 
-  test('Tab to plan mode reflects a cross-SDK mode default in the provider segment', async () => {
+  test('Tab to plan mode ignores a plan mode default that belongs to another SDK', async () => {
+    // A mode default for another SDK must never flip the picker's SDK on its
+    // own: the launch stays on the configured default (opencode here).
     act(() => {
       useSettingsStore.setState({
         defaultAgentSdk: 'opencode',
@@ -626,12 +628,11 @@ describe('Session 9: Worktree Picker Modal', () => {
     fireEvent.keyDown(modal, { key: 'Tab' })
 
     await waitFor(() => {
-      expect(screen.getByTestId('sdk-toggle-claude-code')).toHaveClass('bg-primary')
+      expect(screen.getByTestId('wt-picker-mode-toggle')).toHaveAttribute('data-mode', 'plan')
     })
-    expect(screen.getByTestId('sdk-toggle-opencode')).not.toHaveClass('bg-primary')
-    await waitFor(() => {
-      expect(screen.getByTestId('model-selector')).toHaveTextContent('opus-4.5')
-    })
+    expect(screen.getByTestId('sdk-toggle-opencode')).toHaveClass('bg-primary')
+    expect(screen.getByTestId('sdk-toggle-claude-code')).not.toHaveClass('bg-primary')
+    expect(screen.getByTestId('model-selector')).not.toHaveTextContent('opus-4.5')
   })
 
   test('Tab still toggles mode when prompt textarea is already focused', () => {
@@ -1603,6 +1604,41 @@ describe('Session 9: Worktree Picker Modal', () => {
 
       expect(screen.getByTestId('sdk-toggle-codex')).toHaveAttribute('aria-pressed', 'true')
       expect(screen.getByTestId('sdk-toggle-claude-code')).toHaveAttribute('aria-pressed', 'false')
+    })
+
+    test('a build mode default for another SDK does not pull the picker off the default SDK', () => {
+      // Regression: default SDK claude-code with a Codex build default left
+      // over from earlier opened every ticket on Codex.
+      act(() => {
+        useSettingsStore.setState({
+          defaultAgentSdk: 'claude-code',
+          selectedModelByProvider: {
+            'claude-code': { providerID: 'claude-code', modelID: 'fable', variant: 'high' }
+          },
+          defaultModels: {
+            build: { agentSdk: 'codex', providerID: 'codex', modelID: 'gpt-5.5', variant: 'high' },
+            plan: null,
+            ask: null,
+            review: null
+          }
+        })
+      })
+
+      render(
+        <WorktreePickerModal
+          ticket={defaultTicket}
+          projectId="proj-1"
+          open={true}
+          onOpenChange={() => {}}
+        />
+      )
+
+      expect(screen.getByTestId('sdk-toggle-claude-code')).toHaveAttribute('aria-pressed', 'true')
+      expect(screen.getByTestId('sdk-toggle-codex')).toHaveAttribute('aria-pressed', 'false')
+      expect(resolveQuickLaunchModel()).toEqual({
+        sdk: 'claude-code',
+        model: { providerID: 'claude-code', modelID: 'fable', variant: 'high' }
+      })
     })
 
     test('launching a ticket with another SDK/model does not change the global defaults', async () => {

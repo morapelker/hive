@@ -68,13 +68,19 @@ export function resolveSessionCreation(opts: {
     opts.defaultAgentSdk ?? settings.defaultAgentSdk ?? 'opencode'
   )
   const configuredDefaultSdk = normalizeAgentSdk(settings.defaultAgentSdk ?? 'opencode')
-  let resolvedSdk: HandoffAgentSdk = requestedSdk
+  const resolvedSdk: HandoffAgentSdk = requestedSdk
   let model: SharedSelectedModel | null = null
 
+  // Mirrors the renderer: a mode default only supplies a model for the SDK it
+  // belongs to. One tagged for another SDK is ignored rather than redirecting
+  // the session, so the configured default SDK stays in charge.
   const modeDefault = settings.defaultModels?.[getModeDefaultKey(opts.mode)]
-  if (modeDefault && requestedSdk === configuredDefaultSdk) {
+  if (
+    modeDefault &&
+    requestedSdk === configuredDefaultSdk &&
+    (!modeDefault.agentSdk || normalizeAgentSdk(modeDefault.agentSdk) === requestedSdk)
+  ) {
     model = modeDefault
-    resolvedSdk = normalizeAgentSdk(modeDefault.agentSdk ?? requestedSdk)
   }
 
   if (!model) {

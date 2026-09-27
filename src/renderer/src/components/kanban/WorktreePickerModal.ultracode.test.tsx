@@ -124,7 +124,12 @@ function setupStores(): void {
       'claude-code-cli': { providerID: 'claude-code', modelID: 'opus', variant: 'xhigh' }
     },
     defaultModels: {
-      build: { agentSdk: 'claude-code-cli', providerID: 'claude-code', modelID: 'opus', variant: 'high' },
+      build: {
+        agentSdk: 'claude-code-cli',
+        providerID: 'claude-code',
+        modelID: 'opus',
+        variant: 'high'
+      },
       plan: null,
       ask: null,
       review: null
@@ -260,10 +265,13 @@ describe('WorktreePickerModal ultracode chip (real ModelSelector)', () => {
     // Open the model picker dropdown (the pill trigger).
     await userEvent.click(await screen.findByTestId('model-selector'))
 
-    await waitFor(() => expect(screen.getByTestId('variant-chips-opus')).toBeInTheDocument())
-
-    const opusChips = screen.getByTestId('variant-chips-opus')
-    expect(within(opusChips).getByTestId('variant-chip-ultracode')).toBeInTheDocument()
+    // Switching SDK reloads the catalog asynchronously: wait for the Claude
+    // CLI chips (which include ultracode), not just the first render.
+    await waitFor(() =>
+      expect(
+        within(screen.getByTestId('variant-chips-opus')).getByTestId('variant-chip-ultracode')
+      ).toBeInTheDocument()
+    )
 
     const sonnetChips = screen.getByTestId('variant-chips-sonnet')
     expect(within(sonnetChips).queryByTestId('variant-chip-ultracode')).toBeNull()

@@ -275,10 +275,15 @@ describe('handoff model picker', () => {
     expect(effective.display.modelName).toBe('Sonnet 4.6')
   })
 
-  test('resolveSessionCreationSelection uses a mode default from a different SDK', () => {
+  test('resolveSessionCreationSelection ignores a mode default from a different SDK', () => {
+    // The configured default SDK stays in charge: a build default picked for
+    // codex must not redirect a claude-code session (or its model) to codex.
     cacheHandoffModelCatalog('codex', codexProviders)
     useSettingsStore.setState({
       defaultAgentSdk: 'claude-code',
+      selectedModelByProvider: {
+        'claude-code': { providerID: 'anthropic', modelID: 'opus-4.5', variant: 'high' }
+      },
       defaultModels: {
         build: {
           agentSdk: 'codex',
@@ -294,15 +299,8 @@ describe('handoff model picker', () => {
 
     const selection = resolveSessionCreationSelection({ initialMode: 'build' })
 
-    expect(selection).toEqual({
-      agentSdk: 'codex',
-      model: {
-        agentSdk: 'codex',
-        providerID: 'codex',
-        modelID: 'gpt-5.5',
-        variant: 'xhigh'
-      }
-    })
+    expect(selection.agentSdk).toBe('claude-code')
+    expect(selection.model).toMatchObject({ providerID: 'anthropic', modelID: 'opus-4.5' })
   })
 
   test('resolveSessionCreationSelection keeps an explicit SDK when the mode default uses another SDK', () => {

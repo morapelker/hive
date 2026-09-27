@@ -168,20 +168,20 @@ function resolveSessionSelection(opts: {
     : resolvePreferredAgentSdk(settings)
   const configuredDefaultSdk = normalizeHandoffSdk(settings.defaultAgentSdk ?? 'opencode')
   let model: SelectedModel | null = null
-  let resolvedSdk = requestedSdk
+  // The SDK is settled here: a mode default may only supply a model that
+  // belongs to it. A mode default picked for another SDK is ignored rather
+  // than redirecting the session, so the configured default SDK (or the
+  // explicit pick) stays in charge.
+  const resolvedSdk = requestedSdk
 
   const modeDefault = settings.getModelForMode(getModeDefaultKey(opts.mode))
-  // Session creation can pass an explicit SDK; in that case the mode default may only
-  // supply a model that already belongs to the requested SDK.
   if (modeDefault && (modeDefault.agentSdk || requestedSdk === configuredDefaultSdk)) {
     const modeDefaultSdk = modeDefault.agentSdk ? normalizeHandoffSdk(modeDefault.agentSdk) : null
-    if (opts.explicitSdk) {
-      if (modeDefaultSdk === requestedSdk) {
-        model = modeDefault
-      }
-    } else {
+    // A legacy mode default (no SDK stamp) belongs to the configured default
+    // SDK and only applies when the SDK was not picked explicitly.
+    const applies = modeDefaultSdk ? modeDefaultSdk === requestedSdk : !opts.explicitSdk
+    if (applies) {
       model = modeDefault
-      resolvedSdk = modeDefaultSdk ?? requestedSdk
     }
   }
 

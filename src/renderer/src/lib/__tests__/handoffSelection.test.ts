@@ -183,6 +183,60 @@ describe('resolveSessionCreationSelection', () => {
     })
   })
 
+  it('ignores a mode default for another SDK instead of redirecting the session', () => {
+    // Regression: default SDK claude-code-cli with Fable as the global model,
+    // but a Build mode default left over from Codex pulled every new session
+    // (and the ticket picker) over to Codex.
+    useSettingsStore.setState({
+      defaultAgentSdk: 'claude-code-cli',
+      selectedModel: null,
+      selectedModelByProvider: {
+        'claude-code-cli': { providerID: 'claude-code', modelID: 'fable', variant: 'high' }
+      },
+      defaultModels: {
+        build: { agentSdk: 'codex', providerID: 'codex', modelID: 'gpt-6-astra', variant: 'high' },
+        plan: null,
+        ask: null,
+        review: null
+      }
+    })
+
+    const selection = resolveSessionCreationSelection({ initialMode: 'build' })
+
+    expect(selection.agentSdk).toBe('claude-code-cli')
+    expect(selection.model).toMatchObject({
+      providerID: 'claude-code',
+      modelID: 'fable',
+      variant: 'high'
+    })
+  })
+
+  it('still applies a mode default that belongs to the default SDK', () => {
+    useSettingsStore.setState({
+      defaultAgentSdk: 'claude-code-cli',
+      selectedModel: null,
+      selectedModelByProvider: {
+        'claude-code-cli': { providerID: 'claude-code', modelID: 'fable', variant: 'high' }
+      },
+      defaultModels: {
+        build: {
+          agentSdk: 'claude-code-cli',
+          providerID: 'claude-code',
+          modelID: 'opus',
+          variant: 'max'
+        },
+        plan: null,
+        ask: null,
+        review: null
+      }
+    })
+
+    const selection = resolveSessionCreationSelection({ initialMode: 'build' })
+
+    expect(selection.agentSdk).toBe('claude-code-cli')
+    expect(selection.model).toMatchObject({ modelID: 'opus', variant: 'max' })
+  })
+
   it('keeps yielding terminal sessions for a terminal default', () => {
     useSettingsStore.setState({
       defaultAgentSdk: 'terminal',

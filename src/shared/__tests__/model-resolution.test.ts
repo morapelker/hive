@@ -56,9 +56,12 @@ describe('model-resolution', () => {
     })
   })
 
-  it('switches SDK when a mode default is tagged for another SDK', () => {
+  it('ignores a mode default tagged for another SDK instead of switching SDK', () => {
     const settings: ModelResolutionSettings = {
       defaultAgentSdk: 'opencode',
+      selectedModelByProvider: {
+        opencode: { providerID: 'openai', modelID: 'gpt-5.5' }
+      },
       defaultModels: {
         plan: {
           providerID: 'anthropic',
@@ -70,13 +73,8 @@ describe('model-resolution', () => {
     }
 
     expect(resolveSessionCreation({ settings, mode: 'super-plan' })).toEqual({
-      agentSdk: 'claude-code-cli',
-      model: {
-        providerID: 'anthropic',
-        modelID: 'sonnet',
-        variant: 'high',
-        agentSdk: 'claude-code-cli'
-      }
+      agentSdk: 'opencode',
+      model: { providerID: 'openai', modelID: 'gpt-5.5' }
     })
   })
 

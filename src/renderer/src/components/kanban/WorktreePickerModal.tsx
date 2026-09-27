@@ -862,9 +862,17 @@ export function WorktreePickerModal({
     // regardless of what's actually selected, so a leftover default from a
     // different SDK never leaks into the remote payload.
     const effectiveSelectedSdk = runOnRemote ? 'claude-code-cli' : selectedSdk
+    // The SDK the launch will run on: the explicit pick, else the configured
+    // default. A mode default only applies when it belongs to that SDK — one
+    // picked for another SDK must never flip the launch SDK on its own. A
+    // legacy mode default (no SDK stamp) belongs to the configured default.
+    const launchSdk = effectiveSelectedSdk ?? baseAgentSdk
     // Priority 1: mode-specific default
     const modeModel = settings.getModelForMode(mode)
-    if (modeModel && (!effectiveSelectedSdk || modeModel.agentSdk === effectiveSelectedSdk)) {
+    if (
+      modeModel &&
+      (modeModel.agentSdk ? modeModel.agentSdk === launchSdk : !effectiveSelectedSdk)
+    ) {
       return modeModel
     }
     // Priority 2: per-provider / global default
