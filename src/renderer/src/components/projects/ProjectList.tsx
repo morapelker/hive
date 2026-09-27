@@ -12,6 +12,7 @@ import {
 } from '@/stores'
 import { ProjectItem } from './ProjectItem'
 import { filterProjects } from '@/lib/project-filter'
+import { sidebarPerfFlags } from '@/lib/sidebar-perf-flags'
 import {
   assignHints,
   buildNormalModeTargets,
@@ -30,9 +31,18 @@ export function ProjectList({
   filterQuery,
   activeLanguages = []
 }: ProjectListProps): React.JSX.Element {
-  const { projects, isLoading, error, loadProjects, reorderProjects } = useProjectStore()
+  // Narrow selectors: a whole-store subscription re-rendered the list (and
+  // re-mapped every row) on any project/hint store change, e.g. selecting a
+  // project or the pending-hint keypress.
+  const projects = useProjectStore((s) => s.projects)
+  const isLoading = useProjectStore((s) => s.isLoading)
+  const error = useProjectStore((s) => s.error)
+  const loadProjects = useProjectStore((s) => s.loadProjects)
+  const reorderProjects = useProjectStore((s) => s.reorderProjects)
   const worktreesByProject = useWorktreeStore((s) => s.worktreesByProject)
-  const { setHints, clearHints, setFilterActive } = useHintStore()
+  const setHints = useHintStore((s) => s.setHints)
+  const clearHints = useHintStore((s) => s.clearHints)
+  const setFilterActive = useHintStore((s) => s.setFilterActive)
   const vimMode = useVimModeStore((s) => s.mode)
   const vimModeEnabled = useSettingsStore((s) => s.vimModeEnabled)
   const pinnedWorktreeIds = usePinnedStore((s) => s.pinnedWorktreeIds)
@@ -120,7 +130,7 @@ export function ProjectList({
         }
       }
       const lastChar = filterQuery.trim().slice(-1).toUpperCase()
-      return assignHints(targets, lastChar)
+      return assignHints(targets, sidebarPerfFlags.stableHintPrefix ? undefined : lastChar)
     }
 
     if (vimModeEnabled && vimMode === 'normal') {

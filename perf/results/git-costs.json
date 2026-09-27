@@ -1,0 +1,9 @@
+{
+  "sampleRepo": "/Users/mor/.hive-worktrees/tedooo-code/tedooo-code--project-filter-implementation/apps/hive",
+  "iterations": 60,
+  "perCallMs": {
+    "git worktree list --porcelain (sync, per project)": 11.00866875,
+    "git status (branch info, per worktree)": 22.13443403333333,
+    "git rev-parse --abbrev-ref HEAD (HEAD-only alternative)": 10.247749999999996
+  }
+}

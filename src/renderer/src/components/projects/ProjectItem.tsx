@@ -184,7 +184,16 @@ export const ProjectItem = memo(function ProjectItem({
   const [noCommitsDialogOpen, setNoCommitsDialogOpen] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  const isExpanded = isSearchMode || isExpandedInStore
+  // A text search auto-expands a git project only when its worktrees are already
+  // in the store. Expanding a never-opened project stays an explicit action, so a
+  // keystroke can never fan out into per-project DB load + git sync + watchers
+  // (with 200 projects that was thousands of main-process calls per keystroke).
+  // Connection projects render from the connection store with no I/O, so they
+  // keep expanding as before.
+  const searchExpanded = isSearchMode && (isConnectionProject || worktreeCount > 0)
+  const isExpanded = isExpandedInStore || searchExpanded
+  // Search-driven mounts show what the store has and never load/sync/watch.
+  const searchDriven = searchExpanded && !isExpandedInStore
 
   // Focus input when editing starts (deferred to run after menu closes)
   useEffect(() => {
@@ -344,7 +353,14 @@ export const ProjectItem = memo(function ProjectItem({
         error instanceof Error ? error.message : 'Unknown error'
       )
     }
-  }, [isConnectionProject, doCreateInstance, isCreatingWorktree, createWorktree, project, autoPullBeforeWorktree])
+  }, [
+    isConnectionProject,
+    doCreateInstance,
+    isCreatingWorktree,
+    createWorktree,
+    project,
+    autoPullBeforeWorktree
+  ])
 
   const handleCreateWorktree = useCallback(
     async (e: React.MouseEvent): Promise<void> => {
@@ -693,7 +709,7 @@ export const ProjectItem = memo(function ProjectItem({
         (isConnectionProject ? (
           <ConnectionInstanceList projectId={project.id} />
         ) : (
-          <WorktreeList project={project} />
+          <WorktreeList project={project} searchDriven={searchDriven} />
         ))}
 
       {/* Branch Picker Dialog */}
