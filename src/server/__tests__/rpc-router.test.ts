@@ -1,5 +1,5 @@
 import { Effect } from 'effect'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   PET_JUMP_TO_WORKTREE_CHANNEL,
   PET_SETTINGS_UPDATED_CHANNEL,
@@ -4932,6 +4932,9 @@ describe('rpc router', () => {
     const router = makeRpcRouter({
       eventBus: makeEventBus(),
       usageOps: {
+        listOpenaiResets: () => Effect.succeed({ available_count: 0, credits: [] }),
+        consumeOpenaiReset: () =>
+          Effect.succeed({ code: 'nothing_to_reset' as const, windows_reset: 0 }),
         getClaudeTokenTally: () =>
           Effect.succeed({
             inputTokens: 0,
@@ -4973,6 +4976,9 @@ describe('rpc router', () => {
     const router = makeRpcRouter({
       eventBus: makeEventBus(),
       usageOps: {
+        listOpenaiResets: () => Effect.succeed({ available_count: 0, credits: [] }),
+        consumeOpenaiReset: () =>
+          Effect.succeed({ code: 'nothing_to_reset' as const, windows_reset: 0 }),
         getClaudeTokenTally: () =>
           Effect.succeed({
             inputTokens: 0,
@@ -5034,6 +5040,9 @@ describe('rpc router', () => {
     const router = makeRpcRouter({
       eventBus: makeEventBus(),
       usageOps: {
+        listOpenaiResets: () => Effect.succeed({ available_count: 0, credits: [] }),
+        consumeOpenaiReset: () =>
+          Effect.succeed({ code: 'nothing_to_reset' as const, windows_reset: 0 }),
         getClaudeTokenTally: () =>
           Effect.succeed({
             inputTokens: 0,
@@ -5075,6 +5084,9 @@ describe('rpc router', () => {
     const router = makeRpcRouter({
       eventBus: makeEventBus(),
       usageOps: {
+        listOpenaiResets: () => Effect.succeed({ available_count: 0, credits: [] }),
+        consumeOpenaiReset: () =>
+          Effect.succeed({ code: 'nothing_to_reset' as const, windows_reset: 0 }),
         getClaudeTokenTally: () =>
           Effect.succeed({
             inputTokens: 0,
@@ -5124,6 +5136,9 @@ describe('rpc router', () => {
     const router = makeRpcRouter({
       eventBus: makeEventBus(),
       usageOps: {
+        listOpenaiResets: () => Effect.succeed({ available_count: 0, credits: [] }),
+        consumeOpenaiReset: () =>
+          Effect.succeed({ code: 'nothing_to_reset' as const, windows_reset: 0 }),
         getClaudeTokenTally: () =>
           Effect.succeed({
             inputTokens: 0,
@@ -5165,6 +5180,9 @@ describe('rpc router', () => {
     const router = makeRpcRouter({
       eventBus: makeEventBus(),
       usageOps: {
+        listOpenaiResets: () => Effect.succeed({ available_count: 0, credits: [] }),
+        consumeOpenaiReset: () =>
+          Effect.succeed({ code: 'nothing_to_reset' as const, windows_reset: 0 }),
         getClaudeTokenTally: () =>
           Effect.succeed({
             inputTokens: 0,
@@ -5206,6 +5224,9 @@ describe('rpc router', () => {
     const router = makeRpcRouter({
       eventBus: makeEventBus(),
       usageOps: {
+        listOpenaiResets: () => Effect.succeed({ available_count: 0, credits: [] }),
+        consumeOpenaiReset: () =>
+          Effect.succeed({ code: 'nothing_to_reset' as const, windows_reset: 0 }),
         getClaudeTokenTally: () =>
           Effect.succeed({
             inputTokens: 0,
@@ -5246,6 +5267,9 @@ describe('rpc router', () => {
     const router = makeRpcRouter({
       eventBus: makeEventBus(),
       usageOps: {
+        listOpenaiResets: () => Effect.succeed({ available_count: 0, credits: [] }),
+        consumeOpenaiReset: () =>
+          Effect.succeed({ code: 'nothing_to_reset' as const, windows_reset: 0 }),
         getClaudeTokenTally: () =>
           Effect.succeed({
             inputTokens: 0,
@@ -5287,6 +5311,9 @@ describe('rpc router', () => {
     const router = makeRpcRouter({
       eventBus: makeEventBus(),
       usageOps: {
+        listOpenaiResets: () => Effect.succeed({ available_count: 0, credits: [] }),
+        consumeOpenaiReset: () =>
+          Effect.succeed({ code: 'nothing_to_reset' as const, windows_reset: 0 }),
         getClaudeTokenTally: () =>
           Effect.succeed({
             inputTokens: 0,

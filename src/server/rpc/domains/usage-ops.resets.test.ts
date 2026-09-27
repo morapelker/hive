@@ -1,8 +1,10 @@
 import { Effect } from 'effect'
 import { describe, expect, it, vi } from 'vitest'
 import { makeUsageOpsRpcHandlers, type UsageOpsRpcService } from './usage-ops'
+import type { RpcContext } from '../router'
 
 describe('usage reset RPC', () => {
+  const context = { eventBus: null } as unknown as RpcContext
   const listOpenaiResets = vi.fn(() => Effect.succeed({ available_count: 0, credits: [] }))
   const consumeOpenaiReset = vi.fn(() =>
     Effect.succeed({ code: 'reset' as const, windows_reset: 2 })
@@ -18,9 +20,13 @@ describe('usage reset RPC', () => {
       creditId: 'credit'
     }
     expect(
-      await Effect.runPromise(handlers.get('usageOps.listOpenaiResets')!({ accountId: 'account' }))
+      await Effect.runPromise(
+        handlers.get('usageOps.listOpenaiResets')!({ accountId: 'account' }, context)
+      )
     ).toEqual({ available_count: 0, credits: [] })
-    expect(await Effect.runPromise(handlers.get('usageOps.consumeOpenaiReset')!(params))).toEqual({
+    expect(
+      await Effect.runPromise(handlers.get('usageOps.consumeOpenaiReset')!(params, context))
+    ).toEqual({
       code: 'reset',
       windows_reset: 2
     })
@@ -34,10 +40,10 @@ describe('usage reset RPC', () => {
     consumeOpenaiReset.mockClear()
     await expect(
       Effect.runPromise(
-        handlers.get('usageOps.consumeOpenaiReset')!({
-          accountId: 'account',
-          redeemRequestId: 'invalid'
-        })
+        handlers.get('usageOps.consumeOpenaiReset')!(
+          { accountId: 'account', redeemRequestId: 'invalid' },
+          context
+        )
       )
     ).rejects.toThrow()
     expect(consumeOpenaiReset).not.toHaveBeenCalled()
