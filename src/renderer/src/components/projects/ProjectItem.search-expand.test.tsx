@@ -73,7 +73,12 @@ describe('ProjectItem in search mode', () => {
     useWorktreeStore.setState({
       loadWorktrees,
       syncWorktrees,
-      worktreesByProject: new Map([['loaded', [worktree('loaded', 0), worktree('loaded', 1)]]]),
+      worktreesByProject: new Map([
+        ['loaded', [worktree('loaded', 0), worktree('loaded', 1)]],
+        // A worktree created for a never-loaded project: an entry, but not the full list.
+        ['partial', [worktree('partial', 0)]]
+      ]),
+      loadedProjectIds: new Set(['loaded']),
       worktreeOrderByProject: new Map()
     })
     useHintStore.setState({ filterActive: true, inputFocused: true })
@@ -88,6 +93,14 @@ describe('ProjectItem in search mode', () => {
     expect(rpc.get('gitOps.getBranchInfo') ?? 0).toBe(0)
   })
 
+  it("does not present a partial worktree list as the project's worktrees", () => {
+    render(<ProjectItem project={project('partial')} nameMatchIndices={[0]} />)
+    expect(screen.queryByTestId('worktree-list-partial')).toBeNull()
+    expect(screen.queryByTestId('project-worktree-count-partial')).toBeNull()
+    expect(loadWorktrees).not.toHaveBeenCalled()
+    expect(syncWorktrees).not.toHaveBeenCalled()
+  })
+
   it('shows already-loaded worktrees without loading, syncing or watching', () => {
     render(<ProjectItem project={project('loaded')} nameMatchIndices={[0]} />)
     expect(screen.getByTestId('worktree-list-loaded')).toBeInTheDocument()
@@ -96,6 +109,16 @@ describe('ProjectItem in search mode', () => {
     expect(syncWorktrees).not.toHaveBeenCalled()
     expect(rpc.get('gitOps.watchBranch') ?? 0).toBe(0)
     expect(rpc.get('gitOps.getBranchInfo') ?? 0).toBe(0)
+  })
+
+  it('keeps a match beyond the auto-expand limit collapsed, with its real count', () => {
+    render(
+      <ProjectItem project={project('loaded')} nameMatchIndices={[0]} searchAutoExpand={false} />
+    )
+    expect(screen.queryByTestId('worktree-list-loaded')).toBeNull()
+    expect(screen.getByTestId('project-worktree-count-loaded')).toHaveTextContent('2')
+    expect(loadWorktrees).not.toHaveBeenCalled()
+    expect(syncWorktrees).not.toHaveBeenCalled()
   })
 
   it('still loads and syncs on an explicit expand', () => {

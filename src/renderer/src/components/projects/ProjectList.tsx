@@ -13,6 +13,7 @@ import {
 import { ProjectItem } from './ProjectItem'
 import { filterProjects } from '@/lib/project-filter'
 import { sidebarPerfFlags } from '@/lib/sidebar-perf-flags'
+import { pickSearchAutoExpandIds } from '@/lib/search-auto-expand'
 import {
   assignHints,
   buildNormalModeTargets,
@@ -40,6 +41,8 @@ export function ProjectList({
   const loadProjects = useProjectStore((s) => s.loadProjects)
   const reorderProjects = useProjectStore((s) => s.reorderProjects)
   const worktreesByProject = useWorktreeStore((s) => s.worktreesByProject)
+  const loadedProjectIds = useWorktreeStore((s) => s.loadedProjectIds)
+  const expandedProjectIds = useProjectStore((s) => s.expandedProjectIds)
   const setHints = useHintStore((s) => s.setHints)
   const clearHints = useHintStore((s) => s.clearHints)
   const setFilterActive = useHintStore((s) => s.setFilterActive)
@@ -100,10 +103,14 @@ export function ProjectList({
 
   // Load projects and spaces on mount
   const loadSpaces = useSpaceStore((s) => s.loadSpaces)
+  const hydrateAllWorktrees = useWorktreeStore((s) => s.hydrateAllWorktrees)
   useEffect(() => {
     loadProjects()
     loadSpaces()
-  }, [loadProjects, loadSpaces])
+    // One DB query for every project's worktrees, so filtering shows complete,
+    // uniformly expanded results instead of whatever happened to be loaded.
+    hydrateAllWorktrees()
+  }, [loadProjects, loadSpaces, hydrateAllWorktrees])
 
   // Space filtering: restrict to projects in the active space
   const activeSpaceId = useSpaceStore((s) => s.activeSpaceId)
@@ -115,13 +122,29 @@ export function ProjectList({
     [projects, filterQuery, activeSpaceId, projectSpaceMap, activeLanguages]
   )
 
+  // A filter expands only its best-ranked matches (see SEARCH_AUTO_EXPAND_LIMIT).
+  const filterActive = !!filterQuery.trim() || activeLanguages.length > 0
+  const searchAutoExpandIds = useMemo(() => {
+    if (!filterActive) return new Set<string>()
+    return pickSearchAutoExpandIds(
+      filteredProjects.map(({ project }) => project.id),
+      (id) => loadedProjectIds.has(id) && (worktreesByProject.get(id)?.length ?? 0) > 0
+    )
+  }, [filterActive, filteredProjects, loadedProjectIds, worktreesByProject])
+
   // Build hint assignments when filter is active
   const { hintMap: computedHintMap, hintTargetMap: computedHintTargetMap } = useMemo(() => {
     if (filterQuery.trim()) {
       // Filter mode: existing behavior (plus + worktree targets)
       const targets: HintTarget[] = []
       for (const { project } of filteredProjects) {
-        const wts = worktreesByProject.get(project.id) ?? []
+        const wts = loadedProjectIds.has(project.id)
+          ? (worktreesByProject.get(project.id) ?? [])
+          : []
+        // Hints go to the projects the search expanded (or that were already open).
+        // Hint codes change with every keystroke, so badging every collapsed match
+        // too would re-render the whole result list per keystroke.
+        if (!searchAutoExpandIds.has(project.id) && !expandedProjectIds.has(project.id)) continue
         if (wts.length > 0) {
           targets.push({ kind: 'plus', projectId: project.id })
           for (const wt of wts) {
@@ -159,6 +182,9 @@ export function ProjectList({
   }, [
     filteredProjects,
     worktreesByProject,
+    loadedProjectIds,
+    searchAutoExpandIds,
+    expandedProjectIds,
     filterQuery,
     vimModeEnabled,
     vimMode,
@@ -268,6 +294,7 @@ export function ProjectList({
           key={item.project.id}
           project={item.project}
           isFirst={index === 0}
+          searchAutoExpand={searchAutoExpandIds.has(item.project.id)}
           nameMatchIndices={item.nameMatch?.matched ? item.nameMatch.indices : undefined}
           pathMatchIndices={
             item.pathMatch?.matched && !item.nameMatch?.matched ? item.pathMatch.indices : undefined

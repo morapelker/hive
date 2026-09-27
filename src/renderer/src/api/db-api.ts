@@ -263,6 +263,8 @@ export const dbApi = {
       getRendererRpcClient().request<TResult[]>('db.worktree.getActiveByProject', { projectId }),
     getPinned: async <TResult = Worktree>(): Promise<TResult[]> =>
       getRendererRpcClient().request<TResult[]>('db.worktree.getPinned', {}),
+    getAllActive: async <TResult = Worktree>(): Promise<TResult[]> =>
+      getRendererRpcClient().request<TResult[]>('db.worktree.getAllActive', {}),
     updateModel: async (
       params: WorktreeUpdateModelData
     ): Promise<{ success: boolean; error?: string }> =>

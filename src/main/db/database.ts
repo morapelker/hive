@@ -1490,6 +1490,18 @@ export class DatabaseService {
     return rows.map((row) => this.mapWorktreeRow(row))
   }
 
+  // Every active worktree across all projects in one query. Feeds the sidebar's
+  // bulk hydrate so a project filter never needs a per-project round trip.
+  getAllActiveWorktrees(): Worktree[] {
+    const db = this.getDb()
+    const rows = db
+      .prepare(
+        "SELECT * FROM worktrees WHERE status = 'active' ORDER BY project_id ASC, is_default ASC, last_accessed_at DESC"
+      )
+      .all() as Record<string, unknown>[]
+    return rows.map((row) => this.mapWorktreeRow(row))
+  }
+
   getDiscordResourcesByGuild(guildId: string): DiscordResource[] {
     const db = this.getDb()
     return db

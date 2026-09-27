@@ -10,6 +10,7 @@ import type { FileTreeNode, FlatFile } from '@shared/types/file-tree'
 import type { GitBranchInfo, GitFileStatus } from '@shared/types/git'
 import type { PetSettings } from '@shared/types/pet'
 import { makeEventBus } from '../events/event-bus'
+import type { DbRpcService } from '../rpc/domains/db'
 import type { GitOpsRpcService } from '../rpc/domains/git-ops'
 import { parseKanbanBoardImportFile } from '../rpc/domains/kanban'
 import { makeRpcRouter } from '../rpc/router'
@@ -30863,6 +30864,50 @@ describe('rpc router', () => {
       ok: true,
       value: [pinnedWorktree]
     })
+  })
+
+  it('handles db.worktree.getAllActive through the database RPC domain', async () => {
+    const otherProjectWorktree = { ...worktree, id: 'worktree-2', project_id: 'project-2' }
+    const getAllActiveWorktrees = vi.fn(() => Effect.succeed([worktree, otherProjectWorktree]))
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      // Only the method under test: the route must not reach for any other service call.
+      db: { getAllActiveWorktrees } as unknown as DbRpcService
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'worktree-get-all-active-1',
+        method: 'db.worktree.getAllActive',
+        params: {}
+      })
+    )
+
+    expect(getAllActiveWorktrees).toHaveBeenCalledTimes(1)
+    expect(response).toEqual({
+      id: 'worktree-get-all-active-1',
+      ok: true,
+      value: [worktree, otherProjectWorktree]
+    })
+  })
+
+  it('validates db.worktree.getAllActive params', async () => {
+    const getAllActiveWorktrees = vi.fn(() => Effect.succeed([]))
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      db: { getAllActiveWorktrees } as unknown as DbRpcService
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'worktree-get-all-active-invalid-1',
+        method: 'db.worktree.getAllActive',
+        params: { projectId: 'project-1' }
+      })
+    )
+
+    expect(response.ok).toBe(false)
+    expect(getAllActiveWorktrees).not.toHaveBeenCalled()
   })
 
   it('validates db.worktree.getPinned params', async () => {

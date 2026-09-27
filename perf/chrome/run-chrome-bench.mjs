@@ -13,9 +13,12 @@ const only = process.argv.slice(2)
 // re-running overwrites them with the new baseline.
 const runs = [
   ['baseline', 200],
+  ['noHydrate', 200],
   ['stableHintPrefix', 200],
   ['baseline', 25],
-  ['baseline', 50]
+  ['noHydrate', 25],
+  ['baseline', 50],
+  ['noHydrate', 50]
 ].filter(([v, s]) => only.length === 0 || only.includes(`${v}-${s}`) || only.includes(v))
 
 const server = await createServer({ configFile: resolve(here, '../vite.chrome.config.ts') })

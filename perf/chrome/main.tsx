@@ -16,7 +16,10 @@ import { makeFixture } from '../fixtures'
 // 'combinedKeepHints' run in perf/results; 'stableHintPrefix' is the Phase 2 trial.
 const VARIANTS: Record<string, Partial<SidebarPerfFlags>> = {
   baseline: {},
-  stableHintPrefix: { stableHintPrefix: true }
+  stableHintPrefix: { stableHintPrefix: true },
+  // See perf/sidebar-search.bench.tsx: skips the mount-time bulk hydrate for an
+  // A/B against the previous behaviour (only already-expanded projects show worktrees).
+  noHydrate: {}
 }
 // Stable like the store-provided array in production; a fresh [] per render would loop.
 const NO_LANGUAGES: string[] = []
@@ -27,6 +30,7 @@ const VARIANT = params.get('variant') ?? 'baseline'
 const SIZE = Number(params.get('size') ?? 200)
 const REPS = Number(params.get('reps') ?? 5)
 Object.assign(sidebarPerfFlags, { stableHintPrefix: false }, VARIANTS[VARIANT] ?? {})
+const HYDRATE = VARIANT !== 'noHydrate'
 
 const { projects, worktreesByProject } = makeFixture(SIZE)
 const EXPANDED_COUNT = Math.min(10, SIZE)
@@ -44,6 +48,8 @@ setRendererRpcClient({
     switch (method) {
       case 'db.project.getAll':
         return projects as T
+      case 'db.worktree.getAllActive':
+        return [...worktreesByProject.values()].flat() as T
       case 'db.worktree.getActiveByProject': {
         const { projectId } = p as { projectId: string }
         return (worktreesByProject.get(projectId) ?? []) as T
@@ -105,8 +111,10 @@ function seedStores(): void {
   })
   useWorktreeStore.setState({
     worktreesByProject: wtMap as never,
+    loadedProjectIds: new Set(expandedIds),
     worktreeOrderByProject: new Map(),
-    isLoading: false
+    isLoading: false,
+    ...(HYDRATE ? {} : { hydrateAllWorktrees: async () => {} })
   })
   useSpaceStore.setState({ loadSpaces: async () => {} })
   // Onboarding tips are a one-time-per-install affair; with the mock DB they would

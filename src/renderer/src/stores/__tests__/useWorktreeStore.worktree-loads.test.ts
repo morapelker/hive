@@ -57,6 +57,7 @@ describe('useWorktreeStore worktree loading', () => {
     setRendererRpcClient({ request, subscribe: vi.fn() })
     useWorktreeStore.setState({
       worktreesByProject: new Map(),
+      loadedProjectIds: new Set(),
       worktreeOrderByProject: new Map(),
       isLoading: false,
       error: null,
@@ -203,5 +204,134 @@ describe('useWorktreeStore worktree loading', () => {
 
     expectGetActiveByProjectCalls(2)
     expect(worktreeApi.sync).toHaveBeenCalledTimes(1)
+  })
+  describe('bulk hydrate', () => {
+    const callsTo = (method: string) => request.mock.calls.filter(([m]) => m === method)
+
+    it('fills every project from one query and marks them loaded', async () => {
+      const rows = [
+        makeWorktree('a1', 'hydrate-a'),
+        { ...makeWorktree('a-default', 'hydrate-a'), is_default: true },
+        makeWorktree('a2', 'hydrate-a'),
+        makeWorktree('b1', 'hydrate-b')
+      ]
+      request.mockImplementation((method) =>
+        Promise.resolve(method === 'db.worktree.getAllActive' ? rows : [])
+      )
+
+      await useWorktreeStore.getState().hydrateAllWorktrees()
+
+      const state = useWorktreeStore.getState()
+      expect(callsTo('db.worktree.getAllActive')).toHaveLength(1)
+      expectGetActiveByProjectCalls(0)
+      expect(state.worktreesByProject.get('hydrate-a')?.map((w) => w.id)).toEqual([
+        'a1',
+        'a2',
+        'a-default'
+      ])
+      expect(state.worktreesByProject.get('hydrate-b')?.map((w) => w.id)).toEqual(['b1'])
+      expect([...state.loadedProjectIds].sort()).toEqual(['hydrate-a', 'hydrate-b'])
+    })
+
+    it('never triggers a git sync', async () => {
+      request.mockImplementation((method) =>
+        Promise.resolve(
+          method === 'db.worktree.getAllActive' ? [makeWorktree('s1', 'hydrate-nosync')] : []
+        )
+      )
+      await useWorktreeStore.getState().hydrateAllWorktrees()
+      expect(worktreeApi.sync).not.toHaveBeenCalled()
+    })
+
+    it('leaves an already-loaded project untouched', async () => {
+      const projectId = 'hydrate-already-loaded'
+      const fresh = [makeWorktree('fresh-1', projectId), makeWorktree('fresh-2', projectId)]
+      request.mockImplementation((method) => {
+        if (method === 'db.worktree.getActiveByProject') return Promise.resolve(fresh)
+        // Older snapshot that predates fresh-2.
+        if (method === 'db.worktree.getAllActive') return Promise.resolve([fresh[0]])
+        return Promise.resolve([])
+      })
+
+      await useWorktreeStore.getState().loadWorktrees(projectId)
+      const before = useWorktreeStore.getState().worktreesByProject.get(projectId)
+      await useWorktreeStore.getState().hydrateAllWorktrees()
+
+      expect(useWorktreeStore.getState().worktreesByProject.get(projectId)).toBe(before)
+      expect(before).toHaveLength(2)
+    })
+
+    it('keeps a worktree added to the store while the query was in flight', async () => {
+      const projectId = 'hydrate-inflight-insert'
+      let resolveAll: (rows: unknown[]) => void
+      const allPromise = new Promise<unknown[]>((resolve) => {
+        resolveAll = resolve
+      })
+      request.mockImplementation((method) =>
+        method === 'db.worktree.getAllActive' ? allPromise : Promise.resolve([])
+      )
+
+      const hydrate = useWorktreeStore.getState().hydrateAllWorktrees()
+      useWorktreeStore.setState({
+        worktreesByProject: new Map([[projectId, [makeWorktree('created-mid-flight', projectId)]]])
+      })
+      resolveAll!([makeWorktree('from-db', projectId)])
+      await hydrate
+
+      expect(
+        useWorktreeStore
+          .getState()
+          .worktreesByProject.get(projectId)
+          ?.map((w) => w.id)
+      ).toEqual(['created-mid-flight', 'from-db'])
+    })
+
+    it('coalesces concurrent hydrates', async () => {
+      await Promise.all([
+        useWorktreeStore.getState().hydrateAllWorktrees(),
+        useWorktreeStore.getState().hydrateAllWorktrees()
+      ])
+      expect(callsTo('db.worktree.getAllActive')).toHaveLength(1)
+    })
+  })
+
+  describe('loaded tracking', () => {
+    it('marks a project loaded only once its full list has been fetched', async () => {
+      const projectId = 'loaded-tracking-project'
+      expect(useWorktreeStore.getState().loadedProjectIds.has(projectId)).toBe(false)
+      await useWorktreeStore.getState().loadWorktrees(projectId)
+      expect(useWorktreeStore.getState().loadedProjectIds.has(projectId)).toBe(true)
+    })
+
+    it('fetches the full list when a worktree is added to a never-loaded project', async () => {
+      const projectId = 'partial-insert-project'
+      const created = makeWorktree('created', projectId)
+      const existing = makeWorktree('existing', projectId)
+      request.mockImplementation((method) =>
+        Promise.resolve(method === 'db.worktree.getActiveByProject' ? [created, existing] : [])
+      )
+
+      useWorktreeStore.getState().addWorktreeToProject(projectId, created)
+      await vi.waitFor(() =>
+        expect(useWorktreeStore.getState().loadedProjectIds.has(projectId)).toBe(true)
+      )
+
+      expect(
+        useWorktreeStore
+          .getState()
+          .worktreesByProject.get(projectId)
+          ?.map((w) => w.id)
+          .sort()
+      ).toEqual(['created', 'existing'])
+      expectGetActiveByProjectCalls(1)
+    })
+
+    it('does not refetch when a worktree is added to a loaded project', async () => {
+      const projectId = 'loaded-insert-project'
+      await useWorktreeStore.getState().loadWorktrees(projectId)
+      useWorktreeStore.getState().addWorktreeToProject(projectId, makeWorktree('new', projectId))
+      expectGetActiveByProjectCalls(1)
+      expect(useWorktreeStore.getState().worktreesByProject.get(projectId)).toHaveLength(1)
+    })
   })
 })

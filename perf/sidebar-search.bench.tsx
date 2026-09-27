@@ -40,8 +40,13 @@ const WARM_REPS = Number(process.env.SIDEBAR_BENCH_REPS ?? 5)
 // 'combinedKeepHints' run in perf/results; 'stableHintPrefix' is the Phase 2 trial.
 const VARIANTS: Record<string, Partial<SidebarPerfFlags>> = {
   baseline: {},
-  stableHintPrefix: { stableHintPrefix: true }
+  stableHintPrefix: { stableHintPrefix: true },
+  // The app bulk-hydrates every project's worktrees from the DB on mount, so a
+  // search expands every match. 'noHydrate' skips that for an A/B against the
+  // previous behaviour, where only already-expanded projects showed worktrees.
+  noHydrate: {}
 }
+const HYDRATE = VARIANT !== 'noHydrate'
 Object.assign(sidebarPerfFlags, VARIANTS[VARIANT] ?? {})
 
 // jsdom gaps hit by sidebar rows
@@ -108,6 +113,8 @@ setRendererRpcClient({
     switch (method) {
       case 'db.project.getAll':
         return projects as T
+      case 'db.worktree.getAllActive':
+        return [...worktreesByProject.values()].flat() as T
       case 'db.worktree.getActiveByProject': {
         const { projectId } = params as { projectId: string }
         return (worktreesByProject.get(projectId) ?? []) as T
@@ -174,8 +181,10 @@ function seedStores(): void {
   })
   useWorktreeStore.setState({
     worktreesByProject: wtMap as never,
+    loadedProjectIds: new Set(expandedIds),
     worktreeOrderByProject: new Map(),
-    isLoading: false
+    isLoading: false,
+    ...(HYDRATE ? {} : { hydrateAllWorktrees: async () => {} })
   })
   useSpaceStore.setState({ loadSpaces: async () => {} })
   // Onboarding tips are a one-time-per-install affair; with the mock DB they would
@@ -279,8 +288,11 @@ describe(`sidebar search bench [${VARIANT}, ${SIZE} projects]`, () => {
     mark('start')
     seedStores()
     root = createRoot(container)
+    const tMount = performance.now()
     renderQuery('')
     await settle()
+    const mountMs = performance.now() - tMount
+    const loadedAfterMount = useWorktreeStore.getState().loadedProjectIds.size
     mark('mounted')
     const mountRpc = Object.fromEntries(rpcCounts)
 
@@ -347,6 +359,9 @@ describe(`sidebar search bench [${VARIANT}, ${SIZE} projects]`, () => {
       warmReps: WARM_REPS,
       expandedAtStart: EXPANDED_COUNT,
       totalWorktrees: [...worktreesByProject.values()].reduce((n, w) => n + w.length, 0),
+      hydrate: HYDRATE,
+      mountMs,
+      loadedAfterMount,
       mountRpc,
       cold,
       warm,
@@ -361,7 +376,8 @@ describe(`sidebar search bench [${VARIANT}, ${SIZE} projects]`, () => {
     console.log(
       `[${VARIANT}/${SIZE}] cold total render ${cold.reduce((n, s) => n + s.renderMs, 0).toFixed(1)}ms, ` +
         `settle ${cold.reduce((n, s) => n + s.settleMs, 0).toFixed(1)}ms, rpc ${cold.reduce((n, s) => n + s.rpcTotal, 0)}; ` +
-        `warm 'ted' render ${warm[2].renderMs.toFixed(1)}ms`
+        `warm 'ted' render ${warm[2].renderMs.toFixed(1)}ms; ` +
+        `mount ${mountMs.toFixed(1)}ms, ${loadedAfterMount}/${SIZE} projects loaded`
     )
   })
 })

@@ -14,6 +14,7 @@ const only = process.argv.slice(2)
 // re-running overwrites them with the new baseline.
 const runs = [
   ['baseline', 200],
+  ['noHydrate', 200],
   ['stableHintPrefix', 200],
   ['baseline', 25],
   ['baseline', 50]

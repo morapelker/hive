@@ -22,6 +22,7 @@ const inflightLoad = new Map<string, Promise<void>>()
 const lastLoad = new Map<string, number>()
 const SYNC_TTL_MS = 10_000
 const LOAD_TTL_MS = 10_000
+let inflightHydrateAll: Promise<void> | null = null
 
 /** Fire-and-forget: run setup script for a worktree, subscribing to output events
  *  so output is captured even when SetupTab is not mounted. */
@@ -106,6 +107,10 @@ interface WorktreeSelectionOptions {
 interface WorktreeState {
   // Data - keyed by project ID
   worktreesByProject: Map<string, Worktree[]>
+  // Projects whose worktreesByProject entry is the complete DB list. An entry can
+  // exist without this (a worktree created for a never-loaded project), so
+  // "has an entry" must not be read as "loaded".
+  loadedProjectIds: Set<string>
   worktreeOrderByProject: Map<string, string[]>
   isLoading: boolean
   error: string | null
@@ -117,6 +122,7 @@ interface WorktreeState {
 
   // Actions
   loadWorktrees: (projectId: string, opts?: { force?: boolean }) => Promise<void>
+  hydrateAllWorktrees: () => Promise<void>
   createWorktree: (
     projectId: string,
     projectPath: string,
@@ -286,9 +292,44 @@ function applyWorktreeSelectionEffects(
   }
 }
 
+// A worktree was just added to a project's list. If that project was never loaded,
+// the list now holds only the new worktree, so fetch the rest from the DB (no git).
+function ensureProjectLoaded(projectId: string): void {
+  const store = useWorktreeStore.getState()
+  if (store.loadedProjectIds.has(projectId)) return
+  void store.loadWorktrees(projectId, { force: true })
+}
+
+// Sort: non-default worktrees by last_accessed_at descending, default worktree last
+function sortLoadedWorktrees(worktrees: Worktree[]): Worktree[] {
+  return worktrees.sort((a, b) => {
+    if (a.is_default && !b.is_default) return 1
+    if (!a.is_default && b.is_default) return -1
+    return new Date(b.last_accessed_at).getTime() - new Date(a.last_accessed_at).getTime()
+  })
+}
+
+// Hydrate last-message timestamps and attached PRs from DB rows into their stores
+function hydrateWorktreeSideStores(worktrees: Worktree[]): void {
+  const statusStore = useWorktreeStatusStore.getState()
+  const gitStore = useGitStore.getState()
+  for (const wt of worktrees) {
+    if (wt.last_message_at) {
+      statusStore.setLastMessageTime(wt.id, wt.last_message_at)
+    }
+    if (wt.github_pr_number && wt.github_pr_url) {
+      gitStore.setAttachedPR(wt.id, {
+        number: wt.github_pr_number,
+        url: wt.github_pr_url
+      })
+    }
+  }
+}
+
 export const useWorktreeStore = create<WorktreeState>((set, get) => ({
   // Initial state
   worktreesByProject: new Map(),
+  loadedProjectIds: new Set(),
   worktreeOrderByProject: loadPersistedOrder(),
   isLoading: false,
   error: null,
@@ -314,36 +355,17 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
       set({ isLoading: true, error: null })
       try {
         const worktrees = await dbApi.worktree.getActiveByProject<Worktree>(projectId)
-        // Sort: non-default worktrees by last_accessed_at descending, default worktree last
-        const sortedWorktrees = worktrees.sort((a, b) => {
-          if (a.is_default && !b.is_default) return 1
-          if (!a.is_default && b.is_default) return -1
-          return new Date(b.last_accessed_at).getTime() - new Date(a.last_accessed_at).getTime()
-        })
+        const sortedWorktrees = sortLoadedWorktrees(worktrees)
         set((state) => {
           const newMap = new Map(state.worktreesByProject)
           newMap.set(projectId, sortedWorktrees)
-          return { worktreesByProject: newMap, isLoading: false }
+          const loadedProjectIds = state.loadedProjectIds.has(projectId)
+            ? state.loadedProjectIds
+            : new Set(state.loadedProjectIds).add(projectId)
+          return { worktreesByProject: newMap, loadedProjectIds, isLoading: false }
         })
 
-        // Hydrate last-message timestamps from DB into the status store
-        const statusStore = useWorktreeStatusStore.getState()
-        for (const wt of sortedWorktrees) {
-          if (wt.last_message_at) {
-            statusStore.setLastMessageTime(wt.id, wt.last_message_at)
-          }
-        }
-
-        // Hydrate attached PRs from DB into the git store
-        const gitStore = useGitStore.getState()
-        for (const wt of sortedWorktrees) {
-          if (wt.github_pr_number && wt.github_pr_url) {
-            gitStore.setAttachedPR(wt.id, {
-              number: wt.github_pr_number,
-              url: wt.github_pr_url
-            })
-          }
-        }
+        hydrateWorktreeSideStores(sortedWorktrees)
         lastLoad.set(projectId, Date.now())
       } catch (error) {
         set({
@@ -356,6 +378,54 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
     })()
     inflightLoad.set(projectId, promise)
     return promise
+  },
+
+  // Fill every not-yet-loaded project from the DB in one query, so the sidebar
+  // filter shows complete, uniform worktree lists without a per-project load.
+  // DB only: git sync and branch watchers stay tied to explicitly expanding a project.
+  hydrateAllWorktrees: async () => {
+    if (inflightHydrateAll) return inflightHydrateAll
+
+    inflightHydrateAll = (async () => {
+      try {
+        const all = await dbApi.worktree.getAllActive<Worktree>()
+        const byProject = new Map<string, Worktree[]>()
+        for (const wt of all) {
+          const list = byProject.get(wt.project_id)
+          if (list) list.push(wt)
+          else byProject.set(wt.project_id, [wt])
+        }
+
+        const hydrated: Worktree[] = []
+        const now = Date.now()
+        set((state) => {
+          const newMap = new Map(state.worktreesByProject)
+          const loadedProjectIds = new Set(state.loadedProjectIds)
+          for (const [projectId, rows] of byProject) {
+            // A per-project load already holds the complete list and has been kept
+            // current by store mutations since; this snapshot may be older.
+            if (loadedProjectIds.has(projectId) || inflightLoad.has(projectId)) continue
+            // Keep worktrees added to the store while this query was in flight.
+            const ids = new Set(rows.map((w) => w.id))
+            const storeOnly = (newMap.get(projectId) ?? []).filter((w) => !ids.has(w.id))
+            newMap.set(projectId, [...storeOnly, ...sortLoadedWorktrees(rows)])
+            loadedProjectIds.add(projectId)
+            lastLoad.set(projectId, now)
+            hydrated.push(...rows)
+          }
+          // Everything already loaded (e.g. the sidebar remounted): no store update.
+          if (hydrated.length === 0) return state
+          return { worktreesByProject: newMap, loadedProjectIds }
+        })
+
+        hydrateWorktreeSideStores(hydrated)
+      } catch {
+        // Non-fatal: projects fall back to loading on first expand.
+      } finally {
+        inflightHydrateAll = null
+      }
+    })()
+    return inflightHydrateAll
   },
 
   // Create a new worktree
@@ -384,6 +454,7 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
           creatingForProjectId: null
         }
       })
+      ensureProjectLoaded(projectId)
 
       // Clear file tabs from the previous worktree
       useFileViewerStore.getState().closeAllFiles()
@@ -439,6 +510,7 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
           creatingForProjectId: null
         }
       })
+      ensureProjectLoaded(projectId)
 
       // Clear file tabs from the previous worktree
       useFileViewerStore.getState().closeAllFiles()
@@ -830,6 +902,7 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
       newMap.set(projectId, [worktree, ...current])
       return { worktreesByProject: newMap }
     })
+    ensureProjectLoaded(projectId)
   },
 
   // Inverse of addWorktreeToProject: drop a worktree from the project list without

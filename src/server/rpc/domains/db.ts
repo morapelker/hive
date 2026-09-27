@@ -90,6 +90,7 @@ export interface DbRpcService {
     pinned: boolean
   ) => Effect.Effect<{ success: boolean }, unknown, never>
   readonly getPinnedWorktrees: () => Effect.Effect<Worktree[], unknown, never>
+  readonly getAllActiveWorktrees: () => Effect.Effect<Worktree[], unknown, never>
   readonly createSession: (data: SessionCreate) => Effect.Effect<Session, unknown, never>
   readonly getSession: (id: string) => Effect.Effect<Session | null, unknown, never>
   readonly getSessionsByWorktree: (worktreeId: string) => Effect.Effect<Session[], unknown, never>
@@ -693,6 +694,14 @@ export const makeLiveDbRpcService = (): DbRpcService => ({
       try: async () => {
         const { getDatabase } = await import('../../../main/db')
         return getDatabase().getPinnedWorktrees()
+      },
+      catch: (cause) => cause
+    }),
+  getAllActiveWorktrees: () =>
+    Effect.tryPromise({
+      try: async () => {
+        const { getDatabase } = await import('../../../main/db')
+        return getDatabase().getAllActiveWorktrees()
       },
       catch: (cause) => cause
     }),
@@ -1313,6 +1322,17 @@ export const makeDbRpcHandlers = (
             catch: (cause) => cause
           })
           return yield* service.getPinnedWorktrees()
+        })
+    ],
+    [
+      'db.worktree.getAllActive',
+      (params) =>
+        Effect.gen(function* () {
+          yield* Effect.try({
+            try: () => emptyParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          return yield* service.getAllActiveWorktrees()
         })
     ],
     [

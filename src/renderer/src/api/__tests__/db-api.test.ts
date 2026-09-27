@@ -1120,6 +1120,17 @@ describe('dbApi', () => {
     expect(request).toHaveBeenCalledWith('db.worktree.getPinned', {})
   })
 
+  it('routes worktree.getAllActive through the renderer RPC client', async () => {
+    const worktrees = [{ id: 'worktree-1', project_id: 'project-1' }]
+    const request = vi.fn().mockResolvedValue(worktrees)
+    const subscribe = vi.fn()
+
+    setRendererRpcClient({ request, subscribe })
+
+    await expect(dbApi.worktree.getAllActive()).resolves.toBe(worktrees)
+    expect(request).toHaveBeenCalledWith('db.worktree.getAllActive', {})
+  })
+
   it('routes worktree.updateModel through the renderer RPC client', async () => {
     const params = {
       worktreeId: 'worktree-1',

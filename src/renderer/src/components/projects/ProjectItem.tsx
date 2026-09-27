@@ -107,6 +107,11 @@ interface ProjectItemProps {
   pathMatchIndices?: number[]
   /** First group in the list gets no top spacer (orca: firstHeaderIndex has no pt-1). */
   isFirst?: boolean
+  /**
+   * Whether an active search may expand this project. ProjectList grants it to the
+   * best-ranked matches only, so a broad query does not render every worktree list.
+   */
+  searchAutoExpand?: boolean
   isDraggable?: boolean
   isDragging?: boolean
   isDragOver?: boolean
@@ -121,6 +126,7 @@ export const ProjectItem = memo(function ProjectItem({
   nameMatchIndices,
   pathMatchIndices,
   isFirst,
+  searchAutoExpand = true,
   isDraggable,
   isDragging,
   isDragOver,
@@ -145,7 +151,11 @@ export const ProjectItem = memo(function ProjectItem({
   const createWorktree = useWorktreeStore((s) => s.createWorktree)
   const isCreatingWorktree = useWorktreeStore((s) => s.creatingForProjectId === project.id)
   const syncWorktrees = useWorktreeStore((s) => s.syncWorktrees)
-  const worktreeCount = useWorktreeStore((s) => s.worktreesByProject.get(project.id)?.length ?? 0)
+  // Only a complete list counts: a never-loaded project can hold a lone worktree
+  // that was just created for it, which would read as "this project has 1 worktree".
+  const worktreeCount = useWorktreeStore((s) =>
+    s.loadedProjectIds.has(project.id) ? (s.worktreesByProject.get(project.id)?.length ?? 0) : 0
+  )
 
   const spaces = useSpaceStore((s) => s.spaces)
   const projectSpaceMap = useSpaceStore((s) => s.projectSpaceMap)
@@ -184,13 +194,15 @@ export const ProjectItem = memo(function ProjectItem({
   const [noCommitsDialogOpen, setNoCommitsDialogOpen] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  // A text search auto-expands a git project only when its worktrees are already
-  // in the store. Expanding a never-opened project stays an explicit action, so a
-  // keystroke can never fan out into per-project DB load + git sync + watchers
-  // (with 200 projects that was thousands of main-process calls per keystroke).
+  // A text search auto-expands a git project only when its complete worktree list
+  // is already in the store (the sidebar bulk-hydrates every project from the DB
+  // in one query). A keystroke never triggers I/O: git sync + watchers stay tied
+  // to explicitly expanding a project (with 200 projects that fan-out was
+  // thousands of main-process calls per keystroke).
   // Connection projects render from the connection store with no I/O, so they
   // keep expanding as before.
-  const searchExpanded = isSearchMode && (isConnectionProject || worktreeCount > 0)
+  const searchExpanded =
+    isSearchMode && (isConnectionProject || (searchAutoExpand && worktreeCount > 0))
   const isExpanded = isExpandedInStore || searchExpanded
   // Search-driven mounts show what the store has and never load/sync/watch.
   const searchDriven = searchExpanded && !isExpandedInStore
