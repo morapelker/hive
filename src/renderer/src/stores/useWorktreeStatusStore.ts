@@ -5,6 +5,7 @@ import { lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
 import { notifyKanbanSessionSync } from './store-coordination'
 import { dbApi } from '@/api/db-api'
 import { higherPriority, type SessionStatusType } from '@shared/types/session-status'
+import type { ClaudeCliCompletion } from '@shared/types/claude-cli-stop-completion'
 
 // Re-exported from the shared definition so existing importers keep working.
 export type { SessionStatusType }
@@ -46,6 +47,8 @@ export interface SessionStatusEntry {
   plan?: string
   /** The turn ended with this Claude API error classification (StopFailure). */
   apiError?: string
+  /** Claude CLI: how a 'completed' status came about (detected completion, pause, or no Stop). */
+  completion?: ClaudeCliCompletion
 }
 
 export type MergeConflictFlow =
@@ -102,6 +105,7 @@ interface WorktreeStatusState {
       plan?: string
       taskNotification?: boolean
       apiError?: string
+      completion?: ClaudeCliCompletion
     }
   ) => void
   setSessionApiError: (sessionId: string, error: string) => void
@@ -148,6 +152,7 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
       plan?: string
       taskNotification?: boolean
       apiError?: string
+      completion?: ClaudeCliCompletion
     }
   ) => {
     set((state) => {
@@ -208,7 +213,8 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
         notifyKanbanSessionSync(sessionId, {
           type: 'session_completed',
           sessionMode: mode,
-          tokenDelta: metadata?.tokenDelta
+          tokenDelta: metadata?.tokenDelta,
+          completion: metadata?.completion
         })
       }
     } else if (status === 'plan_ready') {

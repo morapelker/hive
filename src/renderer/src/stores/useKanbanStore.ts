@@ -18,6 +18,7 @@ import {
   type KanbanSessionEvent
 } from './store-coordination'
 import { CUSTOM_MODEL_PROVIDER_ID } from '@shared/types/custom-provider'
+import { isClaudeCliCompletionDetected } from '@shared/types/claude-cli-stop-completion'
 import { isPlanLike } from '../lib/constants'
 import { useConnectionStore } from './useConnectionStore'
 import { usePinnedStore } from './usePinnedStore'
@@ -299,6 +300,13 @@ interface KanbanState {
        * trigger).
        */
       skipCompletionEffects?: boolean
+      /**
+       * Entering review from a Claude CLI session whose turn ended without a
+       * detected completion (background tasks / scheduled wakeups pending,
+       * or no Stop hook at all): the card shows a "still waiting" mark in
+       * place of the unread dot until the real completion lands.
+       */
+      awaitingCompletion?: boolean
     }
   ) => Promise<void>
   reorderTicket: (ticketId: string, projectId: string, newSortOrder: number) => Promise<void>
@@ -558,7 +566,18 @@ export const useKanbanStore = create<KanbanState>()(
             if (isPlanLike(ticket.mode) && !ticket.plan_ready && !apiErrored) {
               get().updateTicket(ticket.id, projectId, { plan_ready: true }).catch(() => {})
             }
-            get().moveTicket(ticket.id, projectId, 'review', ticket.sort_order).catch(() => {})
+            // Same completion rule as the live session_completed path: a
+            // Claude CLI stop that was only a pause leaves the ticket
+            // awaiting completion.
+            const completion = statuses[ticket.current_session_id]?.completion
+            get()
+              .moveTicket(ticket.id, projectId, 'review', ticket.sort_order, {
+                awaitingCompletion:
+                  status === 'completed' &&
+                  completion !== undefined &&
+                  !isClaudeCliCompletionDetected(completion)
+              })
+              .catch(() => {})
           } else if (ticket.column === 'done' || ticket.column === 'merged') {
             // Recover an explicit follow-up or plan-approval reopen this
             // project missed while unloaded. Only while the session's run is
@@ -695,7 +714,14 @@ export const useKanbanStore = create<KanbanState>()(
                     data.unread ??
                     (data.column !== undefined && data.column !== t.column
                       ? data.column === 'review'
-                      : t.unread)
+                      : t.unread),
+                  // Likewise a column change drops awaiting_completion unless
+                  // the update sets it explicitly
+                  awaiting_completion:
+                    data.awaiting_completion ??
+                    (data.column !== undefined && data.column !== t.column
+                      ? false
+                      : t.awaiting_completion)
                 }
               : t
           )
@@ -1027,7 +1053,7 @@ export const useKanbanStore = create<KanbanState>()(
         projectId: string,
         column: KanbanTicketColumn,
         sortOrder: number,
-        opts?: { skipCompletionEffects?: boolean }
+        opts?: { skipCompletionEffects?: boolean; awaitingCompletion?: boolean }
       ) => {
         const prev = get().tickets.get(projectId) ?? []
         const snapshot = prev.map((t) => ({ ...t }))
@@ -1036,6 +1062,7 @@ export const useKanbanStore = create<KanbanState>()(
         // bumps so transition-sorted columns place the ticket correctly right away)
         const moveStartedAtMs = Date.now()
         const movedAt = new Date(moveStartedAtMs).toISOString()
+        const awaitingCompletion = column === 'review' && opts?.awaitingCompletion === true
         set((state) => {
           const next = new Map(state.tickets)
           const tickets = (next.get(projectId) ?? []).map((t) =>
@@ -1046,7 +1073,11 @@ export const useKanbanStore = create<KanbanState>()(
                   sort_order: sortOrder,
                   updated_at: movedAt,
                   column_changed_at: t.column === column ? t.column_changed_at : movedAt,
-                  unread: t.column === column ? t.unread : column === 'review'
+                  unread: t.column === column ? t.unread : column === 'review',
+                  // Mirror the backend rule: only an entry to review can arm
+                  // awaiting_completion; any other column change drops it.
+                  awaiting_completion:
+                    t.column === column ? t.awaiting_completion : awaitingCompletion
                 }
               : t
           )
@@ -1061,7 +1092,13 @@ export const useKanbanStore = create<KanbanState>()(
         }
 
         try {
-          await kanban.ticket.move(projectId, ticketId, column, sortOrder)
+          if (awaitingCompletion) {
+            await kanban.ticket.move(projectId, ticketId, column, sortOrder, {
+              awaitingCompletion: true
+            })
+          } else {
+            await kanban.ticket.move(projectId, ticketId, column, sortOrder)
+          }
 
           // Entering the done column ends the ticket's work: close the attached
           // session so its agent process dies now and the tab is not restored on
@@ -1312,6 +1349,12 @@ export const useKanbanStore = create<KanbanState>()(
                     .updateTicket(ticket.id, projectId, { plan_ready: true })
                     .catch(() => {})
                 }
+                // Claude CLI sessions say whether the turn ended with a real
+                // completion or a pause (background tasks / scheduled wakeups
+                // still pending, or no Stop hook at all). Other providers carry
+                // no signal, so their tickets are never flagged.
+                const awaitingCompletion =
+                  event.completion !== undefined && !isClaudeCliCompletionDetected(event.completion)
                 // The session finished → its progress bar is gone. Any non-terminal
                 // ticket must advance to review regardless of mode/plan state (board
                 // invariant: in_progress ⇔ a running progress bar). Move is idempotent.
@@ -1321,8 +1364,22 @@ export const useKanbanStore = create<KanbanState>()(
                   ticket.column !== 'merged'
                 ) {
                   get()
-                    .moveTicket(ticket.id, projectId, 'review', ticket.sort_order)
+                    .moveTicket(ticket.id, projectId, 'review', ticket.sort_order, {
+                      awaitingCompletion
+                    })
                     .catch(() => {})
+                } else if (ticket.column === 'review' && ticket.awaiting_completion) {
+                  // Still in review from an earlier pause; the real completion
+                  // clears the "still waiting" mark and re-arms the unread dot
+                  // so the finish is noticed. A further pause changes nothing.
+                  if (!awaitingCompletion) {
+                    get()
+                      .updateTicket(ticket.id, projectId, {
+                        awaiting_completion: false,
+                        unread: true
+                      })
+                      .catch(() => {})
+                  }
                 }
                 // Accumulate token delta to ticket's persistent total
                 if (event.tokenDelta && event.tokenDelta > 0) {

@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 49
+export const CURRENT_SCHEMA_VERSION = 50
 
 /**
  * Voice dictation history (v48): every transcript the local speech model produced, newest
@@ -799,5 +799,13 @@ DROP TABLE IF EXISTS diff_comments;`
       DROP INDEX IF EXISTS idx_sessions_opencode_session_id;
       DROP INDEX IF EXISTS idx_sessions_claude_session_id;
     `
+  },
+  {
+    version: 50,
+    name: 'add_ticket_awaiting_completion',
+    up: `-- NOTE: ALTER TABLE for kanban_tickets.awaiting_completion and
+         -- markdown_kanban_card_state.awaiting_completion is handled idempotently
+         -- by safeAddColumn() in database.ts to avoid "duplicate column" errors.`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
   }
 ]

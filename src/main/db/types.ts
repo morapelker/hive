@@ -553,6 +553,14 @@ export interface KanbanTicket {
   auto_approve_plan: boolean
   /** Set when the ticket enters the review column; cleared on open or on leaving review. */
   unread: boolean
+  /**
+   * Set when a Claude CLI session moved the ticket to review without a
+   * detected completion (its Stop reported pending background tasks or
+   * scheduled wakeups, or no Stop hook ended the turn at all). Cleared when a
+   * real completion lands or the ticket leaves review; opening the ticket
+   * leaves it alone — the agent is still expected to be woken again.
+   */
+  awaiting_completion: boolean
   model_provider_id: string | null
   model_id: string | null
   model_variant: string | null
@@ -605,6 +613,7 @@ export interface KanbanTicketUpdate {
   note?: string | null
   auto_approve_plan?: boolean
   unread?: boolean
+  awaiting_completion?: boolean
   model_provider_id?: string | null
   model_id?: string | null
   model_variant?: string | null

@@ -38,7 +38,8 @@ import {
   SquareTerminal,
   Radar,
   Bot,
-  Star
+  Star,
+  Hourglass
 } from 'lucide-react'
 import { CheckeredFlagIcon } from './CheckeredFlagIcon'
 import { HighlightedText } from './HighlightedText'
@@ -1356,12 +1357,26 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
               >
             {/* Title + top-right indicators */}
             <div className="flex items-start justify-between gap-2">
-              {ticket.unread && (
+              {ticket.awaiting_completion ? (
+                // The Claude CLI session stopped without a completion message
+                // (background work or a scheduled wake-up still pending): the
+                // ticket is in review but not done yet. Takes the unread dot's
+                // slot until the real completion lands.
                 <span
-                  data-testid="ticket-unread-dot"
-                  title="Unread — just moved to review"
-                  className="mt-[6px] h-1.5 w-1.5 shrink-0 rounded-full bg-foreground/70"
-                />
+                  data-testid="ticket-awaiting-completion"
+                  title="Still waiting — the agent stopped without finishing (background work or a scheduled wake-up is pending)"
+                  className="mt-[3px] flex h-3 w-3 shrink-0 items-center justify-center text-amber-500"
+                >
+                  <Hourglass className="h-3 w-3" aria-label="Still waiting for the agent to finish" />
+                </span>
+              ) : (
+                ticket.unread && (
+                  <span
+                    data-testid="ticket-unread-dot"
+                    title="Unread — just moved to review"
+                    className="mt-[6px] h-1.5 w-1.5 shrink-0 rounded-full bg-foreground/70"
+                  />
+                )
               )}
               <p
                 className={cn(

@@ -91,6 +91,7 @@ function makeTicket(overrides: Partial<KanbanTicket> = {}): KanbanTicket {
     created_from_session: false,
     auto_approve_plan: false,
     unread: false,
+    awaiting_completion: false,
     attachments: [],
     archived_at: null,
     external_provider: null,

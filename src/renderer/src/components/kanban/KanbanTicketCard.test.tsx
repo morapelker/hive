@@ -38,6 +38,7 @@ const baseTicket: KanbanTicket = {
   created_from_session: false,
   auto_approve_plan: false,
   unread: false,
+  awaiting_completion: false,
   model_provider_id: null,
   model_id: null,
   model_variant: null,
@@ -151,6 +152,39 @@ describe('KanbanTicketCard unread indicator', () => {
     render(<KanbanTicketCard ticket={{ ...baseTicket, column: 'review', unread: false }} />)
 
     expect(screen.queryByTestId('ticket-unread-dot')).toBeNull()
+  })
+
+  it('renders the still-waiting mark instead of the dot while a Claude CLI completion is pending', () => {
+    render(
+      <KanbanTicketCard
+        ticket={{ ...baseTicket, column: 'review', unread: true, awaiting_completion: true }}
+      />
+    )
+
+    expect(screen.getByTestId('ticket-awaiting-completion')).toBeInTheDocument()
+    expect(screen.queryByTestId('ticket-unread-dot')).toBeNull()
+  })
+
+  it('keeps the still-waiting mark after the ticket was opened (unread cleared)', () => {
+    render(
+      <KanbanTicketCard
+        ticket={{ ...baseTicket, column: 'review', unread: false, awaiting_completion: true }}
+      />
+    )
+
+    expect(screen.getByTestId('ticket-awaiting-completion')).toBeInTheDocument()
+    expect(screen.queryByTestId('ticket-unread-dot')).toBeNull()
+  })
+
+  it('renders no still-waiting mark once the completion landed', () => {
+    render(
+      <KanbanTicketCard
+        ticket={{ ...baseTicket, column: 'review', unread: true, awaiting_completion: false }}
+      />
+    )
+
+    expect(screen.queryByTestId('ticket-awaiting-completion')).toBeNull()
+    expect(screen.getByTestId('ticket-unread-dot')).toBeInTheDocument()
   })
 })
 

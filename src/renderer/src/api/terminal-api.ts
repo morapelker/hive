@@ -11,6 +11,7 @@ import type {
 import type { ServerEvent } from '@shared/rpc/protocol'
 import type { Envelope } from '@shared/types/ipc-envelope'
 import type { GhosttyTerminalConfig } from '@shared/types/terminal'
+import type { ClaudeCliStopCompletionKind } from '@shared/types/claude-cli-stop-completion'
 import {
   CLAUDE_CLI_BACKGROUND_WORK_CHANNEL,
   isClaudeCliBackgroundWorkPayload,
@@ -45,6 +46,10 @@ export interface ClaudeCliStatusPayload {
     readonly plan?: string
     readonly taskNotification?: boolean
     readonly apiError?: string
+    /** Main-agent Stop (claude-cli): detected completion vs pause with pending work. */
+    readonly completion?: ClaudeCliStopCompletionKind
+    readonly pendingTasks?: number
+    readonly pendingWakeups?: number
   }
 }
 

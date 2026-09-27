@@ -88,7 +88,8 @@ export interface KanbanRpcService {
     projectId: string,
     id: string,
     column: KanbanTicket['column'],
-    sortOrder: number
+    sortOrder: number,
+    options?: { awaitingCompletion?: boolean }
   ) => Effect.Effect<KanbanTicket | null, unknown, never>
   // Optional (like the other ticket methods below) so the 50+ existing test
   // mocks that construct a full `kanban:` service literal don't all need updating.
@@ -294,6 +295,7 @@ const kanbanTicketUpdateSchema = z
     archived_at: z.string().nullable().optional(),
     auto_approve_plan: z.boolean().optional(),
     unread: z.boolean().optional(),
+    awaiting_completion: z.boolean().optional(),
     model_provider_id: z.string().nullable().optional(),
     model_id: z.string().nullable().optional(),
     model_variant: z.string().nullable().optional(),
@@ -337,7 +339,9 @@ const moveTicketParamsSchema = z
     projectId: z.string(),
     id: z.string(),
     column: ticketColumnSchema,
-    sortOrder: z.number()
+    sortOrder: z.number(),
+    /** Entering review from a Claude CLI session that stopped without a detected completion. */
+    awaitingCompletion: z.boolean().optional()
   })
   .strict()
 const moveTicketToProjectParamsSchema = z
@@ -599,11 +603,14 @@ export const makeLiveKanbanRpcService = (): KanbanRpcService => ({
       },
       catch: (cause) => cause
     }),
-  moveTicket: (projectId, id, column, sortOrder) =>
+  moveTicket: (projectId, id, column, sortOrder, options) =>
     Effect.tryPromise({
       try: async () => {
         const { getKanbanBackendForProject } = await import('../../../main/services/kanban-backend')
-        return getKanbanBackendForProject(projectId).move(projectId, id, column, sortOrder)
+        const backend = getKanbanBackendForProject(projectId)
+        return options === undefined
+          ? backend.move(projectId, id, column, sortOrder)
+          : backend.move(projectId, id, column, sortOrder, options)
       },
       catch: (cause) => cause
     }),
@@ -1195,11 +1202,13 @@ export const makeKanbanRpcHandlers = (
       'kanban.ticket.move',
       (params) =>
         Effect.gen(function* () {
-          const { projectId, id, column, sortOrder } = yield* Effect.try({
+          const { projectId, id, column, sortOrder, awaitingCompletion } = yield* Effect.try({
             try: () => moveTicketParamsSchema.parse(params),
             catch: (cause) => cause
           })
-          return yield* service.moveTicket(projectId, id, column, sortOrder)
+          return yield* (awaitingCompletion === undefined
+            ? service.moveTicket(projectId, id, column, sortOrder)
+            : service.moveTicket(projectId, id, column, sortOrder, { awaitingCompletion }))
         })
     ],
     [

@@ -396,6 +396,7 @@ export class DatabaseService {
       created_from_session: row.created_from_session === 1,
       auto_approve_plan: row.auto_approve_plan === 1,
       unread: row.unread === 1,
+      awaiting_completion: row.awaiting_completion === 1,
       model_provider_id: (row.model_provider_id as string) ?? null,
       model_id: (row.model_id as string) ?? null,
       model_variant: (row.model_variant as string) ?? null,
@@ -733,6 +734,7 @@ export class DatabaseService {
     this.safeAddColumn('kanban_tickets', 'created_from_session', 'INTEGER NOT NULL DEFAULT 0')
     this.safeAddColumn('kanban_tickets', 'auto_approve_plan', 'INTEGER NOT NULL DEFAULT 0')
     this.safeAddColumn('kanban_tickets', 'unread', 'INTEGER NOT NULL DEFAULT 0')
+    this.safeAddColumn('kanban_tickets', 'awaiting_completion', 'INTEGER NOT NULL DEFAULT 0')
     this.safeAddColumn('kanban_tickets', 'model_provider_id', 'TEXT DEFAULT NULL')
     this.safeAddColumn('kanban_tickets', 'model_id', 'TEXT DEFAULT NULL')
     this.safeAddColumn('kanban_tickets', 'model_variant', 'TEXT DEFAULT NULL')
@@ -868,6 +870,11 @@ export class DatabaseService {
     this.safeAddColumn('markdown_kanban_card_state', 'column_changed_at', 'TEXT DEFAULT NULL')
     this.safeAddColumn('markdown_kanban_card_state', 'last_known_column', 'TEXT DEFAULT NULL')
     this.safeAddColumn('markdown_kanban_card_state', 'unread', 'INTEGER NOT NULL DEFAULT 0')
+    this.safeAddColumn(
+      'markdown_kanban_card_state',
+      'awaiting_completion',
+      'INTEGER NOT NULL DEFAULT 0'
+    )
 
     db.exec(`
       CREATE TABLE IF NOT EXISTS session_usage_state (
@@ -3167,6 +3174,14 @@ export class DatabaseService {
       updates.push('unread = ?')
       values.push(unreadValue ? 1 : 0)
     }
+    // Awaiting-completion never survives a column change on its own: only the
+    // session-sync path that moves a ticket into review sets it explicitly.
+    const awaitingValue =
+      data.awaiting_completion ?? (derivedUnread !== undefined ? false : undefined)
+    if (awaitingValue !== undefined) {
+      updates.push('awaiting_completion = ?')
+      values.push(awaitingValue ? 1 : 0)
+    }
     if (data.model_provider_id !== undefined) {
       updates.push('model_provider_id = ?')
       values.push(data.model_provider_id)
@@ -3347,16 +3362,25 @@ export class DatabaseService {
     return this.getKanbanTicket(id)
   }
 
-  moveKanbanTicket(id: string, column: KanbanTicketColumn, sortOrder: number): KanbanTicket | null {
+  moveKanbanTicket(
+    id: string,
+    column: KanbanTicketColumn,
+    sortOrder: number,
+    options?: { awaitingCompletion?: boolean }
+  ): KanbanTicket | null {
     const db = this.getDb()
     const existing = this.getKanbanTicket(id)
     if (!existing) return null
 
     const now = new Date().toISOString()
     if (column !== existing.column) {
+      // Entering review marks the ticket unread; awaiting_completion is only
+      // ever set on entry to review (a Claude CLI session that stopped without
+      // a detected completion) and clears on any other column change.
+      const awaitingCompletion = column === 'review' && options?.awaitingCompletion === true
       db.prepare(
-        'UPDATE kanban_tickets SET "column" = ?, sort_order = ?, updated_at = ?, column_changed_at = ?, unread = ? WHERE id = ?'
-      ).run(column, sortOrder, now, now, column === 'review' ? 1 : 0, id)
+        'UPDATE kanban_tickets SET "column" = ?, sort_order = ?, updated_at = ?, column_changed_at = ?, unread = ?, awaiting_completion = ? WHERE id = ?'
+      ).run(column, sortOrder, now, now, column === 'review' ? 1 : 0, awaitingCompletion ? 1 : 0, id)
     } else {
       db.prepare(
         'UPDATE kanban_tickets SET "column" = ?, sort_order = ?, updated_at = ? WHERE id = ?'

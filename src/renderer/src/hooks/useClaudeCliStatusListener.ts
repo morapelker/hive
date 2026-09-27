@@ -10,6 +10,8 @@ import { notifyKanbanSessionSync } from '@/stores/store-coordination'
 import { isPlanLike } from '@/lib/constants'
 import { isHandoffPickerOpenForSession } from '@/lib/handoff-ui-state'
 import { toast } from '@/lib/toast'
+import { isClaudeCli } from '@shared/types/agent-sdk'
+import type { ClaudeCliCompletion } from '@shared/types/claude-cli-stop-completion'
 
 type ClaudeCliStatusMetadata = {
   reason?: string
@@ -19,6 +21,23 @@ type ClaudeCliStatusMetadata = {
   plan?: string
   taskNotification?: boolean
   apiError?: string
+  completion?: ClaudeCliCompletion
+}
+
+// A claude-cli 'completed' publish that did not come from a main-agent Stop
+// hook (user interrupt, PTY exit, SessionEnd, a fresh spawn's idle prompt)
+// produced no completion message at all. Stamp it so the kanban board can
+// tell "the agent said it is done" apart from "the turn merely ended". Codex
+// sessions ride the same channel but have no such signal — leave them alone.
+function withClaudeCliCompletion(
+  sessionId: string,
+  status: string,
+  metadata: ClaudeCliStatusMetadata | undefined
+): ClaudeCliStatusMetadata | undefined {
+  if (status !== 'completed' || metadata?.completion !== undefined) return metadata
+  const session = useSessionStore.getState().getSessionById(sessionId)
+  if (!session || !isClaudeCli(session.agent_sdk)) return metadata
+  return { ...metadata, completion: 'none' }
 }
 
 // StopFailure `error` classifications → user-facing labels. Unlisted values
@@ -108,7 +127,8 @@ export function useClaudeCliStatusListener(): void {
       useWorktreeStatusStore.getState().setSessionStatus(sessionId, 'planning', metadata)
     }
 
-    const unsubscribe = terminalApi.onClaudeCliStatus(({ sessionId, status, metadata }) => {
+    const unsubscribe = terminalApi.onClaudeCliStatus(({ sessionId, status, ...payload }) => {
+      const metadata = withClaudeCliCompletion(sessionId, status, payload.metadata)
       const worktreeStatus = useWorktreeStatusStore.getState()
       const sessionStore = useSessionStore.getState()
       const currentStatus = worktreeStatus.sessionStatuses[sessionId]?.status

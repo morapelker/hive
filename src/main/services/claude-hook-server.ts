@@ -38,6 +38,10 @@ import {
   type ClaudeCliApiErrorPayload
 } from '@shared/types/claude-cli-api-error'
 import {
+  classifyClaudeCliStopCompletion,
+  type ClaudeCliStopCompletionKind
+} from '@shared/types/claude-cli-stop-completion'
+import {
   clearAllClaudeCliPlanAutoApprove,
   consumeClaudeCliPlanAutoApprove,
   isClaudeCliPlanAutoApproveArmed,
@@ -100,6 +104,15 @@ export interface ParsedClaudeHook {
   agent_type?: string
   /** Snapshot of in-flight background work at Stop/SubagentStop time. */
   background_tasks?: ClaudeCliBackgroundTask[]
+  /** Snapshot of session-scoped scheduled wakeups (ScheduleWakeup / CronCreate / `/loop`) at Stop time. */
+  session_crons?: ClaudeCliSessionCron[]
+}
+
+export interface ClaudeCliSessionCron {
+  id?: string
+  schedule?: string
+  recurring?: boolean
+  prompt?: string
 }
 
 export interface ClaudeCliStatusPayload {
@@ -114,6 +127,16 @@ export interface ClaudeCliStatusPayload {
     taskNotification?: boolean
     /** StopFailure: the turn ended with this API-error classification. */
     apiError?: string
+    /**
+     * Main-agent Stop (claude only): whether this Stop is the real completion
+     * or a pause while background tasks / scheduled wakeups are pending.
+     * Absent on every other status publish (no Stop hook was involved).
+     */
+    completion?: ClaudeCliStopCompletionKind
+    /** Main-agent Stop: in-flight background tasks at stop time. */
+    pendingTasks?: number
+    /** Main-agent Stop: scheduled wakeups at stop time. */
+    pendingWakeups?: number
   }
 }
 
@@ -245,7 +268,8 @@ function extractPlanText(hook: ParsedClaudeHook): string | undefined {
 
 function buildStatusMetadata(
   hook: ParsedClaudeHook,
-  hookPath: string
+  hookPath: string,
+  cli: CliHookFamily
 ): NonNullable<ClaudeCliStatusPayload['metadata']> {
   const metadata: NonNullable<ClaudeCliStatusPayload['metadata']> = {
     hookEventName: hook.hook_event_name,
@@ -254,6 +278,16 @@ function buildStatusMetadata(
 
   if (hook.tool_name) {
     metadata.toolName = hook.tool_name
+  }
+
+  // Completion vs pause: a main-agent Stop is the real end of the work only
+  // when claude reports nothing in flight and nothing scheduled. Codex hooks
+  // are adapted from a different lifecycle and never carry these arrays.
+  if (cli === 'claude' && hook.hook_event_name === 'Stop' && !hook.agent_id) {
+    const completion = classifyClaudeCliStopCompletion(hook)
+    metadata.completion = completion.kind
+    metadata.pendingTasks = completion.pendingTasks
+    metadata.pendingWakeups = completion.pendingWakeups
   }
 
   const plan = extractPlanText(hook)
@@ -643,7 +677,7 @@ function processCliHook(
         sessionId: route.sessionId,
         status,
         metadata: {
-          ...buildStatusMetadata(body, route.hookPath),
+          ...buildStatusMetadata(body, route.hookPath, route.cli),
           ...(options.reason ? { reason: options.reason } : {})
         }
       }

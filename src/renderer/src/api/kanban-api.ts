@@ -83,13 +83,17 @@ export const kanbanApi = {
       projectId: string,
       id: string,
       column: string,
-      sortOrder: number
+      sortOrder: number,
+      options?: { awaitingCompletion?: boolean }
     ): Promise<TResult> =>
       getRendererRpcClient().request<TResult>('kanban.ticket.move', {
         projectId,
         id,
         column,
-        sortOrder
+        sortOrder,
+        ...(options?.awaitingCompletion !== undefined
+          ? { awaitingCompletion: options.awaitingCompletion }
+          : {})
       }),
     moveToProject: async <TResult>(
       projectId: string,
