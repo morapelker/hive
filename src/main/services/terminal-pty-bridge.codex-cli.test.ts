@@ -646,3 +646,66 @@ describe('Codex CLI terminal wiring', () => {
     })
   })
 })
+
+describe('Codex CLI turn end', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    mocks.handlers.clear()
+    mocks.exitCallbacks.clear()
+    mocks.dataCallbacks.clear()
+    codexMocks.hookSubscribers.clear()
+    codexMocks.turnWatchers.length = 0
+    vi.clearAllMocks()
+    __resetRuntimeRegistryForTests()
+
+    setupDb()
+    mocks.ptyService.has.mockReturnValue(false)
+    mocks.getClaudeHookServer.mockResolvedValue({ port: 45678 })
+    mocks.publishDesktopBackendEvent.mockResolvedValue(true)
+    mocks.getLastClaudeCliStatus.mockReturnValue(undefined)
+    codexMocks.findCodexRolloutByIdPrefix.mockReturnValue(null)
+  })
+
+  afterEach(async () => {
+    await cleanupTerminals()
+    vi.useRealTimers()
+  })
+
+  it('does not re-publish working from a spinner title once the Stop hook completed the turn and the title is Ready', async () => {
+    setupDb(makeSession({ claude_session_id: THREAD }))
+    await createClaudeCliTerminal('codex-session-1', {})
+    mocks.publishClaudeCliStatus.mockClear()
+    // The turn is running: hooks already said working, the title streams spinner frames.
+    mocks.getLastClaudeCliStatus.mockReturnValue('working')
+    emitPty(title(`Working | ${THREAD} ⠋`))
+    await vi.advanceTimersByTimeAsync(1_500)
+    emitPty(title(`Working | ${THREAD} ⠙`))
+    // The Stop hook completes the turn; the TUI paints Ready right after.
+    mocks.getLastClaudeCliStatus.mockReturnValue('completed')
+    emitPty(title(`Ready | ${THREAD}`))
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(mocks.publishClaudeCliStatus).not.toHaveBeenCalled()
+  })
+
+  it('does not re-publish working from a spinner title when the Stop hook lands before the Ready title', async () => {
+    setupDb(makeSession({ claude_session_id: THREAD }))
+    await createClaudeCliTerminal('codex-session-1', {})
+    mocks.publishClaudeCliStatus.mockClear()
+    mocks.getLastClaudeCliStatus.mockReturnValue('working')
+    emitPty(title(`Working | ${THREAD} ⠋`))
+    mocks.getLastClaudeCliStatus.mockReturnValue('completed')
+    for (const subscriber of codexMocks.hookSubscribers) {
+      subscriber({
+        cli: 'codex',
+        sessionId: 'codex-session-1',
+        hook: { hook_event_name: 'Stop', session_id: THREAD }
+      })
+    }
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(mocks.publishClaudeCliStatus).not.toHaveBeenCalled()
+    // A later Ready title neither completes nor reopens anything.
+    emitPty(title(`Ready | ${THREAD}`))
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(mocks.publishClaudeCliStatus).not.toHaveBeenCalled()
+  })
+})

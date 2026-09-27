@@ -152,6 +152,20 @@ function closeCodexTurnWatcher(sessionId: string): void {
 }
 
 /**
+ * Drop the pending title-derived 'working' (handleCodexTitle). The title
+ * re-arms it on every spinner frame of a running turn, so one is nearly
+ * always pending when the turn ends; left alone it would fire after the Stop
+ * hook's 'completed' and publish 'working' over it — the renderer reads that
+ * as the run resuming and pulls the ticket from review back to in progress.
+ */
+function cancelCodexWorkingFallback(sessionId: string): void {
+  const timer = codexWorkingFallbackTimers.get(sessionId)
+  if (!timer) return
+  clearTimeout(timer)
+  codexWorkingFallbackTimers.delete(sessionId)
+}
+
+/**
  * Codex runs its Stop hook only for turns that end with an answer; a turn
  * that fails (API error, inaccessible model) ends silently for hooks. The
  * rollout records every turn's end (`task_complete` with an `error`, or
@@ -219,8 +233,11 @@ function ensureCodexHookSubscription(): void {
         )
       }
     } else if (hook.hook_event_name === 'Stop' || hook.hook_event_name === 'SessionEnd') {
-      // The hook pipeline owns this turn end; the rollout tail is redundant.
+      // The hook pipeline owns this turn end; the rollout tail is redundant,
+      // and a title-derived 'working' still pending must not undo the
+      // 'completed' this hook publishes.
       closeCodexTurnWatcher(event.sessionId)
+      cancelCodexWorkingFallback(event.sessionId)
     }
   })
 }
@@ -462,24 +479,25 @@ function handleCodexTitle(sessionId: string, rawTitle: string): void {
     } else {
       cancelCodexReadySettle(sessionId)
     }
-    if (info.runState !== 'Ready' && info.runState !== 'Starting') {
-      if (!codexWorkingFallbackTimers.has(sessionId)) {
-        codexWorkingFallbackTimers.set(
-          sessionId,
-          setTimeout(() => {
-            codexWorkingFallbackTimers.delete(sessionId)
-            if (!codexCliSessions.has(sessionId)) return
-            const last = getLastClaudeCliStatus(sessionId)
-            if (last === undefined || last === 'completed' || last === 'unread') {
-              publishClaudeCliStatus({
-                sessionId,
-                status: 'working',
-                metadata: { reason: 'codex_title_working' }
-              })
-            }
-          }, CODEX_WORKING_FALLBACK_MS)
-        )
-      }
+    if (info.runState === 'Ready' || info.runState === 'Starting') {
+      // The TUI is idle: whatever the last spinner frame armed is moot.
+      cancelCodexWorkingFallback(sessionId)
+    } else if (!codexWorkingFallbackTimers.has(sessionId)) {
+      codexWorkingFallbackTimers.set(
+        sessionId,
+        setTimeout(() => {
+          codexWorkingFallbackTimers.delete(sessionId)
+          if (!codexCliSessions.has(sessionId)) return
+          const last = getLastClaudeCliStatus(sessionId)
+          if (last === undefined || last === 'completed' || last === 'unread') {
+            publishClaudeCliStatus({
+              sessionId,
+              status: 'working',
+              metadata: { reason: 'codex_title_working' }
+            })
+          }
+        }, CODEX_WORKING_FALLBACK_MS)
+      )
     }
   }
 
@@ -517,9 +535,7 @@ function handleCodexTitle(sessionId: string, rawTitle: string): void {
 
 function resetCodexSessionState(sessionId: string): void {
   clearCodexPendingStart(sessionId)
-  const workingTimer = codexWorkingFallbackTimers.get(sessionId)
-  if (workingTimer) clearTimeout(workingTimer)
-  codexWorkingFallbackTimers.delete(sessionId)
+  cancelCodexWorkingFallback(sessionId)
   codexWatchers.get(sessionId)?.close()
   codexWatchers.delete(sessionId)
   codexCliSessions.delete(sessionId)
