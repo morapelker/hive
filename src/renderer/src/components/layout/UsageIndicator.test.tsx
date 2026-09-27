@@ -809,6 +809,82 @@ describe('ProviderUsageBlock provider toggle', () => {
     expect(screen.queryByText('Claude API Usage')).toBeNull()
   })
 
+  it('shows a third Fable bar in the trigger when the Fable window is above 0%', () => {
+    useUsageStore.setState({
+      anthropicUsage: {
+        ...sampleUsage,
+        scoped: [{ label: 'Fable', used_percent: 42, resets_at: inOneDay() }]
+      }
+    })
+    render(
+      <ProviderUsageBlock
+        provider="anthropic"
+        isExplicitlySelected
+        toggleProviders={['anthropic']}
+      />
+    )
+
+    const trigger = screen.getByTestId('usage-trigger-anthropic')
+    expect(within(trigger).getByText('Fable')).toBeTruthy()
+    expect(within(trigger).getByText('42%')).toBeTruthy()
+  })
+
+  it('hides the Fable bar in the trigger when the Fable window is at 0%', () => {
+    useUsageStore.setState({
+      anthropicUsage: {
+        ...sampleUsage,
+        scoped: [{ label: 'Fable', used_percent: 0, resets_at: null }]
+      }
+    })
+    render(
+      <ProviderUsageBlock
+        provider="anthropic"
+        isExplicitlySelected
+        toggleProviders={['anthropic']}
+      />
+    )
+
+    expect(within(screen.getByTestId('usage-trigger-anthropic')).queryByText('Fable')).toBeNull()
+  })
+
+  it('hides the Fable bar in the trigger when the Fable window reset in the past', () => {
+    useUsageStore.setState({
+      anthropicUsage: {
+        ...sampleUsage,
+        scoped: [{ label: 'Fable', used_percent: 80, resets_at: oneHourAgo() }]
+      }
+    })
+    render(
+      <ProviderUsageBlock
+        provider="anthropic"
+        isExplicitlySelected
+        toggleProviders={['anthropic']}
+      />
+    )
+
+    expect(within(screen.getByTestId('usage-trigger-anthropic')).queryByText('Fable')).toBeNull()
+  })
+
+  it('does not show a Fable bar in the trigger for other scoped models', () => {
+    useUsageStore.setState({
+      anthropicUsage: {
+        ...sampleUsage,
+        scoped: [{ label: 'Opus', used_percent: 60, resets_at: inOneDay() }]
+      }
+    })
+    render(
+      <ProviderUsageBlock
+        provider="anthropic"
+        isExplicitlySelected
+        toggleProviders={['anthropic']}
+      />
+    )
+
+    const trigger = screen.getByTestId('usage-trigger-anthropic')
+    expect(within(trigger).queryByText('Fable')).toBeNull()
+    expect(within(trigger).queryByText('Opus')).toBeNull()
+  })
+
   it('hides the toggle when only one provider is visible', async () => {
     const user = userEvent.setup()
     render(

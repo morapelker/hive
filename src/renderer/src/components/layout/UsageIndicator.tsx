@@ -32,6 +32,7 @@ import type {
   OpenAIUsageData,
   SavedAccountDTO,
   SavedUsageStatus,
+  ScopedUsageWindow,
   AnthropicRateLimitState,
   AnthropicRateLimitWindow,
   UsageData,
@@ -124,6 +125,13 @@ function getStatusLabel(status?: string): string | null {
   if (status === 'rejected') return 'blocked'
   if (status === 'allowed_warning') return 'warning'
   return null
+}
+
+const FABLE_LABEL = 'Fable'
+
+/** The per-model Fable window from the usage payload's scoped limits, if any. */
+function findFableWindow(usage: UsageData | null | undefined): ScopedUsageWindow | undefined {
+  return usage?.scoped?.find((entry) => entry.label.toLowerCase() === FABLE_LABEL.toLowerCase())
 }
 
 function getRateLimitWindow(
@@ -872,6 +880,18 @@ export function ProviderUsageBlock({
     provider === 'anthropic' && usage
       ? getRateLimitWindow(anthropicRateLimit, 'seven_day')
       : undefined
+  // Third bar for the Fable model window, only once it has actually been
+  // used — an idle 0% Fable row would just be noise below the 7d bar.
+  const fableWindow = provider === 'anthropic' ? findFableWindow(usage) : undefined
+  const fable = fableWindow
+    ? usageWindowDisplay(
+        { utilization: fableWindow.used_percent, resets_at: fableWindow.resets_at },
+        'seven_day'
+      )
+    : undefined
+  const showFable = fable !== undefined && fable.percent > 0
+  // Widen every label so the three bars stay aligned when "Fable" is shown.
+  const triggerLabelClassName = showFable ? 'w-10' : undefined
 
   return (
     <HoverCard onOpenChange={handleOpenChange}>
@@ -918,13 +938,23 @@ export function ProviderUsageBlock({
                 percent={fiveHour.percent}
                 resetTime={fiveHour.resetTime}
                 rateLimit={fiveHourRateLimit}
+                labelClassName={triggerLabelClassName}
               />
               <UsageRow
                 label="7d"
                 percent={sevenDay.percent}
                 resetTime={sevenDay.resetTime}
                 rateLimit={sevenDayRateLimit}
+                labelClassName={triggerLabelClassName}
               />
+              {showFable && fable && (
+                <UsageRow
+                  label={FABLE_LABEL}
+                  percent={fable.percent}
+                  resetTime={fable.resetTime}
+                  labelClassName={triggerLabelClassName}
+                />
+              )}
             </div>
           </div>
         </div>
