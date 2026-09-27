@@ -106,7 +106,8 @@ import { parseTicketKey, setKanbanDragData, ticketKey, ticketTransitionTime, use
 import type { TicketKey } from '@/stores/useKanbanStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { isBlockerSatisfied } from '@/lib/blocker-utils'
-import { findBaseInstanceConnection } from '@/lib/connection-project'
+import { findBaseInstanceConnection, isBaseInstance } from '@/lib/connection-project'
+import { setProjectBasePinned } from '@/lib/auto-pin'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useProjectIconUrl } from '@/components/projects/LanguageIcon'
@@ -700,14 +701,6 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     )
   )
 
-  // ── Pin state for the assigned worktree ─────────────────────────
-  const isPinned = usePinnedStore(
-    useCallback(
-      (s) => (ticket.worktree_id ? s.pinnedWorktreeIds.has(ticket.worktree_id) : false),
-      [ticket.worktree_id]
-    )
-  )
-
   // Reads worktree list snapshot — reactive only to remoteInfo changes, not worktree additions.
   const hasGitRemote = useGitStore(
     useCallback(
@@ -1216,6 +1209,42 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     )
   )
 
+  // ── Pin state for the project's BASE (default worktree / base instance) ──
+  // Pinning any worktree of a project puts the whole project on the pinned
+  // board, so the ticket's pin action targets the project's base rather than
+  // the worktree the ticket happens to run on — it shows/hides every ticket of
+  // the project there.
+  const baseWorktreeId = useWorktreeStore(
+    useCallback(
+      (s) =>
+        isConnectionProjectTicket
+          ? null
+          : (s.worktreesByProject.get(ticket.project_id)?.find((w) => w.is_default)?.id ?? null),
+      [isConnectionProjectTicket, ticket.project_id]
+    )
+  )
+  const baseConnectionId = useConnectionStore(
+    useCallback(
+      (s) =>
+        isConnectionProjectTicket
+          ? (s.connections.find((c) => c.saved_project_id === ticket.project_id && isBaseInstance(c))
+              ?.id ?? null)
+          : null,
+      [isConnectionProjectTicket, ticket.project_id]
+    )
+  )
+  const isBasePinned = usePinnedStore(
+    useCallback(
+      (s) => {
+        if (baseWorktreeId) return s.pinnedWorktreeIds.has(baseWorktreeId)
+        if (baseConnectionId) return s.pinnedConnectionIds.has(baseConnectionId)
+        return false
+      },
+      [baseWorktreeId, baseConnectionId]
+    )
+  )
+  const baseLabel = isConnectionProjectTicket ? 'base instance' : 'base worktree'
+
   const handleUnassignWorktree = useCallback(async () => {
     try {
       await useKanbanStore.getState().updateTicket(ticket.id, ticket.project_id, {
@@ -1227,14 +1256,10 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     }
   }, [ticket.id, ticket.project_id])
 
-  const handleTogglePin = useCallback(async () => {
-    if (!ticket.worktree_id) return
-    if (isPinned) {
-      await usePinnedStore.getState().unpinWorktree(ticket.worktree_id)
-    } else {
-      await usePinnedStore.getState().pinWorktree(ticket.worktree_id)
-    }
-  }, [isPinned, ticket.worktree_id])
+  const handleToggleBasePin = useCallback(async () => {
+    const found = await setProjectBasePinned(ticket.project_id, !isBasePinned)
+    if (!found) toast.error(`No ${baseLabel} found for this project`)
+  }, [isBasePinned, ticket.project_id, baseLabel])
 
   const handleEditContext = useCallback(() => {
     if (!ticket.worktree_id) return
@@ -1915,25 +1940,23 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
               )}
 
               {ticket.worktree_id && (
-                <>
-                  <ContextMenuItem
-                    data-testid="ctx-edit-context"
-                    onClick={handleEditContext}
-                    className="gap-2"
-                  >
-                    <FileText className="h-3.5 w-3.5" />
-                    Edit Context
-                  </ContextMenuItem>
-                  <ContextMenuItem
-                    data-testid="ctx-toggle-pin"
-                    onClick={handleTogglePin}
-                    className="gap-2"
-                  >
-                    {isPinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
-                    {isPinned ? 'Unpin worktree' : 'Pin worktree'}
-                  </ContextMenuItem>
-                </>
+                <ContextMenuItem
+                  data-testid="ctx-edit-context"
+                  onClick={handleEditContext}
+                  className="gap-2"
+                >
+                  <FileText className="h-3.5 w-3.5" />
+                  Edit Context
+                </ContextMenuItem>
               )}
+              <ContextMenuItem
+                data-testid="ctx-toggle-base-pin"
+                onClick={handleToggleBasePin}
+                className="gap-2"
+              >
+                {isBasePinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
+                {isBasePinned ? `Unpin ${baseLabel}` : `Pin ${baseLabel}`}
+              </ContextMenuItem>
 
               {!isFlowTicket && !ticket.worktree_id && (
                 <ContextMenuItem disabled className="text-muted-foreground text-xs">
@@ -2023,27 +2046,27 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             </>
           )}
 
-          {/* Worktree actions: edit context & pin/unpin (when worktree assigned) */}
+          {/* Edit context (when worktree assigned) */}
           {ticket.worktree_id && (
-            <>
-              <ContextMenuItem
-                data-testid="ctx-edit-context"
-                onClick={handleEditContext}
-                className="gap-2"
-              >
-                <FileText className="h-3.5 w-3.5" />
-                Edit Context
-              </ContextMenuItem>
-              <ContextMenuItem
-                data-testid="ctx-toggle-pin"
-                onClick={handleTogglePin}
-                className="gap-2"
-              >
-                {isPinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
-                {isPinned ? 'Unpin worktree' : 'Pin worktree'}
-              </ContextMenuItem>
-            </>
+            <ContextMenuItem
+              data-testid="ctx-edit-context"
+              onClick={handleEditContext}
+              className="gap-2"
+            >
+              <FileText className="h-3.5 w-3.5" />
+              Edit Context
+            </ContextMenuItem>
           )}
+
+          {/* Pin/unpin the project's base so its tickets show/hide on the pinned board */}
+          <ContextMenuItem
+            data-testid="ctx-toggle-base-pin"
+            onClick={handleToggleBasePin}
+            className="gap-2"
+          >
+            {isBasePinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
+            {isBasePinned ? `Unpin ${baseLabel}` : `Pin ${baseLabel}`}
+          </ContextMenuItem>
 
           {/* Update status on remote platform */}
           {isExternalTicket && (

@@ -84,10 +84,11 @@ function resolveWorktreeTarget(
   return state.getDefaultWorktree(projectId)
 }
 
-async function pinGitProjectWorktree(
+/** `resolveWorktreeTarget`, reloading the project's worktrees when the target is missing. */
+async function resolveWorktreeTargetWithReload(
   projectId: string,
   worktreeId: string | null | undefined
-): Promise<void> {
+): Promise<{ id: string } | null> {
   let target = resolveWorktreeTarget(projectId, worktreeId)
   if (!target || (worktreeId && target.id !== worktreeId)) {
     // The project's worktrees may not be loaded yet (e.g. auto-launch firing
@@ -96,6 +97,14 @@ async function pinGitProjectWorktree(
     await useWorktreeStore.getState().loadWorktrees(projectId)
     target = resolveWorktreeTarget(projectId, worktreeId)
   }
+  return target
+}
+
+async function pinGitProjectWorktree(
+  projectId: string,
+  worktreeId: string | null | undefined
+): Promise<void> {
+  const target = await resolveWorktreeTargetWithReload(projectId, worktreeId)
   if (!target) return
 
   const pinned = usePinnedStore.getState()
@@ -121,10 +130,11 @@ function resolveConnectionTarget(
   return findBaseInstanceConnection(projectId)
 }
 
-async function pinConnectionProjectInstance(
+/** `resolveConnectionTarget`, reloading connections when the target is missing. */
+async function resolveConnectionTargetWithReload(
   projectId: string,
   connectionId: string | null | undefined
-): Promise<void> {
+): Promise<{ id: string } | null> {
   let target = resolveConnectionTarget(projectId, connectionId)
   if (!target || (connectionId && target.id !== connectionId)) {
     // Connections may not be loaded yet, or the base was only just healed
@@ -132,9 +142,48 @@ async function pinConnectionProjectInstance(
     await useConnectionStore.getState().loadConnections()
     target = resolveConnectionTarget(projectId, connectionId)
   }
+  return target
+}
+
+async function pinConnectionProjectInstance(
+  projectId: string,
+  connectionId: string | null | undefined
+): Promise<void> {
+  const target = await resolveConnectionTargetWithReload(projectId, connectionId)
   if (!target) return
 
   const pinned = usePinnedStore.getState()
   if (pinned.isConnectionPinned(target.id)) return
   await pinned.pinConnection(target.id)
+}
+
+/**
+ * Pin or unpin a project's base — its default (is_default) worktree, or the
+ * base instance of a connection project — so the project's tickets show up on
+ * (or leave) the pinned board. This is the manual twin of 'root-branch'
+ * auto-pin: a ticket's "Pin/Unpin base worktree" action targets the base
+ * regardless of which worktree the ticket itself runs on.
+ *
+ * Loads the project's worktrees / connections when the base is not in the
+ * stores yet. Resolves to false when the project has no base to pin.
+ */
+export async function setProjectBasePinned(projectId: string, pinned: boolean): Promise<boolean> {
+  const project = useProjectStore.getState().projects.find((p) => p.id === projectId)
+  const pinnedStore = usePinnedStore.getState()
+
+  if (project?.kind === 'connection') {
+    const base = await resolveConnectionTargetWithReload(projectId, null)
+    if (!base) return false
+    if (pinnedStore.isConnectionPinned(base.id) !== pinned) {
+      await (pinned ? pinnedStore.pinConnection(base.id) : pinnedStore.unpinConnection(base.id))
+    }
+    return true
+  }
+
+  const base = await resolveWorktreeTargetWithReload(projectId, null)
+  if (!base) return false
+  if (pinnedStore.isWorktreePinned(base.id) !== pinned) {
+    await (pinned ? pinnedStore.pinWorktree(base.id) : pinnedStore.unpinWorktree(base.id))
+  }
+  return true
 }
