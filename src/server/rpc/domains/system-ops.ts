@@ -218,7 +218,7 @@ export const makeLiveSystemOpsRpcService = (): SystemOpsRpcService => ({
       catch: (cause) => cause
     }),
   // Both run in the backend process itself: it is a child of the app bundle,
-  // so macOS attributes its file access (and the probe) to Tedooo Code exactly
+  // so macOS attributes its file access (and the probe) to Hive exactly
   // as it does for the sessions it spawns. No Electron API is involved.
   getMacosPermissions: () =>
     Effect.tryPromise({

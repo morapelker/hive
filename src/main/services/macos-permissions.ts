@@ -11,10 +11,10 @@ import {
 
 /**
  * macOS privacy (TCC) helpers for the folder-access prompts agent sessions
- * trigger: "Tedooo Code wants to access files in your Documents folder".
+ * trigger: "Hive wants to access files in your Documents folder".
  *
  * Every claude / codex / terminal process is a descendant of the app bundle,
- * so macOS attributes its file access to Tedooo Code. Folder grants can persist,
+ * so macOS attributes its file access to Hive. Folder grants can persist,
  * but access to other apps' protected data resets when the app quits.
  * These grants cannot be enabled from code. Full Disk Access, which only the user
  * can flip in System Settings; these helpers report whether it is on and open

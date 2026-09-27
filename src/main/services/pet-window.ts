@@ -78,7 +78,7 @@ const FRENCH_BULLDOG_MANIFEST: PetManifest = {
   id: 'french-bulldog',
   name: 'French Bulldog',
   version: '1.0.0',
-  author: 'Tedooo OS',
+  author: 'Hive',
   assets: {
     idle: 'assets/french-bulldog.png',
     working: 'assets/french-bulldog.png',
@@ -99,7 +99,7 @@ const DACHSHUND_MANIFEST: PetManifest = {
   id: 'dachshund',
   name: 'Dachshund',
   version: '1.0.0',
-  author: 'Tedooo OS',
+  author: 'Hive',
   assets: {
     idle: 'assets/dachshund.png',
     working: 'assets/dachshund.png',

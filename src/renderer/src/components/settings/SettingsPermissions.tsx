@@ -78,7 +78,7 @@ export function SettingsPermissions(): React.JSX.Element {
       <div>
         <h3 className="text-base font-medium mb-1">Permissions</h3>
         <p className="text-sm text-muted-foreground">
-          macOS access for the agent sessions and terminals Tedooo Code runs
+          macOS access for the agent sessions and terminals Hive runs
         </p>
       </div>
 
@@ -123,8 +123,8 @@ export function SettingsPermissions(): React.JSX.Element {
             </div>
 
             <p className="text-xs text-muted-foreground">
-              Claude Code, Codex and the terminal run inside Tedooo Code, so macOS treats every file
-              they touch as Tedooo Code touching it. Access to these locations may prompt:
+              Claude Code, Codex and the terminal run inside Hive, so macOS treats every file
+              they touch as Hive touching it. Access to these locations may prompt:
             </p>
             <ul className="list-disc pl-5 text-xs text-muted-foreground space-y-0.5">
               {PROTECTED_LOCATIONS.map((location) => (
@@ -132,12 +132,12 @@ export function SettingsPermissions(): React.JSX.Element {
               ))}
             </ul>
             <p className="text-xs text-muted-foreground">
-              For &ldquo;data from other apps&rdquo;, Allow lasts only until Tedooo Code quits.
+              For &ldquo;data from other apps&rdquo;, Allow lasts only until Hive quits.
               macOS can ask again after relaunch even if you previously allowed it. Avoiding those
               files avoids that prompt. Full Disk Access covers these file-access categories at
-              once: open System Settings, turn on <strong>Tedooo Code</strong> in the Full Disk
+              once: open System Settings, turn on <strong>Hive</strong> in the Full Disk
               Access list (use <strong>+</strong> and pick it from Applications if it is not
-              listed), then restart Tedooo Code.
+              listed), then restart Hive.
             </p>
 
             <div className="flex flex-wrap gap-2 pt-1">
@@ -186,9 +186,9 @@ export function SettingsPermissions(): React.JSX.Element {
           </div>
 
           <p className="text-xs text-muted-foreground pt-4 border-t">
-            macOS keeps a separate answer for every app. Tedooo OS and Tedooo Code each need their
-            own grant, and a development checkout prompts as &ldquo;Electron&rdquo; or as the
-            terminal it was started from.
+            macOS keeps a separate answer for every app, so the packaged Hive needs its own grant,
+            and a development checkout prompts as &ldquo;Electron&rdquo; or as the terminal it was
+            started from.
           </p>
         </>
       )}
