@@ -1036,6 +1036,81 @@ describe('ProviderUsageBlock provider toggle', () => {
     ])
   })
 
+  it('puts potential auto-switch targets above ineligible accounts, each by 7d reset', async () => {
+    const user = userEvent.setup()
+    const account = (
+      id: string,
+      email: string,
+      last_usage: UsageData,
+      status: SavedAccountDTO['status'] = 'ok'
+    ): SavedAccountDTO => ({
+      id,
+      provider: 'anthropic',
+      email,
+      last_usage,
+      last_fetched_at: null,
+      status,
+      last_error: null,
+      created_at: new Date().toISOString(),
+      plan: null
+    })
+    const at = (hours: number): string =>
+      new Date(Date.now() + hours * 60 * 60 * 1000).toISOString()
+    const usageAt = (utilization: number, sevenDayHours: number): UsageData => ({
+      five_hour: { utilization, resets_at: at(1) },
+      seven_day: { utilization, resets_at: at(sevenDayHours) }
+    })
+
+    useAccountScheduleStore.setState({
+      schedules: {},
+      autoSwitch: {
+        anthropic: { provider: 'anthropic', thresholdPercent: 80, createdAt: Date.now() }
+      }
+    })
+    useUsageStore.setState((state) => ({
+      savedAccounts: {
+        ...state.savedAccounts,
+        anthropic: [
+          // Over threshold but frees up soonest: must still sit below every target.
+          account('over-soon', 'over-soon@example.com', usageAt(90, 12)),
+          account('target-late', 'target-late@example.com', usageAt(10, 96)),
+          account('expired', 'expired@example.com', usageAt(10, 6), 'stale'),
+          account('active', 'claude@example.com', usageAt(95, 160)),
+          account('target-soon', 'target-soon@example.com', usageAt(10, 48)),
+          account('over-late', 'over-late@example.com', usageAt(85, 120))
+        ]
+      }
+    }))
+
+    try {
+      render(
+        <ProviderUsageBlock
+          provider="anthropic"
+          isExplicitlySelected
+          toggleProviders={['anthropic']}
+        />
+      )
+
+      await user.hover(screen.getByTestId('usage-trigger-anthropic'))
+      await screen.findByText('target-soon@example.com')
+
+      const emails = screen
+        .getAllByText(/@example\.com$/)
+        .map((el) => el.textContent)
+        .filter((text) => text !== null && text.endsWith('@example.com'))
+      expect(emails).toEqual([
+        'claude@example.com',
+        'target-soon@example.com',
+        'target-late@example.com',
+        'expired@example.com',
+        'over-soon@example.com',
+        'over-late@example.com'
+      ])
+    } finally {
+      useAccountScheduleStore.setState({ schedules: {}, autoSwitch: {} })
+    }
+  })
+
   it('shows the auto-switch shuffle icon in the bar when armed, instead of the timer', () => {
     useAccountScheduleStore.setState({
       schedules: {},

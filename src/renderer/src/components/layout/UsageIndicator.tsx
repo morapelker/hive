@@ -654,12 +654,24 @@ function ProviderUsagePopoverBody({ provider }: { provider: UsageProvider }): Re
         ]
 
   // With multiple accounts, the active one goes first (and gets a neutral
-  // ring) so it's visible at the popover's natural top scroll position. The
-  // rest are ordered by when they free up: soonest 7d reset first, then
-  // Fable, then 5h as tie-breakers.
+  // ring) so it's visible at the popover's natural top scroll position. Then
+  // come the accounts that could be switched to (no auto-switch ineligibility
+  // reason), and finally the ones that can't be a switch target — expired,
+  // failing, or already at/over the armed threshold. Within each group rows
+  // are ordered by when they free up: soonest 7d reset first, then Fable,
+  // then 5h as tie-breakers.
   const nowMs = Date.now()
+  const ineligibleReasons = new Map(
+    accountRows.map((row) => [
+      row.id,
+      autoSwitchIneligibilityReason(row, autoSwitchThreshold, nowMs)
+    ])
+  )
   const orderedRows = [...accountRows].sort(
-    (a, b) => Number(b.isActive) - Number(a.isActive) || compareByResetTime(a.usage, b.usage, nowMs)
+    (a, b) =>
+      Number(b.isActive) - Number(a.isActive) ||
+      Number(!!ineligibleReasons.get(a.id)) - Number(!!ineligibleReasons.get(b.id)) ||
+      compareByResetTime(a.usage, b.usage, nowMs)
   )
   const highlightActive = accountRows.length > 1
 
@@ -707,11 +719,7 @@ function ProviderUsagePopoverBody({ provider }: { provider: UsageProvider }): Re
             onSignInAgain={() => startLogin(provider, row.email ?? undefined)}
             members={membersFor(row.email)}
             membersLoading={membersLoading}
-            autoSwitchIneligibleReason={autoSwitchIneligibilityReason(
-              row,
-              autoSwitchThreshold,
-              nowMs
-            )}
+            autoSwitchIneligibleReason={ineligibleReasons.get(row.id) ?? null}
           />
         ))
       ) : (
