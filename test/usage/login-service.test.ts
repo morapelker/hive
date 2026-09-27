@@ -69,6 +69,8 @@ async function importFresh(): Promise<typeof import('../../src/main/services/log
   return import('../../src/main/services/login-service')
 }
 
+type AnyHandler = (...args: never[]) => void
+
 /** In-memory fake for BrowserContextLike/PageLike, small enough to exercise every capture path. */
 function createFakeDriver(): {
   launcher: LoginBrowserLauncher
@@ -77,10 +79,17 @@ function createFakeDriver(): {
   launchProfileDirs: string[]
   triggerRoute: (url: string) => Promise<{ fulfill: ReturnType<typeof vi.fn>; continue: ReturnType<typeof vi.fn> }>
   triggerFrameNavigated: (url: string) => void
+  /** Simulates Chrome quitting (Cmd+Q / crash): the whole context goes away. */
   triggerClose: () => void
+  /** Simulates a new window/tab (e.g. an SSO popup) opening in the context. */
+  openPage: () => PageLike
+  /** Simulates the user closing one window/tab; Chrome itself stays alive. */
+  closePage: (page?: PageLike) => void
 } {
   const routeHandlers: Array<(route: RouteLike) => void | Promise<void>> = []
   const closeHandlers: Array<() => void> = []
+  const pageOpenedHandlers: Array<(page: PageLike) => void> = []
+  const pageCloseHandlers = new Map<PageLike, Array<() => void>>()
   const gotoCalls: string[] = []
   const launchProfileDirs: string[] = []
   let closed = false
@@ -89,16 +98,25 @@ function createFakeDriver(): {
 
   const mainFrame: FrameLike = { url: () => currentFrameUrl }
 
-  const page: PageLike = {
-    goto: vi.fn(async (url: string) => {
-      gotoCalls.push(url)
-      currentFrameUrl = url
-    }),
-    on: vi.fn((event: 'framenavigated', handler: (frame: FrameLike) => void) => {
-      if (event === 'framenavigated') frameNavigatedHandler = handler
-    }),
-    mainFrame: () => mainFrame
+  const makePage = (): PageLike => {
+    const handlers: Array<() => void> = []
+    const page: PageLike = {
+      goto: vi.fn(async (url: string) => {
+        gotoCalls.push(url)
+        currentFrameUrl = url
+      }),
+      on: vi.fn((event: string, handler: AnyHandler) => {
+        if (event === 'framenavigated') frameNavigatedHandler = handler as (frame: FrameLike) => void
+        if (event === 'close') handlers.push(handler as () => void)
+      }),
+      mainFrame: () => mainFrame
+    }
+    pageCloseHandlers.set(page, handlers)
+    return page
   }
+
+  const page = makePage()
+  const openPages: PageLike[] = [page]
 
   const close = vi.fn(async () => {
     if (closed) return
@@ -107,13 +125,14 @@ function createFakeDriver(): {
   })
 
   const context: BrowserContextLike = {
-    pages: vi.fn(() => [page]),
+    pages: vi.fn(() => [...openPages]),
     newPage: vi.fn(async () => page),
     route: vi.fn(async (_glob: string, handler: (route: RouteLike) => void | Promise<void>) => {
       routeHandlers.push(handler)
     }),
-    on: vi.fn((event: 'close', handler: () => void) => {
-      if (event === 'close') closeHandlers.push(handler)
+    on: vi.fn((event: string, handler: AnyHandler) => {
+      if (event === 'close') closeHandlers.push(handler as () => void)
+      if (event === 'page') pageOpenedHandlers.push(handler as (page: PageLike) => void)
     }),
     close
   }
@@ -147,6 +166,18 @@ function createFakeDriver(): {
     },
     triggerClose() {
       for (const handler of closeHandlers) handler()
+    },
+    openPage() {
+      const popup = makePage()
+      openPages.push(popup)
+      for (const handler of pageOpenedHandlers) handler(popup)
+      return popup
+    },
+    closePage(target: PageLike = page) {
+      const index = openPages.indexOf(target)
+      if (index !== -1) openPages.splice(index, 1)
+      // Like Playwright: the page is already gone from pages() when 'close' fires.
+      for (const handler of pageCloseHandlers.get(target) ?? []) handler()
     }
   }
 }
@@ -453,7 +484,48 @@ describe('login-service', () => {
     expect(mocks.addClaudeAccount).not.toHaveBeenCalled()
   })
 
-  it('fails when the browser window is closed before login completes', async () => {
+  it('cancels automatically when Chrome is quit before login completes', async () => {
+    const driver = createFakeDriver()
+    const { loginStart, loginStatus, isLoginActive, setLoginBrowserLauncherForTests } = await importFresh()
+    setLoginBrowserLauncherForTests(driver.launcher)
+
+    const { loginId } = await loginStart('anthropic', 'user@example.com')
+    await pumpUntil(() => loginStatus(loginId).state === 'waiting')
+
+    driver.triggerClose()
+
+    expect(loginStatus(loginId).state).toBe('cancelled')
+    expect(loginStatus(loginId).error).toBeNull()
+    expect(isLoginActive()).toBe(false)
+    // Chrome is already gone — nothing to close on our side.
+    expect(driver.close).not.toHaveBeenCalled()
+  })
+
+  it('cancels automatically (and quits Chrome) when the last browser window is closed while waiting', async () => {
+    const driver = createFakeDriver()
+    const { loginStart, loginStatus, isLoginActive, setLoginBrowserLauncherForTests } = await importFresh()
+    setLoginBrowserLauncherForTests(driver.launcher)
+
+    const { loginId } = await loginStart('anthropic', 'user@example.com')
+    await pumpUntil(() => loginStatus(loginId).state === 'waiting')
+
+    // On macOS closing the last window leaves Chrome (and the context) alive,
+    // so no context 'close' fires — only the page's.
+    driver.closePage()
+    expect(loginStatus(loginId).state).toBe('waiting')
+
+    await vi.advanceTimersByTimeAsync(500)
+
+    expect(loginStatus(loginId).state).toBe('cancelled')
+    expect(loginStatus(loginId).error).toBeNull()
+    expect(isLoginActive()).toBe(false)
+    // The windowless Chrome process is torn down, exactly like a manual cancel.
+    expect(driver.close).toHaveBeenCalledTimes(1)
+    // A 'close' fired by our own teardown must not flip the terminal state.
+    expect(loginStatus(loginId).state).toBe('cancelled')
+  })
+
+  it('does not cancel when a popup closes while the main window is still open', async () => {
     const driver = createFakeDriver()
     const { loginStart, loginStatus, setLoginBrowserLauncherForTests } = await importFresh()
     setLoginBrowserLauncherForTests(driver.launcher)
@@ -461,10 +533,70 @@ describe('login-service', () => {
     const { loginId } = await loginStart('anthropic', 'user@example.com')
     await pumpUntil(() => loginStatus(loginId).state === 'waiting')
 
-    driver.triggerClose()
-    await pumpUntil(() => loginStatus(loginId).state === 'failed')
+    const popup = driver.openPage()
+    driver.closePage(popup)
+    await vi.advanceTimersByTimeAsync(2000)
 
-    expect(loginStatus(loginId).error).toBe('Browser closed before login completed')
+    expect(loginStatus(loginId).state).toBe('waiting')
+    expect(driver.close).not.toHaveBeenCalled()
+  })
+
+  it('does not cancel when the last window closes but another opens within the grace period', async () => {
+    const driver = createFakeDriver()
+    const { loginStart, loginStatus, setLoginBrowserLauncherForTests } = await importFresh()
+    setLoginBrowserLauncherForTests(driver.launcher)
+
+    const { loginId } = await loginStart('anthropic', 'user@example.com')
+    await pumpUntil(() => loginStatus(loginId).state === 'waiting')
+
+    driver.closePage()
+    await vi.advanceTimersByTimeAsync(200)
+    const replacement = driver.openPage()
+    await vi.advanceTimersByTimeAsync(2000)
+
+    expect(loginStatus(loginId).state).toBe('waiting')
+    expect(driver.close).not.toHaveBeenCalled()
+
+    // ...but closing the replacement too does cancel: the popup is watched as well.
+    driver.closePage(replacement)
+    await vi.advanceTimersByTimeAsync(500)
+    expect(loginStatus(loginId).state).toBe('cancelled')
+    expect(driver.close).toHaveBeenCalledTimes(1)
+  })
+
+  it('lets the exchange finish when the window is closed after the redirect was captured', async () => {
+    const driver = createFakeDriver()
+    const { loginStart, loginStatus, setLoginBrowserLauncherForTests } = await importFresh()
+    setLoginBrowserLauncherForTests(driver.launcher)
+
+    const exchange = createDeferred<Awaited<ReturnType<typeof mocks.exchangeAnthropicCode>>>()
+    mocks.exchangeAnthropicCode.mockReturnValue(exchange.promise)
+
+    const { loginId } = await loginStart('anthropic', 'user@example.com')
+    await pumpUntil(() => loginStatus(loginId).state === 'waiting')
+    const state = new URL(driver.gotoCalls[0]).searchParams.get('state')
+
+    await driver.triggerRoute(
+      `https://console.anthropic.com/oauth/code/callback?code=abc123&state=${state}`
+    )
+    expect(loginStatus(loginId).state).toBe('exchanging')
+
+    // The Signed-in page says "you can close this window" — doing so (or even
+    // quitting Chrome) must not cancel a login whose code is already captured.
+    driver.closePage()
+    await vi.advanceTimersByTimeAsync(2000)
+    driver.triggerClose()
+    expect(loginStatus(loginId).state).toBe('exchanging')
+
+    exchange.resolve({
+      accessToken: 'anthropic-access-token',
+      refreshToken: 'anthropic-refresh-token',
+      expiresAt: 1_700_000_000_000,
+      scope: 'user:profile',
+      account: { uuid: 'uuid-1', emailAddress: 'user@example.com' }
+    })
+    await pumpUntil(() => loginStatus(loginId).state === 'done')
+    expect(loginStatus(loginId).email).toBe('user@example.com')
   })
 
   it('cancels a non-terminal login; the resulting close does not overwrite the cancelled state', async () => {

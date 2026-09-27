@@ -17,6 +17,12 @@
  *                        \-> failed
  *   (any non-terminal state) -> cancelled
  *
+ * Closing Chrome counts as a cancel: quitting the browser (context 'close')
+ * or closing its last window while we're still waiting for the redirect both
+ * move the session to `cancelled` without the user pressing Cancel. The
+ * window case matters on macOS, where closing the last window leaves the
+ * Chrome process (and therefore the Playwright context) alive.
+ *
  * Terminal sessions (`done`/`failed`/`cancelled`) are retained until the next
  * `loginStart` (which replaces `currentSession`) or 5 minutes, whichever comes
  * first, so a renderer's final status poll always lands.
@@ -41,6 +47,8 @@ const log = createLogger({ component: 'LoginService' })
 const GC_DELAY_MS = 5 * 60 * 1000
 const LOGIN_TIMEOUT_MS = 30 * 60 * 1000
 const CLOSE_DELAY_MS = 1500
+/** How long the last window may stay closed before we treat it as a cancel (absorbs close-then-reopen window swaps). */
+const PAGE_CLOSE_GRACE_MS = 500
 
 // ─── Minimal browser-driver surface ──────────────────────────────────────
 //
@@ -72,9 +80,14 @@ export interface ElementHandleLike {
   isEnabled: () => Promise<boolean>
 }
 
+export interface PageEventHandlers {
+  framenavigated: (frame: FrameLike) => void
+  close: () => void
+}
+
 export interface PageLike {
   goto: (url: string) => Promise<unknown>
-  on: (event: 'framenavigated', handler: (frame: FrameLike) => void) => void
+  on: <E extends keyof PageEventHandlers>(event: E, handler: PageEventHandlers[E]) => void
   mainFrame: () => FrameLike
   waitForSelector: (
     selector: string,
@@ -83,11 +96,19 @@ export interface PageLike {
   $$: (selector: string) => Promise<ElementHandleLike[]>
 }
 
+export interface BrowserContextEventHandlers {
+  close: () => void
+  page: (page: PageLike) => void
+}
+
 export interface BrowserContextLike {
   pages: () => PageLike[]
   newPage: () => Promise<PageLike>
   route: (glob: string, handler: (route: RouteLike) => void | Promise<void>) => Promise<void>
-  on: (event: 'close', handler: () => void) => void
+  on: <E extends keyof BrowserContextEventHandlers>(
+    event: E,
+    handler: BrowserContextEventHandlers[E]
+  ) => void
   close: () => Promise<void>
 }
 
@@ -172,6 +193,8 @@ interface LoginSession {
   resolved: boolean
   timeoutTimer: NodeJS.Timeout | null
   closeTimer: NodeJS.Timeout | null
+  /** Grace timer armed when the last browser window closes; fires the auto-cancel. */
+  pageCloseTimer: NodeJS.Timeout | null
   gcTimer: NodeJS.Timeout | null
 }
 
@@ -189,6 +212,10 @@ function clearActiveTimers(session: LoginSession): void {
   if (session.closeTimer) {
     clearTimeout(session.closeTimer)
     session.closeTimer = null
+  }
+  if (session.pageCloseTimer) {
+    clearTimeout(session.pageCloseTimer)
+    session.pageCloseTimer = null
   }
 }
 
@@ -208,6 +235,14 @@ function failSession(session: LoginSession, message: string): void {
   clearActiveTimers(session)
   scheduleGc(session)
   log.warn('Login failed', { loginId: session.loginId, provider: session.provider, error: message })
+}
+
+/** Moves a non-terminal session to `cancelled` and tears down its browser. Callers check the state first. */
+async function cancelSession(session: LoginSession): Promise<void> {
+  session.state = 'cancelled'
+  clearActiveTimers(session)
+  await safeClose(session.context)
+  scheduleGc(session)
 }
 
 async function safeClose(context: BrowserContextLike | null): Promise<void> {
@@ -253,10 +288,7 @@ export async function loginCancel(loginId: string): Promise<boolean> {
   if (!session || session.loginId !== loginId) return false
   if (isTerminal(session.state)) return false
 
-  session.state = 'cancelled'
-  clearActiveTimers(session)
-  await safeClose(session.context)
-  scheduleGc(session)
+  await cancelSession(session)
   return true
 }
 
@@ -282,6 +314,7 @@ export async function loginStart(
     resolved: false,
     timeoutTimer: null,
     closeTimer: null,
+    pageCloseTimer: null,
     gcTimer: null
   }
   currentSession = session
@@ -338,11 +371,31 @@ async function runLoginFlow(session: LoginSession, emailHint?: string): Promise<
   session.context = context
   session.state = 'waiting'
 
+  // The user quit Chrome (or it died) while we were still waiting for the
+  // redirect: treat it as a cancel. Once `resolved`, the code is captured and
+  // the browser is no longer needed — the exchange decides the final state.
   context.on('close', () => {
-    if (!isTerminal(session.state)) {
-      failSession(session, 'Browser closed before login completed')
-    }
+    if (session.resolved || isTerminal(session.state)) return
+    log.info('Login browser quit before login completed — cancelling', {
+      loginId: session.loginId,
+      provider: session.provider
+    })
+    session.state = 'cancelled'
+    clearActiveTimers(session)
+    scheduleGc(session)
   })
+
+  // On macOS closing the last Chrome window does NOT quit Chrome, so the
+  // context 'close' above never fires in that case. Watch every page (initial
+  // tabs, popups, anything opened later) and cancel once none are left.
+  const watched = new WeakSet<PageLike>()
+  const watchPage = (page: PageLike): void => {
+    if (watched.has(page)) return
+    watched.add(page)
+    page.on('close', () => handlePageClosed(session, context, page))
+  }
+  context.on('page', watchPage)
+  for (const existing of context.pages()) watchPage(existing)
 
   // The overall timeout timer was already armed in loginStart (it covers the
   // 'launching' state too), so there's nothing to (re)start here.
@@ -357,6 +410,7 @@ async function runLoginFlow(session: LoginSession, emailHint?: string): Promise<
     failSession(session, error instanceof Error ? error.message : String(error))
     return
   }
+  watchPage(page)
 
   page.on('framenavigated', (frame) => {
     if (frame === page.mainFrame()) {
@@ -377,6 +431,34 @@ async function runLoginFlow(session: LoginSession, emailHint?: string): Promise<
   if (emailHint) {
     void autofillEmail(session, page, emailHint)
   }
+}
+
+/**
+ * A browser window/tab closed. If it was the last one and we're still waiting
+ * for the redirect, cancel the login after a short grace period (so a page
+ * that closes itself and immediately reopens another window isn't mistaken
+ * for the user walking away). Also quits the now-windowless Chrome.
+ */
+function handlePageClosed(session: LoginSession, context: BrowserContextLike, closedPage: PageLike): void {
+  if (session.resolved || isTerminal(session.state)) return
+  // Playwright drops the page from `pages()` before emitting 'close', but
+  // filter defensively in case a driver emits first.
+  const remaining = context.pages().filter((page) => page !== closedPage)
+  if (remaining.length > 0) return
+
+  if (session.pageCloseTimer) clearTimeout(session.pageCloseTimer)
+  const timer = setTimeout(() => {
+    session.pageCloseTimer = null
+    if (session.resolved || isTerminal(session.state)) return
+    if (context.pages().length > 0) return
+    log.info('All login browser windows closed — cancelling login', {
+      loginId: session.loginId,
+      provider: session.provider
+    })
+    void cancelSession(session)
+  }, PAGE_CLOSE_GRACE_MS)
+  timer.unref()
+  session.pageCloseTimer = timer
 }
 
 // ─── Email autofill (port of login.mjs submitEmail/clickByText) ───────────
