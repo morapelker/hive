@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 48
+export const CURRENT_SCHEMA_VERSION = 49
 
 /**
  * Voice dictation history (v48): every transcript the local speech model produced, newest
@@ -782,5 +782,22 @@ DROP TABLE IF EXISTS diff_comments;`
     // ensureVoiceHistoryTable() in database.ts.
     up: VOICE_HISTORY_TABLES_SQL,
     down: VOICE_HISTORY_TABLES_DROP_SQL
+  },
+  {
+    version: 49,
+    name: 'add_session_native_id_indexes',
+    // Lookups by the provider's own session id (getSessionByOpenCodeSessionId /
+    // getSessionByClaudeSessionId) ran as full table scans; the usage sweep does
+    // thousands of them per pass on the main thread.
+    up: `
+      CREATE INDEX IF NOT EXISTS idx_sessions_opencode_session_id
+        ON sessions(opencode_session_id);
+      CREATE INDEX IF NOT EXISTS idx_sessions_claude_session_id
+        ON sessions(claude_session_id);
+    `,
+    down: `
+      DROP INDEX IF EXISTS idx_sessions_opencode_session_id;
+      DROP INDEX IF EXISTS idx_sessions_claude_session_id;
+    `
   }
 ]
