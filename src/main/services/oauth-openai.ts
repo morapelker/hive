@@ -16,11 +16,14 @@ const OPENAI_ORIGINATOR = 'codex_cli_rs'
 const REQUEST_TIMEOUT_MS = 10_000
 const BODY_SNIPPET_LENGTH = 500
 
-export function buildOpenAIAuthorizeUrl(pkce: Pkce): string {
+export function buildOpenAIAuthorizeUrl(
+  pkce: Pkce,
+  redirectUri: string = OPENAI_REDIRECT_URI
+): string {
   const url = new URL(OPENAI_AUTHORIZE_URL)
   url.searchParams.set('response_type', 'code')
   url.searchParams.set('client_id', OPENAI_CLIENT_ID)
-  url.searchParams.set('redirect_uri', OPENAI_REDIRECT_URI)
+  url.searchParams.set('redirect_uri', redirectUri)
   url.searchParams.set('scope', OPENAI_SCOPE)
   url.searchParams.set('code_challenge', pkce.challenge)
   url.searchParams.set('code_challenge_method', 'S256')
@@ -123,15 +126,19 @@ export async function refreshOpenAIToken(refreshToken: string): Promise<OpenAIRe
   }
 }
 
-/** Exchange an authorization code (from the interactive login flow) for tokens. */
+/**
+ * Exchange an authorization code (from the interactive login flow) for tokens.
+ * `redirectUri` must be the exact value the authorize URL was built with.
+ */
 export async function exchangeOpenAICode(
   code: string,
-  pkce: Pkce
+  pkce: Pkce,
+  redirectUri: string = OPENAI_REDIRECT_URI
 ): Promise<{ idToken: string; accessToken: string; refreshToken: string }> {
   const form = new URLSearchParams()
   form.set('grant_type', 'authorization_code')
   form.set('code', code)
-  form.set('redirect_uri', OPENAI_REDIRECT_URI)
+  form.set('redirect_uri', redirectUri)
   form.set('client_id', OPENAI_CLIENT_ID)
   form.set('code_verifier', pkce.verifier)
 

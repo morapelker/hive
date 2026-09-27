@@ -40,6 +40,11 @@ describe('buildAnthropicAuthorizeUrl', () => {
       state: 'test-state'
     })
   })
+
+  it('uses the caller-supplied loopback redirect URI when given', () => {
+    const url = new URL(buildAnthropicAuthorizeUrl(pkce(), 'http://localhost:54545/callback'))
+    expect(url.searchParams.get('redirect_uri')).toBe('http://localhost:54545/callback')
+  })
 })
 
 describe('refreshAnthropicToken', () => {
@@ -182,5 +187,20 @@ describe('exchangeAnthropicCode', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(textResponse('nope', { status: 403 })))
 
     await expect(exchangeAnthropicCode('code', 'state', pkce())).rejects.toThrow(/403/)
+  })
+
+  it('echoes a caller-supplied redirect URI in the exchange body', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse(
+        { access_token: 'access-1', refresh_token: 'refresh-1', expires_in: 3600 },
+        { status: 200 }
+      )
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await exchangeAnthropicCode('the-code', 'the-state', pkce(), 'http://localhost:54545/callback')
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string)
+    expect(body.redirect_uri).toBe('http://localhost:54545/callback')
   })
 })

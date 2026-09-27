@@ -51,6 +51,11 @@ describe('buildOpenAIAuthorizeUrl', () => {
       originator: 'codex_cli_rs'
     })
   })
+
+  it('uses the caller-supplied redirect URI when given', () => {
+    const url = new URL(buildOpenAIAuthorizeUrl(pkce(), 'http://localhost:1455/auth/callback'))
+    expect(url.searchParams.get('redirect_uri')).toBe('http://localhost:1455/auth/callback')
+  })
 })
 
 describe('refreshOpenAIToken', () => {
@@ -195,6 +200,25 @@ describe('exchangeOpenAICode', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(textResponse('nope', { status: 400 })))
 
     await expect(exchangeOpenAICode('code', pkce())).rejects.toThrow(/400/)
+  })
+
+  it('echoes a caller-supplied redirect URI in the exchange body', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        jsonResponse(
+          { id_token: 'id-1', access_token: 'access-1', refresh_token: 'refresh-1' },
+          { status: 200 }
+        )
+      )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await exchangeOpenAICode('the-code', pkce(), 'http://localhost:1455/auth/callback')
+
+    const [, init] = fetchMock.mock.calls[0]
+    expect(new URLSearchParams(init.body as string).get('redirect_uri')).toBe(
+      'http://localhost:1455/auth/callback'
+    )
   })
 
   it('parses a realistic-size token response (JWTs well over 1 KiB)', async () => {

@@ -9,18 +9,27 @@ import type { Pkce } from './oauth-pkce'
 export const ANTHROPIC_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e'
 export const ANTHROPIC_TOKEN_URL = 'https://console.anthropic.com/v1/oauth/token'
 export const ANTHROPIC_AUTHORIZE_URL = 'https://claude.ai/oauth/authorize'
+/**
+ * Anthropic's hosted "copy this code" callback page. The interactive login
+ * flow (login-service.ts) passes its own loopback `http://localhost:<port>/callback`
+ * redirect instead — the same shape Claude Code uses — so this only serves as
+ * the default for callers that don't supply one.
+ */
 export const ANTHROPIC_REDIRECT_URI = 'https://console.anthropic.com/oauth/code/callback'
 export const ANTHROPIC_SCOPE = 'org:create_api_key user:profile user:inference'
 
 const REQUEST_TIMEOUT_MS = 10_000
 const BODY_SNIPPET_LENGTH = 500
 
-export function buildAnthropicAuthorizeUrl(pkce: Pkce): string {
+export function buildAnthropicAuthorizeUrl(
+  pkce: Pkce,
+  redirectUri: string = ANTHROPIC_REDIRECT_URI
+): string {
   const url = new URL(ANTHROPIC_AUTHORIZE_URL)
   url.searchParams.set('code', 'true')
   url.searchParams.set('client_id', ANTHROPIC_CLIENT_ID)
   url.searchParams.set('response_type', 'code')
-  url.searchParams.set('redirect_uri', ANTHROPIC_REDIRECT_URI)
+  url.searchParams.set('redirect_uri', redirectUri)
   url.searchParams.set('scope', ANTHROPIC_SCOPE)
   url.searchParams.set('code_challenge', pkce.challenge)
   url.searchParams.set('code_challenge_method', 'S256')
@@ -140,17 +149,21 @@ export interface AnthropicTokenExchange {
   account?: { uuid?: string; emailAddress?: string }
 }
 
-/** Exchange an authorization code (from the interactive login flow) for tokens. */
+/**
+ * Exchange an authorization code (from the interactive login flow) for tokens.
+ * `redirectUri` must be the exact value the authorize URL was built with.
+ */
 export async function exchangeAnthropicCode(
   code: string,
   state: string,
-  pkce: Pkce
+  pkce: Pkce,
+  redirectUri: string = ANTHROPIC_REDIRECT_URI
 ): Promise<AnthropicTokenExchange> {
   const response = await postJson({
     grant_type: 'authorization_code',
     code,
     state,
-    redirect_uri: ANTHROPIC_REDIRECT_URI,
+    redirect_uri: redirectUri,
     client_id: ANTHROPIC_CLIENT_ID,
     code_verifier: pkce.verifier
   })
