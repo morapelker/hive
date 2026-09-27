@@ -20281,10 +20281,8 @@ describe('renderer API cleanup', () => {
       'utf-8'
     )
     const worktreeBranchStart = source.indexOf('// Close modal immediately')
-    const cliStart = source.indexOf(
-      "if (sessionAgentSdk === 'claude-code-cli') {",
-      worktreeBranchStart
-    )
+    // Claude CLI and Codex CLI share the terminal-backed path
+    const cliStart = source.indexOf('if (isAgentCli(sessionAgentSdk)) {', worktreeBranchStart)
     const openCodeStart = source.indexOf(
       '// ── Start the OpenCode session in the background',
       cliStart
