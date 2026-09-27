@@ -9,12 +9,14 @@ import type {
 } from '@shared/types/usage'
 import { toast } from '@/lib/toast'
 import {
+  autoSwitchUsage,
   getMaxUsagePercent,
   isProvablyAtOrAbove,
   scoreAccountHeadroom
 } from '@/lib/auto-switch-score'
 import { useUsageStore, normalizeUsage } from './useUsageStore'
 import { useAccountStore } from './useAccountStore'
+import { useSettingsStore } from './useSettingsStore'
 
 export type ScheduleMode = 'time' | 'usage'
 
@@ -97,18 +99,27 @@ function anthropicRejectedOverlay(): number | null {
   return rejected ? 100 : null
 }
 
+/** Settings › "Ignore Fable usage for auto-switch". */
+function ignoreFableForAutoSwitch(): boolean {
+  return useSettingsStore.getState().ignoreFableForAutoSwitch
+}
+
 /**
  * Highest current utilization across ALL of the active account's usage bars
  * for the provider — 5h, 7d, and any scoped windows (Fable, etc.) — the
  * number a 'usage' schedule is compared against. A live rejected rate-limit
  * event counts as 100 (anthropic only). Returns null when no fresh usage
- * data is available.
+ * data is available. `ignoreFable` drops the Fable window (auto-switch only).
  */
-export function getActiveUsagePercent(provider: UsageProvider): number | null {
+export function getActiveUsagePercent(
+  provider: UsageProvider,
+  { ignoreFable = false }: { ignoreFable?: boolean } = {}
+): number | null {
   const overlay = provider === 'anthropic' ? anthropicRejectedOverlay() : null
   const state = useUsageStore.getState()
-  const usage = normalizeUsage(provider, state.anthropicUsage, state.openaiUsage)
-  if (!usage) return overlay
+  const normalized = normalizeUsage(provider, state.anthropicUsage, state.openaiUsage)
+  if (!normalized) return overlay
+  const usage = autoSwitchUsage(normalized, ignoreFable)
   const windows = [
     usage.five_hour,
     usage.seven_day,
@@ -117,6 +128,14 @@ export function getActiveUsagePercent(provider: UsageProvider): number | null {
   if (windows.length === 0) return overlay
   const max = Math.max(...windows.map((w) => w.utilization))
   return overlay === null ? max : Math.max(max, overlay)
+}
+
+/**
+ * The active account's utilization as auto-switch sees it: like
+ * getActiveUsagePercent, minus the Fable window when the user opted out of it.
+ */
+export function getAutoSwitchUsagePercent(provider: UsageProvider): number | null {
+  return getActiveUsagePercent(provider, { ignoreFable: ignoreFableForAutoSwitch() })
 }
 
 function activeEmailFor(provider: UsageProvider): string | null {
@@ -148,12 +167,13 @@ export function computeSweepExclusions(
   const usageState = useUsageStore.getState()
   if (!usageState.savedAccountsLoaded[provider]) return undefined
   const nowMs = Date.now()
+  const ignoreFable = ignoreFableForAutoSwitch()
   return usageState.savedAccounts[provider]
     .filter((account) => {
       if (activeEmail !== null && account.email === activeEmail) return true
       const usage = savedAccountUsage(provider, account)
       if (!usage) return false
-      return isProvablyAtOrAbove(usage, thresholdPercent, nowMs)
+      return isProvablyAtOrAbove(autoSwitchUsage(usage, ignoreFable), thresholdPercent, nowMs)
     })
     .map((account) => account.id)
 }
@@ -265,7 +285,7 @@ export const useAccountScheduleStore = create<AccountScheduleState>()(
           const auto = get().autoSwitch[provider]
           if (auto) {
             if (auto.notBefore !== undefined && Date.now() < auto.notBefore) continue
-            const percent = getActiveUsagePercent(provider)
+            const percent = getAutoSwitchUsagePercent(provider)
             if (percent === null || percent < auto.thresholdPercent) continue
 
             const backOff = (): void => {
@@ -349,6 +369,7 @@ export const useAccountScheduleStore = create<AccountScheduleState>()(
                 results.filter((r) => r.success).map((r) => r.accountId)
               )
               const now = Date.now()
+              const ignoreFable = ignoreFableForAutoSwitch()
               // Eligible: the refresh succeeded, the token is valid, it's not
               // the account we're leaving, its windows carry CURRENT data
               // (all-expired resets right after a refresh means its live usage
@@ -360,7 +381,10 @@ export const useAccountScheduleStore = create<AccountScheduleState>()(
                   (a) => succeededIds.has(a.id) && a.status === 'ok' && a.email !== activeEmail
                 )
                 .map((a) => ({ account: a, usage: savedAccountUsage(provider, a) }))
-                .filter((c): c is { account: SavedAccountDTO; usage: UsageData } => c.usage !== null)
+                .filter(
+                  (c): c is { account: SavedAccountDTO; usage: UsageData } => c.usage !== null
+                )
+                .map((c) => ({ ...c, usage: autoSwitchUsage(c.usage, ignoreFable) }))
                 .filter((c) => {
                   const maxPercent = getMaxUsagePercent(c.usage, now)
                   return maxPercent !== null && maxPercent < latest.thresholdPercent

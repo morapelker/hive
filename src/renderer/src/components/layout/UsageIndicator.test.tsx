@@ -7,6 +7,7 @@ import { ProviderUsageBlock, UsageAccountRow } from './UsageIndicator'
 import { autoSwitchIneligibilityReason } from '@/lib/auto-switch-score'
 import { useAccountStore, useUsageStore } from '@/stores'
 import { useAccountScheduleStore } from '@/stores/useAccountScheduleStore'
+import { useSettingsStore } from '@/stores/useSettingsStore'
 import type { AccountMemberInfo } from './MemberAvatarStack'
 import type { OpenAIUsageData, SavedAccountDTO, UsageData } from '@shared/types/usage'
 import { nextUsageRefreshAt } from '@/hooks/useAccountScheduleRunner'
@@ -827,6 +828,35 @@ describe('ProviderUsageBlock provider toggle', () => {
     const trigger = screen.getByTestId('usage-trigger-anthropic')
     expect(within(trigger).getByText('Fable')).toBeTruthy()
     expect(within(trigger).getByText('42%')).toBeTruthy()
+  })
+
+  it('hides the Fable bar in the trigger but keeps it in the popover when Fable is ignored', async () => {
+    const user = userEvent.setup()
+    useSettingsStore.setState({ ignoreFableForAutoSwitch: true })
+    useUsageStore.setState({
+      anthropicUsage: {
+        ...sampleUsage,
+        scoped: [{ label: 'Fable', used_percent: 42, resets_at: inOneDay() }]
+      }
+    })
+    try {
+      render(
+        <ProviderUsageBlock
+          provider="anthropic"
+          isExplicitlySelected
+          toggleProviders={['anthropic']}
+        />
+      )
+
+      const trigger = screen.getByTestId('usage-trigger-anthropic')
+      expect(within(trigger).queryByText('Fable')).toBeNull()
+
+      await user.hover(trigger)
+      const popover = await screen.findByTestId('usage-popover-scroll')
+      expect(within(popover).getByText('Fable')).toBeTruthy()
+    } finally {
+      useSettingsStore.setState({ ignoreFableForAutoSwitch: false })
+    }
   })
 
   it('hides the Fable bar in the trigger when the Fable window is at 0%', () => {

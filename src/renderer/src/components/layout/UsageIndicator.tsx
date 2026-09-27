@@ -19,7 +19,7 @@ import { MemberAvatarStack, type AccountMemberInfo } from './MemberAvatarStack'
 import { cn } from '@/lib/utils'
 import { Loader2, RefreshCw, Shuffle, Timer } from 'lucide-react'
 import { useAccountScheduleStore } from '@/stores/useAccountScheduleStore'
-import { autoSwitchIneligibilityReason } from '@/lib/auto-switch-score'
+import { autoSwitchIneligibilityReason, isFableWindow } from '@/lib/auto-switch-score'
 import { compareByResetTime } from '@/lib/usage-reset-order'
 import {
   AutoSwitchControls,
@@ -131,7 +131,7 @@ const FABLE_LABEL = 'Fable'
 
 /** The per-model Fable window from the usage payload's scoped limits, if any. */
 function findFableWindow(usage: UsageData | null | undefined): ScopedUsageWindow | undefined {
-  return usage?.scoped?.find((entry) => entry.label.toLowerCase() === FABLE_LABEL.toLowerCase())
+  return usage?.scoped?.find(isFableWindow)
 }
 
 function getRateLimitWindow(
@@ -626,6 +626,7 @@ function ProviderUsagePopoverBody({ provider }: { provider: UsageProvider }): Re
     (s) => s.autoSwitch[provider]?.thresholdPercent
   )
   const autoSwitchArmed = autoSwitchThreshold !== undefined
+  const ignoreFable = useSettingsStore((s) => s.ignoreFableForAutoSwitch)
   const telemetryEnabled = useSettingsStore((s) => isHiveTelemetryEnabled(s))
   const {
     membersByAccount,
@@ -677,7 +678,7 @@ function ProviderUsagePopoverBody({ provider }: { provider: UsageProvider }): Re
   const ineligibleReasons = new Map(
     accountRows.map((row) => [
       row.id,
-      autoSwitchIneligibilityReason(row, autoSwitchThreshold, nowMs)
+      autoSwitchIneligibilityReason(row, autoSwitchThreshold, nowMs, ignoreFable)
     ])
   )
   // Freeze IDs, not row data, so refreshes and account switches update the
@@ -829,6 +830,7 @@ export function ProviderUsageBlock({
   const autoSwitchThreshold = useAccountScheduleStore(
     (s) => s.autoSwitch[provider]?.thresholdPercent
   )
+  const ignoreFable = useSettingsStore((s) => s.ignoreFableForAutoSwitch)
 
   // Which provider the popover shows. The bottom toggle can point it at a
   // different provider than the hovered trigger; each open snaps it back.
@@ -881,8 +883,9 @@ export function ProviderUsageBlock({
       ? getRateLimitWindow(anthropicRateLimit, 'seven_day')
       : undefined
   // Third bar for the Fable model window, only once it has actually been
-  // used — an idle 0% Fable row would just be noise below the 7d bar.
-  const fableWindow = provider === 'anthropic' ? findFableWindow(usage) : undefined
+  // used — an idle 0% Fable row would just be noise below the 7d bar. Hidden
+  // when the user ignores Fable for auto-switch (the popover still lists it).
+  const fableWindow = provider === 'anthropic' && !ignoreFable ? findFableWindow(usage) : undefined
   const fable = fableWindow
     ? usageWindowDisplay(
         { utilization: fableWindow.used_percent, resets_at: fableWindow.resets_at },

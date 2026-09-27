@@ -11,6 +11,7 @@ import {
 import {
   useAccountScheduleStore,
   getActiveUsagePercent,
+  getAutoSwitchUsagePercent,
   computeSweepExclusions
 } from '@/stores/useAccountScheduleStore'
 import {
@@ -64,10 +65,17 @@ function armedUsageThresholdPercent(provider: UsageProvider): number | null {
   return null
 }
 
+/** The utilization the armed switch compares against its threshold (auto-switch may ignore Fable). */
+function armedUsagePercent(provider: UsageProvider): number | null {
+  return useAccountScheduleStore.getState().autoSwitch[provider]
+    ? getAutoSwitchUsagePercent(provider)
+    : getActiveUsagePercent(provider)
+}
+
 function usageRefreshIntervalMs(provider: UsageProvider): number {
   const threshold = armedUsageThresholdPercent(provider)
   if (threshold === null) return SESSION_USAGE_REFRESH_MS
-  const percent = getActiveUsagePercent(provider)
+  const percent = armedUsagePercent(provider)
   if (percent === null || percent < threshold - NEAR_THRESHOLD_MARGIN_PERCENT) {
     return SESSION_USAGE_REFRESH_MS
   }
@@ -185,7 +193,7 @@ async function maintainBurnRatePredictor(): Promise<void> {
   }
 
   if (!providersWithRunningSessions().has('anthropic')) return
-  const percent = getActiveUsagePercent('anthropic')
+  const percent = armedUsagePercent('anthropic')
   if (percent === null || percent < threshold - PREDICTOR_BAND_PERCENT) return
   if (tallyInFlight) return
 
@@ -229,7 +237,7 @@ async function maintainBurnRatePredictor(): Promise<void> {
     // the disk scan replaced the usage object, and anchoring the new object
     // at the pre-await percent would bake a stale baseline in for good
     // (lastAnchoredUsage advances, so the correct percent never anchors).
-    const anchorPercent = getActiveUsagePercent('anthropic')
+    const anchorPercent = armedUsagePercent('anthropic')
     if (anchorPercent !== null) {
       recordAnchor(
         predictor,
@@ -279,7 +287,7 @@ function prewarmAutoSwitchCandidates(): void {
   for (const provider of running) {
     const auto = useAccountScheduleStore.getState().autoSwitch[provider]
     if (!auto) continue
-    const percent = getActiveUsagePercent(provider)
+    const percent = getAutoSwitchUsagePercent(provider)
     if (percent === null || percent < auto.thresholdPercent - NEAR_THRESHOLD_MARGIN_PERCENT) {
       continue
     }

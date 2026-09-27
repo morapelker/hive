@@ -39,6 +39,7 @@ export function SettingsGeneral(): React.JSX.Element {
     showModelProvider,
     usageIndicatorMode,
     usageIndicatorProviders,
+    ignoreFableForAutoSwitch,
     defaultAgentSdk,
     availableAgentSdks,
     stripAtMentions,
@@ -591,6 +592,34 @@ export function SettingsGeneral(): React.JSX.Element {
             Settings → Accounts
           </button>
         </p>
+      </div>
+
+      {/* Ignore Fable usage for auto-switch */}
+      <div className="flex items-center justify-between">
+        <div>
+          <label className="text-sm font-medium">Ignore Fable usage for auto-switch</label>
+          <p className="text-xs text-muted-foreground">
+            Auto-switch disregards the Fable window when deciding when and where to switch, and the
+            Fable bar is hidden from the sidebar (it still shows in the usage popover)
+          </p>
+        </div>
+        <button
+          role="switch"
+          aria-checked={ignoreFableForAutoSwitch}
+          onClick={() => updateSetting('ignoreFableForAutoSwitch', !ignoreFableForAutoSwitch)}
+          className={cn(
+            'relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors',
+            ignoreFableForAutoSwitch ? 'bg-primary' : 'bg-muted'
+          )}
+          data-testid="ignore-fable-for-auto-switch-toggle"
+        >
+          <span
+            className={cn(
+              'pointer-events-none block h-4 w-4 rounded-full bg-background ring-0 transition-transform',
+              ignoreFableForAutoSwitch ? 'translate-x-4' : 'translate-x-0'
+            )}
+          />
+        </button>
       </div>
 
       {/* Default Agent SDK */}

@@ -1,4 +1,4 @@
-import type { SavedUsageStatus, UsageData } from '@shared/types/usage'
+import type { SavedUsageStatus, ScopedUsageWindow, UsageData } from '@shared/types/usage'
 
 // How much each window's remaining headroom counts toward an account's score.
 // The 5h window dominates: it resets within hours, so headroom there is worth
@@ -25,6 +25,20 @@ function hasResetSince(resetsAt: string | null | undefined, nowMs: number): bool
 function headroom(window: WindowLike, nowMs: number): number {
   if (hasResetSince(window.resets_at, nowMs)) return 100
   return Math.min(100, Math.max(0, 100 - window.utilization))
+}
+
+export function isFableWindow(window: ScopedUsageWindow): boolean {
+  return window.label.toLowerCase() === 'fable'
+}
+
+/**
+ * The usage auto-switch should reason about: with Settings › "Ignore Fable
+ * usage for auto-switch" on, the Fable window is dropped so it neither
+ * triggers a switch, disqualifies a candidate, nor drags its score down.
+ */
+export function autoSwitchUsage(usage: UsageData, ignoreFable: boolean): UsageData {
+  if (!ignoreFable || !usage.scoped?.some(isFableWindow)) return usage
+  return { ...usage, scoped: usage.scoped.filter((s) => !isFableWindow(s)) }
 }
 
 /**
@@ -109,13 +123,14 @@ export function scoreAccountHeadroom(usage: UsageData, nowMs: number): number {
 export function autoSwitchIneligibilityReason(
   row: { usage: UsageData | null; status: SavedUsageStatus; isActive: boolean },
   thresholdPercent: number | undefined,
-  nowMs: number
+  nowMs: number,
+  ignoreFable = false
 ): string | null {
   if (thresholdPercent === undefined || row.isActive) return null
   if (row.status === 'stale') return 'Expired — not an auto-switch target'
   if (row.status === 'error') return 'Refresh failed — not an auto-switch target'
   if (!row.usage) return null
-  const maxPercent = getMaxUsagePercent(row.usage, nowMs)
+  const maxPercent = getMaxUsagePercent(autoSwitchUsage(row.usage, ignoreFable), nowMs)
   if (maxPercent !== null && maxPercent >= thresholdPercent) {
     return `At ${Math.round(maxPercent)}% — auto-switch only targets accounts below ${thresholdPercent}%`
   }

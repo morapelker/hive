@@ -4,10 +4,12 @@ import { cn } from '@/lib/utils'
 import { Switch } from '@/components/ui/switch'
 import { useTimerTickStore } from '@/stores/useTimerTickStore'
 import { useUsageStore } from '@/stores/useUsageStore'
+import { useSettingsStore } from '@/stores/useSettingsStore'
 import {
   useAccountScheduleStore,
   describeSchedule,
   getActiveUsagePercent,
+  getAutoSwitchUsagePercent,
   type ScheduledSwitch,
   type ScheduleMode
 } from '@/stores/useAccountScheduleStore'
@@ -191,12 +193,14 @@ export function AutoSwitchControls({
   const schedule = useAccountScheduleStore((s) => s.schedules[provider])
   const setAutoSwitch = useAccountScheduleStore((s) => s.setAutoSwitch)
   const disableAutoSwitch = useAccountScheduleStore((s) => s.disableAutoSwitch)
-  // Subscribed only so the "(now X%)" readout re-renders when fresh usage lands.
+  // Subscribed only so the "(now X%)" readout re-renders when fresh usage
+  // lands or the Fable opt-out flips.
   useUsageStore((s) => (provider === 'anthropic' ? s.anthropicUsage : s.openaiUsage))
+  useSettingsStore((s) => s.ignoreFableForAutoSwitch)
   const [customValue, setCustomValue] = useState('')
 
   const enabled = auto !== undefined
-  const currentPercent = enabled ? getActiveUsagePercent(provider) : null
+  const currentPercent = enabled ? getAutoSwitchUsagePercent(provider) : null
 
   const submitCustom = (): void => {
     const value = Number(customValue)

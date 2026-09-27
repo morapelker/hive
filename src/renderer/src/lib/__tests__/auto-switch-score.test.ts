@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  autoSwitchIneligibilityReason,
+  autoSwitchUsage,
   getMaxUsagePercent,
   isProvablyAtOrAbove,
   scoreAccountHeadroom
@@ -152,5 +154,26 @@ describe('isProvablyAtOrAbove', () => {
       seven_day: { utilization: 10, resets_at: FUTURE }
     }
     expect(isProvablyAtOrAbove(invalidHorizon, 90, NOW)).toBe(false)
+  })
+})
+
+describe('ignoring Fable', () => {
+  const fableMaxed = usage(10, 20, [
+    { label: 'Fable', used_percent: 100 },
+    { label: 'Opus', used_percent: 30 }
+  ])
+
+  it('drops only the Fable window when ignoreFable is on', () => {
+    expect(autoSwitchUsage(fableMaxed, false)).toBe(fableMaxed)
+    expect(autoSwitchUsage(fableMaxed, true).scoped?.map((s) => s.label)).toEqual(['Opus'])
+    expect(getMaxUsagePercent(autoSwitchUsage(fableMaxed, true), NOW)).toBe(30)
+    expect(isProvablyAtOrAbove(autoSwitchUsage(fableMaxed, true), 90, NOW)).toBe(false)
+    expect(scoreAccountHeadroom(autoSwitchUsage(fableMaxed, true), NOW)).toBeGreaterThan(0)
+  })
+
+  it('no longer marks a Fable-exhausted account as "Not a switch target"', () => {
+    const row = { usage: fableMaxed, status: 'ok' as const, isActive: false }
+    expect(autoSwitchIneligibilityReason(row, 90, NOW)).toMatch(/At 100%/)
+    expect(autoSwitchIneligibilityReason(row, 90, NOW, true)).toBeNull()
   })
 })

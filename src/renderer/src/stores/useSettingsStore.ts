@@ -200,6 +200,8 @@ export interface AppSettings {
   // Usage indicator
   usageIndicatorMode: 'current-agent' | 'specific-providers'
   usageIndicatorProviders: UsageProvider[]
+  /** Leave the Fable window out of auto-switch decisions and the sidebar usage bars. */
+  ignoreFableForAutoSwitch: boolean
 
   // Agent SDK
   defaultAgentSdk: AgentSdk
@@ -304,6 +306,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   showModelProvider: false,
   usageIndicatorMode: 'current-agent',
   usageIndicatorProviders: [],
+  ignoreFableForAutoSwitch: false,
   defaultAgentSdk: 'opencode',
   customProviders: [],
   stripAtMentions: true,
@@ -537,6 +540,7 @@ function extractSettings(state: SettingsState): AppSettings {
     showModelProvider: state.showModelProvider,
     usageIndicatorMode: state.usageIndicatorMode,
     usageIndicatorProviders: state.usageIndicatorProviders,
+    ignoreFableForAutoSwitch: state.ignoreFableForAutoSwitch,
     defaultAgentSdk: state.defaultAgentSdk,
     customProviders: state.customProviders,
     stripAtMentions: state.stripAtMentions,
@@ -941,6 +945,7 @@ export const useSettingsStore = create<SettingsState>()(
         showModelProvider: state.showModelProvider,
         usageIndicatorMode: state.usageIndicatorMode,
         usageIndicatorProviders: state.usageIndicatorProviders,
+        ignoreFableForAutoSwitch: state.ignoreFableForAutoSwitch,
         defaultAgentSdk: state.defaultAgentSdk,
         customProviders: state.customProviders,
         activeSection: state.activeSection,
