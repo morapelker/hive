@@ -12,7 +12,13 @@ import {
   type SetSessionQueuedStatePayload,
   type UpdateMenuStatePayload
 } from '../../../shared/desktop-command'
-import type { SystemAppPaths } from '../../../shared/system-types'
+import {
+  MACOS_PRIVACY_PANES,
+  type MacosPermissionStatus,
+  type MacosPrivacyPane,
+  type OpenMacosPrivacySettingsResult,
+  type SystemAppPaths
+} from '../../../shared/system-types'
 import type { RpcHandler } from '../router'
 
 type SystemDesktopCommandName =
@@ -53,6 +59,11 @@ export interface SystemOpsRpcService {
     sessionId: string,
     hasQueued: boolean
   ) => Effect.Effect<void, unknown, never>
+  /** macOS privacy (TCC) state for the folder-access prompts agent sessions trigger. */
+  readonly getMacosPermissions?: () => Effect.Effect<MacosPermissionStatus, unknown, never>
+  readonly openMacosPrivacySettings?: (
+    pane: MacosPrivacyPane
+  ) => Effect.Effect<OpenMacosPrivacySettingsResult, unknown, never>
 }
 
 export interface AgentSdkDetectionResult {
@@ -96,6 +107,11 @@ const setSessionQueuedStateParamsSchema = z
   .object({
     sessionId: z.string().min(1),
     hasQueued: z.boolean()
+  })
+  .strict()
+const openMacosPrivacySettingsParamsSchema = z
+  .object({
+    pane: z.enum(MACOS_PRIVACY_PANES)
   })
   .strict()
 
@@ -199,6 +215,27 @@ export const makeLiveSystemOpsRpcService = (): SystemOpsRpcService => ({
         requestDesktopCommand<void>('setSessionQueuedState', { sessionId, hasQueued }).then(
           () => undefined
         ),
+      catch: (cause) => cause
+    }),
+  // Both run in the backend process itself: it is a child of the app bundle,
+  // so macOS attributes its file access (and the probe) to Tedooo Code exactly
+  // as it does for the sessions it spawns. No Electron API is involved.
+  getMacosPermissions: () =>
+    Effect.tryPromise({
+      try: async () => {
+        const { getMacosPermissionStatus } =
+          await import('../../../main/services/macos-permissions')
+        return getMacosPermissionStatus()
+      },
+      catch: (cause) => cause
+    }),
+  openMacosPrivacySettings: (pane) =>
+    Effect.tryPromise({
+      try: async () => {
+        const { openMacosPrivacySettings } =
+          await import('../../../main/services/macos-permissions')
+        return openMacosPrivacySettings(pane)
+      },
       catch: (cause) => cause
     })
 })
@@ -394,6 +431,36 @@ export const makeSystemOpsRpcHandlers = (
             return yield* Effect.fail(new Error('systemOps.setSessionQueuedState is unavailable'))
           }
           return yield* service.setSessionQueuedState(sessionId, hasQueued)
+        })
+    ],
+    [
+      'systemOps.getMacosPermissions',
+      (params) =>
+        Effect.gen(function* () {
+          yield* Effect.try({
+            try: () => emptyParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          if (!service.getMacosPermissions) {
+            return yield* Effect.fail(new Error('systemOps.getMacosPermissions is unavailable'))
+          }
+          return yield* service.getMacosPermissions()
+        })
+    ],
+    [
+      'systemOps.openMacosPrivacySettings',
+      (params) =>
+        Effect.gen(function* () {
+          const { pane } = yield* Effect.try({
+            try: () => openMacosPrivacySettingsParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          if (!service.openMacosPrivacySettings) {
+            return yield* Effect.fail(
+              new Error('systemOps.openMacosPrivacySettings is unavailable')
+            )
+          }
+          return yield* service.openMacosPrivacySettings(pane)
         })
     ]
   ])
