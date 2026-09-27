@@ -16,12 +16,21 @@ function pkce(): Pkce {
   return { verifier: 'test-verifier', challenge: 'test-challenge', state: 'test-state' }
 }
 
+/** A three-part JWT-shaped string of roughly `length` chars. */
+function fakeJwt(length: number): string {
+  const part = 'a'.repeat(Math.ceil(length / 3))
+  return `${part}.${part}.${part}`
+}
+
 function textResponse(body: string, init: ResponseInit): Response {
   return new Response(body, init)
 }
 
 function jsonResponse(body: unknown, init: ResponseInit): Response {
-  return textResponse(JSON.stringify(body), { headers: { 'content-type': 'application/json' }, ...init })
+  return textResponse(JSON.stringify(body), {
+    headers: { 'content-type': 'application/json' },
+    ...init
+  })
 }
 
 describe('buildOpenAIAuthorizeUrl', () => {
@@ -45,22 +54,54 @@ describe('buildOpenAIAuthorizeUrl', () => {
 })
 
 describe('refreshOpenAIToken', () => {
+  it('parses a realistic-size token response (JWTs well over 1 KiB)', async () => {
+    const accessToken = fakeJwt(2500)
+    const idToken = fakeJwt(1500)
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValue(
+          jsonResponse(
+            { access_token: accessToken, refresh_token: 'new-refresh', id_token: idToken },
+            { status: 200 }
+          )
+        )
+    )
+
+    const outcome = await refreshOpenAIToken('refresh-1')
+
+    expect(outcome).toEqual({
+      ok: true,
+      result: { accessToken, refreshToken: 'new-refresh', idToken }
+    })
+  })
+
   it('returns needsLogin on 401', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ error: 'unauthorized' }, { status: 401 })))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(jsonResponse({ error: 'unauthorized' }, { status: 401 }))
+    )
 
     const outcome = await refreshOpenAIToken('refresh-1')
     expect(outcome).toMatchObject({ ok: false, needsLogin: true })
   })
 
   it('returns needsLogin on 400', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ error: 'bad request' }, { status: 400 })))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(jsonResponse({ error: 'bad request' }, { status: 400 }))
+    )
 
     const outcome = await refreshOpenAIToken('refresh-1')
     expect(outcome).toMatchObject({ ok: false, needsLogin: true })
   })
 
   it('throws on a 500 response', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(textResponse('internal error', { status: 500 })))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(textResponse('internal error', { status: 500 }))
+    )
 
     await expect(refreshOpenAIToken('refresh-1')).rejects.toThrow(/500/)
   })
@@ -72,12 +113,14 @@ describe('refreshOpenAIToken', () => {
   })
 
   it('maps a success response and rotates refresh/id tokens when present', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      jsonResponse(
-        { access_token: 'new-access', refresh_token: 'new-refresh', id_token: 'new-id' },
-        { status: 200 }
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        jsonResponse(
+          { access_token: 'new-access', refresh_token: 'new-refresh', id_token: 'new-id' },
+          { status: 200 }
+        )
       )
-    )
     vi.stubGlobal('fetch', fetchMock)
 
     const outcome = await refreshOpenAIToken('old-refresh')
@@ -100,21 +143,29 @@ describe('refreshOpenAIToken', () => {
   })
 
   it('omits refreshToken/idToken from the result when the response does not include them', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ access_token: 'new-access' }, { status: 200 })))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(jsonResponse({ access_token: 'new-access' }, { status: 200 }))
+    )
 
     const outcome = await refreshOpenAIToken('old-refresh')
-    expect(outcome).toEqual({ ok: true, result: { accessToken: 'new-access', refreshToken: undefined, idToken: undefined } })
+    expect(outcome).toEqual({
+      ok: true,
+      result: { accessToken: 'new-access', refreshToken: undefined, idToken: undefined }
+    })
   })
 })
 
 describe('exchangeOpenAICode', () => {
   it('POSTs a form-urlencoded (not JSON) body with the expected fields', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      jsonResponse(
-        { id_token: 'id-1', access_token: 'access-1', refresh_token: 'refresh-1' },
-        { status: 200 }
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        jsonResponse(
+          { id_token: 'id-1', access_token: 'access-1', refresh_token: 'refresh-1' },
+          { status: 200 }
+        )
       )
-    )
     vi.stubGlobal('fetch', fetchMock)
 
     const result = await exchangeOpenAICode('the-code', pkce())
@@ -144,5 +195,28 @@ describe('exchangeOpenAICode', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(textResponse('nope', { status: 400 })))
 
     await expect(exchangeOpenAICode('code', pkce())).rejects.toThrow(/400/)
+  })
+
+  it('parses a realistic-size token response (JWTs well over 1 KiB)', async () => {
+    // Real OpenAI id/access tokens are multi-KB JWTs; the whole body used to
+    // be capped at 1024 chars before JSON.parse, which broke every login.
+    const idToken = fakeJwt(1500)
+    const accessToken = fakeJwt(2500)
+    const refreshToken = 'rt_' + 'r'.repeat(120)
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValue(
+          jsonResponse(
+            { id_token: idToken, access_token: accessToken, refresh_token: refreshToken },
+            { status: 200 }
+          )
+        )
+    )
+
+    const result = await exchangeOpenAICode('the-code', pkce())
+
+    expect(result).toEqual({ idToken, accessToken, refreshToken })
   })
 })

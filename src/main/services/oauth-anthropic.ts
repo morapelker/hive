@@ -29,12 +29,22 @@ export function buildAnthropicAuthorizeUrl(pkce: Pkce): string {
 }
 
 export type AnthropicRefreshOutcome =
-  | { ok: true; result: { accessToken: string; refreshToken: string; expiresAt: number }; scope?: string }
+  | {
+      ok: true
+      result: { accessToken: string; refreshToken: string; expiresAt: number }
+      scope?: string
+    }
   | { ok: false; needsLogin: true; error: string }
 
-async function readCappedBody(response: Response): Promise<string> {
+/**
+ * Read the full response body. Do NOT cap this: successful token responses
+ * carry JWTs that easily exceed a few KB, and truncating them before
+ * `JSON.parse` fails the whole login with an "unexpected end of JSON" error.
+ * Error messages slice to `BODY_SNIPPET_LENGTH` at the call sites instead.
+ */
+async function readBody(response: Response): Promise<string> {
   try {
-    return (await response.text()).slice(0, 1024)
+    return await response.text()
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return `Failed to read response body: ${message}`
@@ -68,13 +78,15 @@ async function postJson(body: unknown): Promise<Response> {
  * `invalid_grant`; throws on any other failure (network error or other
  * non-2xx status).
  */
-export async function refreshAnthropicToken(refreshToken: string): Promise<AnthropicRefreshOutcome> {
+export async function refreshAnthropicToken(
+  refreshToken: string
+): Promise<AnthropicRefreshOutcome> {
   const response = await postJson({
     grant_type: 'refresh_token',
     refresh_token: refreshToken,
     client_id: ANTHROPIC_CLIENT_ID
   })
-  const body = await readCappedBody(response)
+  const body = await readBody(response)
 
   if (response.status === 401 || response.status === 400 || body.includes('invalid_grant')) {
     return {
@@ -85,7 +97,9 @@ export async function refreshAnthropicToken(refreshToken: string): Promise<Anthr
   }
 
   if (!response.ok) {
-    throw new Error(`Anthropic token refresh returned ${response.status}: ${body.slice(0, BODY_SNIPPET_LENGTH)}`)
+    throw new Error(
+      `Anthropic token refresh returned ${response.status}: ${body.slice(0, BODY_SNIPPET_LENGTH)}`
+    )
   }
 
   const data = JSON.parse(body) as {
@@ -103,7 +117,9 @@ export async function refreshAnthropicToken(refreshToken: string): Promise<Anthr
   }
 
   const rotatedRefreshToken =
-    typeof data.refresh_token === 'string' && data.refresh_token.length > 0 ? data.refresh_token : refreshToken
+    typeof data.refresh_token === 'string' && data.refresh_token.length > 0
+      ? data.refresh_token
+      : refreshToken
 
   return {
     ok: true,
@@ -138,10 +154,12 @@ export async function exchangeAnthropicCode(
     client_id: ANTHROPIC_CLIENT_ID,
     code_verifier: pkce.verifier
   })
-  const body = await readCappedBody(response)
+  const body = await readBody(response)
 
   if (!response.ok) {
-    throw new Error(`Anthropic token exchange returned ${response.status}: ${body.slice(0, BODY_SNIPPET_LENGTH)}`)
+    throw new Error(
+      `Anthropic token exchange returned ${response.status}: ${body.slice(0, BODY_SNIPPET_LENGTH)}`
+    )
   }
 
   const data = JSON.parse(body) as {
