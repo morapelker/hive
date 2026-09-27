@@ -184,13 +184,6 @@ export interface AppSettings {
 
   // Agent SDK
   defaultAgentSdk: AgentSdk
-  /**
-   * SDK of the model the user most recently picked or launched with anywhere
-   * in the app (session model selector, ticket picker, settings). New sessions
-   * and ticket launches default to this over `defaultAgentSdk` so "the last
-   * model I used" wins; cleared when `defaultAgentSdk` is changed explicitly.
-   */
-  lastUsedAgentSdk: HandoffAgentSdk | null
 
   // Custom claude-cli-based providers
   customProviders: CustomClaudeProvider[]
@@ -293,7 +286,6 @@ const DEFAULT_SETTINGS: AppSettings = {
   usageIndicatorMode: 'current-agent',
   usageIndicatorProviders: [],
   defaultAgentSdk: 'opencode',
-  lastUsedAgentSdk: null,
   customProviders: [],
   stripAtMentions: true,
   codexFastMode: false,
@@ -372,8 +364,7 @@ interface SettingsState extends AppSettings {
   ) => Promise<void>
   setSelectedModelForSdk: (
     agentSdk: AppSettings['defaultAgentSdk'],
-    model: SelectedModel | null,
-    options?: { skipBackendPush?: boolean }
+    model: SelectedModel | null
   ) => Promise<void>
   setModeDefaultModel: (
     mode: 'build' | 'plan' | 'ask' | 'review',
@@ -528,7 +519,6 @@ function extractSettings(state: SettingsState): AppSettings {
     usageIndicatorMode: state.usageIndicatorMode,
     usageIndicatorProviders: state.usageIndicatorProviders,
     defaultAgentSdk: state.defaultAgentSdk,
-    lastUsedAgentSdk: state.lastUsedAgentSdk,
     customProviders: state.customProviders,
     stripAtMentions: state.stripAtMentions,
     codexFastMode: state.codexFastMode,
@@ -583,19 +573,19 @@ export function resolveModelForSdk(
 }
 
 /**
- * The SDK new sessions and ticket launches should default to: the SDK of the
- * model the user most recently used anywhere (`lastUsedAgentSdk`), falling back
- * to the configured `defaultAgentSdk`. The bare terminal SDK has no models, so
- * it degrades to opencode for model resolution, matching every picker.
+ * The SDK new sessions and ticket launches default to: the `defaultAgentSdk`
+ * configured on the settings page, and only that. Launching a ticket or
+ * switching a session's model never changes it. The bare terminal SDK has no
+ * models, so it degrades to opencode for model resolution, matching every
+ * picker.
  *
  * Accepts a state snapshot so it can run inside Zustand selectors; falls back
  * to store.getState() when omitted.
  */
 export function resolvePreferredAgentSdk(
-  state?: Pick<AppSettings, 'lastUsedAgentSdk' | 'defaultAgentSdk'>
+  state?: Pick<AppSettings, 'defaultAgentSdk'>
 ): HandoffAgentSdk {
   const s = state ?? useSettingsStore.getState()
-  if (s.lastUsedAgentSdk) return s.lastUsedAgentSdk
   const configured = s.defaultAgentSdk ?? 'opencode'
   return configured === 'terminal' ? 'opencode' : configured
 }
@@ -627,15 +617,9 @@ export const useSettingsStore = create<SettingsState>()(
         key: K,
         value: AppSettings[K]
       ): Promise<void> => {
-        // Explicitly choosing a default SDK must take effect immediately, so it
-        // also drops the remembered last-used SDK that would otherwise mask it.
-        const patch: Partial<SettingsState> =
-          key === 'defaultAgentSdk'
-            ? ({ [key]: value, lastUsedAgentSdk: null } as Partial<SettingsState>)
-            : ({ [key]: value } as Partial<SettingsState>)
-        set(patch)
+        set({ [key]: value } as Partial<SettingsState>)
         // Persist to database
-        const settings = extractSettings({ ...get(), ...patch } as SettingsState)
+        const settings = extractSettings({ ...get(), [key]: value } as SettingsState)
         const savePromise = saveToDatabase(settings)
         const fileSavePromise =
           key === 'customProjectCommands'
@@ -743,8 +727,7 @@ export const useSettingsStore = create<SettingsState>()(
 
       setSelectedModelForSdk: async (
         agentSdk: AppSettings['defaultAgentSdk'],
-        model: SelectedModel | null,
-        options?: { skipBackendPush?: boolean }
+        model: SelectedModel | null
       ) => {
         // null clears the per-SDK entry
         const current = { ...get().selectedModelByProvider }
@@ -753,18 +736,9 @@ export const useSettingsStore = create<SettingsState>()(
         } else {
           delete current[agentSdk]
         }
-        // Picking a model for an SDK makes that SDK the one the user most
-        // recently used, so new sessions / ticket launches default to it.
-        // Clearing an entry says nothing about intent, so it leaves the
-        // last-used SDK alone.
-        const lastUsedAgentSdk =
-          model && agentSdk !== 'terminal' ? agentSdk : get().lastUsedAgentSdk
-        set({ selectedModelByProvider: current, lastUsedAgentSdk })
+        set({ selectedModelByProvider: current })
         // Push to backend only for SDKs with a structured implementer.
-        if (
-          !isTerminalBacked(agentSdk) &&
-          !options?.skipBackendPush
-        ) {
+        if (!isTerminalBacked(agentSdk)) {
           try {
             unwrapEnvelope(await opencodeApi.setModel(model ? { ...model, agentSdk } : null))
           } catch (error) {
@@ -774,8 +748,7 @@ export const useSettingsStore = create<SettingsState>()(
         // Persist to app settings DB
         const settings = extractSettings({
           ...get(),
-          selectedModelByProvider: current,
-          lastUsedAgentSdk
+          selectedModelByProvider: current
         } as SettingsState)
         saveToDatabase(settings)
       },
@@ -946,7 +919,6 @@ export const useSettingsStore = create<SettingsState>()(
         usageIndicatorMode: state.usageIndicatorMode,
         usageIndicatorProviders: state.usageIndicatorProviders,
         defaultAgentSdk: state.defaultAgentSdk,
-        lastUsedAgentSdk: state.lastUsedAgentSdk,
         customProviders: state.customProviders,
         activeSection: state.activeSection,
         stripAtMentions: state.stripAtMentions,

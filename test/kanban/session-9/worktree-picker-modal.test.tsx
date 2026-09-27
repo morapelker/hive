@@ -177,7 +177,8 @@ import { getSuperPlanModePrefix } from '@/lib/constants'
 import {
   WorktreePickerModal,
   _resetLastSourceBranch,
-  quickLaunchTicket
+  quickLaunchTicket,
+  resolveQuickLaunchModel
 } from '@/components/kanban/WorktreePickerModal'
 
 import type { KanbanTicket } from '../../../src/main/db/types'
@@ -413,7 +414,6 @@ describe('Session 9: Worktree Picker Modal', () => {
       useSettingsStore.setState({
         availableAgentSdks: { opencode: true, claude: true, codex: true },
         defaultAgentSdk: 'opencode',
-        lastUsedAgentSdk: null,
         defaultModels: {
           build: null,
           plan: null,
@@ -1586,10 +1586,10 @@ describe('Session 9: Worktree Picker Modal', () => {
     })
   })
 
-  describe('last-used SDK default', () => {
-    test('opens on the configured default SDK when no model has been used yet', () => {
+  describe('configured default SDK', () => {
+    test('opens on the SDK configured on the settings page', () => {
       act(() => {
-        useSettingsStore.setState({ defaultAgentSdk: 'codex', lastUsedAgentSdk: null })
+        useSettingsStore.setState({ defaultAgentSdk: 'codex' })
       })
 
       render(
@@ -1605,58 +1605,18 @@ describe('Session 9: Worktree Picker Modal', () => {
       expect(screen.getByTestId('sdk-toggle-claude-code')).toHaveAttribute('aria-pressed', 'false')
     })
 
-    test('opens on the last-used SDK instead of the configured default', () => {
-      // Regression: the user switched to Claude in a session, but dragging a
-      // ticket to In Progress still pre-selected the stale Codex default.
-      act(() => {
-        useSettingsStore.setState({ defaultAgentSdk: 'codex', lastUsedAgentSdk: 'claude-code' })
-      })
-
-      render(
-        <WorktreePickerModal
-          ticket={defaultTicket}
-          projectId="proj-1"
-          open={true}
-          onOpenChange={() => {}}
-        />
-      )
-
-      expect(screen.getByTestId('sdk-toggle-claude-code')).toHaveAttribute('aria-pressed', 'true')
-      expect(screen.getByTestId('sdk-toggle-codex')).toHaveAttribute('aria-pressed', 'false')
-    })
-
-    test('a build mode default for another SDK does not pull the picker back to it', () => {
-      act(() => {
-        useSettingsStore.setState({
-          defaultAgentSdk: 'codex',
-          lastUsedAgentSdk: 'claude-code',
-          defaultModels: {
-            build: { agentSdk: 'codex', providerID: 'codex', modelID: 'gpt-5.5', variant: 'high' },
-            plan: null,
-            ask: null,
-            review: null
-          }
-        })
-      })
-
-      render(
-        <WorktreePickerModal
-          ticket={defaultTicket}
-          projectId="proj-1"
-          open={true}
-          onOpenChange={() => {}}
-        />
-      )
-
-      expect(screen.getByTestId('sdk-toggle-claude-code')).toHaveAttribute('aria-pressed', 'true')
-      expect(screen.getByTestId('sdk-toggle-codex')).toHaveAttribute('aria-pressed', 'false')
-    })
-
-    test('launching a ticket records its SDK as the last-used SDK', async () => {
+    test('launching a ticket with another SDK/model does not change the global defaults', async () => {
+      // Regression: sending a ticket used to make its SDK + model/effort the
+      // default for the next ticket. Defaults only change from the settings page.
+      const opencodeDefault = {
+        providerID: 'anthropic',
+        modelID: 'claude-sonnet-4',
+        variant: 'high'
+      }
       act(() => {
         useSettingsStore.setState({
           defaultAgentSdk: 'opencode',
-          lastUsedAgentSdk: null,
+          selectedModelByProvider: { opencode: opencodeDefault },
           codexFastModeAccepted: true
         })
       })
@@ -1682,7 +1642,10 @@ describe('Session 9: Worktree Picker Modal', () => {
           expect.objectContaining({ agent_sdk: 'codex' })
         )
       })
-      expect(useSettingsStore.getState().lastUsedAgentSdk).toBe('codex')
+      const settings = useSettingsStore.getState()
+      expect(settings.defaultAgentSdk).toBe('opencode')
+      expect(settings.selectedModelByProvider).toEqual({ opencode: opencodeDefault })
+      expect(resolveQuickLaunchModel().sdk).toBe('opencode')
     })
   })
 
@@ -1783,7 +1746,7 @@ describe('Session 9: Worktree Picker Modal', () => {
 })
 
 // ── quickLaunchTicket (right-button drag / Create & Send / Save & Send) ──
-describe('quickLaunchTicket last-used SDK', () => {
+describe('quickLaunchTicket default SDK', () => {
   const ticket = makeTicket()
   const worktrees = [
     makeWorktree({ id: 'wt-1', name: 'feature-auth' }),
@@ -1809,19 +1772,17 @@ describe('quickLaunchTicket last-used SDK', () => {
       })
       useSettingsStore.setState({
         availableAgentSdks: { opencode: true, claude: true, codex: true },
-        defaultAgentSdk: 'opencode',
-        lastUsedAgentSdk: null
+        defaultAgentSdk: 'opencode'
       })
     })
     vi.clearAllMocks()
     resetApiMocks()
   })
 
-  test('quick launch runs on the last-used SDK instead of the configured default', async () => {
+  test('quick launch runs on the configured default SDK', async () => {
     act(() => {
       useSettingsStore.setState({
-        defaultAgentSdk: 'opencode',
-        lastUsedAgentSdk: 'codex',
+        defaultAgentSdk: 'codex',
         selectedModelByProvider: {
           codex: { providerID: 'codex', modelID: 'gpt-5.5', variant: 'high' }
         }

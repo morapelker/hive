@@ -159,17 +159,10 @@ function resolveSessionSelection(opts: {
   agentSdk?: AgentSdk
   mode?: 'build' | 'plan' | 'super-plan' | 'super-build'
   explicitSdk?: boolean
-  /**
-   * The SDK came from the user's last-used pick rather than the configured
-   * default: a mode default for a different SDK must not redirect the session.
-   */
-  lastUsedSdk?: boolean
 }): EffectiveHandoffSelection {
   // Discord mirrors the data-driven subset of this chain in src/shared/model-resolution.ts.
   const settings = useSettingsStore.getState()
-  // No SDK requested: prefer the SDK the user most recently used anywhere over
-  // the configured default, and pin it like an explicit pick below.
-  const fromLastUsed = opts.lastUsedSdk || (!opts.agentSdk && !!settings.lastUsedAgentSdk)
+  // No SDK requested: use the default configured on the settings page.
   const requestedSdk = opts.agentSdk
     ? normalizeHandoffSdk(opts.agentSdk)
     : resolvePreferredAgentSdk(settings)
@@ -184,12 +177,6 @@ function resolveSessionSelection(opts: {
     const modeDefaultSdk = modeDefault.agentSdk ? normalizeHandoffSdk(modeDefault.agentSdk) : null
     if (opts.explicitSdk) {
       if (modeDefaultSdk === requestedSdk) {
-        model = modeDefault
-      }
-    } else if (fromLastUsed) {
-      // A legacy mode default (no SDK stamp) only reaches here when the
-      // last-used SDK is the configured default, so it still applies.
-      if (modeDefaultSdk === null || modeDefaultSdk === requestedSdk) {
         model = modeDefault
       }
     } else {
@@ -462,14 +449,10 @@ export function resolveSessionCreationSelection(opts: {
   model: SelectedModel | null
 } {
   const settings = useSettingsStore.getState()
-  // Nothing requested an SDK: the one the user most recently used wins over the
-  // configured default. A bare-terminal default has no model to remember and
-  // keeps yielding terminal sessions.
-  const requestedSdk = opts.modelOverride?.agentSdk ?? opts.agentSdkOverride
+  // Nothing requested an SDK: fall back to the default configured on the
+  // settings page. Ticket launches and session model changes never rewrite it.
   const agentSdk: AgentSdk =
-    requestedSdk ??
-    (settings.defaultAgentSdk === 'terminal' ? 'terminal' : resolvePreferredAgentSdk(settings))
-  const fromLastUsed = !requestedSdk && agentSdk !== 'terminal' && !!settings.lastUsedAgentSdk
+    opts.modelOverride?.agentSdk ?? opts.agentSdkOverride ?? settings.defaultAgentSdk ?? 'opencode'
 
   if (agentSdk === 'terminal') {
     return { agentSdk, model: null }
@@ -513,8 +496,7 @@ export function resolveSessionCreationSelection(opts: {
     worktreeId: opts.worktreeId,
     agentSdk,
     mode: opts.initialMode,
-    explicitSdk: opts.agentSdkOverride != null,
-    lastUsedSdk: fromLastUsed
+    explicitSdk: opts.agentSdkOverride != null
   })
   return { agentSdk: resolved.agentSdk, model: resolved.model }
 }

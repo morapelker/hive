@@ -149,7 +149,7 @@ function composePromptForSdk(
     : fullPrompt
 }
 
-/** Last-used (else default) SDK + build-mode model, mirroring the picker's quick-launch resolution. */
+/** Default SDK + build-mode model, mirroring the picker's quick-launch resolution. */
 function resolveQuickModel(): {
   sdk: LaunchSdk
   model: { providerID: string; modelID: string; variant?: string }

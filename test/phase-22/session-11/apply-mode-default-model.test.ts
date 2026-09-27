@@ -99,9 +99,7 @@ describe('applyModeDefaultModel', () => {
 
     await useSessionStore.getState().applyModeDefaultModel('session-1', 'plan')
 
-    expect(setSessionModel).toHaveBeenCalledWith('session-1', claudePlanDefault, {
-      skipGlobalUpdate: true
-    })
+    expect(setSessionModel).toHaveBeenCalledWith('session-1', claudePlanDefault)
   })
 
   test('applies mode default when modeDefault.agentSdk is unset', async () => {
@@ -112,9 +110,7 @@ describe('applyModeDefaultModel', () => {
 
     await useSessionStore.getState().applyModeDefaultModel('session-1', 'plan')
 
-    expect(setSessionModel).toHaveBeenCalledWith('session-1', claudeUnsetSdkDefault, {
-      skipGlobalUpdate: true
-    })
+    expect(setSessionModel).toHaveBeenCalledWith('session-1', claudeUnsetSdkDefault)
   })
 
   test('does not apply unset-SDK mode default to a non-default live session SDK', async () => {
@@ -148,9 +144,7 @@ describe('applyModeDefaultModel', () => {
 
     await useSessionStore.getState().applyModeDefaultModel('session-1', 'plan')
 
-    expect(setSessionModel).toHaveBeenCalledWith('session-1', claudeFallback, {
-      skipGlobalUpdate: true
-    })
+    expect(setSessionModel).toHaveBeenCalledWith('session-1', claudeFallback)
   })
 
   test('does not clobber a custom-provider session model with a stock mode default', async () => {
