@@ -16,6 +16,13 @@ export interface ClaudeHookBody {
 
 export interface CliHookRouteContext {
   suppressIdle?: boolean
+  /**
+   * Never hold this CLI's hook replies open for a remote answer. Codex's
+   * question tool (`request_user_input`) cannot take answers through the hook
+   * reply and its plan approval is a TUI selection, so for codex-cli sessions
+   * the transports only observe busy/idle and the questions stay in the TUI.
+   */
+  disableHeldInteractions?: boolean
 }
 
 type InteractionKind = 'question' | 'plan'
@@ -82,10 +89,11 @@ export class CliHookHoldCore {
     if (!this.registered.has(sessionId)) return false
 
     const event = body.hook_event_name
-    if (event === 'PreToolUse' && body.tool_name === 'AskUserQuestion') {
+    const canHold = ctx?.disableHeldInteractions !== true
+    if (canHold && event === 'PreToolUse' && body.tool_name === 'AskUserQuestion') {
       return this.holdQuestion(sessionId, body, res)
     }
-    if (event === 'PreToolUse' && body.tool_name === 'ExitPlanMode') {
+    if (canHold && event === 'PreToolUse' && body.tool_name === 'ExitPlanMode') {
       return this.holdPlan(sessionId, body, res)
     }
     // StopFailure is the API-error turn end (fires instead of Stop); its

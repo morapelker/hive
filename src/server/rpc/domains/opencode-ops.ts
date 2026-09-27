@@ -1,4 +1,5 @@
 import { Effect } from 'effect'
+import { AGENT_SDK_VALUES } from '../../../shared/types/agent-sdk'
 import { z } from 'zod'
 import {
   isDesktopCommandResult,
@@ -224,7 +225,7 @@ const getMessagesParamsSchema = z
 const refreshFromThreadParamsSchema = z
   .object({ worktreePath: z.string().min(1), opencodeSessionId: z.string().min(1) })
   .strict()
-const agentSdkSchema = z.enum(['opencode', 'claude-code', 'claude-code-cli', 'codex', 'terminal'])
+const agentSdkSchema = z.enum(AGENT_SDK_VALUES)
 const listModelsParamsSchema = z.object({ agentSdk: agentSdkSchema.optional() }).strict().optional()
 const setModelParamsSchema = z
   .object({

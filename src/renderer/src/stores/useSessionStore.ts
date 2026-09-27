@@ -20,7 +20,7 @@ import { terminalApi } from '@/api/terminal-api'
 import { remoteLaunchApi } from '@/api/remote-launch-api'
 import { parseRemoteLaunch } from '@shared/types/remote-launch'
 import { opencodeApi } from '@/api/opencode-api'
-import { type AgentSdk, isTerminalBacked } from '@shared/types/agent-sdk'
+import { type AgentSdk, isAgentCli, isCodexCli, isTerminalBacked } from '@shared/types/agent-sdk'
 import { CUSTOM_MODEL_PROVIDER_ID } from '@shared/types/custom-provider'
 import { isSuperMode, toggleSuper } from '@shared/agent-mode-prefixes'
 
@@ -412,12 +412,14 @@ export function syncClaudeCliPermissionModeIfNeeded(
   nextMode: SessionMode
 ): void {
   const session = findSessionInState(state, sessionId)
-  if (session?.agent_sdk !== 'claude-code-cli') return
+  if (!isAgentCli(session?.agent_sdk)) return
   const wasPlanLike = previousMode === 'plan' || previousMode === 'super-plan'
   const isPlanLike = nextMode === 'plan' || nextMode === 'super-plan'
   if (wasPlanLike === isPlanLike) return
 
-  const presses = isPlanLike ? 2 : 1
+  // The codex TUI has exactly two collaboration modes (Default ↔ Plan), so a
+  // single Shift+Tab toggles in either direction.
+  const presses = isCodexCli(session?.agent_sdk) ? 1 : isPlanLike ? 2 : 1
   for (let i = 0; i < presses; i++) {
     terminalApi.write(sessionId, '\x1b[Z')
   }

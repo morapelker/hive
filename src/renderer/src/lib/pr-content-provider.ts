@@ -1,5 +1,5 @@
 export type PRContentProvider = 'opencode' | 'claude-code' | 'codex'
-export type AgentSdkPreference = PRContentProvider | 'terminal' | 'claude-code-cli'
+export type AgentSdkPreference = PRContentProvider | 'terminal' | 'claude-code-cli' | 'codex-cli'
 
 export interface AvailableAgentSdks {
   opencode: boolean
@@ -15,7 +15,11 @@ export function resolvePRContentProvider(
 ): PRContentProvider | null {
   // claude-code-cli shares Claude's text-generation provider
   const preferredSdk: PRContentProvider | 'terminal' =
-    rawPreferredSdk === 'claude-code-cli' ? 'claude-code' : rawPreferredSdk
+    rawPreferredSdk === 'claude-code-cli'
+      ? 'claude-code'
+      : rawPreferredSdk === 'codex-cli'
+        ? 'codex'
+        : rawPreferredSdk
   if (preferredSdk !== 'terminal') {
     if (!availableSdks || isProviderAvailable(preferredSdk, availableSdks)) {
       return preferredSdk
@@ -90,6 +94,8 @@ function toPRContentProvider(agentSdk: string): PRContentProvider | null {
     case 'claude-code':
     case 'claude-code-cli':
       return 'claude-code'
+    case 'codex-cli':
+      return 'codex'
     case 'codex':
       return 'codex'
     case 'opencode':

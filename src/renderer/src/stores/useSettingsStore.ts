@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { isTerminalBacked } from '@shared/types/agent-sdk'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { APP_SETTINGS_DB_KEY, DEFAULT_HIVE_ENTERPRISE_SERVER_URL } from '@shared/types/settings'
 import type { TeleportSettings } from '@shared/types/settings'
@@ -703,8 +704,7 @@ export const useSettingsStore = create<SettingsState>()(
         set({ selectedModelByProvider: current })
         // Push to backend only for SDKs with a structured implementer.
         if (
-          agentSdk !== 'terminal' &&
-          agentSdk !== 'claude-code-cli' &&
+          !isTerminalBacked(agentSdk) &&
           !options?.skipBackendPush
         ) {
           try {

@@ -3,7 +3,9 @@ import { APP_SETTINGS_DB_KEY, DEFAULT_HIVE_ENTERPRISE_SERVER_URL } from '@shared
 import type { DatabaseService } from '../db/database'
 import { getDatabase } from '../db'
 import type { Project } from '../db/types'
-import { getClaudeAccountEmail } from './account-service'
+import { getClaudeAccountEmail, getOpenAIAccountEmail } from './account-service'
+import { isCodexCli } from '@shared/types/agent-sdk'
+import { lastCodexContextLength } from './codex-cli-rollout'
 import { GitService } from './git-service'
 import { createLogger } from './logger'
 import { isTaskNotificationPrompt } from './claude-cli-subagent-tracker'
@@ -254,6 +256,14 @@ async function getRemoteUrl(worktreePath: string | null): Promise<string | null>
   }
 }
 
+type CliTelemetryProvider = 'anthropic' | 'openai'
+
+function telemetryProviderForSession(
+  session: { agent_sdk?: string | null } | null
+): CliTelemetryProvider {
+  return isCodexCli(session?.agent_sdk) ? 'openai' : 'anthropic'
+}
+
 async function buildPromptStartInput(
   db: DatabaseService,
   sessionId: string,
@@ -267,7 +277,16 @@ async function buildPromptStartInput(
     (worktree?.project_id ? db.getProject(worktree.project_id) : null) ??
     (session?.project_id ? db.getProject(session.project_id) : null)
   const transcript = readTranscript(transcriptPath)
-  const accountEmail = await getClaudeAccountEmail().catch(() => null)
+  // Claude CLI sessions resolve the Anthropic account, Codex CLI sessions the OpenAI one.
+  const provider = telemetryProviderForSession(session)
+  const accountEmail =
+    provider === 'openai'
+      ? await getOpenAIAccountEmail().catch(() => null)
+      : await getClaudeAccountEmail().catch(() => null)
+  const contextLength =
+    provider === 'openai'
+      ? lastCodexContextLength(transcript)
+      : lastAssistantContextLengthFromClaudeTranscript(transcript)
 
   return {
     input: {
@@ -279,7 +298,7 @@ async function buildPromptStartInput(
       projectName: project?.name ?? null,
       projectPath: project?.path ?? null,
       gitRemoteUrl: await getRemoteUrl(worktree?.path ?? null),
-      contextLength: lastAssistantContextLengthFromClaudeTranscript(transcript) ?? 0,
+      contextLength: contextLength ?? 0,
       providerId: session?.agent_sdk ?? null,
       modelProviderId: session?.model_provider_id ?? null,
       modelId: session?.model_id ?? null,
@@ -290,7 +309,7 @@ async function buildPromptStartInput(
       loggedAt: now.toISOString(),
       connectionProjects: connectionProjects(db, session?.connection_id ?? null),
       accountEmail,
-      accountProvider: accountEmail ? 'anthropic' : null
+      accountProvider: accountEmail ? provider : null
     }
   }
 }

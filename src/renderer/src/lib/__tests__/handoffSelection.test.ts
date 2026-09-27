@@ -120,11 +120,20 @@ describe('resolveSessionCreationSelection', () => {
 })
 
 describe('handoff provider visuals', () => {
-  it('orders Claude Code second and Claude CLI last', () => {
+  it('orders Claude Code second and the CLIs last', () => {
     expect(getAvailableHandoffAgentSdks({ opencode: true, claude: true, codex: true })).toEqual([
       'opencode',
       'claude-code',
       'codex',
+      'claude-code-cli',
+      'codex-cli'
+    ])
+  })
+
+  it('hides both codex providers when codex is unavailable', () => {
+    expect(getAvailableHandoffAgentSdks({ opencode: true, claude: true, codex: false })).toEqual([
+      'opencode',
+      'claude-code',
       'claude-code-cli'
     ])
   })

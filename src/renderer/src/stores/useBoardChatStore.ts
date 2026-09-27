@@ -135,6 +135,7 @@ export function resolveBoardChatAgentSdk(
   const sdk = defaultAgentSdk ?? 'opencode'
   if (sdk === 'terminal') return 'opencode'
   if (sdk === 'claude-code-cli') return 'claude-code'
+  if (sdk === 'codex-cli') return 'codex'
   return sdk
 }
 

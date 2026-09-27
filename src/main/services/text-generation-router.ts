@@ -14,6 +14,7 @@ import type { AgentSdkDetection } from './system-info'
 import type { OpenCodeLaunchSpec } from './opencode-binary-resolver'
 import { createLogger } from './logger'
 import type { AgentSdkId } from './agent-sdk-types'
+import { toModelCatalogSdk } from '@shared/types/agent-sdk'
 import {
   SpawnFailed,
   SpawnNonZeroExit,
@@ -165,13 +166,15 @@ export async function generateText(
  * Resolve to an available provider, falling back if the requested one is unavailable.
  * Fallback order: claude-code -> codex -> opencode.
  */
+type TextGenerationSdk = Exclude<AgentSdkId, 'terminal' | 'claude-code-cli' | 'codex-cli'>
+
 function resolveProvider(provider: AgentSdkId): AgentSdkId | null {
   if (provider === 'terminal') return null
-  // claude-code-cli shares Claude's text-generation path
-  const requested = provider === 'claude-code-cli' ? 'claude-code' : provider
+  // The terminal-backed CLIs share their SDK sibling's text-generation path.
+  const requested = toModelCatalogSdk(provider) as TextGenerationSdk
 
   const sdks = getCachedSdkDetection()
-  const providerAvailable: Record<Exclude<AgentSdkId, 'terminal' | 'claude-code-cli'>, boolean> = {
+  const providerAvailable: Record<TextGenerationSdk, boolean> = {
     'claude-code': sdks.claude,
     codex: sdks.codex,
     opencode: sdks.opencode
@@ -179,7 +182,7 @@ function resolveProvider(provider: AgentSdkId): AgentSdkId | null {
 
   if (providerAvailable[requested]) return requested
 
-  const fallbackOrder: Exclude<AgentSdkId, 'terminal' | 'claude-code-cli'>[] = [
+  const fallbackOrder: TextGenerationSdk[] = [
     'claude-code',
     'codex',
     'opencode'
@@ -208,6 +211,7 @@ function generateWithProvider(
     case 'claude-code-cli':
       return generateWithClaude(prompt, systemPrompt, modelOverride, effort, cwd)
     case 'codex':
+    case 'codex-cli':
       return generateWithCodex(prompt, systemPrompt, modelOverride, effort, outputSchema, cwd)
     case 'opencode':
       return generateWithOpenCode(prompt, systemPrompt, modelOverride, cwd)

@@ -1,4 +1,5 @@
 import { Effect } from 'effect'
+import { AGENT_SDK_VALUES } from '../../../shared/types/agent-sdk'
 import { z } from 'zod'
 import type {
   DiffComment,
@@ -291,7 +292,7 @@ const worktreeIdParamsSchema = z.object({ worktreeId: z.string() }).strict()
 const worktreePinnedParamsSchema = z
   .object({ worktreeId: z.string(), pinned: z.boolean() })
   .strict()
-const agentSdkSchema = z.enum(['opencode', 'claude-code', 'claude-code-cli', 'codex', 'terminal'])
+const agentSdkSchema = z.enum(AGENT_SDK_VALUES)
 const sessionModeSchema = z.enum(['build', 'plan', 'super-plan', 'super-build'])
 const sessionTypeSchema = z.enum(['default', 'board-assistant'])
 const sessionCreateParamsSchema = z.object({

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { type AgentSdk, isClaudeFamily } from '@shared/types/agent-sdk'
+import { type AgentSdk, isClaudeFamily, isCodexFamily } from '@shared/types/agent-sdk'
 import {
   customProviderUsageToUsageProvider,
   findCustomProvider
@@ -724,6 +724,7 @@ export function resolveUsageProvider(session: SessionLike): UsageProvider | null
   if (isClaudeFamily(session.agent_sdk)) {
     return 'anthropic'
   }
+  if (isCodexFamily(session.agent_sdk)) return 'openai'
   if (session.model_provider_id === 'openai') return 'openai'
   if (session.model_id?.startsWith('gpt')) return 'openai'
   return 'anthropic'
@@ -736,7 +737,7 @@ export function resolveDefaultUsageProvider(
 ): UsageProvider | null {
   const customUsage = resolveCustomProviderUsage(customProviderId)
   if (customUsage !== undefined) return customUsage
-  if (agentSdk === 'codex') return 'openai'
+  if (isCodexFamily(agentSdk)) return 'openai'
   return 'anthropic'
 }
 

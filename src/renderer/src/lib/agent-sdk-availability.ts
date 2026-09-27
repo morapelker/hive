@@ -19,6 +19,8 @@ function getAgentSdkLabel(sdk: Exclude<SelectableAgentSdk, 'terminal'>): string 
       return 'Claude Code (CLI)'
     case 'codex':
       return 'Codex'
+    case 'codex-cli':
+      return 'Codex (CLI)'
   }
 }
 
@@ -35,9 +37,8 @@ export function isAgentSdkAvailable(
     case 'claude-code-cli':
       return availableAgentSdks.claude
     case 'codex':
+    case 'codex-cli':
       return availableAgentSdks.codex
-    case 'terminal':
-      return true
   }
 }
 

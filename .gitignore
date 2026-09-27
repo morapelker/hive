@@ -58,6 +58,7 @@ vendor/
 scripts/*
 !scripts/generate-icon.py
 !scripts/release-canary.sh
+!scripts/codex-cli-pty-driver.py
 !scripts/release-github.sh
 !scripts/finalize.sh
 !scripts/release.sh

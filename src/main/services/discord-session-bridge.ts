@@ -9,7 +9,7 @@ import {
   type SharedSelectedModel
 } from '@shared/model-resolution'
 import { APP_SETTINGS_DB_KEY } from '@shared/types/settings'
-import { supportsGoalMode, type AgentSdk } from '@shared/types/agent-sdk'
+import { isAgentCli, supportsGoalMode, toModelCatalogSdk, type AgentSdk } from '@shared/types/agent-sdk'
 import type { DiscordEmissionMode } from '@shared/types/discord'
 import { getDiscordToolEmoji, getToolLabel, isFileChangeTool } from '@shared/tool-label'
 import type { DatabaseService } from '../db/database'
@@ -176,7 +176,7 @@ function normalizeToolStatus(status: unknown): 'running' | 'success' | 'error' {
 }
 
 function getImplementerSdk(sdk: AgentSdk): AgentSdk {
-  return sdk === 'claude-code-cli' ? 'claude-code' : sdk
+  return toModelCatalogSdk(sdk)
 }
 
 function displayToolName(name: string): string {
@@ -599,7 +599,7 @@ export class DiscordSessionBridge {
       existing.mode = session.mode
       existing.model = this.getSessionModel(session)
       existing.agentSdk = session.agent_sdk
-      if (session.agent_sdk === 'claude-code-cli') {
+      if (isAgentCli(session.agent_sdk)) {
         claudeCliDiscordBridge.register(session.id)
       }
       return existing
@@ -628,7 +628,7 @@ export class DiscordSessionBridge {
       sendChain: Promise.resolve()
     }
     this.runtimesBySessionId.set(session.id, runtime)
-    if (session.agent_sdk === 'claude-code-cli') {
+    if (isAgentCli(session.agent_sdk)) {
       claudeCliDiscordBridge.register(session.id)
     }
     return runtime
