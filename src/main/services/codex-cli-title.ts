@@ -14,6 +14,16 @@
  * unavailable items are omitted — the thread id appears once the thread
  * exists, the thread title once codex named the thread, falling back to the
  * id). Run-state words: Starting, Ready, Working, Thinking, Waiting.
+ *
+ * The `activity` item (codex calls it the spinner) is what makes the TUI
+ * replace the whole title with `[ ! ] Action Required | …` (blinking to
+ * `[ . ]`) while a bottom-pane view is blocked on the user — a
+ * `request_user_input` question, a command approval, an MCP elicitation
+ * (`terminal_title_requires_action`). Without it codex never says so on the
+ * title channel. While a turn runs the item renders a braille spinner frame
+ * joined by a plain space (`Working | <id> ⠋`); while idle it renders nothing,
+ * so it sits last. The same frames also trail the thread items while codex is
+ * naming the thread (`<id> ⠙ | <title> ⠙`), so every part is stripped of them.
  */
 
 // Same OSC 0/2 matcher as claude-cli-title-handler.ts.
@@ -21,13 +31,23 @@
 const OSC_TITLE_RE = /\x1b\][02];([^\x07\x1b]*)(?:\x07|\x1b\\)/g
 const MAX_TAIL_LENGTH = 4096
 
-export const CODEX_TERMINAL_TITLE_ITEMS = ['run-state', 'thread-id', 'thread-title'] as const
+export const CODEX_TERMINAL_TITLE_ITEMS = ['run-state', 'thread-id', 'thread-title', 'activity'] as const
 
 export type CodexRunState = 'Starting' | 'Ready' | 'Working' | 'Thinking' | 'Waiting'
 
 const RUN_STATES = new Set<string>(['Starting', 'Ready', 'Working', 'Thinking', 'Waiting'])
 const THREAD_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{0,12}(\.\.\.)?$/i
 const FULL_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+/**
+ * Spinner frames (`TERMINAL_TITLE_SPINNER_FRAMES` in codex's status_surfaces.rs)
+ * trailing a title part, optionally with the `●` the activity item shows while
+ * the realtime microphone listens. Joined by a plain space, never ` | `.
+ */
+const TRAILING_SPINNER_RE = /(?:\s*[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏●]+)+\s*$/u
+
+function stripSpinnerFrames(part: string): string {
+  return part.replace(TRAILING_SPINNER_RE, '').trim()
+}
 
 export interface CodexTitleInfo {
   raw: string
@@ -55,7 +75,7 @@ export function parseCodexTerminalTitle(raw: string): CodexTitleInfo {
     text = text.replace(/^\[ [!.] \] Action Required\s*\|?\s*/, '')
   }
   for (const part of text.split(' | ')) {
-    const value = part.trim()
+    const value = stripSpinnerFrames(part)
     if (!value) continue
     if (info.runState === null && RUN_STATES.has(value)) {
       info.runState = value as CodexRunState

@@ -69,6 +69,7 @@ import {
   type CodexRunState
 } from './codex-cli-title'
 import { resetAllCodexCliModelTracking, resetCodexCliModelTracking } from './codex-cli-hook-adapter'
+import type { SessionStatusType } from '@shared/types/session-status'
 
 const log = createLogger({ component: 'TerminalPtyBridge' })
 
@@ -114,6 +115,8 @@ const codexWorkingFallbackTimers = new Map<string, NodeJS.Timeout>()
 const codexLastPrompt = new Map<string, string>()
 /** Rollout tail per codex session while a turn is in flight (turn-end without a Stop hook). */
 const codexTurnWatchers = new Map<string, CodexTurnWatchHandle>()
+/** Codex sessions whose title currently reads `[ ! ] Action Required` (the TUI is blocked on the user). */
+const codexActionRequired = new Set<string>()
 let unsubscribeCodexHookEvents: (() => void) | null = null
 
 /**
@@ -366,11 +369,62 @@ function persistCodexThreadId(sessionId: string, threadId: string, source: strin
   }
 }
 
+/** Statuses a hook already latched for a blocking interaction; the title must not override them. */
+const CODEX_BLOCKING_STATUSES = new Set<SessionStatusType>(['answering', 'permission', 'plan_ready'])
+
+/**
+ * The title's `[ ! ] Action Required` prefix is the one reliable signal codex
+ * gives for the whole life of a question. Its `request_user_input` tool fires
+ * a PreToolUse hook when the question opens (→ 'answering' through the
+ * ledger), but the PostToolUse that should follow the answer is not dependable
+ * (codex 0.154.0 was observed both sending and skipping it): when it is
+ * skipped the turn resumes silently and the latched 'answering' would sit
+ * until Stop. The TUI, however, swaps the title to Action Required while the
+ * question view (or an approval / MCP elicitation) is open and restores the
+ * run-state title the moment it closes, so the title is authoritative here:
+ *
+ *   · while it says Action Required, the session is 'answering' — asserted on
+ *     every blink, so it also covers hooks that never ran, a Stop that fired
+ *     while a non-blocking question stayed open, or an Escape mirrored to
+ *     'completed' that only dismissed a sub-prompt. A hook-latched blocking
+ *     status (a PermissionRequest's 'permission', a plan's 'plan_ready') is
+ *     left alone;
+ *   · when it stops saying so, an 'answering'/'permission' session is back to
+ *     'working' and the ledger's stale latch is dropped (the Stop hook, or the
+ *     Ready title below, then completes the turn as usual). 'plan_ready' is
+ *     resolved by the plan pipeline (the implement prompt), never by the title.
+ */
+function handleCodexActionRequired(sessionId: string, actionRequired: boolean): void {
+  const last = getLastClaudeCliStatus(sessionId)
+  if (actionRequired) {
+    codexActionRequired.add(sessionId)
+    if (last !== undefined && CODEX_BLOCKING_STATUSES.has(last)) return
+    publishClaudeCliStatus({
+      sessionId,
+      status: 'answering',
+      metadata: { reason: 'codex_title_action_required' }
+    })
+    return
+  }
+  if (!codexActionRequired.delete(sessionId)) return
+  if (last !== 'answering' && last !== 'permission') return
+  clearClaudeCliInteractions(sessionId)
+  publishClaudeCliStatus({
+    sessionId,
+    status: 'working',
+    metadata: { reason: 'codex_title_action_resolved' }
+  })
+}
+
 /** React to one codex terminal title (`Ready | <thread-id> | <thread title>`). */
 function handleCodexTitle(sessionId: string, rawTitle: string): void {
   const info = parseCodexTerminalTitle(rawTitle)
 
   noteCodexTitleSeen(sessionId)
+  // Before the run-state handling: a question answered right at the end of a
+  // turn flips Action Required straight to Ready, and the Ready→completed
+  // mirror below only moves a session that is 'working'.
+  handleCodexActionRequired(sessionId, info.actionRequired)
   if (info.runState) {
     const previous = codexRunState.get(sessionId) ?? null
     codexRunState.set(sessionId, info.runState)
@@ -456,6 +510,7 @@ function resetCodexSessionState(sessionId: string): void {
   codexWatchers.delete(sessionId)
   codexCliSessions.delete(sessionId)
   codexRunState.delete(sessionId)
+  codexActionRequired.delete(sessionId)
   codexThreadTitleApplied.delete(sessionId)
   codexResolvedPrefixes.delete(sessionId)
   codexLastPrompt.delete(sessionId)

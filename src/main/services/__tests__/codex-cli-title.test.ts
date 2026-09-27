@@ -51,6 +51,50 @@ describe('parseCodexTerminalTitle', () => {
     expect(hidden.runState).toBeNull()
   })
 
+  it('strips the activity spinner frames that trail title parts while a turn runs', () => {
+    const info = parseCodexTerminalTitle('Working | 01a07dbd-6a11-7982-a2b6-ceaa4... | Fix flaky test ⠙')
+    expect(info.runState).toBe('Working')
+    expect(info.threadIdPrefix).toBe('01a07dbd-6a11-7982-a2b6-ceaa4')
+    expect(info.threadTitle).toBe('Fix flaky test')
+    expect(parseCodexTerminalTitle('Thinking ⠋').runState).toBe('Thinking')
+    expect(parseCodexTerminalTitle('Working | 01a07dbd-6a11-7982-a2b6-ceaa4... ● ⠏').threadIdPrefix).toBe(
+      '01a07dbd-6a11-7982-a2b6-ceaa4'
+    )
+    // Observed on codex 0.154.0 while the thread is being named: the frame also
+    // trails the thread-id and thread-title items, and the untruncated id
+    // fallback still completes the truncated id.
+    const naming = parseCodexTerminalTitle(
+      'Working | 01a09797-935a-71d3-88b1-cb182... ⠹ | 01a09797-935a-71d3-88b1-cb182c71017b ⠹ ⠹'
+    )
+    expect(naming.runState).toBe('Working')
+    expect(naming.threadIdPrefix).toBe('01a09797-935a-71d3-88b1-cb182c71017b')
+    expect(naming.threadIdIsComplete).toBe(true)
+    expect(naming.threadTitle).toBeNull()
+    expect(parseCodexTerminalTitle('Ready | 01a07dbd-6a11-7982-a2b6-ceaa4...').runState).toBe('Ready')
+    // A part that is nothing but frames is not a thread title.
+    expect(parseCodexTerminalTitle('Working | ⠋').threadTitle).toBeNull()
+  })
+
+  it('reads the action-required title exactly as codex 0.154.0 emits it around a question', () => {
+    // A pending request_user_input: the run-state item is dropped, the prefix
+    // blinks, and spinner frames may still trail the thread items.
+    const pending = parseCodexTerminalTitle(
+      '[ ! ] Action Required | 01a09797-935a-71d3-88b1-cb182... ⠧ | 01a09797-935a-71d3-88b1-cb182c71017b ⠧'
+    )
+    expect(pending.actionRequired).toBe(true)
+    expect(pending.runState).toBeNull()
+    expect(pending.threadIdPrefix).toBe('01a09797-935a-71d3-88b1-cb182c71017b')
+    expect(pending.threadTitle).toBeNull()
+    const named = parseCodexTerminalTitle('[ . ] Action Required | 01a09797-935a-71d3-88b1-cb182... | Ask color preference')
+    expect(named.actionRequired).toBe(true)
+    expect(named.threadTitle).toBe('Ask color preference')
+    // Answered: the turn resumes with the spinner, then idles without it.
+    const resumed = parseCodexTerminalTitle('Working | 01a09797-935a-71d3-88b1-cb182... | Ask color preference ⠋')
+    expect(resumed.actionRequired).toBe(false)
+    expect(resumed.runState).toBe('Working')
+    expect(resumed.threadTitle).toBe('Ask color preference')
+  })
+
   it('does not mistake ordinary claude-style titles for codex state', () => {
     const info = parseCodexTerminalTitle('✳ Refactoring the parser')
     expect(info.runState).toBeNull()
@@ -82,9 +126,9 @@ describe('extractCodexTitles', () => {
 })
 
 describe('buildCodexTerminalTitleOverride', () => {
-  it('turns on the run-state / thread-id / thread-title items', () => {
+  it('turns on the run-state / thread-id / thread-title / activity items', () => {
     expect(buildCodexTerminalTitleOverride()).toBe(
-      'tui.terminal_title=["run-state","thread-id","thread-title"]'
+      'tui.terminal_title=["run-state","thread-id","thread-title","activity"]'
     )
   })
 })

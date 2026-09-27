@@ -292,7 +292,7 @@ describe('Codex CLI terminal wiring', () => {
       'http://127.0.0.1:45678/codex-hook/codex-session-1/stop'
     )
     expect(args.find((a) => a.startsWith('hooks.state='))).toMatch(/trusted_hash="sha256:/)
-    expect(args).toContain('tui.terminal_title=["run-state","thread-id","thread-title"]')
+    expect(args).toContain('tui.terminal_title=["run-state","thread-id","thread-title","activity"]')
     expect(args.at(-1)).toBe('Implement the ticket')
     // The prompt is in flight: no idle publish.
     expect(mocks.publishClaudeCliStatus).not.toHaveBeenCalled()
@@ -489,6 +489,112 @@ describe('Codex CLI terminal wiring', () => {
       metadata: { reason: 'codex_title_ready' }
     })
     expect(mocks.clearClaudeCliInteractions).toHaveBeenCalledWith('codex-session-1')
+  })
+
+  it('publishes answering while the title says Action Required and working once it stops', async () => {
+    setupDb(makeSession({ claude_session_id: THREAD }))
+    await createClaudeCliTerminal('codex-session-1', {})
+    mocks.publishClaudeCliStatus.mockClear()
+    mocks.clearClaudeCliInteractions.mockClear()
+    // Exactly what codex 0.154.0 emits around a request_user_input question
+    // (the blink alternates the prefix; spinner frames trail the thread items).
+    mocks.getLastClaudeCliStatus.mockReturnValue('working')
+    emitPty(title(`Working | ${THREAD} ⠧`))
+    emitPty(title(`[ ! ] Action Required | ${THREAD} ⠧`))
+    expect(mocks.publishClaudeCliStatus).toHaveBeenCalledTimes(1)
+    expect(mocks.publishClaudeCliStatus).toHaveBeenLastCalledWith({
+      sessionId: 'codex-session-1',
+      status: 'answering',
+      metadata: { reason: 'codex_title_action_required' }
+    })
+    // Blinks while it already holds are no-ops; a blink after something else
+    // moved the status (a Stop fired with the question still open) re-asserts.
+    mocks.getLastClaudeCliStatus.mockReturnValue('answering')
+    emitPty(title(`[ . ] Action Required | ${THREAD}`))
+    expect(mocks.publishClaudeCliStatus).toHaveBeenCalledTimes(1)
+    mocks.getLastClaudeCliStatus.mockReturnValue('completed')
+    emitPty(title(`[ ! ] Action Required | ${THREAD} | Ask color preference`))
+    expect(mocks.publishClaudeCliStatus).toHaveBeenCalledTimes(2)
+    expect(mocks.publishClaudeCliStatus.mock.calls.every(([p]) => p.status === 'answering')).toBe(true)
+    mocks.getLastClaudeCliStatus.mockReturnValue('answering')
+    expect(mocks.clearClaudeCliInteractions).not.toHaveBeenCalled()
+    // No naming from an action-required title (the run-state item is absent).
+    expect(applyClaudeCliTitle).not.toHaveBeenCalled()
+
+    // Answered: no PostToolUse hook fires, the title just resumes the run state.
+    mocks.publishClaudeCliStatus.mockClear()
+    emitPty(title(`Working | ${THREAD} | Ask color preference ⠋`))
+    expect(mocks.clearClaudeCliInteractions).toHaveBeenCalledWith('codex-session-1')
+    expect(mocks.publishClaudeCliStatus).toHaveBeenCalledTimes(1)
+    expect(mocks.publishClaudeCliStatus).toHaveBeenLastCalledWith({
+      sessionId: 'codex-session-1',
+      status: 'working',
+      metadata: { reason: 'codex_title_action_resolved' }
+    })
+    // A plain Working title afterwards is not another release.
+    emitPty(title(`Working | ${THREAD} | Ask color preference ⠙`))
+    expect(mocks.publishClaudeCliStatus).toHaveBeenCalledTimes(1)
+  })
+
+  it('re-asserts answering after a Stop or an Escape moved the session off the question', async () => {
+    setupDb(makeSession({ claude_session_id: THREAD }))
+    await createClaudeCliTerminal('codex-session-1', {})
+    mocks.publishClaudeCliStatus.mockClear()
+    mocks.clearClaudeCliInteractions.mockClear()
+    mocks.getLastClaudeCliStatus.mockReturnValue('completed')
+    emitPty(title(`[ ! ] Action Required | ${THREAD}`))
+    expect(mocks.publishClaudeCliStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({ status: 'answering' })
+    )
+    // Dismissed without an answer (Escape mirrored to completed by the
+    // keystroke handler): the title stops blinking and nothing is released.
+    mocks.publishClaudeCliStatus.mockClear()
+    emitPty(title(`Ready | ${THREAD}`))
+    expect(mocks.publishClaudeCliStatus).not.toHaveBeenCalled()
+    expect(mocks.clearClaudeCliInteractions).not.toHaveBeenCalled()
+  })
+
+  it('leaves a hook-latched permission or plan alone while the title says Action Required', async () => {
+    setupDb(makeSession({ claude_session_id: THREAD }))
+    await createClaudeCliTerminal('codex-session-1', {})
+    mocks.publishClaudeCliStatus.mockClear()
+    mocks.clearClaudeCliInteractions.mockClear()
+    mocks.getLastClaudeCliStatus.mockReturnValue('plan_ready')
+    emitPty(title(`[ ! ] Action Required | ${THREAD}`))
+    expect(mocks.publishClaudeCliStatus).not.toHaveBeenCalled()
+    // The plan is resolved by the implement prompt, never by the title.
+    emitPty(title(`Working | ${THREAD}`))
+    expect(mocks.publishClaudeCliStatus).not.toHaveBeenCalled()
+    expect(mocks.clearClaudeCliInteractions).not.toHaveBeenCalled()
+
+    // A PermissionRequest-latched approval is kept, and released with the title.
+    mocks.getLastClaudeCliStatus.mockReturnValue('permission')
+    emitPty(title(`[ ! ] Action Required | ${THREAD}`))
+    expect(mocks.publishClaudeCliStatus).not.toHaveBeenCalled()
+    emitPty(title(`Working | ${THREAD}`))
+    expect(mocks.clearClaudeCliInteractions).toHaveBeenCalledWith('codex-session-1')
+    expect(mocks.publishClaudeCliStatus).toHaveBeenLastCalledWith({
+      sessionId: 'codex-session-1',
+      status: 'working',
+      metadata: { reason: 'codex_title_action_resolved' }
+    })
+  })
+
+  it('completes a turn whose question was answered right before Ready', async () => {
+    setupDb(makeSession({ claude_session_id: THREAD }))
+    await createClaudeCliTerminal('codex-session-1', {})
+    mocks.publishClaudeCliStatus.mockClear()
+    mocks.getLastClaudeCliStatus.mockReturnValue('working')
+    emitPty(title(`Working | ${THREAD}`))
+    mocks.getLastClaudeCliStatus.mockReturnValue('answering')
+    emitPty(title(`[ ! ] Action Required | ${THREAD}`))
+    // The release publishes working, which the Ready mirror then completes
+    // (the dedup map is what getLastClaudeCliStatus reads in production).
+    mocks.publishClaudeCliStatus.mockImplementation(({ status }) => {
+      mocks.getLastClaudeCliStatus.mockReturnValue(status)
+    })
+    emitPty(title(`Ready | ${THREAD}`))
+    expect(mocks.publishClaudeCliStatus.mock.calls.map(([p]) => p.status)).toEqual(['working', 'completed'])
   })
 
   it('publishes a title-derived working only after the grace period and only if hooks did not', async () => {

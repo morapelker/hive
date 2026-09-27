@@ -349,6 +349,94 @@ describeLive('codex-cli live (real binary)', () => {
   )
 
   it(
+    'question (plan mode): request_user_input latches answering and the title says Action Required until answered',
+    async () => {
+      // request_user_input is only available in Plan mode on stock codex
+      // (Default mode needs the under-development `default_mode_request_user_input`
+      // feature); Hive's Plan sessions are where codex asks questions.
+      const sessionId = `live-question-${Date.now()}`
+      dbMocks.sessions.set(sessionId, {
+        id: sessionId,
+        claude_session_id: null,
+        agent_sdk: 'codex-cli',
+        mode: 'plan',
+        model_id: MODEL,
+        model_variant: 'low'
+      })
+      subscribe(sessionId)
+      const prompt =
+        'Before doing anything else, call the request_user_input tool once to ask me which color I prefer, offering the options red and blue. After I answer, reply with exactly the word done. Do not write a plan and do not run any other tools.'
+      const spec = spawnSpec(sessionId, prompt)
+      mkdirSync(LOG_DIR, { recursive: true })
+      const logPath = join(LOG_DIR, 'question.log')
+      const result = await runDriver({
+        command: spec.command,
+        args: spec.args,
+        cwd: spec.cwd,
+        env: spec.env,
+        logPath,
+        steps: [
+          ['wait', '\\x1b\\]0;Ready \\|', 60],
+          ['wait', '\\x1b\\]0;(Starting|Working)', 20],
+          ['wait', '\\x1b\\]0;Ready \\|', 60],
+          ['sleep', 1.5],
+          ['send', '\x1b[Z'],
+          ['sleep', 0.5],
+          ['paste', prompt],
+          ['wait', '\\x1b\\]0;(Working|Thinking)', 60],
+          ['wait', '\\x1b\\]0;\\[ [!.] \\] Action Required', 180],
+          ['sleep', 3],
+          // Enter commits the preselected option and submits the single question.
+          ['send', '\r'],
+          ['wait', '\\x1b\\]0;Ready', 180],
+          ['sleep', 3],
+          // Close a possible "Implement this plan?" selection before quitting.
+          ['send', '\x1b'],
+          ['sleep', 0.5],
+          ['quit', 15]
+        ]
+      })
+      const log = readFileSync(logPath, 'utf8')
+      assertNoInteractiveGates(log)
+      expect(result.timedOut, JSON.stringify(result.matched)).toBe(false)
+
+      // Hooks: the question opens with a PreToolUse (adapted to AskUserQuestion).
+      // Whether a PostToolUse follows the answer is not reliable on codex
+      // 0.154.0 (observed both with and without one across runs) — which is
+      // why the PTY bridge releases the question from the title channel.
+      const events = hooks.map((h) => [h.hook.hook_event_name, h.hook.tool_name ?? null])
+      const questionIndex = events.findIndex(([e, t]) => e === 'PreToolUse' && t === 'AskUserQuestion')
+      expect(questionIndex, JSON.stringify(events)).toBeGreaterThan(-1)
+      const answered = events.slice(questionIndex + 1).some(([e, t]) => e === 'PostToolUse' && t === 'AskUserQuestion')
+      console.info(`[codex-cli live] PostToolUse after the answered question: ${answered}`)
+      expect(events.at(-1)?.[0] === 'SessionEnd' || events.at(-1)?.[0] === 'Stop').toBe(true)
+      const question = hooks[questionIndex]!.hook
+      expect(question.tool_use_id).toMatch(/^call_/)
+      expect(question.tool_input?.questions?.[0]?.question).toBeTruthy()
+      expect(statuses.map((s) => s.status)).toContain('answering')
+      expect(statuses.at(-1)?.status).toBe('completed')
+
+      // Title channel: Action Required (both blink phases) while the question is
+      // open, still carrying the thread id, then the run state resumes.
+      const titles = titlesFrom(log)
+      const firstActionRequired = titles.findIndex((t) => t.actionRequired)
+      expect(firstActionRequired, titles.map((t) => t.raw).join('\n')).toBeGreaterThan(0)
+      expect(titles[firstActionRequired - 1]?.runState).toBe('Working')
+      const actionRequiredRaw = titles.filter((t) => t.actionRequired).map((t) => t.raw)
+      expect(actionRequiredRaw.some((raw) => raw.startsWith('[ ! ] Action Required'))).toBe(true)
+      expect(actionRequiredRaw.some((raw) => raw.startsWith('[ . ] Action Required'))).toBe(true)
+      expect(titles.filter((t) => t.actionRequired).every((t) => t.runState === null && t.threadIdPrefix)).toBe(true)
+      const lastActionRequired = titles.length - 1 - [...titles].reverse().findIndex((t) => t.actionRequired)
+      const after = titles.slice(lastActionRequired + 1).filter((t) => t.runState)
+      expect(after[0]?.runState, after.map((t) => t.raw).join('\n')).toBe('Working')
+      expect(after.some((t) => t.runState === 'Ready')).toBe(true)
+      // The spinner frames never leak into the parsed thread title.
+      for (const t of titles) expect(t.threadTitle ?? '').not.toMatch(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/)
+    },
+    300_000
+  )
+
+  it(
     'resume: `codex resume <id>` re-announces the thread and runs the argv prompt',
     async () => {
       const sessionId = `live-resume-${Date.now()}`
