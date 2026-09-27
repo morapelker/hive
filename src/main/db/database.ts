@@ -3091,6 +3091,40 @@ export class DatabaseService {
     return rows.map((row) => this.mapKanbanTicketRow(row))
   }
 
+  /**
+   * Cheap change marker for the ticket autocomplete corpus: moves whenever a
+   * ticket is added, removed or edited (`updated_at` is bumped on every write).
+   */
+  getTicketAutocompleteFingerprint(): string {
+    const row = this.getDb()
+      .prepare('SELECT COUNT(*) AS n, MAX(updated_at) AS u FROM kanban_tickets')
+      .get() as { n: number; u: string | null }
+    return `${row.n}:${row.u ?? ''}`
+  }
+
+  /**
+   * Text the user typed themselves, oldest first, for the ticket autocomplete
+   * model: titles and descriptions. Imported tickets (Jira, GitHub), tickets
+   * generated from a session and mega-plan tickets were not typed by the user
+   * and would teach someone else's phrasing, so they are left out. `note` is
+   * private and never leaves the ticket, so it is left out too.
+   */
+  getTicketAutocompleteCorpus(): string[] {
+    const rows = this.getDb()
+      .prepare(
+        `SELECT title, description FROM kanban_tickets
+         WHERE external_provider IS NULL AND created_from_session = 0 AND mega_plan_id IS NULL
+         ORDER BY created_at ASC`
+      )
+      .all() as { title: string; description: string | null }[]
+    const documents: string[] = []
+    for (const row of rows) {
+      if (row.title.trim()) documents.push(row.title)
+      if (row.description?.trim()) documents.push(row.description)
+    }
+    return documents
+  }
+
   updateKanbanTicket(id: string, data: KanbanTicketUpdate): KanbanTicket | null {
     const db = this.getDb()
     const existing = this.getKanbanTicket(id)

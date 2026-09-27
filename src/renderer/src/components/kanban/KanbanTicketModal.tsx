@@ -56,7 +56,7 @@ import {
   DropdownMenuItem
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
+import { TicketDescriptionTextarea } from './TicketDescriptionTextarea'
 import { MarkdownRenderer } from '../sessions/MarkdownRenderer'
 import { HandoffSplitButton } from '../sessions/HandoffSplitButton'
 import { IndeterminateProgressBar } from '@/components/sessions/IndeterminateProgressBar'
@@ -1804,7 +1804,7 @@ function EditModeContent({
               )}
             </div>
           ) : (
-            <Textarea
+            <TicketDescriptionTextarea
               id="ticket-edit-description"
               data-testid="ticket-edit-description-input"
               placeholder="Describe the ticket (supports markdown)..."

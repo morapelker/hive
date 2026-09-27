@@ -122,6 +122,8 @@ export interface AppSettings {
   warnBeforeQuitting: boolean
   breedType: 'dogs' | 'cats'
   vimModeEnabled: boolean
+  /** Inline completions in ticket descriptions, learned locally from past tickets. */
+  ticketAutocompleteEnabled: boolean
   keepAwakeEnabled: boolean
   taskListCollapsed: boolean
   goalStatusCollapsed: boolean
@@ -275,6 +277,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   warnBeforeQuitting: true,
   breedType: 'dogs',
   vimModeEnabled: false,
+  ticketAutocompleteEnabled: true,
   keepAwakeEnabled: false,
   taskListCollapsed: false,
   goalStatusCollapsed: false,
@@ -509,6 +512,7 @@ function extractSettings(state: SettingsState): AppSettings {
     warnBeforeQuitting: state.warnBeforeQuitting,
     breedType: state.breedType,
     vimModeEnabled: state.vimModeEnabled,
+    ticketAutocompleteEnabled: state.ticketAutocompleteEnabled,
     keepAwakeEnabled: state.keepAwakeEnabled,
     taskListCollapsed: state.taskListCollapsed,
     goalStatusCollapsed: state.goalStatusCollapsed,
@@ -914,6 +918,7 @@ export const useSettingsStore = create<SettingsState>()(
         warnBeforeQuitting: state.warnBeforeQuitting,
         breedType: state.breedType,
         vimModeEnabled: state.vimModeEnabled,
+        ticketAutocompleteEnabled: state.ticketAutocompleteEnabled,
         keepAwakeEnabled: state.keepAwakeEnabled,
         taskListCollapsed: state.taskListCollapsed,
         goalStatusCollapsed: state.goalStatusCollapsed,

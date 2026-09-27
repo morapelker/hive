@@ -12,7 +12,8 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
+import { TicketDescriptionTextarea } from './TicketDescriptionTextarea'
+import { isInlineSuggestionTarget } from '@/lib/inline-suggestion'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useConnectionStore, useProjectStore } from '@/stores'
 import { usePinnedStore } from '@/stores/usePinnedStore'
@@ -120,6 +121,8 @@ export function TicketCreateModal({
     if (!open) return
     const handler = (e: KeyboardEvent): void => {
       if (e.key === 'Tab' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        // Tab accepts an inline suggestion in the description; its own handler takes it.
+        if (isInlineSuggestionTarget(e.target)) return
         const modal = document.querySelector('[data-testid="ticket-create-modal"]')
         if (modal?.contains(document.activeElement)) {
           e.stopImmediatePropagation()
@@ -372,7 +375,7 @@ export function TicketCreateModal({
                 )}
               </div>
             ) : (
-              <Textarea
+              <TicketDescriptionTextarea
                 id="ticket-description"
                 data-testid="ticket-description-input"
                 placeholder="Describe the ticket (supports markdown)..."

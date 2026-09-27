@@ -151,6 +151,11 @@ import {
   type UsageOpsRpcService
 } from './domains/usage-ops'
 import {
+  makeLiveTicketAutocompleteRpcService,
+  makeTicketAutocompleteRpcHandlers,
+  type TicketAutocompleteRpcService
+} from './domains/ticket-autocomplete'
+import {
   makeLiveWorktreeOpsRpcService,
   makeWorktreeOpsRpcHandlers,
   type WorktreeOpsRpcService
@@ -184,6 +189,7 @@ export interface RpcContext {
   readonly storageOps?: StorageOpsRpcService
   readonly systemOps?: SystemOpsRpcService
   readonly terminalOps?: TerminalOpsRpcService
+  readonly ticketAutocomplete?: TicketAutocompleteRpcService
   readonly ticketImport?: TicketImportRpcService
   readonly telegramOps?: TelegramOpsRpcService
   readonly teleportOps?: TeleportOpsRpcService
@@ -256,6 +262,9 @@ const makeDefaultRpcHandlers = (context: RpcContext): ReadonlyMap<string, RpcHan
     ...makeSystemOpsRpcHandlers(context.systemOps ?? makeLiveSystemOpsRpcService()),
     ...makeTerminalOpsRpcHandlers(
       context.terminalOps ?? makeLiveTerminalOpsRpcService(context.eventBus)
+    ),
+    ...makeTicketAutocompleteRpcHandlers(
+      context.ticketAutocomplete ?? makeLiveTicketAutocompleteRpcService()
     ),
     ...makeTicketImportRpcHandlers(context.ticketImport ?? makeLiveTicketImportRpcService()),
     ...makeTelegramOpsRpcHandlers(
