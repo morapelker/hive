@@ -42,6 +42,7 @@ import type { TicketAttachmentData } from '@/components/kanban/TicketPickerModal
 import { SlashCommandPopover } from './SlashCommandPopover'
 import { FileMentionPopover } from './FileMentionPopover'
 import { ScrollToBottomFab } from './ScrollToBottomFab'
+import { ScrollTagGutter } from './ScrollTagGutter'
 import { PlanReadyImplementFab } from './PlanReadyImplementFab'
 import { SavePlanAsFileModal } from './SavePlanAsFileModal'
 import { IndeterminateProgressBar } from './IndeterminateProgressBar'
@@ -910,6 +911,8 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
   const pointerDownInScrollerRef = useRef(false)
   const pendingViewportAnchorRef = useRef<VirtualizedMessageListViewportAnchor | null>(null)
   const [viewportRestoreNonce, setViewportRestoreNonce] = useState(0)
+  // Total virtualized content size — rerender signal for scroll-tag markers
+  const [listTotalSize, setListTotalSize] = useState(0)
 
   // Streaming rAF ref (frame-synced flushing for text updates)
   const rafRef = useRef<number | null>(null)
@@ -6360,6 +6363,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
               completionEntry={completionEntry}
               scrollElement={scrollElement}
               lockViewport={sessionAgentSdk === 'codex' && showScrollFab}
+              onTotalSizeChange={setListTotalSize}
             />
           )}
         </div>
@@ -6392,6 +6396,16 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
           visible={showScrollFab}
           bottomClass={showPlanReadyImplementFab ? 'bottom-16' : 'bottom-4'}
         />
+        {/* Scroll-tag gutter: right-click to mark scroll locations */}
+        {visibleMessages.length > 0 && (
+          <ScrollTagGutter
+            sessionId={sessionId}
+            listRef={virtualizedListRef}
+            scrollElement={scrollElement}
+            onWheelIntent={handleScrollWheel}
+            totalSize={listTotalSize}
+          />
+        )}
       </div>
 
       {/* Permission prompt from AI */}

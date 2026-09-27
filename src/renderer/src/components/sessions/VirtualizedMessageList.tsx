@@ -1,4 +1,4 @@
-import { useMemo, memo, forwardRef, useImperativeHandle } from 'react'
+import { useMemo, memo, forwardRef, useImperativeHandle, useEffect } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { AlertCircle, RefreshCw, Minimize2 } from 'lucide-react'
 import { MessageRenderer } from './MessageRenderer'
@@ -6,6 +6,12 @@ import { QueuedMessageBubble } from './QueuedMessageBubble'
 import type { OpenCodeMessage } from './SessionView'
 import { formatCompletionDuration } from '@/lib/format-utils'
 import beeIcon from '@/assets/bee.png'
+import {
+  stabilizeAnchor,
+  computeAnchorFractions,
+  anchorAtFraction,
+  isEphemeralItemKey
+} from '@/lib/scroll-tag-anchors'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -46,12 +52,27 @@ export interface VirtualizedMessageListProps {
   completionEntry: { word?: string; durationMs?: number } | null
   scrollElement: HTMLDivElement | null
   lockViewport: boolean
+  /** Fires when the virtualizer's total content size changes (rerender signal for scroll-tag markers). */
+  onTotalSizeChange?: (size: number) => void
 }
 
 export interface VirtualizedMessageListHandle {
   scrollToEnd: (behavior?: ScrollBehavior) => void
   captureViewportAnchor: () => VirtualizedMessageListViewportAnchor | null
+  /**
+   * Build an anchor for a fractional position (0..1) of the full content —
+   * used by scroll tags when the user clicks a spot on the gutter minimap.
+   * Never anchors to ephemeral items (optimistic local messages,
+   * streaming/queued items, banners) — walks back to the nearest stable item.
+   */
+  captureAnchorAtFraction: (fraction: number) => VirtualizedMessageListViewportAnchor | null
   restoreViewportAnchor: (anchor: VirtualizedMessageListViewportAnchor) => boolean
+  /** 0..1 fraction of the anchor within the full content, or null if unresolvable. */
+  getAnchorFraction: (anchor: VirtualizedMessageListViewportAnchor) => number | null
+  /** Batch variant: resolves all anchors with one key→offset map. */
+  getAnchorFractions: (
+    anchors: readonly VirtualizedMessageListViewportAnchor[]
+  ) => (number | null)[]
 }
 
 export interface VirtualizedMessageListViewportAnchor {
@@ -96,7 +117,8 @@ export const VirtualizedMessageList = memo(
         steeringMessageId,
         completionEntry,
         scrollElement,
-        lockViewport
+        lockViewport,
+        onTotalSizeChange
       }: VirtualizedMessageListProps,
       ref
     ): React.JSX.Element {
@@ -173,18 +195,15 @@ export const VirtualizedMessageList = memo(
         ? () => false
         : undefined
 
+      const totalSize = virtualizer.getTotalSize()
+      useEffect(() => {
+        onTotalSizeChange?.(totalSize)
+      }, [totalSize, onTotalSizeChange])
+
       useImperativeHandle(
         ref,
-        () => ({
-          scrollToEnd: (behavior?: ScrollBehavior) => {
-            if (items.length > 0) {
-              virtualizer.scrollToIndex(items.length - 1, {
-                align: 'end',
-                behavior: behavior ?? 'instant'
-              })
-            }
-          },
-          captureViewportAnchor: () => {
+        () => {
+          const captureAnchor = (): VirtualizedMessageListViewportAnchor | null => {
             if (!scrollElement || items.length === 0) return null
 
             const scrollTop = scrollElement.scrollTop
@@ -199,32 +218,83 @@ export const VirtualizedMessageList = memo(
               fallbackScrollTop: scrollTop,
               fallbackScrollHeight: scrollElement.scrollHeight
             }
-          },
-          restoreViewportAnchor: (anchor: VirtualizedMessageListViewportAnchor) => {
-            if (!scrollElement) return false
+          }
 
-            const anchorItem = virtualizer.measurementsCache.find(
-              (measurement) => String(measurement.key) === anchor.itemKey
-            )
-            const fallbackScrollTop =
-              anchor.fallbackScrollTop + (scrollElement.scrollHeight - anchor.fallbackScrollHeight)
-            const nextScrollTop = anchorItem
-              ? anchorItem.start + anchor.offsetWithinItem
-              : fallbackScrollTop
-            const maxScrollTop = Math.max(
-              0,
-              scrollElement.scrollHeight - scrollElement.clientHeight
-            )
-            const clampedScrollTop = Math.max(0, Math.min(nextScrollTop, maxScrollTop))
+          const getMeasurements = () =>
+            virtualizer.measurementsCache.map((m) => ({ key: String(m.key), start: m.start }))
 
-            if (Math.abs(scrollElement.scrollTop - clampedScrollTop) < 1) {
+          return {
+            scrollToEnd: (behavior?: ScrollBehavior) => {
+              if (items.length > 0) {
+                virtualizer.scrollToIndex(items.length - 1, {
+                  align: 'end',
+                  behavior: behavior ?? 'instant'
+                })
+              }
+            },
+            captureViewportAnchor: captureAnchor,
+            captureAnchorAtFraction: (fraction: number) => {
+              if (!scrollElement) return null
+              const measurements = getMeasurements()
+              const base = anchorAtFraction(
+                fraction,
+                measurements,
+                virtualizer.getTotalSize(),
+                scrollElement.scrollHeight
+              )
+              if (!base) return null
+              const stabilized = stabilizeAnchor(base, measurements)
+              // No stable item to anchor to (e.g. only optimistic/streaming
+              // content exists yet) — refuse rather than saving a tag whose
+              // key is guaranteed to be replaced.
+              if (isEphemeralItemKey(stabilized.itemKey)) return null
+              return stabilized
+            },
+            getAnchorFraction: (anchor: VirtualizedMessageListViewportAnchor) => {
+              const total = virtualizer.getTotalSize()
+              if (total <= 0) return null
+              const m = virtualizer.measurementsCache.find(
+                (mm) => String(mm.key) === anchor.itemKey
+              )
+              if (!m) return null
+              return Math.min(1, Math.max(0, (m.start + anchor.offsetWithinItem) / total))
+            },
+            getAnchorFractions: (anchors: readonly VirtualizedMessageListViewportAnchor[]) => {
+              if (anchors.length === 0) return []
+              // Pass raw cache rows — no per-render copy of the measurement list.
+              return computeAnchorFractions(
+                anchors,
+                virtualizer.measurementsCache,
+                virtualizer.getTotalSize()
+              )
+            },
+            restoreViewportAnchor: (anchor: VirtualizedMessageListViewportAnchor) => {
+              if (!scrollElement) return false
+
+              const anchorItem = virtualizer.measurementsCache.find(
+                (measurement) => String(measurement.key) === anchor.itemKey
+              )
+              const fallbackScrollTop =
+                anchor.fallbackScrollTop +
+                (scrollElement.scrollHeight - anchor.fallbackScrollHeight)
+              const nextScrollTop = anchorItem
+                ? anchorItem.start + anchor.offsetWithinItem
+                : fallbackScrollTop
+              const maxScrollTop = Math.max(
+                0,
+                scrollElement.scrollHeight - scrollElement.clientHeight
+              )
+              const clampedScrollTop = Math.max(0, Math.min(nextScrollTop, maxScrollTop))
+
+              if (Math.abs(scrollElement.scrollTop - clampedScrollTop) < 1) {
+                return true
+              }
+
+              scrollElement.scrollTop = clampedScrollTop
               return true
             }
-
-            scrollElement.scrollTop = clampedScrollTop
-            return true
           }
-        }),
+        },
         [items, scrollElement, virtualizer]
       )
 
