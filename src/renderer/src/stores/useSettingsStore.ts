@@ -1,5 +1,9 @@
 import { create } from 'zustand'
 import { isTerminalBacked } from '@shared/types/agent-sdk'
+import {
+  normalizeAgentSdk,
+  resolveModelForSdk as resolveSharedModelForSdk
+} from '@shared/model-resolution'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { APP_SETTINGS_DB_KEY, DEFAULT_HIVE_ENTERPRISE_SERVER_URL } from '@shared/types/settings'
 import type { TeleportSettings } from '@shared/types/settings'
@@ -143,7 +147,17 @@ export interface AppSettings {
   terminalPosition: TerminalPosition
 
   // Model
+  /**
+   * Global default model. Stamped with the `agentSdk` it was picked for; it
+   * only applies to that SDK (see `resolveModelForSdk`).
+   */
   selectedModel: SelectedModel | null
+  /**
+   * Default model + effort per agent SDK (Settings › Models › Provider
+   * Defaults). Whatever switches a session/ticket to an SDK — the ticket
+   * modal's provider toggle, the handoff picker, the model selector's provider
+   * pill — defaults to this SDK's entry.
+   */
   selectedModelByProvider: Record<string, SelectedModel>
   defaultModels: ModeDefaultModels | null
   /** Model + effort used for PR title/description generation (null = follow defaultAgentSdk). */
@@ -553,9 +567,11 @@ function extractSettings(state: SettingsState): AppSettings {
 }
 
 /**
- * Resolve the default model for a given agent SDK using the per-provider priority chain.
- * Priority: per-provider default → (legacy only) global selectedModel.
- * Returns null when per-provider defaults exist but none matches the requested SDK.
+ * The stored default model for an agent SDK: its provider default (Settings ›
+ * Models › Provider Defaults), else the global default when that belongs to
+ * the SDK. Returns null when nothing stored applies, so callers can layer the
+ * catalog / hard SDK fallback on top. The rules live in the shared resolver
+ * (`@shared/model-resolution`) so the main process resolves identically.
  *
  * Accepts an optional state snapshot so it can be used inside Zustand selectors
  * (where getState() must not be called). Falls back to store.getState() when omitted.
@@ -565,11 +581,10 @@ export function resolveModelForSdk(
   state?: Pick<AppSettings, 'selectedModelByProvider' | 'selectedModel'>
 ): SelectedModel | null {
   const s = state ?? useSettingsStore.getState()
-  const perProvider = s.selectedModelByProvider[agentSdk]
-  if (perProvider) return perProvider
-  // Legacy fallback only when per-provider feature not yet active (migration)
-  if (Object.keys(s.selectedModelByProvider).length > 0) return null
-  return s.selectedModel
+  return resolveSharedModelForSdk(normalizeAgentSdk(agentSdk), {
+    selectedModel: s.selectedModel,
+    selectedModelByProvider: s.selectedModelByProvider
+  }) as SelectedModel | null
 }
 
 /**
@@ -714,11 +729,14 @@ export const useSettingsStore = create<SettingsState>()(
           return get().setSelectedModelForSdk(agentSdk, model)
         }
         set({ selectedModel: model })
-        // Persist to backend (settings DB + opencode service)
-        try {
-          unwrapEnvelope(await opencodeApi.setModel(model))
-        } catch (error) {
-          console.error('Failed to persist model selection:', error)
+        // Push to the live service only for SDKs with a structured implementer
+        // (the terminal-backed CLIs read their model at spawn time).
+        if (!isTerminalBacked(model?.agentSdk)) {
+          try {
+            unwrapEnvelope(await opencodeApi.setModel(model))
+          } catch (error) {
+            console.error('Failed to persist model selection:', error)
+          }
         }
         // Always save to app settings (including null to clear)
         const settings = extractSettings({ ...get(), selectedModel: model } as SettingsState)

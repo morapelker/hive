@@ -44,18 +44,36 @@ export function normalizeAgentSdk(sdk: AgentSdk | string | null | undefined): Ha
   return 'opencode'
 }
 
+/**
+ * The model an SDK defaults to, from the user's stored preferences only (no
+ * catalog or hard fallback — callers layer those on top).
+ *
+ * Priority:
+ * 1. The provider default stored for this SDK (Settings › Models › Provider
+ *    Defaults). Codex CLI inherits Codex's pick until it has its own, since
+ *    the two share a catalog and account.
+ * 2. The global default model, when it belongs to this SDK. The settings page
+ *    stamps it with the `agentSdk` it was picked for, and it only applies to
+ *    that SDK (model catalogs are not portable). An unstamped one predates the
+ *    stamp: it was picked for whatever SDK was the default at the time, so it
+ *    only applies while no provider default exists at all (legacy behavior).
+ */
 export function resolveModelForSdk(
   sdk: HandoffAgentSdk,
   settings: ModelResolutionSettings
 ): SharedSelectedModel | null {
   const perProvider = settings.selectedModelByProvider ?? {}
-  // The codex CLI shares codex's catalog and account: until the user picks a
-  // model for it explicitly, run whatever they already chose for codex (the
-  // static fallback below may not even be enabled on their account).
   const selected = perProvider[sdk] ?? (sdk === 'codex-cli' ? perProvider.codex : undefined)
   if (selected) return selected
-  if (Object.keys(perProvider).length > 0) return null
-  return settings.selectedModel ?? null
+
+  const global = settings.selectedModel ?? null
+  if (!global) return null
+  if (global.agentSdk) {
+    const globalSdk = normalizeAgentSdk(global.agentSdk)
+    const applies = globalSdk === sdk || (sdk === 'codex-cli' && globalSdk === 'codex')
+    return applies ? global : null
+  }
+  return Object.values(perProvider).some(Boolean) ? null : global
 }
 
 export function resolveSessionCreation(opts: {
