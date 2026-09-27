@@ -55,6 +55,7 @@ interface ResolvedState {
 export function MergeOnDoneDialog() {
   const pendingDoneMove = useKanbanStore((s) => s.pendingDoneMove)
   const completeDoneMove = useKanbanStore((s) => s.completeDoneMove)
+  const continueDoneMoveAfterConflict = useKanbanStore((s) => s.continueDoneMoveAfterConflict)
   const clearPendingDoneMove = useKanbanStore((s) => s.clearPendingDoneMove)
 
   // Identity passed to completeDoneMove so a stale async completion (e.g. a
@@ -396,21 +397,36 @@ export function MergeOnDoneDialog() {
         // Conflicts or error — keep conflicts on disk so the ticket-level fix flow can act on them.
         if (mergeResult.conflicts && mergeResult.conflicts.length > 0) {
           useGitStore.getState().setHasConflicts(resolved.baseWorktreePath, true)
-          useWorktreeStatusStore
-            .getState()
-            .setMergeConflictWorktreeForTicket(
-              ticketKey(pendingDoneMove.projectId, pendingDoneMove.ticketId),
-              resolved.baseWorktreeId
-            )
+          // The ticket surfaces one conflict target — keep the first member
+          // that conflicted in this queue so later members don't hide it
+          if (!pendingDoneMove.conflictedWorktrees?.length) {
+            useWorktreeStatusStore
+              .getState()
+              .setMergeConflictWorktreeForTicket(
+                ticketKey(pendingDoneMove.projectId, pendingDoneMove.ticketId),
+                resolved.baseWorktreeId
+              )
+          }
           // Hydrate the owning project's worktrees so the conflict banner can
           // resolve the worktree path when the member project isn't loaded yet
           void useWorktreeStore
             .getState()
             .loadWorktrees(pendingDoneMove.worktreeProjectId ?? pendingDoneMove.projectId)
           void useGitStore.getState().refreshStatuses(resolved.baseWorktreePath)
-          toast.error(
-            `Merge conflicts in ${mergeResult.conflicts.length} file${mergeResult.conflicts.length !== 1 ? 's' : ''} — merge manually`
-          )
+          const conflictSummary = `Merge conflicts in ${mergeResult.conflicts.length} file${mergeResult.conflicts.length !== 1 ? 's' : ''}`
+          // Connection flow: a conflicted member must not abort the queue —
+          // keep checking the remaining members so every branch gets merged
+          // (or flagged) in one pass. The ticket stays put at the end.
+          if (pendingDoneMove.worktreeId) {
+            const where = resolved.projectName ?? resolved.baseBranch
+            const hasMore = (pendingDoneMove.remainingWorktrees?.length ?? 0) > 0
+            toast.error(
+              `${conflictSummary} on ${where}${hasMore ? ' — continuing with the next project' : ''}`
+            )
+            continueDoneMoveAfterConflict(pendingIdentity)
+            return
+          }
+          toast.error(`${conflictSummary} — merge manually`)
         } else {
           toast.error(`Merge failed: ${mergeResult.error}`)
         }
@@ -432,7 +448,14 @@ export function MergeOnDoneDialog() {
     } finally {
       setMerging(false)
     }
-  }, [resolved, pendingDoneMove, pendingIdentity, completeDoneMove, clearPendingDoneMove])
+  }, [
+    resolved,
+    pendingDoneMove,
+    pendingIdentity,
+    completeDoneMove,
+    continueDoneMoveAfterConflict,
+    clearPendingDoneMove
+  ])
 
   const handleArchive = useCallback(async () => {
     if (!resolved) return

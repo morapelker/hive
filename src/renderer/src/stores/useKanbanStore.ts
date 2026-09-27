@@ -227,11 +227,63 @@ export interface PendingDoneMove {
   /** Connection flow: member worktrees still to merge after the current one */
   remainingWorktrees?: { worktreeId: string; projectId: string }[]
   /**
+   * Connection flow: member worktrees whose merge hit conflicts earlier in
+   * this queue. The queue keeps going past them, but the ticket stays put
+   * once the last member finishes so the conflicts can be fixed first.
+   */
+  conflictedWorktrees?: { worktreeId: string; projectId: string }[]
+  /**
    * Connection-project flow: offer the archive/keep step for each member
    * worktree (plain connections skip it — archiving would tear a worktree
    * out of a connection the user still needs).
    */
   offerArchive?: boolean
+}
+
+/**
+ * Stale async completion (e.g. a merge resolving after the dialog was
+ * dismissed and another ticket set a new pending move) must not advance or
+ * move an unrelated pending state
+ */
+function pendingDoneMoveMatches(
+  pending: PendingDoneMove,
+  expected?: { ticketId: string; projectId: string; worktreeId?: string }
+): boolean {
+  return (
+    !expected ||
+    (expected.ticketId === pending.ticketId &&
+      expected.projectId === pending.projectId &&
+      expected.worktreeId === pending.worktreeId)
+  )
+}
+
+/**
+ * Connection flow: the pending move for the next member worktree, or null
+ * when the current member was the last one.
+ */
+function nextPendingDoneMove(
+  pending: PendingDoneMove,
+  conflictedWorktrees: NonNullable<PendingDoneMove['conflictedWorktrees']>
+): PendingDoneMove | null {
+  const [nextWorktree, ...restWorktrees] = pending.remainingWorktrees ?? []
+  if (!nextWorktree) return null
+  return {
+    ticketId: pending.ticketId,
+    projectId: pending.projectId,
+    sortOrder: pending.sortOrder,
+    targetColumn: pending.targetColumn,
+    worktreeId: nextWorktree.worktreeId,
+    worktreeProjectId: nextWorktree.projectId,
+    remainingWorktrees: restWorktrees,
+    offerArchive: pending.offerArchive,
+    ...(conflictedWorktrees.length > 0 ? { conflictedWorktrees } : {})
+  }
+}
+
+function toastConflictedDoneMove(count: number): void {
+  toast.warning(
+    `Merge conflicts in ${count} project${count !== 1 ? 's' : ''} — ticket not moved. Fix the conflicts and move it again.`
+  )
 }
 
 // ── State interface ────────────────────────────────────────────────────
@@ -323,6 +375,15 @@ interface KanbanState {
     projectId: string
     worktreeId?: string
   }) => Promise<void>
+  /**
+   * Connection flow: the current member's merge hit conflicts. Record it and
+   * advance to the next member instead of aborting the whole queue.
+   */
+  continueDoneMoveAfterConflict: (expected?: {
+    ticketId: string
+    projectId: string
+    worktreeId?: string
+  }) => void
 
   // ── Session coordination ────────────────────────────────────────────
   syncTicketWithSession: (sessionId: string, event: KanbanSessionEvent) => void
@@ -1693,43 +1754,52 @@ export const useKanbanStore = create<KanbanState>()(
 
       completeDoneMove: async (expected) => {
         const pending = get().pendingDoneMove
-        if (!pending) return
-        // Stale async completion (e.g. a merge resolving after the dialog was
-        // dismissed and another ticket set a new pending move) must not
-        // advance or move an unrelated pending state
-        if (
-          expected &&
-          (expected.ticketId !== pending.ticketId ||
-            expected.projectId !== pending.projectId ||
-            expected.worktreeId !== pending.worktreeId)
-        ) {
-          return
-        }
+        if (!pending || !pendingDoneMoveMatches(pending, expected)) return
         // Connection flow: advance to the next member worktree before moving
         // the ticket — the move only happens after the last worktree finishes
-        const [nextWorktree, ...restWorktrees] = pending.remainingWorktrees ?? []
-        if (nextWorktree) {
-          set({
-            pendingDoneMove: {
-              ticketId: pending.ticketId,
-              projectId: pending.projectId,
-              sortOrder: pending.sortOrder,
-              targetColumn: pending.targetColumn,
-              worktreeId: nextWorktree.worktreeId,
-              worktreeProjectId: nextWorktree.projectId,
-              remainingWorktrees: restWorktrees,
-              offerArchive: pending.offerArchive
-            }
-          })
+        const conflictedWorktrees = pending.conflictedWorktrees ?? []
+        const next = nextPendingDoneMove(pending, conflictedWorktrees)
+        if (next) {
+          set({ pendingDoneMove: next })
           return
         }
         set({ pendingDoneMove: null })
+        // Earlier members hit conflicts — the queue ran to the end so every
+        // member got checked, but the ticket stays until they're resolved
+        if (conflictedWorktrees.length > 0) {
+          toastConflictedDoneMove(conflictedWorktrees.length)
+          return
+        }
         await get().moveTicket(
           pending.ticketId,
           pending.projectId,
           pending.targetColumn,
           pending.sortOrder
         )
+      },
+
+      continueDoneMoveAfterConflict: (expected) => {
+        const pending = get().pendingDoneMove
+        if (!pending || !pendingDoneMoveMatches(pending, expected)) return
+        const conflictedWorktrees = [
+          ...(pending.conflictedWorktrees ?? []),
+          ...(pending.worktreeId
+            ? [
+                {
+                  worktreeId: pending.worktreeId,
+                  projectId: pending.worktreeProjectId ?? pending.projectId
+                }
+              ]
+            : [])
+        ]
+        const next = nextPendingDoneMove(pending, conflictedWorktrees)
+        if (next) {
+          set({ pendingDoneMove: next })
+          return
+        }
+        // Last member — never move the ticket past unresolved conflicts
+        set({ pendingDoneMove: null })
+        toastConflictedDoneMove(conflictedWorktrees.length)
       },
 
       // ── getTicketsForProject ─────────────────────────────────────
