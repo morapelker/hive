@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { WorktreePickerModal, _resetLastSourceBranch } from './WorktreePickerModal'
@@ -261,7 +261,15 @@ describe('WorktreePickerModal ultracode chip (real ModelSelector)', () => {
       />
     )
 
-    await userEvent.click(screen.getByTestId('sdk-toggle-claude-code-cli'))
+    // The picker opens on the configured default SDK (Codex): a build default
+    // stamped for Claude CLI no longer switches it, so pick Claude CLI explicitly.
+    fireEvent.click(screen.getByTestId('sdk-toggle-claude-code-cli'))
+    await waitFor(() =>
+      expect(screen.getByTestId('sdk-toggle-claude-code-cli')).toHaveAttribute(
+        'aria-pressed',
+        'true'
+      )
+    )
 
     // Open the model picker dropdown (the pill trigger).
     await userEvent.click(await screen.findByTestId('model-selector'))

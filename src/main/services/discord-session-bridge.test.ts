@@ -447,7 +447,7 @@ describe('DiscordSessionBridge managed sessions', () => {
   it('creates an empty-channel /plan session with the configured plan model and SDK', async () => {
     const { db, bridge, openCode } = setupBridge()
     setAppSettings(db, {
-      defaultAgentSdk: 'opencode',
+      defaultAgentSdk: 'claude-code-cli',
       selectedModelByProvider: {
         opencode: BUILD_MODEL
       },
@@ -536,7 +536,7 @@ describe('DiscordSessionBridge managed sessions', () => {
   it('remembers channel mode across clear and recreates the next plain-message session with that mode default', async () => {
     const { db, bridge, openCode } = setupBridge()
     setAppSettings(db, {
-      defaultAgentSdk: 'opencode',
+      defaultAgentSdk: 'claude-code-cli',
       selectedModelByProvider: {
         opencode: BUILD_MODEL
       },
@@ -586,7 +586,7 @@ describe('DiscordSessionBridge managed sessions', () => {
     })
     bridge.setAgentSdkManager({ getImplementer } as never)
     setAppSettings(db, {
-      defaultAgentSdk: 'opencode',
+      defaultAgentSdk: 'claude-code-cli',
       defaultModels: {
         plan: PLAN_MODEL
       }
@@ -623,7 +623,7 @@ describe('DiscordSessionBridge managed sessions', () => {
   it('falls back to opencode when the resolved SDK is not registered', async () => {
     const { db, bridge, openCode } = setupBridge()
     setAppSettings(db, {
-      defaultAgentSdk: 'opencode',
+      defaultAgentSdk: 'codex',
       defaultModels: {
         plan: {
           providerID: 'codex',
