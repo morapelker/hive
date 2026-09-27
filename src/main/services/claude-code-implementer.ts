@@ -202,6 +202,13 @@ export interface ClaudeSessionState {
   pendingCloseTimer: NodeJS.Timeout | null
   /** Safety net that closes stdin if background work never reports done */
   backgroundWorkWatchdog: NodeJS.Timeout | null
+  /** True from the turn's 'busy' publish until its 'idle' publish. reconnect()
+   *  reports busy/idle from this, not from `query`: the query handle only exists
+   *  once the SDK has loaded and the transcript has been read from disk, and a
+   *  reconnect landing in that window (opening a ticket / focusing a session
+   *  right after a send) would otherwise call an announced-running turn idle —
+   *  the renderer then finalizes it and the kanban ticket lands in review. */
+  turnActive: boolean
 }
 
 export class ClaudeCodeImplementer implements AgentSdkImplementer {
@@ -293,7 +300,8 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       promptInput: null,
       liveBackgroundTasks: new Set(),
       pendingCloseTimer: null,
-      backgroundWorkWatchdog: null
+      backgroundWorkWatchdog: null,
+      turnActive: false
     }
     this.sessions.set(key, state)
 
@@ -315,7 +323,9 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     const existing = this.sessions.get(key)
     if (existing) {
       existing.hiveSessionId = hiveSessionId
-      const sessionStatus = existing.query ? 'busy' : 'idle'
+      // Mirror the status the renderer was last told, not the query handle's
+      // presence (see ClaudeSessionState.turnActive).
+      const sessionStatus = existing.turnActive ? 'busy' : 'idle'
       log.info('Reconnect: session already registered, updated hiveSessionId', {
         worktreePath,
         agentSessionId,
@@ -350,7 +360,8 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
       promptInput: null,
       liveBackgroundTasks: new Set(),
       pendingCloseTimer: null,
-      backgroundWorkWatchdog: null
+      backgroundWorkWatchdog: null,
+      turnActive: false
     }
     this.sessions.set(key, state)
 
@@ -2829,6 +2840,12 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
     extra?: { attempt?: number; message?: string; next?: number }
   ): void {
     const statusPayload = { type: status, ...extra }
+    // Keep the reconnect answer in step with what is being published.
+    for (const session of this.sessions.values()) {
+      if (session.hiveSessionId === hiveSessionId) {
+        session.turnActive = status !== 'idle'
+      }
+    }
     this.sendToRenderer('opencode:stream', {
       type: 'session.status',
       sessionId: hiveSessionId,
