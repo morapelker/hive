@@ -176,6 +176,24 @@ describe('TicketDescriptionTextarea', () => {
     expect(tab(el)).toBe(false)
   })
 
+  it('mirrors the text after the caret so the overlay scrolls like the textarea', async () => {
+    const value = ['one', 'two', 'three', 'four', 'five', 'six', ''].join('\n')
+    render(<Harness suggest={fromTable({ 'one\ntwo': ' more' })} initial={value} />)
+    const el = screen.getByTestId('description') as HTMLTextAreaElement
+    act(() => {
+      el.focus()
+      el.setSelectionRange(7, 7)
+      fireEvent.select(el)
+    })
+    const overlay = await screen.findByTestId('ticket-description-suggestion')
+    const ghost = overlay.querySelector('span')
+    expect(ghost?.textContent).toBe(' more')
+    expect(ghost?.previousSibling?.textContent).toBe('one\ntwo')
+    // The trailing newline makes an empty row in the textarea; the zero-width
+    // space makes the overlay render one too.
+    expect(overlay.textContent).toBe('one\ntwo more\nthree\nfour\nfive\nsix\n\u200b')
+  })
+
   it('only suggests with the caret at the end of a line', async () => {
     const suggest = vi.fn(fromTable({ 'use ': 'subagents' }))
     render(<Harness suggest={suggest} initial="use tail" />)

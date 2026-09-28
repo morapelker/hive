@@ -92,6 +92,7 @@ export const TicketDescriptionTextarea = React.forwardRef<
 
   const atLineEnd = caret !== null && (caret === value.length || value[caret] === '\n')
   const before = caret !== null ? value.slice(0, caret) : ''
+  const after = caret !== null ? value.slice(caret) : ''
   const ghost =
     enabled && atLineEnd && suggestion
       ? remainingSuggestion(suggestion.anchor, suggestion.text, before)
@@ -206,6 +207,12 @@ export const TicketDescriptionTextarea = React.forwardRef<
         >
           {before}
           <span className="text-muted-foreground/70">{ghost}</span>
+          {/* The text after the caret keeps the overlay as tall as the textarea so
+              it can scroll as far; without it the ghost sinks to the bottom row
+              whenever the textarea is scrolled. A trailing newline needs a
+              zero-width space after it to make a row, as it does in the textarea. */}
+          {after}
+          {(after || ghost).endsWith('\n') ? '\u200b' : null}
         </div>
       )}
     </div>
