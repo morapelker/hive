@@ -1265,6 +1265,39 @@ export const useKanbanStore = create<KanbanState>()(
             }
           }
 
+          // Leaving the done column resumes the ticket's work. The done-move
+          // above closed its session (completed, tab-less), and a modal that
+          // opens a completed session respawns the process only for the
+          // modal-release cleanup to kill it again on close — so every tap on
+          // the ticket resumed the session from scratch. Revive it once here
+          // (active status + tab restored, no focus change): later modal
+          // opens re-attach to the same process, and the cleanup leaves it
+          // alone. A merged target is terminal too and stays closed. No-op
+          // for a session that is not completed (reactivateSession checks the
+          // DB row), so a move back that races the in-flight close above is
+          // fine: the close aborts on the reactivation mark, or its own undo
+          // path and this one both land on an active session.
+          if (
+            !opts?.skipCompletionEffects &&
+            movedTicket?.column === 'done' &&
+            column !== 'done' &&
+            column !== 'merged' &&
+            movedTicket.current_session_id
+          ) {
+            const sessionIdToRevive = movedTicket.current_session_id
+            import('./useSessionStore')
+              .then(({ useSessionStore }) =>
+                useSessionStore.getState().reactivateSession(sessionIdToRevive)
+              )
+              .catch((err) => {
+                console.error(
+                  'Failed to reactivate session for a ticket moved out of done:',
+                  sessionIdToRevive,
+                  err
+                )
+              })
+          }
+
           // When a ticket moves to done (or review, if that's the trigger), check if any dependents can be auto-launched
           const { useSettingsStore } = await import('./useSettingsStore')
           const { isBlockerSatisfied } = await import('../lib/blocker-utils')

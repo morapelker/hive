@@ -125,7 +125,10 @@ describe('moveTicket — close attached session on the done column', () => {
     await flush()
 
     expect(closeSession).toHaveBeenCalledTimes(1)
-    expect(closeSession).toHaveBeenCalledWith(SESSION_ID, { abortIfRevived: true, stopRemote: true })
+    expect(closeSession).toHaveBeenCalledWith(SESSION_ID, {
+      abortIfRevived: true,
+      stopRemote: true
+    })
   })
 
   it('does not close the session when a ticket moves to merged', async () => {
@@ -212,7 +215,10 @@ describe('moveTicket — close attached session on the done column', () => {
     await useKanbanStore.getState().moveTicket('ticket-1', PROJECT_ID, 'done', 0)
     await flush()
 
-    expect(closeSession).toHaveBeenCalledWith(SESSION_ID, { abortIfRevived: true, stopRemote: true })
+    expect(closeSession).toHaveBeenCalledWith(SESSION_ID, {
+      abortIfRevived: true,
+      stopRemote: true
+    })
   })
 
   it('skips the close (but not the move) when the link check fails', async () => {
@@ -284,13 +290,11 @@ describe('moveTicket — close attached session on the done column', () => {
     await useKanbanStore.getState().moveTicket('ticket-1', PROJECT_ID, 'done', 0)
     await flush()
 
-    expect(closeSession).toHaveBeenCalledWith(SESSION_ID, { abortIfRevived: true, stopRemote: true })
+    expect(closeSession).toHaveBeenCalledWith(SESSION_ID, {
+      abortIfRevived: true,
+      stopRemote: true
+    })
   })
-
-
-
-
-
 
   it('reactivates the session when the ticket was dragged back out of done mid-close', async () => {
     seed(makeTicket())
@@ -313,9 +317,7 @@ describe('moveTicket — close attached session on the done column', () => {
     closeSession.mockImplementationOnce(async () => {
       // Drag-to-todo completes AND unlinks the session itself
       useKanbanStore.setState({
-        tickets: new Map([
-          [PROJECT_ID, [makeTicket({ column: 'todo', current_session_id: null })]]
-        ])
+        tickets: new Map([[PROJECT_ID, [makeTicket({ column: 'todo', current_session_id: null })]]])
       })
       return { success: true }
     })
@@ -373,6 +375,98 @@ describe('moveTicket — close attached session on the done column', () => {
     await flush()
 
     expect(columnOf('ticket-1')).toBe('done')
+    consoleError.mockRestore()
+  })
+})
+
+describe('moveTicket — revive the closed session when a ticket leaves done', () => {
+  it.each(['review', 'in_progress', 'todo'] as const)(
+    'reactivates the attached session when a done ticket moves back to %s',
+    async (column) => {
+      seed(makeTicket({ column: 'done' }))
+
+      await useKanbanStore.getState().moveTicket('ticket-1', PROJECT_ID, column, 0)
+      await flush()
+
+      expect(reactivateSession).toHaveBeenCalledTimes(1)
+      expect(reactivateSession).toHaveBeenCalledWith(SESSION_ID)
+      expect(closeSession).not.toHaveBeenCalled()
+      expect(columnOf('ticket-1')).toBe(column)
+    }
+  )
+
+  it('does not reactivate on a move from done to merged', async () => {
+    seed(makeTicket({ column: 'done' }))
+
+    await useKanbanStore.getState().moveTicket('ticket-1', PROJECT_ID, 'merged', 0)
+    await flush()
+
+    expect(reactivateSession).not.toHaveBeenCalled()
+  })
+
+  it('does not reactivate on a move within the done column', async () => {
+    seed(makeTicket({ column: 'done' }))
+
+    await useKanbanStore.getState().moveTicket('ticket-1', PROJECT_ID, 'done', 3)
+    await flush()
+
+    expect(reactivateSession).not.toHaveBeenCalled()
+  })
+
+  it('does not reactivate when the ticket leaves a non-done column', async () => {
+    seed(makeTicket({ column: 'review' }))
+
+    await useKanbanStore.getState().moveTicket('ticket-1', PROJECT_ID, 'in_progress', 0)
+    await flush()
+
+    expect(reactivateSession).not.toHaveBeenCalled()
+  })
+
+  it('does not reactivate anything for a done ticket without a session', async () => {
+    seed(makeTicket({ column: 'done', current_session_id: null }))
+
+    await useKanbanStore.getState().moveTicket('ticket-1', PROJECT_ID, 'review', 0)
+    await flush()
+
+    expect(reactivateSession).not.toHaveBeenCalled()
+  })
+
+  it('skips the reactivation when completion effects are suppressed', async () => {
+    seed(makeTicket({ column: 'done' }))
+
+    await useKanbanStore
+      .getState()
+      .moveTicket('ticket-1', PROJECT_ID, 'review', 0, { skipCompletionEffects: true })
+    await flush()
+
+    expect(reactivateSession).not.toHaveBeenCalled()
+  })
+
+  it('does not reactivate when the move RPC fails (optimistic revert)', async () => {
+    seed(makeTicket({ column: 'done' }))
+    vi.mocked(kanbanApi.ticket.move).mockRejectedValueOnce(new Error('boom'))
+
+    await expect(
+      useKanbanStore.getState().moveTicket('ticket-1', PROJECT_ID, 'review', 0)
+    ).rejects.toThrow('boom')
+    await flush()
+
+    expect(reactivateSession).not.toHaveBeenCalled()
+    expect(columnOf('ticket-1')).toBe('done')
+  })
+
+  it('does not fail the move when the reactivation rejects', async () => {
+    seed(makeTicket({ column: 'done' }))
+    reactivateSession.mockRejectedValueOnce(new Error('db gone'))
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    await expect(
+      useKanbanStore.getState().moveTicket('ticket-1', PROJECT_ID, 'review', 0)
+    ).resolves.toBeUndefined()
+    await flush()
+
+    expect(columnOf('ticket-1')).toBe('review')
+    expect(consoleError).toHaveBeenCalled()
     consoleError.mockRestore()
   })
 })
