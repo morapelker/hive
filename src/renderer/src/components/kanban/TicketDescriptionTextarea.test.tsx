@@ -72,7 +72,8 @@ describe('TicketDescriptionTextarea', () => {
     expect(tab(el)).toBe(true)
     expect(el.value).toBe('ask me any clarifying questions')
     await waitFor(() => expect(screen.queryByTestId('ticket-description-suggestion')).toBeNull())
-    expect(isInlineSuggestionTarget(el)).toBe(false)
+    // Still owns Tab: an accidental press must not move focus.
+    expect(isInlineSuggestionTarget(el)).toBe(true)
   })
 
   it('keeps the rest visible while typing through the suggestion', async () => {
@@ -126,14 +127,39 @@ describe('TicketDescriptionTextarea', () => {
     document.removeEventListener('keydown', outer)
   })
 
-  it('leaves Tab alone when there is no suggestion', async () => {
+  it('swallows Tab when there is no suggestion so focus stays in the field', async () => {
+    render(<Harness suggest={fromTable({})} />)
+    const el = screen.getByTestId('description') as HTMLTextAreaElement
+    const outer = vi.fn()
+    document.addEventListener('keydown', outer)
+    act(() => el.focus())
+    type(el, 'nothing to see ')
+    await settle()
+    expect(isInlineSuggestionTarget(el)).toBe(true)
+    expect(tab(el)).toBe(true)
+    expect(outer).not.toHaveBeenCalled()
+    expect(el.value).toBe('nothing to see ')
+    expect(document.activeElement).toBe(el)
+    document.removeEventListener('keydown', outer)
+  })
+
+  it('lets Shift+Tab and other keys through when there is no suggestion', async () => {
     render(<Harness suggest={fromTable({})} />)
     const el = screen.getByTestId('description') as HTMLTextAreaElement
     act(() => el.focus())
     type(el, 'nothing to see ')
     await settle()
-    expect(tab(el)).toBe(false)
-    expect(el.value).toBe('nothing to see ')
+    for (const init of [
+      { key: 'Tab', shiftKey: true },
+      { key: 'Escape' },
+      { key: 'ArrowRight', metaKey: true }
+    ]) {
+      const event = new KeyboardEvent('keydown', { ...init, bubbles: true, cancelable: true })
+      act(() => {
+        el.dispatchEvent(event)
+      })
+      expect(event.defaultPrevented).toBe(false)
+    }
   })
 
   it('does nothing when the setting is off', async () => {
@@ -146,6 +172,8 @@ describe('TicketDescriptionTextarea', () => {
     await settle()
     expect(suggest).not.toHaveBeenCalled()
     expect(screen.queryByTestId('ticket-description-suggestion')).toBeNull()
+    expect(isInlineSuggestionTarget(el)).toBe(false)
+    expect(tab(el)).toBe(false)
   })
 
   it('only suggests with the caret at the end of a line', async () => {

@@ -50,6 +50,8 @@ const MIRRORED_STYLES = [
  * user's past tickets. The suggestion is drawn as grey text in an overlay that
  * mirrors the textarea's layout; Tab accepts it, Cmd/Ctrl+Right accepts one
  * word, Esc dismisses it. Only shown with the caret at the end of a line.
+ * With no suggestion showing, plain Tab is swallowed rather than moving focus:
+ * it was most likely meant to accept one.
  */
 export const TicketDescriptionTextarea = React.forwardRef<
   HTMLTextAreaElement,
@@ -117,16 +119,20 @@ export const TicketDescriptionTextarea = React.forwardRef<
 
   // Accept / dismiss keys. Window capture runs before the app's global Tab
   // handlers and Radix's Escape handler, which would otherwise toggle
-  // Build/Plan mode, move focus or close the dialog.
+  // Build/Plan mode, move focus or close the dialog. Plain Tab is taken even
+  // with nothing to accept: a Tab in a field that completes on Tab is far more
+  // likely a missed suggestion than a wish to leave the field.
   React.useEffect(() => {
-    if (!ghost) return
+    if (!enabled) return
     const handler = (e: KeyboardEvent): void => {
       const el = textareaRef.current
       if (!el || e.target !== el || e.isComposing) return
       const plain = !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey
       const wordModifier = isMac() ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey
       if (e.key === 'Tab' && plain) {
-        insertTextAtCaret(el, ghost)
+        if (ghost) insertTextAtCaret(el, ghost)
+      } else if (!ghost) {
+        return
       } else if (e.key === 'ArrowRight' && wordModifier && !e.shiftKey && !e.altKey) {
         insertTextAtCaret(el, firstWordOf(ghost))
       } else if (e.key === 'Escape' && plain) {
@@ -140,7 +146,7 @@ export const TicketDescriptionTextarea = React.forwardRef<
     }
     window.addEventListener('keydown', handler, true)
     return () => window.removeEventListener('keydown', handler, true)
-  }, [ghost, before])
+  }, [enabled, ghost, before])
 
   // Keep the overlay's box and scroll position identical to the textarea's.
   const syncOverlay = React.useCallback(() => {
@@ -173,7 +179,7 @@ export const TicketDescriptionTextarea = React.forwardRef<
         {...props}
         ref={setTextareaRef}
         value={value}
-        {...{ [INLINE_SUGGESTION_ATTRIBUTE]: ghost ? 'active' : undefined }}
+        {...{ [INLINE_SUGGESTION_ATTRIBUTE]: !enabled ? undefined : ghost ? 'active' : 'idle' }}
         onSelect={(e) => {
           readCaret()
           onSelect?.(e)

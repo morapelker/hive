@@ -2,18 +2,21 @@
  * Helpers for inline ("ghost text") suggestions in plain textareas.
  */
 
-/** Set to "active" on a field while it shows a suggestion that Tab would accept. */
+/**
+ * Set on a field that owns plain Tab: "active" while it shows a suggestion
+ * that Tab would accept, "idle" while suggestions are on but none is showing
+ * (Tab is then swallowed so an accidental press does not move focus).
+ */
 export const INLINE_SUGGESTION_ATTRIBUTE = 'data-inline-suggestion'
 
 /**
- * True when a key event is headed for a field that is showing an inline
- * suggestion. Global capture-phase Tab handlers (Build/Plan toggle, the ticket
- * modal's focus guard) must leave such events alone so Tab can accept.
+ * True when a key event is headed for a field with inline suggestions on.
+ * Global capture-phase Tab handlers (Build/Plan toggle, the ticket modal's
+ * focus guard) must leave such events alone: the field accepts the suggestion
+ * or, when there is none, keeps the Tab from moving focus.
  */
 export function isInlineSuggestionTarget(target: EventTarget | null): boolean {
-  return (
-    target instanceof HTMLElement && target.getAttribute(INLINE_SUGGESTION_ATTRIBUTE) === 'active'
-  )
+  return target instanceof HTMLElement && target.hasAttribute(INLINE_SUGGESTION_ATTRIBUTE)
 }
 
 /**
