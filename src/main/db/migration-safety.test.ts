@@ -404,20 +404,20 @@ describeIf('database migration safety', () => {
       title: 'With model',
       note: 'private annotation',
       model_provider_id: 'anthropic',
-      model_id: 'claude-sonnet-5',
+      model_id: 'claude-sonnet-5-5',
       model_variant: 'high',
       variant_group_id: 'group-1'
     })
     expect(ticket.note).toBe('private annotation')
     expect(ticket.model_provider_id).toBe('anthropic')
-    expect(ticket.model_id).toBe('claude-sonnet-5')
+    expect(ticket.model_id).toBe('claude-sonnet-5-5')
     expect(ticket.model_variant).toBe('high')
     expect(ticket.variant_group_id).toBe('group-1')
 
     const fetched = db.getKanbanTicket(ticket.id)
     expect(fetched?.note).toBe('private annotation')
     expect(fetched?.model_provider_id).toBe('anthropic')
-    expect(fetched?.model_id).toBe('claude-sonnet-5')
+    expect(fetched?.model_id).toBe('claude-sonnet-5-5')
     expect(fetched?.model_variant).toBe('high')
     expect(fetched?.variant_group_id).toBe('group-1')
 
