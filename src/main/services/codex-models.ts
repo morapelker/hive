@@ -16,7 +16,7 @@ const CODEX_EFFORT_VARIANTS: Record<string, Record<string, never>> = {
   low: {}
 }
 
-// gpt-5.6/gpt-6 efforts (wire values from codex models.json): luna stops at max, sol/terra/astra add ultra.
+// gpt-5.6/gpt-6/gpt-6.1 efforts (wire values from codex models.json): luna stops at max, sol/terra/astra add ultra.
 const CODEX_EFFORT_VARIANTS_MAX: Record<string, Record<string, never>> = {
   max: {},
   ...CODEX_EFFORT_VARIANTS
@@ -28,16 +28,17 @@ const CODEX_EFFORT_VARIANTS_ULTRA: Record<string, Record<string, never>> = {
 }
 
 export const CODEX_MODELS: CodexModelInfo[] = [
+  // Ordered by quality: gpt-6.1-sol is OpenAI's latest and the top codex pick.
   {
-    id: 'gpt-6-astra',
-    name: 'GPT-6 Astra',
+    id: 'gpt-6.1-sol',
+    name: 'GPT-6.1 Sol',
     limit: { context: 372000, output: 32000 },
     variants: CODEX_EFFORT_VARIANTS_ULTRA,
     defaultVariant: 'high'
   },
   {
-    id: 'gpt-6-sol',
-    name: 'GPT-6 Sol',
+    id: 'gpt-6-astra',
+    name: 'GPT-6 Astra',
     limit: { context: 372000, output: 32000 },
     variants: CODEX_EFFORT_VARIANTS_ULTRA,
     defaultVariant: 'high'
@@ -142,14 +143,18 @@ export function getCodexModelInfo(
 // ── Model slug normalization ──────────────────────────────────────
 
 export const CODEX_MODEL_ALIASES: Record<string, string> = {
+  '6.1-sol': 'gpt-6.1-sol',
+  'gpt-6.1': 'gpt-6.1-sol',
   '6-astra': 'gpt-6-astra',
   'gpt-6': 'gpt-6-astra',
-  '6-sol': 'gpt-6-sol',
   '6-luna': 'gpt-6-luna',
   '5.6-terra': 'gpt-5.6-terra',
-  // Sol and Luna moved from gpt-5.6 to gpt-6; keep persisted selections working.
-  '5.6-sol': 'gpt-6-sol',
-  'gpt-5.6-sol': 'gpt-6-sol',
+  // Sol moved gpt-5.6 -> gpt-6 -> gpt-6.1; keep persisted selections working.
+  '6-sol': 'gpt-6.1-sol',
+  'gpt-6-sol': 'gpt-6.1-sol',
+  '5.6-sol': 'gpt-6.1-sol',
+  'gpt-5.6-sol': 'gpt-6.1-sol',
+  // Luna moved from gpt-5.6 to gpt-6.
   '5.6-luna': 'gpt-6-luna',
   'gpt-5.6-luna': 'gpt-6-luna',
   '5.5': 'gpt-5.5',
