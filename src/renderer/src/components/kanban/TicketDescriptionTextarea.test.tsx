@@ -59,18 +59,39 @@ describe('TicketDescriptionTextarea', () => {
     useSettingsStore.setState({ ticketAutocompleteEnabled: true })
   })
 
-  it('shows the suggestion as ghost text and accepts it with Tab', async () => {
-    render(<Harness suggest={fromTable({ 'ask me any clar': 'ifying questions' })} />)
+  it('shows the suggestion as ghost text and accepts it one word per Tab', async () => {
+    const suggest = vi.fn(fromTable({ 'ask me any clar': 'ifying questions before starting' }))
+    render(<Harness suggest={suggest} />)
     const el = screen.getByTestId('description') as HTMLTextAreaElement
     act(() => el.focus())
     type(el, 'ask me any clar')
 
     const ghost = await screen.findByTestId('ticket-description-suggestion')
-    expect(ghost.textContent).toBe('ask me any clarifying questions')
+    expect(ghost.textContent).toBe('ask me any clarifying questions before starting')
     expect(isInlineSuggestionTarget(el)).toBe(true)
 
+    // The first Tab finishes the current word; the rest stays showing.
+    expect(tab(el)).toBe(true)
+    expect(el.value).toBe('ask me any clarifying')
+    expect(screen.getByTestId('ticket-description-suggestion').textContent).toBe(
+      'ask me any clarifying questions before starting'
+    )
+
+    // Each further Tab takes the next word, with its leading space.
     expect(tab(el)).toBe(true)
     expect(el.value).toBe('ask me any clarifying questions')
+    expect(tab(el)).toBe(true)
+    expect(el.value).toBe('ask me any clarifying questions before')
+    expect(screen.getByTestId('ticket-description-suggestion').textContent).toBe(
+      'ask me any clarifying questions before starting'
+    )
+    // Walking through the suggestion never asked for another.
+    await settle()
+    expect(suggest).toHaveBeenCalledTimes(1)
+
+    // The last word uses the suggestion up.
+    expect(tab(el)).toBe(true)
+    expect(el.value).toBe('ask me any clarifying questions before starting')
     await waitFor(() => expect(screen.queryByTestId('ticket-description-suggestion')).toBeNull())
     // Still owns Tab: an accidental press must not move focus.
     expect(isInlineSuggestionTarget(el)).toBe(true)

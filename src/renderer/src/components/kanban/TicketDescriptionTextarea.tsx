@@ -48,8 +48,9 @@ const MIRRORED_STYLES = [
 /**
  * The ticket description textarea with inline completions learned from the
  * user's past tickets. The suggestion is drawn as grey text in an overlay that
- * mirrors the textarea's layout; Tab accepts it, Cmd/Ctrl+Right accepts one
- * word, Esc dismisses it. Only shown with the caret at the end of a line.
+ * mirrors the textarea's layout; Tab (or Cmd/Ctrl+Right) accepts its next
+ * word, keeping the rest showing so repeated Tabs take more, Esc dismisses it.
+ * Only shown with the caret at the end of a line.
  * With no suggestion showing, plain Tab is swallowed rather than moving focus:
  * it was most likely meant to accept one.
  */
@@ -131,7 +132,10 @@ export const TicketDescriptionTextarea = React.forwardRef<
       const plain = !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey
       const wordModifier = isMac() ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey
       if (e.key === 'Tab' && plain) {
-        if (ghost) insertTextAtCaret(el, ghost)
+        // One word per press so a run of Tabs takes as much as wanted; the
+        // rest stays showing since the ghost is what is left of the anchored
+        // suggestion after the caret moves.
+        if (ghost) insertTextAtCaret(el, firstWordOf(ghost))
       } else if (!ghost) {
         return
       } else if (e.key === 'ArrowRight' && wordModifier && !e.shiftKey && !e.altKey) {

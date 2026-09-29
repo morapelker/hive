@@ -31,7 +31,7 @@ export function remainingSuggestion(anchor: string, text: string, before: string
   return full.slice(before.length)
 }
 
-/** The next word of a suggestion, with its leading whitespace: what Cmd/Ctrl+Right accepts. */
+/** The next word of a suggestion, with its leading whitespace: what Tab and Cmd/Ctrl+Right accept. */
 export function firstWordOf(text: string): string {
   return text.match(/^\s*\S+/)?.[0] ?? text
 }
