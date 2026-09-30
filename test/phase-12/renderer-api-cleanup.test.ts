@@ -8298,9 +8298,9 @@ describe('renderer API cleanup', () => {
     expect(source).not.toContain('window.systemOps.openInChrome(ticket.external_url!')
   })
 
-  it('routes KanbanTicketModal in-memory session worktree fallback through dbApi', () => {
+  it('routes ticket followup in-memory session worktree fallback through dbApi', () => {
     const source = fs.readFileSync(
-      path.resolve(__dirname, '../../src/renderer/src/components/kanban/KanbanTicketModal.tsx'),
+      path.resolve(__dirname, '../../src/renderer/src/lib/session-followup.ts'),
       'utf-8'
     )
     const fallbackStart = source.indexOf('if (!worktreePath && found.worktree_id) {')
@@ -8311,14 +8311,14 @@ describe('renderer API cleanup', () => {
     expect(returnStart).toBeGreaterThan(fallbackStart)
     expect(source).toContain("import { dbApi } from '@/api/db-api'")
     expect(fallbackSource).toContain(
-      'worktreePath = (await dbApi.worktree.get(found.worktree_id))?.path ?? null'
+      'worktreePath = (await dbApi.worktree.get<Worktree>(found.worktree_id))?.path ?? null'
     )
     expect(fallbackSource).not.toContain('db.worktree.get(found.worktree_id)')
   })
 
-  it('routes KanbanTicketModal missing session fallback through dbApi', () => {
+  it('routes ticket followup missing session fallback through dbApi', () => {
     const source = fs.readFileSync(
-      path.resolve(__dirname, '../../src/renderer/src/components/kanban/KanbanTicketModal.tsx'),
+      path.resolve(__dirname, '../../src/renderer/src/lib/session-followup.ts'),
       'utf-8'
     )
     const fallbackStart = source.indexOf('// DB fallback: session not in store')
@@ -8336,9 +8336,9 @@ describe('renderer API cleanup', () => {
     expect(fallbackSource).not.toContain('db.session.get(sessionId)')
   })
 
-  it('routes KanbanTicketModal missing session worktree path fallback through dbApi', () => {
+  it('routes ticket followup missing session worktree path fallback through dbApi', () => {
     const source = fs.readFileSync(
-      path.resolve(__dirname, '../../src/renderer/src/components/kanban/KanbanTicketModal.tsx'),
+      path.resolve(__dirname, '../../src/renderer/src/lib/session-followup.ts'),
       'utf-8'
     )
     const hydrateStart = source.indexOf('// Hydrate into the in-memory store')
@@ -23219,15 +23219,15 @@ describe('renderer API cleanup', () => {
 
   it('routes kanban ticket follow-up prompt dispatch through opencodeApi', () => {
     const source = fs.readFileSync(
-      path.resolve(__dirname, '../../src/renderer/src/components/kanban/KanbanTicketModal.tsx'),
+      path.resolve(__dirname, '../../src/renderer/src/lib/session-followup.ts'),
       'utf-8'
     )
-    const followupStart = source.indexOf('async function sendFollowupToSession(')
-    const modalModeStart = source.indexOf('/** Determine what mode the modal should operate in */')
-    const followupSource = source.slice(followupStart, modalModeStart)
+    const followupStart = source.indexOf('export async function sendFollowupToSession(')
+    const continueStart = source.indexOf('export async function continueTicketSession(')
+    const followupSource = source.slice(followupStart, continueStart)
 
     expect(followupStart).toBeGreaterThan(-1)
-    expect(modalModeStart).toBeGreaterThan(followupStart)
+    expect(continueStart).toBeGreaterThan(followupStart)
     expect(source).toContain("import { opencodeApi } from '@/api/opencode-api'")
     expect(followupSource).toContain('const messageParts = opts.attachments?.length')
     expect(followupSource).toContain(
@@ -23239,15 +23239,15 @@ describe('renderer API cleanup', () => {
 
   it('routes kanban ticket follow-up reconnect through opencodeApi', () => {
     const source = fs.readFileSync(
-      path.resolve(__dirname, '../../src/renderer/src/components/kanban/KanbanTicketModal.tsx'),
+      path.resolve(__dirname, '../../src/renderer/src/lib/session-followup.ts'),
       'utf-8'
     )
-    const followupStart = source.indexOf('async function sendFollowupToSession(')
-    const modalModeStart = source.indexOf('/** Determine what mode the modal should operate in */')
-    const followupSource = source.slice(followupStart, modalModeStart)
+    const followupStart = source.indexOf('export async function sendFollowupToSession(')
+    const continueStart = source.indexOf('export async function continueTicketSession(')
+    const followupSource = source.slice(followupStart, continueStart)
 
     expect(followupStart).toBeGreaterThan(-1)
-    expect(modalModeStart).toBeGreaterThan(followupStart)
+    expect(continueStart).toBeGreaterThan(followupStart)
     expect(source).toContain("import { opencodeApi } from '@/api/opencode-api'")
     expect(followupSource).toContain(
       'await opencodeApi.reconnect(workingPath, session.opencode_session_id, opts.sessionId)'

@@ -60,6 +60,7 @@ import { useRemoteLaunchStore } from '@/stores/useRemoteLaunchStore'
 import { systemApi } from '@/api/system-api'
 import { ProviderIcon, getProviderLabel } from '@/components/ui/provider-icon'
 import { toast } from '@/lib/toast'
+import { continueTicketSession } from '@/lib/session-followup'
 import {
   ContextMenu,
   ContextMenuTrigger,
@@ -724,6 +725,14 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   )
 
   const isError = sessionStatus === 'error' || sessionApiError !== null
+  // claude-cli marks are snake_case classification codes; SDK marks are the
+  // provider's prose message (first line only — the rest is a stack trace)
+  // and must not have their underscores rewritten.
+  const errorTitle = sessionApiError
+    ? /\s/.test(sessionApiError)
+      ? `Session error: ${sessionApiError.split('\n')[0]}`
+      : `Claude API error: ${sessionApiError.replace(/_/g, ' ')}`
+    : undefined
   const hasAttachments = ticket.attachments.length > 0
   // Surface the model on cards that are part of a multi-model duplicate
   // group — for single-model launches the name is noise, unless the user
@@ -1298,6 +1307,25 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     }
   }, [ticket.current_session_id, ticket.worktree_id])
 
+  // ── Continue an errored session ──────────────────────────────────
+  // Sends a bare "continue" follow-up through the shared ticket send path
+  // (CLI sessions via their PTY, SDK sessions via the prompt API).
+  const [isContinuing, setIsContinuing] = useState(false)
+  const handleContinue = useCallback(async () => {
+    if (isContinuing) return
+    setIsContinuing(true)
+    try {
+      await continueTicketSession({
+        id: ticket.id,
+        project_id: ticket.project_id,
+        current_session_id: ticket.current_session_id,
+        mode: ticket.mode
+      })
+    } finally {
+      setIsContinuing(false)
+    }
+  }, [isContinuing, ticket.id, ticket.project_id, ticket.current_session_id, ticket.mode])
+
   const handleMarkChange = useCallback(async (value: string) => {
     try {
       await useKanbanStore.getState().updateTicket(ticket.id, ticket.project_id, {
@@ -1702,20 +1730,39 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                   </Tooltip>
                 )}
 
-                {/* Error badge */}
+                {/* Error badge + Continue nudge for the linked session */}
                 {isError && (
-                  <span
-                    data-testid="kanban-ticket-error-badge"
-                    title={
-                      sessionApiError
-                        ? `Claude API error: ${sessionApiError.replace(/_/g, ' ')}`
-                        : undefined
-                    }
-                    className={cn(ticketPillBaseClass, 'border-red-500/30 bg-red-500/10 text-red-500')}
-                  >
-                    <AlertCircle className="h-2.5 w-2.5" />
-                    Error
-                  </span>
+                  <>
+                    <span
+                      data-testid="kanban-ticket-error-badge"
+                      title={errorTitle}
+                      className={cn(ticketPillBaseClass, 'border-red-500/30 bg-red-500/10 text-red-500')}
+                    >
+                      <AlertCircle className="h-2.5 w-2.5" />
+                      Error
+                    </span>
+                    <button
+                      type="button"
+                      data-testid="kanban-ticket-continue"
+                      title='Send "continue" to the linked session'
+                      disabled={isContinuing || !ticket.current_session_id}
+                      className={cn(
+                        ticketPillClass,
+                        'hover:bg-accent hover:text-foreground transition-colors disabled:opacity-60'
+                      )}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        void handleContinue()
+                      }}
+                    >
+                      {isContinuing ? (
+                        <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                      ) : (
+                        <Play className="h-2.5 w-2.5" />
+                      )}
+                      Continue
+                    </button>
+                  </>
                 )}
 
                 {(() => {

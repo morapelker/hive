@@ -25,6 +25,7 @@ import {
   Lock,
   Plus,
   Map as MapIcon,
+  Play,
   RadioTower,
   Unplug
 } from 'lucide-react'
@@ -69,7 +70,7 @@ import { useClaudeCliSessionPortal } from '@/contexts/ClaudeCliSessionPortalCont
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useCommandApprovalStore } from '@/stores/useCommandApprovalStore'
 import { useProjectStore } from '@/stores/useProjectStore'
-import { useSettingsStore, resolveModelForSdk } from '@/stores/useSettingsStore'
+import { useSettingsStore } from '@/stores/useSettingsStore'
 import { isBlockerSatisfied } from '@/lib/blocker-utils'
 import { buildConnectionMergeQueue, resolveTicketConnectionId } from '@/lib/connection-merge'
 import { useGitStore } from '@/stores/useGitStore'
@@ -78,14 +79,7 @@ import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/mes
 import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
 import { snapshotTokenBaseline } from '@/lib/token-baselines'
 import { markClaudeCliPromptStarted } from '@/lib/claude-cli-send-tracking'
-import {
-  PLAN_MODE_PREFIX,
-  getSuperModePrefix,
-  isPlanLike,
-  isSuperMode,
-  baseMode,
-  toggleSuper
-} from '@/lib/constants'
+import { isPlanLike, toggleSuper } from '@/lib/constants'
 import { buildSdkPlanImplementationPrompt } from '@/lib/proposedPlan'
 import { toast } from '@/lib/toast'
 import {
@@ -99,7 +93,7 @@ import { useQuestionStore, type QuestionRequest } from '@/stores/useQuestionStor
 import { QuestionPrompt } from '@/components/sessions/QuestionPrompt'
 import { FollowupInput } from './FollowupInput'
 import type { Attachment, AttachmentInput } from '@/components/sessions/AttachmentPreview'
-import { buildMessageParts, isImageMime, MAX_ATTACHMENTS } from '@/lib/file-attachment-utils'
+import { isImageMime, MAX_ATTACHMENTS } from '@/lib/file-attachment-utils'
 import { useDropZone } from '@/hooks/useDropZone'
 import { SessionStreamPanel } from './SessionStreamPanel'
 import { ReviewTicketDiffSummary, type ReviewTicketDiffFile } from './ReviewTicketDiffSummary'
@@ -120,7 +114,15 @@ import { submitShortcutLabel } from '@/lib/shortcut-labels'
 import { quickLaunchTicket, quickLaunchTicketOnConnection } from './WorktreePickerModal'
 import type { KanbanTicket, KanbanTicketUpdate, Session, Worktree } from '../../../../main/db/types'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
-import { autoPinForBoardPrompt } from '@/lib/auto-pin'
+import {
+  completionSendMode,
+  continueTicketSession,
+  findSessionById,
+  findWorktreePathById,
+  resolveSessionModel,
+  sendFollowupToSession,
+  type FollowUpMode
+} from '@/lib/session-followup'
 import {
   registerHivePromptHandoff,
   startHivePromptTelemetry
@@ -136,36 +138,8 @@ import { terminalApi } from '@/api/terminal-api'
 
 // ── Types ───────────────────────────────────────────────────────────
 type ModalMode = 'edit' | 'plan_review' | 'review' | 'error' | 'question'
-type FollowUpMode = 'build' | 'plan' | 'super-plan' | 'super-build'
 type ResolvedModalWorktree = Pick<Worktree, 'id' | 'path' | 'branch_name' | 'project_id'> &
   Partial<Pick<Worktree, 'base_branch'>>
-
-function completionSendMode(mode: FollowUpMode): 'build' | 'plan' {
-  return isPlanLike(mode) ? 'plan' : 'build'
-}
-
-function recordSuccessfulFollowupSideEffects(
-  session: { project_id: string; worktree_id: string | null; connection_id?: string | null },
-  sessionId: string,
-  prompt: string,
-  followUpMode: FollowUpMode,
-  model?: ReturnType<typeof resolveSessionModel>
-): void {
-  void autoPinForBoardPrompt({
-    projectId: session.project_id,
-    worktreeId: session.worktree_id,
-    connectionId: session.connection_id ?? null
-  })
-  startHivePromptTelemetry({
-    sessionId,
-    prompt,
-    worktreeId: session.worktree_id,
-    modelId: model?.modelID,
-    providerId: model?.providerID,
-    modelVariant: model?.variant,
-    mode: followUpMode
-  })
-}
 
 /** Standard (non-dual-pane) DialogContent className per modal mode */
 const MODE_DIALOG_CLASS: Record<ModalMode, string> = {
@@ -288,270 +262,6 @@ function findWorktreeById(worktreeId: string): ResolvedModalWorktree | null {
     if (wt) return wt
   }
   return null
-}
-
-/** Find a worktree path by its ID across all projects */
-function findWorktreePathById(worktreeId: string): string | null {
-  return findWorktreeById(worktreeId)?.path ?? null
-}
-
-/** Find a session by ID across worktree and connection session maps, with DB fallback */
-async function findSessionById(sessionId: string): Promise<{
-  session: {
-    id: string
-    project_id: string
-    worktree_id: string | null
-    connection_id: string | null
-    opencode_session_id: string | null
-    agent_sdk: string
-    mode: FollowUpMode
-    model_provider_id: string | null
-    model_id: string | null
-    model_variant: string | null
-  }
-  worktreePath: string | null
-  connectionId: string | null
-  /** Working directory for opencode ops — worktree path or connection path */
-  workingPath: string | null
-} | null> {
-  // Fast path: check in-memory store
-  const sessionStore = useSessionStore.getState()
-  for (const sessions of sessionStore.sessionsByWorktree.values()) {
-    const found = sessions.find((s) => s.id === sessionId)
-    if (found) {
-      let worktreePath = found.worktree_id ? findWorktreePathById(found.worktree_id) : null
-      // Worktree not in the in-memory store (project not loaded in sidebar) — try DB
-      if (!worktreePath && found.worktree_id) {
-        worktreePath = (await dbApi.worktree.get<Worktree>(found.worktree_id))?.path ?? null
-      }
-      return { session: found, worktreePath, connectionId: null, workingPath: worktreePath }
-    }
-  }
-  for (const [connId, sessions] of sessionStore.sessionsByConnection.entries()) {
-    const found = sessions.find((s) => s.id === sessionId)
-    if (found) {
-      const connectionPath =
-        useConnectionStore.getState().connections.find((c) => c.id === connId)?.path ?? null
-      return {
-        session: found,
-        worktreePath: null,
-        connectionId: connId,
-        workingPath: connectionPath
-      }
-    }
-  }
-  // DB fallback: session not in store (worktree not currently selected)
-  const dbSession = await dbApi.session.get<Session>(sessionId)
-  if (!dbSession) {
-    console.warn(
-      `[KanbanTicketModal] findSessionById: session not found in store or DB — sessionId=${sessionId}`
-    )
-    return null
-  }
-  // Hydrate into the in-memory store so getWorktreeStatus() and
-  // zustand selectors can find this session going forward.
-  useSessionStore.getState().hydrateSession(dbSession)
-
-  const worktreePath = dbSession.worktree_id
-    ? ((await dbApi.worktree.get<Worktree>(dbSession.worktree_id))?.path ?? null)
-    : null
-  return {
-    session: {
-      id: dbSession.id,
-      project_id: dbSession.project_id,
-      worktree_id: dbSession.worktree_id,
-      connection_id: dbSession.connection_id,
-      opencode_session_id: dbSession.opencode_session_id,
-      agent_sdk: dbSession.agent_sdk,
-      mode: dbSession.mode,
-      model_provider_id: dbSession.model_provider_id,
-      model_id: dbSession.model_id,
-      model_variant: dbSession.model_variant
-    },
-    worktreePath,
-    connectionId: dbSession.connection_id,
-    workingPath: worktreePath
-  }
-}
-
-/** Resolve the model to use for a session's next prompt (mirrors SessionView.getModelForRequests) */
-function resolveSessionModel(
-  sessionId: string,
-  sessionDataFallback?: {
-    model_provider_id: string | null
-    model_id: string | null
-    model_variant: string | null
-    agent_sdk: string
-  }
-): { providerID: string; modelID: string; variant?: string } | undefined {
-  // Primary: scan store (picks up mode-specific defaults applied by setSessionMode)
-  const state = useSessionStore.getState()
-  let session: {
-    model_provider_id: string | null
-    model_id: string | null
-    model_variant: string | null
-    agent_sdk: string
-  } | null = null
-  for (const sessions of state.sessionsByWorktree.values()) {
-    const found = sessions.find((s) => s.id === sessionId)
-    if (found) {
-      session = found
-      break
-    }
-  }
-  // Fallback: use provided session data when session not in store (DB fallback path)
-  if (!session && sessionDataFallback) {
-    session = sessionDataFallback
-  }
-  // Session has an explicit model — use it
-  if (session?.model_provider_id && session.model_id) {
-    return {
-      providerID: session.model_provider_id,
-      modelID: session.model_id,
-      variant: session.model_variant ?? undefined
-    }
-  }
-  // Fall back to per-provider default for this session's SDK
-  const agentSdk = session?.agent_sdk ?? 'opencode'
-  return resolveModelForSdk(agentSdk) ?? undefined
-}
-
-/** Send a followup prompt to an existing session */
-async function sendFollowupToSession(opts: {
-  sessionId: string
-  prompt: string
-  followUpMode: FollowUpMode
-  ticketId: string
-  attachments?: Attachment[]
-  /**
-   * Caller already wrote the send stamps + working status for this attempt
-   * (and may use its messageSendTimes stamp as a generation token to detect
-   * newer sends) — don't overwrite them here.
-   */
-  skipSendBookkeeping?: boolean
-}): Promise<void> {
-  const result = await findSessionById(opts.sessionId)
-  if (!result) {
-    console.error(
-      `[KanbanTicketModal] sendFollowupToSession: session not found — sessionId=${opts.sessionId}`
-    )
-    throw new Error(`Session not found: ${opts.sessionId}`)
-  }
-
-  const { session, workingPath, connectionId } = result
-
-  if (!workingPath) {
-    console.error(
-      `[KanbanTicketModal] sendFollowupToSession: workingPath is null — sessionId=${opts.sessionId}, worktree_id=${session.worktree_id}, connection_id=${session.connection_id}`
-    )
-    throw new Error(`Working path not found for session: ${opts.sessionId}`)
-  }
-
-  // Set session mode so the agent SDK knows we're in plan mode (matches Tab toggle in SessionView).
-  // This updates modeBySession, persists to DB, and applies mode-specific default model.
-  await useSessionStore.getState().setSessionMode(opts.sessionId, opts.followUpMode)
-
-  // Claude Code & Codex handle plan mode via the SDK — don't prepend the text prefix
-  const skipPrefix = session.agent_sdk === 'claude-code' || session.agent_sdk === 'codex'
-  const modePrefix = isSuperMode(opts.followUpMode)
-    ? getSuperModePrefix(opts.followUpMode, session.agent_sdk)
-    : opts.followUpMode === 'plan' && !skipPrefix
-      ? PLAN_MODE_PREFIX
-      : ''
-  const fullPrompt = modePrefix + opts.prompt
-
-  // Auto-revert super modes to their base mode immediately (one-shot mode).
-  // The prefix is already captured in fullPrompt above.
-  if (isSuperMode(opts.followUpMode)) {
-    useSessionStore.getState().setSessionMode(opts.sessionId, baseMode(opts.followUpMode))
-  }
-
-  if (!opts.skipSendBookkeeping) {
-    messageSendTimes.set(opts.sessionId, Date.now())
-    userExplicitSendTimes.set(opts.sessionId, Date.now())
-    snapshotTokenBaseline(opts.sessionId)
-    lastSendMode.set(opts.sessionId, completionSendMode(opts.followUpMode))
-    useWorktreeStatusStore
-      .getState()
-      .setSessionStatus(opts.sessionId, isPlanLike(opts.followUpMode) ? 'planning' : 'working')
-  }
-  bumpWorktreeLastMessage({
-    worktreeId: session.worktree_id,
-    connectionId: session.connection_id ?? connectionId
-  })
-
-  // Resolve model AFTER setSessionMode (which may have applied a mode-specific default)
-  const model = resolveSessionModel(opts.sessionId, result.session)
-
-  if (isAgentCli(session.agent_sdk)) {
-    // The follow-up may target a session closed when its ticket entered Done.
-    // Reactivate BEFORE delivering: this serializes behind any in-flight
-    // close via the lifecycle lock (delivering first could hand the prompt to
-    // a PTY the close is about to destroy), flips the row back to active, and
-    // restores the tab so the working process has a restore entry and is not
-    // culled by the modal-release cleanup.
-    await useSessionStore.getState().reactivateSession(opts.sessionId)
-    const delivery = unwrapEnvelope(
-      await terminalApi.sendClaudeCliPrompt(opts.sessionId, fullPrompt)
-    )
-    if (!delivery.delivered) {
-      const createResult = unwrapEnvelope(
-        await terminalApi.createClaudeCli(opts.sessionId, { pendingPrompt: fullPrompt })
-      )
-      if (!createResult.success) {
-        throw new Error(createResult.error ?? 'Failed to start CLI session')
-      }
-    }
-    recordSuccessfulFollowupSideEffects(
-      session,
-      opts.sessionId,
-      fullPrompt,
-      opts.followUpMode,
-      model
-    )
-    return
-  }
-
-  if (!session.opencode_session_id) {
-    console.error(
-      `[KanbanTicketModal] sendFollowupToSession: opencode_session_id is null — sessionId=${opts.sessionId}`
-    )
-    throw new Error(`No opencode session ID for session: ${opts.sessionId}`)
-  }
-
-  // Same as the claude-code-cli branch: reactivate BEFORE reconnecting so the
-  // revival serializes behind any in-flight close via the lifecycle lock —
-  // otherwise a close could disconnect the implementer state while the
-  // reconnect below is in flight and the prompt would fail "session not
-  // found" on a session that was just restored as active.
-  await useSessionStore.getState().reactivateSession(opts.sessionId)
-
-  // Ensure the session is loaded in the agent SDK implementer's in-memory map.
-  // SessionView does this on mount via initializeSession(), but the kanban
-  // followup path bypasses SessionView entirely.  Without this, the Claude Code
-  // implementer throws "session not found" because its Map was never populated.
-  const reconnectResult = unwrapEnvelope(
-    await opencodeApi.reconnect(workingPath, session.opencode_session_id, opts.sessionId)
-  )
-  if (!reconnectResult.success) {
-    throw new Error(`Failed to reconnect to session: ${opts.sessionId}`)
-  }
-
-  const messageParts = opts.attachments?.length
-    ? buildMessageParts(opts.attachments, fullPrompt)
-    : [{ type: 'text' as const, text: fullPrompt }]
-
-  const promptResult = unwrapEnvelope(
-    await opencodeApi.prompt(workingPath, session.opencode_session_id, messageParts, model)
-  )
-
-  if (promptResult && !promptResult.success) {
-    console.error(
-      `[KanbanTicketModal] sendFollowupToSession: prompt returned failure — error=${promptResult.error}`
-    )
-    throw new Error(promptResult.error || 'Failed to send prompt to session')
-  }
-  recordSuccessfulFollowupSideEffects(session, opts.sessionId, fullPrompt, opts.followUpMode, model)
 }
 
 /** Determine what mode the modal should operate in */
@@ -3871,6 +3581,18 @@ function ErrorModeContent({
     }
   }, [followUpText, followUpMode, ticket, isSending, updateTicket, onClose, attachments])
 
+  // ── Bare "continue" nudge (same path as the card's Continue button) ──
+  const handleContinue = useCallback(async () => {
+    if (!ticket.current_session_id || isSending) return
+    setIsSending(true)
+    try {
+      const sent = await continueTicketSession(ticket)
+      if (sent) onClose()
+    } finally {
+      setIsSending(false)
+    }
+  }, [ticket, isSending, onClose])
+
   return (
     <div ref={dropZoneRef} className="relative contents">
       <DialogHeader>
@@ -3941,6 +3663,17 @@ function ErrorModeContent({
         <TicketRunButton state={runScriptState} testId="error-run-btn" />
         <Button type="button" variant="outline" data-testid="error-cancel-btn" onClick={onClose}>
           Cancel
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          data-testid="error-continue-btn"
+          disabled={!ticket.current_session_id || isSending}
+          onClick={handleContinue}
+          className="gap-1.5"
+        >
+          <Play className="h-3.5 w-3.5" />
+          Continue
         </Button>
         <Button
           type="button"

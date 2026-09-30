@@ -26,6 +26,7 @@ import {
   startHivePromptTelemetry
 } from '@/lib/hive-enterprise-telemetry'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
+import { extractSessionErrorMessage } from '@/lib/session-error-message'
 import { checkAutoApprove } from '@/lib/permissionUtils'
 import { isPlanLike } from '@/lib/constants'
 import { shouldPreserveBlockingSessionStatus } from '@/lib/session-status-guards'
@@ -292,6 +293,23 @@ export function useOpenCodeGlobalListener(): void {
         const promptText = (event.data as { promptText?: unknown } | undefined)?.promptText
         if (typeof promptText === 'string') {
           notifyKanbanAutoCreateTicket({ sessionId, rawPrompt: promptText })
+        }
+        return
+      }
+
+      // A turn that died with a provider error (Claude SDK, Codex, OpenCode).
+      // Mark the session so its kanban ticket renders the Error badge and the
+      // Continue button — the claude-cli path writes the same mark from its
+      // StopFailure hook. SessionView owns the inline banner and the ticket's
+      // move to review for the active session; cover background sessions here.
+      if (event.type === 'session.error') {
+        if (!event.childSessionId) {
+          useWorktreeStatusStore
+            .getState()
+            .setSessionApiError(sessionId, extractSessionErrorMessage(event.data))
+          if (sessionId !== activeId) {
+            notifyKanbanSessionSync(sessionId, { type: 'session_error' })
+          }
         }
         return
       }
@@ -617,6 +635,10 @@ export function useOpenCodeGlobalListener(): void {
 
       // Background session became busy again — restore working/planning status
       if (status?.type === 'busy') {
+        // A new turn verifiably started — drop the session's error mark (the
+        // claude-cli path clears it on UserPromptSubmit hook evidence instead).
+        useWorktreeStatusStore.getState().clearSessionApiError(sessionId)
+
         // Don't overwrite plan_ready — session is blocked waiting for plan approval
         if (useSessionStore.getState().getPendingPlan(sessionId)) return
 

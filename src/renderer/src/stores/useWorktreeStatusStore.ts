@@ -69,8 +69,9 @@ interface WorktreeStatusState {
   // (claude-cli StopFailure). Kept separate from sessionStatuses so the
   // error mark on the linked kanban ticket survives unread-clearing, status
   // dedup, and failed-relaunch rollbacks; cleared only when a new turn
-  // verifiably starts (working/planning with UserPromptSubmit hook evidence
-  // or a plan-followup), and a fresh launch re-keys current_session_id so
+  // verifiably starts (claude-cli: working/planning with UserPromptSubmit
+  // hook evidence or a plan-followup; SDK sessions: a busy status event via
+  // clearSessionApiError), and a fresh launch re-keys current_session_id so
   // stale entries are never rendered.
   sessionApiErrors: Record<string, string>
   // sessionId → live background subagent/shell/monitor counts, reported by both
@@ -109,6 +110,7 @@ interface WorktreeStatusState {
     }
   ) => void
   setSessionApiError: (sessionId: string, error: string) => void
+  clearSessionApiError: (sessionId: string) => void
   setSessionBackgroundWork: (sessionId: string, work: SessionBackgroundWork) => void
   clearSessionStatus: (sessionId: string) => void
   clearWorktreeUnread: (worktreeId: string) => void
@@ -277,6 +279,14 @@ export const useWorktreeStatusStore = create<WorktreeStatusState>((set, get) => 
     set((state) => ({
       sessionApiErrors: { ...state.sessionApiErrors, [sessionId]: error }
     }))
+  },
+
+  clearSessionApiError: (sessionId: string) => {
+    if (!(sessionId in get().sessionApiErrors)) return
+    set((state) => {
+      const { [sessionId]: _dropped, ...rest } = state.sessionApiErrors
+      return { sessionApiErrors: rest }
+    })
   },
 
   clearSessionStatus: (sessionId: string) => {

@@ -1,5 +1,14 @@
-import { cleanup, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+const continueMocks = vi.hoisted(() => ({
+  continueTicketSession: vi.fn().mockResolvedValue(true)
+}))
+
+vi.mock('@/lib/session-followup', () => ({
+  continueTicketSession: continueMocks.continueTicketSession
+}))
+
 import { KanbanTicketCard } from './KanbanTicketCard'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
@@ -110,6 +119,48 @@ describe('KanbanTicketCard model badge', () => {
 
     expect(screen.queryByRole('img', { name: 'Claude' })).toBeNull()
     expect(screen.queryByRole('img', { name: 'OpenAI' })).toBeNull()
+  })
+})
+
+describe('KanbanTicketCard error state', () => {
+  afterEach(() => {
+    cleanup()
+    useWorktreeStatusStore.setState({ sessionApiErrors: {} })
+    continueMocks.continueTicketSession.mockClear()
+  })
+
+  it('renders a Continue button next to the Error badge that nudges the linked session', async () => {
+    useWorktreeStatusStore.setState({ sessionApiErrors: { 'session-1': 'rate_limit' } })
+    const ticket: KanbanTicket = {
+      ...baseTicket,
+      column: 'review',
+      current_session_id: 'session-1',
+      mode: 'build'
+    }
+
+    render(<KanbanTicketCard ticket={ticket} />)
+
+    expect(screen.getByTestId('kanban-ticket-error-badge')).toHaveTextContent('Error')
+    const button = screen.getByTestId('kanban-ticket-continue')
+    expect(button).toHaveTextContent('Continue')
+    expect(button).not.toBeDisabled()
+
+    fireEvent.click(button)
+
+    await waitFor(() => expect(continueMocks.continueTicketSession).toHaveBeenCalledTimes(1))
+    expect(continueMocks.continueTicketSession).toHaveBeenCalledWith({
+      id: 'ticket-1',
+      project_id: 'project-1',
+      current_session_id: 'session-1',
+      mode: 'build'
+    })
+  })
+
+  it('does not render the Continue button when the linked session has no error', () => {
+    render(<KanbanTicketCard ticket={{ ...baseTicket, current_session_id: 'session-1' }} />)
+
+    expect(screen.queryByTestId('kanban-ticket-error-badge')).toBeNull()
+    expect(screen.queryByTestId('kanban-ticket-continue')).toBeNull()
   })
 })
 
