@@ -48,9 +48,9 @@ const MIRRORED_STYLES = [
 /**
  * The ticket description textarea with inline completions learned from the
  * user's past tickets. The suggestion is drawn as grey text in an overlay that
- * mirrors the textarea's layout; Tab (or Cmd/Ctrl+Right) accepts its next
- * word, keeping the rest showing so repeated Tabs take more, Esc dismisses it.
- * Only shown with the caret at the end of a line.
+ * mirrors the textarea's layout; Tab accepts all of it, Shift+Tab (or
+ * Cmd/Ctrl+Right) accepts its next word and keeps the rest showing, Esc
+ * dismisses it. Only shown with the caret at the end of a line.
  * With no suggestion showing, plain Tab is swallowed rather than moving focus:
  * it was most likely meant to accept one.
  */
@@ -121,24 +121,29 @@ export const TicketDescriptionTextarea = React.forwardRef<
 
   // Accept / dismiss keys. Window capture runs before the app's global Tab
   // handlers and Radix's Escape handler, which would otherwise toggle
-  // Build/Plan mode, move focus or close the dialog. Plain Tab is taken even
-  // with nothing to accept: a Tab in a field that completes on Tab is far more
-  // likely a missed suggestion than a wish to leave the field.
+  // Build/Plan or Super mode, move focus or close the dialog. Plain Tab is
+  // taken even with nothing to accept: a Tab in a field that completes on Tab
+  // is far more likely a missed suggestion than a wish to leave the field.
+  // Shift+Tab is only taken while a suggestion is showing.
   React.useEffect(() => {
     if (!enabled) return
     const handler = (e: KeyboardEvent): void => {
       const el = textareaRef.current
       if (!el || e.target !== el || e.isComposing) return
       const plain = !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey
+      const shiftOnly = e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey
       const wordModifier = isMac() ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey
       if (e.key === 'Tab' && plain) {
-        // One word per press so a run of Tabs takes as much as wanted; the
-        // rest stays showing since the ghost is what is left of the anchored
-        // suggestion after the caret moves.
-        if (ghost) insertTextAtCaret(el, firstWordOf(ghost))
+        if (ghost) insertTextAtCaret(el, ghost)
       } else if (!ghost) {
         return
-      } else if (e.key === 'ArrowRight' && wordModifier && !e.shiftKey && !e.altKey) {
+      } else if (
+        (e.key === 'Tab' && shiftOnly) ||
+        (e.key === 'ArrowRight' && wordModifier && !e.shiftKey && !e.altKey)
+      ) {
+        // One word per press so a run of them takes as much as wanted; the
+        // rest stays showing since the ghost is what is left of the anchored
+        // suggestion after the caret moves.
         insertTextAtCaret(el, firstWordOf(ghost))
       } else if (e.key === 'Escape' && plain) {
         setDismissedAt(before)

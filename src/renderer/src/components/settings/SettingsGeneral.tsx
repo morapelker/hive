@@ -361,8 +361,8 @@ export function SettingsGeneral(): React.JSX.Element {
           <label className="text-sm font-medium">Ticket autocomplete</label>
           <p className="text-xs text-muted-foreground">
             Suggest the rest of what you are typing in ticket descriptions, learned on this computer
-            from your own past tickets. Tab accepts the next word (keep pressing for more),
-            Esc dismisses. Tab never leaves the description field while this is on
+            from your own past tickets. Tab accepts, Shift+Tab accepts one word, Esc dismisses. Tab
+            never leaves the description field while this is on
           </p>
         </div>
         <button

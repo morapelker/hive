@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('@/lib/platform', () => ({ isMac: () => true }))
 
 import { useSettingsStore } from '@/stores/useSettingsStore'
-import { isInlineSuggestionTarget } from '@/lib/inline-suggestion'
+import { isInlineSuggestionTarget, isShowingInlineSuggestion } from '@/lib/inline-suggestion'
 import { TicketDescriptionTextarea } from './TicketDescriptionTextarea'
 
 type Suggest = (before: string) => Promise<{
@@ -46,22 +46,30 @@ const settle = (): Promise<void> =>
     await new Promise((resolve) => setTimeout(resolve, 100))
   })
 
-function tab(el: HTMLTextAreaElement): boolean {
-  const event = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })
+function tab(el: HTMLTextAreaElement, init: KeyboardEventInit = {}): boolean {
+  const event = new KeyboardEvent('keydown', {
+    key: 'Tab',
+    bubbles: true,
+    cancelable: true,
+    ...init
+  })
   act(() => {
     el.dispatchEvent(event)
   })
   return event.defaultPrevented
 }
 
+const shiftTab = (el: HTMLTextAreaElement): boolean => tab(el, { shiftKey: true })
+
 describe('TicketDescriptionTextarea', () => {
   beforeEach(() => {
     useSettingsStore.setState({ ticketAutocompleteEnabled: true })
   })
 
-  it('shows the suggestion as ghost text and accepts it one word per Tab', async () => {
-    const suggest = vi.fn(fromTable({ 'ask me any clar': 'ifying questions before starting' }))
-    render(<Harness suggest={suggest} />)
+  it('shows the suggestion as ghost text and accepts all of it with Tab', async () => {
+    render(
+      <Harness suggest={fromTable({ 'ask me any clar': 'ifying questions before starting' })} />
+    )
     const el = screen.getByTestId('description') as HTMLTextAreaElement
     act(() => el.focus())
     type(el, 'ask me any clar')
@@ -69,32 +77,48 @@ describe('TicketDescriptionTextarea', () => {
     const ghost = await screen.findByTestId('ticket-description-suggestion')
     expect(ghost.textContent).toBe('ask me any clarifying questions before starting')
     expect(isInlineSuggestionTarget(el)).toBe(true)
+    expect(isShowingInlineSuggestion(el)).toBe(true)
 
-    // The first Tab finishes the current word; the rest stays showing.
-    expect(tab(el)).toBe(true)
-    expect(el.value).toBe('ask me any clarifying')
-    expect(screen.getByTestId('ticket-description-suggestion').textContent).toBe(
-      'ask me any clarifying questions before starting'
-    )
-
-    // Each further Tab takes the next word, with its leading space.
-    expect(tab(el)).toBe(true)
-    expect(el.value).toBe('ask me any clarifying questions')
-    expect(tab(el)).toBe(true)
-    expect(el.value).toBe('ask me any clarifying questions before')
-    expect(screen.getByTestId('ticket-description-suggestion').textContent).toBe(
-      'ask me any clarifying questions before starting'
-    )
-    // Walking through the suggestion never asked for another.
-    await settle()
-    expect(suggest).toHaveBeenCalledTimes(1)
-
-    // The last word uses the suggestion up.
     expect(tab(el)).toBe(true)
     expect(el.value).toBe('ask me any clarifying questions before starting')
     await waitFor(() => expect(screen.queryByTestId('ticket-description-suggestion')).toBeNull())
     // Still owns Tab: an accidental press must not move focus.
     expect(isInlineSuggestionTarget(el)).toBe(true)
+    expect(isShowingInlineSuggestion(el)).toBe(false)
+  })
+
+  it('accepts the suggestion one word per Shift+Tab', async () => {
+    const suggest = vi.fn(fromTable({ 'ask me any clar': 'ifying questions before starting' }))
+    render(<Harness suggest={suggest} />)
+    const el = screen.getByTestId('description') as HTMLTextAreaElement
+    const outer = vi.fn()
+    document.addEventListener('keydown', outer)
+    act(() => el.focus())
+    type(el, 'ask me any clar')
+    await screen.findByTestId('ticket-description-suggestion')
+
+    // The first Shift+Tab finishes the current word; the rest stays showing.
+    expect(shiftTab(el)).toBe(true)
+    expect(el.value).toBe('ask me any clarifying')
+    expect(screen.getByTestId('ticket-description-suggestion').textContent).toBe(
+      'ask me any clarifying questions before starting'
+    )
+
+    // Each further Shift+Tab takes the next word, with its leading space.
+    expect(shiftTab(el)).toBe(true)
+    expect(el.value).toBe('ask me any clarifying questions')
+    // Walking through the suggestion never asked for another.
+    await settle()
+    expect(suggest).toHaveBeenCalledTimes(1)
+
+    // Tab takes whatever is left.
+    expect(tab(el)).toBe(true)
+    expect(el.value).toBe('ask me any clarifying questions before starting')
+    await waitFor(() => expect(screen.queryByTestId('ticket-description-suggestion')).toBeNull())
+    // The Super mode toggle and focus traversal never saw any of it.
+    expect(outer).not.toHaveBeenCalled()
+    expect(document.activeElement).toBe(el)
+    document.removeEventListener('keydown', outer)
   })
 
   it('keeps the rest visible while typing through the suggestion', async () => {
@@ -170,6 +194,7 @@ describe('TicketDescriptionTextarea', () => {
     act(() => el.focus())
     type(el, 'nothing to see ')
     await settle()
+    expect(isShowingInlineSuggestion(el)).toBe(false)
     for (const init of [
       { key: 'Tab', shiftKey: true },
       { key: 'Escape' },

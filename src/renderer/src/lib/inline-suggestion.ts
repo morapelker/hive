@@ -20,6 +20,17 @@ export function isInlineSuggestionTarget(target: EventTarget | null): boolean {
 }
 
 /**
+ * True when a key event is headed for a field that is showing a suggestion.
+ * Shift+Tab then takes one word of it, so global Shift+Tab handlers (the Super
+ * mode toggle) must leave the event alone; with nothing showing it is theirs.
+ */
+export function isShowingInlineSuggestion(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLElement && target.getAttribute(INLINE_SUGGESTION_ATTRIBUTE) === 'active'
+  )
+}
+
+/**
  * What is left to show of a suggestion made when the text before the caret
  * was `anchor`, now that it is `before`. Typing through the suggestion keeps
  * the rest visible; anything else invalidates it (empty string).
@@ -31,7 +42,7 @@ export function remainingSuggestion(anchor: string, text: string, before: string
   return full.slice(before.length)
 }
 
-/** The next word of a suggestion, with its leading whitespace: what Tab and Cmd/Ctrl+Right accept. */
+/** The next word of a suggestion, with its leading whitespace: what Shift+Tab and Cmd/Ctrl+Right accept. */
 export function firstWordOf(text: string): string {
   return text.match(/^\s*\S+/)?.[0] ?? text
 }

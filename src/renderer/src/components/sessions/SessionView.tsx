@@ -14,7 +14,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import { isInlineSuggestionTarget } from '@/lib/inline-suggestion'
+import { isInlineSuggestionTarget, isShowingInlineSuggestion } from '@/lib/inline-suggestion'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { ProviderIcon } from '@/components/ui/provider-icon'
 import { toast } from '@/lib/toast'
@@ -5863,8 +5863,11 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
     const handler = (e: KeyboardEvent): void => {
       if (e.key !== 'Tab' || e.ctrlKey || e.metaKey || e.altKey) return
 
-      // Tab accepts an inline suggestion (ticket description autocomplete).
-      if (!e.shiftKey && isInlineSuggestionTarget(e.target)) return
+      // Tab accepts an inline suggestion (ticket description autocomplete);
+      // Shift+Tab takes one word of it, but only while one is showing.
+      if (e.shiftKey ? isShowingInlineSuggestion(e.target) : isInlineSuggestionTarget(e.target)) {
+        return
+      }
 
       // Don't intercept plain Tab inside the ticket creation modal — it needs
       // natural tab navigation. Shift+Tab still toggles super mode.
