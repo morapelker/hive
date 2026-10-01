@@ -12,7 +12,8 @@ import {
   RefreshCw,
   Settings,
   GitBranch,
-  FolderHeart
+  FolderHeart,
+  Sparkles
 } from 'lucide-react'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
@@ -51,6 +52,7 @@ import {
 import { HintBadge } from '@/components/ui/HintBadge'
 import { WorktreeList, BranchPickerDialog } from '@/components/worktrees'
 import { ConnectionInstanceList } from './ConnectionInstanceList'
+import { ManageSkillsDialog } from './ManageSkillsDialog'
 import { getMemberProjects } from '@/lib/connection-project'
 import { LanguageIcon } from './LanguageIcon'
 import { HighlightedText } from './HighlightedText'
@@ -190,6 +192,7 @@ export const ProjectItem = memo(function ProjectItem({
 
   const [editName, setEditName] = useState(project.name)
   const [branchPickerOpen, setBranchPickerOpen] = useState(false)
+  const [manageSkillsOpen, setManageSkillsOpen] = useState(false)
   const [removeConfirmOpen, setRemoveConfirmOpen] = useState(false)
   const [noCommitsDialogOpen, setNoCommitsDialogOpen] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -668,6 +671,10 @@ export const ProjectItem = memo(function ProjectItem({
                     <Settings className="h-4 w-4 mr-2" />
                     Project Settings
                   </ContextMenuItem>
+                  <ContextMenuItem onClick={() => setManageSkillsOpen(true)}>
+                    <Sparkles className="h-4 w-4 mr-2" />
+                    Manage Skills
+                  </ContextMenuItem>
                 </>
               )}
               {spaces.length > 0 && (
@@ -731,6 +738,11 @@ export const ProjectItem = memo(function ProjectItem({
         projectPath={project.path}
         onSelect={handleBranchSelect}
       />
+
+      {/* Manage Skills Dialog — mounted only while open so idle sidebar rows stay cheap */}
+      {manageSkillsOpen && (
+        <ManageSkillsDialog project={project} open onOpenChange={setManageSkillsOpen} />
+      )}
 
       {/* Remove Confirmation Dialog */}
       <AlertDialog open={removeConfirmOpen} onOpenChange={setRemoveConfirmOpen}>

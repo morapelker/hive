@@ -4,6 +4,7 @@ import { Effect } from 'effect'
 import { z } from 'zod'
 import { isDesktopCommandResult, makeDesktopCommandRequest } from '../../../shared/desktop-command'
 import type { SuggestionItem } from '../../../shared/types/setup-suggestions'
+import type { ProjectSkillsListing, SetDisabledSkillsResult } from '../../../shared/types/skills'
 import type { RpcHandler } from '../router'
 import {
   isValidDirectory,
@@ -22,6 +23,11 @@ export interface ProjectOpsRpcService {
   readonly detectSetupSuggestions: (
     projectPath: string
   ) => Effect.Effect<SuggestionItem[], unknown, never>
+  readonly listSkills: (projectPath: string) => Effect.Effect<ProjectSkillsListing, unknown, never>
+  readonly setDisabledSkills: (
+    projectPath: string,
+    disabledSkills: string[]
+  ) => Effect.Effect<SetDisabledSkillsResult, unknown, never>
   readonly findXcworkspace: (projectPath: string) => Effect.Effect<string | null, unknown, never>
   readonly isAndroidProject: (projectPath: string) => Effect.Effect<boolean, unknown, never>
   readonly loadLanguageIcons: () => Effect.Effect<Record<string, string>, unknown, never>
@@ -79,6 +85,9 @@ const filenameParamsSchema = z.object({ filename: z.string().min(1) }).strict()
 const emptyParamsSchema = z.union([z.object({}).strict(), z.undefined(), z.null()])
 const createProjectFolderParamsSchema = z
   .object({ parentPath: z.string().min(1), name: z.string().min(1) })
+  .strict()
+const setDisabledSkillsParamsSchema = z
+  .object({ path: z.string().min(1), disabledSkills: z.array(z.string().min(1)).max(1000) })
   .strict()
 
 const INVALID_PROJECT_NAME_PATTERN = /[/\\:*?"<>|]/
@@ -140,6 +149,22 @@ export const makeLiveProjectOpsRpcService = (): ProjectOpsRpcService => ({
         const { detectSetupSuggestions } =
           await import('../../../main/services/setup-script-suggester')
         return detectSetupSuggestions(projectPath)
+      },
+      catch: (cause) => cause
+    }),
+  listSkills: (projectPath) =>
+    Effect.tryPromise({
+      try: async () => {
+        const { listProjectSkills } = await import('../../../main/services/claude-skills')
+        return listProjectSkills(projectPath)
+      },
+      catch: (cause) => cause
+    }),
+  setDisabledSkills: (projectPath, disabledSkills) =>
+    Effect.tryPromise({
+      try: async () => {
+        const { setDisabledProjectSkills } = await import('../../../main/services/claude-skills')
+        return setDisabledProjectSkills(projectPath, disabledSkills)
       },
       catch: (cause) => cause
     }),
@@ -787,6 +812,28 @@ export const makeProjectOpsRpcHandlers = (
             catch: (cause) => cause
           })
           return yield* service.detectSetupSuggestions(path)
+        })
+    ],
+    [
+      'projectOps.listSkills',
+      (params) =>
+        Effect.gen(function* () {
+          const { path } = yield* Effect.try({
+            try: () => pathParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          return yield* service.listSkills(path)
+        })
+    ],
+    [
+      'projectOps.setDisabledSkills',
+      (params) =>
+        Effect.gen(function* () {
+          const { path, disabledSkills } = yield* Effect.try({
+            try: () => setDisabledSkillsParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          return yield* service.setDisabledSkills(path, disabledSkills)
         })
     ],
     [

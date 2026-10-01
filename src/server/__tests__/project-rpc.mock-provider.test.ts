@@ -447,6 +447,137 @@ describe('project ops RPC mocked provider', () => {
     })
   })
 
+  it('routes projectOps.listSkills to the injected provider service', async () => {
+    const listing = {
+      globalSkills: [{ id: 'review', name: 'review', description: 'Review a diff' }],
+      projectSkills: [{ id: 'deploy', name: 'Deploy', description: null, enabled: false }]
+    }
+    const listSkills = vi.fn(() => Effect.succeed(listing))
+    const service = { listSkills } as unknown as ProjectOpsRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      projectOps: service
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'project-list-skills-1',
+        method: 'projectOps.listSkills',
+        params: { path: '/repo' }
+      })
+    )
+
+    expect(listSkills).toHaveBeenCalledWith('/repo')
+    expect(response).toEqual({
+      id: 'project-list-skills-1',
+      ok: true,
+      value: listing
+    })
+  })
+
+  it('validates projectOps.listSkills params before calling the provider service', async () => {
+    const listSkills = vi.fn(() => Effect.succeed({ globalSkills: [], projectSkills: [] }))
+    const service = { listSkills } as unknown as ProjectOpsRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      projectOps: service
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'project-list-skills-invalid',
+        method: 'projectOps.listSkills',
+        params: { path: '' }
+      })
+    )
+
+    expect(listSkills).not.toHaveBeenCalled()
+    expect(response).toMatchObject({
+      id: 'project-list-skills-invalid',
+      ok: false,
+      error: { code: 'VALIDATION_FAILED' }
+    })
+  })
+
+  it('routes projectOps.setDisabledSkills to the injected provider service', async () => {
+    const result = { success: true }
+    const setDisabledSkills = vi.fn(() => Effect.succeed(result))
+    const service = { setDisabledSkills } as unknown as ProjectOpsRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      projectOps: service
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'project-set-disabled-skills-1',
+        method: 'projectOps.setDisabledSkills',
+        params: { path: '/repo', disabledSkills: ['deploy', 'release-notes'] }
+      })
+    )
+
+    expect(setDisabledSkills).toHaveBeenCalledWith('/repo', ['deploy', 'release-notes'])
+    expect(response).toEqual({
+      id: 'project-set-disabled-skills-1',
+      ok: true,
+      value: result
+    })
+  })
+
+  it('accepts an empty projectOps.setDisabledSkills list, which re-enables every skill', async () => {
+    const setDisabledSkills = vi.fn(() => Effect.succeed({ success: true }))
+    const service = { setDisabledSkills } as unknown as ProjectOpsRpcService
+    const router = makeRpcRouter({
+      eventBus: makeEventBus(),
+      projectOps: service
+    })
+
+    const response = await Effect.runPromise(
+      router.handle({
+        id: 'project-set-disabled-skills-empty',
+        method: 'projectOps.setDisabledSkills',
+        params: { path: '/repo', disabledSkills: [] }
+      })
+    )
+
+    expect(setDisabledSkills).toHaveBeenCalledWith('/repo', [])
+    expect(response).toMatchObject({ id: 'project-set-disabled-skills-empty', ok: true })
+  })
+
+  it.each([
+    ['an empty path', { path: '', disabledSkills: ['deploy'] }],
+    ['disabledSkills that is not an array', { path: '/repo', disabledSkills: 'deploy' }],
+    ['a missing disabledSkills', { path: '/repo' }],
+    ['an empty skill id', { path: '/repo', disabledSkills: [''] }],
+    ['a non-string skill id', { path: '/repo', disabledSkills: [true] }],
+    ['an unknown key', { path: '/repo', disabledSkills: [], extra: true }]
+  ])(
+    'rejects projectOps.setDisabledSkills with %s before calling the provider service',
+    async (_label, params) => {
+      const setDisabledSkills = vi.fn(() => Effect.succeed({ success: true }))
+      const service = { setDisabledSkills } as unknown as ProjectOpsRpcService
+      const router = makeRpcRouter({
+        eventBus: makeEventBus(),
+        projectOps: service
+      })
+
+      const response = await Effect.runPromise(
+        router.handle({
+          id: 'project-set-disabled-skills-invalid',
+          method: 'projectOps.setDisabledSkills',
+          params
+        })
+      )
+
+      expect(setDisabledSkills).not.toHaveBeenCalled()
+      expect(response).toMatchObject({
+        id: 'project-set-disabled-skills-invalid',
+        ok: false,
+        error: { code: 'VALIDATION_FAILED' }
+      })
+    }
+  )
+
   it('routes projectOps.findXcworkspace to the injected provider service', async () => {
     const findXcworkspace = vi.fn(() => Effect.succeed('/repo/App.xcworkspace'))
     const service = { findXcworkspace } as unknown as ProjectOpsRpcService

@@ -1,5 +1,6 @@
 import { getRendererRpcClient } from './rpc-client'
 import type { SuggestionItem } from '@shared/types/setup-suggestions'
+import type { ProjectSkillsListing, SetDisabledSkillsResult } from '@shared/types/skills'
 
 export interface ProjectValidationResult {
   success: boolean
@@ -94,5 +95,19 @@ export const projectApi = {
       name
     }),
   detectFavicon: async (projectPath: string): Promise<string | null> =>
-    getRendererRpcClient().request<string | null>('projectOps.detectFavicon', { path: projectPath })
+    getRendererRpcClient().request<string | null>('projectOps.detectFavicon', {
+      path: projectPath
+    }),
+  listSkills: async (projectPath: string): Promise<ProjectSkillsListing> =>
+    getRendererRpcClient().request<ProjectSkillsListing>('projectOps.listSkills', {
+      path: projectPath
+    }),
+  setDisabledSkills: async (
+    projectPath: string,
+    disabledSkills: string[]
+  ): Promise<SetDisabledSkillsResult> =>
+    getRendererRpcClient().request<SetDisabledSkillsResult>('projectOps.setDisabledSkills', {
+      path: projectPath,
+      disabledSkills
+    })
 }

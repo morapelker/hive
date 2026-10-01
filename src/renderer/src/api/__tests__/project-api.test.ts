@@ -297,4 +297,35 @@ describe('projectApi', () => {
       path: '/tmp/hive'
     })
   })
+
+  it('routes listSkills through the renderer RPC client', async () => {
+    const listing = {
+      globalSkills: [{ id: 'pdf', name: 'pdf', description: 'Work with PDF files' }],
+      projectSkills: [{ id: 'deploy', name: 'deploy', description: null, enabled: false }]
+    }
+    const request = vi.fn().mockResolvedValue(listing)
+    const subscribe = vi.fn()
+
+    setRendererRpcClient({ request, subscribe })
+
+    await expect(projectApi.listSkills('/tmp/hive')).resolves.toEqual(listing)
+    expect(request).toHaveBeenCalledWith('projectOps.listSkills', {
+      path: '/tmp/hive'
+    })
+  })
+
+  it('routes setDisabledSkills through the renderer RPC client', async () => {
+    const request = vi.fn().mockResolvedValue({ success: true })
+    const subscribe = vi.fn()
+
+    setRendererRpcClient({ request, subscribe })
+
+    await expect(projectApi.setDisabledSkills('/tmp/hive', ['deploy', 'release'])).resolves.toEqual(
+      { success: true }
+    )
+    expect(request).toHaveBeenCalledWith('projectOps.setDisabledSkills', {
+      path: '/tmp/hive',
+      disabledSkills: ['deploy', 'release']
+    })
+  })
 })

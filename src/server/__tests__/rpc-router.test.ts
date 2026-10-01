@@ -37242,7 +37242,9 @@ describe('rpc router', () => {
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
         detectFavicon: () => Effect.succeed(null),
-        getAbsoluteIconDataUrl: () => Effect.succeed(null)
+        getAbsoluteIconDataUrl: () => Effect.succeed(null),
+        listSkills: () => Effect.succeed({ globalSkills: [], projectSkills: [] }),
+        setDisabledSkills: () => Effect.succeed({ success: true })
       }
     })
 
@@ -37283,7 +37285,9 @@ describe('rpc router', () => {
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
         detectFavicon: () => Effect.succeed(null),
-        getAbsoluteIconDataUrl: () => Effect.succeed(null)
+        getAbsoluteIconDataUrl: () => Effect.succeed(null),
+        listSkills: () => Effect.succeed({ globalSkills: [], projectSkills: [] }),
+        setDisabledSkills: () => Effect.succeed({ success: true })
       }
     })
 
@@ -37328,7 +37332,9 @@ describe('rpc router', () => {
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
         detectFavicon: () => Effect.succeed(null),
-        getAbsoluteIconDataUrl: () => Effect.succeed(null)
+        getAbsoluteIconDataUrl: () => Effect.succeed(null),
+        listSkills: () => Effect.succeed({ globalSkills: [], projectSkills: [] }),
+        setDisabledSkills: () => Effect.succeed({ success: true })
       }
     })
 
@@ -37370,7 +37376,9 @@ describe('rpc router', () => {
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
         detectFavicon: () => Effect.succeed(null),
-        getAbsoluteIconDataUrl: () => Effect.succeed(null)
+        getAbsoluteIconDataUrl: () => Effect.succeed(null),
+        listSkills: () => Effect.succeed({ globalSkills: [], projectSkills: [] }),
+        setDisabledSkills: () => Effect.succeed({ success: true })
       }
     })
 
@@ -37416,7 +37424,9 @@ describe('rpc router', () => {
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
         detectFavicon: () => Effect.succeed(null),
-        getAbsoluteIconDataUrl: () => Effect.succeed(null)
+        getAbsoluteIconDataUrl: () => Effect.succeed(null),
+        listSkills: () => Effect.succeed({ globalSkills: [], projectSkills: [] }),
+        setDisabledSkills: () => Effect.succeed({ success: true })
       }
     })
 
@@ -37458,7 +37468,9 @@ describe('rpc router', () => {
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
         detectFavicon: () => Effect.succeed(null),
-        getAbsoluteIconDataUrl: () => Effect.succeed(null)
+        getAbsoluteIconDataUrl: () => Effect.succeed(null),
+        listSkills: () => Effect.succeed({ globalSkills: [], projectSkills: [] }),
+        setDisabledSkills: () => Effect.succeed({ success: true })
       }
     })
 
@@ -37503,7 +37515,9 @@ describe('rpc router', () => {
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
         detectFavicon: () => Effect.succeed(null),
-        getAbsoluteIconDataUrl: () => Effect.succeed(null)
+        getAbsoluteIconDataUrl: () => Effect.succeed(null),
+        listSkills: () => Effect.succeed({ globalSkills: [], projectSkills: [] }),
+        setDisabledSkills: () => Effect.succeed({ success: true })
       }
     })
 
@@ -37545,7 +37559,9 @@ describe('rpc router', () => {
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
         detectFavicon: () => Effect.succeed(null),
-        getAbsoluteIconDataUrl: () => Effect.succeed(null)
+        getAbsoluteIconDataUrl: () => Effect.succeed(null),
+        listSkills: () => Effect.succeed({ globalSkills: [], projectSkills: [] }),
+        setDisabledSkills: () => Effect.succeed({ success: true })
       }
     })
 
@@ -37586,7 +37602,9 @@ describe('rpc router', () => {
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
         detectFavicon: () => Effect.succeed(null),
-        getAbsoluteIconDataUrl: () => Effect.succeed(null)
+        getAbsoluteIconDataUrl: () => Effect.succeed(null),
+        listSkills: () => Effect.succeed({ globalSkills: [], projectSkills: [] }),
+        setDisabledSkills: () => Effect.succeed({ success: true })
       }
     })
 
@@ -37627,7 +37645,9 @@ describe('rpc router', () => {
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
         detectFavicon: () => Effect.succeed(null),
-        getAbsoluteIconDataUrl: () => Effect.succeed(null)
+        getAbsoluteIconDataUrl: () => Effect.succeed(null),
+        listSkills: () => Effect.succeed({ globalSkills: [], projectSkills: [] }),
+        setDisabledSkills: () => Effect.succeed({ success: true })
       }
     })
 
@@ -37668,7 +37688,9 @@ describe('rpc router', () => {
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
         detectFavicon: () => Effect.succeed(null),
-        getAbsoluteIconDataUrl: () => Effect.succeed(null)
+        getAbsoluteIconDataUrl: () => Effect.succeed(null),
+        listSkills: () => Effect.succeed({ globalSkills: [], projectSkills: [] }),
+        setDisabledSkills: () => Effect.succeed({ success: true })
       }
     })
 
@@ -37709,7 +37731,9 @@ describe('rpc router', () => {
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
         detectFavicon: () => Effect.succeed(null),
-        getAbsoluteIconDataUrl: () => Effect.succeed(null)
+        getAbsoluteIconDataUrl: () => Effect.succeed(null),
+        listSkills: () => Effect.succeed({ globalSkills: [], projectSkills: [] }),
+        setDisabledSkills: () => Effect.succeed({ success: true })
       }
     })
 
@@ -37752,7 +37776,9 @@ describe('rpc router', () => {
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
         detectFavicon: () => Effect.succeed(null),
-        getAbsoluteIconDataUrl: () => Effect.succeed(null)
+        getAbsoluteIconDataUrl: () => Effect.succeed(null),
+        listSkills: () => Effect.succeed({ globalSkills: [], projectSkills: [] }),
+        setDisabledSkills: () => Effect.succeed({ success: true })
       }
     })
 
@@ -37793,7 +37819,9 @@ describe('rpc router', () => {
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
         detectFavicon: () => Effect.succeed(null),
-        getAbsoluteIconDataUrl: () => Effect.succeed(null)
+        getAbsoluteIconDataUrl: () => Effect.succeed(null),
+        listSkills: () => Effect.succeed({ globalSkills: [], projectSkills: [] }),
+        setDisabledSkills: () => Effect.succeed({ success: true })
       }
     })
 
@@ -37835,7 +37863,9 @@ describe('rpc router', () => {
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
         detectFavicon: () => Effect.succeed(null),
-        getAbsoluteIconDataUrl: () => Effect.succeed(null)
+        getAbsoluteIconDataUrl: () => Effect.succeed(null),
+        listSkills: () => Effect.succeed({ globalSkills: [], projectSkills: [] }),
+        setDisabledSkills: () => Effect.succeed({ success: true })
       }
     })
 
@@ -37876,7 +37906,9 @@ describe('rpc router', () => {
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
         detectFavicon: () => Effect.succeed(null),
-        getAbsoluteIconDataUrl: () => Effect.succeed(null)
+        getAbsoluteIconDataUrl: () => Effect.succeed(null),
+        listSkills: () => Effect.succeed({ globalSkills: [], projectSkills: [] }),
+        setDisabledSkills: () => Effect.succeed({ success: true })
       }
     })
 
@@ -37927,7 +37959,9 @@ describe('rpc router', () => {
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
         detectFavicon: () => Effect.succeed(null),
-        getAbsoluteIconDataUrl: () => Effect.succeed(null)
+        getAbsoluteIconDataUrl: () => Effect.succeed(null),
+        listSkills: () => Effect.succeed({ globalSkills: [], projectSkills: [] }),
+        setDisabledSkills: () => Effect.succeed({ success: true })
       }
     })
 
@@ -37968,7 +38002,9 @@ describe('rpc router', () => {
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
         detectFavicon: () => Effect.succeed(null),
-        getAbsoluteIconDataUrl: () => Effect.succeed(null)
+        getAbsoluteIconDataUrl: () => Effect.succeed(null),
+        listSkills: () => Effect.succeed({ globalSkills: [], projectSkills: [] }),
+        setDisabledSkills: () => Effect.succeed({ success: true })
       }
     })
 
@@ -38010,7 +38046,9 @@ describe('rpc router', () => {
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
         detectFavicon: () => Effect.succeed(null),
-        getAbsoluteIconDataUrl: () => Effect.succeed(null)
+        getAbsoluteIconDataUrl: () => Effect.succeed(null),
+        listSkills: () => Effect.succeed({ globalSkills: [], projectSkills: [] }),
+        setDisabledSkills: () => Effect.succeed({ success: true })
       }
     })
 
@@ -38051,7 +38089,9 @@ describe('rpc router', () => {
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
         detectFavicon: () => Effect.succeed(null),
-        getAbsoluteIconDataUrl: () => Effect.succeed(null)
+        getAbsoluteIconDataUrl: () => Effect.succeed(null),
+        listSkills: () => Effect.succeed({ globalSkills: [], projectSkills: [] }),
+        setDisabledSkills: () => Effect.succeed({ success: true })
       }
     })
 
@@ -38092,7 +38132,9 @@ describe('rpc router', () => {
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
         detectFavicon: () => Effect.succeed(null),
-        getAbsoluteIconDataUrl: () => Effect.succeed(null)
+        getAbsoluteIconDataUrl: () => Effect.succeed(null),
+        listSkills: () => Effect.succeed({ globalSkills: [], projectSkills: [] }),
+        setDisabledSkills: () => Effect.succeed({ success: true })
       }
     })
 
@@ -38133,7 +38175,9 @@ describe('rpc router', () => {
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
         detectFavicon: () => Effect.succeed(null),
-        getAbsoluteIconDataUrl: () => Effect.succeed(null)
+        getAbsoluteIconDataUrl: () => Effect.succeed(null),
+        listSkills: () => Effect.succeed({ globalSkills: [], projectSkills: [] }),
+        setDisabledSkills: () => Effect.succeed({ success: true })
       }
     })
 
@@ -38177,7 +38221,9 @@ describe('rpc router', () => {
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
         detectFavicon: () => Effect.succeed(null),
-        getAbsoluteIconDataUrl: () => Effect.succeed(null)
+        getAbsoluteIconDataUrl: () => Effect.succeed(null),
+        listSkills: () => Effect.succeed({ globalSkills: [], projectSkills: [] }),
+        setDisabledSkills: () => Effect.succeed({ success: true })
       }
     })
 
@@ -38218,7 +38264,9 @@ describe('rpc router', () => {
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
         detectFavicon: () => Effect.succeed(null),
-        getAbsoluteIconDataUrl: () => Effect.succeed(null)
+        getAbsoluteIconDataUrl: () => Effect.succeed(null),
+        listSkills: () => Effect.succeed({ globalSkills: [], projectSkills: [] }),
+        setDisabledSkills: () => Effect.succeed({ success: true })
       }
     })
 
@@ -38261,7 +38309,9 @@ describe('rpc router', () => {
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
         detectFavicon: () => Effect.succeed(null),
-        getAbsoluteIconDataUrl: () => Effect.succeed(null)
+        getAbsoluteIconDataUrl: () => Effect.succeed(null),
+        listSkills: () => Effect.succeed({ globalSkills: [], projectSkills: [] }),
+        setDisabledSkills: () => Effect.succeed({ success: true })
       }
     })
 
@@ -38302,7 +38352,9 @@ describe('rpc router', () => {
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
         detectFavicon: () => Effect.succeed(null),
-        getAbsoluteIconDataUrl: () => Effect.succeed(null)
+        getAbsoluteIconDataUrl: () => Effect.succeed(null),
+        listSkills: () => Effect.succeed({ globalSkills: [], projectSkills: [] }),
+        setDisabledSkills: () => Effect.succeed({ success: true })
       }
     })
 
@@ -38347,7 +38399,9 @@ describe('rpc router', () => {
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
         detectFavicon: () => Effect.succeed(null),
-        getAbsoluteIconDataUrl: () => Effect.succeed(null)
+        getAbsoluteIconDataUrl: () => Effect.succeed(null),
+        listSkills: () => Effect.succeed({ globalSkills: [], projectSkills: [] }),
+        setDisabledSkills: () => Effect.succeed({ success: true })
       }
     })
 
@@ -38388,7 +38442,9 @@ describe('rpc router', () => {
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
         detectFavicon: () => Effect.succeed(null),
-        getAbsoluteIconDataUrl: () => Effect.succeed(null)
+        getAbsoluteIconDataUrl: () => Effect.succeed(null),
+        listSkills: () => Effect.succeed({ globalSkills: [], projectSkills: [] }),
+        setDisabledSkills: () => Effect.succeed({ success: true })
       }
     })
 
@@ -38430,7 +38486,9 @@ describe('rpc router', () => {
           Effect.succeed(projectId === 'project-1' ? { success: true } : { success: false }),
         getProjectIconPath: () => Effect.succeed(null),
         detectFavicon: () => Effect.succeed(null),
-        getAbsoluteIconDataUrl: () => Effect.succeed(null)
+        getAbsoluteIconDataUrl: () => Effect.succeed(null),
+        listSkills: () => Effect.succeed({ globalSkills: [], projectSkills: [] }),
+        setDisabledSkills: () => Effect.succeed({ success: true })
       }
     })
 
@@ -38471,7 +38529,9 @@ describe('rpc router', () => {
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
         detectFavicon: () => Effect.succeed(null),
-        getAbsoluteIconDataUrl: () => Effect.succeed(null)
+        getAbsoluteIconDataUrl: () => Effect.succeed(null),
+        listSkills: () => Effect.succeed({ globalSkills: [], projectSkills: [] }),
+        setDisabledSkills: () => Effect.succeed({ success: true })
       }
     })
 
@@ -38514,7 +38574,9 @@ describe('rpc router', () => {
         getProjectIconPath: (filename) =>
           Effect.succeed(filename === 'project-1.svg' ? dataUrl : null),
         detectFavicon: () => Effect.succeed(null),
-        getAbsoluteIconDataUrl: () => Effect.succeed(null)
+        getAbsoluteIconDataUrl: () => Effect.succeed(null),
+        listSkills: () => Effect.succeed({ globalSkills: [], projectSkills: [] }),
+        setDisabledSkills: () => Effect.succeed({ success: true })
       }
     })
 
@@ -38555,7 +38617,9 @@ describe('rpc router', () => {
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
         detectFavicon: () => Effect.succeed(null),
-        getAbsoluteIconDataUrl: () => Effect.succeed(null)
+        getAbsoluteIconDataUrl: () => Effect.succeed(null),
+        listSkills: () => Effect.succeed({ globalSkills: [], projectSkills: [] }),
+        setDisabledSkills: () => Effect.succeed({ success: true })
       }
     })
 
@@ -38598,7 +38662,9 @@ describe('rpc router', () => {
         getProjectIconPath: () => Effect.succeed(null),
         detectFavicon: (projectPath) =>
           Effect.succeed(projectPath === '/tmp/hive' ? faviconPath : null),
-        getAbsoluteIconDataUrl: () => Effect.succeed(null)
+        getAbsoluteIconDataUrl: () => Effect.succeed(null),
+        listSkills: () => Effect.succeed({ globalSkills: [], projectSkills: [] }),
+        setDisabledSkills: () => Effect.succeed({ success: true })
       }
     })
 
@@ -38639,7 +38705,9 @@ describe('rpc router', () => {
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
         detectFavicon: () => Effect.succeed(null),
-        getAbsoluteIconDataUrl: () => Effect.succeed(null)
+        getAbsoluteIconDataUrl: () => Effect.succeed(null),
+        listSkills: () => Effect.succeed({ globalSkills: [], projectSkills: [] }),
+        setDisabledSkills: () => Effect.succeed({ success: true })
       }
     })
 
@@ -38682,7 +38750,9 @@ describe('rpc router', () => {
         getProjectIconPath: () => Effect.succeed(null),
         detectFavicon: () => Effect.succeed(null),
         getAbsoluteIconDataUrl: (absolutePath) =>
-          Effect.succeed(absolutePath === '/tmp/hive/public/favicon.svg' ? dataUrl : null)
+          Effect.succeed(absolutePath === '/tmp/hive/public/favicon.svg' ? dataUrl : null),
+        listSkills: () => Effect.succeed({ globalSkills: [], projectSkills: [] }),
+        setDisabledSkills: () => Effect.succeed({ success: true })
       }
     })
 
@@ -38723,7 +38793,9 @@ describe('rpc router', () => {
         removeProjectIcon: () => Effect.succeed({ success: true }),
         getProjectIconPath: () => Effect.succeed(null),
         detectFavicon: () => Effect.succeed(null),
-        getAbsoluteIconDataUrl: () => Effect.succeed(null)
+        getAbsoluteIconDataUrl: () => Effect.succeed(null),
+        listSkills: () => Effect.succeed({ globalSkills: [], projectSkills: [] }),
+        setDisabledSkills: () => Effect.succeed({ success: true })
       }
     })
 
