@@ -14,6 +14,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { projectApi } from '@/api/project-api'
+import { CliToolsSection } from './CliToolsSection'
 
 interface ManageSkillsDialogProps {
   project: { id: string; name: string; path: string }
@@ -53,6 +54,8 @@ export function ManageSkillsDialog({
   // Bumped whenever the dialog closes or moves to another project, so a save that is still in
   // flight cannot close or un-spin the dialog that replaced it.
   const generationRef = useRef(0)
+  const listingRef = useRef<ProjectSkillsListing | null>(null)
+  listingRef.current = listing
 
   const isLoading = listing === null && loadError === null
 
@@ -83,6 +86,34 @@ export function ManageSkillsDialog({
       generationRef.current += 1
     }
   }, [open, project.path])
+
+  // After a tool's skill lands in .claude/skills, re-list so it shows up with its checkbox. The
+  // user's unsaved checkbox changes for the other skills are kept; the installed skill and any
+  // new ones take the state on disk (the install re-enables a skill that was switched off).
+  const reloadSkills = useCallback(
+    (installedSkillId: string) => {
+      const generation = generationRef.current
+      projectApi
+        .listSkills(project.path)
+        .then((result) => {
+          if (generationRef.current !== generation) return
+          const known = new Set(listingRef.current?.projectSkills.map((s) => s.id) ?? [])
+          setEnabledIds((current) => {
+            const next = new Set<string>()
+            for (const skill of result.projectSkills) {
+              const keepUserChoice = known.has(skill.id) && skill.id !== installedSkillId
+              if (keepUserChoice ? current.has(skill.id) : skill.enabled) next.add(skill.id)
+            }
+            return next
+          })
+          setListing(result)
+        })
+        .catch(() => {
+          // The install succeeded; the list just didn't refresh — it will on next open.
+        })
+    },
+    [project.path]
+  )
 
   const projectSkills = useMemo(() => listing?.projectSkills ?? [], [listing])
   const globalSkills = listing?.globalSkills ?? []
@@ -218,6 +249,9 @@ export function ManageSkillsDialog({
                   )}
                 </div>
               </div>
+
+              {/* Tools — CLIs to install/update, and their skills to add to the project */}
+              <CliToolsSection projectPath={project.path} onSkillInstalled={reloadSkills} />
 
               {/* Project skills — checked means enabled */}
               <div className="space-y-1.5 min-w-0">

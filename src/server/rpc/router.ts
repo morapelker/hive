@@ -71,6 +71,11 @@ import {
   type FileTreeOpsRpcService
 } from './domains/file-tree-ops'
 import {
+  makeCliToolsOpsRpcHandlers,
+  makeLiveCliToolsOpsRpcService,
+  type CliToolsOpsRpcService
+} from './domains/cli-tools-ops'
+import {
   makeFileOpsRpcHandlers,
   makeLiveFileOpsRpcService,
   type FileOpsRpcService
@@ -170,6 +175,7 @@ export interface RpcContext {
   readonly bash?: BashRpcService
   readonly codexDebugLoggerOps?: CodexDebugLoggerOpsRpcService
   readonly connectionOps?: ConnectionOpsRpcService
+  readonly cliToolsOps?: CliToolsOpsRpcService
   readonly db?: DbRpcService
   readonly discordOps?: DiscordOpsRpcService
   readonly favoriteTickets?: FavoriteTicketsRpcService
@@ -231,6 +237,9 @@ const makeDefaultRpcHandlers = (context: RpcContext): ReadonlyMap<string, RpcHan
     ),
     ...makeConnectionOpsRpcHandlers(context.connectionOps ?? makeLiveConnectionOpsRpcService()),
     ...makeDbRpcHandlers(context.db ?? makeLiveDbRpcService()),
+    ...makeCliToolsOpsRpcHandlers(
+      context.cliToolsOps ?? makeLiveCliToolsOpsRpcService(context.eventBus)
+    ),
     ...makeDiscordOpsRpcHandlers(
       context.discordOps ?? makeLiveDiscordOpsRpcService(context.eventBus)
     ),
