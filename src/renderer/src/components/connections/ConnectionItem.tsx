@@ -4,6 +4,7 @@ import {
   Archive,
   Code,
   Copy,
+  CopyPlus,
   ExternalLink,
   FolderPlus,
   Link,
@@ -163,6 +164,8 @@ export function ConnectionItem({
     (connection.members || []).map((m) => m.project_id)
   ).size
   const canSaveAsProject = !connection.saved_project_id && distinctMemberProjectCount >= 2
+  // Duplicating recreates the connection from its projects, which takes >=2 of them
+  const canDuplicate = distinctMemberProjectCount >= 2
   const [isSavingAsProject, setIsSavingAsProject] = useState(false)
   const handleSaveAsProject = useCallback(async (): Promise<void> => {
     if (isSavingAsProject) return
@@ -173,6 +176,21 @@ export function ConnectionItem({
       setIsSavingAsProject(false)
     }
   }, [isSavingAsProject, saveConnectionAsProject, connection.id])
+
+  // "Duplicate": a new connection from the same projects, on new worktrees
+  const duplicateConnection = useConnectionStore((s) => s.duplicateConnection)
+  const [isDuplicating, setIsDuplicating] = useState(false)
+  const handleDuplicate = useCallback(async (): Promise<void> => {
+    if (isDuplicating) return
+    setIsDuplicating(true)
+    const loadingToastId = toast.loading('Creating connection worktrees...')
+    try {
+      await duplicateConnection(connection.id)
+    } finally {
+      toast.dismiss(loadingToastId)
+      setIsDuplicating(false)
+    }
+  }, [isDuplicating, duplicateConnection, connection.id])
 
   // Pinned state
   const isPinned = usePinnedStore((s) => s.pinnedConnectionIds.has(connection.id))
@@ -483,6 +501,10 @@ export function ConnectionItem({
         {isPinned ? <PinOff className="h-4 w-4 mr-2" /> : <Pin className="h-4 w-4 mr-2" />}
         {isPinned ? 'Unpin' : 'Pin'}
       </ContextMenuItem>
+      <ContextMenuItem onClick={handleDuplicate} disabled={!canDuplicate || isDuplicating}>
+        <CopyPlus className="h-4 w-4 mr-2" />
+        Duplicate
+      </ContextMenuItem>
       {canSaveAsProject && (
         <ContextMenuItem onClick={handleSaveAsProject} disabled={isSavingAsProject}>
           <FolderPlus className="h-4 w-4 mr-2" />
@@ -691,6 +713,13 @@ export function ConnectionItem({
                         <Pin className="h-4 w-4 mr-2" />
                       )}
                       {isPinned ? 'Unpin' : 'Pin'}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={handleDuplicate}
+                      disabled={!canDuplicate || isDuplicating}
+                    >
+                      <CopyPlus className="h-4 w-4 mr-2" />
+                      Duplicate
                     </DropdownMenuItem>
                     {canSaveAsProject && (
                       <DropdownMenuItem onClick={handleSaveAsProject} disabled={isSavingAsProject}>

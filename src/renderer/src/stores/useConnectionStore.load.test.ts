@@ -45,6 +45,7 @@ vi.mock('./useKanbanStore', () => ({
 
 import { useConnectionStore } from './useConnectionStore'
 import { usePinnedStore } from './usePinnedStore'
+import { useProjectStore } from './useProjectStore'
 import { toast } from '@/lib/toast'
 
 vi.mock('@/lib/toast', () => ({
@@ -997,6 +998,142 @@ describe('useConnectionStore connection loading', () => {
       // sidebar by removing it from the store.
       expect(worktreeStoreMocks.removeWorktreeFromProject).not.toHaveBeenCalled()
       expect(worktreeStoreMocks.fireSetupScript).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('duplicateConnection', () => {
+    const storeProjects = [
+      { id: 'project-1', path: '/tmp/project-1', name: 'Project 1' },
+      { id: 'project-2', path: '/tmp/project-2', name: 'Project 2' },
+      { id: 'project-3', path: '/tmp/project-3', name: 'Project 3' }
+    ]
+
+    const memberOf = (projectId: string, worktreeId: string): Record<string, unknown> => ({
+      id: `member-${worktreeId}`,
+      connection_id: 'connection-source',
+      worktree_id: worktreeId,
+      project_id: projectId,
+      symlink_name: projectId,
+      added_at: '2026-05-28T00:00:00.000Z',
+      worktree_name: worktreeId,
+      worktree_branch: worktreeId,
+      worktree_path: `/tmp/${projectId}/${worktreeId}`,
+      project_name: projectId
+    })
+
+    const sourceConnection = (extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+      id: 'connection-source',
+      name: 'Project 2 + Project 1',
+      custom_name: 'My feature',
+      status: 'active',
+      path: '/tmp/connection-source',
+      color: null,
+      created_at: '2026-05-28T00:00:00.000Z',
+      updated_at: '2026-05-28T00:00:00.000Z',
+      members: [memberOf('project-2', 'wt-b'), memberOf('project-1', 'wt-a')],
+      ...extra
+    })
+
+    let quickCreateConnection: ReturnType<typeof vi.fn>
+    let originalQuickCreateConnection: ReturnType<
+      typeof useConnectionStore.getState
+    >['quickCreateConnection']
+
+    beforeEach(() => {
+      originalQuickCreateConnection = useConnectionStore.getState().quickCreateConnection
+      quickCreateConnection = vi.fn().mockResolvedValue('connection-duplicate')
+      useConnectionStore.setState({ quickCreateConnection } as never)
+      useProjectStore.setState({ projects: storeProjects } as never)
+    })
+
+    afterEach(() => {
+      useConnectionStore.setState({ quickCreateConnection: originalQuickCreateConnection })
+      useProjectStore.setState({ projects: [] })
+    })
+
+    it("quick-creates a connection from the source connection's projects, in member order", async () => {
+      useConnectionStore.setState({ connections: [sourceConnection()] } as never)
+
+      const result = await useConnectionStore.getState().duplicateConnection('connection-source')
+
+      expect(result).toBe('connection-duplicate')
+      expect(quickCreateConnection).toHaveBeenCalledTimes(1)
+      expect(quickCreateConnection).toHaveBeenCalledWith(
+        [storeProjects[1], storeProjects[0]],
+        undefined
+      )
+      expect(toast.error).not.toHaveBeenCalled()
+    })
+
+    it('uses each project once even when several members share a project', async () => {
+      useConnectionStore.setState({
+        connections: [
+          sourceConnection({
+            members: [
+              memberOf('project-1', 'wt-a'),
+              memberOf('project-2', 'wt-b'),
+              memberOf('project-1', 'wt-c')
+            ]
+          })
+        ]
+      } as never)
+
+      await useConnectionStore.getState().duplicateConnection('connection-source')
+
+      expect(quickCreateConnection).toHaveBeenCalledWith(
+        [storeProjects[0], storeProjects[1]],
+        undefined
+      )
+    })
+
+    it('keeps the duplicate of a connection-project instance under the same project', async () => {
+      useConnectionStore.setState({
+        connections: [sourceConnection({ saved_project_id: 'saved-project-1' })]
+      } as never)
+
+      await useConnectionStore.getState().duplicateConnection('connection-source')
+
+      expect(quickCreateConnection).toHaveBeenCalledWith([storeProjects[1], storeProjects[0]], {
+        savedProjectId: 'saved-project-1'
+      })
+    })
+
+    it('errors without creating anything when a member project no longer exists', async () => {
+      useConnectionStore.setState({
+        connections: [
+          sourceConnection({
+            members: [memberOf('project-1', 'wt-a'), memberOf('project-gone', 'wt-x')]
+          })
+        ]
+      } as never)
+
+      const result = await useConnectionStore.getState().duplicateConnection('connection-source')
+
+      expect(result).toBeNull()
+      expect(quickCreateConnection).not.toHaveBeenCalled()
+      expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('no longer exists'))
+    })
+
+    it('errors without creating anything when the connection spans fewer than two projects', async () => {
+      useConnectionStore.setState({
+        connections: [sourceConnection({ members: [memberOf('project-1', 'wt-a')] })]
+      } as never)
+
+      const result = await useConnectionStore.getState().duplicateConnection('connection-source')
+
+      expect(result).toBeNull()
+      expect(quickCreateConnection).not.toHaveBeenCalled()
+      expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('at least 2 projects'))
+    })
+
+    it('errors when the connection is unknown', async () => {
+      useConnectionStore.setState({ connections: [] })
+
+      const result = await useConnectionStore.getState().duplicateConnection('missing')
+
+      expect(result).toBeNull()
+      expect(quickCreateConnection).not.toHaveBeenCalled()
+      expect(toast.error).toHaveBeenCalledWith('Connection not found')
     })
   })
 })

@@ -82,6 +82,7 @@ interface ConnectionState {
     projects: { id: string; path: string; name: string }[],
     opts?: { savedProjectId?: string }
   ) => Promise<string | null>
+  duplicateConnection: (connectionId: string) => Promise<string | null>
   saveConnectionAsProject: (connectionId: string) => Promise<string | null>
   selectConnection: (id: string | null, opts?: { gitView?: ConnectionGitView }) => void
 
@@ -375,6 +376,40 @@ export const useConnectionStore = create<ConnectionState>()(
         }
 
         return connectionId
+      },
+
+      // A fresh connection over the same member projects on brand-new worktrees —
+      // the same thing as picking those projects in the New Connection dialog.
+      duplicateConnection: async (connectionId: string) => {
+        const source = get().connections.find((c) => c.id === connectionId)
+        if (!source) {
+          toast.error('Connection not found')
+          return null
+        }
+
+        // Dynamic import avoids a store cycle.
+        const { useProjectStore } = await import('./useProjectStore')
+        const projectsById = new Map(useProjectStore.getState().projects.map((p) => [p.id, p]))
+
+        const projects: { id: string; path: string; name: string }[] = []
+        for (const projectId of new Set((source.members || []).map((m) => m.project_id))) {
+          const project = projectsById.get(projectId)
+          if (!project) {
+            toast.error('Failed to duplicate connection: a member project no longer exists')
+            return null
+          }
+          projects.push({ id: project.id, path: project.path, name: project.name })
+        }
+        if (projects.length < 2) {
+          toast.error('A connection needs at least 2 projects to be duplicated')
+          return null
+        }
+
+        // An instance of a connection project duplicates into another instance of it.
+        return get().quickCreateConnection(
+          projects,
+          source.saved_project_id ? { savedProjectId: source.saved_project_id } : undefined
+        )
       },
 
       saveConnectionAsProject: async (connectionId: string) => {
