@@ -15,8 +15,9 @@ import { getDatabase } from '../../db'
 import { publishDesktopBackendEvent } from '../../desktop/backend-event-publisher'
 import {
   addClaudeAccount,
+  isClaudeAccountManaged,
   listClaudeAccountTokenFingerprints,
-  readClaudeLiveIdentity,
+  readClaudeLiveIdentityCached,
   readClaudeLiveRawBlob,
   readClaudeLiveTokenFingerprint,
   rememberClaudeAccountUuid,
@@ -249,8 +250,11 @@ export function resolveClaudeApiUpstream(
 function buildUpdater(): ClaudeUsageLiveUpdater {
   return new ClaudeUsageLiveUpdater({
     listManagedAccounts: (options) => listClaudeAccountTokenFingerprints(options),
-    readLiveIdentity: readClaudeLiveIdentity,
+    // Consulted on every update: served from a stat-keyed cache so the large
+    // identity file is only re-parsed when it actually changed.
+    readLiveIdentity: readClaudeLiveIdentityCached,
     readLiveTokenFingerprint: readClaudeLiveTokenFingerprint,
+    isAccountManaged: isClaudeAccountManaged,
     ensureLiveAccountManaged: async (email, uuid) => {
       const rawBlob = await readClaudeLiveRawBlob()
       if (!rawBlob) return false

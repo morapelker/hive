@@ -26,6 +26,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 import {
   listClaudeAccountTokenFingerprints,
   readClaudeLiveIdentity,
+  readClaudeLiveIdentityCached,
   readClaudeLiveTokenFingerprint
 } from '../../account-store-claude'
 import { startLocalApiProxy, type LocalApiProxyExchange } from '../local-api-proxy'
@@ -140,6 +141,23 @@ describeLive('claude through the local API proxy (live)', () => {
     // Attribution by credential: the token the CLI sent is the live one...
     expect(observation.credentialFingerprint).not.toBeNull()
     expect(observation.credentialFingerprint).toBe(await readClaudeLiveTokenFingerprint())
+    // What attribution costs here: the live-credential fast path against the
+    // full per-account sweep it replaces, and the identity read with and
+    // without the stat-keyed cache.
+    const time = async (work: () => Promise<unknown>): Promise<number> => {
+      const startedAt = performance.now()
+      await work()
+      return Math.round((performance.now() - startedAt) * 10) / 10
+    }
+    const liveReadMs = await time(() => readClaudeLiveTokenFingerprint())
+    const sweepMs = await time(() =>
+      listClaudeAccountTokenFingerprints({ notOlderThan: Date.now() + 1 })
+    )
+    const identityParseMs = await time(() => readClaudeLiveIdentity())
+    await readClaudeLiveIdentityCached()
+    const identityCachedMs = await time(() => readClaudeLiveIdentityCached())
+    console.log('[cost ms]', { liveReadMs, sweepMs, identityParseMs, identityCachedMs })
+
     // ...and, when the live account is managed, the index maps it to that account.
     const managed = await listClaudeAccountTokenFingerprints()
     const owner = managed.find(

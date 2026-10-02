@@ -2,7 +2,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const fsMocks = vi.hoisted(() => ({
-  files: new Map<string, string>()
+  files: new Map<string, string>(),
+  stats: new Map<string, { mtimeMs: number; size: number; ino: number }>()
 }))
 
 vi.mock('fs', async (importOriginal) => {
@@ -22,6 +23,11 @@ vi.mock('fs/promises', async (importOriginal) => {
       const content = fsMocks.files.get(String(path))
       if (content === undefined) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
       return content
+    },
+    stat: async (path: string) => {
+      const stats = fsMocks.stats.get(String(path))
+      if (stats === undefined) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+      return stats
     }
   }
 })
@@ -46,7 +52,9 @@ import { homedir } from 'os'
 import { join } from 'path'
 import {
   clearAccountStoreCacheForTests,
+  isClaudeAccountManaged,
   listClaudeAccountTokenFingerprints,
+  readClaudeLiveIdentityCached,
   readClaudeLiveTokenFingerprint,
   rememberClaudeAccountUuid,
   repairStaleClaudeLiveIdentityUuid,
@@ -106,6 +114,7 @@ function writtenIdentity(): Record<string, unknown> | undefined {
 beforeEach(() => {
   process.env.HIVE_CLAUDE_STORE_DIR = STORE_DIR
   fsMocks.files.clear()
+  fsMocks.stats.clear()
   vi.mocked(keychainRead).mockReset()
   vi.mocked(keychainWrite).mockReset()
   vi.mocked(atomicWriteJson).mockReset()
@@ -297,5 +306,82 @@ describe('access-token fingerprints', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('readClaudeLiveIdentityCached', () => {
+  const parses = (): number =>
+    vi.mocked(readJsonFile).mock.calls.filter(([path]) => path === IDENTITY_PATH).length
+
+  it('re-parses the identity file only when its stat changes', async () => {
+    seedIdentity({ emailAddress: 'a@example.com', accountUuid: UUID_A })
+    fsMocks.stats.set(IDENTITY_PATH, { mtimeMs: 1_000, size: 800_000, ino: 7 })
+
+    expect(await readClaudeLiveIdentityCached()).toEqual({ email: 'a@example.com', uuid: UUID_A })
+    expect(await readClaudeLiveIdentityCached()).toEqual({ email: 'a@example.com', uuid: UUID_A })
+    expect(parses()).toBe(1)
+
+    // An account switch (possibly by another process) replaces the file.
+    seedIdentity({ emailAddress: 'b@example.com', accountUuid: UUID_B })
+    fsMocks.stats.set(IDENTITY_PATH, { mtimeMs: 2_000, size: 800_010, ino: 8 })
+    expect(await readClaudeLiveIdentityCached()).toEqual({ email: 'b@example.com', uuid: UUID_B })
+    expect(parses()).toBe(2)
+
+    // Each stat key alone must invalidate: a different inode with the same
+    // mtime and size (atomic replace)...
+    seedIdentity({ emailAddress: 'a@example.com', accountUuid: UUID_A })
+    fsMocks.stats.set(IDENTITY_PATH, { mtimeMs: 2_000, size: 800_010, ino: 9 })
+    expect((await readClaudeLiveIdentityCached()).email).toBe('a@example.com')
+    expect(parses()).toBe(3)
+    // ...a newer mtime on the same inode and size (an in-place rewrite)...
+    seedIdentity({ emailAddress: 'b@example.com', accountUuid: UUID_B })
+    fsMocks.stats.set(IDENTITY_PATH, { mtimeMs: 3_000, size: 800_010, ino: 9 })
+    expect((await readClaudeLiveIdentityCached()).email).toBe('b@example.com')
+    expect(parses()).toBe(4)
+    // ...and a different size with the same mtime and inode (coarse clocks).
+    seedIdentity({ emailAddress: 'a@example.com', accountUuid: UUID_A })
+    fsMocks.stats.set(IDENTITY_PATH, { mtimeMs: 3_000, size: 800_011, ino: 9 })
+    expect((await readClaudeLiveIdentityCached()).email).toBe('a@example.com')
+    expect(parses()).toBe(5)
+  })
+
+  it('hands out copies, so a caller cannot corrupt the cached identity', async () => {
+    seedIdentity({ emailAddress: 'a@example.com', accountUuid: UUID_A })
+    fsMocks.stats.set(IDENTITY_PATH, { mtimeMs: 1_000, size: 10, ino: 1 })
+    const first = await readClaudeLiveIdentityCached()
+    first.email = 'tampered@example.com'
+    const hit = await readClaudeLiveIdentityCached()
+    expect(hit.email).toBe('a@example.com')
+    // The cache-hit result is a copy too.
+    hit.email = 'tampered-again@example.com'
+    expect((await readClaudeLiveIdentityCached()).email).toBe('a@example.com')
+    expect(parses()).toBe(1)
+  })
+
+  it('reads through, uncached, when the file cannot be stat-ed', async () => {
+    seedIdentity({ emailAddress: 'a@example.com', accountUuid: UUID_A })
+    expect((await readClaudeLiveIdentityCached()).email).toBe('a@example.com')
+    seedIdentity({ emailAddress: 'b@example.com', accountUuid: UUID_B })
+    expect((await readClaudeLiveIdentityCached()).email).toBe('b@example.com')
+    expect(parses()).toBe(2)
+  })
+
+  it('is dropped whenever this process changes the account store', async () => {
+    seedSequence({ '1': { email: 'a@example.com', uuid: '' } })
+    seedIdentity({ emailAddress: 'a@example.com', accountUuid: UUID_A })
+    fsMocks.stats.set(IDENTITY_PATH, { mtimeMs: 1_000, size: 10, ino: 1 })
+    await readClaudeLiveIdentityCached()
+    await rememberClaudeAccountUuid('a@example.com', UUID_A)
+    await readClaudeLiveIdentityCached()
+    expect(parses()).toBe(2)
+  })
+})
+
+describe('isClaudeAccountManaged', () => {
+  it('answers from the index alone, without touching the Keychain', async () => {
+    seedSequence({ '1': { email: 'a@example.com', uuid: UUID_A } })
+    expect(await isClaudeAccountManaged('A@Example.com')).toBe(true)
+    expect(await isClaudeAccountManaged('nobody@example.com')).toBe(false)
+    expect(keychainRead).not.toHaveBeenCalled()
   })
 })

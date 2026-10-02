@@ -11,7 +11,7 @@
  * - Live active oauth: ~/.claude/.claude.json (preferred) or ~/.claude.json
  */
 import { existsSync } from 'fs'
-import { readFile } from 'fs/promises'
+import { readFile, stat } from 'fs/promises'
 import { homedir } from 'os'
 import { join } from 'path'
 import { keychainDelete, keychainListAccounts, keychainRead, keychainWrite } from './keychain'
@@ -103,6 +103,7 @@ let liveAccountCache: { value: string | null; expiresAt: number } | null = null
 function invalidateListCache(): void {
   listCache = null
   liveAccountCache = null
+  liveIdentityCache = null
 }
 
 /** Test-only escape hatch: forces the next `listClaudeAccounts()` call to
@@ -332,6 +333,66 @@ export async function readClaudeLiveIdentity(): Promise<{ email: string | null; 
   const uuid =
     oauthAccount && typeof oauthAccount.accountUuid === 'string' ? oauthAccount.accountUuid : null
   return { email, uuid }
+}
+
+/**
+ * The parsed identity, remembered against the identity file's stat. The file
+ * is large (it also holds the CLI's project history) and is consulted on every
+ * live usage update, so re-parsing it when it has not changed is pure waste.
+ * Keyed on path + mtime + size + inode: a switch (here or in another process)
+ * replaces the file atomically, which changes all of them.
+ */
+let liveIdentityCache: {
+  path: string
+  mtimeMs: number
+  size: number
+  ino: number
+  identity: { email: string | null; uuid: string | null }
+} | null = null
+
+/**
+ * `readClaudeLiveIdentity()` without the re-parse when the identity file is
+ * unchanged since the last call (one `stat` instead of reading and parsing
+ * the whole file). Falls back to a plain read whenever the file cannot be
+ * stat'ed, so a missing or unreadable file behaves exactly like the uncached
+ * reader.
+ */
+export async function readClaudeLiveIdentityCached(): Promise<{
+  email: string | null
+  uuid: string | null
+}> {
+  const path = claudeJsonPath()
+  let stats: { mtimeMs: number; size: number; ino: number }
+  try {
+    stats = await stat(path)
+  } catch {
+    liveIdentityCache = null
+    return readClaudeLiveIdentity()
+  }
+  const cached = liveIdentityCache
+  if (
+    cached !== null &&
+    cached.path === path &&
+    cached.mtimeMs === stats.mtimeMs &&
+    cached.size === stats.size &&
+    cached.ino === stats.ino
+  ) {
+    return { ...cached.identity }
+  }
+  const identity = await readClaudeLiveIdentity()
+  liveIdentityCache = {
+    path,
+    mtimeMs: stats.mtimeMs,
+    size: stats.size,
+    ino: stats.ino,
+    identity: { ...identity }
+  }
+  return identity
+}
+
+/** Whether `email` is in the managed index (sequence.json only — no Keychain traffic). */
+export async function isClaudeAccountManaged(email: string): Promise<boolean> {
+  return findNumByEmail(await readSequence(), email) !== null
 }
 
 /** List all managed Claude accounts, in sequence.json's `sequence` order. */

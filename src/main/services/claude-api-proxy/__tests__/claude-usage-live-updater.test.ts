@@ -129,6 +129,9 @@ function makeHarness(
     ),
     readLiveIdentity: vi.fn(async () => ({ email: liveState.email, uuid: liveState.uuid })),
     readLiveTokenFingerprint: vi.fn(async () => liveState.tokenFingerprint),
+    isAccountManaged: vi.fn(async (email: string) =>
+      managed.some((account) => account.email.toLowerCase() === email)
+    ),
     ensureLiveAccountManaged: vi.fn(async (email: string, uuid: string) => {
       managed.push({ email, uuid, tokenFingerprint: liveState.tokenFingerprint })
       return true
@@ -434,6 +437,121 @@ describe('ClaudeUsageLiveUpdater', () => {
     expect(harness.deps.ensureLiveAccountManaged).not.toHaveBeenCalled()
   })
 
+  it('places the signed-in account from the live credentials alone, without sweeping every account', async () => {
+    const harness = makeHarness([accountA(), accountB()], {
+      email: 'b@example.com',
+      uuid: ACCOUNT_B,
+      tokenFingerprint: TOKEN_B
+    })
+
+    harness.updater.handleExchange(exchange({ token: TOKEN_B, reportedUuid: ACCOUNT_A }))
+    await harness.updater.settle()
+
+    expect(harness.published[0]?.email).toBe('b@example.com')
+    expect(harness.published[0]?.isLiveAccount).toBe(true)
+    // One Keychain read for the live entry and a look at the index — the
+    // per-account token list was never needed.
+    expect(harness.deps.readLiveTokenFingerprint).toHaveBeenCalledTimes(1)
+    expect(harness.deps.isAccountManaged).toHaveBeenCalledWith('b@example.com')
+    expect(harness.deps.listManagedAccounts).not.toHaveBeenCalled()
+
+    // A first pairing is re-checked after seconds; once a second lookup
+    // agrees it is trusted for the long TTL and no further reads happen.
+    const sendLater = async (observedAt: number): Promise<void> => {
+      harness.runTimers()
+      harness.runTimers()
+      harness.updater.handleExchange(exchange({ token: TOKEN_B, observedAt }))
+      await harness.updater.settle()
+    }
+    harness.advance(20_000)
+    await sendLater(2_000)
+    expect(harness.deps.readLiveTokenFingerprint).toHaveBeenCalledTimes(2)
+    harness.advance(60_000)
+    await sendLater(3_000)
+    expect(harness.deps.readLiveTokenFingerprint).toHaveBeenCalledTimes(2)
+    expect(harness.deps.listManagedAccounts).not.toHaveBeenCalled()
+    expect(harness.published.map((p) => p.email)).toEqual([
+      'b@example.com',
+      'b@example.com',
+      'b@example.com'
+    ])
+  })
+
+  it('recovers within seconds from a lookup that landed in a half-applied switch', async () => {
+    // Switch A -> B: the live Keychain entry already holds B's token while
+    // the identity file still names A. A lookup in that gap cannot tell.
+    const harness = makeHarness([accountA(), accountB()], {
+      email: 'a@example.com',
+      uuid: ACCOUNT_A,
+      tokenFingerprint: TOKEN_B
+    })
+    harness.updater.handleExchange(exchange({ token: TOKEN_B, reportedUuid: ACCOUNT_A }))
+    await harness.updater.settle()
+    expect(harness.published[0]?.email).toBe('a@example.com')
+
+    // The switch completes. The wrong pairing was only trusted briefly: the
+    // next lookup disagrees with it, so B's traffic is B's again — and the
+    // bar follows, instead of ten minutes of B's usage filed under A.
+    harness.live.email = 'b@example.com'
+    harness.live.uuid = ACCOUNT_B
+    harness.runTimers()
+    harness.runTimers()
+    harness.advance(20_000)
+    harness.updater.handleExchange(exchange({ token: TOKEN_B, observedAt: 2_000 }))
+    await harness.updater.settle()
+    expect(harness.published[1]?.email).toBe('b@example.com')
+    expect(harness.published[1]?.isLiveAccount).toBe(true)
+    expect(harness.deps.listManagedAccounts).not.toHaveBeenCalled()
+  })
+
+  it('never registers the outgoing account with the incoming account credentials', async () => {
+    // Same half-applied switch, but the outgoing account A is unmanaged
+    // (signed in via the CLI): capturing in the gap would file B's blob
+    // under A's email.
+    const harness = makeHarness([accountB()], {
+      email: 'a@example.com',
+      uuid: ACCOUNT_A,
+      tokenFingerprint: TOKEN_B
+    })
+    harness.updater.handleExchange(exchange({ token: TOKEN_B, reportedUuid: ACCOUNT_A }))
+    await harness.updater.settle()
+    expect(harness.deps.ensureLiveAccountManaged).not.toHaveBeenCalled()
+
+    harness.live.email = 'b@example.com'
+    harness.live.uuid = ACCOUNT_B
+    harness.runTimers()
+    harness.runTimers()
+    harness.advance(20_000)
+    harness.updater.handleExchange(exchange({ token: TOKEN_B, observedAt: 2_000 }))
+    await harness.updater.settle()
+    expect(harness.deps.ensureLiveAccountManaged).not.toHaveBeenCalled()
+    expect(harness.published.map((p) => p.email)).toEqual(['a@example.com', 'b@example.com'])
+  })
+
+  it('does not trust the live match when the signed-in identity changes mid-lookup', async () => {
+    // The token read is the live one, but by the time it was read the
+    // identity file names another account (a switch landed in between):
+    // pairing the two would credit the token to the wrong account, so the
+    // per-account list decides instead.
+    const harness = makeHarness([accountA(), accountB()], {
+      email: 'a@example.com',
+      uuid: ACCOUNT_A,
+      tokenFingerprint: TOKEN_B
+    })
+    vi.mocked(harness.deps.readLiveTokenFingerprint).mockImplementationOnce(async () => {
+      harness.live.email = 'b@example.com'
+      harness.live.uuid = ACCOUNT_B
+      return TOKEN_B
+    })
+
+    harness.updater.handleExchange(exchange({ token: TOKEN_B, reportedUuid: ACCOUNT_A }))
+    await harness.updater.settle()
+
+    expect(harness.deps.listManagedAccounts).toHaveBeenCalledTimes(1)
+    expect(harness.published[0]?.email).toBe('b@example.com')
+    expect(harness.rows.get('a@example.com')).toBeUndefined()
+  })
+
   it('captures a live account nothing manages yet, by its live token', async () => {
     const harness = makeHarness([], {
       email: 'Live@Example.com',
@@ -444,16 +562,31 @@ describe('ClaudeUsageLiveUpdater', () => {
     harness.updater.handleExchange(exchange({ token: TOKEN_A }))
     await harness.updater.settle()
 
+    // First sighting: attributed and published, but not yet registered — the
+    // live blob and identity are only trusted together once they have held.
+    expect(harness.deps.ensureLiveAccountManaged).not.toHaveBeenCalled()
+    expect(harness.published[0]?.email).toBe('live@example.com')
+    expect(harness.published[0]?.isLiveAccount).toBe(true)
+
+    harness.runTimers()
+    harness.runTimers()
+    harness.advance(20_000)
+    harness.updater.handleExchange(exchange({ token: TOKEN_A, observedAt: 2_000 }))
+    await harness.updater.settle()
+
+    expect(harness.deps.ensureLiveAccountManaged).toHaveBeenCalledTimes(1)
     expect(harness.deps.ensureLiveAccountManaged).toHaveBeenCalledWith(
       'live@example.com',
       ACCOUNT_A
     )
-    expect(harness.published[0]?.email).toBe('live@example.com')
+    expect(harness.published[1]?.email).toBe('live@example.com')
     expect(harness.published[0]?.isLiveAccount).toBe(true)
     expect(harness.rows.get('live@example.com')).toBeDefined()
   })
 
   it('resolves a credential once and reuses the answer', async () => {
+    // A non-live token (the live entry is unreadable here) is placed by the
+    // per-account list, which is a definite answer: no second lookup needed.
     const harness = makeHarness([accountA()], { email: 'a@example.com', uuid: ACCOUNT_A })
     harness.updater.handleExchange(exchange())
     await harness.updater.settle()

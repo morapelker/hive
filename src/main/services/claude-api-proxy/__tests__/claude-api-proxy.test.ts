@@ -13,7 +13,8 @@ const storeMocks = vi.hoisted(() => ({
     async () => [] as Array<{ email: string; uuid: string; tokenFingerprint: string | null }>
   ),
   readClaudeLiveTokenFingerprint: vi.fn(async () => null as string | null),
-  readClaudeLiveIdentity: vi.fn(async () => ({
+  isClaudeAccountManaged: vi.fn(async () => true),
+  readClaudeLiveIdentityCached: vi.fn(async () => ({
     email: null as string | null,
     uuid: null as string | null
   })),
@@ -289,7 +290,7 @@ describe('startClaudeApiProxy', () => {
         tokenFingerprint: fingerprintSecret('x')
       }
     ])
-    storeMocks.readClaudeLiveIdentity.mockResolvedValue({ email: 'Me@example.com', uuid })
+    storeMocks.readClaudeLiveIdentityCached.mockResolvedValue({ email: 'Me@example.com', uuid })
     // A previously polled row: live updates must not disturb its poll stamp.
     dbMocks.rows.set('me@example.com', {
       id: 'row-me@example.com',

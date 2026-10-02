@@ -70,6 +70,8 @@ export interface ClaudeUsageLiveUpdaterDeps {
   readLiveIdentity: () => Promise<ClaudeLiveIdentity>
   /** Fingerprint of the access token in the live credentials, if readable. */
   readLiveTokenFingerprint: () => Promise<string | null>
+  /** Whether `email` is in the managed index — a cheap check, no Keychain traffic. */
+  isAccountManaged: (email: string) => Promise<boolean>
   /**
    * Register the live account in the managed store when a request belongs to
    * it but nothing manages it yet (mirrors the poll path's capture). Returns
@@ -100,7 +102,10 @@ export interface ClaudeUsageLiveUpdaterDeps {
 export const LIVE_USAGE_COALESCE_MS = 250
 /** How long a credential → account (or uuid → account) resolution is trusted. */
 const RESOLUTION_TTL_MS = 10 * 60_000
-/** A resolution read while two accounts showed the same token is re-checked soon. */
+/**
+ * A resolution that has not been confirmed yet — a first live-credential
+ * pairing, or a token seen under two accounts at once — is re-checked soon.
+ */
 const AMBIGUOUS_RESOLUTION_TTL_MS = 15_000
 /**
  * How long an unrecognised credential is not looked up again: short at first
@@ -306,7 +311,12 @@ export class ClaudeUsageLiveUpdater {
       const misses = cached !== undefined && cached.email === null ? (cached.misses ?? 0) : 0
       // Only the first miss pays for a full rescan; a credential that stays
       // unknown is re-checked against the (cheap) memo and live entry only.
-      const byToken = await this.lookupByToken(fingerprint, live, misses === 0)
+      const byToken = await this.lookupByToken(
+        fingerprint,
+        live,
+        misses === 0,
+        cached?.email ?? null
+      )
       if (byToken.email !== null) {
         this.remember(
           this.tokenOwners,
@@ -336,31 +346,61 @@ export class ClaudeUsageLiveUpdater {
     return email === null ? null : { email, via: 'reported-uuid' }
   }
 
+  /**
+   * @param previouslyResolvedEmail what an earlier (now expired) lookup of
+   *   this same credential concluded, if anything. A live-credential match is
+   *   trusted for the full TTL only once two lookups agree: the live token and
+   *   the identity file are written by an account switch a few milliseconds
+   *   apart, so a single read can pair the incoming account's token with the
+   *   outgoing account's identity. The first pairing is therefore short-lived
+   *   (re-checked in seconds) and a mismatch with the previous answer resets
+   *   the clock.
+   */
   private async lookupByToken(
     fingerprint: string,
     live: ClaudeLiveIdentity,
-    allowRescan: boolean
+    allowRescan: boolean,
+    previouslyResolvedEmail: string | null
   ): Promise<{ email: string | null; ambiguous: boolean; tokensReadable: boolean }> {
+    // Fast path — the live credentials. Nearly every request carries the
+    // signed-in account's token, and comparing against it costs one Keychain
+    // read instead of one per managed account. It is also the freshest view of
+    // that token (the CLI may have refreshed it since any list was memoised)
+    // and the only view of a live account nothing manages yet.
+    const liveFingerprint = await this.deps.readLiveTokenFingerprint()
+    let identity = live
+    if (liveFingerprint !== null && liveFingerprint === fingerprint && live.email) {
+      // The token is the live one; make sure the identity it was paired with
+      // did not change while it was being read (an account switch completing
+      // mid-lookup), or the token would be credited to the account just left.
+      const confirmed = await this.deps.readLiveIdentity()
+      const email = live.email.toLowerCase()
+      identity = confirmed
+      if (confirmed.email !== null && confirmed.email.toLowerCase() === email) {
+        const agreedTwice = previouslyResolvedEmail === email
+        if (!(await this.deps.isAccountManaged(email))) {
+          // Register a live account nothing manages yet — but only once the
+          // pairing has held across two lookups: in a half-applied switch
+          // the live blob already belongs to the incoming account while the
+          // identity still names the outgoing one, and capturing then would
+          // file the wrong credentials under the wrong email.
+          if (!agreedTwice) return { email, ambiguous: true, tokensReadable: true }
+          const added = await this.deps.ensureLiveAccountManaged(email, live.uuid ?? '')
+          if (!added) return { email: null, ambiguous: false, tokensReadable: true }
+          this.deps.log.info('Captured the live Claude account into the managed store', { email })
+        }
+        return { email, ambiguous: !agreedTwice, tokensReadable: true }
+      }
+    }
+
+    // Not the live token: a request still in flight on another account (the
+    // one just switched away from), which only the managed list can place.
     // Wall clock on purpose (not the injectable `now`): it is compared with
     // the moment the account store's own scan started.
     const startedAt = Date.now()
     let managed = await this.deps.listManagedAccounts()
-    let owner = this.ownerOf(managed, fingerprint, live)
+    let owner = this.ownerOf(managed, fingerprint, identity)
     if (owner !== null) return { ...owner, tokensReadable: true }
-
-    // The live credentials: the freshest view of the signed-in account's
-    // token (the CLI may have refreshed it since the list was memoised), and
-    // the only view of a live account nothing manages yet.
-    const liveFingerprint = await this.deps.readLiveTokenFingerprint()
-    if (liveFingerprint !== null && liveFingerprint === fingerprint && live.email) {
-      const email = live.email.toLowerCase()
-      if (!managed.some((account) => account.email.toLowerCase() === email)) {
-        const added = await this.deps.ensureLiveAccountManaged(email, live.uuid ?? '')
-        if (!added) return { email: null, ambiguous: false, tokensReadable: true }
-        this.deps.log.info('Captured the live Claude account into the managed store', { email })
-      }
-      return { email, ambiguous: false, tokensReadable: true }
-    }
 
     // A token nobody recognises is usually one that was rotated since the
     // list was memoised (the app's own maintenance, or another process).
@@ -369,7 +409,7 @@ export class ClaudeUsageLiveUpdater {
     if (allowRescan && this.now() - this.lastForcedRescanAt >= FORCED_RESCAN_MIN_INTERVAL_MS) {
       this.lastForcedRescanAt = this.now()
       managed = await this.deps.listManagedAccounts({ notOlderThan: startedAt })
-      owner = this.ownerOf(managed, fingerprint, live)
+      owner = this.ownerOf(managed, fingerprint, identity)
       if (owner !== null) return { ...owner, tokensReadable: true }
     }
 
