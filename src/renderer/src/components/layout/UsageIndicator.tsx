@@ -21,6 +21,7 @@ import { cn } from '@/lib/utils'
 import { Loader2, RefreshCw, Shuffle, Timer } from 'lucide-react'
 import { useAccountScheduleStore } from '@/stores/useAccountScheduleStore'
 import { autoSwitchIneligibilityReason, isFableWindow } from '@/lib/auto-switch-score'
+import { sessionEndingSoonLabel, staleAccountNotice } from '@/lib/account-session'
 import { compareByResetTime } from '@/lib/usage-reset-order'
 import {
   AutoSwitchControls,
@@ -211,6 +212,8 @@ interface AccountRowData {
   usage: UsageData | null
   status: SavedUsageStatus
   lastError: string | null
+  /** When the sign-in session ends (epoch ms); see `SavedAccountDTO.session_expires_at`. */
+  sessionExpiresAt?: number | null
   isActive: boolean
   isRefreshing: boolean
 }
@@ -328,6 +331,7 @@ export function UsageAccountRow({
   const [showScheduleForm, setShowScheduleForm] = useState(false)
   const scheduleTargetsRow = schedule !== undefined && schedule.accountId === row.id
   const canSchedule = provider !== undefined && !row.isActive && onSwitch !== undefined
+  const sessionEndingSoon = sessionEndingSoonLabel(row.sessionExpiresAt, Date.now())
 
   return (
     <div
@@ -368,7 +372,17 @@ export function UsageAccountRow({
       </div>
 
       {row.status === 'stale' && (
-        <div className="mt-1 text-[10px] text-destructive">expired - sign in again</div>
+        <div className="mt-1 text-[10px] text-destructive" title={row.lastError ?? undefined}>
+          {staleAccountNotice(row.lastError).detail}
+        </div>
+      )}
+      {row.status === 'ok' && sessionEndingSoon && (
+        <div
+          className="mt-1 text-[10px] text-amber-500"
+          title="Claude sign-ins last about 30 days. Sign in again before then to keep this account usable."
+        >
+          {sessionEndingSoon.toLowerCase()} - sign in again to renew
+        </div>
       )}
       {row.status === 'error' && row.lastError && (
         <div className="mt-1 truncate text-[10px] text-destructive/90">{row.lastError}</div>
@@ -667,6 +681,7 @@ function ProviderUsagePopoverBody({ provider }: { provider: UsageProvider }): Re
           usage: usageFromSavedAccount(provider, account),
           status: account.status,
           lastError: account.last_error,
+          sessionExpiresAt: account.session_expires_at,
           isActive: email !== null && account.email === email,
           isRefreshing: refreshingAccountIds.has(account.id)
         }))

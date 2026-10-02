@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   ANTHROPIC_AUTHORIZE_URL,
   ANTHROPIC_CLIENT_ID,
@@ -7,6 +7,7 @@ import {
   ANTHROPIC_SCOPE,
   ANTHROPIC_TOKEN_URL,
   buildAnthropicAuthorizeUrl,
+  clearRejectedAnthropicRefreshTokensForTests,
   exchangeAnthropicCode,
   refreshAnthropicToken
 } from '../../src/main/services/oauth-anthropic'
@@ -48,6 +49,93 @@ describe('buildAnthropicAuthorizeUrl', () => {
 })
 
 describe('refreshAnthropicToken', () => {
+  beforeEach(() => {
+    clearRejectedAnthropicRefreshTokensForTests()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it.each(['Refresh token expired', 'Refresh token not found or invalid'])(
+    'never posts a token again once the endpoint answered "%s"',
+    async (description) => {
+      const fetchMock = vi.fn().mockImplementation(async () =>
+        jsonResponse({ error: 'invalid_grant', error_description: description }, { status: 400 })
+      )
+      vi.stubGlobal('fetch', fetchMock)
+      vi.useFakeTimers()
+
+      const first = await refreshAnthropicToken('dead-refresh')
+      vi.advanceTimersByTime(7 * 24 * 60 * 60 * 1000)
+      const second = await refreshAnthropicToken('dead-refresh')
+
+      expect(first).toMatchObject({ ok: false, needsLogin: true })
+      expect(second).toEqual(first)
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+
+      // A different token (a new sign-in) is not affected.
+      await refreshAnthropicToken('other-refresh')
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+    }
+  )
+
+  it('retries a rejection that can be lifted server-side, but not more than every 10 minutes', async () => {
+    const fetchMock = vi.fn().mockImplementation(async () =>
+      jsonResponse({ error: 'invalid_grant', error_description: 'account_on_hold' }, { status: 400 })
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    vi.useFakeTimers()
+
+    await refreshAnthropicToken('held-refresh')
+    vi.advanceTimersByTime(9 * 60_000)
+    await refreshAnthropicToken('held-refresh')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    vi.advanceTimersByTime(2 * 60_000)
+    const outcome = await refreshAnthropicToken('held-refresh')
+    expect(outcome).toMatchObject({ ok: false, needsLogin: true })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not remember transient failures', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(textResponse('internal error', { status: 500 }))
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'new-access', expires_in: 60 }, { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(refreshAnthropicToken('flaky-refresh')).rejects.toThrow(/500/)
+    const outcome = await refreshAnthropicToken('flaky-refresh')
+    expect(outcome.ok).toBe(true)
+  })
+
+  it('reports when the sign-in session ends from refresh_token_expires_in, and omits it otherwise', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          jsonResponse(
+            { access_token: 'a', refresh_token: 'r', expires_in: 60, refresh_token_expires_in: 86_400 },
+            { status: 200 }
+          )
+        )
+        .mockResolvedValueOnce(
+          jsonResponse({ access_token: 'a', refresh_token: 'r', expires_in: 60 }, { status: 200 })
+        )
+    )
+
+    const before = Date.now()
+    const withExpiry = await refreshAnthropicToken('refresh-a')
+    const withoutExpiry = await refreshAnthropicToken('refresh-b')
+
+    if (!withExpiry.ok || !withoutExpiry.ok) throw new Error('unreachable')
+    expect(withExpiry.result.refreshTokenExpiresAt).toBeGreaterThanOrEqual(before + 86_400_000)
+    expect(withExpiry.result.refreshTokenExpiresAt).toBeLessThanOrEqual(Date.now() + 86_400_000)
+    expect('refreshTokenExpiresAt' in withoutExpiry.result).toBe(false)
+  })
+
   it('returns needsLogin on 401', async () => {
     vi.stubGlobal(
       'fetch',
@@ -181,6 +269,29 @@ describe('exchangeAnthropicCode', () => {
       refreshToken: 'refresh-1',
       account: { uuid: 'uuid-1', emailAddress: 'person@example.com' }
     })
+  })
+
+  it('reports when the sign-in session ends from refresh_token_expires_in', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        jsonResponse(
+          {
+            access_token: 'access-1',
+            refresh_token: 'refresh-1',
+            expires_in: 3600,
+            refresh_token_expires_in: 2_592_000
+          },
+          { status: 200 }
+        )
+      )
+    )
+
+    const before = Date.now()
+    const result = await exchangeAnthropicCode('the-code', 'the-state', pkce())
+
+    expect(result.refreshTokenExpiresAt).toBeGreaterThanOrEqual(before + 2_592_000_000)
+    expect(result.refreshTokenExpiresAt).toBeLessThanOrEqual(Date.now() + 2_592_000_000)
   })
 
   it('throws on a non-2xx response', async () => {

@@ -111,8 +111,11 @@ export async function listSavedAccounts(provider?: UsageProvider): Promise<Saved
 
   for (const p of providers) {
     const savedProvider: SavedUsageProvider = p
-    const storeAccounts: Array<{ email: string; plan: string | null }> =
-      p === 'anthropic' ? await listClaudeAccounts() : await listCodexAccounts()
+    const storeAccounts: Array<{
+      email: string
+      plan: string | null
+      sessionExpiresAtMs?: number | null
+    }> = p === 'anthropic' ? await listClaudeAccounts() : await listCodexAccounts()
     const cacheRows = db.getSavedUsageAccountsByProvider(savedProvider)
     const cacheByEmail = new Map(cacheRows.map((row) => [row.email.toLowerCase(), row]))
 
@@ -138,7 +141,11 @@ export async function listSavedAccounts(provider?: UsageProvider): Promise<Saved
         })
       }
 
-      dtos.push({ ...toSavedAccountDTO(row), plan: account.plan })
+      dtos.push({
+        ...toSavedAccountDTO(row),
+        plan: account.plan,
+        session_expires_at: account.sessionExpiresAtMs ?? null
+      })
     }
 
     for (const row of cacheRows) {

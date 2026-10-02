@@ -108,6 +108,36 @@ describe('SettingsAccounts', () => {
     expect(signInButtons).toHaveLength(1)
   })
 
+  it('says why an account is signed out, and flags a sign-in that is about to end', async () => {
+    const accounts: SavedAccountDTO[] = [
+      {
+        ...anthropicAccounts[1],
+        last_error:
+          'Token refresh failed: Anthropic refresh needs login (400): {"error": "invalid_grant", "error_description": "Refresh token expired"}'
+      },
+      {
+        ...anthropicAccounts[0],
+        id: 'acc-ending',
+        email: 'ending@example.com',
+        session_expires_at: Date.now() + 2 * 24 * 60 * 60 * 1000 + 60_000
+      }
+    ]
+    request.mockImplementation(async (method: string) => {
+      if (method === 'accountOps.listSaved') return accounts
+      if (method === 'accountOps.getClaudeEmail') return 'active@example.com'
+      return null
+    })
+    useUsageStore.setState({ savedAccounts: { anthropic: accounts, openai: [] } })
+
+    await renderSettingsAccounts()
+
+    expect(screen.getByText('Session expired')).not.toBeNull()
+    expect(screen.queryByText('Expired')).toBeNull()
+    expect(screen.getByText('Session ends in 2d')).not.toBeNull()
+    // Both the ended and the about-to-end sign-in can be renewed.
+    expect(screen.getAllByRole('button', { name: /sign in again/i })).toHaveLength(2)
+  })
+
   it('requires confirmation before removing an account', async () => {
     const user = userEvent.setup()
     await renderSettingsAccounts()

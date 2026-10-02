@@ -4,6 +4,7 @@
  * `src/providers/anthropic.rs` OAuth surface (usage fetching stays in
  * usage-service.ts).
  */
+import { fingerprintSecret } from './credential-fingerprint'
 import type { Pkce } from './oauth-pkce'
 
 export const ANTHROPIC_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e'
@@ -20,6 +21,41 @@ export const ANTHROPIC_SCOPE = 'org:create_api_key user:profile user:inference'
 
 const REQUEST_TIMEOUT_MS = 10_000
 const BODY_SNIPPET_LENGTH = 500
+
+/**
+ * The token endpoint's verdicts that can never change for a given refresh
+ * token: the sign-in session reached its end (sessions last about 30 days and
+ * rotating the token does not extend them), or the token is not the session's
+ * current one (rotated by another holder, or signed out).
+ */
+const TERMINAL_REJECTIONS = ['Refresh token expired', 'Refresh token not found or invalid']
+/** Any other rejection (e.g. `account_on_hold`) may be lifted server-side. */
+const REJECTED_RETRY_AFTER_MS = 10 * 60_000
+
+type AnthropicRefreshRejection = { ok: false; needsLogin: true; error: string }
+
+/**
+ * Refresh tokens the token endpoint already rejected, by fingerprint (never
+ * the token). Every usage sweep, watcher tick and live fetch funnels through
+ * `refreshAnthropicToken`, so without this a signed-out account re-posts its
+ * dead token on each of them — thousands of rejected requests a day once a
+ * batch of accounts expires together. A new sign-in stores a new token, which
+ * is simply not in here.
+ */
+const rejectedRefreshTokens = new Map<
+  string,
+  { outcome: AnthropicRefreshRejection; retryAt: number }
+>()
+
+/** Test-only: forget every remembered rejection. */
+export function clearRejectedAnthropicRefreshTokensForTests(): void {
+  rejectedRefreshTokens.clear()
+}
+
+/** `expires_in`-style seconds from now, as epoch ms; undefined when the field is absent. */
+function expiresInToEpochMs(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? Date.now() + value * 1000 : undefined
+}
 
 export function buildAnthropicAuthorizeUrl(
   pkce: Pkce,
@@ -40,10 +76,16 @@ export function buildAnthropicAuthorizeUrl(
 export type AnthropicRefreshOutcome =
   | {
       ok: true
-      result: { accessToken: string; refreshToken: string; expiresAt: number }
+      result: {
+        accessToken: string
+        refreshToken: string
+        expiresAt: number
+        /** When the sign-in session itself ends (`refresh_token_expires_in`), if the server said. */
+        refreshTokenExpiresAt?: number
+      }
       scope?: string
     }
-  | { ok: false; needsLogin: true; error: string }
+  | AnthropicRefreshRejection
 
 /**
  * Read the full response body. Do NOT cap this: successful token responses
@@ -85,11 +127,19 @@ async function postJson(body: unknown): Promise<Response> {
  * (falling back to the input token when the response omits one). Returns a
  * `needsLogin` outcome for 401/400 responses or a body containing
  * `invalid_grant`; throws on any other failure (network error or other
- * non-2xx status).
+ * non-2xx status). A token the endpoint already rejected is answered from
+ * memory (see `rejectedRefreshTokens`) instead of being posted again.
  */
 export async function refreshAnthropicToken(
   refreshToken: string
 ): Promise<AnthropicRefreshOutcome> {
+  const fingerprint = fingerprintSecret(refreshToken)
+  const rejected = rejectedRefreshTokens.get(fingerprint)
+  if (rejected) {
+    if (Date.now() < rejected.retryAt) return rejected.outcome
+    rejectedRefreshTokens.delete(fingerprint)
+  }
+
   const response = await postJson({
     grant_type: 'refresh_token',
     refresh_token: refreshToken,
@@ -98,11 +148,17 @@ export async function refreshAnthropicToken(
   const body = await readBody(response)
 
   if (response.status === 401 || response.status === 400 || body.includes('invalid_grant')) {
-    return {
+    const outcome: AnthropicRefreshRejection = {
       ok: false,
       needsLogin: true,
       error: `Anthropic refresh needs login (${response.status}): ${body.slice(0, BODY_SNIPPET_LENGTH)}`
     }
+    const terminal = TERMINAL_REJECTIONS.some((description) => body.includes(description))
+    rejectedRefreshTokens.set(fingerprint, {
+      outcome,
+      retryAt: terminal ? Number.POSITIVE_INFINITY : Date.now() + REJECTED_RETRY_AFTER_MS
+    })
+    return outcome
   }
 
   if (!response.ok) {
@@ -115,6 +171,7 @@ export async function refreshAnthropicToken(
     access_token?: unknown
     refresh_token?: unknown
     expires_in?: unknown
+    refresh_token_expires_in?: unknown
     scope?: unknown
   }
 
@@ -130,12 +187,15 @@ export async function refreshAnthropicToken(
       ? data.refresh_token
       : refreshToken
 
+  const refreshTokenExpiresAt = expiresInToEpochMs(data.refresh_token_expires_in)
+
   return {
     ok: true,
     result: {
       accessToken: data.access_token,
       refreshToken: rotatedRefreshToken,
-      expiresAt: Date.now() + data.expires_in * 1000
+      expiresAt: Date.now() + data.expires_in * 1000,
+      ...(refreshTokenExpiresAt !== undefined ? { refreshTokenExpiresAt } : {})
     },
     scope: typeof data.scope === 'string' ? data.scope : undefined
   }
@@ -145,6 +205,8 @@ export interface AnthropicTokenExchange {
   accessToken: string
   refreshToken: string
   expiresAt: number
+  /** When the sign-in session itself ends (`refresh_token_expires_in`), if the server said. */
+  refreshTokenExpiresAt?: number
   scope?: string
   account?: { uuid?: string; emailAddress?: string }
 }
@@ -179,6 +241,7 @@ export async function exchangeAnthropicCode(
     access_token?: unknown
     refresh_token?: unknown
     expires_in?: unknown
+    refresh_token_expires_in?: unknown
     scope?: unknown
     account?: { uuid?: unknown; email_address?: unknown }
   }
@@ -202,10 +265,13 @@ export async function exchangeAnthropicCode(
         }
       : undefined
 
+  const refreshTokenExpiresAt = expiresInToEpochMs(data.refresh_token_expires_in)
+
   return {
     accessToken: data.access_token,
     refreshToken: data.refresh_token,
     expiresAt: Date.now() + data.expires_in * 1000,
+    ...(refreshTokenExpiresAt !== undefined ? { refreshTokenExpiresAt } : {}),
     scope: typeof data.scope === 'string' ? data.scope : undefined,
     account
   }

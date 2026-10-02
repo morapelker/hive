@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
     getSavedUsageAccountByProviderEmail: vi.fn()
   },
   addClaudeAccount: vi.fn(),
+  readClaudeLiveEmail: vi.fn(),
+  switchClaudeAccount: vi.fn(),
   addCodexAccount: vi.fn(),
   exchangeAnthropicCode: vi.fn(),
   exchangeOpenAICode: vi.fn(),
@@ -25,7 +27,9 @@ vi.mock('../../src/main/db', () => ({
 }))
 
 vi.mock('../../src/main/services/account-store-claude', () => ({
-  addClaudeAccount: mocks.addClaudeAccount
+  addClaudeAccount: mocks.addClaudeAccount,
+  readClaudeLiveEmail: mocks.readClaudeLiveEmail,
+  switchClaudeAccount: mocks.switchClaudeAccount
 }))
 
 vi.mock('../../src/main/services/account-store-codex', () => ({
@@ -189,6 +193,7 @@ describe('login-service', () => {
       refreshToken: 'openai-refresh-token'
     })
     mocks.addClaudeAccount.mockResolvedValue('1')
+    mocks.readClaudeLiveEmail.mockResolvedValue(null)
     mocks.addCodexAccount.mockResolvedValue({ accountKey: 'user-1::acct-1', email: 'codex@example.com' })
 
     vi.useFakeTimers()
@@ -204,6 +209,41 @@ describe('login-service', () => {
     }
     await vi.runOnlyPendingTimersAsync()
     vi.useRealTimers()
+  })
+
+  it('makes a re-sign-in of the live Anthropic account live, and stores when its session ends', async () => {
+    mocks.readClaudeLiveEmail.mockResolvedValue('user@example.com')
+    mocks.exchangeAnthropicCode.mockResolvedValue({
+      accessToken: 'anthropic-access-token',
+      refreshToken: 'anthropic-refresh-token',
+      expiresAt: 1_700_000_000_000,
+      refreshTokenExpiresAt: 1_702_592_000_000,
+      scope: 'user:inference',
+      account: { uuid: 'uuid-1', emailAddress: 'User@Example.com' }
+    })
+    const { opener, openedUrls } = createFakeOpener()
+    const { loginStart, loginStatus, setLoginUrlOpenerForTests } = await importFresh()
+    setLoginUrlOpenerForTests(opener)
+
+    const { loginId } = await loginStart('anthropic', 'user@example.com')
+    await pumpUntil(() => openedUrls.length === 1)
+    await hitCallback(openedUrls[0], { code: 'abc123', state: stateOf(openedUrls[0]) })
+    await pumpUntil(() => loginStatus(loginId).state === 'done')
+
+    expect(mocks.addClaudeAccount).toHaveBeenCalledWith(
+      'user@example.com',
+      'uuid-1',
+      JSON.stringify({
+        claudeAiOauth: {
+          accessToken: 'anthropic-access-token',
+          refreshToken: 'anthropic-refresh-token',
+          expiresAt: 1_700_000_000_000,
+          refreshTokenExpiresAt: 1_702_592_000_000,
+          scopes: ['user:inference']
+        }
+      })
+    )
+    expect(mocks.switchClaudeAccount).toHaveBeenCalledWith('1', 'user@example.com')
   })
 
   it('runs the full happy path for an Anthropic login: launching -> waiting -> exchanging -> done', async () => {
@@ -250,6 +290,8 @@ describe('login-service', () => {
         }
       })
     )
+    // Not the live account: the live credentials are left alone.
+    expect(mocks.switchClaudeAccount).not.toHaveBeenCalled()
     expect(mocks.listSavedAccounts).toHaveBeenCalledWith('anthropic')
     expect(mocks.db.getSavedUsageAccountByProviderEmail).toHaveBeenCalledWith(
       'anthropic',

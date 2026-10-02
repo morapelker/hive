@@ -35,6 +35,7 @@ import {
   AlertDialogTitle
 } from '@/components/ui/alert-dialog'
 import { isMac } from '@/lib/platform'
+import { sessionEndingSoonLabel, staleAccountNotice } from '@/lib/account-session'
 import type { SavedAccountDTO, UsageProvider } from '@shared/types/usage'
 import claudeIcon from '@/assets/model-icons/claude.svg'
 import openaiIcon from '@/assets/model-icons/openai.svg'
@@ -143,6 +144,11 @@ function ProviderAccountsCard({ provider }: { provider: UsageProvider }): React.
             const isSwitching = switchingAccountIds.has(account.id)
             const isRemoving = removingAccountIds.has(account.id)
             const isExpired = account.status === 'stale'
+            const staleNotice = isExpired ? staleAccountNotice(account.last_error) : null
+            const sessionEndingSoon =
+              account.status === 'ok'
+                ? sessionEndingSoonLabel(account.session_expires_at, Date.now())
+                : null
 
             return (
               <div
@@ -170,9 +176,20 @@ function ProviderAccountsCard({ provider }: { provider: UsageProvider }): React.
                         OK
                       </span>
                     )}
-                    {isExpired && (
-                      <span className="rounded-full bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium text-destructive">
-                        Expired
+                    {staleNotice && (
+                      <span
+                        className="rounded-full bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium text-destructive"
+                        title={staleNotice.detail}
+                      >
+                        {staleNotice.label}
+                      </span>
+                    )}
+                    {sessionEndingSoon && (
+                      <span
+                        className="rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-500"
+                        title="Claude sign-ins last about 30 days. Sign in again before then to keep this account usable."
+                      >
+                        {sessionEndingSoon}
                       </span>
                     )}
                     {account.status === 'error' && (
@@ -267,7 +284,7 @@ function ProviderAccountsCard({ provider }: { provider: UsageProvider }): React.
                       </PopoverContent>
                     </Popover>
                   )}
-                  {isExpired && (
+                  {(isExpired || sessionEndingSoon) && (
                     <Button
                       variant="ghost"
                       size="sm"

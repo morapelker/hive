@@ -31,6 +31,8 @@ export interface ClaudeRefreshResult {
   accessToken: string
   refreshToken: string
   expiresAt: number
+  /** When the sign-in session itself ends, if the token endpoint said (epoch ms). */
+  refreshTokenExpiresAt?: number
   scope?: string
   /**
    * The refresh token that was actually passed into the refresh call that
@@ -136,6 +138,11 @@ export interface SavedAccountDTO {
   last_error: string | null
   created_at: string
   plan: string | null
+  /**
+   * When the account's sign-in session ends (epoch ms) and it has to be signed
+   * in again — refreshing tokens does not move it. Null/absent when unknown.
+   */
+  session_expires_at?: number | null
 }
 
 export interface FetchForAccountResult {

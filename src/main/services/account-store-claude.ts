@@ -28,6 +28,8 @@ export interface ClaudeOauthBlob {
   accessToken?: string
   refreshToken?: string
   expiresAt?: number
+  /** When the sign-in session ends (the `claude` CLI writes this too); see `applySessionEnd`. */
+  refreshTokenExpiresAt?: number
   scopes?: string[]
   subscriptionType?: string
   [key: string]: unknown
@@ -57,6 +59,8 @@ export interface ClaudeStoreAccount {
   email: string
   uuid: string
   expiresAtMs: number | null
+  /** When the sign-in session ends and the account must be signed in again; null when unknown. */
+  sessionExpiresAtMs: number | null
   hasRefresh: boolean
   plan: string | null
   active: boolean
@@ -429,6 +433,8 @@ export async function listClaudeAccounts(): Promise<ClaudeStoreAccount[]> {
       email,
       uuid: entry.uuid ?? '',
       expiresAtMs: typeof parsed?.expiresAt === 'number' ? parsed.expiresAt : null,
+      sessionExpiresAtMs:
+        typeof parsed?.refreshTokenExpiresAt === 'number' ? parsed.refreshTokenExpiresAt : null,
       hasRefresh: typeof parsed?.refreshToken === 'string' && parsed.refreshToken.length > 0,
       plan: typeof parsed?.subscriptionType === 'string' ? parsed.subscriptionType : null,
       active: liveEmail !== null && liveEmail === email
@@ -472,6 +478,26 @@ export async function readClaudeLiveTokenFingerprint(): Promise<string | null> {
   return typeof token === 'string' && token.length > 0 ? fingerprintSecret(token) : null
 }
 
+interface RotatedClaudeTokens {
+  accessToken: string
+  refreshToken: string
+  expiresAt: number
+  refreshTokenExpiresAt?: number
+}
+
+/**
+ * A rotation only fills in a session end the blob doesn't have yet. The end is
+ * fixed when the account signs in — sessions have been seen to stop exactly at
+ * the sign-in's `refreshTokenExpiresAt` after weeks of 8-hourly rotations — so
+ * a later value reported alongside a rotated token must not push it out.
+ */
+function applySessionEnd(oauth: ClaudeOauthBlob, rotated: RotatedClaudeTokens): void {
+  if (typeof oauth.refreshTokenExpiresAt === 'number') return
+  if (rotated.refreshTokenExpiresAt !== undefined) {
+    oauth.refreshTokenExpiresAt = rotated.refreshTokenExpiresAt
+  }
+}
+
 /**
  * Patch rotated tokens into an account's backup blob (preserving unknown
  * fields), and mirror the patched blob to the live Keychain entry when this
@@ -480,7 +506,7 @@ export async function readClaudeLiveTokenFingerprint(): Promise<string | null> {
 export async function updateClaudeTokens(
   num: string,
   email: string,
-  rotated: { accessToken: string; refreshToken: string; expiresAt: number },
+  rotated: RotatedClaudeTokens,
   scope?: string
 ): Promise<void> {
   invalidateListCache()
@@ -496,6 +522,7 @@ export async function updateClaudeTokens(
   oauth.accessToken = rotated.accessToken
   oauth.refreshToken = rotated.refreshToken
   oauth.expiresAt = rotated.expiresAt
+  applySessionEnd(oauth, rotated)
   if (scope !== undefined) {
     oauth.scopes = scope.split(' ')
   }
@@ -556,7 +583,7 @@ export async function readClaudeLiveRawBlob(): Promise<string | null> {
  * credentials forward, and writing here would clobber that newer rotation.
  */
 export async function persistRotatedLiveClaudeTokens(
-  rotated: { accessToken: string; refreshToken: string; expiresAt: number },
+  rotated: RotatedClaudeTokens,
   usedRefreshToken: string,
   scope?: string
 ): Promise<'persisted' | 'skipped-race' | 'no-live'> {
@@ -584,6 +611,7 @@ export async function persistRotatedLiveClaudeTokens(
   oauth.accessToken = rotated.accessToken
   oauth.refreshToken = rotated.refreshToken
   oauth.expiresAt = rotated.expiresAt
+  applySessionEnd(oauth, rotated)
   if (scope !== undefined) {
     oauth.scopes = scope.split(' ')
   }

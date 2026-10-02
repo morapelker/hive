@@ -24,6 +24,7 @@ vi.mock('os', async () => {
 })
 
 import { fetchClaudeUsage } from '../../src/main/services/usage-service'
+import { clearRejectedAnthropicRefreshTokensForTests } from '../../src/main/services/oauth-anthropic'
 
 const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage'
 const TOKEN_URL = 'https://console.anthropic.com/v1/oauth/token'
@@ -45,6 +46,7 @@ function jsonResponse(body: unknown, init: ResponseInit): Response {
 describe('fetchClaudeUsage saved-account refresh', () => {
   beforeEach(async () => {
     vi.restoreAllMocks()
+    clearRejectedAnthropicRefreshTokensForTests()
     osMock.homeDir = await mkdtemp(join(tmpdir(), 'hive-usage-refresh-'))
   })
 
@@ -436,6 +438,30 @@ describe('fetchClaudeUsage saved-account refresh', () => {
     expect(result.success).toBe(false)
     expect(result.needsLogin).toBe(true)
     expect(result.error).toContain('Token refresh failed: invalid_grant')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not go back to the network for an account whose sign-in session already ended', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      jsonResponse(
+        { error: 'invalid_grant', error_description: 'Refresh token expired' },
+        { status: 400, statusText: 'Bad Request' }
+      )
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const signedOut = {
+      accessToken: 'expired-access-token',
+      refreshToken: 'ended-session-refresh-token',
+      expiresAt: Date.now() - 1_000,
+      accountId: 'acct-ended'
+    }
+
+    const first = await fetchClaudeUsage(signedOut, { caller: 'refreshAllForProvider' })
+    const second = await fetchClaudeUsage(signedOut, { caller: 'refreshAllForProvider' })
+
+    expect(first.needsLogin).toBe(true)
+    expect(second.needsLogin).toBe(true)
+    expect(second.error).toBe(first.error)
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 

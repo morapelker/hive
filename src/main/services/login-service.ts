@@ -36,7 +36,8 @@ import { randomUUID } from 'crypto'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'http'
 import type { AddressInfo } from 'net'
 import { getDatabase } from '../db'
-import { addClaudeAccount } from './account-store-claude'
+import { accountLockKey, withAccountLock } from './account-lock'
+import { addClaudeAccount, readClaudeLiveEmail, switchClaudeAccount } from './account-store-claude'
 import { addCodexAccount } from './account-store-codex'
 import { createLogger } from './logger'
 import { buildAnthropicAuthorizeUrl, exchangeAnthropicCode } from './oauth-anthropic'
@@ -555,10 +556,20 @@ async function exchangeAndStoreAnthropic(session: LoginSession, code: string): P
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
       expiresAt: tokens.expiresAt,
+      refreshTokenExpiresAt: tokens.refreshTokenExpiresAt,
       scopes
     }
   })
-  await addClaudeAccount(email, uuid, blob)
+  await withAccountLock(accountLockKey('anthropic', email), async () => {
+    const num = await addClaudeAccount(email, uuid, blob)
+    // Signing in again as the account that is live right now: the live
+    // credentials are the ones in use, and the next switch away copies them
+    // back over this account's slot — so the new sign-in has to replace them
+    // too, or the old (expired) session keeps being used and then overwrites it.
+    if ((await readClaudeLiveEmail()) === email) {
+      await switchClaudeAccount(num, email)
+    }
+  })
   return email
 }
 

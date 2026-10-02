@@ -55,6 +55,7 @@ function claudeBlob(
     accessToken: string
     refreshToken: string
     expiresAt: number
+    refreshTokenExpiresAt: number
     scopes: string[]
     subscriptionType: string
   }> = {}
@@ -263,6 +264,36 @@ describe('account-store-claude', () => {
       expect(live.claudeAiOauth.scopes).toEqual(['scope-a', 'scope-b'])
       expect(live.someUnrelatedTopLevelField).toBe('keep-me')
     })
+
+    it('fills in an unknown session end from a rotation but never moves a known one', async () => {
+      await addClaudeAccount('a@b.c', 'uuid-a', claudeBlob())
+      const stored = (): number | undefined =>
+        JSON.parse(mocks.keychainStore.get('Claude Code-Account-1-a@b.c')!).claudeAiOauth
+          .refreshTokenExpiresAt
+
+      await updateClaudeTokens('1', 'a@b.c', {
+        accessToken: 'new-access',
+        refreshToken: 'new-refresh',
+        expiresAt: 2000
+      })
+      expect(stored()).toBeUndefined()
+
+      await updateClaudeTokens('1', 'a@b.c', {
+        accessToken: 'newer-access',
+        refreshToken: 'newer-refresh',
+        expiresAt: 3000,
+        refreshTokenExpiresAt: 5000
+      })
+      expect(stored()).toBe(5000)
+
+      await updateClaudeTokens('1', 'a@b.c', {
+        accessToken: 'newest-access',
+        refreshToken: 'newest-refresh',
+        expiresAt: 4000,
+        refreshTokenExpiresAt: 9000
+      })
+      expect(stored()).toBe(5000)
+    })
   })
 
   describe('removeClaudeAccount', () => {
@@ -292,7 +323,11 @@ describe('account-store-claude', () => {
 
   describe('listClaudeAccounts', () => {
     it('lists accounts in sequence order, marks the active one case-insensitively, and tolerates a missing keychain entry', async () => {
-      await addClaudeAccount('a@b.c', 'uuid-a', claudeBlob({ subscriptionType: 'max' }))
+      await addClaudeAccount(
+        'a@b.c',
+        'uuid-a',
+        claudeBlob({ subscriptionType: 'max', refreshTokenExpiresAt: 1_702_000_000_000 })
+      )
       await addClaudeAccount('nokeys@example.com', 'uuid-none', claudeBlob())
       mocks.keychainStore.delete('Claude Code-Account-2-nokeys@example.com')
 
@@ -300,11 +335,18 @@ describe('account-store-claude', () => {
 
       const accounts = await listClaudeAccounts()
       expect(accounts.map((a) => a.num)).toEqual(['1', '2'])
-      expect(accounts[0]).toMatchObject({ email: 'a@b.c', active: true, plan: 'max', hasRefresh: true })
+      expect(accounts[0]).toMatchObject({
+        email: 'a@b.c',
+        active: true,
+        plan: 'max',
+        hasRefresh: true,
+        sessionExpiresAtMs: 1_702_000_000_000
+      })
       expect(accounts[1]).toMatchObject({
         email: 'nokeys@example.com',
         active: false,
         expiresAtMs: null,
+        sessionExpiresAtMs: null,
         hasRefresh: false,
         plan: null
       })

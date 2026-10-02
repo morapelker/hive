@@ -223,6 +223,7 @@ export async function refreshClaudeAccessToken(
         accessToken: outcome.result.accessToken,
         refreshToken: outcome.result.refreshToken,
         expiresAt: outcome.result.expiresAt,
+        refreshTokenExpiresAt: outcome.result.refreshTokenExpiresAt,
         scope: outcome.scope,
         rotatedFrom: refreshToken
       }
