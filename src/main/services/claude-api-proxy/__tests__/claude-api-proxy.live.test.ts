@@ -13,14 +13,21 @@
  *  - the `/v1/messages` response carries `anthropic-ratelimit-unified-*`
  *    headers that parse into 5h/7d utilization;
  *  - the request body's `metadata.user_id` yields the account uuid, and it
- *    matches the live identity file's `oauthAccount.accountUuid`.
+ *    matches the live identity file's `oauthAccount.accountUuid`;
+ *  - the fingerprint of the bearer token the CLI sent equals the live
+ *    Keychain credential's, and resolves to that account in the managed index
+ *    (the attribution the app relies on — independent of the reported uuid).
  */
 import { spawn } from 'node:child_process'
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
-import { readClaudeLiveIdentity } from '../../account-store-claude'
+import {
+  listClaudeAccountTokenFingerprints,
+  readClaudeLiveIdentity,
+  readClaudeLiveTokenFingerprint
+} from '../../account-store-claude'
 import { startLocalApiProxy, type LocalApiProxyExchange } from '../local-api-proxy'
 import { buildUpstreamCaCertificates } from '../claude-api-proxy'
 import { observationFromExchange } from '../claude-usage-live-updater'
@@ -128,6 +135,23 @@ describeLive('claude through the local API proxy (live)', () => {
     const identity = await readClaudeLiveIdentity()
     if (identity.uuid) {
       expect(observation.accountUuid).toBe(identity.uuid.toLowerCase())
+    }
+
+    // Attribution by credential: the token the CLI sent is the live one...
+    expect(observation.credentialFingerprint).not.toBeNull()
+    expect(observation.credentialFingerprint).toBe(await readClaudeLiveTokenFingerprint())
+    // ...and, when the live account is managed, the index maps it to that account.
+    const managed = await listClaudeAccountTokenFingerprints()
+    const owner = managed.find(
+      (account) => account.tokenFingerprint === observation.credentialFingerprint
+    )
+    console.log('[attribution]', {
+      managedAccounts: managed.length,
+      ownerFound: owner !== undefined,
+      ownerIsLiveEmail: owner?.email === identity.email?.toLowerCase()
+    })
+    if (managed.some((account) => account.email === identity.email?.toLowerCase())) {
+      expect(owner?.email).toBe(identity.email?.toLowerCase())
     }
   }, 120_000)
 })

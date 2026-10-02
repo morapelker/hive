@@ -46,12 +46,15 @@ import { homedir } from 'os'
 import { join } from 'path'
 import {
   clearAccountStoreCacheForTests,
+  listClaudeAccountTokenFingerprints,
+  readClaudeLiveTokenFingerprint,
   rememberClaudeAccountUuid,
   repairStaleClaudeLiveIdentityUuid,
   switchClaudeAccount
 } from '../account-store-claude'
 import { keychainRead, keychainWrite } from '../keychain'
 import { atomicWriteJson, readJsonFile } from '../atomic-json'
+import { fingerprintSecret } from '../credential-fingerprint'
 
 const STORE_DIR = '/tmp/hive-claude-store-test'
 const SEQUENCE_PATH = join(STORE_DIR, 'sequence.json')
@@ -226,5 +229,73 @@ describe('repairStaleClaudeLiveIdentityUuid', () => {
     vi.mocked(readJsonFile).mockResolvedValue(null)
     expect(await repairStaleClaudeLiveIdentityUuid()).toBe(false)
     expect(atomicWriteJson).not.toHaveBeenCalled()
+  })
+})
+
+describe('access-token fingerprints', () => {
+  let tokens: Record<string, string | null>
+
+  beforeEach(() => {
+    tokens = {
+      'Claude Code-credentials': 'live-token-b',
+      'Claude Code-Account-1-a@example.com': 'token-a',
+      'Claude Code-Account-2-b@example.com': 'stale-backup-token-b',
+      'Claude Code-Account-3-c@example.com': null
+    }
+    vi.mocked(keychainRead).mockImplementation(async (service: string) => {
+      const token = tokens[service]
+      return token ? blob({ accessToken: token }) : null
+    })
+    seedSequence({
+      '1': { email: 'a@example.com', uuid: UUID_A },
+      '2': { email: 'b@example.com', uuid: UUID_B },
+      '3': { email: 'c@example.com', uuid: '' }
+    })
+    // B is the signed-in account.
+    seedIdentity({ emailAddress: 'b@example.com', accountUuid: UUID_B })
+  })
+
+  it('fingerprints each account by the token it would send right now', async () => {
+    const fingerprints = await listClaudeAccountTokenFingerprints()
+    expect(fingerprints).toEqual([
+      { email: 'a@example.com', uuid: UUID_A, tokenFingerprint: fingerprintSecret('token-a') },
+      // The live account's effective credentials are the live entry, not its backup slot.
+      { email: 'b@example.com', uuid: UUID_B, tokenFingerprint: fingerprintSecret('live-token-b') },
+      { email: 'c@example.com', uuid: '', tokenFingerprint: null }
+    ])
+    // Never the token itself.
+    expect(JSON.stringify(fingerprints)).not.toContain('token-a')
+    expect(await readClaudeLiveTokenFingerprint()).toBe(fingerprintSecret('live-token-b'))
+  })
+
+  it('serves the memo unless it predates the moment the caller needs', async () => {
+    const sweeps = (): number =>
+      vi
+        .mocked(keychainRead)
+        .mock.calls.filter(([service]) => service === 'Claude Code-Account-1-a@example.com').length
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(1_000_000)
+      const lookupStartedAt = Date.now()
+      await listClaudeAccountTokenFingerprints()
+      expect(sweeps()).toBe(1)
+
+      // The memo was built by this very lookup: asking for "not older than
+      // when I started" must not sweep the Keychain a second time.
+      await listClaudeAccountTokenFingerprints({ notOlderThan: lookupStartedAt })
+      expect(sweeps()).toBe(1)
+
+      // A token is rotated; a later lookup that needs a view newer than the
+      // memo gets a real rescan, a plain one still gets the memo.
+      tokens['Claude Code-Account-1-a@example.com'] = 'token-a-rotated'
+      vi.setSystemTime(1_002_000)
+      const memoised = await listClaudeAccountTokenFingerprints()
+      expect(memoised[0].tokenFingerprint).toBe(fingerprintSecret('token-a'))
+      const rescanned = await listClaudeAccountTokenFingerprints({ notOlderThan: Date.now() })
+      expect(rescanned[0].tokenFingerprint).toBe(fingerprintSecret('token-a-rotated'))
+      expect(sweeps()).toBe(2)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

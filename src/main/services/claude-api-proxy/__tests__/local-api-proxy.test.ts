@@ -8,6 +8,7 @@ import {
   type LocalApiProxy,
   type LocalApiProxyExchange
 } from '../local-api-proxy'
+import { fingerprintSecret } from '../../credential-fingerprint'
 
 interface UpstreamSeen {
   method: string
@@ -173,6 +174,9 @@ describe('startLocalApiProxy', () => {
     expect(exchange.status).toBe(200)
     expect(exchange.requestBody?.toString()).toBe(body)
     expect(exchange.requestHeaders.authorization).toBeUndefined()
+    // The credential is recognisable by fingerprint only — never present itself.
+    expect(exchange.credentialFingerprint).toBe(fingerprintSecret('secret-token'))
+    expect(JSON.stringify(exchange.requestHeaders)).not.toContain('secret-token')
     expect(exchange.requestHeaders['x-claude-code-session-id']).toBe('sess-1')
     expect(exchange.responseHeaders['anthropic-ratelimit-unified-5h-utilization']).toBe('0.25')
     expect(exchange.latencyMs).toBeGreaterThanOrEqual(0)

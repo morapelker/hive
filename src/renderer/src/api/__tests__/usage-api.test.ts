@@ -147,6 +147,10 @@ describe('usageApi', () => {
     expect(callback).toHaveBeenCalledTimes(1)
     expect(callback).toHaveBeenCalledWith(payload)
 
+    // The client-reported uuid is optional: attribution goes by credential.
+    listener({ channel: 'usage:claudeLive', payload: { ...payload, accountUuid: null } })
+    expect(callback).toHaveBeenCalledTimes(2)
+
     dispose()
     expect(unsubscribe).toHaveBeenCalledTimes(1)
   })

@@ -21,8 +21,13 @@ export interface ClaudeLiveUsagePayload {
   accountId: string
   /** Lowercased account email, matching `SavedAccountDTO.email` / the live-identity email. */
   email: string
-  /** The Anthropic `account_uuid` from the request's `metadata.user_id`. */
-  accountUuid: string
+  /**
+   * The `account_uuid` the client reported in the request's `metadata.user_id`,
+   * if any. Informational only: a running CLI keeps reporting the account it
+   * started on even after it adopts another account's token, so attribution
+   * goes by the credential the request carried, not by this.
+   */
+  accountUuid: string | null
   /**
    * True when the request's account is the one currently signed in (decided
    * in the main process against the CLI's own identity file, which an account
@@ -46,8 +51,8 @@ export function isClaudeLiveUsagePayload(value: unknown): value is ClaudeLiveUsa
   const payload = value as Record<string, unknown>
   if (payload.provider !== 'anthropic') return false
   if (typeof payload.accountId !== 'string' || typeof payload.email !== 'string') return false
-  if (typeof payload.accountUuid !== 'string' || typeof payload.observedAt !== 'number')
-    return false
+  if (payload.accountUuid !== null && typeof payload.accountUuid !== 'string') return false
+  if (typeof payload.observedAt !== 'number') return false
   if (typeof payload.isLiveAccount !== 'boolean') return false
   if (payload.liveEmail !== null && typeof payload.liveEmail !== 'string') return false
   if (typeof payload.usage !== 'object' || payload.usage === null) return false

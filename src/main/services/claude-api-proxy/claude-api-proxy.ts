@@ -15,9 +15,10 @@ import { getDatabase } from '../../db'
 import { publishDesktopBackendEvent } from '../../desktop/backend-event-publisher'
 import {
   addClaudeAccount,
-  listClaudeAccounts,
+  listClaudeAccountTokenFingerprints,
   readClaudeLiveIdentity,
   readClaudeLiveRawBlob,
+  readClaudeLiveTokenFingerprint,
   rememberClaudeAccountUuid,
   repairStaleClaudeLiveIdentityUuid
 } from '../account-store-claude'
@@ -247,9 +248,9 @@ export function resolveClaudeApiUpstream(
 
 function buildUpdater(): ClaudeUsageLiveUpdater {
   return new ClaudeUsageLiveUpdater({
-    listManagedAccounts: async () =>
-      (await listClaudeAccounts()).map((account) => ({ email: account.email, uuid: account.uuid })),
+    listManagedAccounts: (options) => listClaudeAccountTokenFingerprints(options),
     readLiveIdentity: readClaudeLiveIdentity,
+    readLiveTokenFingerprint: readClaudeLiveTokenFingerprint,
     ensureLiveAccountManaged: async (email, uuid) => {
       const rawBlob = await readClaudeLiveRawBlob()
       if (!rawBlob) return false

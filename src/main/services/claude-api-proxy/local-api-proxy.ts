@@ -16,6 +16,7 @@ import http from 'http'
 import https from 'https'
 import type { AddressInfo } from 'net'
 import { pipeline } from 'stream'
+import { fingerprintRequestCredential } from '../credential-fingerprint'
 
 export interface LocalApiProxyExchange {
   method: string
@@ -23,6 +24,13 @@ export interface LocalApiProxyExchange {
   path: string
   /** Request headers minus credentials (`authorization`, `x-api-key`, `cookie`, ...). */
   requestHeaders: http.IncomingHttpHeaders
+  /**
+   * SHA-256 of the credential the request authenticated with (bearer token or
+   * API key), or null when it carried none. Lets an observer recognise WHICH
+   * account's credential was used — the thing the upstream actually bills —
+   * without ever seeing the credential.
+   */
+  credentialFingerprint: string | null
   /**
    * Full request body when it was captured (POST/PUT/PATCH under the capture
    * cap and fully received before the upstream answered), else null.
@@ -395,6 +403,7 @@ export async function startLocalApiProxy(options: LocalApiProxyOptions): Promise
             method,
             path,
             requestHeaders: redactCredentialHeaders(req.headers),
+            credentialFingerprint: fingerprintRequestCredential(req.headers),
             requestBody,
             status,
             responseHeaders: upstreamRes.headers,

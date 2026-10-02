@@ -17,6 +17,7 @@ import { join } from 'path'
 import { keychainDelete, keychainListAccounts, keychainRead, keychainWrite } from './keychain'
 import { atomicWriteJson, readJsonFile } from './atomic-json'
 import { createLogger } from './logger'
+import { fingerprintSecret } from './credential-fingerprint'
 
 const log = createLogger({ component: 'AccountStoreClaude' })
 
@@ -62,6 +63,17 @@ export interface ClaudeStoreAccount {
 }
 
 /**
+ * Which managed account currently owns which access token, as a SHA-256
+ * fingerprint (never the token). This is how an observed API request is
+ * attributed to the account it is actually billed to.
+ */
+export interface ClaudeAccountTokenFingerprint {
+  email: string
+  uuid: string
+  tokenFingerprint: string | null
+}
+
+/**
  * Short TTL memo for `listClaudeAccounts()`. Every list call re-reads
  * sequence.json plus every account's effective Keychain blob (a `security`
  * execFile each, ~10-30ms) — callers like the saved-usage orchestrator's
@@ -70,7 +82,14 @@ export interface ClaudeStoreAccount {
  * function in this module, and never populated from a rejected read.
  */
 const LIST_CACHE_TTL_MS = 15_000
-let listCache: { value: ClaudeStoreAccount[]; expiresAt: number } | null = null
+let listCache: {
+  value: ClaudeStoreAccount[]
+  /** Parallel to `value`: each account's current access-token fingerprint. */
+  tokenFingerprints: ClaudeAccountTokenFingerprint[]
+  /** Epoch ms at which the scan that produced this memo STARTED. */
+  scannedAt: number
+  expiresAt: number
+} | null = null
 
 /**
  * Short TTL memo for the live Keychain entry's `acct` attribute (see
@@ -321,10 +340,12 @@ export async function listClaudeAccounts(): Promise<ClaudeStoreAccount[]> {
     return listCache.value
   }
 
+  const scannedAt = Date.now()
   const seq = await readSequence()
   const liveEmail = await readClaudeLiveEmail()
 
   const out: ClaudeStoreAccount[] = []
+  const tokenFingerprints: ClaudeAccountTokenFingerprint[] = []
   for (const numValue of seq.sequence) {
     const num = String(numValue)
     const entry = seq.accounts[num]
@@ -333,6 +354,14 @@ export async function listClaudeAccounts(): Promise<ClaudeStoreAccount[]> {
     const email = (entry.email ?? '').toLowerCase()
     const effective = await readClaudeEffectiveBlob(num, email)
     const parsed = effective?.parsed ?? null
+    tokenFingerprints.push({
+      email,
+      uuid: entry.uuid ?? '',
+      tokenFingerprint:
+        typeof parsed?.accessToken === 'string' && parsed.accessToken.length > 0
+          ? fingerprintSecret(parsed.accessToken)
+          : null
+    })
 
     out.push({
       num,
@@ -344,8 +373,42 @@ export async function listClaudeAccounts(): Promise<ClaudeStoreAccount[]> {
       active: liveEmail !== null && liveEmail === email
     })
   }
-  listCache = { value: out, expiresAt: Date.now() + LIST_CACHE_TTL_MS }
+  listCache = {
+    value: out,
+    tokenFingerprints,
+    scannedAt,
+    expiresAt: Date.now() + LIST_CACHE_TTL_MS
+  }
   return out
+}
+
+/**
+ * The access-token fingerprint of every managed account (same Keychain reads
+ * and memo as `listClaudeAccounts`). `notOlderThan` (epoch ms) rejects a memo
+ * whose scan started before that moment — for a token nobody recognises, which
+ * usually means it was rotated since the memo was built. A memo built at or
+ * after it is reused, so a caller that just triggered the scan itself never
+ * pays for the same sweep twice.
+ */
+export async function listClaudeAccountTokenFingerprints(
+  options: { notOlderThan?: number } = {}
+): Promise<ClaudeAccountTokenFingerprint[]> {
+  if (
+    options.notOlderThan !== undefined &&
+    listCache !== null &&
+    listCache.scannedAt < options.notOlderThan
+  ) {
+    invalidateListCache()
+  }
+  await listClaudeAccounts()
+  return listCache?.tokenFingerprints ?? []
+}
+
+/** Fingerprint of the access token in the LIVE credentials (what a new `claude` would send). */
+export async function readClaudeLiveTokenFingerprint(): Promise<string | null> {
+  const live = await readLiveBlob()
+  const token = live?.parsed.accessToken
+  return typeof token === 'string' && token.length > 0 ? fingerprintSecret(token) : null
 }
 
 /**

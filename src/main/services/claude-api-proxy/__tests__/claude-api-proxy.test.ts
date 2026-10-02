@@ -9,7 +9,10 @@ const dbMocks = vi.hoisted(() => ({
 }))
 
 const storeMocks = vi.hoisted(() => ({
-  listClaudeAccounts: vi.fn(async () => [] as Array<{ email: string; uuid: string }>),
+  listClaudeAccountTokenFingerprints: vi.fn(
+    async () => [] as Array<{ email: string; uuid: string; tokenFingerprint: string | null }>
+  ),
+  readClaudeLiveTokenFingerprint: vi.fn(async () => null as string | null),
   readClaudeLiveIdentity: vi.fn(async () => ({
     email: null as string | null,
     uuid: null as string | null
@@ -79,6 +82,7 @@ import {
   __resetClaudeApiProxyCachesForTests
 } from '../claude-api-proxy'
 import { getClaudeApiProxyEnv } from '../claude-api-proxy-env'
+import { fingerprintSecret } from '../../credential-fingerprint'
 
 const ENV_KEYS = ['ANTHROPIC_BASE_URL', '_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL']
 const saved: Record<string, string | undefined> = {}
@@ -275,7 +279,16 @@ describe('startClaudeApiProxy', () => {
     await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve))
     const upstreamPort = (upstream.address() as AddressInfo).port
     const uuid = '718fd88e-2076-4451-bc5f-066158379585'
-    storeMocks.listClaudeAccounts.mockResolvedValue([{ email: 'me@example.com', uuid }])
+    // The request below carries `Bearer x`; the account owning that token is
+    // the one billed, whatever uuid the body reports.
+    storeMocks.listClaudeAccountTokenFingerprints.mockResolvedValue([
+      { email: 'other@example.com', uuid, tokenFingerprint: fingerprintSecret('some-other-token') },
+      {
+        email: 'me@example.com',
+        uuid: '0d2c9a9e-1f1d-4a8a-9d2c-3a4b5c6d7e8f',
+        tokenFingerprint: fingerprintSecret('x')
+      }
+    ])
     storeMocks.readClaudeLiveIdentity.mockResolvedValue({ email: 'Me@example.com', uuid })
     // A previously polled row: live updates must not disturb its poll stamp.
     dbMocks.rows.set('me@example.com', {

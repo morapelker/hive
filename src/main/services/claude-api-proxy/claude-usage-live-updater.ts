@@ -2,22 +2,25 @@
  * Turns proxied Anthropic exchanges into per-account usage updates.
  *
  * For every response that carries `anthropic-ratelimit-unified-*` headers:
- * 1. read the `account_uuid` Claude Code put in the request body — that is
- *    the account the usage belongs to, even when the user has since switched
- *    accounts and this session is still streaming on the old credentials;
- * 2. map it to a managed account (sequence.json `uuid`, else the live
- *    identity file), i.e. to the `saved_usage_accounts` row the popover shows;
- * 3. merge the header windows into that row's cached usage (keeping the
- *    polled-only fields: extra usage, per-model windows the headers lack) —
+ * 1. identify the account the request was BILLED to: the managed account
+ *    whose access token the request carried (compared by SHA-256 fingerprint).
+ *    Not the `account_uuid` the client reports in `metadata.user_id` — a
+ *    running CLI adopts the new account's token from the Keychain after an
+ *    account switch but keeps stamping its requests with the account it
+ *    started on, so that uuid would credit the new account's usage to the old
+ *    one. The reported uuid is only a last resort, for environments where no
+ *    token can be read to compare against;
+ * 2. merge the header windows into that account's cached usage row (keeping
+ *    the polled-only fields: extra usage, per-model windows the headers lack)
  *    WITHOUT touching the row's poll bookkeeping (`last_fetched_at`,
  *    `status`), which the refresh sweeps key their decisions on;
- * 4. decide, against the CLI's own identity file, whether this is the account
+ * 3. decide, against the CLI's own identity file, whether this is the account
  *    currently signed in, and push a `usage:claudeLive` event so the renderer
  *    updates that account's bar immediately — and the bottom bar only when it
  *    is the live account.
  *
- * Updates for one account are coalesced (leading + trailing edge) because a
- * session with parallel subagents can answer several requests per second.
+ * Updates for one credential are coalesced (leading + trailing edge) because
+ * a session with parallel subagents can answer several requests per second.
  */
 import {
   CLAUDE_LIVE_USAGE_CHANNEL,
@@ -36,15 +39,20 @@ import {
 import type { LocalApiProxyExchange } from './local-api-proxy'
 
 export interface ClaudeUsageObservation {
-  accountUuid: string
+  /** SHA-256 of the credential the request carried — what the API billed. */
+  credentialFingerprint: string | null
+  /** The uuid the client reported in the body; may lag an account switch. */
+  accountUuid: string | null
   snapshot: UnifiedRateLimitSnapshot
   observedAt: number
 }
 
-/** The one piece of identity the updater needs per managed account. */
+/** What the updater needs to know about each managed account. */
 export interface ClaudeAccountIdentity {
   email: string
   uuid: string
+  /** SHA-256 of the account's current access token, when it could be read. */
+  tokenFingerprint: string | null
 }
 
 export interface ClaudeLiveIdentity {
@@ -53,9 +61,15 @@ export interface ClaudeLiveIdentity {
 }
 
 export interface ClaudeUsageLiveUpdaterDeps {
-  listManagedAccounts: () => Promise<ClaudeAccountIdentity[]>
+  /**
+   * `notOlderThan` (epoch ms) rejects a memoised list scanned before that
+   * moment — a token nobody recognises was probably rotated since.
+   */
+  listManagedAccounts: (options?: { notOlderThan?: number }) => Promise<ClaudeAccountIdentity[]>
   /** The CLI's identity file (`oauthAccount.{emailAddress,accountUuid}`), read fresh. */
   readLiveIdentity: () => Promise<ClaudeLiveIdentity>
+  /** Fingerprint of the access token in the live credentials, if readable. */
+  readLiveTokenFingerprint: () => Promise<string | null>
   /**
    * Register the live account in the managed store when a request belongs to
    * it but nothing manages it yet (mirrors the poll path's capture). Returns
@@ -82,26 +96,44 @@ export interface ClaudeUsageLiveUpdaterDeps {
   clearTimer?: (handle: unknown) => void
 }
 
-/** Minimum spacing between two published updates for the same account. */
+/** Minimum spacing between two published updates for the same credential. */
 export const LIVE_USAGE_COALESCE_MS = 250
-/** How long a uuid → email resolution is trusted before re-reading the stores. */
-const RESOLUTION_TTL_MS = 30_000
-/** Re-log an unattributable uuid at most this often. */
+/** How long a credential → account (or uuid → account) resolution is trusted. */
+const RESOLUTION_TTL_MS = 10 * 60_000
+/** A resolution read while two accounts showed the same token is re-checked soon. */
+const AMBIGUOUS_RESOLUTION_TTL_MS = 15_000
+/**
+ * How long an unrecognised credential is not looked up again: short at first
+ * (a rotation is usually visible within seconds), backing off for one that
+ * stays unknown (an env-provided token or API key the app will never place)
+ * so it cannot keep the Keychain busy for a whole session.
+ */
+const UNKNOWN_CREDENTIAL_TTL_MS = 5_000
+const UNKNOWN_CREDENTIAL_MAX_TTL_MS = 5 * 60_000
+/** A memo-bypassing rescan reads every account's Keychain entry; keep it rare. */
+const FORCED_RESCAN_MIN_INTERVAL_MS = 10_000
+/** Re-log an unattributable request at most this often. */
 const UNRESOLVED_LOG_TTL_MS = 10 * 60_000
+const MAX_CACHED_RESOLUTIONS = 500
 
 /**
  * Pure: the usage observation an exchange carries, or null when it carries
- * none (no unified headers, no `account_uuid`, body not captured).
+ * none (no unified headers) or nothing to attribute it by (neither a
+ * credential nor a reported `account_uuid`).
  */
 export function observationFromExchange(
-  exchange: Pick<LocalApiProxyExchange, 'responseHeaders' | 'requestBody' | 'observedAt'>
+  exchange: Pick<
+    LocalApiProxyExchange,
+    'responseHeaders' | 'requestBody' | 'observedAt' | 'credentialFingerprint'
+  >
 ): ClaudeUsageObservation | null {
   const snapshot = parseUnifiedRateLimitHeaders(exchange.responseHeaders)
   if (snapshot === null || !snapshotHasUsage(snapshot)) return null
-  if (exchange.requestBody === null) return null
-  const accountUuid = extractClaudeAccountUuid(exchange.requestBody)
-  if (accountUuid === null) return null
-  return { accountUuid, snapshot, observedAt: exchange.observedAt }
+  const accountUuid =
+    exchange.requestBody === null ? null : extractClaudeAccountUuid(exchange.requestBody)
+  const credentialFingerprint = exchange.credentialFingerprint ?? null
+  if (credentialFingerprint === null && accountUuid === null) return null
+  return { credentialFingerprint, accountUuid, snapshot, observedAt: exchange.observedAt }
 }
 
 function parseUsageJson(json: string | null): UsageData | null {
@@ -137,18 +169,15 @@ export function rateLimitWindowFromSnapshot(
   }
 }
 
-/**
- * Whether the request's account is the one currently signed in. The identity
- * file's uuid is authoritative when both sides have one; legacy entries can
- * leave it absent, in which case the email decides.
- */
-export function isLiveAccountFor(
-  accountUuid: string,
-  email: string,
-  live: ClaudeLiveIdentity
-): boolean {
-  if (live.uuid) return live.uuid.toLowerCase() === accountUuid.toLowerCase()
+/** Whether `email` is the account currently signed in, per the CLI's identity file. */
+export function isLiveAccountEmail(email: string, live: ClaudeLiveIdentity): boolean {
   return live.email !== null && live.email.toLowerCase() === email
+}
+
+function coalesceKey(observation: ClaudeUsageObservation): string {
+  return observation.credentialFingerprint !== null
+    ? `token:${observation.credentialFingerprint}`
+    : `uuid:${observation.accountUuid}`
 }
 
 interface PendingAccount {
@@ -156,12 +185,23 @@ interface PendingAccount {
   timer: unknown
 }
 
+interface CachedResolution {
+  email: string | null
+  expiresAt: number
+  /** Consecutive failed lookups (unknown credentials only). */
+  misses?: number
+}
+
+type Attribution = { email: string; via: 'token' | 'reported-uuid' }
+
 export class ClaudeUsageLiveUpdater {
   private readonly deps: ClaudeUsageLiveUpdaterDeps
   private readonly pending = new Map<string, PendingAccount>()
-  private readonly resolutions = new Map<string, { email: string | null; expiresAt: number }>()
+  private readonly tokenOwners = new Map<string, CachedResolution>()
+  private readonly uuidOwners = new Map<string, CachedResolution>()
   private readonly unresolvedLoggedAt = new Map<string, number>()
   private readonly announced = new Set<string>()
+  private lastForcedRescanAt = 0
   private chain: Promise<void> = Promise.resolve()
 
   constructor(deps: ClaudeUsageLiveUpdaterDeps) {
@@ -180,7 +220,7 @@ export class ClaudeUsageLiveUpdater {
   }
 
   observe(observation: ClaudeUsageObservation): void {
-    const key = observation.accountUuid
+    const key = coalesceKey(observation)
     const pending = this.pending.get(key)
     if (pending === undefined) {
       // Leading edge: apply right away, then hold further updates for a beat.
@@ -242,19 +282,142 @@ export class ClaudeUsageLiveUpdater {
     this.pending.clear()
   }
 
-  private async resolveEmail(
+  private remember(
+    cache: Map<string, CachedResolution>,
+    key: string,
+    email: string | null,
+    ttlMs: number,
+    misses?: number
+  ): void {
+    if (cache.size >= MAX_CACHED_RESOLUTIONS && !cache.has(key)) cache.clear()
+    cache.set(key, { email, expiresAt: this.now() + ttlMs, ...(misses ? { misses } : {}) })
+  }
+
+  private async attribute(
+    observation: ClaudeUsageObservation,
+    live: ClaudeLiveIdentity
+  ): Promise<Attribution | null> {
+    const fingerprint = observation.credentialFingerprint
+    if (fingerprint !== null) {
+      const cached = this.tokenOwners.get(fingerprint)
+      if (cached !== undefined && cached.expiresAt > this.now()) {
+        return cached.email === null ? null : { email: cached.email, via: 'token' }
+      }
+      const misses = cached !== undefined && cached.email === null ? (cached.misses ?? 0) : 0
+      // Only the first miss pays for a full rescan; a credential that stays
+      // unknown is re-checked against the (cheap) memo and live entry only.
+      const byToken = await this.lookupByToken(fingerprint, live, misses === 0)
+      if (byToken.email !== null) {
+        this.remember(
+          this.tokenOwners,
+          fingerprint,
+          byToken.email,
+          byToken.ambiguous ? AMBIGUOUS_RESOLUTION_TTL_MS : RESOLUTION_TTL_MS
+        )
+        return { email: byToken.email, via: 'token' }
+      }
+      if (byToken.tokensReadable) {
+        // Tokens can be compared here and this one belongs to no account we
+        // know. Never guess from the client-reported uuid in that case: it is
+        // exactly what goes stale across an account switch.
+        const ttlMs = Math.min(
+          UNKNOWN_CREDENTIAL_TTL_MS * 4 ** misses,
+          UNKNOWN_CREDENTIAL_MAX_TTL_MS
+        )
+        this.remember(this.tokenOwners, fingerprint, null, ttlMs, misses + 1)
+        return null
+      }
+    }
+
+    // No credential on the request, or no token is readable in this
+    // environment to compare against: the reported uuid is all there is.
+    if (observation.accountUuid === null) return null
+    const email = await this.resolveByReportedUuid(observation.accountUuid, live)
+    return email === null ? null : { email, via: 'reported-uuid' }
+  }
+
+  private async lookupByToken(
+    fingerprint: string,
+    live: ClaudeLiveIdentity,
+    allowRescan: boolean
+  ): Promise<{ email: string | null; ambiguous: boolean; tokensReadable: boolean }> {
+    // Wall clock on purpose (not the injectable `now`): it is compared with
+    // the moment the account store's own scan started.
+    const startedAt = Date.now()
+    let managed = await this.deps.listManagedAccounts()
+    let owner = this.ownerOf(managed, fingerprint, live)
+    if (owner !== null) return { ...owner, tokensReadable: true }
+
+    // The live credentials: the freshest view of the signed-in account's
+    // token (the CLI may have refreshed it since the list was memoised), and
+    // the only view of a live account nothing manages yet.
+    const liveFingerprint = await this.deps.readLiveTokenFingerprint()
+    if (liveFingerprint !== null && liveFingerprint === fingerprint && live.email) {
+      const email = live.email.toLowerCase()
+      if (!managed.some((account) => account.email.toLowerCase() === email)) {
+        const added = await this.deps.ensureLiveAccountManaged(email, live.uuid ?? '')
+        if (!added) return { email: null, ambiguous: false, tokensReadable: true }
+        this.deps.log.info('Captured the live Claude account into the managed store', { email })
+      }
+      return { email, ambiguous: false, tokensReadable: true }
+    }
+
+    // A token nobody recognises is usually one that was rotated since the
+    // list was memoised (the app's own maintenance, or another process).
+    // Only a memo that predates this lookup is rescanned: when the call above
+    // built it, a second sweep of every Keychain entry could find nothing new.
+    if (allowRescan && this.now() - this.lastForcedRescanAt >= FORCED_RESCAN_MIN_INTERVAL_MS) {
+      this.lastForcedRescanAt = this.now()
+      managed = await this.deps.listManagedAccounts({ notOlderThan: startedAt })
+      owner = this.ownerOf(managed, fingerprint, live)
+      if (owner !== null) return { ...owner, tokensReadable: true }
+    }
+
+    const tokensReadable =
+      liveFingerprint !== null || managed.some((account) => account.tokenFingerprint !== null)
+    return { email: null, ambiguous: false, tokensReadable }
+  }
+
+  /**
+   * The managed account holding `fingerprint`. Normally exactly one; a list
+   * read in the instant an account switch is half-applied can show the live
+   * token under two accounts, in which case the signed-in one owns it and the
+   * answer is flagged so it is not trusted for long.
+   */
+  private ownerOf(
+    managed: ClaudeAccountIdentity[],
+    fingerprint: string,
+    live: ClaudeLiveIdentity
+  ): { email: string; ambiguous: boolean } | null {
+    const owners = managed.filter((account) => account.tokenFingerprint === fingerprint)
+    if (owners.length === 0) return null
+    if (owners.length === 1) return { email: owners[0].email.toLowerCase(), ambiguous: false }
+    const liveEmail = live.email?.toLowerCase()
+    const liveOwner = owners.find((account) => account.email.toLowerCase() === liveEmail)
+    return { email: (liveOwner ?? owners[0]).email.toLowerCase(), ambiguous: true }
+  }
+
+  private async resolveByReportedUuid(
     accountUuid: string,
     live: ClaudeLiveIdentity
   ): Promise<string | null> {
-    const cached = this.resolutions.get(accountUuid)
+    const cached = this.uuidOwners.get(accountUuid)
     if (cached !== undefined && cached.expiresAt > this.now()) return cached.email
 
-    const email = await this.lookupEmail(accountUuid, live)
-    this.resolutions.set(accountUuid, { email, expiresAt: this.now() + RESOLUTION_TTL_MS })
+    const email = await this.lookupByReportedUuid(accountUuid, live)
+    this.remember(
+      this.uuidOwners,
+      accountUuid,
+      email,
+      email === null ? UNKNOWN_CREDENTIAL_TTL_MS : RESOLUTION_TTL_MS
+    )
     return email
   }
 
-  private async lookupEmail(accountUuid: string, live: ClaudeLiveIdentity): Promise<string | null> {
+  private async lookupByReportedUuid(
+    accountUuid: string,
+    live: ClaudeLiveIdentity
+  ): Promise<string | null> {
     const managed = await this.deps.listManagedAccounts()
     const byUuid = managed.find((account) => account.uuid.toLowerCase() === accountUuid)
     if (byUuid !== undefined && byUuid.email) return byUuid.email.toLowerCase()
@@ -270,8 +433,7 @@ export class ClaudeUsageLiveUpdater {
         if (!added) return null
         this.deps.log.info('Captured the live Claude account into the managed store', { email })
       } else if (managedByEmail.uuid === '') {
-        // Backfill so the primary lookup works from now on (and so a later
-        // switch writes the right uuid into the identity file).
+        // Backfill so a later switch writes the right uuid into the identity file.
         if (await this.deps.rememberAccountUuid(email, live.uuid)) {
           this.deps.log.info('Recorded the uuid of a legacy Claude account', { email })
         }
@@ -285,17 +447,21 @@ export class ClaudeUsageLiveUpdater {
     // Read fresh every time: an account switch rewrites this file before the
     // switch reports success, so it is the race-free source of "who is live".
     const live = await this.deps.readLiveIdentity()
-    const email = await this.resolveEmail(observation.accountUuid, live)
-    if (email === null) {
-      const loggedAt = this.unresolvedLoggedAt.get(observation.accountUuid)
+    const attribution = await this.attribute(observation, live)
+    if (attribution === null) {
+      const key = coalesceKey(observation)
+      const loggedAt = this.unresolvedLoggedAt.get(key)
       if (loggedAt === undefined || this.now() - loggedAt > UNRESOLVED_LOG_TTL_MS) {
-        this.unresolvedLoggedAt.set(observation.accountUuid, this.now())
+        if (this.unresolvedLoggedAt.size >= MAX_CACHED_RESOLUTIONS) this.unresolvedLoggedAt.clear()
+        this.unresolvedLoggedAt.set(key, this.now())
         this.deps.log.info('Live Claude usage for an account this app does not manage; ignoring', {
-          accountUuid: observation.accountUuid
+          accountUuid: observation.accountUuid,
+          hasCredential: observation.credentialFingerprint !== null
         })
       }
       return
     }
+    const { email } = attribution
 
     const previousRow = this.deps.readUsageRow(email)
     const previousUsage = parseUsageJson(previousRow?.last_usage_json ?? null)
@@ -307,7 +473,7 @@ export class ClaudeUsageLiveUpdater {
       accountId: row.id,
       email,
       accountUuid: observation.accountUuid,
-      isLiveAccount: isLiveAccountFor(observation.accountUuid, email, live),
+      isLiveAccount: isLiveAccountEmail(email, live),
       liveEmail: live.email ? live.email.toLowerCase() : null,
       usage,
       rateLimit: {
@@ -327,10 +493,11 @@ export class ClaudeUsageLiveUpdater {
 
     if (!this.announced.has(email)) {
       this.announced.add(email)
-      this.deps.log.info('Live Claude usage attributed', { email })
+      this.deps.log.info('Live Claude usage attributed', { email, via: attribution.via })
     }
     this.deps.log.debug('Live Claude usage update', {
       email,
+      via: attribution.via,
       live: payload.isLiveAccount,
       fiveHour: usage.five_hour.utilization,
       sevenDay: usage.seven_day.utilization,
