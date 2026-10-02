@@ -161,12 +161,63 @@ describe('useAccountScheduleStore auto-switch', () => {
     await useAccountScheduleStore.getState().checkSchedules()
 
     // acc-1 is the active account (best usage but excluded), acc-4's refresh
-    // failed, acc-5 is expired — acc-2 wins over acc-3 on headroom.
+    // failed, acc-5 is expired — acc-2 and acc-3 share a 7-day reset, so
+    // acc-2 wins on headroom.
     expect(refreshAllCalls()).toHaveLength(1)
     expect(switchCalls()).toHaveLength(1)
     expect(switchCalls()[0][1]).toEqual({ accountId: 'acc-2' })
     // Stays armed for the next threshold crossing.
     expect(useAccountScheduleStore.getState().autoSwitch.anthropic).toBeDefined()
+  })
+
+  it('prefers the comfortable account whose 7-day window resets soonest over the emptiest one', async () => {
+    const withSevenDayReset = (usage: UsageData, inMs: number): UsageData => ({
+      ...usage,
+      seven_day: { ...usage.seven_day, resets_at: new Date(Date.now() + inMs).toISOString() }
+    })
+    // acc-2 is emptier, but acc-3's weekly usage expires first.
+    refreshedAccounts[1] = makeAccount(
+      'acc-2',
+      'best@x.com',
+      withSevenDayReset(makeUsage(10, 20), 5 * 86_400_000)
+    )
+    refreshedAccounts[2] = makeAccount(
+      'acc-3',
+      'meh@x.com',
+      withSevenDayReset(makeUsage(60, 50), 86_400_000)
+    )
+    useUsageStore.setState({ savedAccounts: { anthropic: refreshedAccounts, openai: [] } })
+    useAccountScheduleStore.getState().setAutoSwitch('anthropic', 90)
+
+    await useAccountScheduleStore.getState().checkSchedules()
+
+    expect(switchCalls()).toHaveLength(1)
+    expect(switchCalls()[0][1]).toEqual({ accountId: 'acc-3' })
+  })
+
+  it('falls back to the best headroom score when no account is 10 points under the threshold', async () => {
+    const withSevenDayReset = (usage: UsageData, inMs: number): UsageData => ({
+      ...usage,
+      seven_day: { ...usage.seven_day, resets_at: new Date(Date.now() + inMs).toISOString() }
+    })
+    // Both sit in the 80-90% band; acc-3 resets sooner but acc-2 has more headroom.
+    refreshedAccounts[1] = makeAccount(
+      'acc-2',
+      'best@x.com',
+      withSevenDayReset(makeUsage(20, 82), 5 * 86_400_000)
+    )
+    refreshedAccounts[2] = makeAccount(
+      'acc-3',
+      'meh@x.com',
+      withSevenDayReset(makeUsage(88, 85), 86_400_000)
+    )
+    useUsageStore.setState({ savedAccounts: { anthropic: refreshedAccounts, openai: [] } })
+    useAccountScheduleStore.getState().setAutoSwitch('anthropic', 90)
+
+    await useAccountScheduleStore.getState().checkSchedules()
+
+    expect(switchCalls()).toHaveLength(1)
+    expect(switchCalls()[0][1]).toEqual({ accountId: 'acc-2' })
   })
 
   it('ignores an account whose refresh failed even when its cached usage looks best', async () => {

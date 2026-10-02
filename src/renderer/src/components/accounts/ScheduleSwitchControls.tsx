@@ -181,9 +181,10 @@ interface AutoSwitchControlsProps {
 
 /**
  * Provider-global "auto-switch accounts" control: when armed, crossing the
- * threshold refreshes every saved account and hops to the one with the most
- * headroom — and stays armed for the next crossing. Mutually exclusive with
- * the per-account schedule (arming one replaces the other).
+ * threshold refreshes every saved account and hops to the one comfortably
+ * under it whose 7-day window resets soonest — and stays armed for the next
+ * crossing. Mutually exclusive with the per-account schedule (arming one
+ * replaces the other).
  */
 export function AutoSwitchControls({
   provider,
@@ -298,17 +299,16 @@ export function AutoSwitchControls({
             </div>
           </div>
           <div className="mt-1 text-[9px] text-amber-600/90 dark:text-amber-400/90">
-            Hops to the account with the most headroom at {auto.thresholdPercent}% usage
+            At {auto.thresholdPercent}% usage
             {currentPercent !== null && (
               <span className="opacity-70"> (now {Math.round(currentPercent)}%)</span>
             )}
-            .
+            , hops to the account whose weekly usage resets soonest.
           </div>
         </>
       ) : (
         <div className="mt-1 text-[9px] text-muted-foreground/70">
-          Automatically hop to the account with the most usage left whenever the active one runs
-          hot.
+          Automatically hop to another account with usage left whenever the active one runs hot.
           {schedule && (
             <span className="text-amber-500"> Replaces the pending scheduled switch.</span>
           )}

@@ -111,6 +111,54 @@ export function scoreAccountHeadroom(usage: UsageData, nowMs: number): number {
   )
 }
 
+// A candidate is "comfortable" when every window sits at least this many
+// points below the armed threshold (under 80% for a 90% threshold): hopping
+// there buys real runway instead of re-triggering a few prompts later.
+export const AUTO_SWITCH_TARGET_MARGIN_PERCENT = 10
+
+// When the account's running 7-day window resets; Infinity when none is
+// running (reset time missing, invalid or already passed — the weekly usage
+// is fresh, so nothing there is about to expire).
+function sevenDayResetMs(usage: UsageData, nowMs: number): number {
+  const resetsAt = usage.seven_day.resets_at
+  if (!resetsAt) return Infinity
+  const time = new Date(resetsAt).getTime()
+  return isNaN(time) || time < nowMs ? Infinity : time
+}
+
+/**
+ * Picks the auto-switch target among eligible candidates (all already below
+ * `thresholdPercent`). Comfortable candidates — every window at least
+ * AUTO_SWITCH_TARGET_MARGIN_PERCENT points under the threshold — win, and
+ * among them the one whose 7-day window resets soonest: its remaining weekly
+ * usage is the first to expire, so it gets burned first, while accounts with
+ * no running weekly window are kept in reserve. Ties go to the higher
+ * headroom score. With no comfortable candidate the pick falls back to the
+ * best headroom score. Null when there are no candidates.
+ */
+export function pickAutoSwitchTarget<T extends { usage: UsageData }>(
+  candidates: T[],
+  thresholdPercent: number,
+  nowMs: number
+): T | null {
+  const byHeadroomDesc = (a: T, b: T): number =>
+    scoreAccountHeadroom(b.usage, nowMs) - scoreAccountHeadroom(a.usage, nowMs)
+
+  const comfortable = candidates.filter((c) => {
+    const maxPercent = getMaxUsagePercent(c.usage, nowMs)
+    return maxPercent !== null && maxPercent < thresholdPercent - AUTO_SWITCH_TARGET_MARGIN_PERCENT
+  })
+  if (comfortable.length > 0) {
+    return [...comfortable].sort((a, b) => {
+      const resetA = sevenDayResetMs(a.usage, nowMs)
+      const resetB = sevenDayResetMs(b.usage, nowMs)
+      // Infinity - Infinity is NaN, so equal resets must short-circuit.
+      return resetA === resetB ? byHeadroomDesc(a, b) : resetA - resetB
+    })[0]
+  }
+  return [...candidates].sort(byHeadroomDesc)[0] ?? null
+}
+
 /**
  * Why an account can't be an auto-switch target right now, mirroring the
  * candidate filter in useAccountScheduleStore's sweep: the token must be

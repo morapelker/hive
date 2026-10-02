@@ -12,7 +12,7 @@ import {
   autoSwitchUsage,
   getMaxUsagePercent,
   isProvablyAtOrAbove,
-  scoreAccountHeadroom
+  pickAutoSwitchTarget
 } from '@/lib/auto-switch-score'
 import { useUsageStore, normalizeUsage } from './useUsageStore'
 import { useAccountStore } from './useAccountStore'
@@ -35,11 +35,12 @@ export interface ScheduledSwitch {
 }
 
 /**
- * Provider-global "keep me on whichever account has the most headroom" mode:
- * when the ACTIVE account crosses thresholdPercent, refresh the saved
- * accounts that could plausibly be viable and hop to the best-scoring one —
- * then stay armed for the next crossing. Mutually exclusive with a
- * per-account ScheduledSwitch.
+ * Provider-global "keep me on an account with usage left" mode: when the
+ * ACTIVE account crosses thresholdPercent, refresh the saved accounts that
+ * could plausibly be viable and hop to the one pickAutoSwitchTarget prefers
+ * (comfortably under the threshold, soonest 7-day reset first) — then stay
+ * armed for the next crossing. Mutually exclusive with a per-account
+ * ScheduledSwitch.
  */
 export interface AutoSwitchConfig {
   provider: UsageProvider
@@ -390,22 +391,15 @@ export const useAccountScheduleStore = create<AccountScheduleState>()(
                   return maxPercent !== null && maxPercent < latest.thresholdPercent
                 })
 
-              if (candidates.length === 0) {
+              // Prefers accounts comfortably under the threshold, soonest
+              // 7-day reset first; otherwise the best headroom score.
+              const best = pickAutoSwitchTarget(candidates, latest.thresholdPercent, now)
+              if (!best) {
                 toast.error(
                   `Auto-switch: no other account below ${latest.thresholdPercent}% usage to switch to`
                 )
                 backOff()
                 continue
-              }
-
-              let best = candidates[0]
-              let bestScore = scoreAccountHeadroom(best.usage, now)
-              for (const candidate of candidates.slice(1)) {
-                const score = scoreAccountHeadroom(candidate.usage, now)
-                if (score > bestScore) {
-                  best = candidate
-                  bestScore = score
-                }
               }
 
               // switchAccount toasts success/failure itself, and the mode

@@ -5,6 +5,7 @@ import {
   autoSwitchUsage,
   getMaxUsagePercent,
   isProvablyAtOrAbove,
+  pickAutoSwitchTarget,
   scoreAccountHeadroom
 } from '../auto-switch-score'
 import type { UsageData } from '@shared/types/usage'
@@ -95,6 +96,98 @@ describe('scoreAccountHeadroom', () => {
     expect(scoreAccountHeadroom(usage(0, 0), NOW)).toBeGreaterThan(
       scoreAccountHeadroom(usage(50, 50), NOW)
     )
+  })
+})
+
+describe('pickAutoSwitchTarget', () => {
+  const HOUR = 3_600_000
+  const candidate = (
+    id: string,
+    data: UsageData,
+    sevenDayResetsAt?: string | null
+  ): { id: string; usage: UsageData } => ({
+    id,
+    usage:
+      sevenDayResetsAt === undefined
+        ? data
+        : { ...data, seven_day: { ...data.seven_day, resets_at: sevenDayResetsAt } }
+  })
+  const inHours = (hours: number): string => new Date(NOW + hours * HOUR).toISOString()
+  const pick = (candidates: { id: string; usage: UsageData }[], threshold = 90): string | null =>
+    pickAutoSwitchTarget(candidates, threshold, NOW)?.id ?? null
+
+  it('returns null without candidates', () => {
+    expect(pick([])).toBeNull()
+  })
+
+  it('picks the comfortable account whose 7-day window resets soonest, not the emptiest', () => {
+    expect(
+      pick([
+        candidate('emptiest', usage(0, 0), inHours(100)),
+        candidate('soonest', usage(60, 70), inHours(5)),
+        candidate('middle', usage(20, 20), inHours(40))
+      ])
+    ).toBe('soonest')
+  })
+
+  it('requires the margin on every window: 5h, 7d and scoped', () => {
+    const comfortable = candidate('comfortable', usage(10, 10), inHours(100))
+    // Each resets sooner, but sits within 10 points of the 90% threshold on one window.
+    expect(pick([candidate('hot-5h', usage(80, 10), inHours(1)), comfortable])).toBe('comfortable')
+    expect(pick([candidate('hot-7d', usage(10, 85), inHours(1)), comfortable])).toBe('comfortable')
+    expect(
+      pick([
+        candidate('hot-fable', usage(10, 10, [{ label: 'Fable', used_percent: 80 }]), inHours(1)),
+        comfortable
+      ])
+    ).toBe('comfortable')
+    // Just inside the margin on all three wins on its sooner reset.
+    expect(
+      pick([
+        candidate('just-inside', usage(79, 79, [{ label: 'Fable', used_percent: 79 }]), inHours(1)),
+        comfortable
+      ])
+    ).toBe('just-inside')
+  })
+
+  it('scales the margin with the threshold', () => {
+    const candidates = [
+      candidate('at-65', usage(65, 10), inHours(1)),
+      candidate('at-10', usage(10, 10), inHours(100))
+    ]
+    expect(pick(candidates, 90)).toBe('at-65')
+    expect(pick(candidates, 70)).toBe('at-10')
+  })
+
+  it('ranks accounts without a running 7-day window last', () => {
+    expect(
+      pick([
+        candidate('idle', usage(0, 0), null),
+        candidate('already-reset', usage(0, 50), PAST),
+        candidate('running', usage(50, 50), inHours(150))
+      ])
+    ).toBe('running')
+  })
+
+  it('breaks ties on the 7-day reset by headroom', () => {
+    expect(
+      pick([candidate('fuller', usage(50, 50), null), candidate('emptier', usage(5, 5), null)])
+    ).toBe('emptier')
+    expect(
+      pick([
+        candidate('fuller', usage(50, 50), inHours(10)),
+        candidate('emptier', usage(5, 5), inHours(10))
+      ])
+    ).toBe('emptier')
+  })
+
+  it('falls back to the best headroom score when no account has the margin', () => {
+    expect(
+      pick([
+        candidate('soonest-but-fuller', usage(88, 85), inHours(1)),
+        candidate('most-headroom', usage(20, 82), inHours(100))
+      ])
+    ).toBe('most-headroom')
   })
 })
 
