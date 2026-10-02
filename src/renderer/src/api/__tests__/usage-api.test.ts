@@ -112,4 +112,42 @@ describe('usageApi', () => {
       userInitiated: true
     })
   })
+
+  it('subscribes to live Claude usage events and ignores malformed payloads', () => {
+    const request = vi.fn()
+    const unsubscribe = vi.fn()
+    const subscribe = vi.fn().mockReturnValue(unsubscribe)
+    setRendererRpcClient({ request, subscribe })
+
+    const callback = vi.fn()
+    const dispose = usageApi.onClaudeLiveUsage(callback)
+    expect(subscribe).toHaveBeenCalledWith('usage:claudeLive', expect.any(Function))
+    const listener = subscribe.mock.calls[0][1] as (event: {
+      channel: string
+      payload: unknown
+    }) => void
+
+    const payload = {
+      provider: 'anthropic',
+      accountId: 'row-a',
+      email: 'a@example.com',
+      accountUuid: '718fd88e-2076-4451-bc5f-066158379585',
+      isLiveAccount: true,
+      liveEmail: 'a@example.com',
+      usage: {
+        five_hour: { utilization: 3, resets_at: null },
+        seven_day: { utilization: 39, resets_at: null }
+      },
+      rateLimit: {},
+      observedAt: 1
+    }
+    listener({ channel: 'usage:claudeLive', payload })
+    listener({ channel: 'usage:claudeLive', payload: { provider: 'openai' } })
+    listener({ channel: 'usage:claudeLive', payload: null })
+    expect(callback).toHaveBeenCalledTimes(1)
+    expect(callback).toHaveBeenCalledWith(payload)
+
+    dispose()
+    expect(unsubscribe).toHaveBeenCalledTimes(1)
+  })
 })

@@ -6,6 +6,7 @@ import {
   type CustomProviderModel
 } from '@shared/types/custom-provider'
 import { getUserEnvironmentVariables } from './env-vars'
+import { getClaudeApiProxyEnv } from './claude-api-proxy/claude-api-proxy-env'
 import type { DatabaseService } from '../db/database'
 
 export interface ClaudeCliPtySpawnInput {
@@ -169,11 +170,18 @@ export function buildClaudeCliPtySpawn(input: ClaudeCliPtySpawnInput): ClaudeCli
     args.push(prompt)
   }
 
+  // The local API proxy's env goes LAST: a user-level ANTHROPIC_BASE_URL in
+  // Settings still applies, as the proxy's upstream, rather than bypassing the
+  // proxy (and with it the real-time usage headers). A custom provider whose
+  // command inlines its own ANTHROPIC_BASE_URL= still wins inside the shell —
+  // those are not Anthropic subscription accounts.
+  const env = { ...getUserEnvironmentVariables(input.db ?? null), ...getClaudeApiProxyEnv() }
+
   if (customCommand) {
     return {
       ...buildCustomProviderShellSpawn(customCommand, args),
       cwd: input.worktreePath,
-      env: getUserEnvironmentVariables(input.db ?? null)
+      env
     }
   }
 
@@ -181,7 +189,7 @@ export function buildClaudeCliPtySpawn(input: ClaudeCliPtySpawnInput): ClaudeCli
     command: input.claudeBinary || 'claude',
     args,
     cwd: input.worktreePath,
-    env: getUserEnvironmentVariables(input.db ?? null)
+    env
   }
 }
 

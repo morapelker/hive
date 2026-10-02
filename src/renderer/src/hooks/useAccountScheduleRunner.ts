@@ -6,7 +6,8 @@ import {
   useUsageStore,
   resolveUsageProvider,
   USAGE_FETCH_DEBOUNCE_MS,
-  EARLY_USAGE_REFRESH_FLOOR_MS
+  EARLY_USAGE_REFRESH_FLOOR_MS,
+  LIVE_USAGE_FRESH_MS
 } from '@/stores/useUsageStore'
 import {
   useAccountScheduleStore,
@@ -246,6 +247,17 @@ async function maintainBurnRatePredictor(): Promise<void> {
       )
       lastAnchoredUsage = usageStore.anthropicUsage
     }
+  }
+
+  // While the local API proxy is reporting this account's usage off every
+  // response, the numbers are already exact — an estimate-driven early poll
+  // of the usage endpoint would only add load. (Anchors above still record,
+  // so the predictor stays calibrated for when live data stops.)
+  if (
+    usageStore.anthropicLiveUpdatedAt !== null &&
+    now - usageStore.anthropicLiveUpdatedAt < LIVE_USAGE_FRESH_MS
+  ) {
+    return
   }
 
   const nextAt = nextUsageRefreshAt('anthropic')

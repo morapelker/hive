@@ -13,6 +13,7 @@ import type {
   SavedAccountDTO,
   RefreshAllResultItem
 } from '@shared/types/usage'
+import type { ClaudeLiveUsagePayload } from '@shared/types/claude-live-usage'
 import { accountApi } from '@/api/account-api'
 import { usageApi } from '@/api/usage-api'
 import { reportActiveAccountsSnapshot } from '@/lib/hive-account-report'
@@ -48,6 +49,10 @@ interface UsageState {
    * and per-path floors would let the paths pair up requests under the
    * advertised 30s endpoint floor. */
   anthropicEarlyRefreshAttemptAt: number | null
+  /** Epoch ms of the last live (proxy-observed) usage update applied to the
+   * ACTIVE account. While recent, the polled refresh cadence and the burn-rate
+   * predictor stand down: every API response already brings exact numbers. */
+  anthropicLiveUpdatedAt: number | null
 
   openaiUsage: OpenAIUsageData | null
   openaiLastFetchedAt: number | null
@@ -86,7 +91,15 @@ interface UsageState {
   ) => Promise<void>
   forceRefreshProvider: (provider: UsageProvider) => Promise<void>
   setActiveProvider: (provider: UsageProvider) => void
-  setAnthropicRateLimit: (info: AnthropicRateLimitInfo) => void
+  /** opts.triggerRefresh (default true): a warning/rejected window pulls a
+   * fresh usage snapshot; the live proxy path passes false — its numbers are
+   * already current. */
+  setAnthropicRateLimit: (info: AnthropicRateLimitInfo, opts?: { triggerRefresh?: boolean }) => void
+  /** A per-response usage update from the local Claude API proxy, already
+   * attributed to the account whose credentials made the request. Updates
+   * that account's saved row; mirrors into the live slot only when it is the
+   * active account. */
+  applyClaudeLiveUsage: (payload: ClaudeLiveUsagePayload) => void
   /** Called when the active Anthropic identity changed hands OUTSIDE a
    * Hive-initiated switch (external `claude login` observed via an email
    * change). Applies the same invalidation an internal switch does. */
@@ -103,6 +116,11 @@ const DEBOUNCE_MS = USAGE_FETCH_DEBOUNCE_MS
 // bypass the 3-minute debounce, but never hit the usage endpoint more often
 // than this.
 export const EARLY_USAGE_REFRESH_FLOOR_MS = 30_000
+
+// How long a live (proxy-observed) usage update counts as current. Within
+// this window the usage popover says "Live" instead of counting down to the
+// next poll and the burn-rate predictor skips its early sampling.
+export const LIVE_USAGE_FRESH_MS = 2 * 60_000
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
@@ -126,6 +144,7 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
   anthropicUsageFromFetch: false,
   anthropicAccountSwitchedAt: null,
   anthropicEarlyRefreshAttemptAt: null,
+  anthropicLiveUpdatedAt: null,
 
   openaiUsage: null,
   openaiLastFetchedAt: null,
@@ -360,7 +379,8 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
             anthropicUsageFromFetch: false,
             anthropicLastRetryAfter: null,
             anthropicLastFetchedAt: null,
-            anthropicEarlyRefreshAttemptAt: null
+            anthropicEarlyRefreshAttemptAt: null,
+            anthropicLiveUpdatedAt: null
           })
         }
         if (provider) {
@@ -601,7 +621,7 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
     }
   },
 
-  setAnthropicRateLimit: (info: AnthropicRateLimitInfo) => {
+  setAnthropicRateLimit: (info: AnthropicRateLimitInfo, opts?: { triggerRefresh?: boolean }) => {
     set((state) => {
       const now = Date.now()
       const nowSeconds = now / 1000
@@ -641,7 +661,7 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
     // The floor gates on ATTEMPT time: failed fetches never advance
     // lastFetchedAt, and an event storm against a failing endpoint would
     // otherwise retry on every single event.
-    if (info.status !== 'allowed') {
+    if (info.status !== 'allowed' && opts?.triggerRefresh !== false) {
       const nowMs = Date.now()
       const {
         anthropicEarlyRefreshAttemptAt: lastAttempt,
@@ -683,8 +703,98 @@ export const useUsageStore = create<UsageState>()((set, get) => ({
       anthropicUsageFromFetch: false,
       anthropicLastRetryAfter: null,
       anthropicLastFetchedAt: null,
-      anthropicEarlyRefreshAttemptAt: null
+      anthropicEarlyRefreshAttemptAt: null,
+      anthropicLiveUpdatedAt: null
     })
+  },
+
+  applyClaudeLiveUsage: (payload: ClaudeLiveUsagePayload) => {
+    if (payload.provider !== 'anthropic') return
+    const email = payload.email.toLowerCase()
+
+    // 1. The attributed account's row in the popover — every account, active
+    //    or not, since a session can keep streaming on the account the user
+    //    just switched away from. Only the usage snapshot changes: the row's
+    //    last_fetched_at/status describe the usage-endpoint poll, which still
+    //    owns the fields the response headers lack (extra usage, per-model
+    //    windows) and must keep running on its own clock.
+    let rowFound = false
+    set((state) => {
+      const rows = state.savedAccounts.anthropic
+      const index = rows.findIndex(
+        (row) => row.id === payload.accountId || row.email.toLowerCase() === email
+      )
+      if (index === -1) return {}
+      rowFound = true
+      const next = [...rows]
+      next[index] = { ...rows[index], last_usage: payload.usage }
+      return { savedAccounts: { ...state.savedAccounts, anthropic: next } }
+    })
+    if (!rowFound && get().savedAccountsLoaded.anthropic) {
+      // A row the list has not seen yet (first request of a freshly captured
+      // account): pull the list so it appears with its usage.
+      get()
+        .loadSavedAccounts('anthropic')
+        .catch(() => {})
+    }
+
+    // 2. The live slot behind the bottom bar — only for the account that is
+    //    signed in NOW. Decided in the main process against the CLI's own
+    //    identity file (rewritten by a switch before it reports success), so
+    //    an in-flight session on the account we just left can never repaint
+    //    the bar or re-arm its rejected overlay against the new account.
+    if (!payload.isLiveAccount) return
+    const switchedAt = get().anthropicAccountSwitchedAt
+    // Observed before this renderer stamped its switch: the main-side
+    // liveness verdict predates the switch (coalescing adds latency), so the
+    // data may describe the previous account. Drop it; the next response on
+    // the new account arrives within seconds.
+    if (switchedAt !== null && payload.observedAt < switchedAt) return
+
+    if (
+      payload.liveEmail !== null &&
+      useAccountStore.getState().anthropicEmail !== payload.liveEmail
+    ) {
+      // The cached active email lags (switch still refreshing it, or an
+      // external `claude login`): the identity file is authoritative. An
+      // email-to-email change drives the external-switch invalidation.
+      useAccountStore.setState({ anthropicEmail: payload.liveEmail })
+    }
+
+    const now = Date.now()
+    // Not anthropicLastFetchedAt / anthropicLastRetryAfter: those gate the
+    // usage-endpoint poll, which must keep its cadence (and its Retry-After
+    // back-dating) while live data flows — a /v1/messages response says
+    // nothing about that endpoint's own throttle, so its error stays
+    // visible until the deadline passes.
+    set((state) => {
+      const retryPending =
+        state.anthropicLastRetryAfter !== null &&
+        state.anthropicLastFetchedAt !== null &&
+        now - state.anthropicLastFetchedAt < DEBOUNCE_MS
+      return {
+        anthropicUsage: payload.usage,
+        anthropicUsageFromFetch: true,
+        anthropicLiveUpdatedAt: now,
+        ...(retryPending ? {} : { anthropicLastError: null })
+      }
+    })
+    // Per-window status/reset for the overlay (also what clears a stale
+    // rejected overlay once a window is allowed again). No early poll: the
+    // numbers that poll would fetch are the ones we just applied.
+    const { fiveHour, sevenDay } = payload.rateLimit
+    if (fiveHour) {
+      get().setAnthropicRateLimit(
+        { ...fiveHour, rateLimitType: 'five_hour' },
+        { triggerRefresh: false }
+      )
+    }
+    if (sevenDay) {
+      get().setAnthropicRateLimit(
+        { ...sevenDay, rateLimitType: 'seven_day' },
+        { triggerRefresh: false }
+      )
+    }
   },
 
   fetchUsage: async () => {

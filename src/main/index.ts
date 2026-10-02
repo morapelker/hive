@@ -1,5 +1,5 @@
 import { loadShellEnv } from './services/shell-env'
-import { app, shell, BrowserWindow, Menu, webContents } from 'electron'
+import { app, shell, BrowserWindow, Menu, powerMonitor, webContents } from 'electron'
 import { join } from 'path'
 import { electronApp, is } from '@electron-toolkit/utils'
 import { getDatabase, closeDatabase } from './db'
@@ -65,6 +65,11 @@ import { ptyService } from './services/pty-service'
 import { ghosttyService } from './services/ghostty-service'
 import { getGhosttyConfigPathOnce } from './services/ghostty-config-store'
 import { closeClaudeHookServer } from './services/claude-hook-server'
+import {
+  closeClaudeApiProxy,
+  dropClaudeApiProxyUpstreamSockets,
+  startClaudeApiProxy
+} from './services/claude-api-proxy/claude-api-proxy'
 import { scriptRunner } from './services/script-runner'
 import { cleanupScripts } from './services/script-cleanup'
 import { cleanupFileTreeWatchers, getFileTreeWatcherCount } from './services/file-tree-watcher'
@@ -437,6 +442,16 @@ app
     // Load full shell environment for macOS when launched from Finder/Dock/Spotlight.
     // Must run before any child process spawning (opencode, scripts, Claude Code SDK).
     loadShellEnv()
+
+    // Route every Claude Code process through the local API proxy so the
+    // subscription usage headers on each response update the usage bars in
+    // real time. Must come after loadShellEnv (it chains to the user's own
+    // ANTHROPIC_BASE_URL, if any) and before the backend child and any
+    // terminal spawns, which inherit process.env.
+    const claudeApiProxy = await startClaudeApiProxy()
+    if (claudeApiProxy.started) {
+      powerMonitor.on('resume', () => dropClaudeApiProxyUpstreamSockets())
+    }
 
     // Cache the XDG-only config path for native terminals without probing
     // Ghostty's protected Application Support directory.
@@ -850,6 +865,7 @@ wireQuitCleanup({
     // Terminal PTYs and Ghostty runtime
     { name: 'cleanupTerminals', run: () => cleanupTerminals() },
     { name: 'closeClaudeHookServer', run: () => closeClaudeHookServer() },
+    { name: 'closeClaudeApiProxy', run: () => closeClaudeApiProxy() },
     { name: 'cleanupScripts', run: () => cleanupScripts() },
     { name: 'bashKillAll', run: () => bashService.killAll() },
     { name: 'disposeAllRuntimes', run: () => disposeAllRuntimes() },

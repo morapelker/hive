@@ -12,6 +12,7 @@ import type { DatabaseService } from '../db/database'
 import { readClaudeTranscript, translateEntry } from './claude-transcript-reader'
 import { scheduleSessionUsageReport } from './usage/session-usage-service'
 import { getUserEnvironmentVariables } from './env-vars'
+import { getClaudeApiProxyEnv } from './claude-api-proxy/claude-api-proxy-env'
 import { generateSessionTitle } from './claude-session-title'
 import { isUltracodeEffort, normalizeClaudeCliModel } from './claude-cli-spawner'
 import { autoRenameWorktreeBranch } from './git-service'
@@ -631,6 +632,9 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         env: {
           ...process.env,
           ...getUserEnvironmentVariables(this.dbService),
+          // Last, so the SDK's CLI reports usage through the local proxy even
+          // when the user's env vars carry their own ANTHROPIC_BASE_URL.
+          ...getClaudeApiProxyEnv(),
           CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: '1'
         },
         stderr: (data: string) => {
@@ -3453,6 +3457,7 @@ export class ClaudeCodeImplementer implements AgentSdkImplementer {
         env: {
           ...process.env,
           ...getUserEnvironmentVariables(this.dbService),
+          ...getClaudeApiProxyEnv(),
           CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: '1'
         },
         ...(this.claudeBinaryPath ? { pathToClaudeCodeExecutable: this.claudeBinaryPath } : {})

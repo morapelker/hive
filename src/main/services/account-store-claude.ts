@@ -528,14 +528,34 @@ export async function switchClaudeAccount(num: string, email: string): Promise<v
     }
   }
 
-  const uuid = seq.accounts[num]?.uuid ?? ''
+  let uuid = seq.accounts[num]?.uuid ?? ''
   const oauthAccount: Record<string, unknown> =
     identity.oauthAccount && typeof identity.oauthAccount === 'object'
       ? { ...(identity.oauthAccount as Record<string, unknown>) }
       : {}
+  const switchingToLive = currentLiveEmail !== null && currentLiveEmail === email.toLowerCase()
   oauthAccount.emailAddress = email
   if (uuid !== '') {
     oauthAccount.accountUuid = uuid
+  } else if (
+    switchingToLive &&
+    typeof oauthAccount.accountUuid === 'string' &&
+    oauthAccount.accountUuid
+  ) {
+    // The index never learned this account's uuid but the CLI did (it fetched
+    // its profile): remember it, so attribution by uuid works from now on.
+    uuid = oauthAccount.accountUuid
+    const entry = seq.accounts[num]
+    if (entry) seq.accounts[num] = { ...entry, uuid }
+  } else {
+    // The index doesn't know this account's uuid (a legacy entry). Never leave
+    // the OUTGOING account's identity behind: the CLI stamps every request's
+    // metadata with `accountUuid`, so a stale value credits this account's
+    // usage to the previous one. Dropping the profile stamp too makes the CLI
+    // re-fetch its profile (and write the real uuid) on its next launch.
+    delete oauthAccount.accountUuid
+    delete oauthAccount.organizationUuid
+    delete oauthAccount.profileFetchedAt
   }
   identity.oauthAccount = oauthAccount
   await atomicWriteJson(path, identity, { pretty: true })
@@ -544,6 +564,73 @@ export async function switchClaudeAccount(num: string, email: string): Promise<v
   seq.activeAccountNumber = Number.parseInt(num, 10)
   seq.lastUpdated = new Date().toISOString()
   await writeSequence(seq)
+}
+
+/**
+ * Persist the uuid of a managed account that was registered without one
+ * (legacy migration, share import). sequence.json only — no Keychain traffic.
+ * Returns true when the index changed; false when the email is unmanaged or
+ * the entry already has a uuid (an existing uuid is never overwritten).
+ */
+export async function rememberClaudeAccountUuid(email: string, uuid: string): Promise<boolean> {
+  if (!uuid) return false
+  const seq = await readSequence()
+  const num = findNumByEmail(seq, email)
+  if (num === null) return false
+  const entry = seq.accounts[num]
+  if (!entry || (entry.uuid ?? '') !== '') return false
+  invalidateListCache()
+  seq.accounts[num] = { ...entry, uuid }
+  seq.lastUpdated = new Date().toISOString()
+  await writeSequence(seq)
+  return true
+}
+
+/**
+ * Heal an identity file left behind by an older `switchClaudeAccount`: a
+ * switch to an account the index knew no uuid for used to keep the OUTGOING
+ * account's `accountUuid`, so the CLI stamped the new account's requests with
+ * a foreign uuid. When the identity file's uuid provably belongs to a
+ * different managed account than its email, drop it (and the profile stamp,
+ * so the CLI re-fetches the right one). Returns true when the file changed.
+ */
+export async function repairStaleClaudeLiveIdentityUuid(): Promise<boolean> {
+  const path = claudeJsonPath()
+  const identity = await readJsonFile<Record<string, unknown>>(path)
+  const oauthAccount =
+    identity?.oauthAccount && typeof identity.oauthAccount === 'object'
+      ? (identity.oauthAccount as Record<string, unknown>)
+      : null
+  if (!identity || !oauthAccount) return false
+  const liveEmail =
+    typeof oauthAccount.emailAddress === 'string' ? oauthAccount.emailAddress.toLowerCase() : ''
+  const liveUuid =
+    typeof oauthAccount.accountUuid === 'string' ? oauthAccount.accountUuid.toLowerCase() : ''
+  if (!liveEmail || !liveUuid) return false
+
+  const seq = await readSequence()
+  const entries = Object.values(seq.accounts)
+  const ownedByLiveEmail = entries.some(
+    (entry) =>
+      (entry.email ?? '').toLowerCase() === liveEmail &&
+      (entry.uuid ?? '').toLowerCase() === liveUuid
+  )
+  if (ownedByLiveEmail) return false
+  const ownedByOther = entries.some(
+    (entry) =>
+      (entry.uuid ?? '').toLowerCase() === liveUuid &&
+      (entry.email ?? '').toLowerCase() !== liveEmail
+  )
+  if (!ownedByOther) return false
+
+  const repaired = { ...oauthAccount }
+  delete repaired.accountUuid
+  delete repaired.organizationUuid
+  delete repaired.profileFetchedAt
+  await atomicWriteJson(path, { ...identity, oauthAccount: repaired }, { pretty: true })
+  invalidateListCache()
+  log.info('Dropped a stale account uuid from the Claude identity file', { email: liveEmail })
+  return true
 }
 
 /**

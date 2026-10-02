@@ -1122,6 +1122,22 @@ export class DatabaseService {
     return this.getSavedUsageAccountById(id)
   }
 
+  /**
+   * Replace only the cached usage snapshot (the live API-proxy path).
+   * Deliberately leaves `last_fetched_at` / `status` / `last_error` alone:
+   * those describe the last usage-endpoint POLL, which the refresh sweeps key
+   * their "is this row fresh" decisions on — and the poll is still the only
+   * source for the fields the response headers lack.
+   */
+  updateSavedUsageAccountLiveUsage(id: string, lastUsageJson: string): SavedUsageAccount | null {
+    const db = this.getDb()
+    const now = new Date().toISOString()
+    db.prepare(
+      `UPDATE saved_usage_accounts SET last_usage_json = ?, updated_at = ? WHERE id = ?`
+    ).run(lastUsageJson, now, id)
+    return this.getSavedUsageAccountById(id)
+  }
+
   getSavedUsageAccountById(id: string): SavedUsageAccount | null {
     const db = this.getDb()
     const row = db.prepare('SELECT * FROM saved_usage_accounts WHERE id = ?').get(id) as

@@ -10,6 +10,7 @@ import {
   normalizeUsage
 } from '@/stores'
 import { useSettingsStore } from '@/stores/useSettingsStore'
+import { LIVE_USAGE_FRESH_MS } from '@/stores/useUsageStore'
 import { useTimerTickStore } from '@/stores/useTimerTickStore'
 import { nextUsageRefreshAt } from '@/hooks/useAccountScheduleRunner'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
@@ -253,9 +254,16 @@ function RefreshCountdown({ provider }: { provider: UsageProvider }): React.JSX.
   const lastFetchedAt = useUsageStore((s) =>
     provider === 'anthropic' ? s.anthropicLastFetchedAt : s.openaiLastFetchedAt
   )
+  const liveUpdatedAt = useUsageStore((s) =>
+    provider === 'anthropic' ? s.anthropicLiveUpdatedAt : null
+  )
+  // The local API proxy just reported this account's usage off a real
+  // response: the numbers are current, there is nothing to count down to.
+  const isLive = liveUpdatedAt !== null && tickMs - liveUpdatedAt < LIVE_USAGE_FRESH_MS
   const nextAt = nextUsageRefreshAt(provider)
-  const label =
-    nextAt !== null
+  const label = isLive
+    ? 'Live'
+    : nextAt !== null
       ? formatRefreshCountdown(nextAt, tickMs)
       : lastFetchedAt !== null
         ? formatRefreshedAgo(lastFetchedAt, tickMs)
@@ -263,9 +271,16 @@ function RefreshCountdown({ provider }: { provider: UsageProvider }): React.JSX.
   if (label === null) return null
   return (
     <span
-      className="ml-auto shrink-0 text-[9px] text-muted-foreground/70"
+      className={cn(
+        'ml-auto shrink-0 text-[9px] text-muted-foreground/70',
+        isLive && 'inline-flex items-center gap-1'
+      )}
       data-testid="usage-refresh-countdown"
+      title={isLive ? 'Updated from the latest Claude API response' : undefined}
     >
+      {isLive && (
+        <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+      )}
       {label}
     </span>
   )
