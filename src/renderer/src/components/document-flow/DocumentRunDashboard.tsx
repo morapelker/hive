@@ -11,6 +11,7 @@ import {
   AlertDialogTitle
 } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
 import {
   Dialog,
   DialogContent,
@@ -19,6 +20,11 @@ import {
   DialogTitle
 } from '@/components/ui/dialog'
 import { copyTextToClipboard } from '@/lib/clipboard'
+import {
+  applyQuestionMode,
+  questionModeTargets,
+  type QuestionModeResult
+} from '@/lib/document-flow/question-mode'
 import { toast } from '@/lib/toast'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
@@ -41,7 +47,7 @@ import {
   shortSha
 } from './document-flow-ui'
 
-type ConfirmKind = 'finish' | 'cancel' | 'delete'
+type ConfirmKind = 'finish' | 'cancel' | 'delete' | 'questionsOff' | 'questionsOn'
 
 const CONFIRM_COPY: Record<
   ConfirmKind,
@@ -67,7 +73,45 @@ const CONFIRM_COPY: Record<
     description: 'The run and its report are removed from the list.',
     action: 'Delete',
     destructive: true
+  },
+  // Both are followed by describeQuestionModeReach(items): how many sessions get the message.
+  questionsOff: {
+    title: 'Are you sure? Agents will stop asking questions',
+    description:
+      'Tickets launched from now on are told not to ask you anything: they pick the recommended approach, and skip and document anything too pivotal to decide alone.',
+    action: 'Stop asking',
+    destructive: false
+  },
+  questionsOn: {
+    title: 'Are you sure? Agents will ask questions again',
+    description:
+      'Tickets launched from now on are told to ask you through their question tool when they need a clarification.',
+    action: 'Allow questions',
+    destructive: false
   }
+}
+
+/** The part of the question-mode confirmation that depends on what is running right now. */
+function describeQuestionModeReach(count: number): string {
+  if (count === 0) return 'No ticket of this run is in progress, so no session is messaged.'
+  const tickets = count === 1 ? '1 ticket is' : `${count} tickets are`
+  return `${tickets} in progress: each session that is working gets the same instruction as a queued message, which it reads when its current turn ends. A session at rest gets it with its next prompt, and a question that is already asked still waits for your answer.`
+}
+
+function describeQuestionModeResult(interactive: boolean, result: QuestionModeResult): string {
+  const lead = interactive
+    ? 'Agents may ask questions again.'
+    : 'Agents are told not to ask questions.'
+  const told = `Told ${result.told} running session${result.told === 1 ? '' : 's'}.`
+  const parts = [lead, told]
+  if (result.waiting > 0) {
+    parts.push(`${result.waiting} will read it after you answer the question it asked.`)
+  }
+  if (result.skipped > 0) {
+    parts.push(`${result.skipped} at rest ${result.skipped === 1 ? 'was' : 'were'} not messaged.`)
+  }
+  if (result.failed > 0) parts.push(`${result.failed} could not be reached.`)
+  return parts.join(' ')
 }
 
 const errorMessage = (cause: unknown): string =>
@@ -76,7 +120,8 @@ const errorMessage = (cause: unknown): string =>
 /**
  * The dashboard of a launched run: a projection of the store's copy of the run, which the
  * server's pushes keep current. Nothing here drives the run; the buttons only write the
- * user's decisions.
+ * user's decisions. The one that reaches further is the questions switch, which also messages
+ * the run's working sessions, and so asks first.
  */
 export function DocumentRunDashboard(): React.JSX.Element {
   const runId = useDocumentFlowStore((s) => s.dashboardRunId)
@@ -161,7 +206,18 @@ function DashboardBody({ detail }: { detail: DocumentRunDetail }): React.JSX.Ele
   const confirmed = (kind: ConfirmKind): void => {
     if (kind === 'finish') perform(kind, finishRunNow(run.id), 'Could not finish the run')
     else if (kind === 'cancel') perform(kind, cancelRun(run.id), 'Could not cancel the run')
-    else perform(kind, deleteRun(run.id), 'Could not delete the run')
+    else if (kind === 'delete') perform(kind, deleteRun(run.id), 'Could not delete the run')
+    else {
+      const interactive = kind === 'questionsOn'
+      perform(
+        kind,
+        applyQuestionMode(run.id, interactive).then((result) => {
+          const report = result.failed > 0 ? toast.warning : toast.success
+          report(describeQuestionModeResult(interactive, result))
+        }),
+        'Could not change the questions setting'
+      )
+    }
   }
 
   const copyBranch = async (): Promise<void> => {
@@ -247,6 +303,25 @@ function DashboardBody({ detail }: { detail: DocumentRunDetail }): React.JSX.Ele
           </span>
           <RunProgressBar segments={segments} className="flex-1" />
           <div className="flex shrink-0 items-center gap-1.5">
+            {active && (
+              <div className="mr-1.5 flex items-center gap-1.5">
+                <label
+                  htmlFor="docflow-dashboard-interactive"
+                  className="text-[12px] text-muted-foreground"
+                >
+                  Agents may ask me questions
+                </label>
+                {/* Controlled by the run: it moves only once the confirmed change is saved. */}
+                <Switch
+                  id="docflow-dashboard-interactive"
+                  size="sm"
+                  data-testid="docflow-dashboard-interactive-switch"
+                  checked={run.config.interactive}
+                  disabled={busy !== null}
+                  onCheckedChange={(next) => setConfirm(next ? 'questionsOn' : 'questionsOff')}
+                />
+              </div>
+            )}
             {run.status === 'running' && (
               <Button
                 type="button"
@@ -362,7 +437,9 @@ function DashboardBody({ detail }: { detail: DocumentRunDetail }): React.JSX.Ele
                 <AlertDialogDescription>
                   {confirm === 'delete'
                     ? `${CONFIRM_COPY.delete.description} ${describeRunDeletion(items)}`
-                    : CONFIRM_COPY[confirm].description}
+                    : confirm === 'questionsOff' || confirm === 'questionsOn'
+                      ? `${CONFIRM_COPY[confirm].description} ${describeQuestionModeReach(questionModeTargets(items).length)}`
+                      : CONFIRM_COPY[confirm].description}
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>

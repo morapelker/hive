@@ -7,6 +7,9 @@ import {
   buildFixTicket,
   buildLaunchPrompt,
   buildNudgePrompt,
+  buildQuestionModeNotice,
+  isQuestionModeNotice,
+  statusFooterInstructions,
   toFileUrl,
   type ConflictPromptInput,
   type FixTicketInput,
@@ -100,14 +103,14 @@ describe('buildLaunchPrompt', () => {
     expect(small).toHaveLength(full.length - 1)
   })
 
-  it('tells an unattended run to decide instead of asking', () => {
+  it('tells an unattended run to pick the recommended approach instead of asking', () => {
     for (const promptStyle of ['full', 'small'] as const) {
       const asking = buildLaunchPrompt(launch({ promptStyle })).split('\n\n')
       const unattended = buildLaunchPrompt(launch({ promptStyle, interactive: false }))
       expect(unattended.split('\n\n')).toEqual(
         asking.map((paragraph) =>
           paragraph.startsWith('if you have any clarifications')
-            ? 'do not stop to ask me for clarifications - decide yourself, and mention the decisions you made in your final message.'
+            ? "do not ask me anything - i won't be next to the computer to answer you. if you need a clarification, pick the recommended approach and keep going. only if a decision is too pivotal to make on your own: skip that part, leave it as a gap, and document the gap and the decisions you made in your final message."
             : paragraph
         )
       )
@@ -273,5 +276,85 @@ describe('buildContinuePrompt', () => {
       expect(prompt).toContain('check `git status` and your earlier progress first')
       expect(prompt.endsWith(`\n\n${STATUS_FOOTER_INSTRUCTIONS}`)).toBe(true)
     }
+  })
+})
+
+describe('statusFooterInstructions', () => {
+  it('is the asking footer when agents may ask', () => {
+    expect(statusFooterInstructions(true)).toBe(STATUS_FOOTER_INSTRUCTIONS)
+  })
+
+  it('swaps only the question line when agents may not ask', () => {
+    const asking = statusFooterInstructions(true).split('\n')
+    const unattended = statusFooterInstructions(false).split('\n')
+    expect(unattended.slice(1)).toEqual(asking.slice(1))
+    expect(unattended[0]).toContain('Do not ask me anything')
+    expect(unattended[0]).toContain('pick the recommended approach')
+    expect(unattended[0]).toContain('leave it as a gap')
+    expect(statusFooterInstructions(false)).not.toContain('ask through your question tool')
+  })
+
+  it('reaches every follow-up of a run that may not ask', () => {
+    const footer = statusFooterInstructions(false)
+    const prompts = [
+      buildConflictPrompt(conflict({ interactive: false })),
+      buildFixTicket(fix({ interactive: false })).description,
+      buildNudgePrompt({ reason: 'Tests are still failing.' }, false),
+      buildContinuePrompt('api_error', false),
+      buildContinuePrompt('interrupted', false)
+    ]
+    for (const prompt of prompts) {
+      expect(prompt.endsWith(`\n${footer}`)).toBe(true)
+      expect(prompt).not.toContain('ask through your question tool')
+    }
+  })
+})
+
+describe('buildQuestionModeNotice', () => {
+  it('tells a running session to stop asking and how to decide instead', () => {
+    const notice = buildQuestionModeNotice({ interactive: false, sdk: 'claude-code' })
+    expect(notice).toContain("do not ask me anything - I won't be next to the computer")
+    expect(notice).toContain('Do not use the AskUserQuestion tool')
+    expect(notice).toContain('pick the recommended approach')
+    expect(notice).toContain('too pivotal')
+    expect(notice).toContain('leave it as a gap, and document the gap')
+  })
+
+  it('tells a running session it may ask again', () => {
+    const notice = buildQuestionModeNotice({ interactive: true, sdk: 'claude-code' })
+    expect(notice).toContain('use the AskUserQuestion tool to ask me')
+    expect(notice).not.toContain('do not ask me anything')
+  })
+
+  it.each([
+    ['claude-code-cli', 'AskUserQuestion'],
+    ['codex', 'request_user_input'],
+    ['codex-cli', 'request_user_input'],
+    ['opencode', 'question']
+  ])('names the question tool of %s in both directions', (sdk, tool) => {
+    expect(buildQuestionModeNotice({ interactive: true, sdk })).toContain(`the ${tool} tool`)
+    expect(buildQuestionModeNotice({ interactive: false, sdk })).toContain(`the ${tool} tool`)
+  })
+
+  it.each([true, false])(
+    'is one paragraph that keeps the task going (interactive: %s)',
+    (interactive) => {
+      const notice = buildQuestionModeNotice({ interactive, sdk: 'claude-code-cli' })
+      // Pasted into a CLI's terminal: a line break would submit it early.
+      expect(notice).not.toMatch(/[\r\n]/)
+      expect(notice).toContain('not a new task')
+      expect(notice).toContain('repeat your final message unchanged')
+    }
+  )
+})
+
+describe('isQuestionModeNotice', () => {
+  it('recognises the notice of either direction and nothing a user would type', () => {
+    for (const sdk of ['claude-code', 'codex', 'opencode']) {
+      expect(isQuestionModeNotice(buildQuestionModeNotice({ interactive: true, sdk }))).toBe(true)
+      expect(isQuestionModeNotice(buildQuestionModeNotice({ interactive: false, sdk }))).toBe(true)
+    }
+    expect(isQuestionModeNotice('Change of plans: use the other endpoint instead')).toBe(false)
+    expect(isQuestionModeNotice('also add a test')).toBe(false)
   })
 })

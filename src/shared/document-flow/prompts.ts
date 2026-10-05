@@ -20,9 +20,14 @@ const listTickets = (tickets: readonly TicketRef[]): string =>
  * runner sees as a waiting session. (The footer parser still reads the older block, which had
  * NEEDS_INPUT and a QUESTIONS line.)
  */
-export const STATUS_FOOTER_INSTRUCTIONS = `If you need an answer from me, ask through your question tool rather than in the text of your message.
+const STATUS_FOOTER_ASK =
+  'If you need an answer from me, ask through your question tool rather than in the text of your message.'
 
-End your final message with exactly this block:
+/** The same rule the unattended launch prompt gives, for the follow-ups of a run that may not ask. */
+const STATUS_FOOTER_DO_NOT_ASK =
+  'Do not ask me anything - I am not next to the computer to answer. Where you need a clarification, pick the recommended approach; if a decision is too pivotal to make on your own, skip that part, leave it as a gap and list it under ASSUMPTIONS.'
+
+const STATUS_FOOTER_BLOCK = `End your final message with exactly this block:
 
 STATUS: DONE | BLOCKED
 SUMMARY: what you implemented, in one or two sentences
@@ -31,6 +36,13 @@ MANUAL STEPS: anything a human must do after this is merged (run migrations, set
 ASSUMPTIONS: decisions you made where the spec was silent, or "none"
 
 Use DONE only when the task is fully implemented and committed, and BLOCKED when something outside your control stops you.`
+
+/** The footer for the run's current "agents may ask" setting, which can change mid-run. */
+export function statusFooterInstructions(interactive: boolean): string {
+  return `${interactive ? STATUS_FOOTER_ASK : STATUS_FOOTER_DO_NOT_ASK}\n\n${STATUS_FOOTER_BLOCK}`
+}
+
+export const STATUS_FOOTER_INSTRUCTIONS = statusFooterInstructions(true)
 
 /**
  * `file://` URL of an absolute path, the way a browser's address bar shows it: spaces and
@@ -44,7 +56,7 @@ export function toFileUrl(path: string): string {
 }
 
 /** What each provider calls its ask-the-user tool (see agent-mode-prefixes.ts). */
-function questionToolName(sdk: HandoffAgentSdk): string {
+export function questionToolName(sdk: string): string {
   switch (sdk) {
     case 'codex':
     case 'codex-cli':
@@ -70,7 +82,7 @@ export interface LaunchPromptInput {
  * The whole prompt of a ticket session. The wording is the user's own manual brief; the title
  * is there because some keys are made up at extraction and appear nowhere in the document.
  * `small` drops the subagent research paragraph, and an unattended run swaps the
- * clarifications paragraph for "decide yourself".
+ * clarifications paragraph for "do not ask: pick the recommended approach, or leave a gap".
  */
 export function buildLaunchPrompt(input: LaunchPromptInput): string {
   const title = input.title.replace(/\s+/g, ' ').trim()
@@ -85,11 +97,45 @@ export function buildLaunchPrompt(input: LaunchPromptInput): string {
   paragraphs.push(
     input.interactive
       ? `if you have any clarifications you might need - use the ${questionToolName(input.sdk)} tool to ask me.`
-      : 'do not stop to ask me for clarifications - decide yourself, and mention the decisions you made in your final message.',
+      : "do not ask me anything - i won't be next to the computer to answer you. if you need a clarification, pick the recommended approach and keep going. only if a decision is too pivotal to make on your own: skip that part, leave it as a gap, and document the gap and the decisions you made in your final message.",
     'then - implement this',
     'implement only this task, commit your work on this branch, do not push or switch branches, and do not run migrations against any database.'
   )
   return paragraphs.join('\n\n')
+}
+
+const QUESTION_MODE_NOTICE_LEAD = 'Change of plans: '
+const QUESTION_MODE_NOTICE_TAIL =
+  'This is a change of instructions, not a new task: carry on with what you were doing and do not restart anything. If you had already finished, repeat your final message unchanged, including its status block if it had one.'
+
+/**
+ * Whether a queued message is the orchestrator's notice rather than something the user typed:
+ * a later flip replaces it, and stopping a turn must not hand it to the user as their draft.
+ */
+export function isQuestionModeNotice(message: string): boolean {
+  return (
+    message.startsWith(QUESTION_MODE_NOTICE_LEAD) && message.endsWith(QUESTION_MODE_NOTICE_TAIL)
+  )
+}
+
+export interface QuestionModeNoticeInput {
+  /** The setting the run was just switched to. */
+  interactive: boolean
+  /** The session's own SDK, which names its question tool. */
+  sdk: string
+}
+
+/**
+ * Queued to a session that is mid-task when the run's "agents may ask" setting is flipped.
+ * One paragraph, because a CLI session gets it pasted into its terminal. A session that had
+ * just finished runs it as an extra turn, so it is told to repeat its final message: that is
+ * the message the runner judges.
+ */
+export function buildQuestionModeNotice(input: QuestionModeNoticeInput): string {
+  const tool = questionToolName(input.sdk)
+  return input.interactive
+    ? `${QUESTION_MODE_NOTICE_LEAD}I am back at the computer. From now on, if you have any clarifications you might need - use the ${tool} tool to ask me instead of deciding on your own. If you skipped something or left a gap because you could not ask, ask me about it now. ${QUESTION_MODE_NOTICE_TAIL}`
+    : `${QUESTION_MODE_NOTICE_LEAD}from now on do not ask me anything - I won't be next to the computer to answer you. Do not use the ${tool} tool for the rest of this task. If you need a clarification, pick the recommended approach and keep going. Only if a decision is too pivotal to make on your own: skip that part, leave it as a gap, and document the gap and the decisions you made in your final message. ${QUESTION_MODE_NOTICE_TAIL}`
 }
 
 export interface ConflictPromptInput {
@@ -103,6 +149,8 @@ export interface ConflictPromptInput {
   /** Tickets merged into the integration branch since this ticket's branch was cut. */
   mergedTickets: readonly TicketRef[]
   attempt: number
+  /** The run's "agents may ask" setting; asking is allowed when omitted. */
+  interactive?: boolean
 }
 
 /** Sent to the ticket's own session when its branch no longer merges cleanly. */
@@ -136,7 +184,7 @@ export function buildConflictPrompt(input: ConflictPromptInput): string {
     '',
     'In the block below, describe your whole task as it now stands on this branch, not only the merge: its summary, its migrations, and the manual steps that still apply after the merge.',
     '',
-    STATUS_FOOTER_INSTRUCTIONS
+    statusFooterInstructions(input.interactive ?? true)
   ].join('\n')
 }
 
@@ -149,6 +197,8 @@ export interface FixTicketInput {
   /** Tail of the failing command's output. */
   verifyOutput: string
   attempt: number
+  /** The run's "agents may ask" setting; asking is allowed when omitted. */
+  interactive?: boolean
 }
 
 /**
@@ -185,25 +235,31 @@ export function buildFixTicket(input: FixTicketInput): { title: string; descript
     ...(input.attempt > 1
       ? [`This is attempt ${input.attempt}; the previous fix did not make the command pass.`, '']
       : []),
-    STATUS_FOOTER_INSTRUCTIONS
+    statusFooterInstructions(input.interactive ?? true)
   ].join('\n')
   return { title, description }
 }
 
 /** Sent when the classifier judged the final message as only partly done. */
-export function buildNudgePrompt(verdict: Pick<DocumentRunVerdict, 'reason'>): string {
+export function buildNudgePrompt(
+  verdict: Pick<DocumentRunVerdict, 'reason'>,
+  interactive = true
+): string {
   return [
     'Your last message reads as only partly done:',
     verdict.reason,
     '',
     'Continue until the task is fully implemented, the checks pass and everything is committed. If something genuinely stops you, say so instead of stopping silently.',
     '',
-    STATUS_FOOTER_INSTRUCTIONS
+    statusFooterInstructions(interactive)
   ].join('\n')
 }
 
 /** Sent to resume a turn that ended on an API error or was cut off by an app restart. */
-export function buildContinuePrompt(reason: 'api_error' | 'interrupted'): string {
+export function buildContinuePrompt(
+  reason: 'api_error' | 'interrupted',
+  interactive = true
+): string {
   const lead =
     reason === 'api_error'
       ? 'Your last turn ended on an API error.'
@@ -211,6 +267,6 @@ export function buildContinuePrompt(reason: 'api_error' | 'interrupted'): string
   return [
     `${lead} Continue where you left off: check \`git status\` and your earlier progress first, then finish the task and commit.`,
     '',
-    STATUS_FOOTER_INSTRUCTIONS
+    statusFooterInstructions(interactive)
   ].join('\n')
 }

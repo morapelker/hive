@@ -532,6 +532,11 @@ export class DocumentFlowRunner {
     return detail && item ? { run: detail.run, item } : null
   }
 
+  /** Whether the run's agents may ask right now; the dashboard can flip it mid-run. */
+  private interactive(op: ItemOp): boolean {
+    return this.currentItem(op)?.run.config.interactive ?? true
+  }
+
   /** The run, if this runner may still act on it; steps call this before every side effect. */
   private requireActive(op: ItemOp): DocumentRun {
     const current = this.currentItem(op)
@@ -873,11 +878,16 @@ export class DocumentFlowRunner {
   ): Promise<void> {
     this.requireActive(op)
     const transient = isTransientDetail(op.item.status_detail)
-    const sent = await this.followUp(op, target, buildContinuePrompt(reason), {
-      continue_attempts: op.item.continue_attempts + 1,
-      retry_at: null,
-      status_detail: transient ? this.workingDetail(op.item) : op.item.status_detail
-    })
+    const sent = await this.followUp(
+      op,
+      target,
+      buildContinuePrompt(reason, this.interactive(op)),
+      {
+        continue_attempts: op.item.continue_attempts + 1,
+        retry_at: null,
+        status_detail: transient ? this.workingDetail(op.item) : op.item.status_detail
+      }
+    )
     if (sent) this.event(op, 'continue_sent', `Asked the session to continue (${reason})`)
   }
 
@@ -952,7 +962,7 @@ export class DocumentFlowRunner {
         const sent = await this.followUp(
           op,
           { sessionId, ticketId: item.ticket_id },
-          buildNudgePrompt({ reason }),
+          buildNudgePrompt({ reason }, this.interactive(op)),
           {
             ...checked,
             status: 'running',
@@ -1082,6 +1092,9 @@ export class DocumentFlowRunner {
     if (!ticket) return this.flag(op, 'Its ticket no longer exists.')
 
     const modelConfig = this.launchConfig(run, item)
+    // Read now, not from the run captured before the awaits above: the setting can be flipped
+    // mid-run from the dashboard.
+    const briefed = this.interactive(op)
     // The ticket's description is the brief, sent as it reads on the board (the user may
     // have edited it), with no ticket wrapper and no attachments: the agent reads the task in
     // the document itself. A ticket left without a description gets the standard brief.
@@ -1092,7 +1105,7 @@ export class DocumentFlowRunner {
         title: item.title,
         sourcePath: run.source_path,
         promptStyle: run.config.promptStyle,
-        interactive: run.config.interactive,
+        interactive: briefed,
         sdk: modelConfig.sdk
       })
 
@@ -1141,6 +1154,22 @@ export class DocumentFlowRunner {
       last_prompt_at: startedAt
     })
     this.event(op, 'launched', `Launched ${item.key} on ${worktree?.branch_name ?? 'a new branch'}`)
+    await this.tellIfFlipped(op, result.sessionId, briefed)
+  }
+
+  /**
+   * The setting was flipped while a session was being launched: the flip could not message a
+   * session that did not exist yet, and its prompt was built under the old setting.
+   */
+  private async tellIfFlipped(op: ItemOp, sessionId: string, briefed: boolean): Promise<void> {
+    const interactive = this.interactive(op)
+    if (interactive === briefed) return
+    try {
+      await this.ports.tellQuestionMode(sessionId, interactive)
+    } catch (error) {
+      // Advisory: the next prompt this session gets carries the setting anyway.
+      this.ports.warn(`${op.item.key}: could not tell the new session about questions`, error)
+    }
   }
 
   /** Same recovery as a failed multi-model launch: no phantom session, ticket back in To Do. */
@@ -1278,7 +1307,8 @@ export class DocumentFlowRunner {
               (!other.finished_at || toMs(other.finished_at) > cutAt)
           )
           .map(ticketRef),
-        attempt
+        attempt,
+        interactive: this.interactive(op)
       }),
       {
         status: 'resolving_conflicts',
@@ -1351,6 +1381,7 @@ export class DocumentFlowRunner {
   ): Promise<void> {
     const item = op.item
     const attempt = item.fix_attempts + 1
+    const briefed = this.interactive(op)
     const worktreeId = run.integration_worktree_id
     if (!worktreeId || !run.integration_branch) {
       return this.giveUp(op, 'The run has no integration worktree to fix the checks in.')
@@ -1367,7 +1398,8 @@ export class DocumentFlowRunner {
           integrationBranch: run.integration_branch,
           verifyCommand: run.config.verifyCommand ?? '',
           verifyOutput: failure.output,
-          attempt
+          attempt,
+          interactive: briefed
         })
       )
     } catch (error) {
@@ -1404,6 +1436,7 @@ export class DocumentFlowRunner {
     }
     await this.patch(op, { fix_session_id: result.sessionId })
     this.event(op, 'fix_started', `Started fix attempt ${attempt} for ${item.key}`)
+    await this.tellIfFlipped(op, result.sessionId, briefed)
   }
 
   /** `fixing` without a session: this renderer was reloaded while the fix session started. */

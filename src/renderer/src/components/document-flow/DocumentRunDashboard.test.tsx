@@ -27,7 +27,14 @@ const api = vi.hoisted(() => ({
   delete: vi.fn()
 }))
 
+const questionMode = vi.hoisted(() => ({ applyQuestionMode: vi.fn() }))
+
 vi.mock('@/api/document-flow-api', () => ({ documentFlowApi: api }))
+// The broadcast to the run's sessions has its own tests; here only the gate in front of it.
+vi.mock('@/lib/document-flow/question-mode', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/document-flow/question-mode')>()),
+  applyQuestionMode: questionMode.applyQuestionMode
+}))
 vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() }
 }))
@@ -213,6 +220,102 @@ describe('DocumentRunDashboard — header', () => {
     await click('docflow-confirm-action')
     expect(api.cancel).toHaveBeenCalledWith('run-1')
     expect(screen.getByTestId('docflow-dashboard-status')).toHaveTextContent('Cancelled')
+  })
+
+  it('changes whether agents may ask only after confirmation, and says who is told', async () => {
+    questionMode.applyQuestionMode.mockImplementation(async (runId: string, interactive) => {
+      const detail = storedDetail(runId)
+      useDocumentFlowStore.setState({
+        runsById: {
+          [runId]: {
+            ...detail,
+            run: { ...detail.run, config: { ...detail.run.config, interactive } }
+          }
+        }
+      })
+      return interactive
+        ? { told: 0, waiting: 0, skipped: 0, failed: 1 }
+        : { told: 2, waiting: 1, skipped: 1, failed: 0 }
+    })
+    await renderDashboard(
+      makeDetail(LAUNCHED, [
+        { key: 'A1', status: 'running', session_id: 's-1' },
+        { key: 'A2', status: 'running', session_id: 's-2' },
+        { key: 'A3', status: 'merged', session_id: 's-3' },
+        { key: 'A4', status: 'pending' }
+      ])
+    )
+    const toggle = screen.getByTestId('docflow-dashboard-interactive-switch')
+    expect(toggle).toHaveAttribute('aria-checked', 'true')
+
+    await click('docflow-dashboard-interactive-switch')
+    expect(screen.getByText('Are you sure? Agents will stop asking questions')).toBeInTheDocument()
+    expect(
+      screen.getByText(/2 tickets are in progress: each session that is working gets the same/)
+    ).toBeInTheDocument()
+    await click('docflow-confirm-cancel')
+    expect(questionMode.applyQuestionMode).not.toHaveBeenCalled()
+    expect(toggle).toHaveAttribute('aria-checked', 'true')
+
+    await click('docflow-dashboard-interactive-switch')
+    await click('docflow-confirm-action')
+    expect(questionMode.applyQuestionMode).toHaveBeenCalledWith('run-1', false)
+    expect(screen.getByTestId('docflow-dashboard-interactive-switch')).toHaveAttribute(
+      'aria-checked',
+      'false'
+    )
+    expect(toast.success).toHaveBeenCalledWith(
+      'Agents are told not to ask questions. Told 2 running sessions. 1 will read it after you answer the question it asked. 1 at rest was not messaged.'
+    )
+
+    // And back on: the same gate.
+    await click('docflow-dashboard-interactive-switch')
+    expect(screen.getByText('Are you sure? Agents will ask questions again')).toBeInTheDocument()
+    expect(questionMode.applyQuestionMode).toHaveBeenCalledTimes(1)
+    await click('docflow-confirm-action')
+    expect(questionMode.applyQuestionMode).toHaveBeenLastCalledWith('run-1', true)
+    // A session that could not be reached is not passed off as one at rest.
+    expect(toast.warning).toHaveBeenCalledWith(
+      'Agents may ask questions again. Told 0 running sessions. 1 could not be reached.'
+    )
+    expect(screen.getByTestId('docflow-dashboard-interactive-switch')).toHaveAttribute(
+      'aria-checked',
+      'true'
+    )
+  })
+
+  it('offers the questions switch on a paused run and says when no session is working', async () => {
+    await renderDashboard(
+      makeDetail({ ...LAUNCHED, status: 'paused' }, [{ key: 'A1', status: 'pending' }])
+    )
+
+    await click('docflow-dashboard-interactive-switch')
+    expect(
+      screen.getByText(/No ticket of this run is in progress, so no session is messaged/)
+    ).toBeInTheDocument()
+  })
+
+  it('has no questions switch once the run is over', async () => {
+    await renderDashboard(
+      makeDetail({ ...LAUNCHED, status: 'completed' }, [{ key: 'A1', status: 'merged' }])
+    )
+    expect(screen.queryByTestId('docflow-dashboard-interactive-switch')).toBeNull()
+  })
+
+  it('reports a questions change that could not be saved and leaves the switch as it was', async () => {
+    questionMode.applyQuestionMode.mockRejectedValue(new Error('offline'))
+    await renderDashboard(
+      makeDetail(LAUNCHED, [{ key: 'A1', status: 'running', session_id: 's-1' }])
+    )
+
+    await click('docflow-dashboard-interactive-switch')
+    await click('docflow-confirm-action')
+
+    expect(toast.error).toHaveBeenCalledWith('Could not change the questions setting: offline')
+    expect(screen.getByTestId('docflow-dashboard-interactive-switch')).toHaveAttribute(
+      'aria-checked',
+      'true'
+    )
   })
 
   it('offers Delete only for runs that are not live, and closes after deleting', async () => {

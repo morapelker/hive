@@ -31,6 +31,7 @@ import { resolvePreferredAgentSdk, useSettingsStore } from '@/stores/useSettings
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { fireSetupScript, useWorktreeStore } from '@/stores/useWorktreeStore'
 import type { KanbanTicket, KanbanTicketColumn, Session } from '../../../../main/db/types'
+import { tellQuestionMode } from './question-mode'
 import { getSessionSignal, startSessionSignalLatch, type SessionSignal } from './session-signal'
 
 // Everything the document-run orchestrator touches outside its own logic. The runner only
@@ -121,6 +122,11 @@ export interface RunnerPorts {
   resetTicketToTodo(projectId: string, ticketId: string): Promise<void>
   /** Rejects when the prompt could not be delivered. */
   sendFollowup(target: { sessionId: string; ticketId: string; prompt: string }): Promise<void>
+  /**
+   * Queue the "agents may ask" notice for a session whose launch prompt was built under the
+   * other setting. Advisory: it never starts or interrupts a turn.
+   */
+  tellQuestionMode(sessionId: string, interactive: boolean): Promise<void>
   getSessionSignal(sessionId: string): SessionSignal
   /** The last assistant text of an SDK session; null for CLI sessions (the server reads those). */
   readFinalMessage(sessionId: string): Promise<string | null>
@@ -322,6 +328,9 @@ export function createLiveRunnerPorts(): RunnerPorts {
         ticketId,
         preserveSessionModel: true
       }),
+    tellQuestionMode: async (sessionId, interactive) => {
+      await tellQuestionMode(sessionId, interactive, { justLaunched: true })
+    },
     getSessionSignal,
     readFinalMessage: readSdkFinalMessage,
     isSessionClosed,

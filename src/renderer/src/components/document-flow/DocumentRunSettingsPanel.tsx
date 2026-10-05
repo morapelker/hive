@@ -178,7 +178,8 @@ export function DocumentRunSettingsPanel({
         </div>
         <p className={HELP_CLASS}>
           On: a ticket whose agent asks a question waits for you while the others continue. Off:
-          agents decide on their own and say what they decided.
+          agents pick the recommended approach and document what was too pivotal to decide. You can
+          change this while the run is going, from the run's ticket.
         </p>
       </div>
     </div>

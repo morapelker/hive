@@ -175,6 +175,7 @@ export function createWorld(options: WorldOptions = {}) {
   const notices: RunnerNotice[] = []
   const events: { itemId: string | null; type: string; message: string }[] = []
   const followups: { sessionId: string; ticketId: string; prompt: string }[] = []
+  const modeNotices: { sessionId: string; interactive: boolean }[] = []
   const launches: TicketLaunchSpec[] = []
   let counter = 0
 
@@ -429,6 +430,9 @@ export function createWorld(options: WorldOptions = {}) {
       // Like the real send: the session shows as working from the moment it is prompted.
       setSignal(target.sessionId, { kind: 'working' })
     }),
+    tellQuestionMode: vi.fn(async (sessionId: string, interactive: boolean) => {
+      modeNotices.push({ sessionId, interactive })
+    }),
     getSessionSignal: (sessionId: string): SessionSignal =>
       signals.get(sessionId) ?? { kind: 'unknown' },
     readFinalMessage: vi.fn(async (_sessionId: string): Promise<string | null> => null),
@@ -461,6 +465,7 @@ export function createWorld(options: WorldOptions = {}) {
     notices,
     events,
     followups,
+    modeNotices,
     launches,
     detail,
     item,

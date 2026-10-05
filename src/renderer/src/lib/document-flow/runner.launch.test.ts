@@ -197,11 +197,64 @@ describe('DocumentFlowRunner: launching', () => {
     await advance(1000)
 
     expect(interactive.launches[0].prompt).toContain('use the AskUserQuestion tool to ask me.')
-    expect(interactive.launches[0].prompt).not.toContain('do not stop to ask me')
+    expect(interactive.launches[0].prompt).not.toContain('do not ask me anything')
     expect(unattended.launches[0].prompt).toContain(
-      'do not stop to ask me for clarifications - decide yourself'
+      "do not ask me anything - i won't be next to the computer to answer you"
     )
     expect(unattended.launches[0].prompt).not.toContain('AskUserQuestion')
+  })
+
+  it('tells a session whose launch was under way when the setting was flipped', async () => {
+    const world = createWorld({ config: { interactive: true }, items: [{ key: 'A' }] })
+    world.ports.launchTicket.mockImplementation(async (spec) => {
+      world.launches.push(spec)
+      await new Promise((resolve) => setTimeout(resolve, 500))
+      return world.launchOk(spec)
+    })
+    start(world)
+
+    await advance(300)
+    expect(world.item('A').status).toBe('launching')
+    world.setRun({ config: { ...world.detail().run.config, interactive: false } })
+    await advance(2000)
+
+    // Briefed to ask, and no session existed for the flip to message.
+    expect(world.launches[0].prompt).toContain('use the AskUserQuestion tool to ask me.')
+    expect(world.modeNotices).toEqual([{ sessionId: world.sessionOf('A'), interactive: false }])
+    expect(world.item('A').status).toBe('running')
+  })
+
+  it('sends no notice to a session launched under the current setting', async () => {
+    const world = createWorld({ config: { interactive: false }, items: [{ key: 'A' }] })
+    start(world)
+    await advance(1000)
+
+    expect(world.item('A').status).toBe('running')
+    expect(world.modeNotices).toEqual([])
+  })
+
+  it('briefs tickets launched after a mid-run flip of the setting with the new one', async () => {
+    const world = createWorld({
+      config: { maxParallel: 1, interactive: true },
+      items: [{ key: 'A' }, { key: 'B' }]
+    })
+    start(world)
+    await advance(1000)
+    expect(world.launches[0].prompt).toContain('use the AskUserQuestion tool to ask me.')
+
+    world.setRun({ config: { ...world.detail().run.config, interactive: false } })
+    world.setItem('A', { status: 'merged' })
+    await advance(5000)
+
+    expect(world.launches.map((spec) => spec.ticketId)).toEqual(['ticket-A', 'ticket-B'])
+    expect(world.launches[1].prompt).toContain('do not ask me anything')
+    expect(world.launches[1].prompt).not.toContain('AskUserQuestion')
+
+    world.setRun({ config: { ...world.detail().run.config, interactive: true } })
+    world.setItem('B', { status: 'merged' })
+    world.setItem('A', { status: 'pending', session_id: null })
+    await advance(5000)
+    expect(world.launches[2].prompt).toContain('use the AskUserQuestion tool to ask me.')
   })
 
   it('drops the subagents paragraph when the run uses the small prompt', async () => {

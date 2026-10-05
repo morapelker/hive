@@ -66,6 +66,7 @@ import {
   useWorktreeStatusStore
 } from '@/stores/useWorktreeStatusStore'
 import { useContextStore } from '@/stores/useContextStore'
+import { isQuestionModeNotice } from '@shared/document-flow/prompts'
 import { maybeExtractJsonTitle } from '@shared/title-utils'
 import {
   canonicalizeTicketTitle,
@@ -4352,14 +4353,19 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
     useSessionStore.getState().setPendingFollowUpMessages(sessionId, [])
     setQueuedMessages([])
 
-    const restored = queued.join('\n\n')
+    // A document run's notice is not the user's text: it is dropped with the stop, and the
+    // run's next prompt to this session carries the setting instead.
+    const mine = queued.filter((message) => !isQuestionModeNotice(message))
+    if (mine.length === 0) return 0
+
+    const restored = mine.join('\n\n')
     const draft = inputValueRef.current.trim()
     const next = draft ? `${inputValueRef.current}\n\n${restored}` : restored
     setInputValue(next)
     inputValueRef.current = next
     if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
     dbApi.session.updateDraft(sessionId, next)
-    return queued.length
+    return mine.length
   }, [sessionId])
 
   useEffect(() => {
