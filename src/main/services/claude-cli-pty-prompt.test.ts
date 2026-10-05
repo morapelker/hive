@@ -5,7 +5,11 @@ const { ptyService } = vi.hoisted(() => ({
 }))
 vi.mock('./pty-service', () => ({ ptyService }))
 
-import { reassertClaudeCliPromptSubmit, writeClaudeCliPrompt } from './claude-cli-pty-prompt'
+import {
+  isCliPromptSubmission,
+  reassertClaudeCliPromptSubmit,
+  writeClaudeCliPrompt
+} from './claude-cli-pty-prompt'
 
 afterEach(() => {
   vi.clearAllMocks()
@@ -26,9 +30,36 @@ describe('writeClaudeCliPrompt', () => {
   })
 })
 
+describe('isCliPromptSubmission', () => {
+  it('recognizes a bracketed paste with its submitting CR', () => {
+    expect(isCliPromptSubmission('\x1b[200~resolve the\nconflicts\x1b[201~\r')).toBe(true)
+  })
+
+  it('rejects keystrokes and a paste without the CR', () => {
+    expect(isCliPromptSubmission('\r')).toBe(false)
+    expect(isCliPromptSubmission('\x1b[200~pasted\x1b[201~')).toBe(false)
+    expect(isCliPromptSubmission('typed\r')).toBe(false)
+  })
+})
+
 describe('reassertClaudeCliPromptSubmit', () => {
   // Run the scheduler synchronously so we can assert the CRs without real timers.
   const sync = (fn: () => void): void => fn()
+
+  it('stops for good once the prompt is no longer unsent', () => {
+    const stillUnsent = vi
+      .fn()
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false)
+      .mockReturnValue(true)
+    reassertClaudeCliPromptSubmit('s1', {
+      delaysMs: [400, 900, 1600, 2600],
+      schedule: sync,
+      stillUnsent
+    })
+    expect(ptyService.write).toHaveBeenCalledTimes(1)
+    expect(ptyService.write).toHaveBeenCalledWith('s1', '\r')
+  })
 
   it('re-sends a bare CR for each scheduled retry while the PTY is live', () => {
     reassertClaudeCliPromptSubmit('s1', { delaysMs: [400, 900, 1600], schedule: sync })

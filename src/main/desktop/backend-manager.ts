@@ -68,6 +68,7 @@ import { startFileTreeWatcher, stopFileTreeWatcher } from '../services/file-tree
 import {
   createClaudeCliTerminal,
   destroyNodePtyTerminal,
+  ensureCliPromptSubmitted,
   handleClaudeCliTerminalInput
 } from '../services/terminal-pty-bridge'
 import { launchClaudeCliInTmux } from '../services/remote-tmux-launcher'
@@ -3019,6 +3020,7 @@ const handleDesktopBackendCommand = (
         }
         handleClaudeCliTerminalInput(message.payload.terminalId, message.payload.data)
         ptyService.write(message.payload.terminalId, message.payload.data)
+        ensureCliPromptSubmitted(message.payload.terminalId, message.payload.data)
       }
       sendDesktopBackendCommandResult(
         child,

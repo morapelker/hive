@@ -32,7 +32,11 @@ import { ensureProjectTrustCheck } from './claude-trust'
 import { getCustomProviderById } from './custom-providers'
 import type { CustomProviderModel } from '@shared/types/custom-provider'
 import { externalizeGoalHandoffPlan } from './claude-cli-plan-handoff'
-import { reassertClaudeCliPromptSubmit, writeClaudeCliPrompt } from './claude-cli-pty-prompt'
+import {
+  isCliPromptSubmission,
+  reassertClaudeCliPromptSubmit,
+  writeClaudeCliPrompt
+} from './claude-cli-pty-prompt'
 import { watchForClaudeSessionId, type ClaudeSessionWatchHandle } from './claude-session-watcher'
 import {
   watchForClaudePlanFollowup,
@@ -615,6 +619,26 @@ function ensureClaudeCliStatusSubscription(): void {
     ) {
       closeClaudePlanFollowupWatcher(payload.sessionId)
     }
+  })
+}
+
+/**
+ * A follow-up prompt written to a running CLI (a ticket follow-up, a document
+ * run's nudge or conflict prompt) is a paste and its Enter in one write. The
+ * CLI can take the text and drop the Enter, which leaves the prompt sitting in
+ * the input box while its sender waits for a turn that never starts. Enter is
+ * re-asserted for as long as the session shows no turn starting.
+ *
+ * Only a session at rest is covered: one that is mid-turn queues what is typed,
+ * and one showing a dialog would take the Enter as its answer.
+ */
+export function ensureCliPromptSubmitted(terminalId: string, data: string): void {
+  if (!claudeCliSessions.has(terminalId)) return
+  if (!isCliPromptSubmission(data)) return
+  const before = getLastClaudeCliStatus(terminalId)
+  if (before !== undefined && before !== 'completed' && before !== 'unread') return
+  reassertClaudeCliPromptSubmit(terminalId, {
+    stillUnsent: () => getLastClaudeCliStatus(terminalId) === before
   })
 }
 

@@ -55,6 +55,7 @@ const fileTreeHandlerMocks = vi.hoisted(() => ({
 const terminalHandlerMocks = vi.hoisted(() => ({
   createClaudeCliTerminal: vi.fn(),
   destroyNodePtyTerminal: vi.fn(),
+  ensureCliPromptSubmitted: vi.fn(),
   handleClaudeCliTerminalInput: vi.fn()
 }))
 
@@ -169,6 +170,7 @@ vi.mock('../services/file-tree-watcher', () => ({
 vi.mock('../services/terminal-pty-bridge', () => ({
   createClaudeCliTerminal: terminalHandlerMocks.createClaudeCliTerminal,
   destroyNodePtyTerminal: terminalHandlerMocks.destroyNodePtyTerminal,
+  ensureCliPromptSubmitted: terminalHandlerMocks.ensureCliPromptSubmitted,
   handleClaudeCliTerminalInput: terminalHandlerMocks.handleClaudeCliTerminalInput
 }))
 

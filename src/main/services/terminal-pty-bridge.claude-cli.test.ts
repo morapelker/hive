@@ -152,6 +152,7 @@ import {
   cleanupTerminals,
   destroyNodePtyTerminal,
   createClaudeCliTerminal,
+  ensureCliPromptSubmitted,
   handleClaudeCliTerminalInput
 } from './terminal-pty-bridge'
 import { externalizeGoalHandoffPlan } from './claude-cli-plan-handoff'
@@ -595,6 +596,51 @@ describe('Claude CLI terminal hook status wiring', () => {
     await createClaudeCliTerminal('hive-session-1', {})
 
     expect(mocks.publishClaudeCliStatus).not.toHaveBeenCalled()
+  })
+
+  describe('ensureCliPromptSubmitted', () => {
+    const PROMPT = '\x1b[200~resolve the conflicts\x1b[201~\r'
+
+    it.each([undefined, 'completed', 'unread'])(
+      're-asserts Enter for a prompt written to a session at rest (%s)',
+      async (status) => {
+        await createClaudeCliTerminal('hive-session-1', {})
+        mocks.getLastClaudeCliStatus.mockReturnValue(status)
+
+        ensureCliPromptSubmitted('hive-session-1', PROMPT)
+
+        expect(reassertClaudeCliPromptSubmit).toHaveBeenCalledTimes(1)
+        const [sessionId, opts] = vi.mocked(reassertClaudeCliPromptSubmit).mock.calls[0]
+        expect(sessionId).toBe('hive-session-1')
+        // Unsent only until the session reports its turn started.
+        expect(opts?.stillUnsent?.()).toBe(true)
+        mocks.getLastClaudeCliStatus.mockReturnValue('working')
+        expect(opts?.stillUnsent?.()).toBe(false)
+      }
+    )
+
+    it.each(['working', 'planning', 'permission', 'answering', 'plan_ready'])(
+      'leaves a session that is %s alone',
+      async (status) => {
+        await createClaudeCliTerminal('hive-session-1', {})
+        mocks.getLastClaudeCliStatus.mockReturnValue(status)
+
+        ensureCliPromptSubmitted('hive-session-1', PROMPT)
+
+        expect(reassertClaudeCliPromptSubmit).not.toHaveBeenCalled()
+      }
+    )
+
+    it('ignores ordinary terminal input and terminals that are not CLI sessions', async () => {
+      await createClaudeCliTerminal('hive-session-1', {})
+      mocks.getLastClaudeCliStatus.mockReturnValue('completed')
+
+      ensureCliPromptSubmitted('hive-session-1', '\r')
+      ensureCliPromptSubmitted('hive-session-1', '\x1b[200~paste\x1b[201~')
+      ensureCliPromptSubmitted('plain-terminal', PROMPT)
+
+      expect(reassertClaudeCliPromptSubmit).not.toHaveBeenCalled()
+    })
   })
 
   describe('handleClaudeCliTerminalInput', () => {

@@ -22,6 +22,11 @@ export function writeClaudeCliPrompt(sessionId: string, prompt: string): { deliv
   return { delivered: true }
 }
 
+/** Terminal input that is a whole prompt submission: one bracketed paste and its Enter. */
+export function isCliPromptSubmission(data: string): boolean {
+  return data.startsWith('\x1b[200~') && data.endsWith('\x1b[201~\r')
+}
+
 // Re-send Enter at these offsets (ms) after a paste to cover claude's boot window.
 const SUBMIT_REASSERT_DELAYS_MS = [400, 900, 1600, 2600]
 
@@ -39,16 +44,30 @@ const SUBMIT_REASSERT_DELAYS_MS = [400, 900, 1600, 2600]
  * while the input is empty — is a harmless no-op, so a fixed retry schedule is
  * safe. The `ptyService.has` guard avoids writing to a torn-down PTY.
  *
+ * `stillUnsent` narrows the retries to a prompt that has not started a turn:
+ * once it reports false no further CR is sent, so a dialog the new turn opens
+ * is never answered by a stray Enter.
+ *
  * `schedule` is injectable for tests; it defaults to `setTimeout`.
  */
 export function reassertClaudeCliPromptSubmit(
   sessionId: string,
-  opts?: { delaysMs?: number[]; schedule?: (fn: () => void, ms: number) => void }
+  opts?: {
+    delaysMs?: number[]
+    schedule?: (fn: () => void, ms: number) => void
+    stillUnsent?: () => boolean
+  }
 ): void {
   const delays = opts?.delaysMs ?? SUBMIT_REASSERT_DELAYS_MS
   const schedule = opts?.schedule ?? ((fn, ms) => void setTimeout(fn, ms))
+  let submitted = false
   for (const ms of delays) {
     schedule(() => {
+      if (submitted) return
+      if (opts?.stillUnsent && !opts.stillUnsent()) {
+        submitted = true
+        return
+      }
       if (ptyService.has(sessionId)) {
         ptyService.write(sessionId, '\r')
       }
