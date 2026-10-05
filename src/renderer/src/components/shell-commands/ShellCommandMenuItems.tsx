@@ -30,6 +30,9 @@ interface ShellCommandMenuItemsOptions {
   MenuSubContent: React.ComponentType<any>
   /** For menus whose next group does not open with its own separator. */
   trailingSeparator?: boolean
+  /** Section heading (needs MenuLabel), for menus that list the commands once per target. */
+  label?: string
+  MenuLabel?: React.ComponentType<any>
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
@@ -46,7 +49,9 @@ export function renderShellCommandMenuItems({
   MenuSub,
   MenuSubTrigger,
   MenuSubContent,
-  trailingSeparator
+  trailingSeparator,
+  label,
+  MenuLabel
 }: ShellCommandMenuItemsOptions): React.JSX.Element | null {
   if (commands.length === 0) return null
 
@@ -60,6 +65,7 @@ export function renderShellCommandMenuItems({
   return (
     <>
       <MenuSeparator />
+      {label && MenuLabel && <MenuLabel className="truncate">{label}</MenuLabel>}
       {commands.length <= SHELL_COMMAND_FLAT_LIMIT ? (
         items
       ) : (

@@ -67,6 +67,7 @@ import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
+  ContextMenuLabel,
   ContextMenuSub,
   ContextMenuSubTrigger,
   ContextMenuSubContent,
@@ -129,6 +130,12 @@ import { useTimerTickStore } from '@/stores/useTimerTickStore'
 import { canToggleAutoApprovePlan } from '@/lib/plan-auto-approve'
 import { isAgentCli } from '@shared/types/agent-sdk'
 import { terminalApi } from '@/api/terminal-api'
+import type { ProjectShellCommand } from '@shared/lib/shell-commands'
+import {
+  getRunnableShellCommands,
+  renderShellCommandMenuItems,
+  runShellCommandFromMenu
+} from '@/components/shell-commands/ShellCommandMenuItems'
 import { dbApi } from '@/api/db-api'
 import type { KanbanTicket, TicketMark } from '../../../../main/db/types'
 
@@ -1242,6 +1249,54 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
       [isConnectionProjectTicket, ticket.project_id]
     )
   )
+  // ── Project shell commands in the context menu ──────────────────
+  const shellCommandProject = useProjectStore(
+    useCallback(
+      (state) => state.projects.find((p) => p.id === ticket.project_id) ?? null,
+      [ticket.project_id]
+    )
+  )
+  const shellCommands = useMemo(
+    () => getRunnableShellCommands(shellCommandProject),
+    [shellCommandProject]
+  )
+  // Set only when the ticket runs on a non-base worktree of its project: the menu then
+  // lists the commands twice, once for that worktree and once for the base branch.
+  const shellCommandWorktreeLabel = useWorktreeStore(
+    useCallback(
+      (s) => {
+        if (!ticket.worktree_id) return null
+        const found = s.worktreesByProject
+          .get(ticket.project_id)
+          ?.find((w) => w.id === ticket.worktree_id)
+        if (!found || found.is_default) return null
+        return found.name || found.branch_name || 'Worktree'
+      },
+      [ticket.project_id, ticket.worktree_id]
+    )
+  )
+  const shellCommandBaseLabel = useWorktreeStore(
+    useCallback(
+      (s) => {
+        const base = s.worktreesByProject.get(ticket.project_id)?.find((w) => w.is_default)
+        return base?.branch_name || base?.name || 'Base branch'
+      },
+      [ticket.project_id]
+    )
+  )
+  // worktreeId null => the project's base worktree, like a launch from the project menu
+  const handleRunShellCommand = useCallback(
+    (command: ProjectShellCommand, worktreeId: string | null) => {
+      void runShellCommandFromMenu({
+        projectId: ticket.project_id,
+        commandId: command.id,
+        commandName: command.name,
+        worktreeId
+      })
+    },
+    [ticket.project_id]
+  )
+
   const baseConnectionId = useConnectionStore(
     useCallback(
       (s) =>
@@ -2270,6 +2325,31 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
               Move to project…
             </ContextMenuItem>
           )}
+
+          {shellCommandWorktreeLabel &&
+            renderShellCommandMenuItems({
+              commands: shellCommands,
+              onRun: (command) => handleRunShellCommand(command, ticket.worktree_id),
+              MenuItem: ContextMenuItem,
+              MenuSeparator: ContextMenuSeparator,
+              MenuSub: ContextMenuSub,
+              MenuSubTrigger: ContextMenuSubTrigger,
+              MenuSubContent: ContextMenuSubContent,
+              label: shellCommandWorktreeLabel,
+              MenuLabel: ContextMenuLabel
+            })}
+          {renderShellCommandMenuItems({
+            commands: shellCommands,
+            onRun: (command) => handleRunShellCommand(command, null),
+            MenuItem: ContextMenuItem,
+            MenuSeparator: ContextMenuSeparator,
+            MenuSub: ContextMenuSub,
+            MenuSubTrigger: ContextMenuSubTrigger,
+            MenuSubContent: ContextMenuSubContent,
+            ...(shellCommandWorktreeLabel
+              ? { label: shellCommandBaseLabel, MenuLabel: ContextMenuLabel }
+              : {})
+          })}
 
           <ContextMenuSeparator />
 

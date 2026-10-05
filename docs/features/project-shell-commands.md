@@ -1,6 +1,6 @@
 # Project Shell Commands
 
-Project shell commands are named, pre-configured shell snippets that you run from the project or worktree right-click menu. Each run opens its own terminal tab, and can be tracked as a ticket on the board.
+Project shell commands are named, pre-configured shell snippets that you run from the project, worktree or ticket right-click menu. Each run opens its own terminal tab, and can be tracked as a ticket on the board.
 
 They are different from [Custom Project Commands](./custom-project-commands.md): a custom command is a prompt template that is sent to an AI session, a shell command is executed by your shell. Shell commands appear with a terminal icon in menus, custom commands with a lightning bolt.
 
@@ -40,6 +40,9 @@ pnpm install:mac
 | A project                                                 | The project's base worktree |
 | A worktree in the sidebar (right-click or its `...` menu) | That worktree               |
 | A pinned worktree (right-click or its `...` menu)         | That worktree               |
+| A ticket on the board                                     | See below                   |
+
+Right-clicking a ticket lists the project's commands too. A ticket that is attached to a worktree other than the base one shows them twice, under two headings: the worktree's name (runs in that worktree) and the base branch's name (runs in the base worktree). Any other ticket shows one list that runs in the base worktree. Either way the run is a new session with its own ticket; the ticket you clicked is not changed.
 
 Up to five commands are listed directly in the menu. With more than five they are grouped under **Run Command**.
 
