@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<!-- saved from url=(0038)file:///tmp/deliverables/orders-r1.html <h1>not a heading</h1> -->
+<html lang="en"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<title>Acme · Orders area · Changes round 1</title><style>
+.card{background:#fff;border:1px solid #e3e3e8}
+.L{display:none} body.en .L.en, body.he .L.he{display:block}
+.fix{color:#9b1c1c} .ex::before{content:"Styled text that must not leak"}
+</style><script>document.body.className = 'en'; var leaked = '<p>Script text that must not leak</p>'</script></head><body>
+<header><h1>Orders area: changes, round 1</h1><p>Changes to the live Orders area, in build order A &rarr; B. Mock-ups use example data.</p>
+<div class="legend"><span><span class="fix">FIX</span> bug fix</span><span><span class="chg">CHANGE</span> change</span><span><span class="new">NEW</span> new</span><span><span class="dat">DATA</span> data migration</span><span>🔒 managers only</span></div></header>
+<nav><a href="file:///tmp/deliverables/orders-r1.html#rules">Rules &amp; decisions</a><a href="file:///tmp/deliverables/orders-r1.html#a">A Fixes</a><a href="file:///tmp/deliverables/orders-r1.html#b">B Export</a><a href="file:///tmp/deliverables/orders-r1.html#data">Data changes</a></nav><main>
+<h2 id="rules">How to apply these changes</h2>
+<div class="card"><ul><li>Build on what exists; <b>don't rebuild</b> screens that aren't mentioned.</li><li>Work in the order <b>A → B</b>. After each part run its tests.</li><li>Data migrations (marked <span class="dat">DATA</span>) run once, on a backup first, and must be reversible.</li></ul></div>
+<h3>Decisions this round is built on</h3>
+<table><tbody><tr><th>Topic</th><th>Decision</th></tr><tr><td>Delete</td><td><b>Soft delete only.</b> A manager can restore from a "Deleted" filter.</td></tr><tr><td>Export</td><td>CSV with a <code>;</code> separator, UTF-8 &amp; BOM.</td></tr><tr><td>Rounding</td><td>Totals &gt; 0 round half up to 2 decimals.</td></tr></tbody></table>
+<div class="L en"><p>Questions go to the product owner before work starts.</p></div>
+<div class="L he"><p>שאלות מופנות לבעל המוצר לפני תחילת העבודה.</p></div>
+<div hidden>Internal draft note that must not leak.</div>
+<p style="display: none">Superseded paragraph that must not leak.</p>
+<div class="part" id="a">PART A · FIXES (do these first) <span class="s1" style="margin-inline-start:10px">✓ DONE</span></div>
+<h3>A1 · Order totals <span class="fix">FIX</span> <span class="s1">✓ DONE</span> <span class="s2">LIVE · MIGRATION APPLIED 5 OCT · TOTALS RECOMPUTED FOR OPEN ORDERS</span></h3>
+<div class="card"><ul><li>Totals include tax and shipping.<ul><li>Rounded to 2 decimals.</li><li>Shown in the order's currency.</li></ul></li><li>Use <code>order_total</code> everywhere; the old <del>grand_total</del> column goes away.</li><li><span class="dat">DATA</span> Backfill <code>order_total</code> for open orders.</li></ul></div>
+<h4>Orders list with totals</h4><figure><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==" alt="Orders list with totals"></figure><div class="cap"><ul><li>The total column is right-aligned.</li><li>Empty totals show a dash.</li></ul></div><div class="ex">Mock-up with example data. Layout and content are the reference.</div>
+<h3>A2 · Counters (stats row) <span class="fix">FIX</span></h3>
+<div class="card"><ul><li><b>One definition per counter</b>, used by the number and by the filtered view.</li><li>"Today" is the warehouse day, 00:00–24:00 Europe/Berlin.</li></ul></div>
+<table><tbody><tr><th>Counter</th><th>Exact definition</th></tr><tr><td><b>Orders</b> · Open</td><td>status ≠ Cancelled and not shipped</td></tr><tr><td>Late <span class="chg">RENAMED</span></td><td>open and due_date older than <i>late days</i> (Settings, 2)</td></tr></tbody></table>
+<h4>Stats row</h4><figure><img alt='Stats row "after" the fix' src=img/stats-row.png></figure><div class="cap"><ul><li>Each counter is clickable.</li></ul></div><div class="ex">Mock-up with example data. Layout and content are the reference.</div>
+<div class="ex">Mock-up with example data. Layout and content are the reference.</div>
+<div class="card" style="border-color:#9fd8b4;background:#f6fcf8"><b>Done and live</b> · on <code>main</code> (<code>3edbeb58</code>), deployed on 5 Oct. <b>A1</b>: totals recomputed; migration <code>migrations/20261005_order_total/migration.sql</code> applied. <b>Open</b>: the Late counter waits for part B.<ul><li><b>Counters that were wrong, and the fix</b></li><li>Open: counted cancelled orders. Now one definition.</li></ul></div>
+<section id="b"><h3>B1 · CSV export <span class="new">NEW</span> <span class="dat">DATA</span></h3>
+<div class="card"><ul><li>Managers 🔒 export the filtered list; see A2 for the filters.</li><li>Columns follow the list; totals use the A1 rounding.</li></ul></div>
+<h4>Export dialog</h4><figure><img src="data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=" alt="Export dialog"><figcaption>The dialog remembers the last choice.</figcaption></figure><div class="ex">Mock-up with example data. Layout and content are the reference.</div>
+<h3>B2 · Export history <span class="chg">CHANGE</span></h3>
+<div class="card"><ol><li>Keep the last 20 exports per user.</li><li>Older ones are soft-deleted.</li></ol></div><div class="ex">Mock-up with example data. Layout and content are the reference.</div></section>
+<h2 id="data">Data changes</h2>
+<table><tbody><tr><th>Table</th><th>Change</th><th>Tag</th></tr><tr><td><code>orders</code></td><td>add order_total; drop grand_total</td><td><span class="chg">CHANGE</span><span class="dat">DATA</span></td></tr><tr><td><code>exports</code></td><td>user_id, filters, file_id, deleted_at</td><td><span class="new">NEW</span></td></tr></tbody></table>
+<h2 id="perm">Permissions (changes only)</h2>
+<table><tbody><tr><th>Action</th><th>Who</th></tr><tr><td>Export the orders list</td><td>Managers 🔒</td></tr></tbody></table>
+<h2 id="tests">Tests and sign-off</h2>
+<div class="card"><ul class="chk"><li><b>A1</b> · 0.005 rounds to 0.01; an order without lines totals 0. <span class="s1">✓ DONE</span></li><li><b>A2</b> · Each counter equals the rows shown after clicking it.</li><li><b>B</b> · The file opens in Excel with the right separator. <span class="s2">SQL READY · RUN BY HAND</span></li></ul></div>
+<div class="card"><b>Send back at the end:</b> screenshots of every changed screen.</div><div class="ex">Mock-up with example data. Layout and content are the reference.</div></main></body></html>

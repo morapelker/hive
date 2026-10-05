@@ -5847,6 +5847,10 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
       const createModal = document.querySelector('[data-testid="ticket-create-modal"]')
       if (createModal?.contains(document.activeElement) && !e.shiftKey) return
 
+      // The document-flow dialogs are forms laid over the session: Tab and Shift+Tab move
+      // focus there and must never toggle the mode of the session behind them.
+      if (document.activeElement?.closest('[data-docflow-dialog]')) return
+
       // Don't intercept Tab when the xterm terminal is focused — it needs
       // to reach the shell for tab completion.
       const terminalContainer = document.querySelector('[data-testid="terminal-view-container"]')

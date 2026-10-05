@@ -51,6 +51,7 @@ export { useConnectionStore } from './useConnectionStore'
 export { useRecentStore } from './useRecentStore'
 export { usePinnedStore } from './usePinnedStore'
 export { useFavoriteTicketsStore } from './useFavoriteTicketsStore'
+export { useDocumentFlowStore } from './useDocumentFlowStore'
 export {
   useUsageStore,
   type UsageData,

@@ -538,6 +538,14 @@ export const setDesktopBackendOpenCodeForkHandler = (
   openCodeForkHandler = handler
 }
 
+/**
+ * When this app instance started. Sessions live in this process; a document run (driven from
+ * the server child, which can restart on its own) treats a session prompted before this
+ * moment as lost with the app. Handed to the child in its environment rather than through
+ * the database, which several app instances share.
+ */
+export const APP_STARTED_AT = new Date().toISOString()
+
 export const startDesktopBackend = async (
   input: StartDesktopBackendInput = {},
   deps: BackendManagerDeps = {}
@@ -571,7 +579,11 @@ export const startDesktopBackend = async (
     // projects/worktrees/sessions. We deliberately do NOT use or create the
     // server-mode userdata/state.sqlite for desktop, and we do NOT copy/migrate
     // data between the two. Keep this override in place.
-    env: { HIVE_SERVER_DB_PATH: join(baseDir, 'hive.db') }
+    env: {
+      HIVE_SERVER_DB_PATH: join(baseDir, 'hive.db'),
+      // Read by the document flow service (APP_STARTED_AT_ENV); the same on a child restart.
+      HIVE_APP_STARTED_AT: APP_STARTED_AT
+    }
   })
 
   let stopping = false

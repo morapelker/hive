@@ -54,6 +54,7 @@ import { isForceBoardMode, whenHiveOrgPolicySettled } from '@/api/hive-enterpris
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useFavoriteTicketsStore } from '@/stores/useFavoriteTicketsStore'
+import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import { TicketCreateModal } from '@/components/kanban/TicketCreateModal'
 import { ImportTicketsModal } from '@/components/kanban/ImportTicketsModal'
 import { JiraImportModal } from '@/components/kanban/JiraImportModal'
@@ -1810,6 +1811,16 @@ export function SessionTabs(): React.JSX.Element | null {
             >
               <FileJson className="h-4 w-4 mr-2" />
               Import from Hive JSON
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              data-testid="docflow-import-menu-item"
+              disabled={!project || project.kind === 'connection'}
+              onClick={() => {
+                if (project) useDocumentFlowStore.getState().openWizard(project.id)
+              }}
+            >
+              <FileText className="h-4 w-4 mr-2" />
+              Implement document…
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem

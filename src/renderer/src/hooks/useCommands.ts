@@ -13,6 +13,7 @@ import {
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
 import { BOARD_TAB_ID } from '@/stores/useSessionStore'
 import { useGitStore } from '@/stores/useGitStore'
+import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import { useShortcutStore } from '@/stores/useShortcutStore'
 import { useCommandPaletteStore, type Command } from '@/stores/useCommandPaletteStore'
 import { commandRegistry, fuzzySearch } from '@/lib/command-registry'
@@ -77,6 +78,11 @@ export function useCommands() {
 
   // Register all commands on mount
   useEffect(() => {
+    // A document run cuts one integration branch, so it needs a single git repository.
+    const selectedProject = projects.find((p) => p.id === selectedProjectId)
+    const documentFlowProjectId =
+      selectedProject && selectedProject.kind !== 'connection' ? selectedProject.id : null
+
     const commands: Command[] = [
       // =====================
       // NAVIGATION COMMANDS
@@ -258,6 +264,39 @@ export function useCommands() {
           closeCommandPalette()
         },
         isVisible: () => true
+      },
+
+      // =====================
+      // DOCUMENT FLOW COMMANDS
+      // =====================
+      {
+        id: 'action:implement-document',
+        label: 'Implement document…',
+        description: 'Turn a spec document into tickets and run them into one integration branch',
+        category: 'action',
+        icon: 'FileText',
+        keywords: ['document', 'spec', 'implement', 'tickets', 'extract', 'integration'],
+        action: () => {
+          if (!documentFlowProjectId) return
+          useDocumentFlowStore.getState().openWizard(documentFlowProjectId)
+          closeCommandPalette()
+        },
+        isEnabled: () => documentFlowProjectId !== null
+      },
+      {
+        id: 'action:document-runs',
+        label: 'Document runs',
+        description: 'Show the document runs of the current project',
+        category: 'action',
+        icon: 'History',
+        keywords: ['document', 'runs', 'spec', 'integration', 'report', 'dashboard'],
+        action: () => {
+          if (!documentFlowProjectId) return
+          // The wizard's first step lists the project's runs below the document picker.
+          useDocumentFlowStore.getState().openWizard(documentFlowProjectId, null)
+          closeCommandPalette()
+        },
+        isEnabled: () => documentFlowProjectId !== null
       },
 
       // =====================

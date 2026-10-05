@@ -29,10 +29,16 @@ import { ForceUpdateModal } from '@/components/update/ForceUpdateModal'
 import { useKeepAwake } from '@/hooks/useKeepAwake'
 import { useSleepWhenIdle } from '@/hooks/useSleepWhenIdle'
 import { useAccountScheduleRunner } from '@/hooks/useAccountScheduleRunner'
+import { useDocumentFlowRunner } from '@/hooks/useDocumentFlowRunner'
 import { ErrorBoundary, ErrorFallback } from '@/components/error'
 import { CreatePRModal } from '@/components/pr/CreatePRModal'
 import { ConnectionPRModal } from '@/components/pr/ConnectionPRModal'
 import { ProjectSettingsDialog } from '@/components/projects/ProjectSettingsDialog'
+import {
+  DocumentRunDashboard,
+  DocumentRunsIndicator,
+  ImplementDocumentWizard
+} from '@/components/document-flow'
 import { TerminalPortalProvider, useTerminalPortal } from '@/contexts/TerminalPortalContext'
 import { ClaudeCliSessionPortalProvider } from '@/contexts/ClaudeCliSessionPortalContext'
 import { TerminalManager } from '@/components/terminal/TerminalManager'
@@ -165,6 +171,8 @@ export function AppLayout({ children }: AppLayoutProps): React.JSX.Element {
   useSleepWhenIdle()
   // Scheduled account switches + mid-session 5-minute usage refresh
   useAccountScheduleRunner()
+  // Keep document runs in sync with the server and drive the launched runs this client owns
+  useDocumentFlowRunner()
 
   // Drag-and-drop from Finder
   const activeSessionId = useSessionStore((s) => s.activeSessionId)
@@ -334,6 +342,15 @@ export function AppLayout({ children }: AppLayoutProps): React.JSX.Element {
               <ConnectionPRModal connectionId={connectionPRConnectionId} />
             </ErrorBoundary>
           )}
+          <ErrorBoundary componentName="ImplementDocumentWizard" fallback={null}>
+            <ImplementDocumentWizard />
+          </ErrorBoundary>
+          <ErrorBoundary componentName="DocumentRunDashboard" fallback={null}>
+            <DocumentRunDashboard />
+          </ErrorBoundary>
+          <ErrorBoundary componentName="DocumentRunsIndicator" fallback={null}>
+            <DocumentRunsIndicator />
+          </ErrorBoundary>
           <AgentSetupGuard />
           <ErrorBoundary componentName="ForceUpdateModal" fallback={null}>
             <ForceUpdateModal />

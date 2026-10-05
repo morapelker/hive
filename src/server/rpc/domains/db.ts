@@ -32,6 +32,9 @@ import type {
 import type { RpcHandler } from '../router'
 import { scheduleSessionUsageReport } from '../../../main/services/usage/session-usage-service'
 
+/** As many runs as `DatabaseService.listDocumentRuns` hands out at most. */
+const DOCUMENT_RUNS_PAGE = 200
+
 export interface DbRpcService {
   readonly getSetting: (key: string) => Effect.Effect<string | null, unknown, never>
   readonly setSetting: (key: string, value: string) => Effect.Effect<boolean, unknown, never>
@@ -554,6 +557,32 @@ export const makeLiveDbRpcService = (): DbRpcService => ({
           .getSessionsByProject(id)
           .filter(isShellCommandSession)
           .map((s) => s.id)
+        // Document runs go through their service, not the row cascade: it stops the ones
+        // still running, removes their directories and tells every client the run is gone
+        // (the orchestrator would otherwise keep driving a run that no longer exists).
+        if (project) {
+          const { getDocumentFlowService } =
+            await import('../../../main/services/document-flow/document-flow-service')
+          const documentFlow = await getDocumentFlowService()
+          // The list is capped at a page; each delete removes its row, so the next page is
+          // the rest. A run that comes back was not removed: stop rather than spin.
+          const removed = new Set<string>()
+          for (
+            let runs = db.listDocumentRuns(id, DOCUMENT_RUNS_PAGE);
+            runs.length > 0;
+            runs = db.listDocumentRuns(id, DOCUMENT_RUNS_PAGE)
+          ) {
+            for (const run of runs) {
+              if (removed.has(run.id)) {
+                throw new Error(`Document run ${run.id} could not be removed with the project.`)
+              }
+              removed.add(run.id)
+              if (run.status === 'running' || run.status === 'paused') documentFlow.cancel(run.id)
+              // The board tickets that would keep the run's files are going with the project.
+              await documentFlow.delete(run.id, { removeFiles: true })
+            }
+          }
+        }
         const deleted = db.deleteProject(id)
         if (deleted && shellSessionIds.length > 0) {
           // Never throws; skips runs whose owner process is still alive.

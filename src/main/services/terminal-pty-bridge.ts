@@ -392,7 +392,11 @@ function persistCodexThreadId(sessionId: string, threadId: string, source: strin
 }
 
 /** Statuses a hook already latched for a blocking interaction; the title must not override them. */
-const CODEX_BLOCKING_STATUSES = new Set<SessionStatusType>(['answering', 'permission', 'plan_ready'])
+const CODEX_BLOCKING_STATUSES = new Set<SessionStatusType>([
+  'answering',
+  'permission',
+  'plan_ready'
+])
 
 /**
  * The title's `[ ! ] Action Required` prefix is the one reliable signal codex
@@ -889,7 +893,8 @@ export async function createClaudeCliTerminal(
       sessionId,
       command: spawn.command,
       args: spawn.args.map((arg, index) => {
-        if (index === spawn.args.length - 1 && pendingPrompt && !codexPromptViaPty) return '<prompt>'
+        if (index === spawn.args.length - 1 && pendingPrompt && !codexPromptViaPty)
+          return '<prompt>'
         // The custom command may embed inline secrets (ANTHROPIC_AUTH_TOKEN=…)
         // — never write it to the log verbatim. The wrapper puts the shell
         // script at index 1 and (for POSIX shells) argv0 at index 2; fish has
@@ -938,7 +943,10 @@ export async function createClaudeCliTerminal(
                     }
                   )
                 }
-                claudeCliTranscriptSources.set(sessionId, { worktreePath, claudeSessionId: settled })
+                claudeCliTranscriptSources.set(sessionId, {
+                  worktreePath,
+                  claudeSessionId: settled
+                })
                 claudeWatchers.delete(sessionId)
                 return true
               }
@@ -979,7 +987,10 @@ export async function createClaudeCliTerminal(
             }
             void import('../desktop/backend-event-publisher')
               .then(({ publishDesktopBackendEvent }) =>
-                publishDesktopBackendEvent(`terminal:claude-session-id:${sessionId}`, claudeSessionId)
+                publishDesktopBackendEvent(
+                  `terminal:claude-session-id:${sessionId}`,
+                  claudeSessionId
+                )
               )
               .catch(() => undefined)
             claudeCliTranscriptSources.set(sessionId, { worktreePath, claudeSessionId })
@@ -1069,7 +1080,9 @@ export async function createClaudeCliTerminal(
       resetClaudeCliBackgroundWork(sessionId)
     }
     claudeCliWorktreeBasenames.set(sessionId, path.basename(worktreePath))
-    if (!pendingPrompt) {
+    // A fresh process with nothing to do is idle. A reused PTY is in whatever state its
+    // hooks last published — mounting a view of a working session must not report it idle.
+    if (!pendingPrompt && !alreadyExists) {
       publishClaudeCliStatus({
         sessionId,
         status: 'completed',

@@ -55,7 +55,17 @@ export interface TicketLaunchSpec {
   projectId: string
   ticketTitle: string
   worktree:
-    | { type: 'new'; sourceBranch: string; nameHint?: string }
+    | {
+        type: 'new'
+        sourceBranch: string
+        nameHint?: string
+        /** Cut the branch from this ref even when `sourceBranch` is checked out in a worktree. */
+        baseRef?: string
+        /** Overrides the "auto-pull before worktree" setting for this launch. */
+        autoPull?: boolean
+        /** false: keep the user's selected worktree and open file tabs (background launch). */
+        select?: boolean
+      }
     | { type: 'existing'; worktreeId: string }
   prompt: string
   mode: LaunchMode
@@ -221,15 +231,32 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
         return { success: false, error: 'Project not found' }
       }
       const nameHint = spec.worktree.nameHint ?? canonicalizeTicketTitle(spec.ticketTitle)
-      const result = await useWorktreeStore
-        .getState()
-        .createWorktreeFromBranch(
-          spec.projectId,
-          project.path,
-          project.name,
-          spec.worktree.sourceBranch,
-          nameHint || undefined
-        )
+      const { baseRef, autoPull, select } = spec.worktree
+      const worktreeOptions = {
+        ...(baseRef === undefined ? {} : { baseRef }),
+        ...(autoPull === undefined ? {} : { autoPull }),
+        ...(select === undefined ? {} : { select })
+      }
+      const createWorktreeFromBranch = useWorktreeStore.getState().createWorktreeFromBranch
+      // The options argument is passed only when one is set, so plain launches make the
+      // exact five-argument call they always did.
+      const result =
+        Object.keys(worktreeOptions).length > 0
+          ? await createWorktreeFromBranch(
+              spec.projectId,
+              project.path,
+              project.name,
+              spec.worktree.sourceBranch,
+              nameHint || undefined,
+              worktreeOptions
+            )
+          : await createWorktreeFromBranch(
+              spec.projectId,
+              project.path,
+              project.name,
+              spec.worktree.sourceBranch,
+              nameHint || undefined
+            )
       if (!result.success || !result.worktree?.id) {
         return { success: false, error: result.error || 'Could not create worktree' }
       }

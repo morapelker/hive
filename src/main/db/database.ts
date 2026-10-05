@@ -1,13 +1,32 @@
 import { deleteAttachment } from '../services/attachment-storage'
 import type { AgentSdk } from '@shared/types/agent-sdk'
 import { parseProjectShellCommands } from '@shared/lib/shell-commands'
+import { DEFAULT_DOCUMENT_RUN_CONFIG, SESSION_TURN_STATES } from '@shared/types/document-flow'
+import type {
+  DocumentRun,
+  DocumentRunConfig,
+  DocumentRunEvent,
+  DocumentRunItem,
+  SessionFinalMessage,
+  SessionTurnState
+} from '@shared/types/document-flow'
+import type {
+  DocumentFlowDb,
+  DocumentRunCreate,
+  DocumentRunEventCreate,
+  DocumentRunItemCreate,
+  DocumentRunItemRowPatch,
+  DocumentRunnerClaimResult,
+  DocumentRunRowPatch,
+  SessionFinalMessageUpsert
+} from '../services/document-flow/db-port'
 import Database from 'better-sqlite3'
 import { dirname, join } from 'path'
 import { existsSync, mkdirSync, statSync } from 'fs'
 import { randomUUID } from 'crypto'
 import { homedir } from 'os'
 import { Worker as NodeWorker } from 'node:worker_threads'
-import { MIGRATIONS, VOICE_HISTORY_TABLES_SQL } from './schema'
+import { DOCUMENT_FLOW_TABLES_SQL, MIGRATIONS, VOICE_HISTORY_TABLES_SQL } from './schema'
 import type {
   Project,
   ProjectCreate,
@@ -161,6 +180,10 @@ try {
     const orphanedActivities = db
       .prepare('DELETE FROM session_activities WHERE session_id NOT IN (SELECT id FROM sessions)')
       .run().changes
+    // No foreign key: the worktree and project cascades leave these behind.
+    db.prepare(
+      'DELETE FROM session_final_messages WHERE session_id NOT IN (SELECT id FROM sessions)'
+    ).run()
 
     return {
       orphanedMessages,
@@ -245,7 +268,64 @@ const runCompactionWorker = (dbPath: string, beforeBytes: number): Promise<Compa
   })
 }
 
-export class DatabaseService {
+/** How a patchable document-flow column is written: as given, JSON-stringified, or as 0/1. */
+type DocumentFlowColumnKind = 'plain' | 'json' | 'flag'
+
+// Keyed by the patch types, so a field added to one of them does not compile until it has a
+// column here — a patch key the UPDATE silently dropped would look like a lost write.
+const DOCUMENT_RUN_PATCH_COLUMNS: Record<keyof DocumentRunRowPatch, DocumentFlowColumnKind> = {
+  title: 'plain',
+  document_path: 'plain',
+  status: 'plain',
+  error: 'plain',
+  config: 'json',
+  extraction: 'json',
+  base_branch: 'plain',
+  base_sha: 'plain',
+  integration_branch: 'plain',
+  integration_worktree_id: 'plain',
+  integration_worktree_path: 'plain',
+  report: 'json',
+  started_at: 'plain',
+  finished_at: 'plain'
+}
+
+const DOCUMENT_RUN_ITEM_PATCH_COLUMNS: Record<
+  keyof DocumentRunItemRowPatch,
+  DocumentFlowColumnKind
+> = {
+  title: 'plain',
+  summary: 'plain',
+  description: 'plain',
+  depends_on: 'json',
+  selected: 'flag',
+  launch_config: 'json',
+  status: 'plain',
+  status_detail: 'plain',
+  ticket_id: 'plain',
+  worktree_id: 'plain',
+  session_id: 'plain',
+  fix_ticket_id: 'plain',
+  fix_session_id: 'plain',
+  branch_name: 'plain',
+  verdict: 'json',
+  nudge_count: 'plain',
+  conflict_attempts: 'plain',
+  conflict_head: 'plain',
+  fix_attempts: 'plain',
+  continue_attempts: 'plain',
+  pre_merge_sha: 'plain',
+  merge_sha: 'plain',
+  last_prompt_at: 'plain',
+  last_checked_at: 'plain',
+  retry_at: 'plain',
+  started_at: 'plain',
+  finished_at: 'plain'
+}
+
+// `implements DocumentFlowDb` is the compile-time check that the document-flow section below
+// still matches the port its service and tests are written against (services/document-flow).
+export class DatabaseService implements DocumentFlowDb {
   private db: Database.Database | null = null
   private dbPath: string
   private compactionInProgress = false
@@ -597,11 +677,23 @@ export class DatabaseService {
     // skew between worktree builds.
     this.ensureConnectionTables()
     this.ensureVoiceHistoryTable()
+    this.ensureDocumentFlowTables()
   }
 
   /** Idempotently ensure the voice dictation history table exists (repair for the v48 migration). */
   private ensureVoiceHistoryTable(): void {
     this.getDb().exec(VOICE_HISTORY_TABLES_SQL)
+  }
+
+  /**
+   * Idempotently ensure the "Implement document" tables exist (repair for the v55 migration):
+   * runs, their items and events, and the per-session final messages. IF NOT EXISTS only.
+   */
+  private ensureDocumentFlowTables(): void {
+    this.getDb().exec(DOCUMENT_FLOW_TABLES_SQL)
+    this.safeAddColumn('session_final_messages', 'state', "TEXT NOT NULL DEFAULT 'ended'")
+    this.safeAddColumn('session_final_messages', 'detail', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('document_run_items', 'conflict_head', 'TEXT DEFAULT NULL')
   }
 
   /**
@@ -1038,6 +1130,427 @@ export class DatabaseService {
   clearVoiceHistory(): number {
     const result = this.getDb().prepare('DELETE FROM voice_history').run()
     return result.changes
+  }
+
+  // "Implement document" flow: runs, their items and audit log, per-session final messages.
+  // Not `db:changed` entities — the flow publishes its own channel
+  // (shared/document-flow-events.ts), so none of these writes call emitDbChanged.
+
+  /** A JSON object column; null when it is NULL, corrupt or not an object. */
+  private parseDocumentFlowObject<T extends object>(value: unknown): T | null {
+    if (typeof value !== 'string' || value === '') return null
+    try {
+      const parsed: unknown = JSON.parse(value)
+      return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? (parsed as T)
+        : null
+    } catch {
+      return null
+    }
+  }
+
+  /** A JSON array column; empty when it is NULL, corrupt or not an array. */
+  private parseDocumentFlowArray<T>(value: unknown): T[] {
+    if (typeof value !== 'string' || value === '') return []
+    try {
+      const parsed: unknown = JSON.parse(value)
+      return Array.isArray(parsed) ? (parsed as T[]) : []
+    } catch {
+      return []
+    }
+  }
+
+  private clampDocumentFlowLimit(limit: number | undefined, fallback: number, max: number): number {
+    const wanted =
+      typeof limit === 'number' && Number.isFinite(limit) ? Math.floor(limit) : fallback
+    return Math.max(1, Math.min(max, wanted))
+  }
+
+  private mapDocumentRunRow(row: Record<string, unknown>): DocumentRun {
+    return {
+      id: row.id as string,
+      project_id: row.project_id as string,
+      title: row.title as string,
+      source_path: row.source_path as string,
+      run_dir: row.run_dir as string,
+      document_path: (row.document_path as string | null) ?? null,
+      status: row.status as DocumentRun['status'],
+      error: (row.error as string | null) ?? null,
+      // Over the defaults, so a row written before a setting existed still has every field.
+      config: {
+        ...DEFAULT_DOCUMENT_RUN_CONFIG,
+        ...this.parseDocumentFlowObject<Partial<DocumentRunConfig>>(row.config)
+      },
+      extraction: this.parseDocumentFlowObject<NonNullable<DocumentRun['extraction']>>(
+        row.extraction
+      ),
+      base_branch: (row.base_branch as string | null) ?? null,
+      base_sha: (row.base_sha as string | null) ?? null,
+      integration_branch: (row.integration_branch as string | null) ?? null,
+      integration_worktree_id: (row.integration_worktree_id as string | null) ?? null,
+      integration_worktree_path: (row.integration_worktree_path as string | null) ?? null,
+      report: this.parseDocumentFlowObject<NonNullable<DocumentRun['report']>>(row.report),
+      runner_client_id: (row.runner_client_id as string | null) ?? null,
+      runner_heartbeat_at: (row.runner_heartbeat_at as string | null) ?? null,
+      created_at: row.created_at as string,
+      updated_at: row.updated_at as string,
+      started_at: (row.started_at as string | null) ?? null,
+      finished_at: (row.finished_at as string | null) ?? null
+    }
+  }
+
+  private mapDocumentRunItemRow(row: Record<string, unknown>): DocumentRunItem {
+    return {
+      id: row.id as string,
+      run_id: row.run_id as string,
+      key: row.item_key as string,
+      position: (row.position as number) ?? 0,
+      title: row.title as string,
+      summary: (row.summary as string) ?? '',
+      description: (row.description as string) ?? '',
+      kind: (row.kind as DocumentRunItem['kind']) ?? 'change',
+      depends_on: this.parseDocumentFlowArray<string>(row.depends_on),
+      has_migration: !!row.has_migration,
+      size: (row.size as DocumentRunItem['size']) ?? null,
+      conflict_risk: (row.conflict_risk as DocumentRunItem['conflict_risk']) ?? null,
+      doc_status: (row.doc_status as DocumentRunItem['doc_status']) ?? 'unknown',
+      selected: !!row.selected,
+      figures: this.parseDocumentFlowArray<DocumentRunItem['figures'][number]>(row.figures),
+      open_questions: this.parseDocumentFlowArray<string>(row.open_questions),
+      launch_config: this.parseDocumentFlowObject<NonNullable<DocumentRunItem['launch_config']>>(
+        row.launch_config
+      ),
+      status: row.status as DocumentRunItem['status'],
+      status_detail: (row.status_detail as string | null) ?? null,
+      ticket_id: (row.ticket_id as string | null) ?? null,
+      worktree_id: (row.worktree_id as string | null) ?? null,
+      session_id: (row.session_id as string | null) ?? null,
+      fix_ticket_id: (row.fix_ticket_id as string | null) ?? null,
+      fix_session_id: (row.fix_session_id as string | null) ?? null,
+      branch_name: (row.branch_name as string | null) ?? null,
+      verdict: this.parseDocumentFlowObject<NonNullable<DocumentRunItem['verdict']>>(row.verdict),
+      nudge_count: (row.nudge_count as number) ?? 0,
+      conflict_attempts: (row.conflict_attempts as number) ?? 0,
+      conflict_head: (row.conflict_head as string | null) ?? null,
+      fix_attempts: (row.fix_attempts as number) ?? 0,
+      continue_attempts: (row.continue_attempts as number) ?? 0,
+      pre_merge_sha: (row.pre_merge_sha as string | null) ?? null,
+      merge_sha: (row.merge_sha as string | null) ?? null,
+      last_prompt_at: (row.last_prompt_at as string | null) ?? null,
+      last_checked_at: (row.last_checked_at as string | null) ?? null,
+      retry_at: (row.retry_at as string | null) ?? null,
+      created_at: row.created_at as string,
+      updated_at: row.updated_at as string,
+      started_at: (row.started_at as string | null) ?? null,
+      finished_at: (row.finished_at as string | null) ?? null
+    }
+  }
+
+  private mapDocumentRunEventRow(row: Record<string, unknown>): DocumentRunEvent {
+    let data: unknown = null
+    if (typeof row.data === 'string' && row.data !== '') {
+      try {
+        data = JSON.parse(row.data)
+      } catch {
+        data = null
+      }
+    }
+    return {
+      id: row.id as number,
+      run_id: row.run_id as string,
+      item_id: (row.item_id as string | null) ?? null,
+      at: row.at as string,
+      type: row.type as string,
+      message: row.message as string,
+      data
+    }
+  }
+
+  /**
+   * Write the columns whose key is present in `patch` (undefined leaves a column alone, null
+   * clears it) and stamp `updated_at`. Column names come from `columns`, never from the patch,
+   * so an unknown key is ignored; with nothing to write the row is left untouched.
+   */
+  private patchDocumentFlowRow<P extends object>(
+    table: 'document_runs' | 'document_run_items',
+    id: string,
+    patch: P,
+    columns: Record<keyof P, DocumentFlowColumnKind>
+  ): void {
+    const sets: string[] = []
+    const values: (string | number | null)[] = []
+    for (const column of Object.keys(columns) as (keyof P & string)[]) {
+      const value: unknown = patch[column]
+      if (value === undefined) continue
+      sets.push(`${column} = ?`)
+      if (value === null) values.push(null)
+      else if (columns[column] === 'json') values.push(JSON.stringify(value))
+      else if (columns[column] === 'flag') values.push(value ? 1 : 0)
+      else values.push(value as string | number)
+    }
+    if (sets.length === 0) return
+    sets.push('updated_at = ?')
+    values.push(new Date().toISOString(), id)
+    this.getDb()
+      .prepare(`UPDATE ${table} SET ${sets.join(', ')} WHERE id = ?`)
+      .run(...values)
+  }
+
+  createDocumentRun(data: DocumentRunCreate): DocumentRun {
+    const db = this.getDb()
+    const now = new Date().toISOString()
+    db.prepare(
+      `INSERT INTO document_runs (
+         id, project_id, title, source_path, run_dir, document_path, status, config,
+         created_at, updated_at
+       ) VALUES (
+         @id, @project_id, @title, @source_path, @run_dir, @document_path, @status, @config,
+         @now, @now
+       )`
+    ).run({
+      id: data.id,
+      project_id: data.project_id,
+      title: data.title,
+      source_path: data.source_path,
+      run_dir: data.run_dir,
+      document_path: data.document_path ?? null,
+      status: data.status,
+      config: JSON.stringify(data.config),
+      now
+    })
+    const created = this.getDocumentRun(data.id)
+    if (!created) throw new Error(`[db] document_runs: row ${data.id} missing right after insert`)
+    return created
+  }
+
+  getDocumentRun(id: string): DocumentRun | null {
+    const row = this.getDb().prepare('SELECT * FROM document_runs WHERE id = ?').get(id) as
+      Record<string, unknown> | undefined
+    return row ? this.mapDocumentRunRow(row) : null
+  }
+
+  /** Newest first, of one project or of all. */
+  listDocumentRuns(projectId?: string, limit?: number): DocumentRun[] {
+    const db = this.getDb()
+    const max = this.clampDocumentFlowLimit(limit, 50, 200)
+    const rows = projectId
+      ? (db
+          .prepare(
+            `SELECT * FROM document_runs WHERE project_id = ?
+             ORDER BY created_at DESC, rowid DESC LIMIT ?`
+          )
+          .all(projectId, max) as Record<string, unknown>[])
+      : (db
+          .prepare('SELECT * FROM document_runs ORDER BY created_at DESC, rowid DESC LIMIT ?')
+          .all(max) as Record<string, unknown>[])
+    return rows.map((row) => this.mapDocumentRunRow(row))
+  }
+
+  updateDocumentRun(id: string, patch: DocumentRunRowPatch): DocumentRun | null {
+    if (!this.getDocumentRun(id)) return null
+    this.patchDocumentFlowRow('document_runs', id, patch, DOCUMENT_RUN_PATCH_COLUMNS)
+    return this.getDocumentRun(id)
+  }
+
+  /** Deletes the run with its items and events; explicit, so it holds without foreign keys. */
+  deleteDocumentRun(id: string): boolean {
+    const db = this.getDb()
+    return db.transaction((): boolean => {
+      db.prepare('DELETE FROM document_run_events WHERE run_id = ?').run(id)
+      db.prepare('DELETE FROM document_run_items WHERE run_id = ?').run(id)
+      return db.prepare('DELETE FROM document_runs WHERE id = ?').run(id).changes > 0
+    })()
+  }
+
+  /** Replace every item of the run in one transaction; `position` follows the array order. */
+  replaceDocumentRunItems(runId: string, items: DocumentRunItemCreate[]): DocumentRunItem[] {
+    const db = this.getDb()
+    return db.transaction((): DocumentRunItem[] => {
+      db.prepare('DELETE FROM document_run_items WHERE run_id = ?').run(runId)
+      const insert = db.prepare(
+        `INSERT INTO document_run_items (
+           id, run_id, item_key, position, title, summary, description, kind, depends_on,
+           has_migration, size, conflict_risk, doc_status, selected, figures, open_questions,
+           launch_config, status, created_at, updated_at
+         ) VALUES (
+           @id, @run_id, @item_key, @position, @title, @summary, @description, @kind, @depends_on,
+           @has_migration, @size, @conflict_risk, @doc_status, @selected, @figures, @open_questions,
+           @launch_config, 'pending', @now, @now
+         )`
+      )
+      const now = new Date().toISOString()
+      items.forEach((item, position) => {
+        insert.run({
+          id: randomUUID(),
+          run_id: runId,
+          item_key: item.key,
+          position,
+          title: item.title,
+          summary: item.summary,
+          description: item.description,
+          kind: item.kind,
+          depends_on: JSON.stringify(item.depends_on),
+          has_migration: item.has_migration ? 1 : 0,
+          size: item.size ?? null,
+          conflict_risk: item.conflict_risk ?? null,
+          doc_status: item.doc_status,
+          selected: item.selected ? 1 : 0,
+          figures: JSON.stringify(item.figures),
+          open_questions: JSON.stringify(item.open_questions),
+          launch_config: item.launch_config ? JSON.stringify(item.launch_config) : null,
+          now
+        })
+      })
+      return this.getDocumentRunItems(runId)
+    })()
+  }
+
+  /** Ordered by `position`. */
+  getDocumentRunItems(runId: string): DocumentRunItem[] {
+    const rows = this.getDb()
+      .prepare('SELECT * FROM document_run_items WHERE run_id = ? ORDER BY position, rowid')
+      .all(runId) as Record<string, unknown>[]
+    return rows.map((row) => this.mapDocumentRunItemRow(row))
+  }
+
+  getDocumentRunItem(id: string): DocumentRunItem | null {
+    const row = this.getDb().prepare('SELECT * FROM document_run_items WHERE id = ?').get(id) as
+      Record<string, unknown> | undefined
+    return row ? this.mapDocumentRunItemRow(row) : null
+  }
+
+  updateDocumentRunItem(id: string, patch: DocumentRunItemRowPatch): DocumentRunItem | null {
+    if (!this.getDocumentRunItem(id)) return null
+    this.patchDocumentFlowRow('document_run_items', id, patch, DOCUMENT_RUN_ITEM_PATCH_COLUMNS)
+    return this.getDocumentRunItem(id)
+  }
+
+  appendDocumentRunEvent(data: DocumentRunEventCreate): DocumentRunEvent {
+    const db = this.getDb()
+    const result = db
+      .prepare(
+        `INSERT INTO document_run_events (run_id, item_id, at, type, message, data)
+         VALUES (@run_id, @item_id, @at, @type, @message, @data)`
+      )
+      .run({
+        run_id: data.run_id,
+        item_id: data.item_id ?? null,
+        at: new Date().toISOString(),
+        type: data.type,
+        message: data.message,
+        data: data.data === undefined ? null : (JSON.stringify(data.data) ?? null)
+      })
+    const row = db
+      .prepare('SELECT * FROM document_run_events WHERE id = ?')
+      .get(result.lastInsertRowid) as Record<string, unknown>
+    return this.mapDocumentRunEventRow(row)
+  }
+
+  /** The newest `limit` events of the run, oldest first; only those of `type` when given. */
+  listDocumentRunEvents(runId: string, limit?: number, type?: string): DocumentRunEvent[] {
+    const max = this.clampDocumentFlowLimit(limit, 200, 1000)
+    const rows =
+      type === undefined
+        ? (this.getDb()
+            .prepare(
+              `SELECT * FROM (
+                 SELECT * FROM document_run_events WHERE run_id = ? ORDER BY id DESC LIMIT ?
+               ) ORDER BY id ASC`
+            )
+            .all(runId, max) as Record<string, unknown>[])
+        : (this.getDb()
+            .prepare(
+              `SELECT * FROM (
+                 SELECT * FROM document_run_events WHERE run_id = ? AND type = ?
+                 ORDER BY id DESC LIMIT ?
+               ) ORDER BY id ASC`
+            )
+            .all(runId, type, max) as Record<string, unknown>[])
+    return rows.map((row) => this.mapDocumentRunEventRow(row))
+  }
+
+  /**
+   * Single-owner lease on a run: granted (and the heartbeat stamped) when it has no owner, the
+   * owner is `clientId`, or the owner's heartbeat is older than `staleBeforeIso`. One UPDATE,
+   * so two clients racing for a stale lease cannot both win. `updated_at` is left alone: a
+   * heartbeat is not a change to the run.
+   */
+  claimDocumentRunRunner(
+    runId: string,
+    clientId: string,
+    nowIso: string,
+    staleBeforeIso: string
+  ): DocumentRunnerClaimResult {
+    const db = this.getDb()
+    db.prepare(
+      `UPDATE document_runs
+       SET runner_client_id = @clientId, runner_heartbeat_at = @nowIso
+       WHERE id = @runId
+         AND (runner_client_id IS NULL
+           OR runner_client_id = @clientId
+           OR runner_heartbeat_at IS NULL
+           OR runner_heartbeat_at < @staleBeforeIso)`
+    ).run({ runId, clientId, nowIso, staleBeforeIso })
+    const row = db.prepare('SELECT runner_client_id FROM document_runs WHERE id = ?').get(runId) as
+      { runner_client_id: string | null } | undefined
+    const ownerClientId = row?.runner_client_id ?? null
+    return { owned: ownerClientId === clientId, ownerClientId }
+  }
+
+  /** One row per session: the latest turn end replaces the previous one. */
+  upsertSessionFinalMessage(data: SessionFinalMessageUpsert): void {
+    // A blocking or busy state keeps the text of the last turn end unless new text is given.
+    this.getDb()
+      .prepare(
+        `INSERT INTO session_final_messages (
+           session_id, state, text, completion, api_error, hook_event, detail, updated_at
+         ) VALUES (
+           @session_id, @state, COALESCE(@text, ''), @completion, @api_error, @hook_event,
+           @detail, @updated_at
+         )
+         ON CONFLICT(session_id) DO UPDATE SET
+           state = excluded.state,
+           text = COALESCE(@text, session_final_messages.text),
+           completion = excluded.completion,
+           api_error = excluded.api_error,
+           hook_event = excluded.hook_event,
+           detail = excluded.detail,
+           updated_at = excluded.updated_at`
+      )
+      .run({
+        session_id: data.session_id,
+        state: data.state ?? 'ended',
+        text: data.text ?? null,
+        completion: data.completion ?? null,
+        api_error: data.api_error ?? null,
+        hook_event: data.hook_event,
+        detail: data.detail ?? null,
+        updated_at: new Date().toISOString()
+      })
+  }
+
+  deleteSessionFinalMessage(sessionId: string): void {
+    this.getDb().prepare('DELETE FROM session_final_messages WHERE session_id = ?').run(sessionId)
+  }
+
+  getSessionFinalMessage(sessionId: string): SessionFinalMessage | null {
+    const row = this.getDb()
+      .prepare('SELECT * FROM session_final_messages WHERE session_id = ?')
+      .get(sessionId) as Record<string, unknown> | undefined
+    if (!row) return null
+    const state = row.state as string
+    return {
+      session_id: row.session_id as string,
+      state: SESSION_TURN_STATES.includes(state as SessionTurnState)
+        ? (state as SessionTurnState)
+        : 'ended',
+      text: (row.text as string) ?? '',
+      completion: (row.completion as string | null) ?? null,
+      api_error: (row.api_error as string | null) ?? null,
+      hook_event: row.hook_event as string,
+      detail: (row.detail as string | null) ?? null,
+      updated_at: row.updated_at as string
+    }
   }
 
   // Saved usage account operations
@@ -2095,6 +2608,11 @@ export class DatabaseService {
   deleteSession(id: string): boolean {
     const db = this.getDb()
     const result = db.prepare('DELETE FROM sessions WHERE id = ?').run(id)
+    // The usage reporter's rows have no foreign key (they may outlive a wiped sessions table
+    // in tests and repairs): drop them with the session so nothing orphans. The recorded
+    // final message is keyed the same way, and holds the session's last assistant text.
+    db.prepare('DELETE FROM session_usage_state WHERE hive_session_id = ?').run(id)
+    db.prepare('DELETE FROM session_final_messages WHERE session_id = ?').run(id)
     return result.changes > 0
   }
 

@@ -1,4 +1,120 @@
-export const CURRENT_SCHEMA_VERSION = 51
+export const CURRENT_SCHEMA_VERSION = 52
+
+/**
+ * "Implement document" flow (v55). `document_runs` is one spec document turned into tickets
+ * and merged, ticket by ticket, into an integration branch; `runner_client_id` /
+ * `runner_heartbeat_at` are the single-owner lease of the client driving it.
+ * `document_run_items` are its extracted tickets with their orchestration state (`item_key` is
+ * the document's own task id: "key" is an SQL keyword). `document_run_events` is the
+ * append-only audit log, ordered by its autoincrement id. `session_final_messages` keeps the
+ * last turn state each session reported (one row per session: a turn end with its final
+ * message, a blocking question or permission, or busy again), which a run reads when its
+ * renderer was not watching.
+ * Only the run → project and item / event → run links are foreign keys: worktree rows are
+ * archived rather than deleted, and markdown-backed boards have no kanban_tickets row, so
+ * `integration_worktree_id`, `worktree_id`, `ticket_id` and the session ids are plain ids.
+ * CREATE TABLE IF NOT EXISTS, replayed by ensureDocumentFlowTables() in database.ts.
+ */
+export const DOCUMENT_FLOW_TABLES_SQL = `
+  CREATE TABLE IF NOT EXISTS document_runs (
+    id                        TEXT PRIMARY KEY,
+    project_id                TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    title                     TEXT NOT NULL,
+    source_path               TEXT NOT NULL,
+    run_dir                   TEXT NOT NULL,
+    document_path             TEXT DEFAULT NULL,
+    status                    TEXT NOT NULL DEFAULT 'extracting',
+    error                     TEXT DEFAULT NULL,
+    config                    TEXT NOT NULL DEFAULT '{}',
+    extraction                TEXT DEFAULT NULL,
+    base_branch               TEXT DEFAULT NULL,
+    base_sha                  TEXT DEFAULT NULL,
+    integration_branch        TEXT DEFAULT NULL,
+    integration_worktree_id   TEXT DEFAULT NULL,
+    integration_worktree_path TEXT DEFAULT NULL,
+    report                    TEXT DEFAULT NULL,
+    runner_client_id          TEXT DEFAULT NULL,
+    runner_heartbeat_at       TEXT DEFAULT NULL,
+    created_at                TEXT NOT NULL,
+    updated_at                TEXT NOT NULL,
+    started_at                TEXT DEFAULT NULL,
+    finished_at               TEXT DEFAULT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_document_runs_project ON document_runs(project_id, created_at);
+  CREATE TABLE IF NOT EXISTS document_run_items (
+    id                TEXT PRIMARY KEY,
+    run_id            TEXT NOT NULL REFERENCES document_runs(id) ON DELETE CASCADE,
+    item_key          TEXT NOT NULL,
+    position          INTEGER NOT NULL DEFAULT 0,
+    title             TEXT NOT NULL,
+    summary           TEXT NOT NULL DEFAULT '',
+    description       TEXT NOT NULL DEFAULT '',
+    kind              TEXT NOT NULL DEFAULT 'change',
+    depends_on        TEXT NOT NULL DEFAULT '[]',
+    has_migration     INTEGER NOT NULL DEFAULT 0,
+    size              TEXT DEFAULT NULL,
+    conflict_risk     TEXT DEFAULT NULL,
+    doc_status        TEXT NOT NULL DEFAULT 'unknown',
+    selected          INTEGER NOT NULL DEFAULT 1,
+    figures           TEXT NOT NULL DEFAULT '[]',
+    open_questions    TEXT NOT NULL DEFAULT '[]',
+    launch_config     TEXT DEFAULT NULL,
+    status            TEXT NOT NULL DEFAULT 'pending',
+    status_detail     TEXT DEFAULT NULL,
+    ticket_id         TEXT DEFAULT NULL,
+    worktree_id       TEXT DEFAULT NULL,
+    session_id        TEXT DEFAULT NULL,
+    fix_ticket_id     TEXT DEFAULT NULL,
+    fix_session_id    TEXT DEFAULT NULL,
+    branch_name       TEXT DEFAULT NULL,
+    verdict           TEXT DEFAULT NULL,
+    nudge_count       INTEGER NOT NULL DEFAULT 0,
+    conflict_attempts INTEGER NOT NULL DEFAULT 0,
+    conflict_head TEXT DEFAULT NULL,
+    fix_attempts      INTEGER NOT NULL DEFAULT 0,
+    continue_attempts INTEGER NOT NULL DEFAULT 0,
+    pre_merge_sha     TEXT DEFAULT NULL,
+    merge_sha         TEXT DEFAULT NULL,
+    last_prompt_at    TEXT DEFAULT NULL,
+    last_checked_at   TEXT DEFAULT NULL,
+    retry_at          TEXT DEFAULT NULL,
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL,
+    started_at        TEXT DEFAULT NULL,
+    finished_at       TEXT DEFAULT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_document_run_items_run ON document_run_items(run_id, position);
+  CREATE TABLE IF NOT EXISTS document_run_events (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id  TEXT NOT NULL REFERENCES document_runs(id) ON DELETE CASCADE,
+    item_id TEXT DEFAULT NULL,
+    at      TEXT NOT NULL,
+    type    TEXT NOT NULL,
+    message TEXT NOT NULL,
+    data    TEXT DEFAULT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_document_run_events_run ON document_run_events(run_id, id);
+  CREATE TABLE IF NOT EXISTS session_final_messages (
+    session_id TEXT PRIMARY KEY,
+    state      TEXT NOT NULL DEFAULT 'ended',
+    text       TEXT NOT NULL DEFAULT '',
+    completion TEXT DEFAULT NULL,
+    api_error  TEXT DEFAULT NULL,
+    hook_event TEXT NOT NULL,
+    detail     TEXT DEFAULT NULL,
+    updated_at TEXT NOT NULL
+  );
+`
+
+export const DOCUMENT_FLOW_TABLES_DROP_SQL = `
+  DROP INDEX IF EXISTS idx_document_run_events_run;
+  DROP INDEX IF EXISTS idx_document_run_items_run;
+  DROP INDEX IF EXISTS idx_document_runs_project;
+  DROP TABLE IF EXISTS session_final_messages;
+  DROP TABLE IF EXISTS document_run_events;
+  DROP TABLE IF EXISTS document_run_items;
+  DROP TABLE IF EXISTS document_runs;
+`
 
 /**
  * Voice dictation history (v48): every transcript the local speech model produced, newest
@@ -816,5 +932,14 @@ DROP TABLE IF EXISTS diff_comments;`
          -- handled idempotently by safeAddColumn() in database.ts to avoid
          -- "duplicate column" errors.`,
     down: `-- SQLite cannot drop columns; this is a no-op for safety`
+  },
+  {
+    version: 52,
+    name: 'add_document_flow',
+    // "Implement document" runs, their tickets and audit log, plus the final message each CLI
+    // session reported. CREATE TABLE IF NOT EXISTS, replayed by ensureDocumentFlowTables() in
+    // database.ts.
+    up: DOCUMENT_FLOW_TABLES_SQL,
+    down: DOCUMENT_FLOW_TABLES_DROP_SQL
   }
 ]

@@ -1,0 +1,545 @@
+import { execFileSync } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { devNull, tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import type { DocumentFlowUpdatedEvent } from '@shared/document-flow-events'
+import {
+  DEFAULT_DOCUMENT_RUN_CONFIG,
+  type DocumentRun,
+  type DocumentRunEvent,
+  type DocumentRunItem,
+  type DocumentRunItemDraft,
+  type SessionFinalMessage
+} from '@shared/types/document-flow'
+import type { KanbanTicketBatchCreateItem } from '../../db/types'
+import type { CreateFromBranchParams, WorktreeResult } from '../worktree-ops'
+import type { DocumentFlowDb, DocumentRunItemRowPatch, DocumentRunRowPatch } from './db-port'
+import {
+  DocumentFlowService,
+  type DocumentFlowGenerate,
+  type DocumentFlowProject,
+  type DocumentFlowServiceDeps,
+  type DocumentFlowWorktree
+} from './document-flow-service'
+
+// Test support for the document-flow suites: an in-memory DocumentFlowDb that behaves like the
+// SQLite one where the service can tell the difference, throwaway git repositories, and a
+// service wired to fakes. Suites that import this must mock '../logger' themselves.
+
+export interface FakeDocumentFlowDb extends DocumentFlowDb {
+  readonly runs: Map<string, DocumentRun>
+  readonly items: Map<string, DocumentRunItem>
+  readonly events: DocumentRunEvent[]
+  readonly finalMessages: Map<string, SessionFinalMessage>
+}
+
+const copy = <T>(value: T): T => structuredClone(value)
+
+/** `undefined` means "absent", like the real patch methods. */
+const definedEntries = (patch: object): [string, unknown][] =>
+  Object.entries(patch).filter(([, value]) => value !== undefined)
+
+export function createFakeDocumentFlowDb(): FakeDocumentFlowDb {
+  const runs = new Map<string, DocumentRun>()
+  const items = new Map<string, DocumentRunItem>()
+  const events: DocumentRunEvent[] = []
+  const finalMessages = new Map<string, SessionFinalMessage>()
+  let nextEventId = 1
+  const nowIso = (): string => new Date().toISOString()
+
+  const itemsOf = (runId: string): DocumentRunItem[] =>
+    [...items.values()]
+      .filter((item) => item.run_id === runId)
+      .sort((a, b) => a.position - b.position)
+
+  return {
+    runs,
+    items,
+    events,
+    finalMessages,
+
+    createDocumentRun(data) {
+      const now = nowIso()
+      const run: DocumentRun = {
+        id: data.id,
+        project_id: data.project_id,
+        title: data.title,
+        source_path: data.source_path,
+        run_dir: data.run_dir,
+        document_path: data.document_path ?? null,
+        status: data.status,
+        error: null,
+        config: copy(data.config),
+        extraction: null,
+        base_branch: null,
+        base_sha: null,
+        integration_branch: null,
+        integration_worktree_id: null,
+        integration_worktree_path: null,
+        report: null,
+        runner_client_id: null,
+        runner_heartbeat_at: null,
+        created_at: now,
+        updated_at: now,
+        started_at: null,
+        finished_at: null
+      }
+      runs.set(run.id, run)
+      return copy(run)
+    },
+
+    getDocumentRun(id) {
+      const run = runs.get(id)
+      return run ? copy(run) : null
+    },
+
+    listDocumentRuns(projectId, limit = 50) {
+      return [...runs.values()]
+        .filter((run) => !projectId || run.project_id === projectId)
+        .sort((a, b) => b.created_at.localeCompare(a.created_at))
+        .slice(0, limit)
+        .map(copy)
+    },
+
+    updateDocumentRun(id, patch) {
+      const run = runs.get(id)
+      if (!run) return null
+      const entries = definedEntries(patch)
+      if (entries.length > 0) {
+        Object.assign(run, copy(Object.fromEntries(entries)), { updated_at: nowIso() })
+      }
+      return copy(run)
+    },
+
+    deleteDocumentRun(id) {
+      for (const item of itemsOf(id)) items.delete(item.id)
+      for (let index = events.length - 1; index >= 0; index--) {
+        if (events[index].run_id === id) events.splice(index, 1)
+      }
+      return runs.delete(id)
+    },
+
+    replaceDocumentRunItems(runId, drafts) {
+      if (drafts.length > 0 && !runs.has(runId)) throw new Error('FOREIGN KEY constraint failed')
+      for (const item of itemsOf(runId)) items.delete(item.id)
+      const now = nowIso()
+      drafts.forEach((draft, position) => {
+        const item: DocumentRunItem = {
+          id: randomUUID(),
+          run_id: runId,
+          key: draft.key,
+          position,
+          title: draft.title,
+          summary: draft.summary,
+          description: draft.description,
+          kind: draft.kind,
+          depends_on: [...draft.depends_on],
+          has_migration: draft.has_migration,
+          size: draft.size,
+          conflict_risk: draft.conflict_risk,
+          doc_status: draft.doc_status,
+          selected: draft.selected,
+          figures: copy(draft.figures),
+          open_questions: [...draft.open_questions],
+          launch_config: draft.launch_config ? copy(draft.launch_config) : null,
+          status: 'pending',
+          status_detail: null,
+          ticket_id: null,
+          worktree_id: null,
+          session_id: null,
+          fix_ticket_id: null,
+          fix_session_id: null,
+          branch_name: null,
+          verdict: null,
+          nudge_count: 0,
+          conflict_attempts: 0,
+          conflict_head: null,
+          fix_attempts: 0,
+          continue_attempts: 0,
+          pre_merge_sha: null,
+          merge_sha: null,
+          last_prompt_at: null,
+          last_checked_at: null,
+          retry_at: null,
+          created_at: now,
+          updated_at: now,
+          started_at: null,
+          finished_at: null
+        }
+        items.set(item.id, item)
+      })
+      return itemsOf(runId).map(copy)
+    },
+
+    getDocumentRunItems(runId) {
+      return itemsOf(runId).map(copy)
+    },
+
+    getDocumentRunItem(id) {
+      const item = items.get(id)
+      return item ? copy(item) : null
+    },
+
+    updateDocumentRunItem(id, patch) {
+      const item = items.get(id)
+      if (!item) return null
+      const entries = definedEntries(patch)
+      if (entries.length > 0) {
+        Object.assign(item, copy(Object.fromEntries(entries)), { updated_at: nowIso() })
+      }
+      return copy(item)
+    },
+
+    appendDocumentRunEvent(data) {
+      if (!runs.has(data.run_id)) throw new Error('FOREIGN KEY constraint failed')
+      const event: DocumentRunEvent = {
+        id: nextEventId++,
+        run_id: data.run_id,
+        item_id: data.item_id ?? null,
+        at: nowIso(),
+        type: data.type,
+        message: data.message,
+        // Stored as JSON: what comes back is the round trip.
+        data: data.data === undefined ? null : (JSON.parse(JSON.stringify(data.data)) ?? null)
+      }
+      events.push(event)
+      return copy(event)
+    },
+
+    listDocumentRunEvents(runId, limit = 200, type) {
+      return events
+        .filter((event) => event.run_id === runId && (type === undefined || event.type === type))
+        .slice(-limit)
+        .map(copy)
+    },
+
+    claimDocumentRunRunner(runId, clientId, nowIsoValue, staleBeforeIso) {
+      const run = runs.get(runId)
+      if (!run) return { owned: false, ownerClientId: null }
+      const free =
+        run.runner_client_id === null ||
+        run.runner_client_id === clientId ||
+        run.runner_heartbeat_at === null ||
+        run.runner_heartbeat_at < staleBeforeIso
+      if (free) {
+        run.runner_client_id = clientId
+        run.runner_heartbeat_at = nowIsoValue
+      }
+      return { owned: run.runner_client_id === clientId, ownerClientId: run.runner_client_id }
+    },
+
+    upsertSessionFinalMessage(data) {
+      const previous = finalMessages.get(data.session_id)
+      finalMessages.set(data.session_id, {
+        session_id: data.session_id,
+        state: data.state ?? 'ended',
+        text: data.text ?? previous?.text ?? '',
+        completion: data.completion ?? null,
+        api_error: data.api_error ?? null,
+        hook_event: data.hook_event,
+        detail: data.detail ?? null,
+        updated_at: nowIso()
+      })
+    },
+
+    getSessionFinalMessage(sessionId) {
+      const message = finalMessages.get(sessionId)
+      return message ? copy(message) : null
+    },
+
+    deleteSessionFinalMessage(sessionId) {
+      finalMessages.delete(sessionId)
+    }
+  }
+}
+
+/**
+ * Point git at an empty global config for the calling process (and so for every git the code
+ * under test spawns): a developer's signing, hooks or default-branch settings must not decide
+ * whether a test passes. Returns the undo.
+ */
+export function isolateGitConfig(): () => void {
+  const overrides: Record<string, string> = {
+    GIT_CONFIG_GLOBAL: devNull,
+    GIT_CONFIG_NOSYSTEM: '1',
+    GIT_AUTHOR_NAME: 'Document Flow Test',
+    GIT_AUTHOR_EMAIL: 'document-flow@example.test',
+    GIT_COMMITTER_NAME: 'Document Flow Test',
+    GIT_COMMITTER_EMAIL: 'document-flow@example.test'
+  }
+  const previous = Object.keys(overrides).map((key) => [key, process.env[key]] as const)
+  Object.assign(process.env, overrides)
+  return () => {
+    for (const [key, value] of previous) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+  }
+}
+
+export interface TestRepo {
+  /** Temp directory holding the project and its worktrees. */
+  root: string
+  /** The main checkout, on `main`, with one base commit. */
+  projectPath: string
+  baseSha: string
+  git: (cwd: string, ...args: string[]) => string
+  /** Write `files` (path → content) under `cwd` without committing. */
+  write: (cwd: string, files: Record<string, string>) => void
+  /** Write `files` and commit them; returns the commit. */
+  commit: (cwd: string, message: string, files: Record<string, string>) => string
+  /** `git worktree add -b <branch> <root>/worktrees/<branch> <from>`; returns the path. */
+  addWorktree: (branch: string, from: string) => string
+  cleanup: () => void
+}
+
+/** A throwaway repository under the OS temp directory. Call `isolateGitConfig()` first. */
+export function createTestRepo(): TestRepo {
+  // macOS hands out a symlinked temp path, and git reports real ones.
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'docflow-repo-')))
+  const projectPath = join(root, 'project')
+  mkdirSync(projectPath)
+
+  const git = (cwd: string, ...args: string[]): string =>
+    execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+
+  const write = (cwd: string, files: Record<string, string>): void => {
+    for (const [file, content] of Object.entries(files)) {
+      mkdirSync(dirname(join(cwd, file)), { recursive: true })
+      writeFileSync(join(cwd, file), content)
+    }
+  }
+
+  const commit = (cwd: string, message: string, files: Record<string, string>): string => {
+    write(cwd, files)
+    git(cwd, 'add', '-A')
+    git(cwd, 'commit', '-m', message)
+    return git(cwd, 'rev-parse', 'HEAD')
+  }
+
+  git(projectPath, 'init', '-b', 'main')
+  const baseSha = commit(projectPath, 'base', {
+    'README.md': '# project\n',
+    'src/app.ts': 'export const app = 1\n',
+    'src/shared.ts': 'export const shared = "base"\n'
+  })
+
+  return {
+    root,
+    projectPath,
+    baseSha,
+    git,
+    write,
+    commit,
+    addWorktree: (branch, from) => {
+      const path = join(root, 'worktrees', branch)
+      git(projectPath, 'worktree', 'add', '-b', branch, path, from)
+      return path
+    },
+    cleanup: () => rmSync(root, { recursive: true, force: true })
+  }
+}
+
+export const TEST_PROJECT_ID = 'project-1'
+
+export interface ServiceHarness {
+  service: DocumentFlowService
+  db: FakeDocumentFlowDb
+  /** Every event handed to `publish`, in order. */
+  published: DocumentFlowUpdatedEvent[]
+  /** Replies the fake model gives, first in first out; an Error is thrown instead. */
+  replies: (string | null | Error)[]
+  generateCalls: {
+    prompt: string
+    systemPrompt: string
+    provider: Parameters<DocumentFlowGenerate>[2]
+    options: Parameters<DocumentFlowGenerate>[3]
+  }[]
+  projects: Map<string, DocumentFlowProject>
+  worktrees: Map<string, DocumentFlowWorktree>
+  worktreeRequests: CreateFromBranchParams[]
+  ticketBatches: { projectId: string; drafts: KanbanTicketBatchCreateItem[] }[]
+  ticketLinks: { projectId: string; dependent: string; blocker: string }[]
+  /** Scratch directory: holds the run directories and stands in for the home directory. */
+  scratch: string
+  runsRoot: string
+  /** How many tasks were handed to `detach`. */
+  detachCount: () => number
+  /** Replace a collaborator for the rest of the test; the harness's own fake is used otherwise. */
+  overrides: Partial<OverridableDeps>
+  cleanup: () => void
+}
+
+type OverridableDeps = Required<
+  Pick<
+    DocumentFlowServiceDeps,
+    | 'generate'
+    | 'getWorktree'
+    | 'getDefaultBranch'
+    | 'getAppStartedAt'
+    | 'createWorktreeFromBranch'
+    | 'createTickets'
+    | 'addTicketDependency'
+    | 'resolveFinalMessage'
+    | 'runVerify'
+    | 'detach'
+    | 'now'
+  >
+>
+
+/**
+ * A service wired to fakes. With `repo`, the project is that repository and integration
+ * worktrees are really created in it (`git worktree add -b <hint> … <baseRef>`). A test swaps a
+ * collaborator through `overrides`.
+ */
+export function createServiceHarness(options: { repo?: TestRepo } = {}): ServiceHarness {
+  const { repo } = options
+  const db = createFakeDocumentFlowDb()
+  const overrides: Partial<OverridableDeps> = {}
+  const published: DocumentFlowUpdatedEvent[] = []
+  const replies: ServiceHarness['replies'] = []
+  const generateCalls: ServiceHarness['generateCalls'] = []
+  const projects = new Map<string, DocumentFlowProject>()
+  const worktrees = new Map<string, DocumentFlowWorktree>()
+  const worktreeRequests: CreateFromBranchParams[] = []
+  const ticketBatches: ServiceHarness['ticketBatches'] = []
+  const ticketLinks: ServiceHarness['ticketLinks'] = []
+  const scratch = realpathSync(mkdtempSync(join(tmpdir(), 'docflow-service-')))
+  const runsRoot = join(scratch, 'document-runs')
+  let detached = 0
+  let ticketCount = 0
+
+  projects.set(TEST_PROJECT_ID, {
+    id: TEST_PROJECT_ID,
+    name: 'project',
+    path: repo?.projectPath ?? join(scratch, 'project'),
+    kind: 'git'
+  })
+
+  const fakes: OverridableDeps = {
+    generate: async (prompt, systemPrompt, provider, generateOptions) => {
+      generateCalls.push({ prompt, systemPrompt, provider, options: generateOptions })
+      const reply = replies.shift()
+      if (reply instanceof Error) throw reply
+      return reply ?? null
+    },
+    getWorktree: (worktreeId) => worktrees.get(worktreeId) ?? null,
+    getDefaultBranch: async () => 'main',
+    getAppStartedAt: () => null,
+    createWorktreeFromBranch: async (params): Promise<WorktreeResult> => {
+      worktreeRequests.push(params)
+      if (!repo) return { success: false, error: 'This test has no repository.' }
+      let branch = params.nameHint ?? 'worktree'
+      for (let suffix = 2; worktrees.has(`wt-${branch}`); suffix++) {
+        branch = `${params.nameHint}-${suffix}`
+      }
+      const path = repo.addWorktree(branch, params.baseRef ?? params.branchName)
+      const worktree = { id: `wt-${branch}`, path, branch_name: branch }
+      worktrees.set(worktree.id, worktree)
+      return { success: true, worktree: worktree as WorktreeResult['worktree'] }
+    },
+    createTickets: async (projectId, drafts) => {
+      ticketBatches.push({ projectId, drafts })
+      return { tickets: drafts.map(() => ({ id: `ticket-${++ticketCount}` })) }
+    },
+    addTicketDependency: async (projectId, dependent, blocker) => {
+      ticketLinks.push({ projectId, dependent, blocker })
+    },
+    resolveFinalMessage: async () => null,
+    runVerify: async () => ({ exitCode: 0, timedOut: false, output: '', durationMs: 1 }),
+    detach: (task) => task(),
+    now: () => new Date()
+  }
+  const service = new DocumentFlowService({
+    db,
+    publish: (event) => published.push(event),
+    generate: (...args) => (overrides.generate ?? fakes.generate)(...args),
+    getProject: (projectId) => projects.get(projectId) ?? null,
+    getWorktree: (...args) => (overrides.getWorktree ?? fakes.getWorktree)(...args),
+    getDefaultBranch: (...args) => (overrides.getDefaultBranch ?? fakes.getDefaultBranch)(...args),
+    getAppStartedAt: () => (overrides.getAppStartedAt ?? fakes.getAppStartedAt)(),
+    createWorktreeFromBranch: (...args) =>
+      (overrides.createWorktreeFromBranch ?? fakes.createWorktreeFromBranch)(...args),
+    createTickets: (...args) => (overrides.createTickets ?? fakes.createTickets)(...args),
+    addTicketDependency: (...args) =>
+      (overrides.addTicketDependency ?? fakes.addTicketDependency)(...args),
+    resolveFinalMessage: (...args) =>
+      (overrides.resolveFinalMessage ?? fakes.resolveFinalMessage)(...args),
+    runVerify: (...args) => (overrides.runVerify ?? fakes.runVerify)(...args),
+    detach: (task) => {
+      detached++
+      return (overrides.detach ?? fakes.detach)(task)
+    },
+    now: () => (overrides.now ?? fakes.now)(),
+    runsRoot,
+    homeDir: scratch
+  })
+
+  return {
+    service,
+    db,
+    published,
+    replies,
+    generateCalls,
+    projects,
+    worktrees,
+    worktreeRequests,
+    ticketBatches,
+    ticketLinks,
+    scratch,
+    runsRoot,
+    detachCount: () => detached,
+    overrides,
+    cleanup: () => rmSync(scratch, { recursive: true, force: true })
+  }
+}
+
+let seededRuns = 0
+
+/** A stored run with items, without going through extraction. Items default to `A1`, `A2`, … */
+export function seedRun(
+  harness: Pick<ServiceHarness, 'db' | 'runsRoot'>,
+  options: {
+    run?: DocumentRunRowPatch & { project_id?: string; source_path?: string }
+    items?: (Partial<DocumentRunItemDraft> & DocumentRunItemRowPatch)[]
+  } = {}
+): { run: DocumentRun; items: DocumentRunItem[] } {
+  const { db } = harness
+  const id = `run-${++seededRuns}`
+  const { project_id, source_path, ...runPatch } = options.run ?? {}
+  db.createDocumentRun({
+    id,
+    project_id: project_id ?? TEST_PROJECT_ID,
+    title: 'Factory spec',
+    source_path: source_path ?? '/specs/factory.html',
+    run_dir: join(harness.runsRoot, id),
+    status: 'preview',
+    config: { ...DEFAULT_DOCUMENT_RUN_CONFIG }
+  })
+  db.updateDocumentRun(id, runPatch)
+
+  const drafts = (options.items ?? []).map((item, index): DocumentRunItemDraft => ({
+    key: item.key ?? `A${index + 1}`,
+    title: item.title ?? `Task ${index + 1}`,
+    summary: item.summary ?? `Summary ${index + 1}`,
+    description: item.description ?? `Implement task ${index + 1}.`,
+    kind: item.kind ?? 'feature',
+    depends_on: item.depends_on ?? [],
+    has_migration: item.has_migration ?? false,
+    size: item.size ?? 'M',
+    conflict_risk: item.conflict_risk ?? 'low',
+    doc_status: item.doc_status ?? 'open',
+    selected: item.selected ?? true,
+    figures: item.figures ?? [],
+    open_questions: item.open_questions ?? [],
+    launch_config: item.launch_config ?? null
+  }))
+  const created = db.replaceDocumentRunItems(id, drafts)
+  // Whatever is not part of a draft (status, session, merge bookkeeping) is patched on top.
+  created.forEach((item, index) => db.updateDocumentRunItem(item.id, options.items?.[index] ?? {}))
+
+  const run = db.getDocumentRun(id)
+  if (!run) throw new Error('seedRun: the run was not stored')
+  return { run, items: db.getDocumentRunItems(id) }
+}

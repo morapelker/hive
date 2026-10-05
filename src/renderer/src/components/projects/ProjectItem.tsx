@@ -13,7 +13,8 @@ import {
   Settings,
   GitBranch,
   FolderHeart,
-  Sparkles
+  Sparkles,
+  FileText
 } from 'lucide-react'
 import type { ProjectShellCommand } from '@shared/lib/shell-commands'
 import { toast } from '@/lib/toast'
@@ -50,6 +51,7 @@ import {
   useVimModeStore,
   useSettingsStore
 } from '@/stores'
+import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import { HintBadge } from '@/components/ui/HintBadge'
 import { WorktreeList, BranchPickerDialog } from '@/components/worktrees'
 import { ConnectionInstanceList } from './ConnectionInstanceList'
@@ -681,6 +683,13 @@ export const ProjectItem = memo(function ProjectItem({
                   <ContextMenuItem onClick={() => setBranchPickerOpen(true)}>
                     <GitBranch className="h-4 w-4 mr-2" />
                     New Workspace From...
+                  </ContextMenuItem>
+                  <ContextMenuItem
+                    data-testid="docflow-project-menu-item"
+                    onClick={() => useDocumentFlowStore.getState().openWizard(project.id)}
+                  >
+                    <FileText className="h-4 w-4 mr-2" />
+                    Implement Document…
                   </ContextMenuItem>
                   <ContextMenuItem
                     onClick={() => useProjectStore.getState().openProjectSettings(project.id)}

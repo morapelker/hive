@@ -242,6 +242,7 @@ import {
   setDesktopBackendOpenCodeSessionInfoHandler,
   setDesktopBackendOpenCodeSteerHandler,
   setDesktopBackendOpenCodeUndoHandler,
+  APP_STARTED_AT,
   startDesktopBackend,
   waitForBackendReady
 } from './backend-manager'
@@ -365,6 +366,50 @@ describe('desktop backend manager', () => {
       `${backend.config.httpBaseUrl}/.well-known/hive/environment`
     )
     expect(getDesktopBackendBootstrap()).toEqual(backend.bootstrap)
+  })
+
+  it("hands the backend this instance's start time, the same again after a restart", async () => {
+    const first = new FakeChildProcess()
+    const second = new FakeChildProcess()
+    const queue = [first, second]
+    const spawnProcess = vi.fn(() => queue.shift() as never)
+    // Several app instances share the database: the stamp travels with the child's environment,
+    // not through a setting, and its value is this process's start, not the child's.
+    vi.stubEnv('HIVE_APP_STARTED_AT', '1999-01-01T00:00:00.000Z')
+
+    const backend = await startDesktopBackend(
+      {
+        executablePath: '/electron',
+        entryPath: '/app/server.js',
+        cwd: '/app',
+        baseDir: mkdtempSync(join(tmpdir(), 'hive-backend-manager-')),
+        port: 0,
+        restartLimit: 1
+      },
+      {
+        spawnProcess,
+        fetch: vi.fn(async () => new Response('{}', { status: 200 })),
+        logger: makeLogger(),
+        setTimeout: ((callback: () => void) => {
+          callback()
+          return 0
+        }) as unknown as typeof setTimeout
+      }
+    )
+    // The child died on its own: the replacement sees the same start time.
+    first.emit('exit', 1, null)
+    await backend.stop()
+    expect(second.kill).toHaveBeenCalledWith('SIGTERM')
+
+    expect(new Date(APP_STARTED_AT).toISOString()).toBe(APP_STARTED_AT)
+    expect(spawnProcess).toHaveBeenCalledTimes(2)
+    for (const call of spawnProcess.mock.calls as unknown as [
+      string,
+      string[],
+      { env: NodeJS.ProcessEnv }
+    ][]) {
+      expect(call[2].env.HIVE_APP_STARTED_AT).toBe(APP_STARTED_AT)
+    }
   })
 
   it('uses an explicit desktop bootstrap token from the environment', async () => {

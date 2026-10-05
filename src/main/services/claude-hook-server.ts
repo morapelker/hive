@@ -57,6 +57,7 @@ import {
   type CodexCliHookBody
 } from './codex-cli-hook-adapter'
 import { normalizeCodexModelSlug } from './codex-models'
+import { recordSessionFinalMessage } from './document-flow/session-final-message-recorder'
 
 // Delay between replying to the ExitPlanMode PermissionRequest hook and
 // pressing "1" on the PTY: claude renders its plan dialog only after the hook
@@ -333,7 +334,10 @@ export function __resetClaudeCliSessionIdCaptureForTests(): void {
  * carries `session_id`, so the first one settles it. A claimed id (another
  * Hive session already owns it) is left alone, as the bridge does.
  */
-export function captureClaudeCliSessionId(hiveSessionId: string, hook: ParsedClaudeHook): void {
+export function captureClaudeCliSessionId(
+  hiveSessionId: string,
+  hook: ParsedClaudeHook
+): void {
   if (claudeSessionIdKnown.has(hiveSessionId)) return
   const claudeSessionId = hook.session_id
   if (typeof claudeSessionId !== 'string' || claudeSessionId.length === 0) return
@@ -370,7 +374,10 @@ export function captureClaudeCliSessionId(hiveSessionId: string, hook: ParsedCla
       claudeSessionId
     })
     void Promise.resolve(
-      publishDesktopBackendEvent(`terminal:claude-session-id:${hiveSessionId}`, claudeSessionId)
+      publishDesktopBackendEvent(
+        `terminal:claude-session-id:${hiveSessionId}`,
+        claudeSessionId
+      )
     ).catch(() => undefined)
   } catch (error) {
     log.warn('Failed to persist the Claude CLI session id from a hook', {
@@ -378,6 +385,48 @@ export function captureClaudeCliSessionId(hiveSessionId: string, hook: ParsedCla
       error: error instanceof Error ? error.message : String(error)
     })
   }
+}
+
+// Statuses a document run must learn about even when no window was watching: the agent
+// stopped for the user, or got back to work. Turn ends are recorded where the Stop hooks are
+// handled, together with the final message.
+const BLOCKED_STATUSES: ReadonlySet<SessionStatusType> = new Set<SessionStatusType>([
+  'answering',
+  'permission',
+  'plan_ready',
+  'command_approval'
+])
+const WORKING_STATUSES: ReadonlySet<SessionStatusType> = new Set<SessionStatusType>([
+  'working',
+  'planning'
+])
+const WORKING_HOOK_EVENT = 'Working'
+// What was last written per session, so working ⇄ planning and repeated blocks do not
+// touch the database; a 'completed' publish ends the sequence (its Stop records itself).
+const lastRecordedTurnState = new Map<string, string>()
+
+function recordSessionTurnState(payload: ClaudeCliStatusPayload): void {
+  const { sessionId, status } = payload
+  if (status === 'completed') {
+    lastRecordedTurnState.delete(sessionId)
+    return
+  }
+  const blocked = BLOCKED_STATUSES.has(status)
+  if (!blocked && !WORKING_STATUSES.has(status)) return
+  const hookEvent = blocked ? status : WORKING_HOOK_EVENT
+  // Only a permission's tool says something; a question's or plan's tool is the question itself.
+  const detail = status === 'permission' ? (payload.metadata?.toolName ?? null) : null
+  const key = `${hookEvent}\u0000${detail ?? ''}`
+  if (lastRecordedTurnState.get(sessionId) === key) return
+  lastRecordedTurnState.set(sessionId, key)
+  recordSessionFinalMessage({
+    session_id: sessionId,
+    state: blocked ? 'blocked' : 'working',
+    completion: null,
+    api_error: null,
+    hook_event: hookEvent,
+    detail
+  })
 }
 
 export function publishClaudeCliStatus(payload: ClaudeCliStatusPayload): void {
@@ -395,6 +444,7 @@ export function publishClaudeCliStatus(payload: ClaudeCliStatusPayload): void {
     )
   }
 
+  recordSessionTurnState(payload)
   lastStatusBySession.set(payload.sessionId, payload.status)
   for (const subscriber of statusSubscribers) {
     subscriber(payload)
@@ -598,12 +648,17 @@ function captureCodexCliSessionId(hiveSessionId: string, hook: ParsedClaudeHook)
     }
     db.updateSession(hiveSessionId, { claude_session_id: threadId })
     claudeSessionIdKnown.add(hiveSessionId)
-    log.info(hasStored ? 'Codex CLI session moved to a new thread' : 'Persisted Codex CLI thread id from a hook', {
-      sessionId: hiveSessionId,
-      threadId,
-      previous: hasStored ? stored : null,
-      source: typeof hook.source === 'string' ? hook.source : undefined
-    })
+    log.info(
+      hasStored
+        ? 'Codex CLI session moved to a new thread'
+        : 'Persisted Codex CLI thread id from a hook',
+      {
+        sessionId: hiveSessionId,
+        threadId,
+        previous: hasStored ? stored : null,
+        source: typeof hook.source === 'string' ? hook.source : undefined
+      }
+    )
     void Promise.resolve(
       publishDesktopBackendEvent(`terminal:claude-session-id:${hiveSessionId}`, threadId)
     ).catch(() => undefined)
@@ -718,9 +773,16 @@ function processCliHook(
       error: apiError.error,
       errorDetails: apiError.errorDetails
     })
-    void Promise.resolve(
-      publishDesktopBackendEvent(CLAUDE_CLI_API_ERROR_CHANNEL, apiError)
-    ).catch(() => undefined)
+    void Promise.resolve(publishDesktopBackendEvent(CLAUDE_CLI_API_ERROR_CHANNEL, apiError)).catch(
+      () => undefined
+    )
+    recordSessionFinalMessage({
+      session_id: route.sessionId,
+      text: apiError.lastAssistantMessage ?? '',
+      completion: null,
+      api_error: apiError.error,
+      hook_event: 'StopFailure'
+    })
   }
   // Background Task subagents can keep running after the main agent's
   // Stop fires; the tracker decides whether this Stop is truly final
@@ -736,6 +798,19 @@ function processCliHook(
     // re-surfaces queued interactions as each one resolves.
     for (const payload of processClaudeCliHook(route.sessionId, body, mapped)) {
       publishClaudeCliStatus(payload)
+    }
+    // A passing main-agent Stop is the end of a turn (a deferred or subagent-scoped one is
+    // not). Its final message is kept so that whoever was not watching can still read it. A
+    // turn the user cut short (codex's Interrupt hook) is kept apart: it has nothing to judge.
+    if (body.hook_event_name === 'Stop' && !body.agent_id) {
+      const finalMessage = body.last_assistant_message ?? body.assistant_message
+      recordSessionFinalMessage({
+        session_id: route.sessionId,
+        text: typeof finalMessage === 'string' ? finalMessage : '',
+        completion: mapped?.metadata?.completion ?? null,
+        api_error: null,
+        hook_event: options.reason === 'user_interrupt' ? 'Interrupt' : 'Stop'
+      })
     }
     void handleClaudeCliHiveTelemetryHook(route.sessionId, body)
     // Mid-session model change (usage-limit/safety degrade, /model): the
@@ -922,6 +997,16 @@ export async function getClaudeHookServer(): Promise<{ port: number }> {
     publishClaudeCliStatus({
       ...payload,
       metadata: { ...payload.metadata, reason: 'deferred_completion_watchdog' }
+    })
+    // The turn ended without a Stop of its own: the deferred message is what the agent said
+    // before its subagents finished, not its last word. An empty text sends whoever judges
+    // the turn to the transcript instead of the previous turn's recorded message.
+    recordSessionFinalMessage({
+      session_id: sessionId,
+      text: '',
+      completion: payload.metadata?.completion ?? null,
+      api_error: null,
+      hook_event: 'Stop'
     })
     cliHookTransportRouter.notifySessionIdle(sessionId, lastAssistantMessage)
     return true

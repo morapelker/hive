@@ -21,6 +21,7 @@ import {
   Upload,
   Download,
   RefreshCw,
+  FileText,
   ChevronRight,
   type LucideIcon
 } from 'lucide-react'
@@ -48,6 +49,7 @@ const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
   Upload,
   Download,
   RefreshCw,
+  FileText,
   KanbanIcon
 }
 

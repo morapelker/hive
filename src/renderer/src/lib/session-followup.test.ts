@@ -32,7 +32,7 @@ vi.mock('@/lib/hive-enterprise-telemetry', async (importOriginal) => ({
   startHivePromptTelemetry: mocks.startHivePromptTelemetry
 }))
 
-import { CONTINUE_PROMPT, continueTicketSession } from './session-followup'
+import { CONTINUE_PROMPT, continueTicketSession, sendFollowupToSession } from './session-followup'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
@@ -196,5 +196,53 @@ describe('continueTicketSession', () => {
     expect(mocks.terminalApi.sendClaudeCliPrompt).not.toHaveBeenCalled()
     expect(mocks.opencodeApi.prompt).not.toHaveBeenCalled()
     expect(mocks.toast.error).toHaveBeenCalled()
+  })
+})
+
+describe('sendFollowupToSession', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.opencodeApi.reconnect.mockResolvedValue({ success: true, value: { success: true } })
+    mocks.opencodeApi.prompt.mockResolvedValue({ success: true, value: { success: true } })
+    mocks.dbApi.worktree.get.mockResolvedValue(null)
+    useWorktreeStore.setState({
+      worktreesByProject: new Map([['project-1', [worktree]]])
+    } as Partial<ReturnType<typeof useWorktreeStore.getState>>)
+    useWorktreeStatusStore.setState({ sessionStatuses: {}, sessionApiErrors: {} })
+    seedSession(makeSession({ agent_sdk: 'claude-code', opencode_session_id: 'opc-1' }))
+  })
+
+  afterEach(() => {
+    useSessionStore.setState({
+      sessionsByWorktree: new Map(),
+      sessionsByConnection: new Map()
+    } as Partial<ReturnType<typeof useSessionStore.getState>>)
+  })
+
+  it('applies the mode default model unless asked to keep the session model', async () => {
+    await sendFollowupToSession({
+      sessionId: 'session-1',
+      prompt: 'continue',
+      followUpMode: 'build',
+      ticketId: 'ticket-1'
+    })
+    expect(setSessionMode).toHaveBeenLastCalledWith('session-1', 'build', undefined)
+
+    await sendFollowupToSession({
+      sessionId: 'session-1',
+      prompt: 'continue',
+      followUpMode: 'build',
+      ticketId: 'ticket-1',
+      preserveSessionModel: true
+    })
+    expect(setSessionMode).toHaveBeenLastCalledWith('session-1', 'build', {
+      applyModeDefault: false
+    })
+    expect(mocks.opencodeApi.prompt).toHaveBeenLastCalledWith(
+      '/repo/feature',
+      'opc-1',
+      [{ type: 'text', text: 'continue' }],
+      { providerID: 'anthropic', modelID: 'opus', variant: 'high' }
+    )
   })
 })

@@ -4,7 +4,8 @@ import { OPENCODE_STREAM_CHANNEL } from '@shared/opencode-events'
 import type { OpenCodeStreamEvent } from '@shared/types/opencode'
 import { getRendererRpcClient } from './rpc-client'
 
-type OpenCodeAgentSdk = 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'codex-cli' | 'terminal'
+type OpenCodeAgentSdk =
+  'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'codex-cli' | 'terminal'
 
 export type OpenCodeSetModelInput = {
   readonly providerID: string
@@ -236,6 +237,21 @@ const isOpenCodeStreamEvent = (value: unknown): value is RendererOpenCodeStreamE
   typeof value.sessionId === 'string' &&
   'data' in value
 
+// When the user last stopped each SDK session, by the opencode session id the abort RPC
+// carries. The idle that follows an abort reaches the status store as a plain completed,
+// indistinguishable from a finished turn; whoever acts on turn ends reads this to tell them
+// apart. Set by `abort` itself, so every Stop button in the app is covered.
+const abortTimes = new Map<string, number>()
+
+export function markSessionAborted(opencodeSessionId: string): void {
+  abortTimes.set(opencodeSessionId, Date.now())
+}
+
+/** When the user last stopped the session (epoch ms), or undefined if never in this page. */
+export function lastSessionAbortTime(opencodeSessionId: string): number | undefined {
+  return abortTimes.get(opencodeSessionId)
+}
+
 export const opencodeApi = {
   connect: async (
     worktreePath: string,
@@ -285,13 +301,16 @@ export const opencodeApi = {
   abort: async (
     worktreePath: string,
     opencodeSessionId: string
-  ): Promise<Envelope<OpenCodeAbortResult>> => ({
-    success: true,
-    value: await getRendererRpcClient().request<OpenCodeAbortResult>('opencodeOps.abort', {
-      worktreePath,
-      opencodeSessionId
-    })
-  }),
+  ): Promise<Envelope<OpenCodeAbortResult>> => {
+    markSessionAborted(opencodeSessionId)
+    return {
+      success: true,
+      value: await getRendererRpcClient().request<OpenCodeAbortResult>('opencodeOps.abort', {
+        worktreePath,
+        opencodeSessionId
+      })
+    }
+  },
   steer: async (
     worktreePath: string,
     opencodeSessionId: string,

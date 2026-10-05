@@ -205,6 +205,11 @@ export async function sendFollowupToSession(opts: {
    * newer sends) — don't overwrite them here.
    */
   skipSendBookkeeping?: boolean
+  /**
+   * Keep the model the session runs with instead of applying the mode's default
+   * model (an automated follow-up must not change what the user launched).
+   */
+  preserveSessionModel?: boolean
 }): Promise<void> {
   const result = await findSessionById(opts.sessionId)
   if (!result) {
@@ -224,8 +229,15 @@ export async function sendFollowupToSession(opts: {
   }
 
   // Set session mode so the agent SDK knows we're in plan mode (matches Tab toggle in SessionView).
-  // This updates modeBySession, persists to DB, and applies mode-specific default model.
-  await useSessionStore.getState().setSessionMode(opts.sessionId, opts.followUpMode)
+  // This updates modeBySession, persists to DB, and applies mode-specific default model
+  // unless the caller asked to keep the session's own.
+  await useSessionStore
+    .getState()
+    .setSessionMode(
+      opts.sessionId,
+      opts.followUpMode,
+      opts.preserveSessionModel ? { applyModeDefault: false } : undefined
+    )
 
   // Claude Code & Codex handle plan mode via the SDK — don't prepend the text prefix
   const skipPrefix = session.agent_sdk === 'claude-code' || session.agent_sdk === 'codex'

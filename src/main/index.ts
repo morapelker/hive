@@ -69,6 +69,9 @@ import {
 import { ghosttyService } from './services/ghostty-service'
 import { getGhosttyConfigPathOnce } from './services/ghostty-config-store'
 import { closeClaudeHookServer } from './services/claude-hook-server'
+import { agentEventBus } from './services/agent-event-bus'
+import { startSdkTurnRecorder } from './services/document-flow/sdk-turn-recorder'
+import { recordSessionFinalMessage } from './services/document-flow/session-final-message-recorder'
 import {
   closeClaudeApiProxy,
   dropClaudeApiProxyUpstreamSockets,
@@ -109,6 +112,7 @@ import {
   setDesktopBackendOpenCodeSessionInfoHandler,
   setDesktopBackendOpenCodeSteerHandler,
   setDesktopBackendOpenCodeUndoHandler,
+  APP_STARTED_AT,
   startDesktopBackend,
   stopDesktopBackend
 } from './desktop/backend-manager'
@@ -497,7 +501,9 @@ app
 
     // Initialize database
     log.info('Initializing database')
-    getDatabase()
+    // The server child gets this instance's start time in its environment; the setting is
+    // the fallback of a child that was not handed it (the database is shared by instances).
+    getDatabase().setSetting('app_started_at', APP_STARTED_AT)
 
     // Shell command runs left over from the previous app lifetime: finalize the ones
     // that finished or died, re-adopt detached ones that are still running.
@@ -575,6 +581,12 @@ app
 
     const databaseService = getDatabase()
     telegramForwardingService.initialize({ db: databaseService, sdkManager })
+    // Document runs resumed after a reload learn from this that an SDK session's turn ended.
+    startSdkTurnRecorder({
+      subscribe: (listener) => agentEventBus.subscribe(listener),
+      getSessionSdk: (sessionId) => databaseService.getSession(sessionId)?.agent_sdk,
+      record: recordSessionFinalMessage
+    })
 
     // Voice dictation (hotkey → local speech model → paste). Off until enabled in Settings.
     log.info('Initializing voice dictation')

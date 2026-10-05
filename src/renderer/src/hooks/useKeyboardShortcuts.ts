@@ -19,6 +19,7 @@ import { useShortcutStore } from '@/stores/useShortcutStore'
 import { useWorktreeStore, getOrderedProjectWorktrees } from '@/stores/useWorktreeStore'
 import { useScriptStore, fireRunScript, killRunScript } from '@/stores/useScriptStore'
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
+import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useTerminalTabStore } from '@/stores/useTerminalTabStore'
 import { useTerminalStore } from '@/stores/useTerminalStore'
@@ -406,6 +407,17 @@ function tryCloseOpenModal(): boolean {
     return true
   }
 
+  // Document run dashboard and "Implement document" wizard
+  const documentFlow = useDocumentFlowStore.getState()
+  if (documentFlow.dashboardRunId !== null) {
+    documentFlow.closeDashboard()
+    return true
+  }
+  if (documentFlow.wizard.open) {
+    documentFlow.closeWizard()
+    return true
+  }
+
   // Session history panel
   if (useSessionHistoryStore.getState().isOpen) {
     useSessionHistoryStore.getState().closePanel()
@@ -461,6 +473,11 @@ export function useKeyboardShortcuts(): void {
       // but allow Ctrl+Tab through for terminal tab cycling.
       const isXtermFocused = target.closest?.('.xterm') !== null
 
+      // The document-flow dialogs are forms over whatever session is active behind them:
+      // Tab and Shift+Tab move focus between their fields and must never flip that
+      // session's mode (which, for a CLI session, writes into its PTY).
+      const inDocflowDialog = !!target.closest?.('[data-docflow-dialog]')
+
       // Ctrl+[ is the Escape equivalent in terminals (and Vim), and Ctrl+] is
       // Vim's "jump to tag/definition". Never intercept them while the
       // terminal is focused, even though meta-modifier bindings also match
@@ -479,7 +496,7 @@ export function useKeyboardShortcuts(): void {
         if (isInputFocused && !allowInInput) continue
         if (isXtermFocused && binding.modifiers.length === 0) continue
         if (
-          isXtermFocused &&
+          (isXtermFocused || inDocflowDialog) &&
           binding.key?.toLowerCase() === 'tab' &&
           !binding.modifiers.includes('ctrl')
         )

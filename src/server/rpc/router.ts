@@ -41,6 +41,11 @@ import {
   type DiscordOpsRpcService
 } from './domains/discord-ops'
 import {
+  makeDocumentFlowRpcHandlers,
+  makeLiveDocumentFlowRpcService,
+  type DocumentFlowRpcService
+} from './domains/document-flow'
+import {
   makeLivePetOpsRpcService,
   makePetOpsRpcHandlers,
   type PetOpsRpcService
@@ -178,6 +183,7 @@ export interface RpcContext {
   readonly cliToolsOps?: CliToolsOpsRpcService
   readonly db?: DbRpcService
   readonly discordOps?: DiscordOpsRpcService
+  readonly documentFlow?: DocumentFlowRpcService
   readonly favoriteTickets?: FavoriteTicketsRpcService
   readonly fileOps?: FileOpsRpcService
   readonly fileTreeOps?: FileTreeOpsRpcService
@@ -242,6 +248,9 @@ const makeDefaultRpcHandlers = (context: RpcContext): ReadonlyMap<string, RpcHan
     ),
     ...makeDiscordOpsRpcHandlers(
       context.discordOps ?? makeLiveDiscordOpsRpcService(context.eventBus)
+    ),
+    ...makeDocumentFlowRpcHandlers(
+      context.documentFlow ?? makeLiveDocumentFlowRpcService(context.eventBus)
     ),
     ...makeFavoriteTicketsRpcHandlers(
       context.favoriteTickets ?? makeLiveFavoriteTicketsRpcService()

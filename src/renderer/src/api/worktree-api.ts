@@ -45,6 +45,10 @@ type WorktreeCreateFromBranchParams = WorktreeCreateParams & {
   branchName: string
   prNumber?: number
   nameHint?: string
+  /** Overrides the "auto-pull before worktree" setting for this one creation. */
+  autoPull?: boolean
+  /** Cut the new branch from this ref even when `branchName` is checked out elsewhere. */
+  baseRef?: string
 }
 
 type WorktreeDeleteParams = {
@@ -152,7 +156,9 @@ export const worktreeApi = {
       projectName: params.projectName,
       branchName: params.branchName,
       ...(params.prNumber === undefined ? {} : { prNumber: params.prNumber }),
-      ...(params.nameHint === undefined ? {} : { nameHint: params.nameHint })
+      ...(params.nameHint === undefined ? {} : { nameHint: params.nameHint }),
+      ...(params.autoPull === undefined ? {} : { autoPull: params.autoPull }),
+      ...(params.baseRef === undefined ? {} : { baseRef: params.baseRef })
     }),
   delete: async (params: WorktreeDeleteParams): Promise<WorktreeMutationResult> =>
     getRendererRpcClient().request<WorktreeMutationResult>('worktreeOps.delete', params),

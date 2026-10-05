@@ -97,6 +97,16 @@ describe('DatabaseService compaction', () => {
       new Date().toISOString()
     )
     db.pragma('foreign_keys = ON')
+    // The recorded turn ends have no foreign key: one of a live session, one left behind.
+    for (const sessionId of [activeSession.id, 'missing-session']) {
+      service.upsertSessionFinalMessage({
+        session_id: sessionId,
+        text: 'Done.',
+        completion: 'completed',
+        api_error: null,
+        hook_event: 'Stop'
+      })
+    }
 
     const preview = service.previewCompaction()
     expect(preview.orphaned.rows).toEqual({ messages: 1, activities: 1 })
@@ -114,6 +124,8 @@ describe('DatabaseService compaction', () => {
     expect(service.getSessionMessages(archivedSession.id)).toHaveLength(1)
     expect(service.getSessionActivities(activeSession.id)).toHaveLength(1)
     expect(service.getSessionActivities(archivedSession.id)).toHaveLength(1)
+    expect(service.getSessionFinalMessage(activeSession.id)).not.toBeNull()
+    expect(service.getSessionFinalMessage('missing-session')).toBeNull()
 
     const secondPreview = service.previewCompaction()
     expect(secondPreview.orphaned.rows).toEqual({ messages: 0, activities: 0 })

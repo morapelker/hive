@@ -109,7 +109,9 @@ const createFromBranchParamsSchema = z
     projectName: z.string().min(1),
     branchName: z.string().min(1),
     prNumber: z.number().optional(),
-    nameHint: z.string().optional()
+    nameHint: z.string().optional(),
+    autoPull: z.boolean().optional(),
+    baseRef: z.string().min(1).optional()
   })
   .strict() satisfies z.ZodType<CreateFromBranchParams>
 

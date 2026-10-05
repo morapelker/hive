@@ -351,9 +351,12 @@ async function generateWithCodex(
 
   try {
     await writeFile(outputFile, '')
+    // One-shot generation runs read-only and often outside any repository (a temp directory,
+    // or no cwd at all); codex would otherwise refuse the directory before contacting a model.
     const args = [
       'exec',
       '--ephemeral',
+      '--skip-git-repo-check',
       '-s',
       'read-only',
       '--model',

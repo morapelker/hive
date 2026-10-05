@@ -104,6 +104,15 @@ interface WorktreeSelectionOptions {
   preservePinnedBoard?: boolean
 }
 
+export interface CreateWorktreeFromBranchOptions {
+  /** Overrides the "auto-pull before worktree" setting for this one creation. */
+  autoPull?: boolean
+  /** Cut the new branch from this ref even when the source branch is checked out elsewhere. */
+  baseRef?: string
+  /** false: a background creation — keep the user's selected worktree and open file tabs. */
+  select?: boolean
+}
+
 interface WorktreeState {
   // Data - keyed by project ID
   worktreesByProject: Map<string, Worktree[]>
@@ -161,7 +170,8 @@ interface WorktreeState {
     projectPath: string,
     projectName: string,
     branchName: string,
-    nameHint?: string
+    nameHint?: string,
+    options?: CreateWorktreeFromBranchOptions
   ) => Promise<{ success: boolean; worktree?: Worktree; error?: string }>
   duplicateWorktree: (
     projectId: string,
@@ -482,8 +492,10 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
     projectPath: string,
     projectName: string,
     branchName: string,
-    nameHint?: string
+    nameHint?: string,
+    options?: CreateWorktreeFromBranchOptions
   ) => {
+    const select = options?.select !== false
     set({ creatingForProjectId: projectId })
     try {
       const result = await worktreeApi.createFromBranch({
@@ -491,7 +503,9 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
         projectPath,
         projectName,
         branchName,
-        nameHint
+        nameHint,
+        ...(options?.autoPull === undefined ? {} : { autoPull: options.autoPull }),
+        ...(options?.baseRef === undefined ? {} : { baseRef: options.baseRef })
       })
 
       if (!result.success || !result.worktree) {
@@ -506,14 +520,14 @@ export const useWorktreeStore = create<WorktreeState>((set, get) => ({
         newMap.set(projectId, [result.worktree!, ...existing])
         return {
           worktreesByProject: newMap,
-          selectedWorktreeId: result.worktree!.id,
+          ...(select ? { selectedWorktreeId: result.worktree!.id } : {}),
           creatingForProjectId: null
         }
       })
       ensureProjectLoaded(projectId)
 
       // Clear file tabs from the previous worktree
-      useFileViewerStore.getState().closeAllFiles()
+      if (select) useFileViewerStore.getState().closeAllFiles()
 
       // Fire-and-forget: run setup script if configured
       fireSetupScript(projectId, result.worktree!.id, result.worktree!.path)
