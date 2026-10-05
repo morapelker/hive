@@ -109,18 +109,18 @@ describe('the card of a document run ticket', () => {
     expect(screen.getByTestId('kanban-docflow-run-marker-run-live')).toHaveTextContent(
       'Document run'
     )
-    // Verifying is the orchestrator's own step: in the bar, not among the running sessions.
+    // Verifying is the orchestrator's own step: not among the sessions at work.
     expect(screen.getByTestId('kanban-docflow-run-running-run-live')).toHaveTextContent(
-      /^2 running$/
+      /^2 working$/
     )
     expect(screen.getByTestId('kanban-docflow-run-progress-run-live')).toHaveTextContent(
       '1/5 merged'
     )
-    const bar = within(card()).getByTestId('docflow-progress-bar')
-    expect(within(bar).getByTestId('docflow-progress-merged')).toHaveStyle({ flexGrow: '1' })
-    expect(within(bar).getByTestId('docflow-progress-inProgress')).toHaveStyle({ flexGrow: '3' })
-    expect(within(bar).getByTestId('docflow-progress-pending')).toHaveStyle({ flexGrow: '1' })
-    expect(within(bar).queryByTestId('docflow-progress-attention')).toBeNull()
+    // One moving bar, like any ticket at work.
+    const bar = screen.getByTestId('kanban-docflow-run-bar-run-live')
+    expect(bar).toHaveAttribute('data-moving')
+    expect(within(bar).getByRole('progressbar')).toHaveAccessibleName('Agent is working')
+    expect(within(card()).queryByTestId('docflow-progress-bar')).toBeNull()
 
     const body = screen.getByTestId('kanban-docflow-run-run-live')
     expect(body).toHaveAttribute('data-phase', 'running')
@@ -147,12 +147,40 @@ describe('the card of a document run ticket', () => {
     )
     expect(card().className).toContain('!border-l-orange-500')
     expect(card().className).not.toContain('!border-l-blue-500/60')
+    // The count of those waiting takes the place of the count of those at work.
+    const label = screen.getByTestId('kanban-docflow-run-running-run-live')
+    expect(label).toHaveTextContent(/^1 waiting for answer$/)
+    expect(label.className).toContain('text-orange-500')
+    expect(
+      within(screen.getByTestId('kanban-docflow-run-bar-run-live')).getByRole('progressbar')
+    ).toHaveAccessibleName('Waiting for answer')
+    expect(screen.queryByTestId('kanban-docflow-run-needs-you-run-live')).toBeNull()
+  })
+
+  it('keeps "Needs you" on a paused run, whose label says it is paused', () => {
+    seedRuns(
+      makeDetail({ id: 'run-live', status: 'paused' }, [{ key: 'A1', status: 'needs_input' }])
+    )
+    render(<KanbanTicketCard ticket={makeTicket()} />)
+
+    expect(screen.getByTestId('kanban-docflow-run-running-run-live')).toHaveTextContent(/^Paused$/)
     expect(screen.getByTestId('kanban-docflow-run-needs-you-run-live')).toHaveTextContent(
       'Needs you'
     )
-    expect(screen.getByTestId('kanban-docflow-run-running-run-live')).toHaveTextContent(
-      '1 running'
-    )
+  })
+
+  it('wears the dragon, lit and animated only while In Progress', () => {
+    seedRuns(makeDetail({ id: 'run-live', status: 'running' }, [{ key: 'A1', status: 'running' }]))
+    const { rerender } = render(<KanbanTicketCard ticket={makeTicket()} />)
+
+    expect(within(card()).getByTestId('ticket-elite-dragon')).toHaveAttribute('data-active')
+    expect(card().className).toContain('ticket-elite-active')
+
+    rerender(<KanbanTicketCard ticket={makeTicket({ column: 'review' })} />)
+
+    // Elsewhere it is a card like any other, with the dragon in the border's gray.
+    expect(within(card()).getByTestId('ticket-elite-dragon')).not.toHaveAttribute('data-active')
+    expect(card().className).not.toContain('ticket-elite-active')
   })
 
   it('says a paused run is paused', () => {
@@ -170,6 +198,11 @@ describe('the card of a document run ticket', () => {
     expect(screen.getByTestId('kanban-docflow-run-progress-run-live')).toHaveTextContent(
       '1/2 merged'
     )
+    // A run that is not moving shows how far it got instead.
+    const bar = screen.getByTestId('kanban-docflow-run-bar-run-live')
+    expect(bar).not.toHaveAttribute('data-moving')
+    expect(bar).toHaveAttribute('aria-valuenow', '1')
+    expect(bar).toHaveAttribute('aria-valuemax', '2')
   })
 
   it('follows the run while it works and stays once it has finished', () => {
@@ -179,12 +212,12 @@ describe('the card of a document run ticket', () => {
     ])
     seedRuns(running)
     const { rerender } = render(<KanbanTicketCard ticket={makeTicket()} />)
-    expect(screen.getByTestId('kanban-docflow-run-running-run-live')).toHaveTextContent('2 running')
+    expect(screen.getByTestId('kanban-docflow-run-running-run-live')).toHaveTextContent('2 working')
 
     act(() => {
       useDocumentFlowStore.getState().applyItem({ ...running.items[1], status: 'merged' })
     })
-    expect(screen.getByTestId('kanban-docflow-run-running-run-live')).toHaveTextContent('1 running')
+    expect(screen.getByTestId('kanban-docflow-run-running-run-live')).toHaveTextContent('1 working')
     expect(screen.getByTestId('kanban-docflow-run-progress-run-live')).toHaveTextContent(
       '1/2 merged'
     )

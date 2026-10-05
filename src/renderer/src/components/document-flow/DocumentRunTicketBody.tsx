@@ -1,7 +1,7 @@
 import { CircleSlash, FileText, MessageCircleQuestion, Pause } from 'lucide-react'
 import { ticketPillClass } from '@/components/kanban/pill'
 import { cn } from '@/lib/utils'
-import { RunProgressBar } from './RunProgressBar'
+import { IndeterminateProgressBar } from '@/components/sessions/IndeterminateProgressBar'
 import type { RunBoardCardState } from './document-flow-ui'
 import type { DocumentRunTicketView } from './useDocumentRunTicket'
 
@@ -13,6 +13,14 @@ const LABEL_CLASSES: Record<RunBoardCardState['phase'], string> = {
   cancelled: 'text-muted-foreground'
 }
 
+// A run that is no longer moving shows how far it got: merged of total, in its phase's color
+const STILL_BAR_CLASSES: Record<Exclude<RunBoardCardState['phase'], 'running'>, string> = {
+  paused: 'bg-muted-foreground/40',
+  completed: 'bg-emerald-500',
+  issues: 'bg-amber-500',
+  cancelled: 'bg-muted-foreground/40'
+}
+
 interface DocumentRunTicketBodyProps {
   runId: string
   view: DocumentRunTicketView
@@ -20,7 +28,8 @@ interface DocumentRunTicketBodyProps {
 
 /**
  * The body of a run's ticket card, under the ticket's own title: the "Document run" marker,
- * the progress bar, the sessions at work (or how the run ended) and merged of total.
+ * one progress bar (moving while the run is on, like any ticket at work), the sessions at
+ * work or waiting for an answer (or how the run ended) and merged of total.
  */
 export function DocumentRunTicketBody({
   runId,
@@ -41,7 +50,8 @@ export function DocumentRunTicketBody({
           <FileText className="h-2.5 w-2.5" />
           Document run
         </span>
-        {state?.waitingOnUser && (
+        {/* A run at work says so in its label; a paused one's label is taken by "Paused" */}
+        {state?.waitingOnUser && state.paused && (
           <span
             className="ml-auto inline-flex shrink-0 items-center gap-1 text-[11px] font-medium text-orange-500"
             data-testid={`kanban-docflow-run-needs-you-${runId}`}
@@ -62,7 +72,29 @@ export function DocumentRunTicketBody({
       )}
       {state && (
         <>
-          <RunProgressBar segments={state.segments} className="mt-2" />
+          {state.phase === 'running' ? (
+            <div data-testid={`kanban-docflow-run-bar-${runId}`} data-moving="">
+              <IndeterminateProgressBar
+                mode="build"
+                isAsking={state.waitingOnUser}
+                className="mt-2 w-full"
+              />
+            </div>
+          ) : (
+            <div
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={state.total}
+              aria-valuenow={state.merged}
+              data-testid={`kanban-docflow-run-bar-${runId}`}
+              className="mt-2 h-[3px] overflow-hidden rounded-[2px] bg-[color-mix(in_srgb,var(--foreground)_8%,transparent)]"
+            >
+              <div
+                className={cn('h-full rounded-[2px]', STILL_BAR_CLASSES[state.phase])}
+                style={{ width: `${state.total > 0 ? (state.merged / state.total) * 100 : 0}%` }}
+              />
+            </div>
+          )}
           <div className="mt-1.5 flex items-center gap-1.5 text-[11px] tabular-nums">
             <span
               className={cn(

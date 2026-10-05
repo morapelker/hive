@@ -42,6 +42,7 @@ import {
   Hourglass
 } from 'lucide-react'
 import { CheckeredFlagIcon } from './CheckeredFlagIcon'
+import { EliteDragonIcon } from './EliteDragonIcon'
 import { HighlightedText } from './HighlightedText'
 import { ticketPillBaseClass, ticketPillClass } from './pill'
 import { TicketModelBadge } from './TicketModelBadge'
@@ -220,6 +221,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   const isDocumentRunTicket = documentRunId !== null
   const documentRunView = useDocumentRunTicket(documentRunId, ticket.column)
   const documentRunRailClass = documentRunView ? documentRunTicketRailClass(documentRunView) : null
+  const isEliteActive = isDocumentRunTicket && ticket.column === 'in_progress'
   const isExternalTicket = !!ticket.external_provider && !isDocumentRunTicket
 
   // Board search (Cmd+F): highlight title matches; when only the description
@@ -1499,6 +1501,17 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                 className={cn(
                   'group cursor-pointer rounded-md border bg-card px-2.5 pt-2.5 pb-2 transition-[border-color,background-color] duration-150',
                   'hover:border-muted-foreground/35',
+                  // Type cues: a shell command has a torn-receipt bottom edge, the ticket of
+                  // a document run (an orchestrator) wears the elite dragon
+                  isShellCommandTicket &&
+                    'ticket-jagged relative mb-1.5 rounded-b-none !border-b-transparent',
+                  isShellCommandTicket &&
+                    !hasHoverHighlight &&
+                    isError &&
+                    '[--ticket-jag-color:#ef4444b3]',
+                  isDocumentRunTicket && 'relative',
+                  // The elite frame lights up only while the run's ticket is at work
+                  isEliteActive && !hasHoverHighlight && !isError && 'ticket-elite-active !border-transparent',
                   isDragging && 'invisible',
                   isArchived && 'opacity-50 cursor-default',
                   (isBlocked || blockingDiagnostic) && 'opacity-60',
@@ -1524,8 +1537,20 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                   !isError && !isSidebarHoverHighlighted && ticket.mark === 'legendary' && 'border-l-2 !border-l-orange-500'
                 )}
               >
+            {isDocumentRunTicket && (
+              <EliteDragonIcon
+                active={isEliteActive}
+                className="pointer-events-none absolute -top-2.5 -right-1 h-[30px] w-[30px]"
+              />
+            )}
             {/* Title + top-right indicators */}
-            <div className="flex items-start justify-between gap-2">
+            <div
+              className={cn(
+                'flex items-start justify-between gap-2',
+                // Clear of the dragon on the corner
+                isDocumentRunTicket && 'pr-5'
+              )}
+            >
               {ticket.unread && (
                 <span
                   data-testid="ticket-unread-dot"

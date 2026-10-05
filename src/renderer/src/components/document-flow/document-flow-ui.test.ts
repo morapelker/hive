@@ -313,15 +313,11 @@ describe('runBoardCardState', () => {
       total: 6,
       running: 2,
       phase: 'running',
+      waiting: 0,
       waitingOnUser: false,
       paused: false,
-      label: '2 running'
+      label: '2 working'
     })
-    expect(state.segments.map((segment) => [segment.key, segment.count])).toEqual([
-      ['merged', 1],
-      ['inProgress', 4],
-      ['pending', 1]
-    ])
   })
 
   it('falls back to the file name of an untitled run', () => {
@@ -348,7 +344,9 @@ describe('runBoardCardState', () => {
     )
 
     expect(state.waitingOnUser).toBe(true)
+    expect(state.waiting).toBe(1)
     expect(state.running).toBe(1)
+    expect(state.label).toBe('1 waiting for answer')
   })
 
   it('does not wait on the user for a ticket left out of the run', () => {
@@ -373,7 +371,7 @@ describe('runBoardCardState', () => {
           { key: 'A2', status: 'pending' }
         ])
       )
-    ).toMatchObject({ paused: true, running: 1, label: 'Paused · 1 running' })
+    ).toMatchObject({ paused: true, running: 1, label: 'Paused · 1 working' })
   })
 
   it('says a completed run is ready to merge into its base branch, until its ticket moved on', () => {

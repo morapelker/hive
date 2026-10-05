@@ -296,16 +296,17 @@ export type RunBoardCardPhase = 'running' | 'paused' | 'completed' | 'issues' | 
 export interface RunBoardCardState {
   title: string
   phase: RunBoardCardPhase
-  segments: ProgressSegment[]
   merged: number
   total: number
   /** Agent sessions at work right now; checking, merging and verifying are not counted. */
   running: number
-  /** While the run is on: a ticket waits on the user (a question, a permission, flagged). */
+  /** While the run is on: tickets waiting on the user (a question, a permission, flagged). */
+  waiting: number
   waitingOnUser: boolean
   paused: boolean
   /**
-   * "3 running", "Paused", "Paused · 1 running" while sessions finish their turn; once the
+   * "3 working", "2 waiting for answer", "Paused", "Paused · 1 working" while sessions
+   * finish their turn; once the
    * run ended, what is left to do: "Ready to merge into main", "2 not merged", "Cancelled".
    */
   label: string
@@ -331,12 +332,14 @@ export function runBoardCardState(
   const summary = summarizeItems(items)
   const running = countRunningAgents(items)
   const phase = RUN_BOARD_CARD_PHASES[run.status] ?? 'running'
-  const runningLabel = `${running} running`
+  const workingLabel = `${running} working`
+  const waiting = isActiveRunStatus(run.status) ? items.filter(needsUser).length : 0
   const moved = column === 'merged' || column === 'done'
   const notMerged = summary.total - summary.merged
   const labels: Record<RunBoardCardPhase, string> = {
-    running: runningLabel,
-    paused: running > 0 ? `Paused · ${runningLabel}` : 'Paused',
+    // One ticket waiting for an answer outweighs the count of those at work
+    running: waiting > 0 ? `${waiting} waiting for answer` : workingLabel,
+    paused: running > 0 ? `Paused · ${workingLabel}` : 'Paused',
     completed: moved ? 'Finished' : `Ready to merge into ${run.base_branch ?? 'the base branch'}`,
     issues: `Finished · ${notMerged} not merged`,
     cancelled: 'Cancelled'
@@ -344,11 +347,11 @@ export function runBoardCardState(
   return {
     title: run.title || documentNameFromPath(run.source_path),
     phase,
-    segments: progressSegments(summary),
     merged: summary.merged,
     total: summary.total,
     running,
-    waitingOnUser: isActiveRunStatus(run.status) && items.some(needsUser),
+    waiting,
+    waitingOnUser: waiting > 0,
     paused: phase === 'paused',
     label: labels[phase]
   }

@@ -503,6 +503,79 @@
   will-change: transform;
 }
 
+/* Ticket type cues (KanbanTicketCard).
+   Shell-command ticket: a zigzag bottom edge, like a torn receipt. Two stacked rows of
+   teeth, the outline one 1px wider and taller than the card-colored one on top of it. */
+.ticket-jagged::before,
+.ticket-jagged::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  pointer-events: none;
+  -webkit-mask: conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) 50% /
+    10px 100%;
+  mask: conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) 50% / 10px 100%;
+}
+.ticket-jagged::before {
+  left: -1px;
+  right: -1px;
+  height: 6.5px;
+  background: var(
+    --ticket-jag-color,
+    color-mix(in srgb, var(--muted-foreground) 45%, var(--card))
+  );
+}
+.ticket-jagged::after {
+  left: 0;
+  right: 0;
+  height: 5px;
+  background: var(--card);
+}
+
+/* Orchestrator ticket at work: a gold glint travels around an orange border, over a slow
+   breathing glow. The border itself is transparent; the conic gradient shows through it. */
+@property --ticket-elite-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+.ticket-elite-active {
+  background:
+    linear-gradient(var(--card), var(--card)) padding-box,
+    conic-gradient(
+        from var(--ticket-elite-angle),
+        #c2670a 0deg,
+        #c2670a 250deg,
+        #f59e0b 300deg,
+        #fff3c4 345deg,
+        #f59e0b 355deg,
+        #c2670a 360deg
+      )
+      border-box;
+  animation:
+    ticket-elite-orbit 3.5s linear infinite,
+    ticket-elite-glow 3.5s ease-in-out infinite;
+}
+@keyframes ticket-elite-orbit {
+  to {
+    --ticket-elite-angle: 360deg;
+  }
+}
+@keyframes ticket-elite-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgb(245 145 20 / 0);
+  }
+  50% {
+    box-shadow: 0 0 8px 0 rgb(245 145 20 / 0.28);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ticket-elite-active {
+    animation: none;
+  }
+}
+
 /* Pulse wave (worktree "working" indicator) — scrolls the repeating wave left.
    Uses a CSS transform animation instead of SVG SMIL so it can be GPU-composited
    and won't stutter when the main thread is busy. The path repeats every 12 user

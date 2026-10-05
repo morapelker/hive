@@ -99,6 +99,17 @@ describe('KanbanTicketCard shell-command tickets', () => {
     expect(screen.getByTestId('kanban-ticket-continue')).toBeInTheDocument()
   })
 
+  it('gives a shell-command ticket a jagged bottom edge, and no other ticket', () => {
+    useShellCommandRunStore.setState({ runsBySession: { 'another-session': failedRun } })
+    const { unmount } = render(<KanbanTicketCard ticket={makeTicket()} />)
+    expect(screen.getByTestId('kanban-ticket-ticket-1').className).not.toContain('ticket-jagged')
+    unmount()
+
+    useShellCommandRunStore.setState({ runsBySession: { 'session-1': failedRun } })
+    render(<KanbanTicketCard ticket={makeTicket()} />)
+    expect(screen.getByTestId('kanban-ticket-ticket-1').className).toContain('ticket-jagged')
+  })
+
   it('shows neither for a shell-command ticket without an error', () => {
     useShellCommandRunStore.setState({
       runsBySession: { 'session-1': { ...failedRun, state: 'succeeded', exitCode: 0 } }
