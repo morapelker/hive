@@ -64,7 +64,7 @@ interface DocumentFlowState {
   closeDashboard: () => void
 
   // ── Actions (RPC wrappers that apply the result; they reject on failure) ──
-  createRun: (projectId: string, documentPath: string) => Promise<DocumentRunDetail>
+  createRun: (projectId: string, documentPath: string, notes?: string) => Promise<DocumentRunDetail>
   retryExtraction: (runId: string) => Promise<DocumentRunDetail>
   updateRun: (runId: string, patch: DocumentRunPatch) => Promise<DocumentRun>
   updateItem: (
@@ -240,11 +240,13 @@ export const useDocumentFlowStore = create<DocumentFlowState>()(
       },
       closeDashboard: () => set({ dashboardRunId: null }),
 
-      createRun: async (projectId, documentPath) => {
+      createRun: async (projectId, documentPath, notes) => {
+        const trimmedNotes = notes?.trim()
         const detail = await documentFlowApi.createRun({
           projectId,
           documentPath,
-          generation: resolveDocumentFlowGeneration()
+          generation: resolveDocumentFlowGeneration(),
+          ...(trimmedNotes ? { notes: trimmedNotes } : {})
         })
         get().applyDetail(detail)
         set((state) => ({ wizard: { ...state.wizard, projectId, runId: detail.run.id } }))

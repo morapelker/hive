@@ -110,7 +110,8 @@ describe('updateRun', () => {
       promptStyle: 'small',
       defaultLaunch: launchConfig,
       generation: null,
-      baseBranch: null
+      baseBranch: null,
+      notes: null
     })
     // A second patch keeps what the first one set.
     expect(

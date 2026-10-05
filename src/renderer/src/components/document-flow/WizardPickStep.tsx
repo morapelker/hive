@@ -14,10 +14,11 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 import { selectRunsForProject, useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
-import type { DocumentRunDetail } from '@shared/types/document-flow'
+import { DOCUMENT_RUN_NOTES_LIMIT, type DocumentRunDetail } from '@shared/types/document-flow'
 import { TonePill } from './DocumentFlowBadges'
 import {
   DOCUMENT_FILE_ACCEPT,
@@ -61,6 +62,7 @@ interface WizardPickStepProps {
 export function WizardPickStep({ projectId }: WizardPickStepProps): React.JSX.Element {
   const createRun = useDocumentFlowStore((s) => s.createRun)
   const [pathInput, setPathInput] = useState('')
+  const [notes, setNotes] = useState('')
   const [isDragOver, setIsDragOver] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -96,14 +98,14 @@ export function WizardPickStep({ projectId }: WizardPickStepProps): React.JSX.El
     setSubmitting(true)
     setError(null)
     try {
-      const detail = await createRun(projectId, parsed.path)
+      const detail = await createRun(projectId, parsed.path, notes)
       markRunAwaitingPrefs(detail.run.id)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
       setSubmitting(false)
     }
-  }, [createRun, pathInput, projectId, submitting])
+  }, [createRun, notes, pathInput, projectId, submitting])
 
   const stopDrag = (event: React.DragEvent): void => {
     event.preventDefault()
@@ -202,6 +204,31 @@ export function WizardPickStep({ projectId }: WizardPickStepProps): React.JSX.El
             {error}
           </p>
         )}
+      </div>
+
+      <div className="space-y-1.5">
+        <label htmlFor="docflow-notes" className={SECTION_LABEL_CLASS}>
+          Notes (optional)
+        </label>
+        <Textarea
+          id="docflow-notes"
+          data-testid="docflow-notes-input"
+          placeholder="Anything the extraction should know, e.g. “only tasks 7, 8 and 9” or “skip the mobile section”."
+          value={notes}
+          rows={3}
+          maxLength={DOCUMENT_RUN_NOTES_LIMIT}
+          className="resize-y text-[12px]"
+          onChange={(event) => setNotes(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+              event.preventDefault()
+              void handleExtract()
+            }
+          }}
+        />
+        <p className="text-[11px] text-muted-foreground">
+          Given to the model that reads the document: they decide which tickets are created and how.
+        </p>
       </div>
 
       <PreviousRuns projectId={projectId} />

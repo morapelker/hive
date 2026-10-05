@@ -46,6 +46,7 @@ import { RpcRouteError } from '@shared/rpc/errors'
 import {
   DEFAULT_DOCUMENT_RUN_CONFIG,
   DOCUMENT_RUN_MAX_PARALLEL_LIMIT,
+  DOCUMENT_RUN_NOTES_LIMIT,
   type DocumentCommitResult,
   type DocumentMergeCheckResult,
   type DocumentMergeResult,
@@ -398,6 +399,7 @@ export class DocumentFlowService {
     projectId: string
     documentPath: string
     generation?: DocumentRunGeneration | null
+    notes?: string | null
   }): Promise<DocumentRunDetail> {
     const project = this.deps.getProject(params.projectId)
     if (!project) throw notFound('The project')
@@ -428,7 +430,11 @@ export class DocumentFlowService {
       run_dir: join(this.runsRoot, id),
       document_path: null,
       status: 'extracting',
-      config: { ...DEFAULT_DOCUMENT_RUN_CONFIG, generation: params.generation ?? null }
+      config: {
+        ...DEFAULT_DOCUMENT_RUN_CONFIG,
+        generation: params.generation ?? null,
+        notes: params.notes?.trim().slice(0, DOCUMENT_RUN_NOTES_LIMIT) || null
+      }
     })
     this.publishRun(run)
     this.log(
@@ -522,7 +528,7 @@ export class DocumentFlowService {
       }
       let reply =
         (await this.deps.generate(
-          buildExtractionPrompt(doc),
+          buildExtractionPrompt(doc, run.config.notes),
           EXTRACTION_SYSTEM_PROMPT,
           provider,
           options
@@ -532,7 +538,7 @@ export class DocumentFlowService {
         this.log(run, 'extraction_retry', `The model's reply could not be used: ${parsed.error}`)
         reply =
           (await this.deps.generate(
-            buildExtractionRepairPrompt(doc, reply, parsed.error),
+            buildExtractionRepairPrompt(doc, reply, parsed.error, run.config.notes),
             EXTRACTION_SYSTEM_PROMPT,
             provider,
             options

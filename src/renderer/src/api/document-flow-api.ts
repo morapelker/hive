@@ -34,11 +34,13 @@ export const documentFlowApi = {
   /**
    * Pre-process the document and start extracting tickets in the background. Resolves as soon
    * as the run row exists (`status: 'extracting'`); the result arrives through `onUpdated`.
+   * `notes` tell the extraction model which tickets to make and how.
    */
   createRun: (params: {
     projectId: string
     documentPath: string
     generation?: DocumentRunGeneration | null
+    notes?: string
   }): Promise<DocumentRunDetail> => request('createRun', params),
 
   /** Re-run extraction for a run in `extract_failed` or `preview` (replaces its items). */

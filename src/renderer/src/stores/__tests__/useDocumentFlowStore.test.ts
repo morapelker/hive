@@ -369,7 +369,8 @@ describe('useDocumentFlowStore', () => {
           promptStyle: 'small',
           defaultLaunch: { sdk: 'codex', model: null, codexFastMode: true },
           generation: null,
-          baseBranch: null
+          baseBranch: null,
+          notes: null
         }
       })
       api.start.mockResolvedValue(started)

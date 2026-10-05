@@ -149,6 +149,7 @@ function ExtractingStep({ run }: { run: DocumentRun }): React.JSX.Element {
         </span>
         . This is the PR content model; change it in Settings › Models.
       </p>
+      <RunNotes run={run} />
       <p className="max-w-md text-[12px] leading-relaxed text-muted-foreground">
         You can close this dialog. Extraction continues, and the run shows up under Previous runs.
       </p>
@@ -217,6 +218,20 @@ function FailedStep({
         </Button>
       </div>
     </div>
+  )
+}
+
+/** The notes the document was picked with; they apply to every extraction of the run. */
+function RunNotes({ run }: { run: DocumentRun }): React.JSX.Element | null {
+  if (!run.config.notes) return null
+  return (
+    <p
+      className="max-w-md whitespace-pre-wrap break-words rounded-md border border-border px-3 py-2 text-left text-[12px] leading-relaxed text-muted-foreground"
+      data-testid="docflow-run-notes"
+    >
+      <span className="text-foreground">Your notes: </span>
+      {run.config.notes}
+    </p>
   )
 }
 

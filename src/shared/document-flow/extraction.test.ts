@@ -181,6 +181,24 @@ describe('extraction prompt', () => {
     expect(prompt).not.toContain('base64')
   })
 
+  it("adds the user's notes after the document, as instructions", () => {
+    const prompt = buildExtractionPrompt(doc, '  only tasks 7, 8 and 9\n')
+    expect(prompt).toContain(
+      '</document>\n\nNotes from the user about what to extract from this document. Follow them:\n<user-notes>\nonly tasks 7, 8 and 9\n</user-notes>\n\nReply with the JSON object only.'
+    )
+    expect(EXTRACTION_SYSTEM_PROMPT).toContain('<user-notes>')
+    expect(
+      buildExtractionRepairPrompt(doc, '{', 'The reply was cut off.', 'only tasks 7, 8 and 9')
+    ).toContain(prompt)
+  })
+
+  it('leaves the notes section out when there are none', () => {
+    for (const notes of [undefined, null, '', '  \n ']) {
+      expect(buildExtractionPrompt(doc, notes)).toBe(buildExtractionPrompt(doc))
+    }
+    expect(buildExtractionPrompt(doc)).not.toContain('user-notes')
+  })
+
   it('builds a repair prompt from the original one, the reply and the error', () => {
     const prompt = buildExtractionRepairPrompt(doc, '  {"tickets": [  ', 'The reply was cut off.')
     expect(prompt.startsWith(buildExtractionPrompt(doc))).toBe(true)

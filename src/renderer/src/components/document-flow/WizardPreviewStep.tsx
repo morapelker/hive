@@ -152,6 +152,16 @@ export function WizardPreviewStep({
               </Button>
             </div>
 
+            {run.config.notes && (
+              <p
+                className="whitespace-pre-wrap break-words rounded-md border border-border px-3 py-2 text-[12px] leading-snug text-muted-foreground"
+                data-testid="docflow-preview-notes"
+              >
+                <span className="text-foreground">Extracted with your notes: </span>
+                {run.config.notes}
+              </p>
+            )}
+
             {extraction && extraction.warnings.length > 0 && (
               <ul
                 className="list-disc space-y-0.5 rounded-md border border-amber-500/30 bg-amber-500/10 py-2 pl-7 pr-3 text-[12px] leading-snug text-amber-600 dark:text-amber-400"

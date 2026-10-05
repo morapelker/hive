@@ -147,6 +147,28 @@ describe('ImplementDocumentWizard — pick step', () => {
     )
   })
 
+  it('sends the notes typed next to the document with the extraction', async () => {
+    openWizard()
+    await renderWizard()
+
+    fireEvent.change(screen.getByTestId('docflow-path-input'), {
+      target: { value: '/docs/spec.html' }
+    })
+    fireEvent.change(screen.getByTestId('docflow-notes-input'), {
+      target: { value: ' only tasks 7, 8 and 9 ' }
+    })
+    fireEvent.click(screen.getByTestId('docflow-extract-btn'))
+
+    await waitFor(() =>
+      expect(api.createRun).toHaveBeenCalledWith({
+        projectId: TEST_PROJECT.id,
+        documentPath: '/docs/spec.html',
+        generation: GENERATION,
+        notes: 'only tasks 7, 8 and 9'
+      })
+    )
+  })
+
   it('accepts a home-relative path and leaves its expansion to the server', async () => {
     openWizard()
     await renderWizard()

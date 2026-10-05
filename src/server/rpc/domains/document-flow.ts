@@ -6,6 +6,7 @@ import {
 } from '../../../shared/document-flow-events'
 import {
   DOCUMENT_RUN_ITEM_STATUSES,
+  DOCUMENT_RUN_NOTES_LIMIT,
   DOCUMENT_RUN_STATUSES,
   type DocumentCommitResult,
   type DocumentMergeCheckResult,
@@ -33,6 +34,7 @@ export interface DocumentFlowCreateRunParams {
   projectId: string
   documentPath: string
   generation?: DocumentRunGeneration | null
+  notes?: string | null
 }
 
 export interface DocumentFlowRetryExtractionParams {
@@ -139,7 +141,9 @@ const configPatchSchema = z
       .string()
       .regex(/^(?!-)\S*$/)
       .nullable()
-      .optional()
+      .optional(),
+    // The preview writes the whole config back; the notes in it are ignored (set at creation).
+    notes: z.string().nullable().optional()
   })
   .strict() satisfies z.ZodType<Partial<DocumentRunConfig>>
 
@@ -189,7 +193,8 @@ const createRunParamsSchema = z
   .object({
     projectId: idSchema,
     documentPath: z.string().min(1),
-    generation: generationSchema.nullable().optional()
+    generation: generationSchema.nullable().optional(),
+    notes: z.string().max(DOCUMENT_RUN_NOTES_LIMIT).nullable().optional()
   })
   .strict() satisfies z.ZodType<DocumentFlowCreateRunParams>
 const retryExtractionParamsSchema = z

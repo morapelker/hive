@@ -142,6 +142,36 @@ async function extract(documentPath: string = specPath): Promise<string> {
 }
 
 describe('createRun', () => {
+  it("stores the user's notes and hands them to every extraction of the run", async () => {
+    const generate = vi.fn(async (_prompt: string) => replyFor())
+    harness.overrides.generate = generate
+    const { service, db } = harness
+
+    const detail = await service.createRun({
+      projectId: TEST_PROJECT_ID,
+      documentPath: specPath,
+      notes: '  only task A2  '
+    })
+    expect(detail.run.config.notes).toBe('only task A2')
+    await service.whenExtractionSettled(detail.run.id)
+    expect(generate.mock.calls[0][0]).toContain('<user-notes>\nonly task A2\n</user-notes>')
+
+    service.retryExtraction({ runId: detail.run.id })
+    await service.whenExtractionSettled(detail.run.id)
+    expect(generate.mock.calls[1][0]).toContain('<user-notes>\nonly task A2\n</user-notes>')
+    expect(db.getDocumentRun(detail.run.id)?.config.notes).toBe('only task A2')
+  })
+
+  it('sends no notes section when the document was picked without notes', async () => {
+    const generate = vi.fn(async (_prompt: string) => replyFor())
+    harness.overrides.generate = generate
+
+    const runId = await extract()
+
+    expect(harness.db.getDocumentRun(runId)?.config.notes).toBeNull()
+    expect(generate.mock.calls[0][0]).not.toContain('user-notes')
+  })
+
   it('creates the run in `extracting` and returns before the model answers', async () => {
     const model = deferredModel()
     harness.overrides.generate = model.generate

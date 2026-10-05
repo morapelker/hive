@@ -138,9 +138,15 @@ export interface DocumentRunConfig {
   generation: DocumentRunGeneration | null
   /** Branch the integration branch is cut from; null = the project's default branch. */
   baseBranch: string | null
+  /**
+   * What the user wrote next to the document when picking it ("only tasks 7, 8 and 9"). Given
+   * to the extraction model as instructions; set at creation and never changed. null = none.
+   */
+  notes: string | null
 }
 
 export const DOCUMENT_RUN_MAX_PARALLEL_LIMIT = 50
+export const DOCUMENT_RUN_NOTES_LIMIT = 4000
 
 export const DEFAULT_DOCUMENT_RUN_CONFIG: DocumentRunConfig = {
   maxParallel: 4,
@@ -149,7 +155,8 @@ export const DEFAULT_DOCUMENT_RUN_CONFIG: DocumentRunConfig = {
   promptStyle: 'full',
   defaultLaunch: null,
   generation: null,
-  baseBranch: null
+  baseBranch: null,
+  notes: null
 }
 
 // ── Extraction ─────────────────────────────────────────────────────────────
