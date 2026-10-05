@@ -165,13 +165,13 @@ export function WizardPickStep({ projectId }: WizardPickStepProps): React.JSX.El
 
       <div className="space-y-1.5">
         <label htmlFor="docflow-path" className={SECTION_LABEL_CLASS}>
-          Document path
+          Document path or link
         </label>
         <div className="flex items-center gap-2">
           <Input
             id="docflow-path"
             data-testid="docflow-path-input"
-            placeholder="/absolute/path/to/spec.html, ~/spec.md or file:///…"
+            placeholder="/absolute/path/to/spec.html, ~/spec.md or https://…"
             value={pathInput}
             autoFocus
             spellCheck={false}

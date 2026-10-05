@@ -1,5 +1,7 @@
 // @vitest-environment node
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { createServer, type ServerResponse } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -104,6 +106,21 @@ function deferredModel(): {
   }
 }
 
+/** A local web server that answers every request the same way. */
+async function serve(
+  answer: (response: ServerResponse) => void
+): Promise<{ origin: string; close: () => Promise<void> }> {
+  const server = createServer((_request, response) => answer(response))
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  return {
+    origin: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+    close: async () => {
+      server.closeAllConnections()
+      await new Promise((resolve) => server.close(resolve))
+    }
+  }
+}
+
 let harness: ServiceHarness
 let specPath: string
 
@@ -177,6 +194,63 @@ describe('createRun', () => {
     expect(fromHome.run.source_path).toBe(specPath)
     await harness.service.whenExtractionSettled(fromUrl.run.id)
     await harness.service.whenExtractionSettled(fromHome.run.id)
+  })
+
+  it('downloads a linked document into the project directory, then extracts from that file', async () => {
+    const projectPath = harness.projects.get(TEST_PROJECT_ID)!.path
+    mkdirSync(projectPath, { recursive: true })
+    const site = await serve((response) => {
+      response.writeHead(200, { 'content-type': 'text/markdown' })
+      response.end(SPEC)
+    })
+    const link = `${site.origin}/specs/Factory%20spec.md`
+    harness.replies.push(replyFor())
+
+    try {
+      const detail = await harness.service.createRun({
+        projectId: TEST_PROJECT_ID,
+        documentPath: `  ${link} `
+      })
+
+      const saved = join(projectPath, 'Factory spec.md')
+      expect(detail.run).toMatchObject({
+        status: 'extracting',
+        title: 'Factory spec.md',
+        source_path: saved
+      })
+      expect(readFileSync(saved, 'utf8')).toBe(SPEC)
+      expect(detail.events.map((event) => event.message)).toEqual([
+        `Document downloaded from ${link} to ${saved}`
+      ])
+
+      await harness.service.whenExtractionSettled(detail.run.id)
+      const extracted = harness.service.get(detail.run.id)
+      expect(extracted?.run.status).toBe('preview')
+      expect(extracted?.items.map((item) => item.key)).toEqual(['A1', 'A2'])
+    } finally {
+      await site.close()
+    }
+  })
+
+  it('refuses a link that cannot be downloaded and creates nothing', async () => {
+    const site = await serve((response) => response.writeHead(410).end('gone'))
+
+    try {
+      await expect(
+        harness.service.createRun({
+          projectId: TEST_PROJECT_ID,
+          documentPath: `${site.origin}/spec.html`
+        })
+      ).rejects.toMatchObject({
+        code: 'INVALID_INPUT',
+        message: expect.stringContaining('the server answered 410')
+      })
+    } finally {
+      await site.close()
+    }
+
+    expect(harness.db.runs.size).toBe(0)
+    expect(harness.published).toEqual([])
   })
 
   it.each([

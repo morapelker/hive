@@ -61,6 +61,7 @@ import type { KanbanTicketBatchCreateItem } from '../../db/types'
 import { createLogger } from '../logger'
 import type { CreateFromBranchParams, WorktreeResult } from '../worktree-ops'
 import type { DocumentFlowDb, DocumentRunItemRowPatch, DocumentRunRowPatch } from './db-port'
+import { downloadDocument, isDocumentUrl, type DocumentFetch } from './document-download'
 import {
   DocumentFileError,
   assertDocumentFile,
@@ -181,6 +182,8 @@ export interface DocumentFlowServiceDeps {
   runsRoot?: string
   homeDir?: string
   staleExtractionMs?: number
+  /** Downloads a document given as a link; defaults to the global `fetch`. */
+  fetch?: DocumentFetch
 }
 
 const notFound = (what: string): RpcRouteError =>
@@ -377,9 +380,13 @@ export class DocumentFlowService {
       )
     }
 
+    // A link is downloaded into the project directory first; the run then reads that file.
+    const link = isDocumentUrl(params.documentPath) ? params.documentPath.trim() : null
     let sourcePath: string
     try {
-      sourcePath = normalizeDocumentPath(params.documentPath, this.deps.homeDir)
+      sourcePath = link
+        ? await downloadDocument({ url: link, targetDir: project.path, fetch: this.deps.fetch })
+        : normalizeDocumentPath(params.documentPath, this.deps.homeDir)
       await assertDocumentFile(sourcePath)
     } catch (error) {
       throw invalidInput(describeError(error))
@@ -397,7 +404,11 @@ export class DocumentFlowService {
       config: { ...DEFAULT_DOCUMENT_RUN_CONFIG, generation: params.generation ?? null }
     })
     this.publishRun(run)
-    this.log(run, 'created', `Document picked: ${sourcePath}`)
+    this.log(
+      run,
+      'created',
+      link ? `Document downloaded from ${link} to ${sourcePath}` : `Document picked: ${sourcePath}`
+    )
     this.startExtraction(run.id)
     return this.detail(run, true)
   }

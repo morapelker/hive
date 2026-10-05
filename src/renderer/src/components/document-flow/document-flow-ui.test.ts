@@ -378,6 +378,18 @@ describe('parseDocumentPath', () => {
     expect(parseDocumentPath('file:///C:/docs/spec.md').path).toBe('C:/docs/spec.md')
   })
 
+  it('passes http(s) links through for the server to download', () => {
+    expect(parseDocumentPath(' https://specs.example.com/round-2 ')).toEqual({
+      path: 'https://specs.example.com/round-2',
+      error: null
+    })
+    expect(parseDocumentPath('http://localhost:8080/spec.html?v=2').path).toBe(
+      'http://localhost:8080/spec.html?v=2'
+    )
+    expect(parseDocumentPath('https://').error).toMatch(/not a valid http\(s\) URL/)
+    expect(parseDocumentPath('ftp://specs.example.com/spec.html').error).toMatch(/absolute path/)
+  })
+
   it('rejects empty, relative and unsupported inputs with a reason', () => {
     expect(parseDocumentPath('   ')).toEqual({ path: null, error: 'Choose a document first.' })
     expect(parseDocumentPath('docs/spec.html').error).toMatch(/absolute path/)

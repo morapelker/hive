@@ -368,12 +368,30 @@ function fileUrlToPath(value: string): string | null {
   }
 }
 
-/** Turn what the user typed, pasted or dropped into the absolute path the server reads. */
+function isHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value)
+    return (url.protocol === 'http:' || url.protocol === 'https:') && url.hostname !== ''
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Turn what the user typed, pasted or dropped into what the server reads: an absolute path, or
+ * an http(s) link the server downloads into the project directory first.
+ */
 export function parseDocumentPath(input: string): DocumentPathResult {
   let value = input.trim()
   // Paths copied from a terminal or Finder often arrive quoted.
   if (/^(".*"|'.*')$/.test(value)) value = value.slice(1, -1).trim()
   if (!value) return { path: null, error: 'Choose a document first.' }
+
+  if (/^https?:/i.test(value)) {
+    // What the link serves is only known once it is downloaded: no extension check here.
+    if (!isHttpUrl(value)) return { path: null, error: 'That link is not a valid http(s) URL.' }
+    return { path: value, error: null }
+  }
 
   if (/^file:/i.test(value)) {
     const fromUrl = fileUrlToPath(value)
@@ -382,7 +400,10 @@ export function parseDocumentPath(input: string): DocumentPathResult {
   }
 
   if (!ABSOLUTE_PATH_PATTERN.test(value)) {
-    return { path: null, error: 'Enter an absolute path (or ~/…) or a file:// URL.' }
+    return {
+      path: null,
+      error: 'Enter an absolute path (or ~/…), a file:// URL or an http(s) link.'
+    }
   }
   const lower = value.toLowerCase()
   if (!DOCUMENT_FILE_EXTENSIONS.some((extension) => lower.endsWith(extension))) {
