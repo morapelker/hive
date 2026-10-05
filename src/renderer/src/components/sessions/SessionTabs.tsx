@@ -8,7 +8,7 @@ import {
   useMemo,
   type KeyboardEvent
 } from 'react'
-import type { AgentSdk } from '@shared/types/agent-sdk'
+import { isShellCommandSession, type AgentSdk } from '@shared/types/agent-sdk'
 import {
   Plus,
   X,
@@ -22,6 +22,7 @@ import {
   AlertCircle,
   Check,
   TerminalSquare,
+  SquareTerminal,
   Download,
   Github,
   ClipboardList,
@@ -184,6 +185,7 @@ const SessionTab = memo(function SessionTab({
     (state) => state.sessionStatuses[sessionId]?.status ?? null
   )
   const isSessionBusy = sessionStatus === 'working' || sessionStatus === 'planning'
+  const isShellCommand = useSessionStore((s) => isShellCommandSession(s.getSessionById(sessionId)))
 
   // Focus and select input text when entering edit mode
   useEffect(() => {
@@ -238,7 +240,19 @@ const SessionTab = memo(function SessionTab({
           }}
           className={tabClass(isActive, isDragging && 'opacity-50', isDragOver && 'bg-accent')}
         >
-          {agentSdk === 'terminal' ? (
+          {isShellCommand ? (
+            isSessionBusy ? (
+              <Loader2
+                className="h-3 w-3 animate-spin flex-shrink-0 text-yellow-500"
+                data-testid={`tab-spinner-${sessionId}`}
+              />
+            ) : (
+              <SquareTerminal
+                className="h-3 w-3 text-emerald-500 flex-shrink-0"
+                data-testid={`tab-shell-command-${sessionId}`}
+              />
+            )
+          ) : agentSdk === 'terminal' ? (
             <TerminalSquare
               className="h-3 w-3 text-emerald-500 flex-shrink-0"
               data-testid={`tab-terminal-${sessionId}`}

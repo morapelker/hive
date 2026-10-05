@@ -1,4 +1,5 @@
 import type { CustomProjectCommand } from '@shared/lib/custom-commands'
+import type { ProjectShellCommand } from '@shared/lib/shell-commands'
 import type { AgentSdk } from '@shared/types/agent-sdk'
 
 /** Project discriminator: 'git' = a regular repo project, 'connection' = a saved connection project. */
@@ -22,6 +23,8 @@ export interface Project {
   archive_script: string | null
   worktree_create_script: string | null
   custom_commands: CustomProjectCommand[] | null
+  /** Named shell commands runnable from the project / worktree menus (see shared/lib/shell-commands). */
+  shell_commands?: ProjectShellCommand[] | null
   auto_assign_port: boolean
   /** True once the claude CLI folder-trust pre-flight verified/stamped this
    * project's root in ~/.claude.json (so later launches skip the file check). */
@@ -89,6 +92,7 @@ export interface ProjectUpdate {
   archive_script?: string | null
   worktree_create_script?: string | null
   custom_commands?: CustomProjectCommand[] | null
+  shell_commands?: ProjectShellCommand[] | null
   auto_assign_port?: boolean
   last_accessed_at?: string
 }
@@ -166,7 +170,7 @@ export interface DiscordResourceCreate {
 }
 
 export type SessionMode = 'build' | 'plan' | 'super-plan' | 'super-build'
-export type SessionType = 'default' | 'board-assistant'
+export type SessionType = 'default' | 'board-assistant' | 'shell-command'
 
 export interface Session {
   id: string
@@ -186,6 +190,8 @@ export interface Session {
   model_id: string | null
   model_variant: string | null
   remote_launch: string | null
+  /** JSON SessionShellCommand: script snapshot + run state of a 'shell-command' session. */
+  shell_command?: string | null
   created_at: string
   updated_at: string
   completed_at: string | null
@@ -207,6 +213,7 @@ export interface SessionCreate {
   model_id?: string | null
   model_variant?: string | null
   remote_launch?: string | null
+  shell_command?: string | null
   pinned_to_board?: boolean
 }
 
@@ -223,6 +230,7 @@ export interface SessionUpdate {
   model_id?: string | null
   model_variant?: string | null
   remote_launch?: string | null
+  shell_command?: string | null
   updated_at?: string
   completed_at?: string | null
   pinned_to_board?: boolean

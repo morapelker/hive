@@ -24,6 +24,10 @@ import { systemApi } from '@/api/system-api'
 import { worktreeApi } from '@/api/worktree-api'
 import { projectApi } from '@/api/project-api'
 import { settingsApi } from '@/api/settings-api'
+import {
+  getRunnableShellCommands,
+  runShellCommandFromMenu
+} from '@/components/shell-commands/ShellCommandMenuItems'
 
 /**
  * Hook that registers all available commands and returns filtered commands
@@ -292,6 +296,57 @@ export function useCommands() {
         // Org "Force board mode" policy: sessions may only be started from a
         // board ticket.
         isVisible: () => !isForceBoardMode(useSettingsStore.getState())
+      },
+      {
+        id: 'action:run-shell-command',
+        label: 'Run Shell Command',
+        description: "Run one of the project's shell commands",
+        category: 'action',
+        icon: 'Terminal',
+        keywords: ['run', 'shell', 'command', 'script'],
+        hasChildren: true,
+        action: () => {
+          // Re-read at execution: the palette's command list is memoized, so the
+          // commands captured when it was built can be stale.
+          const projectId = selectedProjectId
+          const shellCommands = getRunnableShellCommands(
+            useProjectStore.getState().projects.find((p) => p.id === projectId)
+          )
+          if (!projectId || shellCommands.length === 0) {
+            toast.error('This project has no shell commands')
+            return
+          }
+          // Run in the active worktree when it belongs to this project, else in the base
+          const worktreeId = getWorktreesForProject(projectId).some(
+            (worktree) => worktree.id === activeWorktreeId
+          )
+            ? activeWorktreeId
+            : undefined
+          const children = shellCommands.map((command) => ({
+            id: `action:shell-command:${command.id}`,
+            label: command.name,
+            category: 'action' as const,
+            icon: 'Terminal',
+            action: () => {
+              closeCommandPalette()
+              void runShellCommandFromMenu({
+                projectId,
+                commandId: command.id,
+                commandName: command.name,
+                worktreeId
+              })
+            }
+          }))
+          pushCommandLevel(children, {
+            id: 'action:run-shell-command',
+            label: 'Run Shell Command',
+            category: 'action',
+            action: () => {}
+          })
+        },
+        isVisible: () =>
+          selectedProjectId !== null &&
+          getRunnableShellCommands(projects.find((p) => p.id === selectedProjectId)).length > 0
       },
       {
         id: 'action:close-session',

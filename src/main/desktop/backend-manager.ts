@@ -35,7 +35,8 @@ import {
   type OpenCodeSetModelResult,
   type OpenCodeSessionInfoResult,
   type OpenCodeSteerResult,
-  type OpenCodeUndoResult
+  type OpenCodeUndoResult,
+  type TerminalAttachShellCommandResult
 } from '../../shared/desktop-command'
 import { openInApp } from '../services/open-in-app'
 import { openInChrome } from '../services/open-in-chrome'
@@ -54,6 +55,13 @@ import {
 } from '../services/project-icons'
 import { scriptRunner } from '../services/script-runner'
 import { ptyService } from '../services/pty-service'
+import {
+  attachShellCommandTerminal,
+  getLiveShellCommandSessionIds,
+  resizeShellCommandRun,
+  runShellCommandTerminal,
+  writeShellCommandRun
+} from '../services/shell-command-runs'
 import { ghosttyService } from '../services/ghostty-service'
 import { getGhosttyConfigPathOnce } from '../services/ghostty-config-store'
 import { startFileTreeWatcher, stopFileTreeWatcher } from '../services/file-tree-watcher'
@@ -2926,7 +2934,15 @@ const handleDesktopBackendCommand = (
 
   if (message.command === 'terminalResize') {
     try {
-      ptyService.resize(message.payload.terminalId, message.payload.cols, message.payload.rows)
+      if (
+        !resizeShellCommandRun(
+          message.payload.terminalId,
+          message.payload.cols,
+          message.payload.rows
+        )
+      ) {
+        ptyService.resize(message.payload.terminalId, message.payload.cols, message.payload.rows)
+      }
       sendDesktopBackendCommandResult(
         child,
         makeDesktopCommandResult(message.id, { ok: true, value: { success: true } }),
@@ -2950,7 +2966,11 @@ const handleDesktopBackendCommand = (
       child,
       makeDesktopCommandResult(message.id, {
         ok: true,
-        value: { terminalIds: ptyService.getIds() }
+        value: {
+          terminalIds: Array.from(
+            new Set([...ptyService.getIds(), ...getLiveShellCommandSessionIds()])
+          )
+        }
       }),
       log
     )
@@ -2980,11 +3000,14 @@ const handleDesktopBackendCommand = (
 
   if (message.command === 'terminalWrite') {
     try {
-      if (!ptyService.has(message.payload.terminalId)) {
-        throw new Error('Terminal not found')
+      // A live shell-command run (in-app PTY or detached) takes the input through its host.
+      if (!writeShellCommandRun(message.payload.terminalId, message.payload.data)) {
+        if (!ptyService.has(message.payload.terminalId)) {
+          throw new Error('Terminal not found')
+        }
+        handleClaudeCliTerminalInput(message.payload.terminalId, message.payload.data)
+        ptyService.write(message.payload.terminalId, message.payload.data)
       }
-      handleClaudeCliTerminalInput(message.payload.terminalId, message.payload.data)
-      ptyService.write(message.payload.terminalId, message.payload.data)
       sendDesktopBackendCommandResult(
         child,
         makeDesktopCommandResult(message.id, { ok: true, value: { success: true } }),
@@ -3022,6 +3045,46 @@ const handleDesktopBackendCommand = (
           log
         )
       })
+  }
+
+  if (message.command === 'terminalRunShellCommand') {
+    // Resolves right after the spawn, never at the end of the run.
+    return runShellCommandTerminal(message.payload.sessionId, {
+      cols: message.payload.cols,
+      rows: message.payload.rows
+    })
+      .then((value) => {
+        sendDesktopBackendCommandResult(
+          child,
+          makeDesktopCommandResult(message.id, { ok: true, value }),
+          log
+        )
+      })
+      .catch((error) => {
+        sendDesktopBackendCommandResult(
+          child,
+          makeDesktopCommandResult(message.id, {
+            ok: true,
+            value: { success: false, error: error instanceof Error ? error.message : String(error) }
+          }),
+          log
+        )
+      })
+  }
+
+  if (message.command === 'terminalAttachShellCommand') {
+    let value: TerminalAttachShellCommandResult
+    try {
+      value = attachShellCommandTerminal(message.payload.sessionId)
+    } catch (error) {
+      value = { success: false, error: error instanceof Error ? error.message : String(error) }
+    }
+    sendDesktopBackendCommandResult(
+      child,
+      makeDesktopCommandResult(message.id, { ok: true, value }),
+      log
+    )
+    return undefined
   }
 
   if (message.command === 'remoteLaunchClaudeTmux') {

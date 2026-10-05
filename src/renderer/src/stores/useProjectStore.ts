@@ -5,6 +5,7 @@ import { LANGUAGE_MAP } from '@/components/projects/LanguageIcon'
 import { dbApi } from '@/api/db-api'
 import { projectApi } from '@/api/project-api'
 import type { CustomProjectCommand } from '@/lib/custom-commands'
+import type { ProjectShellCommand } from '@shared/lib/shell-commands'
 
 // Project type matching the database schema
 interface Project {
@@ -25,6 +26,8 @@ interface Project {
   archive_script: string | null
   worktree_create_script: string | null
   custom_commands: CustomProjectCommand[] | null
+  /** Named shell commands runnable from the project / worktree menus. */
+  shell_commands?: ProjectShellCommand[] | null
   auto_assign_port: boolean
   sort_order: number
   created_at: string
@@ -66,6 +69,7 @@ interface ProjectState {
       archive_script?: string | null
       worktree_create_script?: string | null
       custom_commands?: CustomProjectCommand[] | null
+      shell_commands?: ProjectShellCommand[] | null
       auto_assign_port?: boolean
     }
   ) => Promise<boolean>
@@ -309,6 +313,7 @@ export const useProjectStore = create<ProjectState>()(
           archive_script?: string | null
           worktree_create_script?: string | null
           custom_commands?: CustomProjectCommand[] | null
+          shell_commands?: ProjectShellCommand[] | null
           auto_assign_port?: boolean
         }
       ) => {

@@ -1,4 +1,5 @@
 import type { CustomProjectCommand } from '@shared/lib/custom-commands'
+import type { ProjectShellCommand } from '@shared/lib/shell-commands'
 
 export type ProjectKind = 'git' | 'connection'
 
@@ -20,6 +21,8 @@ export interface Project {
   archive_script: string | null
   worktree_create_script: string | null
   custom_commands: CustomProjectCommand[] | null
+  /** Named shell commands runnable from the project / worktree menus. */
+  shell_commands?: ProjectShellCommand[] | null
   auto_assign_port: boolean
   sort_order: number
   created_at: string

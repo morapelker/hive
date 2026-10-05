@@ -22,8 +22,14 @@ import {
   isClaudeCliApiErrorPayload,
   type ClaudeCliApiErrorPayload
 } from '@shared/types/claude-cli-api-error'
+import {
+  SHELL_COMMAND_STATUS_CHANNEL,
+  isShellCommandStatusPayload,
+  type ShellCommandStatusPayload
+} from '@shared/shell-command-events'
+import type { ShellCommandRunState } from '@shared/lib/shell-commands'
 
-export type { ClaudeCliBackgroundWorkPayload, ClaudeCliApiErrorPayload }
+export type { ClaudeCliBackgroundWorkPayload, ClaudeCliApiErrorPayload, ShellCommandStatusPayload }
 
 export type ClaudeCliSessionStatusType =
   | 'working'
@@ -52,6 +58,26 @@ export interface ClaudeCliStatusPayload {
     readonly pendingWakeups?: number
     readonly ignoredShells?: number
   }
+}
+
+export interface ShellCommandRunResult {
+  success: boolean
+  cols?: number
+  rows?: number
+  error?: string
+  /** The session already has a live run: nothing was started and no state changed. */
+  alreadyRunning?: boolean
+}
+
+export interface ShellCommandAttachResult {
+  success: boolean
+  cols?: number
+  rows?: number
+  error?: string
+  /** Persisted run state at attach time. The transcript itself arrives on terminal:data. */
+  state?: ShellCommandRunState
+  exitCode?: number | null
+  runId?: string | null
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -102,6 +128,28 @@ export const terminalApi = {
       rows?: number
       error?: string
     }>('terminalOps.createClaudeCli', { sessionId, opts })
+    return { success: true, value: result }
+  },
+  /**
+   * Start (or re-start) the run of a shell-command session. The main process reads the
+   * script from the session's own snapshot: command text is never sent from here.
+   */
+  runShellCommand: async (sessionId: string): Promise<Envelope<ShellCommandRunResult>> => {
+    const result = await getRendererRpcClient().request<ShellCommandRunResult>(
+      'terminalOps.runShellCommand',
+      { sessionId }
+    )
+    return { success: true, value: result }
+  },
+  /**
+   * Attach a view to a shell-command session's terminal. Never starts anything: the
+   * main process answers by publishing the transcript on terminal:data:<sessionId>.
+   */
+  attachShellCommand: async (sessionId: string): Promise<Envelope<ShellCommandAttachResult>> => {
+    const result = await getRendererRpcClient().request<ShellCommandAttachResult>(
+      'terminalOps.attachShellCommand',
+      { sessionId }
+    )
     return { success: true, value: result }
   },
   /**
@@ -198,6 +246,11 @@ export const terminalApi = {
   ): (() => void) => {
     return getRendererRpcClient().subscribe(CLAUDE_CLI_API_ERROR_CHANNEL, (event: ServerEvent) => {
       if (isClaudeCliApiErrorPayload(event.payload)) callback(event.payload)
+    })
+  },
+  onShellCommandStatus: (callback: (payload: ShellCommandStatusPayload) => void): (() => void) => {
+    return getRendererRpcClient().subscribe(SHELL_COMMAND_STATUS_CHANNEL, (event: ServerEvent) => {
+      if (isShellCommandStatusPayload(event.payload)) callback(event.payload)
     })
   },
   ghosttyPasteText: async (terminalId: string, text: string): Promise<Envelope<void>> => {

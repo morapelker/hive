@@ -249,6 +249,108 @@ const seedTicketModelColumnsV38Shape = (dbPath: string): void => {
   db.close()
 }
 
+// v54 shape: projects has custom_commands but not shell_commands; sessions has
+// remote_launch / custom_provider_id but not shell_command (both added at v55).
+const seedShellCommandsV54Shape = (dbPath: string): void => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const Database = require('better-sqlite3')
+  const db = new Database(dbPath)
+  db.pragma('foreign_keys = ON')
+  db.exec(`
+    CREATE TABLE settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+
+    CREATE TABLE projects (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      path TEXT NOT NULL UNIQUE,
+      custom_commands TEXT DEFAULT NULL,
+      created_at TEXT NOT NULL,
+      last_accessed_at TEXT NOT NULL
+    );
+
+    CREATE TABLE worktrees (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      branch_name TEXT NOT NULL,
+      path TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at TEXT NOT NULL,
+      last_accessed_at TEXT NOT NULL
+    );
+
+    CREATE TABLE sessions (
+      id TEXT PRIMARY KEY,
+      worktree_id TEXT REFERENCES worktrees(id) ON DELETE SET NULL,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      agent_sdk TEXT NOT NULL DEFAULT 'opencode',
+      session_type TEXT NOT NULL DEFAULT 'default',
+      remote_launch TEXT DEFAULT NULL,
+      custom_provider_id TEXT DEFAULT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      mode TEXT NOT NULL DEFAULT 'build',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE kanban_tickets (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      description TEXT,
+      attachments TEXT NOT NULL DEFAULT '[]',
+      "column" TEXT NOT NULL DEFAULT 'todo',
+      sort_order REAL NOT NULL DEFAULT 0,
+      current_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+      worktree_id TEXT REFERENCES worktrees(id) ON DELETE SET NULL,
+      mode TEXT,
+      plan_ready INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE markdown_kanban_card_state (
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      card_id TEXT NOT NULL,
+      current_session_id TEXT DEFAULT NULL REFERENCES sessions(id) ON DELETE SET NULL,
+      worktree_id TEXT DEFAULT NULL REFERENCES worktrees(id) ON DELETE SET NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (project_id, card_id)
+    );
+
+    INSERT INTO settings (key, value) VALUES ('schema_version', '54');
+    INSERT INTO projects (id, name, path, custom_commands, created_at, last_accessed_at)
+      VALUES ('project-1', 'Project', '/tmp/project-1', '[{"id":"c1","name":"Ask","prompt":"hi"}]', '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z');
+    INSERT INTO worktrees (id, project_id, name, branch_name, path, created_at, last_accessed_at)
+      VALUES ('worktree-1', 'project-1', 'Main', 'main', '/tmp/project-1', '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z');
+    INSERT INTO sessions (id, worktree_id, project_id, agent_sdk, created_at, updated_at)
+      VALUES ('session-1', 'worktree-1', 'project-1', 'terminal', '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z');
+  `)
+  db.close()
+}
+
+const SHELL_SNAPSHOT = {
+  commandId: 'cmd-1',
+  name: 'Build',
+  script: 'pnpm build',
+  detached: false,
+  state: 'pending',
+  runId: null,
+  exitCode: null,
+  signal: null,
+  reason: null,
+  error: null,
+  startedAt: null,
+  finishedAt: null
+}
+
+const shellSnapshotJson = (overrides: Record<string, unknown> = {}): string =>
+  JSON.stringify({ ...SHELL_SNAPSHOT, ...overrides })
+
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true })
@@ -560,5 +662,241 @@ describeIf('database migration safety', () => {
     expect(columnNames(db, 'worktrees')).toEqual(expect.arrayContaining(['teleported_to']))
 
     db.close()
+  })
+
+  describe('shell commands (v55)', () => {
+    it('adds projects.shell_commands and sessions.shell_command on a fresh database', () => {
+      const db = new DatabaseService(makeDbPath())
+      db.init()
+
+      expect(db.getSchemaVersion()).toBe(CURRENT_SCHEMA_VERSION)
+      expect(CURRENT_SCHEMA_VERSION).toBe(55)
+      expect(columnNames(db, 'projects')).toEqual(expect.arrayContaining(['shell_commands']))
+      expect(columnNames(db, 'sessions')).toEqual(expect.arrayContaining(['shell_command']))
+
+      db.close()
+    })
+
+    it('stores shell_commands on the project (keepRunningOnQuit kept) and drops invalid entries', () => {
+      const db = new DatabaseService(makeDbPath())
+      db.init()
+
+      const project = db.createProject({ name: 'Project', path: makeDbPath() })
+      expect(project.shell_commands).toEqual([])
+
+      const updated = db.updateProject(project.id, {
+        shell_commands: [
+          { id: 'build', name: 'Build', commands: 'pnpm build', keepRunningOnQuit: true },
+          { id: 'test', name: 'Test', commands: 'pnpm test' },
+          // invalid: comment-only script
+          { id: 'noop', name: 'Noop', commands: '# nothing' },
+          // invalid: missing name
+          { id: 'bad', commands: 'echo hi' } as never
+        ]
+      })
+      expect(updated?.shell_commands).toEqual([
+        { id: 'build', name: 'Build', commands: 'pnpm build', keepRunningOnQuit: true },
+        { id: 'test', name: 'Test', commands: 'pnpm test' }
+      ])
+      expect(db.getProject(project.id)?.shell_commands).toEqual(updated?.shell_commands)
+
+      // Stored as normalized JSON; clearing writes NULL.
+      const raw = db
+        .getRawDb()
+        .prepare('SELECT shell_commands FROM projects WHERE id = ?')
+        .get(project.id) as { shell_commands: string | null }
+      expect(JSON.parse(raw.shell_commands as string)).toHaveLength(2)
+
+      expect(db.updateProject(project.id, { shell_commands: [] })?.shell_commands).toEqual([])
+      const cleared = db
+        .getRawDb()
+        .prepare('SELECT shell_commands FROM projects WHERE id = ?')
+        .get(project.id) as { shell_commands: string | null }
+      expect(cleared.shell_commands).toBeNull()
+
+      // Unrelated updates leave the definitions alone.
+      db.updateProject(project.id, {
+        shell_commands: [{ id: 'build', name: 'Build', commands: 'pnpm build' }]
+      })
+      expect(db.updateProject(project.id, { name: 'Renamed' })?.shell_commands).toHaveLength(1)
+
+      db.close()
+    })
+
+    it('persists shell_command on create and rewrites it on update', () => {
+      const db = new DatabaseService(makeDbPath())
+      db.init()
+
+      const project = db.createProject({ name: 'Project', path: makeDbPath() })
+      const worktree = db.createWorktree({
+        project_id: project.id,
+        name: 'Main',
+        branch_name: 'main',
+        path: project.path
+      })
+
+      const plain = db.createSession({ worktree_id: worktree.id, project_id: project.id })
+      expect(plain.shell_command).toBeNull()
+      expect(db.getSession(plain.id)?.shell_command).toBeNull()
+
+      const snapshot = shellSnapshotJson()
+      const session = db.createSession({
+        worktree_id: worktree.id,
+        project_id: project.id,
+        agent_sdk: 'terminal',
+        session_type: 'shell-command',
+        shell_command: snapshot
+      })
+      expect(session.session_type).toBe('shell-command')
+      expect(session.shell_command).toBe(snapshot)
+      expect(db.getSession(session.id)?.shell_command).toBe(snapshot)
+
+      const running = shellSnapshotJson({ state: 'running', runId: 'run-1' })
+      expect(db.updateSession(session.id, { shell_command: running })?.shell_command).toBe(running)
+      expect(db.getSession(session.id)?.shell_command).toBe(running)
+
+      // Unrelated updates leave the snapshot alone.
+      expect(db.updateSession(session.id, { name: 'Renamed' })?.shell_command).toBe(running)
+
+      db.close()
+    })
+
+    it('getShellCommandSessionsInStates filters by persisted state and tolerates malformed JSON', () => {
+      const db = new DatabaseService(makeDbPath())
+      db.init()
+
+      const project = db.createProject({ name: 'Project', path: makeDbPath() })
+      const worktree = db.createWorktree({
+        project_id: project.id,
+        name: 'Main',
+        branch_name: 'main',
+        path: project.path
+      })
+      const create = (shellCommand: string | null, sessionType = 'shell-command' as const) =>
+        db.createSession({
+          worktree_id: worktree.id,
+          project_id: project.id,
+          agent_sdk: 'terminal',
+          session_type: sessionType,
+          shell_command: shellCommand
+        })
+
+      const running = create(shellSnapshotJson({ state: 'running', runId: 'run-1' }))
+      const pending = create(shellSnapshotJson())
+      const succeeded = create(shellSnapshotJson({ state: 'succeeded', exitCode: 0 }))
+      create('{not json')
+      create(null)
+      // A default session with a running-looking snapshot is not a shell command.
+      db.createSession({
+        worktree_id: worktree.id,
+        project_id: project.id,
+        agent_sdk: 'terminal',
+        shell_command: shellSnapshotJson({ state: 'running' })
+      })
+
+      expect(db.getShellCommandSessionsInStates([])).toEqual([])
+      expect(db.getShellCommandSessionsInStates(['running']).map((s) => s.id)).toEqual([running.id])
+      expect(
+        db
+          .getShellCommandSessionsInStates(['pending', 'running'])
+          .map((s) => s.id)
+          .sort()
+      ).toEqual([pending.id, running.id].sort())
+      expect(db.getShellCommandSessionsInStates(['succeeded']).map((s) => s.id)).toEqual([
+        succeeded.id
+      ])
+      expect(db.getShellCommandSessionsInStates(['failed'])).toEqual([])
+
+      db.close()
+    })
+
+    it('getShellCommandRunRows returns the mapped rows newest first', () => {
+      const db = new DatabaseService(makeDbPath())
+      db.init()
+
+      const project = db.createProject({ name: 'Project', path: makeDbPath() })
+      const worktree = db.createWorktree({
+        project_id: project.id,
+        name: 'Main',
+        branch_name: 'main',
+        path: project.path
+      })
+
+      const first = db.createSession({
+        worktree_id: worktree.id,
+        project_id: project.id,
+        agent_sdk: 'terminal',
+        session_type: 'shell-command',
+        shell_command: shellSnapshotJson()
+      })
+      const second = db.createSession({
+        worktree_id: worktree.id,
+        project_id: project.id,
+        agent_sdk: 'terminal',
+        session_type: 'shell-command',
+        shell_command: shellSnapshotJson({ state: 'succeeded', exitCode: 0 })
+      })
+      // Not shell commands: excluded.
+      db.createSession({ worktree_id: worktree.id, project_id: project.id })
+      db.createSession({
+        worktree_id: worktree.id,
+        project_id: project.id,
+        session_type: 'shell-command',
+        shell_command: null
+      })
+      // Make the ordering deterministic: `first` was updated last.
+      db.getRawDb()
+        .prepare('UPDATE sessions SET updated_at = ? WHERE id = ?')
+        .run('2030-01-01T00:00:00.000Z', first.id)
+
+      const rows = db.getShellCommandRunRows()
+      expect(rows).toEqual([
+        {
+          sessionId: first.id,
+          projectId: project.id,
+          worktreeId: worktree.id,
+          shellCommand: shellSnapshotJson()
+        },
+        {
+          sessionId: second.id,
+          projectId: project.id,
+          worktreeId: worktree.id,
+          shellCommand: shellSnapshotJson({ state: 'succeeded', exitCode: 0 })
+        }
+      ])
+      expect(db.getShellCommandRunRows(1)).toHaveLength(1)
+
+      db.close()
+    })
+
+    it('upgrades a v54-shaped database to v55 keeping its rows', () => {
+      const dbPath = makeDbPath()
+      seedShellCommandsV54Shape(dbPath)
+
+      const db = new DatabaseService(dbPath)
+      db.init()
+
+      expect(db.getSchemaVersion()).toBe(CURRENT_SCHEMA_VERSION)
+      expect(columnNames(db, 'projects')).toEqual(expect.arrayContaining(['shell_commands']))
+      expect(columnNames(db, 'sessions')).toEqual(expect.arrayContaining(['shell_command']))
+
+      const project = db.getProject('project-1')
+      expect(project?.custom_commands).toEqual([{ id: 'c1', name: 'Ask', prompt: 'hi' }])
+      expect(project?.shell_commands).toEqual([])
+
+      const session = db.getSession('session-1')
+      expect(session?.agent_sdk).toBe('terminal')
+      expect(session?.session_type).toBe('default')
+      expect(session?.shell_command).toBeNull()
+      expect(db.getShellCommandRunRows()).toEqual([])
+      expect(db.getShellCommandSessionsInStates(['running'])).toEqual([])
+
+      // Re-running init() on the upgraded database is a no-op.
+      db.close()
+      const db2 = new DatabaseService(dbPath)
+      expect(() => db2.init()).not.toThrow()
+      expect(db2.getSchemaVersion()).toBe(CURRENT_SCHEMA_VERSION)
+      db2.close()
+    })
   })
 })

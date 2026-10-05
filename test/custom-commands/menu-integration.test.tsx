@@ -2,7 +2,7 @@
 
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, test, vi, beforeEach } from 'vitest'
+import { describe, expect, test, vi, beforeAll, afterAll, beforeEach } from 'vitest'
 import { WorktreeItem } from '../../src/renderer/src/components/worktrees/WorktreeItem'
 import { useProjectStore } from '../../src/renderer/src/stores/useProjectStore'
 import { useWorktreeStore } from '../../src/renderer/src/stores/useWorktreeStore'
@@ -11,6 +11,14 @@ import { useConnectionStore } from '../../src/renderer/src/stores/useConnectionS
 import { useHintStore } from '../../src/renderer/src/stores/useHintStore'
 import { useVimModeStore } from '../../src/renderer/src/stores/useVimModeStore'
 import { useSettingsStore } from '../../src/renderer/src/stores/useSettingsStore'
+
+const shellCommandMocks = vi.hoisted(() => ({
+  runProjectShellCommand: vi.fn()
+}))
+
+vi.mock('../../src/renderer/src/lib/shell-command-launch', () => ({
+  runProjectShellCommand: shellCommandMocks.runProjectShellCommand
+}))
 
 // Mock window APIs
 if (!window.projectOps) {
@@ -66,6 +74,23 @@ const mockWorktree = {
   last_accessed_at: '2026-01-01T00:00:00Z',
   attachments: '[]'
 }
+
+// floating-ui probes every positioned element with matches(':popover-open') and
+// matches(':modal'). jsdom's selector engine does not know them and recurses until the
+// stack overflows before throwing, which costs seconds per opened menu. Answer the two
+// probes directly (false is what the fallback returns anyway).
+const TOP_LAYER_PROBES = new Set([':popover-open', ':modal'])
+const originalMatches = Element.prototype.matches
+
+beforeAll(() => {
+  Element.prototype.matches = function (this: Element, selectors: string): boolean {
+    return TOP_LAYER_PROBES.has(selectors) ? false : originalMatches.call(this, selectors)
+  }
+})
+
+afterAll(() => {
+  Element.prototype.matches = originalMatches
+})
 
 describe('ProjectItem - Custom Commands Menu Integration', () => {
   beforeEach(() => {
@@ -184,5 +209,103 @@ describe('ProjectItem - Custom Commands Menu Integration', () => {
     expect(event.detail.commandName).toBe('Run Tests')
 
     window.removeEventListener('hive:execute-custom-command', eventSpy)
+  })
+
+  test('should render shell commands next to the custom commands and run them in the worktree', async () => {
+    const user = userEvent.setup()
+    shellCommandMocks.runProjectShellCommand.mockReset()
+    shellCommandMocks.runProjectShellCommand.mockResolvedValue({ success: true })
+
+    useSettingsStore.setState({
+      customProjectCommands: [{ id: 'cmd-1', name: 'Run Tests', prompt: 'Run tests' }]
+    })
+    useProjectStore.setState({
+      projects: [
+        {
+          ...mockProject,
+          shell_commands: [
+            { id: 'shell-1', name: 'Install App', commands: 'pnpm install:mac' },
+            { id: 'shell-2', name: 'Build App', commands: 'pnpm build' }
+          ]
+        }
+      ]
+    })
+
+    render(<WorktreeItem worktree={mockWorktree} projectPath={mockProject.path} />)
+
+    const worktreeItem = screen.getByTestId('worktree-item-test-worktree-id')
+    await user.pointer({ keys: '[MouseRight]', target: worktreeItem })
+
+    const menu = await screen.findByRole('menu')
+    expect(menu).toBeInTheDocument()
+
+    // Prompt commands first, then the shell commands, in their stored order
+    const names = Array.from(menu.querySelectorAll('[role="menuitem"]')).map(
+      (item) => item.textContent
+    )
+    expect(names).toContain('Run Tests')
+    expect(names.indexOf('Install App')).toBe(names.indexOf('Run Tests') + 1)
+    expect(names.indexOf('Build App')).toBe(names.indexOf('Install App') + 1)
+
+    await user.click(screen.getByText('Build App'))
+
+    // A worktree-level launch names the worktree it was started from
+    expect(shellCommandMocks.runProjectShellCommand).toHaveBeenCalledTimes(1)
+    expect(shellCommandMocks.runProjectShellCommand).toHaveBeenCalledWith({
+      projectId: mockProject.id,
+      commandId: 'shell-2',
+      worktreeId: mockWorktree.id
+    })
+  })
+
+  test('should render shell commands in the worktree "..." dropdown, closed by a separator', async () => {
+    const user = userEvent.setup()
+    shellCommandMocks.runProjectShellCommand.mockReset()
+    shellCommandMocks.runProjectShellCommand.mockResolvedValue({ success: true })
+
+    useProjectStore.setState({
+      projects: [
+        {
+          ...mockProject,
+          shell_commands: [{ id: 'shell-1', name: 'Install App', commands: 'pnpm install:mac' }]
+        }
+      ]
+    })
+    const branchWorktree = {
+      ...mockWorktree,
+      id: 'feature-worktree-id',
+      name: 'feature',
+      branch_name: 'feature',
+      path: '/path/to/feature',
+      is_default: false
+    }
+
+    render(<WorktreeItem worktree={branchWorktree} projectPath={mockProject.path} />)
+
+    const worktreeItem = screen.getByTestId('worktree-item-feature-worktree-id')
+    const trigger = worktreeItem.querySelector('button[aria-haspopup="menu"]')
+    expect(trigger).not.toBeNull()
+    await user.click(trigger as HTMLElement)
+
+    const menu = await screen.findByRole('menu')
+    const names = Array.from(menu.querySelectorAll('[role="menuitem"]')).map(
+      (item) => item.textContent
+    )
+    expect(names.indexOf('Install App')).toBe(names.indexOf('Connect to...') + 1)
+    expect(names.indexOf('Rename Branch')).toBe(names.indexOf('Install App') + 1)
+
+    // In this menu the branch group has no separator of its own: the commands add one
+    const installItem = screen.getByText('Install App').closest('[role="menuitem"]')
+    expect(installItem?.previousElementSibling?.getAttribute('role')).toBe('separator')
+    expect(installItem?.nextElementSibling?.getAttribute('role')).toBe('separator')
+
+    await user.click(screen.getByText('Install App'))
+
+    expect(shellCommandMocks.runProjectShellCommand).toHaveBeenCalledTimes(1)
+    expect(shellCommandMocks.runProjectShellCommand).toHaveBeenCalledWith({
+      projectId: mockProject.id,
+      commandId: 'shell-1',
+      worktreeId: 'feature-worktree-id'
+    })
   })
 })

@@ -47,6 +47,7 @@ import {
 import { ghosttyService } from './ghostty-service'
 import { createLogger } from './logger'
 import { ptyService } from './pty-service'
+import { cancelShellCommandRunIfLive, detachShellCommandRunsForQuit } from './shell-command-runs'
 import { getAgentSdkDisplayName, isAgentCli, isCodexCli } from '@shared/types/agent-sdk'
 import { resolveCodexBinaryPath } from './codex-binary-resolver'
 import { buildCodexCliHookOverrides } from './codex-cli-hooks'
@@ -644,6 +645,9 @@ export function handleClaudeCliTerminalInput(terminalId: string, data: string): 
 }
 
 export function destroyNodePtyTerminal(terminalId: string): void {
+  // A live shell-command run owns this id: the run registry records 'cancelled' and
+  // kills the whole tree through the run's host (in-app PTY or detached).
+  if (cancelShellCommandRunIfLive(terminalId)) return
   const cleanup = listenerCleanups.get(terminalId)
   if (cleanup) {
     cleanup.removeData()
@@ -1093,6 +1097,7 @@ export async function createClaudeCliTerminal(
 
 export function cleanupTerminals(): Promise<void> {
   log.info('Cleaning up all terminals')
+  detachShellCommandRunsForQuit()
   for (const [, cleanup] of listenerCleanups) {
     cleanup.removeData()
     cleanup.removeExit()

@@ -1,4 +1,5 @@
 import type { PetManifest, PetPosition, PetSettings, PetStatusPayload } from './types/pet'
+import type { ShellCommandRunState } from './lib/shell-commands'
 
 export const DESKTOP_COMMAND_REQUEST_TYPE = 'hive-desktop-command'
 export const DESKTOP_COMMAND_RESULT_TYPE = 'hive-desktop-command-result'
@@ -63,6 +64,8 @@ export type DesktopCommandName =
   | 'terminalDestroy'
   | 'terminalWrite'
   | 'terminalCreateClaudeCli'
+  | 'terminalRunShellCommand'
+  | 'terminalAttachShellCommand'
   | 'terminalGetLiveIds'
   | 'remoteLaunchClaudeTmux'
   | 'terminalGhosttyInit'
@@ -356,11 +359,31 @@ export interface TerminalCreateClaudeCliPayload {
   }
 }
 
+export interface TerminalRunShellCommandPayload {
+  readonly sessionId: string
+  readonly cols?: number
+  readonly rows?: number
+}
+
+export interface TerminalAttachShellCommandPayload {
+  readonly sessionId: string
+}
+
 export interface TerminalCreateResult {
   readonly success: boolean
   readonly cols?: number
   readonly rows?: number
   readonly error?: string
+}
+
+export interface TerminalRunShellCommandResult extends TerminalCreateResult {
+  readonly alreadyRunning?: boolean
+}
+
+export interface TerminalAttachShellCommandResult extends TerminalCreateResult {
+  readonly state?: ShellCommandRunState
+  readonly exitCode?: number | null
+  readonly runId?: string | null
 }
 
 export interface RemoteLaunchClaudeTmuxPayload {
@@ -957,6 +980,8 @@ export type DesktopCommandRequest =
   | TerminalDestroyDesktopCommandRequest
   | TerminalWriteDesktopCommandRequest
   | TerminalCreateClaudeCliDesktopCommandRequest
+  | TerminalRunShellCommandDesktopCommandRequest
+  | TerminalAttachShellCommandDesktopCommandRequest
   | TerminalGetLiveIdsDesktopCommandRequest
   | RemoteLaunchClaudeTmuxDesktopCommandRequest
   | TerminalGhosttyInitDesktopCommandRequest
@@ -1394,6 +1419,20 @@ export interface TerminalCreateClaudeCliDesktopCommandRequest {
   readonly id: string
   readonly command: 'terminalCreateClaudeCli'
   readonly payload: TerminalCreateClaudeCliPayload
+}
+
+export interface TerminalRunShellCommandDesktopCommandRequest {
+  readonly type: typeof DESKTOP_COMMAND_REQUEST_TYPE
+  readonly id: string
+  readonly command: 'terminalRunShellCommand'
+  readonly payload: TerminalRunShellCommandPayload
+}
+
+export interface TerminalAttachShellCommandDesktopCommandRequest {
+  readonly type: typeof DESKTOP_COMMAND_REQUEST_TYPE
+  readonly id: string
+  readonly command: 'terminalAttachShellCommand'
+  readonly payload: TerminalAttachShellCommandPayload
 }
 
 export interface TerminalGetLiveIdsDesktopCommandRequest {
@@ -2029,6 +2068,16 @@ export function makeDesktopCommandRequest(
 ): TerminalCreateClaudeCliDesktopCommandRequest
 export function makeDesktopCommandRequest(
   id: string,
+  command: 'terminalRunShellCommand',
+  payload: TerminalRunShellCommandPayload
+): TerminalRunShellCommandDesktopCommandRequest
+export function makeDesktopCommandRequest(
+  id: string,
+  command: 'terminalAttachShellCommand',
+  payload: TerminalAttachShellCommandPayload
+): TerminalAttachShellCommandDesktopCommandRequest
+export function makeDesktopCommandRequest(
+  id: string,
   command: 'terminalGetLiveIds'
 ): TerminalGetLiveIdsDesktopCommandRequest
 export function makeDesktopCommandRequest(
@@ -2320,6 +2369,8 @@ export function makeDesktopCommandRequest(
     | TerminalDestroyPayload
     | TerminalWritePayload
     | TerminalCreateClaudeCliPayload
+    | TerminalRunShellCommandPayload
+    | TerminalAttachShellCommandPayload
     | TerminalGhosttyCreateSurfacePayload
     | TerminalGhosttySetFramePayload
     | TerminalGhosttySetSizePayload
@@ -2914,6 +2965,32 @@ export function makeDesktopCommandRequest(
       command,
       payload
     } as TerminalCreateClaudeCliDesktopCommandRequest
+  }
+
+  if (command === 'terminalRunShellCommand') {
+    if (!payload) {
+      throw new Error('Missing terminalRunShellCommand payload')
+    }
+
+    return {
+      type: DESKTOP_COMMAND_REQUEST_TYPE,
+      id,
+      command,
+      payload
+    } as TerminalRunShellCommandDesktopCommandRequest
+  }
+
+  if (command === 'terminalAttachShellCommand') {
+    if (!payload) {
+      throw new Error('Missing terminalAttachShellCommand payload')
+    }
+
+    return {
+      type: DESKTOP_COMMAND_REQUEST_TYPE,
+      id,
+      command,
+      payload
+    } as TerminalAttachShellCommandDesktopCommandRequest
   }
 
   if (command === 'terminalGetLiveIds') {
@@ -3614,6 +3691,10 @@ export const isDesktopCommandRequest = (value: unknown): value is DesktopCommand
       (value.command === 'terminalWrite' && isTerminalWritePayload(value.payload)) ||
       (value.command === 'terminalCreateClaudeCli' &&
         isTerminalCreateClaudeCliPayload(value.payload)) ||
+      (value.command === 'terminalRunShellCommand' &&
+        isTerminalRunShellCommandPayload(value.payload)) ||
+      (value.command === 'terminalAttachShellCommand' &&
+        isTerminalAttachShellCommandPayload(value.payload)) ||
       value.command === 'terminalGetLiveIds' ||
       (value.command === 'remoteLaunchClaudeTmux' &&
         isRemoteLaunchClaudeTmuxPayload(value.payload)) ||
@@ -3909,6 +3990,19 @@ const isTerminalCreateClaudeCliPayload = (
         value.opts.pendingPrompt === undefined ||
         value.opts.pendingPrompt === null ||
         typeof value.opts.pendingPrompt === 'string')))
+
+const isTerminalRunShellCommandPayload = (
+  value: unknown
+): value is TerminalRunShellCommandPayload =>
+  isRecord(value) &&
+  typeof value.sessionId === 'string' &&
+  (value.cols === undefined || typeof value.cols === 'number') &&
+  (value.rows === undefined || typeof value.rows === 'number')
+
+const isTerminalAttachShellCommandPayload = (
+  value: unknown
+): value is TerminalAttachShellCommandPayload =>
+  isRecord(value) && typeof value.sessionId === 'string'
 
 const isRemoteLaunchClaudeTmuxPayload = (
   value: unknown

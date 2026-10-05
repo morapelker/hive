@@ -74,6 +74,12 @@ import { projectApi } from '@/api/project-api'
 import { gitApi } from '@/api/git-api'
 import { mergeCustomCommands, replaceTemplateVariables } from '@/lib/custom-commands'
 import type { CustomProjectCommand } from '@/lib/custom-commands'
+import type { ProjectShellCommand } from '@shared/lib/shell-commands'
+import {
+  getRunnableShellCommands,
+  renderShellCommandMenuItems,
+  runShellCommandFromMenu
+} from '@/components/shell-commands/ShellCommandMenuItems'
 import {
   AGENT_LIST,
   AGENT_LIST_AFTER_META,
@@ -204,6 +210,7 @@ export const WorktreeItem = memo(function WorktreeItem({
     () => mergeCustomCommands(globalCommands, project?.custom_commands ?? []),
     [globalCommands, project?.custom_commands]
   )
+  const shellCommands = useMemo(() => getRunnableShellCommands(project), [project])
 
   const handleTogglePin = useCallback(async (): Promise<void> => {
     if (isPinned) {
@@ -248,6 +255,18 @@ export const WorktreeItem = memo(function WorktreeItem({
       }
     },
     [project, worktree.id]
+  )
+
+  const handleRunShellCommand = useCallback(
+    (command: ProjectShellCommand) => {
+      void runShellCommandFromMenu({
+        projectId: worktree.project_id,
+        commandId: command.id,
+        commandName: command.name,
+        worktreeId: worktree.id
+      })
+    },
+    [worktree.id, worktree.project_id]
   )
 
   const isInConnectionMode = connectionModeActive
@@ -930,6 +949,16 @@ export const WorktreeItem = memo(function WorktreeItem({
                           <Link className="h-4 w-4 mr-2" />
                           Connect to...
                         </DropdownMenuItem>
+                        {renderShellCommandMenuItems({
+                          commands: shellCommands,
+                          onRun: handleRunShellCommand,
+                          MenuItem: DropdownMenuItem,
+                          MenuSeparator: DropdownMenuSeparator,
+                          MenuSub: DropdownMenuSub,
+                          MenuSubTrigger: DropdownMenuSubTrigger,
+                          MenuSubContent: DropdownMenuSubContent,
+                          trailingSeparator: !worktree.is_default && hasNamedBranch
+                        })}
                         {!worktree.is_default && (
                           <>
                             {hasNamedBranch ? (
@@ -1077,6 +1106,15 @@ export const WorktreeItem = memo(function WorktreeItem({
             ))}
           </>
         )}
+        {renderShellCommandMenuItems({
+          commands: shellCommands,
+          onRun: handleRunShellCommand,
+          MenuItem: ContextMenuItem,
+          MenuSeparator: ContextMenuSeparator,
+          MenuSub: ContextMenuSub,
+          MenuSubTrigger: ContextMenuSubTrigger,
+          MenuSubContent: ContextMenuSubContent
+        })}
         {!worktree.is_default && (
           <>
             {hasNamedBranch ? (

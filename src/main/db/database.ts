@@ -1,5 +1,6 @@
 import { deleteAttachment } from '../services/attachment-storage'
 import type { AgentSdk } from '@shared/types/agent-sdk'
+import { parseProjectShellCommands } from '@shared/lib/shell-commands'
 import Database from 'better-sqlite3'
 import { dirname, join } from 'path'
 import { existsSync, mkdirSync, statSync } from 'fs'
@@ -113,9 +114,13 @@ export function resolveDatabasePath(options?: {
   return join(homeDir, '.hive', 'hive.db')
 }
 
-type ProjectRow = Omit<Project, 'auto_assign_port' | 'custom_commands' | 'trust_check_done'> & {
+type ProjectRow = Omit<
+  Project,
+  'auto_assign_port' | 'custom_commands' | 'shell_commands' | 'trust_check_done'
+> & {
   auto_assign_port: number | boolean
   custom_commands: string | null
+  shell_commands: string | null
   trust_check_done?: number | boolean
 }
 
@@ -329,7 +334,8 @@ export class DatabaseService {
       claude_session_id: (row.claude_session_id as string) ?? null,
       custom_provider_id: (row.custom_provider_id as string) ?? null,
       pinned_to_board: !!(row.pinned_to_board as number),
-      session_type: (row.session_type as string) ?? 'default'
+      session_type: (row.session_type as string) ?? 'default',
+      shell_command: (row.shell_command as string) ?? null
     } as Session
   }
 
@@ -350,7 +356,8 @@ export class DatabaseService {
       ...row,
       auto_assign_port: Boolean(row.auto_assign_port),
       trust_check_done: Boolean(row.trust_check_done),
-      custom_commands: this.parseProjectCustomCommands(row.custom_commands)
+      custom_commands: this.parseProjectCustomCommands(row.custom_commands),
+      shell_commands: parseProjectShellCommands(row.shell_commands)
     } as Project
   }
 
@@ -722,6 +729,7 @@ export class DatabaseService {
     this.safeAddColumn('projects', 'kanban_storage_mode', "TEXT NOT NULL DEFAULT 'internal'")
     this.safeAddColumn('projects', 'kanban_markdown_config', 'TEXT DEFAULT NULL')
     this.safeAddColumn('projects', 'custom_commands', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('projects', 'shell_commands', 'TEXT DEFAULT NULL')
     this.safeAddColumn('projects', 'worktree_create_script', 'TEXT DEFAULT NULL')
     this.safeAddColumn('kanban_tickets', 'archived_at', 'TEXT DEFAULT NULL')
     this.safeAddColumn('sessions', 'pinned_to_board', 'INTEGER NOT NULL DEFAULT 0')
@@ -743,6 +751,7 @@ export class DatabaseService {
     this.safeAddColumn('sessions', 'session_type', "TEXT NOT NULL DEFAULT 'default'")
     this.safeAddColumn('sessions', 'remote_launch', 'TEXT DEFAULT NULL')
     this.safeAddColumn('sessions', 'custom_provider_id', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('sessions', 'shell_command', 'TEXT DEFAULT NULL')
     this.safeAddColumn(
       'discord_resources',
       'managed_session_id',
@@ -1213,6 +1222,7 @@ export class DatabaseService {
       archive_script: data.archive_script ?? null,
       worktree_create_script: data.worktree_create_script ?? null,
       custom_commands: null,
+      shell_commands: [],
       auto_assign_port: false,
       sort_order: 0,
       created_at: now,
@@ -1376,6 +1386,12 @@ export class DatabaseService {
     if (data.custom_commands !== undefined) {
       updates.push('custom_commands = ?')
       values.push(data.custom_commands ? JSON.stringify(data.custom_commands) : null)
+    }
+    if (data.shell_commands !== undefined) {
+      // Drops invalid entries and unknown keys: defence in depth behind the zod schema.
+      const commands = parseProjectShellCommands(data.shell_commands)
+      updates.push('shell_commands = ?')
+      values.push(commands.length > 0 ? JSON.stringify(commands) : null)
     }
     if (data.auto_assign_port !== undefined) {
       updates.push('auto_assign_port = ?')
@@ -1875,6 +1891,7 @@ export class DatabaseService {
       model_id: data.model_id ?? null,
       model_variant: data.model_variant ?? null,
       remote_launch: data.remote_launch ?? null,
+      shell_command: data.shell_command ?? null,
       created_at: now,
       updated_at: now,
       completed_at: null,
@@ -1882,8 +1899,8 @@ export class DatabaseService {
     }
 
     db.prepare(
-      `INSERT INTO sessions (id, worktree_id, project_id, connection_id, name, status, opencode_session_id, claude_session_id, agent_sdk, custom_provider_id, mode, session_type, model_provider_id, model_id, model_variant, remote_launch, created_at, updated_at, completed_at, pinned_to_board)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO sessions (id, worktree_id, project_id, connection_id, name, status, opencode_session_id, claude_session_id, agent_sdk, custom_provider_id, mode, session_type, model_provider_id, model_id, model_variant, remote_launch, shell_command, created_at, updated_at, completed_at, pinned_to_board)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       session.id,
       session.worktree_id,
@@ -1901,6 +1918,7 @@ export class DatabaseService {
       session.model_id,
       session.model_variant,
       session.remote_launch,
+      session.shell_command ?? null,
       session.created_at,
       session.updated_at,
       session.completed_at,
@@ -2055,6 +2073,10 @@ export class DatabaseService {
       updates.push('remote_launch = ?')
       values.push(data.remote_launch)
     }
+    if (data.shell_command !== undefined) {
+      updates.push('shell_command = ?')
+      values.push(data.shell_command)
+    }
     if (data.completed_at !== undefined) {
       updates.push('completed_at = ?')
       values.push(data.completed_at)
@@ -2084,6 +2106,51 @@ export class DatabaseService {
       )
       .all(worktreeId) as Record<string, unknown>[]
     return rows.map((row) => this.mapSessionRow(row))
+  }
+
+  /** Shell-command sessions whose persisted run state is one of `states` (startup reconcile). */
+  getShellCommandSessionsInStates(states: readonly string[]): Session[] {
+    if (states.length === 0) return []
+    const db = this.getDb()
+    const placeholders = states.map(() => '?').join(', ')
+    // json_extract raises on malformed JSON, so guard it: one bad row must not break the reconcile.
+    const rows = db
+      .prepare(
+        `SELECT * FROM sessions
+         WHERE session_type = 'shell-command' AND shell_command IS NOT NULL
+           AND CASE WHEN json_valid(shell_command)
+                    THEN json_extract(shell_command, '$.state') END IN (${placeholders})`
+      )
+      .all(...states) as Record<string, unknown>[]
+    return rows.map((row) => this.mapSessionRow(row))
+  }
+
+  /** Run snapshot of every shell-command session, newest first (the renderer's run index). */
+  getShellCommandRunRows(limit = 1000): Array<{
+    sessionId: string
+    projectId: string
+    worktreeId: string | null
+    shellCommand: string
+  }> {
+    const db = this.getDb()
+    const rows = db
+      .prepare(
+        `SELECT id, project_id, worktree_id, shell_command FROM sessions
+         WHERE session_type = 'shell-command' AND shell_command IS NOT NULL
+         ORDER BY updated_at DESC LIMIT ?`
+      )
+      .all(limit) as Array<{
+      id: string
+      project_id: string
+      worktree_id: string | null
+      shell_command: string
+    }>
+    return rows.map((row) => ({
+      sessionId: row.id,
+      projectId: row.project_id,
+      worktreeId: row.worktree_id,
+      shellCommand: row.shell_command
+    }))
   }
 
   searchSessions(options: SessionSearchOptions): SessionWithWorktree[] {

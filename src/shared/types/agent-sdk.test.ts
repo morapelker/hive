@@ -7,9 +7,12 @@ import {
   isClaudeFamily,
   isCodexCli,
   isCodexFamily,
+  isShellCommandSession,
   isTerminalBacked,
+  SHELL_COMMAND_SESSION_TYPE,
   supportsGoalMode,
-  toModelCatalogSdk
+  toModelCatalogSdk,
+  usesSessionTerminalPortal
 } from './agent-sdk'
 
 describe('agent-sdk predicates', () => {
@@ -52,5 +55,45 @@ describe('agent-sdk predicates', () => {
     expect(getAgentSdkDisplayName('codex-cli')).toBe('Codex (CLI)')
     expect(getAgentSdkDisplayName('claude-code-cli')).toBe('Claude Code (CLI)')
     expect(getAgentSdkDisplayName(null)).toBe('Agent')
+  })
+
+  it('tells shell-command sessions apart from plain terminals', () => {
+    expect(SHELL_COMMAND_SESSION_TYPE).toBe('shell-command')
+    expect(isShellCommandSession({ agent_sdk: 'terminal', session_type: 'shell-command' })).toBe(
+      true
+    )
+    expect(isShellCommandSession({ agent_sdk: 'terminal', session_type: 'default' })).toBe(false)
+    expect(isShellCommandSession({ agent_sdk: 'terminal' })).toBe(false)
+    expect(isShellCommandSession({ agent_sdk: 'terminal', session_type: null })).toBe(false)
+    expect(
+      isShellCommandSession({ agent_sdk: 'claude-code-cli', session_type: 'shell-command' })
+    ).toBe(false)
+    expect(isShellCommandSession({ session_type: 'shell-command' })).toBe(false)
+    expect(isShellCommandSession(null)).toBe(false)
+    expect(isShellCommandSession(undefined)).toBe(false)
+
+    // A shell command is still a terminal for every "terminal means no AI" guard.
+    expect(isTerminalBacked('terminal')).toBe(true)
+    expect(isAgentCli('terminal')).toBe(false)
+  })
+
+  it('routes the agent CLIs and shell commands through the session terminal portal', () => {
+    expect(usesSessionTerminalPortal({ agent_sdk: 'claude-code-cli' })).toBe(true)
+    expect(usesSessionTerminalPortal({ agent_sdk: 'codex-cli', session_type: 'default' })).toBe(
+      true
+    )
+    expect(
+      usesSessionTerminalPortal({ agent_sdk: 'terminal', session_type: 'shell-command' })
+    ).toBe(true)
+    expect(usesSessionTerminalPortal({ agent_sdk: 'terminal', session_type: 'default' })).toBe(
+      false
+    )
+    expect(usesSessionTerminalPortal({ agent_sdk: 'terminal' })).toBe(false)
+    expect(usesSessionTerminalPortal({ agent_sdk: 'opencode' })).toBe(false)
+    expect(
+      usesSessionTerminalPortal({ agent_sdk: 'opencode', session_type: 'shell-command' })
+    ).toBe(false)
+    expect(usesSessionTerminalPortal(null)).toBe(false)
+    expect(usesSessionTerminalPortal(undefined)).toBe(false)
   })
 })

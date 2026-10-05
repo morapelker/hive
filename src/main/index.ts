@@ -62,6 +62,10 @@ import { discordService } from './services/discord-service'
 import { perfDiagnostics } from './services/perf-diagnostics'
 import { configure as configureCodexDebugLogger } from './services/codex-debug-logger'
 import { ptyService } from './services/pty-service'
+import {
+  reconcileShellCommandRuns,
+  startShellCommandRunSweep
+} from './services/shell-command-runs'
 import { ghosttyService } from './services/ghostty-service'
 import { getGhosttyConfigPathOnce } from './services/ghostty-config-store'
 import { closeClaudeHookServer } from './services/claude-hook-server'
@@ -494,6 +498,15 @@ app
     // Initialize database
     log.info('Initializing database')
     getDatabase()
+
+    // Shell command runs left over from the previous app lifetime: finalize the ones
+    // that finished or died, re-adopt detached ones that are still running.
+    await reconcileShellCommandRuns().catch((error) => {
+      log.warn('Shell command run reconcile failed', {
+        error: error instanceof Error ? error.message : String(error)
+      })
+    })
+    startShellCommandRunSweep()
 
     // Ensure the file-based custom command template exists and record its mtime.
     initializeCustomCommandsFile()

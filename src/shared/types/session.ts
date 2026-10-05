@@ -1,6 +1,6 @@
 import type { AgentSdk } from './agent-sdk'
 
-export type SessionType = 'default' | 'board-assistant'
+export type SessionType = 'default' | 'board-assistant' | 'shell-command'
 
 export interface Session {
   id: string
@@ -19,6 +19,8 @@ export interface Session {
   model_id: string | null
   model_variant: string | null
   remote_launch: string | null
+  /** JSON SessionShellCommand: script snapshot + run state of a 'shell-command' session. */
+  shell_command?: string | null
   created_at: string
   updated_at: string
   completed_at: string | null

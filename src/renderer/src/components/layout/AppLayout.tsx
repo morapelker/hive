@@ -17,6 +17,7 @@ import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts'
 import { useVimNavigation } from '@/hooks/useVimNavigation'
 import { useOpenCodeGlobalListener } from '@/hooks/useOpenCodeGlobalListener'
 import { useClaudeCliStatusListener } from '@/hooks/useClaudeCliStatusListener'
+import { useShellCommandStatusListener } from '@/hooks/useShellCommandStatusListener'
 import { useClaudeLiveUsageListener } from '@/hooks/useClaudeLiveUsageListener'
 import { useNotificationNavigation } from '@/hooks/useNotificationNavigation'
 import { useWindowFocusRefresh } from '@/hooks/useWindowFocusRefresh'
@@ -142,6 +143,8 @@ export function AppLayout({ children }: AppLayoutProps): React.JSX.Element {
   // Global listener for background session events (AI finishes while viewing another project)
   useOpenCodeGlobalListener()
   useClaudeCliStatusListener()
+  // Run-state changes of shell-command sessions (ticket moves, error badge, strip)
+  useShellCommandStatusListener()
   // Per-response Claude usage from the local API proxy (real-time usage bars)
   useClaudeLiveUsageListener()
   // Navigate to session when native notification is clicked

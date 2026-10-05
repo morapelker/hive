@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 50
+export const CURRENT_SCHEMA_VERSION = 51
 
 /**
  * Voice dictation history (v48): every transcript the local speech model produced, newest
@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS projects (
   archive_script TEXT DEFAULT NULL,
   worktree_create_script TEXT DEFAULT NULL,
   custom_commands TEXT DEFAULT NULL,
+  shell_commands TEXT DEFAULT NULL,
   custom_icon TEXT DEFAULT NULL,
   detected_icon TEXT DEFAULT NULL,
   sort_order INTEGER NOT NULL DEFAULT 0,
@@ -806,6 +807,14 @@ DROP TABLE IF EXISTS diff_comments;`
     up: `-- NOTE: ALTER TABLE for kanban_tickets.awaiting_completion and
          -- markdown_kanban_card_state.awaiting_completion is handled idempotently
          -- by safeAddColumn() in database.ts to avoid "duplicate column" errors.`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
+  },
+  {
+    version: 51,
+    name: 'add_shell_commands',
+    up: `-- NOTE: ALTER TABLE for projects.shell_commands and sessions.shell_command is
+         -- handled idempotently by safeAddColumn() in database.ts to avoid
+         -- "duplicate column" errors.`,
     down: `-- SQLite cannot drop columns; this is a no-op for safety`
   }
 ]

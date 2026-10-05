@@ -16,6 +16,7 @@ import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { CustomCommandsEditor } from '@/components/custom-commands/CustomCommandsEditor'
+import { ShellCommandsEditor } from '@/components/shell-commands/ShellCommandsEditor'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { LanguageIcon } from './LanguageIcon'
@@ -23,6 +24,12 @@ import { SetupScriptSuggestionsDialog } from './SetupScriptSuggestionsDialog'
 import { kanbanApi } from '@/api/kanban-api'
 import { projectApi } from '@/api/project-api'
 import type { CustomProjectCommand } from '@/lib/custom-commands'
+import {
+  SHELL_COMMAND_MAX_PER_PROJECT,
+  normalizeShellCommand,
+  validateShellCommand,
+  type ProjectShellCommand
+} from '@shared/lib/shell-commands'
 import { formatSelectedKanbanFolder } from './kanban-folder-paths'
 
 interface Project {
@@ -37,6 +44,7 @@ interface Project {
   archive_script: string | null
   worktree_create_script: string | null
   custom_commands: CustomProjectCommand[] | null
+  shell_commands?: ProjectShellCommand[] | null
   auto_assign_port: boolean
   kanban_storage_mode?: 'internal' | 'markdown'
   kanban_markdown_config?: string | null
@@ -91,6 +99,7 @@ export function ProjectSettingsDialog({
   const [worktreeCreateScriptExpanded, setWorktreeCreateScriptExpanded] = useState(false)
   const [customIcon, setCustomIcon] = useState<string | null>(null)
   const [customCommands, setCustomCommands] = useState<CustomProjectCommand[]>([])
+  const [shellCommands, setShellCommands] = useState<ProjectShellCommand[]>([])
   const [autoAssignPort, setAutoAssignPort] = useState(false)
   const [kanbanMode, setKanbanMode] = useState<'internal' | 'markdown'>('internal')
   const [kanbanLayout, setKanbanLayout] = useState<MarkdownLayout>('single-folder')
@@ -140,6 +149,7 @@ export function ProjectSettingsDialog({
     setWorktreeCreateScriptExpanded((initialProject.worktree_create_script ?? '').trim().length > 0)
     setCustomIcon(initialProject.custom_icon ?? null)
     setCustomCommands(initialProject.custom_commands ?? [])
+    setShellCommands(initialProject.shell_commands ?? [])
     setAutoAssignPort(initialProject.auto_assign_port ?? false)
     setKanbanMode(initialProject.kanban_storage_mode ?? 'internal')
     setKanbanConfigError(null)
@@ -301,6 +311,22 @@ export function ProjectSettingsDialog({
   }
 
   const handleSave = async (): Promise<void> => {
+    // Half-typed rows are dropped; a filled-in row that cannot run blocks the save.
+    const shellCommandsToSave = shellCommands
+      .filter((command) => command.name.trim() !== '' && command.commands.trim() !== '')
+      .map(normalizeShellCommand)
+    if (shellCommandsToSave.length > SHELL_COMMAND_MAX_PER_PROJECT) {
+      toast.error(`At most ${SHELL_COMMAND_MAX_PER_PROJECT} shell commands per project`)
+      return
+    }
+    for (const command of shellCommandsToSave) {
+      const validation = validateShellCommand(command)
+      if (!validation.valid) {
+        toast.error(`Shell command "${command.name}": ${validation.errors[0]}`)
+        return
+      }
+    }
+
     setSaving(true)
     setKanbanConfigError(null)
     setCanCreateKanbanFolders(false)
@@ -315,6 +341,7 @@ export function ProjectSettingsDialog({
           custom_commands: customCommands.filter(
             (command) => command.name.trim() !== '' && command.prompt.trim() !== ''
           ),
+          shell_commands: shellCommandsToSave,
           custom_icon: customIcon,
           auto_assign_port: autoAssignPort
         })
@@ -396,6 +423,7 @@ export function ProjectSettingsDialog({
             <TabsList>
               <TabsTrigger value="general">General</TabsTrigger>
               <TabsTrigger value="custom-commands">Custom Commands</TabsTrigger>
+              <TabsTrigger value="shell-commands">Shell Commands</TabsTrigger>
             </TabsList>
 
             <TabsContent value="general" className="space-y-5">
@@ -717,6 +745,13 @@ export function ProjectSettingsDialog({
 
             <TabsContent value="custom-commands">
               <CustomCommandsEditor value={customCommands} onChange={setCustomCommands} />
+            </TabsContent>
+
+            <TabsContent value="shell-commands" className="space-y-3">
+              <p className="text-xs text-muted-foreground">
+                Named commands you can run from the project or worktree right-click menu.
+              </p>
+              <ShellCommandsEditor value={shellCommands} onChange={setShellCommands} />
             </TabsContent>
           </Tabs>
 

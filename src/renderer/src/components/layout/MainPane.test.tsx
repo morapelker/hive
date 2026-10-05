@@ -90,7 +90,7 @@ type MainPaneSession = {
   claude_session_id: string | null
   agent_sdk: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'terminal'
   mode: 'build' | 'plan' | 'super-plan'
-  session_type: 'default' | 'board-assistant'
+  session_type: 'default' | 'board-assistant' | 'shell-command'
   model_provider_id: string | null
   model_id: string | null
   model_variant: string | null
@@ -384,5 +384,116 @@ describe('MainPane terminal activation gating', () => {
       })
     })
     expect(screen.queryByTestId('session-view-session-2')).toBeNull()
+  })
+})
+
+// A shell-command session is stored as the terminal SDK. Mounting the plain terminal
+// view for it would spawn a second, interactive shell under the same id.
+describe('MainPane shell-command sessions', () => {
+  const shellSession = makeSession({
+    id: 'shell-1',
+    name: 'Build',
+    agent_sdk: 'terminal',
+    session_type: 'shell-command',
+    model_provider_id: null,
+    model_id: null
+  })
+
+  it('renders an active shell-command session through the portal, not the terminal view', () => {
+    setupMainPaneState(shellSession)
+
+    renderMainPane()
+
+    const view = screen.getByTestId('session-view-shell-1')
+    expect(view.getAttribute('data-visible')).toBe('true')
+    expect(screen.queryByTestId('terminal-view-shell-1')).toBeNull()
+  })
+
+  it('still renders a plain terminal session with the terminal view', () => {
+    setupMainPaneState(makeSession({ id: 'terminal-1', agent_sdk: 'terminal' }))
+
+    renderMainPane()
+
+    expect(screen.getByTestId('terminal-view-terminal-1').getAttribute('data-visible')).toBe('true')
+    expect(screen.queryByTestId('session-view-terminal-1')).toBeNull()
+  })
+
+  it('keeps a shell-command session mounted but hidden during board view', () => {
+    setupMainPaneState(shellSession)
+    useKanbanStore.setState({ isBoardViewActive: true })
+
+    renderMainPane()
+
+    const view = screen.getByTestId('session-view-shell-1')
+    expect(view.getAttribute('data-visible')).toBe('false')
+    expect(view.closest('.hidden')).not.toBeNull()
+  })
+
+  it('admits a non-active shell-command session with a mount request (ticket modal)', () => {
+    setupMainPaneState()
+    useSessionStore.setState({
+      sessionsByWorktree: new Map([['worktree-1', [makeSession(), shellSession]]])
+    })
+
+    renderMainPane()
+    expect(screen.queryByTestId('session-view-shell-1')).toBeNull()
+
+    act(() => {
+      useSessionStore.setState({ sessionMountRequests: new Map([['shell-1', 1]]) })
+    })
+
+    expect(screen.getByTestId('session-view-shell-1').getAttribute('data-visible')).toBe('false')
+    expect(screen.queryByTestId('terminal-view-shell-1')).toBeNull()
+  })
+
+  it('admits a mount request for a shell-command session of another worktree', () => {
+    setupMainPaneState()
+    useSessionStore.setState({
+      sessionsByWorktree: new Map([
+        ['worktree-1', [makeSession()]],
+        ['worktree-2', [{ ...shellSession, worktree_id: 'worktree-2' }]]
+      ]),
+      sessionMountRequests: new Map([['shell-1', 1]])
+    })
+
+    renderMainPane()
+
+    expect(screen.getByTestId('session-view-shell-1')).toBeTruthy()
+    expect(screen.queryByTestId('terminal-view-shell-1')).toBeNull()
+  })
+
+  it('does not admit a mount request for a plain terminal session', () => {
+    setupMainPaneState()
+    useSessionStore.setState({
+      sessionsByWorktree: new Map([
+        ['worktree-1', [makeSession()]],
+        ['worktree-2', [makeSession({ id: 'terminal-1', agent_sdk: 'terminal' })]]
+      ]),
+      sessionMountRequests: new Map([['terminal-1', 1]])
+    })
+
+    renderMainPane()
+
+    expect(screen.queryByTestId('terminal-view-terminal-1')).toBeNull()
+    expect(screen.queryByTestId('session-view-terminal-1')).toBeNull()
+  })
+
+  it('keeps avoiding the terminal view after the session leaves the store', () => {
+    setupMainPaneState(shellSession)
+
+    renderMainPane()
+    expect(screen.getByTestId('session-view-shell-1')).toBeTruthy()
+
+    // Transient session-map churn: the session is no longer resolvable, so the
+    // cached mount kind (not the raw 'terminal' SDK) decides what stays mounted.
+    act(() => {
+      useSessionStore.setState({
+        activeSessionId: null,
+        sessionsByWorktree: new Map([['worktree-1', []]])
+      })
+    })
+
+    expect(screen.getByTestId('session-view-shell-1').closest('.hidden')).not.toBeNull()
+    expect(screen.queryByTestId('terminal-view-shell-1')).toBeNull()
   })
 })

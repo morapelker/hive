@@ -19,6 +19,8 @@ export interface BackupProject {
   archive_script: string | null
   worktree_create_script: string | null
   custom_commands: unknown[] | null // CustomProjectCommand[] round-tripped as YAML
+  /** ProjectShellCommand[]; absent in backups written before shell commands existed. */
+  shell_commands?: unknown[] | null
   auto_assign_port: boolean
   sort_order: number // exported for fidelity; NOT applied on restore
   kanban_simple_mode: boolean

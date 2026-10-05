@@ -74,6 +74,15 @@ const ptyServiceMocks = vi.hoisted(() => ({
   getIds: vi.fn(() => [] as string[])
 }))
 
+// Defaults mean "not a shell-command run", so the legacy terminal cases keep their behaviour.
+const shellCommandRunMocks = vi.hoisted(() => ({
+  attachShellCommandTerminal: vi.fn(),
+  getLiveShellCommandSessionIds: vi.fn(() => [] as string[]),
+  resizeShellCommandRun: vi.fn(() => false),
+  runShellCommandTerminal: vi.fn(),
+  writeShellCommandRun: vi.fn(() => false)
+}))
+
 const ghosttyServiceMocks = vi.hoisted(() => ({
   createSurface: vi.fn(),
   destroySurface: vi.fn(),
@@ -182,6 +191,8 @@ vi.mock('../services/pty-service', () => ({
     getIds: ptyServiceMocks.getIds
   }
 }))
+
+vi.mock('../services/shell-command-runs', () => shellCommandRunMocks)
 
 vi.mock('../services/ghostty-service', () => ({
   ghosttyService: ghosttyServiceMocks
@@ -4322,4 +4333,241 @@ const makeLogger = () => ({
   info: vi.fn(),
   warn: vi.fn(),
   error: vi.fn()
+})
+
+describe('desktop backend manager shell command routing', () => {
+  const startBackend = async (): Promise<FakeChildProcess> => {
+    const child = new FakeChildProcess()
+    await startDesktopBackend(
+      {
+        executablePath: '/electron',
+        entryPath: '/app/server.js',
+        cwd: '/app',
+        baseDir: mkdtempSync(join(tmpdir(), 'hive-backend-manager-')),
+        port: 0
+      },
+      {
+        spawnProcess: vi.fn(() => child as never),
+        fetch: vi.fn(async () => new Response('{}', { status: 200 })),
+        logger: makeLogger()
+      }
+    )
+    return child
+  }
+
+  const nextTick = (): Promise<void> => new Promise((resolve) => setImmediate(resolve))
+
+  afterEach(async () => {
+    await __resetDesktopBackendForTests()
+    shellCommandRunMocks.attachShellCommandTerminal.mockReset()
+    shellCommandRunMocks.runShellCommandTerminal.mockReset()
+    shellCommandRunMocks.getLiveShellCommandSessionIds.mockReset().mockReturnValue([])
+    shellCommandRunMocks.resizeShellCommandRun.mockReset().mockReturnValue(false)
+    shellCommandRunMocks.writeShellCommandRun.mockReset().mockReturnValue(false)
+    terminalHandlerMocks.handleClaudeCliTerminalInput.mockClear()
+    ptyServiceMocks.has.mockReset()
+    ptyServiceMocks.resize.mockClear()
+    ptyServiceMocks.write.mockClear()
+    ptyServiceMocks.getIds.mockReset().mockReturnValue([])
+  })
+
+  it('forwards terminalRunShellCommand to the run registry and returns its value', async () => {
+    shellCommandRunMocks.runShellCommandTerminal.mockResolvedValue({
+      success: true,
+      cols: 100,
+      rows: 30
+    })
+    const child = await startBackend()
+
+    child.emit(
+      'message',
+      makeDesktopCommandRequest('shell-run-1', 'terminalRunShellCommand', {
+        sessionId: 'session-1',
+        cols: 100,
+        rows: 30
+      })
+    )
+    await nextTick()
+
+    expect(shellCommandRunMocks.runShellCommandTerminal).toHaveBeenCalledWith('session-1', {
+      cols: 100,
+      rows: 30
+    })
+    expect(child.send).toHaveBeenCalledWith(
+      makeDesktopCommandResult('shell-run-1', {
+        ok: true,
+        value: { success: true, cols: 100, rows: 30 }
+      }),
+      expect.any(Function)
+    )
+  })
+
+  it('reports a rejected terminalRunShellCommand as a failed result', async () => {
+    shellCommandRunMocks.runShellCommandTerminal.mockRejectedValue(new Error('db is closed'))
+    const child = await startBackend()
+
+    child.emit(
+      'message',
+      makeDesktopCommandRequest('shell-run-2', 'terminalRunShellCommand', {
+        sessionId: 'session-1'
+      })
+    )
+    await nextTick()
+
+    expect(child.send).toHaveBeenCalledWith(
+      makeDesktopCommandResult('shell-run-2', {
+        ok: true,
+        value: { success: false, error: 'db is closed' }
+      }),
+      expect.any(Function)
+    )
+  })
+
+  it('answers terminalAttachShellCommand synchronously with the registry value', async () => {
+    const value = {
+      success: true,
+      cols: 80,
+      rows: 24,
+      state: 'running',
+      exitCode: null,
+      runId: 'r1'
+    }
+    shellCommandRunMocks.attachShellCommandTerminal.mockReturnValue(value)
+    const child = await startBackend()
+
+    child.emit(
+      'message',
+      makeDesktopCommandRequest('shell-attach-1', 'terminalAttachShellCommand', {
+        sessionId: 'session-1'
+      })
+    )
+
+    // No tick in between: the answer is sent in the same turn as the request.
+    expect(shellCommandRunMocks.attachShellCommandTerminal).toHaveBeenCalledWith('session-1')
+    expect(child.send).toHaveBeenCalledWith(
+      makeDesktopCommandResult('shell-attach-1', { ok: true, value }),
+      expect.any(Function)
+    )
+  })
+
+  it('reports a throwing terminalAttachShellCommand as a failed result', async () => {
+    shellCommandRunMocks.attachShellCommandTerminal.mockImplementation(() => {
+      throw new Error('db is closed')
+    })
+    const child = await startBackend()
+
+    child.emit(
+      'message',
+      makeDesktopCommandRequest('shell-attach-2', 'terminalAttachShellCommand', {
+        sessionId: 'session-1'
+      })
+    )
+
+    expect(child.send).toHaveBeenCalledWith(
+      makeDesktopCommandResult('shell-attach-2', {
+        ok: true,
+        value: { success: false, error: 'db is closed' }
+      }),
+      expect.any(Function)
+    )
+  })
+
+  it('routes terminalWrite to a live shell command run, not the PTY service', async () => {
+    shellCommandRunMocks.writeShellCommandRun.mockReturnValue(true)
+    const child = await startBackend()
+
+    child.emit(
+      'message',
+      makeDesktopCommandRequest('shell-write-1', 'terminalWrite', {
+        terminalId: 'session-1',
+        data: 'y\n'
+      })
+    )
+    await nextTick()
+
+    expect(shellCommandRunMocks.writeShellCommandRun).toHaveBeenCalledWith('session-1', 'y\n')
+    expect(ptyServiceMocks.has).not.toHaveBeenCalled()
+    expect(ptyServiceMocks.write).not.toHaveBeenCalled()
+    expect(terminalHandlerMocks.handleClaudeCliTerminalInput).not.toHaveBeenCalled()
+    expect(child.send).toHaveBeenCalledWith(
+      makeDesktopCommandResult('shell-write-1', { ok: true, value: { success: true } }),
+      expect.any(Function)
+    )
+  })
+
+  it('falls back to the PTY service for terminalWrite when the registry declines', async () => {
+    ptyServiceMocks.has.mockReturnValue(true)
+    const child = await startBackend()
+
+    child.emit(
+      'message',
+      makeDesktopCommandRequest('shell-write-2', 'terminalWrite', {
+        terminalId: 'terminal-1',
+        data: 'ls\n'
+      })
+    )
+    await nextTick()
+
+    expect(shellCommandRunMocks.writeShellCommandRun).toHaveBeenCalledWith('terminal-1', 'ls\n')
+    expect(ptyServiceMocks.write).toHaveBeenCalledWith('terminal-1', 'ls\n')
+  })
+
+  it('routes terminalResize to the run registry without touching the PTY service', async () => {
+    shellCommandRunMocks.resizeShellCommandRun.mockReturnValue(true)
+    const child = await startBackend()
+
+    child.emit(
+      'message',
+      makeDesktopCommandRequest('shell-resize-1', 'terminalResize', {
+        terminalId: 'session-1',
+        cols: 132,
+        rows: 40
+      })
+    )
+    await nextTick()
+
+    expect(shellCommandRunMocks.resizeShellCommandRun).toHaveBeenCalledWith('session-1', 132, 40)
+    expect(ptyServiceMocks.resize).not.toHaveBeenCalled()
+    expect(child.send).toHaveBeenCalledWith(
+      makeDesktopCommandResult('shell-resize-1', { ok: true, value: { success: true } }),
+      expect.any(Function)
+    )
+  })
+
+  it('falls back to the PTY service for terminalResize when the registry declines', async () => {
+    const child = await startBackend()
+
+    child.emit(
+      'message',
+      makeDesktopCommandRequest('shell-resize-2', 'terminalResize', {
+        terminalId: 'terminal-1',
+        cols: 90,
+        rows: 20
+      })
+    )
+    await nextTick()
+
+    expect(shellCommandRunMocks.resizeShellCommandRun).toHaveBeenCalledWith('terminal-1', 90, 20)
+    expect(ptyServiceMocks.resize).toHaveBeenCalledWith('terminal-1', 90, 20)
+  })
+
+  it('merges live shell command runs into terminalGetLiveIds without duplicates', async () => {
+    ptyServiceMocks.getIds.mockReturnValue(['pty-1', 'session-in-app'])
+    shellCommandRunMocks.getLiveShellCommandSessionIds.mockReturnValue([
+      'session-in-app',
+      'session-detached'
+    ])
+    const child = await startBackend()
+
+    child.emit('message', makeDesktopCommandRequest('shell-live-ids-1', 'terminalGetLiveIds'))
+    await nextTick()
+
+    expect(child.send).toHaveBeenCalledWith(
+      makeDesktopCommandResult('shell-live-ids-1', {
+        ok: true,
+        value: { terminalIds: ['pty-1', 'session-in-app', 'session-detached'] }
+      }),
+      expect.any(Function)
+    )
+  })
 })

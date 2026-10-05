@@ -21,6 +21,13 @@ import { remoteLaunchApi } from '@/api/remote-launch-api'
 import { parseRemoteLaunch } from '@shared/types/remote-launch'
 import { opencodeApi } from '@/api/opencode-api'
 import { type AgentSdk, isAgentCli, isCodexCli, isTerminalBacked } from '@shared/types/agent-sdk'
+import {
+  createSessionShellCommandSnapshot,
+  parseSessionShellCommand,
+  serializeSessionShellCommand,
+  type ProjectShellCommand
+} from '@shared/lib/shell-commands'
+import { useShellCommandRunStore } from './useShellCommandRunStore'
 import { CUSTOM_MODEL_PROVIDER_ID } from '@shared/types/custom-provider'
 import { isSuperMode, toggleSuper } from '@shared/agent-mode-prefixes'
 
@@ -159,7 +166,9 @@ export interface Session {
   /** JSON RemoteLaunchInfo when this session was launched on a remote host. */
   remote_launch?: string | null
   mode: SessionMode
-  session_type: 'default' | 'board-assistant'
+  session_type: 'default' | 'board-assistant' | 'shell-command'
+  /** JSON SessionShellCommand: script snapshot + run state of a 'shell-command' session. */
+  shell_command?: string | null
   model_provider_id: string | null
   model_id: string | null
   model_variant: string | null
@@ -332,6 +341,13 @@ interface SessionState {
   ) => Promise<{ success: boolean; session?: Session; error?: string }>
   closeBoardAssistantSession: (projectId: string) => Promise<{ success: boolean; error?: string }>
   focusBoardAssistantSession: (projectId: string) => void
+
+  // Shell-command session actions
+  createShellCommandSession: (input: {
+    worktreeId: string
+    projectId: string
+    command: ProjectShellCommand
+  }) => Promise<{ success: boolean; session?: Session; error?: string }>
 
   // Tiled sessions tab actions
   openTiledSessions: (tab: TiledSessionsTab) => void
@@ -2230,6 +2246,61 @@ export const useSessionStore = create<SessionState>()(
           return {
             success: false,
             error: error instanceof Error ? error.message : 'Failed to create board assistant'
+          }
+        }
+      },
+
+      // A shell-command session: a bare terminal session that runs a project's shell
+      // command (shared/lib/shell-commands). Unlike createSession it keeps the command's
+      // name, never calls notifyKanbanNewSession (which would attach an unrelated
+      // pre-assigned ticket of the worktree) or attachAllToChat, and does not change
+      // focus: the launcher (lib/shell-command-launch) owns ticket, pin and navigation.
+      createShellCommandSession: async ({ worktreeId, projectId, command }) => {
+        if (isWindows()) {
+          return { success: false, error: 'Shell commands are not supported on Windows' }
+        }
+        try {
+          const snapshot = createSessionShellCommandSnapshot(command)
+          const session = await dbApi.session.create<Session>({
+            worktree_id: worktreeId,
+            project_id: projectId,
+            name: command.name.trim(),
+            agent_sdk: 'terminal',
+            session_type: 'shell-command',
+            mode: 'build',
+            shell_command: serializeSessionShellCommand(snapshot)
+          })
+
+          set((state) => {
+            const newSessionsMap = new Map(state.sessionsByWorktree)
+            const existingSessions = newSessionsMap.get(worktreeId) || []
+            newSessionsMap.set(worktreeId, [session, ...existingSessions])
+
+            const newTabOrderMap = new Map(state.tabOrderByWorktree)
+            const existingOrder = newTabOrderMap.get(worktreeId) || []
+            newTabOrderMap.set(worktreeId, [...existingOrder, session.id])
+
+            const newModeMap = new Map(state.modeBySession)
+            newModeMap.set(session.id, 'build')
+
+            return {
+              sessionsByWorktree: newSessionsMap,
+              tabOrderByWorktree: newTabOrderMap,
+              modeBySession: newModeMap
+            }
+          })
+
+          // The run index is what ticket cards / the session view key on; seed it now so
+          // the new session is a shell command before the first status event arrives.
+          useShellCommandRunStore
+            .getState()
+            .setRun(session.id, parseSessionShellCommand(session.shell_command) ?? snapshot)
+
+          return { success: true, session }
+        } catch (error) {
+          return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Failed to create shell command session'
           }
         }
       },

@@ -51,6 +51,7 @@ import { BackgroundWorkIndicator } from './BackgroundWorkIndicator'
 import { TaskListWidget } from './TaskListWidget'
 import { GoalStatusWidget } from './GoalStatusWidget'
 import { ClaudeCliSessionView } from './ClaudeCliSessionView'
+import { ShellCommandSessionView } from './ShellCommandSessionView'
 import { useLatestTodoList } from './useLatestTodoList'
 import { usePRStackTopOffset } from './usePRStackTopOffset'
 import { useFileMentions } from '@/hooks/useFileMentions'
@@ -71,7 +72,7 @@ import {
   extractPlanTitle,
   normalizeFilename
 } from '@shared/types/branch-utils'
-import { supportsGoalMode, isAgentCli } from '@shared/types/agent-sdk'
+import { supportsGoalMode, isAgentCli, isShellCommandSession } from '@shared/types/agent-sdk'
 import type { TokenInfo, SessionModelRef } from '@/stores/useContextStore'
 import {
   extractTokens,
@@ -6700,6 +6701,13 @@ export function SessionView({ sessionId, isVisible = true }: SessionViewProps): 
   // Subscribe to just the agent_sdk: routing only needs that, so unrelated
   // session updates no longer re-render this wrapper with a new object identity.
   const agentSdk = useSessionStore((state) => state.getSessionById(sessionId)?.agent_sdk ?? null)
+  const isShellCommand = useSessionStore((state) =>
+    isShellCommandSession(state.getSessionById(sessionId))
+  )
+
+  if (isShellCommand) {
+    return <ShellCommandSessionView sessionId={sessionId} isVisible={isVisible} />
+  }
 
   if (isAgentCli(agentSdk)) {
     return <ClaudeCliSessionView sessionId={sessionId} isVisible={isVisible} />

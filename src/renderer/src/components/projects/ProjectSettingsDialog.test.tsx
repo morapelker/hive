@@ -4,6 +4,7 @@ import type { ComponentProps } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ProjectSettingsDialog } from './ProjectSettingsDialog'
 import { useKanbanStore } from '@/stores/useKanbanStore'
+import { toast } from '@/lib/toast'
 
 const mocks = vi.hoisted(() => ({
   updateProject: vi.fn(),
@@ -354,5 +355,104 @@ describe('ProjectSettingsDialog', () => {
       })
     })
     expect(screen.queryByText(/Cannot read properties of undefined/)).toBeNull()
+  })
+
+  it('hydrates the Shell Commands tab from the project', async () => {
+    const user = userEvent.setup()
+    renderDialog({
+      shell_commands: [
+        {
+          id: 'install',
+          name: 'Install app',
+          commands: 'pnpm install:mac',
+          keepRunningOnQuit: true
+        },
+        { id: 'build', name: 'Build', commands: 'pnpm build' }
+      ]
+    })
+
+    await waitFor(() => expect(projectApiMocks.detectSetupSuggestions).toHaveBeenCalled())
+    await user.click(screen.getByRole('tab', { name: 'Shell Commands' }))
+
+    expect(
+      screen.getByText('Named commands you can run from the project or worktree right-click menu.')
+    ).toBeTruthy()
+    expect(screen.getByTestId('shell-command-name-install')).toHaveValue('Install app')
+    expect(screen.getByTestId('shell-command-script-install')).toHaveValue('pnpm install:mac')
+    expect(screen.getByTestId('shell-command-keep-running-install')).toHaveAttribute(
+      'aria-checked',
+      'true'
+    )
+    expect(screen.getByTestId('shell-command-name-build')).toHaveValue('Build')
+    expect(screen.getByTestId('shell-command-keep-running-build')).toHaveAttribute(
+      'aria-checked',
+      'false'
+    )
+  })
+
+  it('saves shell commands with keepRunningOnQuit and without blank rows', async () => {
+    const user = userEvent.setup()
+    renderDialog({
+      shell_commands: [
+        { id: 'install', name: '  Install app ', commands: 'pnpm install:mac' },
+        { id: 'build', name: 'Build', commands: 'pnpm build' },
+        { id: 'no-script', name: 'Half typed', commands: '   ' },
+        { id: 'no-name', name: '', commands: 'echo hi' }
+      ]
+    })
+
+    await waitFor(() => expect(projectApiMocks.detectSetupSuggestions).toHaveBeenCalled())
+    await user.click(screen.getByRole('tab', { name: 'Shell Commands' }))
+    await user.click(screen.getByTestId('shell-command-keep-running-install'))
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(mocks.updateProject).toHaveBeenCalledTimes(1))
+    expect(mocks.updateProject.mock.calls[0][1].shell_commands).toEqual([
+      { id: 'install', name: 'Install app', commands: 'pnpm install:mac', keepRunningOnQuit: true },
+      { id: 'build', name: 'Build', commands: 'pnpm build' }
+    ])
+  })
+
+  it('saves an empty shell command list when the project has none', async () => {
+    const user = userEvent.setup()
+    renderDialog()
+
+    await waitFor(() => expect(projectApiMocks.detectSetupSuggestions).toHaveBeenCalled())
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(mocks.updateProject).toHaveBeenCalledTimes(1))
+    expect(mocks.updateProject.mock.calls[0][1].shell_commands).toEqual([])
+  })
+
+  it('blocks the save with a toast when a shell command cannot run', async () => {
+    const user = userEvent.setup()
+    const onOpenChange = vi.fn()
+    const toastError = vi.spyOn(toast, 'error').mockImplementation(() => 'toast-id')
+    try {
+      renderDialog(
+        {
+          shell_commands: [
+            { id: 'build', name: 'Build', commands: 'pnpm build' },
+            { id: 'notes', name: 'Notes', commands: '# nothing runs here' }
+          ]
+        },
+        onOpenChange
+      )
+
+      await waitFor(() => expect(projectApiMocks.detectSetupSuggestions).toHaveBeenCalled())
+      await user.click(screen.getByRole('button', { name: 'Save' }))
+
+      expect(toastError).toHaveBeenCalledTimes(1)
+      expect(toastError).toHaveBeenCalledWith(
+        'Shell command "Notes": commands must contain at least one runnable line'
+      )
+      expect(mocks.updateProject).not.toHaveBeenCalled()
+      expect(kanbanApiMocks.config.setMode).not.toHaveBeenCalled()
+      expect(onOpenChange).not.toHaveBeenCalledWith(false)
+      // The dialog is not left stuck in its saving state
+      expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled()
+    } finally {
+      toastError.mockRestore()
+    }
   })
 })

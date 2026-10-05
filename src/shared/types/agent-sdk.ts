@@ -123,3 +123,28 @@ export function getAgentSdkDisplayName(sdk: MaybeSdk): string {
       return typeof sdk === 'string' && sdk ? sdk : 'Agent'
   }
 }
+
+/** `sessions.session_type` of a session that runs a project shell command. */
+export const SHELL_COMMAND_SESSION_TYPE = 'shell-command'
+
+type MaybeSessionKind = { agent_sdk?: MaybeSdk; session_type?: string | null } | null | undefined
+
+/**
+ * A session that runs a project's shell command (shared/lib/shell-commands.ts). It is
+ * stored as the bare `terminal` SDK plus a session_type, so every existing
+ * "terminal means no AI" guard keeps applying; this predicate is what tells it apart
+ * from an interactive Terminal tab. Routers must test it BEFORE any `=== 'terminal'`
+ * branch: mounting the plain terminal view for such a session would spawn a second,
+ * interactive shell under the same id.
+ */
+export function isShellCommandSession(session: MaybeSessionKind): boolean {
+  return session?.agent_sdk === 'terminal' && session.session_type === SHELL_COMMAND_SESSION_TYPE
+}
+
+/**
+ * Sessions rendered by the single always-mounted session view that MainPane portals
+ * into the main pane, the ticket modal or a tile: the agent CLIs and shell commands.
+ */
+export function usesSessionTerminalPortal(session: MaybeSessionKind): boolean {
+  return isAgentCli(session?.agent_sdk) || isShellCommandSession(session)
+}

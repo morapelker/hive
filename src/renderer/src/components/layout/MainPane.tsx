@@ -15,7 +15,12 @@ import { SessionTerminalView } from '@/components/sessions/SessionTerminalView'
 import { FileViewer } from '@/components/file-viewer'
 import { ImageDiffView } from '@/components/diff'
 import { isImageFile } from '@shared/types/file-utils'
-import { isTerminalBacked, isAgentCli } from '@shared/types/agent-sdk'
+import {
+  isTerminalBacked,
+  isAgentCli,
+  isShellCommandSession,
+  usesSessionTerminalPortal
+} from '@shared/types/agent-sdk'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useSessionStore, BOARD_TAB_ID } from '@/stores/useSessionStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
@@ -154,6 +159,15 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
     return useSessionStore.getState().getSessionById(sid)?.agent_sdk ?? null
   }, [])
 
+  // What to mount for a session: 'shell-command' for shell-command sessions (which are
+  // stored as the terminal SDK and must never mount the plain terminal view), else its SDK.
+  const getSessionMountKind = useCallback((sid: string | null): string | null => {
+    if (!sid) return null
+    const session = useSessionStore.getState().getSessionById(sid)
+    if (!session) return null
+    return isShellCommandSession(session) ? 'shell-command' : session.agent_sdk
+  }, [])
+
   // Collect the terminal-type sessions in the current scope that are activated.
   // Mounting a stateful terminal view spawns its agent process, so merely
   // having a tab must NOT admit a session here — selecting the tab, opening
@@ -194,7 +208,10 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
     }
 
     for (const [sessionId, count] of sessionMountRequests.entries()) {
-      if (count > 0 && isAgentCli(getAgentSdk(sessionId))) {
+      if (
+        count > 0 &&
+        usesSessionTerminalPortal(useSessionStore.getState().getSessionById(sessionId))
+      ) {
         terminals.add(sessionId)
       }
     }
@@ -226,9 +243,9 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
       let changed = false
 
       for (const sessionId of terminalSessions) {
-        const agentSdk = getAgentSdk(sessionId)
-        if (agentSdk) {
-          mountedTerminalAgentSdkBySessionId.current.set(sessionId, agentSdk)
+        const kind = getSessionMountKind(sessionId)
+        if (kind) {
+          mountedTerminalAgentSdkBySessionId.current.set(sessionId, kind)
         }
         if (!merged.includes(sessionId)) {
           merged.push(sessionId)
@@ -238,7 +255,7 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
 
       return changed ? merged : current
     })
-  }, [terminalSessions, getAgentSdk])
+  }, [terminalSessions, getSessionMountKind])
 
   // Prune terminals that were explicitly closed (tab close).
   // This is the ONLY path that removes from mountedTerminalSessionIds.
@@ -558,14 +575,15 @@ export function MainPane({ children }: MainPaneProps): React.JSX.Element {
         {/* Always-mounted terminal sessions — kept alive to preserve PTY state across tab switches */}
         {mountedTerminalSessionIds.map((sessionId) => {
           const isActive = visibleTerminalId === sessionId
-          const agentSdk =
-            getAgentSdk(sessionId) ?? mountedTerminalAgentSdkBySessionId.current.get(sessionId)
+          const kind =
+            getSessionMountKind(sessionId) ??
+            mountedTerminalAgentSdkBySessionId.current.get(sessionId)
           return (
             <div key={sessionId} className={isActive ? 'flex-1 flex flex-col min-h-0' : 'hidden'}>
-              {agentSdk === 'terminal' ? (
-                <SessionTerminalView sessionId={sessionId} isVisible={isActive} />
-              ) : isAgentCli(agentSdk) ? (
+              {kind === 'shell-command' || isAgentCli(kind) ? (
                 <ClaudeCliSessionPortal sessionId={sessionId} isActive={isActive} />
+              ) : kind === 'terminal' ? (
+                <SessionTerminalView sessionId={sessionId} isVisible={isActive} />
               ) : (
                 <SessionView sessionId={sessionId} isVisible={isActive} />
               )}

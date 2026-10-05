@@ -114,6 +114,7 @@ import { useProjectStore } from '@/stores/useProjectStore'
 import { useProjectIconUrl } from '@/components/projects/LanguageIcon'
 import { useScriptStore } from '@/stores/useScriptStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
+import { useShellCommandRunStore } from '@/stores/useShellCommandRunStore'
 import { useQuestionStore } from '@/stores/useQuestionStore'
 import { usePinnedStore } from '@/stores/usePinnedStore'
 import { useFavoriteTicketsStore } from '@/stores/useFavoriteTicketsStore'
@@ -578,6 +579,15 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
         if (!ticket.current_session_id) return null
         return state.sessionApiErrors[ticket.current_session_id] ?? null
       },
+      [ticket.current_session_id]
+    )
+  )
+
+  // The run index knows shell-command sessions even when they are not loaded into the
+  // session store (closed tab, other worktree).
+  const isShellCommandTicket = useShellCommandRunStore(
+    useCallback(
+      (s) => !!ticket.current_session_id && ticket.current_session_id in s.runsBySession,
       [ticket.current_session_id]
     )
   )
@@ -1741,27 +1751,30 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                       <AlertCircle className="h-2.5 w-2.5" />
                       Error
                     </span>
-                    <button
-                      type="button"
-                      data-testid="kanban-ticket-continue"
-                      title='Send "continue" to the linked session'
-                      disabled={isContinuing || !ticket.current_session_id}
-                      className={cn(
-                        ticketPillClass,
-                        'hover:bg-accent hover:text-foreground transition-colors disabled:opacity-60'
-                      )}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        void handleContinue()
-                      }}
-                    >
-                      {isContinuing ? (
-                        <Loader2 className="h-2.5 w-2.5 animate-spin" />
-                      ) : (
-                        <Play className="h-2.5 w-2.5" />
-                      )}
-                      Continue
-                    </button>
+                    {/* A shell command has no agent to nudge: it is re-run from its session */}
+                    {!isShellCommandTicket && (
+                      <button
+                        type="button"
+                        data-testid="kanban-ticket-continue"
+                        title='Send "continue" to the linked session'
+                        disabled={isContinuing || !ticket.current_session_id}
+                        className={cn(
+                          ticketPillClass,
+                          'hover:bg-accent hover:text-foreground transition-colors disabled:opacity-60'
+                        )}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          void handleContinue()
+                        }}
+                      >
+                        {isContinuing ? (
+                          <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                        ) : (
+                          <Play className="h-2.5 w-2.5" />
+                        )}
+                        Continue
+                      </button>
+                    )}
                   </>
                 )}
 

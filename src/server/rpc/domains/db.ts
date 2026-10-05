@@ -1,5 +1,11 @@
 import { Effect } from 'effect'
-import { AGENT_SDK_VALUES } from '../../../shared/types/agent-sdk'
+import { AGENT_SDK_VALUES, isShellCommandSession } from '../../../shared/types/agent-sdk'
+import {
+  SHELL_COMMAND_MAX_PER_PROJECT,
+  SHELL_COMMAND_MAX_SCRIPT_BYTES,
+  parseSessionShellCommand,
+  serializeSessionShellCommand
+} from '../../../shared/lib/shell-commands'
 import { z } from 'zod'
 import type {
   DiffComment,
@@ -125,6 +131,17 @@ export interface DbRpcService {
   readonly getActiveBoardAssistant: (
     projectId: string
   ) => Effect.Effect<Session | null, unknown, never>
+  /** Optional: tests build service objects without it. */
+  readonly getShellCommandRuns?: () => Effect.Effect<
+    Array<{
+      sessionId: string
+      projectId: string
+      worktreeId: string | null
+      shellCommand: string
+    }>,
+    unknown,
+    never
+  >
   readonly listSessionMessages: (
     sessionId: string
   ) => Effect.Effect<SessionMessage[], unknown, never>
@@ -211,6 +228,14 @@ const customProjectCommandSchema = z.object({
   name: z.string(),
   prompt: z.string()
 })
+// Non-strict object: every key must be listed here or it is silently stripped
+// (keepRunningOnQuit included, otherwise no run would ever be detached).
+const projectShellCommandSchema = z.object({
+  id: z.string().min(1).max(64),
+  name: z.string(),
+  commands: z.string().max(SHELL_COMMAND_MAX_SCRIPT_BYTES),
+  keepRunningOnQuit: z.boolean().optional()
+})
 const projectUpdateDataSchema = z.object({
   name: z.string().optional(),
   description: z.string().nullable().optional(),
@@ -223,6 +248,11 @@ const projectUpdateDataSchema = z.object({
   archive_script: z.string().nullable().optional(),
   worktree_create_script: z.string().nullable().optional(),
   custom_commands: z.array(customProjectCommandSchema).nullable().optional(),
+  shell_commands: z
+    .array(projectShellCommandSchema)
+    .max(SHELL_COMMAND_MAX_PER_PROJECT)
+    .nullable()
+    .optional(),
   auto_assign_port: z.boolean().optional(),
   last_accessed_at: z.string().optional()
 }) satisfies z.ZodType<ProjectUpdate>
@@ -295,7 +325,7 @@ const worktreePinnedParamsSchema = z
   .strict()
 const agentSdkSchema = z.enum(AGENT_SDK_VALUES)
 const sessionModeSchema = z.enum(['build', 'plan', 'super-plan', 'super-build'])
-const sessionTypeSchema = z.enum(['default', 'board-assistant'])
+const sessionTypeSchema = z.enum(['default', 'board-assistant', 'shell-command'])
 const sessionCreateParamsSchema = z.object({
   worktree_id: z.string().nullable(),
   project_id: z.string(),
@@ -311,8 +341,11 @@ const sessionCreateParamsSchema = z.object({
   model_id: z.string().nullable().optional(),
   model_variant: z.string().nullable().optional(),
   remote_launch: z.string().nullable().optional(),
+  shell_command: z.string().nullable().optional(),
   pinned_to_board: z.boolean().optional()
 }) satisfies z.ZodType<SessionCreate>
+// `shell_command` is deliberately absent (stripped): the Electron main process is the only
+// writer of shell-command run state and writes it through DatabaseService.updateSession directly.
 const sessionUpdateDataSchema = z.object({
   name: z.string().nullable().optional(),
   status: z.enum(['active', 'completed', 'error']).optional(),
@@ -356,6 +389,37 @@ const sessionUpdateDraftParamsSchema = z
   })
   .strict()
 const emptyParamsSchema = z.union([z.object({}).strict(), z.undefined(), z.null()])
+
+const normalizeShellCommandSessionCreate = (data: SessionCreate): SessionCreate => {
+  if (data.session_type !== 'shell-command') {
+    if (data.shell_command != null) {
+      throw new Error('shell_command is only valid for shell-command sessions')
+    }
+    return data
+  }
+  if (data.agent_sdk !== 'terminal') {
+    throw new Error('Shell command sessions must use the terminal SDK')
+  }
+  if (!data.worktree_id) throw new Error('Shell command sessions need a worktree')
+  const snapshot = parseSessionShellCommand(data.shell_command)
+  if (!snapshot) throw new Error('Invalid shell command snapshot')
+  // A new session always starts un-run: the caller cannot forge run state.
+  return {
+    ...data,
+    shell_command: serializeSessionShellCommand({
+      ...snapshot,
+      state: 'pending',
+      runId: null,
+      exitCode: null,
+      signal: null,
+      reason: null,
+      error: null,
+      startedAt: null,
+      finishedAt: null
+    })
+  }
+}
+
 const spaceCreateParamsSchema = z.object({
   name: z.string(),
   icon_type: z.string().optional(),
@@ -484,7 +548,19 @@ export const makeLiveDbRpcService = (): DbRpcService => ({
             await import('../../../main/services/connection-ops')
           await deleteBaseInstanceForProjectOp(db, id)
         }
+        // The session rows go with the project (FK cascade), so collect the shell
+        // command sessions first: their run logs on disk are removed below.
+        const shellSessionIds = db
+          .getSessionsByProject(id)
+          .filter(isShellCommandSession)
+          .map((s) => s.id)
         const deleted = db.deleteProject(id)
+        if (deleted && shellSessionIds.length > 0) {
+          // Never throws; skips runs whose owner process is still alive.
+          const { removeShellCommandSessionRunDirs } =
+            await import('../../../main/services/shell-command-paths')
+          for (const sessionId of shellSessionIds) removeShellCommandSessionRunDirs(sessionId)
+        }
         // Connection projects own a dedicated symlink dir under
         // ~/.hive/connection-projects — clean it up so it doesn't leak.
         if (deleted && project?.kind === 'connection') {
@@ -757,7 +833,14 @@ export const makeLiveDbRpcService = (): DbRpcService => ({
     Effect.tryPromise({
       try: async () => {
         const { getDatabase } = await import('../../../main/db')
-        return getDatabase().deleteSession(id)
+        const deleted = getDatabase().deleteSession(id)
+        if (deleted) {
+          // Never throws; skips runs whose owner process is still alive.
+          const { removeShellCommandSessionRunDirs } =
+            await import('../../../main/services/shell-command-paths')
+          removeShellCommandSessionRunDirs(id)
+        }
+        return deleted
       },
       catch: (cause) => cause
     }),
@@ -822,6 +905,14 @@ export const makeLiveDbRpcService = (): DbRpcService => ({
       try: async () => {
         const { getDatabase } = await import('../../../main/db')
         return getDatabase().getActiveBoardAssistantByProject(projectId)
+      },
+      catch: (cause) => cause
+    }),
+  getShellCommandRuns: () =>
+    Effect.tryPromise({
+      try: async () => {
+        const { getDatabase } = await import('../../../main/db')
+        return getDatabase().getShellCommandRunRows()
       },
       catch: (cause) => cause
     }),
@@ -1339,8 +1430,12 @@ export const makeDbRpcHandlers = (
       'db.session.create',
       (params) =>
         Effect.gen(function* () {
-          const data = yield* Effect.try({
+          const parsed = yield* Effect.try({
             try: () => sessionCreateParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          const data = yield* Effect.try({
+            try: () => normalizeShellCommandSessionCreate(parsed),
             catch: (cause) => cause
           })
           return yield* service.createSession(data)
@@ -1504,6 +1599,17 @@ export const makeDbRpcHandlers = (
             catch: (cause) => cause
           })
           return yield* service.getActiveBoardAssistant(projectId)
+        })
+    ],
+    [
+      'db.session.getShellCommandRuns',
+      (params) =>
+        Effect.gen(function* () {
+          yield* Effect.try({
+            try: () => emptyParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          return service.getShellCommandRuns ? yield* service.getShellCommandRuns() : []
         })
     ],
     [

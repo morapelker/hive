@@ -4,6 +4,7 @@ import type { Setting } from '@shared/types/settings'
 import type { ProjectSpaceAssignment, Space } from '@shared/types/space'
 import type { Worktree } from '@shared/types/worktree'
 import type { CustomProjectCommand } from '@shared/lib/custom-commands'
+import type { ProjectShellCommand } from '@shared/lib/shell-commands'
 
 type SpaceCreateData = {
   name: string
@@ -63,6 +64,7 @@ type ProjectUpdateData = {
   archive_script?: string | null
   worktree_create_script?: string | null
   custom_commands?: CustomProjectCommand[] | null
+  shell_commands?: ProjectShellCommand[] | null
   auto_assign_port?: boolean
   last_accessed_at?: string
 }
@@ -77,10 +79,11 @@ type SessionCreateData = {
   agent_sdk?: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'codex-cli' | 'terminal'
   custom_provider_id?: string | null
   mode?: 'build' | 'plan' | 'super-plan' | 'super-build'
-  session_type?: 'default' | 'board-assistant'
+  session_type?: 'default' | 'board-assistant' | 'shell-command'
   model_provider_id?: string | null
   model_id?: string | null
   model_variant?: string | null
+  shell_command?: string | null
   pinned_to_board?: boolean
 }
 
@@ -92,7 +95,7 @@ type SessionUpdateData = {
   agent_sdk?: 'opencode' | 'claude-code' | 'claude-code-cli' | 'codex' | 'codex-cli' | 'terminal'
   custom_provider_id?: string | null
   mode?: 'build' | 'plan' | 'super-plan' | 'super-build'
-  session_type?: 'default' | 'board-assistant'
+  session_type?: 'default' | 'board-assistant' | 'shell-command'
   model_provider_id?: string | null
   model_id?: string | null
   model_variant?: string | null

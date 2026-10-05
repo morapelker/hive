@@ -7,6 +7,7 @@ import { Effect } from 'effect'
 import YAML from 'yaml'
 import { z } from 'zod'
 import type { CustomProjectCommand } from '@shared/lib/custom-commands'
+import { parseProjectShellCommands } from '../../../shared/lib/shell-commands'
 import { isDesktopCommandResult, makeDesktopCommandRequest } from '../../../shared/desktop-command'
 import type {
   BackupExportResult,
@@ -57,7 +58,7 @@ interface BackupOpsDb {
   readonly createWorktree: (data: WorktreeCreate) => Worktree
   readonly updateProject: (
     id: string,
-    data: Pick<ProjectUpdate, 'language' | 'custom_commands' | 'auto_assign_port'>
+    data: Pick<ProjectUpdate, 'language' | 'custom_commands' | 'shell_commands' | 'auto_assign_port'>
   ) => Project | null
   readonly updateProjectKanbanStorageMode: (
     id: string,
@@ -199,6 +200,8 @@ const backupProjectSchema = z
     archive_script: z.string().nullable(),
     worktree_create_script: z.string().nullable(),
     custom_commands: z.array(z.unknown()).nullable(),
+    // Absent in backups written before shell commands existed.
+    shell_commands: z.array(z.unknown()).nullable().optional(),
     auto_assign_port: z.boolean(),
     sort_order: z.number(),
     kanban_simple_mode: z.boolean(),
@@ -394,6 +397,7 @@ async function buildBackupProject(
     archive_script: project.archive_script,
     worktree_create_script: project.worktree_create_script,
     custom_commands: project.custom_commands,
+    shell_commands: project.shell_commands ?? [],
     auto_assign_port: project.auto_assign_port,
     sort_order: project.sort_order,
     kanban_simple_mode: isProjectSimpleMode(project),
@@ -818,6 +822,8 @@ async function restoreProject(
       deps.db.updateProject(projectId, {
         language: project.language,
         custom_commands: project.custom_commands as CustomProjectCommand[] | null,
+        // Invalid entries in a backup are dropped, never stored.
+        shell_commands: parseProjectShellCommands(project.shell_commands ?? null),
         auto_assign_port: project.auto_assign_port
       })
       deps.db.updateProjectKanbanStorageMode(projectId, project.kanban_storage_mode)

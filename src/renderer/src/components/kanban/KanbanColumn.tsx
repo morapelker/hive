@@ -57,6 +57,8 @@ import { opencodeApi } from '@/api/opencode-api'
 import { remoteLaunchApi } from '@/api/remote-launch-api'
 import { useRemoteLaunchStore } from '@/stores/useRemoteLaunchStore'
 import { parseRemoteLaunch } from '@shared/types/remote-launch'
+import { isShellCommandSession } from '@shared/types/agent-sdk'
+import { terminalApi } from '@/api/terminal-api'
 
 // ── Layout animation spring ─────────────────────────────────────────
 const CARD_LAYOUT_SPRING = {
@@ -785,9 +787,13 @@ export function KanbanColumn({
     try {
       // Stop the actual session
       const draggedTicket = findTicket(ticketId, ticketProjectId)
+      let shellCommandSessionToStop: string | null = null
       if (draggedTicket?.current_session_id) {
         // Abort the running agent process (not just the DB status)
         const session = await dbApi.session.get<Session>(draggedTicket.current_session_id)
+        if (isShellCommandSession(session)) {
+          shellCommandSessionToStop = draggedTicket.current_session_id
+        }
         if (session?.opencode_session_id && session.worktree_id) {
           const worktree = await dbApi.worktree.get<Worktree>(session.worktree_id)
           if (worktree?.path) {
@@ -834,6 +840,16 @@ export function KanbanColumn({
         mode: null,
         plan_ready: false
       })
+
+      // Stop the command only now that the ticket no longer points at the session: the
+      // run's 'cancelled' event then finds neither a linked ticket nor a live status.
+      if (shellCommandSessionToStop) {
+        try {
+          unwrapEnvelope(await terminalApi.destroy(shellCommandSessionToStop))
+        } catch {
+          // Best-effort: the run may already be over
+        }
+      }
 
       // Move to todo
       const sortOrder = store.computeSortOrder(

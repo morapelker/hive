@@ -10,6 +10,11 @@ import { terminalApi } from '@/api/terminal-api'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import type { GhosttyTerminalConfig } from '@shared/types/terminal'
+import {
+  SHELL_COMMAND_REPLAY_END,
+  SHELL_COMMAND_REPLAY_OSC,
+  SHELL_COMMAND_REPLAY_START
+} from '@shared/shell-command-events'
 
 /** Default neutral theme (Ghostty default-style dark palette) used when no
     Ghostty config is found — background/foreground get overridden by app tokens */
@@ -149,6 +154,9 @@ export class XtermBackend implements TerminalBackend {
   private rendererKind: 'webgl' | 'dom' = 'dom'
   private terminalId: string = ''
   private lastReportedStatus: 'creating' | 'running' | 'exited' | null = null
+  private suppressInputForReplay = false
+  private replaySuppressionTimer: ReturnType<typeof setTimeout> | null = null
+  private replayOscDisposable: { dispose: () => void } | null = null
   private shiftEnterAsNewline = false
   private ghosttyConfig: GhosttyTerminalConfig = {}
 
@@ -299,8 +307,33 @@ export class XtermBackend implements TerminalBackend {
       callbacks.onStatusChange(status, code)
     }
 
+    // Shell-command sessions replay their transcript in-band, bracketed by a private
+    // OSC (see shared/shell-command-events). While a replay is being parsed, xterm's own
+    // answers to the terminal queries inside it (cursor position, device attributes)
+    // must not be typed into the live program. The suppression also expires on its own,
+    // so a program printing a stray start marker cannot mute the keyboard for good.
+    // Optional chaining: unit tests mount a minimal Terminal mock without a parser.
+    const parser = (terminal as { parser?: Terminal['parser'] }).parser
+    this.replayOscDisposable =
+      parser?.registerOscHandler(SHELL_COMMAND_REPLAY_OSC, (data) => {
+        if (data === SHELL_COMMAND_REPLAY_START) {
+          this.suppressInputForReplay = true
+          if (this.replaySuppressionTimer) clearTimeout(this.replaySuppressionTimer)
+          this.replaySuppressionTimer = setTimeout(() => {
+            this.suppressInputForReplay = false
+            this.replaySuppressionTimer = null
+          }, 5000)
+        } else if (data === SHELL_COMMAND_REPLAY_END) {
+          this.suppressInputForReplay = false
+          if (this.replaySuppressionTimer) clearTimeout(this.replaySuppressionTimer)
+          this.replaySuppressionTimer = null
+        }
+        return true
+      }) ?? null
+
     // Wire user input -> PTY
     this.inputDisposable = terminal.onData((data) => {
+      if (this.suppressInputForReplay) return
       terminalApi.write(this.terminalId, data)
     })
 
@@ -472,6 +505,13 @@ export class XtermBackend implements TerminalBackend {
       this.resizeDebounceTimer = null
     }
     this.resizeObserver?.disconnect()
+    if (this.replaySuppressionTimer) {
+      clearTimeout(this.replaySuppressionTimer)
+      this.replaySuppressionTimer = null
+    }
+    this.suppressInputForReplay = false
+    this.replayOscDisposable?.dispose()
+    this.replayOscDisposable = null
     this.inputDisposable?.dispose()
     this.removeDataListener?.()
     this.removeExitListener?.()

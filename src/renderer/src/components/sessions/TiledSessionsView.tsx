@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { isAgentCli } from '@shared/types/agent-sdk'
+import { isAgentCli, isShellCommandSession } from '@shared/types/agent-sdk'
 import { LayoutGrid, MonitorOff, CircleSlash } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { computeGridLayout } from '@/lib/tiled-sessions'
@@ -99,7 +99,11 @@ function TileStatusDot({ sessionId }: { sessionId: string | null }): React.JSX.E
 
 function SessionTile({ tile }: { tile: TiledSessionTile }): React.JSX.Element {
   const isClaudeCli = isAgentCli(tile.agentSdk)
-  const isPlainTerminal = tile.agentSdk === 'terminal'
+  // Shell-command sessions are stored as the terminal SDK but render through the portal
+  const isShellCommand = useSessionStore((s) =>
+    tile.sessionId ? isShellCommandSession(s.getSessionById(tile.sessionId)) : false
+  )
+  const isPlainTerminal = tile.agentSdk === 'terminal' && !isShellCommand
 
   // Live check on top of the snapshot: if the session is closed while the tab
   // is open (its view in MainPane unmounts and the reparented DOM disappears),
@@ -121,7 +125,7 @@ function SessionTile({ tile }: { tile: TiledSessionTile }): React.JSX.Element {
         message="Session not running — open its tab to start it"
       />
     )
-  } else if (isClaudeCli) {
+  } else if (isClaudeCli || isShellCommand) {
     content = <TiledClaudeCliSlot sessionId={tile.sessionId} />
   } else if (isPlainTerminal) {
     content = (

@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
-import { isAgentCli } from '@shared/types/agent-sdk'
+import { isAgentCli, isShellCommandSession } from '@shared/types/agent-sdk'
 import { useShallow } from 'zustand/react/shallow'
 import {
   Eye,
@@ -68,6 +68,7 @@ import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useClaudeCliSessionPortal } from '@/contexts/ClaudeCliSessionPortalContext'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
+import { useShellCommandRunStore } from '@/stores/useShellCommandRunStore'
 import { useCommandApprovalStore } from '@/stores/useCommandApprovalStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
@@ -676,6 +677,17 @@ function KanbanTicketModalContent({
 
   const effectiveSession = sessionRecord ?? dbSessionInfo?.session ?? null
   const isClaudeCli = isAgentCli(effectiveSession?.agent_sdk)
+  // The run index knows shell-command sessions on the first render, also for sessions
+  // that are not loaded into the session store.
+  const isShellCommandRunKnown = useShellCommandRunStore(
+    useCallback(
+      (s) => !!ticket.current_session_id && ticket.current_session_id in s.runsBySession,
+      [ticket.current_session_id]
+    )
+  )
+  const isShellCommandTicket = isShellCommandRunKnown || isShellCommandSession(effectiveSession)
+  // Shell commands render in the same portalled terminal pane as the agent CLIs
+  const usesTerminalPane = isClaudeCli || isShellCommandTicket
   const currentWorktreeSessionStatus = useWorktreeStatusStore(
     useCallback(
       (state) =>
@@ -976,9 +988,13 @@ function KanbanTicketModalContent({
   }
 
   // ── Full-width session layout (only in-progress edit mode — left pane has no actionable content) ──
+  // Shell-command tickets get it in every column: the follow-up / review panes are for agents.
   let dialogBody: React.ReactNode
 
-  if (wantsDualPane && modalMode === 'edit' && ticket.column === 'in_progress') {
+  if (
+    wantsDualPane &&
+    (isShellCommandTicket || (modalMode === 'edit' && ticket.column === 'in_progress'))
+  ) {
     dialogBody = (
       <DialogContent
         data-testid="kanban-ticket-modal"
@@ -989,7 +1005,7 @@ function KanbanTicketModalContent({
         </DialogHeader>
         {conflictBanner}
         <div className="flex min-h-0 flex-1 overflow-hidden">
-          {isClaudeCli && ticket.current_session_id ? (
+          {usesTerminalPane && ticket.current_session_id ? (
             <div className="flex flex-col h-full bg-background flex-1 min-w-0">
               <div className="shrink-0 px-4 py-3 border-b border-border/60 flex items-center gap-2">
                 <span className="text-sm font-medium text-foreground truncate">{ticket.title}</span>
@@ -1109,7 +1125,7 @@ function KanbanTicketModalContent({
             {modeContent}
           </div>
           {/* Right: session stream (or loading spinner while DB lookup resolves) */}
-          {isClaudeCli && ticket.current_session_id ? (
+          {usesTerminalPane && ticket.current_session_id ? (
             <div className="flex flex-col h-full bg-background flex-1 min-w-0 border-l border-border/60">
               {remoteLaunchInfo === undefined ? (
                 /* Remote-launch status still resolving — mounting the local

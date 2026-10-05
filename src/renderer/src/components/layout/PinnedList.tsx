@@ -108,6 +108,12 @@ import { worktreeApi } from '@/api/worktree-api'
 import { projectApi } from '@/api/project-api'
 import { connectionApi } from '@/api/connection-api'
 import { gitApi } from '@/api/git-api'
+import type { ProjectShellCommand } from '@shared/lib/shell-commands'
+import {
+  getRunnableShellCommands,
+  renderShellCommandMenuItems,
+  runShellCommandFromMenu
+} from '@/components/shell-commands/ShellCommandMenuItems'
 
 type PinnedItem = { kind: 'worktree'; id: string } | { kind: 'connection'; id: string }
 type WorktreeAttachmentRow = { attachments?: string | null }
@@ -542,6 +548,15 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
     await unpinWorktree(worktreeId)
   }
 
+  const handleRunShellCommand = (command: ProjectShellCommand): void => {
+    void runShellCommandFromMenu({
+      projectId: project.id,
+      commandId: command.id,
+      commandName: command.name,
+      worktreeId
+    })
+  }
+
   /* eslint-disable @typescript-eslint/no-explicit-any */
   const worktreeMenuItems = (
     MenuItem: any,
@@ -611,6 +626,16 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
         <Link className="h-4 w-4 mr-2" />
         Connect to...
       </MenuItem>
+      {renderShellCommandMenuItems({
+        commands: getRunnableShellCommands(project),
+        onRun: handleRunShellCommand,
+        MenuItem,
+        MenuSeparator,
+        MenuSub,
+        MenuSubTrigger,
+        MenuSubContent,
+        trailingSeparator: !worktree.is_default && hasNamedBranch
+      })}
       {!worktree.is_default && (
         <>
           {hasNamedBranch ? (

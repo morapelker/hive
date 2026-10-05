@@ -286,6 +286,71 @@ describe('terminalApi', () => {
     expect(callback).toHaveBeenCalledWith(payload)
   })
 
+  it('routes runShellCommand through the renderer RPC client with the session id only', async () => {
+    const runResult = { success: true, cols: 120, rows: 32 }
+    const request = vi.fn().mockResolvedValue(runResult)
+    setRendererRpcClient({ request, subscribe: vi.fn() })
+
+    await expect(terminalApi.runShellCommand('session-1')).resolves.toEqual({
+      success: true,
+      value: runResult
+    })
+    expect(request).toHaveBeenCalledExactlyOnceWith('terminalOps.runShellCommand', {
+      sessionId: 'session-1'
+    })
+  })
+
+  it('routes attachShellCommand through the renderer RPC client with the session id only', async () => {
+    const attachResult = { success: true, cols: 80, rows: 24, state: 'running', runId: 'run-1' }
+    const request = vi.fn().mockResolvedValue(attachResult)
+    setRendererRpcClient({ request, subscribe: vi.fn() })
+
+    await expect(terminalApi.attachShellCommand('session-1')).resolves.toEqual({
+      success: true,
+      value: attachResult
+    })
+    expect(request).toHaveBeenCalledExactlyOnceWith('terminalOps.attachShellCommand', {
+      sessionId: 'session-1'
+    })
+  })
+
+  it('subscribes to shell-command status events and drops invalid payloads', () => {
+    const request = vi.fn()
+    const unsubscribe = vi.fn()
+    const subscribe = vi.fn((..._args: unknown[]): (() => void) => unsubscribe)
+    const callback = vi.fn()
+    const payload = {
+      sessionId: 'session-1',
+      runId: 'run-1',
+      state: 'failed',
+      exitCode: 3,
+      signal: null,
+      detached: false,
+      reason: null,
+      error: null,
+      startedAt: '2026-01-01T00:00:00.000Z',
+      finishedAt: '2026-01-01T00:00:05.000Z'
+    } as const
+
+    setRendererRpcClient({ request, subscribe })
+
+    expect(terminalApi.onShellCommandStatus(callback)).toBe(unsubscribe)
+    expect(subscribe).toHaveBeenCalledWith('shell-command:status', expect.any(Function))
+
+    const listener = subscribe.mock.calls[0]?.[1] as ((event: ServerEvent) => void) | undefined
+    listener?.({ channel: 'shell-command:status', payload })
+    listener?.({ channel: 'shell-command:status', payload: { sessionId: 'session-1' } })
+    listener?.({
+      channel: 'shell-command:status',
+      payload: { ...payload, state: 'exploded' }
+    })
+    listener?.({ channel: 'shell-command:status', payload: { ...payload, detached: 'yes' } })
+    listener?.({ channel: 'shell-command:status', payload: 'running' })
+
+    expect(callback).toHaveBeenCalledTimes(1)
+    expect(callback).toHaveBeenCalledWith(payload)
+  })
+
   it('routes ghosttyPasteText through the renderer RPC client', async () => {
     const request = vi.fn().mockResolvedValue(undefined)
     const subscribe = vi.fn()

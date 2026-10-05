@@ -15,6 +15,7 @@ import {
   FolderHeart,
   Sparkles
 } from 'lucide-react'
+import type { ProjectShellCommand } from '@shared/lib/shell-commands'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -53,6 +54,11 @@ import { HintBadge } from '@/components/ui/HintBadge'
 import { WorktreeList, BranchPickerDialog } from '@/components/worktrees'
 import { ConnectionInstanceList } from './ConnectionInstanceList'
 import { ManageSkillsDialog } from './ManageSkillsDialog'
+import {
+  getRunnableShellCommands,
+  renderShellCommandMenuItems,
+  runShellCommandFromMenu
+} from '@/components/shell-commands/ShellCommandMenuItems'
 import { getMemberProjects } from '@/lib/connection-project'
 import { LanguageIcon } from './LanguageIcon'
 import { HighlightedText } from './HighlightedText'
@@ -97,6 +103,7 @@ interface Project {
   setup_script: string | null
   run_script: string | null
   archive_script: string | null
+  shell_commands?: ProjectShellCommand[] | null
   auto_assign_port: boolean
   sort_order: number
   created_at: string
@@ -168,6 +175,7 @@ export const ProjectItem = memo(function ProjectItem({
 
   // ── Connection project (saved connection) ─────────────────────────
   const isConnectionProject = project.kind === 'connection'
+  const shellCommands = getRunnableShellCommands(project)
   const instanceCount = useConnectionStore((s) =>
     isConnectionProject
       ? s.connections.reduce((n, c) => (c.saved_project_id === project.id ? n + 1 : n), 0)
@@ -289,6 +297,15 @@ export const ProjectItem = memo(function ProjectItem({
   const handleRefreshProject = async (): Promise<void> => {
     await syncWorktrees(project.id, project.path, { force: true })
     toast.success('Project refreshed')
+  }
+
+  // Project-level launch: no worktreeId, the launcher resolves the base worktree
+  const handleRunShellCommand = (command: ProjectShellCommand): void => {
+    void runShellCommandFromMenu({
+      projectId: project.id,
+      commandId: command.id,
+      commandName: command.name
+    })
   }
 
   const doCreateInstance = useCallback(async (): Promise<void> => {
@@ -638,7 +655,7 @@ export const ProjectItem = memo(function ProjectItem({
           </ContextMenuTrigger>
 
           {!connectionModeActive && (
-            <ContextMenuContent className="w-48">
+            <ContextMenuContent className="w-52">
               <ContextMenuItem onClick={handleStartEdit}>
                 <Pencil className="h-4 w-4 mr-2" />
                 Edit Name
@@ -708,6 +725,15 @@ export const ProjectItem = memo(function ProjectItem({
                   </ContextMenuSub>
                 </>
               )}
+              {renderShellCommandMenuItems({
+                commands: shellCommands,
+                onRun: handleRunShellCommand,
+                MenuItem: ContextMenuItem,
+                MenuSeparator: ContextMenuSeparator,
+                MenuSub: ContextMenuSub,
+                MenuSubTrigger: ContextMenuSubTrigger,
+                MenuSubContent: ContextMenuSubContent
+              })}
               <ContextMenuSeparator />
               <ContextMenuItem
                 onClick={() => setRemoveConfirmOpen(true)}

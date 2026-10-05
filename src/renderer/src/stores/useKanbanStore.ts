@@ -668,6 +668,12 @@ export const useKanbanStore = create<KanbanState>()(
               .catch(() => {})
           }
         }
+        // Shell-command tickets carry their run state in the database (the main process
+        // persists it): map it onto statuses so runs that finished while this board was
+        // not loaded, or while the app was closed, still move their ticket.
+        void import('@/lib/shell-command-status')
+          .then(({ reconcileShellCommandTickets }) => reconcileShellCommandTickets(projectId))
+          .catch(() => {})
       },
 
       loadTicketsForProjectInAggregate: async (projectId: string) => {

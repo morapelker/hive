@@ -7,6 +7,7 @@ import { ptyService } from '../../../main/services/pty-service'
 import {
   isDesktopCommandResult,
   makeDesktopCommandRequest,
+  type TerminalAttachShellCommandResult,
   type TerminalGhosttyAvailabilityResult,
   type TerminalGhosttyCreateSurfaceOptions,
   type TerminalGhosttyCreateSurfaceResult,
@@ -14,8 +15,10 @@ import {
   type TerminalGhosttyKeyEvent,
   type TerminalGhosttyRect,
   type TerminalGhosttyInitResult,
-  type TerminalLiveIdsResult
+  type TerminalLiveIdsResult,
+  type TerminalRunShellCommandResult
 } from '../../../shared/desktop-command'
+import { SHELL_COMMAND_RUN_STATES } from '../../../shared/lib/shell-commands'
 import type { GhosttyTerminalConfig } from '../../../shared/types/terminal'
 import type { RpcHandler } from '../router'
 
@@ -36,6 +39,14 @@ export interface TerminalOpsRpcService {
     sessionId: string,
     opts?: { pendingPrompt?: string | null }
   ) => Effect.Effect<TerminalCreateResult, unknown>
+  /** Start (or re-run) the shell command of a 'shell-command' session. Desktop only. */
+  readonly runShellCommand?: (
+    sessionId: string
+  ) => Effect.Effect<TerminalRunShellCommandResult, unknown>
+  /** Ask main to publish the session's transcript and report its run state. Never spawns. */
+  readonly attachShellCommand?: (
+    sessionId: string
+  ) => Effect.Effect<TerminalAttachShellCommandResult, unknown>
   readonly setClaudeCliPlanAutoApprove: (
     sessionId: string,
     enabled: boolean
@@ -122,6 +133,7 @@ const createClaudeCliParamsSchema = z
       .optional()
   })
   .strict()
+const shellCommandSessionParamsSchema = z.object({ sessionId: z.string().min(1) }).strict()
 const setClaudeCliPlanAutoApproveParamsSchema = z
   .object({
     sessionId: z.string().min(1),
@@ -1162,6 +1174,123 @@ const requestDesktopTerminalCreateClaudeCli = (
   })
 }
 
+const isTerminalRunShellCommandResult = (value: unknown): value is TerminalRunShellCommandResult =>
+  isTerminalCommandResult(value) &&
+  (!('alreadyRunning' in value) ||
+    value.alreadyRunning === undefined ||
+    typeof value.alreadyRunning === 'boolean')
+
+const isTerminalAttachShellCommandResult = (
+  value: unknown
+): value is TerminalAttachShellCommandResult =>
+  isTerminalCommandResult(value) &&
+  (!('state' in value) ||
+    value.state === undefined ||
+    (typeof value.state === 'string' &&
+      (SHELL_COMMAND_RUN_STATES as readonly string[]).includes(value.state))) &&
+  (!('exitCode' in value) ||
+    value.exitCode === undefined ||
+    value.exitCode === null ||
+    typeof value.exitCode === 'number') &&
+  (!('runId' in value) ||
+    value.runId === undefined ||
+    value.runId === null ||
+    typeof value.runId === 'string')
+
+// A detached start may wait up to DETACHED_READY_TIMEOUT_MS (5 s) for its host.
+const SHELL_COMMAND_DESKTOP_COMMAND_TIMEOUT_MS = 15_000
+
+/** Shared transport of the two shell-command desktop commands; never rejects. */
+const requestDesktopShellCommand = <T extends TerminalCreateResult>(
+  command: string,
+  send: NonNullable<typeof process.send>,
+  id: string,
+  request: Parameters<NonNullable<typeof process.send>>[0],
+  isResult: (value: unknown) => value is T
+): Promise<T | TerminalCreateResult> =>
+  new Promise<T | TerminalCreateResult>((resolve) => {
+    let settled = false
+    const cleanup = (): void => {
+      clearTimeout(timeout)
+      process.off('message', onMessage)
+    }
+    const finish = (value: T | TerminalCreateResult): void => {
+      if (settled) return
+      settled = true
+      cleanup()
+      resolve(value)
+    }
+    const timeout = setTimeout(() => {
+      finish({
+        success: false,
+        error: `Timed out waiting for desktop command response: ${command}`
+      })
+    }, SHELL_COMMAND_DESKTOP_COMMAND_TIMEOUT_MS)
+
+    const onMessage = (message: unknown): void => {
+      if (!isDesktopCommandResult(message) || message.id !== id) return
+      if (!message.ok) {
+        finish({ success: false, error: message.error ?? `Desktop command failed: ${command}` })
+        return
+      }
+      if (isResult(message.value)) {
+        finish(message.value)
+        return
+      }
+      finish({ success: false, error: `Invalid desktop command response for ${command}` })
+    }
+
+    process.on('message', onMessage)
+    send.call(process, request, (error) => {
+      if (!error) return
+      finish({ success: false, error: error.message })
+    })
+  })
+
+const requestDesktopTerminalRunShellCommand = (
+  sessionId: string
+): Promise<TerminalRunShellCommandResult> => {
+  const send = process.send
+  if (!send) {
+    return Promise.resolve({
+      success: false,
+      error: 'Desktop command transport is not available'
+    })
+  }
+
+  const id = `terminal-run-shell-command-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  const command = 'terminalRunShellCommand'
+  return requestDesktopShellCommand(
+    command,
+    send,
+    id,
+    makeDesktopCommandRequest(id, command, { sessionId }),
+    isTerminalRunShellCommandResult
+  )
+}
+
+const requestDesktopTerminalAttachShellCommand = (
+  sessionId: string
+): Promise<TerminalAttachShellCommandResult> => {
+  const send = process.send
+  if (!send) {
+    return Promise.resolve({
+      success: false,
+      error: 'Desktop command transport is not available'
+    })
+  }
+
+  const id = `terminal-attach-shell-command-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  const command = 'terminalAttachShellCommand'
+  return requestDesktopShellCommand(
+    command,
+    send,
+    id,
+    makeDesktopCommandRequest(id, command, { sessionId }),
+    isTerminalAttachShellCommandResult
+  )
+}
+
 /**
  * Ask the Electron main process which PTYs are alive. Fail-soft: any
  * transport error/timeout resolves to an empty list — callers merge this
@@ -1463,6 +1592,16 @@ export const makeLiveTerminalOpsRpcService = (eventBus?: EventBus): TerminalOpsR
       try: () => requestDesktopTerminalCreateClaudeCli(sessionId, opts),
       catch: (cause) => cause
     }),
+  runShellCommand: (sessionId) =>
+    Effect.tryPromise({
+      try: () => requestDesktopTerminalRunShellCommand(sessionId),
+      catch: (cause) => cause
+    }),
+  attachShellCommand: (sessionId) =>
+    Effect.tryPromise({
+      try: () => requestDesktopTerminalAttachShellCommand(sessionId),
+      catch: (cause) => cause
+    }),
   setClaudeCliPlanAutoApprove: (sessionId, enabled) =>
     Effect.tryPromise({
       try: async () => {
@@ -1660,6 +1799,40 @@ export const makeTerminalOpsRpcHandlers = (
             catch: (cause) => cause
           })
           return yield* service.createClaudeCli(parsed.sessionId, parsed.opts)
+        })
+    ],
+    [
+      'terminalOps.runShellCommand',
+      (params) =>
+        Effect.gen(function* () {
+          const parsed = yield* Effect.try({
+            try: () => shellCommandSessionParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          if (!service.runShellCommand) {
+            return {
+              success: false,
+              error: 'Shell commands are not available in this environment'
+            }
+          }
+          return yield* service.runShellCommand(parsed.sessionId)
+        })
+    ],
+    [
+      'terminalOps.attachShellCommand',
+      (params) =>
+        Effect.gen(function* () {
+          const parsed = yield* Effect.try({
+            try: () => shellCommandSessionParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          if (!service.attachShellCommand) {
+            return {
+              success: false,
+              error: 'Shell commands are not available in this environment'
+            }
+          }
+          return yield* service.attachShellCommand(parsed.sessionId)
         })
     ],
     [

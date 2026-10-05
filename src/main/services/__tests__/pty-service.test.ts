@@ -370,4 +370,39 @@ describe('ptyService.destroy kill escalation', () => {
 
     expect(killSpy).toHaveBeenCalledWith(-PID, 'SIGKILL')
   })
+
+  it('a late exit of a destroyed PTY does not unregister the PTY that reused its id', () => {
+    // A shell command's Run again: destroy the old run's PTY, create a new one under
+    // the same session id, and only then does the old process report its exit.
+    // (Lives in this describe for its inert timers and kill spy: destroy() arms the
+    // escalation, which must never probe real pids from a unit test.)
+    type ExitHandler = (e: { exitCode: number; signal: number }) => void
+    killSpy.mockImplementation((() => true) as KillFn)
+    const first = makeFakePty(7101)
+    const second = makeFakePty(7102)
+    nodePtyMocks.spawn.mockReturnValueOnce(first).mockReturnValueOnce(second)
+
+    ptyService.create('reused-id', { cwd: '/tmp' })
+    ptyService.destroy('reused-id')
+    expect(ptyService.has('reused-id')).toBe(false)
+
+    ptyService.create('reused-id', { cwd: '/tmp' })
+    const secondExits: Array<[number, number]> = []
+    ptyService.onExit('reused-id', (code, signal) => secondExits.push([code, signal]))
+
+    const firstExit = (first.onExit as ReturnType<typeof vi.fn>).mock.calls[0][0] as ExitHandler
+    firstExit({ exitCode: 0, signal: 1 })
+
+    expect(ptyService.has('reused-id')).toBe(true)
+    expect(secondExits).toEqual([])
+    ptyService.write('reused-id', 'still here\r')
+    expect(second.write).toHaveBeenCalledWith('still here\r')
+    expect(first.write).not.toHaveBeenCalled()
+
+    // The second PTY's own exit still unregisters it.
+    const secondExit = (second.onExit as ReturnType<typeof vi.fn>).mock.calls[0][0] as ExitHandler
+    secondExit({ exitCode: 3, signal: 0 })
+    expect(secondExits).toEqual([[3, 0]])
+    expect(ptyService.has('reused-id')).toBe(false)
+  })
 })

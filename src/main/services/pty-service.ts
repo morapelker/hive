@@ -194,7 +194,10 @@ class PtyService {
           )
         }
       }
-      this.ptys.delete(id)
+      // Only forget the id if it still belongs to THIS pty: after destroy() the id can
+      // be reused (a shell command's Run again), and a late exit of the old process
+      // must not unregister the new one.
+      if (this.ptys.get(id) === instance) this.ptys.delete(id)
     })
 
     this.ptys.set(id, instance)

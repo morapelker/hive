@@ -301,6 +301,35 @@ describe('backupOps.exportBackup', () => {
     expect(exportedB.ticket_dependencies).toBeNull()
   })
 
+  it('exports project shell commands, and [] for projects without any', async () => {
+    const dir = makeTempDir()
+    const outPath = join(dir, 'out.yaml')
+    const shellCommands = [
+      { id: 'install', name: 'Install', commands: 'pnpm i\npnpm build', keepRunningOnQuit: true },
+      { id: 'test', name: 'Test', commands: 'pnpm test' }
+    ]
+
+    const deps = makeDeps({
+      db: {
+        ...makeDeps().db,
+        getAllProjects: () => [
+          project({ id: 'project-a', name: 'with', path: '/with', shell_commands: shellCommands }),
+          project({ id: 'project-b', name: 'without', path: '/without' }),
+          project({ id: 'project-c', name: 'null', path: '/null', shell_commands: null })
+        ]
+      },
+      requestSaveFileDialog: vi.fn(async () => outPath)
+    })
+
+    const result = await Effect.runPromise(makeBackupOpsRpcService(deps).exportBackup())
+    expect(result).toMatchObject({ success: true, projectCount: 3 })
+
+    const written = YAML.parse(readFileSync(outPath, 'utf-8')) as BackupFile
+    expect(written.projects.find((p) => p.name === 'with')?.shell_commands).toEqual(shellCommands)
+    expect(written.projects.find((p) => p.name === 'without')?.shell_commands).toEqual([])
+    expect(written.projects.find((p) => p.name === 'null')?.shell_commands).toEqual([])
+  })
+
   it('returns canceled without writing when the save dialog is dismissed', async () => {
     const writeFileSpy = vi.fn(async () => undefined)
     const deps = makeDeps({
@@ -478,6 +507,41 @@ describe('backupOps.openBackupFile', () => {
       kind: 'hive-backup',
       app_version: '1.2.3'
     })
+  })
+
+  it('keeps shell_commands when present and accepts files without the key', async () => {
+    const dir = makeTempDir()
+    const shellCommands = [
+      { id: 'install', name: 'Install', commands: 'pnpm install', keepRunningOnQuit: true }
+    ]
+    const withPath = join(dir, 'with.yaml')
+    writeFileSync(
+      withPath,
+      YAML.stringify({
+        ...validBackup,
+        projects: [{ ...validBackup.projects[0], shell_commands: shellCommands }]
+      }),
+      'utf-8'
+    )
+    const withoutPath = join(dir, 'without.yaml')
+    writeFileSync(withoutPath, YAML.stringify(validBackup), 'utf-8')
+
+    const withKey = await Effect.runPromise(
+      makeBackupOpsRpcService(
+        makeDeps({ requestOpenFileDialog: vi.fn(async () => withPath) })
+      ).openBackupFile()
+    )
+    expect(withKey.error).toBeUndefined()
+    expect(withKey.backup?.projects[0].shell_commands).toEqual(shellCommands)
+
+    const withoutKey = await Effect.runPromise(
+      makeBackupOpsRpcService(
+        makeDeps({ requestOpenFileDialog: vi.fn(async () => withoutPath) })
+      ).openBackupFile()
+    )
+    expect(withoutKey.error).toBeUndefined()
+    expect(withoutKey.backup?.projects).toHaveLength(1)
+    expect(withoutKey.backup?.projects[0]).not.toHaveProperty('shell_commands')
   })
 
   it('reports a newer-version error for version > 1', async () => {
@@ -897,6 +961,76 @@ describe('backupOps.restoreProject', () => {
       projectId: 'project-repo',
       projectPath: '/clones/repo'
     })
+  })
+
+  it('restores shell commands, keeping valid entries and dropping invalid ones', async () => {
+    const deps = makeDeps({
+      fs: mockFs(['/repo']),
+      isGitRepository: vi.fn(() => true),
+      git: { ...makeDeps().git, getRemoteUrl: vi.fn(async () => null) }
+    })
+    const service = makeBackupOpsRpcService(deps)
+
+    const result = await Effect.runPromise(
+      service.restoreProject({
+        project: backupProject({
+          path: '/repo',
+          shell_commands: [
+            { id: 'install', name: ' Install ', commands: 'pnpm install', keepRunningOnQuit: true },
+            { id: 'build', name: 'Build', commands: 'pnpm build', unexpected: 'dropped' },
+            // invalid: comment-only script, bad id, duplicate id, not an object
+            { id: 'noop', name: 'Noop', commands: '# nothing' },
+            { id: 'bad id', name: 'Bad', commands: 'echo hi' },
+            { id: 'build', name: 'Duplicate', commands: 'echo again' },
+            'pnpm test'
+          ]
+        }),
+        options: { cloneParentDir: null }
+      })
+    )
+
+    expect(result.success).toBe(true)
+    expect(deps.db.updateProject).toHaveBeenLastCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        shell_commands: [
+          { id: 'install', name: 'Install', commands: 'pnpm install', keepRunningOnQuit: true },
+          { id: 'build', name: 'Build', commands: 'pnpm build' }
+        ]
+      })
+    )
+  })
+
+  it('restores a backup written before shell commands existed (no shell_commands key)', async () => {
+    const deps = makeDeps({
+      fs: mockFs(['/repo']),
+      isGitRepository: vi.fn(() => true),
+      git: { ...makeDeps().git, getRemoteUrl: vi.fn(async () => null) }
+    })
+    const service = makeBackupOpsRpcService(deps)
+
+    const legacy = backupProject({ path: '/repo' })
+    expect(legacy).not.toHaveProperty('shell_commands')
+    const withoutField = await Effect.runPromise(
+      service.restoreProject({ project: legacy, options: { cloneParentDir: null } })
+    )
+    expect(withoutField.success).toBe(true)
+    expect(deps.db.updateProject).toHaveBeenLastCalledWith(
+      expect.any(String),
+      expect.objectContaining({ shell_commands: [] })
+    )
+
+    const withNull = await Effect.runPromise(
+      service.restoreProject({
+        project: backupProject({ path: '/repo', shell_commands: null }),
+        options: { cloneParentDir: null }
+      })
+    )
+    expect(withNull.success).toBe(true)
+    expect(deps.db.updateProject).toHaveBeenLastCalledWith(
+      expect.any(String),
+      expect.objectContaining({ shell_commands: [] })
+    )
   })
 
   it('restores fine when kanban_markdown_config is entirely absent (zod z.unknown() optional-key edge case), rather than persisting JSON.stringify(undefined)', async () => {
