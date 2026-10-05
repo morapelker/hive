@@ -153,6 +153,17 @@ export const byTransitionDesc = (a: KanbanTicket, b: KanbanTicket): number =>
 export const isDateSortedColumn = (column: KanbanTicketColumn): boolean =>
   column === 'done' || column === 'merged'
 
+// The transition sort of a column. In Progress and Review keep the tickets of
+// document runs (orchestrators) above every other ticket; time only orders
+// tickets within each group
+export const transitionSortFor = (
+  column: KanbanTicketColumn
+): ((a: KanbanTicket, b: KanbanTicket) => number) =>
+  column === 'in_progress' || column === 'review'
+    ? (a, b) =>
+        Number(isDocumentRunTicket(b)) - Number(isDocumentRunTicket(a)) || byTransitionDesc(a, b)
+    : byTransitionDesc
+
 // Key for the persisted per-board, per-column transition-sort toggle
 // (projectId is '' on pinned/connection boards, mirroring showArchivedByProject)
 export const transitionSortKey = (projectId: string, column: KanbanTicketColumn): string =>
@@ -1876,7 +1887,9 @@ export const useKanbanStore = create<KanbanState>()(
           (get().transitionSortByColumn[transitionSortKey(projectId, column)] ?? false)
         return tickets
           .filter((t) => t.column === column && !t.archived_at)
-          .sort(sortByTransition ? byTransitionDesc : (a, b) => a.sort_order - b.sort_order)
+          .sort(
+            sortByTransition ? transitionSortFor(column) : (a, b) => a.sort_order - b.sort_order
+          )
       },
 
       // ── getArchivedTicketsByColumn ─────────────────────────────────
@@ -1983,7 +1996,9 @@ export const useKanbanStore = create<KanbanState>()(
         const sortByTransition =
           isDateSortedColumn(column) ||
           (get().transitionSortByColumn[transitionSortKey('', column)] ?? false)
-        merged.sort(sortByTransition ? byTransitionDesc : (a, b) => a.sort_order - b.sort_order)
+        merged.sort(
+          sortByTransition ? transitionSortFor(column) : (a, b) => a.sort_order - b.sort_order
+        )
         return merged
       },
 
@@ -2081,7 +2096,9 @@ export const useKanbanStore = create<KanbanState>()(
         const sortByTransition =
           isDateSortedColumn(column) ||
           (get().transitionSortByColumn[transitionSortKey('', column)] ?? false)
-        merged.sort(sortByTransition ? byTransitionDesc : (a, b) => a.sort_order - b.sort_order)
+        merged.sort(
+          sortByTransition ? transitionSortFor(column) : (a, b) => a.sort_order - b.sort_order
+        )
         return merged
       },
 

@@ -175,6 +175,65 @@ describe('getTicketsByColumn — transition sort toggle', () => {
   })
 })
 
+describe('getTicketsByColumn — orchestrator tickets first', () => {
+  const seedColumn = (column: KanbanTicket['column']): void =>
+    seed([
+      makeTicket({
+        id: 'normal-new',
+        column,
+        sort_order: 0,
+        column_changed_at: '2026-04-01T00:00:00.000Z'
+      }),
+      makeTicket({
+        id: 'run-old',
+        column,
+        sort_order: 1,
+        column_changed_at: '2026-01-01T00:00:00.000Z',
+        external_provider: 'document-run',
+        external_id: 'run-1'
+      }),
+      makeTicket({
+        id: 'normal-old',
+        column,
+        sort_order: 2,
+        column_changed_at: '2026-02-01T00:00:00.000Z'
+      }),
+      makeTicket({
+        id: 'run-new',
+        column,
+        sort_order: 3,
+        column_changed_at: '2026-03-01T00:00:00.000Z',
+        external_provider: 'document-run',
+        external_id: 'run-2'
+      })
+    ])
+
+  const idsIn = (column: KanbanTicket['column']): string[] =>
+    useKanbanStore
+      .getState()
+      .getTicketsByColumn(PROJECT_ID, column)
+      .map((t) => t.id)
+
+  it.each(['in_progress', 'review'] as const)(
+    'puts orchestrator tickets above normal ones in %s, time second',
+    (column) => {
+      seedColumn(column)
+      useKanbanStore.getState().setTransitionSort(PROJECT_ID, column, true)
+      expect(idsIn(column)).toEqual(['run-new', 'run-old', 'normal-new', 'normal-old'])
+    }
+  )
+
+  it('leaves manual order alone when the toggle is off', () => {
+    seedColumn('in_progress')
+    expect(idsIn('in_progress')).toEqual(['normal-new', 'run-old', 'normal-old', 'run-new'])
+  })
+
+  it('sorts other columns by time only', () => {
+    seedColumn('done')
+    expect(idsIn('done')).toEqual(['normal-new', 'run-new', 'normal-old', 'run-old'])
+  })
+})
+
 describe('moveTicket — optimistic transition date', () => {
   it('stamps column_changed_at locally so the ticket lands on top of a sorted column', async () => {
     seed([
