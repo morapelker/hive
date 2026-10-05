@@ -1,6 +1,7 @@
 import { ticketPillBaseClass } from '@/components/kanban/pill'
 import type { AgentDotState } from '@/components/sidebar/agent-state'
 import {
+  countRunningAgents,
   isItemWaitingOnUser,
   isRunWaitingOnUser,
   isTerminalItemStatus,
@@ -8,6 +9,7 @@ import {
   unmetDependencies,
   type DocumentRunItemSummary
 } from '@shared/document-flow/planning'
+import { isActiveRunStatus } from '@shared/document-flow/run-ticket'
 import {
   DOCUMENT_RUN_ITEM_MERGE_STATUSES,
   type DocumentRun,
@@ -93,22 +95,21 @@ export function isLaunchedRunStatus(status: DocumentRunStatus): boolean {
 }
 
 /** The orchestrator still owns the run: item actions make sense, deleting does not. */
-export function isActiveRunStatus(status: DocumentRunStatus): boolean {
-  return status === 'running' || status === 'paused'
-}
+export { isActiveRunStatus }
 
 export function isRunDeletable(status: DocumentRunStatus): boolean {
   return !isActiveRunStatus(status)
 }
 
 /**
- * What deleting a run does to its files. The server keeps the run directory (the spec text
- * and the figures the board tickets attach by path) as long as any ticket exists; a run that
- * never launched has no tickets, so its files go with it.
+ * What deleting a run does to its tickets and files. The run's own ticket goes with it. The
+ * server keeps the run directory (the spec text and the figures the task tickets attach by
+ * path) as long as any of those exists; a run that never launched has no tickets, so its
+ * files go with it.
  */
 export function describeRunDeletion(items: readonly DocumentRunItem[]): string {
   return items.some((item) => item.ticket_id)
-    ? 'Branches, worktrees and board tickets are not touched, and the spec text and figures those tickets attach stay on disk.'
+    ? "The run's own ticket is removed from the board. Branches, worktrees and the tickets of its tasks are not touched, and the spec text and figures those tickets attach stay on disk."
     : 'Its spec text and figures are removed from disk as well.'
 }
 
@@ -287,6 +288,90 @@ export function runCountsLabel(detail: Pick<DocumentRunDetail, 'run' | 'items'>)
   const summary = summarizeItems(items)
   const attention = summary.attention > 0 ? ` · ${summary.attention} need you` : ''
   return `${summary.merged}/${summary.total} merged${attention}`
+}
+
+/** Where a launched run stands, as its ticket on the board tells it apart. */
+export type RunBoardCardPhase = 'running' | 'paused' | 'completed' | 'issues' | 'cancelled'
+
+export interface RunBoardCardState {
+  title: string
+  phase: RunBoardCardPhase
+  segments: ProgressSegment[]
+  merged: number
+  total: number
+  /** Agent sessions at work right now; checking, merging and verifying are not counted. */
+  running: number
+  /** While the run is on: a ticket waits on the user (a question, a permission, flagged). */
+  waitingOnUser: boolean
+  paused: boolean
+  /**
+   * "3 running", "Paused", "Paused · 1 running" while sessions finish their turn; once the
+   * run ended, what is left to do: "Ready to merge into main", "2 not merged", "Cancelled".
+   */
+  label: string
+}
+
+const RUN_BOARD_CARD_PHASES: Partial<Record<DocumentRunStatus, RunBoardCardPhase>> = {
+  paused: 'paused',
+  completed: 'completed',
+  completed_with_issues: 'issues',
+  cancelled: 'cancelled'
+}
+
+/**
+ * What a run's ticket on the board shows; the same notions as the dashboard and the
+ * indicator. `column` is where the ticket sits: once it left Review for Merged or Done there
+ * is nothing left to announce.
+ */
+export function runBoardCardState(
+  detail: Pick<DocumentRunDetail, 'run' | 'items'>,
+  column?: string
+): RunBoardCardState {
+  const { run, items } = detail
+  const summary = summarizeItems(items)
+  const running = countRunningAgents(items)
+  const phase = RUN_BOARD_CARD_PHASES[run.status] ?? 'running'
+  const runningLabel = `${running} running`
+  const moved = column === 'merged' || column === 'done'
+  const notMerged = summary.total - summary.merged
+  const labels: Record<RunBoardCardPhase, string> = {
+    running: runningLabel,
+    paused: running > 0 ? `Paused · ${runningLabel}` : 'Paused',
+    completed: moved ? 'Finished' : `Ready to merge into ${run.base_branch ?? 'the base branch'}`,
+    issues: `Finished · ${notMerged} not merged`,
+    cancelled: 'Cancelled'
+  }
+  return {
+    title: run.title || documentNameFromPath(run.source_path),
+    phase,
+    segments: progressSegments(summary),
+    merged: summary.merged,
+    total: summary.total,
+    running,
+    waitingOnUser: isActiveRunStatus(run.status) && items.some(needsUser),
+    paused: phase === 'paused',
+    label: labels[phase]
+  }
+}
+
+/**
+ * Why a run's ticket cannot be dropped on `column`, or null when it can. The ticket stays In
+ * Progress while the run is on (the app moves it to Review when the run ends); from then on
+ * it is the user's to move forward. `status` is null when the run's record is gone.
+ */
+export function documentRunTicketDropRefusal(
+  status: DocumentRunStatus | null,
+  column: string
+): string | null {
+  if (column === 'todo') return 'The ticket of a document run cannot go back to To Do.'
+  const active = status !== null && isActiveRunStatus(status)
+  if (column === 'in_progress') {
+    return active ? null : 'This document run is over; its ticket cannot go back to In Progress.'
+  }
+  if (!active) return null
+  return column === 'review'
+    ? 'The document run is still going; its ticket moves to Review when the run ends.'
+    : 'The document run is still going. Wait for it to end, or cancel it, before merging it.'
 }
 
 // ── Wizard steps ───────────────────────────────────────────────────────────

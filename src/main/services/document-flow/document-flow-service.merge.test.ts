@@ -257,8 +257,9 @@ describe('classify', () => {
     })
   })
 
-  it('fails closed when the model fails and there is no footer', async () => {
-    launchTicket('A2')
+  it('takes a plain finished message as done when the model fails and the branch has work', async () => {
+    const path = launchTicket('A2')
+    repo.commit(path, 'rule', { 'src/rule.ts': 'export const rule = 1\n' })
     harness.replies.push(new Error('No AI provider available'))
 
     const verdict = await harness.service.classify({
@@ -267,9 +268,55 @@ describe('classify', () => {
       finalMessage: 'All done, everything works.'
     })
 
+    expect(verdict).toMatchObject({ status: 'done', source: 'fallback', confidence: 'low' })
+    expect(verdict.reason).toContain('No AI provider available')
+    expect(verdict.reason).toContain('the branch carries commits')
+  })
+
+  it('still surfaces a question asked in text when the model fails', async () => {
+    launchTicket('A2')
+    harness.replies.push(new Error('No AI provider available'))
+
+    const verdict = await harness.service.classify({
+      runId,
+      itemId: itemByKey('A2').id,
+      finalMessage: 'I added the totals.\n\nWhich currency should they use?'
+    })
+
+    expect(verdict).toMatchObject({
+      status: 'needs_input',
+      source: 'fallback',
+      question: 'Which currency should they use?'
+    })
+  })
+
+  it('fails closed when the model fails and the message may report a problem', async () => {
+    const path = launchTicket('A2')
+    repo.commit(path, 'rule', { 'src/rule.ts': 'export const rule = 1\n' })
+    harness.replies.push(new Error('No AI provider available'))
+
+    const verdict = await harness.service.classify({
+      runId,
+      itemId: itemByKey('A2').id,
+      finalMessage: 'I could not finish the export dialog.'
+    })
+
     expect(verdict).toMatchObject({ status: 'blocked', source: 'fallback', confidence: 'low' })
     expect(verdict.reason).toContain('No AI provider available')
-    expect(verdict.reason).toContain('no STATUS footer')
+  })
+
+  it('fails closed when the model fails and the branch carries no work', async () => {
+    launchTicket('A1')
+    harness.replies.push(new Error('No AI provider available'))
+
+    const verdict = await harness.service.classify({
+      runId,
+      itemId: itemByKey('A1').id,
+      finalMessage: 'All done, everything works.'
+    })
+
+    expect(verdict).toMatchObject({ status: 'blocked', source: 'fallback', confidence: 'low' })
+    expect(verdict.reason).toContain('the branch carries no work')
   })
 
   it('refuses a ticket that has no session yet', async () => {

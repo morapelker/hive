@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MergeOnDoneDialog } from './MergeOnDoneDialog'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
+import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
+import { makeDetail } from '@/components/document-flow/test-fixtures'
 import type { KanbanTicket } from '../../../../main/db/types'
 
 const dbApiMocks = vi.hoisted(() => ({
@@ -32,7 +34,8 @@ const gitApiMocks = vi.hoisted(() => ({
   commit: vi.fn(),
   merge: vi.fn(),
   pull: vi.fn(),
-  getRemoteUrl: vi.fn()
+  getRemoteUrl: vi.fn(),
+  isBranchMerged: vi.fn()
 }))
 
 vi.mock('@/api/git-api', () => ({
@@ -230,6 +233,79 @@ describe('MergeOnDoneDialog — already-merged branch', () => {
     expect(await screen.findByText('Merge branch')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Merge' })).toBeTruthy()
     expect(moveTicketMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('MergeOnDoneDialog — ticket of a document run', () => {
+  const aheadOfBase = (): void => {
+    gitApiMocks.branchDiffShortStat.mockResolvedValue({
+      success: true,
+      filesChanged: 2,
+      insertions: 10,
+      deletions: 3,
+      commitsAhead: 4
+    })
+  }
+  /** The ticket's branch was cut from the integration branch after A1 and A2 landed on it. */
+  const seedRun = (): void => {
+    useDocumentFlowStore.setState({
+      runsById: {
+        'run-1': makeDetail({ id: 'run-1', status: 'completed', base_branch: 'main' }, [
+          { key: 'A1', status: 'merged', merge_sha: 'm1', ticket_id: 'ticket-a1' },
+          { key: 'A2', status: 'merged', merge_sha: 'm2', ticket_id: 'ticket-a2' },
+          { key: 'A3', status: 'merged', merge_sha: 'm3', ticket_id: 'ticket-1' }
+        ])
+      }
+    })
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    moveTicketMock.mockResolvedValue(undefined)
+    mockAlreadyMergedBranch()
+    aheadOfBase()
+    setupStores()
+  })
+
+  afterEach(() => {
+    cleanup()
+    useKanbanStore.setState({ pendingDoneMove: null })
+    useDocumentFlowStore.setState({ runsById: {} })
+  })
+
+  it('warns that merging it brings earlier tickets of the run into the base branch', async () => {
+    seedRun()
+    // On the ticket's branch, not on main yet: the run's own ticket was not merged.
+    gitApiMocks.isBranchMerged.mockImplementation(async (path: string) => ({
+      success: true,
+      isMerged: path === '/repo/feature'
+    }))
+
+    render(<MergeOnDoneDialog />)
+
+    expect(await screen.findByTestId('merge-carried-run-tickets')).toHaveTextContent(
+      'This branch was cut from its document run, so the merge also brings A1, A2 into main, ahead of the run’s own ticket.'
+    )
+    // Allowed all the same.
+    expect(screen.getByRole('button', { name: 'Merge' })).toBeEnabled()
+  })
+
+  it('says nothing once the run was merged: only the follow-up is left to merge', async () => {
+    seedRun()
+    gitApiMocks.isBranchMerged.mockResolvedValue({ success: true, isMerged: true })
+
+    render(<MergeOnDoneDialog />)
+
+    expect(await screen.findByText('Merge branch')).toBeTruthy()
+    expect(screen.queryByTestId('merge-carried-run-tickets')).toBeNull()
+  })
+
+  it('says nothing for a ticket of no run, without asking git', async () => {
+    render(<MergeOnDoneDialog />)
+
+    expect(await screen.findByText('Merge branch')).toBeTruthy()
+    expect(screen.queryByTestId('merge-carried-run-tickets')).toBeNull()
+    expect(gitApiMocks.isBranchMerged).not.toHaveBeenCalled()
   })
 })
 

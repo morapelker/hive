@@ -1,8 +1,9 @@
 /**
  * Server side of the "Implement document" flow (RPC domain `documentFlow.*`): turns a spec
  * document into previewable tickets with the generation model, launches a run (an integration
- * branch + worktree cut from the base branch, tickets on the board), judges sessions' final
- * messages, and merges ticket branches into the integration branch one at a time.
+ * branch + worktree cut from the base branch, tickets on the board plus one ticket for the run
+ * itself), judges sessions' final messages, and merges ticket branches into the integration
+ * branch one at a time.
  *
  * Runs in the server child. The orchestrator loop that decides WHEN to call these lives in the
  * renderer; nothing here launches or prompts a session. The base branch is only ever read.
@@ -19,7 +20,7 @@ import {
   buildClassificationPrompt,
   fallbackVerdict,
   parseClassificationResponse,
-  verdictFromStatusFooter
+  verdictForUnjudgedMessage
 } from '@shared/document-flow/classification'
 import {
   EXTRACTION_JSON_SCHEMA,
@@ -36,6 +37,11 @@ import {
   sanitizeDependencies
 } from '@shared/document-flow/planning'
 import { DOCUMENT_TEXT_LIMIT, preprocessDocument } from '@shared/document-flow/preprocess'
+import {
+  DOCUMENT_RUN_TICKET_PROVIDER,
+  isActiveRunStatus,
+  isEndedRunStatus
+} from '@shared/document-flow/run-ticket'
 import { RpcRouteError } from '@shared/rpc/errors'
 import {
   DEFAULT_DOCUMENT_RUN_CONFIG,
@@ -57,7 +63,7 @@ import {
   type DocumentVerifyResult,
   type SessionFinalMessage
 } from '@shared/types/document-flow'
-import type { KanbanTicketBatchCreateItem } from '../../db/types'
+import type { KanbanTicketBatchCreateItem, KanbanTicketColumn } from '../../db/types'
 import { createLogger } from '../logger'
 import type { CreateFromBranchParams, WorktreeResult } from '../worktree-ops'
 import type { DocumentFlowDb, DocumentRunItemRowPatch, DocumentRunRowPatch } from './db-port'
@@ -108,6 +114,8 @@ const MAX_CONCURRENT_CLASSIFICATIONS = 3
 /** Passing checks only need enough of the output to recognise them in the audit log. */
 const PASSED_VERIFY_EVENT_OUTPUT_CHARS = 2000
 const ERROR_MESSAGE_CHARS = 600
+/** How far back the startup repair of run tickets looks; the list itself caps at this. */
+const RECONCILED_RUNS = 200
 
 export type DocumentFlowPublisher = (event: DocumentFlowUpdatedEvent) => void
 
@@ -138,6 +146,16 @@ export interface DocumentFlowWorktree {
   id: string
   path: string
   branch_name: string
+  /** `active` or `archived`; a row without one counts as active. */
+  status?: string
+  /** The branch the worktree's work is merged into from the board. */
+  base_branch?: string | null
+}
+
+/** A board ticket as far as a run cares: where it sits. */
+export interface DocumentFlowTicket {
+  id: string
+  column: KanbanTicketColumn
 }
 
 export interface DocumentFlowServiceDeps {
@@ -160,6 +178,13 @@ export interface DocumentFlowServiceDeps {
     dependentTicketId: string,
     blockerTicketId: string
   ) => Promise<unknown>
+  /** The ticket on the project's board; null when it is gone. */
+  getTicket: (projectId: string, ticketId: string) => Promise<DocumentFlowTicket | null>
+  /** Moves the ticket to the top of `column`. */
+  moveTicket: (projectId: string, ticketId: string, column: KanbanTicketColumn) => Promise<unknown>
+  deleteTicket: (projectId: string, ticketId: string) => Promise<unknown>
+  /** Records the branch a worktree's work is merged into. Not reachable over RPC. */
+  setWorktreeBaseBranch: (worktreeId: string, baseBranch: string) => void
   resolveFinalMessage: (input: {
     sessionId: string
     worktreePath: string | null
@@ -337,6 +362,8 @@ export class DocumentFlowService {
   private readonly lastVerify = new Map<string, VerifyOutcome>()
   /** The merge under way per run, so that closing the run can wait for it to land or fail. */
   private readonly mergesInFlight = new Map<string, Promise<unknown>>()
+  /** One writer at a time for a run's own board ticket: a launch and the startup repair. */
+  private readonly runTicketLocks = new KeyedMutex()
 
   constructor(private readonly deps: DocumentFlowServiceDeps) {
     this.db = deps.db
@@ -624,6 +651,7 @@ export class DocumentFlowService {
       config.verifyCommand = patch.verifyCommand === null ? null : patch.verifyCommand.trim()
     }
     if (patch.interactive !== undefined) config.interactive = patch.interactive
+    if (patch.promptStyle !== undefined) config.promptStyle = patch.promptStyle
     if (patch.defaultLaunch !== undefined) config.defaultLaunch = patch.defaultLaunch
     if (patch.generation !== undefined) config.generation = patch.generation
     if (patch.baseBranch !== undefined) {
@@ -731,6 +759,7 @@ export class DocumentFlowService {
       this.cleanDependencies(run)
       if (!run.integration_worktree_id) run = await this.createIntegrationWorktree(run, project)
       await this.createTickets(run)
+      run = await this.ensureRunTicket(run, 'in_progress')
       run = this.saveRun(run, {
         status: 'running',
         started_at: run.started_at ?? this.now().toISOString(),
@@ -905,6 +934,139 @@ export class DocumentFlowService {
     this.log(run, 'tickets_created', `${pending.length} tickets created on the board`)
   }
 
+  // ── The run's own ticket ──────────────────────────────────────────────────
+
+  /**
+   * The run's ticket on the board: an ordinary ticket on the integration worktree, so moving
+   * it to Done merges the integration branch into the base branch like any ticket's work. It
+   * has no session; the external-source fields mark it (both board backends store those).
+   * Idempotent: a run that has its ticket is returned as it is.
+   */
+  private ensureRunTicket(run: DocumentRun, column: KanbanTicketColumn): Promise<DocumentRun> {
+    return this.runTicketLocks.run(run.id, async () => {
+      const current = this.db.getDocumentRun(run.id) ?? run
+      if (current.ticket_id || !current.integration_worktree_id) return current
+      const { tickets } = await this.deps.createTickets(current.project_id, [
+        {
+          draft_key: `run-${current.id}`,
+          project_id: current.project_id,
+          title: sanitizeLine(current.title) || 'Document run',
+          description: `Document run of ${current.source_path}. Its branch ${current.integration_branch} collects the merged work of the run's tickets; move this ticket to Done to merge it into ${current.base_branch}.`,
+          column,
+          mode: null,
+          worktree_id: current.integration_worktree_id,
+          external_provider: DOCUMENT_RUN_TICKET_PROVIDER,
+          external_id: current.id
+        }
+      ])
+      const ticket = tickets[0]
+      if (!ticket) throw new Error('The board did not create the ticket of the run.')
+      // Several app instances share one database: the instance that linked its ticket first
+      // keeps it.
+      const raced = this.db.getDocumentRun(current.id)
+      if (!raced || raced.ticket_id) {
+        await this.deps.deleteTicket(current.project_id, ticket.id).catch(() => undefined)
+        if (!raced) throw notFound('The run')
+        return raced
+      }
+      const updated = this.saveRun(raced, { ticket_id: ticket.id })
+      this.log(updated, 'run_ticket_created', 'The run got its ticket on the board')
+      return updated
+    })
+  }
+
+  /**
+   * A run that ended leaves In Progress for Review, once: from there its ticket is the user's
+   * to move (to Done, which merges it). Never fails the operation that ended the run.
+   */
+  private async settleRunTicket(run: DocumentRun): Promise<void> {
+    const ticketId = run.ticket_id
+    if (!ticketId || !isEndedRunStatus(run.status)) return
+    try {
+      const ticket = await this.deps.getTicket(run.project_id, ticketId)
+      if (ticket?.column !== 'in_progress') return
+      await this.detach(() => this.deps.moveTicket(run.project_id, ticketId, 'review'))
+    } catch (error) {
+      log.warn('Could not move the ticket of a finished document run to review', {
+        runId: run.id,
+        ticketId,
+        error: describeError(error)
+      })
+    }
+  }
+
+  /**
+   * Ticket branches are cut from the integration branch but recorded against the run's base
+   * branch, so the board merges a ticket (a follow-up after the run, say) straight into it.
+   * Worktrees of runs launched before that still name the integration branch.
+   */
+  private repointTaskWorktrees(run: DocumentRun): void {
+    const { base_branch: base, integration_branch: integration } = run
+    if (!base || !integration || base === integration) return
+    for (const item of this.db.getDocumentRunItems(run.id)) {
+      if (!item.worktree_id) continue
+      const worktree = this.deps.getWorktree(item.worktree_id)
+      if (worktree?.base_branch !== integration) continue
+      this.deps.setWorktreeBaseBranch(worktree.id, base)
+    }
+  }
+
+  /**
+   * Startup repair, safe to repeat. Runs launched before runs had a ticket get one while their
+   * integration worktree is still there, their ticket worktrees are re-pointed at the base
+   * branch, and a run that ended while no one was looking leaves In Progress.
+   */
+  async reconcileRunTickets(): Promise<void> {
+    let runs: DocumentRun[]
+    try {
+      runs = this.db.listDocumentRuns(undefined, RECONCILED_RUNS)
+    } catch (error) {
+      log.warn('Could not list the document runs to reconcile', { error: describeError(error) })
+      return
+    }
+    for (const run of runs) {
+      const active = isActiveRunStatus(run.status)
+      if (!run.integration_worktree_id || (!active && !isEndedRunStatus(run.status))) continue
+      // A launch under way creates the ticket itself.
+      if (this.startsInFlight.has(run.id)) continue
+      try {
+        this.detach(() => this.repointTaskWorktrees(run))
+        if (run.ticket_id) {
+          await this.settleRunTicket(run)
+          continue
+        }
+        // A run cancelled before its launch finished never had a ticket.
+        if (!run.started_at) continue
+        const worktree = this.deps.getWorktree(run.integration_worktree_id)
+        if (!worktree || (worktree.status ?? 'active') !== 'active') continue
+        await this.detach(() => this.ensureRunTicket(run, active ? 'in_progress' : 'review'))
+      } catch (error) {
+        log.warn('Could not reconcile the ticket of a document run', {
+          runId: run.id,
+          error: describeError(error)
+        })
+      }
+    }
+  }
+
+  /**
+   * Deleting a run's own ticket deletes the run with it (a finished run has no other way in);
+   * refused while the run is running or paused. Branches and worktrees are kept. A ticket
+   * whose run is already gone is simply deleted.
+   */
+  async deleteRunTicket(projectId: string, ticketId: string, runId: string): Promise<boolean> {
+    const run = this.db.getDocumentRun(runId)
+    if (run && run.project_id === projectId && run.ticket_id === ticketId) {
+      if (isActiveRunStatus(run.status)) {
+        throw invalidState('Cancel the run before deleting its ticket.')
+      }
+      await this.delete(run.id)
+      return true
+    }
+    await this.deps.deleteTicket(projectId, ticketId)
+    return true
+  }
+
   claimRunner(runId: string, clientId: string): DocumentRunnerClaim {
     const run = this.requireRun(runId)
     const now = this.now()
@@ -971,7 +1133,7 @@ export class DocumentFlowService {
     return verdict
   }
 
-  /** Fails closed: without a readable reply the agent's own footer decides, and never beyond it. */
+  /** Without a readable reply: the agent's own footer, then what the message and branch show. */
   private async judge(
     run: DocumentRun,
     item: DocumentRunItem,
@@ -1006,13 +1168,14 @@ export class DocumentFlowService {
       if (!verdict) throw new Error('its reply was not a verdict')
       return verdict
     } catch (error) {
-      const nowIso = this.now().toISOString()
-      return (
-        verdictFromStatusFooter(message, nowIso) ??
-        fallbackVerdict(
-          `The final message could not be judged (${describeError(error)}), and it has no STATUS footer.`,
-          nowIso
-        )
+      return verdictForUnjudgedMessage(
+        {
+          finalMessage: message,
+          commitsAhead: facts.commitsAhead,
+          hasUncommittedChanges: facts.dirty,
+          failure: describeError(error)
+        },
+        this.now().toISOString()
       )
     }
   }
@@ -1387,6 +1550,7 @@ export class DocumentFlowService {
       status,
       `Run finished: ${merged.length} of ${items.length} tickets merged into ${report.integrationBranch}`
     )
+    await this.settleRunTicket(updated)
     return this.detail(updated, true)
   }
 
@@ -1536,13 +1700,15 @@ export class DocumentFlowService {
       'cancelled',
       `Run cancelled; ${cancelledItems} unfinished tickets were stopped. Branches and worktrees were kept.`
     )
+    void this.settleRunTicket(updated)
     return this.detail(updated, true)
   }
 
   /**
-   * Removes the run. Its directory goes with it unless a board ticket (kept, as promised)
-   * attaches the spec text and figures from it by path; `removeFiles` removes it regardless,
-   * for a caller whose tickets are going too (the project is being deleted).
+   * Removes the run and its own board ticket. Its directory goes with it unless a task ticket
+   * (kept, as promised) attaches the spec text and figures from it by path; `removeFiles`
+   * removes it regardless, for a caller whose tickets are going too (the project is being
+   * deleted). Branches and worktrees stay.
    */
   async delete(runId: string, options: { removeFiles?: boolean } = {}): Promise<boolean> {
     const found = this.db.getDocumentRun(runId)
@@ -1555,6 +1721,19 @@ export class DocumentFlowService {
     const hasTickets = this.db.getDocumentRunItems(run.id).some((item) => item.ticket_id)
     const deleted = this.db.deleteDocumentRun(run.id)
     this.lastVerify.delete(run.id)
+    const ticketId = run.ticket_id
+    if (ticketId) {
+      try {
+        // Detached, so the board of whoever asked reloads too.
+        await this.detach(() => this.deps.deleteTicket(run.project_id, ticketId))
+      } catch (error) {
+        log.warn('Could not delete the ticket of a document run', {
+          runId: run.id,
+          ticketId,
+          error: describeError(error)
+        })
+      }
+    }
     if (!hasTickets || options.removeFiles) {
       try {
         await removeRunDir(run.run_dir, this.runsRoot)
@@ -1827,6 +2006,9 @@ export async function getDocumentFlowService(
     },
     getProject: (projectId) => db.getProject(projectId),
     getWorktree: (worktreeId) => db.getWorktree(worktreeId),
+    setWorktreeBaseBranch: (worktreeId, baseBranch) => {
+      db.setWorktreeBaseBranch(worktreeId, baseBranch)
+    },
     getAppStartedAt: () => appStartedAtFromEnv() ?? db.getSetting(APP_STARTED_AT_SETTING),
     getDefaultBranch: async (projectPath) => {
       const { gitService } = await import('../../effect/git/facade')
@@ -1848,6 +2030,23 @@ export async function getDocumentFlowService(
         blockerTicketId
       )
     },
+    getTicket: async (projectId, ticketId) => {
+      const { getKanbanBackendForProject } = await import('../kanban-backend')
+      return getKanbanBackendForProject(projectId).get(projectId, ticketId)
+    },
+    moveTicket: async (projectId, ticketId, column) => {
+      const { getKanbanBackendForProject } = await import('../kanban-backend')
+      const backend = getKanbanBackendForProject(projectId)
+      const inColumn = (await backend.list(projectId, false)).filter(
+        (ticket) => ticket.column === column && ticket.id !== ticketId
+      )
+      const top = Math.min(...inColumn.map((ticket) => ticket.sort_order))
+      return backend.move(projectId, ticketId, column, Number.isFinite(top) ? top - 1 : 0)
+    },
+    deleteTicket: async (projectId, ticketId) => {
+      const { getKanbanBackendForProject } = await import('../kanban-backend')
+      return getKanbanBackendForProject(projectId).delete(projectId, ticketId)
+    },
     resolveFinalMessage: async (input) => {
       const { readClaudeTranscript } = await import('../claude-transcript-reader')
       return resolveSessionFinalMessage(input, {
@@ -1859,5 +2058,7 @@ export async function getDocumentFlowService(
       })
     }
   })
+  // Nothing waits for it: the runs are listed as they are and updated when it gets to them.
+  void liveService.reconcileRunTickets()
   return liveService
 }

@@ -366,6 +366,7 @@ describe('useDocumentFlowStore', () => {
           maxParallel: 99,
           verifyCommand: 'pnpm check',
           interactive: false,
+          promptStyle: 'small',
           defaultLaunch: { sdk: 'codex', model: null, codexFastMode: true },
           generation: null,
           baseBranch: null
@@ -377,8 +378,9 @@ describe('useDocumentFlowStore', () => {
 
       expect(useDocumentFlowStore.getState().runsById['run-1']).toBe(started)
       expect(useDocumentFlowStore.getState().prefs).toEqual({
-        maxParallel: 8,
+        maxParallel: 50,
         interactive: false,
+        promptStyle: 'small',
         defaultLaunch: { sdk: 'codex', model: null, codexFastMode: true },
         verifyCommandByProject: { 'project-2': 'make check', 'project-1': 'pnpm check' }
       })
@@ -622,7 +624,7 @@ describe('useDocumentFlowStore', () => {
     it('clampMaxParallel keeps the value in range', () => {
       expect(clampMaxParallel(0)).toBe(1)
       expect(clampMaxParallel(3.6)).toBe(4)
-      expect(clampMaxParallel(99)).toBe(8)
+      expect(clampMaxParallel(99)).toBe(50)
       expect(clampMaxParallel(Number.NaN)).toBe(4)
     })
   })

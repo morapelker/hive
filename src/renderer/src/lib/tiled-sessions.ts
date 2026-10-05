@@ -1,5 +1,6 @@
 import type { KanbanTicket } from '../../../main/db/types'
 import { isTerminalBacked } from '@shared/types/agent-sdk'
+import { isDocumentRunTicket } from '@shared/document-flow/run-ticket'
 import { dbApi } from '@/api/db-api'
 import { terminalApi } from '@/api/terminal-api'
 import { useKanbanStore } from '@/stores/useKanbanStore'
@@ -110,7 +111,10 @@ export async function openTiledInProgressSessions(
    * to a fresh store query when omitted. */
   columnTickets?: KanbanTicket[]
 ): Promise<void> {
-  const tickets = columnTickets ?? getInProgressTickets(scope)
+  // A document run's ticket never has a session: it would only take a grid slot
+  const tickets = (columnTickets ?? getInProgressTickets(scope)).filter(
+    (t) => !isDocumentRunTicket(t)
+  )
   const isMultiProject = !!scope.connectionId || !!scope.isPinnedMode
   const projects = useProjectStore.getState().projects
 

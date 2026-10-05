@@ -230,7 +230,7 @@ describe('DocumentRunDashboard — header', () => {
     // The run's tickets attach its spec text and figures by path, so those files stay.
     expect(
       screen.getByText(
-        /The run and its report are removed from the list\. Branches, worktrees and board tickets are not touched, and the spec text and figures those tickets attach stay on disk\./
+        /The run and its report are removed from the list\. The run's own ticket is removed from the board\. Branches, worktrees and the tickets of its tasks are not touched, and the spec text and figures those tickets attach stay on disk\./
       )
     ).toBeInTheDocument()
     await click('docflow-confirm-action')
@@ -270,6 +270,24 @@ describe('DocumentRunDashboard — header', () => {
     expect(useWorktreeStore.getState().selectedWorktreeId).toBe('wt-integration')
     expect(useProjectStore.getState().selectedProjectId).toBe(TEST_PROJECT.id)
     expect(useDocumentFlowStore.getState().dashboardRunId).toBeNull()
+  })
+
+  it('stays open and says so when the integration worktree was archived', async () => {
+    // The project's worktrees are loaded, and the integration worktree is not among them.
+    useWorktreeStore.setState({ worktreesByProject: new Map([[TEST_PROJECT.id, []]]) })
+    await renderDashboard(
+      makeDetail({ ...LAUNCHED, status: 'completed', report: makeReport() }, [
+        { key: 'A1', status: 'merged' }
+      ])
+    )
+
+    await click('docflow-open-worktree')
+
+    expect(toast.info).toHaveBeenCalledWith('The worktree of doc-checkout-redesign was archived.')
+    expect(useWorktreeStore.getState().selectedWorktreeId).not.toBe('wt-integration')
+    expect(useDocumentFlowStore.getState().dashboardRunId).not.toBeNull()
+    // The report is still there to read.
+    expect(screen.getByTestId('docflow-report')).toBeInTheDocument()
   })
 
   it('closes when the run it was opened on no longer exists', async () => {
@@ -676,7 +694,7 @@ describe('DocumentRunDashboard — report and activity', () => {
       'main has new commits since this run started — merge or rebase before landing'
     )
     expect(screen.getByTestId('docflow-report-next')).toHaveTextContent(
-      'What is left for you: run the migrations, review, and push / merge doc-checkout-redesign into main.'
+      'What is left for you: run the migrations, review, then move the run’s ticket to Done on the board to merge doc-checkout-redesign into main.'
     )
   })
 

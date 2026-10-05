@@ -1,0 +1,438 @@
+/**
+ * The ticket of a document run is a real board ticket: the usual card, draggable, with a
+ * context menu. It shows the run it stands for and opens the run dashboard, and it offers
+ * nothing that needs a session of its own.
+ */
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { KanbanTicketCard } from './KanbanTicketCard'
+import { makeDetail } from '@/components/document-flow/test-fixtures'
+import { toast } from '@/lib/toast'
+import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
+import { useKanbanStore } from '@/stores/useKanbanStore'
+import { WAITING_PREFIX } from '@shared/document-flow/planning'
+import type { DocumentRunDetail } from '@shared/types/document-flow'
+import type { KanbanTicket } from '../../../../main/db/types'
+
+const api = vi.hoisted(() => ({ get: vi.fn() }))
+
+vi.mock('@/api/document-flow-api', () => ({ documentFlowApi: api }))
+
+vi.mock('@/lib/toast', () => ({
+  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() }
+}))
+
+const initialFlowState = useDocumentFlowStore.getState()
+const initialKanbanState = useKanbanStore.getState()
+
+const now = '2026-06-01T00:00:00.000Z'
+
+function makeTicket(overrides: Partial<KanbanTicket> = {}): KanbanTicket {
+  return {
+    id: 'ticket-run',
+    project_id: 'proj-1',
+    title: 'Checkout redesign',
+    description: null,
+    attachments: [],
+    column: 'in_progress',
+    sort_order: 0,
+    current_session_id: null,
+    worktree_id: 'wt-integration',
+    mode: null,
+    plan_ready: false,
+    created_at: now,
+    updated_at: now,
+    column_changed_at: null,
+    archived_at: null,
+    external_provider: 'document-run',
+    external_id: 'run-live',
+    external_url: null,
+    github_pr_number: null,
+    github_pr_url: null,
+    mark: null,
+    total_tokens: 0,
+    pending_launch_config: null,
+    goal_mode: false,
+    goal_success_criteria: null,
+    note: null,
+    created_from_session: false,
+    auto_approve_plan: false,
+    unread: false,
+    awaiting_completion: false,
+    model_provider_id: null,
+    model_id: null,
+    model_variant: null,
+    variant_group_id: null,
+    ...overrides
+  }
+}
+
+function seedRuns(...details: DocumentRunDetail[]): void {
+  useDocumentFlowStore.setState({
+    runsById: Object.fromEntries(details.map((detail) => [detail.run.id, detail]))
+  })
+}
+
+const card = (id = 'ticket-run'): HTMLElement => screen.getByTestId(`kanban-ticket-${id}`)
+
+beforeEach(() => {
+  api.get.mockImplementation(
+    async (runId: string) => useDocumentFlowStore.getState().runsById[runId] ?? null
+  )
+})
+
+afterEach(async () => {
+  await act(async () => {})
+  cleanup()
+  vi.resetAllMocks()
+  useDocumentFlowStore.setState(initialFlowState, true)
+  useKanbanStore.setState(initialKanbanState, true)
+})
+
+describe('the card of a document run ticket', () => {
+  it('shows marker, progress and the sessions at work of a running run, in the ticket chrome', () => {
+    seedRuns(
+      makeDetail({ id: 'run-live', status: 'running', title: 'Checkout redesign' }, [
+        { key: 'A1', status: 'merged' },
+        { key: 'A2', status: 'running' },
+        { key: 'A3', status: 'launching' },
+        { key: 'A4', status: 'verifying' },
+        { key: 'A5', status: 'pending' },
+        { key: 'A6', status: 'pending', selected: false }
+      ])
+    )
+    render(<KanbanTicketCard ticket={makeTicket()} />)
+
+    expect(card()).toHaveTextContent('Checkout redesign')
+    // A ticket like any other: it can be dragged between columns.
+    expect(card()).toHaveAttribute('draggable', 'true')
+    expect(screen.getByTestId('kanban-docflow-run-marker-run-live')).toHaveTextContent(
+      'Document run'
+    )
+    // Verifying is the orchestrator's own step: in the bar, not among the running sessions.
+    expect(screen.getByTestId('kanban-docflow-run-running-run-live')).toHaveTextContent(
+      /^2 running$/
+    )
+    expect(screen.getByTestId('kanban-docflow-run-progress-run-live')).toHaveTextContent(
+      '1/5 merged'
+    )
+    const bar = within(card()).getByTestId('docflow-progress-bar')
+    expect(within(bar).getByTestId('docflow-progress-merged')).toHaveStyle({ flexGrow: '1' })
+    expect(within(bar).getByTestId('docflow-progress-inProgress')).toHaveStyle({ flexGrow: '3' })
+    expect(within(bar).getByTestId('docflow-progress-pending')).toHaveStyle({ flexGrow: '1' })
+    expect(within(bar).queryByTestId('docflow-progress-attention')).toBeNull()
+
+    const body = screen.getByTestId('kanban-docflow-run-run-live')
+    expect(body).toHaveAttribute('data-phase', 'running')
+    expect(body).not.toHaveAttribute('data-waiting-on-user')
+    expect(card().className).toContain('!border-l-blue-500/60')
+    expect(screen.queryByTestId('kanban-docflow-run-needs-you-run-live')).toBeNull()
+  })
+
+  it.each([
+    ['asks a question', { status: 'needs_input' }],
+    ['is flagged', { status: 'needs_attention' }],
+    ['stopped to ask mid-fix', { status: 'fixing', status_detail: `${WAITING_PREFIX}which one?` }]
+  ] as const)('turns orange when a ticket %s', (_name, waiting) => {
+    seedRuns(
+      makeDetail({ id: 'run-live', status: 'running' }, [
+        { key: 'A1', status: 'running' },
+        { key: 'A2', ...waiting }
+      ])
+    )
+    render(<KanbanTicketCard ticket={makeTicket()} />)
+
+    expect(screen.getByTestId('kanban-docflow-run-run-live')).toHaveAttribute(
+      'data-waiting-on-user'
+    )
+    expect(card().className).toContain('!border-l-orange-500')
+    expect(card().className).not.toContain('!border-l-blue-500/60')
+    expect(screen.getByTestId('kanban-docflow-run-needs-you-run-live')).toHaveTextContent(
+      'Needs you'
+    )
+    expect(screen.getByTestId('kanban-docflow-run-running-run-live')).toHaveTextContent(
+      '1 running'
+    )
+  })
+
+  it('says a paused run is paused', () => {
+    seedRuns(
+      makeDetail({ id: 'run-live', status: 'paused' }, [
+        { key: 'A1', status: 'merged' },
+        { key: 'A2', status: 'pending' }
+      ])
+    )
+    render(<KanbanTicketCard ticket={makeTicket()} />)
+
+    expect(screen.getByTestId('kanban-docflow-run-run-live')).toHaveAttribute('data-paused')
+    expect(card().className).not.toContain('!border-l-blue-500/60')
+    expect(screen.getByTestId('kanban-docflow-run-running-run-live')).toHaveTextContent(/^Paused$/)
+    expect(screen.getByTestId('kanban-docflow-run-progress-run-live')).toHaveTextContent(
+      '1/2 merged'
+    )
+  })
+
+  it('follows the run while it works and stays once it has finished', () => {
+    const running = makeDetail({ id: 'run-live', status: 'running', base_branch: 'main' }, [
+      { key: 'A1', status: 'running' },
+      { key: 'A2', status: 'running' }
+    ])
+    seedRuns(running)
+    const { rerender } = render(<KanbanTicketCard ticket={makeTicket()} />)
+    expect(screen.getByTestId('kanban-docflow-run-running-run-live')).toHaveTextContent('2 running')
+
+    act(() => {
+      useDocumentFlowStore.getState().applyItem({ ...running.items[1], status: 'merged' })
+    })
+    expect(screen.getByTestId('kanban-docflow-run-running-run-live')).toHaveTextContent('1 running')
+    expect(screen.getByTestId('kanban-docflow-run-progress-run-live')).toHaveTextContent(
+      '1/2 merged'
+    )
+
+    act(() => {
+      useDocumentFlowStore.getState().applyItem({ ...running.items[0], status: 'merged' })
+      useDocumentFlowStore.getState().applyRun({ ...running.run, status: 'completed' })
+    })
+    // The app moved the ticket to Review when the run ended.
+    rerender(<KanbanTicketCard ticket={makeTicket({ column: 'review', unread: true })} />)
+
+    const body = screen.getByTestId('kanban-docflow-run-run-live')
+    expect(body).toHaveAttribute('data-phase', 'completed')
+    expect(body).toHaveTextContent('Ready to merge into main')
+    expect(body).toHaveTextContent('2/2 merged')
+    expect(card().className).toContain('!border-l-emerald-500/60')
+    expect(screen.getByTestId('ticket-unread-dot')).toBeInTheDocument()
+  })
+
+  it.each([
+    ['completed_with_issues', 'issues', 'Finished · 1 not merged', '!border-l-amber-500/70'],
+    ['cancelled', 'cancelled', 'Cancelled', '!border-l-muted-foreground/40']
+  ] as const)('shows how a %s run ended', (status, phase, label, rail) => {
+    seedRuns(
+      makeDetail({ id: 'run-live', status }, [
+        { key: 'A1', status: 'merged' },
+        { key: 'A2', status: 'needs_attention' }
+      ])
+    )
+    render(<KanbanTicketCard ticket={makeTicket({ column: 'review' })} />)
+
+    const body = screen.getByTestId('kanban-docflow-run-run-live')
+    expect(body).toHaveAttribute('data-phase', phase)
+    expect(screen.getByTestId('kanban-docflow-run-running-run-live')).toHaveTextContent(label)
+    expect(body).toHaveTextContent('1/2 merged')
+    // What a run left flagged is part of its result, not a question any more.
+    expect(body).not.toHaveAttribute('data-waiting-on-user')
+    expect(card().className).toContain(rail)
+  })
+
+  it('stops announcing the merge once the ticket is in Merged or Done', () => {
+    seedRuns(
+      makeDetail({ id: 'run-live', status: 'completed', base_branch: 'main' }, [
+        { key: 'A1', status: 'merged' }
+      ])
+    )
+    render(<KanbanTicketCard ticket={makeTicket({ column: 'done' })} />)
+
+    expect(screen.getByTestId('kanban-docflow-run-running-run-live')).toHaveTextContent(
+      /^Finished$/
+    )
+  })
+
+  it('still renders, and opens the dashboard, after its integration worktree was archived', async () => {
+    seedRuns(
+      makeDetail({ id: 'run-live', status: 'completed', base_branch: 'main' }, [
+        { key: 'A1', status: 'merged' }
+      ])
+    )
+    // Archiving a worktree detaches its tickets.
+    render(<KanbanTicketCard ticket={makeTicket({ column: 'done', worktree_id: null })} />)
+
+    expect(screen.getByTestId('kanban-docflow-run-progress-run-live')).toHaveTextContent(
+      '1/1 merged'
+    )
+    await act(async () => {
+      fireEvent.click(card())
+    })
+    expect(useDocumentFlowStore.getState().dashboardRunId).toBe('run-live')
+  })
+
+  it('fetches a run that is not in the list, and says so when its record is gone', async () => {
+    const detail = makeDetail({ id: 'run-old', status: 'completed', base_branch: 'main' }, [
+      { key: 'A1', status: 'merged' }
+    ])
+    api.get.mockImplementation(async (runId: string) => (runId === 'run-old' ? detail : null))
+    render(
+      <>
+        <KanbanTicketCard ticket={makeTicket({ id: 'ticket-old', external_id: 'run-old' })} />
+        <KanbanTicketCard ticket={makeTicket({ id: 'ticket-gone', external_id: 'run-gone' })} />
+      </>
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('kanban-docflow-run-progress-run-old')).toHaveTextContent(
+        '1/1 merged'
+      )
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('kanban-docflow-run-missing-run-gone')).toHaveTextContent(
+        'Run record missing'
+      )
+    )
+    expect(screen.getByTestId('kanban-docflow-run-run-gone')).toHaveAttribute('data-run-missing')
+    expect(screen.queryByTestId('kanban-docflow-run-progress-run-gone')).toBeNull()
+
+    // Nothing to open: the ticket is all that is left.
+    fireEvent.click(card('ticket-gone'))
+    expect(useDocumentFlowStore.getState().dashboardRunId).toBeNull()
+    expect(useKanbanStore.getState().selectedTicketRef).toBeNull()
+    expect(toast.info).toHaveBeenCalledWith(
+      'The record of this document run was deleted. Only its ticket is left.'
+    )
+  })
+
+  it('does not call a run missing because it could not be fetched', async () => {
+    api.get.mockRejectedValue(new Error('WebSocket is closed'))
+    render(<KanbanTicketCard ticket={makeTicket({ external_id: 'run-unreachable' })} />)
+    await act(async () => {})
+
+    expect(screen.getByTestId('kanban-docflow-run-marker-run-unreachable')).toBeInTheDocument()
+    expect(screen.queryByTestId('kanban-docflow-run-missing-run-unreachable')).toBeNull()
+  })
+
+  it('opens the run dashboard on click, never the ticket modal', async () => {
+    seedRuns(makeDetail({ id: 'run-live', status: 'running' }))
+    render(<KanbanTicketCard ticket={makeTicket()} />)
+
+    await act(async () => {
+      fireEvent.click(card())
+    })
+
+    expect(useDocumentFlowStore.getState().dashboardRunId).toBe('run-live')
+    expect(useKanbanStore.getState().selectedTicketRef).toBeNull()
+    expect(useKanbanStore.getState().selectedTicketId).toBeNull()
+  })
+
+  it('leaves clicks to the board while it is in dependency mode', () => {
+    seedRuns(makeDetail({ id: 'run-live', status: 'running' }))
+    useKanbanStore.setState({
+      dependencyMode: { active: true, sourceTicketId: 'ticket-1', sourceProjectId: null }
+    })
+    render(<KanbanTicketCard ticket={makeTicket()} />)
+
+    fireEvent.click(card())
+
+    expect(useDocumentFlowStore.getState().dashboardRunId).toBeNull()
+  })
+
+  it('offers what fits a run in its menu and nothing that needs a session of its own', async () => {
+    seedRuns(makeDetail({ id: 'run-live', status: 'completed' }, [{ key: 'A1', status: 'merged' }]))
+    render(<KanbanTicketCard ticket={makeTicket({ column: 'review' })} />)
+
+    fireEvent.contextMenu(card())
+
+    const open = await screen.findByTestId('ctx-open-document-run')
+    for (const absent of [
+      'ctx-assign-worktree',
+      'ctx-change-worktree',
+      'ctx-unassign-worktree',
+      'ctx-jump-to-session',
+      'ctx-toggle-auto-approve',
+      'ctx-dependencies-submenu',
+      'ctx-duplicate-ticket',
+      'ctx-add-to-favorites',
+      'ctx-move-to-project',
+      // Not an imported ticket either: there is no remote status to update.
+      'ctx-update-remote-status'
+    ]) {
+      expect(screen.queryByTestId(absent), absent).toBeNull()
+    }
+    expect(screen.getByTestId('ctx-mark-submenu')).toBeInTheDocument()
+    expect(screen.getByTestId('ctx-delete-ticket')).toBeInTheDocument()
+
+    fireEvent.click(open)
+    expect(useDocumentFlowStore.getState().dashboardRunId).toBe('run-live')
+  })
+
+  it('refuses to delete the ticket of a run that is still going', async () => {
+    seedRuns(makeDetail({ id: 'run-live', status: 'paused' }))
+    const deleteTicket = vi.fn()
+    useKanbanStore.setState({ deleteTicket })
+    render(<KanbanTicketCard ticket={makeTicket()} />)
+
+    fireEvent.contextMenu(card())
+    fireEvent.click(await screen.findByTestId('ctx-delete-ticket'))
+
+    expect(toast.warning).toHaveBeenCalledWith(
+      'Cancel the document run before deleting its ticket.'
+    )
+    expect(screen.queryByTestId('ctx-delete-confirm-dialog')).toBeNull()
+    expect(deleteTicket).not.toHaveBeenCalled()
+  })
+
+  it('deletes the ticket of a finished run after a confirmation that names the run record', async () => {
+    seedRuns(makeDetail({ id: 'run-live', status: 'cancelled' }))
+    const deleteTicket = vi.fn().mockResolvedValue(undefined)
+    useKanbanStore.setState({ deleteTicket })
+    render(<KanbanTicketCard ticket={makeTicket({ column: 'review' })} />)
+
+    fireEvent.contextMenu(card())
+    fireEvent.click(await screen.findByTestId('ctx-delete-ticket'))
+
+    const dialog = await screen.findByTestId('ctx-delete-confirm-dialog')
+    expect(dialog).toHaveTextContent('Delete document run')
+    expect(dialog).toHaveTextContent(
+      'Its run record (progress, report and log) is deleted with it. The run’s tickets, branches and worktrees are kept.'
+    )
+    expect(deleteTicket).not.toHaveBeenCalled()
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('ctx-delete-confirm-btn'))
+    })
+
+    expect(deleteTicket).toHaveBeenCalledWith('ticket-run', 'proj-1')
+    expect(toast.success).toHaveBeenCalledWith('Document run deleted')
+  })
+
+  it('passes on why the server refused a delete', async () => {
+    // Another window still has the run as finished while it was resumed elsewhere.
+    seedRuns(makeDetail({ id: 'run-live', status: 'cancelled' }))
+    useKanbanStore.setState({
+      deleteTicket: vi.fn().mockRejectedValue(new Error('Cancel the run before deleting its ticket.'))
+    })
+    render(<KanbanTicketCard ticket={makeTicket({ column: 'review' })} />)
+
+    fireEvent.contextMenu(card())
+    fireEvent.click(await screen.findByTestId('ctx-delete-ticket'))
+    await act(async () => {
+      fireEvent.click(await screen.findByTestId('ctx-delete-confirm-btn'))
+    })
+
+    expect(toast.error).toHaveBeenCalledWith('Cancel the run before deleting its ticket.')
+  })
+})
+
+describe('an ordinary ticket', () => {
+  it('shows nothing of a document run and keeps its menu', async () => {
+    seedRuns(makeDetail({ id: 'run-live', status: 'running' }))
+    render(
+      <KanbanTicketCard
+        ticket={makeTicket({ id: 'ticket-1', external_provider: null, external_id: null })}
+      />
+    )
+
+    expect(screen.queryByTestId('kanban-docflow-run-run-live')).toBeNull()
+    expect(api.get).not.toHaveBeenCalled()
+
+    fireEvent.contextMenu(card('ticket-1'))
+    expect(await screen.findByTestId('ctx-duplicate-ticket')).toBeInTheDocument()
+    expect(screen.getByTestId('ctx-dependencies-submenu')).toBeInTheDocument()
+    expect(screen.queryByTestId('ctx-open-document-run')).toBeNull()
+
+    fireEvent.click(card('ticket-1'))
+    expect(useDocumentFlowStore.getState().dashboardRunId).toBeNull()
+    expect(useKanbanStore.getState().selectedTicketRef).toEqual({
+      projectId: 'proj-1',
+      ticketId: 'ticket-1'
+    })
+  })
+})

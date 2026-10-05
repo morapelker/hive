@@ -538,13 +538,36 @@ describe('ImplementDocumentWizard — run settings', () => {
     })
   })
 
-  it('keeps the parallel ticket count between 1 and 8', async () => {
+  it('switches between the full and the small prompt', async () => {
+    await renderPreview()
+
+    expect(screen.getByTestId('docflow-prompt-style-full')).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByTestId('docflow-prompt-style-small')).toHaveAttribute(
+      'aria-checked',
+      'false'
+    )
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('docflow-prompt-style-small'))
+    })
+    expect(screen.getByTestId('docflow-prompt-style-small')).toHaveAttribute('aria-checked', 'true')
+    expect(api.updateRun).toHaveBeenLastCalledWith('run-1', {
+      config: { ...DEFAULT_DOCUMENT_RUN_CONFIG, verifyCommand: 'pnpm check', promptStyle: 'small' }
+    })
+
+    fireEvent.click(screen.getByTestId('docflow-launch-btn'))
+    expect(screen.getByTestId('docflow-launch-confirm')).toHaveTextContent(
+      'Promptsmall (no subagents)'
+    )
+  })
+
+  it('keeps the parallel ticket count between 1 and 50', async () => {
     await renderPreview(
-      makeDetail({ config: { ...DEFAULT_DOCUMENT_RUN_CONFIG, verifyCommand: '', maxParallel: 8 } })
+      makeDetail({ config: { ...DEFAULT_DOCUMENT_RUN_CONFIG, verifyCommand: '', maxParallel: 50 } })
     )
     expect(screen.getByTestId('docflow-parallel-increase')).toBeDisabled()
 
-    for (let click = 0; click < 9; click += 1) {
+    for (let click = 0; click < 51; click += 1) {
       await act(async () => {
         fireEvent.click(screen.getByTestId('docflow-parallel-decrease'))
       })
@@ -552,7 +575,7 @@ describe('ImplementDocumentWizard — run settings', () => {
 
     expect(screen.getByTestId('docflow-parallel-value')).toHaveTextContent('1')
     expect(screen.getByTestId('docflow-parallel-decrease')).toBeDisabled()
-    expect(api.updateRun).toHaveBeenCalledTimes(7)
+    expect(api.updateRun).toHaveBeenCalledTimes(49)
   })
 
   it('offers the local branches as base, naming the one the default resolves to', async () => {
@@ -685,6 +708,7 @@ describe('ImplementDocumentWizard — run settings', () => {
       prefs: {
         maxParallel: 6,
         interactive: false,
+        promptStyle: 'small',
         verifyCommandByProject: {},
         defaultLaunch: null
       }
@@ -696,7 +720,7 @@ describe('ImplementDocumentWizard — run settings', () => {
     expect(screen.getByTestId('docflow-parallel-value')).toHaveTextContent('6')
     expect(api.updateRun).toHaveBeenCalledTimes(1)
     expect(api.updateRun).toHaveBeenCalledWith('run-1', {
-      config: expect.objectContaining({ maxParallel: 6, interactive: false })
+      config: expect.objectContaining({ maxParallel: 6, interactive: false, promptStyle: 'small' })
     })
 
     // Reopening the same run shows what is stored, not the prefs again.
@@ -827,6 +851,7 @@ describe('ImplementDocumentWizard — launch', () => {
     expect(dialog).toHaveTextContent('Parallel tickets3')
     expect(dialog).toHaveTextContent('Verificationpnpm check')
     expect(dialog).toHaveTextContent('ModelApp default')
+    expect(dialog).toHaveTextContent('Promptfull (research with subagents)')
     expect(api.start).not.toHaveBeenCalled()
 
     await act(async () => {

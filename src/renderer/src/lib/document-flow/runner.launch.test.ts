@@ -126,7 +126,7 @@ describe('DocumentFlowRunner: launching', () => {
     expect(world.events.map((event) => event.type)).toContain('launched')
   })
 
-  it('cuts the ticket worktree from the integration branch without touching the user’s view', async () => {
+  it('cuts the ticket worktree from the integration tip, recorded against the run’s base branch, without touching the user’s view', async () => {
     const world = createWorld({ items: [{ key: 'A2', title: 'Ramp-up rule' }, { key: 'B' }] })
     start(world)
 
@@ -141,7 +141,8 @@ describe('DocumentFlowRunner: launching', () => {
       goalSuccessCriteria: null,
       worktree: {
         type: 'new',
-        sourceBranch: INTEGRATION_BRANCH,
+        // What the worktree records as its merge target; the branch is cut from `baseRef`.
+        sourceBranch: 'main',
         baseRef: INTEGRATION_BRANCH,
         autoPull: false,
         select: false,
@@ -154,11 +155,35 @@ describe('DocumentFlowRunner: launching', () => {
         pending_launch_config: null
       }
     })
-    expect(spec.prompt.startsWith('<ticket title="Ramp-up rule">')).toBe(true)
-    expect(spec.prompt).toContain(`Your branch was cut from \`${INTEGRATION_BRANCH}\``)
-    expect(spec.prompt).toContain('otherwise change `main`')
-    expect(spec.prompt).toContain('B (Task B)')
-    expect(spec.prompt).toContain('STATUS: DONE | NEEDS_INPUT | BLOCKED')
+    // The brief alone: no ticket wrapper, no description, no attachments, no status block.
+    expect(spec.prompt).toBe(
+      [
+        'implement task A2 ("Ramp-up rule") from the file:///docs/checkout.html',
+        'use subagents to research and read the spec attached there, read the description of it, understand the requirements, research best practices regarding it',
+        'if you have any clarifications you might need - use the AskUserQuestion tool to ask me.',
+        'then - implement this',
+        'implement only this task, commit your work on this branch, do not push or switch branches, and do not run migrations against any database.'
+      ].join('\n\n')
+    )
+  })
+
+  it('records the configured base branch, and the integration branch for a run without one', async () => {
+    const onDevelop = createWorld({ run: { base_branch: 'develop' } })
+    start(onDevelop)
+    await advance(1000)
+    runner?.stop()
+    expect(onDevelop.launches[0].worktree).toMatchObject({
+      sourceBranch: 'develop',
+      baseRef: INTEGRATION_BRANCH
+    })
+
+    const unknownBase = createWorld({ run: { base_branch: null } })
+    start(unknownBase)
+    await advance(1000)
+    expect(unknownBase.launches[0].worktree).toMatchObject({
+      sourceBranch: INTEGRATION_BRANCH,
+      baseRef: INTEGRATION_BRANCH
+    })
   })
 
   it('tells agents whether they may ask, following the run setting', async () => {
@@ -171,26 +196,42 @@ describe('DocumentFlowRunner: launching', () => {
     start(unattended)
     await advance(1000)
 
-    expect(interactive.launches[0].prompt).toContain('ask with the AskUserQuestion tool')
-    expect(interactive.launches[0].prompt).not.toContain('Nobody is watching this run')
-    expect(unattended.launches[0].prompt).toContain('Nobody is watching this run')
+    expect(interactive.launches[0].prompt).toContain('use the AskUserQuestion tool to ask me.')
+    expect(interactive.launches[0].prompt).not.toContain('do not stop to ask me')
+    expect(unattended.launches[0].prompt).toContain(
+      'do not stop to ask me for clarifications - decide yourself'
+    )
+    expect(unattended.launches[0].prompt).not.toContain('AskUserQuestion')
   })
 
-  it('names the dependencies already merged into the branch a ticket starts from', async () => {
+  it('drops the subagents paragraph when the run uses the small prompt', async () => {
+    const world = createWorld({ config: { promptStyle: 'small' } })
+    start(world)
+
+    await advance(1000)
+
+    const prompt = world.launches[0].prompt
+    expect(prompt).not.toContain('subagents')
+    expect(
+      prompt.startsWith('implement task A ("Task A") from the file:///docs/checkout.html')
+    ).toBe(true)
+    expect(prompt).toContain('\n\nthen - implement this\n\n')
+  })
+
+  it("names the question tool of the ticket's own launch SDK", async () => {
     const world = createWorld({
       items: [
-        { key: 'A', status: 'merged' },
-        { key: 'B', depends_on: ['A'], has_migration: true }
+        {
+          key: 'A',
+          launch_config: { sdk: 'codex', model: null, codexFastMode: false }
+        }
       ]
     })
     start(world)
 
     await advance(1000)
 
-    const prompt = world.launches[0].prompt
-    expect(prompt).toContain('Already on your branch (merged before you started): A (Task A)')
-    expect(prompt).not.toContain('Other tasks of this document are built in parallel')
-    expect(prompt).toContain('add a NEW migration')
+    expect(world.launches[0].prompt).toContain('use the request_user_input tool to ask me.')
   })
 
   it('resolves the model from the ticket, then the run default, then the app default', async () => {
@@ -359,7 +400,7 @@ describe('DocumentFlowRunner: launching', () => {
 
       expect(world.item('B').status).toBe('running')
       expect(world.launches[0].worktree).toMatchObject({
-        sourceBranch: INTEGRATION_BRANCH,
+        sourceBranch: 'main',
         baseRef: 'before-a'
       })
     })

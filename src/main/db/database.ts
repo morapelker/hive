@@ -285,6 +285,7 @@ const DOCUMENT_RUN_PATCH_COLUMNS: Record<keyof DocumentRunRowPatch, DocumentFlow
   integration_branch: 'plain',
   integration_worktree_id: 'plain',
   integration_worktree_path: 'plain',
+  ticket_id: 'plain',
   report: 'json',
   started_at: 'plain',
   finished_at: 'plain'
@@ -694,6 +695,7 @@ export class DatabaseService implements DocumentFlowDb {
     this.safeAddColumn('session_final_messages', 'state', "TEXT NOT NULL DEFAULT 'ended'")
     this.safeAddColumn('session_final_messages', 'detail', 'TEXT DEFAULT NULL')
     this.safeAddColumn('document_run_items', 'conflict_head', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('document_runs', 'ticket_id', 'TEXT DEFAULT NULL')
   }
 
   /**
@@ -1189,6 +1191,7 @@ export class DatabaseService implements DocumentFlowDb {
       integration_branch: (row.integration_branch as string | null) ?? null,
       integration_worktree_id: (row.integration_worktree_id as string | null) ?? null,
       integration_worktree_path: (row.integration_worktree_path as string | null) ?? null,
+      ticket_id: (row.ticket_id as string | null) ?? null,
       report: this.parseDocumentFlowObject<NonNullable<DocumentRun['report']>>(row.report),
       runner_client_id: (row.runner_client_id as string | null) ?? null,
       runner_heartbeat_at: (row.runner_heartbeat_at as string | null) ?? null,
@@ -2234,6 +2237,20 @@ export class DatabaseService implements DocumentFlowDb {
 
   archiveWorktree(id: string): Worktree | null {
     return this.updateWorktree(id, { status: 'archived' })
+  }
+
+  /**
+   * Re-point the branch a worktree's work is merged into. Not part of `WorktreeUpdate` (and so
+   * of the RPC) on purpose: only the document flow calls it, for task worktrees recorded
+   * against a run's integration branch before v57.
+   */
+  setWorktreeBaseBranch(id: string, baseBranch: string): boolean {
+    const projectId = this.lookupWorktreeProjectId(id)
+    const result = this.getDb()
+      .prepare('UPDATE worktrees SET base_branch = ? WHERE id = ?')
+      .run(baseBranch, id)
+    if (result.changes > 0) emitDbChanged({ entity: 'worktree', op: 'update', id, projectId })
+    return result.changes > 0
   }
 
   touchWorktree(id: string): void {

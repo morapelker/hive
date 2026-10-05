@@ -18,6 +18,7 @@ import {
   type KanbanSessionEvent
 } from './store-coordination'
 import { CUSTOM_MODEL_PROVIDER_ID } from '@shared/types/custom-provider'
+import { documentRunIdOf, isDocumentRunTicket } from '@shared/document-flow/run-ticket'
 import { isClaudeCliCompletionDetected } from '@shared/types/claude-cli-stop-completion'
 import { isPlanLike } from '../lib/constants'
 import { useConnectionStore } from './useConnectionStore'
@@ -497,6 +498,22 @@ export const useKanbanStore = create<KanbanState>()(
       },
 
       setSelectedTicketRef: (ref: TicketRef | null) => {
+        // The ticket of a document run opens its run from every route, never the ticket
+        // detail with its session launcher
+        const documentRunId = ref
+          ? documentRunIdOf(
+              get()
+                .tickets.get(ref.projectId)
+                ?.find((t) => t.id === ref.ticketId)
+            )
+          : null
+        if (ref && documentRunId) {
+          get().markTicketRead(ref.ticketId, ref.projectId)
+          void import('./useDocumentFlowStore').then(({ useDocumentFlowStore }) => {
+            useDocumentFlowStore.getState().openDashboard(documentRunId)
+          })
+          return
+        }
         set({ selectedTicketId: ref?.ticketId ?? null, selectedTicketRef: ref })
         // Opening the ticket detail (from any route) marks it read
         if (ref) get().markTicketRead(ref.ticketId, ref.projectId)
@@ -2297,9 +2314,15 @@ registerKanbanNewSession((sessionId, worktreeId, projectId, sessionMode) => {
   const store = useKanbanStore.getState()
   const tickets = store.tickets.get(projectId) ?? []
 
-  // Find the first ticket pre-assigned to this worktree with no active session
+  // Find the first ticket pre-assigned to this worktree with no active session. The ticket of
+  // a document run sits session-less on its integration worktree for good: the fix sessions
+  // launched there belong to their own tickets.
   const orphan = tickets.find(
-    (t) => t.worktree_id === worktreeId && !t.current_session_id && !t.archived_at
+    (t) =>
+      t.worktree_id === worktreeId &&
+      !t.current_session_id &&
+      !t.archived_at &&
+      !isDocumentRunTicket(t)
   )
   if (!orphan) return
 

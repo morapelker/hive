@@ -20,12 +20,15 @@ import {
 } from '@/components/ui/dialog'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { toast } from '@/lib/toast'
+import { useWorktreeStore } from '@/stores/useWorktreeStore'
+import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import { summarizeItems } from '@shared/document-flow/planning'
 import type { DocumentRunDetail } from '@shared/types/document-flow'
 import { TonePill } from './DocumentFlowBadges'
 import { NeedsYouSection, RunItemsTable } from './DocumentRunItems'
 import { RunActivityLog, RunReportSection } from './DocumentRunReport'
+import { RunProgressBar } from './RunProgressBar'
 import { openWorktree } from './document-flow-navigation'
 import {
   describeRunDeletion,
@@ -129,6 +132,10 @@ export function DocumentRunDashboard(): React.JSX.Element {
 
 function DashboardBody({ detail }: { detail: DocumentRunDetail }): React.JSX.Element {
   const { run, items, events } = detail
+  const landed = useKanbanStore((s) => {
+    const column = s.tickets.get(run.project_id)?.find((t) => t.id === run.ticket_id)?.column
+    return column === 'done' || column === 'merged'
+  })
   const pauseRun = useDocumentFlowStore((s) => s.pauseRun)
   const resumeRun = useDocumentFlowStore((s) => s.resumeRun)
   const finishRunNow = useDocumentFlowStore((s) => s.finishRunNow)
@@ -207,8 +214,15 @@ function DashboardBody({ detail }: { detail: DocumentRunDetail }): React.JSX.Ele
                 className="h-6 text-xs"
                 data-testid="docflow-open-worktree"
                 onClick={() => {
-                  if (!run.integration_worktree_id) return
-                  openWorktree(run.project_id, run.integration_worktree_id)
+                  const worktreeId = run.integration_worktree_id
+                  if (!worktreeId) return
+                  // Archived with the merge of the run's ticket: there is nothing to select
+                  const loaded = useWorktreeStore.getState().worktreesByProject.get(run.project_id)
+                  if (loaded && !loaded.some((worktree) => worktree.id === worktreeId)) {
+                    toast.info(`The worktree of ${run.integration_branch} was archived.`)
+                    return
+                  }
+                  openWorktree(run.project_id, worktreeId)
                   closeDashboard()
                 }}
               >
@@ -231,20 +245,7 @@ function DashboardBody({ detail }: { detail: DocumentRunDetail }): React.JSX.Ele
           >
             {summary.merged} / {summary.total} merged
           </span>
-          <div
-            className="flex h-1.5 min-w-0 flex-1 gap-px overflow-hidden rounded-full bg-muted"
-            data-testid="docflow-progress-bar"
-          >
-            {segments.map((segment) => (
-              <div
-                key={segment.key}
-                className={segment.className}
-                style={{ flexGrow: segment.count }}
-                title={`${segment.count} ${segment.label}`}
-                data-testid={`docflow-progress-${segment.key}`}
-              />
-            ))}
-          </div>
+          <RunProgressBar segments={segments} className="flex-1" />
           <div className="flex shrink-0 items-center gap-1.5">
             {run.status === 'running' && (
               <Button
@@ -342,7 +343,7 @@ function DashboardBody({ detail }: { detail: DocumentRunDetail }): React.JSX.Ele
           </div>
         )}
         <NeedsYouSection run={run} items={items} />
-        {run.report && <RunReportSection report={run.report} />}
+        {run.report && <RunReportSection report={run.report} landed={landed} />}
         <RunItemsTable run={run} items={items} />
         <RunActivityLog events={events} items={items} />
       </div>

@@ -25,6 +25,7 @@ import {
   baseMode
 } from '@/lib/constants'
 import { canonicalizeTicketTitle } from '@shared/types/branch-utils'
+import { isDocumentRunTicket } from '@shared/document-flow/run-ticket'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { opencodeApi } from '@/api/opencode-api'
 import { dbApi } from '@/api/db-api'
@@ -221,6 +222,15 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
   // leaving a phantom "working" session the caller can't see/clean up).
   let createdWorktreeId: string | undefined
   let createdSessionId: string | undefined
+
+  // A document run's ticket has no session of its own, whoever asks for one
+  const launchedTicket = useKanbanStore
+    .getState()
+    .tickets.get(spec.projectId)
+    ?.find((t) => t.id === spec.ticketId)
+  if (isDocumentRunTicket(launchedTicket)) {
+    return { success: false, error: 'The ticket of a document run cannot be launched.' }
+  }
 
   try {
     // 1. Resolve worktree

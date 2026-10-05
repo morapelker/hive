@@ -7,8 +7,11 @@ import {
   buildClassificationPrompt,
   fallbackVerdict,
   parseClassificationResponse,
+  closingQuestion,
+  verdictForUnjudgedMessage,
   verdictFromStatusFooter,
-  type ClassificationInput
+  type ClassificationInput,
+  type UnjudgedMessageInput
 } from './classification'
 import { STATUS_FOOTER_INSTRUCTIONS } from './prompts'
 
@@ -32,6 +35,10 @@ describe('classification prompt', () => {
       '"failed"',
       '"partial"',
       'STATUS: DONE | NEEDS_INPUT | BLOCKED',
+      'the agent was not asked for any format',
+      'A message that reports the ticket as implemented and asks nothing is "done"',
+      'some agents still end with a question in the text: that is "needs_input"',
+      'is not a question; the ticket is "done"',
       'the body wins',
       'lower the confidence',
       'prefer "needs_input" or "partial" over "done"',
@@ -41,8 +48,8 @@ describe('classification prompt', () => {
     ]) {
       expect(CLASSIFICATION_SYSTEM_PROMPT).toContain(phrase)
     }
-    // The footer the classifier is told about is the one the agents are asked for.
-    expect(STATUS_FOOTER_INSTRUCTIONS).toContain('STATUS: DONE | NEEDS_INPUT | BLOCKED')
+    // The follow-up prompts ask for the same footer, minus the ways to end on a question.
+    expect(STATUS_FOOTER_INSTRUCTIONS).toContain('STATUS: DONE | BLOCKED')
   })
 
   it('describes a strict-mode compatible schema', () => {
@@ -278,7 +285,7 @@ describe('parseClassificationResponse', () => {
 })
 
 describe('verdictFromStatusFooter', () => {
-  it('reads the footer the agents are asked for', () => {
+  it('reads the older footer, with its QUESTIONS line', () => {
     const message = [
       'I implemented the counters and committed everything.',
       '',
@@ -441,5 +448,182 @@ describe('fallbackVerdict', () => {
       source: 'fallback',
       classifiedAt: NOW
     })
+  })
+})
+
+describe('closingQuestion', () => {
+  it.each([
+    ['the last line', 'I added the totals.\n\nWhich currency should they use?'],
+    ['a decorated line', 'Done so far.\n\n> **Which currency should they use?**'],
+    ['a question before a short sign-off', 'Which currency should they use?\n\nThanks!'],
+    ['a quoted question', 'I stopped here.\n- Which currency should they use?"'],
+    [
+      'a question followed by its numbered options',
+      'Which currency should they use?\n1. Dollars\n2. Euros\n3. The shop currency\n4. Something else'
+    ],
+    [
+      'a question followed by bulleted options',
+      'I looked at the totals.\n\n**Which currency should they use?**\n- Dollars\n- Euros\n* The shop currency\na) Something else'
+    ]
+  ])('finds %s', (_name, message) => {
+    expect(closingQuestion(message)?.startsWith('Which currency should they use?')).toBe(true)
+  })
+
+  it.each([
+    ['there is none', 'I implemented the counters and committed everything.'],
+    [
+      'the question sits far from the end',
+      'Should totals round? I decided they do.\n\nImplemented.\n\nTests pass.\n\nCommitted.'
+    ],
+    ['the message is empty', '  \n']
+  ])('is null when %s', (_name, message) => {
+    expect(closingQuestion(message)).toBeNull()
+  })
+})
+
+describe('verdictForUnjudgedMessage', () => {
+  const unjudged = (overrides: Partial<UnjudgedMessageInput> = {}): UnjudgedMessageInput => ({
+    finalMessage: 'I implemented the counters and committed everything. All checks pass.',
+    commitsAhead: 2,
+    hasUncommittedChanges: false,
+    failure: 'codex timed out after 90000ms',
+    ...overrides
+  })
+
+  it("prefers the agent's own footer", () => {
+    const verdict = verdictForUnjudgedMessage(
+      unjudged({ finalMessage: 'Which currency?\n\nSTATUS: BLOCKED\nSUMMARY: none' }),
+      NOW
+    )
+    expect(verdict).toMatchObject({ status: 'blocked', source: 'footer' })
+  })
+
+  it('takes a plain finished message on a branch with work as done', () => {
+    expect(verdictForUnjudgedMessage(unjudged(), NOW)).toEqual({
+      status: 'done',
+      reason:
+        'The final message could not be judged (codex timed out after 90000ms). It says the work is finished, asks nothing and reports no problem, and the branch carries commits, so it is taken as done.',
+      question: null,
+      summary: null,
+      migrations: [],
+      manualSteps: [],
+      confidence: 'low',
+      source: 'fallback',
+      classifiedAt: NOW
+    })
+  })
+
+  it.each([
+    [
+      'no errors',
+      'Implemented task 11 and committed. Typecheck and lint pass with no errors; all tests pass.'
+    ],
+    ['nothing failed', 'Added the export dialog and committed. 42 passed, 0 failed.'],
+    ['nothing remains', 'Implemented and committed. No type errors. Nothing remaining.']
+  ])('takes a finished message that reports %s as done', (_name, finalMessage) => {
+    expect(verdictForUnjudgedMessage(unjudged({ finalMessage }), NOW).status).toBe('done')
+  })
+
+  it('does not take uncommitted work alone as done', () => {
+    const verdict = verdictForUnjudgedMessage(
+      unjudged({ commitsAhead: 0, hasUncommittedChanges: true }),
+      NOW
+    )
+    expect(verdict).toMatchObject({ status: 'blocked', source: 'fallback', question: null })
+    expect(verdict.reason).toContain('is not committed')
+  })
+
+  it.each([
+    [
+      'a progress note on a dirty worktree',
+      'I have set up the data layer and will continue with the UI next.',
+      0,
+      true
+    ],
+    [
+      'a progress note on a branch with commits',
+      'I have set up the data layer and will continue with the UI next.',
+      2,
+      false
+    ],
+    ['a message that claims no result', 'Here is how the export dialog is laid out.', 2, false],
+    [
+      'finished work with more announced',
+      "Added the dialog. Next I'll wire the history tab.",
+      2,
+      false
+    ]
+  ])('stays blocked on %s', (_name, finalMessage, commitsAhead, hasUncommittedChanges) => {
+    const verdict = verdictForUnjudgedMessage(
+      unjudged({ finalMessage, commitsAhead, hasUncommittedChanges }),
+      NOW
+    )
+    expect(verdict).toMatchObject({ status: 'blocked', source: 'fallback', question: null })
+  })
+
+  it('surfaces a question followed by its options', () => {
+    const verdict = verdictForUnjudgedMessage(
+      unjudged({
+        finalMessage:
+          'Which behaviour do you want for expired links?\n1. Redirect to login\n2. Show an inline notice\n3. Silently refresh\n4. Something else'
+      }),
+      NOW
+    )
+    expect(verdict).toMatchObject({
+      status: 'needs_input',
+      question: 'Which behaviour do you want for expired links?',
+      source: 'fallback'
+    })
+  })
+
+  it('surfaces a message that ends with a question, whatever the branch holds', () => {
+    for (const commitsAhead of [0, 2, null]) {
+      const verdict = verdictForUnjudgedMessage(
+        unjudged({
+          finalMessage: 'I added the totals.\n\nWhich currency should they use?',
+          commitsAhead
+        }),
+        NOW
+      )
+      expect(verdict).toMatchObject({
+        status: 'needs_input',
+        question: 'Which currency should they use?',
+        confidence: 'low',
+        source: 'fallback'
+      })
+      expect(verdict.reason).toContain('ends with a question')
+    }
+  })
+
+  it.each([
+    ['it could not finish', 'I could not get the export to work.'],
+    ['something failed', 'Implemented, but 2 tests failed.'],
+    ['work remains', 'Implemented the dialog. Remaining: the history tab.'],
+    ['it is not done', 'The migration is not yet implemented.'],
+    ['it waits', "I'm waiting for the staging credentials."],
+    [
+      'it was not able to',
+      'I was not able to implement the export dialog, so I only added a stub.'
+    ],
+    ['it gave up', 'I gave up on the history tab; the build is broken.'],
+    ['it did half', 'Only half of the task is implemented; I skipped the history tab.'],
+    ['a check did not pass', "Implemented and committed. The tests didn't pass."],
+    ['an error next to a negated one', 'Done. There are no tests, and the build has errors.']
+  ])('stays blocked when the message says %s', (_name, finalMessage) => {
+    const verdict = verdictForUnjudgedMessage(unjudged({ finalMessage }), NOW)
+    expect(verdict).toMatchObject({ status: 'blocked', source: 'fallback', question: null })
+    expect(verdict.reason).toContain('may report a problem')
+  })
+
+  it.each([
+    ['no commits and a clean worktree', 0, false],
+    ['unknown git facts', null, null]
+  ])('stays blocked with %s', (_name, commitsAhead, hasUncommittedChanges) => {
+    const verdict = verdictForUnjudgedMessage(
+      unjudged({ commitsAhead, hasUncommittedChanges }),
+      NOW
+    )
+    expect(verdict).toMatchObject({ status: 'blocked', source: 'fallback' })
+    expect(verdict.reason).toContain('the branch carries no work')
   })
 })

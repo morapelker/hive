@@ -50,6 +50,8 @@ import { moveWorktreeTicketsToMerged } from '../pr-merge-ticket-move'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
+import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
+import { makeDetail } from '@/components/document-flow/test-fixtures'
 
 const PROJECT_ID = 'proj-1'
 const WORKTREE_ID = 'wt-1'
@@ -174,6 +176,31 @@ describe('moveWorktreeTicketsToMerged', () => {
 
     expect(moveTicket).toHaveBeenCalledTimes(1)
     expect(rpcGetByProject).not.toHaveBeenCalled()
+  })
+
+  it('leaves the ticket of a document run In Progress while its run is going, and moves it once the run ended', async () => {
+    const runTicket = makeTicket({
+      id: 'ticket-run',
+      column: 'in_progress',
+      mode: null,
+      external_provider: 'document-run',
+      external_id: 'run-1'
+    })
+    useKanbanStore.setState({ tickets: new Map([[PROJECT_ID, [runTicket]]]) })
+    useDocumentFlowStore.setState({
+      runsById: { 'run-1': makeDetail({ id: 'run-1', status: 'running' }) }
+    })
+
+    await moveWorktreeTicketsToMerged(WORKTREE_ID, 42)
+    expect(moveTicket).not.toHaveBeenCalled()
+
+    useDocumentFlowStore.setState({
+      runsById: { 'run-1': makeDetail({ id: 'run-1', status: 'completed' }) }
+    })
+    await moveWorktreeTicketsToMerged(WORKTREE_ID, 42)
+    expect(moveTicket).toHaveBeenCalledWith('ticket-run', PROJECT_ID, 'merged', 5)
+
+    useDocumentFlowStore.setState({ runsById: {} })
   })
 
   it('swallows move failures instead of rejecting', async () => {

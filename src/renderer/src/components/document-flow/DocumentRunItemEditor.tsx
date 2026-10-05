@@ -255,7 +255,7 @@ function ItemEditorBody({ item, items, save }: ItemEditorBodyProps): React.JSX.E
           <Textarea
             id={`docflow-description-${item.id}`}
             data-testid={`docflow-item-description-${item.key}`}
-            placeholder="What the agent is asked to build (supports markdown)"
+            placeholder="Shown on the board ticket; the agent reads the task from the original document (supports markdown)"
             rows={8}
             className="resize-y font-mono text-[12px]"
             value={description.value}

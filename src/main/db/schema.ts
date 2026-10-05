@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 52
+export const CURRENT_SCHEMA_VERSION = 53
 
 /**
  * "Implement document" flow (v55). `document_runs` is one spec document turned into tickets
@@ -13,6 +13,8 @@ export const CURRENT_SCHEMA_VERSION = 52
  * Only the run → project and item / event → run links are foreign keys: worktree rows are
  * archived rather than deleted, and markdown-backed boards have no kanban_tickets row, so
  * `integration_worktree_id`, `worktree_id`, `ticket_id` and the session ids are plain ids.
+ * `document_runs.ticket_id` (v57) is the run's own board ticket, the one that is moved to Done
+ * to merge the integration branch.
  * CREATE TABLE IF NOT EXISTS, replayed by ensureDocumentFlowTables() in database.ts.
  */
 export const DOCUMENT_FLOW_TABLES_SQL = `
@@ -32,6 +34,7 @@ export const DOCUMENT_FLOW_TABLES_SQL = `
     integration_branch        TEXT DEFAULT NULL,
     integration_worktree_id   TEXT DEFAULT NULL,
     integration_worktree_path TEXT DEFAULT NULL,
+    ticket_id                 TEXT DEFAULT NULL,
     report                    TEXT DEFAULT NULL,
     runner_client_id          TEXT DEFAULT NULL,
     runner_heartbeat_at       TEXT DEFAULT NULL,
@@ -941,5 +944,12 @@ DROP TABLE IF EXISTS diff_comments;`
     // database.ts.
     up: DOCUMENT_FLOW_TABLES_SQL,
     down: DOCUMENT_FLOW_TABLES_DROP_SQL
+  },
+  {
+    version: 53,
+    name: 'add_document_run_ticket',
+    up: `-- NOTE: ALTER TABLE for document_runs.ticket_id is handled idempotently by
+         -- safeAddColumn() in database.ts to avoid "duplicate column" errors.`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
   }
 ]

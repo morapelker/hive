@@ -15,7 +15,14 @@ import {
 const SECTION_LABEL_CLASS = 'text-xs font-medium uppercase tracking-wider text-muted-foreground'
 
 /** What a finished run hands back: what merged, what did not, and what is left for the user. */
-export function RunReportSection({ report }: { report: DocumentRunReport }): React.JSX.Element {
+export function RunReportSection({
+  report,
+  landed = false
+}: {
+  report: DocumentRunReport
+  /** The run's ticket already sits in Done or Merged, so the merge is not left to do. */
+  landed?: boolean
+}): React.JSX.Element {
   const { stats, verify } = report
   return (
     <section className="space-y-3" data-testid="docflow-report">
@@ -32,11 +39,19 @@ export function RunReportSection({ report }: { report: DocumentRunReport }): Rea
         </p>
       )}
 
-      <p className="text-[13px] leading-relaxed text-foreground" data-testid="docflow-report-next">
-        What is left for you: {report.migrations.length > 0 ? 'run the migrations, ' : ''}review,
-        and push / merge <span className="font-mono text-[12px]">{report.integrationBranch}</span>{' '}
-        into <span className="font-mono text-[12px]">{report.baseBranch}</span>.
-      </p>
+      {landed ? (
+        <p className="text-[13px] leading-relaxed text-foreground" data-testid="docflow-report-next">
+          The run&rsquo;s ticket is in Done.
+          {report.migrations.length > 0 ? ' Run the migrations if you have not yet.' : ''}
+        </p>
+      ) : (
+        <p className="text-[13px] leading-relaxed text-foreground" data-testid="docflow-report-next">
+          What is left for you: {report.migrations.length > 0 ? 'run the migrations, ' : ''}review,
+          then move the run&rsquo;s ticket to Done on the board to merge{' '}
+          <span className="font-mono text-[12px]">{report.integrationBranch}</span> into{' '}
+          <span className="font-mono text-[12px]">{report.baseBranch}</span>.
+        </p>
+      )}
 
       <p className="text-[12px] text-muted-foreground" data-testid="docflow-report-stats">
         {pluralize(stats.commits, 'commit')} · {pluralize(stats.filesChanged, 'file')} changed ·{' '}

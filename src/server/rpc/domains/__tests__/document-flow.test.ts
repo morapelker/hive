@@ -344,6 +344,10 @@ describe('documentFlow RPC handlers', () => {
     })
     await rejectsValidation(service, 'updateRun', {
       runId: 'run-1',
+      patch: { config: { promptStyle: 'medium' } }
+    })
+    await rejectsValidation(service, 'updateRun', {
+      runId: 'run-1',
       patch: { config: { baseBranch: '--force' } }
     })
     await rejectsValidation(service, 'updateRun', {
@@ -381,6 +385,8 @@ describe('documentFlow RPC handlers', () => {
       runId: 'r',
       patch: { config: { verifyCommand: null, defaultLaunch: null, baseBranch: null } }
     })
+    await call(service, 'updateRun', { runId: 'r', patch: { config: { promptStyle: 'small' } } })
+    await call(service, 'updateRun', { runId: 'r', patch: { config: { promptStyle: 'full' } } })
     await call(service, 'createRun', { projectId: 'p', documentPath: '/x', generation: null })
     await call(service, 'classify', { runId: 'r', itemId: 'i', finalMessage: null })
     await call(service, 'logEvent', { runId: 'r', itemId: null, type: 't', message: '' })

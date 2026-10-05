@@ -25,6 +25,7 @@ function initialConfig(run: DocumentRun, prefs: DocumentFlowPrefs): DocumentRunC
       ...config,
       maxParallel: clampMaxParallel(prefs.maxParallel),
       interactive: prefs.interactive,
+      promptStyle: prefs.promptStyle,
       defaultLaunch: prefs.defaultLaunch
     }
   }

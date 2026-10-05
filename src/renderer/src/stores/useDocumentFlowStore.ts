@@ -14,13 +14,15 @@ import {
   type DocumentRunItem,
   type DocumentRunItemPatch,
   type DocumentRunLaunchConfig,
-  type DocumentRunPatch
+  type DocumentRunPatch,
+  type DocumentRunPromptStyle
 } from '@shared/types/document-flow'
 
 /** Last-used run settings, remembered across runs (persisted in localStorage). */
 export interface DocumentFlowPrefs {
   maxParallel: number
   interactive: boolean
+  promptStyle: DocumentRunPromptStyle
   /** Verify command per project id; an empty string means "none", remembered as such. */
   verifyCommandByProject: Record<string, string>
   defaultLaunch: DocumentRunLaunchConfig | null
@@ -89,6 +91,7 @@ interface DocumentFlowState {
 const DEFAULT_PREFS: DocumentFlowPrefs = {
   maxParallel: DEFAULT_DOCUMENT_RUN_CONFIG.maxParallel,
   interactive: DEFAULT_DOCUMENT_RUN_CONFIG.interactive,
+  promptStyle: DEFAULT_DOCUMENT_RUN_CONFIG.promptStyle,
   verifyCommandByProject: {},
   defaultLaunch: null
 }
@@ -276,6 +279,7 @@ export const useDocumentFlowStore = create<DocumentFlowState>()(
         get().setPrefs({
           maxParallel: clampMaxParallel(config.maxParallel),
           interactive: config.interactive,
+          promptStyle: config.promptStyle,
           defaultLaunch: config.defaultLaunch,
           verifyCommandByProject: {
             ...get().prefs.verifyCommandByProject,

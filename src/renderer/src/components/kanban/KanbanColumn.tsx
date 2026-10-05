@@ -8,6 +8,9 @@ import { lastSendMode } from '@/lib/message-send-times'
 import { Switch } from '@/components/ui/switch'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { KanbanTicketCard } from '@/components/kanban/KanbanTicketCard'
+import { documentRunTicketDropRefusal } from '@/components/document-flow/document-flow-ui'
+import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
+import { documentFlowApi } from '@/api/document-flow-api'
 import { TicketCreateModal } from '@/components/kanban/TicketCreateModal'
 import { WorktreePickerModal } from '@/components/kanban/WorktreePickerModal'
 import {
@@ -50,6 +53,8 @@ import type {
   Session,
   Worktree
 } from '../../../../main/db/types'
+import { documentRunIdOf, isDocumentRunTicket } from '@shared/document-flow/run-ticket'
+import type { DocumentRunStatus } from '@shared/types/document-flow'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { dbApi } from '@/api/db-api'
 import { gitApi } from '@/api/git-api'
@@ -213,6 +218,8 @@ export function KanbanColumn({
   const isMergedColumn = column === 'merged'
   const isTodoColumn = column === 'todo'
   const isInProgressColumn = column === 'in_progress'
+  // A document run's ticket has no session to tile
+  const hasTileableTickets = tickets.some((t) => !isDocumentRunTicket(t))
   // Done and Merged are always date-sorted; other columns opt in via the
   // per-column transition-sort toggle (persisted, '' key on multi-project boards)
   const isForcedDateSorted = isDoneColumn || isMergedColumn
@@ -552,6 +559,40 @@ export function KanbanColumn({
           return
         }
         const ticketProjectId = findTicketProjectId(ticketId, draggedProjectId)
+
+        // A document run's ticket follows its run: In Progress while the run is on, then
+        // Review, Merged or Done. It has no session, so it never takes the launch or the
+        // stop-session paths below.
+        const documentRunId = documentRunIdOf(findTicket(ticketId, ticketProjectId))
+        if (documentRunId) {
+          let runStatus: DocumentRunStatus | undefined =
+            useDocumentFlowStore.getState().runsById[documentRunId]?.run.status
+          if (!runStatus) {
+            try {
+              // No run when its record is gone; then only its ticket is left to move
+              runStatus = (await documentFlowApi.get(documentRunId))?.run.status
+            } catch (err) {
+              toast.warning(
+                `Could not check the document run: ${err instanceof Error ? err.message : String(err)}`
+              )
+              return
+            }
+          }
+          const refusal = documentRunTicketDropRefusal(runStatus ?? null, column)
+          if (refusal) {
+            toast.warning(refusal)
+            return
+          }
+          if (column === 'in_progress') {
+            const sortOrder = store.computeSortOrder(
+              projectTicketsForColumn(ticketProjectId),
+              projectLocalDropIndex(ticketProjectId, targetIndex)
+            )
+            store.moveTicket(ticketId, ticketProjectId, column, sortOrder)
+            return
+          }
+        }
+
         const simpleModeKey = isMultiProjectMode ? projectId : ticketProjectId
         const isSimpleMode =
           store.simpleModeByProject[simpleModeKey] ??
@@ -626,7 +667,9 @@ export function KanbanColumn({
                     (w) => w.branch_name === resolvedBaseBranch && w.status === 'active'
                   )
 
-                  if (baseWorktree) {
+                  // A document run's ticket is checked without a base worktree too: Done
+                  // means merged for it, so it only moves freely with nothing left to merge
+                  if (baseWorktree || documentRunId) {
                     // Pre-check: does the feature branch actually have work to merge?
                     const [hasUncommitted, branchStatResult] = await Promise.all([
                       gitApi.hasUncommittedChanges(worktree.path),
@@ -644,25 +687,37 @@ export function KanbanColumn({
                       return
                     }
 
-                    // Review/Merged → Done drops with an already-merged branch
-                    // skip the merge steps but still get the archive/keep prompt
-                    const archivePromptOnly =
-                      column === 'done' &&
-                      (sourceColumn === 'review' || sourceColumn === 'merged') &&
-                      worktree.status === 'active'
+                    if (!baseWorktree) {
+                      if (hasUncommitted || commitsAhead > 0) {
+                        // Say why it cannot be merged, instead of moving the ticket as if
+                        // it had been
+                        toast.warning(
+                          `Cannot merge ${worktree.branch_name}: no worktree has ${resolvedBaseBranch} checked out. Check it out (in the project or a worktree) and move the ticket again.`
+                        )
+                        return
+                      }
+                      // Nothing left to merge — fall through to normal move
+                    } else {
+                      // Review/Merged → Done drops with an already-merged branch
+                      // skip the merge steps but still get the archive/keep prompt
+                      const archivePromptOnly =
+                        column === 'done' &&
+                        (sourceColumn === 'review' || sourceColumn === 'merged') &&
+                        worktree.status === 'active'
 
-                    if (hasUncommitted || commitsAhead > 0 || archivePromptOnly) {
-                      const sortOrder = store.computeSortOrder(
-                        projectTicketsForColumn(ticketProjectId),
-                        projectLocalDropIndex(ticketProjectId, targetIndex)
-                      )
-                      store.setPendingDoneMove({
-                        ticketId,
-                        projectId: ticketProjectId,
-                        sortOrder,
-                        targetColumn: column
-                      })
-                      return
+                      if (hasUncommitted || commitsAhead > 0 || archivePromptOnly) {
+                        const sortOrder = store.computeSortOrder(
+                          projectTicketsForColumn(ticketProjectId),
+                          projectLocalDropIndex(ticketProjectId, targetIndex)
+                        )
+                        store.setPendingDoneMove({
+                          ticketId,
+                          projectId: ticketProjectId,
+                          sortOrder,
+                          targetColumn: column
+                        })
+                        return
+                      }
                     }
                   }
                   // No base worktree OR nothing to commit/merge — fall through to normal move
@@ -946,7 +1001,7 @@ export function KanbanColumn({
                   <TooltipTrigger asChild>
                     <button
                       data-testid="tile-in-progress-button"
-                      disabled={tickets.length === 0}
+                      disabled={!hasTileableTickets}
                       onClick={() =>
                         void openTiledInProgressSessions(
                           { projectId, connectionId, isPinnedMode },
@@ -955,7 +1010,7 @@ export function KanbanColumn({
                       }
                       className={cn(
                         'flex h-6 w-6 items-center justify-center rounded-md transition-colors',
-                        tickets.length === 0
+                        !hasTileableTickets
                           ? 'cursor-default text-muted-foreground/30'
                           : 'text-muted-foreground/50 hover:text-muted-foreground hover:bg-accent'
                       )}

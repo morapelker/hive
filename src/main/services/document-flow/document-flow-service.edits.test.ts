@@ -98,6 +98,7 @@ describe('updateRun', () => {
       config: {
         verifyCommand: '  pnpm run lint  ',
         interactive: false,
+        promptStyle: 'small',
         defaultLaunch: launchConfig
       }
     })
@@ -106,6 +107,7 @@ describe('updateRun', () => {
       maxParallel: 4,
       verifyCommand: 'pnpm run lint',
       interactive: false,
+      promptStyle: 'small',
       defaultLaunch: launchConfig,
       generation: null,
       baseBranch: null
@@ -116,6 +118,7 @@ describe('updateRun', () => {
     ).toMatchObject({
       verifyCommand: 'pnpm run lint',
       interactive: false,
+      promptStyle: 'small',
       generation: { provider: 'codex' }
     })
     // A cleared command is the user's explicit "no verification": kept apart from "never chosen",
@@ -133,7 +136,8 @@ describe('updateRun', () => {
     [-3, 1],
     [2.6, 3],
     [8, 8],
-    [99, 8]
+    [50, 50],
+    [99, 50]
   ])('clamps maxParallel %s to %s', (given, stored) => {
     const { run } = seedRun(harness)
 

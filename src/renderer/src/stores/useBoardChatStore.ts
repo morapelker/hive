@@ -14,6 +14,7 @@ import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { opencodeApi } from '@/api/opencode-api'
 import { dbApi } from '@/api/db-api'
 import { kanbanApi } from '@/api/kanban-api'
+import { isDocumentRunTicket } from '@shared/document-flow/run-ticket'
 
 export type BoardChatStatus = 'idle' | 'starting' | 'thinking' | 'awaiting_confirmation' | 'error'
 
@@ -449,6 +450,12 @@ async function cleanupRuntime(
   }
 }
 
+/** One board line for the assistant. A document run's ticket is not a task to plan around. */
+const boardTicketLine = (ticket: KanbanTicket): string =>
+  `- [${ticket.column}] ${ticket.title}${
+    isDocumentRunTicket(ticket) ? ' (document run: tracks the tickets of a spec, not a task)' : ''
+  }`
+
 async function buildBoardContext(
   scope: BoardChatScope,
   selectedTargetProjectId: string | null
@@ -459,7 +466,7 @@ async function buildBoardContext(
       `Single-project board: ${scope.projectName}`,
       `Target project ID: ${scope.projectId}`,
       'Current tickets:',
-      ...tickets.slice(0, 50).map((ticket: KanbanTicket) => `- [${ticket.column}] ${ticket.title}`)
+      ...tickets.slice(0, 50).map(boardTicketLine)
     ].join('\n')
   }
 
@@ -477,9 +484,7 @@ async function buildBoardContext(
       `Projects in scope: ${scope.availableProjects.map((project) => project.name).join(', ')}`,
       ...ticketGroups.flatMap(({ project, tickets }) => [
         `${project.name}:`,
-        ...tickets
-          .slice(0, 20)
-          .map((ticket: KanbanTicket) => `- [${ticket.column}] ${ticket.title}`)
+        ...tickets.slice(0, 20).map(boardTicketLine)
       ])
     ].join('\n')
   }

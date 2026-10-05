@@ -1,9 +1,10 @@
-import type { DocumentRunVerdict } from '../types/document-flow'
+import type { HandoffAgentSdk } from '../types/agent-sdk'
+import type { DocumentRunPromptStyle, DocumentRunVerdict } from '../types/document-flow'
 
-// Everything the orchestrator says to an agent after the ticket text itself. The ticket's
-// description (written at extraction, editable in the preview) says WHAT to build; these say
-// how to behave inside a run: stay in scope, commit, never touch the base branch, and end with
-// a status footer the classifier can lean on.
+// Everything the orchestrator says to an agent. The launch prompt is deliberately the short
+// brief a person would type: which task, of which document, research it, ask through the
+// question tool, implement. What to change and where is the implementing model's call. The
+// follow-ups say how to behave inside a run: resolve a conflict, fix a failing check, finish.
 
 interface TicketRef {
   key: string
@@ -13,86 +14,82 @@ interface TicketRef {
 const listTickets = (tickets: readonly TicketRef[]): string =>
   tickets.map((ticket) => `${ticket.key} (${ticket.title})`).join(', ')
 
-/** The footer every ticket session is asked to end its final message with. */
-export const STATUS_FOOTER_INSTRUCTIONS = `End your final message with exactly this block:
+/**
+ * The block the follow-up prompts ask a session to end its final message with. Questions are
+ * not part of it: an agent that needs an answer asks through its question tool, which the
+ * runner sees as a waiting session. (The footer parser still reads the older block, which had
+ * NEEDS_INPUT and a QUESTIONS line.)
+ */
+export const STATUS_FOOTER_INSTRUCTIONS = `If you need an answer from me, ask through your question tool rather than in the text of your message.
 
-STATUS: DONE | NEEDS_INPUT | BLOCKED
+End your final message with exactly this block:
+
+STATUS: DONE | BLOCKED
 SUMMARY: what you implemented, in one or two sentences
 MIGRATIONS: migration files you added, or "none"
 MANUAL STEPS: anything a human must do after this is merged (run migrations, set env vars, data fixes), or "none"
 ASSUMPTIONS: decisions you made where the spec was silent, or "none"
-QUESTIONS: what you need answered, or "none"
 
-Use DONE only when the task is fully implemented and committed. Use NEEDS_INPUT when you are waiting for an answer, and BLOCKED when something outside your control stops you.`
+Use DONE only when the task is fully implemented and committed, and BLOCKED when something outside your control stops you.`
 
-export interface LaunchFooterInput {
+/**
+ * `file://` URL of an absolute path, the way a browser's address bar shows it: spaces and
+ * non-ASCII are escaped, `(`, `)` and `/` are kept, and `?` / `#` (legal in file names, but
+ * URL delimiters) are escaped too. Windows paths become `file:///C:/…`.
+ */
+export function toFileUrl(path: string): string {
+  const slashed = path.replace(/\\/g, '/')
+  const encoded = encodeURI(slashed).replace(/[?#]/g, encodeURIComponent)
+  return `file://${encoded.startsWith('/') ? '' : '/'}${encoded}`
+}
+
+/** What each provider calls its ask-the-user tool (see agent-mode-prefixes.ts). */
+function questionToolName(sdk: HandoffAgentSdk): string {
+  switch (sdk) {
+    case 'codex':
+    case 'codex-cli':
+      return 'request_user_input'
+    case 'opencode':
+      return 'question'
+    default:
+      return 'AskUserQuestion'
+  }
+}
+
+export interface LaunchPromptInput {
   key: string
   title: string
-  documentTitle: string
-  integrationBranch: string
-  baseBranch: string
-  /** Other tickets of the run, built on their own branches. */
-  siblings: readonly TicketRef[]
-  /** Dependencies already merged into the integration branch this ticket starts from. */
-  mergedDependencies: readonly TicketRef[]
+  /** Absolute path of the document the user picked (not the pre-processed text copy). */
+  sourcePath: string
+  promptStyle: DocumentRunPromptStyle
   interactive: boolean
-  hasMigration: boolean
+  sdk: HandoffAgentSdk
 }
 
 /**
- * Appended to the ticket prompt at launch. Generalises the manual brief ("use subagents to
- * research the spec … ask me if anything is unclear … then implement") and adds what an
- * unattended, later-merged run needs.
+ * The whole prompt of a ticket session. The wording is the user's own manual brief; the title
+ * is there because some keys are made up at extraction and appear nowhere in the document.
+ * `small` drops the subagent research paragraph, and an unattended run swaps the
+ * clarifications paragraph for "decide yourself".
  */
-export function buildLaunchFooter(input: LaunchFooterInput): string {
-  const lines: string[] = [
-    '',
-    '',
-    '---',
-    `You are implementing task ${input.key} of the document "${input.documentTitle}" as part of an automated run. Your branch was cut from \`${input.integrationBranch}\`, and will be merged back into it when you are done.`,
-    '',
-    '## How to work',
-    '- Use subagents to read the spec section and its mock-ups, explore the code it touches, and research best practices before you write code.'
+export function buildLaunchPrompt(input: LaunchPromptInput): string {
+  const title = input.title.replace(/\s+/g, ' ').trim()
+  const paragraphs: string[] = [
+    `implement task ${input.key}${title ? ` ("${title}")` : ''} from the ${toFileUrl(input.sourcePath)}`
   ]
-
-  lines.push(
+  if (input.promptStyle === 'full') {
+    paragraphs.push(
+      'use subagents to research and read the spec attached there, read the description of it, understand the requirements, research best practices regarding it'
+    )
+  }
+  paragraphs.push(
     input.interactive
-      ? '- If a requirement is unclear and a wrong guess would be costly, ask with the AskUserQuestion tool. Otherwise decide, and record the decision under ASSUMPTIONS.'
-      : '- Nobody is watching this run. Do not stop to ask questions: settle them from the spec, choose the most reasonable reading, and record the decision under ASSUMPTIONS. Ask only if a wrong guess would be destructive.'
+      ? `if you have any clarifications you might need - use the ${questionToolName(input.sdk)} tool to ask me.`
+      : 'do not stop to ask me for clarifications - decide yourself, and mention the decisions you made in your final message.',
+    'then - implement this',
+    'implement only this task, commit your work on this branch, do not push or switch branches, and do not run migrations against any database.'
   )
-  lines.push(
-    '- Then implement the task completely, and run the checks this repository uses (typecheck, lint, the tests you touched).',
-    '- If dependencies are not installed yet, a setup script may still be running in this worktree: wait for it or install them yourself.',
-    '',
-    '## Scope'
-  )
-  lines.push(
-    `- Implement only ${input.key}. Keep the diff narrow: no drive-by refactors or reformatting.`
-  )
-  if (input.siblings.length > 0) {
-    lines.push(
-      `- Other tasks of this document are built in parallel on their own branches and merged with yours: ${listTickets(input.siblings)}. Do not implement them. Where your task needs something one of them delivers, build against a minimal seam and say so under ASSUMPTIONS.`
-    )
-  }
-  if (input.mergedDependencies.length > 0) {
-    lines.push(
-      `- Already on your branch (merged before you started): ${listTickets(input.mergedDependencies)}. Build on that work rather than re-implementing it.`
-    )
-  }
-  lines.push(
-    input.hasMigration
-      ? "- Schema or data changes: add a NEW migration following this repository's convention. Never edit an existing migration, and never run migrations against any database — list them under MIGRATIONS."
-      : "- If you find you need a schema or data change, add a NEW migration following this repository's convention, never run it against any database, and list it under MIGRATIONS."
-  )
-  lines.push(
-    '',
-    '## When you are done',
-    '- Commit all of your work on this branch (several commits are fine). Uncommitted work is not merged.',
-    `- Do not push. Do not switch branches. Never commit to, merge into, or otherwise change \`${input.baseBranch}\`.`,
-    '',
-    STATUS_FOOTER_INSTRUCTIONS
-  )
-  return lines.join('\n')
+  return paragraphs.join('\n\n')
 }
 
 export interface ConflictPromptInput {

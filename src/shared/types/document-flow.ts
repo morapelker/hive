@@ -120,13 +120,18 @@ export interface DocumentRunGeneration {
   effort?: string
 }
 
+/** `full` asks the agent to research the spec with subagents first; `small` skips that. */
+export type DocumentRunPromptStyle = 'full' | 'small'
+
 export interface DocumentRunConfig {
   /** Tickets whose agent may be working at once (1-8). */
   maxParallel: number
   /** Shell command run in the integration worktree after each merge; null/empty = skip. */
   verifyCommand: string | null
-  /** true: agents may ask via AskUserQuestion; false: decide and record assumptions. */
+  /** true: agents ask through their question tool; false: decide and say what they decided. */
   interactive: boolean
+  /** Which launch prompt the ticket agents get. */
+  promptStyle: DocumentRunPromptStyle
   /** Launch config for tickets without their own; null = the app's default at launch. */
   defaultLaunch: DocumentRunLaunchConfig | null
   /** Model used for extraction and final-message classification; null = provider default. */
@@ -135,12 +140,13 @@ export interface DocumentRunConfig {
   baseBranch: string | null
 }
 
-export const DOCUMENT_RUN_MAX_PARALLEL_LIMIT = 8
+export const DOCUMENT_RUN_MAX_PARALLEL_LIMIT = 50
 
 export const DEFAULT_DOCUMENT_RUN_CONFIG: DocumentRunConfig = {
   maxParallel: 4,
   verifyCommand: null,
   interactive: true,
+  promptStyle: 'full',
   defaultLaunch: null,
   generation: null,
   baseBranch: null
@@ -214,7 +220,11 @@ export interface DocumentRunVerdict {
   /** Manual / post-production steps the agent says remain for a human. */
   manualSteps: string[]
   confidence: 'low' | 'medium' | 'high'
-  /** `model`: the classifier; `footer`: parsed from the STATUS footer after a classifier failure; `fallback`: no usable signal. */
+  /**
+   * `model`: the classifier; `footer`: parsed from the STATUS footer after a classifier
+   * failure; `fallback`: the classifier failed and there was no footer, so it is judged from
+   * the message text and the branch's git facts (done, needs_input or blocked).
+   */
   source: 'model' | 'footer' | 'fallback'
   classifiedAt: string
 }
@@ -241,6 +251,8 @@ export interface DocumentRun {
   integration_branch: string | null
   integration_worktree_id: string | null
   integration_worktree_path: string | null
+  /** The run's own ticket on the board, created at launch; moving it to Done merges the run. */
+  ticket_id: string | null
   report: DocumentRunReport | null
   /** Client currently driving the run, and its last heartbeat (single-owner lease). */
   runner_client_id: string | null

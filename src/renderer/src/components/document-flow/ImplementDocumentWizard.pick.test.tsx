@@ -302,7 +302,7 @@ describe('ImplementDocumentWizard — previous runs', () => {
     // A launched run's tickets attach its spec text and figures by path, so those files stay.
     expect(
       screen.getByText(
-        /Checkout redesign and its extracted tickets are removed from the list\. Branches, worktrees and board tickets are not touched, and the spec text and figures those tickets attach stay on disk\./
+        /Checkout redesign and its extracted tickets are removed from the list\. The run's own ticket is removed from the board\. Branches, worktrees and the tickets of its tasks are not touched, and the spec text and figures those tickets attach stay on disk\./
       )
     ).toBeInTheDocument()
     expect(api.delete).not.toHaveBeenCalled()

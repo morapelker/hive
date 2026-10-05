@@ -51,6 +51,7 @@ export function makeRun(overrides: Partial<DocumentRun> = {}): DocumentRun {
     integration_branch: INTEGRATION_BRANCH,
     integration_worktree_id: INTEGRATION_WORKTREE,
     integration_worktree_path: '/worktrees/shop--doc-checkout',
+    ticket_id: null,
     report: null,
     runner_client_id: null,
     runner_heartbeat_at: null,

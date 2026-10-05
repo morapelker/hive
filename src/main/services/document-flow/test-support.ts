@@ -12,7 +12,7 @@ import {
   type DocumentRunItemDraft,
   type SessionFinalMessage
 } from '@shared/types/document-flow'
-import type { KanbanTicketBatchCreateItem } from '../../db/types'
+import type { KanbanTicketBatchCreateItem, KanbanTicketColumn } from '../../db/types'
 import type { CreateFromBranchParams, WorktreeResult } from '../worktree-ops'
 import type { DocumentFlowDb, DocumentRunItemRowPatch, DocumentRunRowPatch } from './db-port'
 import {
@@ -77,6 +77,7 @@ export function createFakeDocumentFlowDb(): FakeDocumentFlowDb {
         integration_branch: null,
         integration_worktree_id: null,
         integration_worktree_path: null,
+        ticket_id: null,
         report: null,
         runner_client_id: null,
         runner_heartbeat_at: null,
@@ -361,6 +362,12 @@ export interface ServiceHarness {
   worktreeRequests: CreateFromBranchParams[]
   ticketBatches: { projectId: string; drafts: KanbanTicketBatchCreateItem[] }[]
   ticketLinks: { projectId: string; dependent: string; blocker: string }[]
+  /** The board: every created ticket that was not deleted, with the column it sits in. */
+  boardTickets: Map<string, { id: string; projectId: string; column: KanbanTicketColumn }>
+  ticketMoves: { projectId: string; ticketId: string; column: KanbanTicketColumn }[]
+  deletedTickets: string[]
+  /** Worktree id → base branch, as the service re-pointed them. */
+  baseBranchWrites: { worktreeId: string; baseBranch: string }[]
   /** Scratch directory: holds the run directories and stands in for the home directory. */
   scratch: string
   runsRoot: string
@@ -381,6 +388,10 @@ type OverridableDeps = Required<
     | 'createWorktreeFromBranch'
     | 'createTickets'
     | 'addTicketDependency'
+    | 'getTicket'
+    | 'moveTicket'
+    | 'deleteTicket'
+    | 'setWorktreeBaseBranch'
     | 'resolveFinalMessage'
     | 'runVerify'
     | 'detach'
@@ -405,6 +416,10 @@ export function createServiceHarness(options: { repo?: TestRepo } = {}): Service
   const worktreeRequests: CreateFromBranchParams[] = []
   const ticketBatches: ServiceHarness['ticketBatches'] = []
   const ticketLinks: ServiceHarness['ticketLinks'] = []
+  const boardTickets: ServiceHarness['boardTickets'] = new Map()
+  const ticketMoves: ServiceHarness['ticketMoves'] = []
+  const deletedTickets: string[] = []
+  const baseBranchWrites: ServiceHarness['baseBranchWrites'] = []
   const scratch = realpathSync(mkdtempSync(join(tmpdir(), 'docflow-service-')))
   const runsRoot = join(scratch, 'document-runs')
   let detached = 0
@@ -441,10 +456,36 @@ export function createServiceHarness(options: { repo?: TestRepo } = {}): Service
     },
     createTickets: async (projectId, drafts) => {
       ticketBatches.push({ projectId, drafts })
-      return { tickets: drafts.map(() => ({ id: `ticket-${++ticketCount}` })) }
+      return {
+        tickets: drafts.map((draft) => {
+          const ticket = { id: `ticket-${++ticketCount}`, projectId, column: draft.column ?? 'todo' }
+          boardTickets.set(ticket.id, ticket)
+          return { id: ticket.id }
+        })
+      }
     },
     addTicketDependency: async (projectId, dependent, blocker) => {
       ticketLinks.push({ projectId, dependent, blocker })
+    },
+    getTicket: async (projectId, ticketId) => {
+      const ticket = boardTickets.get(ticketId)
+      return ticket && ticket.projectId === projectId
+        ? { id: ticket.id, column: ticket.column }
+        : null
+    },
+    moveTicket: async (projectId, ticketId, column) => {
+      ticketMoves.push({ projectId, ticketId, column })
+      const ticket = boardTickets.get(ticketId)
+      if (ticket) ticket.column = column
+    },
+    deleteTicket: async (_projectId, ticketId) => {
+      deletedTickets.push(ticketId)
+      return boardTickets.delete(ticketId)
+    },
+    setWorktreeBaseBranch: (worktreeId, baseBranch) => {
+      baseBranchWrites.push({ worktreeId, baseBranch })
+      const worktree = worktrees.get(worktreeId)
+      if (worktree) worktree.base_branch = baseBranch
     },
     resolveFinalMessage: async () => null,
     runVerify: async () => ({ exitCode: 0, timedOut: false, output: '', durationMs: 1 }),
@@ -464,6 +505,11 @@ export function createServiceHarness(options: { repo?: TestRepo } = {}): Service
     createTickets: (...args) => (overrides.createTickets ?? fakes.createTickets)(...args),
     addTicketDependency: (...args) =>
       (overrides.addTicketDependency ?? fakes.addTicketDependency)(...args),
+    getTicket: (...args) => (overrides.getTicket ?? fakes.getTicket)(...args),
+    moveTicket: (...args) => (overrides.moveTicket ?? fakes.moveTicket)(...args),
+    deleteTicket: (...args) => (overrides.deleteTicket ?? fakes.deleteTicket)(...args),
+    setWorktreeBaseBranch: (...args) =>
+      (overrides.setWorktreeBaseBranch ?? fakes.setWorktreeBaseBranch)(...args),
     resolveFinalMessage: (...args) =>
       (overrides.resolveFinalMessage ?? fakes.resolveFinalMessage)(...args),
     runVerify: (...args) => (overrides.runVerify ?? fakes.runVerify)(...args),
@@ -487,6 +533,10 @@ export function createServiceHarness(options: { repo?: TestRepo } = {}): Service
     worktreeRequests,
     ticketBatches,
     ticketLinks,
+    boardTickets,
+    ticketMoves,
+    deletedTickets,
+    baseBranchWrites,
     scratch,
     runsRoot,
     detachCount: () => detached,

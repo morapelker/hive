@@ -1,6 +1,7 @@
 import { Effect } from 'effect'
 import { z } from 'zod'
 import { isDesktopCommandResult, makeDesktopCommandRequest } from '../../../shared/desktop-command'
+import { documentRunIdOf } from '../../../shared/document-flow/run-ticket'
 import type {
   KanbanMarkdownConfig,
   KanbanStorageConfig,
@@ -572,7 +573,16 @@ export const makeLiveKanbanRpcService = (): KanbanRpcService => ({
     Effect.tryPromise({
       try: async () => {
         const { getKanbanBackendForProject } = await import('../../../main/services/kanban-backend')
-        return getKanbanBackendForProject(projectId).delete(projectId, id)
+        const backend = getKanbanBackendForProject(projectId)
+        // A document run's own ticket goes through the run's service: it refuses while the
+        // run is running and removes the run record with the ticket.
+        const runId = documentRunIdOf(await backend.get(projectId, id))
+        if (runId) {
+          const { getDocumentFlowService } =
+            await import('../../../main/services/document-flow/document-flow-service')
+          return (await getDocumentFlowService()).deleteRunTicket(projectId, id, runId)
+        }
+        return backend.delete(projectId, id)
       },
       catch: (cause) => cause
     }),

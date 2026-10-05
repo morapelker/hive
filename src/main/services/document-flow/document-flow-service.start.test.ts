@@ -61,6 +61,7 @@ function seedPreview(): ReturnType<typeof seedRun> {
         maxParallel: 4,
         verifyCommand: null,
         interactive: true,
+        promptStyle: 'full',
         defaultLaunch: sonnet,
         generation: null,
         baseBranch: null
@@ -108,6 +109,8 @@ describe('start', () => {
       integration_branch: 'doc-factory-area-changes-round-2',
       integration_worktree_id: 'wt-doc-factory-area-changes-round-2',
       integration_worktree_path: join(repo.root, 'worktrees', 'doc-factory-area-changes-round-2'),
+      // Created after the three task tickets.
+      ticket_id: 'ticket-4',
       error: null
     })
     expect(detail.run.started_at).toBeTruthy()
@@ -130,6 +133,7 @@ describe('start', () => {
       'base_resolved',
       'integration_created',
       'tickets_created',
+      'run_ticket_created',
       'started'
     ])
   })
@@ -262,7 +266,8 @@ describe('start', () => {
 
     const detail = await harness.service.start(run.id)
 
-    expect(harness.ticketBatches).toHaveLength(1)
+    // The task tickets, then the run's own ticket.
+    expect(harness.ticketBatches).toHaveLength(2)
     const [{ projectId, drafts }] = harness.ticketBatches
     expect(projectId).toBe(TEST_PROJECT_ID)
     expect(drafts).toEqual([
@@ -349,8 +354,8 @@ describe('start', () => {
     )
 
     // With the caller's client id on them, that client would ignore the `db:changed` events
-    // and never reload its board.
-    expect(contexts).toEqual([undefined])
+    // and never reload its board. Two batches: the task tickets and the run's own ticket.
+    expect(contexts).toEqual([undefined, undefined])
   })
 
   it('publishes every write', async () => {
@@ -361,9 +366,9 @@ describe('start', () => {
     const reasons = harness.published.map((event) => event.reason)
     // A2's cleaned dependencies, three ticket ids.
     expect(reasons.filter((reason) => reason === 'item')).toHaveLength(4)
-    // Base, integration worktree, status.
-    expect(reasons.filter((reason) => reason === 'run')).toHaveLength(3)
-    expect(reasons.filter((reason) => reason === 'event')).toHaveLength(6)
+    // Base, integration worktree, the run's ticket, status.
+    expect(reasons.filter((reason) => reason === 'run')).toHaveLength(4)
+    expect(reasons.filter((reason) => reason === 'event')).toHaveLength(7)
     expect(harness.published.every((event) => event.runId === run.id)).toBe(true)
     expect(harness.published).toContainEqual({
       runId: run.id,
@@ -383,7 +388,74 @@ describe('start', () => {
 
     expect(second).toEqual(first)
     expect(harness.worktreeRequests).toHaveLength(1)
-    expect(harness.ticketBatches).toHaveLength(1)
+    expect(harness.ticketBatches).toHaveLength(2)
+  })
+
+  describe("the run's own ticket", () => {
+    it('is created In Progress on the integration worktree, marked as the ticket of the run', async () => {
+      const { run } = seedPreview()
+
+      const detail = await harness.service.start(run.id)
+
+      const [, { projectId, drafts }] = harness.ticketBatches
+      expect(projectId).toBe(TEST_PROJECT_ID)
+      expect(drafts).toEqual([
+        {
+          draft_key: `run-${run.id}`,
+          project_id: TEST_PROJECT_ID,
+          title: 'Factory area · Changes round 2',
+          description:
+            "Document run of /specs/factory.html. Its branch doc-factory-area-changes-round-2 collects the merged work of the run's tickets; move this ticket to Done to merge it into main.",
+          column: 'in_progress',
+          // No session will ever run on it.
+          mode: null,
+          worktree_id: 'wt-doc-factory-area-changes-round-2',
+          external_provider: 'document-run',
+          external_id: run.id
+        }
+      ])
+      expect(detail.run.ticket_id).toBe('ticket-4')
+      expect(harness.boardTickets.get('ticket-4')).toMatchObject({ column: 'in_progress' })
+      // None of the run's items claims it.
+      expect(detail.items.map((item) => item.ticket_id)).not.toContain('ticket-4')
+    })
+
+    it('is not created again by a start that continues after a failure', async () => {
+      const { run } = seedPreview()
+      await harness.service.start(run.id)
+      const ticketId = harness.db.getDocumentRun(run.id)?.ticket_id
+      // The status write was lost: the run is started again from the top.
+      harness.db.updateDocumentRun(run.id, { status: 'preview' })
+
+      const detail = await harness.service.start(run.id)
+
+      expect(detail.run.ticket_id).toBe(ticketId)
+      expect(harness.ticketBatches).toHaveLength(2)
+      expect(
+        detail.events.filter((event) => event.type === 'run_ticket_created')
+      ).toHaveLength(1)
+    })
+
+    it('fails the start when the board cannot create it, and creates it on the next one', async () => {
+      const { run } = seedPreview()
+      let calls = 0
+      harness.overrides.createTickets = async (_projectId, drafts) => {
+        calls++
+        if (calls === 2) return { tickets: [] }
+        return { tickets: drafts.map((draft) => ({ id: `ticket-${draft.draft_key}` })) }
+      }
+
+      await expect(harness.service.start(run.id)).rejects.toThrow(
+        'The board did not create the ticket of the run.'
+      )
+      expect(harness.db.getDocumentRun(run.id)).toMatchObject({ status: 'preview', ticket_id: null })
+
+      const detail = await harness.service.start(run.id)
+
+      expect(detail.run).toMatchObject({ status: 'running', ticket_id: `ticket-run-${run.id}` })
+      // The task tickets of the first attempt were kept: only the run's ticket was missing.
+      expect(calls).toBe(3)
+    })
   })
 
   describe('when a step fails', () => {

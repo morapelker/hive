@@ -13,10 +13,11 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { toast } from 'sonner'
-import { Loader2, GitMerge, GitCommit, Archive } from 'lucide-react'
+import { Loader2, GitMerge, GitCommit, Archive, AlertTriangle } from 'lucide-react'
 import { dbApi } from '@/api/db-api'
 import { gitApi } from '@/api/git-api'
 import { cn } from '@/lib/utils'
+import { findCarriedRunTickets } from '@/lib/document-flow/carried-tickets'
 import { ChangedFilesPanel, type ChangedFilesPanelHandle } from './merge-dialog/ChangedFilesPanel'
 import { ChangedFilesSummary, SummaryChip } from './merge-dialog/ChangedFilesSummary'
 import { useChangedFiles } from './merge-dialog/useChangedFiles'
@@ -59,6 +60,11 @@ interface ResolvedState {
   baseDirty: boolean
   branchStats: BranchStats
   alreadyMerged: boolean
+  /**
+   * Document-run tickets merged before this one whose work is on its branch (it was cut from
+   * the run's integration branch) but not on the base branch yet: merging brings them along.
+   */
+  carriedRunTickets: string[]
 }
 
 export function MergeOnDoneDialog() {
@@ -253,6 +259,14 @@ export function MergeOnDoneDialog() {
 
         // Get project path for archive step
         const project = await dbApi.project.get<MergeProject>(featureWorktree.project_id)
+        const carriedRunTickets = alreadyMerged
+          ? []
+          : await findCarriedRunTickets({
+              ticketId: ticket.id,
+              worktreeId: featureWorktree.id,
+              featureWorktreePath: featureWorktree.path,
+              baseWorktreePath: baseWorktree.path
+            }).catch(() => [])
         if (cancelled) return
 
         setResolved({
@@ -267,7 +281,8 @@ export function MergeOnDoneDialog() {
           projectName: project?.name ?? null,
           baseDirty,
           branchStats,
-          alreadyMerged
+          alreadyMerged,
+          carriedRunTickets
         })
         setCommitMessage(ticket.title)
         setBaseCommitMessage('')
@@ -703,6 +718,20 @@ export function MergeOnDoneDialog() {
                 files={changed.files}
                 fileLabel={(n) => `${n} uncommitted file${n === 1 ? '' : 's'}`}
               />
+            )}
+
+            {step !== 'commit_base' && resolved.carriedRunTickets.length > 0 && (
+              <p
+                className="flex shrink-0 items-start gap-1.5 text-xs text-amber-500"
+                data-testid="merge-carried-run-tickets"
+              >
+                <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0" />
+                <span>
+                  This branch was cut from its document run, so the merge also brings{' '}
+                  {resolved.carriedRunTickets.join(', ')} into {resolved.baseBranch}, ahead of
+                  the run&rsquo;s own ticket.
+                </span>
+              </p>
             )}
 
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-border/60 bg-muted/10">

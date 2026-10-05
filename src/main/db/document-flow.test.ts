@@ -167,6 +167,15 @@ describe('document flow schema', () => {
     expect(migration?.down).toBe(DOCUMENT_FLOW_TABLES_DROP_SQL)
   })
 
+  it('ships the run ticket link as the v57 migration, a column added by the repair step', () => {
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(57)
+    const migration = MIGRATIONS.find((m) => m.version === 57)
+    expect(migration?.name).toBe('add_document_run_ticket')
+    // Comment only: safeAddColumn() adds the column, so a replay cannot fail on a duplicate.
+    expect(migration?.up.replace(/--.*$/gm, '').trim()).toBe('')
+    expect(DOCUMENT_FLOW_TABLES_SQL).toMatch(/ticket_id\s+TEXT DEFAULT NULL,\s+report/)
+  })
+
   it('keeps the migration versions strictly increasing', () => {
     for (let i = 1; i < MIGRATIONS.length; i++) {
       expect(MIGRATIONS[i].version).toBeGreaterThan(MIGRATIONS[i - 1].version)
@@ -247,6 +256,7 @@ describeIf('document runs', () => {
       maxParallel: 2,
       verifyCommand: 'pnpm test',
       interactive: false,
+      promptStyle: 'small',
       defaultLaunch: LAUNCH,
       generation: { provider: 'claude-code', model: 'sonnet', effort: 'high' },
       baseBranch: 'develop'
@@ -269,6 +279,7 @@ describeIf('document runs', () => {
       integration_branch: null,
       integration_worktree_id: null,
       integration_worktree_path: null,
+      ticket_id: null,
       report: null,
       runner_client_id: null,
       runner_heartbeat_at: null,
@@ -315,6 +326,7 @@ describeIf('document runs', () => {
       integration_branch: 'document/checkout',
       integration_worktree_id: 'wt-1',
       integration_worktree_path: '/worktrees/checkout',
+      ticket_id: 'ticket-run',
       report,
       started_at: '2026-03-01T10:30:00.000Z',
       finished_at: '2026-03-01T12:00:00.000Z'
@@ -331,6 +343,7 @@ describeIf('document runs', () => {
       integration_branch: 'document/checkout',
       integration_worktree_id: 'wt-1',
       integration_worktree_path: '/worktrees/checkout',
+      ticket_id: 'ticket-run',
       report,
       updated_at: updatedAt,
       started_at: '2026-03-01T10:30:00.000Z',

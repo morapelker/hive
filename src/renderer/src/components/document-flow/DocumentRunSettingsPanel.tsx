@@ -2,10 +2,12 @@ import { Minus, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
+import { cn } from '@/lib/utils'
 import { clampMaxParallel } from '@/stores/useDocumentFlowStore'
 import {
   DOCUMENT_RUN_MAX_PARALLEL_LIMIT,
-  type DocumentRunConfig
+  type DocumentRunConfig,
+  type DocumentRunPromptStyle
 } from '@shared/types/document-flow'
 import { LaunchConfigPicker } from './LaunchConfigPicker'
 import { defaultBaseBranchLabel } from './document-flow-ui'
@@ -13,6 +15,11 @@ import type { BaseBranchOptions } from './useBaseBranchOptions'
 
 const LABEL_CLASS = 'text-xs font-medium uppercase tracking-wider text-muted-foreground'
 const HELP_CLASS = 'text-[11px] leading-snug text-muted-foreground'
+
+const PROMPT_STYLE_OPTIONS: { value: DocumentRunPromptStyle; label: string }[] = [
+  { value: 'full', label: 'Full' },
+  { value: 'small', label: 'Small' }
+]
 
 interface DocumentRunSettingsPanelProps {
   branches: BaseBranchOptions
@@ -126,6 +133,37 @@ export function DocumentRunSettingsPanel({
       </div>
 
       <div className="space-y-1.5">
+        <p className={LABEL_CLASS}>Prompt</p>
+        <div className="flex gap-2" role="radiogroup" data-testid="docflow-prompt-style">
+          {PROMPT_STYLE_OPTIONS.map((option) => {
+            const selected = config.promptStyle === option.value
+            return (
+              <button
+                key={option.value}
+                type="button"
+                role="radio"
+                aria-checked={selected}
+                data-testid={`docflow-prompt-style-${option.value}`}
+                onClick={() => onChange({ promptStyle: option.value })}
+                className={cn(
+                  'rounded-md border px-3 py-1 text-[12px] transition-colors',
+                  selected
+                    ? 'border-primary bg-primary text-primary-foreground'
+                    : 'border-border bg-muted/50 text-muted-foreground hover:bg-accent/50'
+                )}
+              >
+                {option.label}
+              </button>
+            )
+          })}
+        </div>
+        <p className={HELP_CLASS}>
+          Full: agents research the spec with subagents before they implement. Small: no subagents,
+          for documents of small tasks.
+        </p>
+      </div>
+
+      <div className="space-y-1.5">
         <div className="flex items-center justify-between gap-3">
           <label htmlFor="docflow-interactive" className="text-[13px] text-foreground">
             Agents may ask me questions
@@ -140,7 +178,7 @@ export function DocumentRunSettingsPanel({
         </div>
         <p className={HELP_CLASS}>
           On: a ticket whose agent asks a question waits for you while the others continue. Off:
-          agents decide on their own and record their assumptions.
+          agents decide on their own and say what they decided.
         </p>
       </div>
     </div>

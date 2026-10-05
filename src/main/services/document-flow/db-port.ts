@@ -13,8 +13,8 @@ import type {
 } from '@shared/types/document-flow'
 
 // The persistence the document flow needs, as an interface: `DatabaseService` implements it
-// (document_runs, document_run_items, document_run_events, session_final_messages — schema v55),
-// and the service's tests substitute an in-memory fake.
+// (document_runs, document_run_items, document_run_events, session_final_messages — schema v52,
+// document_runs.ticket_id v53), and the service's tests substitute an in-memory fake.
 
 export interface DocumentRunCreate {
   /** Caller-supplied so the run directory can be named after it before the row exists. */
@@ -41,6 +41,7 @@ export interface DocumentRunRowPatch {
   integration_branch?: string | null
   integration_worktree_id?: string | null
   integration_worktree_path?: string | null
+  ticket_id?: string | null
   report?: DocumentRunReport | null
   started_at?: string | null
   finished_at?: string | null

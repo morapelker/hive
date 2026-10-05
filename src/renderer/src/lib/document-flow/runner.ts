@@ -12,7 +12,7 @@ import {
   buildConflictPrompt,
   buildContinuePrompt,
   buildFixTicket,
-  buildLaunchFooter,
+  buildLaunchPrompt,
   buildNudgePrompt
 } from '@shared/document-flow/prompts'
 import {
@@ -1081,24 +1081,16 @@ export class DocumentFlowRunner {
     const ticket = await this.findTicket(run.project_id, item.ticket_id)
     if (!ticket) return this.flag(op, 'Its ticket no longer exists.')
 
-    const byKey = new Map(detail.items.map((candidate) => [candidate.key, candidate]))
-    const footer = buildLaunchFooter({
+    const modelConfig = this.launchConfig(run, item)
+    // The agent gets the brief alone: the ticket's description and attachments stay on the
+    // board for people, and the agent reads the task in the document itself.
+    const prompt = buildLaunchPrompt({
       key: item.key,
       title: item.title,
-      documentTitle: run.title,
-      integrationBranch: branch,
-      baseBranch: run.base_branch ?? run.config.baseBranch ?? 'the base branch',
-      siblings: detail.items
-        .filter(
-          (other) => other.selected && other.id !== item.id && !isTerminalItemStatus(other.status)
-        )
-        .map(ticketRef),
-      mergedDependencies: item.depends_on
-        .map((key) => byKey.get(key))
-        .filter((dependency): dependency is DocumentRunItem => dependency?.status === 'merged')
-        .map(ticketRef),
+      sourcePath: run.source_path,
+      promptStyle: run.config.promptStyle,
       interactive: run.config.interactive,
-      hasMigration: item.has_migration
+      sdk: modelConfig.sdk
     })
 
     const result = await this.ports.launchTicket({
@@ -1107,18 +1099,20 @@ export class DocumentFlowRunner {
       ticketTitle: ticket.title,
       // `baseRef` cuts the branch from the verified integration commit without copying the
       // integration worktree's uncommitted files; no auto-pull, which could move the user's
-      // checkout.
+      // checkout. The source branch is only what the worktree records as its merge target:
+      // the run's base branch, so the board merges this ticket (a follow-up after the run,
+      // say) straight into it, also once the integration branch is gone.
       worktree: {
         type: 'new',
-        sourceBranch: branch,
+        sourceBranch: run.base_branch ?? branch,
         baseRef,
         autoPull: false,
         select: false,
         nameHint: ticketBranchHint(item.key, item.title)
       },
-      prompt: this.ports.buildTicketPrompt(ticket) + footer,
+      prompt,
       mode: 'build',
-      modelConfig: this.launchConfig(run, item),
+      modelConfig,
       goalMode: false,
       goalSuccessCriteria: null,
       ticketUpdateExtras: this.ticketExtras(run.project_id)
@@ -1264,7 +1258,7 @@ export class DocumentFlowRunner {
     const items = this.ports.getRun(op.runId)?.items ?? []
     const attempt = attempts + 1
     // Only what landed after this ticket's branch was cut is news to its session; what was
-    // merged before is on its branch already (the launch footer said so).
+    // merged before is on its branch already.
     const cutAt = toMs(item.started_at)
     await this.followUp(
       op,

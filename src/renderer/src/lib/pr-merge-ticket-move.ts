@@ -2,6 +2,8 @@ import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { kanbanApi } from '@/api/kanban-api'
+import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
+import { documentRunIdOf, isActiveRunStatus } from '@shared/document-flow/run-ticket'
 import type { KanbanTicket } from '../../../main/db/types'
 
 function resolveProjectIdForWorktree(worktreeId: string): string | null {
@@ -25,9 +27,17 @@ export async function moveWorktreeTicketsToMerged(
   try {
     if (!useSettingsStore.getState().showMergedColumn) return
 
+    // The ticket of a document run stays In Progress for as long as its run is on
+    const isRunningDocumentRun = (t: KanbanTicket): boolean => {
+      const runId = documentRunIdOf(t)
+      const run = runId ? useDocumentFlowStore.getState().runsById[runId]?.run : null
+      return !!run && isActiveRunStatus(run.status)
+    }
+
     const shouldMove = (t: KanbanTicket): boolean =>
       t.worktree_id === worktreeId &&
       !t.archived_at &&
+      !isRunningDocumentRun(t) &&
       t.column !== 'merged' &&
       t.column !== 'done' &&
       (prNumber == null || t.github_pr_number == null || t.github_pr_number === prNumber)

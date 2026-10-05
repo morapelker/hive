@@ -5,28 +5,26 @@ import {
   buildConflictPrompt,
   buildContinuePrompt,
   buildFixTicket,
-  buildLaunchFooter,
+  buildLaunchPrompt,
   buildNudgePrompt,
+  toFileUrl,
   type ConflictPromptInput,
   type FixTicketInput,
-  type LaunchFooterInput
+  type LaunchPromptInput
 } from './prompts'
 
-const launch = (overrides: Partial<LaunchFooterInput> = {}): LaunchFooterInput => ({
-  key: 'A2',
+const launch = (overrides: Partial<LaunchPromptInput> = {}): LaunchPromptInput => ({
+  key: '11',
   title: 'Counters',
-  documentTitle: 'Factory area · Changes round 2',
-  integrationBranch: 'doc-factory-area-changes-round-2',
-  baseBranch: 'main',
-  siblings: [
-    { key: 'A1', title: 'Chinese translation' },
-    { key: 'B1', title: 'Tabs' }
-  ],
-  mergedDependencies: [{ key: 'A3', title: 'Ramp-up rule' }],
+  sourcePath: '/Users/mor/Desktop/brand-os-bugs (2).html',
+  promptStyle: 'full',
   interactive: true,
-  hasMigration: false,
+  sdk: 'claude-code',
   ...overrides
 })
+
+const GUARD_LINE =
+  'implement only this task, commit your work on this branch, do not push or switch branches, and do not run migrations against any database.'
 
 const conflict = (overrides: Partial<ConflictPromptInput> = {}): ConflictPromptInput => ({
   integrationBranch: 'doc-factory',
@@ -51,81 +49,104 @@ const fix = (overrides: Partial<FixTicketInput> = {}): FixTicketInput => ({
 describe('STATUS_FOOTER_INSTRUCTIONS', () => {
   it('asks for the block the classifier and the footer parser read', () => {
     const lines = STATUS_FOOTER_INSTRUCTIONS.split('\n')
-    expect(lines).toContain('STATUS: DONE | NEEDS_INPUT | BLOCKED')
-    for (const label of ['SUMMARY', 'MIGRATIONS', 'MANUAL STEPS', 'ASSUMPTIONS', 'QUESTIONS']) {
+    expect(lines).toContain('STATUS: DONE | BLOCKED')
+    for (const label of ['SUMMARY', 'MIGRATIONS', 'MANUAL STEPS', 'ASSUMPTIONS']) {
       expect(lines.some((line) => line.startsWith(`${label}: `))).toBe(true)
     }
     expect(STATUS_FOOTER_INSTRUCTIONS).toContain('Use DONE only when')
   })
+
+  it('sends questions to the question tool instead of offering a way to end on one', () => {
+    expect(STATUS_FOOTER_INSTRUCTIONS).toContain(
+      'ask through your question tool rather than in the text of your message'
+    )
+    expect(STATUS_FOOTER_INSTRUCTIONS).not.toContain('NEEDS_INPUT')
+    expect(STATUS_FOOTER_INSTRUCTIONS).not.toContain('QUESTIONS')
+  })
 })
 
-describe('buildLaunchFooter', () => {
-  it('is appended after the ticket text behind a rule', () => {
-    const footer = buildLaunchFooter(launch())
-    expect(footer.startsWith('\n\n---\n')).toBe(true)
-    expect(footer).toContain(
-      'You are implementing task A2 of the document "Factory area · Changes round 2"'
+describe('toFileUrl', () => {
+  it.each([
+    [
+      '/Users/mor/Desktop/brand-os-bugs (2).html',
+      'file:///Users/mor/Desktop/brand-os-bugs%20(2).html'
+    ],
+    ['/docs/checkout.html', 'file:///docs/checkout.html'],
+    ['/docs/what? #1 100%.md', 'file:///docs/what%3F%20%231%20100%25.md'],
+    ['/docs/מפרט é.html', 'file:///docs/%D7%9E%D7%A4%D7%A8%D7%98%20%C3%A9.html'],
+    ['C:\\Users\\mor\\spec v2.html', 'file:///C:/Users/mor/spec%20v2.html']
+  ])('encodes %s', (path, url) => {
+    expect(toFileUrl(path)).toBe(url)
+  })
+})
+
+describe('buildLaunchPrompt', () => {
+  it('is the brief a person would type, plus one guard line', () => {
+    expect(buildLaunchPrompt(launch())).toBe(
+      [
+        'implement task 11 ("Counters") from the file:///Users/mor/Desktop/brand-os-bugs%20(2).html',
+        'use subagents to research and read the spec attached there, read the description of it, understand the requirements, research best practices regarding it',
+        'if you have any clarifications you might need - use the AskUserQuestion tool to ask me.',
+        'then - implement this',
+        GUARD_LINE
+      ].join('\n\n')
     )
-    expect(footer).toContain('Your branch was cut from `doc-factory-area-changes-round-2`')
-    expect(footer).toContain('- Implement only A2.')
   })
 
-  it('lets an interactive run ask, and tells an unattended one to decide', () => {
-    const interactive = buildLaunchFooter(launch({ interactive: true }))
-    expect(interactive).toContain('ask with the AskUserQuestion tool')
-    expect(interactive).not.toContain('Nobody is watching this run')
-
-    const unattended = buildLaunchFooter(launch({ interactive: false }))
-    expect(unattended).toContain('Nobody is watching this run. Do not stop to ask questions')
-    expect(unattended).not.toContain('AskUserQuestion')
-    expect(unattended).toContain('record the decision under ASSUMPTIONS')
-    expect(interactive).toContain('record the decision under ASSUMPTIONS')
+  it('drops only the subagents paragraph in the small style', () => {
+    const full = buildLaunchPrompt(launch()).split('\n\n')
+    const small = buildLaunchPrompt(launch({ promptStyle: 'small' })).split('\n\n')
+    expect(small).toEqual(full.filter((paragraph) => !paragraph.startsWith('use subagents')))
+    expect(small).toHaveLength(full.length - 1)
   })
 
-  it('lists siblings only when there are some', () => {
-    const withSiblings = buildLaunchFooter(launch())
-    expect(withSiblings).toContain(
-      'merged with yours: A1 (Chinese translation), B1 (Tabs). Do not implement them.'
-    )
-    const alone = buildLaunchFooter(launch({ siblings: [] }))
-    expect(alone).not.toContain('Other tasks of this document')
-    expect(alone).not.toContain('Do not implement them')
-  })
-
-  it('lists merged dependencies only when there are some', () => {
-    const withMerged = buildLaunchFooter(launch())
-    expect(withMerged).toContain(
-      '- Already on your branch (merged before you started): A3 (Ramp-up rule). Build on that work'
-    )
-    const none = buildLaunchFooter(launch({ mergedDependencies: [] }))
-    expect(none).not.toContain('Already on your branch')
-  })
-
-  it('names the base branch in the line that forbids changing it', () => {
-    const footer = buildLaunchFooter(launch({ baseBranch: 'release/2026-10' }))
-    const line = footer.split('\n').find((candidate) => candidate.includes('Never commit to'))
-    expect(line).toBe(
-      '- Do not push. Do not switch branches. Never commit to, merge into, or otherwise change `release/2026-10`.'
-    )
-    expect(footer).not.toContain('`main`')
-  })
-
-  it('words the migration rule by whether the ticket is known to need one', () => {
-    const known = buildLaunchFooter(launch({ hasMigration: true }))
-    const unknown = buildLaunchFooter(launch({ hasMigration: false }))
-    expect(known).toContain('- Schema or data changes: add a NEW migration')
-    expect(known).toContain('Never edit an existing migration')
-    expect(unknown).toContain('- If you find you need a schema or data change, add a NEW migration')
-    for (const footer of [known, unknown]) {
-      expect(footer).toContain('never run')
-      expect(footer).toContain('under MIGRATIONS')
+  it('tells an unattended run to decide instead of asking', () => {
+    for (const promptStyle of ['full', 'small'] as const) {
+      const asking = buildLaunchPrompt(launch({ promptStyle })).split('\n\n')
+      const unattended = buildLaunchPrompt(launch({ promptStyle, interactive: false }))
+      expect(unattended.split('\n\n')).toEqual(
+        asking.map((paragraph) =>
+          paragraph.startsWith('if you have any clarifications')
+            ? 'do not stop to ask me for clarifications - decide yourself, and mention the decisions you made in your final message.'
+            : paragraph
+        )
+      )
+      expect(unattended).not.toContain('AskUserQuestion')
     }
   })
 
-  it('asks for a commit and ends with the status footer', () => {
-    const footer = buildLaunchFooter(launch())
-    expect(footer).toContain('- Commit all of your work on this branch')
-    expect(footer.endsWith(`\n\n${STATUS_FOOTER_INSTRUCTIONS}`)).toBe(true)
+  it.each([
+    ['claude-code', 'AskUserQuestion'],
+    ['claude-code-cli', 'AskUserQuestion'],
+    ['codex', 'request_user_input'],
+    ['codex-cli', 'request_user_input'],
+    ['opencode', 'question']
+  ] as const)('names the question tool of %s', (sdk, tool) => {
+    expect(buildLaunchPrompt(launch({ sdk }))).toContain(
+      `\n\nif you have any clarifications you might need - use the ${tool} tool to ask me.\n\n`
+    )
+  })
+
+  it('keeps the title on the first line', () => {
+    const prompt = buildLaunchPrompt(launch({ key: 'T3', title: ' Export\n dialog ' }))
+    expect(prompt.split('\n')[0]).toBe(
+      'implement task T3 ("Export dialog") from the file:///Users/mor/Desktop/brand-os-bugs%20(2).html'
+    )
+    expect(buildLaunchPrompt(launch({ title: '  ' })).split('\n')[0]).toBe(
+      'implement task 11 from the file:///Users/mor/Desktop/brand-os-bugs%20(2).html'
+    )
+  })
+
+  it('leaves the how to the agent: no status block, no file lists, no sibling tickets', () => {
+    for (const promptStyle of ['full', 'small'] as const) {
+      for (const interactive of [true, false]) {
+        const prompt = buildLaunchPrompt(launch({ promptStyle, interactive }))
+        expect(prompt).not.toContain('STATUS')
+        expect(prompt).not.toContain('QUESTIONS')
+        expect(prompt).not.toContain('<ticket')
+        expect(prompt.endsWith(`\n\n${GUARD_LINE}`)).toBe(true)
+      }
+    }
   })
 })
 

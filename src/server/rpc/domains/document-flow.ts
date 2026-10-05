@@ -131,6 +131,7 @@ const configPatchSchema = z
     maxParallel: z.number().optional(),
     verifyCommand: z.string().nullable().optional(),
     interactive: z.boolean().optional(),
+    promptStyle: z.enum(['full', 'small']).optional(),
     defaultLaunch: launchConfigSchema.nullable().optional(),
     generation: generationSchema.nullable().optional(),
     // It ends up as a git argument: no whitespace, and nothing git could read as an option.

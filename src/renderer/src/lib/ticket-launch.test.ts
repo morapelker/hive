@@ -216,6 +216,28 @@ describe('launchTicketWithModel', () => {
     useWorktreeStatusStore.setState(initialWorktreeStatusState, true)
   })
 
+  it('refuses the ticket of a document run before creating anything', async () => {
+    const { createSession, createWorktreeFromBranch, updateTicket } = setupStores()
+    useKanbanStore.setState({
+      tickets: new Map([
+        [
+          'project-1',
+          [{ id: 'ticket-1', external_provider: 'document-run', external_id: 'run-1' }]
+        ]
+      ]) as never
+    })
+
+    const result = await launchTicketWithModel(baseSpec())
+
+    expect(result).toEqual({
+      success: false,
+      error: 'The ticket of a document run cannot be launched.'
+    })
+    expect(createSession).not.toHaveBeenCalled()
+    expect(createWorktreeFromBranch).not.toHaveBeenCalled()
+    expect(updateTicket).not.toHaveBeenCalled()
+  })
+
   it('returns sessionId/worktreeId and stamps badge fields + extras on success', async () => {
     const { updateTicket } = setupStores()
 

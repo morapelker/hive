@@ -4,6 +4,8 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
+import { DEFAULT_DOCUMENT_RUN_CONFIG } from '@shared/types/document-flow'
+
 import { CURRENT_SCHEMA_VERSION } from './schema'
 import { DatabaseService } from './database'
 
@@ -897,6 +899,107 @@ describeIf('database migration safety', () => {
       expect(() => db2.init()).not.toThrow()
       expect(db2.getSchemaVersion()).toBe(CURRENT_SCHEMA_VERSION)
       db2.close()
+    })
+  })
+
+  describe('document run ticket (v57)', () => {
+    it('adds document_runs.ticket_id on a fresh database', () => {
+      const db = new DatabaseService(makeDbPath())
+      db.init()
+
+      expect(db.getSchemaVersion()).toBe(CURRENT_SCHEMA_VERSION)
+      expect(columnNames(db, 'document_runs')).toEqual(expect.arrayContaining(['ticket_id']))
+
+      db.close()
+    })
+
+    it('upgrades a v56-shaped database to v57 keeping its runs, and links a ticket afterwards', () => {
+      const dbPath = makeDbPath()
+      const seeded = new DatabaseService(dbPath)
+      seeded.init()
+      const projectId = seeded.createProject({ name: 'repo', path: '/tmp/run-ticket-repo' }).id
+      seeded.createDocumentRun({
+        id: 'run-1',
+        project_id: projectId,
+        title: 'Checkout spec',
+        source_path: '/docs/checkout.html',
+        run_dir: '/runs/checkout',
+        status: 'extracting',
+        config: DEFAULT_DOCUMENT_RUN_CONFIG
+      })
+      seeded.updateDocumentRun('run-1', {
+        status: 'completed',
+        base_branch: 'main',
+        integration_branch: 'doc-checkout',
+        integration_worktree_id: 'wt-integration'
+      })
+      // v56 shape: document_runs without the ticket link.
+      seeded.getRawDb().exec('ALTER TABLE document_runs DROP COLUMN ticket_id')
+      seeded.setSetting('schema_version', '56')
+      seeded.close()
+
+      const db = new DatabaseService(dbPath)
+      db.init()
+
+      expect(db.getSchemaVersion()).toBe(CURRENT_SCHEMA_VERSION)
+      expect(columnNames(db, 'document_runs')).toEqual(expect.arrayContaining(['ticket_id']))
+      expect(db.getDocumentRun('run-1')).toMatchObject({
+        status: 'completed',
+        base_branch: 'main',
+        integration_branch: 'doc-checkout',
+        integration_worktree_id: 'wt-integration',
+        ticket_id: null
+      })
+
+      expect(db.updateDocumentRun('run-1', { ticket_id: 'ticket-run' })?.ticket_id).toBe(
+        'ticket-run'
+      )
+      expect(db.updateDocumentRun('run-1', { ticket_id: null })?.ticket_id).toBeNull()
+
+      // Re-running init() on the upgraded database is a no-op.
+      db.close()
+      const db2 = new DatabaseService(dbPath)
+      expect(() => db2.init()).not.toThrow()
+      expect(db2.getSchemaVersion()).toBe(CURRENT_SCHEMA_VERSION)
+      db2.close()
+    })
+
+    it('repairs the column even if schema_version was already advanced', () => {
+      const dbPath = makeDbPath()
+      const seeded = new DatabaseService(dbPath)
+      seeded.init()
+      seeded.getRawDb().exec('ALTER TABLE document_runs DROP COLUMN ticket_id')
+      seeded.close()
+
+      const db = new DatabaseService(dbPath)
+      db.init()
+
+      expect(columnNames(db, 'document_runs')).toEqual(expect.arrayContaining(['ticket_id']))
+      db.close()
+    })
+
+    it('setWorktreeBaseBranch re-points one worktree and reports an unknown id', () => {
+      const db = new DatabaseService(makeDbPath())
+      db.init()
+      const projectId = db.createProject({ name: 'repo', path: '/tmp/run-ticket-base' }).id
+      const worktree = (name: string): string =>
+        db.createWorktree({
+          project_id: projectId,
+          name,
+          branch_name: name,
+          path: `/tmp/run-ticket-base/${name}`,
+          base_branch: 'doc-checkout'
+        }).id
+      const task = worktree('a1-task')
+      const other = worktree('a2-task')
+
+      expect(db.setWorktreeBaseBranch(task, 'main')).toBe(true)
+
+      expect(db.getWorktree(task)?.base_branch).toBe('main')
+      expect(db.getWorktree(other)?.base_branch).toBe('doc-checkout')
+      expect(db.setWorktreeBaseBranch('no-such-worktree', 'main')).toBe(false)
+
+      db.close()
     })
   })
 })

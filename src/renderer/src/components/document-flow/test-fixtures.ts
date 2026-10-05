@@ -35,6 +35,7 @@ export function makeRun(overrides: Partial<DocumentRun> = {}): DocumentRun {
     integration_branch: null,
     integration_worktree_id: null,
     integration_worktree_path: null,
+    ticket_id: null,
     report: null,
     runner_client_id: null,
     runner_heartbeat_at: null,

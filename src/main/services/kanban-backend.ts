@@ -12,6 +12,7 @@ import {
 } from 'node:fs/promises'
 import { basename, dirname, extname, join } from 'node:path'
 import YAML from 'yaml'
+import { isDocumentRunTicket } from '@shared/document-flow/run-ticket'
 
 import { getDatabase } from '../db'
 import { normalizeKanbanBatchDrafts } from '../db/kanban-batch'
@@ -1992,6 +1993,10 @@ export async function moveKanbanTicketToProject(
   if (!sourceTicket) return null
   requireProject(targetProjectId)
   if (sourceProjectId === targetProjectId) return sourceTicket
+  // Its run, integration worktree and task tickets all stay in the source project.
+  if (isDocumentRunTicket(sourceTicket)) {
+    throw new Error('The ticket of a document run cannot be moved to another project.')
+  }
 
   const sourceMode = getProjectStorageMode(sourceProjectId)
   const targetMode = getProjectStorageMode(targetProjectId)

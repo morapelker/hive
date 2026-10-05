@@ -378,6 +378,10 @@ function LaunchConfirmDialog({
         ? `${describeLaunchConfig(config.defaultLaunch)} (${pluralize(ownModelCount, 'ticket')} with their own)`
         : describeLaunchConfig(config.defaultLaunch)
     ],
+    [
+      'Prompt',
+      config.promptStyle === 'small' ? 'small (no subagents)' : 'full (research with subagents)'
+    ],
     ['Questions', config.interactive ? 'agents may ask you' : 'agents decide on their own']
   ]
 

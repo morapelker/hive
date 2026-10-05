@@ -103,6 +103,28 @@ describe('openTiledInProgressSessions', () => {
     terminalApiMocks.getLiveTerminalIds.mockResolvedValue([])
   })
 
+  it.each([
+    ['the tickets a column passes', true],
+    ['the store fallback', false]
+  ])('gives the ticket of a document run no tile, from %s', async (_source, passTickets) => {
+    const tickets = [
+      makeTicket({ id: 't-task', title: 'Task' }),
+      makeTicket({
+        id: 't-run',
+        title: 'Document run',
+        external_provider: 'document-run',
+        external_id: 'run-1'
+      })
+    ]
+    useProjectStore.setState({ projects: [{ id: 'p1', name: 'Acme' }] as never })
+    useKanbanStore.setState({ tickets: new Map([['p1', tickets]]) })
+
+    await openTiledInProgressSessions({ projectId: 'p1' }, passTickets ? tickets : undefined)
+
+    const tiles = useSessionStore.getState().tiledSessionsTab?.tiles ?? []
+    expect(tiles.map((t) => t.ticketIds)).toEqual([['t-task']])
+  })
+
   it('builds a snapshot for a single-project board (no project names on tiles)', async () => {
     useProjectStore.setState({
       projects: [{ id: 'p1', name: 'Acme' }] as never

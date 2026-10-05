@@ -107,6 +107,20 @@ export function isItemWaitingOnUser(
 }
 
 /**
+ * Items with an agent session at work right now: launching or working, or resolving conflicts
+ * or fixing checks without having stopped for the user. Checking, merging and verifying are
+ * the orchestrator's own steps and hold no live session.
+ */
+export function countRunningAgents(items: readonly DocumentRunItem[]): number {
+  return items.filter((item) => {
+    if (!item.selected) return false
+    if (item.status === 'launching' || item.status === 'running') return true
+    if (item.status !== 'resolving_conflicts' && item.status !== 'fixing') return false
+    return !isItemWaitingOnUser(item)
+  }).length
+}
+
+/**
  * The run cannot advance without the user: nothing is launching, working or merging, and
  * whatever is left is waiting on them — directly, behind an item that is, or (given the
  * slot count) because every slot is held by an item waiting on them.

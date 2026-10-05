@@ -6,6 +6,9 @@ import {
   type DocumentRunItemStatus
 } from '../types/document-flow'
 import {
+  USER_INTERRUPT_DETAIL,
+  WAITING_PREFIX,
+  countRunningAgents,
   integrationBranchHint,
   isDependencySatisfied,
   isMergeInFlight,
@@ -309,6 +312,43 @@ describe('isRunWaitingOnUser', () => {
     expect(isRunWaitingOnUser([])).toBe(false)
     expect(isRunWaitingOnUser([item('A', 'merged'), item('B', 'skipped')])).toBe(false)
     expect(isRunWaitingOnUser([item('A', 'needs_input', { selected: false })])).toBe(false)
+  })
+})
+
+describe('countRunningAgents', () => {
+  it('counts the sessions at work, not the steps the orchestrator runs itself', () => {
+    const items = [
+      item('A', 'launching'),
+      item('B', 'running'),
+      item('C', 'resolving_conflicts'),
+      item('D', 'fixing', { status_detail: 'Fixing the failed checks.' }),
+      item('E', 'checking'),
+      item('F', 'ready'),
+      item('G', 'merging'),
+      item('H', 'verifying'),
+      item('I', 'pending'),
+      item('J', 'needs_input'),
+      item('K', 'needs_attention'),
+      item('L', 'merged'),
+      item('M', 'skipped'),
+      item('N', 'cancelled')
+    ]
+    expect(countRunningAgents(items)).toBe(4)
+  })
+
+  it('leaves out a conflict or fix session that stopped for the user', () => {
+    expect(
+      countRunningAgents([
+        item('A', 'resolving_conflicts', { status_detail: `${WAITING_PREFIX}which one wins?` }),
+        item('B', 'fixing', { status_detail: USER_INTERRUPT_DETAIL }),
+        item('C', 'fixing')
+      ])
+    ).toBe(1)
+  })
+
+  it('ignores items that are not part of the run', () => {
+    expect(countRunningAgents([item('A', 'running', { selected: false })])).toBe(0)
+    expect(countRunningAgents([])).toBe(0)
   })
 })
 

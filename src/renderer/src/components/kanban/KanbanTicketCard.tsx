@@ -129,6 +129,14 @@ import { formatTokenCount, formatTransitionAge } from '@/lib/format-utils'
 import { useTimerTickStore } from '@/stores/useTimerTickStore'
 import { canToggleAutoApprovePlan } from '@/lib/plan-auto-approve'
 import { isAgentCli } from '@shared/types/agent-sdk'
+import { documentRunIdOf } from '@shared/document-flow/run-ticket'
+import { DocumentRunTicketBody } from '@/components/document-flow/DocumentRunTicketBody'
+import {
+  documentRunTicketRailClass,
+  useDocumentRunTicket
+} from '@/components/document-flow/useDocumentRunTicket'
+import { isActiveRunStatus } from '@/components/document-flow/document-flow-ui'
+import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import { terminalApi } from '@/api/terminal-api'
 import type { ProjectShellCommand } from '@shared/lib/shell-commands'
 import {
@@ -206,7 +214,13 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   const activeRemoteLaunch =
     remoteLaunchInfo && !remoteLaunchInfo.stoppedAt ? remoteLaunchInfo : null
   const hasNote = !!ticket.note && ticket.note.trim().length > 0
-  const isExternalTicket = !!ticket.external_provider
+  // The ticket of a document run: a ticket like any other on the board (drag, merge on Done),
+  // but it shows the run and opens the run dashboard; it has no session to launch or continue.
+  const documentRunId = documentRunIdOf(ticket)
+  const isDocumentRunTicket = documentRunId !== null
+  const documentRunView = useDocumentRunTicket(documentRunId, ticket.column)
+  const documentRunRailClass = documentRunView ? documentRunTicketRailClass(documentRunView) : null
+  const isExternalTicket = !!ticket.external_provider && !isDocumentRunTicket
 
   // Board search (Cmd+F): highlight title matches; when only the description
   // matched (toggle on), surface a one-line snippet under the title
@@ -983,12 +997,22 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
         // Unknown project — nothing to select; fall through to the modal
       }
 
+      // A run's ticket opens the run, never the ticket modal and its session launcher
+      if (documentRunId) {
+        if (documentRunView?.missing) {
+          toast.info('The record of this document run was deleted. Only its ticket is left.')
+          return
+        }
+        useDocumentFlowStore.getState().openDashboard(documentRunId)
+        return
+      }
+
       useKanbanStore.getState().setSelectedTicketRef({
         projectId: ticket.project_id,
         ticketId: ticket.id
       })
     },
-    [ticket.id, ticket.worktree_id, ticket.project_id, ticket.current_session_id, isPinnedMode, connectionId, connectionSession, recordBoardTelegramTarget, blockingDiagnostic]
+    [ticket.id, ticket.worktree_id, ticket.project_id, ticket.current_session_id, isPinnedMode, connectionId, connectionSession, recordBoardTelegramTarget, blockingDiagnostic, documentRunId, documentRunView?.missing]
   )
 
   // ── Right-button drag into In Progress — start immediately with the
@@ -996,6 +1020,8 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   const handleRightDrop = useCallback(
     (column: string | null) => {
       if (column !== 'in_progress' || ticket.column === 'in_progress') return
+      // The run's ticket has no session of its own to launch
+      if (isDocumentRunTicket) return
       if (isBlocked) {
         toast.warning('Ticket is blocked — resolve its dependencies first')
         return
@@ -1005,11 +1031,11 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
       if (connectionId) void quickLaunchTicketOnConnection(ticket, connectionId)
       else void quickLaunchTicket(ticket)
     },
-    [ticket, isBlocked, connectionId]
+    [ticket, isBlocked, connectionId, isDocumentRunTicket]
   )
   const { onMouseDown: rightDragMouseDown, onContextMenuCapture: rightDragContextMenuCapture } =
     useRightButtonDrag({
-      enabled: !isArchived && !blockingDiagnostic,
+      enabled: !isArchived && !blockingDiagnostic && !isDocumentRunTicket,
       onDrop: handleRightDrop,
       // Show the default model + effort the drop will launch with, riding
       // along under the ghost so it's clear before release
@@ -1065,12 +1091,27 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   const handleDelete = useCallback(async () => {
     try {
       await useKanbanStore.getState().deleteTicket(ticket.id, ticket.project_id)
-      toast.success('Ticket deleted')
-    } catch {
-      toast.error('Failed to delete ticket')
+      toast.success(isDocumentRunTicket ? 'Document run deleted' : 'Ticket deleted')
+    } catch (err) {
+      // The server refuses to delete the ticket of a run that is still running, and says so
+      toast.error(
+        isDocumentRunTicket && err instanceof Error && err.message
+          ? err.message
+          : 'Failed to delete ticket'
+      )
     }
     setShowDeleteConfirm(false)
-  }, [ticket.id, ticket.project_id])
+  }, [ticket.id, ticket.project_id, isDocumentRunTicket])
+
+  // Deleting the ticket of a run that is still on is refused before asking to confirm
+  const requestDelete = useCallback(() => {
+    const run = documentRunId ? useDocumentFlowStore.getState().runsById[documentRunId]?.run : null
+    if (run && isActiveRunStatus(run.status)) {
+      toast.warning('Cancel the document run before deleting its ticket.')
+      return
+    }
+    setShowDeleteConfirm(true)
+  }, [documentRunId])
 
   const handleStopRemoteSession = useCallback(async () => {
     const sessionId = ticket.current_session_id
@@ -1471,6 +1512,8 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                   // rails and mark stripes until the session is relaunched
                   !hasHoverHighlight && isError && '!border-red-500/70 ring-1 ring-red-500/25',
                   !hasHoverHighlight && !isError && borderState === 'default' && 'border-border',
+                  // A document run's ticket carries the run's state in the same rail
+                  !hasHoverHighlight && !isError && documentRunRailClass,
                   // Mode cue lives in a 2px left rail; the perimeter stays neutral
                   !hasHoverHighlight && !isError && borderState === 'blue' && 'border-border border-l-2 !border-l-blue-500/60',
                   !hasHoverHighlight && !isError && borderState === 'violet' && 'border-border border-l-2 !border-l-violet-500/60',
@@ -1524,7 +1567,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                     </TooltipContent>
                   </Tooltip>
                 )}
-                {ticket.external_provider && (
+                {isExternalTicket && ticket.external_provider && (
                   <button
                     onClick={(e) => {
                       e.stopPropagation()
@@ -1540,6 +1583,11 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                 )}
               </div>
             </div>
+
+            {/* Document run: marker, progress and state of the run this ticket stands for */}
+            {documentRunId && documentRunView && (
+              <DocumentRunTicketBody runId={documentRunId} view={documentRunView} />
+            )}
 
             {/* Description match snippet (board search) */}
             {descriptionSnippet && (
@@ -2081,6 +2129,17 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             </>
           ) : (
             <>
+          {documentRunId && (
+            <ContextMenuItem
+              data-testid="ctx-open-document-run"
+              onClick={() => useDocumentFlowStore.getState().openDashboard(documentRunId)}
+              className="gap-2"
+            >
+              <FileText className="h-3.5 w-3.5" />
+              Open document run
+            </ContextMenuItem>
+          )}
+
           {/* Todo tickets without worktree: pre-assign */}
           {isSimpleTicket && isTodo && !ticket.worktree_id && !isConnectionProjectTicket && (
             <ContextMenuItem
@@ -2094,7 +2153,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
           )}
 
           {/* Todo tickets WITH pre-assigned worktree: change or unassign */}
-          {isSimpleTicket && isTodo && ticket.worktree_id && (
+          {isSimpleTicket && isTodo && ticket.worktree_id && !isDocumentRunTicket && (
             <>
               <ContextMenuItem
                 data-testid="ctx-change-worktree"
@@ -2116,7 +2175,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
           )}
 
           {/* Non-todo simple tickets: full assign flow (existing behavior) */}
-          {isSimpleTicket && !isTodo && !isConnectionProjectTicket && (
+          {isSimpleTicket && !isTodo && !isConnectionProjectTicket && !isDocumentRunTicket && (
             <ContextMenuItem
               data-testid="ctx-assign-worktree"
               onClick={() => setShowWorktreePicker(true)}
@@ -2218,7 +2277,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             </ContextMenuItem>
           )}
 
-          {canToggleAutoApprove && (
+          {canToggleAutoApprove && !isDocumentRunTicket && (
             <ContextMenuItem
               data-testid="ctx-toggle-auto-approve"
               onClick={() => void handleToggleAutoApprove()}
@@ -2258,72 +2317,78 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             </ContextMenuSubContent>
           </ContextMenuSub>
 
-          <ContextMenuSub>
-            <ContextMenuSubTrigger data-testid="ctx-dependencies-submenu" className="gap-2">
-              <Link2 className="h-3.5 w-3.5" />
-              Dependencies
-            </ContextMenuSubTrigger>
-            <ContextMenuSubContent>
-              <ContextMenuItem
-                data-testid="ctx-add-dependency"
-                onClick={() => useKanbanStore.getState().enterDependencyMode(ticket.id, ticket.project_id)}
-                className="gap-2"
-              >
-                <Plus className="h-3.5 w-3.5" />
-                Add dependency...
-              </ContextMenuItem>
-              {blockerTickets.length > 0 && <ContextMenuSeparator />}
-              {blockerTickets.map(blocker => (
+          {/* Dependencies, duplicates, favorites and other projects are for tickets an agent
+              works on; a run's ticket stands for its run and stays with it */}
+          {!isDocumentRunTicket && (
+            <>
+            <ContextMenuSub>
+              <ContextMenuSubTrigger data-testid="ctx-dependencies-submenu" className="gap-2">
+                <Link2 className="h-3.5 w-3.5" />
+                Dependencies
+              </ContextMenuSubTrigger>
+              <ContextMenuSubContent>
                 <ContextMenuItem
-                  key={`${blocker.project_id}:${blocker.id}`}
-                  className="gap-2 justify-between"
-                  onSelect={(e) => {
-                    e.preventDefault()
-                    useKanbanStore.getState().removeDependency(
-                      { projectId: ticket.project_id, ticketId: ticket.id },
-                      { projectId: blocker.project_id, ticketId: blocker.id }
-                    )
-                  }}
+                  data-testid="ctx-add-dependency"
+                  onClick={() => useKanbanStore.getState().enterDependencyMode(ticket.id, ticket.project_id)}
+                  className="gap-2"
                 >
-                  <span className="truncate max-w-[180px]">{blocker.title}</span>
-                  <X className="h-3 w-3 shrink-0 text-muted-foreground hover:text-foreground" />
+                  <Plus className="h-3.5 w-3.5" />
+                  Add dependency...
                 </ContextMenuItem>
-              ))}
-              {blockerTickets.length === 0 && (
-                <ContextMenuItem disabled className="text-muted-foreground text-xs">
-                  (No dependencies)
-                </ContextMenuItem>
-              )}
-            </ContextMenuSubContent>
-          </ContextMenuSub>
+                {blockerTickets.length > 0 && <ContextMenuSeparator />}
+                {blockerTickets.map(blocker => (
+                  <ContextMenuItem
+                    key={`${blocker.project_id}:${blocker.id}`}
+                    className="gap-2 justify-between"
+                    onSelect={(e) => {
+                      e.preventDefault()
+                      useKanbanStore.getState().removeDependency(
+                        { projectId: ticket.project_id, ticketId: ticket.id },
+                        { projectId: blocker.project_id, ticketId: blocker.id }
+                      )
+                    }}
+                  >
+                    <span className="truncate max-w-[180px]">{blocker.title}</span>
+                    <X className="h-3 w-3 shrink-0 text-muted-foreground hover:text-foreground" />
+                  </ContextMenuItem>
+                ))}
+                {blockerTickets.length === 0 && (
+                  <ContextMenuItem disabled className="text-muted-foreground text-xs">
+                    (No dependencies)
+                  </ContextMenuItem>
+                )}
+              </ContextMenuSubContent>
+            </ContextMenuSub>
 
-          <ContextMenuItem
-            data-testid="ctx-duplicate-ticket"
-            onClick={() => void handleDuplicate()}
-            className="gap-2"
-          >
-            <Copy className="h-3.5 w-3.5" />
-            Duplicate
-          </ContextMenuItem>
-
-          <ContextMenuItem
-            data-testid="ctx-add-to-favorites"
-            onClick={() => void handleAddToFavorites()}
-            className="gap-2"
-          >
-            <Star className="h-3.5 w-3.5" />
-            Add to favorites
-          </ContextMenuItem>
-
-          {!isExternalTicket && (
             <ContextMenuItem
-              data-testid="ctx-move-to-project"
-              onClick={() => setShowMoveToProject(true)}
+              data-testid="ctx-duplicate-ticket"
+              onClick={() => void handleDuplicate()}
               className="gap-2"
             >
-              <FolderInput className="h-3.5 w-3.5" />
-              Move to project…
+              <Copy className="h-3.5 w-3.5" />
+              Duplicate
             </ContextMenuItem>
+
+            <ContextMenuItem
+              data-testid="ctx-add-to-favorites"
+              onClick={() => void handleAddToFavorites()}
+              className="gap-2"
+            >
+              <Star className="h-3.5 w-3.5" />
+              Add to favorites
+            </ContextMenuItem>
+
+            {!isExternalTicket && (
+              <ContextMenuItem
+                data-testid="ctx-move-to-project"
+                onClick={() => setShowMoveToProject(true)}
+                className="gap-2"
+              >
+                <FolderInput className="h-3.5 w-3.5" />
+                Move to project…
+              </ContextMenuItem>
+            )}
+            </>
           )}
 
           {shellCommandWorktreeLabel &&
@@ -2377,7 +2442,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
           ) : (
             <ContextMenuItem
               data-testid="ctx-delete-ticket"
-              onClick={() => setShowDeleteConfirm(true)}
+              onClick={requestDelete}
               className="gap-2 text-destructive focus:text-destructive"
             >
               <Trash2 className="h-3.5 w-3.5" />
@@ -2396,10 +2461,22 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
         <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
           <AlertDialogContent data-testid="ctx-delete-confirm-dialog">
             <AlertDialogHeader>
-              <AlertDialogTitle>Delete ticket</AlertDialogTitle>
+              <AlertDialogTitle>
+                {isDocumentRunTicket ? 'Delete document run' : 'Delete ticket'}
+              </AlertDialogTitle>
               <AlertDialogDescription>
-                Are you sure you want to delete &ldquo;{ticket.title}&rdquo;? This action cannot be
-                undone.
+                {isDocumentRunTicket ? (
+                  <>
+                    Are you sure you want to delete &ldquo;{ticket.title}&rdquo;? Its run record
+                    (progress, report and log) is deleted with it. The run&rsquo;s tickets,
+                    branches and worktrees are kept. This action cannot be undone.
+                  </>
+                ) : (
+                  <>
+                    Are you sure you want to delete &ldquo;{ticket.title}&rdquo;? This action
+                    cannot be undone.
+                  </>
+                )}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>

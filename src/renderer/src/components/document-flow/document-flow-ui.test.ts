@@ -20,6 +20,7 @@ import {
   describeBaseBranch,
   describeRunDeletion,
   documentNameFromPath,
+  documentRunTicketDropRefusal,
   formatGeneration,
   formatRunProgress,
   isLaunchedRunStatus,
@@ -32,6 +33,7 @@ import {
   needsUserMessage,
   parseDocumentPath,
   progressSegments,
+  runBoardCardState,
   runCountsLabel,
   runStatusDisplay,
   tonePillClass,
@@ -291,6 +293,187 @@ describe('progress', () => {
   })
 })
 
+describe('runBoardCardState', () => {
+  it('summarizes a running run: progress, merged of total and the sessions at work', () => {
+    const state = runBoardCardState(
+      makeDetail({ status: 'running', title: 'Checkout redesign' }, [
+        { key: 'A1', status: 'merged' },
+        { key: 'A2', status: 'running' },
+        { key: 'A3', status: 'launching' },
+        { key: 'A4', status: 'verifying' },
+        { key: 'A5', status: 'checking' },
+        { key: 'A6', status: 'pending' },
+        { key: 'A7', status: 'running', selected: false }
+      ])
+    )
+
+    expect(state).toMatchObject({
+      title: 'Checkout redesign',
+      merged: 1,
+      total: 6,
+      running: 2,
+      phase: 'running',
+      waitingOnUser: false,
+      paused: false,
+      label: '2 running'
+    })
+    expect(state.segments.map((segment) => [segment.key, segment.count])).toEqual([
+      ['merged', 1],
+      ['inProgress', 4],
+      ['pending', 1]
+    ])
+  })
+
+  it('falls back to the file name of an untitled run', () => {
+    expect(
+      runBoardCardState(makeDetail({ title: '', source_path: '/docs/brand-os-bugs (2).html' }))
+        .title
+    ).toBe('brand-os-bugs (2).html')
+  })
+
+  it.each([
+    ['a question', { status: 'needs_input' }],
+    ['a flagged ticket', { status: 'needs_attention' }],
+    [
+      'a conflict session that stopped to ask',
+      { status: 'resolving_conflicts', status_detail: `${WAITING_PREFIX}which one wins?` }
+    ],
+    ['an interrupted fix session', { status: 'fixing', status_detail: USER_INTERRUPT_DETAIL }]
+  ] as const)('waits on the user for %s, which is not a running session', (_name, waiting) => {
+    const state = runBoardCardState(
+      makeDetail({ status: 'running' }, [
+        { key: 'A1', status: 'running' },
+        { key: 'A2', ...waiting }
+      ])
+    )
+
+    expect(state.waitingOnUser).toBe(true)
+    expect(state.running).toBe(1)
+  })
+
+  it('does not wait on the user for a ticket left out of the run', () => {
+    const state = runBoardCardState(
+      makeDetail({ status: 'running' }, [
+        { key: 'A1', status: 'running' },
+        { key: 'A2', status: 'needs_input', selected: false }
+      ])
+    )
+
+    expect(state.waitingOnUser).toBe(false)
+  })
+
+  it('says a paused run is paused, and how many sessions are still finishing', () => {
+    expect(
+      runBoardCardState(makeDetail({ status: 'paused' }, [{ key: 'A1', status: 'pending' }]))
+    ).toMatchObject({ paused: true, running: 0, label: 'Paused' })
+    expect(
+      runBoardCardState(
+        makeDetail({ status: 'paused' }, [
+          { key: 'A1', status: 'running' },
+          { key: 'A2', status: 'pending' }
+        ])
+      )
+    ).toMatchObject({ paused: true, running: 1, label: 'Paused · 1 running' })
+  })
+
+  it('says a completed run is ready to merge into its base branch, until its ticket moved on', () => {
+    const detail = makeDetail({ status: 'completed', base_branch: 'main' }, [
+      { key: 'A1', status: 'merged' },
+      { key: 'A2', status: 'merged' }
+    ])
+
+    expect(runBoardCardState(detail, 'review')).toMatchObject({
+      phase: 'completed',
+      merged: 2,
+      total: 2,
+      paused: false,
+      waitingOnUser: false,
+      label: 'Ready to merge into main'
+    })
+    expect(runBoardCardState(detail).label).toBe('Ready to merge into main')
+    expect(runBoardCardState(detail, 'merged').label).toBe('Finished')
+    expect(runBoardCardState(detail, 'done').label).toBe('Finished')
+    expect(
+      runBoardCardState(makeDetail({ status: 'completed', base_branch: null }), 'review').label
+    ).toBe('Ready to merge into the base branch')
+  })
+
+  it('counts what a run with issues left unmerged, without asking for the user', () => {
+    const state = runBoardCardState(
+      makeDetail({ status: 'completed_with_issues' }, [
+        { key: 'A1', status: 'merged' },
+        { key: 'A2', status: 'needs_attention' },
+        { key: 'A3', status: 'skipped' },
+        { key: 'A4', status: 'merged', selected: false }
+      ]),
+      'review'
+    )
+
+    expect(state).toMatchObject({
+      phase: 'issues',
+      merged: 1,
+      total: 3,
+      // The flagged ticket is part of the result now, not a question to answer.
+      waitingOnUser: false,
+      label: 'Finished · 2 not merged'
+    })
+  })
+
+  it('says a cancelled run was cancelled', () => {
+    expect(
+      runBoardCardState(
+        makeDetail({ status: 'cancelled' }, [
+          { key: 'A1', status: 'merged' },
+          { key: 'A2', status: 'cancelled' },
+          { key: 'A3', status: 'needs_input' }
+        ]),
+        'review'
+      )
+    ).toMatchObject({
+      phase: 'cancelled',
+      merged: 1,
+      total: 3,
+      running: 0,
+      waitingOnUser: false,
+      label: 'Cancelled'
+    })
+  })
+})
+
+describe('documentRunTicketDropRefusal', () => {
+  it('never lets the ticket of a run go back to To Do', () => {
+    for (const status of [...DOCUMENT_RUN_STATUSES, null]) {
+      expect(documentRunTicketDropRefusal(status, 'todo'), String(status)).toBe(
+        'The ticket of a document run cannot go back to To Do.'
+      )
+    }
+  })
+
+  it.each(['running', 'paused'] as const)('keeps the ticket of a %s run In Progress', (status) => {
+    expect(documentRunTicketDropRefusal(status, 'in_progress')).toBeNull()
+    expect(documentRunTicketDropRefusal(status, 'review')).toBe(
+      'The document run is still going; its ticket moves to Review when the run ends.'
+    )
+    for (const column of ['merged', 'done']) {
+      expect(documentRunTicketDropRefusal(status, column)).toBe(
+        'The document run is still going. Wait for it to end, or cancel it, before merging it.'
+      )
+    }
+  })
+
+  it.each(['completed', 'completed_with_issues', 'cancelled', null] as const)(
+    'lets the ticket of a %s run move forward, but not back to In Progress',
+    (status) => {
+      for (const column of ['review', 'merged', 'done']) {
+        expect(documentRunTicketDropRefusal(status, column)).toBeNull()
+      }
+      expect(documentRunTicketDropRefusal(status, 'in_progress')).toBe(
+        'This document run is over; its ticket cannot go back to In Progress.'
+      )
+    }
+  )
+})
+
 describe('run status groups', () => {
   it('sends launched runs to the dashboard and the rest to the wizard', () => {
     const launched = DOCUMENT_RUN_STATUSES.filter(isLaunchedRunStatus)
@@ -320,7 +503,7 @@ describe('describeRunDeletion', () => {
         makeItem({ key: 'A2', ticket_id: 'ticket-A2' })
       ])
     ).toBe(
-      'Branches, worktrees and board tickets are not touched, and the spec text and figures those tickets attach stay on disk.'
+      "The run's own ticket is removed from the board. Branches, worktrees and the tickets of its tasks are not touched, and the spec text and figures those tickets attach stay on disk."
     )
   })
 
