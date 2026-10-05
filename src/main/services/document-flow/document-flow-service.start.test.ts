@@ -2,7 +2,10 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { DocumentRunLaunchConfig } from '@shared/types/document-flow'
+import {
+  DEFAULT_DOCUMENT_RUN_CONFIG,
+  type DocumentRunLaunchConfig
+} from '@shared/types/document-flow'
 import { getRpcRequestContext, rpcRequestContext } from '../../../server/rpc/request-context'
 
 vi.mock('../logger', () => ({
@@ -51,6 +54,17 @@ afterEach(() => {
   harness.cleanup()
   repo.cleanup()
 })
+
+/** The launch prompt a ticket is created with: what its agent is sent. */
+function brief(key: string, title: string, questionTool = 'AskUserQuestion'): string {
+  return [
+    `implement task ${key} ("${title}") from the file:///specs/factory.html`,
+    'use subagents to research and read the spec attached there, read the description of it, understand the requirements, research best practices regarding it',
+    `if you have any clarifications you might need - use the ${questionTool} tool to ask me.`,
+    'then - implement this',
+    'implement only this task, commit your work on this branch, do not push or switch branches, and do not run migrations against any database.'
+  ].join('\n\n')
+}
 
 function seedPreview(): ReturnType<typeof seedRun> {
   return seedRun(harness, {
@@ -261,6 +275,19 @@ describe('start', () => {
     ])
   })
 
+  it("words the brief for the app's default agent when the run names none", async () => {
+    const { run } = seedRun(harness, {
+      run: { config: { ...DEFAULT_DOCUMENT_RUN_CONFIG } },
+      items: [{ key: 'A1', title: 'Report' }]
+    })
+
+    await harness.service.start(run.id, 'codex')
+
+    expect(harness.ticketBatches[0].drafts[0].description).toBe(
+      brief('A1', 'Report', 'request_user_input')
+    )
+  })
+
   it('creates one ticket per selected item, with attachments, model and selected dependencies', async () => {
     const { run } = seedPreview()
 
@@ -276,7 +303,7 @@ describe('start', () => {
         project_id: TEST_PROJECT_ID,
         // Safe inside the launcher's <ticket title="…">.
         title: 'A1 · Chinese translation',
-        description: 'Implement A1.',
+        description: brief('A1', 'Chinese "translation"'),
         column: 'todo',
         mode: 'build',
         attachments: [
@@ -298,7 +325,7 @@ describe('start', () => {
         draft_key: 'A2',
         project_id: TEST_PROJECT_ID,
         title: 'A2 · Ramp-up rule',
-        description: 'Implement task 2.',
+        description: brief('A2', 'Ramp-up rule'),
         column: 'todo',
         mode: 'build',
         attachments: [
@@ -317,7 +344,7 @@ describe('start', () => {
         draft_key: 'A4',
         project_id: TEST_PROJECT_ID,
         title: 'A4 · Report',
-        description: 'Implement task 4.',
+        description: brief('A4', 'Report'),
         column: 'todo',
         mode: 'build',
         attachments: [
@@ -431,9 +458,7 @@ describe('start', () => {
 
       expect(detail.run.ticket_id).toBe(ticketId)
       expect(harness.ticketBatches).toHaveLength(2)
-      expect(
-        detail.events.filter((event) => event.type === 'run_ticket_created')
-      ).toHaveLength(1)
+      expect(detail.events.filter((event) => event.type === 'run_ticket_created')).toHaveLength(1)
     })
 
     it('fails the start when the board cannot create it, and creates it on the next one', async () => {
@@ -448,7 +473,10 @@ describe('start', () => {
       await expect(harness.service.start(run.id)).rejects.toThrow(
         'The board did not create the ticket of the run.'
       )
-      expect(harness.db.getDocumentRun(run.id)).toMatchObject({ status: 'preview', ticket_id: null })
+      expect(harness.db.getDocumentRun(run.id)).toMatchObject({
+        status: 'preview',
+        ticket_id: null
+      })
 
       const detail = await harness.service.start(run.id)
 

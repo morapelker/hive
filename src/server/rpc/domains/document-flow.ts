@@ -25,7 +25,7 @@ import {
   type DocumentVerifyResult,
   type SessionFinalMessage
 } from '../../../shared/types/document-flow'
-import { AGENT_SDK_VALUES } from '../../../shared/types/agent-sdk'
+import { AGENT_SDK_VALUES, type HandoffAgentSdk } from '../../../shared/types/agent-sdk'
 import type { DocumentFlowService } from '../../../main/services/document-flow/document-flow-service'
 import type { EventBus } from '../../events/event-bus'
 import type { RpcHandler } from '../router'
@@ -69,7 +69,7 @@ export interface DocumentFlowRpcService {
     itemId: string,
     patch: DocumentRunItemPatch
   ) => Rpc<DocumentRunItem>
-  readonly start: (runId: string) => Rpc<DocumentRunDetail>
+  readonly start: (runId: string, defaultSdk?: HandoffAgentSdk) => Rpc<DocumentRunDetail>
   readonly claimRunner: (runId: string, clientId: string) => Rpc<DocumentRunnerClaim>
   readonly sessionTurn: (sessionId: string) => Rpc<SessionFinalMessage | null>
   readonly classify: (params: DocumentFlowClassifyParams) => Rpc<DocumentRunVerdict>
@@ -187,6 +187,12 @@ const itemPatchSchema = z
   .strict() satisfies z.ZodType<DocumentRunItemPatch>
 
 const runIdParamsSchema = z.object({ runId: idSchema }).strict()
+const startParamsSchema = z
+  .object({
+    runId: idSchema,
+    defaultSdk: z.enum(AGENT_SDK_VALUES).exclude(['terminal']).optional()
+  })
+  .strict()
 const runItemParamsSchema = z.object({ runId: idSchema, itemId: idSchema }).strict()
 const projectIdParamsSchema = z.object({ projectId: idSchema }).strict()
 const createRunParamsSchema = z
@@ -253,7 +259,7 @@ export const makeLiveDocumentFlowRpcService = (eventBus?: EventBus): DocumentFlo
     updateRun: (runId, patch) => call((service) => service.updateRun(runId, patch)),
     updateItem: (runId, itemId, patch) =>
       call((service) => service.updateItem(runId, itemId, patch)),
-    start: (runId) => call((service) => service.start(runId)),
+    start: (runId, defaultSdk) => call((service) => service.start(runId, defaultSdk)),
     claimRunner: (runId, clientId) => call((service) => service.claimRunner(runId, clientId)),
     sessionTurn: (sessionId) => call((service) => service.sessionTurn(sessionId)),
     classify: (params) => call((service) => service.classify(params)),
@@ -307,7 +313,10 @@ export const makeDocumentFlowRpcHandlers = (
         service.updateItem(runId, itemId, patch)
       )
     ],
-    ['documentFlow.start', handle(runIdParamsSchema, ({ runId }) => service.start(runId))],
+    [
+      'documentFlow.start',
+      handle(startParamsSchema, ({ runId, defaultSdk }) => service.start(runId, defaultSdk))
+    ],
     [
       'documentFlow.claimRunner',
       handle(claimRunnerParamsSchema, ({ runId, clientId }) => service.claimRunner(runId, clientId))

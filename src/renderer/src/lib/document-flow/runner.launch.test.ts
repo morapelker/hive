@@ -218,6 +218,20 @@ describe('DocumentFlowRunner: launching', () => {
     expect(prompt).toContain('\n\nthen - implement this\n\n')
   })
 
+  it('sends the description of the ticket as it reads on the board', async () => {
+    const world = createWorld()
+    const ticket = world.tickets.get('ticket-A')!
+    world.tickets.set(ticket.id, {
+      ...ticket,
+      description: '  implement task A, but skip the export button\n'
+    })
+    start(world)
+
+    await advance(1000)
+
+    expect(world.launches[0].prompt).toBe('implement task A, but skip the export button')
+  })
+
   it("names the question tool of the ticket's own launch SDK", async () => {
     const world = createWorld({
       items: [

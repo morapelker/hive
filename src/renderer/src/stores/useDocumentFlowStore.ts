@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { documentFlowApi } from '@/api/document-flow-api'
 import { resolvePRContentGeneration } from '@/lib/pr-content-provider'
-import { useSettingsStore } from '@/stores/useSettingsStore'
+import { resolvePreferredAgentSdk, useSettingsStore } from '@/stores/useSettingsStore'
 import { isTerminalItemStatus } from '@shared/document-flow/planning'
 import type { DocumentFlowUpdatedEvent } from '@shared/document-flow-events'
 import {
@@ -275,7 +275,7 @@ export const useDocumentFlowStore = create<DocumentFlowState>()(
       },
 
       startRun: async (runId) => {
-        const detail = await documentFlowApi.start(runId)
+        const detail = await documentFlowApi.start(runId, resolvePreferredAgentSdk())
         get().applyDetail(detail)
         const { config, project_id: projectId } = detail.run
         get().setPrefs({

@@ -1082,16 +1082,19 @@ export class DocumentFlowRunner {
     if (!ticket) return this.flag(op, 'Its ticket no longer exists.')
 
     const modelConfig = this.launchConfig(run, item)
-    // The agent gets the brief alone: the ticket's description and attachments stay on the
-    // board for people, and the agent reads the task in the document itself.
-    const prompt = buildLaunchPrompt({
-      key: item.key,
-      title: item.title,
-      sourcePath: run.source_path,
-      promptStyle: run.config.promptStyle,
-      interactive: run.config.interactive,
-      sdk: modelConfig.sdk
-    })
+    // The ticket's description is the brief, sent as it reads on the board (the user may
+    // have edited it), with no ticket wrapper and no attachments: the agent reads the task in
+    // the document itself. A ticket left without a description gets the standard brief.
+    const prompt =
+      ticket.description?.trim() ||
+      buildLaunchPrompt({
+        key: item.key,
+        title: item.title,
+        sourcePath: run.source_path,
+        promptStyle: run.config.promptStyle,
+        interactive: run.config.interactive,
+        sdk: modelConfig.sdk
+      })
 
     const result = await this.ports.launchTicket({
       ticketId: ticket.id,

@@ -37,6 +37,8 @@ import {
   sanitizeDependencies
 } from '@shared/document-flow/planning'
 import { DOCUMENT_TEXT_LIMIT, preprocessDocument } from '@shared/document-flow/preprocess'
+import { buildLaunchPrompt } from '@shared/document-flow/prompts'
+import type { HandoffAgentSdk } from '@shared/types/agent-sdk'
 import {
   DOCUMENT_RUN_TICKET_PROVIDER,
   isActiveRunStatus,
@@ -729,7 +731,8 @@ export class DocumentFlowService {
 
   // ── Launch ────────────────────────────────────────────────────────────────
 
-  async start(runId: string): Promise<DocumentRunDetail> {
+  /** `defaultSdk`: the app's default agent, for tickets the run gives no launch config. */
+  async start(runId: string, defaultSdk?: HandoffAgentSdk): Promise<DocumentRunDetail> {
     const inFlight = this.startsInFlight.get(runId)
     if (inFlight) return inFlight
 
@@ -748,7 +751,7 @@ export class DocumentFlowService {
     }
     const project = this.requireGitProject(run)
 
-    const started = this.detach(() => this.launch(run, project)).finally(() => {
+    const started = this.detach(() => this.launch(run, project, defaultSdk)).finally(() => {
       this.startsInFlight.delete(runId)
     })
     this.startsInFlight.set(runId, started)
@@ -758,13 +761,14 @@ export class DocumentFlowService {
   /** Every step is idempotent, so starting again after a failure continues where it stopped. */
   private async launch(
     initialRun: DocumentRun,
-    project: DocumentFlowProject
+    project: DocumentFlowProject,
+    defaultSdk: HandoffAgentSdk | undefined
   ): Promise<DocumentRunDetail> {
     let run = initialRun
     try {
       this.cleanDependencies(run)
       if (!run.integration_worktree_id) run = await this.createIntegrationWorktree(run, project)
-      await this.createTickets(run)
+      await this.createTickets(run, defaultSdk)
       run = await this.ensureRunTicket(run, 'in_progress')
       run = this.saveRun(run, {
         status: 'running',
@@ -864,7 +868,10 @@ export class DocumentFlowService {
     )
   }
 
-  private async createTickets(run: DocumentRun): Promise<void> {
+  private async createTickets(
+    run: DocumentRun,
+    defaultSdk: HandoffAgentSdk | undefined
+  ): Promise<void> {
     const selected = this.db.getDocumentRunItems(run.id).filter((item) => item.selected)
     const pending = selected.filter((item) => !item.ticket_id)
     if (pending.length === 0) return
@@ -872,12 +879,23 @@ export class DocumentFlowService {
     const selectedKeys = new Set(selected.map((item) => item.key))
     const pendingKeys = new Set(pending.map((item) => item.key))
     const drafts = pending.map((item): KanbanTicketBatchCreateItem => {
-      const model = (item.launch_config ?? run.config.defaultLaunch)?.model
+      const launch = item.launch_config ?? run.config.defaultLaunch
+      const model = launch?.model
       return {
         draft_key: item.key,
         project_id: run.project_id,
         title: sanitizeLine(`${item.key} · ${item.title}`),
-        description: item.description,
+        // The ticket is the brief its agent gets: the runner sends this description as the
+        // prompt, so an edit on the board reaches the agent. The extracted description stays
+        // on the run's item.
+        description: buildLaunchPrompt({
+          key: item.key,
+          title: item.title,
+          sourcePath: run.source_path,
+          promptStyle: run.config.promptStyle,
+          interactive: run.config.interactive,
+          sdk: launch?.sdk ?? defaultSdk ?? 'claude-code'
+        }),
         column: 'todo',
         mode: 'build',
         attachments: [

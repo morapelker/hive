@@ -1,4 +1,5 @@
 import type { ServerEvent } from '@shared/rpc/protocol'
+import type { HandoffAgentSdk } from '@shared/types/agent-sdk'
 import {
   DOCUMENT_FLOW_UPDATED_CHANNEL,
   isDocumentFlowUpdatedEvent,
@@ -68,7 +69,9 @@ export const documentFlowApi = {
    * Launch a previewed run: cut the integration branch + worktree from the base branch, create
    * the selected items' tickets on the board, and move the run to `running`.
    */
-  start: (runId: string): Promise<DocumentRunDetail> => request('start', { runId }),
+  /** `defaultSdk`: the app's default agent, which words the brief of tickets without a launch config. */
+  start: (runId: string, defaultSdk?: HandoffAgentSdk): Promise<DocumentRunDetail> =>
+    request('start', { runId, defaultSdk }),
 
   /** Take (or renew) the single-owner lease on driving the run. */
   claimRunner: (runId: string, clientId: string): Promise<DocumentRunnerClaim> =>

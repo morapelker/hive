@@ -375,8 +375,11 @@ describe('useDocumentFlowStore', () => {
       })
       api.start.mockResolvedValue(started)
 
+      useSettingsStore.setState({ defaultAgentSdk: 'codex' })
       await useDocumentFlowStore.getState().startRun('run-1')
 
+      // The app's default agent words the brief of tickets without a launch config.
+      expect(api.start).toHaveBeenCalledWith('run-1', 'codex')
       expect(useDocumentFlowStore.getState().runsById['run-1']).toBe(started)
       expect(useDocumentFlowStore.getState().prefs).toEqual({
         maxParallel: 50,

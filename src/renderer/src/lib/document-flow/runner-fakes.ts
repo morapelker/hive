@@ -184,7 +184,8 @@ export function createWorld(options: WorldOptions = {}) {
       id: item.ticket_id,
       project_id: PROJECT_ID,
       title: item.title,
-      description: item.description,
+      // No brief of its own unless a test writes one: the runner then builds the standard one.
+      description: '',
       attachments: [],
       column: 'todo',
       current_session_id: null,
