@@ -1,11 +1,19 @@
 import { useCallback, useState } from 'react'
-import { ChevronDown, ChevronRight, Eye, EyeOff, Image as ImageIcon } from 'lucide-react'
+import {
+  ChevronDown,
+  ChevronRight,
+  ChevronsUpDown,
+  Eye,
+  EyeOff,
+  Image as ImageIcon
+} from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { ticketPillClass } from '@/components/kanban/pill'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Textarea } from '@/components/ui/textarea'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
@@ -42,7 +50,10 @@ interface DocumentRunItemEditorProps {
   onToggleExpanded: () => void
 }
 
-/** One extracted ticket in the preview list: a summary row that expands into its editor. */
+/**
+ * One extracted ticket in the preview list: a summary row that expands into its editor. The
+ * model and effort are changed straight from the row, without expanding it.
+ */
 export function DocumentRunItemEditor({
   runId,
   item,
@@ -86,15 +97,49 @@ export function DocumentRunItemEditor({
             </span>
             <ItemPills item={item} items={items} />
           </span>
-          <LaunchConfigBadge
-            config={item.launch_config}
-            inheritLabel="default"
-            testId={`docflow-item-model-${item.key}`}
-          />
+        </button>
+        <Popover>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              aria-label={`Model and effort for ${item.key}`}
+              title="Change model and effort"
+              data-testid={`docflow-item-model-trigger-${item.key}`}
+              className="-my-0.5 flex shrink-0 items-center gap-1 rounded-md border border-transparent px-1.5 py-1 transition-colors hover:border-border hover:bg-accent/50 data-[state=open]:border-border data-[state=open]:bg-accent/50"
+            >
+              <LaunchConfigBadge
+                config={item.launch_config}
+                inheritLabel="default"
+                testId={`docflow-item-model-${item.key}`}
+              />
+              <ChevronsUpDown className="h-3 w-3 text-muted-foreground" />
+            </button>
+          </PopoverTrigger>
+          {/* The picker (and its model catalog request) only mounts while the popover is open. */}
+          <PopoverContent align="end" className="w-[380px] space-y-1.5" data-docflow-dialog="">
+            <p className={LABEL_CLASS}>Model for {item.key}</p>
+            <LaunchConfigPicker
+              value={item.launch_config}
+              onChange={(launch_config) => {
+                save({ launch_config }).catch(reportSaveFailure)
+              }}
+              inheritLabel="Run default"
+              clearLabel="Use run default"
+              testIdPrefix={`docflow-item-model-picker-${item.key}`}
+            />
+          </PopoverContent>
+        </Popover>
+        <button
+          type="button"
+          tabIndex={-1}
+          aria-hidden
+          className="mt-0.5 shrink-0 text-muted-foreground"
+          onClick={onToggleExpanded}
+        >
           {expanded ? (
-            <ChevronDown className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            <ChevronDown className="h-3.5 w-3.5" />
           ) : (
-            <ChevronRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            <ChevronRight className="h-3.5 w-3.5" />
           )}
         </button>
       </div>
@@ -328,19 +373,6 @@ function ItemEditorBody({ item, items, save }: ItemEditorBodyProps): React.JSX.E
           </div>
         </div>
       )}
-
-      <div className="space-y-1.5">
-        <p className={LABEL_CLASS}>Model</p>
-        <LaunchConfigPicker
-          value={item.launch_config}
-          onChange={(launch_config) => {
-            save({ launch_config }).catch(reportSaveFailure)
-          }}
-          inheritLabel="Run default"
-          clearLabel="Use run default"
-          testIdPrefix={`docflow-item-model-picker-${item.key}`}
-        />
-      </div>
     </div>
   )
 }

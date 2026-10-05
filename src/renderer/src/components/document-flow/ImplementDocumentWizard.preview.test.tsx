@@ -479,8 +479,13 @@ describe('ImplementDocumentWizard — ticket editor', () => {
 
   it('sets and clears a per-ticket model, mounting the model picker only on demand', async () => {
     await renderPreview()
-    // No picker (and no catalog request) for collapsed rows or rows on the run default.
-    expandItem('A1')
+    // No picker (and no catalog request) for closed popovers or rows on the run default.
+    expect(screen.queryByTestId('docflow-item-model-picker-A1-choose')).toBeNull()
+    // The row itself opens the picker; the ticket stays collapsed.
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('docflow-item-model-trigger-A1'))
+    })
+    expect(screen.queryByTestId('docflow-item-editor-A1')).toBeNull()
     expect(screen.queryByTestId('model-selector')).toBeNull()
     expect(listModels).not.toHaveBeenCalled()
 
