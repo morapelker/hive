@@ -1141,6 +1141,18 @@ export function KanbanColumn({
             )
           ) : (
             <>
+              {/* Add-ticket card always on top of the To Do column */}
+              {isTodoColumn && !searchActive && (
+                <button
+                  data-testid="kanban-add-ticket-card"
+                  onClick={() => setIsCreateModalOpen(true)}
+                  className="flex shrink-0 items-center justify-center gap-1.5 rounded-md border border-dashed border-border p-2 text-[13px] text-muted-foreground/60 hover:border-muted-foreground/35 hover:text-muted-foreground hover:bg-secondary/40 transition-colors cursor-pointer"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  <span>New ticket</span>
+                </button>
+              )}
+
               {isTodoColumn && invalidPlaceholders.map((placeholder) => (
                 <MarkdownInvalidCardPlaceholder
                   key={`${placeholder.projectId}:${placeholder.filePath}`}
@@ -1206,18 +1218,6 @@ export function KanbanColumn({
                     )
                   })}
                 </>
-              )}
-
-              {/* Add-ticket card at the end of the To Do column */}
-              {isTodoColumn && !searchActive && (
-                <button
-                  data-testid="kanban-add-ticket-card"
-                  onClick={() => setIsCreateModalOpen(true)}
-                  className="flex items-center justify-center gap-1.5 rounded-md border border-dashed border-border p-2 text-[13px] text-muted-foreground/60 hover:border-muted-foreground/35 hover:text-muted-foreground hover:bg-secondary/40 transition-colors cursor-pointer"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  <span>New ticket</span>
-                </button>
               )}
             </>
           )}
