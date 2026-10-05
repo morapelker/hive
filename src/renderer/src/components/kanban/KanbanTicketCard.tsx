@@ -36,6 +36,7 @@ import {
   RadioTower,
   Unplug,
   SquareTerminal,
+  Terminal as TerminalIcon,
   Radar,
   Bot,
   Star,
@@ -1557,6 +1558,16 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                   title="Unread — just moved to review"
                   className="mt-[6px] h-1.5 w-1.5 shrink-0 rounded-full bg-foreground/70"
                 />
+              )}
+              {/* Shell-command ticket: a terminal prompt tile in front of the title */}
+              {isShellCommandTicket && (
+                <span
+                  data-testid="ticket-shell-command-icon"
+                  title="Shell command"
+                  className="mt-px inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] border border-border bg-muted text-muted-foreground"
+                >
+                  <TerminalIcon className="h-2.5 w-2.5" strokeWidth={2.5} />
+                </span>
               )}
               <p
                 className={cn(
