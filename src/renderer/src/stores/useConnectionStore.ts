@@ -8,7 +8,6 @@ import {
 } from './store-coordination'
 import { useKanbanStore } from './useKanbanStore'
 import { connectionApi } from '@/api/connection-api'
-import { worktreeApi } from '@/api/worktree-api'
 
 export type ConnectionGitView = 'connection' | 'base'
 
@@ -303,6 +302,9 @@ export const useConnectionStore = create<ConnectionState>()(
         }
       },
 
+      // The New Connection dialog's flow — a fresh worktree per project, then one connection —
+      // lives in lib/connection-create so the agent and the phone create connections the same
+      // way. This action adds the dialog's UI: select the new connection and toast.
       quickCreateConnection: async (
         projects: { id: string; path: string; name: string }[],
         opts?: { savedProjectId?: string }
@@ -311,71 +313,19 @@ export const useConnectionStore = create<ConnectionState>()(
           return null
         }
 
-        // Dynamic import to avoid a store cycle; fireSetupScript is a module-level export.
-        const { useWorktreeStore, fireSetupScript } = await import('./useWorktreeStore')
-
-        const created: {
-          project: { id: string; path: string; name: string }
-          worktree: { id: string; path: string; branch_name: string }
-        }[] = []
-
-        // Best-effort rollback of every already-created worktree (per-item try/catch).
-        const rollback = async (): Promise<void> => {
-          for (const { project, worktree } of created) {
-            try {
-              const deleteResult = await worktreeApi.delete({
-                worktreeId: worktree.id,
-                worktreePath: worktree.path,
-                branchName: worktree.branch_name,
-                projectPath: project.path,
-                archive: false
-              })
-              if (deleteResult.success) {
-                useWorktreeStore.getState().removeWorktreeFromProject(project.id, worktree.id)
-              }
-            } catch {
-              // Ignore rollback failures — this is a best-effort cleanup.
-            }
-          }
-        }
-
-        for (const project of projects) {
-          const result = await worktreeApi.create({
-            projectId: project.id,
-            projectPath: project.path,
-            projectName: project.name
-          })
-          if (!result.success || !result.worktree) {
-            await rollback()
-            toast.error(
-              `Failed to create worktree in "${project.name}": ${result.error ?? 'Unknown error'}`
-            )
-            return null
-          }
-          // Insert WITHOUT selecting — deliberately NOT the createWorktree action, which
-          // selects the new worktree and closes open file tabs.
-          useWorktreeStore.getState().addWorktreeToProject(project.id, result.worktree)
-          created.push({ project, worktree: result.worktree })
-        }
-
-        // Only fire setup scripts once every worktree has been created successfully — the
-        // per-project create loop above can still fail partway through and roll back
-        // (delete) earlier directories, and we don't want setup scripts racing that deletion.
-        for (const { project, worktree } of created) {
-          fireSetupScript(project.id, worktree.id, worktree.path)
-        }
-
-        const connectionId = await get().createConnection(
-          created.map((c) => c.worktree.id),
-          opts
-        )
-        if (!connectionId) {
-          // createConnection already surfaced its own error toast — just undo the worktrees.
-          await rollback()
+        // Dynamic import avoids a store cycle (the helper imports this store).
+        const { createConnectionFromProjects } = await import('@/lib/connection-create')
+        const result = await createConnectionFromProjects(projects, opts)
+        if (!result.ok) {
+          toast.error(result.error)
           return null
         }
 
-        return connectionId
+        set({ selectedConnectionId: result.connectionId, connectionGitView: 'connection' })
+        // Deconflict: clear worktree selection synchronously (same tick)
+        clearWorktreeSelection()
+        toast.success(`Connection "${result.connectionName}" created`)
+        return result.connectionId
       },
 
       // A fresh connection over the same member projects on brand-new worktrees —

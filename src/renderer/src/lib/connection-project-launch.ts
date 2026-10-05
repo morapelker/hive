@@ -35,6 +35,7 @@ import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
 import { startHivePromptTelemetry } from '@/lib/hive-enterprise-telemetry'
 import { createPlanFile, exceedsGoalPromptLimit, planFilePrompt } from '@/lib/goal-plan-file'
 import { resolveBadgeModel } from '@/lib/ticket-launch'
+import { insertConnectionLocally } from '@/lib/connection-create'
 import { autoPinForBoardPrompt } from '@/lib/auto-pin'
 import {
   PLAN_MODE_PREFIX,
@@ -169,22 +170,6 @@ function resolveQuickModel(): {
     sdk,
     model: { providerID: resolved.providerID, modelID: resolved.modelID, variant: resolved.variant }
   }
-}
-
-/** Insert a freshly-created connection into the store WITHOUT selecting it. */
-function insertConnectionLocally(connection: {
-  id: string
-  members?: unknown[]
-}): void {
-  useConnectionStore.setState((state) => {
-    if (state.connections.some((c) => c.id === connection.id)) return state
-    return {
-      connections: [
-        ...state.connections,
-        connection as unknown as (typeof state.connections)[number]
-      ]
-    }
-  })
 }
 
 /**
