@@ -13,18 +13,24 @@ import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
-import type { DocumentRun, DocumentRunItem } from '@shared/types/document-flow'
-import { LaunchConfigBadge, TonePill } from './DocumentFlowBadges'
+import type {
+  DocumentRun,
+  DocumentRunItem,
+  DocumentVerificationMethod
+} from '@shared/types/document-flow'
+import { LaunchConfigBadge, TonePill, VerificationChips } from './DocumentFlowBadges'
 import { openSession } from './document-flow-navigation'
 import { effectiveLaunchConfig } from './document-flow-launch'
 import {
+  canEditVerification,
   isActiveRunStatus,
   isRequeueableItem,
   isSkippableItem,
   itemSessionTarget,
   itemStatusDisplay,
   needsUser,
-  needsUserMessage
+  needsUserMessage,
+  toggleVerificationMethod
 } from './document-flow-ui'
 
 const SECTION_LABEL_CLASS = 'text-xs font-medium uppercase tracking-wider text-muted-foreground'
@@ -45,12 +51,15 @@ interface RunItemActions {
   retry: (item: DocumentRunItem) => void
   markDone: (item: DocumentRunItem) => void
   skip: (item: DocumentRunItem) => void
+  /** Flip one verification method of a ticket that has not launched yet. */
+  toggleVerification: (item: DocumentRunItem, method: DocumentVerificationMethod) => void
 }
 
 function useRunItemActions(run: DocumentRun): RunItemActions {
   const retryItem = useDocumentFlowStore((s) => s.retryItem)
   const markItemDone = useDocumentFlowStore((s) => s.markItemDone)
   const skipItem = useDocumentFlowStore((s) => s.skipItem)
+  const updateItem = useDocumentFlowStore((s) => s.updateItem)
   const closeDashboard = useDocumentFlowStore((s) => s.closeDashboard)
   const sessionStatuses = useWorktreeStatusStore((s) => s.sessionStatuses)
 
@@ -83,9 +92,14 @@ function useRunItemActions(run: DocumentRun): RunItemActions {
       },
       skip: (item) => {
         skipItem(run.id, item.id).catch(report(item, 'skip'))
+      },
+      toggleVerification: (item, method) => {
+        updateItem(run.id, item.id, {
+          verification: toggleVerificationMethod(item.verification, method)
+        }).catch(report(item, 'change the verification of'))
       }
     }
-  }, [run, retryItem, markItemDone, skipItem, closeDashboard, sessionStatuses])
+  }, [run, retryItem, markItemDone, skipItem, updateItem, closeDashboard, sessionStatuses])
 }
 
 interface RunItemsProps {
@@ -196,7 +210,7 @@ export function NeedsYouSection({ run, items }: RunItemsProps): React.JSX.Elemen
 // Every row is its own grid, so each track has a fixed or fractional size: an `auto` track would
 // size per row and the columns would stop lining up.
 const ROW_GRID_CLASS =
-  'grid grid-cols-[14px_48px_minmax(0,1.5fr)_150px_minmax(0,1.2fr)_130px_minmax(0,0.8fr)_104px] items-center gap-2 px-3'
+  'grid grid-cols-[14px_48px_minmax(0,1.5fr)_150px_minmax(0,1.2fr)_130px_186px_minmax(0,0.8fr)_104px] items-center gap-2 px-3'
 
 /** Every ticket of the run in document order; the ones left out of the run come last. */
 export function RunItemsTable({ run, items }: RunItemsProps): React.JSX.Element {
@@ -222,6 +236,7 @@ export function RunItemsTable({ run, items }: RunItemsProps): React.JSX.Element 
           <span>Status</span>
           <span>Detail</span>
           <span>Model</span>
+          <span>Verify by</span>
           <span>Branch</span>
           <span />
         </div>
@@ -264,6 +279,17 @@ export function RunItemsTable({ run, items }: RunItemsProps): React.JSX.Element 
                   <LaunchConfigBadge
                     config={effectiveLaunchConfig(item, run.config.defaultLaunch)}
                     inheritLabel="app default"
+                  />
+                </span>
+                <span className="flex min-w-0 overflow-hidden">
+                  {/* Still open while the ticket waits its turn; fixed once its brief was sent. */}
+                  <VerificationChips
+                    itemKey={item.key}
+                    item={item}
+                    disabled={run.config.verificationDisabled}
+                    readOnly={!(actions.enabled && canEditVerification(run, item))}
+                    onToggle={(method) => actions.toggleVerification(item, method)}
+                    testIdPrefix="docflow-row-verify"
                   />
                 </span>
                 <span

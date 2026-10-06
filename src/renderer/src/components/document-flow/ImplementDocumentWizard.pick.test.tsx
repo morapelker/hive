@@ -60,7 +60,14 @@ beforeEach(() => {
   )
   useProjectStore.setState({ projects: [TEST_PROJECT] } as never)
   useSettingsStore.setState({
-    prContentModel: { agentSdk: 'claude-code', providerID: 'anthropic', modelID: 'haiku' },
+    // Extraction runs with the default model for building, not the PR content model.
+    prContentModel: { agentSdk: 'codex', providerID: 'codex', modelID: 'gpt-5.4-mini' },
+    defaultModels: {
+      build: { agentSdk: 'claude-code', providerID: 'anthropic', modelID: 'haiku' },
+      plan: null,
+      ask: null,
+      review: null
+    },
     defaultAgentSdk: 'claude-code',
     availableAgentSdks: { opencode: true, claude: true, codex: true }
   })
@@ -369,19 +376,20 @@ describe('ImplementDocumentWizard — extracting and failed steps', () => {
     const step = screen.getByTestId('docflow-extracting')
     expect(step).toHaveTextContent('checkout-redesign.html')
     expect(screen.getByTestId('docflow-extracting-model')).toHaveTextContent('codex · gpt-5')
-    expect(step).toHaveTextContent(/PR content model/)
+    expect(step).toHaveTextContent(/default model for building/)
+    expect(step).toHaveTextContent(/inside the project/)
     expect(step).toHaveTextContent(/Settings › Models/)
     expect(step).toHaveTextContent(/Extraction continues/)
   })
 
-  it('says the provider default is used when no model is configured', async () => {
-    useSettingsStore.setState({ prContentModel: null })
+  it("falls back to the SDK's stock model when no default model is configured", async () => {
+    useSettingsStore.setState({ prContentModel: null, defaultModels: null })
     seedRuns(makeDetail({ status: 'extracting' }, []))
     openWizard('run-1')
     await renderWizard()
 
     expect(screen.getByTestId('docflow-extracting-model')).toHaveTextContent(
-      "claude-code · the provider's default model"
+      'claude-code · claude-opus-4-5-20251101'
     )
   })
 

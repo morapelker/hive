@@ -15,7 +15,8 @@ vi.mock('../logger', () => ({
 }))
 
 vi.mock('../system-info', () => ({
-  detectAgentSdks: () => ({ claude: false, codex: true, opencode: false })
+  // Every provider is installed: each test asks for the one it exercises, nothing falls back.
+  detectAgentSdks: () => ({ claude: true, codex: true, opencode: true })
 }))
 
 vi.mock('../codex-binary-resolver', () => ({
@@ -61,10 +62,36 @@ vi.mock('../../effect/spawn/runtime', () => ({
   })
 }))
 
+import { loadClaudeSDK } from '../claude-sdk-loader'
 import { generateText } from '../text-generation-router'
+
+const PROMPT = 'Cut this into tickets.'
+const SYSTEM_PROMPT = 'You are an extractor.'
+
+async function* asyncIterableOf<T>(items: T[]): AsyncGenerator<T> {
+  for (const item of items) yield item
+}
+
+type ClaudeQueryInput = { prompt: string; options: Record<string, unknown> }
+
+/** A Claude SDK whose one query answers with `result` and records what it was asked. */
+function mockClaudeSdk(
+  result: string
+): ReturnType<typeof vi.fn<(input: ClaudeQueryInput) => unknown>> {
+  const query = vi.fn((_input: ClaudeQueryInput) =>
+    asyncIterableOf([{ type: 'result', subtype: 'success', result }])
+  )
+  vi.mocked(loadClaudeSDK).mockResolvedValue({ query } as never)
+  return query
+}
+
+/** One opencode JSON event line carrying `text`. */
+const openCodeTextEvent = (text: string): string => `${JSON.stringify({ type: 'text', text })}\n`
 
 afterEach(() => {
   spawnMocks.runs.length = 0
+  spawnMocks.result = { stdout: '', stderr: '', exitCode: 0 }
+  vi.mocked(loadClaudeSDK).mockReset()
 })
 
 describe('generateText with codex', () => {
@@ -98,5 +125,83 @@ describe('generateText with codex', () => {
     expect(run.stdin).toBe('You are an extractor.\n\nCut this into tickets.')
     expect(run.cwd).toBe(tmpdir())
     expect(run.timeout).toBe(1234)
+  })
+})
+
+describe('generateText with claude', () => {
+  it('hands the model its read-only file tools and the turns to use them when it may read the repository', async () => {
+    const query = mockClaudeSdk('{"ok":true}')
+
+    const reply = await generateText(PROMPT, SYSTEM_PROMPT, 'claude-code', {
+      cwd: '/repo',
+      readRepository: true,
+      maxRetries: 0
+    })
+
+    expect(reply).toBe('{"ok":true}')
+    expect(query).toHaveBeenCalledTimes(1)
+    const [{ prompt, options }] = query.mock.calls[0]
+    expect(prompt).toBe(PROMPT)
+    expect(options).toMatchObject({
+      cwd: '/repo',
+      systemPrompt: SYSTEM_PROMPT,
+      tools: ['Read', 'Glob', 'Grep'],
+      maxTurns: 60,
+      permissionMode: 'dontAsk'
+    })
+  })
+
+  it('answers in one shot without tools by default', async () => {
+    const query = mockClaudeSdk('{"ok":true}')
+
+    await generateText(PROMPT, SYSTEM_PROMPT, 'claude-code', { cwd: '/repo', maxRetries: 0 })
+
+    expect(query).toHaveBeenCalledTimes(1)
+    const [{ options }] = query.mock.calls[0]
+    expect(options).toMatchObject({ cwd: '/repo', tools: [], maxTurns: 2 })
+    expect(options).not.toHaveProperty('permissionMode')
+  })
+})
+
+describe('generateText with opencode', () => {
+  it('runs the read-only plan agent when it may read the repository', async () => {
+    spawnMocks.result = { stdout: openCodeTextEvent('{"ok":true}'), stderr: '', exitCode: 0 }
+
+    const reply = await generateText(PROMPT, SYSTEM_PROMPT, 'opencode', {
+      modelOverride: 'claude-haiku',
+      cwd: '/repo',
+      readRepository: true,
+      maxRetries: 0
+    })
+
+    expect(reply).toBe('{"ok":true}')
+    expect(spawnMocks.runs).toHaveLength(1)
+    const [run] = spawnMocks.runs
+    expect(run.command).toBe('opencode')
+    expect(run.args).toEqual([
+      'run',
+      '--format',
+      'json',
+      '--model',
+      'claude-haiku',
+      '--agent',
+      'plan'
+    ])
+    expect(run.stdin).toBe(`${SYSTEM_PROMPT}\n\n${PROMPT}`)
+    expect(run.cwd).toBe('/repo')
+  })
+
+  it('runs the default agent otherwise', async () => {
+    spawnMocks.result = { stdout: openCodeTextEvent('{"ok":true}'), stderr: '', exitCode: 0 }
+
+    await generateText(PROMPT, SYSTEM_PROMPT, 'opencode', {
+      modelOverride: 'claude-haiku',
+      cwd: '/repo',
+      maxRetries: 0
+    })
+
+    const [run] = spawnMocks.runs
+    expect(run.args).toEqual(['run', '--format', 'json', '--model', 'claude-haiku'])
+    expect(run.args).not.toContain('--agent')
   })
 })

@@ -146,6 +146,9 @@ export function createFakeDocumentFlowDb(): FakeDocumentFlowDb {
           selected: draft.selected,
           figures: copy(draft.figures),
           open_questions: [...draft.open_questions],
+          verification_suggested: [...draft.verification_suggested],
+          verification: [...draft.verification],
+          verification_reason: draft.verification_reason,
           launch_config: draft.launch_config ? copy(draft.launch_config) : null,
           status: 'pending',
           status_detail: null,
@@ -599,6 +602,9 @@ export function seedRun(
     selected: item.selected ?? true,
     figures: item.figures ?? [],
     open_questions: item.open_questions ?? [],
+    verification_suggested: item.verification_suggested ?? item.verification ?? [],
+    verification: item.verification ?? [],
+    verification_reason: item.verification_reason ?? '',
     launch_config: item.launch_config ?? null
   }))
   const created = db.replaceDocumentRunItems(id, drafts)

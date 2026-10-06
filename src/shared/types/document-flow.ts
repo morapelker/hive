@@ -143,6 +143,12 @@ export interface DocumentRunConfig {
    * to the extraction model as instructions; set at creation and never changed. null = none.
    */
   notes: string | null
+  /**
+   * true: no ticket is asked to verify its work, whatever its own `verification` says; the
+   * per-ticket choices are kept, so switching back restores them. Changeable mid-run: it
+   * applies to tickets launched from then on.
+   */
+  verificationDisabled: boolean
 }
 
 export const DOCUMENT_RUN_MAX_PARALLEL_LIMIT = 50
@@ -156,7 +162,8 @@ export const DEFAULT_DOCUMENT_RUN_CONFIG: DocumentRunConfig = {
   defaultLaunch: null,
   generation: null,
   baseBranch: null,
-  notes: null
+  notes: null,
+  verificationDisabled: false
 }
 
 // ── Extraction ─────────────────────────────────────────────────────────────
@@ -166,6 +173,30 @@ export type DocumentTicketSize = 'S' | 'M' | 'L' | 'XL'
 export type DocumentTicketConflictRisk = 'low' | 'medium' | 'high'
 /** What the document itself says about the task ("✓ DONE" badges and the like). */
 export type DocumentTicketDocStatus = 'open' | 'done' | 'partial' | 'unknown'
+
+/**
+ * How a ticket's agent is asked to check its own work before calling it done:
+ * - `tcu`: computer use — drive the running desktop app through the `tcu` CLI
+ * - `playwright`: drive the app in a browser with playwright-cli over CDP (port 9222)
+ * - `tests`: write and run unit / integration / e2e tests
+ * Suggested per ticket at extraction, chosen in the preview, appended to the agent's brief.
+ */
+export const DOCUMENT_VERIFICATION_METHODS = ['tcu', 'playwright', 'tests'] as const
+
+/** One of DOCUMENT_VERIFICATION_METHODS, which lists them in the order the UI and the brief use. */
+export type DocumentVerificationMethod = (typeof DOCUMENT_VERIFICATION_METHODS)[number]
+
+export function isDocumentVerificationMethod(value: unknown): value is DocumentVerificationMethod {
+  return (DOCUMENT_VERIFICATION_METHODS as readonly unknown[]).includes(value)
+}
+
+/** The known methods of `values`, deduplicated, in canonical order. */
+export function normalizeVerificationMethods(
+  values: readonly unknown[] | null | undefined
+): DocumentVerificationMethod[] {
+  if (!values) return []
+  return DOCUMENT_VERIFICATION_METHODS.filter((method) => values.includes(method))
+}
 
 export interface DocumentRunFigure {
   /** Stable id inside the document text, e.g. `fig-03`. */
@@ -190,6 +221,12 @@ export interface DocumentRunItemDraft {
   selected: boolean
   figures: DocumentRunFigure[]
   open_questions: string[]
+  /** What extraction suggested the agent verifies with; never edited. */
+  verification_suggested: DocumentVerificationMethod[]
+  /** What the agent is asked to verify with; starts as the suggestion. Empty = nothing. */
+  verification: DocumentVerificationMethod[]
+  /** One line on why extraction suggested what it did; '' when it said nothing. */
+  verification_reason: string
   launch_config?: DocumentRunLaunchConfig | null
 }
 
@@ -288,7 +325,10 @@ export interface DocumentRunItem {
   position: number
   title: string
   summary: string
-  /** The ticket description (becomes the ticket's body, and so the agent's prompt). */
+  /**
+   * The task as extracted: its verbatim spec text plus pointers. Kept on the item; the board
+   * ticket (and so the agent's brief) is the short launch prompt, see `buildLaunchPrompt`.
+   */
   description: string
   kind: DocumentTicketKind
   /** Keys of items that must be merged before this one launches. */
@@ -301,6 +341,16 @@ export interface DocumentRunItem {
   selected: boolean
   figures: DocumentRunFigure[]
   open_questions: string[]
+  /** What extraction suggested the agent verifies with; never edited. */
+  verification_suggested: DocumentVerificationMethod[]
+  /**
+   * What the agent is asked to verify with (see `DocumentVerificationMethod`); the user's
+   * choice, starting as the suggestion. Empty = nothing. Editable until the ticket launches.
+   * Ignored while the run's `verificationDisabled` is on.
+   */
+  verification: DocumentVerificationMethod[]
+  /** One line on why extraction suggested what it did; '' when it said nothing. */
+  verification_reason: string
   /** null = the run's `defaultLaunch`. */
   launch_config: DocumentRunLaunchConfig | null
   status: DocumentRunItemStatus
@@ -405,6 +455,8 @@ export interface DocumentRunItemPatch {
   description?: string
   depends_on?: string[]
   selected?: boolean
+  /** Editable in preview, and for a ticket still waiting to launch while the run is going. */
+  verification?: DocumentVerificationMethod[]
   launch_config?: DocumentRunLaunchConfig | null
   status?: DocumentRunItemStatus
   status_detail?: string | null

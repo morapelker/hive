@@ -23,7 +23,12 @@ import type {
   DocumentRunItemPatch,
   DocumentTicketConflictRisk
 } from '@shared/types/document-flow'
-import { LaunchConfigBadge, LaunchConfigChip, TonePill } from './DocumentFlowBadges'
+import {
+  LaunchConfigBadge,
+  LaunchConfigChip,
+  TonePill,
+  VerificationChips
+} from './DocumentFlowBadges'
 import { LaunchConfigPicker } from './LaunchConfigPicker'
 import {
   dependencyReaches,
@@ -31,7 +36,7 @@ import {
   sameLaunchConfig,
   type QuickLaunchChoice
 } from './document-flow-launch'
-import { pluralize, type DocumentFlowTone } from './document-flow-ui'
+import { pluralize, toggleVerificationMethod, type DocumentFlowTone } from './document-flow-ui'
 import { useDebouncedText } from './useDebouncedText'
 
 const LABEL_CLASS = 'text-xs font-medium uppercase tracking-wider text-muted-foreground'
@@ -53,6 +58,8 @@ interface DocumentRunItemEditorProps {
   items: readonly DocumentRunItem[]
   /** Models other tickets of the run settled on, offered as one-tap toggles. */
   quickChoices: readonly QuickLaunchChoice[]
+  /** The run skips verification: the chips show the choice but cannot be changed. */
+  verificationDisabled: boolean
   expanded: boolean
   onToggleExpanded: () => void
   /**
@@ -72,6 +79,7 @@ export function DocumentRunItemEditor({
   item,
   items,
   quickChoices,
+  verificationDisabled,
   expanded,
   onToggleExpanded,
   onModelPickingChange
@@ -125,6 +133,16 @@ export function DocumentRunItemEditor({
         </button>
         {/* In a narrow window the chips move under the picker, then shorten, before the title is squeezed away. */}
         <div className="-my-0.5 flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+          <VerificationChips
+            itemKey={item.key}
+            item={item}
+            disabled={verificationDisabled}
+            onToggle={(method) => {
+              save({ verification: toggleVerificationMethod(item.verification, method) }).catch(
+                reportSaveFailure
+              )
+            }}
+          />
           <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
             <PopoverTrigger asChild>
               <button

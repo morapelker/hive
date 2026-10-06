@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { buildLaunchPrompt } from '@shared/document-flow/prompts'
+import {
+  buildLaunchPrompt,
+  VERIFICATION_LEAD_PARAGRAPH,
+  VERIFICATION_PARAGRAPHS
+} from '@shared/document-flow/prompts'
 import { DocumentFlowRunner } from './runner'
 import {
   INTEGRATION_BRANCH,
@@ -645,5 +649,62 @@ describe('DocumentFlowRunner: launching', () => {
     // The launch already under way finishes and is recorded; the queued one never starts.
     expect(world.statuses()).toEqual({ A: 'running', B: 'pending' })
     expect(world.launches).toHaveLength(1)
+  })
+
+  it('asks the agent to verify the way its ticket says, and not at all while the run skips verification', async () => {
+    const world = createWorld({
+      config: { maxParallel: 1 },
+      items: [
+        { key: 'A', verification: ['playwright', 'tests'] },
+        { key: 'B', verification: ['tcu'] }
+      ]
+    })
+    start(world)
+    await advance(1000)
+
+    const paragraphs = world.launches[0].prompt.split('\n\n')
+    expect(paragraphs).toEqual([
+      'implement task A ("Task A") from the file:///docs/checkout.html',
+      expect.stringContaining('use subagents'),
+      'if you have any clarifications you might need - use the AskUserQuestion tool to ask me.',
+      'then - implement this',
+      VERIFICATION_LEAD_PARAGRAPH,
+      VERIFICATION_PARAGRAPHS.playwright,
+      VERIFICATION_PARAGRAPHS.tests,
+      expect.stringContaining('implement only this task'),
+      expect.stringContaining('they are my instructions')
+    ])
+
+    // Verification switched off mid-run: the next ticket is not asked, whatever it chose.
+    world.setRun({ config: { ...world.detail().run.config, verificationDisabled: true } })
+    world.setItem('A', { status: 'merged' })
+    await advance(5000)
+
+    expect(world.launches.map((spec) => spec.ticketId)).toEqual(['ticket-A', 'ticket-B'])
+    expect(world.launches[1].prompt).not.toContain(VERIFICATION_LEAD_PARAGRAPH)
+    expect(world.launches[1].prompt).not.toContain(VERIFICATION_PARAGRAPHS.tcu)
+  })
+
+  it('briefs a ticket with the verification chosen at launch, not the one its description was written with', async () => {
+    const brief = (verification: ('tcu' | 'playwright' | 'tests')[]): string =>
+      buildLaunchPrompt({
+        key: 'A',
+        title: 'Task A',
+        sourcePath: '/docs/checkout.html',
+        promptStyle: 'full',
+        interactive: true,
+        sdk: 'claude-code-cli',
+        verification
+      })
+    // The server wrote the brief when the run started; the user changed the choice since.
+    const world = createWorld({ items: [{ key: 'A', verification: ['tests'] }] })
+    const ticket = world.tickets.get('ticket-A')!
+    world.tickets.set(ticket.id, { ...ticket, description: brief(['tcu']) })
+    start(world)
+
+    await advance(1000)
+
+    expect(world.launches[0].prompt).toBe(brief(['tests']))
+    expect(world.launches[0].prompt).not.toContain(VERIFICATION_PARAGRAPHS.tcu)
   })
 })

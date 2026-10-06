@@ -1112,6 +1112,185 @@ describe('DocumentRunDashboard — tickets', () => {
   })
 })
 
+describe('DocumentRunDashboard — verification', () => {
+  it('turns verification off for the tickets still to launch, without asking', async () => {
+    await renderDashboard(
+      makeDetail(LAUNCHED, [
+        { key: 'A1', status: 'running', session_id: 's-1' },
+        { key: 'A2', status: 'pending' }
+      ])
+    )
+    const toggle = screen.getByTestId('docflow-dashboard-verification-switch')
+    expect(toggle).toHaveAttribute('aria-checked', 'true')
+
+    await click('docflow-dashboard-verification-switch')
+
+    expect(screen.queryByTestId('docflow-confirm-action')).toBeNull()
+    expect(api.updateRun).toHaveBeenCalledTimes(1)
+    expect(api.updateRun).toHaveBeenCalledWith('run-1', { config: { verificationDisabled: true } })
+    expect(screen.getByTestId('docflow-dashboard-verification-switch')).toHaveAttribute(
+      'aria-checked',
+      'false'
+    )
+    // Every ticket keeps its choice; the chips only stop taking clicks.
+    expect(screen.getByTestId('docflow-row-verify-A2')).toHaveAttribute('data-disabled')
+    expect(api.updateItem).not.toHaveBeenCalled()
+
+    await click('docflow-dashboard-verification-switch')
+    expect(api.updateRun).toHaveBeenLastCalledWith('run-1', {
+      config: { verificationDisabled: false }
+    })
+    expect(screen.getByTestId('docflow-dashboard-verification-switch')).toHaveAttribute(
+      'aria-checked',
+      'true'
+    )
+  })
+
+  it('shows the switch off while the run skips verification, on a paused run too', async () => {
+    const detail = makeDetail({ ...LAUNCHED, status: 'paused' }, [{ key: 'A1', status: 'pending' }])
+    detail.run.config = { ...detail.run.config, verificationDisabled: true }
+    await renderDashboard(detail)
+
+    expect(screen.getByTestId('docflow-dashboard-verification-switch')).toHaveAttribute(
+      'aria-checked',
+      'false'
+    )
+    expect(screen.getByTestId('docflow-row-verify-A1')).toHaveAttribute('data-disabled')
+    expect(screen.getByTestId('docflow-row-verify-A1-tests')).toBeDisabled()
+  })
+
+  it('has no verification switch once the run is over', async () => {
+    await renderDashboard(
+      makeDetail({ ...LAUNCHED, status: 'completed' }, [{ key: 'A1', status: 'merged' }])
+    )
+    expect(screen.queryByTestId('docflow-dashboard-verification-switch')).toBeNull()
+  })
+
+  it('reports a verification change that could not be saved and leaves the switch as it was', async () => {
+    api.updateRun.mockRejectedValue(new Error('offline'))
+    await renderDashboard(makeDetail(LAUNCHED, [{ key: 'A1', status: 'pending' }]))
+
+    await click('docflow-dashboard-verification-switch')
+
+    expect(toast.error).toHaveBeenCalledWith('Could not change the verification setting: offline')
+    expect(screen.getByTestId('docflow-dashboard-verification-switch')).toHaveAttribute(
+      'aria-checked',
+      'true'
+    )
+  })
+
+  it('shows what each ticket verifies by, open only while it waits its turn', async () => {
+    await renderDashboard(
+      makeDetail(LAUNCHED, [
+        {
+          key: 'A1',
+          status: 'running',
+          session_id: 's-1',
+          verification_suggested: ['tests'],
+          verification: ['playwright', 'tests']
+        },
+        { key: 'A2', status: 'merged', verification: ['tests'] },
+        { key: 'A3', status: 'pending', verification_suggested: ['tests'], verification: [] }
+      ])
+    )
+
+    expect(screen.getByTestId('docflow-items')).toHaveTextContent('Verify by')
+    for (const key of ['A1', 'A2', 'A3']) {
+      expect(
+        within(screen.getByTestId(`docflow-row-verify-${key}`)).getAllByRole('button')
+      ).toHaveLength(3)
+    }
+
+    // Launched: shown as sent, no toggling.
+    expect(screen.getByTestId('docflow-row-verify-A1-playwright')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    expect(screen.getByTestId('docflow-row-verify-A1-tests')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    expect(screen.getByTestId('docflow-row-verify-A1-tests')).toHaveAttribute('data-suggested')
+    expect(screen.getByTestId('docflow-row-verify-A1-tcu')).toHaveAttribute('aria-pressed', 'false')
+    for (const method of ['tcu', 'playwright', 'tests']) {
+      expect(screen.getByTestId(`docflow-row-verify-A1-${method}`)).toBeDisabled()
+      expect(screen.getByTestId(`docflow-row-verify-A2-${method}`)).toBeDisabled()
+      expect(screen.getByTestId(`docflow-row-verify-A3-${method}`)).not.toBeDisabled()
+    }
+    expect(screen.getByTestId('docflow-row-verify-A2-tests')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    expect(screen.getByTestId('docflow-row-verify-A3-tests')).toHaveAttribute(
+      'aria-pressed',
+      'false'
+    )
+    expect(screen.getByTestId('docflow-row-verify-A3-tests')).toHaveAttribute('data-suggested')
+    expect(screen.queryByTestId('docflow-row-verify-A1')).not.toHaveAttribute('data-disabled')
+
+    // A click on a launched ticket's chip writes nothing.
+    await click('docflow-row-verify-A1-tcu')
+    expect(api.updateItem).not.toHaveBeenCalled()
+  })
+
+  it('flips one method of a waiting ticket, writing the whole choice in canonical order', async () => {
+    await renderDashboard(
+      makeDetail(LAUNCHED, [{ key: 'A1', status: 'pending', verification: ['tests'] }])
+    )
+
+    await click('docflow-row-verify-A1-tcu')
+    expect(api.updateItem).toHaveBeenCalledTimes(1)
+    expect(api.updateItem).toHaveBeenCalledWith('run-1', 'item-A1', {
+      verification: ['tcu', 'tests']
+    })
+    expect(screen.getByTestId('docflow-row-verify-A1-tcu')).toHaveAttribute('aria-pressed', 'true')
+
+    await click('docflow-row-verify-A1-tests')
+    expect(api.updateItem).toHaveBeenLastCalledWith('run-1', 'item-A1', {
+      verification: ['tcu']
+    })
+    expect(screen.getByTestId('docflow-row-verify-A1-tests')).toHaveAttribute(
+      'aria-pressed',
+      'false'
+    )
+  })
+
+  it('reports a chip change that could not be saved', async () => {
+    api.updateItem.mockRejectedValue(
+      new Error('A1 has launched; its verification can no longer be changed.')
+    )
+    await renderDashboard(makeDetail(LAUNCHED, [{ key: 'A1', status: 'pending' }]))
+
+    await click('docflow-row-verify-A1-tests')
+
+    expect(toast.error).toHaveBeenCalledWith(
+      'Could not change the verification of A1: A1 has launched; its verification can no longer be changed.'
+    )
+    expect(screen.getByTestId('docflow-row-verify-A1-tests')).toHaveAttribute(
+      'aria-pressed',
+      'false'
+    )
+  })
+
+  it('offers the chips read-only once the run is over', async () => {
+    await renderDashboard(
+      makeDetail({ ...LAUNCHED, status: 'completed' }, [
+        { key: 'A1', status: 'merged', verification: ['tests'] },
+        { key: 'A2', status: 'skipped', verification: [] }
+      ])
+    )
+
+    expect(screen.getByTestId('docflow-row-verify-A1-tests')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    for (const method of ['tcu', 'playwright', 'tests']) {
+      expect(screen.getByTestId(`docflow-row-verify-A1-${method}`)).toBeDisabled()
+      expect(screen.getByTestId(`docflow-row-verify-A2-${method}`)).toBeDisabled()
+    }
+  })
+})
+
 describe('DocumentRunDashboard — report and activity', () => {
   it('renders what merged, what did not, and what is left for the user', async () => {
     const report = makeReport({

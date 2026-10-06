@@ -7,7 +7,8 @@ import {
 import {
   DEFAULT_DOCUMENT_RUN_CONFIG,
   DOCUMENT_RUN_ITEM_STATUSES,
-  DOCUMENT_RUN_STATUSES
+  DOCUMENT_RUN_STATUSES,
+  DOCUMENT_VERIFICATION_METHODS
 } from '@shared/types/document-flow'
 import {
   DOCUMENT_RUN_ITEM_STATUS_DOTS,
@@ -15,10 +16,15 @@ import {
   DOCUMENT_RUN_ITEM_STATUS_TONES,
   DOCUMENT_RUN_STATUS_LABELS,
   DOCUMENT_RUN_STATUS_TONES,
+  DOCUMENT_VERIFICATION_DESCRIPTIONS,
+  DOCUMENT_VERIFICATION_LABELS,
+  canEditVerification,
   currentRootBranch,
   defaultBaseBranchLabel,
   describeBaseBranch,
   describeRunDeletion,
+  describeVerificationChip,
+  describeVerificationChoice,
   documentNameFromPath,
   documentRunTicketDropRefusal,
   formatGeneration,
@@ -37,6 +43,7 @@ import {
   runBoardCardState,
   runCountsLabel,
   runStatusDisplay,
+  toggleVerificationMethod,
   tonePillClass,
   wizardStep
 } from './document-flow-ui'
@@ -805,5 +812,203 @@ describe('formatGeneration', () => {
     )
     expect(formatGeneration({ provider: 'codex' })).toBe("codex · the provider's default model")
     expect(formatGeneration(null)).toMatch(/default/)
+  })
+})
+
+describe('verification labels', () => {
+  it('gives every verification method a label and a description', () => {
+    for (const method of DOCUMENT_VERIFICATION_METHODS) {
+      expect(DOCUMENT_VERIFICATION_LABELS[method], method).toEqual(expect.any(String))
+      expect(DOCUMENT_VERIFICATION_LABELS[method].length, method).toBeGreaterThan(0)
+      expect(DOCUMENT_VERIFICATION_DESCRIPTIONS[method], method).toEqual(expect.any(String))
+      expect(DOCUMENT_VERIFICATION_DESCRIPTIONS[method].length, method).toBeGreaterThan(0)
+    }
+    expect(Object.keys(DOCUMENT_VERIFICATION_LABELS).sort()).toEqual(
+      [...DOCUMENT_VERIFICATION_METHODS].sort()
+    )
+    expect(Object.keys(DOCUMENT_VERIFICATION_DESCRIPTIONS).sort()).toEqual(
+      [...DOCUMENT_VERIFICATION_METHODS].sort()
+    )
+  })
+
+  it('uses the words the chips show', () => {
+    expect(DOCUMENT_VERIFICATION_LABELS).toEqual({
+      tcu: 'tcu',
+      playwright: 'playwright',
+      tests: 'tests'
+    })
+  })
+})
+
+describe('toggleVerificationMethod', () => {
+  it('adds a method in canonical order, wherever it would land', () => {
+    expect(toggleVerificationMethod([], 'tests')).toEqual(['tests'])
+    expect(toggleVerificationMethod(['tests'], 'playwright')).toEqual(['playwright', 'tests'])
+    expect(toggleVerificationMethod(['playwright', 'tests'], 'tcu')).toEqual([
+      'tcu',
+      'playwright',
+      'tests'
+    ])
+    expect(toggleVerificationMethod(['tcu', 'tests'], 'playwright')).toEqual([
+      'tcu',
+      'playwright',
+      'tests'
+    ])
+  })
+
+  it('removes a method that is on, leaving the rest in canonical order', () => {
+    expect(toggleVerificationMethod(['tcu', 'playwright', 'tests'], 'playwright')).toEqual([
+      'tcu',
+      'tests'
+    ])
+    expect(toggleVerificationMethod(['tests'], 'tests')).toEqual([])
+  })
+
+  it('treats a duplicated method as on once, and does not keep the duplicate', () => {
+    expect(toggleVerificationMethod(['tests', 'tests'], 'tests')).toEqual([])
+    expect(toggleVerificationMethod(['tests', 'tests'], 'tcu')).toEqual(['tcu', 'tests'])
+  })
+
+  it('does not change the array it was given', () => {
+    const current = ['tests'] as const
+    toggleVerificationMethod(current, 'tcu')
+    expect(current).toEqual(['tests'])
+  })
+})
+
+describe('describeVerificationChoice', () => {
+  it('says verification is skipped for every ticket when the run disables it', () => {
+    const items = [makeItem({ key: 'A1', verification: ['tests'] })]
+    expect(describeVerificationChoice(items, true)).toBe('skipped for every ticket')
+    expect(describeVerificationChoice([], true)).toBe('skipped for every ticket')
+  })
+
+  it('says none when no selected ticket verifies', () => {
+    expect(describeVerificationChoice([], false)).toBe('none')
+    expect(describeVerificationChoice([makeItem({ key: 'A1' })], false)).toBe('none')
+  })
+
+  it('counts each method over the selected tickets only, in canonical order', () => {
+    const items = [
+      makeItem({ key: 'A1', verification: ['tests'] }),
+      makeItem({ key: 'A2', verification: ['playwright', 'tests'] }),
+      makeItem({ key: 'A3', verification: ['tcu', 'tests'], selected: false })
+    ]
+    expect(describeVerificationChoice(items, false)).toBe('playwright ×1 · tests ×2')
+  })
+
+  it('lists tcu before playwright before tests, whatever the tickets say', () => {
+    const items = [
+      makeItem({ key: 'A1', verification: ['tests', 'tcu'] }),
+      makeItem({ key: 'A2', verification: ['playwright'] })
+    ]
+    expect(describeVerificationChoice(items, false)).toBe('tcu ×1 · playwright ×1 · tests ×1')
+  })
+})
+
+describe('canEditVerification', () => {
+  it('lets every ticket be changed while the run is in preview', () => {
+    for (const status of DOCUMENT_RUN_ITEM_STATUSES) {
+      expect(canEditVerification({ status: 'preview' }, { status }), status).toBe(true)
+    }
+  })
+
+  it('lets only a pending ticket be changed while the run is running or paused', () => {
+    for (const runStatus of ['running', 'paused'] as const) {
+      for (const status of DOCUMENT_RUN_ITEM_STATUSES) {
+        expect(
+          canEditVerification({ status: runStatus }, { status }),
+          `${runStatus}/${status}`
+        ).toBe(status === 'pending')
+      }
+    }
+  })
+
+  it('lets nothing be changed once the run is over or before it was extracted', () => {
+    for (const runStatus of [
+      'completed',
+      'completed_with_issues',
+      'cancelled',
+      'extracting',
+      'extract_failed'
+    ] as const) {
+      for (const status of DOCUMENT_RUN_ITEM_STATUSES) {
+        expect(
+          canEditVerification({ status: runStatus }, { status }),
+          `${runStatus}/${status}`
+        ).toBe(false)
+      }
+    }
+  })
+})
+
+describe('describeVerificationChip', () => {
+  const editable = { disabled: false, readOnly: false }
+
+  it('starts with what the method is', () => {
+    for (const method of DOCUMENT_VERIFICATION_METHODS) {
+      expect(
+        describeVerificationChip(method, makeItem(), editable).startsWith(
+          DOCUMENT_VERIFICATION_DESCRIPTIONS[method]
+        ),
+        method
+      ).toBe(true)
+    }
+  })
+
+  it('says whether the method is on and what a click does', () => {
+    const on = makeItem({ verification: ['tests'] })
+    expect(describeVerificationChip('tests', on, editable)).toBe(
+      `${DOCUMENT_VERIFICATION_DESCRIPTIONS.tests} · on (click to turn off)`
+    )
+    expect(describeVerificationChip('tcu', on, editable)).toBe(
+      `${DOCUMENT_VERIFICATION_DESCRIPTIONS.tcu} · off (click to turn on)`
+    )
+  })
+
+  it('names the suggestion and its reason', () => {
+    const item = makeItem({
+      verification_suggested: ['tests'],
+      verification: [],
+      verification_reason: 'pure parsing logic'
+    })
+    expect(describeVerificationChip('tests', item, editable)).toBe(
+      `${DOCUMENT_VERIFICATION_DESCRIPTIONS.tests} · off (click to turn on) · suggested by the extraction: pure parsing logic`
+    )
+    // A method the extraction did not suggest says nothing about it.
+    expect(describeVerificationChip('tcu', item, editable)).not.toContain('suggested')
+  })
+
+  it('names a suggestion without a reason too', () => {
+    const item = makeItem({ verification_suggested: ['playwright'], verification: ['playwright'] })
+    expect(describeVerificationChip('playwright', item, editable)).toBe(
+      `${DOCUMENT_VERIFICATION_DESCRIPTIONS.playwright} · on (click to turn off) · suggested by the extraction`
+    )
+  })
+
+  it('says the run skips verification instead of inviting a click', () => {
+    const item = makeItem({ verification: ['tests'] })
+    const text = describeVerificationChip('tests', item, { disabled: true, readOnly: false })
+    expect(text).toBe(
+      `${DOCUMENT_VERIFICATION_DESCRIPTIONS.tests} · verification is skipped for this run`
+    )
+    expect(text).not.toContain('click to turn')
+  })
+
+  it('states on or off without a click once the ticket is read-only', () => {
+    const item = makeItem({ verification: ['tests'] })
+    expect(describeVerificationChip('tests', item, { disabled: false, readOnly: true })).toBe(
+      `${DOCUMENT_VERIFICATION_DESCRIPTIONS.tests} · on`
+    )
+    expect(describeVerificationChip('tcu', item, { disabled: false, readOnly: true })).toBe(
+      `${DOCUMENT_VERIFICATION_DESCRIPTIONS.tcu} · off`
+    )
+  })
+
+  it('lets the run-wide skip win over read-only', () => {
+    const item = makeItem({ verification: ['tests'] })
+    expect(describeVerificationChip('tests', item, { disabled: true, readOnly: true })).toBe(
+      `${DOCUMENT_VERIFICATION_DESCRIPTIONS.tests} · verification is skipped for this run`
+    )
   })
 })

@@ -9,6 +9,7 @@ import type { CustomClaudeProvider } from '@shared/types/custom-provider'
 import {
   DEFAULT_DOCUMENT_RUN_CONFIG,
   type DocumentRunDetail,
+  type DocumentRunItem,
   type DocumentRunItemPatch,
   type DocumentRunLaunchConfig,
   type DocumentRunPatch
@@ -855,7 +856,8 @@ describe('ImplementDocumentWizard — launch', () => {
     expect(dialog).toHaveTextContent('Base branchmain')
     expect(dialog).toHaveTextContent('The base branch itself is not modified.')
     expect(dialog).toHaveTextContent('Parallel tickets3')
-    expect(dialog).toHaveTextContent('Verificationpnpm check')
+    expect(dialog).toHaveTextContent('Verify bynone')
+    expect(dialog).toHaveTextContent('Verify commandpnpm check')
     expect(dialog).toHaveTextContent('ModelApp default')
     expect(dialog).toHaveTextContent('Promptfull (research with subagents)')
     expect(api.start).not.toHaveBeenCalled()
@@ -883,7 +885,7 @@ describe('ImplementDocumentWizard — launch', () => {
     })
   })
 
-  it('says "no verification" and names the base branch in the confirmation', async () => {
+  it('says "no verify command" and names the base branch in the confirmation', async () => {
     await renderPreview(
       makeDetail({
         config: { ...DEFAULT_DOCUMENT_RUN_CONFIG, verifyCommand: '  ', baseBranch: 'develop' }
@@ -893,7 +895,7 @@ describe('ImplementDocumentWizard — launch', () => {
     fireEvent.click(screen.getByTestId('docflow-launch-btn'))
 
     const dialog = screen.getByTestId('docflow-launch-confirm')
-    expect(dialog).toHaveTextContent('Verificationno verification')
+    expect(dialog).toHaveTextContent('Verify commandno verify command')
     expect(dialog).toHaveTextContent('Base branchdevelop')
     expect(dialog).toHaveTextContent('An integration branch is created from develop')
   })
@@ -1052,6 +1054,167 @@ describe('ImplementDocumentWizard — launch', () => {
 
     expect(api.retryExtraction).toHaveBeenCalledWith(expect.objectContaining({ runId: 'run-1' }))
     expect(screen.getByTestId('docflow-wizard')).toHaveAttribute('data-step', 'extracting')
+  })
+})
+
+describe('ImplementDocumentWizard — verification', () => {
+  const VERIFIED: Partial<DocumentRunItem>[] = [
+    { key: 'A1', verification_suggested: ['tests'], verification: ['tests'] },
+    { key: 'A2', verification_suggested: [], verification: [] }
+  ]
+
+  it('shows the three chips on every row, pressed as chosen and marked where suggested', async () => {
+    await renderPreview(makeDetail({}, [...VERIFIED]))
+
+    const a1 = within(screen.getByTestId('docflow-item-verify-A1'))
+    expect(a1.getAllByRole('button')).toHaveLength(3)
+    expect(screen.getByTestId('docflow-item-verify-A1-tcu')).toHaveAttribute(
+      'aria-pressed',
+      'false'
+    )
+    expect(screen.getByTestId('docflow-item-verify-A1-playwright')).toHaveAttribute(
+      'aria-pressed',
+      'false'
+    )
+    expect(screen.getByTestId('docflow-item-verify-A1-tests')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    expect(screen.getByTestId('docflow-item-verify-A1-tests')).toHaveAttribute('data-suggested')
+    expect(screen.getByTestId('docflow-item-verify-A1-tcu')).not.toHaveAttribute('data-suggested')
+
+    const a2 = within(screen.getByTestId('docflow-item-verify-A2'))
+    expect(a2.getAllByRole('button')).toHaveLength(3)
+    for (const method of ['tcu', 'playwright', 'tests']) {
+      const chip = screen.getByTestId(`docflow-item-verify-A2-${method}`)
+      expect(chip).toHaveAttribute('aria-pressed', 'false')
+      expect(chip).not.toHaveAttribute('data-suggested')
+      expect(chip).not.toBeDisabled()
+    }
+  })
+
+  it('writes a chip toggle: adds in canonical order, removes a pressed one', async () => {
+    await renderPreview(makeDetail({}, [...VERIFIED]))
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('docflow-item-verify-A1-playwright'))
+    })
+    expect(api.updateItem).toHaveBeenCalledTimes(1)
+    expect(api.updateItem).toHaveBeenCalledWith('run-1', 'item-A1', {
+      verification: ['playwright', 'tests']
+    })
+    expect(screen.getByTestId('docflow-item-verify-A1-playwright')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('docflow-item-verify-A1-tests'))
+    })
+    expect(api.updateItem).toHaveBeenLastCalledWith('run-1', 'item-A1', {
+      verification: ['playwright']
+    })
+    expect(screen.getByTestId('docflow-item-verify-A1-tests')).toHaveAttribute(
+      'aria-pressed',
+      'false'
+    )
+    // The suggestion is still shown once it is turned off.
+    expect(screen.getByTestId('docflow-item-verify-A1-tests')).toHaveAttribute('data-suggested')
+  })
+
+  it('skips verification for every ticket with the global checkmark, keeping each choice', async () => {
+    await renderPreview(makeDetail({}, [...VERIFIED]))
+    const toggle = screen.getByTestId('docflow-verification-toggle')
+    expect(toggle).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByTestId('docflow-item-verify-A1')).not.toHaveAttribute('data-disabled')
+
+    await act(async () => {
+      fireEvent.click(toggle)
+    })
+    expect(api.updateRun).toHaveBeenCalledTimes(1)
+    expect(api.updateRun).toHaveBeenCalledWith('run-1', {
+      config: {
+        ...DEFAULT_DOCUMENT_RUN_CONFIG,
+        verifyCommand: 'pnpm check',
+        verificationDisabled: true
+      }
+    })
+    expect(screen.getByTestId('docflow-verification-toggle')).toHaveAttribute(
+      'aria-checked',
+      'false'
+    )
+    expect(screen.getByTestId('docflow-item-verify-A1')).toHaveAttribute('data-disabled')
+    expect(screen.getByTestId('docflow-item-verify-A2')).toHaveAttribute('data-disabled')
+    for (const method of ['tcu', 'playwright', 'tests']) {
+      expect(screen.getByTestId(`docflow-item-verify-A1-${method}`)).toBeDisabled()
+      expect(screen.getByTestId(`docflow-item-verify-A2-${method}`)).toBeDisabled()
+    }
+    // The choice stays visible, so turning verification back on restores it.
+    expect(screen.getByTestId('docflow-item-verify-A1-tests')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    expect(api.updateItem).not.toHaveBeenCalled()
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('docflow-verification-toggle'))
+    })
+    expect(api.updateRun).toHaveBeenLastCalledWith('run-1', {
+      config: {
+        ...DEFAULT_DOCUMENT_RUN_CONFIG,
+        verifyCommand: 'pnpm check',
+        verificationDisabled: false
+      }
+    })
+    expect(screen.getByTestId('docflow-verification-toggle')).toHaveAttribute(
+      'aria-checked',
+      'true'
+    )
+    expect(screen.getByTestId('docflow-item-verify-A1')).not.toHaveAttribute('data-disabled')
+    expect(screen.getByTestId('docflow-item-verify-A1-tests')).not.toBeDisabled()
+    expect(screen.getByTestId('docflow-item-verify-A1-tests')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+  })
+
+  it('sums the chosen methods over the selected tickets in the confirmation', async () => {
+    await renderPreview(
+      makeDetail({}, [
+        { key: 'A1', verification: ['tests'] },
+        { key: 'A2', verification: ['tests'] },
+        { key: 'A3', verification: ['tcu', 'tests'], selected: false }
+      ])
+    )
+
+    fireEvent.click(screen.getByTestId('docflow-launch-btn'))
+    const dialog = screen.getByTestId('docflow-launch-confirm')
+    expect(dialog).toHaveTextContent('Verify bytests ×2')
+    expect(dialog).not.toHaveTextContent('tcu')
+    expect(dialog).toHaveTextContent('Verify commandpnpm check')
+  })
+
+  it('says verification is skipped for every ticket in the confirmation once it is off', async () => {
+    await renderPreview(
+      makeDetail(
+        {
+          config: {
+            ...DEFAULT_DOCUMENT_RUN_CONFIG,
+            verifyCommand: 'pnpm check',
+            verificationDisabled: true
+          }
+        },
+        [
+          { key: 'A1', verification: ['tests'] },
+          { key: 'A2', verification: ['tests'] }
+        ]
+      )
+    )
+
+    fireEvent.click(screen.getByTestId('docflow-launch-btn'))
+    const dialog = screen.getByTestId('docflow-launch-confirm')
+    expect(dialog).toHaveTextContent('Verify byskipped for every ticket')
+    expect(dialog).toHaveTextContent('Verify commandpnpm check')
   })
 })
 

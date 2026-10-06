@@ -131,7 +131,8 @@ export function DocumentRunSettingsPanel({
         />
         <p className={HELP_CLASS}>
           Runs in the integration worktree after each merge. On failure a fix session gets 2
-          attempts, then the merge is rolled back.
+          attempts, then the merge is rolled back. Separate from how each agent verifies its own
+          ticket (the tcu / playwright / tests chips in the list).
         </p>
       </div>
 

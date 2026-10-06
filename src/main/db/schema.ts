@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 54
+export const CURRENT_SCHEMA_VERSION = 55
 
 /**
  * "Implement document" flow (v55). `document_runs` is one spec document turned into tickets
@@ -66,6 +66,9 @@ export const DOCUMENT_FLOW_TABLES_SQL = `
     selected          INTEGER NOT NULL DEFAULT 1,
     figures           TEXT NOT NULL DEFAULT '[]',
     open_questions    TEXT NOT NULL DEFAULT '[]',
+    verification_suggested TEXT NOT NULL DEFAULT '[]',
+    verification      TEXT NOT NULL DEFAULT '[]',
+    verification_reason TEXT NOT NULL DEFAULT '',
     launch_config     TEXT DEFAULT NULL,
     status            TEXT NOT NULL DEFAULT 'pending',
     status_detail     TEXT DEFAULT NULL,
@@ -962,6 +965,15 @@ DROP TABLE IF EXISTS diff_comments;`
     name: 'add_document_run_migration_session',
     up: `-- NOTE: ALTER TABLE for document_runs.migration_session_id,
          -- document_runs.migration_started_at and document_runs.migration_owner_pid is
+         -- handled idempotently by safeAddColumn() in database.ts to avoid
+         -- "duplicate column" errors.`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
+  },
+  {
+    version: 55,
+    name: 'add_document_run_item_verification',
+    up: `-- NOTE: ALTER TABLE for document_run_items.verification_suggested,
+         -- document_run_items.verification and document_run_items.verification_reason is
          -- handled idempotently by safeAddColumn() in database.ts to avoid
          -- "duplicate column" errors.`,
     down: `-- SQLite cannot drop columns; this is a no-op for safety`

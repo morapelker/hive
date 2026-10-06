@@ -80,7 +80,7 @@ import {
 } from './document-flow-ui'
 
 type ConfirmKind = 'finish' | 'cancel' | 'delete' | 'questionsOff' | 'questionsOn' | 'migrations'
-type BusyKind = ConfirmKind | 'pause' | 'stopMigrations'
+type BusyKind = ConfirmKind | 'pause' | 'stopMigrations' | 'verification'
 
 const CONFIRM_COPY: Record<
   ConfirmKind,
@@ -262,6 +262,7 @@ function DashboardBody({ detail }: { detail: DocumentRunDetail }): React.JSX.Ele
   const finishRunNow = useDocumentFlowStore((s) => s.finishRunNow)
   const cancelRun = useDocumentFlowStore((s) => s.cancelRun)
   const deleteRun = useDocumentFlowStore((s) => s.deleteRun)
+  const updateRun = useDocumentFlowStore((s) => s.updateRun)
   const closeDashboard = useDocumentFlowStore((s) => s.closeDashboard)
   const openWizard = useDocumentFlowStore((s) => s.openWizard)
   const [confirm, setConfirm] = useState<ConfirmKind | null>(null)
@@ -449,8 +450,32 @@ function DashboardBody({ detail }: { detail: DocumentRunDetail }): React.JSX.Ele
             {active && (
               <div className="mr-1.5 flex items-center gap-1.5">
                 <label
-                  htmlFor="docflow-dashboard-interactive"
+                  htmlFor="docflow-dashboard-verification"
                   className="text-[12px] text-muted-foreground"
+                  title="Off: tickets launched from now on are not asked to verify their work; each ticket's choice is kept."
+                >
+                  Verification
+                </label>
+                {/* Reaches only tickets launched after the change, so no confirmation. */}
+                <Switch
+                  id="docflow-dashboard-verification"
+                  size="sm"
+                  data-testid="docflow-dashboard-verification-switch"
+                  checked={!run.config.verificationDisabled}
+                  disabled={busy !== null}
+                  onCheckedChange={(next) =>
+                    perform(
+                      'verification',
+                      updateRun(run.id, { config: { verificationDisabled: !next } }).then(
+                        () => undefined
+                      ),
+                      'Could not change the verification setting'
+                    )
+                  }
+                />
+                <label
+                  htmlFor="docflow-dashboard-interactive"
+                  className="ml-2 text-[12px] text-muted-foreground"
                 >
                   Agents may ask me questions
                 </label>

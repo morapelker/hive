@@ -3,6 +3,11 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  VERIFICATION_LEAD_PARAGRAPH,
+  VERIFICATION_PARAGRAPHS,
+  buildLaunchPrompt
+} from '@shared/document-flow/prompts'
+import {
   DEFAULT_DOCUMENT_RUN_CONFIG,
   type DocumentRunLaunchConfig
 } from '@shared/types/document-flow'
@@ -77,6 +82,8 @@ function seedPreview(): ReturnType<typeof seedRun> {
         verifyCommand: null,
         interactive: true,
         promptStyle: 'full',
+        notes: null,
+        verificationDisabled: false,
         defaultLaunch: sonnet,
         generation: null,
         baseBranch: null
@@ -287,6 +294,72 @@ describe('start', () => {
     expect(harness.ticketBatches[0].drafts[0].description).toBe(
       brief('A1', 'Report', 'request_user_input')
     )
+  })
+
+  it('tells the agent how to verify, after the brief and before the commit rules', async () => {
+    const { run } = seedRun(harness, {
+      run: { config: { ...DEFAULT_DOCUMENT_RUN_CONFIG, defaultLaunch: sonnet } },
+      items: [
+        { key: 'A1', title: 'Report', verification: ['playwright', 'tests'] },
+        { key: 'A2', title: 'Ramp-up rule' }
+      ]
+    })
+
+    await harness.service.start(run.id)
+
+    const [{ drafts }] = harness.ticketBatches
+    expect(drafts[0].description).toBe(
+      buildLaunchPrompt({
+        key: 'A1',
+        title: 'Report',
+        sourcePath: '/specs/factory.html',
+        promptStyle: 'full',
+        interactive: true,
+        sdk: 'claude-code-cli',
+        verification: ['playwright', 'tests']
+      })
+    )
+    // The lead, then one paragraph per chosen method, in the order of the methods.
+    expect(drafts[0].description).toBe(
+      brief('A1', 'Report').replace(
+        'then - implement this',
+        [
+          'then - implement this',
+          VERIFICATION_LEAD_PARAGRAPH,
+          VERIFICATION_PARAGRAPHS.playwright,
+          VERIFICATION_PARAGRAPHS.tests
+        ].join('\n\n')
+      )
+    )
+    expect(drafts[0].description).not.toContain(VERIFICATION_PARAGRAPHS.tcu)
+    // A ticket with no method chosen is briefed as before.
+    expect(drafts[1].description).toBe(brief('A2', 'Ramp-up rule'))
+  })
+
+  it('says nothing about verifying when the run skips verification, whatever the tickets chose', async () => {
+    const { run } = seedRun(harness, {
+      run: {
+        config: {
+          ...DEFAULT_DOCUMENT_RUN_CONFIG,
+          defaultLaunch: sonnet,
+          verificationDisabled: true
+        }
+      },
+      items: [{ key: 'A1', title: 'Report', verification: ['playwright', 'tests'] }]
+    })
+
+    const detail = await harness.service.start(run.id)
+
+    const [{ drafts }] = harness.ticketBatches
+    expect(drafts[0].description).toBe(brief('A1', 'Report'))
+    for (const paragraph of [
+      VERIFICATION_LEAD_PARAGRAPH,
+      ...Object.values(VERIFICATION_PARAGRAPHS)
+    ]) {
+      expect(drafts[0].description).not.toContain(paragraph)
+    }
+    // The choice is kept for when verification is turned back on.
+    expect(detail.items[0].verification).toEqual(['playwright', 'tests'])
   })
 
   it('creates one ticket per selected item, with attachments, model and selected dependencies', async () => {

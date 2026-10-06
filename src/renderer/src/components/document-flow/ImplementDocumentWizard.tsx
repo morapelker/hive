@@ -147,7 +147,8 @@ function ExtractingStep({ run }: { run: DocumentRun }): React.JSX.Element {
         <span className="text-foreground" data-testid="docflow-extracting-model">
           {formatGeneration(generation)}
         </span>
-        . This is the PR content model; change it in Settings › Models.
+        , inside the project, with read-only access to its files. This is the default model for
+        building; change it in Settings › Models.
       </p>
       <RunNotes run={run} />
       <p className="max-w-md text-[12px] leading-relaxed text-muted-foreground">

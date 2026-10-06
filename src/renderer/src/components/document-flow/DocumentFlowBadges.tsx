@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react'
-import { Check } from 'lucide-react'
+import { Check, FlaskConical, Globe, MousePointerClick } from 'lucide-react'
 import { ticketPillClass } from '@/components/kanban/pill'
 import { TicketModelBadge, resolveModelDisplayName } from '@/components/kanban/TicketModelBadge'
 import { resolveModelIconAsset } from '@/components/worktrees/ModelIcon'
@@ -8,14 +8,24 @@ import { isUltraVariant } from '@/lib/parseProviders'
 import { cn } from '@/lib/utils'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { findCustomProvider } from '@shared/types/custom-provider'
-import type { DocumentRunLaunchConfig } from '@shared/types/document-flow'
+import {
+  DOCUMENT_VERIFICATION_METHODS,
+  type DocumentRunLaunchConfig,
+  type DocumentVerificationMethod
+} from '@shared/types/document-flow'
 import {
   DOCUMENT_FLOW_SDK_LABELS,
   describeLaunchConfig,
   hasCodexFastMode,
   type QuickLaunchChoice
 } from './document-flow-launch'
-import { tonePillClass, type DocumentFlowTone } from './document-flow-ui'
+import {
+  DOCUMENT_VERIFICATION_LABELS,
+  describeVerificationChip,
+  tonePillClass,
+  type DocumentFlowTone,
+  type VerificationChoice
+} from './document-flow-ui'
 
 interface TonePillProps {
   tone: DocumentFlowTone
@@ -166,5 +176,82 @@ export function LaunchConfigChip({
       {fast && <span className={detailClass}>fast</span>}
       {source && <span className={cn(detailClass, 'max-w-[90px] shrink truncate')}>{source}</span>}
     </button>
+  )
+}
+
+const VERIFICATION_ICONS: Record<DocumentVerificationMethod, typeof Check> = {
+  tcu: MousePointerClick,
+  playwright: Globe,
+  tests: FlaskConical
+}
+
+interface VerificationChipsProps {
+  itemKey: string
+  item: VerificationChoice
+  /** The run skips verification: the choice stays visible but cannot be changed. */
+  disabled?: boolean
+  /** The ticket has launched: the choice is shown as it was sent, with no toggling. */
+  readOnly?: boolean
+  onToggle?: (method: DocumentVerificationMethod) => void
+  testIdPrefix?: string
+}
+
+/**
+ * The three verification methods as one-tap toggles, always all three: pressed = the agent is
+ * asked to verify that way. A suggestion the user turned off keeps a dashed border, so what
+ * extraction thought stays visible. Disabled (the run skips verification) dims the group but
+ * keeps every state, so turning verification back on restores the choice.
+ */
+export function VerificationChips({
+  itemKey,
+  item,
+  disabled = false,
+  readOnly = false,
+  onToggle,
+  testIdPrefix = 'docflow-item-verify'
+}: VerificationChipsProps): React.JSX.Element {
+  return (
+    <div
+      role="group"
+      aria-label={`Verify ${itemKey} by`}
+      data-testid={`${testIdPrefix}-${itemKey}`}
+      data-disabled={disabled || undefined}
+      className={cn('flex shrink-0 items-center gap-1', disabled && 'opacity-50')}
+    >
+      {DOCUMENT_VERIFICATION_METHODS.map((method) => {
+        const pressed = item.verification.includes(method)
+        const suggested = item.verification_suggested.includes(method)
+        const Icon = VERIFICATION_ICONS[method]
+        return (
+          <button
+            key={method}
+            type="button"
+            aria-pressed={pressed}
+            disabled={disabled || readOnly}
+            title={describeVerificationChip(method, item, { disabled, readOnly })}
+            data-testid={`${testIdPrefix}-${itemKey}-${method}`}
+            data-suggested={suggested || undefined}
+            className={cn(
+              'inline-flex h-6 items-center gap-1 rounded-full border px-2 font-mono text-[10px] font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-default',
+              pressed
+                ? 'border-primary bg-primary text-primary-foreground'
+                : 'border-border text-muted-foreground',
+              !pressed && suggested && 'border-dashed',
+              !disabled && !readOnly && !pressed && 'hover:bg-accent/50 hover:text-foreground',
+              readOnly && !pressed && 'opacity-60'
+            )}
+            onClick={() => onToggle?.(method)}
+          >
+            {/* The check takes the icon's slot, so the chip keeps its width when toggled. */}
+            {pressed ? (
+              <Check className="h-2.5 w-2.5 shrink-0" />
+            ) : (
+              <Icon className="h-2.5 w-2.5 shrink-0" />
+            )}
+            {DOCUMENT_VERIFICATION_LABELS[method]}
+          </button>
+        )
+      })}
+    </div>
   )
 }

@@ -10,6 +10,7 @@ import {
   buildExtractionRepairPrompt,
   buildItemDrafts,
   parseExtractionResponse,
+  type ExtractedTicket,
   type ExtractionResult
 } from './extraction'
 import { preprocessDocument, type PreprocessedDocument } from './preprocess'
@@ -43,6 +44,8 @@ const ticket = (overrides: Json = {}): Json => ({
   size: 'M',
   conflictRisk: 'high',
   openQuestions: [],
+  verification: ['tests'],
+  verificationReason: 'Totals are computed in a service with unit tests next to it.',
   ...overrides
 })
 
@@ -249,7 +252,9 @@ describe('parseExtractionResponse', () => {
           hasMigration: true,
           size: 'M',
           conflictRisk: 'high',
-          openQuestions: []
+          openQuestions: [],
+          verification: ['tests'],
+          verificationReason: 'Totals are computed in a service with unit tests next to it.'
         },
         expect.objectContaining({
           key: 'A2',
@@ -417,7 +422,9 @@ describe('parseExtractionResponse', () => {
       hasMigration: true,
       size: 'XL',
       conflictRisk: 'high',
-      openQuestions: []
+      openQuestions: [],
+      verification: [],
+      verificationReason: ''
     })
     expect(result.tickets[1]).toMatchObject({ kind: 'fix', docStatus: 'partial' })
     expect(result.tickets[2]).toMatchObject({ title: 'Named', size: 'L', dependsOn: ['A2'] })
@@ -451,7 +458,9 @@ describe('parseExtractionResponse', () => {
       hasMigration: false,
       size: null,
       conflictRisk: null,
-      openQuestions: []
+      openQuestions: [],
+      verification: [],
+      verificationReason: ''
     })
   })
 
@@ -957,7 +966,10 @@ describe('buildItemDrafts', () => {
         figures: [
           { id: 'fig-01', path: '/runs/r1/figures/fig-01.png', label: 'Orders list with totals' }
         ],
-        open_questions: []
+        open_questions: [],
+        verification_suggested: ['tests'],
+        verification: ['tests'],
+        verification_reason: 'Totals are computed in a service with unit tests next to it.'
       },
       {
         key: 'A2',
@@ -972,7 +984,10 @@ describe('buildItemDrafts', () => {
         doc_status: 'open',
         selected: true,
         figures: [],
-        open_questions: ['Which time zone applies to Late?']
+        open_questions: ['Which time zone applies to Late?'],
+        verification_suggested: ['tests'],
+        verification: ['tests'],
+        verification_reason: 'Totals are computed in a service with unit tests next to it.'
       },
       expect.objectContaining({
         key: 'B1',
@@ -1218,5 +1233,70 @@ describe('buildExtractionMeta', () => {
     const meta = buildExtractionMeta({ result, doc, generatedBy: null })
     expect(meta.documentTitle).toBe(doc.title)
     expect(meta.generatedBy).toBeNull()
+  })
+})
+
+describe('verification', () => {
+  const first = (overrides: Json): ExtractedTicket => parse(reply([ticket(overrides)])).tickets[0]
+
+  it('asks for the methods and a reason, and explains the three channels', () => {
+    for (const phrase of [
+      '"verification": ["tcu"|"playwright"|"tests"]',
+      '"verificationReason": string',
+      'computer use on the desktop',
+      'browser automation reaches through the DOM',
+      'unit, integration or end-to-end test'
+    ]) {
+      expect(EXTRACTION_SYSTEM_PROMPT).toContain(phrase)
+    }
+    const schema = JSON.parse(EXTRACTION_JSON_SCHEMA)
+    expect(schema.properties.tickets.items.properties.verification).toEqual({
+      type: 'array',
+      items: { type: 'string', enum: ['tcu', 'playwright', 'tests'] }
+    })
+  })
+
+  it('tells the model it runs inside the repository and may only read', () => {
+    expect(EXTRACTION_SYSTEM_PROMPT).toContain("You run inside the project's repository")
+    expect(EXTRACTION_SYSTEM_PROMPT).toContain('Read only; never modify, create or run anything.')
+    expect(EXTRACTION_SYSTEM_PROMPT).toContain(
+      'If you have no file tools, decide from the document alone.'
+    )
+  })
+
+  it('keeps known methods in canonical order and drops the rest', () => {
+    expect(first({ verification: ['tests', 'tcu', 'tests', 'selenium'] }).verification).toEqual([
+      'tcu',
+      'tests'
+    ])
+    expect(first({ verification: [] }).verification).toEqual([])
+    expect(first({ verification: 'none' }).verification).toEqual([])
+    expect(first({}).verification).toEqual(['tests'])
+  })
+
+  it('reads other names for the methods, a comma list and objects', () => {
+    expect(first({ verification: ['computer use', 'Browser', 'unit tests'] }).verification).toEqual(
+      ['tcu', 'playwright', 'tests']
+    )
+    expect(first({ verification: 'e2e and playwright-cli' }).verification).toEqual([
+      'playwright',
+      'tests'
+    ])
+    expect(first({ verification: [{ method: 'cdp' }, { kind: 'vitest' }] }).verification).toEqual([
+      'playwright',
+      'tests'
+    ])
+    expect(first({ verification: null, verify_with: ['TCU'] }).verification).toEqual(['tcu'])
+  })
+
+  it('keeps the reason on one line and treats "none" as no reason', () => {
+    expect(
+      first({ verificationReason: ' Renders in\nthe settings page. ' }).verificationReason
+    ).toBe('Renders in the settings page.')
+    expect(first({ verificationReason: 'n/a' }).verificationReason).toBe('')
+    expect(first({ verificationReason: 7 }).verificationReason).toBe('7')
+    expect(
+      first({ verificationReason: null, verification_reason: 'snake' }).verificationReason
+    ).toBe('snake')
   })
 })

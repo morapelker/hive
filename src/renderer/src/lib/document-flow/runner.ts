@@ -25,6 +25,7 @@ import {
   type DocumentRunItemPatch,
   type DocumentRunItemStatus,
   type DocumentRunLaunchConfig,
+  type DocumentVerificationMethod,
   type DocumentVerifyResult,
   type SessionFinalMessage
 } from '@shared/types/document-flow'
@@ -541,6 +542,16 @@ export class DocumentFlowRunner {
   /** Whether the run's agents may ask right now; the dashboard can flip it mid-run. */
   private interactive(op: ItemOp): boolean {
     return this.currentItem(op)?.run.config.interactive ?? true
+  }
+
+  /**
+   * How the ticket's agent is asked to verify its work, as chosen right now: the ticket's own
+   * methods, or none while the run skips verification (both can change while it waits).
+   */
+  private verification(op: ItemOp): DocumentVerificationMethod[] {
+    const current = this.currentItem(op)
+    if (!current || current.run.config.verificationDisabled) return []
+    return current.item.verification
   }
 
   /** The run, if this runner may still act on it; steps call this before every side effect. */
@@ -1141,11 +1152,12 @@ export class DocumentFlowRunner {
     // Read now, not from the run captured before the awaits above: the setting can be flipped
     // mid-run from the dashboard.
     const briefed = this.interactive(op)
+    const verification = this.verification(op)
     // The ticket's description is the brief, sent as it reads on the board (the user may
     // have edited it), with no ticket wrapper and no attachments: the agent reads the task in
     // the document itself. A ticket left without a description gets the standard brief.
     // The rules of the run are settled now, whatever the description says: it was written
-    // when the run started, under the setting of that moment.
+    // when the run started, under the settings and verification choice of that moment.
     const prompt = withRunRules(
       ticket.description?.trim() ||
         buildLaunchPrompt({
@@ -1154,9 +1166,10 @@ export class DocumentFlowRunner {
           sourcePath: run.source_path,
           promptStyle: run.config.promptStyle,
           interactive: briefed,
-          sdk: modelConfig.sdk
+          sdk: modelConfig.sdk,
+          verification
         }),
-      { interactive: briefed, sdk: modelConfig.sdk }
+      { interactive: briefed, sdk: modelConfig.sdk, verification }
     )
 
     const result = await this.ports.launchTicket({

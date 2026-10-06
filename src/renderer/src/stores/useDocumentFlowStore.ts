@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { documentFlowApi } from '@/api/document-flow-api'
 import { resolvePRContentGeneration } from '@/lib/pr-content-provider'
+import { resolveDefaultLaunchModel } from '@/lib/tedooo-agent/models'
 import { resolvePreferredAgentSdk, useSettingsStore } from '@/stores/useSettingsStore'
 import { isTerminalItemStatus } from '@shared/document-flow/planning'
 import type { DocumentFlowUpdatedEvent } from '@shared/document-flow-events'
@@ -113,11 +114,23 @@ const RESET_ATTEMPTS: DocumentRunItemPatch = {
   retry_at: null
 }
 
-/** The generation model, resolved exactly as the PR flow resolves it. */
+/**
+ * The generation model: the app's default launch model (what "Create & Send" would run with),
+ * not the PR content model. Extraction reads the repository and judges every ticket, which is
+ * work for the model the user picked for building; it is resolved through the PR flow's
+ * resolver only for its provider-availability fallback.
+ */
 export function resolveDocumentFlowGeneration(): DocumentRunGeneration | null {
-  const { prContentModel, defaultAgentSdk, availableAgentSdks } = useSettingsStore.getState()
+  const { defaultAgentSdk, availableAgentSdks } = useSettingsStore.getState()
+  const sdk = resolvePreferredAgentSdk()
+  const model = resolveDefaultLaunchModel(sdk)
   return resolvePRContentGeneration(
-    prContentModel,
+    {
+      agentSdk: sdk,
+      providerID: model.providerID,
+      modelID: model.modelID,
+      ...(model.variant ? { variant: model.variant } : {})
+    },
     defaultAgentSdk ?? 'claude-code',
     availableAgentSdks
   )

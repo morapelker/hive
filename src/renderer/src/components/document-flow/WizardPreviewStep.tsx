@@ -11,6 +11,7 @@ import {
   AlertDialogTitle
 } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   getCachedModelCatalog,
   getModelCatalogCacheVersion,
@@ -23,6 +24,7 @@ import type { HandoffAgentSdk } from '@shared/types/agent-sdk'
 import type {
   DocumentRunConfig,
   DocumentRunDetail,
+  DocumentRunItem,
   DocumentRunLaunchConfig
 } from '@shared/types/document-flow'
 import { DocumentRunItemEditor } from './DocumentRunItemEditor'
@@ -33,7 +35,7 @@ import {
   quickLaunchChoices,
   validateLaunch
 } from './document-flow-launch'
-import { describeBaseBranch, pluralize } from './document-flow-ui'
+import { describeBaseBranch, describeVerificationChoice, pluralize } from './document-flow-ui'
 import { useBaseBranchOptions } from './useBaseBranchOptions'
 import { PendingWritesProvider, usePendingWrites } from './useDebouncedText'
 import { useRunConfigDraft } from './useRunConfigDraft'
@@ -239,6 +241,26 @@ export function WizardPreviewStep({
             >
               {validation.selectedCount} of {items.length} selected
             </span>
+            {/* One checkmark for every ticket's verification: unchecked, no agent is asked to
+                verify, but each ticket's own choice is kept for when it is checked again. */}
+            <label
+              className="ml-3 flex cursor-pointer items-center gap-1.5 text-[12px] text-muted-foreground"
+              title={
+                draft.config.verificationDisabled
+                  ? 'Verification is skipped for every ticket. Check to ask agents to verify again, with the choices below.'
+                  : 'Agents verify their work the ways chosen on each ticket. Uncheck to skip verification for every ticket; the choices are kept.'
+              }
+            >
+              <Checkbox
+                data-testid="docflow-verification-toggle"
+                aria-label="Ask agents to verify their work"
+                checked={!draft.config.verificationDisabled}
+                onCheckedChange={(checked) =>
+                  draft.change({ verificationDisabled: checked !== true })
+                }
+              />
+              Verification
+            </label>
             <Button
               type="button"
               variant="ghost"
@@ -280,6 +302,7 @@ export function WizardPreviewStep({
                 item={item}
                 items={items}
                 quickChoices={quickChoices}
+                verificationDisabled={draft.config.verificationDisabled}
                 expanded={expandedItemId === item.id}
                 onToggleExpanded={() =>
                   setExpandedItemId((current) => (current === item.id ? null : item.id))
@@ -371,6 +394,7 @@ export function WizardPreviewStep({
         onConfirm={() => void launch()}
         ticketCount={validation.selectedCount}
         ownModelCount={ownModelCount}
+        items={items}
         config={draft.config}
         currentBranch={branches.current}
       />
@@ -385,6 +409,8 @@ interface LaunchConfirmDialogProps {
   ticketCount: number
   /** Selected tickets that carry their own model instead of the run default. */
   ownModelCount: number
+  /** Every ticket of the run, for the verification summary. */
+  items: readonly DocumentRunItem[]
   config: DocumentRunConfig
   /** The root checkout's branch: where a run without a base branch of its own starts. */
   currentBranch: string | null
@@ -396,6 +422,7 @@ function LaunchConfirmDialog({
   onConfirm,
   ticketCount,
   ownModelCount,
+  items,
   config,
   currentBranch
 }: LaunchConfirmDialogProps): React.JSX.Element {
@@ -405,12 +432,13 @@ function LaunchConfirmDialog({
     ['Tickets', ticketCount],
     ['Base branch', baseBranch],
     ['Parallel tickets', config.maxParallel],
+    ['Verify by', describeVerificationChoice(items, config.verificationDisabled)],
     [
-      'Verification',
+      'Verify command',
       verifyCommand ? (
         <code className="font-mono text-[12px]">{verifyCommand}</code>
       ) : (
-        'no verification'
+        'no verify command'
       )
     ],
     [

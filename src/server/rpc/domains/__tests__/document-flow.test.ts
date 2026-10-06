@@ -490,6 +490,74 @@ describe('documentFlow RPC handlers', () => {
     await call(service, 'logEvent', { runId: 'r', itemId: null, type: 't', message: '' })
   })
 
+  it('passes the verification of a ticket and the run-wide skip through', async () => {
+    const updateItem = vi.fn(() => Effect.succeed(detail.items[0]))
+    const updateRun = vi.fn(() => Effect.succeed(run))
+    const service = makeService({ updateItem, updateRun })
+
+    await call(service, 'updateItem', {
+      runId: 'run-1',
+      itemId: 'item-1',
+      patch: { verification: ['playwright', 'tests'] }
+    })
+    await call(service, 'updateItem', {
+      runId: 'run-1',
+      itemId: 'item-1',
+      patch: { verification: [] }
+    })
+    expect(updateItem.mock.calls).toEqual([
+      ['run-1', 'item-1', { verification: ['playwright', 'tests'] }],
+      ['run-1', 'item-1', { verification: [] }]
+    ])
+
+    await call(service, 'updateRun', {
+      runId: 'run-1',
+      patch: { config: { verificationDisabled: true } }
+    })
+    await call(service, 'updateRun', {
+      runId: 'run-1',
+      patch: { config: { verificationDisabled: false } }
+    })
+    expect(updateRun.mock.calls).toEqual([
+      ['run-1', { config: { verificationDisabled: true } }],
+      ['run-1', { config: { verificationDisabled: false } }]
+    ])
+  })
+
+  it('rejects a verification that is not a list of the known methods and a skip that is not a boolean', async () => {
+    const updateItem = vi.fn(() => Effect.succeed(detail.items[0]))
+    const updateRun = vi.fn(() => Effect.succeed(run))
+    const service = makeService({ updateItem, updateRun })
+
+    for (const verification of [['foo'], ['tests', 'foo'], 'tests', null, [1], { tests: true }]) {
+      await rejectsValidation(service, 'updateItem', {
+        runId: 'r',
+        itemId: 'i',
+        patch: { verification }
+      })
+    }
+    // What extraction suggested is not the caller's to change.
+    await rejectsValidation(service, 'updateItem', {
+      runId: 'r',
+      itemId: 'i',
+      patch: { verification_suggested: ['tests'] }
+    })
+    await rejectsValidation(service, 'updateItem', {
+      runId: 'r',
+      itemId: 'i',
+      patch: { verification_reason: 'because' }
+    })
+    for (const verificationDisabled of ['yes', 1, null, 'true']) {
+      await rejectsValidation(service, 'updateRun', {
+        runId: 'run-1',
+        patch: { config: { verificationDisabled } }
+      })
+    }
+
+    expect(updateItem).not.toHaveBeenCalled()
+    expect(updateRun).not.toHaveBeenCalled()
+  })
+
   it('surfaces service failures to the caller', async () => {
     const service = makeService({
       start: () => Effect.fail(new Error('Select at least one ticket to launch.'))

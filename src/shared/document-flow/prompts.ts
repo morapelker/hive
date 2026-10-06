@@ -1,5 +1,10 @@
 import type { HandoffAgentSdk } from '../types/agent-sdk'
-import type { DocumentRunPromptStyle, DocumentRunVerdict } from '../types/document-flow'
+import {
+  DOCUMENT_VERIFICATION_METHODS,
+  type DocumentRunPromptStyle,
+  type DocumentRunVerdict,
+  type DocumentVerificationMethod
+} from '../types/document-flow'
 
 // Everything the orchestrator says to an agent. The launch prompt is deliberately the short
 // brief a person would type: which task, of which document, research it, ask through the
@@ -92,6 +97,37 @@ const LAUNCH_ASK_PARAGRAPHS: readonly string[] = [
   ...['claude-code', 'codex', 'opencode'].map((sdk) => launchAskParagraph(true, sdk))
 ]
 
+/**
+ * How the agent is asked to check its work: one lead, then one paragraph per chosen method,
+ * in the order of DOCUMENT_VERIFICATION_METHODS. Each is a fixed string so a brief that
+ * already carries one can be brought up to date by exact match (see withRunRules).
+ */
+export const VERIFICATION_LEAD_PARAGRAPH =
+  'before you call this done, verify your work the way(s) listed next. in your final message say what you checked and how (the commands and what they returned, the test names, the snapshots or screenshots you took) and what you could not check and why. never describe a check you did not run, and never make a check pass by deleting, skipping or focusing a test.'
+
+export const VERIFICATION_PARAGRAPHS: Record<DocumentVerificationMethod, string> = {
+  tcu: 'verify on the desktop with tcu (computer use): with your build of the app running, `tcu apps` finds it (address one instance as `pid:<n>` when several run), `tcu state <app>` prints its window as an accessibility tree with element ids plus a screenshot, then act by element id (`tcu click`, `tcu type`, `tcu key`) and run `tcu state <app> --diff` after each step to confirm it took. open the screenshot it writes when the check is visual (a menu, a notification, the layout). if tcu refuses the app or reports a missing permission (`tcu doctor`), say so in your final message and move on; do not try to grant permissions yourself.',
+  playwright:
+    'verify in the browser with playwright-cli over cdp: get the app running the way this project runs it (its README, CLAUDE.md or a verify skill under .claude/skills say how) and attach with `playwright-cli -s=<a unique session name> attach --cdp=http://127.0.0.1:9222`. if nothing listens on 9222, start the browser with remote debugging on that port (chrome: `--remote-debugging-port=9222`; an electron app takes the same flag) and attach again. confirm the page is your build, then walk through exactly the flow this task changes: snapshot, click, fill, read the result from the next snapshot, and take a screenshot when the change is visual. detach and stop what you started when you are done.',
+  tests:
+    "verify with tests: add or update unit, integration or end-to-end tests that cover what you changed, in the project's own test style and next to the code, run those first, then the project's test suite for the areas you touched. a failure you did not cause goes in your final message, not fixed here."
+}
+
+/** Every verification paragraph there is: what withRunRules strips before it writes the current choice. */
+const VERIFICATION_ALL_PARAGRAPHS: readonly string[] = [
+  VERIFICATION_LEAD_PARAGRAPH,
+  ...DOCUMENT_VERIFICATION_METHODS.map((method) => VERIFICATION_PARAGRAPHS[method])
+]
+
+/** The paragraphs for a choice of methods: nothing when there is none. */
+export function verificationParagraphs(
+  methods: readonly DocumentVerificationMethod[] | null | undefined
+): string[] {
+  const chosen = DOCUMENT_VERIFICATION_METHODS.filter((method) => methods?.includes(method))
+  if (chosen.length === 0) return []
+  return [VERIFICATION_LEAD_PARAGRAPH, ...chosen.map((method) => VERIFICATION_PARAGRAPHS[method])]
+}
+
 export interface LaunchPromptInput {
   key: string
   title: string
@@ -100,6 +136,8 @@ export interface LaunchPromptInput {
   promptStyle: DocumentRunPromptStyle
   interactive: boolean
   sdk: HandoffAgentSdk
+  /** How the agent is asked to verify its work; empty or missing = the brief says nothing. */
+  verification?: readonly DocumentVerificationMethod[] | null
 }
 
 /**
@@ -121,6 +159,7 @@ export function buildLaunchPrompt(input: LaunchPromptInput): string {
   paragraphs.push(
     launchAskParagraph(input.interactive, input.sdk),
     'then - implement this',
+    ...verificationParagraphs(input.verification),
     LAUNCH_RULES_PARAGRAPH,
     LAUNCH_FOLLOW_UPS_PARAGRAPH
   )
@@ -131,12 +170,13 @@ export function buildLaunchPrompt(input: LaunchPromptInput): string {
  * The brief as a session is launched with it. A ticket's description was written when the run
  * started and may have been edited on the board since, so the rules of the run are settled
  * here: the asking paragraph follows the setting as it is now (it can be flipped while the
- * ticket waits its turn), and the commit and follow-up paragraphs are there whatever the
- * description says.
+ * ticket waits its turn), the verification paragraphs are those of the choice as it is now
+ * (the ticket's methods, or none while the run skips verification), and the commit and
+ * follow-up paragraphs are there whatever the description says.
  */
 export function withRunRules(
   brief: string,
-  input: Pick<LaunchPromptInput, 'interactive' | 'sdk'>
+  input: Pick<LaunchPromptInput, 'interactive' | 'sdk' | 'verification'>
 ): string {
   const ask = launchAskParagraph(input.interactive, input.sdk)
   let text = brief.trim()
@@ -144,7 +184,18 @@ export function withRunRules(
     if (stale === ask || !text.includes(stale)) continue
     text = text.replace(stale, text.includes(ask) ? '' : ask)
   }
+  for (const stale of VERIFICATION_ALL_PARAGRAPHS) {
+    if (text.includes(stale)) text = text.split(stale).join('')
+  }
   text = text.replace(/\n{3,}/g, '\n\n').trim()
+  const verification = verificationParagraphs(input.verification)
+  if (verification.length > 0) {
+    const block = verification.join('\n\n')
+    // Before the commit rules, where buildLaunchPrompt puts it; after the brief otherwise.
+    text = text.includes(LAUNCH_RULES_PARAGRAPH)
+      ? text.replace(LAUNCH_RULES_PARAGRAPH, `${block}\n\n${LAUNCH_RULES_PARAGRAPH}`)
+      : [text, block].filter(Boolean).join('\n\n')
+  }
   const missing = [ask, LAUNCH_RULES_PARAGRAPH, LAUNCH_FOLLOW_UPS_PARAGRAPH].filter(
     (paragraph) => !text.includes(paragraph)
   )

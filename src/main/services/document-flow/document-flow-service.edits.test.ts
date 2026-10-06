@@ -111,7 +111,8 @@ describe('updateRun', () => {
       defaultLaunch: launchConfig,
       generation: null,
       baseBranch: null,
-      notes: null
+      notes: null,
+      verificationDisabled: false
     })
     // A second patch keeps what the first one set.
     expect(
@@ -130,6 +131,22 @@ describe('updateRun', () => {
     expect(
       harness.service.updateRun(run.id, { config: { verifyCommand: null } }).config
     ).toMatchObject({ verifyCommand: null })
+  })
+
+  it('turns verification off for the whole run and keeps it off through later patches', () => {
+    const { run } = seedRun(harness, { run: { status: 'running' } })
+
+    expect(
+      harness.service.updateRun(run.id, { config: { verificationDisabled: true } }).config
+    ).toMatchObject({ verificationDisabled: true })
+    expect(harness.service.updateRun(run.id, { config: { maxParallel: 2 } }).config).toMatchObject({
+      verificationDisabled: true,
+      maxParallel: 2
+    })
+    expect(
+      harness.service.updateRun(run.id, { config: { verificationDisabled: false } }).config
+        .verificationDisabled
+    ).toBe(false)
   })
 
   it.each([
@@ -286,6 +303,54 @@ describe('updateItem', () => {
     expect(() => harness.service.updateItem(run.id, items[0].id, { title: ' <> ' })).toThrow(
       'A ticket needs a title.'
     )
+  })
+
+  it('stores the verification choice in canonical order, without duplicates or unknown methods', () => {
+    const { run, items } = seedRun(harness, { items: [{ verification: ['tests'] }] })
+
+    const updated = harness.service.updateItem(run.id, items[0].id, {
+      verification: ['tests', 'tcu', 'tests', 'bogus' as never]
+    })
+
+    expect(updated.verification).toEqual(['tcu', 'tests'])
+    // What extraction proposed is never edited.
+    expect(updated.verification_suggested).toEqual(['tests'])
+    expect(harness.db.getDocumentRunItem(items[0].id)?.verification).toEqual(['tcu', 'tests'])
+    expect(
+      harness.service.updateItem(run.id, items[0].id, { verification: [] }).verification
+    ).toEqual([])
+  })
+
+  it('changes the verification of a launched run only for tickets that still wait their turn', () => {
+    const { run, items } = seedRun(harness, {
+      run: { status: 'running' },
+      items: [
+        { verification: ['tests'] },
+        { status: 'running', verification: ['tests'] },
+        { status: 'merged', verification: ['tests'] }
+      ]
+    })
+
+    expect(
+      harness.service.updateItem(run.id, items[0].id, { verification: ['playwright'] }).verification
+    ).toEqual(['playwright'])
+    expect(() =>
+      harness.service.updateItem(run.id, items[1].id, { verification: ['playwright'] })
+    ).toThrow('A2 has launched; its verification can no longer be changed.')
+    expect(() => harness.service.updateItem(run.id, items[2].id, { verification: [] })).toThrow(
+      'A3 has launched; its verification can no longer be changed.'
+    )
+    expect(harness.db.getDocumentRunItem(items[1].id)?.verification).toEqual(['tests'])
+    expect(harness.db.getDocumentRunItem(items[2].id)?.verification).toEqual(['tests'])
+  })
+
+  it('refuses a verification change while the tickets are still being extracted', () => {
+    const { run, items } = seedRun(harness, { run: { status: 'extracting' }, items: [{}] })
+
+    expect(() =>
+      harness.service.updateItem(run.id, items[0].id, { verification: ['tests'] })
+    ).toThrow('Tickets can only be edited while the run is in preview.')
+    expect(harness.db.getDocumentRunItem(items[0].id)?.verification).toEqual([])
   })
 
   it.each<DocumentRunStatus>(['extracting', 'running', 'paused', 'completed', 'cancelled'])(

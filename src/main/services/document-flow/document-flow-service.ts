@@ -48,6 +48,7 @@ import { RpcRouteError } from '@shared/rpc/errors'
 import {
   DEFAULT_DOCUMENT_RUN_CONFIG,
   DOCUMENT_RUN_MAX_PARALLEL_LIMIT,
+  normalizeVerificationMethods,
   DOCUMENT_RUN_NOTES_LIMIT,
   type DocumentCommitResult,
   type DocumentMergeCheckResult,
@@ -131,7 +132,8 @@ const RUNNER_LEASE_STALE_MS = 45_000
 /** A run still `extracting` this long after its last write, with no job here, lost its job. */
 const STALE_EXTRACTION_MS = 15_000
 const EXTRACTION_HEARTBEAT_MS = 5_000
-const EXTRACTION_TIMEOUT_MS = 300_000
+/** The model reads the repository while it extracts, so this is an agent's budget, not a reply's. */
+const EXTRACTION_TIMEOUT_MS = 900_000
 const CLASSIFICATION_TIMEOUT_MS = 90_000
 /** Each classification spawns a CLI. */
 const MAX_CONCURRENT_CLASSIFICATIONS = 3
@@ -152,6 +154,8 @@ export type DocumentFlowGenerate = (
     effort?: string
     outputSchema?: string
     cwd?: string
+    /** The model may read (never change) the files under `cwd`: see GenerateTextOptions. */
+    readRepository?: boolean
     timeoutMs?: number
     maxRetries?: number
   }
@@ -559,11 +563,15 @@ export class DocumentFlowService {
 
       const generation = run.config.generation
       const provider = generation?.provider ?? 'claude-code'
+      // The model works inside the project, with read-only file tools: it learns what kind of
+      // app this is and how it is tested, which the document alone does not say.
+      const projectPath = this.deps.getProject(run.project_id)?.path
       const options = {
         modelOverride: generation?.model,
         effort: generation?.effort,
         outputSchema: EXTRACTION_JSON_SCHEMA,
-        cwd: tmpdir(),
+        cwd: projectPath ?? tmpdir(),
+        readRepository: Boolean(projectPath),
         timeoutMs: EXTRACTION_TIMEOUT_MS,
         maxRetries: 1
       }
@@ -706,6 +714,9 @@ export class DocumentFlowService {
       config.verifyCommand = patch.verifyCommand === null ? null : patch.verifyCommand.trim()
     }
     if (patch.interactive !== undefined) config.interactive = patch.interactive
+    if (patch.verificationDisabled !== undefined) {
+      config.verificationDisabled = patch.verificationDisabled
+    }
     if (patch.promptStyle !== undefined) config.promptStyle = patch.promptStyle
     if (patch.defaultLaunch !== undefined) config.defaultLaunch = patch.defaultLaunch
     if (patch.generation !== undefined) config.generation = patch.generation
@@ -735,8 +746,24 @@ export class DocumentFlowService {
     if (ORCHESTRATION_ITEM_FIELDS.some((field) => patch[field] !== undefined) && !launched) {
       throw invalidState('This run has not been launched yet.')
     }
+    // The choice reaches the agent with its launch prompt, so it is open until then: in the
+    // preview, and from the dashboard while the ticket still waits its turn.
+    if (
+      patch.verification !== undefined &&
+      run.status !== 'preview' &&
+      !(launched && item.status === 'pending')
+    ) {
+      throw invalidState(
+        launched
+          ? `${item.key} has launched; its verification can no longer be changed.`
+          : 'Tickets can only be edited while the run is in preview.'
+      )
+    }
 
     const rowPatch: DocumentRunItemPatch = {}
+    if (patch.verification !== undefined) {
+      rowPatch.verification = normalizeVerificationMethods(patch.verification)
+    }
     if (patch.title !== undefined) {
       const title = sanitizeLine(patch.title)
       if (!title) throw invalidInput('A ticket needs a title.')
@@ -941,7 +968,8 @@ export class DocumentFlowService {
           sourcePath: run.source_path,
           promptStyle: run.config.promptStyle,
           interactive: run.config.interactive,
-          sdk: launch?.sdk ?? defaultSdk ?? 'claude-code'
+          sdk: launch?.sdk ?? defaultSdk ?? 'claude-code',
+          verification: run.config.verificationDisabled ? [] : item.verification
         }),
         column: 'todo',
         mode: 'build',

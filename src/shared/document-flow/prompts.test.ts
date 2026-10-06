@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest'
 import {
   CLI_FOLLOW_UP_LEAD,
   STATUS_FOOTER_INSTRUCTIONS,
+  VERIFICATION_LEAD_PARAGRAPH,
+  VERIFICATION_PARAGRAPHS,
   buildConflictPrompt,
   buildContinuePrompt,
   buildFixTicket,
@@ -13,6 +15,7 @@ import {
   isQuestionModeNotice,
   statusFooterInstructions,
   toFileUrl,
+  verificationParagraphs,
   withRunRules,
   type ConflictPromptInput,
   type FixTicketInput,
@@ -573,5 +576,93 @@ describe('isQuestionModeNotice', () => {
     }
     expect(isQuestionModeNotice('Change of plans: use the other endpoint instead')).toBe(false)
     expect(isQuestionModeNotice('also add a test')).toBe(false)
+  })
+})
+
+describe('verification paragraphs', () => {
+  const LEAD = VERIFICATION_LEAD_PARAGRAPH
+  const TCU = VERIFICATION_PARAGRAPHS.tcu
+  const PLAYWRIGHT = VERIFICATION_PARAGRAPHS.playwright
+  const TESTS = VERIFICATION_PARAGRAPHS.tests
+
+  it('says nothing about verification when no method is chosen', () => {
+    expect(verificationParagraphs([])).toEqual([])
+    expect(verificationParagraphs(undefined)).toEqual([])
+    expect(verificationParagraphs(null)).toEqual([])
+    expect(buildLaunchPrompt(launch())).toBe(buildLaunchPrompt(launch({ verification: [] })))
+    expect(buildLaunchPrompt(launch())).not.toContain('verify')
+  })
+
+  it('puts the lead and the chosen methods, in canonical order, before the rules of the run', () => {
+    expect(verificationParagraphs(['tests', 'tcu'])).toEqual([LEAD, TCU, TESTS])
+    const prompt = buildLaunchPrompt(launch({ verification: ['tests', 'playwright'] }))
+    expect(prompt.split('\n\n')).toEqual([
+      'implement task 11 ("Counters") from the file:///Users/mor/Desktop/brand-os-bugs%20(2).html',
+      'use subagents to research and read the spec attached there, read the description of it, understand the requirements, research best practices regarding it',
+      ASK_LINE,
+      'then - implement this',
+      LEAD,
+      PLAYWRIGHT,
+      TESTS,
+      GUARD_LINE,
+      FOLLOW_UPS_LINE
+    ])
+  })
+
+  it('tells the agent how each channel works, and to report what it checked', () => {
+    expect(LEAD).toContain('say what you checked and how')
+    expect(LEAD).toContain('never describe a check you did not run')
+    expect(TCU).toContain('tcu state')
+    expect(TCU).toContain('--diff')
+    expect(PLAYWRIGHT).toContain(
+      'playwright-cli -s=<a unique session name> attach --cdp=http://127.0.0.1:9222'
+    )
+    expect(PLAYWRIGHT).toContain('--remote-debugging-port=9222')
+    expect(TESTS).toContain('add or update unit, integration or end-to-end tests')
+    expect(TESTS).toContain("run those first, then the project's test suite")
+  })
+
+  it('withRunRules writes the choice of the launch over whatever the brief carried', () => {
+    const written = buildLaunchPrompt(launch({ verification: ['tcu'] }))
+    // The run now skips verification: every verification paragraph goes.
+    const skipped = withRunRules(written, {
+      interactive: true,
+      sdk: 'claude-code',
+      verification: []
+    })
+    expect(skipped).toBe(buildLaunchPrompt(launch()))
+    // Another choice replaces the old one, in place.
+    const changed = withRunRules(written, {
+      interactive: true,
+      sdk: 'claude-code',
+      verification: ['playwright', 'tests']
+    })
+    expect(changed).toBe(buildLaunchPrompt(launch({ verification: ['playwright', 'tests'] })))
+    expect(changed.split(LEAD)).toHaveLength(2)
+    // The same choice leaves the brief as it is.
+    expect(
+      withRunRules(written, { interactive: true, sdk: 'claude-code', verification: ['tcu'] })
+    ).toBe(written)
+  })
+
+  it('withRunRules adds the choice to a brief that has none, before the rules', () => {
+    const edited = `do task 11 your way\n\n${GUARD_LINE}\n\n${FOLLOW_UPS_LINE}`
+    const result = withRunRules(edited, {
+      interactive: false,
+      sdk: 'codex',
+      verification: ['tests']
+    })
+    expect(result.split('\n\n')).toEqual([
+      'do task 11 your way',
+      LEAD,
+      TESTS,
+      GUARD_LINE,
+      FOLLOW_UPS_LINE,
+      DO_NOT_ASK_LINE
+    ])
+    // A brief without the rules gets the choice, then the rules.
+    expect(
+      withRunRules('do task 11', { interactive: true, sdk: 'claude-code', verification: ['tcu'] })
+    ).toBe(['do task 11', LEAD, TCU, ASK_LINE, GUARD_LINE, FOLLOW_UPS_LINE].join('\n\n'))
   })
 })

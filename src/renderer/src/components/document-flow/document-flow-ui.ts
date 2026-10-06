@@ -12,13 +12,15 @@ import {
 import { isActiveRunStatus } from '@shared/document-flow/run-ticket'
 import {
   DOCUMENT_RUN_ITEM_MERGE_STATUSES,
+  DOCUMENT_VERIFICATION_METHODS,
   type DocumentRun,
   type DocumentRunConfig,
   type DocumentRunDetail,
   type DocumentRunGeneration,
   type DocumentRunItem,
   type DocumentRunItemStatus,
-  type DocumentRunStatus
+  type DocumentRunStatus,
+  type DocumentVerificationMethod
 } from '@shared/types/document-flow'
 
 // Labels, tones and small pure rules shared by the wizard, the run dashboard and the runs
@@ -580,4 +582,83 @@ export function formatEventTime(iso: string): string {
     minute: '2-digit',
     second: '2-digit'
   })
+}
+
+// ── Verification ───────────────────────────────────────────────────────────
+
+/** Chip labels, in the user's own words for the three methods. */
+export const DOCUMENT_VERIFICATION_LABELS: Record<DocumentVerificationMethod, string> = {
+  tcu: 'tcu',
+  playwright: 'playwright',
+  tests: 'tests'
+}
+
+export const DOCUMENT_VERIFICATION_DESCRIPTIONS: Record<DocumentVerificationMethod, string> = {
+  tcu: 'Computer use: drive the running desktop app with the tcu CLI',
+  playwright: 'Browser: drive the app with playwright-cli over CDP (port 9222)',
+  tests: 'Tests: write and run unit, integration or end-to-end tests'
+}
+
+export type VerificationChoice = Pick<
+  DocumentRunItem,
+  'verification' | 'verification_suggested' | 'verification_reason'
+>
+
+/** Tooltip of one verification chip: what it is, whether it is on, and what extraction said. */
+export function describeVerificationChip(
+  method: DocumentVerificationMethod,
+  item: VerificationChoice,
+  options: { disabled: boolean; readOnly: boolean }
+): string {
+  const on = item.verification.includes(method)
+  const parts = [DOCUMENT_VERIFICATION_DESCRIPTIONS[method]]
+  if (options.disabled) parts.push('verification is skipped for this run')
+  else if (options.readOnly) parts.push(on ? 'on' : 'off')
+  else parts.push(on ? 'on (click to turn off)' : 'off (click to turn on)')
+  if (item.verification_suggested.includes(method)) {
+    parts.push(
+      item.verification_reason
+        ? `suggested by the extraction: ${item.verification_reason}`
+        : 'suggested by the extraction'
+    )
+  }
+  return parts.join(' · ')
+}
+
+/** `current` with `method` flipped, in canonical order. */
+export function toggleVerificationMethod(
+  current: readonly DocumentVerificationMethod[],
+  method: DocumentVerificationMethod
+): DocumentVerificationMethod[] {
+  return DOCUMENT_VERIFICATION_METHODS.filter((candidate) =>
+    candidate === method ? !current.includes(candidate) : current.includes(candidate)
+  )
+}
+
+/**
+ * Whether a ticket's verification can still be changed: in the preview, and from the dashboard
+ * while the run is going and the ticket waits its turn (the choice is sent with its launch).
+ */
+export function canEditVerification(
+  run: Pick<DocumentRun, 'status'>,
+  item: Pick<DocumentRunItem, 'status'>
+): boolean {
+  return run.status === 'preview' || (isActiveRunStatus(run.status) && item.status === 'pending')
+}
+
+/**
+ * The verification line of the launch summary: "skipped for every ticket", "none", or how many
+ * selected tickets use each method ("tests ×5 · playwright ×2").
+ */
+export function describeVerificationChoice(
+  items: readonly Pick<DocumentRunItem, 'selected' | 'verification'>[],
+  disabled: boolean
+): string {
+  if (disabled) return 'skipped for every ticket'
+  const selected = items.filter((item) => item.selected)
+  const parts = DOCUMENT_VERIFICATION_METHODS.flatMap((method) => {
+    const count = selected.filter((item) => item.verification.includes(method)).length
+    return count > 0 ? [`${DOCUMENT_VERIFICATION_LABELS[method]} ×${count}`] : []
+  })
+  return parts.length > 0 ? parts.join(' · ') : 'none'
 }

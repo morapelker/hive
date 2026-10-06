@@ -30,6 +30,10 @@ const log = createLogger({ component: 'TextGenerationRouter' })
 const TIMEOUT_MS = 30_000
 const MAX_RETRIES = 1
 const MAX_OUTPUT_SIZE = 1024 * 1024 // 1 MB
+/** Claude's read-only file tools, for `readRepository` (see GenerateTextOptions). */
+const READ_REPOSITORY_TOOLS = ['Read', 'Glob', 'Grep']
+/** Enough turns to read a manifest, the docs and a handful of files before answering. */
+const READ_REPOSITORY_MAX_TURNS = 60
 
 export interface GenerateTextOptions {
   modelOverride?: string
@@ -37,6 +41,13 @@ export interface GenerateTextOptions {
   effort?: string
   outputSchema?: string
   cwd?: string
+  /**
+   * Let the model read the files under `cwd` before it answers — never change or run anything.
+   * Claude gets its Read, Glob and Grep tools and enough turns to use them; codex already runs
+   * `exec` in its read-only sandbox; opencode runs its read-only `plan` agent. Off by default:
+   * a one-shot reply with no tools.
+   */
+  readRepository?: boolean
   /** Per-attempt wall-clock budget; defaults to 30 s. */
   timeoutMs?: number
   /** Extra attempts after the first failure; defaults to 1. */
@@ -106,6 +117,7 @@ export async function generateText(
   options: GenerateTextOptions = {}
 ): Promise<string | null> {
   const { modelOverride, effort, outputSchema, cwd } = options
+  const readRepository = options.readRepository === true
   const timeoutMs = options.timeoutMs ?? TIMEOUT_MS
   const maxRetries = options.maxRetries ?? MAX_RETRIES
   const resolvedProvider = resolveProvider(provider)
@@ -116,7 +128,10 @@ export async function generateText(
   }
 
   if (resolvedProvider !== provider) {
-    log.info('Falling back to available provider', { requested: provider, resolved: resolvedProvider })
+    log.info('Falling back to available provider', {
+      requested: provider,
+      resolved: resolvedProvider
+    })
   }
 
   let lastError: Error | null = null
@@ -130,7 +145,8 @@ export async function generateText(
         effort,
         outputSchema,
         cwd,
-        timeoutMs
+        timeoutMs,
+        readRepository
       )
       if (result !== null) {
         log.info('Text generation succeeded', {
@@ -138,7 +154,8 @@ export async function generateText(
           resolvedProvider,
           attempt,
           usedStructuredOutput: Boolean(outputSchema),
-          cwd
+          cwd,
+          readRepository
         })
         return result
       }
@@ -212,14 +229,24 @@ function generateWithProvider(
   effort?: string,
   outputSchema?: string,
   cwd?: string,
-  timeoutMs: number = TIMEOUT_MS
+  timeoutMs: number = TIMEOUT_MS,
+  readRepository = false
 ): Promise<string | null> {
   switch (provider) {
     case 'claude-code':
     case 'claude-code-cli':
-      return generateWithClaude(prompt, systemPrompt, modelOverride, effort, cwd, timeoutMs)
+      return generateWithClaude(
+        prompt,
+        systemPrompt,
+        modelOverride,
+        effort,
+        cwd,
+        timeoutMs,
+        readRepository
+      )
     case 'codex':
     case 'codex-cli':
+      // `codex exec` reads its working directory in the read-only sandbox either way.
       return generateWithCodex(
         prompt,
         systemPrompt,
@@ -230,7 +257,14 @@ function generateWithProvider(
         timeoutMs
       )
     case 'opencode':
-      return generateWithOpenCode(prompt, systemPrompt, modelOverride, cwd, timeoutMs)
+      return generateWithOpenCode(
+        prompt,
+        systemPrompt,
+        modelOverride,
+        cwd,
+        timeoutMs,
+        readRepository
+      )
     case 'terminal':
       return Promise.resolve(null)
   }
@@ -245,7 +279,8 @@ async function generateWithClaude(
   modelOverride?: string,
   effort?: string,
   cwd?: string,
-  timeoutMs: number = TIMEOUT_MS
+  timeoutMs: number = TIMEOUT_MS,
+  readRepository = false
 ): Promise<string | null> {
   const sdk = await loadClaudeSDK()
 
@@ -259,13 +294,20 @@ async function generateWithClaude(
       options: {
         cwd: cwd ?? homedir(),
         model: modelOverride ?? 'haiku',
-        maxTurns: 2,
         abortController,
         systemPrompt,
         effort: toClaudeEffort(effort),
         thinking: { type: 'disabled' },
-        tools: [],
         persistSession: false,
+        // Reading the repository takes tool turns; the file tools need no permission, and
+        // `dontAsk` denies anything else outright rather than waiting for a user who is not there.
+        ...(readRepository
+          ? {
+              maxTurns: READ_REPOSITORY_MAX_TURNS,
+              tools: READ_REPOSITORY_TOOLS,
+              permissionMode: 'dontAsk' as const
+            }
+          : { maxTurns: 2, tools: [] }),
         ...(claudeBinaryPath ? { pathToClaudeCodeExecutable: claudeBinaryPath } : {})
       }
     })
@@ -399,14 +441,16 @@ async function generateWithOpenCode(
   systemPrompt: string,
   modelOverride?: string,
   cwd?: string,
-  timeoutMs: number = TIMEOUT_MS
+  timeoutMs: number = TIMEOUT_MS,
+  readRepository = false
 ): Promise<string | null> {
   const model = modelOverride ?? 'claude-haiku'
   const fullPrompt = `${systemPrompt}\n\n${prompt}`
 
+  // The built-in `plan` agent reads and searches but cannot write or run anything.
   const stdout = await spawnWithStdin(
     'opencode',
-    ['run', '--format', 'json', '--model', model],
+    ['run', '--format', 'json', '--model', model, ...(readRepository ? ['--agent', 'plan'] : [])],
     fullPrompt,
     cwd,
     undefined,

@@ -31,6 +31,15 @@ vi.mock('@/lib/pr-content-provider', () => ({
   resolvePRContentGeneration: vi.fn(() => ({ provider: 'claude-code', model: 'haiku' }))
 }))
 
+// The default launch model, as the quick launch would resolve it; what extraction runs with.
+vi.mock('@/lib/tedooo-agent/models', () => ({
+  resolveDefaultLaunchModel: vi.fn(() => ({
+    providerID: 'anthropic',
+    modelID: 'opus',
+    variant: 'high'
+  }))
+}))
+
 const api = vi.mocked(documentFlowApi)
 
 const initialState = useDocumentFlowStore.getState()
@@ -262,8 +271,9 @@ describe('useDocumentFlowStore', () => {
       const detail = await useDocumentFlowStore.getState().createRun('project-1', '/docs/spec.html')
 
       expect(detail).toBe(created)
+      // The default launch model of the default SDK, not the PR content model.
       expect(resolvePRContentGeneration).toHaveBeenCalledWith(
-        initialSettingsState.prContentModel,
+        { agentSdk: 'codex', providerID: 'anthropic', modelID: 'opus', variant: 'high' },
         'codex',
         available
       )
@@ -287,8 +297,9 @@ describe('useDocumentFlowStore', () => {
 
       await useDocumentFlowStore.getState().retryExtraction('run-1')
 
+      // No default SDK degrades to opencode for the model, as every picker does.
       expect(resolvePRContentGeneration).toHaveBeenCalledWith(
-        initialSettingsState.prContentModel,
+        { agentSdk: 'opencode', providerID: 'anthropic', modelID: 'opus', variant: 'high' },
         'claude-code',
         null
       )
@@ -403,7 +414,8 @@ describe('useDocumentFlowStore', () => {
           defaultLaunch: { sdk: 'codex', model: null, codexFastMode: true },
           generation: null,
           baseBranch: null,
-          notes: null
+          notes: null,
+          verificationDisabled: false
         }
       })
       api.start.mockResolvedValue(started)

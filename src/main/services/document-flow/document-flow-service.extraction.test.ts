@@ -2,7 +2,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -373,6 +372,31 @@ describe('the extraction job', () => {
     expect(detail?.events.at(-1)?.message).toBe('2 tickets extracted')
   })
 
+  it('keeps the verification the model suggested, as the suggestion and as the choice', async () => {
+    const reply = JSON.parse(replyFor())
+    reply.tickets[0].verification = ['tests', 'playwright']
+    reply.tickets[0].verificationReason =
+      'The screens change: walk through them in the browser, and the strings have unit tests.'
+    harness.replies.push(JSON.stringify(reply))
+
+    const runId = await extract()
+
+    const [a1, a2] = harness.service.get(runId)?.items ?? []
+    // Stored in the order of the methods, whatever order the model listed them in.
+    expect(a1).toMatchObject({
+      verification_suggested: ['playwright', 'tests'],
+      verification: ['playwright', 'tests'],
+      verification_reason:
+        'The screens change: walk through them in the browser, and the strings have unit tests.'
+    })
+    // A ticket the model said nothing about verifying.
+    expect(a2).toMatchObject({
+      verification_suggested: [],
+      verification: [],
+      verification_reason: ''
+    })
+  })
+
   it('asks the generation model with the extraction prompt, schema and time budget', async () => {
     harness.replies.push(replyFor())
 
@@ -391,9 +415,11 @@ describe('the extraction job', () => {
       modelOverride: 'gpt-5.4-mini',
       effort: 'medium',
       outputSchema: EXTRACTION_JSON_SCHEMA,
-      // A neutral directory: providers that can read files must not wander the project.
-      cwd: tmpdir(),
-      timeoutMs: 300_000,
+      // Inside the project, reading only: the model learns what kind of app this is and how
+      // it is tested, which the document does not say.
+      cwd: join(harness.scratch, 'project'),
+      readRepository: true,
+      timeoutMs: 900_000,
       maxRetries: 1
     })
     expect(call.prompt).toContain('[b1] # Factory changes')

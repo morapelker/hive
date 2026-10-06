@@ -110,6 +110,9 @@ const draft = (key: string, over: Partial<DocumentRunItemDraft> = {}): DocumentR
   selected: true,
   figures: [],
   open_questions: [],
+  verification_suggested: [],
+  verification: [],
+  verification_reason: '',
   ...over
 })
 
@@ -188,6 +191,21 @@ describe('document flow schema', () => {
     }
     expect(DOCUMENT_FLOW_TABLES_SQL).toMatch(
       /report\s+TEXT DEFAULT NULL,\s+migration_session_id\s+TEXT DEFAULT NULL,\s+migration_started_at\s+TEXT DEFAULT NULL,\s+migration_owner_pid\s+INTEGER DEFAULT NULL,\s+runner_client_id/
+    )
+  })
+
+  it('ships the verification of a ticket as the v59 migration, columns added by the repair step', () => {
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(59)
+    const migration = MIGRATIONS.find((m) => m.version === 59)
+    expect(migration?.name).toBe('add_document_run_item_verification')
+    // Comment only: safeAddColumn() adds the columns, so a replay cannot fail on a duplicate.
+    expect(migration?.up.replace(/--.*$/gm, '').trim()).toBe('')
+    expect(migration?.down.replace(/--.*$/gm, '').trim()).toBe('')
+    for (const column of ['verification_suggested', 'verification', 'verification_reason']) {
+      expect(migration?.up).toContain(`document_run_items.${column}`)
+    }
+    expect(DOCUMENT_FLOW_TABLES_SQL).toMatch(
+      /open_questions\s+TEXT NOT NULL DEFAULT '\[\]',\s+verification_suggested\s+TEXT NOT NULL DEFAULT '\[\]',\s+verification\s+TEXT NOT NULL DEFAULT '\[\]',\s+verification_reason\s+TEXT NOT NULL DEFAULT '',\s+launch_config/
     )
   })
 
@@ -322,6 +340,48 @@ describeIf('document flow tables', () => {
       repaired.updateDocumentRun('run-old', { migration_owner_pid: 4321 })?.migration_owner_pid
     ).toBe(4321)
   })
+
+  it('adds the verification columns to an items table created by an earlier build', () => {
+    const path = makeDbPath()
+    const db = openDb(path)
+    const run = makeRun(db, makeProject(db), { id: 'run-old' })
+    const [item] = db.replaceDocumentRunItems(run.id, [
+      draft('A1', {
+        verification_suggested: ['tests'],
+        verification: ['tests'],
+        verification_reason: 'It ships with unit tests.'
+      })
+    ])
+    const raw = db.getRawDb()
+    raw.exec('ALTER TABLE document_run_items DROP COLUMN verification_suggested')
+    raw.exec('ALTER TABLE document_run_items DROP COLUMN verification')
+    raw.exec('ALTER TABLE document_run_items DROP COLUMN verification_reason')
+    db.setSetting('schema_version', '58')
+    db.close()
+
+    const upgraded = openDb(path)
+    expect(upgraded.getSetting('schema_version')).toBe(String(CURRENT_SCHEMA_VERSION))
+    // The ticket of the earlier build reads as one nobody suggested or chose a verification for.
+    expect(upgraded.getDocumentRunItem(item.id)).toEqual({
+      ...item,
+      verification_suggested: [],
+      verification: [],
+      verification_reason: ''
+    })
+    expect(
+      upgraded.updateDocumentRunItem(item.id, { verification: ['tcu', 'playwright'] })
+    ).toMatchObject({
+      verification_suggested: [],
+      verification: ['tcu', 'playwright'],
+      verification_reason: ''
+    })
+
+    // Replayed on every start: the columns are there already.
+    upgraded.close()
+    expect(openDb(path).getDocumentRunItem(item.id)).toMatchObject({
+      verification: ['tcu', 'playwright']
+    })
+  })
 })
 
 describeIf('document runs', () => {
@@ -335,7 +395,9 @@ describeIf('document runs', () => {
       promptStyle: 'small',
       defaultLaunch: LAUNCH,
       generation: { provider: 'claude-code', model: 'sonnet', effort: 'high' },
-      baseBranch: 'develop'
+      baseBranch: 'develop',
+      notes: null,
+      verificationDisabled: true
     }
     const createdAt = at('2026-03-01T10:00:00.000Z')
     const run = makeRun(db, projectId, { id: 'run-1', config })
@@ -739,6 +801,9 @@ describeIf('document run items', () => {
       selected: false,
       figures,
       open_questions: ['Which regions?'],
+      verification_suggested: [],
+      verification: [],
+      verification_reason: '',
       launch_config: LAUNCH,
       status: 'pending',
       status_detail: null,
@@ -772,13 +837,121 @@ describeIf('document run items', () => {
       launch_config: null,
       depends_on: [],
       figures: [],
-      open_questions: []
+      open_questions: [],
+      verification_suggested: [],
+      verification: [],
+      verification_reason: ''
     })
     expect(items[2].launch_config).toBeNull()
     expect(db.getDocumentRunItems(run.id)).toEqual(items)
     expect(db.getDocumentRunItem(items[1].id)).toEqual(items[1])
     expect(db.getDocumentRunItem('ghost')).toBeNull()
     expect(db.getDocumentRunItems('ghost')).toEqual([])
+  })
+
+  it('round-trips the verification of a ticket and drops the methods it does not know', () => {
+    const db = openDb()
+    const run = makeRun(db, makeProject(db))
+    const raw = db.getRawDb()
+    const [item, plain] = db.replaceDocumentRunItems(run.id, [
+      draft('A1', {
+        verification_suggested: ['tcu', 'tests'],
+        verification: ['tests'],
+        verification_reason: 'x'
+      }),
+      draft('A2')
+    ])
+    expect(item).toMatchObject({
+      verification_suggested: ['tcu', 'tests'],
+      verification: ['tests'],
+      verification_reason: 'x'
+    })
+    expect(plain).toMatchObject({
+      verification_suggested: [],
+      verification: [],
+      verification_reason: ''
+    })
+    expect(db.getDocumentRunItem(item.id)).toEqual(item)
+    expect(
+      raw
+        .prepare(
+          'SELECT verification_suggested, verification, verification_reason FROM document_run_items WHERE id = ?'
+        )
+        .get(item.id)
+    ).toEqual({
+      verification_suggested: '["tcu","tests"]',
+      verification: '["tests"]',
+      verification_reason: 'x'
+    })
+
+    // Written by a build that knew other methods: only the known ones survive, in canonical order.
+    raw
+      .prepare(
+        `UPDATE document_run_items
+         SET verification_suggested = '["manual","tests","tcu"]',
+             verification = '["tests","browser",7,"playwright"]'
+         WHERE id = ?`
+      )
+      .run(item.id)
+    expect(db.getDocumentRunItem(item.id)).toMatchObject({
+      verification_suggested: ['tcu', 'tests'],
+      verification: ['playwright', 'tests'],
+      verification_reason: 'x'
+    })
+    raw
+      .prepare(
+        `UPDATE document_run_items SET verification_suggested = 'oops', verification = '{"a":1}'
+         WHERE id = ?`
+      )
+      .run(item.id)
+    expect(db.getDocumentRunItem(item.id)).toMatchObject({
+      verification_suggested: [],
+      verification: []
+    })
+  })
+
+  it('patches the chosen verification of a ticket and leaves the suggestion alone', () => {
+    const db = openDb()
+    const run = makeRun(db, makeProject(db))
+    const [item] = db.replaceDocumentRunItems(run.id, [
+      draft('A1', {
+        verification_suggested: ['tests'],
+        verification: ['tests'],
+        verification_reason: 'x'
+      })
+    ])
+
+    const changedAt = at('2026-03-01T10:20:00.000Z')
+    expect(db.updateDocumentRunItem(item.id, { verification: ['tcu', 'playwright'] })).toEqual({
+      ...item,
+      verification: ['tcu', 'playwright'],
+      updated_at: changedAt
+    })
+    expect(db.getDocumentRunItem(item.id)).toMatchObject({
+      verification_suggested: ['tests'],
+      verification: ['tcu', 'playwright'],
+      verification_reason: 'x'
+    })
+
+    // Every method switched off is an empty list, not a missing one.
+    expect(db.updateDocumentRunItem(item.id, { verification: [] })).toMatchObject({
+      verification_suggested: ['tests'],
+      verification: [],
+      verification_reason: 'x'
+    })
+    expect(
+      (
+        db
+          .getRawDb()
+          .prepare('SELECT verification FROM document_run_items WHERE id = ?')
+          .get(item.id) as { verification: string }
+      ).verification
+    ).toBe('[]')
+    // Other patches leave the choice where it is.
+    expect(db.updateDocumentRunItem(item.id, { title: 'Renamed' })).toMatchObject({
+      title: 'Renamed',
+      verification: []
+    })
   })
 
   it('replaces every item of that run and of no other', () => {

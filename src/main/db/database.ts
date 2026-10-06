@@ -1,7 +1,11 @@
 import { deleteAttachment } from '../services/attachment-storage'
 import type { AgentSdk } from '@shared/types/agent-sdk'
 import { parseProjectShellCommands } from '@shared/lib/shell-commands'
-import { DEFAULT_DOCUMENT_RUN_CONFIG, SESSION_TURN_STATES } from '@shared/types/document-flow'
+import {
+  DEFAULT_DOCUMENT_RUN_CONFIG,
+  SESSION_TURN_STATES,
+  normalizeVerificationMethods
+} from '@shared/types/document-flow'
 import type {
   DocumentRun,
   DocumentRunConfig,
@@ -303,6 +307,7 @@ const DOCUMENT_RUN_ITEM_PATCH_COLUMNS: Record<
   description: 'plain',
   depends_on: 'json',
   selected: 'flag',
+  verification: 'json',
   launch_config: 'json',
   status: 'plain',
   status_detail: 'plain',
@@ -698,6 +703,9 @@ export class DatabaseService implements DocumentFlowDb {
     this.safeAddColumn('session_final_messages', 'state', "TEXT NOT NULL DEFAULT 'ended'")
     this.safeAddColumn('session_final_messages', 'detail', 'TEXT DEFAULT NULL')
     this.safeAddColumn('document_run_items', 'conflict_head', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('document_run_items', 'verification_suggested', "TEXT NOT NULL DEFAULT '[]'")
+    this.safeAddColumn('document_run_items', 'verification', "TEXT NOT NULL DEFAULT '[]'")
+    this.safeAddColumn('document_run_items', 'verification_reason', "TEXT NOT NULL DEFAULT ''")
     this.safeAddColumn('document_runs', 'ticket_id', 'TEXT DEFAULT NULL')
     this.safeAddColumn('document_runs', 'migration_session_id', 'TEXT DEFAULT NULL')
     this.safeAddColumn('document_runs', 'migration_started_at', 'TEXT DEFAULT NULL')
@@ -1229,6 +1237,13 @@ export class DatabaseService implements DocumentFlowDb {
       selected: !!row.selected,
       figures: this.parseDocumentFlowArray<DocumentRunItem['figures'][number]>(row.figures),
       open_questions: this.parseDocumentFlowArray<string>(row.open_questions),
+      verification_suggested: normalizeVerificationMethods(
+        this.parseDocumentFlowArray<unknown>(row.verification_suggested)
+      ),
+      verification: normalizeVerificationMethods(
+        this.parseDocumentFlowArray<unknown>(row.verification)
+      ),
+      verification_reason: (row.verification_reason as string) ?? '',
       launch_config: this.parseDocumentFlowObject<NonNullable<DocumentRunItem['launch_config']>>(
         row.launch_config
       ),
@@ -1383,10 +1398,12 @@ export class DatabaseService implements DocumentFlowDb {
         `INSERT INTO document_run_items (
            id, run_id, item_key, position, title, summary, description, kind, depends_on,
            has_migration, size, conflict_risk, doc_status, selected, figures, open_questions,
+           verification_suggested, verification, verification_reason,
            launch_config, status, created_at, updated_at
          ) VALUES (
            @id, @run_id, @item_key, @position, @title, @summary, @description, @kind, @depends_on,
            @has_migration, @size, @conflict_risk, @doc_status, @selected, @figures, @open_questions,
+           @verification_suggested, @verification, @verification_reason,
            @launch_config, 'pending', @now, @now
          )`
       )
@@ -1409,6 +1426,9 @@ export class DatabaseService implements DocumentFlowDb {
           selected: item.selected ? 1 : 0,
           figures: JSON.stringify(item.figures),
           open_questions: JSON.stringify(item.open_questions),
+          verification_suggested: JSON.stringify(item.verification_suggested),
+          verification: JSON.stringify(item.verification),
+          verification_reason: item.verification_reason,
           launch_config: item.launch_config ? JSON.stringify(item.launch_config) : null,
           now
         })
