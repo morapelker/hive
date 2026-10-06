@@ -1068,7 +1068,20 @@ export function KanbanColumn({
 
             {/* Transition-sort toggle for columns without other right-side controls */}
             {!isInProgressColumn && !isDoneColumn && (
-              <div className="ml-auto flex shrink-0 items-center">{transitionSortButton}</div>
+              <div className="ml-auto flex shrink-0 items-center gap-1">
+                {/* New-ticket button (To Do only) */}
+                {isTodoColumn && !searchActive && (
+                  <button
+                    data-testid="kanban-column-add-ticket-btn"
+                    onClick={() => setIsCreateModalOpen(true)}
+                    className="flex h-6 shrink-0 items-center gap-1 whitespace-nowrap rounded-md border border-border px-1.5 text-[11px] font-medium text-muted-foreground hover:border-muted-foreground/35 hover:bg-secondary/40 hover:text-foreground transition-colors cursor-pointer"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    <span>New ticket</span>
+                  </button>
+                )}
+                {transitionSortButton}
+              </div>
             )}
 
             {/* Hidden measurement spans — inherit font styles via cascade; used
@@ -1124,16 +1137,6 @@ export function KanbanColumn({
           !(isDoneColumn && showArchived && archivedTickets && archivedTickets.length > 0) ? (
             isDragOver ? (
               dropIndicator
-            ) : /* Empty state: show the add-ticket card as the only item */
-            isTodoColumn && !searchActive ? (
-              <button
-                data-testid="kanban-add-ticket-card"
-                onClick={() => setIsCreateModalOpen(true)}
-                className="flex items-center justify-center gap-1.5 rounded-md border border-dashed border-border p-2 text-[13px] text-muted-foreground/60 hover:border-muted-foreground/35 hover:text-muted-foreground hover:bg-secondary/40 transition-colors cursor-pointer"
-              >
-                <Plus className="h-3.5 w-3.5" />
-                <span>New ticket</span>
-              </button>
             ) : (
               <p className="px-2 py-4 text-center text-xs text-muted-foreground/60">
                 {searchActive ? 'No matches' : 'No tickets'}
@@ -1141,18 +1144,6 @@ export function KanbanColumn({
             )
           ) : (
             <>
-              {/* Add-ticket card always on top of the To Do column */}
-              {isTodoColumn && !searchActive && (
-                <button
-                  data-testid="kanban-add-ticket-card"
-                  onClick={() => setIsCreateModalOpen(true)}
-                  className="flex shrink-0 items-center justify-center gap-1.5 rounded-md border border-dashed border-border p-2 text-[13px] text-muted-foreground/60 hover:border-muted-foreground/35 hover:text-muted-foreground hover:bg-secondary/40 transition-colors cursor-pointer"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  <span>New ticket</span>
-                </button>
-              )}
-
               {isTodoColumn && invalidPlaceholders.map((placeholder) => (
                 <MarkdownInvalidCardPlaceholder
                   key={`${placeholder.projectId}:${placeholder.filePath}`}
