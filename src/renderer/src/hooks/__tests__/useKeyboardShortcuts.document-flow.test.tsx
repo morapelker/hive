@@ -100,7 +100,7 @@ describe('Tab inside a document-flow dialog', () => {
 })
 
 describe('Cmd+W with a document-flow dialog open', () => {
-  it('closes the run dashboard, then the wizard, before it closes the session (menu shortcut)', () => {
+  it('closes the run dashboard, then the wizard, and never the session (menu shortcut)', () => {
     useDocumentFlowStore.setState({
       dashboardRunId: 'run-1',
       wizard: { open: true, projectId: 'project-1', runId: null }
@@ -118,7 +118,15 @@ describe('Cmd+W with a document-flow dialog open', () => {
     expect(closeSession).not.toHaveBeenCalled()
 
     closeShortcut()
-    expect(closeSession).toHaveBeenCalledWith('session-behind')
+    expect(closeSession).not.toHaveBeenCalled()
+  })
+
+  it('leaves the active session open on the keydown path too', () => {
+    render(<Harness />)
+
+    fireEvent.keyDown(document.body, { key: 'w', metaKey: true })
+
+    expect(closeSession).not.toHaveBeenCalled()
   })
 
   it('closes the wizard from a field inside it (keydown path) and leaves the session alone', () => {

@@ -36,8 +36,8 @@ export const DEFAULT_SHORTCUTS: ShortcutDefinition[] = [
   },
   {
     id: 'session:close',
-    label: 'Close Session',
-    description: 'Close the current session tab (noop if none open)',
+    label: 'Close Tab',
+    description: 'Close the current dialog, terminal, file or diff tab (never closes a session)',
     category: 'session',
     defaultBinding: { key: 'w', modifiers: ['meta'] }
   },

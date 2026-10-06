@@ -117,7 +117,7 @@ export function buildMenu(mainWindow: BrowserWindow, isDev: boolean): Menu {
           click: () => send(NEW_SESSION_SHORTCUT_CHANNEL)
         },
         {
-          label: 'Close Session',
+          label: 'Close Tab',
           accelerator: 'CmdOrCtrl+W',
           click: () => send(CLOSE_SESSION_SHORTCUT_CHANNEL)
         },

@@ -448,7 +448,7 @@ describe('Session 8: Tab Context Menus UI', () => {
   })
 
   describe('Keyboard shortcut hints', () => {
-    test('Close menu item shows Cmd+W shortcut', async () => {
+    test('Session tab Close menu item shows no Cmd+W shortcut', async () => {
       render(<SessionTabs />)
 
       const tab = screen.getByTestId('session-tab-s1')
@@ -456,7 +456,19 @@ describe('Session 8: Tab Context Menus UI', () => {
 
       await waitFor(() => {
         expect(screen.getByText('Close')).toBeInTheDocument()
-        // The shortcut symbol should be present
+      })
+      // Cmd+W never closes a session, so the hint must not be advertised
+      expect(screen.queryByText('\u2318W')).not.toBeInTheDocument()
+    })
+
+    test('File tab Close menu item shows Cmd+W shortcut', async () => {
+      setupStores({ fileTabs: true })
+      render(<SessionTabs />)
+
+      fireEvent.contextMenu(screen.getByTestId('file-tab-app.ts'))
+
+      await waitFor(() => {
+        expect(screen.getByText('Close')).toBeInTheDocument()
         expect(screen.getByText('\u2318W')).toBeInTheDocument()
       })
     })

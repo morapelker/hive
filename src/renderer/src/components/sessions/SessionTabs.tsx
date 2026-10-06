@@ -327,7 +327,6 @@ const SessionTab = memo(function SessionTab({
       <ContextMenuContent>
         <ContextMenuItem onSelect={(e) => onClose(e as unknown as React.MouseEvent)}>
           Close
-          <ContextMenuShortcut>&#8984;W</ContextMenuShortcut>
         </ContextMenuItem>
         {onCloseOthers && <ContextMenuItem onSelect={onCloseOthers}>Close Others</ContextMenuItem>}
         {onCloseToRight && (

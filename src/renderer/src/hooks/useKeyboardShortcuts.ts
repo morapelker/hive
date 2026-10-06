@@ -386,7 +386,7 @@ function cycleProject(direction: 1 | -1): void {
  *
  * Used as the highest-priority handler for Cmd+W / Ctrl+W so that
  * pressing the shortcut dismisses the topmost overlay instead of
- * closing a session or file tab.
+ * closing a file, diff or terminal tab.
  */
 function tryCloseOpenModal(): boolean {
   // Command palette (highest z-layer, often overlays other modals)
@@ -594,22 +594,10 @@ export function useKeyboardShortcuts(): void {
       // Priority 3: Clear active diff view (legacy — diff without tab)
       if (activeDiff) {
         useFileViewerStore.getState().clearActiveDiff()
-        return
       }
 
-      // Priority 4: Close active session tab
-      const { activeSessionId } = useSessionStore.getState()
-      if (!activeSessionId) return
-      useSessionStore
-        .getState()
-        .closeSession(activeSessionId)
-        .then((result) => {
-          if (result.success) {
-            toast.success('Session closed')
-          } else {
-            toast.error(result.error || 'Failed to close session')
-          }
-        })
+      // Session tabs are deliberately not closed here — Cmd+W on a session was
+      // almost always accidental. Sessions close from the tab's X / context menu.
     })
 
     return cleanup
@@ -700,22 +688,9 @@ function getShortcutHandlers(
         // Priority 3: Clear active diff view (legacy — diff without tab)
         if (activeDiff) {
           useFileViewerStore.getState().clearActiveDiff()
-          return
         }
 
-        // Priority 4: Close active session tab
-        const { activeSessionId } = useSessionStore.getState()
-        if (!activeSessionId) return
-        useSessionStore
-          .getState()
-          .closeSession(activeSessionId)
-          .then((result) => {
-            if (result.success) {
-              toast.success('Session closed')
-            } else {
-              toast.error(result.error || 'Failed to close session')
-            }
-          })
+        // Session tabs are deliberately not closed here (see the Cmd+W listener above).
       }
     },
     {

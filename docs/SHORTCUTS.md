@@ -13,7 +13,7 @@ These shortcuts work anywhere in the application:
 | `Cmd+Q` | Quit Hive | Close the application |
 | `Cmd+H` | Hide Hive | Minimize to dock |
 | `Cmd+M` | Minimize | Minimize window |
-| `Cmd+W` | Close Tab | Close current tab |
+| `Cmd+W` | Close Tab | Close the current dialog, terminal, file or diff tab (never closes a session) |
 | `Cmd+Shift+W` | Close Window | Close current window |
 | `Esc` | Cancel/Close | Close dialogs, panels, or cancel operations |
 

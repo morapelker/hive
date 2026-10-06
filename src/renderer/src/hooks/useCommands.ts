@@ -393,7 +393,6 @@ export function useCommands() {
         description: 'Close the current session tab',
         category: 'action',
         icon: 'X',
-        shortcut: getDisplayString('session:close'),
         keywords: ['close', 'session', 'tab'],
         action: async () => {
           if (!activeSessionId) return

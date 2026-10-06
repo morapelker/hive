@@ -367,7 +367,8 @@ function createWindow(backendBootstrap?: LocalEnvironmentBootstrap | null): void
       emitFileSearchShortcut()
     }
 
-    // Intercept Cmd+W — never close the window, forward to renderer to close session tab
+    // Intercept Cmd+W — never close the window, forward to renderer to close the active
+    // modal / terminal / file / diff tab (session tabs are never closed by Cmd+W)
     if (
       input.key.toLowerCase() === 'w' &&
       (input.meta || input.control) &&
