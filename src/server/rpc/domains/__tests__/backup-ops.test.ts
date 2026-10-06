@@ -236,7 +236,10 @@ describe('backupOps.exportBackup', () => {
       id: 'ticket-a2',
       project_id: 'project-a',
       title: 'Second',
-      archived_at: '2026-01-01T00:00:00.000Z'
+      archived_at: '2026-01-01T00:00:00.000Z',
+      // A shell command's ticket: the marker says which project command it runs
+      external_provider: 'shell-command',
+      external_id: 'cmd-build'
     })
     const dependencyA: TicketDependency = {
       dependent_id: 'ticket-a2',
@@ -289,6 +292,8 @@ describe('backupOps.exportBackup', () => {
     const second = exportedA.tickets?.find((t) => t.title === 'Second')
     expect(first?.worktree_branch).toBe('feature/a')
     expect(second?.archived_at).toBe('2026-01-01T00:00:00.000Z')
+    expect(first).toMatchObject({ external_provider: null, external_id: null })
+    expect(second).toMatchObject({ external_provider: 'shell-command', external_id: 'cmd-build' })
     expect(exportedA.ticket_dependencies).toEqual([{ dependent: 't2', blocker: 't1' }])
     for (const t of exportedA.tickets ?? []) {
       expect(t).not.toHaveProperty('attachments')
@@ -1367,7 +1372,9 @@ describe('backupOps.restoreProject', () => {
           mark: null,
           total_tokens: 500,
           archived_at: '2026-01-01T00:00:00.000Z',
-          worktree_branch: null
+          worktree_branch: null,
+          external_provider: 'shell-command',
+          external_id: 'cmd-build'
         }
       ],
       ticket_dependencies: [
@@ -1381,11 +1388,22 @@ describe('backupOps.restoreProject', () => {
       service.restoreProject({ project: bp, options: { cloneParentDir: null } })
     )
 
+    // `First` comes from a backup written before the marker was exported
     expect(deps.db.createKanbanTicket).toHaveBeenCalledWith(
-      expect.objectContaining({ title: 'First', worktree_id: 'wt-feature-a' })
+      expect.objectContaining({
+        title: 'First',
+        worktree_id: 'wt-feature-a',
+        external_provider: null,
+        external_id: null
+      })
     )
     expect(deps.db.createKanbanTicket).toHaveBeenCalledWith(
-      expect.objectContaining({ title: 'Second', worktree_id: null })
+      expect.objectContaining({
+        title: 'Second',
+        worktree_id: null,
+        external_provider: 'shell-command',
+        external_id: 'cmd-build'
+      })
     )
     expect(deps.db.updateKanbanTicket).toHaveBeenCalledWith('created-Second', {
       archived_at: '2026-01-01T00:00:00.000Z'

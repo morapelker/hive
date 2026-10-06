@@ -19,6 +19,7 @@ import {
 } from './store-coordination'
 import { CUSTOM_MODEL_PROVIDER_ID } from '@shared/types/custom-provider'
 import { documentRunIdOf, isDocumentRunTicket } from '@shared/document-flow/run-ticket'
+import { shellCommandIdOfTicket } from '@shared/lib/shell-commands'
 import { isClaudeCliCompletionDetected } from '@shared/types/claude-cli-stop-completion'
 import { isPlanLike } from '../lib/constants'
 import { useConnectionStore } from './useConnectionStore'
@@ -2333,13 +2334,15 @@ registerKanbanNewSession((sessionId, worktreeId, projectId, sessionMode) => {
 
   // Find the first ticket pre-assigned to this worktree with no active session. The ticket of
   // a document run sits session-less on its integration worktree for good: the fix sessions
-  // launched there belong to their own tickets.
+  // launched there belong to their own tickets. A shell command's ticket only ever takes
+  // the session of its own run.
   const orphan = tickets.find(
     (t) =>
       t.worktree_id === worktreeId &&
       !t.current_session_id &&
       !t.archived_at &&
-      !isDocumentRunTicket(t)
+      !isDocumentRunTicket(t) &&
+      !shellCommandIdOfTicket(t)
   )
   if (!orphan) return
 

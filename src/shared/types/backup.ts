@@ -54,6 +54,8 @@ export interface BackupTicket {
   total_tokens: number
   archived_at: string | null
   worktree_branch: string | null // branch_name of assigned worktree
+  external_provider?: string | null // e.g. 'shell-command' (absent in older backups)
+  external_id?: string | null
 }
 
 export interface BackupTicketDependency {

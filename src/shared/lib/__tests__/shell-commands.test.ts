@@ -5,6 +5,7 @@ import {
   SHELL_COMMAND_MAX_SCRIPT_BYTES,
   SHELL_COMMAND_NAME_MAX,
   SHELL_COMMAND_RUN_STATES,
+  SHELL_COMMAND_TICKET_PROVIDER,
   createSessionShellCommandSnapshot,
   describeShellCommandFailure,
   isShellCommandRunActive,
@@ -14,6 +15,7 @@ import {
   parseSessionShellCommand,
   parseShellCommandSteps,
   serializeSessionShellCommand,
+  shellCommandIdOfTicket,
   shellCommandOutcomeLabel,
   shellCommandStepLabel,
   validateShellCommand,
@@ -413,5 +415,58 @@ describe('run state helpers', () => {
     for (const state of SHELL_COMMAND_RUN_STATES) {
       expect(shellCommandOutcomeLabel(outcome(state))).not.toBe('')
     }
+  })
+})
+
+describe('shellCommandIdOfTicket', () => {
+  it('marks a ticket through the external-source fields with the provider "shell-command"', () => {
+    expect(SHELL_COMMAND_TICKET_PROVIDER).toBe('shell-command')
+    expect(
+      shellCommandIdOfTicket({ external_provider: 'shell-command', external_id: 'cmd-install' })
+    ).toBe('cmd-install')
+  })
+
+  it('returns the id untouched: no trimming, no case folding', () => {
+    expect(
+      shellCommandIdOfTicket({
+        external_provider: SHELL_COMMAND_TICKET_PROVIDER,
+        external_id: ' Cmd-1 '
+      })
+    ).toBe(' Cmd-1 ')
+  })
+
+  it('is null for a marker without a command id', () => {
+    for (const external_id of ['', null, undefined]) {
+      expect(
+        shellCommandIdOfTicket({ external_provider: SHELL_COMMAND_TICKET_PROVIDER, external_id })
+      ).toBeNull()
+    }
+    expect(shellCommandIdOfTicket({ external_provider: SHELL_COMMAND_TICKET_PROVIDER })).toBeNull()
+  })
+
+  it('is null for every other ticket, whatever its external id', () => {
+    const others = [
+      { external_provider: null, external_id: null },
+      { external_provider: null, external_id: 'cmd-install' },
+      { external_provider: undefined, external_id: 'cmd-install' },
+      { external_id: 'cmd-install' },
+      { external_provider: '', external_id: 'cmd-install' },
+      { external_provider: 'jira', external_id: 'PROJ-12' },
+      { external_provider: 'github', external_id: '42' },
+      { external_provider: 'document-run', external_id: 'doc-1' },
+      {}
+    ]
+    for (const ticket of others) expect(shellCommandIdOfTicket(ticket)).toBeNull()
+  })
+
+  it('matches the provider exactly', () => {
+    for (const external_provider of ['Shell-Command', 'shell-command ', 'shell_command', 'shell']) {
+      expect(shellCommandIdOfTicket({ external_provider, external_id: 'cmd-install' })).toBeNull()
+    }
+  })
+
+  it('is null without a ticket', () => {
+    expect(shellCommandIdOfTicket(null)).toBeNull()
+    expect(shellCommandIdOfTicket(undefined)).toBeNull()
   })
 })

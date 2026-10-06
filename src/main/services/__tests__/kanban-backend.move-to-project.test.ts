@@ -138,4 +138,31 @@ describe('moveKanbanTicketToProject cross-backend model field preservation', () 
     expect(moved?.model_variant).toBeNull()
     expect(moved?.variant_group_id).toBeNull()
   })
+
+  // A shell command's ticket names a command of its own project: the id means nothing elsewhere.
+  it.each([
+    ['internal', 'markdown'],
+    ['markdown', 'internal']
+  ] as const)('refuses to move a shell command ticket from an %s to a %s project', async (from) => {
+    const source = from === 'internal' ? internalProject : markdownProject
+    const target = from === 'internal' ? markdownProject : internalProject
+    const backend = getKanbanBackendForProject(source.id)
+    const ticket = await backend.create(source.id, {
+      project_id: source.id,
+      title: 'Build',
+      external_provider: 'shell-command',
+      external_id: 'cmd-build'
+    })
+
+    await expect(moveKanbanTicketToProject(source.id, ticket.id, target.id)).rejects.toThrow(
+      'A shell command ticket cannot be moved to another project.'
+    )
+
+    // The marker survives both backends, and the ticket stays where it was
+    expect(await backend.get(source.id, ticket.id)).toMatchObject({
+      external_provider: 'shell-command',
+      external_id: 'cmd-build'
+    })
+    expect(await getKanbanBackendForProject(target.id).list(target.id, true)).toEqual([])
+  })
 })

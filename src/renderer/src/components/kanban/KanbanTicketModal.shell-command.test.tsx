@@ -1,7 +1,8 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { KanbanTicketModal } from './KanbanTicketModal'
 import { ClaudeCliSessionPortalProvider } from '@/contexts/ClaudeCliSessionPortalContext'
+import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
@@ -10,7 +11,8 @@ import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useRemoteLaunchStore } from '@/stores/useRemoteLaunchStore'
 import { useShellCommandRunStore } from '@/stores/useShellCommandRunStore'
-import type { SessionShellCommand } from '@shared/lib/shell-commands'
+import { toast } from '@/lib/toast'
+import { SHELL_COMMAND_TICKET_PROVIDER, type SessionShellCommand } from '@shared/lib/shell-commands'
 import type { KanbanTicket, Session, Worktree } from '../../../../main/db/types'
 
 vi.mock('@/api/hive-enterprise/client', () => ({
@@ -55,6 +57,25 @@ vi.mock('@/lib/toast', () => ({
     error: vi.fn(),
     warning: vi.fn()
   }
+}))
+
+// The two ways Save & Send can start a To Do ticket: an agent launch, or the command
+const quickLaunchMocks = vi.hoisted(() => ({
+  quickLaunchTicket: vi.fn().mockResolvedValue(true),
+  quickLaunchTicketOnConnection: vi.fn().mockResolvedValue(true)
+}))
+
+vi.mock('./WorktreePickerModal', () => quickLaunchMocks)
+
+const shellTicketMocks = vi.hoisted(() => ({
+  startShellCommandTicket: vi.fn().mockResolvedValue(true)
+}))
+
+vi.mock('@/lib/shell-command-ticket', async () => ({
+  ...(await vi.importActual<typeof import('@/lib/shell-command-ticket')>(
+    '@/lib/shell-command-ticket'
+  )),
+  startShellCommandTicket: shellTicketMocks.startShellCommandTicket
 }))
 
 const terminalApiMocks = vi.hoisted(() => ({
@@ -384,5 +405,207 @@ describe('KanbanTicketModal shell-command tickets', () => {
 
     expect(await screen.findByTestId('followup-input')).toBeInTheDocument()
     expect(screen.queryByTestId('go-to-session-btn')).not.toBeInTheDocument()
+  })
+
+  describe('edit form of a To Do ticket', () => {
+    const initialConnectionState = useConnectionStore.getState()
+
+    // A plain ticket waiting in To Do: no session, no worktree
+    const plainTodoTicket: KanbanTicket = {
+      ...baseTicket,
+      title: 'Todo ticket',
+      description: 'Original description',
+      column: 'todo',
+      current_session_id: null,
+      worktree_id: null,
+      mode: null
+    }
+
+    // A duplicated shell ticket: the marker is all that makes it a shell command
+    const shellTodoTicket: KanbanTicket = {
+      ...plainTodoTicket,
+      title: 'Build',
+      external_provider: SHELL_COMMAND_TICKET_PROVIDER,
+      external_id: 'cmd-1'
+    }
+
+    function updateTicketMock(): ReturnType<typeof vi.fn> {
+      return useKanbanStore.getState().updateTicket as ReturnType<typeof vi.fn>
+    }
+
+    beforeEach(() => {
+      useConnectionStore.setState({ selectedConnectionId: null, connections: [] } as never)
+    })
+
+    afterEach(() => {
+      useConnectionStore.setState(initialConnectionState, true)
+    })
+
+    it('reads Save & Run for a session-less shell-command ticket', async () => {
+      setupStores(shellTodoTicket, {})
+      renderModal()
+
+      const sendBtn = await screen.findByTestId('ticket-edit-save-send-btn')
+      expect(sendBtn).toHaveTextContent('Save & Run')
+      expect(sendBtn).not.toHaveTextContent('Save & Send')
+      expect(sendBtn).toHaveAttribute(
+        'title',
+        "Save the ticket and run its command now in the project's base worktree"
+      )
+      // An edit form, not the terminal pane of a running command
+      expect(screen.queryByTestId('claude-cli-modal-slot')).not.toBeInTheDocument()
+    })
+
+    it('saves the edit, closes, then runs the command instead of launching an agent', async () => {
+      setupStores(shellTodoTicket, {})
+      renderModal()
+
+      const sendBtn = await screen.findByTestId('ticket-edit-save-send-btn')
+      fireEvent.change(screen.getByDisplayValue('Build'), { target: { value: 'Build twice' } })
+      fireEvent.click(sendBtn)
+
+      await waitFor(() => expect(shellTicketMocks.startShellCommandTicket).toHaveBeenCalledTimes(1))
+      const updateTicket = updateTicketMock()
+      expect(updateTicket).toHaveBeenCalledTimes(1)
+      expect(updateTicket).toHaveBeenCalledWith(
+        'ticket-1',
+        'project-1',
+        expect.objectContaining({ title: 'Build twice', description: 'Original description' })
+      )
+      // Saved first: the run must not start from a ticket that failed to save
+      expect(updateTicket.mock.invocationCallOrder[0]).toBeLessThan(
+        shellTicketMocks.startShellCommandTicket.mock.invocationCallOrder[0]
+      )
+      // The saved ticket, marker included; no sort order: the run puts it on top of In Progress
+      expect(shellTicketMocks.startShellCommandTicket).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'ticket-1',
+          project_id: 'project-1',
+          title: 'Build twice',
+          current_session_id: null,
+          external_provider: SHELL_COMMAND_TICKET_PROVIDER,
+          external_id: 'cmd-1'
+        })
+      )
+      expect(quickLaunchMocks.quickLaunchTicket).not.toHaveBeenCalled()
+      expect(quickLaunchMocks.quickLaunchTicketOnConnection).not.toHaveBeenCalled()
+      // Modal closed (selection cleared)
+      expect(useKanbanStore.getState().selectedTicketRef).toBeNull()
+    })
+
+    it('runs the command on Cmd+Shift+Enter as well', async () => {
+      setupStores(shellTodoTicket, {})
+      renderModal()
+
+      const titleInput = await screen.findByDisplayValue('Build')
+      fireEvent.keyDown(titleInput, { key: 'Enter', ctrlKey: true, shiftKey: true })
+
+      await waitFor(() => expect(shellTicketMocks.startShellCommandTicket).toHaveBeenCalledTimes(1))
+      expect(updateTicketMock()).toHaveBeenCalledTimes(1)
+      expect(quickLaunchMocks.quickLaunchTicket).not.toHaveBeenCalled()
+    })
+
+    it('runs the command on a connection board too, never the connection launcher', async () => {
+      setupStores(shellTodoTicket, {})
+      useConnectionStore.setState({ selectedConnectionId: 'conn-1' } as never)
+      renderModal()
+
+      fireEvent.click(await screen.findByTestId('ticket-edit-save-send-btn'))
+
+      await waitFor(() => expect(shellTicketMocks.startShellCommandTicket).toHaveBeenCalledTimes(1))
+      expect(quickLaunchMocks.quickLaunchTicketOnConnection).not.toHaveBeenCalled()
+      expect(quickLaunchMocks.quickLaunchTicket).not.toHaveBeenCalled()
+    })
+
+    it('only saves on Save: the command does not run', async () => {
+      setupStores(shellTodoTicket, {})
+      renderModal()
+
+      fireEvent.click(await screen.findByTestId('ticket-edit-save-btn'))
+
+      await waitFor(() => expect(useKanbanStore.getState().selectedTicketRef).toBeNull())
+      expect(updateTicketMock()).toHaveBeenCalledTimes(1)
+      expect(shellTicketMocks.startShellCommandTicket).not.toHaveBeenCalled()
+      expect(quickLaunchMocks.quickLaunchTicket).not.toHaveBeenCalled()
+    })
+
+    it('does not run the command when the save fails', async () => {
+      setupStores(shellTodoTicket, {})
+      updateTicketMock().mockRejectedValueOnce(new Error('disk full'))
+      renderModal()
+
+      fireEvent.click(await screen.findByTestId('ticket-edit-save-send-btn'))
+
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to update ticket'))
+      expect(shellTicketMocks.startShellCommandTicket).not.toHaveBeenCalled()
+      // Still open, so the edit is not lost
+      expect(useKanbanStore.getState().selectedTicketRef).not.toBeNull()
+    })
+
+    it('refuses to run a blocked shell-command ticket', async () => {
+      const blocker: KanbanTicket = {
+        ...plainTodoTicket,
+        id: 'blocker-1',
+        title: 'Blocker',
+        column: 'in_progress'
+      }
+      setupStores(shellTodoTicket, {})
+      useKanbanStore.setState({
+        tickets: new Map([['project-1', [shellTodoTicket, blocker]]]),
+        dependencyMap: new Map([['project-1:ticket-1', new Set(['project-1:blocker-1'])]]),
+        simpleModeByProject: {}
+      } as never)
+      renderModal()
+
+      fireEvent.click(await screen.findByTestId('ticket-edit-save-send-btn'))
+
+      await waitFor(() =>
+        expect(toast.warning).toHaveBeenCalledWith(
+          'Ticket is blocked — resolve its dependencies first'
+        )
+      )
+      expect(shellTicketMocks.startShellCommandTicket).not.toHaveBeenCalled()
+      expect(updateTicketMock()).not.toHaveBeenCalled()
+    })
+
+    // Another session being a shell command says nothing about this ticket
+    it.each([
+      ['a plain ticket', plainTodoTicket],
+      [
+        'a ticket from another external source',
+        { ...plainTodoTicket, external_provider: 'github', external_id: '42' }
+      ],
+      [
+        'a marker without a command id',
+        { ...shellTodoTicket, title: 'Todo ticket', external_id: null }
+      ]
+    ] as const)('keeps Save & Send and the agent launch for %s', async (_label, ticket) => {
+      setupStores(ticket, { 'another-session': run })
+      renderModal()
+
+      const sendBtn = await screen.findByTestId('ticket-edit-save-send-btn')
+      expect(sendBtn).toHaveTextContent('Save & Send')
+      expect(sendBtn).not.toHaveTextContent('Save & Run')
+      expect(sendBtn).toHaveAttribute(
+        'title',
+        'Save the ticket and start it now with the default launch settings'
+      )
+
+      fireEvent.change(screen.getByDisplayValue('Todo ticket'), {
+        target: { value: 'Edited title' }
+      })
+      fireEvent.click(sendBtn)
+
+      await waitFor(() => expect(quickLaunchMocks.quickLaunchTicket).toHaveBeenCalledTimes(1))
+      expect(updateTicketMock()).toHaveBeenCalledWith(
+        'ticket-1',
+        'project-1',
+        expect.objectContaining({ title: 'Edited title' })
+      )
+      expect(quickLaunchMocks.quickLaunchTicket).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'ticket-1', title: 'Edited title' })
+      )
+      expect(shellTicketMocks.startShellCommandTicket).not.toHaveBeenCalled()
+    })
   })
 })

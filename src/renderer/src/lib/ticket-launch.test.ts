@@ -4,6 +4,8 @@ import { resetRendererRpcClientForTests, setRendererRpcClient } from '@/api/rpc-
 import { opencodeApi } from '@/api/opencode-api'
 import { toast } from '@/lib/toast'
 import { useKanbanStore } from '@/stores/useKanbanStore'
+import { useShellCommandRunStore } from '@/stores/useShellCommandRunStore'
+import { createSessionShellCommandSnapshot } from '@shared/lib/shell-commands'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
@@ -236,6 +238,88 @@ describe('launchTicketWithModel', () => {
     expect(createSession).not.toHaveBeenCalled()
     expect(createWorktreeFromBranch).not.toHaveBeenCalled()
     expect(updateTicket).not.toHaveBeenCalled()
+  })
+
+  it('refuses a ticket from before the marker, known through its shell-command run', async () => {
+    const { createSession, createWorktreeFromBranch, updateTicket } = setupStores()
+    useKanbanStore.setState({
+      tickets: new Map([['project-1', [{ id: 'ticket-1', current_session_id: 's-legacy' }]]]) as never
+    })
+    useShellCommandRunStore.setState({
+      runsBySession: {
+        's-legacy': createSessionShellCommandSnapshot({ id: 'build', name: 'Build', commands: 'make' })
+      }
+    })
+
+    try {
+      const result = await launchTicketWithModel(
+        baseSpec({ worktree: { type: 'new', sourceBranch: 'main' } })
+      )
+
+      expect(result).toEqual({
+        success: false,
+        error: expect.stringMatching(/shell command ticket/i)
+      })
+      expect(createWorktreeFromBranch).not.toHaveBeenCalled()
+      expect(createSession).not.toHaveBeenCalled()
+      expect(updateTicket).not.toHaveBeenCalled()
+    } finally {
+      useShellCommandRunStore.setState({ runsBySession: {} })
+    }
+  })
+
+  it('refuses a shell command ticket before creating anything', async () => {
+    const { createSession, createWorktreeFromBranch, updateTicket } = setupStores()
+    useKanbanStore.setState({
+      tickets: new Map([
+        [
+          'project-1',
+          [{ id: 'ticket-1', external_provider: 'shell-command', external_id: 'build' }]
+        ]
+      ]) as never
+    })
+
+    // A new worktree is asked for: the refusal has to come before it is created.
+    const result = await launchTicketWithModel(
+      baseSpec({ worktree: { type: 'new', sourceBranch: 'main' } })
+    )
+
+    expect(result).toEqual({
+      success: false,
+      error: expect.stringMatching(/shell command ticket/i)
+    })
+    expect(createWorktreeFromBranch).not.toHaveBeenCalled()
+    expect(createSession).not.toHaveBeenCalled()
+    expect(updateTicket).not.toHaveBeenCalled()
+    expect(request).not.toHaveBeenCalled()
+    expect(opencodeApi.connect).not.toHaveBeenCalled()
+    expect(opencodeApi.prompt).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['an ordinary ticket', { id: 'ticket-1', external_provider: null, external_id: null }],
+    // Only the provider marks a ticket: a command's id under another provider is just an id.
+    ['an imported ticket', { id: 'ticket-1', external_provider: 'jira', external_id: 'build' }]
+  ])('launches %s sitting next to a shell command ticket', async (_name, ticket) => {
+    const { createSession, updateTicket } = setupStores()
+    useKanbanStore.setState({
+      tickets: new Map([
+        [
+          'project-1',
+          [{ id: 'ticket-shell', external_provider: 'shell-command', external_id: 'build' }, ticket]
+        ]
+      ]) as never
+    })
+
+    const result = await launchTicketWithModel(baseSpec())
+
+    expect(result).toEqual({ success: true, sessionId: 'session-1', worktreeId: 'worktree-1' })
+    expect(createSession).toHaveBeenCalledTimes(1)
+    expect(updateTicket).toHaveBeenCalledWith(
+      'ticket-1',
+      'project-1',
+      expect.objectContaining({ current_session_id: 'session-1', worktree_id: 'worktree-1' })
+    )
   })
 
   it('returns sessionId/worktreeId and stamps badge fields + extras on success', async () => {

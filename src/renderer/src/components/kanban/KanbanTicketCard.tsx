@@ -140,7 +140,12 @@ import {
 import { isActiveRunStatus } from '@/components/document-flow/document-flow-ui'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import { terminalApi } from '@/api/terminal-api'
-import type { ProjectShellCommand } from '@shared/lib/shell-commands'
+import {
+  SHELL_COMMAND_TICKET_PROVIDER,
+  shellCommandIdOfTicket,
+  type ProjectShellCommand
+} from '@shared/lib/shell-commands'
+import { resolveTicketShellCommandId, startShellCommandTicket } from '@/lib/shell-command-ticket'
 import {
   getRunnableShellCommands,
   renderShellCommandMenuItems,
@@ -223,7 +228,11 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   const documentRunView = useDocumentRunTicket(documentRunId, ticket.column)
   const documentRunRailClass = documentRunView ? documentRunTicketRailClass(documentRunView) : null
   const isEliteActive = isDocumentRunTicket && ticket.column === 'in_progress'
-  const isExternalTicket = !!ticket.external_provider && !isDocumentRunTicket
+  // Marked as a shell command's ticket: it stays one without a session (duplicated, or
+  // dragged back to To Do), and entering In Progress runs the command.
+  const isMarkedShellCommandTicket = shellCommandIdOfTicket(ticket) !== null
+  const isExternalTicket =
+    !!ticket.external_provider && !isDocumentRunTicket && !isMarkedShellCommandTicket
 
   // Board search (Cmd+F): highlight title matches; when only the description
   // matched (toggle on), surface a one-line snippet under the title
@@ -609,12 +618,13 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
 
   // The run index knows shell-command sessions even when they are not loaded into the
   // session store (closed tab, other worktree).
-  const isShellCommandTicket = useShellCommandRunStore(
+  const isShellCommandRunKnown = useShellCommandRunStore(
     useCallback(
       (s) => !!ticket.current_session_id && ticket.current_session_id in s.runsBySession,
       [ticket.current_session_id]
     )
   )
+  const isShellCommandTicket = isMarkedShellCommandTicket || isShellCommandRunKnown
 
   // ── Live background shells/monitors in the linked claude-cli session ──
   const backgroundWork = useWorktreeStatusStore(
@@ -1029,12 +1039,24 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
         toast.warning('Ticket is blocked — resolve its dependencies first')
         return
       }
+      // A shell command's ticket runs its command, never an agent
+      if (isShellCommandTicket) {
+        void startShellCommandTicket(ticket)
+        return
+      }
       // Connection boards have no worktree to create — start a connection
       // session instead (same defaults, mirrors the picker's connection path)
       if (connectionId) void quickLaunchTicketOnConnection(ticket, connectionId)
       else void quickLaunchTicket(ticket)
     },
-    [ticket, isBlocked, connectionId, isDocumentRunTicket]
+    [ticket, isBlocked, connectionId, isDocumentRunTicket, isShellCommandTicket]
+  )
+  const decorateGhostForProject = useCallback(
+    (ghost: HTMLElement) => {
+      // The model + effort chip describes an agent launch
+      if (!isShellCommandTicket) decorateRightDragGhost(ghost)
+    },
+    [isShellCommandTicket]
   )
   const { onMouseDown: rightDragMouseDown, onContextMenuCapture: rightDragContextMenuCapture } =
     useRightButtonDrag({
@@ -1042,7 +1064,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
       onDrop: handleRightDrop,
       // Show the default model + effort the drop will launch with, riding
       // along under the ghost so it's clear before release
-      decorateGhost: decorateRightDragGhost
+      decorateGhost: decorateGhostForProject
     })
 
   // ── Middle-click — select attached worktree (same as sidebar) ─
@@ -1147,11 +1169,17 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   const handleDuplicate = useCallback(async () => {
     try {
       const store = useKanbanStore.getState()
+      // A shell command's ticket duplicates into one: dropped into In Progress, the copy
+      // runs the command in the project's base worktree
+      const shellCommandId = resolveTicketShellCommandId(ticket)
       const created = await store.createTicket(ticket.project_id, {
         project_id: ticket.project_id,
         title: ticket.title,
         description: ticket.description,
-        column: 'todo'
+        column: 'todo',
+        ...(shellCommandId
+          ? { external_provider: SHELL_COMMAND_TICKET_PROVIDER, external_id: shellCommandId }
+          : {})
       })
       // Goal fields aren't part of the create payload — mirror them after creation
       if (ticket.goal_mode || ticket.goal_success_criteria) {
@@ -1164,13 +1192,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     } catch {
       toast.error('Failed to duplicate ticket')
     }
-  }, [
-    ticket.project_id,
-    ticket.title,
-    ticket.description,
-    ticket.goal_mode,
-    ticket.goal_success_criteria
-  ])
+  }, [ticket])
 
   const handleAddToFavorites = useCallback(async () => {
     try {
@@ -1563,7 +1585,11 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
               {isShellCommandTicket && (
                 <span
                   data-testid="ticket-shell-command-icon"
-                  title="Shell command"
+                  title={
+                    ticket.current_session_id
+                      ? 'Shell command'
+                      : 'Shell command — drag to In Progress to run it'
+                  }
                   className="mt-px inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] border border-border bg-muted text-muted-foreground"
                 >
                   <TerminalIcon className="h-2.5 w-2.5" strokeWidth={2.5} />
@@ -2177,7 +2203,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
           )}
 
           {/* Todo tickets without worktree: pre-assign */}
-          {isSimpleTicket && isTodo && !ticket.worktree_id && !isConnectionProjectTicket && (
+          {isSimpleTicket && isTodo && !ticket.worktree_id && !isConnectionProjectTicket && !isShellCommandTicket && (
             <ContextMenuItem
               data-testid="ctx-assign-worktree"
               onClick={() => setShowPreAssignPicker(true)}
@@ -2211,7 +2237,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
           )}
 
           {/* Non-todo simple tickets: full assign flow (existing behavior) */}
-          {isSimpleTicket && !isTodo && !isConnectionProjectTicket && !isDocumentRunTicket && (
+          {isSimpleTicket && !isTodo && !isConnectionProjectTicket && !isDocumentRunTicket && !isShellCommandTicket && (
             <ContextMenuItem
               data-testid="ctx-assign-worktree"
               onClick={() => setShowWorktreePicker(true)}
@@ -2414,7 +2440,8 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
               Add to favorites
             </ContextMenuItem>
 
-            {!isExternalTicket && (
+            {/* A shell command belongs to its project: its ticket does not move */}
+            {!isExternalTicket && !isMarkedShellCommandTicket && (
               <ContextMenuItem
                 data-testid="ctx-move-to-project"
                 onClick={() => setShowMoveToProject(true)}

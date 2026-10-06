@@ -1,5 +1,7 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import { isAgentCli, isShellCommandSession } from '@shared/types/agent-sdk'
+import { shellCommandIdOfTicket } from '@shared/lib/shell-commands'
+import { startShellCommandTicket } from '@/lib/shell-command-ticket'
 import { useShallow } from 'zustand/react/shallow'
 import {
   Eye,
@@ -1345,6 +1347,16 @@ function EditModeContent({
   const isPinnedBoardActive = useKanbanStore((s) => s.isPinnedBoardActive)
   const sendConnectionId = !isPinnedBoardActive && boardConnectionId ? boardConnectionId : null
   const canSend = ticket.column === 'todo' && !remoteLaunchInfo
+  // A shell command's ticket: Save & Send runs the command instead of launching an agent
+  const isMarkedShellCommandTicket = shellCommandIdOfTicket(ticket) !== null
+  const runsShellCommand = useShellCommandRunStore(
+    useCallback(
+      (s) =>
+        isMarkedShellCommandTicket ||
+        (!!ticket.current_session_id && ticket.current_session_id in s.runsBySession),
+      [isMarkedShellCommandTicket, ticket.current_session_id]
+    )
+  )
   const [pendingAction, setPendingAction] = useState<'save' | 'send' | null>(null)
 
   const submit = useCallback(
@@ -1375,6 +1387,11 @@ function EditModeContent({
       if (action === 'send') {
         // Launch with the just-saved content so the prompt never lags the edit
         const launchTicket: KanbanTicket = { ...ticket, ...data }
+        // A shell command's ticket runs its command, never an agent
+        if (runsShellCommand) {
+          void startShellCommandTicket(launchTicket)
+          return
+        }
         // Connection-project tickets always launch through the connection-project
         // pipeline (new worktree per member project) — quickLaunchTicket delegates.
         const ticketProjectKind = useProjectStore
@@ -1391,6 +1408,7 @@ function EditModeContent({
       attachments,
       isSaving,
       isBlockedForSend,
+      runsShellCommand,
       sendConnectionId,
       updateTicket,
       ticket,
@@ -1771,12 +1789,22 @@ function EditModeContent({
               type="button"
               variant="secondary"
               data-testid="ticket-edit-save-send-btn"
-              title="Save the ticket and start it now with the default launch settings"
+              title={
+                runsShellCommand
+                  ? "Save the ticket and run its command now in the project's base worktree"
+                  : 'Save the ticket and start it now with the default launch settings'
+              }
               disabled={!title.trim() || isSaving}
               onClick={handleSaveAndSend}
             >
               <Send className="h-3.5 w-3.5" />
-              {pendingAction === 'send' ? 'Sending...' : 'Save & Send'}
+              {pendingAction === 'send'
+                ? runsShellCommand
+                  ? 'Starting...'
+                  : 'Sending...'
+                : runsShellCommand
+                  ? 'Save & Run'
+                  : 'Save & Send'}
               <ShortcutHint label={submitShortcutLabel({ shift: true })} />
             </Button>
           )}

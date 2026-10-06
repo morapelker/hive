@@ -63,6 +63,7 @@ import { remoteLaunchApi } from '@/api/remote-launch-api'
 import { useRemoteLaunchStore } from '@/stores/useRemoteLaunchStore'
 import { parseRemoteLaunch } from '@shared/types/remote-launch'
 import { isShellCommandSession } from '@shared/types/agent-sdk'
+import { isShellCommandTicket, startShellCommandTicket } from '@/lib/shell-command-ticket'
 import { terminalApi } from '@/api/terminal-api'
 
 // ── Layout animation spring ─────────────────────────────────────────
@@ -599,29 +600,49 @@ export function KanbanColumn({
           store.simpleModeByProject[ticketProjectId] ??
           false
 
+        // Check if the dragged ticket has unresolved blockers
+        const hasUnresolvedBlockers = (): boolean => {
+          const blockerIds = store.dependencyMap.get(ticketKey(ticketProjectId ?? draggedProjectId, ticketId))
+          if (!blockerIds?.size) return false
+          const triggerColumn = useSettingsStore.getState().followUpTriggerColumn
+          for (const blockerKey of blockerIds) {
+            const blockerRef = parseTicketKey(blockerKey)
+            const blockerTicket = store.tickets
+              .get(blockerRef.projectId)
+              ?.find((t) => t.id === blockerRef.ticketId)
+            if (blockerTicket && !isBlockerSatisfied(blockerTicket.column, blockerTicket.mode, triggerColumn)) {
+              return true
+            }
+          }
+          return false
+        }
+
+        // A shell command's ticket runs its command when it enters In Progress, in simple
+        // mode too: a session-less one (duplicated, or dragged back to To Do) in the
+        // project's base worktree, a finished run again in its own session. It never
+        // takes the agent launch below.
+        if (isInProgressColumn) {
+          const shellTicket = findTicket(ticketId, ticketProjectId)
+          if (shellTicket && isShellCommandTicket(shellTicket)) {
+            if (!isSimpleMode && hasUnresolvedBlockers()) {
+              toast.warning('Ticket is blocked — resolve its dependencies first')
+              return
+            }
+            const sortOrder = store.computeSortOrder(
+              projectTicketsForColumn(ticketProjectId),
+              projectLocalDropIndex(ticketProjectId, targetIndex)
+            )
+            void startShellCommandTicket(shellTicket, { sortOrder })
+            return
+          }
+        }
+
         // S9: when dropping on In Progress and simple mode is off,
         //   open the worktree picker modal instead of moving directly.
         if (isInProgressColumn && !isSimpleMode) {
           const draggedTicket = findTicket(ticketId, ticketProjectId)
           if (draggedTicket) {
-            // Check if ticket has unresolved blockers
-            const blockerIds = store.dependencyMap.get(ticketKey(ticketProjectId ?? draggedProjectId, ticketId))
-            const triggerColumn = useSettingsStore.getState().followUpTriggerColumn
-            let isBlocked = false
-            if (blockerIds?.size) {
-              for (const blockerKey of blockerIds) {
-                const blockerRef = parseTicketKey(blockerKey)
-                const blockerTicket = store.tickets
-                  .get(blockerRef.projectId)
-                  ?.find((t) => t.id === blockerRef.ticketId)
-                if (blockerTicket && !isBlockerSatisfied(blockerTicket.column, blockerTicket.mode, triggerColumn)) {
-                  isBlocked = true
-                  break
-                }
-              }
-            }
-
-            if (isBlocked) {
+            if (hasUnresolvedBlockers()) {
               // Blocked ticket — open picker in save-config-only mode
               setSaveConfigTicket(draggedTicket)
             } else {

@@ -13,6 +13,7 @@ import { useConnectionStore } from '@/stores/useConnectionStore'
 import { isAgentCli } from '@shared/types/agent-sdk'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useProjectStore } from '@/stores/useProjectStore'
+import { shellCommandIdOfTicket } from '@shared/lib/shell-commands'
 import { useSessionStore } from '@/stores/useSessionStore'
 import {
   useSettingsStore,
@@ -333,6 +334,15 @@ export async function startTicketSessionOnConnectionInstance(args: {
   const { mode, sdk, model, codexFastMode, goalMode } = options
   const goalCriteria = options.goalSuccessCriteria?.trim() || null
   let promptText = options.promptText
+
+  // A shell command's ticket is never an agent prompt (same refusal as ticket-launch)
+  const boardTicket = useKanbanStore
+    .getState()
+    .tickets.get(ticket.project_id)
+    ?.find((t) => t.id === ticket.id)
+  if (shellCommandIdOfTicket(boardTicket)) {
+    return { success: false, error: 'A shell command ticket cannot be launched with an agent.' }
+  }
 
   try {
     // Oversized goal prompts become a PLAN_{uuid}.md in the connection dir

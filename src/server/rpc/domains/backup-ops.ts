@@ -176,7 +176,9 @@ const backupTicketSchema = z
     mark: z.string().nullable(),
     total_tokens: z.number(),
     archived_at: z.string().nullable(),
-    worktree_branch: z.string().nullable()
+    worktree_branch: z.string().nullable(),
+    external_provider: z.string().nullable().optional(),
+    external_id: z.string().nullable().optional()
   })
   .passthrough()
 
@@ -355,7 +357,11 @@ function buildTicketsAndDependencies(
       archived_at: ticket.archived_at,
       worktree_branch: ticket.worktree_id
         ? (worktreeBranchById.get(ticket.worktree_id) ?? null)
-        : null
+        : null,
+      // Which project command a shell command's ticket runs (project commands are
+      // backed up with the project)
+      external_provider: ticket.external_provider,
+      external_id: ticket.external_id
     }
   })
 
@@ -1021,7 +1027,9 @@ async function restoreProject(
               ? (branchToWorktreeId.get(ticketEntry.worktree_branch) ?? null)
               : null,
             mode: ticketEntry.mode,
-            mark: ticketEntry.mark as TicketMark | null
+            mark: ticketEntry.mark as TicketMark | null,
+            external_provider: ticketEntry.external_provider ?? null,
+            external_id: ticketEntry.external_id ?? null
           })
           if (ticketEntry.archived_at) {
             deps.db.updateKanbanTicket(created.id, { archived_at: ticketEntry.archived_at })

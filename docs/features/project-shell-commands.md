@@ -48,7 +48,9 @@ Up to five commands are listed directly in the menu. With more than five they ar
 
 The command palette also has **Run Shell Command** when the selected project has commands. It runs in the active worktree when that worktree belongs to the selected project, otherwise in the base worktree.
 
-Every launch creates a new terminal session and switches to it. Launching a command that is already running starts a second, independent run.
+Every launch from a menu or the command palette creates a new terminal session and switches to it. Launching a command that is already running starts a second, independent run.
+
+A command can also be started from its own ticket on the board: see [Running a command from its ticket](#running-a-command-from-its-ticket).
 
 The script is copied into the session when it is launched. Editing the command in Project Settings later does not change runs that already exist, including when you use **Run again**.
 
@@ -66,6 +68,31 @@ When the run ends, the ticket moves from **In Progress** to **Review**:
 | Failed                                          | Review, with a red Error badge that carries the exit code |
 | Interrupted (the app quit while it was running) | Review, with a red Error badge                            |
 | Stopped by you                                  | Review, without an error badge                            |
+
+### Running a command from its ticket
+
+A shell command's ticket has a terminal icon in front of its title and a jagged bottom edge. It stays a shell command ticket when it has no run:
+
+- **Duplicate** (right-click the ticket) creates a copy in **To Do** that is a shell command ticket for the same command. The copy has no worktree and no session yet.
+- Dragging a running ticket back to **To Do** stops the run and keeps the ticket as a shell command ticket.
+
+Dragging such a ticket into **In Progress** runs the command instead of starting an AI session:
+
+| Ticket                                       | What runs                                                                 |
+| -------------------------------------------- | ------------------------------------------------------------------------- |
+| No run yet (duplicated, or dragged to To Do) | A new run in the project's base worktree, wherever the original ran       |
+| Finished run (in Review or Done)             | **Run again**: the same script, in the same session and the same worktree |
+
+A right-button drag into **In Progress**, and **Save & Run** in the ticket's edit dialog, do the same. The board stays in view and a message names the command that was started; open the ticket to see the terminal. A ticket whose run is still going (moved to another column by hand) is only moved back.
+
+Things to know:
+
+- A ticket without a run remembers which command it stands for, not the script. Its new run uses the command as it is defined in Project Settings at that moment, so later edits apply. If the command was removed, the ticket stays in To Do and you get a "Command not found" message.
+- The ticket's title and description are only text. Editing them does not change what runs.
+- A ticket that is blocked by unfinished dependencies is not started.
+- A shell command ticket cannot be moved to another project, and it is never started with an AI agent.
+- A backup keeps which command a ticket stands for, so a restored ticket is still a shell command ticket.
+- A ticket created by an older version is recognised through its run only: it can be duplicated and run again, but dragging it back to To Do turns it into a plain ticket.
 
 ## The Terminal Tab
 
@@ -104,5 +131,5 @@ Commands can print secrets. The saved output is readable only by your user accou
 - Not available for connection projects.
 - Multi-line shell constructs are not supported: every line must be a complete command on its own. Heredocs and `if` / `for` blocks spread over several lines fail at their first line. Put such logic in a script file and call it from a step.
 - Background jobs started with `&` or `nohup` can outlive the run, and are not stopped by **Stop** if they detach from the terminal.
-- Not available from paired phones: runs cannot be started from a phone, and a phone cannot show a run's output.
+- Not available from paired phones: runs cannot be started from a phone, and a phone cannot show a run's output. A phone or the web board cannot create a shell command ticket or move one into In Progress.
 - Runs on a worktree that has been teleported to another machine are rejected.

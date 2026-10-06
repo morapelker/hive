@@ -4,7 +4,8 @@
  * for an existing shell-command session.
  *
  * A launch creates a NEW session (agent_sdk 'terminal', session_type 'shell-command'),
- * an In Progress ticket when the settings say so, auto-pins only alongside a ticket,
+ * an In Progress ticket when the settings say so (or links the ticket it was started
+ * from: lib/shell-command-ticket), auto-pins only alongside a ticket,
  * asks the main process to start the run (main reads the script from the session's own
  * snapshot: no command text is ever sent from here) and jumps to the new terminal tab.
  *
@@ -13,6 +14,7 @@
 import {
   parseProjectShellCommands,
   parseSessionShellCommand,
+  SHELL_COMMAND_TICKET_PROVIDER,
   type ProjectShellCommand,
   type SessionShellCommand
 } from '@shared/lib/shell-commands'
@@ -41,6 +43,13 @@ export interface RunProjectShellCommandInput {
   worktreeId?: string | null
   /** Jump to the new terminal tab (default true). */
   focus?: boolean
+  /**
+   * Run for this existing, session-less ticket instead of creating one: it is linked
+   * to the new session and moved to In Progress whatever the ticket settings say.
+   */
+  ticketId?: string
+  /** Position of that ticket in In Progress (default: the top). */
+  sortOrder?: number
 }
 
 export interface RunProjectShellCommandResult {
@@ -107,6 +116,7 @@ async function createRunTicket(input: {
   projectId: string
   worktreeId: string
   sessionId: string
+  commandId: string
   title: string
   description: string
 }): Promise<string | null> {
@@ -123,6 +133,9 @@ async function createRunTicket(input: {
       current_session_id: sessionId,
       worktree_id: worktreeId,
       mode: 'build',
+      // Keeps the ticket a shell-command ticket once it loses this session
+      external_provider: SHELL_COMMAND_TICKET_PROVIDER,
+      external_id: input.commandId,
       created_from_session: true
     })
     // Both existing precedents pin only alongside a ticket. Under Force Board Mode
@@ -131,6 +144,49 @@ async function createRunTicket(input: {
     return ticket.id
   } catch {
     return null
+  }
+}
+
+/** The existing ticket a launch runs for: it must still be there, without a session. */
+function findLinkableTicket(projectId: string, ticketId: string): { error: string } | null {
+  const ticket = useKanbanStore
+    .getState()
+    .tickets.get(projectId)
+    ?.find((t) => t.id === ticketId)
+  if (!ticket || ticket.archived_at) return { error: 'Ticket not found' }
+  if (ticket.current_session_id) return { error: 'Ticket already has a session' }
+  return null
+}
+
+/**
+ * Link an existing ticket to the run's session and move it to In Progress (the fields
+ * createRunTicket sets), auto-pinning alongside. Resolves to false when it failed.
+ */
+async function linkRunTicket(input: {
+  projectId: string
+  worktreeId: string
+  sessionId: string
+  ticketId: string
+  sortOrder: number | undefined
+}): Promise<boolean> {
+  const { projectId, worktreeId, sessionId, ticketId } = input
+  try {
+    const kanban = useKanbanStore.getState()
+    await kanban.updateTicket(ticketId, projectId, {
+      column: 'in_progress',
+      sort_order:
+        input.sortOrder ??
+        kanban.computeSortOrder(kanban.getTicketsByColumn(projectId, 'in_progress'), 0),
+      current_session_id: sessionId,
+      worktree_id: worktreeId,
+      mode: 'build',
+      plan_ready: false,
+      pending_launch_config: null
+    })
+    void autoPinForBoardPrompt({ projectId, worktreeId })
+    return true
+  } catch {
+    return false
   }
 }
 
@@ -213,8 +269,13 @@ export async function runProjectShellCommand(
     if ('error' in target) return { success: false, error: target.error }
     const { worktreeId } = target
 
-    const wantTicket = wantsTicket()
-    if (wantTicket) await ensureTicketsLoaded(projectId)
+    const linkTicketId = input.ticketId ?? null
+    const wantTicket = !linkTicketId && wantsTicket()
+    if (wantTicket || linkTicketId) await ensureTicketsLoaded(projectId)
+    if (linkTicketId) {
+      const refusal = findLinkableTicket(projectId, linkTicketId)
+      if (refusal) return { success: false, error: refusal.error }
+    }
 
     const created = await useSessionStore
       .getState()
@@ -224,15 +285,31 @@ export async function runProjectShellCommand(
     }
     const sessionId = created.session.id
 
-    const ticketId = wantTicket
-      ? await createRunTicket({
-          projectId,
-          worktreeId,
-          sessionId,
-          title: command.name.trim(),
-          description: command.commands
-        })
-      : null
+    let ticketId: string | null = null
+    if (linkTicketId) {
+      const linked = await linkRunTicket({
+        projectId,
+        worktreeId,
+        sessionId,
+        ticketId: linkTicketId,
+        sortOrder: input.sortOrder
+      })
+      if (!linked) {
+        // Nothing has run yet: drop the session so the ticket can be started again
+        void useSessionStore.getState().closeSession(sessionId)
+        return { success: false, error: 'Could not update the ticket' }
+      }
+      ticketId = linkTicketId
+    } else if (wantTicket) {
+      ticketId = await createRunTicket({
+        projectId,
+        worktreeId,
+        sessionId,
+        commandId: command.id,
+        title: command.name.trim(),
+        description: command.commands
+      })
+    }
 
     seedWorkingStatus(sessionId)
 
@@ -279,6 +356,7 @@ async function ensureRunTicket(sessionId: string, run: SessionShellCommand): Pro
       projectId: session.project_id,
       worktreeId: session.worktree_id,
       sessionId,
+      commandId: run.commandId,
       title: run.name.trim(),
       description: run.script
     })

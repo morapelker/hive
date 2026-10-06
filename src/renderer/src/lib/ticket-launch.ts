@@ -26,6 +26,8 @@ import {
 } from '@/lib/constants'
 import { canonicalizeTicketTitle } from '@shared/types/branch-utils'
 import { isDocumentRunTicket } from '@shared/document-flow/run-ticket'
+import { shellCommandIdOfTicket } from '@shared/lib/shell-commands'
+import { useShellCommandRunStore } from '@/stores/useShellCommandRunStore'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { opencodeApi } from '@/api/opencode-api'
 import { dbApi } from '@/api/db-api'
@@ -230,6 +232,19 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
     ?.find((t) => t.id === spec.ticketId)
   if (isDocumentRunTicket(launchedTicket)) {
     return { success: false, error: 'The ticket of a document run cannot be launched.' }
+  }
+  // A shell command's ticket runs its command (lib/shell-command-ticket): its text is
+  // never an agent prompt, whoever asks for the launch. Tickets from before the marker
+  // are known through their session's run.
+  if (
+    shellCommandIdOfTicket(launchedTicket) ||
+    (launchedTicket?.current_session_id &&
+      launchedTicket.current_session_id in useShellCommandRunStore.getState().runsBySession)
+  ) {
+    return {
+      success: false,
+      error: 'A shell command ticket runs its command: drag it to In Progress on the board.'
+    }
   }
 
   try {

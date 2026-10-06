@@ -95,6 +95,8 @@ interface TestTicket {
   id: string
   column: string
   sort_order: number
+  current_session_id?: string | null
+  archived_at?: string | null
 }
 const kanbanState = {
   tickets: new Map<string, TestTicket[]>(),
@@ -113,6 +115,17 @@ const kanbanState = {
     kanbanState.tickets.set(projectId, [...(kanbanState.tickets.get(projectId) ?? []), ticket])
     return ticket
   }),
+  updateTicket: vi.fn(
+    async (ticketId: string, projectId: string, data: Record<string, unknown>) => {
+      calls.push('updateTicket')
+      kanbanState.tickets.set(
+        projectId,
+        (kanbanState.tickets.get(projectId) ?? []).map((t) =>
+          t.id === ticketId ? { ...t, ...data } : t
+        )
+      )
+    }
+  ),
   toggleBoardView: vi.fn(() => {
     calls.push('toggleBoardView')
   })
@@ -160,6 +173,10 @@ const sessionState = {
   getSessionById: vi.fn((id: string) => sessionState.sessions.get(id) ?? null),
   reactivateSession: vi.fn(async (_id: string) => {
     calls.push('reactivateSession')
+  }),
+  closeSession: vi.fn(async (_id: string) => {
+    calls.push('closeSession')
+    return { success: true }
   }),
   setActiveWorktree: vi.fn((_id: string) => {
     calls.push('setActiveWorktree')
@@ -410,6 +427,8 @@ describe('runProjectShellCommand — ticket and auto-pin', () => {
       current_session_id: 'session-1',
       worktree_id: FEATURE,
       mode: 'build',
+      external_provider: 'shell-command',
+      external_id: COMMAND.id,
       created_from_session: true
     })
     expect(kanbanState.getTicketsByColumn).toHaveBeenCalledWith(PROJECT, 'in_progress')
@@ -477,6 +496,333 @@ describe('runProjectShellCommand — ticket and auto-pin', () => {
     expect(kanbanState.createTicket).not.toHaveBeenCalled()
     expect(runShellCommand).not.toHaveBeenCalled()
     expect(statusState.setSessionStatus).not.toHaveBeenCalled()
+  })
+})
+
+describe('runProjectShellCommand — for an existing ticket', () => {
+  const TICKET = 'ticket-todo'
+
+  function seedTicket(overrides: Partial<TestTicket> = {}): void {
+    kanbanState.tickets.set(PROJECT, [
+      { id: 'ticket-running', column: 'in_progress', sort_order: 3, current_session_id: 'other' },
+      { id: TICKET, column: 'todo', sort_order: 12, current_session_id: null, ...overrides }
+    ])
+  }
+
+  beforeEach(() => seedTicket())
+
+  it('links the ticket instead of creating one, even when automaticallyCreateTicket is on', async () => {
+    const result = await runProjectShellCommand({
+      projectId: PROJECT,
+      commandId: COMMAND.id,
+      ticketId: TICKET
+    })
+
+    expect(result).toEqual({
+      success: true,
+      sessionId: 'session-1',
+      ticketId: TICKET,
+      worktreeId: BASE
+    })
+    expect(kanbanState.createTicket).not.toHaveBeenCalled()
+    expect(kanbanState.updateTicket).toHaveBeenCalledTimes(1)
+    expect(kanbanState.tickets.get(PROJECT)).toHaveLength(2)
+  })
+
+  it('links the ticket when the setting is off, and under Force Board Mode', async () => {
+    settingsState.automaticallyCreateTicket = false
+
+    const result = await runProjectShellCommand({
+      projectId: PROJECT,
+      commandId: COMMAND.id,
+      ticketId: TICKET
+    })
+
+    expect(result).toMatchObject({ success: true, sessionId: 'session-1', ticketId: TICKET })
+    expect(kanbanState.updateTicket).toHaveBeenCalledTimes(1)
+    expect(runShellCommand).toHaveBeenCalledExactlyOnceWith('session-1')
+
+    seedTicket()
+    forceBoardMode.value = true
+    const forced = await runProjectShellCommand({
+      projectId: PROJECT,
+      commandId: COMMAND.id,
+      ticketId: TICKET
+    })
+
+    expect(forced).toMatchObject({ success: true, sessionId: 'session-2', ticketId: TICKET })
+    expect(kanbanState.createTicket).not.toHaveBeenCalled()
+  })
+
+  it('updates the ticket with exactly the link fields, at the top of In Progress by default', async () => {
+    await runProjectShellCommand({ projectId: PROJECT, commandId: COMMAND.id, ticketId: TICKET })
+
+    expect(kanbanState.updateTicket).toHaveBeenCalledExactlyOnceWith(TICKET, PROJECT, {
+      column: 'in_progress',
+      sort_order: 7,
+      current_session_id: 'session-1',
+      worktree_id: BASE,
+      mode: 'build',
+      plan_ready: false,
+      pending_launch_config: null
+    })
+    expect(kanbanState.getTicketsByColumn).toHaveBeenCalledWith(PROJECT, 'in_progress')
+    expect(kanbanState.computeSortOrder).toHaveBeenCalledExactlyOnceWith(
+      [expect.objectContaining({ id: 'ticket-running' })],
+      0
+    )
+  })
+
+  it('uses an explicit sortOrder as is, 0 included', async () => {
+    await runProjectShellCommand({
+      projectId: PROJECT,
+      commandId: COMMAND.id,
+      ticketId: TICKET,
+      sortOrder: 42.5
+    })
+    seedTicket()
+    await runProjectShellCommand({
+      projectId: PROJECT,
+      commandId: COMMAND.id,
+      ticketId: TICKET,
+      sortOrder: 0
+    })
+
+    expect(kanbanState.updateTicket.mock.calls.map(([, , data]) => data.sort_order)).toEqual([
+      42.5, 0
+    ])
+    expect(kanbanState.computeSortOrder).not.toHaveBeenCalled()
+  })
+
+  it('never rewrites the ticket text or its marker', async () => {
+    await runProjectShellCommand({ projectId: PROJECT, commandId: COMMAND.id, ticketId: TICKET })
+
+    const data = kanbanState.updateTicket.mock.calls[0][2]
+    for (const field of ['title', 'description', 'external_provider', 'external_id']) {
+      expect(data).not.toHaveProperty(field)
+    }
+  })
+
+  it('orders the steps: session, ticket link, status, start', async () => {
+    await runProjectShellCommand({
+      projectId: PROJECT,
+      commandId: COMMAND.id,
+      ticketId: TICKET,
+      focus: false
+    })
+
+    expect(calls).toEqual([
+      'createShellCommandSession',
+      'updateTicket',
+      'setSessionStatus:working',
+      'runShellCommand'
+    ])
+  })
+
+  it('runs in the base worktree when worktreeId is omitted', async () => {
+    const result = await runProjectShellCommand({
+      projectId: PROJECT,
+      commandId: COMMAND.id,
+      ticketId: TICKET
+    })
+
+    expect(result).toMatchObject({ success: true, worktreeId: BASE })
+    expect(sessionState.createShellCommandSession).toHaveBeenCalledExactlyOnceWith({
+      worktreeId: BASE,
+      projectId: PROJECT,
+      command: COMMAND
+    })
+    expect(kanbanState.updateTicket).toHaveBeenCalledExactlyOnceWith(
+      TICKET,
+      PROJECT,
+      expect.objectContaining({ worktree_id: BASE })
+    )
+  })
+
+  it('links the ticket to an explicit worktree', async () => {
+    await runProjectShellCommand({
+      projectId: PROJECT,
+      commandId: COMMAND.id,
+      ticketId: TICKET,
+      worktreeId: FEATURE
+    })
+
+    expect(kanbanState.updateTicket).toHaveBeenCalledExactlyOnceWith(
+      TICKET,
+      PROJECT,
+      expect.objectContaining({ worktree_id: FEATURE, current_session_id: 'session-1' })
+    )
+  })
+
+  it('auto-pins alongside the linked ticket, also with the setting off', async () => {
+    settingsState.automaticallyCreateTicket = false
+
+    await runProjectShellCommand({ projectId: PROJECT, commandId: COMMAND.id, ticketId: TICKET })
+
+    expect(autoPinForBoardPrompt).toHaveBeenCalledExactlyOnceWith({
+      projectId: PROJECT,
+      worktreeId: BASE
+    })
+  })
+
+  it('does not navigate when focus is false', async () => {
+    kanbanState.isBoardViewActive = true
+
+    const result = await runProjectShellCommand({
+      projectId: PROJECT,
+      commandId: COMMAND.id,
+      ticketId: TICKET,
+      focus: false
+    })
+
+    expect(result.success).toBe(true)
+    expect(kanbanState.toggleBoardView).not.toHaveBeenCalled()
+    expect(worktreeState.selectWorktree).not.toHaveBeenCalled()
+    expect(projectState.selectProject).not.toHaveBeenCalled()
+    expect(sessionState.setActiveWorktree).not.toHaveBeenCalled()
+    expect(sessionState.setActiveSession).not.toHaveBeenCalled()
+  })
+
+  it('loads the project tickets before looking the ticket up, with the setting off too', async () => {
+    settingsState.automaticallyCreateTicket = false
+    const loaded = kanbanState.tickets
+    kanbanState.tickets = new Map()
+    kanbanState.loadTickets.mockImplementationOnce(async () => {
+      calls.push('loadTickets')
+      kanbanState.tickets = loaded
+    })
+
+    const result = await runProjectShellCommand({
+      projectId: PROJECT,
+      commandId: COMMAND.id,
+      ticketId: TICKET
+    })
+
+    expect(result).toMatchObject({ success: true, ticketId: TICKET })
+    expect(kanbanState.loadTickets).toHaveBeenCalledExactlyOnceWith(PROJECT)
+    expect(calls.indexOf('loadTickets')).toBeLessThan(calls.indexOf('createShellCommandSession'))
+  })
+
+  it('a missing ticket is "Ticket not found" and no session is created', async () => {
+    kanbanState.tickets.set('other-project', [
+      { id: 'ticket-elsewhere', column: 'todo', sort_order: 1 }
+    ])
+
+    for (const ticketId of ['ticket-gone', 'ticket-elsewhere']) {
+      await expect(
+        runProjectShellCommand({ projectId: PROJECT, commandId: COMMAND.id, ticketId })
+      ).resolves.toEqual({ success: false, error: 'Ticket not found' })
+    }
+    expect(calls).toEqual([])
+    expect(sessionState.createShellCommandSession).not.toHaveBeenCalled()
+    expect(kanbanState.updateTicket).not.toHaveBeenCalled()
+    expect(runShellCommand).not.toHaveBeenCalled()
+  })
+
+  it('an archived ticket is "Ticket not found" and no session is created', async () => {
+    seedTicket({ archived_at: '2026-01-02T00:00:00.000Z' })
+
+    await expect(
+      runProjectShellCommand({ projectId: PROJECT, commandId: COMMAND.id, ticketId: TICKET })
+    ).resolves.toEqual({ success: false, error: 'Ticket not found' })
+    expect(sessionState.createShellCommandSession).not.toHaveBeenCalled()
+    expect(kanbanState.updateTicket).not.toHaveBeenCalled()
+    expect(runShellCommand).not.toHaveBeenCalled()
+  })
+
+  it('a ticket that already has a session is refused and no session is created', async () => {
+    seedTicket({ column: 'in_progress', current_session_id: 'session-existing' })
+
+    await expect(
+      runProjectShellCommand({ projectId: PROJECT, commandId: COMMAND.id, ticketId: TICKET })
+    ).resolves.toEqual({ success: false, error: 'Ticket already has a session' })
+    expect(sessionState.createShellCommandSession).not.toHaveBeenCalled()
+    expect(kanbanState.updateTicket).not.toHaveBeenCalled()
+    expect(runShellCommand).not.toHaveBeenCalled()
+    expect(kanbanState.tickets.get(PROJECT)).toContainEqual(
+      expect.objectContaining({ id: TICKET, current_session_id: 'session-existing' })
+    )
+  })
+
+  it('a deleted command leaves the ticket alone: "Command not found", no session', async () => {
+    await expect(
+      runProjectShellCommand({ projectId: PROJECT, commandId: 'cmd-gone', ticketId: TICKET })
+    ).resolves.toEqual({ success: false, error: 'Command not found' })
+    expect(calls).toEqual([])
+    expect(kanbanState.tickets.get(PROJECT)).toContainEqual(
+      expect.objectContaining({ id: TICKET, column: 'todo', current_session_id: null })
+    )
+  })
+
+  it('closes the new session and runs nothing when the ticket cannot be updated', async () => {
+    kanbanState.updateTicket.mockRejectedValueOnce(new Error('schema rejected'))
+
+    const result = await runProjectShellCommand({
+      projectId: PROJECT,
+      commandId: COMMAND.id,
+      ticketId: TICKET
+    })
+
+    expect(result).toEqual({ success: false, error: 'Could not update the ticket' })
+    expect(sessionState.closeSession).toHaveBeenCalledExactlyOnceWith('session-1')
+    expect(runShellCommand).not.toHaveBeenCalled()
+    expect(statusState.setSessionStatus).not.toHaveBeenCalled()
+    expect(messageSendTimes.has('session-1')).toBe(false)
+    expect(autoPinForBoardPrompt).not.toHaveBeenCalled()
+    expect(kanbanState.createTicket).not.toHaveBeenCalled()
+    expect(sessionState.setActiveSession).not.toHaveBeenCalled()
+    expect(calls).toEqual(['createShellCommandSession', 'closeSession'])
+  })
+
+  it('creates no session-less orphan: a session that cannot be created leaves the ticket alone', async () => {
+    sessionState.createShellCommandSession.mockResolvedValueOnce({
+      success: false,
+      error: 'db is locked'
+    })
+
+    await expect(
+      runProjectShellCommand({ projectId: PROJECT, commandId: COMMAND.id, ticketId: TICKET })
+    ).resolves.toEqual({ success: false, error: 'db is locked' })
+    expect(kanbanState.updateTicket).not.toHaveBeenCalled()
+    expect(sessionState.closeSession).not.toHaveBeenCalled()
+    expect(runShellCommand).not.toHaveBeenCalled()
+  })
+
+  it('a start failure keeps the link and returns the ticket id with the error', async () => {
+    runShellCommand.mockResolvedValue({
+      success: true,
+      value: { success: false, error: 'Worktree is teleported' }
+    })
+
+    const result = await runProjectShellCommand({
+      projectId: PROJECT,
+      commandId: COMMAND.id,
+      ticketId: TICKET,
+      focus: false
+    })
+
+    expect(result).toEqual({
+      success: false,
+      error: 'Worktree is teleported',
+      sessionId: 'session-1',
+      ticketId: TICKET,
+      worktreeId: BASE
+    })
+    expect(markShellCommandStartFailed).toHaveBeenCalledExactlyOnceWith(
+      'session-1',
+      'Worktree is teleported'
+    )
+    expect(sessionState.closeSession).not.toHaveBeenCalled()
+  })
+
+  it('a second launch for the ticket once it is linked is refused', async () => {
+    await runProjectShellCommand({ projectId: PROJECT, commandId: COMMAND.id, ticketId: TICKET })
+
+    await expect(
+      runProjectShellCommand({ projectId: PROJECT, commandId: COMMAND.id, ticketId: TICKET })
+    ).resolves.toEqual({ success: false, error: 'Ticket already has a session' })
+    expect(sessionState.createShellCommandSession).toHaveBeenCalledTimes(1)
+    expect(runShellCommand).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -736,12 +1082,35 @@ describe('rerunShellCommand', () => {
       current_session_id: SESSION,
       worktree_id: FEATURE,
       mode: 'build',
+      external_provider: 'shell-command',
+      external_id: COMMAND.id,
       created_from_session: true
     })
     expect(autoPinForBoardPrompt).toHaveBeenCalledExactlyOnceWith({
       projectId: PROJECT,
       worktreeId: FEATURE
     })
+  })
+
+  it("stamps a rerun-created ticket with the run's own command id, not the project's", async () => {
+    getBySession.mockResolvedValue([])
+    // The run outlives the project definition it was launched from.
+    runStoreState.runsBySession[SESSION] = runSnapshot({
+      commandId: 'cmd-removed-from-project',
+      state: 'succeeded',
+      exitCode: 0
+    })
+
+    await expect(rerunShellCommand(SESSION)).resolves.toEqual({ success: true })
+
+    expect(kanbanState.createTicket).toHaveBeenCalledExactlyOnceWith(
+      PROJECT,
+      expect.objectContaining({
+        external_provider: 'shell-command',
+        external_id: 'cmd-removed-from-project',
+        current_session_id: SESSION
+      })
+    )
   })
 
   it('creates no ticket when the settings do not want one', async () => {

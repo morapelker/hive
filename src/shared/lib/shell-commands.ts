@@ -72,6 +72,23 @@ export interface SessionShellCommand {
   finishedAt: string | null
 }
 
+/**
+ * A shell command's ticket is an ordinary ticket row marked through the external-source
+ * fields (like a document run's ticket), so it stays a shell-command ticket without a
+ * session: duplicated, or dragged back to To Do. Only the command id is stored. The
+ * script always comes from the project's own definition at launch, so neither a ticket
+ * edit nor a board markdown file can decide what gets executed.
+ */
+export const SHELL_COMMAND_TICKET_PROVIDER = 'shell-command'
+
+/** The ProjectShellCommand.id a ticket stands for; null for every other ticket. */
+export function shellCommandIdOfTicket(
+  ticket: { external_provider?: string | null; external_id?: string | null } | null | undefined
+): string | null {
+  if (ticket?.external_provider !== SHELL_COMMAND_TICKET_PROVIDER) return null
+  return ticket.external_id || null
+}
+
 export interface ShellCommandValidationResult {
   valid: boolean
   errors: string[]
