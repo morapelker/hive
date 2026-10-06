@@ -139,6 +139,10 @@ import { useRemoteLaunchStore } from '@/stores/useRemoteLaunchStore'
 import { systemApi } from '@/api/system-api'
 import { isDocumentRunTicket } from '@shared/document-flow/run-ticket'
 import { terminalApi } from '@/api/terminal-api'
+import {
+  TICKET_SESSION_DIALOG_CLASS,
+  readTicketModalTerminalGeometry
+} from './ticket-modal-session-layout'
 
 // ── Types ───────────────────────────────────────────────────────────
 type ModalMode = 'edit' | 'plan_review' | 'review' | 'error' | 'question'
@@ -229,6 +233,27 @@ function ClaudeCliPortalSlot({ sessionId }: { sessionId: string }): React.JSX.El
       void useSessionStore.getState().destroyCompletedSessionTerminal(sessionId)
     }
   }, [registerTarget, releaseSessionMount, requestSessionMount, sessionId])
+
+  // One-shot support diagnostic, once per modal open: records the screen scale
+  // and how the dialog is positioned, so a "blurry terminal in the ticket
+  // modal" report can be checked from the log (see ticket-modal-session-layout).
+  // Delayed so the session view has been portalled in and xterm has mounted.
+  // Never from a resize path, and never allowed to affect the modal.
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      try {
+        const slot = targetRef.current
+        if (!slot) return
+        terminalApi.logClientDiagnostics('ticket-modal-terminal-geometry', {
+          sessionId,
+          ...readTicketModalTerminalGeometry(slot)
+        })
+      } catch {
+        // Diagnostics only
+      }
+    }, 2000)
+    return () => window.clearTimeout(timer)
+  }, [sessionId])
 
   return (
     <div
@@ -999,10 +1024,7 @@ function KanbanTicketModalContent({
     (isShellCommandTicket || (modalMode === 'edit' && ticket.column === 'in_progress'))
   ) {
     dialogBody = (
-      <DialogContent
-        data-testid="kanban-ticket-modal"
-        className="w-[96vw] max-w-[1920px] h-[90vh] p-0 gap-0 overflow-hidden flex flex-col"
-      >
+      <DialogContent data-testid="kanban-ticket-modal" className={TICKET_SESSION_DIALOG_CLASS}>
         <DialogHeader className="sr-only">
           <DialogTitle>{ticket.title}</DialogTitle>
         </DialogHeader>
@@ -1100,10 +1122,7 @@ function KanbanTicketModalContent({
   } else if (wantsDualPane) {
     // ── Dual-pane layout (ticket + session stream) ──────────────────
     dialogBody = (
-      <DialogContent
-        data-testid="kanban-ticket-modal"
-        className="w-[96vw] max-w-[1920px] h-[90vh] p-0 gap-0 overflow-hidden flex flex-col"
-      >
+      <DialogContent data-testid="kanban-ticket-modal" className={TICKET_SESSION_DIALOG_CLASS}>
         {conflictBanner}
         <div className="flex min-h-0 flex-1 overflow-hidden">
           {/* Left: ticket content */}
