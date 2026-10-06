@@ -110,7 +110,10 @@ export function DocumentRunSettingsPanel({
             <Plus />
           </Button>
         </div>
-        <p className={HELP_CLASS}>How many tickets may have an agent working at the same time.</p>
+        <p className={HELP_CLASS}>
+          How many tickets may have an agent working at the same time. You can change this while the
+          run is going, from the run's ticket.
+        </p>
       </div>
 
       <div className="space-y-1.5">

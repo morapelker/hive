@@ -82,6 +82,110 @@ describe('DocumentFlowRunner: launching', () => {
     expect(world.launches).toHaveLength(1)
   })
 
+  describe('maxParallel changed while the run is going', () => {
+    const setMaxParallel = (world: RunnerWorld, maxParallel: number): void =>
+      world.setRun({ config: { ...world.detail().run.config, maxParallel } })
+
+    it('launches into the slots a raised limit opens, without waiting for the next poll', async () => {
+      const world = createWorld({
+        config: { maxParallel: 1 },
+        items: [{ key: 'A' }, { key: 'B' }, { key: 'C' }, { key: 'D' }]
+      })
+      start(world)
+      await advance(1000)
+      expect(world.statuses()).toEqual({ A: 'running', B: 'pending', C: 'pending', D: 'pending' })
+
+      setMaxParallel(world, 3)
+      // Well inside the poll interval: the change itself wakes the orchestrator.
+      await advance(1000)
+
+      expect(world.statuses()).toEqual({ A: 'running', B: 'running', C: 'running', D: 'pending' })
+      expect(world.launches.map((spec) => spec.ticketId)).toEqual([
+        'ticket-A',
+        'ticket-B',
+        'ticket-C'
+      ])
+    })
+
+    it('stops nothing when the limit is lowered, and launches again only below the new limit', async () => {
+      const world = createWorld({
+        config: { maxParallel: 3 },
+        items: [{ key: 'A' }, { key: 'B' }, { key: 'C' }, { key: 'D' }, { key: 'E' }]
+      })
+      start(world)
+      await advance(1000)
+      const running = { A: 'running', B: 'running', C: 'running', D: 'pending', E: 'pending' }
+      expect(world.statuses()).toEqual(running)
+
+      setMaxParallel(world, 1)
+      await advance(25_000)
+
+      // Three hold a slot with a limit of one: all three keep working, untouched.
+      expect(world.statuses()).toEqual(running)
+      expect(world.followups).toEqual([])
+      expect(world.launches).toHaveLength(3)
+
+      // Two finish: one still holds the only slot, so nothing new starts.
+      world.setItem('A', { status: 'skipped' })
+      await advance(15_000)
+      world.setItem('B', { status: 'skipped' })
+      await advance(15_000)
+      expect(world.statuses()).toMatchObject({ C: 'running', D: 'pending', E: 'pending' })
+      expect(world.launches).toHaveLength(3)
+
+      // The last one finishes: the run is under its limit again, and takes one ticket.
+      world.setItem('C', { status: 'skipped' })
+      await advance(15_000)
+      expect(world.statuses()).toMatchObject({ D: 'running', E: 'pending' })
+      expect(world.launches.map((spec) => spec.ticketId)).toEqual([
+        'ticket-A',
+        'ticket-B',
+        'ticket-C',
+        'ticket-D'
+      ])
+    })
+
+    it('drops a launch that was queued under the higher limit', async () => {
+      const world = createWorld({
+        config: { maxParallel: 3 },
+        items: [{ key: 'A' }, { key: 'B' }, { key: 'C' }]
+      })
+      world.ports.launchTicket.mockImplementation(async (spec) => {
+        world.launches.push(spec)
+        await new Promise((resolve) => setTimeout(resolve, 500))
+        return world.launchOk(spec)
+      })
+      start(world)
+
+      await advance(300)
+      expect(world.statuses()).toEqual({ A: 'launching', B: 'pending', C: 'pending' })
+      setMaxParallel(world, 1)
+      await advance(15_000)
+
+      // The launch under way finishes; the two behind it in the queue never start.
+      expect(world.statuses()).toEqual({ A: 'running', B: 'pending', C: 'pending' })
+      expect(world.launches).toHaveLength(1)
+    })
+
+    it('applies a limit changed during a pause when the run resumes', async () => {
+      const world = createWorld({
+        config: { maxParallel: 1 },
+        items: [{ key: 'A' }, { key: 'B' }, { key: 'C' }]
+      })
+      start(world)
+      await advance(1000)
+      world.setRun({ status: 'paused' })
+      setMaxParallel(world, 2)
+      await advance(15_000)
+      expect(world.statuses()).toEqual({ A: 'running', B: 'pending', C: 'pending' })
+
+      world.setRun({ status: 'running' })
+      await advance(1000)
+
+      expect(world.statuses()).toEqual({ A: 'running', B: 'running', C: 'pending' })
+    })
+  })
+
   it('does not wait for a skipped or a deselected dependency', async () => {
     const world = createWorld({
       items: [

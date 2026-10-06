@@ -34,6 +34,7 @@ import type { DocumentRunDetail } from '@shared/types/document-flow'
 import { TonePill } from './DocumentFlowBadges'
 import { NeedsYouSection, RunItemsTable } from './DocumentRunItems'
 import { RunActivityLog, RunReportSection } from './DocumentRunReport'
+import { RunParallelControl } from './RunParallelControl'
 import { RunProgressBar } from './RunProgressBar'
 import { openWorktree } from './document-flow-navigation'
 import {
@@ -120,8 +121,9 @@ const errorMessage = (cause: unknown): string =>
 /**
  * The dashboard of a launched run: a projection of the store's copy of the run, which the
  * server's pushes keep current. Nothing here drives the run; the buttons only write the
- * user's decisions. The one that reaches further is the questions switch, which also messages
- * the run's working sessions, and so asks first.
+ * user's decisions (the parallel-tickets stepper too: the orchestrator reads the limit on its
+ * next pass). The one that reaches further is the questions switch, which also messages the
+ * run's working sessions, and so asks first.
  */
 export function DocumentRunDashboard(): React.JSX.Element {
   const runId = useDocumentFlowStore((s) => s.dashboardRunId)
@@ -395,6 +397,10 @@ function DashboardBody({ detail }: { detail: DocumentRunDetail }): React.JSX.Ele
             )}
           </div>
         </div>
+
+        {active && (
+          <RunParallelControl key={run.id} run={run} items={items} disabled={busy !== null} />
+        )}
       </DialogHeader>
 
       <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-4">

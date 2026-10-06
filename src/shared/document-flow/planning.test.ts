@@ -8,6 +8,7 @@ import {
 import {
   USER_INTERRUPT_DETAIL,
   WAITING_PREFIX,
+  countOccupiedSlots,
   countRunningAgents,
   integrationBranchHint,
   isDependencySatisfied,
@@ -184,6 +185,47 @@ describe('launchableItems', () => {
     expect(keys(launchableItems(items, -3))).toEqual(['A'])
     expect(keys(launchableItems(items, 2.9))).toEqual(['A', 'B'])
     expect(launchableItems([], 4)).toEqual([])
+  })
+
+  it('launches nothing while more slots are held than the limit allows', () => {
+    // The limit was lowered under what is running: no launch until the count is below it.
+    const items = [item('A', 'running'), item('B', 'running'), item('C', 'running'), item('D')]
+    expect(launchableItems(items, 1)).toEqual([])
+    expect(launchableItems(items, 3)).toEqual([])
+    expect(keys(launchableItems(items, 4))).toEqual(['D'])
+  })
+})
+
+describe('countOccupiedSlots', () => {
+  it('counts what maxParallel limits: every item with a session that is, or may be, working', () => {
+    const items = [
+      item('A', 'launching'),
+      item('B', 'running'),
+      item('C', 'needs_input'),
+      item('D', 'checking'),
+      item('E', 'resolving_conflicts'),
+      item('F', 'pending'),
+      item('G', 'ready'),
+      item('H', 'merging'),
+      item('I', 'verifying'),
+      item('J', 'fixing'),
+      item('K', 'needs_attention'),
+      item('L', 'merged'),
+      item('M', 'skipped'),
+      item('N', 'cancelled')
+    ]
+    expect(countOccupiedSlots(items)).toBe(5)
+  })
+
+  it('ignores items that are not part of the run', () => {
+    expect(countOccupiedSlots([item('A', 'running', { selected: false })])).toBe(0)
+    expect(countOccupiedSlots([])).toBe(0)
+  })
+
+  it('is the count launchableItems fills up to', () => {
+    const items = [item('A', 'running'), item('B', 'needs_input'), item('C'), item('D'), item('E')]
+    const limit = 4
+    expect(launchableItems(items, limit)).toHaveLength(limit - countOccupiedSlots(items))
   })
 })
 

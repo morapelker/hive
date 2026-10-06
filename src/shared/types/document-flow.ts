@@ -124,7 +124,7 @@ export interface DocumentRunGeneration {
 export type DocumentRunPromptStyle = 'full' | 'small'
 
 export interface DocumentRunConfig {
-  /** Tickets whose agent may be working at once (1-8). */
+  /** Tickets that may hold a slot at once (1 to DOCUMENT_RUN_MAX_PARALLEL_LIMIT); changeable mid-run. */
   maxParallel: number
   /** Shell command run in the integration worktree after each merge; null/empty = skip. */
   verifyCommand: string | null

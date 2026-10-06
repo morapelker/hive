@@ -35,22 +35,30 @@ export function unmetDependencies(
   return item.depends_on.filter((key) => !isDependencySatisfied(byKey.get(key)))
 }
 
+/** Selected items holding one of the run's parallel slots: the count `maxParallel` limits. */
+export function countOccupiedSlots(items: readonly DocumentRunItem[]): number {
+  return items.filter(
+    (item) => item.selected && DOCUMENT_RUN_ITEM_ACTIVE_STATUSES.includes(item.status)
+  ).length
+}
+
 /**
  * Pending items that may launch now, in document order, limited to the free slots:
  * every dependency satisfied, and fewer than `maxParallel` items with a live agent.
+ * The limit only gates launches: with more slots held than it allows, nothing launches
+ * and nothing is stopped.
  */
 export function launchableItems<T extends DocumentRunItem>(
   items: readonly T[],
   maxParallel: number
 ): T[] {
-  const selected = items.filter((item) => item.selected)
-  const active = selected.filter((item) =>
-    DOCUMENT_RUN_ITEM_ACTIVE_STATUSES.includes(item.status)
-  ).length
-  const freeSlots = Math.max(0, Math.max(1, Math.floor(maxParallel)) - active)
+  const freeSlots = Math.max(0, Math.max(1, Math.floor(maxParallel)) - countOccupiedSlots(items))
   if (freeSlots === 0) return []
-  return selected
-    .filter((item) => item.status === 'pending' && unmetDependencies(item, items).length === 0)
+  return items
+    .filter(
+      (item) =>
+        item.selected && item.status === 'pending' && unmetDependencies(item, items).length === 0
+    )
     .sort((a, b) => a.position - b.position)
     .slice(0, freeSlots)
 }

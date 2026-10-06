@@ -182,6 +182,41 @@ describe('updateRun', () => {
     expect(harness.published.map((event) => event.reason)).toEqual(['run', 'event', 'run', 'event'])
   })
 
+  it('logs a changed maxParallel of a launched run, and only a change', () => {
+    const { run } = seedRun(harness, { run: { status: 'running' } })
+    const before = run.config
+
+    const raised = harness.service.updateRun(run.id, { config: { maxParallel: 6 } })
+    // Only the limit moved: the rest of the config is the run's own.
+    expect(raised.config).toEqual({ ...before, maxParallel: 6 })
+    expect(raised.status).toBe('running')
+    harness.service.updateRun(run.id, { config: { maxParallel: 6 } })
+    harness.service.updateRun(run.id, { status: 'paused' })
+    harness.service.updateRun(run.id, { config: { maxParallel: 99 } })
+
+    expect(
+      harness.db.listDocumentRunEvents(run.id).map((event) => [event.type, event.message])
+    ).toEqual([
+      ['max_parallel_changed', `Parallel tickets changed from ${before.maxParallel} to 6`],
+      ['paused', 'Run paused'],
+      ['max_parallel_changed', 'Parallel tickets changed from 6 to 50']
+    ])
+    expect(harness.db.listDocumentRunEvents(run.id)[0].data).toEqual({
+      from: before.maxParallel,
+      to: 6
+    })
+  })
+
+  it('does not log the maxParallel a preview is still being set up with', () => {
+    const { run } = seedRun(harness)
+
+    expect(
+      harness.service.updateRun(run.id, { config: { maxParallel: 7 } }).config.maxParallel
+    ).toBe(7)
+
+    expect(harness.db.listDocumentRunEvents(run.id)).toEqual([])
+  })
+
   it('treats the status it already has as nothing to do', () => {
     const { run } = seedRun(harness, { run: { status: 'paused' } })
 

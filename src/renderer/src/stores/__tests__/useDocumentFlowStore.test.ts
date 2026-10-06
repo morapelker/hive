@@ -350,6 +350,39 @@ describe('useDocumentFlowStore', () => {
       expect(api.updateRun).toHaveBeenLastCalledWith('run-1', { status: 'running' })
       expect(useDocumentFlowStore.getState().runsById['run-1'].run.status).toBe('running')
     })
+
+    it('setRunMaxParallel sends only the clamped limit and leaves the next-run default alone', async () => {
+      useDocumentFlowStore.setState({ runsById: { 'run-1': makeDetail({ status: 'running' }) } })
+      const stored = makeDetail().run.config
+      const prefs = useDocumentFlowStore.getState().prefs
+      api.updateRun.mockResolvedValue(
+        makeRun({ status: 'running', config: { ...stored, maxParallel: 6 } })
+      )
+
+      await useDocumentFlowStore.getState().setRunMaxParallel('run-1', 6)
+
+      expect(api.updateRun).toHaveBeenCalledWith('run-1', { config: { maxParallel: 6 } })
+      const detail = useDocumentFlowStore.getState().runsById['run-1']
+      expect(detail.run.config).toEqual({ ...stored, maxParallel: 6 })
+      expect(detail.items).toHaveLength(3)
+      expect(useDocumentFlowStore.getState().prefs).toEqual(prefs)
+
+      await useDocumentFlowStore.getState().setRunMaxParallel('run-1', 99)
+      expect(api.updateRun).toHaveBeenLastCalledWith('run-1', { config: { maxParallel: 50 } })
+      await useDocumentFlowStore.getState().setRunMaxParallel('run-1', 0)
+      expect(api.updateRun).toHaveBeenLastCalledWith('run-1', { config: { maxParallel: 1 } })
+    })
+
+    it('setRunMaxParallel rejects when the server does, leaving the run as it was', async () => {
+      useDocumentFlowStore.setState({ runsById: { 'run-1': makeDetail({ status: 'running' }) } })
+      const before = useDocumentFlowStore.getState().runsById['run-1']
+      api.updateRun.mockRejectedValue(new Error('offline'))
+
+      await expect(useDocumentFlowStore.getState().setRunMaxParallel('run-1', 2)).rejects.toThrow(
+        'offline'
+      )
+      expect(useDocumentFlowStore.getState().runsById['run-1']).toBe(before)
+    })
   })
 
   describe('startRun', () => {

@@ -643,6 +643,14 @@ export class DocumentFlowService {
     const updated = this.saveRun(run, rowPatch)
     if (rowPatch.status === 'paused') this.log(updated, 'paused', 'Run paused')
     if (rowPatch.status === 'running') this.log(updated, 'resumed', 'Run resumed')
+    // The preview saves its settings as they are edited; only a launched run's change is history.
+    const from = run.config.maxParallel
+    const to = updated.config.maxParallel
+    if (from !== to && isActiveRunStatus(run.status)) {
+      this.log(updated, 'max_parallel_changed', `Parallel tickets changed from ${from} to ${to}`, {
+        data: { from, to }
+      })
+    }
     return updated
   }
 

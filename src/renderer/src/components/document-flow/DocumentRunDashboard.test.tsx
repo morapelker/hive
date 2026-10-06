@@ -16,6 +16,7 @@ import type {
   DocumentRunVerdict
 } from '@shared/types/document-flow'
 import { DocumentRunDashboard } from './DocumentRunDashboard'
+import { PARALLEL_WRITE_DEBOUNCE_MS } from './RunParallelControl'
 import { TEST_PROJECT, makeDetail, makeReport } from './test-fixtures'
 
 const api = vi.hoisted(() => ({
@@ -98,7 +99,8 @@ beforeEach(() => {
   )
   api.updateRun.mockImplementation(async (runId: string, patch: DocumentRunPatch) => ({
     ...storedDetail(runId).run,
-    status: patch.status ?? storedDetail(runId).run.status
+    status: patch.status ?? storedDetail(runId).run.status,
+    config: { ...storedDetail(runId).run.config, ...patch.config }
   }))
   api.get.mockImplementation(async (runId: string) => storedDetail(runId) ?? null)
   useProjectStore.setState({ projects: [TEST_PROJECT] } as never)
@@ -412,6 +414,267 @@ describe('DocumentRunDashboard — header', () => {
     const state = useDocumentFlowStore.getState()
     expect(state.dashboardRunId).toBeNull()
     expect(state.wizard).toEqual({ open: true, projectId: TEST_PROJECT.id, runId: 'run-1' })
+  })
+})
+
+describe('DocumentRunDashboard — parallel tickets', () => {
+  const withLimit = (maxParallel: number, run: Partial<DocumentRunDetail['run']> = {}) => ({
+    ...LAUNCHED,
+    ...run,
+    config: { ...makeDetail().run.config, maxParallel }
+  })
+  const limitShown = (): string | null =>
+    screen.getByTestId('docflow-dashboard-parallel-value').textContent
+  const settle = async (ms = PARALLEL_WRITE_DEBOUNCE_MS): Promise<void> => {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ms)
+    })
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('shows the limit and how many tickets hold a slot', async () => {
+    await renderDashboard(
+      makeDetail(withLimit(3), [
+        { key: 'A1', status: 'running' },
+        { key: 'A2', status: 'needs_input' },
+        { key: 'A3', status: 'pending' },
+        { key: 'A4', status: 'merged' },
+        { key: 'A5', status: 'running', selected: false }
+      ])
+    )
+
+    expect(limitShown()).toBe('3')
+    expect(screen.getByTestId('docflow-dashboard-parallel-in-use')).toHaveTextContent(/^2 in use$/)
+  })
+
+  it('raises the limit by writing that one setting', async () => {
+    await renderDashboard(makeDetail(withLimit(4), [{ key: 'A1', status: 'running' }]))
+    const before = storedDetail('run-1').run.config
+
+    await click('docflow-dashboard-parallel-increase')
+    // Shown at once, written after the pause that ends a burst of clicks.
+    expect(limitShown()).toBe('5')
+    expect(api.updateRun).not.toHaveBeenCalled()
+    await settle()
+
+    expect(api.updateRun).toHaveBeenCalledTimes(1)
+    expect(api.updateRun).toHaveBeenCalledWith('run-1', { config: { maxParallel: 5 } })
+    expect(storedDetail('run-1').run.config).toEqual({ ...before, maxParallel: 5 })
+    expect(limitShown()).toBe('5')
+    expect(toast.error).not.toHaveBeenCalled()
+  })
+
+  it('writes a burst of clicks once, as the value it ends on', async () => {
+    await renderDashboard(makeDetail(withLimit(4), [{ key: 'A1', status: 'running' }]))
+
+    // Two clicks before React renders: each steps from the one before it.
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('docflow-dashboard-parallel-increase'))
+      fireEvent.click(screen.getByTestId('docflow-dashboard-parallel-increase'))
+    })
+    await settle(PARALLEL_WRITE_DEBOUNCE_MS - 1)
+    await click('docflow-dashboard-parallel-increase')
+    await settle(PARALLEL_WRITE_DEBOUNCE_MS - 1)
+    expect(limitShown()).toBe('7')
+    expect(api.updateRun).not.toHaveBeenCalled()
+    await settle(1)
+
+    expect(api.updateRun).toHaveBeenCalledTimes(1)
+    expect(api.updateRun).toHaveBeenCalledWith('run-1', { config: { maxParallel: 7 } })
+    expect(storedDetail('run-1').run.config.maxParallel).toBe(7)
+  })
+
+  it('lowers the limit under what is in use without touching any ticket', async () => {
+    await renderDashboard(
+      makeDetail(withLimit(3), [
+        { key: 'A1', status: 'running' },
+        { key: 'A2', status: 'running' },
+        { key: 'A3', status: 'running' },
+        { key: 'A4', status: 'pending' }
+      ])
+    )
+    const itemsBefore = storedDetail('run-1').items
+
+    await click('docflow-dashboard-parallel-decrease')
+    await click('docflow-dashboard-parallel-decrease')
+    await settle()
+
+    expect(api.updateRun).toHaveBeenCalledTimes(1)
+    expect(api.updateRun).toHaveBeenCalledWith('run-1', { config: { maxParallel: 1 } })
+    expect(api.updateItem).not.toHaveBeenCalled()
+    expect(storedDetail('run-1').items).toBe(itemsBefore)
+    expect(storedDetail('run-1').run.status).toBe('running')
+    expect(screen.getByTestId('docflow-dashboard-status')).toHaveTextContent('Running')
+    expect(screen.getByTestId('docflow-dashboard-parallel-in-use')).toHaveTextContent(
+      '3 in use: they keep going, and new tickets start once fewer than 1 is in use'
+    )
+  })
+
+  it('stops at 1 and at the maximum', async () => {
+    await renderDashboard(makeDetail(withLimit(1), [{ key: 'A1', status: 'running' }]))
+    expect(screen.getByTestId('docflow-dashboard-parallel-decrease')).toBeDisabled()
+    expect(screen.getByTestId('docflow-dashboard-parallel-increase')).not.toBeDisabled()
+    cleanup()
+
+    await renderDashboard(makeDetail(withLimit(50), [{ key: 'A1', status: 'running' }]))
+    expect(screen.getByTestId('docflow-dashboard-parallel-increase')).toBeDisabled()
+    expect(screen.getByTestId('docflow-dashboard-parallel-decrease')).not.toBeDisabled()
+  })
+
+  it('is offered on a paused run, and not before launch or once the run is over', async () => {
+    await renderDashboard(
+      makeDetail(withLimit(1, { status: 'paused' }), [
+        { key: 'A1', status: 'running' },
+        { key: 'A2', status: 'running' },
+        { key: 'A3', status: 'pending' }
+      ])
+    )
+    // Paused: being under the limit again is not enough for a launch.
+    expect(screen.getByTestId('docflow-dashboard-parallel-in-use')).toHaveTextContent(
+      '2 in use: they keep going, and after you resume new tickets start once fewer than 1 is in use'
+    )
+    await click('docflow-dashboard-parallel-increase')
+    await settle()
+    expect(api.updateRun).toHaveBeenCalledWith('run-1', { config: { maxParallel: 2 } })
+    expect(storedDetail('run-1').run.status).toBe('paused')
+    expect(screen.getByTestId('docflow-dashboard-parallel-in-use')).toHaveTextContent(/^2 in use$/)
+    cleanup()
+
+    await renderDashboard(
+      makeDetail(withLimit(4, { status: 'completed' }), [{ key: 'A1', status: 'merged' }])
+    )
+    expect(screen.queryByTestId('docflow-dashboard-parallel')).toBeNull()
+    cleanup()
+
+    await renderDashboard(makeDetail({ status: 'preview' }))
+    expect(screen.queryByTestId('docflow-dashboard-parallel')).toBeNull()
+  })
+
+  it('reports a limit that could not be saved and shows the stored one again', async () => {
+    api.updateRun.mockRejectedValue(new Error('offline'))
+    await renderDashboard(makeDetail(withLimit(4), [{ key: 'A1', status: 'running' }]))
+
+    await click('docflow-dashboard-parallel-increase')
+    expect(limitShown()).toBe('5')
+    await settle()
+
+    expect(toast.error).toHaveBeenCalledWith('Could not change the parallel tickets: offline')
+    expect(limitShown()).toBe('4')
+    expect(storedDetail('run-1').run.config.maxParallel).toBe(4)
+  })
+
+  it('keeps a step made while an earlier one is being saved, and writes it next', async () => {
+    let finishFirst: () => void = () => {}
+    const applied = api.updateRun.getMockImplementation() as typeof api.updateRun
+    api.updateRun.mockImplementationOnce(async (runId: string, patch: DocumentRunPatch) => {
+      const run = await applied(runId, patch)
+      await new Promise<void>((resolve) => {
+        finishFirst = resolve
+      })
+      return run
+    })
+    await renderDashboard(makeDetail(withLimit(4), [{ key: 'A1', status: 'running' }]))
+
+    await click('docflow-dashboard-parallel-increase')
+    await settle()
+    await click('docflow-dashboard-parallel-increase')
+    await act(async () => finishFirst())
+    // The first write settled on 5, but 6 is what the user asked for since.
+    expect(limitShown()).toBe('6')
+    await settle()
+
+    expect(api.updateRun.mock.calls.map(([, patch]) => patch)).toEqual([
+      { config: { maxParallel: 5 } },
+      { config: { maxParallel: 6 } }
+    ])
+    expect(storedDetail('run-1').run.config.maxParallel).toBe(6)
+    expect(limitShown()).toBe('6')
+  })
+
+  it('writes a step back to a value whose earlier write is still being saved', async () => {
+    const releases: (() => void)[] = []
+    const applied = api.updateRun.getMockImplementation() as typeof api.updateRun
+    // A slow server: each write is answered, in order, only when released.
+    api.updateRun.mockImplementation(async (runId: string, patch: DocumentRunPatch) => {
+      await new Promise<void>((resolve) => releases.push(resolve))
+      return applied(runId, patch)
+    })
+    const release = async (): Promise<void> => {
+      await act(async () => releases.shift()?.())
+    }
+    await renderDashboard(makeDetail(withLimit(4), [{ key: 'A1', status: 'running' }]))
+
+    await click('docflow-dashboard-parallel-increase')
+    await settle()
+    await click('docflow-dashboard-parallel-increase')
+    await settle()
+    // Back to 5, which the first write is still saving: this 5 is a new decision.
+    await click('docflow-dashboard-parallel-decrease')
+    await release()
+    await release()
+    expect(limitShown()).toBe('5')
+    await settle()
+    await release()
+
+    expect(api.updateRun.mock.calls.map(([, patch]) => patch)).toEqual([
+      { config: { maxParallel: 5 } },
+      { config: { maxParallel: 6 } },
+      { config: { maxParallel: 5 } }
+    ])
+    expect(storedDetail('run-1').run.config.maxParallel).toBe(5)
+    expect(limitShown()).toBe('5')
+    expect(toast.error).not.toHaveBeenCalled()
+  })
+
+  it('still writes the limit when the dashboard closes inside the pause', async () => {
+    await renderDashboard(makeDetail(withLimit(4), [{ key: 'A1', status: 'running' }]))
+
+    await click('docflow-dashboard-parallel-decrease')
+    await act(async () => {
+      useDocumentFlowStore.getState().closeDashboard()
+    })
+
+    expect(api.updateRun).toHaveBeenCalledTimes(1)
+    expect(api.updateRun).toHaveBeenCalledWith('run-1', { config: { maxParallel: 3 } })
+    await settle(PARALLEL_WRITE_DEBOUNCE_MS * 2)
+    expect(api.updateRun).toHaveBeenCalledTimes(1)
+    expect(storedDetail('run-1').run.config.maxParallel).toBe(3)
+  })
+
+  it('follows a limit changed from another window', async () => {
+    const detail = makeDetail(withLimit(4), [{ key: 'A1', status: 'running' }])
+    await renderDashboard(detail)
+
+    await act(async () => {
+      useDocumentFlowStore
+        .getState()
+        .applyRun({ ...detail.run, config: { ...detail.run.config, maxParallel: 9 } })
+    })
+
+    expect(limitShown()).toBe('9')
+    expect(api.updateRun).not.toHaveBeenCalled()
+  })
+
+  it('reads Running again once a raised limit frees a slot for a waiting ticket', async () => {
+    await renderDashboard(
+      makeDetail(withLimit(1), [
+        { key: 'A1', status: 'needs_input' },
+        { key: 'A2', status: 'pending' }
+      ])
+    )
+    expect(screen.getByTestId('docflow-dashboard-status')).toHaveTextContent('Waiting for you')
+
+    await click('docflow-dashboard-parallel-increase')
+    await settle()
+
+    expect(screen.getByTestId('docflow-dashboard-status')).toHaveTextContent('Running')
   })
 })
 

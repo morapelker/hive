@@ -76,6 +76,8 @@ interface DocumentFlowState {
   startRun: (runId: string) => Promise<DocumentRunDetail>
   pauseRun: (runId: string) => Promise<void>
   resumeRun: (runId: string) => Promise<void>
+  /** Change how many tickets may hold a slot. The limit gates launches; nothing running stops. */
+  setRunMaxParallel: (runId: string, maxParallel: number) => Promise<void>
   cancelRun: (runId: string) => Promise<void>
   /** Skip everything that is not merged yet and finalize with what is. */
   finishRunNow: (runId: string) => Promise<void>
@@ -297,6 +299,11 @@ export const useDocumentFlowStore = create<DocumentFlowState>()(
 
       resumeRun: async (runId) => {
         await get().updateRun(runId, { status: 'running' })
+      },
+
+      setRunMaxParallel: async (runId, maxParallel) => {
+        // Only this field: the server merges it into the config the run has by then.
+        await get().updateRun(runId, { config: { maxParallel: clampMaxParallel(maxParallel) } })
       },
 
       cancelRun: async (runId) => {
