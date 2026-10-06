@@ -5,6 +5,7 @@ import { readFile, unlink, writeFile } from 'node:fs/promises'
 import { Effect } from 'effect'
 
 import { loadClaudeSDK } from './claude-sdk-loader'
+import { resolveClaudeBinaryPath } from './claude-binary-resolver'
 import { resolveCodexBinaryPath } from './codex-binary-resolver'
 import { CODEX_REASONING_EFFORTS } from './codex-models'
 import type { CodexReasoningEffort } from './codex-models'
@@ -283,6 +284,10 @@ async function generateWithClaude(
   readRepository = false
 ): Promise<string | null> {
   const sdk = await loadClaudeSDK()
+  // Only the app's main process is handed the path at startup; the desktop backend runs this
+  // module too. Without a path the SDK spawns its bundled binary, which in a packaged app sits
+  // inside app.asar and cannot be spawned (`spawn ENOTDIR`), so look the system binary up here.
+  claudeBinaryPath ??= resolveClaudeBinaryPath()
 
   const abortController = new AbortController()
   const timeout = setTimeout(() => abortController.abort(), timeoutMs)

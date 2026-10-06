@@ -10,6 +10,10 @@ const spawnMocks = vi.hoisted(() => ({
   result: { stdout: '', stderr: '', exitCode: 0 } as RunOnceResult
 }))
 
+const claudeBinaryMocks = vi.hoisted(() => ({
+  resolve: vi.fn<() => string | null>(() => null)
+}))
+
 vi.mock('../logger', () => ({
   createLogger: () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() })
 }))
@@ -21,6 +25,10 @@ vi.mock('../system-info', () => ({
 
 vi.mock('../codex-binary-resolver', () => ({
   resolveCodexBinaryPath: () => '/usr/local/bin/codex'
+}))
+
+vi.mock('../claude-binary-resolver', () => ({
+  resolveClaudeBinaryPath: claudeBinaryMocks.resolve
 }))
 
 vi.mock('../codex-cli-env', () => ({
@@ -63,7 +71,7 @@ vi.mock('../../effect/spawn/runtime', () => ({
 }))
 
 import { loadClaudeSDK } from '../claude-sdk-loader'
-import { generateText } from '../text-generation-router'
+import { generateText, setClaudeBinaryPath } from '../text-generation-router'
 
 const PROMPT = 'Cut this into tickets.'
 const SYSTEM_PROMPT = 'You are an extractor.'
@@ -92,6 +100,8 @@ afterEach(() => {
   spawnMocks.runs.length = 0
   spawnMocks.result = { stdout: '', stderr: '', exitCode: 0 }
   vi.mocked(loadClaudeSDK).mockReset()
+  claudeBinaryMocks.resolve.mockReset().mockReturnValue(null)
+  setClaudeBinaryPath(null)
 })
 
 describe('generateText with codex', () => {
@@ -160,6 +170,42 @@ describe('generateText with claude', () => {
     const [{ options }] = query.mock.calls[0]
     expect(options).toMatchObject({ cwd: '/repo', tools: [], maxTurns: 2 })
     expect(options).not.toHaveProperty('permissionMode')
+  })
+
+  it('spawns the binary the app resolved at startup', async () => {
+    const query = mockClaudeSdk('{"ok":true}')
+    setClaudeBinaryPath('/opt/claude/bin/claude')
+
+    await generateText(PROMPT, SYSTEM_PROMPT, 'claude-code', { maxRetries: 0 })
+
+    const [{ options }] = query.mock.calls[0]
+    expect(options.pathToClaudeCodeExecutable).toBe('/opt/claude/bin/claude')
+    expect(claudeBinaryMocks.resolve).not.toHaveBeenCalled()
+  })
+
+  // The desktop backend never has the path set. Left to itself the SDK spawns its bundled
+  // binary, which in a packaged app is inside app.asar: `spawn ENOTDIR`.
+  it('looks the system binary up itself when no path was set, once', async () => {
+    const query = mockClaudeSdk('{"ok":true}')
+    claudeBinaryMocks.resolve.mockReturnValue('/usr/local/bin/claude')
+
+    await generateText(PROMPT, SYSTEM_PROMPT, 'claude-code', { maxRetries: 0 })
+    await generateText(PROMPT, SYSTEM_PROMPT, 'claude-code', { maxRetries: 0 })
+
+    expect(query).toHaveBeenCalledTimes(2)
+    for (const [{ options }] of query.mock.calls) {
+      expect(options.pathToClaudeCodeExecutable).toBe('/usr/local/bin/claude')
+    }
+    expect(claudeBinaryMocks.resolve).toHaveBeenCalledTimes(1)
+  })
+
+  it('leaves the SDK its own binary when none is installed', async () => {
+    const query = mockClaudeSdk('{"ok":true}')
+
+    await generateText(PROMPT, SYSTEM_PROMPT, 'claude-code', { maxRetries: 0 })
+
+    const [{ options }] = query.mock.calls[0]
+    expect(options).not.toHaveProperty('pathToClaudeCodeExecutable')
   })
 })
 
