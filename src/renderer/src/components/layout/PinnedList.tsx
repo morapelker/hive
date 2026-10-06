@@ -8,6 +8,7 @@ import {
   Copy,
   ExternalLink,
   Figma,
+  FileText,
   GitBranchPlus,
   Link,
   MoreHorizontal,
@@ -57,6 +58,7 @@ import { HintBadge } from '@/components/ui/HintBadge'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useScriptStore } from '@/stores/useScriptStore'
 import { useGitStore } from '@/stores/useGitStore'
+import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import { toast, gitToast, clipboardToast } from '@/lib/toast'
 import { formatRelativeTime } from '@/lib/format-utils'
 import { ModelIcon } from '@/components/worktrees/ModelIcon'
@@ -626,6 +628,15 @@ function PinnedWorktreeItem({ worktreeId }: { worktreeId: string }): React.JSX.E
         <Link className="h-4 w-4 mr-2" />
         Connect to...
       </MenuItem>
+      {project.kind !== 'connection' && (
+        <MenuItem
+          data-testid="docflow-pinned-worktree-menu-item"
+          onClick={() => useDocumentFlowStore.getState().openWizard(project.id)}
+        >
+          <FileText className="h-4 w-4 mr-2" />
+          Implement Document…
+        </MenuItem>
+      )}
       {renderShellCommandMenuItems({
         commands: getRunnableShellCommands(project),
         onRun: handleRunShellCommand,

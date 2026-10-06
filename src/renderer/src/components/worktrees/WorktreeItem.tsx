@@ -57,6 +57,7 @@ import {
 import { HintBadge } from '@/components/ui/HintBadge'
 import { Tip } from '@/components/ui/Tip'
 import { useGitStore } from '@/stores/useGitStore'
+import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import { useScriptStore } from '@/stores/useScriptStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { toast, gitToast, clipboardToast } from '@/lib/toast'
@@ -949,6 +950,17 @@ export const WorktreeItem = memo(function WorktreeItem({
                           <Link className="h-4 w-4 mr-2" />
                           Connect to...
                         </DropdownMenuItem>
+                        {project?.kind !== 'connection' && (
+                          <DropdownMenuItem
+                            data-testid="docflow-worktree-menu-item"
+                            onClick={() =>
+                              useDocumentFlowStore.getState().openWizard(worktree.project_id)
+                            }
+                          >
+                            <FileText className="h-4 w-4 mr-2" />
+                            Implement Document…
+                          </DropdownMenuItem>
+                        )}
                         {renderShellCommandMenuItems({
                           commands: shellCommands,
                           onRun: handleRunShellCommand,
@@ -1094,6 +1106,15 @@ export const WorktreeItem = memo(function WorktreeItem({
           <Link className="h-4 w-4 mr-2" />
           Connect to...
         </ContextMenuItem>
+        {project?.kind !== 'connection' && (
+          <ContextMenuItem
+            data-testid="docflow-worktree-menu-item"
+            onClick={() => useDocumentFlowStore.getState().openWizard(worktree.project_id)}
+          >
+            <FileText className="h-4 w-4 mr-2" />
+            Implement Document…
+          </ContextMenuItem>
+        )}
         {/* Custom Commands */}
         {customCommands.length > 0 && (
           <>
