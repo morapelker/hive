@@ -77,7 +77,9 @@ describeIf('document run ticket on both board backends', () => {
           mode: null,
           worktree_id: worktree.id,
           external_provider: DOCUMENT_RUN_TICKET_PROVIDER,
-          external_id: 'run-1'
+          external_id: 'run-1',
+          // The document the run was made from: on the ticket row, for when the run is gone.
+          external_url: '/docs/checkout.html'
         }
       ]
     })
@@ -100,7 +102,8 @@ describeIf('document run ticket on both board backends', () => {
         current_session_id: null,
         worktree_id: worktreeId,
         external_provider: 'document-run',
-        external_id: 'run-1'
+        external_id: 'run-1',
+        external_url: '/docs/checkout.html'
       })
       expect(documentRunIdOf(stored)).toBe('run-1')
       // Listed like any ticket: it is one.
@@ -108,7 +111,12 @@ describeIf('document run ticket on both board backends', () => {
 
       // The move the document flow makes when the run ends.
       const moved = await backend.move(project.id, id, 'review', -1)
-      expect(moved).toMatchObject({ column: 'review', unread: true, worktree_id: worktreeId })
+      expect(moved).toMatchObject({
+        column: 'review',
+        unread: true,
+        worktree_id: worktreeId,
+        external_url: '/docs/checkout.html'
+      })
       expect(documentRunIdOf(moved)).toBe('run-1')
 
       // Archiving the integration worktree from the merge dialog detaches it.

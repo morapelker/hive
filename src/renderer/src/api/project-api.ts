@@ -35,8 +35,12 @@ export const projectApi = {
   openDirectoryDialog: async (): Promise<string | null> => {
     return getRendererRpcClient().request<string | null>('projectOps.openDirectoryDialog', {})
   },
-  openPath: async (path: string): Promise<void> => {
-    return getRendererRpcClient().request<void>('projectOps.openPath', { path })
+  /**
+   * Opens the path with the OS default app. Resolves '' on success, else the shell's error text
+   * (a missing file resolves with an error, it does not reject).
+   */
+  openPath: async (path: string): Promise<string> => {
+    return getRendererRpcClient().request<string>('projectOps.openPath', { path })
   },
   showInFolder: async (path: string): Promise<void> => {
     return getRendererRpcClient().request<void>('projectOps.showInFolder', { path })

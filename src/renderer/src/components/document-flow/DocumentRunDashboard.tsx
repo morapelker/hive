@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react'
 import {
+  CircleSlash,
   Copy,
   Database,
+  ExternalLink,
+  FileText,
   FlagTriangleRight,
   GitBranch,
   Loader2,
@@ -22,6 +25,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle
 } from '@/components/ui/alert-dialog'
+import { documentFlowApi } from '@/api/document-flow-api'
+import { projectApi } from '@/api/project-api'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import {
@@ -47,7 +52,11 @@ import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import { summarizeItems } from '@shared/document-flow/planning'
-import type { DocumentRun, DocumentRunDetail } from '@shared/types/document-flow'
+import type {
+  DocumentRun,
+  DocumentRunDetail,
+  DocumentSourceFile
+} from '@shared/types/document-flow'
 import { TonePill } from './DocumentFlowBadges'
 import { NeedsYouSection, RunItemsTable } from './DocumentRunItems'
 import { RunActivityLog, RunReportSection } from './DocumentRunReport'
@@ -154,6 +163,35 @@ function describeQuestionModeResult(interactive: boolean, result: QuestionModeRe
 const errorMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause)
 
+/** Next to a withheld "Open document": the file the run was made from is no longer on disk. */
+export const DOCUMENT_DELETED_REASON = 'The document was deleted from disk.'
+
+/**
+ * Whether the run's source document is still on disk, asked of the server when the dashboard
+ * opens. Null while the answer is pending; a failed check counts as missing.
+ */
+function useSourceFile(
+  run: DocumentRun
+): [DocumentSourceFile | null, (file: DocumentSourceFile) => void] {
+  const [source, setSource] = useState<DocumentSourceFile | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    setSource(null)
+    documentFlowApi
+      .sourceFile(run.id)
+      .then((file) => {
+        if (!cancelled) setSource(file)
+      })
+      .catch(() => {
+        if (!cancelled) setSource({ path: run.source_path, exists: false })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [run.id, run.source_path])
+  return [source, setSource]
+}
+
 /**
  * The dashboard of a launched run: a projection of the store's copy of the run, which the
  * server's pushes keep current. Nothing here drives the run; the buttons only write the
@@ -228,6 +266,8 @@ function DashboardBody({ detail }: { detail: DocumentRunDetail }): React.JSX.Ele
   const openWizard = useDocumentFlowStore((s) => s.openWizard)
   const [confirm, setConfirm] = useState<ConfirmKind | null>(null)
   const [busy, setBusy] = useState<BusyKind | null>(null)
+  const [source, setSource] = useSourceFile(run)
+  const documentMissing = source !== null && !source.exists
   // Archived with the merge of the run's ticket: no checkout is left to run a session in
   const worktreeIds = useWorktreeStore((s) => s.worktreesByProject.get(run.project_id))
   const migrating = isRunMigrating(run)
@@ -276,6 +316,22 @@ function DashboardBody({ detail }: { detail: DocumentRunDetail }): React.JSX.Ele
     else toast.error('Could not copy the branch name')
   }
 
+  // Checked again on click: the file may have gone since the dashboard opened.
+  const openDocument = async (): Promise<void> => {
+    try {
+      const file = await documentFlowApi.sourceFile(run.id)
+      setSource(file)
+      if (!file.exists) {
+        toast.info(DOCUMENT_DELETED_REASON)
+        return
+      }
+      const failure = await projectApi.openPath(file.path)
+      if (failure) toast.error(`Could not open the document: ${failure}`)
+    } catch (cause) {
+      toast.error(`Could not open the document: ${errorMessage(cause)}`)
+    }
+  }
+
   return (
     <>
       <DialogHeader className="shrink-0 space-y-2 border-b border-border px-5 pb-3 pr-12 pt-4">
@@ -290,6 +346,43 @@ function DashboardBody({ detail }: { detail: DocumentRunDetail }): React.JSX.Ele
         <DialogDescription className="sr-only">
           Progress of the document run {run.title}
         </DialogDescription>
+
+        <div
+          className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[12px] text-muted-foreground"
+          data-testid="docflow-source-line"
+        >
+          <FileText className="h-3 w-3 shrink-0" />
+          <span
+            className="max-w-[320px] truncate font-mono text-foreground"
+            title={run.source_path}
+            data-testid="docflow-source-path"
+          >
+            {documentNameFromPath(run.source_path)}
+          </span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-6 text-xs"
+            data-testid="docflow-open-document-btn"
+            disabled={source === null || documentMissing}
+            title={documentMissing ? DOCUMENT_DELETED_REASON : run.source_path}
+            onClick={() => void openDocument()}
+          >
+            <ExternalLink className="h-3 w-3" />
+            Open document
+          </Button>
+          {/* Said in words: a disabled button shows no tooltip */}
+          {documentMissing && (
+            <span
+              className="inline-flex items-center gap-1 text-[11px]"
+              data-testid="docflow-document-missing"
+            >
+              <CircleSlash className="h-3 w-3" />
+              {DOCUMENT_DELETED_REASON}
+            </span>
+          )}
+        </div>
 
         {run.integration_branch && (
           <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[12px] text-muted-foreground">

@@ -42,6 +42,7 @@ const API_METHODS = [
   'createRun',
   'retryExtraction',
   'get',
+  'sourceFile',
   'list',
   'updateRun',
   'updateItem',
@@ -68,6 +69,7 @@ function makeService(overrides: Partial<DocumentFlowRpcService> = {}): DocumentF
     createRun: () => Effect.succeed(detail),
     retryExtraction: () => Effect.succeed(detail),
     get: () => Effect.succeed(detail),
+    sourceFile: () => Effect.succeed({ path: '/specs/factory.html', exists: true }),
     list: () => Effect.succeed([detail]),
     updateRun: () => Effect.succeed(run),
     updateItem: () => Effect.succeed(detail.items[0]),
@@ -212,6 +214,7 @@ describe('documentFlow RPC handlers', () => {
       }
     const service = makeService({
       get: record('get', detail),
+      sourceFile: record('sourceFile', { path: '/specs/factory.html', exists: true }),
       updateRun: record('updateRun', run),
       start: record('start', detail),
       claimRunner: record('claimRunner', {
@@ -244,6 +247,7 @@ describe('documentFlow RPC handlers', () => {
     })
 
     await call(service, 'get', { runId: 'run-1' })
+    await call(service, 'sourceFile', { runId: 'run-1' })
     await call(service, 'updateRun', { runId: 'run-1', patch: { status: 'paused' } })
     await call(service, 'start', { runId: 'run-1' })
     await call(service, 'claimRunner', { runId: 'run-1', clientId: 'client-1' })
@@ -260,6 +264,7 @@ describe('documentFlow RPC handlers', () => {
 
     expect(calls).toEqual({
       get: ['run-1'],
+      sourceFile: ['run-1'],
       updateRun: ['run-1', { status: 'paused' }],
       start: ['run-1'],
       claimRunner: ['run-1', 'client-1'],
@@ -367,6 +372,8 @@ describe('documentFlow RPC handlers', () => {
     const service = makeService()
 
     await rejectsValidation(service, 'get', { runId: 'run-1', extra: true })
+    await rejectsValidation(service, 'sourceFile', {})
+    await rejectsValidation(service, 'sourceFile', { runId: 'run-1', extra: true })
     await rejectsValidation(service, 'list', { projectId: 'p', extra: 1 })
     await rejectsValidation(service, 'updateRun', {
       runId: 'run-1',

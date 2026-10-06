@@ -85,6 +85,18 @@ export async function assertDocumentFile(path: string): Promise<void> {
 }
 
 /**
+ * Whether the document is still there as a regular file. Never throws: a missing, unreadable
+ * or non-file path is `false`.
+ */
+export async function documentFileExists(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isFile()
+  } catch {
+    return false
+  }
+}
+
+/**
  * The document as text. Binary formats (PDF, Word) are refused rather than decoded. The
  * encoding is what the file declares (a BOM, `<meta charset>`, `<?xml encoding>`), else UTF-8
  * when the bytes are valid UTF-8, else windows-1252: what Word's "Save as Web Page" writes.

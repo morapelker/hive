@@ -50,7 +50,7 @@ describe('projectApi', () => {
 
   it('routes openPath through the renderer RPC client', async () => {
     const openPath = vi.fn().mockResolvedValue('')
-    const request = vi.fn().mockResolvedValue(undefined)
+    const request = vi.fn().mockResolvedValue('')
     const subscribe = vi.fn()
 
     Object.defineProperty(window, 'desktopBridge', {
@@ -62,11 +62,18 @@ describe('projectApi', () => {
     })
     setRendererRpcClient({ request, subscribe })
 
-    await expect(projectApi.openPath('https://example.com')).resolves.toBeUndefined()
+    await expect(projectApi.openPath('https://example.com')).resolves.toBe('')
     expect(request).toHaveBeenCalledWith('projectOps.openPath', {
       path: 'https://example.com'
     })
     expect(openPath).not.toHaveBeenCalled()
+  })
+
+  it("resolves openPath with the shell's error text when the path could not be opened", async () => {
+    const request = vi.fn().mockResolvedValue('Failed to open path')
+    setRendererRpcClient({ request, subscribe: vi.fn() })
+
+    await expect(projectApi.openPath('/gone/spec.html')).resolves.toBe('Failed to open path')
   })
 
   it('routes copyToClipboard through the renderer RPC client', async () => {

@@ -385,6 +385,12 @@ export interface DocumentRunReport {
 
 // ── RPC payloads ───────────────────────────────────────────────────────────
 
+/** The document a run was made from, and whether that file is still on disk. */
+export interface DocumentSourceFile {
+  path: string
+  exists: boolean
+}
+
 /** Fields of a run the renderer may change. `status` only toggles `running` ⇄ `paused`. */
 export interface DocumentRunPatch {
   title?: string

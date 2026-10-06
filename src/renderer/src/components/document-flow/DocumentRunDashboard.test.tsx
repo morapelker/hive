@@ -16,12 +16,13 @@ import type {
   DocumentRunPatch,
   DocumentRunVerdict
 } from '@shared/types/document-flow'
-import { DocumentRunDashboard } from './DocumentRunDashboard'
+import { DOCUMENT_DELETED_REASON, DocumentRunDashboard } from './DocumentRunDashboard'
 import { PARALLEL_WRITE_DEBOUNCE_MS } from './RunParallelControl'
 import { TEST_PROJECT, makeDetail, makeReport } from './test-fixtures'
 
 const api = vi.hoisted(() => ({
   get: vi.fn(),
+  sourceFile: vi.fn(),
   updateRun: vi.fn(),
   updateItem: vi.fn(),
   cancel: vi.fn(),
@@ -29,10 +30,12 @@ const api = vi.hoisted(() => ({
   delete: vi.fn()
 }))
 
+const projectApi = vi.hoisted(() => ({ openPath: vi.fn() }))
 const questionMode = vi.hoisted(() => ({ applyQuestionMode: vi.fn() }))
 const migrations = vi.hoisted(() => ({ startRunMigrations: vi.fn(), stopRunMigrations: vi.fn() }))
 
 vi.mock('@/api/document-flow-api', () => ({ documentFlowApi: api }))
+vi.mock('@/api/project-api', () => ({ projectApi }))
 // The broadcast to the run's sessions has its own tests; here only the gate in front of it.
 vi.mock('@/lib/document-flow/question-mode', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/document-flow/question-mode')>()),
@@ -112,6 +115,12 @@ beforeEach(() => {
     config: { ...storedDetail(runId).run.config, ...patch.config }
   }))
   api.get.mockImplementation(async (runId: string) => storedDetail(runId) ?? null)
+  // The document the run was made from is still on disk unless a test says otherwise.
+  api.sourceFile.mockImplementation(async (runId: string) => ({
+    path: storedDetail(runId).run.source_path,
+    exists: true
+  }))
+  projectApi.openPath.mockResolvedValue('')
   useProjectStore.setState({ projects: [TEST_PROJECT] } as never)
 })
 
@@ -403,6 +412,86 @@ describe('DocumentRunDashboard — header', () => {
     expect(useDocumentFlowStore.getState().dashboardRunId).not.toBeNull()
     // The report is still there to read.
     expect(screen.getByTestId('docflow-report')).toBeInTheDocument()
+  })
+
+  it('shows the source document and opens it with the default app', async () => {
+    await renderDashboard(makeDetail(LAUNCHED, [{ key: 'A1', status: 'running' }]))
+
+    const name = screen.getByTestId('docflow-source-path')
+    expect(name).toHaveTextContent('checkout-redesign.html')
+    expect(name).toHaveAttribute('title', '/docs/checkout-redesign.html')
+    const button = screen.getByTestId('docflow-open-document-btn')
+    expect(button).not.toBeDisabled()
+    expect(button).toHaveAttribute('title', '/docs/checkout-redesign.html')
+    expect(screen.queryByTestId('docflow-document-missing')).toBeNull()
+
+    await click('docflow-open-document-btn')
+
+    expect(projectApi.openPath).toHaveBeenCalledWith('/docs/checkout-redesign.html')
+    expect(toast.error).not.toHaveBeenCalled()
+    expect(toast.info).not.toHaveBeenCalled()
+    // Opening the file is not a navigation: the dashboard stays.
+    expect(useDocumentFlowStore.getState().dashboardRunId).toBe('run-1')
+  })
+
+  it('withholds "Open document", and says why, when the file was deleted', async () => {
+    api.sourceFile.mockResolvedValue({ path: '/docs/checkout-redesign.html', exists: false })
+    await renderDashboard(makeDetail(LAUNCHED, [{ key: 'A1', status: 'running' }]))
+
+    const button = screen.getByTestId('docflow-open-document-btn')
+    expect(button).toBeDisabled()
+    expect(button).toHaveAttribute('title', DOCUMENT_DELETED_REASON)
+    // In words next to the button: a disabled button shows no tooltip.
+    expect(screen.getByTestId('docflow-document-missing')).toHaveTextContent(
+      DOCUMENT_DELETED_REASON
+    )
+    expect(screen.getByTestId('docflow-source-path')).toHaveTextContent('checkout-redesign.html')
+
+    await click('docflow-open-document-btn')
+    expect(projectApi.openPath).not.toHaveBeenCalled()
+  })
+
+  it('keeps the button disabled, without a reason, while the check is pending', async () => {
+    api.sourceFile.mockReturnValue(new Promise(() => undefined))
+    await renderDashboard(makeDetail(LAUNCHED, [{ key: 'A1', status: 'running' }]))
+
+    expect(screen.getByTestId('docflow-open-document-btn')).toBeDisabled()
+    expect(screen.queryByTestId('docflow-document-missing')).toBeNull()
+  })
+
+  it('says so when the document vanished after the dashboard opened', async () => {
+    api.sourceFile
+      .mockResolvedValueOnce({ path: '/docs/checkout-redesign.html', exists: true })
+      .mockResolvedValueOnce({ path: '/docs/checkout-redesign.html', exists: false })
+    await renderDashboard(makeDetail(LAUNCHED, [{ key: 'A1', status: 'running' }]))
+    expect(screen.getByTestId('docflow-open-document-btn')).not.toBeDisabled()
+
+    await click('docflow-open-document-btn')
+
+    expect(toast.info).toHaveBeenCalledWith(DOCUMENT_DELETED_REASON)
+    expect(projectApi.openPath).not.toHaveBeenCalled()
+    expect(screen.getByTestId('docflow-open-document-btn')).toBeDisabled()
+    expect(screen.getByTestId('docflow-document-missing')).toBeInTheDocument()
+  })
+
+  it('reports when the OS could not open the document', async () => {
+    projectApi.openPath.mockResolvedValue('No application found')
+    await renderDashboard(makeDetail(LAUNCHED, [{ key: 'A1', status: 'running' }]))
+
+    await click('docflow-open-document-btn')
+
+    expect(toast.error).toHaveBeenCalledWith('Could not open the document: No application found')
+    expect(screen.getByTestId('docflow-open-document-btn')).not.toBeDisabled()
+  })
+
+  it('treats a failed check as a missing document', async () => {
+    api.sourceFile.mockRejectedValue(new Error('Lease lost'))
+    await renderDashboard(makeDetail(LAUNCHED, [{ key: 'A1', status: 'running' }]))
+
+    expect(screen.getByTestId('docflow-open-document-btn')).toBeDisabled()
+    expect(screen.getByTestId('docflow-document-missing')).toHaveTextContent(
+      DOCUMENT_DELETED_REASON
+    )
   })
 
   it('closes when the run it was opened on no longer exists', async () => {

@@ -137,6 +137,7 @@ import { opencodeApi } from '@/api/opencode-api'
 import { remoteLaunchApi } from '@/api/remote-launch-api'
 import { useRemoteLaunchStore } from '@/stores/useRemoteLaunchStore'
 import { systemApi } from '@/api/system-api'
+import { isDocumentRunTicket } from '@shared/document-flow/run-ticket'
 import { terminalApi } from '@/api/terminal-api'
 
 // ── Types ───────────────────────────────────────────────────────────
@@ -1461,7 +1462,9 @@ function EditModeContent({
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <DialogTitle>Edit Ticket</DialogTitle>
-            {ticket.external_provider && ticket.external_url && (
+            {/* A run's ticket keeps its document's file path in external_url; it is opened from
+                the run dashboard and the card menu, never as a web link. */}
+            {ticket.external_provider && ticket.external_url && !isDocumentRunTicket(ticket) && (
               <button
                 onClick={() => systemApi.openInChrome(ticket.external_url!)}
                 className="transition-opacity hover:opacity-80"

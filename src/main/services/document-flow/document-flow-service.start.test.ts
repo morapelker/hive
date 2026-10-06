@@ -439,7 +439,8 @@ describe('start', () => {
           mode: null,
           worktree_id: 'wt-doc-factory-area-changes-round-2',
           external_provider: 'document-run',
-          external_id: run.id
+          external_id: run.id,
+          external_url: '/specs/factory.html'
         }
       ])
       expect(detail.run.ticket_id).toBe('ticket-4')

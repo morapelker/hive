@@ -1,4 +1,6 @@
 // @vitest-environment node
+import { rmSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DocumentRunStatus } from '@shared/types/document-flow'
 import { getRpcRequestContext, rpcRequestContext } from '../../../server/rpc/request-context'
@@ -278,7 +280,8 @@ describe('reconcileRunTickets', () => {
         column,
         worktree_id: 'wt-integration',
         external_provider: 'document-run',
-        external_id: runId
+        external_id: runId,
+        external_url: '/specs/factory.html'
       })
     }
   )
@@ -414,5 +417,22 @@ describe('reconcileRunTickets', () => {
 
     expect(harness.db.getDocumentRun(broken)?.ticket_id).toBeNull()
     expect(harness.db.getDocumentRun(fine)?.ticket_id).toBe('ticket-fine')
+  })
+})
+
+describe('sourceFile', () => {
+  it('reports the document the run was made from, and whether it is still on disk', async () => {
+    const path = join(harness.scratch, 'spec.html')
+    writeFileSync(path, '<h1>Spec</h1>')
+    const { run } = seedRun(harness, { run: { source_path: path } })
+
+    await expect(harness.service.sourceFile(run.id)).resolves.toEqual({ path, exists: true })
+
+    rmSync(path)
+    await expect(harness.service.sourceFile(run.id)).resolves.toEqual({ path, exists: false })
+  })
+
+  it('refuses an unknown run', async () => {
+    await expect(harness.service.sourceFile('nope')).rejects.toThrow('The run was not found.')
   })
 })

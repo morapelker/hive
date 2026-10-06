@@ -19,6 +19,7 @@ import type {
   DocumentRunVerdict,
   DocumentRunnerClaim,
   DocumentSimpleResult,
+  DocumentSourceFile,
   DocumentVerifyResult,
   SessionFinalMessage
 } from '@shared/types/document-flow'
@@ -52,6 +53,9 @@ export const documentFlowApi = {
   }): Promise<DocumentRunDetail> => request('retryExtraction', params),
 
   get: (runId: string): Promise<DocumentRunDetail | null> => request('get', { runId }),
+
+  /** The run's source document and whether the file is still on disk. */
+  sourceFile: (runId: string): Promise<DocumentSourceFile> => request('sourceFile', { runId }),
 
   /** Newest first, without events. */
   list: (projectId?: string): Promise<DocumentRunDetail[]> =>

@@ -20,6 +20,7 @@ import {
   DocumentFileError,
   FIGURE_MAX_BYTES,
   assertDocumentFile,
+  documentFileExists,
   documentRunsRoot,
   normalizeDocumentPath,
   readDocumentSource,
@@ -70,6 +71,22 @@ describe('normalizeDocumentPath', () => {
 
   it('places run directories next to the attachments directory', () => {
     expect(documentRunsRoot('/Users/someone')).toBe('/Users/someone/.hive/document-runs')
+  })
+})
+
+describe('documentFileExists', () => {
+  it('is true for a regular file and false once it is gone', async () => {
+    const path = join(dir, 'spec.html')
+    writeFileSync(path, '<h1>Spec</h1>')
+    await expect(documentFileExists(path)).resolves.toBe(true)
+    rmSync(path)
+    await expect(documentFileExists(path)).resolves.toBe(false)
+  })
+
+  it('is false for a folder and for a path that runs through a file', async () => {
+    await expect(documentFileExists(dir)).resolves.toBe(false)
+    writeFileSync(join(dir, 'file'), 'x')
+    await expect(documentFileExists(join(dir, 'file', 'spec.html'))).resolves.toBe(false)
   })
 })
 

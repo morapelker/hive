@@ -23,6 +23,7 @@ import {
   type DocumentRunVerdict,
   type DocumentRunnerClaim,
   type DocumentSimpleResult,
+  type DocumentSourceFile,
   type DocumentVerifyResult,
   type SessionFinalMessage
 } from '../../../shared/types/document-flow'
@@ -63,6 +64,7 @@ export interface DocumentFlowRpcService {
   readonly createRun: (params: DocumentFlowCreateRunParams) => Rpc<DocumentRunDetail>
   readonly retryExtraction: (params: DocumentFlowRetryExtractionParams) => Rpc<DocumentRunDetail>
   readonly get: (runId: string) => Rpc<DocumentRunDetail | null>
+  readonly sourceFile: (runId: string) => Rpc<DocumentSourceFile>
   readonly list: (projectId?: string) => Rpc<DocumentRunDetail[]>
   readonly updateRun: (runId: string, patch: DocumentRunPatch) => Rpc<DocumentRun>
   readonly updateItem: (
@@ -266,6 +268,7 @@ export const makeLiveDocumentFlowRpcService = (eventBus?: EventBus): DocumentFlo
     createRun: (params) => call((service) => service.createRun(params)),
     retryExtraction: (params) => call((service) => service.retryExtraction(params)),
     get: (runId) => call((service) => service.get(runId)),
+    sourceFile: (runId) => call((service) => service.sourceFile(runId)),
     list: (projectId) => call((service) => service.list(projectId)),
     updateRun: (runId, patch) => call((service) => service.updateRun(runId, patch)),
     updateItem: (runId, itemId, patch) =>
@@ -317,6 +320,10 @@ export const makeDocumentFlowRpcHandlers = (
       handle(retryExtractionParamsSchema, (params) => service.retryExtraction(params))
     ],
     ['documentFlow.get', handle(runIdParamsSchema, ({ runId }) => service.get(runId))],
+    [
+      'documentFlow.sourceFile',
+      handle(runIdParamsSchema, ({ runId }) => service.sourceFile(runId))
+    ],
     ['documentFlow.list', handle(listParamsSchema, (params) => service.list(params?.projectId))],
     [
       'documentFlow.updateRun',

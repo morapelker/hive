@@ -17,8 +17,10 @@ import type { DocumentRunDetail } from '@shared/types/document-flow'
 import type { KanbanTicket } from '../../../../main/db/types'
 
 const api = vi.hoisted(() => ({ get: vi.fn() }))
+const projectApi = vi.hoisted(() => ({ openPath: vi.fn() }))
 
 vi.mock('@/api/document-flow-api', () => ({ documentFlowApi: api }))
+vi.mock('@/api/project-api', () => ({ projectApi }))
 
 vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() }
@@ -135,6 +137,7 @@ beforeEach(() => {
   api.get.mockImplementation(
     async (runId: string) => useDocumentFlowStore.getState().runsById[runId] ?? null
   )
+  projectApi.openPath.mockResolvedValue('')
 })
 
 afterEach(async () => {
@@ -539,6 +542,7 @@ describe('the card of a document run ticket', () => {
     fireEvent.contextMenu(card())
 
     const open = await screen.findByTestId('ctx-open-document-run')
+    expect(screen.getByTestId('ctx-open-document')).toBeInTheDocument()
     for (const absent of [
       'ctx-assign-worktree',
       'ctx-change-worktree',
@@ -559,6 +563,63 @@ describe('the card of a document run ticket', () => {
 
     fireEvent.click(open)
     expect(useDocumentFlowStore.getState().dashboardRunId).toBe('run-live')
+  })
+
+  it('opens the document from the menu, from the path kept on the ticket, even when the run record is gone', async () => {
+    api.get.mockResolvedValue(null)
+    render(
+      <KanbanTicketCard
+        ticket={makeTicket({
+          external_id: 'run-gone',
+          external_url: '/docs/checkout-redesign.html'
+        })}
+      />
+    )
+    await screen.findByTestId('kanban-docflow-run-missing-run-gone')
+
+    fireEvent.contextMenu(card())
+    fireEvent.click(await screen.findByTestId('ctx-open-document'))
+
+    await waitFor(() =>
+      expect(projectApi.openPath).toHaveBeenCalledWith('/docs/checkout-redesign.html')
+    )
+    expect(toast.info).not.toHaveBeenCalled()
+  })
+
+  it("falls back to the run's own path for a ticket from before the path was kept on it", async () => {
+    seedRuns(makeDetail({ id: 'run-live', source_path: '/docs/older-spec.html' }))
+    render(<KanbanTicketCard ticket={makeTicket({ external_url: null })} />)
+
+    fireEvent.contextMenu(card())
+    fireEvent.click(await screen.findByTestId('ctx-open-document'))
+
+    await waitFor(() => expect(projectApi.openPath).toHaveBeenCalledWith('/docs/older-spec.html'))
+  })
+
+  it('says so when the document to open was deleted', async () => {
+    projectApi.openPath.mockResolvedValue('Failed to open path')
+    seedRuns(makeDetail({ id: 'run-live' }))
+    render(<KanbanTicketCard ticket={makeTicket({ external_url: '/docs/gone.html' })} />)
+
+    fireEvent.contextMenu(card())
+    fireEvent.click(await screen.findByTestId('ctx-open-document'))
+
+    await waitFor(() =>
+      expect(toast.info).toHaveBeenCalledWith('The document was deleted from disk.')
+    )
+  })
+
+  it('offers nothing to open when neither the ticket nor a run knows the document', async () => {
+    api.get.mockResolvedValue(null)
+    render(
+      <KanbanTicketCard ticket={makeTicket({ external_id: 'run-gone', external_url: null })} />
+    )
+    await screen.findByTestId('kanban-docflow-run-missing-run-gone')
+
+    fireEvent.contextMenu(card())
+
+    await screen.findByTestId('ctx-open-document-run')
+    expect(screen.queryByTestId('ctx-open-document')).toBeNull()
   })
 
   it('refuses to delete the ticket of a run that is still going', async () => {

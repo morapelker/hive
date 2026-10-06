@@ -139,6 +139,7 @@ import {
 } from '@/components/document-flow/useDocumentRunTicket'
 import { isActiveRunStatus } from '@/components/document-flow/document-flow-ui'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
+import { projectApi } from '@/api/project-api'
 import { terminalApi } from '@/api/terminal-api'
 import {
   SHELL_COMMAND_TICKET_PROVIDER,
@@ -227,6 +228,12 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   const isDocumentRunTicket = documentRunId !== null
   const documentRunView = useDocumentRunTicket(documentRunId, ticket.column)
   const documentRunRailClass = documentRunView ? documentRunTicketRailClass(documentRunView) : null
+  // The document the run was made from: on the ticket row itself (so it is known even once the
+  // run record is gone), else from the run for tickets created before it was stored there.
+  const runSourcePath = useDocumentFlowStore((s) =>
+    documentRunId ? (s.runsById[documentRunId]?.run.source_path ?? null) : null
+  )
+  const documentPath = documentRunId ? ticket.external_url || runSourcePath : null
   const isEliteActive = isDocumentRunTicket && ticket.column === 'in_progress'
   // Marked as a shell command's ticket: it stays one without a session (duplicated, or
   // dragged back to To Do), and entering In Progress runs the command.
@@ -2203,6 +2210,24 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
             >
               <FileText className="h-3.5 w-3.5" />
               Open document run
+            </ContextMenuItem>
+          )}
+          {documentRunId && documentPath && (
+            <ContextMenuItem
+              data-testid="ctx-open-document"
+              className="gap-2"
+              onClick={() => {
+                // The shell answers a missing file with an error text, not a rejection.
+                void projectApi
+                  .openPath(documentPath)
+                  .then((failure) => {
+                    if (failure) toast.info('The document was deleted from disk.')
+                  })
+                  .catch(() => toast.error('Could not open the document.'))
+              }}
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+              Open document
             </ContextMenuItem>
           )}
 

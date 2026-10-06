@@ -64,6 +64,7 @@ import {
   type DocumentRunVerdict,
   type DocumentRunnerClaim,
   type DocumentSimpleResult,
+  type DocumentSourceFile,
   type DocumentVerifyResult,
   type SessionFinalMessage
 } from '@shared/types/document-flow'
@@ -75,6 +76,7 @@ import { downloadDocument, isDocumentUrl, type DocumentFetch } from './document-
 import {
   DocumentFileError,
   assertDocumentFile,
+  documentFileExists,
   documentRunsRoot,
   normalizeDocumentPath,
   readDocumentSource,
@@ -413,6 +415,13 @@ export class DocumentFlowService {
   get(runId: string): DocumentRunDetail | null {
     const run = this.db.getDocumentRun(runId)
     return run ? this.detail(this.recoverInterruptedExtraction(run), true) : null
+  }
+
+  /** The run's source document, and whether the file is still on disk (it is the user's file). */
+  async sourceFile(runId: string): Promise<DocumentSourceFile> {
+    const run = this.db.getDocumentRun(runId)
+    if (!run) throw notFound('The run')
+    return { path: run.source_path, exists: await documentFileExists(run.source_path) }
   }
 
   list(projectId?: string): DocumentRunDetail[] {
@@ -1001,7 +1010,9 @@ export class DocumentFlowService {
   /**
    * The run's ticket on the board: an ordinary ticket on the integration worktree, so moving
    * it to Done merges the integration branch into the base branch like any ticket's work. It
-   * has no session; the external-source fields mark it (both board backends store those).
+   * has no session; the external-source fields mark it (both board backends store those), and
+   * `external_url` carries the path of the document the run was made from, so the ticket row
+   * itself says which file to open even once the run record is gone.
    * Idempotent: a run that has its ticket is returned as it is.
    */
   private ensureRunTicket(run: DocumentRun, column: KanbanTicketColumn): Promise<DocumentRun> {
@@ -1018,7 +1029,8 @@ export class DocumentFlowService {
           mode: null,
           worktree_id: current.integration_worktree_id,
           external_provider: DOCUMENT_RUN_TICKET_PROVIDER,
-          external_id: current.id
+          external_id: current.id,
+          external_url: current.source_path
         }
       ])
       const ticket = tickets[0]
