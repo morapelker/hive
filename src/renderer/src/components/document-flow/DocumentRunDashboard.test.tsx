@@ -5,6 +5,7 @@ import { toast } from '@/lib/toast'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useProjectStore } from '@/stores/useProjectStore'
+import { useQuestionStore, type QuestionRequest } from '@/stores/useQuestionStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
@@ -29,12 +30,19 @@ const api = vi.hoisted(() => ({
 }))
 
 const questionMode = vi.hoisted(() => ({ applyQuestionMode: vi.fn() }))
+const migrations = vi.hoisted(() => ({ startRunMigrations: vi.fn(), stopRunMigrations: vi.fn() }))
 
 vi.mock('@/api/document-flow-api', () => ({ documentFlowApi: api }))
 // The broadcast to the run's sessions has its own tests; here only the gate in front of it.
 vi.mock('@/lib/document-flow/question-mode', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/document-flow/question-mode')>()),
   applyQuestionMode: questionMode.applyQuestionMode
+}))
+// Launching and stopping the session has its own tests; here only the buttons in front of it.
+vi.mock('@/lib/document-flow/migrations', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/document-flow/migrations')>()),
+  startRunMigrations: migrations.startRunMigrations,
+  stopRunMigrations: migrations.stopRunMigrations
 }))
 vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() }
@@ -46,6 +54,7 @@ const initialProjectState = useProjectStore.getState()
 const initialWorktreeState = useWorktreeStore.getState()
 const initialWorktreeStatusState = useWorktreeStatusStore.getState()
 const initialSessionState = useSessionStore.getState()
+const initialQuestionState = useQuestionStore.getState()
 const initialKanbanState = useKanbanStore.getState()
 
 const QUESTION_VERDICT: DocumentRunVerdict = {
@@ -116,6 +125,7 @@ afterEach(async () => {
   useWorktreeStore.setState(initialWorktreeState, true)
   useWorktreeStatusStore.setState(initialWorktreeStatusState, true)
   useSessionStore.setState(initialSessionState, true)
+  useQuestionStore.setState(initialQuestionState, true)
   useKanbanStore.setState(initialKanbanState, true)
 })
 
@@ -1116,5 +1126,365 @@ describe('DocumentRunDashboard — report and activity', () => {
     expect(entries[0]).toHaveTextContent('A1')
     expect(entries[0]).toHaveTextContent('Launched in its own worktree')
     expect(entries[1]).toHaveTextContent('Run started')
+  })
+})
+
+describe('DocumentRunDashboard — executing migrations', () => {
+  const MIGRATIONS = ['drizzle/0066_cart_items.sql', 'drizzle/0067_guest_orders.sql']
+  const finished = (run: Partial<DocumentRunDetail['run']> = {}): DocumentRunDetail =>
+    makeDetail(
+      {
+        ...LAUNCHED,
+        status: 'completed',
+        report: makeReport({ migrations: MIGRATIONS }),
+        ...run
+      },
+      [{ key: 'A1', status: 'merged' }]
+    )
+  const migrating = (run: Partial<DocumentRunDetail['run']> = {}): DocumentRunDetail =>
+    finished({
+      migration_session_id: 'session-mig',
+      migration_started_at: '2026-05-04T11:00:00.000Z',
+      ...run
+    })
+  const inMigrations = (): ReturnType<typeof within> =>
+    within(screen.getByTestId('docflow-report-migrations'))
+  // The server's side of start and stop: the run records the session, or lets go of it.
+  const recordSession = (runId: string, sessionId: string | null): void => {
+    const detail = storedDetail(runId)
+    useDocumentFlowStore
+      .getState()
+      .applyRun({ ...detail.run, migration_session_id: sessionId, migration_started_at: null })
+  }
+  const QUESTION: QuestionRequest = {
+    id: 'question-1',
+    sessionID: 'session-mig',
+    questions: [{ question: 'Run 0067 as well?', header: 'Migrations', options: [] }]
+  }
+  const ARCHIVED_REASON =
+    'The worktree of doc-checkout-redesign was archived, so there is no checkout of the branch to execute the migrations in.'
+  const NO_WORKTREE_REASON = 'The run has no integration worktree to execute the migrations in.'
+
+  beforeEach(() => {
+    migrations.startRunMigrations.mockResolvedValue(undefined)
+    migrations.stopRunMigrations.mockResolvedValue(undefined)
+  })
+
+  it.each(['completed', 'completed_with_issues'] as const)(
+    'offers "Execute migrations" next to the migrations of a %s run',
+    async (status) => {
+      await renderDashboard(finished({ status }))
+
+      const button = inMigrations().getByTestId('docflow-execute-migrations-btn')
+      expect(button).toHaveTextContent('Execute migrations')
+      expect(button).not.toBeDisabled()
+      expect(button).not.toHaveAttribute('title')
+      // Nothing stands in the way, so nothing is said about it.
+      expect(screen.queryByTestId('docflow-migrations-blocked')).toBeNull()
+      // The list it acts on is still there to read.
+      expect(
+        inMigrations()
+          .getAllByRole('listitem')
+          .map((item) => item.textContent)
+      ).toEqual(MIGRATIONS)
+      expect(screen.queryByTestId('docflow-stop-migrations-btn')).toBeNull()
+      expect(screen.queryByTestId('docflow-migrations-running')).toBeNull()
+      expect(screen.queryByTestId('docflow-migrations-waiting')).toBeNull()
+      expect(screen.queryByTestId('docflow-open-migration-session')).toBeNull()
+    }
+  )
+
+  it('offers nothing to execute when the run reported no migrations', async () => {
+    await renderDashboard(finished({ report: makeReport({ manualSteps: ['Rotate the key'] }) }))
+
+    expect(screen.getByTestId('docflow-report-manual-steps')).toBeInTheDocument()
+    expect(screen.queryByTestId('docflow-report-migrations')).toBeNull()
+    expect(screen.queryByTestId('docflow-execute-migrations-btn')).toBeNull()
+    expect(screen.queryByTestId('docflow-stop-migrations-btn')).toBeNull()
+  })
+
+  it('starts the session only after a confirmation that names the integration branch', async () => {
+    await renderDashboard(finished())
+
+    await click('docflow-execute-migrations-btn')
+    expect(screen.getByText('Execute the migrations against production?')).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        /It runs in the worktree of doc-checkout-redesign, the branch the run's tickets were merged into\./
+      )
+    ).toBeInTheDocument()
+    expect(screen.getByTestId('docflow-confirm-action')).toHaveTextContent('Execute migrations')
+    await click('docflow-confirm-cancel')
+    expect(migrations.startRunMigrations).not.toHaveBeenCalled()
+    expect(screen.queryByText('Execute the migrations against production?')).toBeNull()
+
+    await click('docflow-execute-migrations-btn')
+    await click('docflow-confirm-action')
+    expect(migrations.startRunMigrations).toHaveBeenCalledTimes(1)
+    expect(migrations.startRunMigrations).toHaveBeenCalledWith('run-1')
+    expect(toast.error).not.toHaveBeenCalled()
+  })
+
+  it('cannot be asked twice while the session is being started', async () => {
+    let finishStart: () => void = () => {}
+    migrations.startRunMigrations.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finishStart = resolve
+        })
+    )
+    await renderDashboard(finished())
+
+    await click('docflow-execute-migrations-btn')
+    await click('docflow-confirm-action')
+    expect(screen.getByTestId('docflow-execute-migrations-btn')).toBeDisabled()
+    await click('docflow-execute-migrations-btn')
+    expect(screen.queryByText('Execute the migrations against production?')).toBeNull()
+
+    // The server recorded the session, and the launch settled: Stop takes the button's place.
+    await act(async () => {
+      recordSession('run-1', 'session-mig')
+      finishStart()
+    })
+    expect(migrations.startRunMigrations).toHaveBeenCalledTimes(1)
+    expect(screen.queryByTestId('docflow-execute-migrations-btn')).toBeNull()
+    expect(screen.getByTestId('docflow-stop-migrations-btn')).not.toBeDisabled()
+  })
+
+  it('reports a session that could not be started and offers to execute again', async () => {
+    migrations.startRunMigrations.mockRejectedValue(new Error('Could not create session'))
+    await renderDashboard(finished())
+
+    await click('docflow-execute-migrations-btn')
+    await click('docflow-confirm-action')
+
+    expect(toast.error).toHaveBeenCalledWith(
+      'Could not execute the migrations: Could not create session'
+    )
+    expect(screen.getByTestId('docflow-execute-migrations-btn')).not.toBeDisabled()
+    expect(screen.queryByTestId('docflow-stop-migrations-btn')).toBeNull()
+    expect(screen.getByTestId('docflow-dashboard-status')).toHaveTextContent('Completed')
+  })
+
+  it('withholds the button, and says why, once the integration worktree was archived', async () => {
+    // The project's worktrees are loaded, and the integration worktree is not among them.
+    useWorktreeStore.setState({ worktreesByProject: new Map([[TEST_PROJECT.id, []]]) })
+    await renderDashboard(finished())
+
+    const button = screen.getByTestId('docflow-execute-migrations-btn')
+    expect(button).toBeDisabled()
+    expect(button).toHaveAttribute('title', ARCHIVED_REASON)
+    // In words next to the button: a disabled button shows no tooltip.
+    expect(inMigrations().getByTestId('docflow-migrations-blocked')).toHaveTextContent(
+      ARCHIVED_REASON
+    )
+    await click('docflow-execute-migrations-btn')
+    expect(screen.queryByText('Execute the migrations against production?')).toBeNull()
+    expect(migrations.startRunMigrations).not.toHaveBeenCalled()
+
+    // Loaded with the worktree among them: nothing stands in the way.
+    act(() => {
+      useWorktreeStore.setState({
+        worktreesByProject: new Map([[TEST_PROJECT.id, [{ id: 'wt-integration' }]]])
+      } as never)
+    })
+    expect(screen.getByTestId('docflow-execute-migrations-btn')).not.toBeDisabled()
+    expect(screen.getByTestId('docflow-execute-migrations-btn')).not.toHaveAttribute('title')
+    expect(screen.queryByTestId('docflow-migrations-blocked')).toBeNull()
+  })
+
+  it('withholds the button for a run that has no integration worktree', async () => {
+    await renderDashboard(finished({ integration_worktree_id: null }))
+
+    const button = screen.getByTestId('docflow-execute-migrations-btn')
+    expect(button).toBeDisabled()
+    expect(button).toHaveAttribute('title', NO_WORKTREE_REASON)
+    expect(inMigrations().getByTestId('docflow-migrations-blocked')).toHaveTextContent(
+      NO_WORKTREE_REASON
+    )
+  })
+
+  it('says nothing stands in the way while the worktrees of the project are still unknown', async () => {
+    // Not loaded yet: no list to miss the integration worktree in.
+    expect(useWorktreeStore.getState().worktreesByProject.has(TEST_PROJECT.id)).toBe(false)
+    await renderDashboard(finished())
+
+    expect(screen.getByTestId('docflow-execute-migrations-btn')).not.toBeDisabled()
+    expect(screen.queryByTestId('docflow-migrations-blocked')).toBeNull()
+  })
+
+  it('shows Stop, the session and "Running migrations" while the session is at it', async () => {
+    await renderDashboard(migrating())
+
+    expect(screen.queryByTestId('docflow-execute-migrations-btn')).toBeNull()
+    expect(inMigrations().getByTestId('docflow-stop-migrations-btn')).toHaveTextContent(/^Stop$/)
+    expect(inMigrations().getByTestId('docflow-stop-migrations-btn')).not.toBeDisabled()
+    const marker = inMigrations().getByTestId('docflow-migrations-running')
+    expect(marker).toHaveTextContent(/^Running migrations$/)
+    expect(marker.className).toContain('text-fuchsia-500')
+    expect(screen.queryByTestId('docflow-migrations-waiting')).toBeNull()
+    expect(inMigrations().getByTestId('docflow-open-migration-session')).toHaveTextContent(
+      'Open session'
+    )
+    expect(screen.getByTestId('docflow-dashboard-status')).toHaveTextContent(/^Running migrations$/)
+    // Not while a session is working in its integration worktree.
+    expect(screen.queryByTestId('docflow-delete-run-btn')).toBeNull()
+    expect(inMigrations().getAllByRole('listitem')).toHaveLength(MIGRATIONS.length)
+  })
+
+  it('keeps Stop within reach after the integration worktree left the list', async () => {
+    useWorktreeStore.setState({ worktreesByProject: new Map([[TEST_PROJECT.id, []]]) })
+    await renderDashboard(migrating())
+
+    expect(screen.getByTestId('docflow-stop-migrations-btn')).not.toBeDisabled()
+    expect(screen.getByTestId('docflow-stop-migrations-btn')).not.toHaveAttribute('title')
+    // Why Execute would be refused is no matter while there is no Execute.
+    expect(screen.queryByTestId('docflow-migrations-blocked')).toBeNull()
+  })
+
+  it('says the migrations wait for the user while their session has a question pending', async () => {
+    useQuestionStore.getState().addQuestion('session-mig', QUESTION)
+    await renderDashboard(migrating())
+
+    const marker = inMigrations().getByTestId('docflow-migrations-waiting')
+    expect(marker).toHaveTextContent(/^Migrations waiting for you$/)
+    expect(marker.className).toContain('text-orange-500')
+    expect(screen.queryByTestId('docflow-migrations-running')).toBeNull()
+    // The way to the session that asks, and to stop it, stays.
+    expect(inMigrations().getByTestId('docflow-open-migration-session')).toBeInTheDocument()
+    expect(inMigrations().getByTestId('docflow-stop-migrations-btn')).not.toBeDisabled()
+    expect(screen.queryByTestId('docflow-execute-migrations-btn')).toBeNull()
+
+    // Answered: the session is at it again.
+    act(() => {
+      useQuestionStore.getState().removeQuestion('session-mig', QUESTION.id)
+    })
+    expect(screen.queryByTestId('docflow-migrations-waiting')).toBeNull()
+    expect(inMigrations().getByTestId('docflow-migrations-running')).toHaveTextContent(
+      /^Running migrations$/
+    )
+  })
+
+  it.each(['answering', 'permission', 'command_approval'] as const)(
+    'says the migrations wait for the user while their session reports "%s"',
+    async (status) => {
+      useWorktreeStatusStore.setState({
+        sessionStatuses: { 'session-mig': { status, timestamp: Date.now() } }
+      })
+      await renderDashboard(migrating())
+
+      expect(inMigrations().getByTestId('docflow-migrations-waiting')).toHaveTextContent(
+        /^Migrations waiting for you$/
+      )
+      expect(screen.queryByTestId('docflow-migrations-running')).toBeNull()
+
+      // The session goes on: the marker is the one of migrations at work again.
+      act(() => {
+        useWorktreeStatusStore.setState({
+          sessionStatuses: { 'session-mig': { status: 'working', timestamp: Date.now() } }
+        })
+      })
+      expect(screen.queryByTestId('docflow-migrations-waiting')).toBeNull()
+      expect(inMigrations().getByTestId('docflow-migrations-running')).toBeInTheDocument()
+    }
+  )
+
+  it('keeps "Running migrations" while it is another session that waits on the user', async () => {
+    useQuestionStore
+      .getState()
+      .addQuestion('session-other', { ...QUESTION, sessionID: 'session-other' })
+    useWorktreeStatusStore.setState({
+      sessionStatuses: {
+        'session-mig': { status: 'working', timestamp: Date.now() },
+        'session-other': { status: 'permission', timestamp: Date.now() }
+      }
+    })
+    await renderDashboard(migrating())
+
+    expect(inMigrations().getByTestId('docflow-migrations-running')).toHaveTextContent(
+      /^Running migrations$/
+    )
+    expect(screen.queryByTestId('docflow-migrations-waiting')).toBeNull()
+  })
+
+  it('shows no marker of a waiting session once the run let go of it', async () => {
+    useQuestionStore.getState().addQuestion('session-mig', QUESTION)
+    await renderDashboard(finished())
+
+    expect(screen.queryByTestId('docflow-migrations-waiting')).toBeNull()
+    expect(screen.queryByTestId('docflow-migrations-running')).toBeNull()
+    expect(inMigrations().getByTestId('docflow-execute-migrations-btn')).not.toBeDisabled()
+  })
+
+  it('stops the session at once, without asking, and offers to execute again', async () => {
+    migrations.stopRunMigrations.mockImplementation(async (runId: string) => {
+      recordSession(runId, null)
+    })
+    await renderDashboard(migrating())
+
+    await click('docflow-stop-migrations-btn')
+
+    expect(migrations.stopRunMigrations).toHaveBeenCalledTimes(1)
+    expect(migrations.stopRunMigrations).toHaveBeenCalledWith('run-1')
+    expect(screen.queryByTestId('docflow-confirm-action')).toBeNull()
+    expect(migrations.startRunMigrations).not.toHaveBeenCalled()
+    // The button is what it was before the session was started.
+    expect(screen.queryByTestId('docflow-stop-migrations-btn')).toBeNull()
+    expect(screen.queryByTestId('docflow-migrations-running')).toBeNull()
+    const button = screen.getByTestId('docflow-execute-migrations-btn')
+    expect(button).toHaveTextContent('Execute migrations')
+    expect(button).not.toBeDisabled()
+    expect(screen.getByTestId('docflow-dashboard-status')).toHaveTextContent('Completed')
+    expect(toast.error).not.toHaveBeenCalled()
+  })
+
+  it('reports a stop that failed and leaves Stop to try again', async () => {
+    migrations.stopRunMigrations.mockRejectedValue(new Error('offline'))
+    await renderDashboard(migrating())
+
+    await click('docflow-stop-migrations-btn')
+
+    expect(toast.error).toHaveBeenCalledWith('Could not stop the migrations: offline')
+    expect(screen.getByTestId('docflow-stop-migrations-btn')).not.toBeDisabled()
+    expect(screen.getByTestId('docflow-migrations-running')).toBeInTheDocument()
+    expect(screen.queryByTestId('docflow-execute-migrations-btn')).toBeNull()
+  })
+
+  it('opens the migration session in the integration worktree and closes the dialog', async () => {
+    const toggleBoardView = vi.fn()
+    useKanbanStore.setState({ isBoardViewActive: true, toggleBoardView } as never)
+    await renderDashboard(migrating())
+
+    await click('docflow-open-migration-session')
+
+    expect(toggleBoardView).toHaveBeenCalledTimes(1)
+    expect(useWorktreeStore.getState().selectedWorktreeId).toBe('wt-integration')
+    expect(useSessionStore.getState().activeWorktreeId).toBe('wt-integration')
+    expect(useSessionStore.getState().activeSessionId).toBe('session-mig')
+    expect(useProjectStore.getState().selectedProjectId).toBe(TEST_PROJECT.id)
+    expect(useDocumentFlowStore.getState().dashboardRunId).toBeNull()
+    // Reading the session stops nothing.
+    expect(migrations.stopRunMigrations).not.toHaveBeenCalled()
+  })
+
+  it('offers to execute again, and to delete, once the run let go of its session', async () => {
+    const detail = migrating()
+    await renderDashboard(detail)
+    expect(screen.getByTestId('docflow-stop-migrations-btn')).toBeInTheDocument()
+
+    // The session ended on its own: the server's push clears it from the run.
+    act(() => {
+      useDocumentFlowStore
+        .getState()
+        .applyRun({ ...detail.run, migration_session_id: null, migration_started_at: null })
+    })
+
+    expect(screen.queryByTestId('docflow-stop-migrations-btn')).toBeNull()
+    expect(screen.queryByTestId('docflow-migrations-running')).toBeNull()
+    expect(screen.queryByTestId('docflow-open-migration-session')).toBeNull()
+    expect(inMigrations().getByTestId('docflow-execute-migrations-btn')).not.toBeDisabled()
+    expect(screen.getByTestId('docflow-dashboard-status')).toHaveTextContent('Completed')
+    expect(screen.getByTestId('docflow-delete-run-btn')).toBeInTheDocument()
+    expect(migrations.stopRunMigrations).not.toHaveBeenCalled()
   })
 })

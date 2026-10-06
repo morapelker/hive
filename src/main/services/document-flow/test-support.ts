@@ -79,6 +79,9 @@ export function createFakeDocumentFlowDb(): FakeDocumentFlowDb {
         integration_worktree_path: null,
         ticket_id: null,
         report: null,
+        migration_session_id: null,
+        migration_started_at: null,
+        migration_owner_pid: null,
         runner_client_id: null,
         runner_heartbeat_at: null,
         created_at: now,
@@ -374,7 +377,7 @@ export interface ServiceHarness {
   /** How many tasks were handed to `detach`. */
   detachCount: () => number
   /** Replace a collaborator for the rest of the test; the harness's own fake is used otherwise. */
-  overrides: Partial<OverridableDeps>
+  overrides: Partial<OverridableDeps> & UnsetDeps
   cleanup: () => void
 }
 
@@ -399,6 +402,9 @@ type OverridableDeps = Required<
   >
 >
 
+/** Collaborators the service is not given at all, unless a test supplies one. */
+type UnsetDeps = Pick<DocumentFlowServiceDeps, 'getAppPid' | 'isProcessAlive'>
+
 /**
  * A service wired to fakes. With `repo`, the project is that repository and integration
  * worktrees are really created in it (`git worktree add -b <hint> … <baseRef>`). A test swaps a
@@ -407,7 +413,7 @@ type OverridableDeps = Required<
 export function createServiceHarness(options: { repo?: TestRepo } = {}): ServiceHarness {
   const { repo } = options
   const db = createFakeDocumentFlowDb()
-  const overrides: Partial<OverridableDeps> = {}
+  const overrides: ServiceHarness['overrides'] = {}
   const published: DocumentFlowUpdatedEvent[] = []
   const replies: ServiceHarness['replies'] = []
   const generateCalls: ServiceHarness['generateCalls'] = []
@@ -458,7 +464,11 @@ export function createServiceHarness(options: { repo?: TestRepo } = {}): Service
       ticketBatches.push({ projectId, drafts })
       return {
         tickets: drafts.map((draft) => {
-          const ticket = { id: `ticket-${++ticketCount}`, projectId, column: draft.column ?? 'todo' }
+          const ticket = {
+            id: `ticket-${++ticketCount}`,
+            projectId,
+            column: draft.column ?? 'todo'
+          }
           boardTickets.set(ticket.id, ticket)
           return { id: ticket.id }
         })
@@ -500,6 +510,12 @@ export function createServiceHarness(options: { repo?: TestRepo } = {}): Service
     getWorktree: (...args) => (overrides.getWorktree ?? fakes.getWorktree)(...args),
     getDefaultBranch: (...args) => (overrides.getDefaultBranch ?? fakes.getDefaultBranch)(...args),
     getAppStartedAt: () => (overrides.getAppStartedAt ?? fakes.getAppStartedAt)(),
+    get getAppPid() {
+      return overrides.getAppPid
+    },
+    get isProcessAlive() {
+      return overrides.isProcessAlive
+    },
     createWorktreeFromBranch: (...args) =>
       (overrides.createWorktreeFromBranch ?? fakes.createWorktreeFromBranch)(...args),
     createTickets: (...args) => (overrides.createTickets ?? fakes.createTickets)(...args),

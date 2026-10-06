@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { documentFlowApi } from '@/api/document-flow-api'
 import { getRendererRpcClient } from '@/api/rpc-client'
 import type { HiveClient } from '@/api/hive-client'
+import { startMigrationWatcher } from '@/lib/document-flow/migrations'
 import { DocumentFlowRunner } from '@/lib/document-flow/runner'
 import { createLiveRunnerPorts } from '@/lib/document-flow/runner-ports'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
@@ -10,7 +11,8 @@ const swallow = (): void => {}
 
 /**
  * Mount-once (AppLayout): keeps the document-flow store in sync with the server
- * (`documentFlow:updated`), loads the runs, and drives every launched run this client owns.
+ * (`documentFlow:updated`), loads the runs, drives every launched run this client owns, and
+ * follows the migration sessions of the finished ones.
  */
 export function useDocumentFlowRunner(): void {
   useEffect(() => {
@@ -35,9 +37,11 @@ export function useDocumentFlowRunner(): void {
 
     const runner = new DocumentFlowRunner(createLiveRunnerPorts())
     runner.start()
+    const stopMigrationWatcher = startMigrationWatcher()
 
     return () => {
       runner.stop()
+      stopMigrationWatcher()
       unsubscribeUpdates()
       unsubscribeOpen()
     }

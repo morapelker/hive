@@ -10,11 +10,14 @@ const LABEL_CLASSES: Record<RunBoardCardState['phase'], string> = {
   paused: 'text-muted-foreground',
   completed: 'text-emerald-500',
   issues: 'text-amber-500',
-  cancelled: 'text-muted-foreground'
+  cancelled: 'text-muted-foreground',
+  migrating: 'text-fuchsia-500'
 }
 
+type MovingPhase = 'running' | 'migrating'
+
 // A run that is no longer moving shows how far it got: merged of total, in its phase's color
-const STILL_BAR_CLASSES: Record<Exclude<RunBoardCardState['phase'], 'running'>, string> = {
+const STILL_BAR_CLASSES: Record<Exclude<RunBoardCardState['phase'], MovingPhase>, string> = {
   paused: 'bg-muted-foreground/40',
   completed: 'bg-emerald-500',
   issues: 'bg-amber-500',
@@ -28,8 +31,9 @@ interface DocumentRunTicketBodyProps {
 
 /**
  * The body of a run's ticket card, under the ticket's own title: the "Document run" marker,
- * one progress bar (moving while the run is on, like any ticket at work), the sessions at
- * work or waiting for an answer (or how the run ended) and merged of total.
+ * one progress bar (moving while the run is on, like any ticket at work, and again in its own
+ * color while a session executes the run's migrations), the sessions at work or waiting for an
+ * answer (or how the run ended) and merged of total.
  */
 export function DocumentRunTicketBody({
   runId,
@@ -72,11 +76,12 @@ export function DocumentRunTicketBody({
       )}
       {state && (
         <>
-          {state.phase === 'running' ? (
+          {state.phase === 'running' || state.phase === 'migrating' ? (
             <div data-testid={`kanban-docflow-run-bar-${runId}`} data-moving="">
               <IndeterminateProgressBar
                 mode="build"
                 isAsking={state.waitingOnUser}
+                isRunningMigrations={state.phase === 'migrating'}
                 className="mt-2 w-full"
               />
             </div>

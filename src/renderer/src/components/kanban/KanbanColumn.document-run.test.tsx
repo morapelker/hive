@@ -126,10 +126,14 @@ const mainWorktree = {
 const moveTicket = vi.fn()
 const setPendingDoneMove = vi.fn()
 
-function seedRun(status: DocumentRunStatus): DocumentRunDetail {
-  const detail = makeDetail({ id: 'run-1', project_id: 'proj-1', status, base_branch: 'main' }, [
-    { key: 'A1', status: 'merged' }
-  ])
+function seedRun(
+  status: DocumentRunStatus,
+  run: Partial<DocumentRunDetail['run']> = {}
+): DocumentRunDetail {
+  const detail = makeDetail(
+    { id: 'run-1', project_id: 'proj-1', status, base_branch: 'main', ...run },
+    [{ key: 'A1', status: 'merged' }]
+  )
   useDocumentFlowStore.setState({ runsById: { 'run-1': detail } })
   return detail
 }
@@ -376,6 +380,67 @@ describe('dropping the ticket of a run that has ended', () => {
     )
     expect(moveTicket).not.toHaveBeenCalled()
     expect(screen.queryByTestId('worktree-picker')).toBeNull()
+  })
+})
+
+describe('dropping the ticket of a run whose migrations are being executed', () => {
+  const MIGRATING = { migration_session_id: 'session-mig' }
+
+  it.each(['review', 'merged', 'done'] as const)(
+    'refuses a move to %s and says why',
+    async (column) => {
+      seedRun('completed', MIGRATING)
+
+      await drop(makeTicket(), column)
+
+      expect(toast.warning).toHaveBeenCalledWith(
+        'The migrations of this document run are being executed. Wait for them to finish, or stop them, before moving its ticket.'
+      )
+      expect(moveTicket).not.toHaveBeenCalled()
+      expect(setPendingDoneMove).not.toHaveBeenCalled()
+      // Refused before anything looked at git.
+      expect(dbApiMocks.worktree.get).not.toHaveBeenCalled()
+      expect(gitApiMocks.branchDiffShortStat).not.toHaveBeenCalled()
+    }
+  )
+
+  it('puts a ticket that strayed back In Progress without offering to launch a session', async () => {
+    seedRun('completed_with_issues', MIGRATING)
+
+    await drop(makeTicket({ column: 'review' }), 'in_progress')
+
+    expect(moveTicket).toHaveBeenCalledWith('ticket-run', 'proj-1', 'in_progress', 0)
+    expect(screen.queryByTestId('worktree-picker')).toBeNull()
+    expect(toast.warning).not.toHaveBeenCalled()
+  })
+
+  it('reads the session off a run fetched from the server', async () => {
+    const detail = makeDetail(
+      { id: 'run-1', project_id: 'proj-1', status: 'completed', ...MIGRATING },
+      [{ key: 'A1', status: 'merged' }]
+    )
+    flowApi.get.mockResolvedValue(detail)
+
+    await drop(makeTicket(), 'done')
+
+    expect(flowApi.get).toHaveBeenCalledWith('run-1')
+    expect(toast.warning).toHaveBeenCalledWith(
+      expect.stringMatching(/^The migrations of this document run are being executed\./)
+    )
+    expect(moveTicket).not.toHaveBeenCalled()
+  })
+
+  it('merges the ticket as usual once the run let go of its session', async () => {
+    seedRun('completed', { migration_session_id: null })
+
+    await drop(makeTicket({ column: 'review' }), 'done')
+
+    await waitFor(() =>
+      expect(setPendingDoneMove).toHaveBeenCalledWith(
+        expect.objectContaining({ ticketId: 'ticket-run', targetColumn: 'done' })
+      )
+    )
+    expect(toast.warning).not.toHaveBeenCalled()
   })
 })
 

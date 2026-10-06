@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 53
+export const CURRENT_SCHEMA_VERSION = 54
 
 /**
  * "Implement document" flow (v55). `document_runs` is one spec document turned into tickets
@@ -14,7 +14,9 @@ export const CURRENT_SCHEMA_VERSION = 53
  * archived rather than deleted, and markdown-backed boards have no kanban_tickets row, so
  * `integration_worktree_id`, `worktree_id`, `ticket_id` and the session ids are plain ids.
  * `document_runs.ticket_id` (v57) is the run's own board ticket, the one that is moved to Done
- * to merge the integration branch.
+ * to merge the integration branch. `migration_session_id` / `migration_started_at` /
+ * `migration_owner_pid` (v58) are the session executing a finished run's migrations, while one
+ * is, and the app instance it runs in.
  * CREATE TABLE IF NOT EXISTS, replayed by ensureDocumentFlowTables() in database.ts.
  */
 export const DOCUMENT_FLOW_TABLES_SQL = `
@@ -36,6 +38,9 @@ export const DOCUMENT_FLOW_TABLES_SQL = `
     integration_worktree_path TEXT DEFAULT NULL,
     ticket_id                 TEXT DEFAULT NULL,
     report                    TEXT DEFAULT NULL,
+    migration_session_id      TEXT DEFAULT NULL,
+    migration_started_at      TEXT DEFAULT NULL,
+    migration_owner_pid       INTEGER DEFAULT NULL,
     runner_client_id          TEXT DEFAULT NULL,
     runner_heartbeat_at       TEXT DEFAULT NULL,
     created_at                TEXT NOT NULL,
@@ -950,6 +955,15 @@ DROP TABLE IF EXISTS diff_comments;`
     name: 'add_document_run_ticket',
     up: `-- NOTE: ALTER TABLE for document_runs.ticket_id is handled idempotently by
          -- safeAddColumn() in database.ts to avoid "duplicate column" errors.`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
+  },
+  {
+    version: 54,
+    name: 'add_document_run_migration_session',
+    up: `-- NOTE: ALTER TABLE for document_runs.migration_session_id,
+         -- document_runs.migration_started_at and document_runs.migration_owner_pid is
+         -- handled idempotently by safeAddColumn() in database.ts to avoid
+         -- "duplicate column" errors.`,
     down: `-- SQLite cannot drop columns; this is a no-op for safety`
   }
 ]

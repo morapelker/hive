@@ -17,11 +17,14 @@ const SECTION_LABEL_CLASS = 'text-xs font-medium uppercase tracking-wider text-m
 /** What a finished run hands back: what merged, what did not, and what is left for the user. */
 export function RunReportSection({
   report,
-  landed = false
+  landed = false,
+  migrationsAction
 }: {
   report: DocumentRunReport
   /** The run's ticket already sits in Done or Merged, so the merge is not left to do. */
   landed?: boolean
+  /** Shown next to the migrations list: the button that executes them, or stops that. */
+  migrationsAction?: React.ReactNode
 }): React.JSX.Element {
   const { stats, verify } = report
   return (
@@ -40,12 +43,18 @@ export function RunReportSection({
       )}
 
       {landed ? (
-        <p className="text-[13px] leading-relaxed text-foreground" data-testid="docflow-report-next">
+        <p
+          className="text-[13px] leading-relaxed text-foreground"
+          data-testid="docflow-report-next"
+        >
           The run&rsquo;s ticket is in Done.
           {report.migrations.length > 0 ? ' Run the migrations if you have not yet.' : ''}
         </p>
       ) : (
-        <p className="text-[13px] leading-relaxed text-foreground" data-testid="docflow-report-next">
+        <p
+          className="text-[13px] leading-relaxed text-foreground"
+          data-testid="docflow-report-next"
+        >
           What is left for you: {report.migrations.length > 0 ? 'run the migrations, ' : ''}review,
           then move the run&rsquo;s ticket to Done on the board to merge{' '}
           <span className="font-mono text-[12px]">{report.integrationBranch}</span> into{' '}
@@ -86,6 +95,7 @@ export function RunReportSection({
         testId="docflow-report-migrations"
         entries={report.migrations}
         mono
+        action={migrationsAction}
       />
       <ReportList
         title="Manual steps"
@@ -145,19 +155,25 @@ function ReportList({
   title,
   testId,
   entries,
-  mono = false
+  mono = false,
+  action
 }: {
   title: string
   testId: string
   entries: string[]
   mono?: boolean
+  /** Sits at the end of the title row. */
+  action?: React.ReactNode
 }): React.JSX.Element | null {
   if (entries.length === 0) return null
   return (
     <div className="space-y-1" data-testid={testId}>
-      <p className="text-[12px] font-medium text-foreground">
-        {title} ({entries.length})
-      </p>
+      <div className="flex min-h-6 items-center justify-between gap-3">
+        <p className="shrink-0 text-[12px] font-medium text-foreground">
+          {title} ({entries.length})
+        </p>
+        {action && <div className="flex min-w-0 items-center justify-end gap-1.5">{action}</div>}
+      </div>
       <ul
         className={
           mono

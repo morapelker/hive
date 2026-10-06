@@ -54,7 +54,7 @@ import type {
   Worktree
 } from '../../../../main/db/types'
 import { documentRunIdOf, isDocumentRunTicket } from '@shared/document-flow/run-ticket'
-import type { DocumentRunStatus } from '@shared/types/document-flow'
+import type { DocumentRun } from '@shared/types/document-flow'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { dbApi } from '@/api/db-api'
 import { gitApi } from '@/api/git-api'
@@ -566,12 +566,12 @@ export function KanbanColumn({
         // stop-session paths below.
         const documentRunId = documentRunIdOf(findTicket(ticketId, ticketProjectId))
         if (documentRunId) {
-          let runStatus: DocumentRunStatus | undefined =
-            useDocumentFlowStore.getState().runsById[documentRunId]?.run.status
-          if (!runStatus) {
+          let run: Pick<DocumentRun, 'status' | 'migration_session_id'> | undefined =
+            useDocumentFlowStore.getState().runsById[documentRunId]?.run
+          if (!run) {
             try {
               // No run when its record is gone; then only its ticket is left to move
-              runStatus = (await documentFlowApi.get(documentRunId))?.run.status
+              run = (await documentFlowApi.get(documentRunId))?.run
             } catch (err) {
               toast.warning(
                 `Could not check the document run: ${err instanceof Error ? err.message : String(err)}`
@@ -579,7 +579,11 @@ export function KanbanColumn({
               return
             }
           }
-          const refusal = documentRunTicketDropRefusal(runStatus ?? null, column)
+          const refusal = documentRunTicketDropRefusal(
+            run?.status ?? null,
+            column,
+            Boolean(run?.migration_session_id)
+          )
           if (refusal) {
             toast.warning(refusal)
             return

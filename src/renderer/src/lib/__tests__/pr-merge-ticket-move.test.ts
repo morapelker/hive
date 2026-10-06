@@ -203,6 +203,102 @@ describe('moveWorktreeTicketsToMerged', () => {
     useDocumentFlowStore.setState({ runsById: {} })
   })
 
+  it('leaves the ticket of an ended document run In Progress while a session executes its migrations, and moves it once that session is gone', async () => {
+    const runTicket = makeTicket({
+      id: 'ticket-run',
+      column: 'in_progress',
+      mode: null,
+      external_provider: 'document-run',
+      external_id: 'run-1'
+    })
+    useKanbanStore.setState({ tickets: new Map([[PROJECT_ID, [runTicket]]]) })
+    // The run itself is over: only the migration session holds the ticket back.
+    useDocumentFlowStore.setState({
+      runsById: {
+        'run-1': makeDetail({
+          id: 'run-1',
+          status: 'completed',
+          migration_session_id: 'session-migrate'
+        })
+      }
+    })
+
+    await moveWorktreeTicketsToMerged(WORKTREE_ID, 42)
+    expect(moveTicket).not.toHaveBeenCalled()
+    expect(rpcMove).not.toHaveBeenCalled()
+
+    useDocumentFlowStore.setState({
+      runsById: {
+        'run-1': makeDetail({ id: 'run-1', status: 'completed', migration_session_id: null })
+      }
+    })
+    await moveWorktreeTicketsToMerged(WORKTREE_ID, 42)
+    expect(moveTicket).toHaveBeenCalledTimes(1)
+    expect(moveTicket).toHaveBeenCalledWith('ticket-run', PROJECT_ID, 'merged', 5)
+
+    useDocumentFlowStore.setState({ runsById: {} })
+  })
+
+  it('holds back only the migrating run ticket: the other tickets of the worktree still move', async () => {
+    const runTicket = makeTicket({
+      id: 'ticket-run',
+      column: 'in_progress',
+      mode: null,
+      external_provider: 'document-run',
+      external_id: 'run-1'
+    })
+    useKanbanStore.setState({
+      tickets: new Map([[PROJECT_ID, [runTicket, makeTicket({ id: 'ticket-plain' })]]])
+    })
+    useDocumentFlowStore.setState({
+      runsById: {
+        'run-1': makeDetail({
+          id: 'run-1',
+          status: 'completed',
+          migration_session_id: 'session-migrate'
+        })
+      }
+    })
+
+    await moveWorktreeTicketsToMerged(WORKTREE_ID, 42)
+
+    expect(moveTicket).toHaveBeenCalledTimes(1)
+    expect(moveTicket).toHaveBeenCalledWith('ticket-plain', PROJECT_ID, 'merged', 5)
+
+    useDocumentFlowStore.setState({ runsById: {} })
+  })
+
+  it('leaves a migrating run ticket alone on the DB fallback path too', async () => {
+    seedWorktreeProject()
+    rpcGetByProject.mockResolvedValue([
+      makeTicket({
+        id: 'db-run-ticket',
+        column: 'in_progress',
+        mode: null,
+        external_provider: 'document-run',
+        external_id: 'run-1'
+      }),
+      makeTicket({ id: 'db-ticket', sort_order: 3 })
+    ])
+    useDocumentFlowStore.setState({
+      runsById: {
+        'run-1': makeDetail({
+          id: 'run-1',
+          status: 'completed',
+          migration_session_id: 'session-migrate'
+        })
+      }
+    })
+
+    await moveWorktreeTicketsToMerged(WORKTREE_ID, 42)
+
+    expect(moveTicket).not.toHaveBeenCalled()
+    expect(rpcMove).toHaveBeenCalledTimes(1)
+    expect(rpcMove).toHaveBeenCalledWith(PROJECT_ID, 'db-ticket', 'merged', 3)
+
+    useDocumentFlowStore.setState({ runsById: {} })
+  })
+
   it('swallows move failures instead of rejecting', async () => {
     moveTicket.mockRejectedValueOnce(new Error('boom'))
     useKanbanStore.setState({ tickets: new Map([[PROJECT_ID, [makeTicket()]]]) })

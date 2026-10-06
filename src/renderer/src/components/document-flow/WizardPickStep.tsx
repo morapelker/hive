@@ -305,7 +305,7 @@ function PreviousRuns({ projectId }: { projectId: string }): React.JSX.Element |
                 </span>
                 <TonePill tone={status.tone}>{status.label}</TonePill>
               </button>
-              {isRunDeletable(detail.run.status) && (
+              {isRunDeletable(detail.run.status, detail.run) && (
                 <Button
                   type="button"
                   variant="ghost"

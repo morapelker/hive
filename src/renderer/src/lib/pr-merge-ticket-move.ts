@@ -27,11 +27,12 @@ export async function moveWorktreeTicketsToMerged(
   try {
     if (!useSettingsStore.getState().showMergedColumn) return
 
-    // The ticket of a document run stays In Progress for as long as its run is on
+    // The ticket of a document run stays In Progress for as long as its run is on, and
+    // again while a session executes the run's migrations
     const isRunningDocumentRun = (t: KanbanTicket): boolean => {
       const runId = documentRunIdOf(t)
       const run = runId ? useDocumentFlowStore.getState().runsById[runId]?.run : null
-      return !!run && isActiveRunStatus(run.status)
+      return !!run && (isActiveRunStatus(run.status) || Boolean(run.migration_session_id))
     }
 
     const shouldMove = (t: KanbanTicket): boolean =>
@@ -68,9 +69,7 @@ export async function moveWorktreeTicketsToMerged(
     await Promise.all(
       dbTickets
         .filter(shouldMove)
-        .map((t) =>
-          kanbanApi.ticket.move(projectId, t.id, 'merged', t.sort_order).catch(() => {})
-        )
+        .map((t) => kanbanApi.ticket.move(projectId, t.id, 'merged', t.sort_order).catch(() => {}))
     )
   } catch {
     // Best-effort: a failed board sync must never surface as a merge failure.

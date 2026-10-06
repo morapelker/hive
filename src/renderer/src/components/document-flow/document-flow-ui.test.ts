@@ -26,6 +26,7 @@ import {
   isLaunchedRunStatus,
   isRequeueableItem,
   isRunDeletable,
+  isRunMigrating,
   isSkippableItem,
   itemSessionTarget,
   itemStatusDisplay,
@@ -157,6 +158,23 @@ describe('runStatusDisplay', () => {
     const items = [makeItem({ status: 'needs_input' })]
     expect(runStatusDisplay({ ...RUNNING, status: 'paused' }, items).label).toBe('Paused')
   })
+
+  it.each(['completed', 'completed_with_issues'] as const)(
+    'reads "Running migrations" while a session executes those of a %s run',
+    (status) => {
+      const items = [makeItem({ status: 'merged' })]
+      const run = { ...RUNNING, status }
+      expect(runStatusDisplay({ ...run, migration_session_id: 'session-mig' }, items)).toEqual({
+        label: 'Running migrations',
+        tone: 'info'
+      })
+      // Without a session (never started, or over) the run reads as it ended.
+      expect(runStatusDisplay({ ...run, migration_session_id: null }, items).label).toBe(
+        DOCUMENT_RUN_STATUS_LABELS[status]
+      )
+      expect(runStatusDisplay(run, items).label).toBe(DOCUMENT_RUN_STATUS_LABELS[status])
+    }
+  )
 })
 
 describe('needs-you rules', () => {
@@ -436,6 +454,129 @@ describe('runBoardCardState', () => {
       label: 'Cancelled'
     })
   })
+
+  it.each(['completed', 'completed_with_issues'] as const)(
+    'says the migrations of a %s run are running, wherever its ticket sits',
+    (status) => {
+      const detail = makeDetail(
+        { status, base_branch: 'main', migration_session_id: 'session-mig' },
+        [
+          { key: 'A1', status: 'merged' },
+          { key: 'A2', status: 'needs_attention' }
+        ]
+      )
+
+      for (const column of [undefined, 'in_progress', 'review', 'merged', 'done']) {
+        expect(runBoardCardState(detail, column), String(column)).toMatchObject({
+          phase: 'migrating',
+          label: 'Running migrations',
+          merged: 1,
+          total: 2,
+          paused: false,
+          // What the run left flagged is still not a question to answer.
+          waitingOnUser: false
+        })
+      }
+      // The session over, the card says how the run ended again.
+      const settled = { ...detail, run: { ...detail.run, migration_session_id: null } }
+      expect(runBoardCardState(settled, 'review').phase).toBe(
+        status === 'completed' ? 'completed' : 'issues'
+      )
+    }
+  )
+
+  it.each(['running', 'paused'] as const)(
+    'keeps a %s run in its own phase whatever migration session it carries',
+    (status) => {
+      const state = runBoardCardState(
+        makeDetail({ status, migration_session_id: 'session-mig' }, [
+          { key: 'A1', status: 'running' }
+        ]),
+        'in_progress'
+      )
+
+      expect(state.phase).toBe(status)
+      expect(state.label).toBe(status === 'running' ? '1 working' : 'Paused · 1 working')
+    }
+  )
+
+  it.each(['completed', 'completed_with_issues'] as const)(
+    'says the migrations of a %s run wait for the user once their session does',
+    (status) => {
+      const detail = makeDetail(
+        { status, base_branch: 'main', migration_session_id: 'session-mig' },
+        [
+          { key: 'A1', status: 'merged' },
+          { key: 'A2', status: 'needs_attention' }
+        ]
+      )
+
+      for (const column of [undefined, 'in_progress', 'review', 'merged', 'done']) {
+        expect(runBoardCardState(detail, column, true), String(column)).toMatchObject({
+          phase: 'migrating',
+          label: 'Migrations waiting for you',
+          // The session, not the ticket the run left flagged.
+          waiting: 1,
+          waitingOnUser: true,
+          merged: 1,
+          total: 2,
+          paused: false
+        })
+      }
+      // A session at work, said or left unsaid, leaves the card as it was.
+      const working = { phase: 'migrating', label: 'Running migrations', waiting: 0 }
+      expect(runBoardCardState(detail, 'in_progress', false)).toMatchObject({
+        ...working,
+        waitingOnUser: false
+      })
+      expect(runBoardCardState(detail, 'in_progress')).toEqual(
+        runBoardCardState(detail, 'in_progress', false)
+      )
+    }
+  )
+
+  it.each(['running', 'paused'] as const)(
+    'counts only its own tickets for a %s run, whatever its migration session waits for',
+    (status) => {
+      const quiet = makeDetail({ status, migration_session_id: 'session-mig' }, [
+        { key: 'A1', status: 'running' }
+      ])
+      const asking = makeDetail({ status, migration_session_id: 'session-mig' }, [
+        { key: 'A1', status: 'running' },
+        { key: 'A2', status: 'needs_input' }
+      ])
+
+      expect(runBoardCardState(quiet, 'in_progress', true)).toMatchObject({
+        phase: status,
+        waiting: 0,
+        waitingOnUser: false,
+        label: status === 'running' ? '1 working' : 'Paused · 1 working'
+      })
+      // The ticket that asks is counted once, the session not at all.
+      expect(runBoardCardState(asking, 'in_progress', true).waiting).toBe(1)
+      for (const detail of [quiet, asking]) {
+        expect(runBoardCardState(detail, 'in_progress', true)).toEqual(
+          runBoardCardState(detail, 'in_progress')
+        )
+      }
+    }
+  )
+
+  it.each(['completed', 'completed_with_issues', 'cancelled'] as const)(
+    'waits on nobody for a %s run that has no migration session',
+    (status) => {
+      const detail = makeDetail({ status, base_branch: 'main' }, [
+        { key: 'A1', status: 'merged' },
+        { key: 'A2', status: 'needs_attention' }
+      ])
+
+      const state = runBoardCardState(detail, 'review', true)
+      expect(state).toMatchObject({ waiting: 0, waitingOnUser: false })
+      expect(state.phase).not.toBe('migrating')
+      expect(state.label).not.toBe('Migrations waiting for you')
+      expect(state).toEqual(runBoardCardState(detail, 'review'))
+    }
+  )
 })
 
 describe('documentRunTicketDropRefusal', () => {
@@ -470,6 +611,36 @@ describe('documentRunTicketDropRefusal', () => {
       )
     }
   )
+
+  it.each(['completed', 'completed_with_issues', 'cancelled'] as const)(
+    'holds the ticket of a %s run In Progress while its migrations are executed',
+    (status) => {
+      expect(documentRunTicketDropRefusal(status, 'in_progress', true)).toBeNull()
+      for (const column of ['review', 'merged', 'done']) {
+        expect(documentRunTicketDropRefusal(status, column, true), column).toBe(
+          'The migrations of this document run are being executed. Wait for them to finish, or stop them, before moving its ticket.'
+        )
+      }
+      // To Do keeps its own answer.
+      expect(documentRunTicketDropRefusal(status, 'todo', true)).toBe(
+        'The ticket of a document run cannot go back to To Do.'
+      )
+    }
+  )
+
+  it.each(['running', 'paused'] as const)(
+    'answers for a %s run as if no migrations were being executed',
+    (status) => {
+      for (const column of ['todo', 'in_progress', 'review', 'merged', 'done']) {
+        expect(documentRunTicketDropRefusal(status, column, true), column).toBe(
+          documentRunTicketDropRefusal(status, column)
+        )
+      }
+      expect(documentRunTicketDropRefusal(status, 'review', true)).toBe(
+        'The document run is still going; its ticket moves to Review when the run ends.'
+      )
+    }
+  )
 })
 
 describe('run status groups', () => {
@@ -486,6 +657,22 @@ describe('run status groups', () => {
 
   it('allows deleting every run the orchestrator is not driving', () => {
     expect(DOCUMENT_RUN_STATUSES.filter((status) => !isRunDeletable(status))).toEqual([
+      'running',
+      'paused'
+    ])
+  })
+
+  it('tells a run whose migrations are being executed by the session it records', () => {
+    expect(isRunMigrating(makeRun({ migration_session_id: 'session-mig' }))).toBe(true)
+    expect(isRunMigrating(makeRun())).toBe(false)
+    expect(isRunMigrating({ migration_session_id: '' })).toBe(false)
+  })
+
+  it('allows deleting no run while its migrations are being executed', () => {
+    const migrating = makeRun({ migration_session_id: 'session-mig' })
+    expect(DOCUMENT_RUN_STATUSES.filter((status) => isRunDeletable(status, migrating))).toEqual([])
+    // A run that carries no session is deletable as its status says.
+    expect(DOCUMENT_RUN_STATUSES.filter((status) => !isRunDeletable(status, makeRun()))).toEqual([
       'running',
       'paused'
     ])

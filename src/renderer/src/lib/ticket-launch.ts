@@ -1,6 +1,6 @@
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { isAgentCli, isCodexCli } from '@shared/types/agent-sdk'
-import { useSessionStore } from '@/stores/useSessionStore'
+import { useSessionStore, type Session } from '@/stores/useSessionStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
@@ -131,7 +131,11 @@ function composeLaunchPrompt(
  */
 export function resolveBadgeModel(
   modelConfig: LaunchModelConfig,
-  session: { model_provider_id: string | null; model_id: string | null; model_variant: string | null }
+  session: {
+    model_provider_id: string | null
+    model_id: string | null
+    model_variant: string | null
+  }
 ): { providerID: string; modelID: string; variant: string | null } {
   if (session.model_provider_id && session.model_id) {
     return {
@@ -168,10 +172,7 @@ export function resolveCustomProviderBadge(
   model?: { providerID: string; modelID: string; variant?: string | null } | null
 ): { providerID: string; modelID: string; variant: string | null } | null {
   if (!customProviderId) return null
-  const provider = findCustomProvider(
-    useSettingsStore.getState().customProviders,
-    customProviderId
-  )
+  const provider = findCustomProvider(useSettingsStore.getState().customProviders, customProviderId)
   if (!provider) return null
   const declaredModel =
     model?.providerID === CUSTOM_MODEL_PROVIDER_ID
@@ -213,17 +214,11 @@ function resolveLaunchCustomProviderId(
  * { success: false, error }; callers own all user-visible messaging.
  */
 export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<TicketLaunchResult> {
-  const { sdk, model, codexFastMode } = spec.modelConfig
   const goalMode = spec.goalMode === true
   const goalSuccessCriteria = spec.goalSuccessCriteria?.trim() || null
-  // Working copy of the prompt — the goal-mode overflow branch may replace it
-  // with a short "Implement PLAN_{uuid}.md" pointer.
-  let prompt = spec.prompt
-  // Snapshots of the worktree/session ids as soon as each is created, hoisted
-  // above the try so the catch fallback can still report them (Fix 5: avoids
-  // leaving a phantom "working" session the caller can't see/clean up).
+  // Snapshot of the worktree id as soon as it is resolved, hoisted above the
+  // try so the catch fallback can still report it.
   let createdWorktreeId: string | undefined
-  let createdSessionId: string | undefined
 
   // A document run's ticket has no session of its own, whoever asks for one
   const launchedTicket = useKanbanStore
@@ -298,6 +293,109 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
     // 'root-branch' mode and pins each model's worktree in 'current-branch'.
     void autoPinForBoardPrompt({ projectId: spec.projectId, worktreeId })
 
+    // The session itself: created, stamped on the ticket, then started with the prompt.
+    const result = await launchSessionWithModel({
+      projectId: spec.projectId,
+      worktreeId,
+      prompt: spec.prompt,
+      mode: spec.mode,
+      modelConfig: spec.modelConfig,
+      goalMode,
+      goalSuccessCriteria,
+      // Update ticket: clear pending config (via extras), set session + worktree,
+      // and stamp the model badge fields. variant_group_id defaults to null
+      // here (a single-model (re)launch shouldn't keep claiming membership in
+      // a stale multi-launch group) — the multi-model orchestrator overrides
+      // it back via ticketUpdateExtras, which must win, hence the field
+      // ordering below.
+      onSessionCreated: async ({ session, customProviderId, model }) => {
+        const badge =
+          resolveCustomProviderBadge(customProviderId, model) ??
+          resolveBadgeModel(spec.modelConfig, session)
+        await useKanbanStore.getState().updateTicket(spec.ticketId, spec.projectId, {
+          current_session_id: session.id,
+          worktree_id: worktreeId,
+          mode: spec.mode,
+          goal_mode: goalMode,
+          goal_success_criteria: goalMode ? goalSuccessCriteria : null,
+          model_provider_id: badge.providerID,
+          model_id: badge.modelID,
+          model_variant: badge.variant,
+          variant_group_id: null,
+          ...spec.ticketUpdateExtras
+        })
+      }
+    })
+    // worktreeId is included on every outcome so a just-created worktree stays
+    // visible to the caller — nothing else records it when the session could
+    // not be created (the ticket link is only stamped after session creation).
+    return { ...result, worktreeId }
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : null
+    return {
+      success: false,
+      error: detail || 'Could not launch session',
+      ...(createdWorktreeId ? { worktreeId: createdWorktreeId } : {})
+    }
+  }
+}
+
+/** A session to launch in a worktree that already exists; `launchSessionWithModel`'s input. */
+export interface SessionLaunchSpec {
+  projectId: string
+  worktreeId: string
+  prompt: string
+  mode: LaunchMode
+  modelConfig: LaunchModelConfig
+  goalMode: boolean
+  goalSuccessCriteria: string | null
+  /** The session belongs to no ticket: the board must not attach it to one pre-assigned to the worktree. */
+  skipKanbanAttach?: boolean
+  /**
+   * Runs once the session row exists and is stamped as working, before the agent is
+   * started with the prompt: where the caller links the session to whatever launched it.
+   * A throw fails the launch (reported with the session id, like every later failure).
+   */
+  onSessionCreated?: (created: SessionLaunchCreated) => void | Promise<void>
+}
+
+export interface SessionLaunchCreated {
+  session: Session
+  /** The custom provider the session really launches through (a deleted one is dropped). */
+  customProviderId: string | null
+  /** The launch config's model as it stands now; null leaves the choice to session creation. */
+  model: { providerID: string; modelID: string; variant?: string } | null
+}
+
+export interface SessionLaunchResult {
+  success: boolean
+  sessionId?: string
+  error?: string
+}
+
+/**
+ * Headless session launch in an existing worktree, with no ticket in sight: creates the
+ * session with the launch config's model, stamps its status, and delivers the prompt per
+ * SDK without waiting for a session view to mount. `launchTicketWithModel` runs on it; a
+ * caller without a ticket (a document run's migration session) uses it directly. Never
+ * throws: every failure is returned as { success: false, error }.
+ */
+export async function launchSessionWithModel(
+  spec: SessionLaunchSpec
+): Promise<SessionLaunchResult> {
+  const { sdk, model, codexFastMode } = spec.modelConfig
+  const { worktreeId } = spec
+  const goalMode = spec.goalMode === true
+  const goalSuccessCriteria = spec.goalSuccessCriteria?.trim() || null
+  // Working copy of the prompt — the goal-mode overflow branch may replace it
+  // with a short "Implement PLAN_{uuid}.md" pointer.
+  let prompt = spec.prompt
+  // Snapshot of the session id as soon as it is created, hoisted above the try
+  // so the catch fallback can still report it (Fix 5: avoids leaving a phantom
+  // "working" session the caller can't see/clean up).
+  let createdSessionId: string | undefined
+
+  try {
     // Resolve the worktree record once — needed for plan-file creation and the
     // OpenCode connect below. Newly created worktrees are already in the store.
     const findWorktree = (): { path: string } | undefined =>
@@ -353,20 +451,14 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
       autoFocus: false,
       ...(modelOverride ? { modelOverride } : {}),
       ...(cliPendingPrompt ? { pendingMessage: cliPendingPrompt } : {}),
-      ...(customProviderId ? { customProviderId } : {})
+      ...(customProviderId ? { customProviderId } : {}),
+      ...(spec.skipKanbanAttach ? { skipKanbanAttach: true } : {})
     }
     const sessionResult = await useSessionStore
       .getState()
       .createSession(worktreeId, spec.projectId, sdk, spec.mode, createOptions)
     if (!sessionResult.success || !sessionResult.session) {
-      // worktreeId is included so a just-created worktree stays visible to
-      // the caller — nothing else records it on this path (the ticket link
-      // is only stamped after session creation).
-      return {
-        success: false,
-        error: sessionResult.error || 'Could not create session',
-        worktreeId
-      }
+      return { success: false, error: sessionResult.error || 'Could not create session' }
     }
 
     const session = sessionResult.session
@@ -389,27 +481,9 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
       await useSessionStore.getState().setSessionModel(sessionId, effectiveConfigModel)
     }
 
-    // 5. Update ticket: clear pending config (via extras), set session + worktree,
-    //    and stamp the model badge fields. variant_group_id defaults to null
-    //    here (a single-model (re)launch shouldn't keep claiming membership in
-    //    a stale multi-launch group) — the multi-model orchestrator overrides
-    //    it back via ticketUpdateExtras, which must win, hence the field
-    //    ordering below.
-    const badge =
-      resolveCustomProviderBadge(customProviderId, effectiveConfigModel) ??
-      resolveBadgeModel(spec.modelConfig, session)
-    await useKanbanStore.getState().updateTicket(spec.ticketId, spec.projectId, {
-      current_session_id: sessionId,
-      worktree_id: worktreeId,
-      mode: spec.mode,
-      goal_mode: goalMode,
-      goal_success_criteria: goalMode ? goalSuccessCriteria : null,
-      model_provider_id: badge.providerID,
-      model_id: badge.modelID,
-      model_variant: badge.variant,
-      variant_group_id: null,
-      ...spec.ticketUpdateExtras
-    })
+    // 5. Let the caller link the session to whatever launched it (a ticket's
+    //    session + badge fields) before the agent is started with the prompt.
+    await spec.onSessionCreated?.({ session, customProviderId, model: effectiveConfigModel })
 
     // 6. Trigger usage refresh
     const usageProvider = resolveDefaultUsageProvider(sdk, customProviderId)
@@ -440,19 +514,18 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
         return {
           success: false,
           error: result.error ?? `Failed to start ${cliDisplayName(sessionAgentSdk)}`,
-          sessionId,
-          worktreeId
+          sessionId
         }
       }
       if (outboundPrompt) {
         useSessionStore.getState().dequeuePendingMessage(sessionId)
       }
-      return { success: true, sessionId, worktreeId }
+      return { success: true, sessionId }
     }
 
     // 7. Connect to OpenCode and send prompt
     if (!worktree?.path) {
-      return { success: false, error: 'Worktree path not found', sessionId, worktreeId }
+      return { success: false, error: 'Worktree path not found', sessionId }
     }
 
     const connectResult = unwrapEnvelope(await opencodeApi.connect(worktree.path, sessionId))
@@ -460,8 +533,7 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
       return {
         success: false,
         error: connectResult.error || 'Could not start session',
-        sessionId,
-        worktreeId
+        sessionId
       }
     }
 
@@ -478,7 +550,7 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
         goalSuccessCriteria,
         { claudeCli: false }
       )
-      if (!outboundPrompt) return { success: true, sessionId, worktreeId }
+      if (!outboundPrompt) return { success: true, sessionId }
 
       const promptOptions = sessionAgentSdk === 'codex' ? { codexFastMode } : undefined
 
@@ -522,20 +594,18 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
         return {
           success: false,
           error: promptResult.error || 'Could not send prompt',
-          sessionId,
-          worktreeId
+          sessionId
         }
       }
     }
 
-    return { success: true, sessionId, worktreeId }
+    return { success: true, sessionId }
   } catch (err) {
     const detail = err instanceof Error ? err.message : null
     return {
       success: false,
       error: detail || 'Could not launch session',
-      ...(createdSessionId ? { sessionId: createdSessionId } : {}),
-      ...(createdWorktreeId ? { worktreeId: createdWorktreeId } : {})
+      ...(createdSessionId ? { sessionId: createdSessionId } : {})
     }
   }
 }

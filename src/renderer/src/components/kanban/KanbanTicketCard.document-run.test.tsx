@@ -10,6 +10,8 @@ import { makeDetail } from '@/components/document-flow/test-fixtures'
 import { toast } from '@/lib/toast'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
+import { useQuestionStore, type QuestionRequest } from '@/stores/useQuestionStore'
+import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { WAITING_PREFIX } from '@shared/document-flow/planning'
 import type { DocumentRunDetail } from '@shared/types/document-flow'
 import type { KanbanTicket } from '../../../../main/db/types'
@@ -24,6 +26,8 @@ vi.mock('@/lib/toast', () => ({
 
 const initialFlowState = useDocumentFlowStore.getState()
 const initialKanbanState = useKanbanStore.getState()
+const initialQuestionState = useQuestionStore.getState()
+const initialWorktreeStatusState = useWorktreeStatusStore.getState()
 
 const now = '2026-06-01T00:00:00.000Z'
 
@@ -75,6 +79,58 @@ function seedRuns(...details: DocumentRunDetail[]): void {
 
 const card = (id = 'ticket-run'): HTMLElement => screen.getByTestId(`kanban-ticket-${id}`)
 
+// A finished run whose migrations a session is executing; its ticket is back In Progress.
+const migratingRun = (): DocumentRunDetail =>
+  makeDetail({ id: 'run-live', status: 'completed', migration_session_id: 'session-mig' }, [
+    { key: 'A1', status: 'merged' },
+    { key: 'A2', status: 'needs_attention' }
+  ])
+
+const MIGRATION_QUESTION: QuestionRequest = {
+  id: 'question-1',
+  sessionID: 'session-mig',
+  questions: [{ question: 'Run 0067 as well?', header: 'Migrations', options: [] }]
+}
+
+/** The card of a migrating run whose session waits on the user: orange, like a ticket that asks. */
+function expectMigrationsWaiting(): void {
+  const body = screen.getByTestId('kanban-docflow-run-run-live')
+  expect(body).toHaveAttribute('data-phase', 'migrating')
+  expect(body).toHaveAttribute('data-waiting-on-user')
+  const bar = screen.getByTestId('kanban-docflow-run-bar-run-live')
+  expect(bar).toHaveAttribute('data-moving')
+  const progressbar = within(bar).getByRole('progressbar')
+  expect(progressbar).toHaveAccessibleName('Waiting for answer')
+  expect(progressbar.firstElementChild?.className).toContain('bg-amber-500')
+  expect(progressbar.firstElementChild?.className).not.toContain('bg-fuchsia-500')
+  const label = screen.getByTestId('kanban-docflow-run-running-run-live')
+  expect(label).toHaveTextContent(/^Migrations waiting for you$/)
+  expect(label.className).toContain('text-orange-500')
+  expect(label.className).not.toContain('text-fuchsia-500')
+  expect(card().className).toContain('!border-l-orange-500')
+  expect(card().className).not.toContain('!border-l-fuchsia-500/60')
+  // The label says it already; "Needs you" is for a paused run.
+  expect(screen.queryByTestId('kanban-docflow-run-needs-you-run-live')).toBeNull()
+}
+
+/** The card of a migrating run whose session is at work: the migrations' own color. */
+function expectMigrationsRunning(): void {
+  const body = screen.getByTestId('kanban-docflow-run-run-live')
+  expect(body).toHaveAttribute('data-phase', 'migrating')
+  expect(body).not.toHaveAttribute('data-waiting-on-user')
+  const progressbar = within(screen.getByTestId('kanban-docflow-run-bar-run-live')).getByRole(
+    'progressbar'
+  )
+  expect(progressbar).toHaveAccessibleName('Running migrations')
+  expect(progressbar.firstElementChild?.className).toContain('bg-fuchsia-500')
+  const label = screen.getByTestId('kanban-docflow-run-running-run-live')
+  expect(label).toHaveTextContent(/^Running migrations$/)
+  expect(label.className).toContain('text-fuchsia-500')
+  expect(label.className).not.toContain('text-orange-500')
+  expect(card().className).toContain('!border-l-fuchsia-500/60')
+  expect(card().className).not.toContain('!border-l-orange-500')
+}
+
 beforeEach(() => {
   api.get.mockImplementation(
     async (runId: string) => useDocumentFlowStore.getState().runsById[runId] ?? null
@@ -87,6 +143,8 @@ afterEach(async () => {
   vi.resetAllMocks()
   useDocumentFlowStore.setState(initialFlowState, true)
   useKanbanStore.setState(initialKanbanState, true)
+  useQuestionStore.setState(initialQuestionState, true)
+  useWorktreeStatusStore.setState(initialWorktreeStatusState, true)
 })
 
 describe('the card of a document run ticket', () => {
@@ -258,6 +316,123 @@ describe('the card of a document run ticket', () => {
     expect(card().className).toContain(rail)
   })
 
+  it.each(['completed', 'completed_with_issues'] as const)(
+    'moves again, in its own color, while a session executes the migrations of a %s run',
+    (status) => {
+      seedRuns(
+        makeDetail({ id: 'run-live', status, migration_session_id: 'session-mig' }, [
+          { key: 'A1', status: 'merged' },
+          { key: 'A2', status: 'needs_attention' }
+        ])
+      )
+      // The server put the ticket back In Progress with the session.
+      render(<KanbanTicketCard ticket={makeTicket()} />)
+
+      const body = screen.getByTestId('kanban-docflow-run-run-live')
+      expect(body).toHaveAttribute('data-phase', 'migrating')
+      expect(body).not.toHaveAttribute('data-waiting-on-user')
+      const bar = screen.getByTestId('kanban-docflow-run-bar-run-live')
+      expect(bar).toHaveAttribute('data-moving')
+      const progressbar = within(bar).getByRole('progressbar')
+      expect(progressbar).toHaveAccessibleName('Running migrations')
+      // A color no other state of a ticket wears.
+      expect(progressbar.firstElementChild?.className).toContain('bg-fuchsia-500')
+      expect(progressbar.firstElementChild?.className).not.toContain('bg-blue-500')
+      const label = screen.getByTestId('kanban-docflow-run-running-run-live')
+      expect(label).toHaveTextContent(/^Running migrations$/)
+      expect(label.className).toContain('text-fuchsia-500')
+      expect(screen.getByTestId('kanban-docflow-run-progress-run-live')).toHaveTextContent(
+        '1/2 merged'
+      )
+      expect(card().className).toContain('!border-l-fuchsia-500/60')
+      expect(card().className).not.toContain('!border-l-blue-500/60')
+      expect(card().className).not.toContain('!border-l-emerald-500/60')
+    }
+  )
+
+  it('turns orange, still migrating, when the migration session asks a question', () => {
+    seedRuns(migratingRun())
+    useQuestionStore.getState().addQuestion('session-mig', MIGRATION_QUESTION)
+    render(<KanbanTicketCard ticket={makeTicket()} />)
+
+    expectMigrationsWaiting()
+    expect(screen.getByTestId('kanban-docflow-run-progress-run-live')).toHaveTextContent(
+      '1/2 merged'
+    )
+  })
+
+  it.each(['answering', 'permission', 'command_approval'] as const)(
+    'turns orange, still migrating, when the migration session reports "%s"',
+    (status) => {
+      seedRuns(migratingRun())
+      useWorktreeStatusStore.setState({
+        sessionStatuses: { 'session-mig': { status, timestamp: Date.now() } }
+      })
+      render(<KanbanTicketCard ticket={makeTicket()} />)
+
+      expectMigrationsWaiting()
+    }
+  )
+
+  it('keeps the color of the migrations while their session works, or another one waits', () => {
+    seedRuns(migratingRun())
+    useWorktreeStatusStore.setState({
+      sessionStatuses: {
+        'session-mig': { status: 'working', timestamp: Date.now() },
+        'session-other': { status: 'permission', timestamp: Date.now() }
+      }
+    })
+    useQuestionStore
+      .getState()
+      .addQuestion('session-other', { ...MIGRATION_QUESTION, sessionID: 'session-other' })
+    render(<KanbanTicketCard ticket={makeTicket()} />)
+
+    expectMigrationsRunning()
+  })
+
+  it('follows the migration session as it asks and is answered', () => {
+    seedRuns(migratingRun())
+    render(<KanbanTicketCard ticket={makeTicket()} />)
+    expectMigrationsRunning()
+
+    act(() => {
+      useQuestionStore.getState().addQuestion('session-mig', MIGRATION_QUESTION)
+    })
+    expectMigrationsWaiting()
+
+    // Answered: the session is at it again.
+    act(() => {
+      useQuestionStore.getState().removeQuestion('session-mig', MIGRATION_QUESTION.id)
+    })
+    expectMigrationsRunning()
+  })
+
+  it('says how the run ended again once its migration session is over', () => {
+    const detail = makeDetail(
+      { id: 'run-live', status: 'completed', base_branch: 'main', migration_session_id: 's-mig' },
+      [{ key: 'A1', status: 'merged' }]
+    )
+    seedRuns(detail)
+    const { rerender } = render(<KanbanTicketCard ticket={makeTicket()} />)
+    expect(screen.getByTestId('kanban-docflow-run-run-live')).toHaveAttribute(
+      'data-phase',
+      'migrating'
+    )
+
+    act(() => {
+      useDocumentFlowStore.getState().applyRun({ ...detail.run, migration_session_id: null })
+    })
+    // The app moved the ticket back to Review when the session ended.
+    rerender(<KanbanTicketCard ticket={makeTicket({ column: 'review' })} />)
+
+    const body = screen.getByTestId('kanban-docflow-run-run-live')
+    expect(body).toHaveAttribute('data-phase', 'completed')
+    expect(body).toHaveTextContent('Ready to merge into main')
+    expect(screen.getByTestId('kanban-docflow-run-bar-run-live')).not.toHaveAttribute('data-moving')
+    expect(card().className).toContain('!border-l-emerald-500/60')
+    expect(card().className).not.toContain('!border-l-fuchsia-500/60')
+  })
+
   it('stops announcing the merge once the ticket is in Merged or Done', () => {
     seedRuns(
       makeDetail({ id: 'run-live', status: 'completed', base_branch: 'main' }, [
@@ -402,6 +577,26 @@ describe('the card of a document run ticket', () => {
     expect(deleteTicket).not.toHaveBeenCalled()
   })
 
+  it("refuses to delete the ticket while a session executes the run's migrations", async () => {
+    seedRuns(
+      makeDetail({ id: 'run-live', status: 'completed', migration_session_id: 'session-mig' }, [
+        { key: 'A1', status: 'merged' }
+      ])
+    )
+    const deleteTicket = vi.fn()
+    useKanbanStore.setState({ deleteTicket })
+    render(<KanbanTicketCard ticket={makeTicket()} />)
+
+    fireEvent.contextMenu(card())
+    fireEvent.click(await screen.findByTestId('ctx-delete-ticket'))
+
+    expect(toast.warning).toHaveBeenCalledWith(
+      'Stop the migrations of the document run before deleting its ticket.'
+    )
+    expect(screen.queryByTestId('ctx-delete-confirm-dialog')).toBeNull()
+    expect(deleteTicket).not.toHaveBeenCalled()
+  })
+
   it('deletes the ticket of a finished run after a confirmation that names the run record', async () => {
     seedRuns(makeDetail({ id: 'run-live', status: 'cancelled' }))
     const deleteTicket = vi.fn().mockResolvedValue(undefined)
@@ -430,7 +625,9 @@ describe('the card of a document run ticket', () => {
     // Another window still has the run as finished while it was resumed elsewhere.
     seedRuns(makeDetail({ id: 'run-live', status: 'cancelled' }))
     useKanbanStore.setState({
-      deleteTicket: vi.fn().mockRejectedValue(new Error('Cancel the run before deleting its ticket.'))
+      deleteTicket: vi
+        .fn()
+        .mockRejectedValue(new Error('Cancel the run before deleting its ticket.'))
     })
     render(<KanbanTicketCard ticket={makeTicket({ column: 'review' })} />)
 

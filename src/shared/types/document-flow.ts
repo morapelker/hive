@@ -261,6 +261,16 @@ export interface DocumentRun {
   /** The run's own ticket on the board, created at launch; moving it to Done merges the run. */
   ticket_id: string | null
   report: DocumentRunReport | null
+  /**
+   * The session executing the run's migrations in the integration worktree, started from the
+   * report of a finished run; null when none is. While it is set the run's ticket is back In
+   * Progress.
+   */
+  migration_session_id: string | null
+  /** When that session was started. */
+  migration_started_at: string | null
+  /** Process id of the app instance that session runs in (several can share one database). */
+  migration_owner_pid: number | null
   /** Client currently driving the run, and its last heartbeat (single-owner lease). */
   runner_client_id: string | null
   runner_heartbeat_at: string | null
@@ -410,6 +420,9 @@ export interface DocumentRunItemPatch {
   started_at?: string | null
   finished_at?: string | null
 }
+
+/** How a migration session ended: its turn finished, or the user stopped it. */
+export type DocumentMigrationOutcome = 'finished' | 'stopped'
 
 export interface DocumentRunnerClaim {
   /** This client drives the run. */

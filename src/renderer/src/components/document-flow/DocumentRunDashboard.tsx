@@ -1,5 +1,17 @@
 import { useEffect, useState } from 'react'
-import { Copy, FlagTriangleRight, GitBranch, Loader2, Pause, Play, Trash2, X } from 'lucide-react'
+import {
+  Copy,
+  Database,
+  FlagTriangleRight,
+  GitBranch,
+  Loader2,
+  MessageCircleQuestion,
+  Pause,
+  Play,
+  Square,
+  Trash2,
+  X
+} from 'lucide-react'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -25,30 +37,41 @@ import {
   questionModeTargets,
   type QuestionModeResult
 } from '@/lib/document-flow/question-mode'
+import {
+  migrationsRefusal,
+  startRunMigrations,
+  stopRunMigrations
+} from '@/lib/document-flow/migrations'
 import { toast } from '@/lib/toast'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import { summarizeItems } from '@shared/document-flow/planning'
-import type { DocumentRunDetail } from '@shared/types/document-flow'
+import type { DocumentRun, DocumentRunDetail } from '@shared/types/document-flow'
 import { TonePill } from './DocumentFlowBadges'
 import { NeedsYouSection, RunItemsTable } from './DocumentRunItems'
 import { RunActivityLog, RunReportSection } from './DocumentRunReport'
 import { RunParallelControl } from './RunParallelControl'
 import { RunProgressBar } from './RunProgressBar'
-import { openWorktree } from './document-flow-navigation'
+import { openSession, openWorktree } from './document-flow-navigation'
+import { useMigrationSessionWaiting } from './useDocumentRunTicket'
 import {
   describeRunDeletion,
   documentNameFromPath,
   isActiveRunStatus,
   isLaunchedRunStatus,
   isRunDeletable,
+  isRunMigrating,
+  MIGRATIONS_WAITING_LABEL,
+  RUNNING_MIGRATIONS_LABEL,
   progressSegments,
   runStatusDisplay,
-  shortSha
+  shortSha,
+  type StatusDisplay
 } from './document-flow-ui'
 
-type ConfirmKind = 'finish' | 'cancel' | 'delete' | 'questionsOff' | 'questionsOn'
+type ConfirmKind = 'finish' | 'cancel' | 'delete' | 'questionsOff' | 'questionsOn' | 'migrations'
+type BusyKind = ConfirmKind | 'pause' | 'stopMigrations'
 
 const CONFIRM_COPY: Record<
   ConfirmKind,
@@ -89,7 +112,20 @@ const CONFIRM_COPY: Record<
       'Tickets launched from now on are told to ask you through their question tool when they need a clarification.',
     action: 'Allow questions',
     destructive: false
+  },
+  // Followed by describeMigrationsLaunch(run): where the session runs.
+  migrations: {
+    title: 'Execute the migrations against production?',
+    description:
+      'A new agent session is asked to check which of the listed migrations production already has, and to run the ones it does not.',
+    action: 'Execute migrations',
+    destructive: false
   }
+}
+
+/** The part of the migrations confirmation that depends on the run. */
+function describeMigrationsLaunch(run: DocumentRun): string {
+  return `It runs in the worktree of ${run.integration_branch ?? 'the integration branch'}, the branch the run's tickets were merged into. While it is at it the run's ticket is back In Progress, and Stop aborts the session.`
 }
 
 /** The part of the question-mode confirmation that depends on what is running right now. */
@@ -191,14 +227,24 @@ function DashboardBody({ detail }: { detail: DocumentRunDetail }): React.JSX.Ele
   const closeDashboard = useDocumentFlowStore((s) => s.closeDashboard)
   const openWizard = useDocumentFlowStore((s) => s.openWizard)
   const [confirm, setConfirm] = useState<ConfirmKind | null>(null)
-  const [busy, setBusy] = useState<ConfirmKind | 'pause' | null>(null)
+  const [busy, setBusy] = useState<BusyKind | null>(null)
+  // Archived with the merge of the run's ticket: no checkout is left to run a session in
+  const worktreeIds = useWorktreeStore((s) => s.worktreesByProject.get(run.project_id))
+  const migrating = isRunMigrating(run)
+  const migrationWaiting = useMigrationSessionWaiting(run.migration_session_id)
+  const migrationsBlocked = migrating
+    ? null
+    : migrationsRefusal(run, worktreeIds && new Set(worktreeIds.map((worktree) => worktree.id)))
 
-  const status = runStatusDisplay(run, items)
+  const status: StatusDisplay =
+    migrating && migrationWaiting
+      ? { label: MIGRATIONS_WAITING_LABEL, tone: 'warning' }
+      : runStatusDisplay(run, items)
   const summary = summarizeItems(items)
   const segments = progressSegments(summary)
   const active = isActiveRunStatus(run.status)
 
-  const perform = (kind: ConfirmKind | 'pause', action: Promise<void>, failure: string): void => {
+  const perform = (kind: BusyKind, action: Promise<void>, failure: string): void => {
     setBusy(kind)
     action
       .catch((cause: unknown) => toast.error(`${failure}: ${errorMessage(cause)}`))
@@ -209,7 +255,9 @@ function DashboardBody({ detail }: { detail: DocumentRunDetail }): React.JSX.Ele
     if (kind === 'finish') perform(kind, finishRunNow(run.id), 'Could not finish the run')
     else if (kind === 'cancel') perform(kind, cancelRun(run.id), 'Could not cancel the run')
     else if (kind === 'delete') perform(kind, deleteRun(run.id), 'Could not delete the run')
-    else {
+    else if (kind === 'migrations') {
+      perform(kind, startRunMigrations(run.id), 'Could not execute the migrations')
+    } else {
       const interactive = kind === 'questionsOn'
       perform(
         kind,
@@ -381,7 +429,7 @@ function DashboardBody({ detail }: { detail: DocumentRunDetail }): React.JSX.Ele
                 </Button>
               </>
             )}
-            {isRunDeletable(run.status) && (
+            {isRunDeletable(run.status, run) && (
               <Button
                 type="button"
                 variant="ghost"
@@ -424,7 +472,101 @@ function DashboardBody({ detail }: { detail: DocumentRunDetail }): React.JSX.Ele
           </div>
         )}
         <NeedsYouSection run={run} items={items} />
-        {run.report && <RunReportSection report={run.report} landed={landed} />}
+        {run.report && (
+          <RunReportSection
+            report={run.report}
+            landed={landed}
+            migrationsAction={
+              migrating ? (
+                <>
+                  {migrationWaiting ? (
+                    <span
+                      className="flex items-center gap-1.5 text-[12px] font-medium text-orange-500"
+                      data-testid="docflow-migrations-waiting"
+                    >
+                      <MessageCircleQuestion className="h-3 w-3" />
+                      {MIGRATIONS_WAITING_LABEL}
+                    </span>
+                  ) : (
+                    <span
+                      className="flex items-center gap-1.5 text-[12px] font-medium text-fuchsia-500"
+                      data-testid="docflow-migrations-running"
+                    >
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      {RUNNING_MIGRATIONS_LABEL}
+                    </span>
+                  )}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 text-xs"
+                    data-testid="docflow-open-migration-session"
+                    onClick={() => {
+                      const sessionId = run.migration_session_id
+                      if (!sessionId) return
+                      openSession(run.project_id, run.integration_worktree_id, sessionId)
+                      closeDashboard()
+                    }}
+                  >
+                    Open session
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-6 text-xs"
+                    data-testid="docflow-stop-migrations-btn"
+                    disabled={busy !== null}
+                    onClick={() =>
+                      perform(
+                        'stopMigrations',
+                        stopRunMigrations(run.id),
+                        'Could not stop the migrations'
+                      )
+                    }
+                  >
+                    {busy === 'stopMigrations' ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <Square className="h-3 w-3" />
+                    )}
+                    Stop
+                  </Button>
+                </>
+              ) : (
+                <>
+                  {/* Said in words: a disabled button shows no tooltip */}
+                  {migrationsBlocked && (
+                    <span
+                      className="max-w-[420px] text-right text-[11px] leading-snug text-muted-foreground"
+                      data-testid="docflow-migrations-blocked"
+                    >
+                      {migrationsBlocked}
+                    </span>
+                  )}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-6 text-xs"
+                    data-testid="docflow-execute-migrations-btn"
+                    disabled={busy !== null || migrationsBlocked !== null}
+                    title={migrationsBlocked ?? undefined}
+                    onClick={() => setConfirm('migrations')}
+                  >
+                    {busy === 'migrations' ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <Database className="h-3 w-3" />
+                    )}
+                    Execute migrations
+                  </Button>
+                </>
+              )
+            }
+          />
+        )}
         <RunItemsTable run={run} items={items} />
         <RunActivityLog events={events} items={items} />
       </div>
@@ -445,7 +587,9 @@ function DashboardBody({ detail }: { detail: DocumentRunDetail }): React.JSX.Ele
                     ? `${CONFIRM_COPY.delete.description} ${describeRunDeletion(items)}`
                     : confirm === 'questionsOff' || confirm === 'questionsOn'
                       ? `${CONFIRM_COPY[confirm].description} ${describeQuestionModeReach(questionModeTargets(items).length)}`
-                      : CONFIRM_COPY[confirm].description}
+                      : confirm === 'migrations'
+                        ? `${CONFIRM_COPY.migrations.description} ${describeMigrationsLaunch(run)}`
+                        : CONFIRM_COPY[confirm].description}
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>

@@ -176,6 +176,21 @@ describe('document flow schema', () => {
     expect(DOCUMENT_FLOW_TABLES_SQL).toMatch(/ticket_id\s+TEXT DEFAULT NULL,\s+report/)
   })
 
+  it('ships the migration session of a run as the v58 migration, columns added by the repair step', () => {
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(58)
+    const migration = MIGRATIONS.find((m) => m.version === 58)
+    expect(migration?.name).toBe('add_document_run_migration_session')
+    // Comment only: safeAddColumn() adds the columns, so a replay cannot fail on a duplicate.
+    expect(migration?.up.replace(/--.*$/gm, '').trim()).toBe('')
+    expect(migration?.down.replace(/--.*$/gm, '').trim()).toBe('')
+    for (const column of ['migration_session_id', 'migration_started_at', 'migration_owner_pid']) {
+      expect(migration?.up).toContain(`document_runs.${column}`)
+    }
+    expect(DOCUMENT_FLOW_TABLES_SQL).toMatch(
+      /report\s+TEXT DEFAULT NULL,\s+migration_session_id\s+TEXT DEFAULT NULL,\s+migration_started_at\s+TEXT DEFAULT NULL,\s+migration_owner_pid\s+INTEGER DEFAULT NULL,\s+runner_client_id/
+    )
+  })
+
   it('keeps the migration versions strictly increasing', () => {
     for (let i = 1; i < MIGRATIONS.length; i++) {
       expect(MIGRATIONS[i].version).toBeGreaterThan(MIGRATIONS[i - 1].version)
@@ -246,6 +261,67 @@ describeIf('document flow tables', () => {
     expect(upgraded.getSetting('schema_version')).toBe(String(CURRENT_SCHEMA_VERSION))
     for (const table of TABLES) expect(upgraded.tableExists(table)).toBe(true)
   })
+
+  it('adds the migration session columns to a runs table created by an earlier build', () => {
+    const path = makeDbPath()
+    const db = openDb(path)
+    const run = makeRun(db, makeProject(db), { id: 'run-old' })
+    const raw = db.getRawDb()
+    raw.exec('ALTER TABLE document_runs DROP COLUMN migration_session_id')
+    raw.exec('ALTER TABLE document_runs DROP COLUMN migration_started_at')
+    raw.exec('ALTER TABLE document_runs DROP COLUMN migration_owner_pid')
+    db.setSetting('schema_version', '57')
+    db.close()
+
+    const upgraded = openDb(path)
+    expect(upgraded.getSetting('schema_version')).toBe(String(CURRENT_SCHEMA_VERSION))
+    // The run of the earlier build reads as one whose migrations nobody is executing.
+    expect(upgraded.getDocumentRun('run-old')).toEqual(run)
+    expect(
+      upgraded.updateDocumentRun('run-old', {
+        migration_session_id: 'session-1',
+        migration_started_at: '2026-03-01T10:00:00.000Z',
+        migration_owner_pid: 4321
+      })
+    ).toMatchObject({
+      migration_session_id: 'session-1',
+      migration_started_at: '2026-03-01T10:00:00.000Z',
+      migration_owner_pid: 4321
+    })
+
+    // Replayed on every start: the columns are there already.
+    upgraded.close()
+    expect(openDb(path).getDocumentRun('run-old')).toMatchObject({
+      migration_session_id: 'session-1',
+      migration_owner_pid: 4321
+    })
+  })
+
+  it('adds the owner of the migration session to a runs table that has the session columns', () => {
+    const path = makeDbPath()
+    const db = openDb(path)
+    makeRun(db, makeProject(db), { id: 'run-old' })
+    // A session recorded by a build that did not say which app instance it belongs to.
+    const session = {
+      migration_session_id: 'session-1',
+      migration_started_at: '2026-03-01T10:00:00.000Z'
+    }
+    const run = db.updateDocumentRun('run-old', session)
+    db.getRawDb().exec('ALTER TABLE document_runs DROP COLUMN migration_owner_pid')
+    // Already at v58: no migration runs, the repair step alone adds the column.
+    expect(db.getSetting('schema_version')).toBe(String(CURRENT_SCHEMA_VERSION))
+    db.close()
+
+    const repaired = openDb(path)
+    expect(repaired.getDocumentRun('run-old')).toEqual(run)
+    expect(repaired.getDocumentRun('run-old')).toMatchObject({
+      ...session,
+      migration_owner_pid: null
+    })
+    expect(
+      repaired.updateDocumentRun('run-old', { migration_owner_pid: 4321 })?.migration_owner_pid
+    ).toBe(4321)
+  })
 })
 
 describeIf('document runs', () => {
@@ -281,6 +357,9 @@ describeIf('document runs', () => {
       integration_worktree_path: null,
       ticket_id: null,
       report: null,
+      migration_session_id: null,
+      migration_started_at: null,
+      migration_owner_pid: null,
       runner_client_id: null,
       runner_heartbeat_at: null,
       created_at: createdAt,
@@ -390,6 +469,75 @@ describeIf('document runs', () => {
         ).config
       )
     ).toEqual({ ...DEFAULT_DOCUMENT_RUN_CONFIG, maxParallel: 8 })
+  })
+
+  it('records the migration session of a run, keeps it across other patches and clears it with null', () => {
+    const db = openDb()
+    const run = makeRun(db, makeProject(db))
+    expect(run).toMatchObject({
+      migration_session_id: null,
+      migration_started_at: null,
+      migration_owner_pid: null
+    })
+
+    const startedAt = at('2026-03-01T12:30:00.000Z')
+    const started = db.updateDocumentRun(run.id, {
+      migration_session_id: 'session-migrations',
+      migration_started_at: startedAt,
+      migration_owner_pid: 4321
+    })
+    expect(started).toEqual({
+      ...run,
+      migration_session_id: 'session-migrations',
+      migration_started_at: startedAt,
+      migration_owner_pid: 4321,
+      updated_at: startedAt
+    })
+    expect(db.getDocumentRun(run.id)).toEqual(started)
+    expect(db.listDocumentRuns(run.project_id)).toEqual([started])
+    // Plain columns, not JSON: two of text and the owner's process id as a number.
+    expect(
+      db
+        .getRawDb()
+        .prepare(
+          'SELECT migration_session_id, migration_started_at, migration_owner_pid, typeof(migration_owner_pid) AS owner_type FROM document_runs WHERE id = ?'
+        )
+        .get(run.id)
+    ).toEqual({
+      migration_session_id: 'session-migrations',
+      migration_started_at: startedAt,
+      migration_owner_pid: 4321,
+      owner_type: 'integer'
+    })
+
+    // An absent key and an explicit undefined both leave the session alone.
+    const patched = db.updateDocumentRun(run.id, {
+      ticket_id: 'ticket-run',
+      migration_session_id: undefined
+    })
+    expect(patched).toMatchObject({
+      ticket_id: 'ticket-run',
+      migration_session_id: 'session-migrations',
+      migration_started_at: startedAt,
+      migration_owner_pid: 4321
+    })
+
+    const endedAt = at('2026-03-01T12:45:00.000Z')
+    const ended = db.updateDocumentRun(run.id, {
+      migration_session_id: null,
+      migration_started_at: null,
+      migration_owner_pid: null
+    })
+    expect(ended).toEqual({ ...run, ticket_id: 'ticket-run', updated_at: endedAt })
+    expect(db.getDocumentRun(run.id)).toEqual(ended)
+
+    // A session of an app instance that did not say which process it is has no owner.
+    expect(
+      db.updateDocumentRun(run.id, {
+        migration_session_id: 'session-unowned',
+        migration_started_at: endedAt
+      })
+    ).toMatchObject({ migration_session_id: 'session-unowned', migration_owner_pid: null })
   })
 
   it('returns the row untouched for an empty patch and null for an unknown id', () => {

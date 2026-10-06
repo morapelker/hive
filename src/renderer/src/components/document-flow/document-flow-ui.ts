@@ -69,14 +69,28 @@ export interface StatusDisplay {
   tone: DocumentFlowTone
 }
 
-/** A running run that cannot advance without the user reads as "Waiting for you". */
+/** The label of a finished run while a session executes its migrations, here and on the board. */
+export const RUNNING_MIGRATIONS_LABEL = 'Running migrations'
+/** The same, once that session waits on the user (a question, a permission). */
+export const MIGRATIONS_WAITING_LABEL = 'Migrations waiting for you'
+
+/** A session is executing the run's migrations in its integration worktree. */
+export function isRunMigrating(run: Pick<DocumentRun, 'migration_session_id'>): boolean {
+  return Boolean(run.migration_session_id)
+}
+
+/**
+ * A running run that cannot advance without the user reads as "Waiting for you", and a
+ * finished one whose migrations are being executed as "Running migrations".
+ */
 export function runStatusDisplay(
-  run: Pick<DocumentRun, 'status' | 'config'>,
+  run: Pick<DocumentRun, 'status' | 'config'> & Partial<Pick<DocumentRun, 'migration_session_id'>>,
   items: readonly DocumentRunItem[]
 ): StatusDisplay {
   if (run.status === 'running' && isRunWaitingOnUser(items, run.config.maxParallel)) {
     return { label: 'Waiting for you', tone: 'warning' }
   }
+  if (run.migration_session_id) return { label: RUNNING_MIGRATIONS_LABEL, tone: 'info' }
   return {
     label: DOCUMENT_RUN_STATUS_LABELS[run.status],
     tone: DOCUMENT_RUN_STATUS_TONES[run.status]
@@ -97,8 +111,12 @@ export function isLaunchedRunStatus(status: DocumentRunStatus): boolean {
 /** The orchestrator still owns the run: item actions make sense, deleting does not. */
 export { isActiveRunStatus }
 
-export function isRunDeletable(status: DocumentRunStatus): boolean {
-  return !isActiveRunStatus(status)
+/** Not while the orchestrator owns the run, nor while a session executes its migrations. */
+export function isRunDeletable(
+  status: DocumentRunStatus,
+  run?: Pick<DocumentRun, 'migration_session_id'>
+): boolean {
+  return !isActiveRunStatus(status) && !(run && isRunMigrating(run))
 }
 
 /**
@@ -290,8 +308,12 @@ export function runCountsLabel(detail: Pick<DocumentRunDetail, 'run' | 'items'>)
   return `${summary.merged}/${summary.total} merged${attention}`
 }
 
-/** Where a launched run stands, as its ticket on the board tells it apart. */
-export type RunBoardCardPhase = 'running' | 'paused' | 'completed' | 'issues' | 'cancelled'
+/**
+ * Where a launched run stands, as its ticket on the board tells it apart. `migrating`: the run
+ * is over and a session is executing its migrations, which puts the ticket back In Progress.
+ */
+export type RunBoardCardPhase =
+  'running' | 'paused' | 'completed' | 'issues' | 'cancelled' | 'migrating'
 
 export interface RunBoardCardState {
   title: string
@@ -307,7 +329,8 @@ export interface RunBoardCardState {
   /**
    * "3 working", "2 waiting for answer", "Paused", "Paused · 1 working" while sessions
    * finish their turn; once the
-   * run ended, what is left to do: "Ready to merge into main", "2 not merged", "Cancelled".
+   * run ended, what is left to do: "Ready to merge into main", "2 not merged", "Cancelled";
+   * and "Running migrations" while a session executes them.
    */
   label: string
 }
@@ -326,14 +349,22 @@ const RUN_BOARD_CARD_PHASES: Partial<Record<DocumentRunStatus, RunBoardCardPhase
  */
 export function runBoardCardState(
   detail: Pick<DocumentRunDetail, 'run' | 'items'>,
-  column?: string
+  column?: string,
+  /** The migration session waits on the user; only the session's live status can tell. */
+  migrationWaiting = false
 ): RunBoardCardState {
   const { run, items } = detail
   const summary = summarizeItems(items)
   const running = countRunningAgents(items)
-  const phase = RUN_BOARD_CARD_PHASES[run.status] ?? 'running'
+  // Only a run that is over has migrations to execute; the session outranks how it ended.
+  const migrating = !isActiveRunStatus(run.status) && isRunMigrating(run)
+  const phase = migrating ? 'migrating' : (RUN_BOARD_CARD_PHASES[run.status] ?? 'running')
   const workingLabel = `${running} working`
-  const waiting = isActiveRunStatus(run.status) ? items.filter(needsUser).length : 0
+  const waiting = isActiveRunStatus(run.status)
+    ? items.filter(needsUser).length
+    : migrating && migrationWaiting
+      ? 1
+      : 0
   const moved = column === 'merged' || column === 'done'
   const notMerged = summary.total - summary.merged
   const labels: Record<RunBoardCardPhase, string> = {
@@ -342,7 +373,8 @@ export function runBoardCardState(
     paused: running > 0 ? `Paused · ${workingLabel}` : 'Paused',
     completed: moved ? 'Finished' : `Ready to merge into ${run.base_branch ?? 'the base branch'}`,
     issues: `Finished · ${notMerged} not merged`,
-    cancelled: 'Cancelled'
+    cancelled: 'Cancelled',
+    migrating: waiting > 0 ? MIGRATIONS_WAITING_LABEL : RUNNING_MIGRATIONS_LABEL
   }
   return {
     title: run.title || documentNameFromPath(run.source_path),
@@ -360,14 +392,21 @@ export function runBoardCardState(
 /**
  * Why a run's ticket cannot be dropped on `column`, or null when it can. The ticket stays In
  * Progress while the run is on (the app moves it to Review when the run ends); from then on
- * it is the user's to move forward. `status` is null when the run's record is gone.
+ * it is the user's to move forward. `status` is null when the run's record is gone. While a
+ * session executes the run's migrations (`migrating`) the ticket is held In Progress again.
  */
 export function documentRunTicketDropRefusal(
   status: DocumentRunStatus | null,
-  column: string
+  column: string,
+  migrating = false
 ): string | null {
   if (column === 'todo') return 'The ticket of a document run cannot go back to To Do.'
   const active = status !== null && isActiveRunStatus(status)
+  if (migrating && !active) {
+    return column === 'in_progress'
+      ? null
+      : 'The migrations of this document run are being executed. Wait for them to finish, or stop them, before moving its ticket.'
+  }
   if (column === 'in_progress') {
     return active ? null : 'This document run is over; its ticket cannot go back to In Progress.'
   }

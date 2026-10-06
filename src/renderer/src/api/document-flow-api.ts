@@ -9,6 +9,7 @@ import type {
   DocumentCommitResult,
   DocumentMergeCheckResult,
   DocumentMergeResult,
+  DocumentMigrationOutcome,
   DocumentRun,
   DocumentRunDetail,
   DocumentRunGeneration,
@@ -119,6 +120,20 @@ export const documentFlowApi = {
 
   /** Stop driving the run. Sessions, branches and worktrees are left as they are. */
   cancel: (runId: string): Promise<DocumentRunDetail> => request('cancel', { runId }),
+
+  /**
+   * Record the session executing a finished run's migrations in its integration worktree; the
+   * run's ticket returns to In Progress. Rejects while another session is at it.
+   */
+  startMigrations: (runId: string, sessionId: string): Promise<DocumentRunDetail> =>
+    request('startMigrations', { runId, sessionId }),
+
+  /** That session is over; a no-op unless it is still the run's migration session. */
+  endMigrations: (
+    runId: string,
+    sessionId: string,
+    outcome: DocumentMigrationOutcome
+  ): Promise<DocumentRunDetail> => request('endMigrations', { runId, sessionId, outcome }),
 
   /** Delete a run that is not `running` (rows and the run directory; never git state). */
   delete: (runId: string): Promise<boolean> => request('delete', { runId }),

@@ -1,5 +1,9 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { launchTicketWithModel } from './ticket-launch'
+import {
+  launchSessionWithModel,
+  launchTicketWithModel,
+  type SessionLaunchSpec
+} from './ticket-launch'
 import { resetRendererRpcClientForTests, setRendererRpcClient } from '@/api/rpc-client'
 import { opencodeApi } from '@/api/opencode-api'
 import { toast } from '@/lib/toast'
@@ -159,7 +163,9 @@ function setupStores(): {
   return { createSession, createWorktreeFromBranch, updateTicket, setSessionModel }
 }
 
-function baseSpec(overrides: Record<string, unknown> = {}): Parameters<typeof launchTicketWithModel>[0] {
+function baseSpec(
+  overrides: Record<string, unknown> = {}
+): Parameters<typeof launchTicketWithModel>[0] {
   return {
     ticketId: 'ticket-1',
     projectId: 'project-1',
@@ -222,10 +228,7 @@ describe('launchTicketWithModel', () => {
     const { createSession, createWorktreeFromBranch, updateTicket } = setupStores()
     useKanbanStore.setState({
       tickets: new Map([
-        [
-          'project-1',
-          [{ id: 'ticket-1', external_provider: 'document-run', external_id: 'run-1' }]
-        ]
+        ['project-1', [{ id: 'ticket-1', external_provider: 'document-run', external_id: 'run-1' }]]
       ]) as never
     })
 
@@ -243,11 +246,17 @@ describe('launchTicketWithModel', () => {
   it('refuses a ticket from before the marker, known through its shell-command run', async () => {
     const { createSession, createWorktreeFromBranch, updateTicket } = setupStores()
     useKanbanStore.setState({
-      tickets: new Map([['project-1', [{ id: 'ticket-1', current_session_id: 's-legacy' }]]]) as never
+      tickets: new Map([
+        ['project-1', [{ id: 'ticket-1', current_session_id: 's-legacy' }]]
+      ]) as never
     })
     useShellCommandRunStore.setState({
       runsBySession: {
-        's-legacy': createSessionShellCommandSnapshot({ id: 'build', name: 'Build', commands: 'make' })
+        's-legacy': createSessionShellCommandSnapshot({
+          id: 'build',
+          name: 'Build',
+          commands: 'make'
+        })
       }
     })
 
@@ -346,6 +355,20 @@ describe('launchTicketWithModel', () => {
     )
     expect(toast.error).not.toHaveBeenCalled()
     expect(toast.success).not.toHaveBeenCalled()
+  })
+
+  it("never asks session creation to skip the kanban attach: a ticket's session is the board's to attach", async () => {
+    const { createSession } = setupStores()
+
+    // Even a spec carrying the session-only flag does not get it through.
+    await launchTicketWithModel(baseSpec())
+    await launchTicketWithModel(baseSpec({ skipKanbanAttach: true }))
+
+    expect(createSession).toHaveBeenCalledTimes(2)
+    for (const call of createSession.mock.calls as unknown[][]) {
+      expect(call[4]).toMatchObject({ autoFocus: false })
+      expect(call[4]).not.toHaveProperty('skipKanbanAttach')
+    }
   })
 
   it('lets ticketUpdateExtras.variant_group_id override the default null (extras win)', async () => {
@@ -650,5 +673,333 @@ describe('launchTicketWithModel', () => {
         model_variant: null
       })
     )
+  })
+})
+
+// The ticket-free half of the pipeline: what a caller without a ticket (a document run's
+// migration session) launches with.
+describe('launchSessionWithModel', () => {
+  let request: ReturnType<typeof vi.fn>
+
+  const sessionSpec = (overrides: Partial<SessionLaunchSpec> = {}): SessionLaunchSpec => ({
+    projectId: 'project-1',
+    worktreeId: 'worktree-2',
+    prompt: 'Run the migrations',
+    mode: 'build',
+    modelConfig: {
+      sdk: 'claude-code-cli',
+      model: { providerID: 'anthropic', modelID: 'opus', variant: 'high' },
+      codexFastMode: false
+    },
+    goalMode: false,
+    goalSuccessCriteria: null,
+    ...overrides
+  })
+
+  const SDK_CONFIG = { sdk: 'opencode', model: null, codexFastMode: false } as const
+
+  /** Call order of the first call of `mock` that `matches`, to compare across mocks. */
+  const orderOf = (
+    mock: ReturnType<typeof vi.fn>,
+    matches: (args: unknown[]) => boolean = () => true
+  ): number => {
+    const index = mock.mock.calls.findIndex(matches)
+    expect(index).toBeGreaterThanOrEqual(0)
+    return mock.mock.invocationCallOrder[index]
+  }
+
+  const cliSpawns = (): unknown[][] =>
+    request.mock.calls.filter(([method]) => method === 'terminalOps.createClaudeCli')
+
+  function setupSessionStores(): ReturnType<typeof setupStores> {
+    const stores = setupStores()
+    // Two worktrees, so the one the session lands in is the one that was asked for.
+    useWorktreeStore.setState({
+      worktreesByProject: new Map([
+        [
+          'project-1',
+          [makeWorktree(), makeWorktree({ id: 'worktree-2', path: '/repo/integration' })]
+        ]
+      ])
+    })
+    return stores
+  }
+
+  beforeAll(() => {
+    // Absorb the useSettingsStore one-shot 200ms import timer so it cannot null
+    // store state mid-test (see global constraints).
+    return new Promise((resolve) => setTimeout(resolve, 220))
+  })
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    resetRendererRpcClientForTests()
+    request = vi.fn(async (method: string) => {
+      if (method === 'terminalOps.createClaudeCli') return { success: true }
+      return null
+    })
+    setRendererRpcClient({ request, subscribe: vi.fn() })
+    nextSession = makeSession({ worktree_id: 'worktree-2' })
+    setupSessionStores()
+    vi.mocked(opencodeApi.connect).mockResolvedValue({
+      success: true,
+      value: { success: true, sessionId: 'opc-1' }
+    })
+    vi.mocked(opencodeApi.prompt).mockResolvedValue({
+      success: true,
+      value: { success: true }
+    })
+  })
+
+  afterEach(() => {
+    resetRendererRpcClientForTests()
+    useSessionStore.setState(initialSessionState, true)
+    useWorktreeStore.setState(initialWorktreeState, true)
+    useKanbanStore.setState(initialKanbanState, true)
+    useProjectStore.setState(initialProjectState, true)
+    useUsageStore.setState(initialUsageState, true)
+    useWorktreeStatusStore.setState(initialWorktreeStatusState, true)
+  })
+
+  it('creates the session in the given worktree, unfocused, with the model of the launch config', async () => {
+    const { createSession, createWorktreeFromBranch, setSessionModel } = setupSessionStores()
+
+    const result = await launchSessionWithModel(sessionSpec())
+
+    expect(createSession).toHaveBeenCalledTimes(1)
+    expect(createSession).toHaveBeenCalledWith(
+      'worktree-2',
+      'project-1',
+      'claude-code-cli',
+      'build',
+      {
+        autoFocus: false,
+        modelOverride: {
+          providerID: 'anthropic',
+          modelID: 'opus',
+          variant: 'high',
+          agentSdk: 'claude-code-cli'
+        },
+        pendingMessage: 'Run the migrations'
+      }
+    )
+    expect(setSessionModel).toHaveBeenCalledWith('session-1', {
+      providerID: 'anthropic',
+      modelID: 'opus',
+      variant: 'high'
+    })
+    // The worktree exists already: none is created for a session.
+    expect(createWorktreeFromBranch).not.toHaveBeenCalled()
+    expect(result.success).toBe(true)
+  })
+
+  it('leaves the model to session creation when the launch config names none', async () => {
+    nextSession = makeSession({ agent_sdk: 'opencode', worktree_id: 'worktree-2' })
+    const { createSession, setSessionModel } = setupSessionStores()
+    const onSessionCreated = vi.fn()
+
+    await launchSessionWithModel(sessionSpec({ modelConfig: SDK_CONFIG, onSessionCreated }))
+
+    expect(createSession).toHaveBeenCalledWith('worktree-2', 'project-1', 'opencode', 'build', {
+      autoFocus: false
+    })
+    expect(setSessionModel).not.toHaveBeenCalled()
+    expect(onSessionCreated).toHaveBeenCalledWith({
+      session: nextSession,
+      customProviderId: null,
+      model: null
+    })
+  })
+
+  it('asks session creation to skip the kanban attach when the caller says the session belongs to no ticket', async () => {
+    const { createSession } = setupSessionStores()
+
+    const result = await launchSessionWithModel(sessionSpec({ skipKanbanAttach: true }))
+
+    expect(createSession).toHaveBeenCalledTimes(1)
+    expect(createSession).toHaveBeenCalledWith(
+      'worktree-2',
+      'project-1',
+      'claude-code-cli',
+      'build',
+      {
+        autoFocus: false,
+        modelOverride: {
+          providerID: 'anthropic',
+          modelID: 'opus',
+          variant: 'high',
+          agentSdk: 'claude-code-cli'
+        },
+        pendingMessage: 'Run the migrations',
+        skipKanbanAttach: true
+      }
+    )
+    expect(result).toEqual({ success: true, sessionId: 'session-1' })
+  })
+
+  it('leaves skipKanbanAttach out of the session options unless the caller sets it', async () => {
+    const { createSession } = setupSessionStores()
+
+    await launchSessionWithModel(sessionSpec())
+    await launchSessionWithModel(sessionSpec({ skipKanbanAttach: false }))
+    nextSession = makeSession({ agent_sdk: 'opencode', worktree_id: 'worktree-2' })
+    await launchSessionWithModel(sessionSpec({ modelConfig: SDK_CONFIG }))
+
+    expect(createSession).toHaveBeenCalledTimes(3)
+    // The key is absent, not merely falsy.
+    for (const call of createSession.mock.calls as unknown[][]) {
+      expect(call[4]).not.toHaveProperty('skipKanbanAttach')
+    }
+  })
+
+  it('returns the session id and nothing about the worktree', async () => {
+    const result = await launchSessionWithModel(sessionSpec())
+
+    expect(result).toEqual({ success: true, sessionId: 'session-1' })
+    expect(result).not.toHaveProperty('worktreeId')
+  })
+
+  it("never touches a ticket: linking the session is the caller's", async () => {
+    const { updateTicket } = setupSessionStores()
+
+    await launchSessionWithModel(sessionSpec())
+    nextSession = makeSession({ agent_sdk: 'opencode', worktree_id: 'worktree-2' })
+    await launchSessionWithModel(sessionSpec({ modelConfig: SDK_CONFIG }))
+
+    expect(updateTicket).not.toHaveBeenCalled()
+  })
+
+  it('hands the created session to onSessionCreated once it is working, before the CLI is started', async () => {
+    setupSessionStores()
+    const setSessionStatus = vi.mocked(useWorktreeStatusStore.getState().setSessionStatus)
+    const onSessionCreated = vi.fn(async () => {
+      // Nothing runs yet when the caller links the session.
+      expect(cliSpawns()).toEqual([])
+    })
+
+    const result = await launchSessionWithModel(sessionSpec({ onSessionCreated }))
+
+    expect(result).toEqual({ success: true, sessionId: 'session-1' })
+    expect(onSessionCreated).toHaveBeenCalledTimes(1)
+    expect(onSessionCreated).toHaveBeenCalledWith({
+      session: nextSession,
+      customProviderId: null,
+      model: { providerID: 'anthropic', modelID: 'opus', variant: 'high' }
+    })
+    expect(setSessionStatus).toHaveBeenCalledWith('session-1', 'working')
+    expect(cliSpawns()).toEqual([
+      [
+        'terminalOps.createClaudeCli',
+        { sessionId: 'session-1', opts: { pendingPrompt: 'Run the migrations' } }
+      ]
+    ])
+    const created = orderOf(onSessionCreated)
+    expect(orderOf(setSessionStatus)).toBeLessThan(created)
+    expect(
+      orderOf(request, ([method]) => method === 'terminalOps.createClaudeCli')
+    ).toBeGreaterThan(created)
+  })
+
+  it('hands the created session to onSessionCreated before an SDK session is connected and prompted', async () => {
+    nextSession = makeSession({ agent_sdk: 'opencode', worktree_id: 'worktree-2' })
+    setupSessionStores()
+    const setSessionStatus = vi.mocked(useWorktreeStatusStore.getState().setSessionStatus)
+    const onSessionCreated = vi.fn(async () => {
+      expect(opencodeApi.connect).not.toHaveBeenCalled()
+      expect(opencodeApi.prompt).not.toHaveBeenCalled()
+    })
+
+    const result = await launchSessionWithModel(
+      sessionSpec({ modelConfig: SDK_CONFIG, onSessionCreated })
+    )
+
+    expect(result).toEqual({ success: true, sessionId: 'session-1' })
+    expect(onSessionCreated).toHaveBeenCalledTimes(1)
+    // Connected in the checkout of the worktree that was asked for.
+    expect(opencodeApi.connect).toHaveBeenCalledWith('/repo/integration', 'session-1')
+    expect(opencodeApi.prompt).toHaveBeenCalledWith(
+      '/repo/integration',
+      'opc-1',
+      [{ type: 'text', text: 'Run the migrations' }],
+      undefined,
+      undefined
+    )
+    const created = orderOf(onSessionCreated)
+    expect(orderOf(setSessionStatus)).toBeLessThan(created)
+    expect(orderOf(vi.mocked(opencodeApi.connect))).toBeGreaterThan(created)
+    expect(orderOf(vi.mocked(opencodeApi.prompt))).toBeGreaterThan(created)
+    expect(cliSpawns()).toEqual([])
+  })
+
+  it('fails the launch with the session id when onSessionCreated throws, and starts no CLI', async () => {
+    const result = await launchSessionWithModel(
+      sessionSpec({
+        onSessionCreated: async () => {
+          throw new Error('another session is at it')
+        }
+      })
+    )
+
+    expect(result).toEqual({
+      success: false,
+      error: 'another session is at it',
+      sessionId: 'session-1'
+    })
+    expect(cliSpawns()).toEqual([])
+    expect(useSessionStore.getState().dequeuePendingMessage).not.toHaveBeenCalled()
+  })
+
+  it('fails the launch with the session id when onSessionCreated throws, and prompts no SDK session', async () => {
+    nextSession = makeSession({ agent_sdk: 'opencode', worktree_id: 'worktree-2' })
+    setupSessionStores()
+
+    const result = await launchSessionWithModel(
+      sessionSpec({
+        modelConfig: SDK_CONFIG,
+        onSessionCreated: () => {
+          throw new Error('another session is at it')
+        }
+      })
+    )
+
+    expect(result).toEqual({
+      success: false,
+      error: 'another session is at it',
+      sessionId: 'session-1'
+    })
+    expect(opencodeApi.connect).not.toHaveBeenCalled()
+    expect(opencodeApi.prompt).not.toHaveBeenCalled()
+  })
+
+  it('does not call onSessionCreated when the session could not be created', async () => {
+    useSessionStore.setState({
+      createSession: vi.fn(async () => ({ success: false, error: 'no provider' }))
+    })
+    const onSessionCreated = vi.fn()
+
+    const result = await launchSessionWithModel(sessionSpec({ onSessionCreated }))
+
+    expect(result).toEqual({ success: false, error: 'no provider' })
+    expect(onSessionCreated).not.toHaveBeenCalled()
+    expect(cliSpawns()).toEqual([])
+  })
+
+  it("loads the project's worktrees when the one asked for is not in the store yet", async () => {
+    nextSession = makeSession({ agent_sdk: 'opencode', worktree_id: 'worktree-2' })
+    setupSessionStores()
+    const loadWorktrees = vi.fn(async () => {
+      useWorktreeStore.setState({
+        worktreesByProject: new Map([
+          ['project-1', [makeWorktree({ id: 'worktree-2', path: '/repo/integration' })]]
+        ])
+      })
+    })
+    useWorktreeStore.setState({ worktreesByProject: new Map(), loadWorktrees })
+
+    const result = await launchSessionWithModel(sessionSpec({ modelConfig: SDK_CONFIG }))
+
+    expect(loadWorktrees).toHaveBeenCalledWith('project-1')
+    expect(result).toEqual({ success: true, sessionId: 'session-1' })
+    expect(opencodeApi.connect).toHaveBeenCalledWith('/repo/integration', 'session-1')
   })
 })

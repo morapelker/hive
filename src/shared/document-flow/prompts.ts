@@ -151,6 +151,36 @@ export function withRunRules(
   return [text, ...missing].filter(Boolean).join('\n\n')
 }
 
+export interface MigrationPromptInput {
+  documentTitle: string
+  integrationBranch: string
+  /** The report's list: migration file paths, and what the agents said they added. */
+  migrations: readonly string[]
+  /** The session's own SDK, which names its question tool. */
+  sdk: string
+}
+
+/**
+ * The whole prompt of the session that executes a finished run's migrations, started from the
+ * run's report in the integration worktree. The list is what the branch says; what production
+ * already has is for the agent to find out, so a migration is never run twice.
+ */
+export function buildMigrationPrompt(input: MigrationPromptInput): string {
+  const title = input.documentTitle.replace(/\s+/g, ' ').trim()
+  const migrations = input.migrations.map((entry) => entry.replace(/\s+/g, ' ').trim())
+  return [
+    `execute the migrations of this branch (${input.integrationBranch}) against production. the branch holds the merged work of the document run${title ? ` "${title}"` : ''}; these are the migrations it added or changed:`,
+    migrations
+      .filter(Boolean)
+      .map((entry) => `- ${entry}`)
+      .join('\n'),
+    "first find out how this project runs and tracks its migrations (its docs, scripts and config), then check against production which of these migrations have already been applied there. do not take the list's word for it, and do not assume: read the production migration state.",
+    "then run the ones that have not been applied yet, in order, with the project's own migration tooling. never re-run a migration that is already applied, and do not edit the migration files.",
+    `if you cannot reach production, cannot tell whether a migration was applied, or a migration fails: stop there and tell me, do not guess and do not work around it. if you have any clarifications you might need - use the ${questionToolName(input.sdk)} tool to ask me.`,
+    'when you are done, tell me which migrations were already applied, which ones you ran, and anything that failed or is left for me.'
+  ].join('\n\n')
+}
+
 /**
  * Typed ahead of a follow-up that is pasted into a Claude CLI session. The CLI wraps a pasted
  * prompt in `<pasted_content>` tags and its agent follows instructions in there only where the

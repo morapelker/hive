@@ -204,6 +204,22 @@ async function isSessionStarted(sessionId: string): Promise<boolean> {
   return live.terminalIds.includes(sessionId)
 }
 
+/** The app's default launch: what "Create & Send" would run with. */
+export function resolveDefaultLaunchConfig(): DocumentRunLaunchConfig {
+  const sdk = resolvePreferredAgentSdk()
+  const model = resolveDefaultLaunchModel(sdk)
+  return {
+    sdk,
+    model: {
+      providerID: model.providerID,
+      modelID: model.modelID,
+      ...(model.variant ? { variant: model.variant } : {})
+    },
+    codexFastMode: useSettingsStore.getState().codexFastMode,
+    customProviderId: null
+  }
+}
+
 export function createLiveRunnerPorts(): RunnerPorts {
   startSessionSignalLatch()
 
@@ -281,20 +297,7 @@ export function createLiveRunnerPorts(): RunnerPorts {
     reloadWorktrees: (projectId) =>
       useWorktreeStore.getState().loadWorktrees(projectId, { force: true }),
 
-    resolveDefaultLaunch: () => {
-      const sdk = resolvePreferredAgentSdk()
-      const model = resolveDefaultLaunchModel(sdk)
-      return {
-        sdk,
-        model: {
-          providerID: model.providerID,
-          modelID: model.modelID,
-          ...(model.variant ? { variant: model.variant } : {})
-        },
-        codexFastMode: useSettingsStore.getState().codexFastMode,
-        customProviderId: null
-      }
-    },
+    resolveDefaultLaunch: resolveDefaultLaunchConfig,
     launchTicket: (spec) => launchTicketWithModel(spec),
     completeOrphanSession: async (sessionId) => {
       await dbApi.session.update(sessionId, {

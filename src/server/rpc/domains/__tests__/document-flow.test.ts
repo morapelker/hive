@@ -56,6 +56,8 @@ const API_METHODS = [
   'rollbackMerge',
   'finalize',
   'cancel',
+  'startMigrations',
+  'endMigrations',
   'delete',
   'logEvent',
   'suggestVerifyCommand'
@@ -95,6 +97,8 @@ function makeService(overrides: Partial<DocumentFlowRpcService> = {}): DocumentF
     rollbackMerge: () => Effect.succeed({ success: true }),
     finalize: () => Effect.succeed(detail),
     cancel: () => Effect.succeed(detail),
+    startMigrations: () => Effect.succeed(detail),
+    endMigrations: () => Effect.succeed(detail),
     delete: () => Effect.succeed(true),
     logEvent: () => Effect.succeed(undefined),
     suggestVerifyCommand: () => Effect.succeed(null),
@@ -270,6 +274,93 @@ describe('documentFlow RPC handlers', () => {
       suggestVerifyCommand: ['project-1'],
       retryExtraction: [{ runId: 'run-1', generation: null }]
     })
+  })
+
+  it('passes the migration session params through positionally', async () => {
+    const startMigrations = vi.fn((..._args: unknown[]) => Effect.succeed(detail))
+    const endMigrations = vi.fn((..._args: unknown[]) => Effect.succeed(detail))
+    const service = makeService({ startMigrations, endMigrations })
+
+    await expect(
+      call(service, 'startMigrations', { runId: 'run-1', sessionId: 'session-1' })
+    ).resolves.toEqual(detail)
+    await expect(
+      call(service, 'endMigrations', {
+        runId: 'run-1',
+        sessionId: 'session-1',
+        outcome: 'finished'
+      })
+    ).resolves.toEqual(detail)
+    await call(service, 'endMigrations', {
+      runId: 'run-2',
+      sessionId: 'session-2',
+      outcome: 'stopped'
+    })
+
+    expect(startMigrations.mock.calls).toEqual([['run-1', 'session-1']])
+    expect(endMigrations.mock.calls).toEqual([
+      ['run-1', 'session-1', 'finished'],
+      ['run-2', 'session-2', 'stopped']
+    ])
+  })
+
+  it('rejects migration session params that are incomplete, mis-shaped or carry extra fields', async () => {
+    const startMigrations = vi.fn(() => Effect.succeed(detail))
+    const endMigrations = vi.fn(() => Effect.succeed(detail))
+    const service = makeService({ startMigrations, endMigrations })
+
+    await rejectsValidation(service, 'startMigrations', undefined)
+    await rejectsValidation(service, 'startMigrations', { runId: 'run-1' })
+    await rejectsValidation(service, 'startMigrations', { sessionId: 'session-1' })
+    await rejectsValidation(service, 'startMigrations', { runId: 'run-1', sessionId: '' })
+    await rejectsValidation(service, 'startMigrations', { runId: '', sessionId: 'session-1' })
+    await rejectsValidation(service, 'startMigrations', { runId: 'run-1', sessionId: null })
+    await rejectsValidation(service, 'startMigrations', { runId: 'run-1', sessionId: 7 })
+    // The outcome belongs to the end of a session, not to its start.
+    await rejectsValidation(service, 'startMigrations', {
+      runId: 'run-1',
+      sessionId: 'session-1',
+      outcome: 'finished'
+    })
+
+    await rejectsValidation(service, 'endMigrations', { runId: 'run-1', outcome: 'stopped' })
+    await rejectsValidation(service, 'endMigrations', {
+      sessionId: 'session-1',
+      outcome: 'stopped'
+    })
+    await rejectsValidation(service, 'endMigrations', { runId: 'run-1', sessionId: 'session-1' })
+    await rejectsValidation(service, 'endMigrations', {
+      runId: 'run-1',
+      sessionId: '',
+      outcome: 'finished'
+    })
+    for (const outcome of ['cancelled', 'failed', 'Finished', '', null, true]) {
+      await rejectsValidation(service, 'endMigrations', {
+        runId: 'run-1',
+        sessionId: 'session-1',
+        outcome
+      })
+    }
+    await rejectsValidation(service, 'endMigrations', {
+      runId: 'run-1',
+      sessionId: 'session-1',
+      outcome: 'stopped',
+      force: true
+    })
+
+    expect(startMigrations).not.toHaveBeenCalled()
+    expect(endMigrations).not.toHaveBeenCalled()
+  })
+
+  it('surfaces a refused migration session to the caller', async () => {
+    const service = makeService({
+      startMigrations: () =>
+        Effect.fail(new Error('The migrations of this run are already being executed.'))
+    })
+
+    await expect(
+      call(service, 'startMigrations', { runId: 'run-1', sessionId: 'session-2' })
+    ).rejects.toThrow('The migrations of this run are already being executed.')
   })
 
   it('rejects unknown fields, at the top level and inside patches', async () => {

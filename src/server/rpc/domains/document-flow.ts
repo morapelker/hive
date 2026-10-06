@@ -11,6 +11,7 @@ import {
   type DocumentCommitResult,
   type DocumentMergeCheckResult,
   type DocumentMergeResult,
+  type DocumentMigrationOutcome,
   type DocumentRun,
   type DocumentRunConfig,
   type DocumentRunDetail,
@@ -80,6 +81,12 @@ export interface DocumentFlowRpcService {
   readonly rollbackMerge: (runId: string, itemId: string) => Rpc<DocumentSimpleResult>
   readonly finalize: (runId: string) => Rpc<DocumentRunDetail>
   readonly cancel: (runId: string) => Rpc<DocumentRunDetail>
+  readonly startMigrations: (runId: string, sessionId: string) => Rpc<DocumentRunDetail>
+  readonly endMigrations: (
+    runId: string,
+    sessionId: string,
+    outcome: DocumentMigrationOutcome
+  ) => Rpc<DocumentRunDetail>
   readonly delete: (runId: string) => Rpc<boolean>
   readonly logEvent: (params: DocumentFlowLogEventParams) => Rpc<void>
   readonly suggestVerifyCommand: (projectId: string) => Rpc<string | null>
@@ -223,6 +230,10 @@ const classifyParamsSchema = z
 const commitIntegrationParamsSchema = z
   .object({ runId: idSchema, message: z.string().min(1) })
   .strict()
+const startMigrationsParamsSchema = z.object({ runId: idSchema, sessionId: idSchema }).strict()
+const endMigrationsParamsSchema = z
+  .object({ runId: idSchema, sessionId: idSchema, outcome: z.enum(['finished', 'stopped']) })
+  .strict()
 const logEventParamsSchema = z
   .object({
     runId: idSchema,
@@ -271,6 +282,10 @@ export const makeLiveDocumentFlowRpcService = (eventBus?: EventBus): DocumentFlo
     rollbackMerge: (runId, itemId) => call((service) => service.rollbackMerge(runId, itemId)),
     finalize: (runId) => call((service) => service.finalize(runId)),
     cancel: (runId) => call((service) => service.cancel(runId)),
+    startMigrations: (runId, sessionId) =>
+      call((service) => service.startMigrations(runId, sessionId)),
+    endMigrations: (runId, sessionId, outcome) =>
+      call((service) => service.endMigrations(runId, sessionId, outcome)),
     delete: (runId) => call((service) => service.delete(runId)),
     logEvent: (params) => call((service) => service.logEvent(params)),
     suggestVerifyCommand: (projectId) => call((service) => service.suggestVerifyCommand(projectId))
@@ -347,6 +362,18 @@ export const makeDocumentFlowRpcHandlers = (
     ],
     ['documentFlow.finalize', handle(runIdParamsSchema, ({ runId }) => service.finalize(runId))],
     ['documentFlow.cancel', handle(runIdParamsSchema, ({ runId }) => service.cancel(runId))],
+    [
+      'documentFlow.startMigrations',
+      handle(startMigrationsParamsSchema, ({ runId, sessionId }) =>
+        service.startMigrations(runId, sessionId)
+      )
+    ],
+    [
+      'documentFlow.endMigrations',
+      handle(endMigrationsParamsSchema, ({ runId, sessionId, outcome }) =>
+        service.endMigrations(runId, sessionId, outcome)
+      )
+    ],
     ['documentFlow.delete', handle(runIdParamsSchema, ({ runId }) => service.delete(runId))],
     ['documentFlow.logEvent', handle(logEventParamsSchema, (params) => service.logEvent(params))],
     [

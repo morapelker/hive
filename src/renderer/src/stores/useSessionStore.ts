@@ -260,6 +260,8 @@ interface SessionState {
       modelOverride?: SelectedModel
       pendingMessage?: string | null
       customProviderId?: string | null
+      /** The session belongs to no ticket: do not attach it to one pre-assigned to the worktree. */
+      skipKanbanAttach?: boolean
     }
   ) => Promise<{ success: boolean; session?: Session; error?: string }>
   closeSession: (
@@ -685,6 +687,7 @@ export const useSessionStore = create<SessionState>()(
           modelOverride?: SelectedModel
           pendingMessage?: string | null
           customProviderId?: string | null
+          skipKanbanAttach?: boolean
         }
       ) => {
         try {
@@ -791,7 +794,9 @@ export const useSessionStore = create<SessionState>()(
           // Notify kanban store — auto-attaches pre-assigned tickets to this session.
           // Wrapped in its own try-catch so a handler error can never break session creation.
           try {
-            notifyKanbanNewSession(session.id, worktreeId, projectId, session.mode || 'build')
+            if (!options?.skipKanbanAttach) {
+              notifyKanbanNewSession(session.id, worktreeId, projectId, session.mode || 'build')
+            }
           } catch {
             // Non-critical — session was created successfully regardless
           }

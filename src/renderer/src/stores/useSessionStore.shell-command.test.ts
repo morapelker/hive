@@ -296,3 +296,65 @@ describe('createShellCommandSession', () => {
     expect(useShellCommandRunStore.getState().runsBySession).toEqual({})
   })
 })
+
+// The same rule for a plain session a caller launches for no ticket (a document run's
+// migration session): createSession notifies the kanban store unless told to skip it.
+describe('createSession', () => {
+  it('notifies the kanban store, so an orphan ticket of the worktree is attached to the session', async () => {
+    useKanbanStore.setState({ tickets: new Map([[PROJECT_ID, [orphanTicket()]]]) })
+
+    const result = await useSessionStore
+      .getState()
+      .createSession(WORKTREE_ID, PROJECT_ID, 'terminal', 'build', { autoFocus: false })
+
+    expect(result.success).toBe(true)
+    const created = result.session!
+    expect(mocks.notifyKanbanNewSession).toHaveBeenCalledTimes(1)
+    expect(mocks.notifyKanbanNewSession).toHaveBeenCalledWith(
+      created.id,
+      WORKTREE_ID,
+      PROJECT_ID,
+      'build'
+    )
+    const ticket = useKanbanStore.getState().tickets.get(PROJECT_ID)?.[0]
+    expect(ticket?.current_session_id).toBe(created.id)
+  })
+
+  it('does not notify the kanban store with skipKanbanAttach, so an orphan ticket of the worktree stays unattached', async () => {
+    useKanbanStore.setState({ tickets: new Map([[PROJECT_ID, [orphanTicket()]]]) })
+
+    const result = await useSessionStore
+      .getState()
+      .createSession(WORKTREE_ID, PROJECT_ID, 'terminal', 'build', {
+        autoFocus: false,
+        skipKanbanAttach: true
+      })
+
+    // The session itself is created like any other.
+    expect(result.success).toBe(true)
+    const created = result.session!
+    expect(mocks.sessionCreate).toHaveBeenCalledTimes(1)
+    expect(
+      useSessionStore
+        .getState()
+        .sessionsByWorktree.get(WORKTREE_ID)
+        ?.map((s) => s.id)
+    ).toEqual([created.id])
+    expect(mocks.notifyKanbanNewSession).not.toHaveBeenCalled()
+    expect(mocks.ticketUpdate).not.toHaveBeenCalled()
+    const ticket = useKanbanStore.getState().tickets.get(PROJECT_ID)?.[0]
+    expect(ticket?.current_session_id).toBeNull()
+    expect(ticket?.column).toBe('todo')
+    // Only the board attach is skipped: the worktree's diff comments still reach the session.
+    expect(mocks.attachAllToChat).toHaveBeenCalledWith(WORKTREE_ID)
+  })
+
+  it('notifies the kanban store when skipKanbanAttach is false', async () => {
+    await useSessionStore.getState().createSession(WORKTREE_ID, PROJECT_ID, 'terminal', 'build', {
+      autoFocus: false,
+      skipKanbanAttach: false
+    })
+
+    expect(mocks.notifyKanbanNewSession).toHaveBeenCalledTimes(1)
+  })
+})

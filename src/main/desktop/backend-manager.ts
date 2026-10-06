@@ -583,7 +583,9 @@ export const startDesktopBackend = async (
     env: {
       HIVE_SERVER_DB_PATH: join(baseDir, 'hive.db'),
       // Read by the document flow service (APP_STARTED_AT_ENV); the same on a child restart.
-      HIVE_APP_STARTED_AT: APP_STARTED_AT
+      HIVE_APP_STARTED_AT: APP_STARTED_AT,
+      // The app instance that owns the sessions this child's document flow service records.
+      HIVE_APP_PID: String(process.pid)
     }
   })
 

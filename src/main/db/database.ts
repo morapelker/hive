@@ -287,6 +287,9 @@ const DOCUMENT_RUN_PATCH_COLUMNS: Record<keyof DocumentRunRowPatch, DocumentFlow
   integration_worktree_path: 'plain',
   ticket_id: 'plain',
   report: 'json',
+  migration_session_id: 'plain',
+  migration_started_at: 'plain',
+  migration_owner_pid: 'plain',
   started_at: 'plain',
   finished_at: 'plain'
 }
@@ -696,6 +699,9 @@ export class DatabaseService implements DocumentFlowDb {
     this.safeAddColumn('session_final_messages', 'detail', 'TEXT DEFAULT NULL')
     this.safeAddColumn('document_run_items', 'conflict_head', 'TEXT DEFAULT NULL')
     this.safeAddColumn('document_runs', 'ticket_id', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('document_runs', 'migration_session_id', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('document_runs', 'migration_started_at', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('document_runs', 'migration_owner_pid', 'INTEGER DEFAULT NULL')
   }
 
   /**
@@ -1193,6 +1199,9 @@ export class DatabaseService implements DocumentFlowDb {
       integration_worktree_path: (row.integration_worktree_path as string | null) ?? null,
       ticket_id: (row.ticket_id as string | null) ?? null,
       report: this.parseDocumentFlowObject<NonNullable<DocumentRun['report']>>(row.report),
+      migration_session_id: (row.migration_session_id as string | null) ?? null,
+      migration_started_at: (row.migration_started_at as string | null) ?? null,
+      migration_owner_pid: (row.migration_owner_pid as number | null) ?? null,
       runner_client_id: (row.runner_client_id as string | null) ?? null,
       runner_heartbeat_at: (row.runner_heartbeat_at as string | null) ?? null,
       created_at: row.created_at as string,

@@ -1135,6 +1135,10 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
       toast.warning('Cancel the document run before deleting its ticket.')
       return
     }
+    if (run?.migration_session_id) {
+      toast.warning('Stop the migrations of the document run before deleting its ticket.')
+      return
+    }
     setShowDeleteConfirm(true)
   }, [documentRunId])
 

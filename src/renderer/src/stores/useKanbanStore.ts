@@ -2386,6 +2386,11 @@ registerKanbanAutoCreateTicket(({ sessionId, rawPrompt }) => {
       // Raw terminals and the board assistant have no real "prompt" to capture.
       if (session.session_type === 'board-assistant' || session.agent_sdk === 'terminal') return
 
+      // The session executing a document run's migrations is shown by the run's own
+      // ticket, which holds no session: it must not get a second ticket here.
+      const { isMigrationSession } = await import('@/lib/document-flow/migrations')
+      if (isMigrationSession(sessionId)) return
+
       // Idempotency gate (authoritative — immune to the auto-attach timing and a
       // stale in-memory tickets map): skip if any non-archived ticket is linked.
       const existing = await kanban.ticket.getBySession<KanbanTicket>(sessionId)

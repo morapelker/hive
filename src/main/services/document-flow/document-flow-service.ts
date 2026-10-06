@@ -52,6 +52,7 @@ import {
   type DocumentCommitResult,
   type DocumentMergeCheckResult,
   type DocumentMergeResult,
+  type DocumentMigrationOutcome,
   type DocumentRun,
   type DocumentRunConfig,
   type DocumentRunDetail,
@@ -96,6 +97,24 @@ const SERVER_STARTED_AT = new Date().toISOString()
 export const APP_STARTED_AT_ENV = 'HIVE_APP_STARTED_AT'
 /** The same stamp as a setting, for a server child that was not handed the environment. */
 export const APP_STARTED_AT_SETTING = 'app_started_at'
+
+/** Process id of the app instance this server child belongs to, handed over by the main process. */
+export const APP_PID_ENV = 'HIVE_APP_PID'
+
+export function appPidFromEnv(env: NodeJS.ProcessEnv = process.env): number | null {
+  const value = Number(env[APP_PID_ENV])
+  return Number.isInteger(value) && value > 0 ? value : null
+}
+
+/** Whether a process with this id exists (also when it is not ours to signal). */
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM'
+  }
+}
 
 /** The app's start time from `env`, when it carries one that is a date. */
 export function appStartedAtFromEnv(env: NodeJS.ProcessEnv = process.env): string | null {
@@ -198,6 +217,10 @@ export interface DocumentFlowServiceDeps {
    * server child, which can restart on its own while every session keeps running.
    */
   getAppStartedAt?: () => string | null
+  /** Process id of the app instance that owns the sessions; null when it is not known. */
+  getAppPid?: () => number | null
+  /** Whether a process with this id is running; defaults to asking the OS. */
+  isProcessAlive?: (pid: number) => boolean
   git?: DocumentFlowGit
   /**
    * Runs `task` outside the caller's RPC request context. Writes made under a request carry
@@ -326,6 +349,13 @@ const ORCHESTRATION_ITEM_FIELDS = [
   'started_at',
   'finished_at'
 ] as const satisfies readonly (keyof DocumentRunItemPatch)[]
+
+/** The patch that releases a run from its migration session. */
+const NO_MIGRATION_SESSION = {
+  migration_session_id: null,
+  migration_started_at: null,
+  migration_owner_pid: null
+} as const satisfies DocumentRunRowPatch
 
 const UNLAUNCHED_RUN_STATUSES: readonly DocumentRun['status'][] = [
   'extracting',
@@ -1011,20 +1041,26 @@ export class DocumentFlowService {
    * A run that ended leaves In Progress for Review, once: from there its ticket is the user's
    * to move (to Done, which merges it). Never fails the operation that ended the run.
    */
-  private async settleRunTicket(run: DocumentRun): Promise<void> {
-    const ticketId = run.ticket_id
-    if (!ticketId || !isEndedRunStatus(run.status)) return
-    try {
-      const ticket = await this.deps.getTicket(run.project_id, ticketId)
-      if (ticket?.column !== 'in_progress') return
-      await this.detach(() => this.deps.moveTicket(run.project_id, ticketId, 'review'))
-    } catch (error) {
-      log.warn('Could not move the ticket of a finished document run to review', {
-        runId: run.id,
-        ticketId,
-        error: describeError(error)
-      })
-    }
+  private settleRunTicket(run: DocumentRun): Promise<void> {
+    // Decided from the current row, under the run's ticket lock: the startup reconcile holds
+    // a snapshot from before a migration session the user just started.
+    return this.runTicketLocks.run(run.id, async () => {
+      const current = this.db.getDocumentRun(run.id) ?? run
+      const ticketId = current.ticket_id
+      // A session executing the run's migrations holds the ticket In Progress until it is done.
+      if (!ticketId || !isEndedRunStatus(current.status) || current.migration_session_id) return
+      try {
+        const ticket = await this.deps.getTicket(current.project_id, ticketId)
+        if (ticket?.column !== 'in_progress') return
+        await this.detach(() => this.deps.moveTicket(current.project_id, ticketId, 'review'))
+      } catch (error) {
+        log.warn('Could not move the ticket of a finished document run to review', {
+          runId: run.id,
+          ticketId,
+          error: describeError(error)
+        })
+      }
+    })
   }
 
   /**
@@ -1046,7 +1082,8 @@ export class DocumentFlowService {
   /**
    * Startup repair, safe to repeat. Runs launched before runs had a ticket get one while their
    * integration worktree is still there, their ticket worktrees are re-pointed at the base
-   * branch, and a run that ended while no one was looking leaves In Progress.
+   * branch, and a run that ended while no one was looking leaves In Progress. So does one whose
+   * migration session died with the app.
    */
   async reconcileRunTickets(): Promise<void> {
     let runs: DocumentRun[]
@@ -1064,7 +1101,7 @@ export class DocumentFlowService {
       try {
         this.detach(() => this.repointTaskWorktrees(run))
         if (run.ticket_id) {
-          await this.settleRunTicket(run)
+          await this.settleRunTicket(this.dropDeadMigrationSession(run))
           continue
         }
         // A run cancelled before its launch finished never had a ticket.
@@ -1079,6 +1116,101 @@ export class DocumentFlowService {
         })
       }
     }
+  }
+
+  // ── Migrations of a finished run ──────────────────────────────────────────
+
+  /**
+   * Record the session that executes a finished run's migrations in the integration worktree.
+   * The run's ticket goes back to In Progress for as long as that session is at it. Refused
+   * while another session is: one worktree, one set of migrations.
+   */
+  async startMigrations(runId: string, sessionId: string): Promise<DocumentRunDetail> {
+    const run = this.requireRun(runId)
+    if (run.migration_session_id === sessionId) return this.detail(run, true)
+    if (run.migration_session_id) {
+      throw invalidState('The migrations of this run are already being executed.')
+    }
+    if (!isEndedRunStatus(run.status) || !run.report) {
+      throw invalidState('Only a run that has finished has migrations to execute.')
+    }
+    const updated = this.saveRun(run, {
+      migration_session_id: sessionId,
+      migration_started_at: this.now().toISOString(),
+      migration_owner_pid: this.deps.getAppPid?.() ?? null
+    })
+    this.log(updated, 'migrations_started', 'Started a session to execute the migrations', {
+      data: { sessionId }
+    })
+    await this.holdRunTicket(updated)
+    return this.detail(updated, true)
+  }
+
+  /**
+   * The migration session is over: it finished, or the user stopped it. The run's ticket
+   * returns to Review. A no-op unless `sessionId` is still the run's migration session, so a
+   * late caller cannot end a session that was started since.
+   */
+  async endMigrations(
+    runId: string,
+    sessionId: string,
+    outcome: DocumentMigrationOutcome
+  ): Promise<DocumentRunDetail> {
+    const run = this.requireRun(runId)
+    if (run.migration_session_id !== sessionId) return this.detail(run, true)
+    const updated = this.saveRun(run, NO_MIGRATION_SESSION)
+    if (outcome === 'stopped') {
+      this.log(updated, 'migrations_stopped', 'The migration session was stopped')
+    } else {
+      this.log(updated, 'migrations_finished', 'The migration session finished')
+    }
+    await this.settleRunTicket(updated)
+    return this.detail(updated, true)
+  }
+
+  /**
+   * A finished run whose migrations are being executed is at work again: its ticket returns
+   * from Review to In Progress. A ticket the user already moved on (Done, Merged) stays put.
+   * Never fails the operation that started the session.
+   */
+  private holdRunTicket(run: DocumentRun): Promise<void> {
+    return this.runTicketLocks.run(run.id, async () => {
+      const current = this.db.getDocumentRun(run.id) ?? run
+      const ticketId = current.ticket_id
+      // Ended already (stopped before the move got its turn): nothing to hold.
+      if (!ticketId || !current.migration_session_id) return
+      try {
+        const ticket = await this.deps.getTicket(current.project_id, ticketId)
+        if (ticket?.column !== 'review') return
+        await this.detach(() => this.deps.moveTicket(current.project_id, ticketId, 'in_progress'))
+      } catch (error) {
+        log.warn('Could not move the ticket of a document run back to in progress', {
+          runId: run.id,
+          ticketId,
+          error: describeError(error)
+        })
+      }
+    })
+  }
+
+  /**
+   * A migration session started before the app did died with it (sessions do not outlive the
+   * app; this server child restarting on its own kills none). Nothing is left to stop. Several
+   * app instances share one database: a session of another instance that is still running is
+   * that instance's to end, and is left alone.
+   */
+  private dropDeadMigrationSession(snapshot: DocumentRun): DocumentRun {
+    // The row as it is now: the reconcile's snapshot may predate a session started since.
+    const run = this.db.getDocumentRun(snapshot.id) ?? snapshot
+    if (!run.migration_session_id) return run
+    const appStartedAt = this.deps.getAppStartedAt?.() ?? SERVER_STARTED_AT
+    if (run.migration_started_at && run.migration_started_at >= appStartedAt) return run
+    const owner = run.migration_owner_pid
+    const alive = this.deps.isProcessAlive ?? isProcessAlive
+    if (owner !== null && owner !== (this.deps.getAppPid?.() ?? null) && alive(owner)) return run
+    const updated = this.saveRun(run, NO_MIGRATION_SESSION)
+    this.log(updated, 'migrations_interrupted', 'The migration session ended with the app')
+    return updated
   }
 
   /**
@@ -1750,6 +1882,10 @@ export class DocumentFlowService {
     if (run.status === 'running' || run.status === 'paused') {
       throw invalidState('Cancel the run before deleting it.')
     }
+    // A project that is being deleted takes the migration session with it.
+    if (run.migration_session_id && !options.removeFiles) {
+      throw invalidState('Stop the migrations of the run before deleting it.')
+    }
     const hasTickets = this.db.getDocumentRunItems(run.id).some((item) => item.ticket_id)
     const deleted = this.db.deleteDocumentRun(run.id)
     this.lastVerify.delete(run.id)
@@ -2042,6 +2178,7 @@ export async function getDocumentFlowService(
       db.setWorktreeBaseBranch(worktreeId, baseBranch)
     },
     getAppStartedAt: () => appStartedAtFromEnv() ?? db.getSetting(APP_STARTED_AT_SETTING),
+    getAppPid: () => appPidFromEnv(),
     getDefaultBranch: async (projectPath) => {
       const { gitService } = await import('../../effect/git/facade')
       return gitService.getDefaultBranch(projectPath)

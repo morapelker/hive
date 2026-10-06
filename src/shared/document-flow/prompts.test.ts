@@ -7,6 +7,7 @@ import {
   buildContinuePrompt,
   buildFixTicket,
   buildLaunchPrompt,
+  buildMigrationPrompt,
   buildNudgePrompt,
   buildQuestionModeNotice,
   isQuestionModeNotice,
@@ -15,7 +16,8 @@ import {
   withRunRules,
   type ConflictPromptInput,
   type FixTicketInput,
-  type LaunchPromptInput
+  type LaunchPromptInput,
+  type MigrationPromptInput
 } from './prompts'
 
 const launch = (overrides: Partial<LaunchPromptInput> = {}): LaunchPromptInput => ({
@@ -43,6 +45,14 @@ const conflict = (overrides: Partial<ConflictPromptInput> = {}): ConflictPromptI
   conflictedFiles: ['src/i18n/en.json', 'drizzle/meta/_journal.json'],
   mergedTickets: [{ key: 'A1', title: 'Chinese translation' }],
   attempt: 1,
+  ...overrides
+})
+
+const migration = (overrides: Partial<MigrationPromptInput> = {}): MigrationPromptInput => ({
+  documentTitle: 'Factory area · Changes round 2',
+  integrationBranch: 'doc-factory',
+  migrations: ['drizzle/0042_counters.sql', 'drizzle/0043_orders.sql — adds orders.test_flag'],
+  sdk: 'claude-code',
   ...overrides
 })
 
@@ -202,6 +212,95 @@ describe('withRunRules', () => {
     expect(withRunRules(brief.join('\n\n'), { interactive: false, sdk: 'claude-code' })).toBe(
       ['do the task', DO_NOT_ASK_LINE, GUARD_LINE, FOLLOW_UPS_LINE].join('\n\n')
     )
+  })
+})
+
+describe('buildMigrationPrompt', () => {
+  it('names the branch, production and the document the work came from', () => {
+    const [first] = buildMigrationPrompt(migration()).split('\n\n')
+    expect(first).toBe(
+      'execute the migrations of this branch (doc-factory) against production. the branch holds the merged work of the document run "Factory area · Changes round 2"; these are the migrations it added or changed:'
+    )
+  })
+
+  it('lists every migration as a bullet of its own, in the order of the report', () => {
+    const paragraphs = buildMigrationPrompt(migration()).split('\n\n')
+    expect(paragraphs[1]).toBe(
+      '- drizzle/0042_counters.sql\n- drizzle/0043_orders.sql — adds orders.test_flag'
+    )
+  })
+
+  it('keeps each migration on one line and drops the blank ones', () => {
+    const prompt = buildMigrationPrompt(
+      migration({
+        migrations: ['  drizzle/0042_counters.sql\n   adds\tthe counters table  ', ' \n ', 'b.sql']
+      })
+    )
+    expect(prompt.split('\n\n')[1]).toBe(
+      '- drizzle/0042_counters.sql adds the counters table\n- b.sql'
+    )
+  })
+
+  it('has the agent read what production already has before it runs anything', () => {
+    const paragraphs = buildMigrationPrompt(migration()).split('\n\n')
+    const check = paragraphs.findIndex((paragraph) =>
+      paragraph.includes(
+        'check against production which of these migrations have already been applied'
+      )
+    )
+    const run = paragraphs.findIndex((paragraph) =>
+      paragraph.startsWith('then run the ones that have not been applied yet, in order')
+    )
+    expect(check).toBeGreaterThan(1)
+    expect(run).toBeGreaterThan(check)
+    expect(paragraphs[check]).toContain("do not take the list's word for it")
+    expect(paragraphs[check]).toContain('read the production migration state')
+    expect(paragraphs[run]).toContain('never re-run a migration that is already applied')
+    expect(paragraphs[run]).toContain('do not edit the migration files')
+  })
+
+  it('tells the agent to stop and report instead of guessing or working around a failure', () => {
+    const prompt = buildMigrationPrompt(migration())
+    expect(prompt).toContain(
+      'if you cannot reach production, cannot tell whether a migration was applied, or a migration fails: stop there and tell me, do not guess and do not work around it.'
+    )
+    expect(prompt.split('\n\n').at(-1)).toBe(
+      'when you are done, tell me which migrations were already applied, which ones you ran, and anything that failed or is left for me.'
+    )
+  })
+
+  it.each([
+    ['claude-code', 'AskUserQuestion'],
+    ['claude-code-cli', 'AskUserQuestion'],
+    ['codex', 'request_user_input'],
+    ['codex-cli', 'request_user_input'],
+    ['opencode', 'question']
+  ] as const)('names the question tool of %s', (sdk, tool) => {
+    expect(buildMigrationPrompt(migration({ sdk }))).toContain(
+      `if you have any clarifications you might need - use the ${tool} tool to ask me.\n\n`
+    )
+  })
+
+  it('keeps the title on the first line, and leaves it out when there is none', () => {
+    const titled = buildMigrationPrompt(migration({ documentTitle: ' Factory\n area ' }))
+    expect(titled.split('\n')[0]).toContain('the document run "Factory area"; these are')
+
+    for (const documentTitle of ['', '  \n ']) {
+      const [first] = buildMigrationPrompt(migration({ documentTitle })).split('\n')
+      expect(first).toBe(
+        'execute the migrations of this branch (doc-factory) against production. the branch holds the merged work of the document run; these are the migrations it added or changed:'
+      )
+      expect(first).not.toContain('""')
+    }
+  })
+
+  it('is the whole prompt: neither the rules of a ticket of the run nor its status footer', () => {
+    const prompt = buildMigrationPrompt(migration())
+    // A ticket of the run is told never to run migrations; this session is told to.
+    expect(prompt).not.toContain('do not run migrations against any database')
+    expect(prompt).not.toContain('implement only this task')
+    expect(prompt).not.toContain('STATUS')
+    expect(withRunRules(prompt, { interactive: true, sdk: 'claude-code' })).not.toBe(prompt)
   })
 })
 
