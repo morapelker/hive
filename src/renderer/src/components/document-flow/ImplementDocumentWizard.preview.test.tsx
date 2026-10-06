@@ -5,6 +5,7 @@ import { toast } from '@/lib/toast'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
+import type { CustomClaudeProvider } from '@shared/types/custom-provider'
 import {
   DEFAULT_DOCUMENT_RUN_CONFIG,
   type DocumentRunDetail,
@@ -1051,5 +1052,309 @@ describe('ImplementDocumentWizard — launch', () => {
 
     expect(api.retryExtraction).toHaveBeenCalledWith(expect.objectContaining({ runId: 'run-1' }))
     expect(screen.getByTestId('docflow-wizard')).toHaveAttribute('data-step', 'extracting')
+  })
+})
+
+describe('ImplementDocumentWizard — quick model chips', () => {
+  const SONNET_HIGH: DocumentRunLaunchConfig = {
+    sdk: 'claude-code-cli',
+    model: { providerID: 'anthropic', modelID: 'sonnet', variant: 'high' },
+    codexFastMode: false
+  }
+  const OPUS_XHIGH: DocumentRunLaunchConfig = {
+    sdk: 'claude-code-cli',
+    model: { providerID: 'anthropic', modelID: 'opus', variant: 'xhigh' },
+    codexFastMode: false
+  }
+  const CODEX: DocumentRunLaunchConfig = {
+    sdk: 'codex',
+    model: { providerID: 'codex', modelID: 'gpt-5.5' },
+    codexFastMode: false
+  }
+
+  const chip = (key: string, index = 0): HTMLElement =>
+    screen.getByTestId(`docflow-item-quick-model-${key}-${index}`)
+  const queryChip = (key: string, index = 0): HTMLElement | null =>
+    screen.queryByTestId(`docflow-item-quick-model-${key}-${index}`)
+  const tap = async (element: HTMLElement): Promise<void> => {
+    await act(async () => {
+      fireEvent.click(element)
+    })
+  }
+
+  it('offers no chip while every ticket is on the run default', async () => {
+    await renderPreview()
+    for (const key of ['A1', 'A2', 'A3']) {
+      expect(screen.queryByTestId(`docflow-item-quick-models-${key}`)).toBeNull()
+    }
+  })
+
+  it('offers a model one ticket uses on every row, pressed where it is in use', async () => {
+    await renderPreview(
+      makeDetail({}, [{ key: 'A1', launch_config: SONNET_HIGH }, { key: 'A2' }, { key: 'A3' }])
+    )
+
+    expect(chip('A1')).toHaveAttribute('aria-pressed', 'true')
+    expect(chip('A1')).toHaveTextContent(/sonnet/i)
+    expect(chip('A1')).toHaveTextContent('high')
+    // The pressed chip names the model, so the picker trigger only keeps its arrows.
+    expect(screen.queryByTestId('docflow-item-model-A1')).toBeNull()
+    expect(screen.getByTestId('docflow-item-model-trigger-A1')).toBeInTheDocument()
+
+    for (const key of ['A2', 'A3']) {
+      expect(chip(key)).toHaveAttribute('aria-pressed', 'false')
+      expect(chip(key)).toHaveTextContent(/sonnet/i)
+      expect(queryChip(key, 1)).toBeNull()
+      expect(screen.getByTestId(`docflow-item-model-${key}`)).toHaveTextContent('default')
+    }
+    // Chips need no picker.
+    expect(screen.queryByTestId('model-selector')).toBeNull()
+  })
+
+  it('applies the model with one tap and goes back to the default with the next', async () => {
+    await renderPreview(
+      makeDetail({}, [{ key: 'A1', launch_config: SONNET_HIGH }, { key: 'A2' }, { key: 'A3' }])
+    )
+
+    await tap(chip('A2'))
+    expect(api.updateItem).toHaveBeenLastCalledWith('run-1', 'item-A2', {
+      launch_config: SONNET_HIGH
+    })
+    expect(chip('A2')).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.queryByTestId('docflow-item-model-A2')).toBeNull()
+    // A tap neither expands the ticket nor opens the picker.
+    expect(screen.queryByTestId('docflow-item-editor-A2')).toBeNull()
+    expect(screen.queryByTestId('docflow-item-model-picker-A2')).toBeNull()
+    // The other rows are untouched.
+    expect(chip('A1')).toHaveAttribute('aria-pressed', 'true')
+    expect(chip('A3')).toHaveAttribute('aria-pressed', 'false')
+
+    await tap(chip('A2'))
+    expect(api.updateItem).toHaveBeenLastCalledWith('run-1', 'item-A2', { launch_config: null })
+    expect(chip('A2')).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByTestId('docflow-item-model-A2')).toHaveTextContent('default')
+  })
+
+  it('keeps a chip after the last ticket using it went back to the default', async () => {
+    await renderPreview(
+      makeDetail({}, [{ key: 'A1', launch_config: SONNET_HIGH }, { key: 'A2' }, { key: 'A3' }])
+    )
+
+    await tap(chip('A1'))
+    expect(api.updateItem).toHaveBeenLastCalledWith('run-1', 'item-A1', { launch_config: null })
+    for (const key of ['A1', 'A2', 'A3']) {
+      expect(chip(key)).toHaveAttribute('aria-pressed', 'false')
+    }
+
+    await tap(chip('A3'))
+    expect(api.updateItem).toHaveBeenLastCalledWith('run-1', 'item-A3', {
+      launch_config: SONNET_HIGH
+    })
+    expect(chip('A3')).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('switches a row between two models, one write per tap', async () => {
+    await renderPreview(
+      makeDetail({}, [
+        { key: 'A1', launch_config: SONNET_HIGH },
+        { key: 'A2', launch_config: CODEX },
+        { key: 'A3' }
+      ])
+    )
+    // Same chips in the same order on every row.
+    for (const key of ['A1', 'A2', 'A3']) {
+      expect(chip(key, 0)).toHaveTextContent(/sonnet/i)
+      expect(chip(key, 1)).toHaveTextContent('gpt-5.5')
+    }
+    expect(chip('A1', 0)).toHaveAttribute('aria-pressed', 'true')
+    expect(chip('A1', 1)).toHaveAttribute('aria-pressed', 'false')
+    expect(chip('A2', 0)).toHaveAttribute('aria-pressed', 'false')
+    expect(chip('A2', 1)).toHaveAttribute('aria-pressed', 'true')
+
+    api.updateItem.mockClear()
+    await tap(chip('A3', 0))
+    await tap(chip('A3', 1))
+    expect(api.updateItem.mock.calls).toEqual([
+      ['run-1', 'item-A3', { launch_config: SONNET_HIGH }],
+      ['run-1', 'item-A3', { launch_config: CODEX }]
+    ])
+    expect(chip('A3', 0)).toHaveAttribute('aria-pressed', 'false')
+    expect(chip('A3', 1)).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('offers the two latest models; a ticket on an older one shows it in its trigger', async () => {
+    await renderPreview(
+      makeDetail({}, [
+        { key: 'A1', launch_config: SONNET_HIGH },
+        { key: 'A2', launch_config: OPUS_XHIGH },
+        { key: 'A3', launch_config: CODEX },
+        { key: 'A4' }
+      ])
+    )
+    for (const key of ['A1', 'A4']) {
+      expect(chip(key, 0)).toHaveTextContent(/opus/i)
+      expect(chip(key, 1)).toHaveTextContent('gpt-5.5')
+      expect(queryChip(key, 2)).toBeNull()
+      expect(chip(key, 0)).toHaveAttribute('aria-pressed', 'false')
+      expect(chip(key, 1)).toHaveAttribute('aria-pressed', 'false')
+    }
+    expect(screen.getByTestId('docflow-item-model-A1')).toHaveTextContent(/sonnet/i)
+    expect(screen.getByTestId('docflow-item-model-A4')).toHaveTextContent('default')
+  })
+
+  it('does not offer the run default as a chip', async () => {
+    await renderPreview(
+      makeDetail({ config: { ...DEFAULT_DOCUMENT_RUN_CONFIG, defaultLaunch: SONNET_HIGH } }, [
+        { key: 'A1', launch_config: { ...SONNET_HIGH, customProviderId: null } },
+        { key: 'A2', launch_config: CODEX },
+        { key: 'A3' }
+      ])
+    )
+    expect(chip('A3', 0)).toHaveTextContent('gpt-5.5')
+    expect(queryChip('A3', 1)).toBeNull()
+    // A1 spells out the run default; no chip stands for it, so its trigger says so.
+    expect(screen.getByTestId('docflow-item-model-A1')).toHaveTextContent(/sonnet/i)
+  })
+
+  it('leaves the row as it was when the write fails', async () => {
+    await renderPreview(
+      makeDetail({}, [{ key: 'A1', launch_config: SONNET_HIGH }, { key: 'A2' }, { key: 'A3' }])
+    )
+    api.updateItem.mockRejectedValueOnce(new Error('nope'))
+
+    await tap(chip('A2'))
+    expect(toast.error).toHaveBeenCalledWith('Could not save your edit: nope')
+    expect(chip('A2')).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByTestId('docflow-item-model-A2')).toHaveTextContent('default')
+  })
+
+  it('checks a model applied with a chip like one chosen in the picker', async () => {
+    await renderPreview(
+      makeDetail({}, [
+        { key: 'A1' },
+        { key: 'A2', launch_config: ULTRACODE_ON_SDK, selected: false }
+      ])
+    )
+    expect(screen.queryByTestId('docflow-launch-blocker')).toBeNull()
+
+    // A deselected ticket still offers its model to the others.
+    await tap(chip('A1'))
+    expect(screen.getByTestId('docflow-launch-blocker')).toHaveTextContent(
+      'A1: ultracode only works with the Claude CLI, not Claude Code.'
+    )
+  })
+
+  it('tells apart chips that differ only in fast mode or in their custom provider', async () => {
+    const provider = (id: string, name: string): CustomClaudeProvider => ({
+      id,
+      name,
+      command: `${id}-claude`,
+      usageProvider: 'none'
+    })
+    useSettingsStore.setState({
+      customProviders: [provider('provider-1', 'Z.ai'), provider('provider-2', 'Moonshot')]
+    })
+    const custom = (customProviderId: string): DocumentRunLaunchConfig => ({
+      sdk: 'claude-code-cli',
+      model: null,
+      codexFastMode: false,
+      customProviderId
+    })
+    await renderPreview(
+      makeDetail({}, [
+        { key: 'A1', launch_config: custom('provider-1') },
+        { key: 'A2', launch_config: custom('provider-2') },
+        { key: 'A3' }
+      ])
+    )
+    expect(chip('A3', 0)).toHaveTextContent('Z.ai')
+    expect(chip('A3', 0)).toHaveAttribute('title', 'Use Claude CLI (Z.ai) · default model')
+    expect(chip('A3', 1)).toHaveTextContent('Moonshot')
+    expect(chip('A3', 1)).toHaveAttribute('title', 'Use Claude CLI (Moonshot) · default model')
+    cleanup()
+
+    await renderPreview(
+      makeDetail({}, [
+        { key: 'A1', launch_config: CODEX },
+        { key: 'A2', launch_config: { ...CODEX, codexFastMode: true } },
+        { key: 'A3' }
+      ])
+    )
+    expect(chip('A3', 0)).not.toHaveTextContent('fast')
+    expect(chip('A3', 0)).toHaveAttribute('title', 'Use Codex · gpt-5.5')
+    expect(chip('A3', 1)).toHaveTextContent('fast')
+    expect(chip('A3', 1)).toHaveAttribute('title', 'Use Codex · gpt-5.5 · fast')
+    expect(chip('A2', 1)).toHaveAttribute(
+      'title',
+      'Codex · gpt-5.5 · fast (click to use the run default)'
+    )
+  })
+
+  it('holds a picked model back while its save is still on the way after the picker closed', async () => {
+    await renderPreview()
+
+    await tap(screen.getByTestId('docflow-item-model-trigger-A1'))
+    // The first step lands: the stored model is the one the picker only passes through.
+    await tap(screen.getByTestId('docflow-item-model-picker-A1-choose'))
+
+    let land: () => void = () => {}
+    api.updateItem.mockImplementationOnce(
+      async (runId: string, itemId: string, patch: DocumentRunItemPatch) => {
+        await new Promise<void>((resolve) => {
+          land = resolve
+        })
+        return { ...storedDetail(runId).items.find((item) => item.id === itemId), ...patch }
+      }
+    )
+    await tap(screen.getByTestId('docflow-item-model-picker-A1-sdk-codex'))
+    await tap(screen.getByTestId('docflow-item-model-trigger-A1'))
+    expect(screen.queryByTestId('docflow-item-model-picker-A1')).toBeNull()
+
+    // Closed, but the last pick has not landed: the model passed through is not offered.
+    expect(screen.getByTestId('docflow-item-model-A1')).toHaveTextContent(/sonnet/i)
+    expect(screen.queryByTestId('docflow-item-quick-models-A2')).toBeNull()
+
+    await act(async () => {
+      land()
+    })
+    expect(chip('A2')).toHaveTextContent('gpt-5.5')
+    expect(queryChip('A2', 1)).toBeNull()
+    expect(chip('A1')).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('offers a model picked in the picker once the picker is closed', async () => {
+    await renderPreview()
+
+    await tap(screen.getByTestId('docflow-item-model-trigger-A1'))
+    await tap(screen.getByTestId('docflow-item-model-picker-A1-choose'))
+    expect(api.updateItem).toHaveBeenLastCalledWith('run-1', 'item-A1', {
+      launch_config: expect.objectContaining({ sdk: 'claude-code-cli' })
+    })
+    // Still picking: every step is saved, and none of them should flash up on the other rows.
+    await tap(screen.getByTestId('docflow-item-model-picker-A1-sdk-codex'))
+    expect(screen.getByTestId('docflow-item-model-A1')).toHaveTextContent('gpt-5.5')
+    expect(screen.queryByTestId('docflow-item-quick-models-A1')).toBeNull()
+    expect(screen.queryByTestId('docflow-item-quick-models-A2')).toBeNull()
+
+    await tap(screen.getByTestId('docflow-item-model-trigger-A1'))
+    expect(screen.queryByTestId('docflow-item-model-picker-A1')).toBeNull()
+
+    // Only the model the picker ended on is offered, not the one it passed through.
+    expect(chip('A1')).toHaveAttribute('aria-pressed', 'true')
+    expect(chip('A1')).toHaveTextContent('gpt-5.5')
+    expect(queryChip('A1', 1)).toBeNull()
+    expect(chip('A2')).toHaveAttribute('aria-pressed', 'false')
+    expect(chip('A2')).toHaveTextContent('gpt-5.5')
+
+    await tap(chip('A2'))
+    expect(api.updateItem).toHaveBeenLastCalledWith('run-1', 'item-A2', {
+      launch_config: {
+        sdk: 'codex',
+        model: { providerID: 'codex', modelID: 'gpt-5.5', variant: undefined },
+        codexFastMode: false,
+        customProviderId: null
+      }
+    })
+    expect(chip('A2')).toHaveAttribute('aria-pressed', 'true')
   })
 })

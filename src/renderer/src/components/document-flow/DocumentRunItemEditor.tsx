@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   ChevronDown,
   ChevronRight,
@@ -23,9 +23,14 @@ import type {
   DocumentRunItemPatch,
   DocumentTicketConflictRisk
 } from '@shared/types/document-flow'
-import { LaunchConfigBadge, TonePill } from './DocumentFlowBadges'
+import { LaunchConfigBadge, LaunchConfigChip, TonePill } from './DocumentFlowBadges'
 import { LaunchConfigPicker } from './LaunchConfigPicker'
-import { dependencyReaches, dependencyState } from './document-flow-launch'
+import {
+  dependencyReaches,
+  dependencyState,
+  sameLaunchConfig,
+  type QuickLaunchChoice
+} from './document-flow-launch'
 import { pluralize, type DocumentFlowTone } from './document-flow-ui'
 import { useDebouncedText } from './useDebouncedText'
 
@@ -46,25 +51,45 @@ interface DocumentRunItemEditorProps {
   item: DocumentRunItem
   /** Every ticket of the run, in document order. */
   items: readonly DocumentRunItem[]
+  /** Models other tickets of the run settled on, offered as one-tap toggles. */
+  quickChoices: readonly QuickLaunchChoice[]
   expanded: boolean
   onToggleExpanded: () => void
+  /**
+   * Reports whether this ticket's model is still being picked: its picker is open, or a pick
+   * is on its way to the server. The picker saves every step, so the model is not final yet.
+   */
+  onModelPickingChange: (itemId: string, picking: boolean) => void
 }
 
 /**
  * One extracted ticket in the preview list: a summary row that expands into its editor. The
- * model and effort are changed straight from the row, without expanding it.
+ * model and effort are changed straight from the row, without expanding it: through the
+ * picker, or with one tap on a model another ticket already uses.
  */
 export function DocumentRunItemEditor({
   runId,
   item,
   items,
+  quickChoices,
   expanded,
-  onToggleExpanded
+  onToggleExpanded,
+  onModelPickingChange
 }: DocumentRunItemEditorProps): React.JSX.Element {
   const updateItem = useDocumentFlowStore((s) => s.updateItem)
   const save = useCallback(
     (patch: DocumentRunItemPatch) => updateItem(runId, item.id, patch),
     [updateItem, runId, item.id]
+  )
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [pendingPicks, setPendingPicks] = useState(0)
+  const picking = pickerOpen || pendingPicks > 0
+  useEffect(() => {
+    onModelPickingChange(item.id, picking)
+  }, [onModelPickingChange, item.id, picking])
+  // The pressed chip already names the model; the trigger then only keeps its arrows.
+  const usesQuickChoice = quickChoices.some((choice) =>
+    sameLaunchConfig(choice.config, item.launch_config)
   )
 
   return (
@@ -83,7 +108,7 @@ export function DocumentRunItemEditor({
           type="button"
           aria-expanded={expanded}
           data-testid={`docflow-item-toggle-${item.key}`}
-          className="flex min-w-0 flex-1 items-start gap-2 text-left"
+          className="flex min-w-[140px] flex-1 items-start gap-2 text-left"
           onClick={onToggleExpanded}
         >
           <span className="min-w-0 flex-1">
@@ -98,37 +123,70 @@ export function DocumentRunItemEditor({
             <ItemPills item={item} items={items} />
           </span>
         </button>
-        <Popover>
-          <PopoverTrigger asChild>
-            <button
-              type="button"
-              aria-label={`Model and effort for ${item.key}`}
-              title="Change model and effort"
-              data-testid={`docflow-item-model-trigger-${item.key}`}
-              className="-my-0.5 flex shrink-0 items-center gap-1 rounded-md border border-transparent px-1.5 py-1 transition-colors hover:border-border hover:bg-accent/50 data-[state=open]:border-border data-[state=open]:bg-accent/50"
-            >
-              <LaunchConfigBadge
-                config={item.launch_config}
-                inheritLabel="default"
-                testId={`docflow-item-model-${item.key}`}
+        {/* In a narrow window the chips move under the picker, then shorten, before the title is squeezed away. */}
+        <div className="-my-0.5 flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+          <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                aria-label={`Model and effort for ${item.key}`}
+                title="Change model and effort"
+                data-testid={`docflow-item-model-trigger-${item.key}`}
+                className="flex h-7 shrink-0 items-center gap-1 rounded-md border border-transparent px-1.5 transition-colors hover:border-border hover:bg-accent/50 data-[state=open]:border-border data-[state=open]:bg-accent/50"
+              >
+                {!usesQuickChoice && (
+                  <LaunchConfigBadge
+                    config={item.launch_config}
+                    inheritLabel="default"
+                    testId={`docflow-item-model-${item.key}`}
+                  />
+                )}
+                <ChevronsUpDown className="h-3 w-3 text-muted-foreground" />
+              </button>
+            </PopoverTrigger>
+            {/* The picker (and its model catalog request) only mounts while the popover is open. */}
+            <PopoverContent align="end" className="w-[380px] space-y-1.5" data-docflow-dialog="">
+              <p className={LABEL_CLASS}>Model for {item.key}</p>
+              <LaunchConfigPicker
+                value={item.launch_config}
+                onChange={(launch_config) => {
+                  setPendingPicks((count) => count + 1)
+                  save({ launch_config })
+                    .catch(reportSaveFailure)
+                    .finally(() => setPendingPicks((count) => count - 1))
+                }}
+                inheritLabel="Run default"
+                clearLabel="Use run default"
+                testIdPrefix={`docflow-item-model-picker-${item.key}`}
               />
-              <ChevronsUpDown className="h-3 w-3 text-muted-foreground" />
-            </button>
-          </PopoverTrigger>
-          {/* The picker (and its model catalog request) only mounts while the popover is open. */}
-          <PopoverContent align="end" className="w-[380px] space-y-1.5" data-docflow-dialog="">
-            <p className={LABEL_CLASS}>Model for {item.key}</p>
-            <LaunchConfigPicker
-              value={item.launch_config}
-              onChange={(launch_config) => {
-                save({ launch_config }).catch(reportSaveFailure)
-              }}
-              inheritLabel="Run default"
-              clearLabel="Use run default"
-              testIdPrefix={`docflow-item-model-picker-${item.key}`}
-            />
-          </PopoverContent>
-        </Popover>
+            </PopoverContent>
+          </Popover>
+          {quickChoices.length > 0 && (
+            <div
+              role="group"
+              aria-label={`Quick models for ${item.key}`}
+              data-testid={`docflow-item-quick-models-${item.key}`}
+              className="flex min-w-0 items-center justify-end gap-1"
+            >
+              {quickChoices.map((choice, index) => {
+                const pressed = sameLaunchConfig(choice.config, item.launch_config)
+                return (
+                  <LaunchConfigChip
+                    key={choice.key}
+                    choice={choice}
+                    pressed={pressed}
+                    testId={`docflow-item-quick-model-${item.key}-${index}`}
+                    onClick={() => {
+                      save({ launch_config: pressed ? null : choice.config }).catch(
+                        reportSaveFailure
+                      )
+                    }}
+                  />
+                )
+              })}
+            </div>
+          )}
+        </div>
         <button
           type="button"
           tabIndex={-1}

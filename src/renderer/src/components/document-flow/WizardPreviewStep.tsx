@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
 import { ChevronDown, ChevronRight, Loader2, RefreshCw, Rocket } from 'lucide-react'
 import {
   AlertDialog,
@@ -20,10 +20,19 @@ import {
 import { toast } from '@/lib/toast'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import type { HandoffAgentSdk } from '@shared/types/agent-sdk'
-import type { DocumentRunConfig, DocumentRunDetail } from '@shared/types/document-flow'
+import type {
+  DocumentRunConfig,
+  DocumentRunDetail,
+  DocumentRunLaunchConfig
+} from '@shared/types/document-flow'
 import { DocumentRunItemEditor } from './DocumentRunItemEditor'
 import { DocumentRunSettingsPanel } from './DocumentRunSettingsPanel'
-import { describeLaunchConfig, validateLaunch } from './document-flow-launch'
+import {
+  describeLaunchConfig,
+  mergeLaunchConfigs,
+  quickLaunchChoices,
+  validateLaunch
+} from './document-flow-launch'
 import { describeBaseBranch, pluralize } from './document-flow-ui'
 import { useBaseBranchOptions } from './useBaseBranchOptions'
 import { PendingWritesProvider, usePendingWrites } from './useDebouncedText'
@@ -61,6 +70,16 @@ export function WizardPreviewStep({
   const [confirm, setConfirm] = useState<'launch' | 'reextract' | null>(null)
   const [launching, setLaunching] = useState(false)
   const [launchError, setLaunchError] = useState<string | null>(null)
+  const [pickingItemIds, setPickingItemIds] = useState<readonly string[]>([])
+  const [knownLaunchConfigs, setKnownLaunchConfigs] = useState<readonly DocumentRunLaunchConfig[]>(
+    []
+  )
+  const setItemPicking = useCallback((itemId: string, picking: boolean): void => {
+    setPickingItemIds((current) => {
+      if (current.includes(itemId) === picking) return current
+      return picking ? [...current, itemId] : current.filter((id) => id !== itemId)
+    })
+  }, [])
 
   // Variants are checked against the SDK's model catalog, which may still be loading.
   useSyncExternalStore(subscribeModelCatalogCache, getModelCatalogCacheVersion)
@@ -83,6 +102,16 @@ export function WizardPreviewStep({
   const extraction = run.extraction
   const documentTitle = extraction?.documentTitle || run.title
   const ownModelCount = items.filter((item) => item.selected && item.launch_config).length
+
+  // A model a ticket settles on becomes a one-tap choice on every row, and stays one for this
+  // preview even when no ticket uses it any more. A model still being picked is held back: the
+  // picker saves every step on the way to it.
+  const settledLaunchConfigs = mergeLaunchConfigs(
+    knownLaunchConfigs,
+    items.filter((item) => !pickingItemIds.includes(item.id)).map((item) => item.launch_config)
+  )
+  if (settledLaunchConfigs !== knownLaunchConfigs) setKnownLaunchConfigs(settledLaunchConfigs)
+  const quickChoices = quickLaunchChoices(settledLaunchConfigs, draft.config.defaultLaunch)
 
   const setAllSelected = (selected: boolean): void => {
     for (const item of items) {
@@ -250,10 +279,12 @@ export function WizardPreviewStep({
                 runId={run.id}
                 item={item}
                 items={items}
+                quickChoices={quickChoices}
                 expanded={expandedItemId === item.id}
                 onToggleExpanded={() =>
                   setExpandedItemId((current) => (current === item.id ? null : item.id))
                 }
+                onModelPickingChange={setItemPicking}
               />
             ))}
           </div>

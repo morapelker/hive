@@ -27,15 +27,110 @@ export function effectiveLaunchConfig(
   return item.launch_config ?? defaultLaunch
 }
 
-/** One line for the launch confirmation: SDK, model and effort, or "App default". */
-export function describeLaunchConfig(config: DocumentRunLaunchConfig | null): string {
+/**
+ * One line for the launch confirmation: SDK, model and effort, or "App default". A custom
+ * provider is named when the caller knows its name.
+ */
+export function describeLaunchConfig(
+  config: DocumentRunLaunchConfig | null,
+  customProviderName?: string | null
+): string {
   if (!config) return 'App default'
   const sdk = config.customProviderId
-    ? `${DOCUMENT_FLOW_SDK_LABELS[config.sdk]} (custom provider)`
+    ? `${DOCUMENT_FLOW_SDK_LABELS[config.sdk]} (${customProviderName || 'custom provider'})`
     : DOCUMENT_FLOW_SDK_LABELS[config.sdk]
   if (!config.model) return `${sdk} · default model`
   const variant = config.model.variant ? ` · ${config.model.variant}` : ''
   return `${sdk} · ${config.model.modelID}${variant}`
+}
+
+/** Only Codex has a fast mode; on any other SDK the flag is noise. */
+export function hasCodexFastMode(config: DocumentRunLaunchConfig): boolean {
+  return config.sdk === 'codex' && config.codexFastMode
+}
+
+/** Identity of a launch config: everything that changes what a ticket launches with. */
+function launchConfigKey(config: DocumentRunLaunchConfig): string {
+  return JSON.stringify([
+    config.sdk,
+    config.customProviderId ?? '',
+    config.model?.providerID ?? '',
+    config.model?.modelID ?? '',
+    config.model?.variant ?? '',
+    hasCodexFastMode(config)
+  ])
+}
+
+export function sameLaunchConfig(
+  a: DocumentRunLaunchConfig | null,
+  b: DocumentRunLaunchConfig | null
+): boolean {
+  if (!a || !b) return a === b
+  return launchConfigKey(a) === launchConfigKey(b)
+}
+
+// ── Quick picks ────────────────────────────────────────────────────────────
+
+/** How many one-tap models a preview row offers. */
+const QUICK_LAUNCH_CHOICE_LIMIT = 2
+
+/**
+ * `known` followed by the configs of `seen` it lacks, in the order they were seen. Returns
+ * `known` itself when nothing is new.
+ */
+export function mergeLaunchConfigs(
+  known: readonly DocumentRunLaunchConfig[],
+  seen: readonly (DocumentRunLaunchConfig | null)[]
+): readonly DocumentRunLaunchConfig[] {
+  const keys = new Set(known.map(launchConfigKey))
+  const added: DocumentRunLaunchConfig[] = []
+  for (const config of seen) {
+    if (!config) continue
+    const key = launchConfigKey(config)
+    if (keys.has(key)) continue
+    keys.add(key)
+    added.push(config)
+  }
+  return added.length > 0 ? [...known, ...added] : known
+}
+
+export interface QuickLaunchChoice {
+  key: string
+  config: DocumentRunLaunchConfig
+  /**
+   * Set only when another choice reads the same without it: same model, effort and fast mode.
+   * Never set for a custom provider, which is always shown by its own name.
+   */
+  sdkLabel: string | null
+}
+
+/**
+ * The one-tap models a preview row offers: the latest `limit` of the known configs, oldest
+ * first. The run default is left out, since picking it is what "default" already does.
+ */
+export function quickLaunchChoices(
+  known: readonly DocumentRunLaunchConfig[],
+  defaultLaunch: DocumentRunLaunchConfig | null,
+  limit = QUICK_LAUNCH_CHOICE_LIMIT
+): QuickLaunchChoice[] {
+  const offered = known.filter((config) => !sameLaunchConfig(config, defaultLaunch)).slice(-limit)
+  // What a choice shows of its model. The provider is not part of it: the same model reads
+  // the same whichever SDK serves it.
+  const label = (config: DocumentRunLaunchConfig): string =>
+    JSON.stringify([
+      config.model?.modelID ?? config.sdk,
+      config.model?.variant ?? '',
+      hasCodexFastMode(config)
+    ])
+  return offered.map((config) => ({
+    key: launchConfigKey(config),
+    config,
+    sdkLabel:
+      !config.customProviderId &&
+      offered.some((other) => other !== config && label(other) === label(config))
+        ? DOCUMENT_FLOW_SDK_LABELS[config.sdk]
+        : null
+  }))
 }
 
 /**
