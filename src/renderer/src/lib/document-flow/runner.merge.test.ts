@@ -120,6 +120,88 @@ describe('DocumentFlowRunner: merging', () => {
     expect(world.api.merge).not.toHaveBeenCalled()
   })
 
+  describe('nothing to merge, in a run whose agents may not ask', () => {
+    const noChanges: DocumentMergeCheckResult = {
+      state: 'no_changes',
+      conflictedFiles: [],
+      committed: false,
+      commitsAhead: 0
+    }
+
+    it('closes a ticket its agent found already done, and launches what depends on it', async () => {
+      const world = createWorld({
+        config: { interactive: false },
+        items: [readyItem('A', { verdict: makeVerdict() }), { key: 'B', depends_on: ['A'] }]
+      })
+      world.api.prepareMerge.mockResolvedValue(noChanges)
+      start(world)
+
+      await advance(2000)
+
+      expect(world.item('A')).toMatchObject({
+        status: 'skipped',
+        status_detail:
+          'Nothing to merge: the agent reported the task done without changing anything.',
+        finished_at: expect.any(String)
+      })
+      expect(world.api.merge).not.toHaveBeenCalled()
+      expect(world.notices).toEqual([])
+      expect(world.launches.map((spec) => spec.ticketId)).toEqual(['ticket-B'])
+    })
+
+    it('still flags a ticket whose agent never reported done', async () => {
+      const reason = 'The agent could not reach the package registry.'
+      const world = createWorld({
+        config: { interactive: false },
+        items: [readyItem('A', { verdict: makeVerdict({ status: 'blocked', reason }) })]
+      })
+      world.api.prepareMerge.mockResolvedValue(noChanges)
+      start(world)
+
+      await advance(1000)
+
+      expect(world.item('A')).toMatchObject({
+        status: 'needs_attention',
+        status_detail: `Its branch has nothing to merge. ${reason}`
+      })
+    })
+
+    it('still flags a ticket that was never judged', async () => {
+      const world = createWorld({ config: { interactive: false }, items: [readyItem('A')] })
+      world.api.prepareMerge.mockResolvedValue(noChanges)
+      start(world)
+
+      await advance(1000)
+
+      expect(world.item('A')).toMatchObject({
+        status: 'needs_attention',
+        status_detail: 'The agent reported done, but its branch has no commits to merge.'
+      })
+    })
+  })
+
+  it('notes on a merged ticket that its agent did not report done', async () => {
+    const reason = 'The export dialog is listed as still to do.'
+    const world = createWorld({
+      items: [
+        readyItem('A', {
+          status_detail: 'Marked done by you.',
+          verdict: makeVerdict({ status: 'partial', reason })
+        }),
+        readyItem('B', { verdict: makeVerdict() })
+      ]
+    })
+    start(world)
+
+    await advance(3000)
+
+    expect(world.item('A')).toMatchObject({
+      status: 'merged',
+      status_detail: `Merged as it stood. The agent ended on: ${reason}`
+    })
+    expect(world.item('B')).toMatchObject({ status: 'merged', status_detail: null })
+  })
+
   it('carries on when the branch turns out to be merged already', async () => {
     const world = createWorld({ items: [readyItem('A')] })
     world.api.prepareMerge.mockResolvedValue({

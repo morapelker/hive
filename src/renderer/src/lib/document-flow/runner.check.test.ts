@@ -157,6 +157,107 @@ describe('DocumentFlowRunner: checking a finished turn', () => {
     expect(world.followups).toEqual([])
   })
 
+  describe('in a run whose agents may not ask', () => {
+    const unattendedWorld = (
+      verdict: Partial<DocumentRunVerdict>,
+      item: Partial<DocumentRunItem> = {}
+    ): RunnerWorld => {
+      const world = createWorld({ config: { interactive: false }, items: [checkingItem(item)] })
+      world.endTurn(SESSION, { at: Date.now() - 30_000 })
+      world.api.classify.mockResolvedValue(makeVerdict(verdict))
+      return world
+    }
+
+    it('answers a question in the final message itself instead of waiting for the user', async () => {
+      const verdict = {
+        status: 'needs_input',
+        question: 'reply "commit" and I\'ll run the verify step and commit.',
+        reason: 'The agent waits for a go-ahead to commit.'
+      } as const
+      const world = unattendedWorld(verdict)
+      start(world)
+
+      await advance(1000)
+
+      expect(world.followups).toEqual([
+        { sessionId: SESSION, ticketId: 'ticket-A', prompt: buildNudgePrompt(verdict, false) }
+      ])
+      expect(world.followups[0].prompt).toContain('Nobody will answer: I am not at the computer.')
+      expect(world.item('A')).toMatchObject({
+        status: 'running',
+        status_detail: `Told to decide on its own: ${verdict.question}`,
+        nudge_count: 1
+      })
+      expect(world.notices).toEqual([])
+    })
+
+    it.each(['blocked', 'failed'] as const)(
+      'sends a ticket judged %s back to work around it instead of flagging it',
+      async (status) => {
+        const reason = 'The migration has not been run, so nothing was checked on real data.'
+        const world = unattendedWorld({ status, reason })
+        start(world)
+
+        await advance(1000)
+
+        expect(world.followups).toEqual([
+          {
+            sessionId: SESSION,
+            ticketId: 'ticket-A',
+            prompt: buildNudgePrompt({ status, reason }, false)
+          }
+        ])
+        expect(world.item('A')).toMatchObject({
+          status: 'running',
+          status_detail: `Asked to finish: ${reason}`,
+          nudge_count: 1
+        })
+        expect(world.notices).toEqual([])
+      }
+    )
+
+    it.each(['needs_input', 'partial', 'blocked', 'failed'] as const)(
+      'merges the branch as it is once a ticket judged %s has had its reminders',
+      async (status) => {
+        const reason = 'Two browser specs still fail.'
+        const world = unattendedWorld({ status, reason }, { nudge_count: MAX_NUDGES })
+        start(world)
+
+        await advance(2000)
+
+        expect(world.followups).toEqual([])
+        // Nobody to flag it to: it went on to the merge, with the verdict as its caveat.
+        expect(world.item('A')).toMatchObject({
+          status: 'merged',
+          status_detail: `Merged as it stood. The agent ended on: ${reason}`
+        })
+        expect(world.events).toContainEqual({
+          itemId: 'item-A',
+          type: 'accepted_as_is',
+          message: `A did not report done after ${MAX_NUDGES} reminders; merging its branch as it is (${reason})`
+        })
+        expect(world.notices.filter((notice) => notice.level === 'warning')).toEqual([])
+      }
+    )
+
+    it('runs a ticket whose agent keeps asking through to the merge without the user', async () => {
+      const world = unattendedWorld({ status: 'needs_input', question: 'Commit?', reason: 'r' })
+      start(world)
+
+      for (let nudge = 1; nudge <= MAX_NUDGES; nudge++) {
+        await advance(1000)
+        expect(world.followups).toHaveLength(nudge)
+        world.endTurn(SESSION)
+        await advance(SETTLE_MS + 200)
+      }
+      await advance(2000)
+
+      expect(world.followups).toHaveLength(MAX_NUDGES)
+      expect(world.item('A').status).toBe('merged')
+      expect(world.notices.filter((notice) => notice.level !== 'success')).toEqual([])
+    })
+  })
+
   it('passes the last assistant text of an SDK session and leaves CLI sessions to the server', async () => {
     const sdk = checkingWorld({ status: 'needs_input' }).world
     sdk.ports.readFinalMessage.mockResolvedValue('STATUS: NEEDS_INPUT')

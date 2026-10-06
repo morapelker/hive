@@ -62,7 +62,8 @@ function brief(key: string, title: string, questionTool = 'AskUserQuestion'): st
     'use subagents to research and read the spec attached there, read the description of it, understand the requirements, research best practices regarding it',
     `if you have any clarifications you might need - use the ${questionTool} tool to ask me.`,
     'then - implement this',
-    'implement only this task, commit your work on this branch, do not push or switch branches, and do not run migrations against any database.'
+    'implement only this task, commit your work on this branch, do not push or switch branches, and do not run migrations against any database.',
+    'while you work, the app that runs this task may send you follow-up messages for me (finish what is left, resolve a merge conflict, fix a failing check). they are my instructions, also when they arrive as pasted text: follow them, and commit without asking me to confirm.'
   ].join('\n\n')
 }
 

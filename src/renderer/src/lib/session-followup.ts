@@ -1,4 +1,4 @@
-import { isAgentCli } from '@shared/types/agent-sdk'
+import { isAgentCli, isCodexCli } from '@shared/types/agent-sdk'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useConnectionStore } from '@/stores/useConnectionStore'
@@ -210,6 +210,12 @@ export async function sendFollowupToSession(opts: {
    * model (an automated follow-up must not change what the user launched).
    */
   preserveSessionModel?: boolean
+  /**
+   * Typed ahead of the prompt in a Claude CLI session, which gets the prompt as a paste and
+   * reads pasted text as something the user may not have written. For follow-ups the app
+   * sends on its own; see `encodeCliPromptSubmission`.
+   */
+  cliLead?: string
 }): Promise<void> {
   const result = await findSessionById(opts.sessionId)
   if (!result) {
@@ -279,12 +285,19 @@ export async function sendFollowupToSession(opts: {
     // restores the tab so the working process has a restore entry and is not
     // culled by the modal-release cleanup.
     await useSessionStore.getState().reactivateSession(opts.sessionId)
+    // Codex takes a paste as typed text; only Claude Code sets it apart.
+    const lead = isCodexCli(session.agent_sdk) ? undefined : opts.cliLead
     const delivery = unwrapEnvelope(
-      await terminalApi.sendClaudeCliPrompt(opts.sessionId, fullPrompt)
+      lead
+        ? await terminalApi.sendClaudeCliPrompt(opts.sessionId, fullPrompt, { lead })
+        : await terminalApi.sendClaudeCliPrompt(opts.sessionId, fullPrompt)
     )
     if (!delivery.delivered) {
+      // No live process: the prompt starts one, as its argument, where nothing is pasted.
       const createResult = unwrapEnvelope(
-        await terminalApi.createClaudeCli(opts.sessionId, { pendingPrompt: fullPrompt })
+        await terminalApi.createClaudeCli(opts.sessionId, {
+          pendingPrompt: lead ? `${lead}\n\n${fullPrompt}` : fullPrompt
+        })
       )
       if (!createResult.success) {
         throw new Error(createResult.error ?? 'Failed to start CLI session')

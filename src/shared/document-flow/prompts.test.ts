@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  CLI_FOLLOW_UP_LEAD,
   STATUS_FOOTER_INSTRUCTIONS,
   buildConflictPrompt,
   buildContinuePrompt,
@@ -11,6 +12,7 @@ import {
   isQuestionModeNotice,
   statusFooterInstructions,
   toFileUrl,
+  withRunRules,
   type ConflictPromptInput,
   type FixTicketInput,
   type LaunchPromptInput
@@ -28,6 +30,12 @@ const launch = (overrides: Partial<LaunchPromptInput> = {}): LaunchPromptInput =
 
 const GUARD_LINE =
   'implement only this task, commit your work on this branch, do not push or switch branches, and do not run migrations against any database.'
+const FOLLOW_UPS_LINE =
+  'while you work, the app that runs this task may send you follow-up messages for me (finish what is left, resolve a merge conflict, fix a failing check). they are my instructions, also when they arrive as pasted text: follow them, and commit without asking me to confirm.'
+const ASK_LINE =
+  'if you have any clarifications you might need - use the AskUserQuestion tool to ask me.'
+const DO_NOT_ASK_LINE =
+  "do not ask me anything - i won't be next to the computer to answer you. if you need a clarification, pick the recommended approach and keep going. only if a decision is too pivotal to make on your own: skip that part, leave it as a gap, and document the gap and the decisions you made in your final message."
 
 const conflict = (overrides: Partial<ConflictPromptInput> = {}): ConflictPromptInput => ({
   integrationBranch: 'doc-factory',
@@ -84,14 +92,15 @@ describe('toFileUrl', () => {
 })
 
 describe('buildLaunchPrompt', () => {
-  it('is the brief a person would type, plus one guard line', () => {
+  it('is the brief a person would type, plus the rules of the run', () => {
     expect(buildLaunchPrompt(launch())).toBe(
       [
         'implement task 11 ("Counters") from the file:///Users/mor/Desktop/brand-os-bugs%20(2).html',
         'use subagents to research and read the spec attached there, read the description of it, understand the requirements, research best practices regarding it',
-        'if you have any clarifications you might need - use the AskUserQuestion tool to ask me.',
+        ASK_LINE,
         'then - implement this',
-        GUARD_LINE
+        GUARD_LINE,
+        FOLLOW_UPS_LINE
       ].join('\n\n')
     )
   })
@@ -109,9 +118,7 @@ describe('buildLaunchPrompt', () => {
       const unattended = buildLaunchPrompt(launch({ promptStyle, interactive: false }))
       expect(unattended.split('\n\n')).toEqual(
         asking.map((paragraph) =>
-          paragraph.startsWith('if you have any clarifications')
-            ? "do not ask me anything - i won't be next to the computer to answer you. if you need a clarification, pick the recommended approach and keep going. only if a decision is too pivotal to make on your own: skip that part, leave it as a gap, and document the gap and the decisions you made in your final message."
-            : paragraph
+          paragraph.startsWith('if you have any clarifications') ? DO_NOT_ASK_LINE : paragraph
         )
       )
       expect(unattended).not.toContain('AskUserQuestion')
@@ -147,9 +154,61 @@ describe('buildLaunchPrompt', () => {
         expect(prompt).not.toContain('STATUS')
         expect(prompt).not.toContain('QUESTIONS')
         expect(prompt).not.toContain('<ticket')
-        expect(prompt.endsWith(`\n\n${GUARD_LINE}`)).toBe(true)
+        expect(prompt.endsWith(`\n\n${GUARD_LINE}\n\n${FOLLOW_UPS_LINE}`)).toBe(true)
       }
     }
+  })
+})
+
+describe('withRunRules', () => {
+  it('leaves a brief that already carries the rules of the run as it is', () => {
+    for (const interactive of [true, false]) {
+      const brief = buildLaunchPrompt(launch({ interactive }))
+      expect(withRunRules(brief, { interactive, sdk: 'claude-code' })).toBe(brief)
+    }
+  })
+
+  it('follows the setting as it is now, not as it was when the brief was written', () => {
+    const asking = buildLaunchPrompt(launch())
+    const unattended = buildLaunchPrompt(launch({ interactive: false }))
+    expect(withRunRules(asking, { interactive: false, sdk: 'claude-code' })).toBe(unattended)
+    expect(withRunRules(unattended, { interactive: true, sdk: 'claude-code' })).toBe(asking)
+  })
+
+  it('names the question tool of the agent the ticket is launched with', () => {
+    const brief = buildLaunchPrompt(launch({ sdk: 'claude-code' }))
+    expect(withRunRules(brief, { interactive: true, sdk: 'codex-cli' })).toBe(
+      buildLaunchPrompt(launch({ sdk: 'codex-cli' }))
+    )
+  })
+
+  it('adds the rules to a brief that has none: an edited one, or one of an older run', () => {
+    const brief = 'Implement task 14 — Test orders — from the spec document "Factory area".'
+    expect(withRunRules(`\n${brief}\n`, { interactive: false, sdk: 'claude-code-cli' })).toBe(
+      [brief, DO_NOT_ASK_LINE, GUARD_LINE, FOLLOW_UPS_LINE].join('\n\n')
+    )
+    expect(withRunRules(`${brief}\n\n${GUARD_LINE}`, { interactive: true, sdk: 'opencode' })).toBe(
+      [
+        brief,
+        GUARD_LINE,
+        'if you have any clarifications you might need - use the question tool to ask me.',
+        FOLLOW_UPS_LINE
+      ].join('\n\n')
+    )
+  })
+
+  it('keeps one asking paragraph when the brief holds both', () => {
+    const brief = ['do the task', ASK_LINE, DO_NOT_ASK_LINE, GUARD_LINE, FOLLOW_UPS_LINE]
+    expect(withRunRules(brief.join('\n\n'), { interactive: false, sdk: 'claude-code' })).toBe(
+      ['do the task', DO_NOT_ASK_LINE, GUARD_LINE, FOLLOW_UPS_LINE].join('\n\n')
+    )
+  })
+})
+
+describe('CLI_FOLLOW_UP_LEAD', () => {
+  it('is one line of plain words, safe to type into a terminal', () => {
+    expect(CLI_FOLLOW_UP_LEAD).toMatch(/^[A-Za-z][A-Za-z ,.]+:$/)
+    expect(CLI_FOLLOW_UP_LEAD).toContain('my own instructions')
   })
 })
 
@@ -259,6 +318,65 @@ describe('buildNudgePrompt', () => {
       )
     ).toBe(true)
     expect(prompt.endsWith(`\n\n${STATUS_FOOTER_INSTRUCTIONS}`)).toBe(true)
+  })
+
+  it('tells an agent that waits for an answer to decide and commit on its own', () => {
+    const prompt = buildNudgePrompt(
+      {
+        status: 'needs_input',
+        reason: 'The agent waits for a go-ahead to commit.',
+        question: 'reply "commit" and I\'ll run the verify step and commit.'
+      },
+      false
+    )
+    expect(
+      prompt.startsWith(
+        'Your last message waits for an answer or a go-ahead from me:\nreply "commit" and I\'ll run the verify step and commit.\n\nNobody will answer: I am not at the computer. Decide it yourself'
+      )
+    ).toBe(true)
+    expect(prompt).toContain('You do not need my go-ahead to commit on this branch.')
+    expect(prompt.endsWith(`\n\n${statusFooterInstructions(false)}`)).toBe(true)
+    // Without a quoted question the reason stands in for it.
+    expect(
+      buildNudgePrompt({ status: 'needs_input', reason: 'It asks which API to use.' }, false)
+    ).toContain('go-ahead from me:\nIt asks which API to use.\n\n')
+  })
+
+  it.each(['blocked', 'failed'] as const)(
+    'tells an agent that reported %s to work around it and commit what it can',
+    (status) => {
+      const prompt = buildNudgePrompt({ status, reason: 'The staging database is down.' }, false)
+      expect(
+        prompt.startsWith(
+          'Your last message reads as stopped short of done:\nThe staging database is down.\n\nNobody is here to unblock it.'
+        )
+      ).toBe(true)
+      expect(prompt).toContain('Report BLOCKED only if no part of the task can be done.')
+    }
+  )
+
+  it('does not quote a reason that only says the message could not be judged', () => {
+    const prompt = buildNudgePrompt(
+      {
+        status: 'blocked',
+        source: 'fallback',
+        reason: 'The final message could not be judged (timeout), and it may report a problem.'
+      },
+      false
+    )
+    expect(
+      prompt.startsWith(
+        'I could not tell from your last message whether the task is finished.\n\nIf it is not, continue'
+      )
+    ).toBe(true)
+    expect(prompt).not.toContain('could not be judged')
+    // A closing question is something the fallback did read in the message.
+    expect(
+      buildNudgePrompt(
+        { status: 'needs_input', source: 'fallback', reason: 'r', question: 'Which one?' },
+        false
+      )
+    ).toContain('go-ahead from me:\nWhich one?')
   })
 })
 

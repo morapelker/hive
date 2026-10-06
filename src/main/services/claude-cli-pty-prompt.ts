@@ -1,4 +1,7 @@
+import { encodeCliPromptSubmission, isCliPromptSubmission } from '@shared/cli-prompt-submission'
 import { ptyService } from './pty-service'
+
+export { isCliPromptSubmission }
 
 /**
  * Inject a prompt into a running Claude CLI session as if the user typed it.
@@ -18,13 +21,8 @@ export function writeClaudeCliPrompt(sessionId: string, prompt: string): { deliv
   if (!ptyService.has(sessionId)) {
     return { delivered: false }
   }
-  ptyService.write(sessionId, `\x1b[200~${prompt}\x1b[201~\r`)
+  ptyService.write(sessionId, encodeCliPromptSubmission(prompt))
   return { delivered: true }
-}
-
-/** Terminal input that is a whole prompt submission: one bracketed paste and its Enter. */
-export function isCliPromptSubmission(data: string): boolean {
-  return data.startsWith('\x1b[200~') && data.endsWith('\x1b[201~\r')
 }
 
 // Re-send Enter at these offsets (ms) after a paste to cover claude's boot window.

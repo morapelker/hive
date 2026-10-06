@@ -13,7 +13,9 @@ import {
   buildContinuePrompt,
   buildFixTicket,
   buildLaunchPrompt,
-  buildNudgePrompt
+  buildNudgePrompt,
+  withRunRules,
+  type NudgeVerdict
 } from '@shared/document-flow/prompts'
 import {
   DOCUMENT_RUN_ITEM_MERGE_STATUSES,
@@ -61,6 +63,10 @@ const API_ERROR_PREFIX = 'API error ('
 const FIX_INTERRUPT_DETAIL = `${WAITING_PREFIX}you interrupted the fix session. Send it a message to continue.`
 const SETUP_WAIT_DETAIL = 'Waiting for the setup script to finish in the integration worktree.'
 const NO_CHANGES_DETAIL = 'The agent reported done, but its branch has no commits to merge.'
+const UNCHANGED_DETAIL =
+  'Nothing to merge: the agent reported the task done without changing anything.'
+/** `status_detail` prefix of a ticket merged although its agent's last message was not `done`. */
+const MERGED_AS_IS_PREFIX = 'Merged as it stood. The agent ended on: '
 
 const BLOCK_LABELS: Record<SessionBlockReason, string> = {
   question: 'a question',
@@ -760,6 +766,14 @@ export class DocumentFlowRunner {
         await this.patch(op, { status: 'checking', status_detail: null })
       } else if (seen.kind === 'blocked') {
         await this.waitForUser(op, waitingDetail(seen))
+      } else if (
+        seen.kind === 'idle' &&
+        !isTransientDetail(item.status_detail) &&
+        !this.interactive(op)
+      ) {
+        // Parked on a question its agent asked in its message, in a run whose agents may no
+        // longer ask: nobody is coming to answer, so the check tells the agent to decide.
+        await this.patch(op, { status: 'checking', status_detail: null })
       }
       return
     }
@@ -945,37 +959,69 @@ export class DocumentFlowRunner {
     if (await this.followMovingSession(op, after, checked)) return
 
     const reason = verdict.reason.trim() || 'The agent did not finish the task.'
+    // A run whose agents may not ask has nobody to hand a question or a stop to: whatever
+    // the message says short of done, the session is sent back to finish on its own.
+    const unattended = !this.interactive(op)
     switch (verdict.status) {
       case 'done':
         await this.patch(op, { ...checked, status: 'ready', status_detail: null })
         return
       case 'needs_input': {
         const question = verdict.question?.trim() || reason
+        if (unattended) return this.nudge(op, sessionId, { ...verdict, reason, question }, checked)
         await this.patch(op, { ...checked, status: 'needs_input', status_detail: question })
         this.ports.notify({ level: 'info', message: `${item.key} is waiting for you: ${question}` })
         this.event(op, 'needs_input', question)
         return
       }
-      case 'partial': {
-        if (item.nudge_count >= MAX_NUDGES) return this.flag(op, reason, checked)
-        this.requireActive(op)
-        const sent = await this.followUp(
-          op,
-          { sessionId, ticketId: item.ticket_id },
-          buildNudgePrompt({ reason }, this.interactive(op)),
-          {
-            ...checked,
-            status: 'running',
-            nudge_count: item.nudge_count + 1,
-            status_detail: `Asked to finish: ${reason}`
-          }
-        )
-        if (sent) this.event(op, 'nudged', reason)
-        return
-      }
+      case 'partial':
+        return this.nudge(op, sessionId, { ...verdict, reason }, checked)
       default:
+        if (unattended) return this.nudge(op, sessionId, { ...verdict, reason }, checked)
         return this.flag(op, reason, checked)
     }
+  }
+
+  /**
+   * Send the session back to finish what its last message left open. Once it has been told
+   * MAX_NUDGES times, an attended run flags the ticket; an unattended one merges what the
+   * branch holds as it is (the verdict stays on the item, and ends up in its detail), so the
+   * tickets behind it are not left waiting for someone who is not there.
+   */
+  private async nudge(
+    op: ItemOp,
+    sessionId: string,
+    verdict: NudgeVerdict,
+    checked: DocumentRunItemPatch
+  ): Promise<void> {
+    const item = op.item
+    const interactive = this.interactive(op)
+    if (item.nudge_count >= MAX_NUDGES) {
+      if (interactive) return this.flag(op, verdict.reason, checked)
+      await this.patch(op, { ...checked, status: 'ready', status_detail: null })
+      this.event(
+        op,
+        'accepted_as_is',
+        `${item.key} did not report done after ${MAX_NUDGES} reminders; merging its branch as it is (${verdict.reason})`
+      )
+      return
+    }
+    this.requireActive(op)
+    const waits = verdict.status === 'needs_input'
+    const sent = await this.followUp(
+      op,
+      { sessionId, ticketId: item.ticket_id },
+      buildNudgePrompt(verdict, interactive),
+      {
+        ...checked,
+        status: 'running',
+        nudge_count: item.nudge_count + 1,
+        status_detail: waits
+          ? `Told to decide on its own: ${verdict.question?.trim() || verdict.reason}`
+          : `Asked to finish: ${verdict.reason}`
+      }
+    )
+    if (sent) this.event(op, 'nudged', verdict.reason)
   }
 
   private async followMovingSession(
@@ -1098,16 +1144,20 @@ export class DocumentFlowRunner {
     // The ticket's description is the brief, sent as it reads on the board (the user may
     // have edited it), with no ticket wrapper and no attachments: the agent reads the task in
     // the document itself. A ticket left without a description gets the standard brief.
-    const prompt =
+    // The rules of the run are settled now, whatever the description says: it was written
+    // when the run started, under the setting of that moment.
+    const prompt = withRunRules(
       ticket.description?.trim() ||
-      buildLaunchPrompt({
-        key: item.key,
-        title: item.title,
-        sourcePath: run.source_path,
-        promptStyle: run.config.promptStyle,
-        interactive: briefed,
-        sdk: modelConfig.sdk
-      })
+        buildLaunchPrompt({
+          key: item.key,
+          title: item.title,
+          sourcePath: run.source_path,
+          promptStyle: run.config.promptStyle,
+          interactive: briefed,
+          sdk: modelConfig.sdk
+        }),
+      { interactive: briefed, sdk: modelConfig.sdk }
+    )
 
     const result = await this.ports.launchTicket({
       ticketId: ticket.id,
@@ -1243,9 +1293,7 @@ export class DocumentFlowRunner {
     if (check.state === 'conflict') {
       return this.resolveConflict(op, run, check.conflictedFiles, integrationCommit)
     }
-    if (check.state === 'no_changes' && !check.alreadyMerged) {
-      return this.flag(op, NO_CHANGES_DETAIL)
-    }
+    if (check.state === 'no_changes' && !check.alreadyMerged) return this.nothingToMerge(op)
 
     this.requireActive(op)
     const result = await this.ports.api.merge(op.runId, op.item.id)
@@ -1254,6 +1302,25 @@ export class DocumentFlowRunner {
       return this.resolveConflict(op, run, result.conflictedFiles, integrationCommit)
     }
     return this.flag(op, result.error ?? 'The merge failed.')
+  }
+
+  /**
+   * The branch holds nothing the integration branch lacks. After a `done` verdict that is an
+   * agent that found the task already implemented: an unattended run closes the ticket (so
+   * the ones that depend on it go on), an attended one lets the user look first.
+   */
+  private async nothingToMerge(op: ItemOp): Promise<void> {
+    const verdict = op.item.verdict
+    if (verdict && verdict.status !== 'done') {
+      return this.flag(op, `Its branch has nothing to merge. ${verdict.reason}`)
+    }
+    if (!verdict || this.interactive(op)) return this.flag(op, NO_CHANGES_DETAIL)
+    await this.patch(op, {
+      status: 'skipped',
+      status_detail: UNCHANGED_DETAIL,
+      finished_at: toIso(this.ports.now())
+    })
+    this.event(op, 'skipped', `${op.item.key}: ${UNCHANGED_DETAIL}`)
   }
 
   /** Conflicts are resolved by the ticket's own session, on its own branch. */
@@ -1478,9 +1545,13 @@ export class DocumentFlowRunner {
 
   private async markMerged(op: ItemOp): Promise<void> {
     const projectId = this.currentItem(op)?.run.project_id
+    // Merged on the user's word or for want of anyone to ask, not on the agent's: its last
+    // verdict is the caveat the dashboard and the report show next to the ticket.
+    const verdict = op.item.verdict
     const item = await this.patch(op, {
       status: 'merged',
-      status_detail: null,
+      status_detail:
+        verdict && verdict.status !== 'done' ? `${MERGED_AS_IS_PREFIX}${verdict.reason}` : null,
       finished_at: toIso(this.ports.now())
     })
     if (projectId && item.ticket_id) {

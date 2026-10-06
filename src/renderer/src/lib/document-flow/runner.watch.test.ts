@@ -364,6 +364,64 @@ describe('DocumentFlowRunner: watching sessions', () => {
       expect(world.item('A').status).toBe('needs_input')
     })
 
+    it('has a ticket parked on its agent’s question decide for itself once the run may no longer ask', async () => {
+      const world = createWorld({
+        items: [
+          runningItem({
+            status: 'needs_input',
+            status_detail: 'Which currency?',
+            last_checked_at: RECORDED_AT
+          })
+        ]
+      })
+      // The turn that asked: ended, and judged already.
+      world.endTurn(SESSION, { at: Date.parse(RECORDED_AT) })
+      world.api.classify.mockResolvedValue(
+        makeVerdict({ status: 'needs_input', question: 'Which currency?', reason: 'It asks.' })
+      )
+      start(world)
+
+      await advance(15_000)
+      expect(world.api.classify).not.toHaveBeenCalled()
+      expect(world.item('A').status).toBe('needs_input')
+
+      // "Agents may ask me questions" is switched off: nobody is coming to answer.
+      world.setRun({ config: { ...world.detail().run.config, interactive: false } })
+      await advance(2000)
+
+      expect(world.followups).toHaveLength(1)
+      expect(world.followups[0].prompt).toContain('go-ahead from me:\nWhich currency?')
+      expect(world.item('A')).toMatchObject({
+        status: 'running',
+        status_detail: 'Told to decide on its own: Which currency?',
+        nudge_count: 1
+      })
+    })
+
+    it.each([
+      ['an open dialog', 'Waiting for you: a question'],
+      ['a session the user interrupted', USER_INTERRUPT_DETAIL]
+    ])('leaves a ticket waiting on %s alone in a run that may not ask', async (_what, detail) => {
+      const world = createWorld({
+        config: { interactive: false },
+        items: [
+          runningItem({
+            status: 'needs_input',
+            status_detail: detail,
+            last_checked_at: RECORDED_AT
+          })
+        ]
+      })
+      world.endTurn(SESSION, { at: Date.parse(RECORDED_AT) })
+      start(world)
+
+      await advance(15_000)
+
+      expect(world.api.classify).not.toHaveBeenCalled()
+      expect(world.followups).toEqual([])
+      expect(world.item('A')).toMatchObject({ status: 'needs_input', status_detail: detail })
+    })
+
     it('picks up a turn the user finished with the session while the app was reloading', async () => {
       const world = createWorld({
         items: [runningItem({ status: 'needs_input', status_detail: 'Which currency?' })]

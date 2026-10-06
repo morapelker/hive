@@ -347,7 +347,21 @@ export function createWorld(options: WorldOptions = {}) {
   }
 
   const ports = {
-    api,
+    api: {
+      ...api,
+      // Like the server: the verdict is on the item's row by the time the call returns.
+      classify: async (params: { runId: string; itemId: string; finalMessage?: string | null }) => {
+        const verdict = await api.classify(params)
+        const current = detail()
+        runs.set(RUN_ID, {
+          ...current,
+          items: current.items.map((candidate) =>
+            candidate.id === params.itemId ? { ...candidate, verdict } : candidate
+          )
+        })
+        return verdict
+      }
+    },
     clientId: 'client-1',
 
     getRuns: () => [...runs.values()],

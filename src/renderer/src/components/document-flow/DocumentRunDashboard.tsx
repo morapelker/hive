@@ -78,7 +78,7 @@ const CONFIRM_COPY: Record<
   questionsOff: {
     title: 'Are you sure? Agents will stop asking questions',
     description:
-      'Tickets launched from now on are told not to ask you anything: they pick the recommended approach, and skip and document anything too pivotal to decide alone.',
+      'Tickets launched from now on are told not to ask you anything: they pick the recommended approach, and skip and document anything too pivotal to decide alone. A ticket whose agent still ends on a question or short of done is told to finish on its own, and after two reminders its branch is merged as it stands.',
     action: 'Stop asking',
     destructive: false
   },

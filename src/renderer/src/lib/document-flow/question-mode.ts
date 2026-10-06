@@ -1,5 +1,9 @@
-import { buildQuestionModeNotice, isQuestionModeNotice } from '@shared/document-flow/prompts'
-import { isAgentCli } from '@shared/types/agent-sdk'
+import {
+  CLI_FOLLOW_UP_LEAD,
+  buildQuestionModeNotice,
+  isQuestionModeNotice
+} from '@shared/document-flow/prompts'
+import { isAgentCli, isCodexCli } from '@shared/types/agent-sdk'
 import type { DocumentRunItem, DocumentRunItemStatus } from '@shared/types/document-flow'
 import { documentFlowApi } from '@/api/document-flow-api'
 import { terminalApi } from '@/api/terminal-api'
@@ -85,7 +89,11 @@ export async function tellQuestionMode(
     // an open question or permission dialog would take the text as its answer, and an idle
     // CLI would start a turn the run did not ask for.
     if (signal.kind !== 'working') return 'skipped'
-    const { delivered } = unwrapEnvelope(await terminalApi.sendClaudeCliPrompt(sessionId, text))
+    const { delivered } = unwrapEnvelope(
+      isCodexCli(sdk)
+        ? await terminalApi.sendClaudeCliPrompt(sessionId, text)
+        : await terminalApi.sendClaudeCliPrompt(sessionId, text, { lead: CLI_FOLLOW_UP_LEAD })
+    )
     return delivered ? 'sent' : 'skipped'
   }
 

@@ -1,3 +1,4 @@
+import { CLI_FOLLOW_UP_LEAD } from '@shared/document-flow/prompts'
 import { isAgentCli } from '@shared/types/agent-sdk'
 import type {
   DocumentRunDetail,
@@ -326,7 +327,8 @@ export function createLiveRunnerPorts(): RunnerPorts {
         prompt,
         followUpMode: 'build',
         ticketId,
-        preserveSessionModel: true
+        preserveSessionModel: true,
+        cliLead: CLI_FOLLOW_UP_LEAD
       }),
     tellQuestionMode: async (sessionId, interactive) => {
       await tellQuestionMode(sessionId, interactive, { justLaunched: true })

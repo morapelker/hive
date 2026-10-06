@@ -52,6 +52,17 @@ describe('classification prompt', () => {
     expect(STATUS_FOOTER_INSTRUCTIONS).toContain('STATUS: DONE | BLOCKED')
   })
 
+  it('tells the classifier the rules the agent works under', () => {
+    // A migration left to a human, or a commit the agent asks leave for, is not a stop.
+    expect(CLASSIFICATION_SYSTEM_PROMPT).toContain(
+      'it may not push, deploy, or run migrations against any database'
+    )
+    expect(CLASSIFICATION_SYSTEM_PROMPT).toContain(
+      'do not call the ticket "blocked" or "partial" for it'
+    )
+    expect(CLASSIFICATION_SYSTEM_PROMPT).toContain('waits for a go-ahead to commit, is "done"')
+  })
+
   it('describes a strict-mode compatible schema', () => {
     const schema = JSON.parse(CLASSIFICATION_JSON_SCHEMA)
     expect(schema.type).toBe('object')

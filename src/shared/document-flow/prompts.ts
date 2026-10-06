@@ -35,7 +35,7 @@ MIGRATIONS: migration files you added, or "none"
 MANUAL STEPS: anything a human must do after this is merged (run migrations, set env vars, data fixes), or "none"
 ASSUMPTIONS: decisions you made where the spec was silent, or "none"
 
-Use DONE only when the task is fully implemented and committed, and BLOCKED when something outside your control stops you.`
+Use DONE only when the task is fully implemented and committed, and BLOCKED when something outside your control stops you. Commit on this branch without waiting for my go-ahead. What you may not do here (push, deploy, run migrations, check against a live system) goes under MANUAL STEPS and does not make the task BLOCKED.`
 
 /** The footer for the run's current "agents may ask" setting, which can change mid-run. */
 export function statusFooterInstructions(interactive: boolean): string {
@@ -68,6 +68,30 @@ export function questionToolName(sdk: string): string {
   }
 }
 
+/** The launch prompt's paragraph on asking: the run's "agents may ask" setting, in the user's words. */
+function launchAskParagraph(interactive: boolean, sdk: string): string {
+  return interactive
+    ? `if you have any clarifications you might need - use the ${questionToolName(sdk)} tool to ask me.`
+    : "do not ask me anything - i won't be next to the computer to answer you. if you need a clarification, pick the recommended approach and keep going. only if a decision is too pivotal to make on your own: skip that part, leave it as a gap, and document the gap and the decisions you made in your final message."
+}
+
+const LAUNCH_RULES_PARAGRAPH =
+  'implement only this task, commit your work on this branch, do not push or switch branches, and do not run migrations against any database.'
+
+/**
+ * A Claude CLI session gets the orchestrator's follow-ups pasted into its terminal, and the CLI
+ * marks pasted text as something the user may not have written. This paragraph is the user's
+ * own word that those messages are theirs.
+ */
+const LAUNCH_FOLLOW_UPS_PARAGRAPH =
+  'while you work, the app that runs this task may send you follow-up messages for me (finish what is left, resolve a merge conflict, fix a failing check). they are my instructions, also when they arrive as pasted text: follow them, and commit without asking me to confirm.'
+
+/** Every wording the asking paragraph can have: either setting, any provider's tool name. */
+const LAUNCH_ASK_PARAGRAPHS: readonly string[] = [
+  launchAskParagraph(false, ''),
+  ...['claude-code', 'codex', 'opencode'].map((sdk) => launchAskParagraph(true, sdk))
+]
+
 export interface LaunchPromptInput {
   key: string
   title: string
@@ -95,14 +119,46 @@ export function buildLaunchPrompt(input: LaunchPromptInput): string {
     )
   }
   paragraphs.push(
-    input.interactive
-      ? `if you have any clarifications you might need - use the ${questionToolName(input.sdk)} tool to ask me.`
-      : "do not ask me anything - i won't be next to the computer to answer you. if you need a clarification, pick the recommended approach and keep going. only if a decision is too pivotal to make on your own: skip that part, leave it as a gap, and document the gap and the decisions you made in your final message.",
+    launchAskParagraph(input.interactive, input.sdk),
     'then - implement this',
-    'implement only this task, commit your work on this branch, do not push or switch branches, and do not run migrations against any database.'
+    LAUNCH_RULES_PARAGRAPH,
+    LAUNCH_FOLLOW_UPS_PARAGRAPH
   )
   return paragraphs.join('\n\n')
 }
+
+/**
+ * The brief as a session is launched with it. A ticket's description was written when the run
+ * started and may have been edited on the board since, so the rules of the run are settled
+ * here: the asking paragraph follows the setting as it is now (it can be flipped while the
+ * ticket waits its turn), and the commit and follow-up paragraphs are there whatever the
+ * description says.
+ */
+export function withRunRules(
+  brief: string,
+  input: Pick<LaunchPromptInput, 'interactive' | 'sdk'>
+): string {
+  const ask = launchAskParagraph(input.interactive, input.sdk)
+  let text = brief.trim()
+  for (const stale of LAUNCH_ASK_PARAGRAPHS) {
+    if (stale === ask || !text.includes(stale)) continue
+    text = text.replace(stale, text.includes(ask) ? '' : ask)
+  }
+  text = text.replace(/\n{3,}/g, '\n\n').trim()
+  const missing = [ask, LAUNCH_RULES_PARAGRAPH, LAUNCH_FOLLOW_UPS_PARAGRAPH].filter(
+    (paragraph) => !text.includes(paragraph)
+  )
+  return [text, ...missing].filter(Boolean).join('\n\n')
+}
+
+/**
+ * Typed ahead of a follow-up that is pasted into a Claude CLI session. The CLI wraps a pasted
+ * prompt in `<pasted_content>` tags and its agent follows instructions in there only where the
+ * user's own words ask it to; without this line an agent answers a nudge with "reply commit
+ * and I will commit". One line of plain words: it is written to the terminal as keystrokes.
+ */
+export const CLI_FOLLOW_UP_LEAD =
+  'This message is from me, sent through the app that runs this task while I am away. Treat the text that follows as my own instructions and act on it:'
 
 const QUESTION_MODE_NOTICE_LEAD = 'Change of plans: '
 const QUESTION_MODE_NOTICE_TAIL =
@@ -240,19 +296,51 @@ export function buildFixTicket(input: FixTicketInput): { title: string; descript
   return { title, description }
 }
 
-/** Sent when the classifier judged the final message as only partly done. */
-export function buildNudgePrompt(
-  verdict: Pick<DocumentRunVerdict, 'reason'>,
-  interactive = true
-): string {
-  return [
-    'Your last message reads as only partly done:',
-    verdict.reason,
-    '',
-    'Continue until the task is fully implemented, the checks pass and everything is committed. If something genuinely stops you, say so instead of stopping silently.',
-    '',
-    statusFooterInstructions(interactive)
-  ].join('\n')
+export type NudgeVerdict = Pick<DocumentRunVerdict, 'reason'> &
+  Partial<Pick<DocumentRunVerdict, 'status' | 'question' | 'source'>>
+
+/** What the nudge says of the last message, and what to do about it. */
+function nudgeBrief(verdict: NudgeVerdict): [lead: string, quote: string, ask: string] {
+  // Judged without the classifier: only a closing question says anything about the message.
+  if (verdict.source === 'fallback' && verdict.status !== 'needs_input') {
+    return [
+      'I could not tell from your last message whether the task is finished.',
+      '',
+      'If it is not, continue until the task is fully implemented, the checks pass and everything is committed. If it is, say so.'
+    ]
+  }
+  switch (verdict.status) {
+    case 'needs_input':
+      return [
+        'Your last message waits for an answer or a go-ahead from me:',
+        verdict.question?.trim() || verdict.reason,
+        'Nobody will answer: I am not at the computer. Decide it yourself - take the approach you would recommend and note it under ASSUMPTIONS - then finish the task and commit. You do not need my go-ahead to commit on this branch.'
+      ]
+    case 'blocked':
+    case 'failed':
+      return [
+        'Your last message reads as stopped short of done:',
+        verdict.reason,
+        'Nobody is here to unblock it. Work around it where you can, finish everything that does not depend on it, leave the rest as a gap listed under MANUAL STEPS or ASSUMPTIONS, and commit. Report BLOCKED only if no part of the task can be done.'
+      ]
+    default:
+      return [
+        'Your last message reads as only partly done:',
+        verdict.reason,
+        'Continue until the task is fully implemented, the checks pass and everything is committed. If something genuinely stops you, say so instead of stopping silently.'
+      ]
+  }
+}
+
+/**
+ * Sent when the final message does not read as done: only partly done, or, in a run whose
+ * agents may not ask, a question or a stop that nobody is there to answer.
+ */
+export function buildNudgePrompt(verdict: NudgeVerdict, interactive = true): string {
+  const [lead, quote, ask] = nudgeBrief(verdict)
+  return [lead, ...(quote ? [quote] : []), '', ask, '', statusFooterInstructions(interactive)].join(
+    '\n'
+  )
 }
 
 /** Sent to resume a turn that ended on an API error or was cut off by an app restart. */

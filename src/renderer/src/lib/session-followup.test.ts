@@ -245,4 +245,74 @@ describe('sendFollowupToSession', () => {
       { providerID: 'anthropic', modelID: 'opus', variant: 'high' }
     )
   })
+
+  describe('a lead for a prompt the app sends on its own', () => {
+    const LEAD = 'This is from me:'
+    const followUp = { prompt: 'finish the task\nand commit', ticketId: 'ticket-1' } as const
+    const send = (): Promise<void> =>
+      sendFollowupToSession({
+        ...followUp,
+        sessionId: 'session-1',
+        followUpMode: 'build',
+        cliLead: LEAD
+      })
+
+    beforeEach(() => {
+      mocks.terminalApi.sendClaudeCliPrompt.mockResolvedValue({
+        success: true,
+        value: { delivered: true }
+      })
+      mocks.terminalApi.createClaudeCli.mockResolvedValue({
+        success: true,
+        value: { success: true }
+      })
+    })
+
+    it('is typed ahead of the paste in a Claude CLI session', async () => {
+      seedSession(makeSession({ agent_sdk: 'claude-code-cli' }))
+
+      await send()
+
+      expect(mocks.terminalApi.sendClaudeCliPrompt.mock.calls).toEqual([
+        ['session-1', followUp.prompt, { lead: LEAD }]
+      ])
+      expect(mocks.terminalApi.createClaudeCli).not.toHaveBeenCalled()
+    })
+
+    it('heads the prompt that starts a Claude CLI session with no live process', async () => {
+      seedSession(makeSession({ agent_sdk: 'claude-code-cli' }))
+      mocks.terminalApi.sendClaudeCliPrompt.mockResolvedValue({
+        success: true,
+        value: { delivered: false }
+      })
+
+      await send()
+
+      expect(mocks.terminalApi.createClaudeCli).toHaveBeenCalledWith('session-1', {
+        pendingPrompt: `${LEAD}\n\n${followUp.prompt}`
+      })
+    })
+
+    it('is left out for codex, which takes a paste as typed text', async () => {
+      seedSession(makeSession({ agent_sdk: 'codex-cli' }))
+
+      await send()
+
+      expect(mocks.terminalApi.sendClaudeCliPrompt.mock.calls).toEqual([
+        ['session-1', followUp.prompt]
+      ])
+    })
+
+    it('is left out for an SDK session, whose prompts are not pasted', async () => {
+      await send()
+
+      expect(mocks.terminalApi.sendClaudeCliPrompt).not.toHaveBeenCalled()
+      expect(mocks.opencodeApi.prompt).toHaveBeenLastCalledWith(
+        '/repo/feature',
+        'opc-1',
+        [{ type: 'text', text: followUp.prompt }],
+        { providerID: 'anthropic', modelID: 'opus', variant: 'high' }
+      )
+    })
+  })
 })

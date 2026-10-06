@@ -178,8 +178,10 @@ export function DocumentRunSettingsPanel({
         </div>
         <p className={HELP_CLASS}>
           On: a ticket whose agent asks a question waits for you while the others continue. Off:
-          agents pick the recommended approach and document what was too pivotal to decide. You can
-          change this while the run is going, from the run's ticket.
+          nothing waits for you. Agents pick the recommended approach and document what was too
+          pivotal to decide; one that still stops short of done is told to finish, and after two
+          reminders its branch is merged as it stands, with a note on the ticket. You can change
+          this while the run is going, from the run's ticket.
         </p>
       </div>
     </div>

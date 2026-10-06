@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { buildLaunchPrompt } from '@shared/document-flow/prompts'
 import { DocumentFlowRunner } from './runner'
 import {
   INTEGRATION_BRANCH,
@@ -162,7 +163,8 @@ describe('DocumentFlowRunner: launching', () => {
         'use subagents to research and read the spec attached there, read the description of it, understand the requirements, research best practices regarding it',
         'if you have any clarifications you might need - use the AskUserQuestion tool to ask me.',
         'then - implement this',
-        'implement only this task, commit your work on this branch, do not push or switch branches, and do not run migrations against any database.'
+        'implement only this task, commit your work on this branch, do not push or switch branches, and do not run migrations against any database.',
+        'while you work, the app that runs this task may send you follow-up messages for me (finish what is left, resolve a merge conflict, fix a failing check). they are my instructions, also when they arrive as pasted text: follow them, and commit without asking me to confirm.'
       ].join('\n\n')
     )
   })
@@ -271,7 +273,7 @@ describe('DocumentFlowRunner: launching', () => {
     expect(prompt).toContain('\n\nthen - implement this\n\n')
   })
 
-  it('sends the description of the ticket as it reads on the board', async () => {
+  it('sends the description of the ticket as it reads on the board, with the rules of the run', async () => {
     const world = createWorld()
     const ticket = world.tickets.get('ticket-A')!
     world.tickets.set(ticket.id, {
@@ -282,7 +284,36 @@ describe('DocumentFlowRunner: launching', () => {
 
     await advance(1000)
 
-    expect(world.launches[0].prompt).toBe('implement task A, but skip the export button')
+    expect(world.launches[0].prompt.split('\n\n')).toEqual([
+      'implement task A, but skip the export button',
+      'if you have any clarifications you might need - use the AskUserQuestion tool to ask me.',
+      'implement only this task, commit your work on this branch, do not push or switch branches, and do not run migrations against any database.',
+      expect.stringContaining('they are my instructions, also when they arrive as pasted text')
+    ])
+  })
+
+  it('briefs a ticket under the setting of the launch, not the one its description was written under', async () => {
+    const brief = (interactive: boolean): string =>
+      buildLaunchPrompt({
+        key: 'A',
+        title: 'Task A',
+        sourcePath: '/docs/checkout.html',
+        promptStyle: 'full',
+        interactive,
+        sdk: 'claude-code-cli'
+      })
+    // The server writes the brief into the ticket when the run starts; questions were on then.
+    const world = createWorld({ config: { interactive: false } })
+    const ticket = world.tickets.get('ticket-A')!
+    world.tickets.set(ticket.id, { ...ticket, description: brief(true) })
+    start(world)
+
+    await advance(1000)
+
+    expect(world.launches[0].prompt).toBe(brief(false))
+    expect(world.launches[0].prompt).not.toContain('AskUserQuestion')
+    // The session was briefed under the current setting: there is nothing to tell it.
+    expect(world.modeNotices).toEqual([])
   })
 
   it("names the question tool of the ticket's own launch SDK", async () => {

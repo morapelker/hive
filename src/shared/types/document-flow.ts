@@ -306,7 +306,7 @@ export interface DocumentRunItem {
   fix_session_id: string | null
   branch_name: string | null
   verdict: DocumentRunVerdict | null
-  /** "continue until complete" nudges sent after a `partial` verdict. */
+  /** "Finish it" nudges sent after a final message that did not read as done. */
   nudge_count: number
   /** Times the ticket session was asked to merge the same integration commit in. */
   conflict_attempts: number

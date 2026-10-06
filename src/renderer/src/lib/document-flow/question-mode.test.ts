@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { buildQuestionModeNotice } from '@shared/document-flow/prompts'
+import { CLI_FOLLOW_UP_LEAD, buildQuestionModeNotice } from '@shared/document-flow/prompts'
 import type { DocumentRunDetail, DocumentRunItem } from '@shared/types/document-flow'
 import { makeDetail } from '@/components/document-flow/test-fixtures'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
@@ -163,9 +163,23 @@ describe('applyQuestionMode', () => {
     const result = await applyQuestionMode('run-1', false)
 
     // An open dialog would take the text as its answer; an idle CLI would start a new turn.
-    expect(mocks.sendClaudeCliPrompt.mock.calls).toEqual([['s-working', off('claude-code-cli')]])
+    // Typed after a line of the user's own words: Claude Code reads a bare paste as text the
+    // user may not have written.
+    expect(mocks.sendClaudeCliPrompt.mock.calls).toEqual([
+      ['s-working', off('claude-code-cli'), { lead: CLI_FOLLOW_UP_LEAD }]
+    ])
     expect(queueOf('s-working')).toEqual([])
     expect(result).toEqual({ told: 1, waiting: 0, skipped: 2, failed: 0 })
+  })
+
+  it('pastes the notice into a working codex CLI without a typed lead', async () => {
+    seed([{ key: 'A', status: 'running', session_id: 's-codex' }])
+    sdks = { 's-codex': 'codex-cli' }
+    signals = { 's-codex': WORKING }
+
+    await applyQuestionMode('run-1', false)
+
+    expect(mocks.sendClaudeCliPrompt.mock.calls).toEqual([['s-codex', off('codex-cli')]])
   })
 
   it('does not start a CLI that is no longer running', async () => {

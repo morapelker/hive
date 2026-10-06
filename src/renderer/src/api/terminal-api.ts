@@ -1,3 +1,4 @@
+import { encodeCliPromptSubmission } from '@shared/cli-prompt-submission'
 import { getRendererRpcClient } from './rpc-client'
 import type {
   TerminalGhosttyAvailabilityResult,
@@ -178,14 +179,16 @@ export const terminalApi = {
     }>('terminalOps.setClaudeCliPlanAutoApprove', { sessionId, enabled })
     return { success: true, value: result }
   },
+  /** `lead` is typed ahead of the pasted prompt (see `encodeCliPromptSubmission`). */
   sendClaudeCliPrompt: async (
     sessionId: string,
-    prompt: string
+    prompt: string,
+    options?: { lead?: string }
   ): Promise<Envelope<{ delivered: boolean }>> => {
     try {
       await getRendererRpcClient().request<void>('terminalOps.write', {
         terminalId: sessionId,
-        data: `\x1b[200~${prompt}\x1b[201~\r`
+        data: encodeCliPromptSubmission(prompt, options?.lead)
       })
       return { success: true, value: { delivered: true } }
     } catch {

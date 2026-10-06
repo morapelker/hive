@@ -84,6 +84,22 @@ describe('terminalApi', () => {
     })
   })
 
+  it('types a lead ahead of the pasted Claude CLI prompt when given one', async () => {
+    const request = vi.fn().mockResolvedValue(undefined)
+    const subscribe = vi.fn()
+
+    setRendererRpcClient({ request, subscribe })
+
+    await terminalApi.sendClaudeCliPrompt('session-1', 'finish\nand commit', {
+      lead: 'This is from me:'
+    })
+
+    expect(request).toHaveBeenCalledWith('terminalOps.write', {
+      terminalId: 'session-1',
+      data: 'This is from me: \x1b[200~finish\nand commit\x1b[201~\r'
+    })
+  })
+
   it('reports undelivered Claude CLI prompts when the terminal write fails', async () => {
     const request = vi.fn().mockRejectedValue(new Error('Terminal not found'))
     const subscribe = vi.fn()
