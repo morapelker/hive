@@ -190,8 +190,11 @@ describe('Session 12: Merge Conflicts Button', () => {
       )
 
       // Pending message
-      sessionStore.setPendingMessage(result.session.id, 'Fix merge conflicts')
-      expect(mockSetPendingMessage).toHaveBeenCalledWith('session-new', 'Fix merge conflicts')
+      sessionStore.setPendingMessage(result.session.id, 'Fix merge conflicts then commit')
+      expect(mockSetPendingMessage).toHaveBeenCalledWith(
+        'session-new',
+        'Fix merge conflicts then commit'
+      )
     })
 
     test('session name uses branch name from branchInfo', () => {

@@ -425,7 +425,7 @@ export function GitStatusPanel({
       // the updateSessionName roundtrip loses the race against
       // ClaudeCliSessionView mounting and spawning a promptless PTY.
       const result = await sessionStore.createSession(selectedWorktreeId, projectId, undefined, resolvedMode, {
-        pendingMessage: 'Fix merge conflicts'
+        pendingMessage: 'Fix merge conflicts then commit'
       })
       if (!result.success || !result.session) {
         toast.error('Failed to create session')

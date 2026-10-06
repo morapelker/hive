@@ -147,7 +147,7 @@ describe('Session 7: Merge Conflict Header Button', () => {
 
       const branch = branchName || 'unknown'
       await mockUpdateSessionName(session.id, `Merge Conflicts -- ${branch}`)
-      mockSetPendingMessage(session.id, 'Fix merge conflicts')
+      mockSetPendingMessage(session.id, 'Fix merge conflicts then commit')
       mockSetActiveSession(session.id)
     }
 
@@ -166,10 +166,13 @@ describe('Session 7: Merge Conflict Header Button', () => {
       )
     })
 
-    test('sets pending message to Fix merge conflicts', async () => {
+    test('sets pending message to Fix merge conflicts then commit', async () => {
       await handleFixConflicts('wt-1', 'proj-1', 'main')
 
-      expect(mockSetPendingMessage).toHaveBeenCalledWith('session-123', 'Fix merge conflicts')
+      expect(mockSetPendingMessage).toHaveBeenCalledWith(
+        'session-123',
+        'Fix merge conflicts then commit'
+      )
     })
 
     test('sets active session after creation', async () => {

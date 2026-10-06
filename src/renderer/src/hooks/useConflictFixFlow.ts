@@ -116,7 +116,7 @@ export function useConflictFixFlow(worktreeId: string | null): {
         currentWorktree.projectId,
         undefined,
         resolvedMode,
-        { pendingMessage: 'Fix merge conflicts' }
+        { pendingMessage: 'Fix merge conflicts then commit' }
       )
       if (!success || !session) {
         statusStore.setMergeConflictFlow(worktreeId, null)

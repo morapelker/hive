@@ -382,7 +382,7 @@ describe('merge conflicts ticket button', () => {
 
     await waitFor(() => {
       expect(mockCreateSession).toHaveBeenCalledWith('base-wt', 'proj-1', undefined, 'build', {
-        pendingMessage: 'Fix merge conflicts'
+        pendingMessage: 'Fix merge conflicts then commit'
       })
     })
   })
@@ -402,7 +402,7 @@ describe('merge conflicts ticket button', () => {
 
     await waitFor(() => {
       expect(mockCreateSession).toHaveBeenCalledWith('wt-1', 'proj-1', undefined, 'plan', {
-        pendingMessage: 'Fix merge conflicts'
+        pendingMessage: 'Fix merge conflicts then commit'
       })
     })
 
@@ -423,7 +423,7 @@ describe('merge conflicts ticket button', () => {
 
     await waitFor(() => {
       expect(mockCreateSession).toHaveBeenCalledWith('wt-1', 'proj-1', undefined, 'build', {
-        pendingMessage: 'Fix merge conflicts'
+        pendingMessage: 'Fix merge conflicts then commit'
       })
     })
   })
@@ -437,7 +437,7 @@ describe('merge conflicts ticket button', () => {
 
     await waitFor(() => {
       expect(mockCreateSession).toHaveBeenCalledWith('wt-1', 'proj-1', undefined, 'build', {
-        pendingMessage: 'Fix merge conflicts'
+        pendingMessage: 'Fix merge conflicts then commit'
       })
     })
   })
