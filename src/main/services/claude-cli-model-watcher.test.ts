@@ -74,7 +74,7 @@ describe('mainChainAssistantModels', () => {
   it('ignores sidechain, synthetic and malformed lines', () => {
     const text =
       assistantLine('claude-fable-5') +
-      assistantLine('claude-haiku-4-5-20251001', { isSidechain: true }) +
+      assistantLine('claude-haiku-5-5-20261006', { isSidechain: true }) +
       assistantLine('<synthetic>', { isApiErrorMessage: true }) +
       'not json\n' +
       `${JSON.stringify({ type: 'assistant', message: null })}\n`
@@ -318,7 +318,7 @@ describe('handleClaudeCliModelChangeHook', () => {
 
     appendFileSync(
       transcriptPath,
-      assistantLine('claude-haiku-4-5-20251001', { isSidechain: true }) +
+      assistantLine('claude-haiku-5-5-20261006', { isSidechain: true }) +
         assistantLine('<synthetic>', { isApiErrorMessage: true }) +
         assistantLine('claude-fable-5')
     )
@@ -475,7 +475,7 @@ describe('handleClaudeCliModelChangeHook', () => {
     expect(db.updateSession).not.toHaveBeenCalled()
 
     // A live transition after re-attach still fires.
-    appendFileSync(transcriptPath, assistantLine('claude-haiku-4-5-20251001'))
+    appendFileSync(transcriptPath, assistantLine('claude-haiku-5-5-20261006'))
     handleClaudeCliModelChangeHook(SESSION_ID, stopHook(), { db })
     expect(db.updateSession).toHaveBeenCalledWith(SESSION_ID, { model_id: 'haiku' })
   })

@@ -39,7 +39,7 @@ describe('buildClaudeCliPtySpawn', () => {
     expect(normalizeClaudeCliModel('claude-fable-5')).toBe('fable')
     expect(normalizeClaudeCliModel('claude-sonnet-4')).toBe('sonnet')
     expect(normalizeClaudeCliModel('claude-opus-4-5-20251101')).toBe('opus')
-    expect(normalizeClaudeCliModel('claude-haiku-4-5-20251001')).toBe('haiku')
+    expect(normalizeClaudeCliModel('claude-haiku-5-5-20261006')).toBe('haiku')
   })
 
   it('builds build-mode argv with model, effort, resume id, and positional prompt', () => {

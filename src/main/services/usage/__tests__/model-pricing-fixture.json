@@ -67,6 +67,13 @@
   "input_cost_per_token": 1e-06,
   "output_cost_per_token": 5e-06
  },
+ "claude-haiku-5-5": {
+  "cache_creation_input_token_cost": 1.25e-07,
+  "cache_creation_input_token_cost_above_1hr": 2e-07,
+  "cache_read_input_token_cost": 1e-08,
+  "input_cost_per_token": 1e-07,
+  "output_cost_per_token": 5e-07
+ },
  "claude-opus-4-1": {
   "cache_creation_input_token_cost": 1.875e-05,
   "cache_creation_input_token_cost_above_1hr": 3e-05,

@@ -103,7 +103,7 @@ const CLAUDE_MODELS = [
   },
   {
     id: 'haiku',
-    name: 'Haiku 4.5',
+    name: 'Haiku 5.5',
     limit: { context: 200000, output: 8192 },
     variants: CLAUDE_EFFORT_VARIANTS,
     defaultVariant: 'high'
