@@ -1090,8 +1090,16 @@ export async function createClaudeCliTerminal(
       if (!alreadyExists) codexRunState.set(sessionId, null)
       ensureCodexHookSubscription()
     }
-    // A restarted session must never inherit a stale interaction latch.
-    clearClaudeCliInteractions(sessionId)
+    // A restarted session must never inherit a stale interaction latch. Only
+    // on a true (re)spawn: a reused live PTY is still blocked on whatever its
+    // hooks last latched (an open AskUserQuestion), and every view mounted
+    // onto it — opening the kanban ticket modal — comes through here. Clearing
+    // then would let the next unrelated hook (a background subagent's
+    // PostToolUse) publish 'working' over 'answering' while the question is
+    // still open, which the ticket modal reads as the question being answered.
+    if (!alreadyExists) {
+      clearClaudeCliInteractions(sessionId)
+    }
     // ...nor a stale subagent deferral/pending-notification set, which could
     // otherwise swallow the next turn's Stop after a restart.
     clearClaudeCliSubagentTracking(sessionId)

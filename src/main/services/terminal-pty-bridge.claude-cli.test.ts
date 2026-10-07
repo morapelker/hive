@@ -720,6 +720,18 @@ describe('Claude CLI terminal hook status wiring', () => {
       expect(mocks.clearClaudeCliInteractions).toHaveBeenCalledWith('hive-session-1')
     })
 
+    it('keeps the session ledger when a view mounts onto the live PTY, so an open question stays latched', async () => {
+      await createClaudeCliTerminal('hive-session-1', {})
+      mocks.clearClaudeCliInteractions.mockClear()
+
+      // The ticket modal (or a tab switch) mounting a view re-enters create
+      // with the PTY still running: no respawn, nothing stale to drop.
+      mocks.ptyService.has.mockReturnValue(true)
+      await createClaudeCliTerminal('hive-session-1', {})
+
+      expect(mocks.clearClaudeCliInteractions).not.toHaveBeenCalled()
+    })
+
     it.each(['\x1b', '\x03'])(
       'clears the session ledger on user interrupt %j so a phantom permission cannot re-surface',
       async (key) => {

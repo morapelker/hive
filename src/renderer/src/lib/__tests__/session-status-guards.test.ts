@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
-import { shouldPreserveBlockingSessionStatus } from '../session-status-guards'
+import {
+  isCliQuestionResolutionEntry,
+  shouldPreserveBlockingSessionStatus
+} from '../session-status-guards'
 
 describe('shouldPreserveBlockingSessionStatus', () => {
   it('preserves command_approval and permission unconditionally, matching the existing guards', () => {
@@ -22,5 +25,61 @@ describe('shouldPreserveBlockingSessionStatus', () => {
     expect(shouldPreserveBlockingSessionStatus('completed', false)).toBe(false)
     expect(shouldPreserveBlockingSessionStatus(null, true)).toBe(false)
     expect(shouldPreserveBlockingSessionStatus(undefined, true)).toBe(false)
+  })
+})
+
+describe('isCliQuestionResolutionEntry', () => {
+  it('accepts the AskUserQuestion PostToolUse / PostToolUseFailure resuming work', () => {
+    expect(
+      isCliQuestionResolutionEntry({
+        status: 'working',
+        hookEventName: 'PostToolUse',
+        toolName: 'AskUserQuestion'
+      })
+    ).toBe(true)
+    expect(
+      isCliQuestionResolutionEntry({
+        status: 'planning',
+        hookEventName: 'PostToolUseFailure',
+        toolName: 'AskUserQuestion'
+      })
+    ).toBe(true)
+  })
+
+  it("accepts codex's title-derived question resolution", () => {
+    expect(
+      isCliQuestionResolutionEntry({ status: 'working', reason: 'codex_title_action_resolved' })
+    ).toBe(true)
+  })
+
+  it('rejects every other working flip: other tools, bare writes, prompts, resurfaced questions', () => {
+    expect(
+      isCliQuestionResolutionEntry({
+        status: 'working',
+        hookEventName: 'PostToolUse',
+        toolName: 'Read'
+      })
+    ).toBe(false)
+    expect(isCliQuestionResolutionEntry({ status: 'working' })).toBe(false)
+    expect(
+      isCliQuestionResolutionEntry({ status: 'working', hookEventName: 'UserPromptSubmit' })
+    ).toBe(false)
+    expect(
+      isCliQuestionResolutionEntry({
+        status: 'answering',
+        hookEventName: 'PreToolUse',
+        toolName: 'AskUserQuestion',
+        reason: 'interaction_resurfaced'
+      })
+    ).toBe(false)
+    expect(
+      isCliQuestionResolutionEntry({
+        status: 'completed',
+        hookEventName: 'PostToolUse',
+        toolName: 'AskUserQuestion'
+      })
+    ).toBe(false)
+    expect(isCliQuestionResolutionEntry(null)).toBe(false)
+    expect(isCliQuestionResolutionEntry(undefined)).toBe(false)
   })
 })

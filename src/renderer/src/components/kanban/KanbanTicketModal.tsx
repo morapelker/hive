@@ -94,6 +94,7 @@ import { TicketRunButton } from './TicketRunButton'
 import { TicketModelBadge } from './TicketModelBadge'
 import { useQuestionStore, type QuestionRequest } from '@/stores/useQuestionStore'
 import { QuestionPrompt } from '@/components/sessions/QuestionPrompt'
+import { isCliQuestionResolutionEntry } from '@/lib/session-status-guards'
 import { FollowupInput } from './FollowupInput'
 import type { Attachment, AttachmentInput } from '@/components/sessions/AttachmentPreview'
 import { isImageMime, MAX_ATTACHMENTS } from '@/lib/file-attachment-utils'
@@ -716,11 +717,13 @@ function KanbanTicketModalContent({
   const isShellCommandTicket = isShellCommandRunKnown || isShellCommandSession(effectiveSession)
   // Shell commands render in the same portalled terminal pane as the agent CLIs
   const usesTerminalPane = isClaudeCli || isShellCommandTicket
-  const currentWorktreeSessionStatus = useWorktreeStatusStore(
+  // The whole entry, not just the status: the auto-close below needs the hook
+  // evidence (hookEventName/toolName/reason) that rides on each write.
+  const currentWorktreeSessionEntry = useWorktreeStatusStore(
     useCallback(
       (state) =>
         ticket.current_session_id
-          ? (state.sessionStatuses[ticket.current_session_id]?.status ?? null)
+          ? (state.sessionStatuses[ticket.current_session_id] ?? null)
           : null,
       [ticket.current_session_id]
     )
@@ -741,48 +744,61 @@ function KanbanTicketModalContent({
     onForceClose()
   }, [onForceClose])
 
-  // Auto-close the modal when an answered CLI question resumes work
-  // (answering → working). `isClaudeCli` derives from the DB-loaded session and
-  // can resolve a render or two after the modal opens, so we must NOT gate the
-  // status tracking on it — otherwise a flip that lands before it resolves slides
-  // the baseline forward under the early-return branch and the transition is lost
-  // forever. Instead we latch `sawAnswering` unconditionally and gate only the
-  // close *action* on `isClaudeCli`; the effect re-runs when `isClaudeCli`
-  // resolves (it's a dep), so a flip seen while it was still false is honored as
-  // soon as it becomes true.
-  const autoCloseLatchRef = useRef<{ sessionId: string | null; sawAnswering: boolean }>({
+  // Auto-close the modal once the CLI question the user was looking at has
+  // been answered. The only evidence that *this* question got its answer is
+  // the status write that resolves its tool call — PostToolUse(AskUserQuestion)
+  // for claude, the title-derived resolution for codex (see
+  // isCliQuestionResolutionEntry). Any other answering → working flip — a
+  // background subagent's tool hook, a stray optimistic write, a held question
+  // falling back to the terminal — leaves the modal open: the question is
+  // still waiting in the terminal pane.
+  //
+  // `isClaudeCli` derives from the DB-loaded session and can resolve a render
+  // or two after the modal opens, so the pending-question tracking must NOT be
+  // gated on it — otherwise a resolution that lands before it resolves slides
+  // the baseline forward under the early-return branch and is lost forever.
+  // Only the close *action* is gated; the effect re-runs when `isClaudeCli`
+  // resolves (it's a dep), so a resolution seen while it was still false is
+  // honored as soon as it becomes true.
+  const autoCloseLatchRef = useRef<{ sessionId: string | null; questionPending: boolean }>({
     sessionId: null,
-    sawAnswering: false
+    questionPending: false
   })
   useEffect(() => {
     const sessionId = ticket.current_session_id
     const latch = autoCloseLatchRef.current
+    const entry = currentWorktreeSessionEntry
 
     if (!sessionId) {
-      autoCloseLatchRef.current = { sessionId: null, sawAnswering: false }
+      autoCloseLatchRef.current = { sessionId: null, questionPending: false }
       return
     }
 
     // First observation of this session — seed the latch from the current status
     // so a modal opened on a session already in `answering` still arms.
     if (latch.sessionId !== sessionId) {
-      autoCloseLatchRef.current = {
-        sessionId,
-        sawAnswering: currentWorktreeSessionStatus === 'answering'
-      }
+      autoCloseLatchRef.current = { sessionId, questionPending: entry?.status === 'answering' }
       return
     }
 
-    if (currentWorktreeSessionStatus === 'answering') {
-      latch.sawAnswering = true
+    if (entry?.status === 'answering') {
+      latch.questionPending = true
       return
     }
 
-    if (isClaudeCli && latch.sawAnswering && currentWorktreeSessionStatus === 'working') {
-      latch.sawAnswering = false
-      forceClose()
+    // The turn ended under the question (Escape, interrupt, process exit):
+    // nothing is pending any more. A later question re-arms on its own
+    // `answering` write.
+    if (entry?.status === 'completed' || entry?.status === 'unread') {
+      latch.questionPending = false
+      return
     }
-  }, [currentWorktreeSessionStatus, forceClose, isClaudeCli, ticket.current_session_id])
+
+    if (!latch.questionPending || !isCliQuestionResolutionEntry(entry)) return
+    if (!isClaudeCli) return
+    latch.questionPending = false
+    forceClose()
+  }, [currentWorktreeSessionEntry, forceClose, isClaudeCli, ticket.current_session_id])
 
   const requestClose = useCallback(() => {
     if (modalMode === 'edit' && editDraftDirty) {

@@ -551,7 +551,93 @@ describe('KanbanTicketModal handoff from Claude CLI plan review', () => {
     expect(relinkTicketsForHandoff).toHaveBeenCalledWith(sourceSession.id, 'handoff-session', true)
   })
 
-  it('auto-closes when an open Claude CLI question ticket returns to working', async () => {
+  it('auto-closes when the open Claude CLI question is answered (its AskUserQuestion PostToolUse)', async () => {
+    setupStores()
+    useKanbanStore.setState({
+      tickets: new Map([['project-1', [{ ...ticket, column: 'in_progress', plan_ready: false }]]])
+    })
+    useWorktreeStatusStore.getState().setSessionStatus(sourceSession.id, 'answering', {
+      hookEventName: 'PreToolUse',
+      toolName: 'AskUserQuestion'
+    })
+
+    render(
+      <ClaudeCliSessionPortalProvider>
+        <KanbanTicketModal />
+      </ClaudeCliSessionPortalProvider>
+    )
+
+    expect(screen.getByTestId('kanban-ticket-modal')).toBeTruthy()
+
+    act(() => {
+      useWorktreeStatusStore.getState().setSessionStatus(sourceSession.id, 'working', {
+        hookEventName: 'PostToolUse',
+        toolName: 'AskUserQuestion'
+      })
+    })
+
+    await waitFor(() => {
+      expect(useKanbanStore.getState().selectedTicketId).toBeNull()
+    })
+  })
+
+  it('stays open while the Claude CLI question is pending and something else flips the session to working', async () => {
+    setupStores()
+    useKanbanStore.setState({
+      tickets: new Map([['project-1', [{ ...ticket, column: 'in_progress', plan_ready: false }]]])
+    })
+    useWorktreeStatusStore.getState().setSessionStatus(sourceSession.id, 'answering', {
+      hookEventName: 'PreToolUse',
+      toolName: 'AskUserQuestion'
+    })
+
+    render(
+      <ClaudeCliSessionPortalProvider>
+        <KanbanTicketModal />
+      </ClaudeCliSessionPortalProvider>
+    )
+
+    expect(screen.getByTestId('kanban-ticket-modal')).toBeTruthy()
+
+    // A background subagent's tool completing — its PostToolUse shares the
+    // parent's session id and used to read as "the question was answered".
+    act(() => {
+      useWorktreeStatusStore.getState().setSessionStatus(sourceSession.id, 'working', {
+        hookEventName: 'PostToolUse',
+        toolName: 'Read'
+      })
+    })
+    expect(useKanbanStore.getState().selectedTicketId).toBe(ticket.id)
+    expect(screen.getByTestId('kanban-ticket-modal')).toBeTruthy()
+
+    // A bare optimistic 'working' write (held question handed back to the
+    // terminal, a transport reply) is not the answer either.
+    act(() => {
+      useWorktreeStatusStore.getState().setSessionStatus(sourceSession.id, 'working')
+    })
+    expect(useKanbanStore.getState().selectedTicketId).toBe(ticket.id)
+
+    // The question is re-surfaced and then actually answered: now it closes.
+    act(() => {
+      useWorktreeStatusStore.getState().setSessionStatus(sourceSession.id, 'answering', {
+        hookEventName: 'PreToolUse',
+        toolName: 'AskUserQuestion',
+        reason: 'interaction_resurfaced'
+      })
+    })
+    act(() => {
+      useWorktreeStatusStore.getState().setSessionStatus(sourceSession.id, 'working', {
+        hookEventName: 'PostToolUse',
+        toolName: 'AskUserQuestion'
+      })
+    })
+
+    await waitFor(() => {
+      expect(useKanbanStore.getState().selectedTicketId).toBeNull()
+    })
+  })
+
+  it('does not auto-close on a later unrelated working flip once the question turn ended', async () => {
     setupStores()
     useKanbanStore.setState({
       tickets: new Map([['project-1', [{ ...ticket, column: 'in_progress', plan_ready: false }]]])
@@ -564,15 +650,20 @@ describe('KanbanTicketModal handoff from Claude CLI plan review', () => {
       </ClaudeCliSessionPortalProvider>
     )
 
-    expect(screen.getByTestId('kanban-ticket-modal')).toBeTruthy()
-
+    // Escape on the question (no hook fires; the keystroke mirror completes the turn).
     act(() => {
-      useWorktreeStatusStore.getState().setSessionStatus(sourceSession.id, 'working')
+      useWorktreeStatusStore.getState().setSessionStatus(sourceSession.id, 'completed', {
+        reason: 'user_interrupt'
+      })
     })
-
-    await waitFor(() => {
-      expect(useKanbanStore.getState().selectedTicketId).toBeNull()
+    // A new prompt typed into the terminal starts a turn: not a question answer.
+    act(() => {
+      useWorktreeStatusStore.getState().setSessionStatus(sourceSession.id, 'working', {
+        hookEventName: 'UserPromptSubmit'
+      })
     })
+    expect(useKanbanStore.getState().selectedTicketId).toBe(ticket.id)
+    expect(screen.getByTestId('kanban-ticket-modal')).toBeTruthy()
   })
 
   it('auto-closes a DB-loaded CLI question ticket even when working arrives before isClaudeCli resolves', async () => {
@@ -610,7 +701,10 @@ describe('KanbanTicketModal handoff from Claude CLI plan review', () => {
 
     // Flip to working while the DB lookup (and thus isClaudeCli) is still pending.
     act(() => {
-      useWorktreeStatusStore.getState().setSessionStatus(sourceSession.id, 'working')
+      useWorktreeStatusStore.getState().setSessionStatus(sourceSession.id, 'working', {
+        hookEventName: 'PostToolUse',
+        toolName: 'AskUserQuestion'
+      })
     })
 
     // Still open: isClaudeCli hasn't resolved, so the close action is gated off —
