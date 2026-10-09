@@ -43,6 +43,15 @@ export const accountApi = {
     getRendererRpcClient().request<LoginStatusDTO>('accountOps.loginStatus', { loginId }),
   loginCancel: async (loginId: string): Promise<boolean> =>
     getRendererRpcClient().request<boolean>('accountOps.loginCancel', { loginId }),
+  /** Ask the child (which has the network reach) whether the auto sign-in code server answers. */
+  autoSignInTest: async (input: {
+    codeServerUrl: string
+    apiToken: string
+  }): Promise<{ ok: boolean; message: string }> =>
+    getRendererRpcClient().request<{ ok: boolean; message: string }>(
+      'accountOps.autoSignInTest',
+      input
+    ),
   exportShare: async (accountId: string): Promise<ExportedAccountShare> =>
     getRendererRpcClient().request<ExportedAccountShare>('accountOps.exportShare', { accountId }),
   importShare: async (url: string): Promise<ImportedAccountShare> =>

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { LoginState, LoginStatusDTO, UsageProvider } from '@shared/types/usage'
+import type { LoginStage, LoginState, LoginStatusDTO, UsageProvider } from '@shared/types/usage'
 import { accountApi } from '@/api/account-api'
 import { toast } from '@/lib/toast'
 import { useUsageStore } from './useUsageStore'
@@ -13,6 +13,9 @@ export interface ActiveLogin {
   email: string | null
   state: LoginState
   error: string | null
+  /** Automated sign-in progress; null for the manual (own browser) flow. */
+  stage: LoginStage | null
+  stageDetail: string | null
 }
 
 interface LoginState_ {
@@ -55,7 +58,9 @@ export const useLoginStore = create<LoginState_>()((set, get) => ({
           provider,
           email: email ?? null,
           state: 'launching',
-          error: null
+          error: null,
+          stage: null,
+          stageDetail: null
         }
       })
       schedulePoll(loginId, provider, get, set)
@@ -116,7 +121,9 @@ function applyStatus(
       provider,
       email: status.email,
       state: status.state,
-      error: status.error
+      error: status.error,
+      stage: status.stage ?? null,
+      stageDetail: status.stageDetail ?? null
     }
   })
 }

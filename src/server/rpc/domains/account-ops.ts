@@ -9,6 +9,7 @@ import {
   loginStart,
   loginStatus
 } from '../../../main/services/login-service'
+import { testCodeServer } from '../../../main/services/claude-auto-login'
 import {
   listSavedAccounts,
   removeSavedAccount,
@@ -37,6 +38,10 @@ export interface AccountOpsRpcService {
   ) => Effect.Effect<{ loginId: string }, unknown, never>
   readonly loginStatus: (loginId: string) => Effect.Effect<LoginStatusDTO, unknown, never>
   readonly loginCancel: (loginId: string) => Effect.Effect<boolean, unknown, never>
+  readonly autoSignInTest: (input: {
+    codeServerUrl: string
+    apiToken: string
+  }) => Effect.Effect<{ ok: boolean; message: string }, unknown, never>
   readonly exportShare: (accountId: string) => Effect.Effect<ExportedAccountShare, unknown, never>
   readonly importShare: (url: string) => Effect.Effect<ImportedAccountShare, unknown, never>
 }
@@ -57,6 +62,9 @@ const loginStartParamsSchema = z
   .strict()
 const loginStatusParamsSchema = z.object({ loginId: z.string() }).strict()
 const loginCancelParamsSchema = z.object({ loginId: z.string() }).strict()
+const autoSignInTestParamsSchema = z
+  .object({ codeServerUrl: z.string().min(1), apiToken: z.string() })
+  .strict()
 const exportShareParamsSchema = z.object({ accountId: z.string() }).strict()
 const importShareParamsSchema = z.object({ url: z.string() }).strict()
 
@@ -99,6 +107,12 @@ export const makeLiveAccountOpsRpcService = (): AccountOpsRpcService => ({
   loginCancel: (loginId) =>
     Effect.tryPromise({
       try: () => loginCancel(loginId),
+      catch: (cause) => cause
+    }),
+  autoSignInTest: (input) =>
+    Effect.tryPromise({
+      try: () =>
+        testCodeServer({ baseUrl: input.codeServerUrl, apiToken: input.apiToken || undefined }),
       catch: (cause) => cause
     }),
   exportShare: (accountId) =>
@@ -203,6 +217,17 @@ export const makeAccountOpsRpcHandlers = (
             catch: (cause) => cause
           })
           return yield* service.loginCancel(loginId)
+        })
+    ],
+    [
+      'accountOps.autoSignInTest',
+      (params) =>
+        Effect.gen(function* () {
+          const input = yield* Effect.try({
+            try: () => autoSignInTestParamsSchema.parse(params),
+            catch: (cause) => cause
+          })
+          return yield* service.autoSignInTest(input)
         })
     ],
     [

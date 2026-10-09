@@ -163,12 +163,31 @@ export interface RefreshAllResultItem {
 
 export type LoginState = 'launching' | 'waiting' | 'exchanging' | 'done' | 'failed' | 'cancelled'
 
+/**
+ * Where the automated Claude sign-in is while the login `state` is `waiting`.
+ * Null for the manual flow (the user signs in in their own browser).
+ * `needs-human` means the automation hit a step it cannot drive (a challenge,
+ * SMS 2FA, an organisation picker…) and left the Chrome window open for the
+ * user; the login still completes through the loopback callback.
+ */
+export type LoginStage =
+  | 'opening-browser'
+  | 'entering-email'
+  | 'waiting-for-code'
+  | 'entering-code'
+  | 'authorizing'
+  | 'redirecting'
+  | 'needs-human'
+
 export interface LoginStatusDTO {
   loginId: string
   provider: UsageProvider
   state: LoginState
   email: string | null
   error: string | null
+  stage?: LoginStage | null
+  /** Human-readable detail for the stage (e.g. why the automation stopped). */
+  stageDetail?: string | null
 }
 
 /**

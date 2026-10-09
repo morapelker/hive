@@ -21,7 +21,9 @@ describe('LoginBanner', () => {
         provider: 'anthropic',
         email: null,
         state: 'waiting',
-        error: null
+        error: null,
+        stage: null,
+        stageDetail: null
       }
     })
     const request: ReturnType<typeof vi.fn> = vi.fn(async () => null)
@@ -40,9 +42,9 @@ describe('LoginBanner', () => {
     // The banner floats over the title-bar drag region; without no-drag,
     // Electron swallows clicks before they reach the Cancel button.
     const pill = screen.getByRole('button', { name: 'Cancel' }).parentElement as HTMLElement
-    expect(
-      (pill.style as CSSStyleDeclaration & { WebkitAppRegion?: string }).WebkitAppRegion
-    ).toBe('no-drag')
+    expect((pill.style as CSSStyleDeclaration & { WebkitAppRegion?: string }).WebkitAppRegion).toBe(
+      'no-drag'
+    )
   })
 
   it('clears the active login when Cancel is clicked', () => {
@@ -51,5 +53,50 @@ describe('LoginBanner', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
 
     expect(useLoginStore.getState().activeLogin).toBeNull()
+  })
+})
+
+describe('LoginBanner automated sign-in stages', () => {
+  afterEach(() => {
+    cleanup()
+    useLoginStore.setState({ activeLogin: null })
+  })
+
+  it('describes the automation stage instead of the Chrome hint', () => {
+    useLoginStore.setState({
+      activeLogin: {
+        loginId: 'login-2',
+        provider: 'anthropic',
+        email: 'a@b.com',
+        state: 'waiting',
+        error: null,
+        stage: 'waiting-for-code',
+        stageDetail: null
+      }
+    })
+    render(<LoginBanner />)
+
+    expect(screen.getByTestId('login-banner-text').textContent).toBe(
+      'Signing in to Claude — waiting for the sign-in code…'
+    )
+  })
+
+  it("shows the driver's own reason when it needs the user to finish", () => {
+    useLoginStore.setState({
+      activeLogin: {
+        loginId: 'login-3',
+        provider: 'anthropic',
+        email: 'a@b.com',
+        state: 'waiting',
+        error: null,
+        stage: 'needs-human',
+        stageDetail: 'Cloudflare verification is required — complete it in the Chrome window'
+      }
+    })
+    render(<LoginBanner />)
+
+    expect(screen.getByTestId('login-banner-text').textContent).toBe(
+      'Cloudflare verification is required — complete it in the Chrome window'
+    )
   })
 })

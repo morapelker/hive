@@ -5,8 +5,14 @@ import {
   resolveModelForSdk as resolveSharedModelForSdk
 } from '@shared/model-resolution'
 import { persist, createJSONStorage } from 'zustand/middleware'
-import { APP_SETTINGS_DB_KEY, DEFAULT_HIVE_ENTERPRISE_SERVER_URL } from '@shared/types/settings'
-import type { TeleportSettings } from '@shared/types/settings'
+import {
+  APP_SETTINGS_DB_KEY,
+  DEFAULT_AUTO_SIGN_IN_SETTINGS,
+  DEFAULT_HIVE_ENTERPRISE_SERVER_URL,
+  sanitizeAutoSignInSettings
+} from '@shared/types/settings'
+import type { AutoSignInSettings, TeleportSettings } from '@shared/types/settings'
+>>>>>>> auto signin claude
 import type { TelegramConfig } from '@shared/types/telegram'
 import type { UsageProvider } from '@shared/types/usage'
 import type { PetSettings } from '@shared/types/pet'
@@ -249,6 +255,9 @@ export interface AppSettings {
   // Teleport
   teleport: TeleportSettings | null
 
+  // Automated Claude sign-in (email + code typed for you, code fetched from a server)
+  autoSignIn: AutoSignInSettings
+
   // Pet
   pet: PetSettings
 
@@ -348,6 +357,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   tipsEnabled: true,
   telegramConfig: null,
   teleport: null,
+  autoSignIn: DEFAULT_AUTO_SIGN_IN_SETTINGS,
   pet: {
     enabled: false,
     petId: 'bee',
@@ -450,6 +460,7 @@ async function loadSettingsFromDatabase(): Promise<AppSettings | null> {
             ...(parsed.pet || {})
           },
           teleport: parsed.teleport ?? null,
+          autoSignIn: sanitizeAutoSignInSettings(parsed.autoSignIn),
           // Validate every voice field so pre-feature or hand-edited blobs get defaults
           voice: sanitizeVoiceSettings(parsed.voice)
         }
@@ -567,6 +578,7 @@ function extractSettings(state: SettingsState): AppSettings {
     tipsEnabled: state.tipsEnabled,
     telegramConfig: null,
     teleport: state.teleport,
+    autoSignIn: state.autoSignIn,
     pet: state.pet,
     voice: state.voice,
     environmentVariables: state.environmentVariables,

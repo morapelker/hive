@@ -52,7 +52,13 @@ describe('useLoginStore', () => {
     request.mockImplementation(async (method: string) => {
       if (method === 'accountOps.loginStart') return { loginId: 'login-1' }
       if (method === 'accountOps.loginStatus') {
-        return { loginId: 'login-1', provider: 'anthropic', state: 'done', email: 'a@b.com', error: null }
+        return {
+          loginId: 'login-1',
+          provider: 'anthropic',
+          state: 'done',
+          email: 'a@b.com',
+          error: null
+        }
       }
       return null
     })
@@ -79,9 +85,21 @@ describe('useLoginStore', () => {
       if (method === 'accountOps.loginStatus') {
         call += 1
         if (call === 1) {
-          return { loginId: 'login-2', provider: 'anthropic', state: 'waiting', email: null, error: null }
+          return {
+            loginId: 'login-2',
+            provider: 'anthropic',
+            state: 'waiting',
+            email: null,
+            error: null
+          }
         }
-        return { loginId: 'login-2', provider: 'anthropic', state: 'done', email: 'x@y.com', error: null }
+        return {
+          loginId: 'login-2',
+          provider: 'anthropic',
+          state: 'done',
+          email: 'x@y.com',
+          error: null
+        }
       }
       return null
     })
@@ -122,7 +140,13 @@ describe('useLoginStore', () => {
         call += 1
         // Fail 3 times, succeed, fail 3 more times (never 5 in a row) -> still polling
         if (call === 4) {
-          return { loginId: 'login-4', provider: 'anthropic', state: 'waiting', email: null, error: null }
+          return {
+            loginId: 'login-4',
+            provider: 'anthropic',
+            state: 'waiting',
+            email: null,
+            error: null
+          }
         }
         throw new Error('ws disconnected')
       }
@@ -167,7 +191,13 @@ describe('useLoginStore', () => {
       if (method === 'accountOps.loginStart') return { loginId: 'login-6' }
       if (method === 'accountOps.loginCancel') return true
       if (method === 'accountOps.loginStatus') {
-        return { loginId: 'login-6', provider: 'anthropic', state: 'waiting', email: null, error: null }
+        return {
+          loginId: 'login-6',
+          provider: 'anthropic',
+          state: 'waiting',
+          email: null,
+          error: null
+        }
       }
       return null
     })
@@ -238,7 +268,13 @@ describe('useLoginStore', () => {
     request.mockImplementation(async (method: string) => {
       if (method === 'accountOps.loginStart') return { loginId: 'login-7' }
       if (method === 'accountOps.loginStatus') {
-        return { loginId: 'login-7', provider: 'anthropic', state: 'waiting', email: null, error: null }
+        return {
+          loginId: 'login-7',
+          provider: 'anthropic',
+          state: 'waiting',
+          email: null,
+          error: null
+        }
       }
       return null
     })
@@ -252,5 +288,51 @@ describe('useLoginStore', () => {
 
     expect(useLoginStore.getState().activeLogin).toEqual(before)
     expect(toast.error).toHaveBeenCalledWith('A login is already in progress')
+  })
+})
+
+describe('useLoginStore automated sign-in stage', () => {
+  let request: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    useLoginStore.setState({ activeLogin: null })
+    request = vi.fn(async () => null)
+    setRendererRpcClient({ request, subscribe: vi.fn() })
+  })
+
+  afterEach(async () => {
+    await useLoginStore.getState().cancelLogin()
+    resetRendererRpcClientForTests()
+    vi.useRealTimers()
+  })
+
+  it('copies the stage and its detail from each status poll', async () => {
+    request.mockImplementation(async (method: string) => {
+      if (method === 'accountOps.loginStart') return { loginId: 'login-9' }
+      if (method === 'accountOps.loginStatus') {
+        return {
+          loginId: 'login-9',
+          provider: 'anthropic',
+          state: 'waiting',
+          email: 'a@b.com',
+          error: null,
+          stage: 'needs-human',
+          stageDetail: 'SMS verification code required — enter it in the Chrome window'
+        }
+      }
+      return null
+    })
+
+    await useLoginStore.getState().startLogin('anthropic', 'a@b.com')
+    expect(useLoginStore.getState().activeLogin).toMatchObject({ stage: null, stageDetail: null })
+
+    await vi.advanceTimersByTimeAsync(1500)
+
+    expect(useLoginStore.getState().activeLogin).toMatchObject({
+      state: 'waiting',
+      stage: 'needs-human',
+      stageDetail: 'SMS verification code required — enter it in the Chrome window'
+    })
   })
 })

@@ -6,6 +6,8 @@ import { resetRendererRpcClientForTests, setRendererRpcClient } from '@/api/rpc-
 import { useUsageStore } from '@/stores/useUsageStore'
 import { useAccountStore } from '@/stores/useAccountStore'
 import { useLoginStore } from '@/stores/useLoginStore'
+import { useSettingsStore } from '@/stores/useSettingsStore'
+import { DEFAULT_AUTO_SIGN_IN_SETTINGS } from '@shared/types/settings'
 import { SettingsAccounts } from './SettingsAccounts'
 import type { SavedAccountDTO } from '@shared/types/usage'
 
@@ -162,7 +164,9 @@ describe('SettingsAccounts', () => {
         provider: 'anthropic',
         email: null,
         state: 'waiting',
-        error: null
+        error: null,
+        stage: null,
+        stageDetail: null
       }
     })
 
@@ -192,6 +196,104 @@ describe('SettingsAccounts', () => {
     // Clean up the poll the real store schedules
     await act(async () => {
       await useLoginStore.getState().cancelLogin()
+    })
+  })
+
+  describe('SettingsAccounts auto sign-in', () => {
+    beforeEach(() => {
+      useSettingsStore.setState({
+        autoSignIn: {
+          enabled: true,
+          codeServerUrl: 'http://claudit-dashboard:3000',
+          apiToken: '',
+          codeTimeoutSeconds: 90
+        }
+      })
+    })
+
+    afterEach(() => {
+      useSettingsStore.setState({ autoSignIn: DEFAULT_AUTO_SIGN_IN_SETTINGS })
+    })
+
+    it('shows the auto sign-in settings under the Claude card only', async () => {
+      await renderSettingsAccounts()
+
+      const blocks = screen.getAllByTestId('auto-sign-in-settings')
+      expect(blocks).toHaveLength(1)
+      expect(screen.getByTestId('accounts-provider-anthropic')).toContainElement(blocks[0])
+      expect((screen.getByTestId('auto-sign-in-url') as HTMLInputElement).value).toBe(
+        'http://claudit-dashboard:3000'
+      )
+    })
+
+    it('asks for the email before an automated Add account and starts the login with it', async () => {
+      const user = userEvent.setup()
+      request.mockImplementation(async (method: string) => {
+        if (method === 'accountOps.loginStart') return { loginId: 'login-3' }
+        if (method === 'accountOps.listSaved') return anthropicAccounts
+        if (method === 'accountOps.getClaudeEmail') return 'active@example.com'
+        if (method === 'accountOps.getOpenAIEmail') return null
+        return null
+      })
+      await renderSettingsAccounts()
+
+      await user.click(screen.getByTestId('add-account-anthropic'))
+      expect(request).not.toHaveBeenCalledWith('accountOps.loginStart', expect.anything())
+
+      const submit = screen.getByTestId('add-account-email-submit')
+      expect(submit).toBeDisabled()
+      await user.type(screen.getByTestId('add-account-email'), ' New.Person@Example.com ')
+      expect(submit).toBeEnabled()
+      await user.click(submit)
+
+      expect(request).toHaveBeenCalledWith('accountOps.loginStart', {
+        provider: 'anthropic',
+        email: 'new.person@example.com'
+      })
+      await act(async () => {
+        await useLoginStore.getState().cancelLogin()
+      })
+    })
+
+    it('keeps the plain Add account flow for OpenAI', async () => {
+      const user = userEvent.setup()
+      request.mockImplementation(async (method: string) => {
+        if (method === 'accountOps.loginStart') return { loginId: 'login-4' }
+        if (method === 'accountOps.listSaved') return []
+        return null
+      })
+      await renderSettingsAccounts()
+
+      await user.click(screen.getByTestId('add-account-openai'))
+
+      expect(request).toHaveBeenCalledWith('accountOps.loginStart', {
+        provider: 'openai',
+        email: undefined
+      })
+      await act(async () => {
+        await useLoginStore.getState().cancelLogin()
+      })
+    })
+
+    it('runs the connection test through the child and shows the verdict', async () => {
+      const user = userEvent.setup()
+      request.mockImplementation(async (method: string) => {
+        if (method === 'accountOps.autoSignInTest')
+          return { ok: true, message: 'Code server reachable' }
+        if (method === 'accountOps.listSaved') return []
+        return null
+      })
+      await renderSettingsAccounts()
+
+      await user.click(screen.getByTestId('auto-sign-in-test'))
+
+      expect(request).toHaveBeenCalledWith('accountOps.autoSignInTest', {
+        codeServerUrl: 'http://claudit-dashboard:3000',
+        apiToken: ''
+      })
+      expect((await screen.findByTestId('auto-sign-in-test-result')).textContent).toContain(
+        'Code server reachable'
+      )
     })
   })
 })

@@ -6,7 +6,8 @@ import type { LoginUrlOpener } from '../../src/main/services/login-service'
 
 const mocks = vi.hoisted(() => ({
   db: {
-    getSavedUsageAccountByProviderEmail: vi.fn()
+    getSavedUsageAccountByProviderEmail: vi.fn(),
+    getSetting: vi.fn(() => null)
   },
   addClaudeAccount: vi.fn(),
   readClaudeLiveEmail: vi.fn(),
@@ -130,7 +131,10 @@ function httpGet(url: string): Promise<HttpReply> {
 }
 
 /** Follows the provider's redirect to our callback with the given query. */
-async function hitCallback(authorizeUrl: string, query: Record<string, string>): Promise<HttpReply> {
+async function hitCallback(
+  authorizeUrl: string,
+  query: Record<string, string>
+): Promise<HttpReply> {
   const url = new URL(redirectUriOf(authorizeUrl))
   for (const [key, value] of Object.entries(query)) url.searchParams.set(key, value)
   return httpGet(url.toString())
@@ -194,7 +198,10 @@ describe('login-service', () => {
     })
     mocks.addClaudeAccount.mockResolvedValue('1')
     mocks.readClaudeLiveEmail.mockResolvedValue(null)
-    mocks.addCodexAccount.mockResolvedValue({ accountKey: 'user-1::acct-1', email: 'codex@example.com' })
+    mocks.addCodexAccount.mockResolvedValue({
+      accountKey: 'user-1::acct-1',
+      email: 'codex@example.com'
+    })
 
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
@@ -336,7 +343,10 @@ describe('login-service', () => {
 
   it('lowercases the addCodexAccount email before the cache lookup, and swallows a rejected fetch', async () => {
     const { opener, openedUrls } = createFakeOpener()
-    mocks.addCodexAccount.mockResolvedValue({ accountKey: 'user-1::acct-1', email: 'User@Example.com' })
+    mocks.addCodexAccount.mockResolvedValue({
+      accountKey: 'user-1::acct-1',
+      email: 'User@Example.com'
+    })
     mocks.db.getSavedUsageAccountByProviderEmail.mockReturnValue({ id: 'row-99' })
     mocks.fetchForSavedAccount.mockRejectedValue(new Error('network blip'))
 
@@ -806,7 +816,8 @@ describe('login-service', () => {
 
   it('isLoginActive reflects whether the current session is non-terminal', async () => {
     const { opener, openedUrls } = createFakeOpener()
-    const { loginStart, loginCancel, isLoginActive, setLoginUrlOpenerForTests } = await importFresh()
+    const { loginStart, loginCancel, isLoginActive, setLoginUrlOpenerForTests } =
+      await importFresh()
     setLoginUrlOpenerForTests(opener)
 
     expect(isLoginActive()).toBe(false)
@@ -816,5 +827,158 @@ describe('login-service', () => {
     expect(isLoginActive()).toBe(true)
     await loginCancel(loginId)
     expect(isLoginActive()).toBe(false)
+  })
+
+  // ─── Automated sign-in ────────────────────────────────────────────────────
+
+  type AutoLoginModule = typeof import('../../src/main/services/claude-auto-login')
+  type AutoLoginInput = Parameters<AutoLoginModule['runClaudeAutoLogin']>[0]
+
+  /** A fake driver: records what it was started with and exposes the callbacks it was given. */
+  function createFakeAutoLogin(): {
+    runner: AutoLoginModule['runClaudeAutoLogin']
+    inputs: AutoLoginInput[]
+    close: ReturnType<typeof vi.fn>
+  } {
+    const inputs: AutoLoginInput[] = []
+    const close = vi.fn(async () => {})
+    const runner: AutoLoginModule['runClaudeAutoLogin'] = vi.fn(async (input: AutoLoginInput) => {
+      inputs.push(input)
+      return { finished: new Promise<void>(() => {}), close }
+    })
+    return { runner, inputs, close }
+  }
+
+  const AUTO_SETTINGS_BLOB = JSON.stringify({
+    autoSignIn: {
+      enabled: true,
+      codeServerUrl: 'http://claudit-dashboard:3000/',
+      apiToken: 'tok',
+      codeTimeoutSeconds: 60
+    }
+  })
+
+  describe('login-service automated Claude sign-in', () => {
+    beforeEach(() => {
+      mocks.db.getSetting.mockReturnValue(null)
+    })
+
+    it('drives the sign-in instead of opening the browser when enabled and the email is known', async () => {
+      mocks.db.getSetting.mockReturnValue(AUTO_SETTINGS_BLOB)
+      const { opener, openedUrls } = createFakeOpener()
+      const fake = createFakeAutoLogin()
+      const {
+        loginStart,
+        loginStatus,
+        setLoginUrlOpenerForTests,
+        setClaudeAutoLoginRunnerForTests
+      } = await importFresh()
+      setLoginUrlOpenerForTests(opener)
+      setClaudeAutoLoginRunnerForTests(fake.runner)
+
+      const { loginId } = await loginStart('anthropic', 'User@Example.com')
+      await pumpUntil(() => fake.inputs.length === 1)
+
+      expect(openedUrls).toEqual([])
+      const input = fake.inputs[0]
+      expect(input.loginId).toBe(loginId)
+      expect(input.email).toBe('User@Example.com')
+      expect(input.authorizeUrl.startsWith('https://claude.ai/oauth/authorize')).toBe(true)
+      expect(input.redirectUri).toBe(redirectUriOf(input.authorizeUrl))
+      expect(input.settings).toEqual({
+        enabled: true,
+        codeServerUrl: 'http://claudit-dashboard:3000',
+        apiToken: 'tok',
+        codeTimeoutSeconds: 60
+      })
+      expect(loginStatus(loginId).state).toBe('waiting')
+
+      // Stage reports flow into the status the renderer polls.
+      input.onStage('waiting-for-code')
+      expect(loginStatus(loginId)).toMatchObject({ stage: 'waiting-for-code', stageDetail: null })
+      input.onStage('needs-human', 'Cloudflare verification is required')
+      expect(loginStatus(loginId)).toMatchObject({
+        stage: 'needs-human',
+        stageDetail: 'Cloudflare verification is required'
+      })
+      expect(input.isResolved()).toBe(false)
+
+      // The loopback callback still completes the login; the driven Chrome is closed after a beat.
+      const reply = await hitCallback(input.authorizeUrl, {
+        code: 'abc123',
+        state: stateOf(input.authorizeUrl)
+      })
+      expect(reply.status).toBe(200)
+      expect(input.isResolved()).toBe(true)
+      await pumpUntil(() => loginStatus(loginId).state === 'done')
+      expect(fake.close).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(1500)
+      expect(fake.close).toHaveBeenCalledTimes(1)
+    })
+
+    it('falls back to the user browser without an email, for OpenAI, or when disabled', async () => {
+      mocks.db.getSetting.mockReturnValue(AUTO_SETTINGS_BLOB)
+      const { opener, openedUrls } = createFakeOpener()
+      const fake = createFakeAutoLogin()
+      const {
+        loginStart,
+        loginCancel,
+        setLoginUrlOpenerForTests,
+        setClaudeAutoLoginRunnerForTests
+      } = await importFresh()
+      setLoginUrlOpenerForTests(opener)
+      setClaudeAutoLoginRunnerForTests(fake.runner)
+
+      const first = await loginStart('anthropic')
+      await pumpUntil(() => openedUrls.length === 1)
+      await loginCancel(first.loginId)
+
+      const second = await loginStart('openai', 'user@example.com')
+      await pumpUntil(() => openedUrls.length === 2)
+      await loginCancel(second.loginId)
+
+      mocks.db.getSetting.mockReturnValue(JSON.stringify({ autoSignIn: { enabled: false } }))
+      const third = await loginStart('anthropic', 'user@example.com')
+      await pumpUntil(() => openedUrls.length === 3)
+      await loginCancel(third.loginId)
+
+      expect(fake.inputs).toEqual([])
+    })
+
+    it('fails the login when the browser cannot be launched', async () => {
+      mocks.db.getSetting.mockReturnValue(AUTO_SETTINGS_BLOB)
+      const { loginStart, loginStatus, setClaudeAutoLoginRunnerForTests } = await importFresh()
+      setClaudeAutoLoginRunnerForTests(async () => {
+        throw new Error('Google Chrome is not installed')
+      })
+
+      const { loginId } = await loginStart('anthropic', 'user@example.com')
+      await pumpUntil(() => loginStatus(loginId).state === 'failed')
+
+      expect(loginStatus(loginId).error).toBe(
+        'Could not start the automated sign-in: Google Chrome is not installed'
+      )
+    })
+
+    it('closes the driven browser on cancel, and treats the user closing it as a cancel', async () => {
+      mocks.db.getSetting.mockReturnValue(AUTO_SETTINGS_BLOB)
+      const fake = createFakeAutoLogin()
+      const { loginStart, loginStatus, loginCancel, setClaudeAutoLoginRunnerForTests } =
+        await importFresh()
+      setClaudeAutoLoginRunnerForTests(fake.runner)
+
+      const first = await loginStart('anthropic', 'user@example.com')
+      await pumpUntil(() => fake.inputs.length === 1)
+      expect(await loginCancel(first.loginId)).toBe(true)
+      expect(fake.close).toHaveBeenCalledTimes(1)
+      expect(loginStatus(first.loginId).state).toBe('cancelled')
+
+      const second = await loginStart('anthropic', 'user@example.com')
+      await pumpUntil(() => fake.inputs.length === 2)
+      fake.inputs[1].onBrowserClosed()
+      expect(loginStatus(second.loginId).state).toBe('cancelled')
+      // The browser is already gone — nothing to close a second time.
+      expect(fake.close).toHaveBeenCalledTimes(1)
+    })
   })
 })

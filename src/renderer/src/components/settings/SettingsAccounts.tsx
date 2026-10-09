@@ -1,7 +1,29 @@
 import { useEffect, useState } from 'react'
-import { Link2, Loader2, Plus, RefreshCw, Repeat, Share2, Timer, Trash2 } from 'lucide-react'
+import {
+  Check,
+  Link2,
+  Loader2,
+  Plus,
+  RefreshCw,
+  Repeat,
+  Share2,
+  Timer,
+  Trash2,
+  Wand2,
+  X
+} from 'lucide-react'
 import { useAccountStore, useUsageStore } from '@/stores'
 import { useLoginStore } from '@/stores/useLoginStore'
+import { useSettingsStore } from '@/stores/useSettingsStore'
+import {
+  AUTO_SIGN_IN_CODE_TIMEOUT_MAX_SECONDS,
+  AUTO_SIGN_IN_CODE_TIMEOUT_MIN_SECONDS,
+  isValidAutoSignInUrl,
+  normalizeAutoSignInUrl,
+  sanitizeAutoSignInSettings,
+  type AutoSignInSettings
+} from '@shared/types/settings'
+import { Switch } from '@/components/ui/switch'
 import { useAccountScheduleStore } from '@/stores/useAccountScheduleStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { accountApi } from '@/api/account-api'
@@ -42,6 +64,246 @@ import openaiIcon from '@/assets/model-icons/openai.svg'
 
 const PROVIDERS: UsageProvider[] = ['anthropic', 'openai']
 
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+/**
+ * Settings for the automated Claude sign-in: when enabled, "Sign in again" and
+ * "Add account" drive a throwaway Chrome through claude.ai's email + code form,
+ * fetching the code from the configured server (claude-code-extractor).
+ */
+function AutoSignInSettingsBlock(): React.JSX.Element {
+  const autoSignIn = useSettingsStore((s) => s.autoSignIn)
+  const updateSetting = useSettingsStore((s) => s.updateSetting)
+  const [url, setUrl] = useState(autoSignIn.codeServerUrl)
+  const [token, setToken] = useState(autoSignIn.apiToken)
+  const [timeout, setTimeoutSeconds] = useState(String(autoSignIn.codeTimeoutSeconds))
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null)
+
+  const normalizedUrl = normalizeAutoSignInUrl(url)
+  const urlValid = normalizedUrl.length === 0 || isValidAutoSignInUrl(normalizedUrl)
+
+  const save = async (patch: Partial<AutoSignInSettings> = {}): Promise<void> => {
+    const next = sanitizeAutoSignInSettings({
+      ...autoSignIn,
+      codeServerUrl: normalizedUrl,
+      apiToken: token,
+      codeTimeoutSeconds: Number(timeout),
+      ...patch
+    })
+    // Sanitizing clamps the timeout and drops `enabled` without a usable URL;
+    // reflect that in the inputs so what is shown is what was saved.
+    setTimeoutSeconds(String(next.codeTimeoutSeconds))
+    setUrl(next.codeServerUrl)
+    await updateSetting('autoSignIn', next)
+  }
+
+  const testConnection = async (): Promise<void> => {
+    if (!isValidAutoSignInUrl(normalizedUrl)) return
+    setTesting(true)
+    setTestResult(null)
+    try {
+      await save()
+      const result = await accountApi.autoSignInTest({
+        codeServerUrl: normalizedUrl,
+        apiToken: token.trim()
+      })
+      setTestResult(result)
+    } catch (error) {
+      setTestResult({
+        ok: false,
+        message: error instanceof Error ? error.message : 'Connection test failed'
+      })
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  return (
+    <div
+      className="space-y-3 rounded-md border border-border/60 bg-muted/20 p-3"
+      data-testid="auto-sign-in-settings"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5 text-sm font-medium">
+            <Wand2 className="h-3.5 w-3.5" />
+            Auto sign-in
+          </div>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Sign in to Claude without touching the browser: a fresh Chrome window types the email,
+            fetches the sign-in code from the code server and authorizes the app. The account&apos;s
+            mailbox must be one the code server watches.
+          </p>
+        </div>
+        <Switch
+          checked={autoSignIn.enabled}
+          disabled={!isValidAutoSignInUrl(autoSignIn.codeServerUrl)}
+          onCheckedChange={(enabled) => void save({ enabled })}
+          aria-label="Auto sign-in"
+          data-testid="auto-sign-in-enabled"
+        />
+      </div>
+
+      <div className="space-y-2">
+        <div className="space-y-1">
+          <label className="text-xs font-medium text-muted-foreground" htmlFor="auto-sign-in-url">
+            Code server URL
+          </label>
+          <Input
+            id="auto-sign-in-url"
+            value={url}
+            onChange={(event) => {
+              setUrl(event.target.value)
+              setTestResult(null)
+            }}
+            onBlur={() => void save()}
+            placeholder="http://claudit-dashboard:3000"
+            className={cn('h-8 font-mono text-xs', !urlValid && 'border-destructive')}
+            data-testid="auto-sign-in-url"
+          />
+          {!urlValid && (
+            <p className="text-[11px] text-destructive">
+              Enter an http(s) URL, e.g. http://host:3000
+            </p>
+          )}
+        </div>
+        <div className="grid grid-cols-[1fr_140px] gap-2">
+          <div className="space-y-1">
+            <label
+              className="text-xs font-medium text-muted-foreground"
+              htmlFor="auto-sign-in-token"
+            >
+              API token (optional)
+            </label>
+            <Input
+              id="auto-sign-in-token"
+              type="password"
+              value={token}
+              onChange={(event) => {
+                setToken(event.target.value)
+                setTestResult(null)
+              }}
+              onBlur={() => void save()}
+              placeholder="CODES_API_TOKEN"
+              className="h-8 font-mono text-xs"
+              data-testid="auto-sign-in-token"
+            />
+          </div>
+          <div className="space-y-1">
+            <label
+              className="text-xs font-medium text-muted-foreground"
+              htmlFor="auto-sign-in-timeout"
+            >
+              Code wait (seconds)
+            </label>
+            <Input
+              id="auto-sign-in-timeout"
+              type="number"
+              min={AUTO_SIGN_IN_CODE_TIMEOUT_MIN_SECONDS}
+              max={AUTO_SIGN_IN_CODE_TIMEOUT_MAX_SECONDS}
+              value={timeout}
+              onChange={(event) => setTimeoutSeconds(event.target.value)}
+              onBlur={() => void save()}
+              className="h-8 text-xs"
+              data-testid="auto-sign-in-timeout"
+            />
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs"
+            disabled={testing || !isValidAutoSignInUrl(normalizedUrl)}
+            onClick={() => void testConnection()}
+            data-testid="auto-sign-in-test"
+          >
+            {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+            Test connection
+          </Button>
+          {testResult && (
+            <span
+              className={cn(
+                'flex items-center gap-1 text-xs',
+                testResult.ok ? 'text-emerald-500' : 'text-destructive'
+              )}
+              data-testid="auto-sign-in-test-result"
+            >
+              {testResult.ok ? <Check className="h-3.5 w-3.5" /> : <X className="h-3.5 w-3.5" />}
+              {testResult.message}
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/** Asks for the email before an automated "Add account": the flow needs it to type into claude.ai. */
+function AddAccountEmailDialog({
+  open,
+  onOpenChange,
+  onSubmit
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onSubmit: (email: string) => void
+}): React.JSX.Element {
+  const [email, setEmail] = useState('')
+  const normalized = email.trim().toLowerCase()
+  const valid = EMAIL_PATTERN.test(normalized)
+
+  const submit = (): void => {
+    if (!valid) return
+    onSubmit(normalized)
+    onOpenChange(false)
+    setEmail('')
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        onOpenChange(next)
+        if (!next) setEmail('')
+      }}
+    >
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Add a Claude account</DialogTitle>
+          <DialogDescription>
+            Auto sign-in is on: enter the account&apos;s email and the sign-in runs by itself. The
+            code is fetched from the code server, so the mailbox must be one it watches.
+          </DialogDescription>
+        </DialogHeader>
+        <Input
+          autoFocus
+          type="email"
+          value={email}
+          onChange={(event) => setEmail(event.target.value)}
+          placeholder="name@example.com"
+          className="text-sm"
+          data-testid="add-account-email"
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') submit()
+          }}
+        />
+        <DialogFooter>
+          <Button
+            size="sm"
+            onClick={submit}
+            disabled={!valid}
+            data-testid="add-account-email-submit"
+          >
+            Sign in
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 function ProviderAccountsCard({ provider }: { provider: UsageProvider }): React.JSX.Element {
   const accounts = useUsageStore((s) => s.savedAccounts[provider])
   const loadError = useUsageStore((s) => s.savedAccountLoadErrors[provider])
@@ -56,6 +318,10 @@ function ProviderAccountsCard({ provider }: { provider: UsageProvider }): React.
   )
   const startLogin = useLoginStore((s) => s.startLogin)
   const isLoginActive = useLoginStore((s) => s.activeLogin !== null)
+  // With auto sign-in on, "Add account" needs the email up front (the driver types it).
+  const autoSignInEnabled = useSettingsStore((s) => s.autoSignIn.enabled)
+  const automateAddAccount = provider === 'anthropic' && autoSignInEnabled
+  const [emailPromptOpen, setEmailPromptOpen] = useState(false)
   const schedule = useAccountScheduleStore((s) => s.schedules[provider])
   const cancelSchedule = useAccountScheduleStore((s) => s.cancelSchedule)
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null)
@@ -74,6 +340,7 @@ function ProviderAccountsCard({ provider }: { provider: UsageProvider }): React.
       const created = await createHiveAccountShare(exported.provider, exported.encryptedPayload)
       const serverUrl = useSettingsStore.getState().hiveEnterpriseServerUrl
       const link = buildShareAccountLink({ serverUrl, token: created.token, key: exported.key })
+>>>>>>> auto signin claude
       setShareResult({ email: account.email, link })
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to create share link')
@@ -110,7 +377,7 @@ function ProviderAccountsCard({ provider }: { provider: UsageProvider }): React.
             size="sm"
             className="h-7 text-xs"
             disabled={isLoginActive}
-            onClick={() => startLogin(provider)}
+            onClick={() => (automateAddAccount ? setEmailPromptOpen(true) : startLogin(provider))}
             data-testid={`add-account-${provider}`}
           >
             <Plus className="h-3.5 w-3.5" />
@@ -374,6 +641,15 @@ function ProviderAccountsCard({ provider }: { provider: UsageProvider }): React.
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {provider === 'anthropic' && canAddAccount && <AutoSignInSettingsBlock />}
+      {automateAddAccount && (
+        <AddAccountEmailDialog
+          open={emailPromptOpen}
+          onOpenChange={setEmailPromptOpen}
+          onSubmit={(email) => void startLogin(provider, email)}
+        />
+      )}
     </div>
   )
 }

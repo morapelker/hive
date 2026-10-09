@@ -39,12 +39,19 @@ import { getDatabase } from '../db'
 import { accountLockKey, withAccountLock } from './account-lock'
 import { addClaudeAccount, readClaudeLiveEmail, switchClaudeAccount } from './account-store-claude'
 import { addCodexAccount } from './account-store-codex'
+import { readAutoSignInSettings } from './auto-sign-in-settings'
+import {
+  runClaudeAutoLogin,
+  type ClaudeAutoLoginHandle,
+  type ClaudeAutoLoginRunner
+} from './claude-auto-login'
 import { createLogger } from './logger'
 import { buildAnthropicAuthorizeUrl, exchangeAnthropicCode } from './oauth-anthropic'
 import { buildOpenAIAuthorizeUrl, exchangeOpenAICode } from './oauth-openai'
 import { generatePkce, type Pkce } from './oauth-pkce'
 import { fetchForSavedAccount, listSavedAccounts } from './saved-usage-orchestrator'
-import type { LoginState, LoginStatusDTO, UsageProvider } from '@shared/types/usage'
+import { isAutoSignInUsable } from '@shared/types/settings'
+import type { LoginStage, LoginState, LoginStatusDTO, UsageProvider } from '@shared/types/usage'
 import type { SavedUsageProvider } from '../db/types'
 
 const log = createLogger({ component: 'LoginService' })
@@ -68,7 +75,8 @@ function execFileAsync(file: string, args: string[]): Promise<void> {
         resolve()
         return
       }
-      const detail = typeof stderr === 'string' && stderr.trim().length > 0 ? stderr.trim() : error.message
+      const detail =
+        typeof stderr === 'string' && stderr.trim().length > 0 ? stderr.trim() : error.message
       reject(new Error(detail))
     })
   })
@@ -100,6 +108,21 @@ let openLoginUrl: LoginUrlOpener = defaultLoginUrlOpener
 /** Test-only seam: inject a fake URL opener, or pass `null` to restore the real one. */
 export function setLoginUrlOpenerForTests(opener: LoginUrlOpener | null): void {
   openLoginUrl = opener ?? defaultLoginUrlOpener
+}
+
+// ─── Automated sign-in (Claude only) ──────────────────────────────────────
+//
+// With "auto sign-in" enabled in Settings › Accounts and an email to sign in
+// as, the Claude flow does not hand the authorize URL to the user's browser:
+// it launches a throwaway Chrome and drives claude.ai's email + code form,
+// fetching the code from the configured code server. The loopback callback
+// below is still what completes the login — the driver only moves the page.
+
+let runAutoLogin: ClaudeAutoLoginRunner = runClaudeAutoLogin
+
+/** Test-only seam: inject a fake automated-sign-in driver, or pass `null` to restore the real one. */
+export function setClaudeAutoLoginRunnerForTests(runner: ClaudeAutoLoginRunner | null): void {
+  runAutoLogin = runner ?? runClaudeAutoLogin
 }
 
 // ─── Provider config ──────────────────────────────────────────────────────
@@ -194,6 +217,11 @@ interface LoginSession {
   resolved: boolean
   timeoutTimer: NodeJS.Timeout | null
   gcTimer: NodeJS.Timeout | null
+  /** Automated sign-in progress; null for the manual flow. */
+  stage: LoginStage | null
+  stageDetail: string | null
+  /** The driven Chrome, when this login is automated; closed on any terminal state. */
+  autoLogin: ClaudeAutoLoginHandle | null
 }
 
 let currentSession: LoginSession | null = null
@@ -237,12 +265,38 @@ function teardownServer(session: LoginSession): void {
   closeServer(server)
 }
 
+/**
+ * Closes the driven Chrome of an automated login, if any. `delayMs` lets the
+ * loopback "Signed in" page show for a moment after success before the window
+ * goes away; failures and cancels close it at once.
+ */
+function closeAutoLogin(session: LoginSession, delayMs = 0): void {
+  const handle = session.autoLogin
+  if (!handle) return
+  session.autoLogin = null
+  const close = (): void => {
+    handle.close().catch((error) => {
+      log.warn('Failed to close the sign-in browser', {
+        loginId: session.loginId,
+        error: error instanceof Error ? error.message : String(error)
+      })
+    })
+  }
+  if (delayMs <= 0) {
+    close()
+    return
+  }
+  const timer = setTimeout(close, delayMs)
+  timer.unref()
+}
+
 function failSession(session: LoginSession, message: string): void {
   if (isTerminal(session.state)) return
   session.state = 'failed'
   session.error = message
   clearActiveTimers(session)
   teardownServer(session)
+  closeAutoLogin(session)
   scheduleGc(session)
   log.warn('Login failed', { loginId: session.loginId, provider: session.provider, error: message })
 }
@@ -252,6 +306,7 @@ function cancelSession(session: LoginSession): void {
   session.state = 'cancelled'
   clearActiveTimers(session)
   teardownServer(session)
+  closeAutoLogin(session)
   scheduleGc(session)
 }
 
@@ -266,8 +321,8 @@ export function loginStatus(loginId: string): LoginStatusDTO {
   if (!currentSession || currentSession.loginId !== loginId) {
     throw new Error('login session not found')
   }
-  const { provider, state, email, error } = currentSession
-  return { loginId, provider, state, email, error }
+  const { provider, state, email, error, stage, stageDetail } = currentSession
+  return { loginId, provider, state, email, error, stage, stageDetail }
 }
 
 /** Test-only seam: cancels any in-flight login (freeing its callback port) and forgets the session. */
@@ -310,7 +365,10 @@ export async function loginStart(
     redirectUri: null,
     resolved: false,
     timeoutTimer: null,
-    gcTimer: null
+    gcTimer: null,
+    stage: null,
+    stageDetail: null,
+    autoLogin: null
   }
   currentSession = session
 
@@ -364,6 +422,14 @@ async function runLoginFlow(session: LoginSession): Promise<void> {
   // signed in) can then never race the state transition.
   session.state = 'waiting'
 
+  if (session.provider === 'anthropic' && session.email) {
+    const settings = readAutoSignInSettings()
+    if (isAutoSignInUsable(settings)) {
+      await startAutoLogin(session, authorizeUrl, redirectUri, settings)
+      return
+    }
+  }
+
   try {
     await openLoginUrl(authorizeUrl)
   } catch (error) {
@@ -376,6 +442,61 @@ async function runLoginFlow(session: LoginSession): Promise<void> {
     loginId: session.loginId,
     provider: session.provider,
     redirectUri
+  })
+}
+
+/**
+ * Drives the sign-in in a throwaway Chrome. Only a browser that cannot be
+ * launched fails the login here; anything the driver cannot get past is
+ * reported as the `needs-human` stage with the window left open, and the
+ * loopback callback still completes the login when the user finishes.
+ */
+async function startAutoLogin(
+  session: LoginSession,
+  authorizeUrl: string,
+  redirectUri: string,
+  settings: ReturnType<typeof readAutoSignInSettings>
+): Promise<void> {
+  const email = session.email
+  if (!email) return
+  let handle: ClaudeAutoLoginHandle
+  try {
+    handle = await runAutoLogin({
+      loginId: session.loginId,
+      authorizeUrl,
+      redirectUri,
+      email,
+      settings,
+      onStage: (stage, detail) => {
+        if (currentSession !== session || isTerminal(session.state)) return
+        session.stage = stage
+        session.stageDetail = detail ?? null
+      },
+      onBrowserClosed: () => {
+        // The user closed the window before the redirect: that is a cancel,
+        // as it was with the previous driven-browser flow.
+        if (session.resolved || isTerminal(session.state)) return
+        session.autoLogin = null
+        cancelSession(session)
+      },
+      isResolved: () => session.resolved || isTerminal(session.state)
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    failSession(session, `Could not start the automated sign-in: ${message}`)
+    return
+  }
+
+  // A cancel could have landed while Chrome was launching.
+  if (isTerminal(session.state)) {
+    handle.close().catch(() => {})
+    return
+  }
+  session.autoLogin = handle
+  log.info('Automated sign-in started', {
+    loginId: session.loginId,
+    redirectUri,
+    codeServerUrl: settings.codeServerUrl
   })
 }
 
@@ -530,6 +651,8 @@ async function exchange(session: LoginSession, code: string, state: string | nul
     session.state = 'done'
     clearActiveTimers(session) // the 30-min timeout no longer applies once we've succeeded
     teardownServer(session)
+    // Let the "Signed in" callback page show for a moment, then take the window away.
+    closeAutoLogin(session, CLOSE_DELAY_MS)
     scheduleGc(session)
   } catch (error) {
     failSession(session, error instanceof Error ? error.message : String(error))
@@ -537,7 +660,10 @@ async function exchange(session: LoginSession, code: string, state: string | nul
 }
 
 /** Returns the stored account's email, or null if `failSession` was already called. */
-async function exchangeAndStoreAnthropic(session: LoginSession, code: string): Promise<string | null> {
+async function exchangeAndStoreAnthropic(
+  session: LoginSession,
+  code: string
+): Promise<string | null> {
   const tokens = await exchangeAnthropicCode(
     code,
     session.pkce.state,
@@ -550,7 +676,11 @@ async function exchangeAndStoreAnthropic(session: LoginSession, code: string): P
     return null
   }
   const uuid = tokens.account?.uuid ?? ''
-  const scopes = tokens.scope?.split(' ') ?? ['org:create_api_key', 'user:profile', 'user:inference']
+  const scopes = tokens.scope?.split(' ') ?? [
+    'org:create_api_key',
+    'user:profile',
+    'user:inference'
+  ]
   const blob = JSON.stringify({
     claudeAiOauth: {
       accessToken: tokens.accessToken,
@@ -587,7 +717,10 @@ async function refreshCacheForNewAccount(provider: UsageProvider, email: string)
     // The orchestrator upserts rows with lowercased emails — match that here,
     // since the email returned by the account-store helpers isn't guaranteed
     // to be lowercased (e.g. Codex's id_token claim is verbatim).
-    const row = getDatabase().getSavedUsageAccountByProviderEmail(savedProvider, email.toLowerCase())
+    const row = getDatabase().getSavedUsageAccountByProviderEmail(
+      savedProvider,
+      email.toLowerCase()
+    )
     if (row) {
       void fetchForSavedAccount(row.id).catch(() => {})
     }
