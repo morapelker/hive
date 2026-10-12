@@ -526,8 +526,11 @@ describe('useAccountScheduleStore auto-switch', () => {
 
     await useAccountScheduleStore.getState().checkSchedules()
     expect(switchCalls()).toHaveLength(1)
+    // A short cooldown (not the 5-minute failure back-off): long enough for
+    // the post-switch refresh to land, short enough that an account that
+    // crosses the threshold right after the hop isn't sat on for minutes.
     expect(useAccountScheduleStore.getState().autoSwitch.anthropic?.notBefore).toBe(
-      Date.now() + 5 * 60_000
+      Date.now() + 10_000
     )
 
     // The active usage still reads the OLD account's 92% (its refresh failed
@@ -557,7 +560,7 @@ describe('useAccountScheduleStore auto-switch', () => {
     )
 
     // Past the cooldown with the refresh still dead: no churn.
-    vi.setSystemTime(Date.now() + 5 * 60_000 + 1_000)
+    vi.setSystemTime(Date.now() + 10_000 + 1_000)
     await useAccountScheduleStore.getState().checkSchedules()
     expect(switchCalls()).toHaveLength(1)
   })

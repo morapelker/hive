@@ -189,6 +189,14 @@ export const TRIGGER_SWEEP_MAX_AGE_MS = 180_000
 // than this — a persistently failing switch shouldn't toast every tick.
 const RETRY_DELAY_MS = 5 * 60_000
 
+// After a SUCCESSFUL auto-switch, re-evaluation pauses only long enough for
+// the post-switch refresh to replace the seeded usage with live data. Under a
+// heavy parallel workload the account just hopped to can cross the threshold
+// within a minute or two — a long cooldown here pins the user to an exhausted
+// account for its remainder (the seed, not the cooldown, is what prevents
+// re-triggering on the OLD account's numbers).
+const SWITCH_COOLDOWN_MS = 10_000
+
 // Re-entrancy guard: checkSchedules can be triggered by both the interval
 // tick and usage-store updates while a switch is still in flight.
 const executingProviders = new Set<UsageProvider>()
@@ -289,14 +297,14 @@ export const useAccountScheduleStore = create<AccountScheduleState>()(
             const percent = getAutoSwitchUsagePercent(provider)
             if (percent === null || percent < auto.thresholdPercent) continue
 
-            const backOff = (): void => {
+            const backOff = (delayMs: number = RETRY_DELAY_MS): void => {
               set((state) => {
                 const current = state.autoSwitch[provider]
                 if (!current || current.createdAt !== auto.createdAt) return state
                 return {
                   autoSwitch: {
                     ...state.autoSwitch,
-                    [provider]: { ...current, notBefore: Date.now() + RETRY_DELAY_MS }
+                    [provider]: { ...current, notBefore: Date.now() + delayMs }
                   }
                 }
               })
@@ -403,8 +411,10 @@ export const useAccountScheduleStore = create<AccountScheduleState>()(
               }
 
               // switchAccount toasts success/failure itself, and the mode
-              // stays armed either way. Both outcomes pause re-evaluation so
-              // a persistent problem doesn't retry (and toast) every tick.
+              // stays armed either way. A failure pauses re-evaluation for the
+              // full retry delay so a persistent problem doesn't retry (and
+              // toast) every tick; a success pauses only for the short switch
+              // cooldown so the next crossing is caught promptly.
               const switched = await useUsageStore.getState().switchAccount(best.account.id)
               if (switched && best.account.last_usage) {
                 // Seed the active-usage slot from the account we just picked:
@@ -426,7 +436,7 @@ export const useAccountScheduleStore = create<AccountScheduleState>()(
                   })
                 }
               }
-              backOff()
+              backOff(switched ? SWITCH_COOLDOWN_MS : RETRY_DELAY_MS)
             } finally {
               executingProviders.delete(provider)
             }
