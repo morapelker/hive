@@ -920,10 +920,19 @@ export const useSettingsStore = create<SettingsState>()(
       // Same legacy autoPin migration as the settings DB path, so the ~200ms
       // window before loadFromDatabase resolves (and a missing DB row, which
       // is then seeded from this hydrated state) never regress a user's choice.
-      merge: (persisted, current) => ({
-        ...current,
-        ...migrateLegacyAutoPinSetting((persisted ?? {}) as Record<string, unknown>)
-      }),
+      merge: (persisted, current) => {
+        const hydrated = migrateLegacyAutoPinSetting(
+          (persisted ?? {}) as Record<string, unknown>
+        )
+        return {
+          ...current,
+          ...hydrated,
+          // Must survive rehydration: every save before loadFromDatabase resolves
+          // serializes the whole store into the app_settings blob, so a field that
+          // is not persisted here is wiped from the DB by that first write.
+          autoSignIn: sanitizeAutoSignInSettings(hydrated.autoSignIn)
+        }
+      },
       partialize: (state) => ({
         autoStartSession: state.autoStartSession,
         autoPullBeforeWorktree: state.autoPullBeforeWorktree,
@@ -984,6 +993,7 @@ export const useSettingsStore = create<SettingsState>()(
         hiveOrganizationForceBoardMode: state.hiveOrganizationForceBoardMode,
         hiveOrganizationMinAppVersion: state.hiveOrganizationMinAppVersion,
         tipsEnabled: state.tipsEnabled,
+        autoSignIn: state.autoSignIn,
         pet: state.pet,
         voice: state.voice,
         environmentVariables: state.environmentVariables,
