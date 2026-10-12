@@ -1,15 +1,15 @@
-import { CircleSlash, FileText, MessageCircleQuestion, Pause } from 'lucide-react'
-import { ticketPillClass } from '@/components/kanban/pill'
+import { AlertTriangle, CircleSlash, FileText, MessageCircleQuestion, Pause } from 'lucide-react'
+import { ticketPillBaseClass, ticketPillClass } from '@/components/kanban/pill'
 import { cn } from '@/lib/utils'
 import { IndeterminateProgressBar } from '@/components/sessions/IndeterminateProgressBar'
-import type { RunBoardCardState } from './document-flow-ui'
+import { documentNameFromPath, type RunBoardCardState } from './document-flow-ui'
 import type { DocumentRunTicketView } from './useDocumentRunTicket'
 
 const LABEL_CLASSES: Record<RunBoardCardState['phase'], string> = {
   running: 'text-blue-500',
   paused: 'text-muted-foreground',
   completed: 'text-emerald-500',
-  issues: 'text-amber-500',
+  issues: 'text-red-500',
   cancelled: 'text-muted-foreground',
   migrating: 'text-fuchsia-500'
 }
@@ -20,24 +20,30 @@ type MovingPhase = 'running' | 'migrating'
 const STILL_BAR_CLASSES: Record<Exclude<RunBoardCardState['phase'], MovingPhase>, string> = {
   paused: 'bg-muted-foreground/40',
   completed: 'bg-emerald-500',
-  issues: 'bg-amber-500',
+  issues: 'bg-red-500',
   cancelled: 'bg-muted-foreground/40'
 }
 
 interface DocumentRunTicketBodyProps {
   runId: string
   view: DocumentRunTicketView
+  /** The document the run was made from; named in the card's footer when known. */
+  documentPath?: string | null
+  /** The card wears a red perimeter: the footer says "Error" in place of the document. */
+  error?: boolean
 }
 
 /**
  * The body of a run's ticket card, under the ticket's own title: the "Document run" marker,
  * one progress bar (moving while the run is on, like any ticket at work, and again in its own
  * color while a session executes the run's migrations), the sessions at work or waiting for an
- * answer (or how the run ended) and merged of total.
+ * answer (or how the run ended) and merged of total, then a footer naming the document.
  */
 export function DocumentRunTicketBody({
   runId,
-  view
+  view,
+  documentPath = null,
+  error = false
 }: DocumentRunTicketBodyProps): React.JSX.Element {
   const { state, missing } = view
   return (
@@ -121,6 +127,32 @@ export function DocumentRunTicketBody({
             </span>
           </div>
         </>
+      )}
+      {(error || documentPath) && (
+        <div
+          className="mt-[7px] flex items-center gap-1"
+          data-testid={`kanban-docflow-run-footer-${runId}`}
+        >
+          {error ? (
+            <span
+              className={cn(
+                ticketPillBaseClass,
+                'border-red-500/25 bg-transparent px-1.5 text-[9px] text-red-500'
+              )}
+            >
+              <AlertTriangle className="h-2.5 w-2.5 shrink-0" />
+              Error
+            </span>
+          ) : (
+            <span
+              className={cn(ticketPillClass, 'min-w-0 max-w-full px-1.5 text-[9px]')}
+              title={documentPath ?? undefined}
+            >
+              <FileText className="h-2.5 w-2.5 shrink-0" />
+              <span className="truncate">{documentNameFromPath(documentPath ?? '')}</span>
+            </span>
+          )}
+        </div>
       )}
     </div>
   )

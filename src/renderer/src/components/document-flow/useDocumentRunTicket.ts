@@ -64,22 +64,26 @@ export function useDocumentRunTicket(
   return { state, missing: missing && !loaded }
 }
 
-/** The 2px left rail of a run's ticket: the same cue a ticket at work has, in the run's state. */
-export function documentRunTicketRailClass(view: DocumentRunTicketView): string | null {
+/**
+ * The tone of the 2px stripe at the left of a run's ticket (drawn by `.ticket-elite::after` from
+ * `--ticket-state-tone`): the same cue a ticket at work has, in the run's state. Without a
+ * state the stripe falls back to the muted gray.
+ */
+export function documentRunTicketToneClass(view: DocumentRunTicketView): string | null {
   const { state } = view
   if (!state) return null
-  if (state.waitingOnUser) return 'border-l-2 !border-l-orange-500'
+  if (state.waitingOnUser) return '[--ticket-state-tone:#f97316]'
   switch (state.phase) {
     case 'running':
-      return 'border-l-2 !border-l-blue-500/60'
+      return '[--ticket-state-tone:#3b82f6]'
     case 'paused':
     case 'cancelled':
-      return 'border-l-2 !border-l-muted-foreground/40'
+      return '[--ticket-state-tone:var(--muted-foreground)]'
     case 'issues':
-      return 'border-l-2 !border-l-amber-500/70'
+      return '[--ticket-state-tone:#ef4444]'
     case 'completed':
-      return 'border-l-2 !border-l-emerald-500/60'
+      return '[--ticket-state-tone:#10b981]'
     case 'migrating':
-      return 'border-l-2 !border-l-fuchsia-500/60'
+      return '[--ticket-state-tone:#d946ef]'
   }
 }

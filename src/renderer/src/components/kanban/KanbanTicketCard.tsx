@@ -43,7 +43,7 @@ import {
   Hourglass
 } from 'lucide-react'
 import { CheckeredFlagIcon } from './CheckeredFlagIcon'
-import { EliteDragonIcon } from './EliteDragonIcon'
+import { EliteDragonIcon, type EliteDragonLook } from './EliteDragonIcon'
 import { HighlightedText } from './HighlightedText'
 import { ticketPillBaseClass, ticketPillClass } from './pill'
 import { TicketModelBadge } from './TicketModelBadge'
@@ -134,7 +134,7 @@ import { isAgentCli } from '@shared/types/agent-sdk'
 import { documentRunIdOf } from '@shared/document-flow/run-ticket'
 import { DocumentRunTicketBody } from '@/components/document-flow/DocumentRunTicketBody'
 import {
-  documentRunTicketRailClass,
+  documentRunTicketToneClass,
   useDocumentRunTicket
 } from '@/components/document-flow/useDocumentRunTicket'
 import { isActiveRunStatus } from '@/components/document-flow/document-flow-ui'
@@ -227,14 +227,21 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
   const documentRunId = documentRunIdOf(ticket)
   const isDocumentRunTicket = documentRunId !== null
   const documentRunView = useDocumentRunTicket(documentRunId, ticket.column)
-  const documentRunRailClass = documentRunView ? documentRunTicketRailClass(documentRunView) : null
+  const documentRunToneClass = documentRunView ? documentRunTicketToneClass(documentRunView) : null
   // The document the run was made from: on the ticket row itself (so it is known even once the
   // run record is gone), else from the run for tickets created before it was stored there.
   const runSourcePath = useDocumentFlowStore((s) =>
     documentRunId ? (s.runsById[documentRunId]?.run.source_path ?? null) : null
   )
   const documentPath = documentRunId ? ticket.external_url || runSourcePath : null
-  const isEliteActive = isDocumentRunTicket && ticket.column === 'in_progress'
+  const documentRunPhase = documentRunView?.state?.phase ?? null
+  // The dragon frame is gold only while the run's ticket is at work; silver otherwise
+  const isEliteActive =
+    isDocumentRunTicket &&
+    ticket.column === 'in_progress' &&
+    (documentRunPhase === 'running' || documentRunPhase === 'migrating')
+  // A run that finished with issues wears the red perimeter of an errored session
+  const isEliteError = isDocumentRunTicket && documentRunPhase === 'issues'
   // Marked as a shell command's ticket: it stays one without a session (duplicated, or
   // dragged back to To Do), and entering In Progress runs the command.
   const isMarkedShellCommandTicket = shellCommandIdOfTicket(ticket) !== null
@@ -1512,6 +1519,15 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     }
   }, [ticket.id, ticket.project_id])
 
+  const eliteLook: EliteDragonLook =
+    isError || isEliteError
+      ? 'error'
+      : isEliteActive
+        ? 'gold'
+        : documentRunPhase === 'completed'
+          ? 'silver-complete'
+          : 'silver'
+
   return (
     <>
       <Popover open={showPRPicker} onOpenChange={setShowPRPicker}>
@@ -1543,9 +1559,17 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                     !hasHoverHighlight &&
                     isError &&
                     '[--ticket-jag-color:#ef4444b3]',
-                  isDocumentRunTicket && 'relative',
-                  // The elite frame lights up only while the run's ticket is at work
-                  isEliteActive && !hasHoverHighlight && !isError && 'ticket-elite-active !border-transparent',
+                  // An orchestrator ticket wears the elite dragon frame: the card makes room
+                  // for the dragon on its top-left corner (it rises above the card and reaches
+                  // past its left edge), and the trim is gold while the run is at work, silver
+                  // otherwise. A red perimeter (an errored run or session) replaces the trim.
+                  isDocumentRunTicket && 'relative mt-5 min-h-[118px] pt-3 pr-3 pb-2.5 pl-[34px]',
+                  isDocumentRunTicket && !hasHoverHighlight && 'ticket-elite',
+                  isDocumentRunTicket &&
+                    !hasHoverHighlight &&
+                    !isError &&
+                    !isEliteError &&
+                    (isEliteActive ? 'ticket-elite-gold' : 'ticket-elite-silver'),
                   isDragging && 'invisible',
                   isArchived && 'opacity-50 cursor-default',
                   (isBlocked || blockingDiagnostic) && 'opacity-60',
@@ -1557,10 +1581,12 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                     '!border-sky-400 ring-2 ring-sky-400/70 bg-sky-400/10',
                   // API-errored session: full red perimeter, overriding mode
                   // rails and mark stripes until the session is relaunched
-                  !hasHoverHighlight && isError && '!border-red-500/70 ring-1 ring-red-500/25',
+                  !hasHoverHighlight &&
+                    (isError || isEliteError) &&
+                    '!border-red-500/70 ring-1 ring-red-500/25',
                   !hasHoverHighlight && !isError && borderState === 'default' && 'border-border',
-                  // A document run's ticket carries the run's state in the same rail
-                  !hasHoverHighlight && !isError && documentRunRailClass,
+                  // A document run's ticket carries the run's state in its left stripe
+                  !hasHoverHighlight && documentRunToneClass,
                   // Mode cue lives in a 2px left rail; the perimeter stays neutral
                   !hasHoverHighlight && !isError && borderState === 'blue' && 'border-border border-l-2 !border-l-blue-500/60',
                   !hasHoverHighlight && !isError && borderState === 'violet' && 'border-border border-l-2 !border-l-violet-500/60',
@@ -1571,18 +1597,13 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                   !isError && !isSidebarHoverHighlighted && ticket.mark === 'legendary' && 'border-l-2 !border-l-orange-500'
                 )}
               >
-            {isDocumentRunTicket && (
-              <EliteDragonIcon
-                active={isEliteActive}
-                className="pointer-events-none absolute -top-2.5 -right-1 h-[30px] w-[30px]"
-              />
-            )}
+            {isDocumentRunTicket && <EliteDragonIcon look={eliteLook} />}
             {/* Title + top-right indicators */}
             <div
               className={cn(
                 'flex items-start justify-between gap-2',
-                // Clear of the dragon on the corner
-                isDocumentRunTicket && 'pr-5'
+                // Above the dragon, whose head may reach the title's first line
+                isDocumentRunTicket && 'relative z-[3]'
               )}
             >
               {ticket.unread && (
@@ -1659,7 +1680,12 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
 
             {/* Document run: marker, progress and state of the run this ticket stands for */}
             {documentRunId && documentRunView && (
-              <DocumentRunTicketBody runId={documentRunId} view={documentRunView} />
+              <DocumentRunTicketBody
+                runId={documentRunId}
+                view={documentRunView}
+                documentPath={documentPath}
+                error={isError || isEliteError}
+              />
             )}
 
             {/* Description match snippet (board search) */}

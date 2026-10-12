@@ -109,8 +109,8 @@ function expectMigrationsWaiting(): void {
   expect(label).toHaveTextContent(/^Migrations waiting for you$/)
   expect(label.className).toContain('text-orange-500')
   expect(label.className).not.toContain('text-fuchsia-500')
-  expect(card().className).toContain('!border-l-orange-500')
-  expect(card().className).not.toContain('!border-l-fuchsia-500/60')
+  expect(card().className).toContain('[--ticket-state-tone:#f97316]')
+  expect(card().className).not.toContain('[--ticket-state-tone:#d946ef]')
   // The label says it already; "Needs you" is for a paused run.
   expect(screen.queryByTestId('kanban-docflow-run-needs-you-run-live')).toBeNull()
 }
@@ -129,8 +129,8 @@ function expectMigrationsRunning(): void {
   expect(label).toHaveTextContent(/^Running migrations$/)
   expect(label.className).toContain('text-fuchsia-500')
   expect(label.className).not.toContain('text-orange-500')
-  expect(card().className).toContain('!border-l-fuchsia-500/60')
-  expect(card().className).not.toContain('!border-l-orange-500')
+  expect(card().className).toContain('[--ticket-state-tone:#d946ef]')
+  expect(card().className).not.toContain('[--ticket-state-tone:#f97316]')
 }
 
 beforeEach(() => {
@@ -186,7 +186,7 @@ describe('the card of a document run ticket', () => {
     const body = screen.getByTestId('kanban-docflow-run-run-live')
     expect(body).toHaveAttribute('data-phase', 'running')
     expect(body).not.toHaveAttribute('data-waiting-on-user')
-    expect(card().className).toContain('!border-l-blue-500/60')
+    expect(card().className).toContain('[--ticket-state-tone:#3b82f6]')
     expect(screen.queryByTestId('kanban-docflow-run-needs-you-run-live')).toBeNull()
   })
 
@@ -206,8 +206,8 @@ describe('the card of a document run ticket', () => {
     expect(screen.getByTestId('kanban-docflow-run-run-live')).toHaveAttribute(
       'data-waiting-on-user'
     )
-    expect(card().className).toContain('!border-l-orange-500')
-    expect(card().className).not.toContain('!border-l-blue-500/60')
+    expect(card().className).toContain('[--ticket-state-tone:#f97316]')
+    expect(card().className).not.toContain('[--ticket-state-tone:#3b82f6]')
     // The count of those waiting takes the place of the count of those at work.
     const label = screen.getByTestId('kanban-docflow-run-running-run-live')
     expect(label).toHaveTextContent(/^1 waiting for answer$/)
@@ -230,18 +230,69 @@ describe('the card of a document run ticket', () => {
     )
   })
 
-  it('wears the dragon, lit and animated only while In Progress', () => {
+  it('wears the dragon frame, gold only while at work In Progress', () => {
     seedRuns(makeDetail({ id: 'run-live', status: 'running' }, [{ key: 'A1', status: 'running' }]))
     const { rerender } = render(<KanbanTicketCard ticket={makeTicket()} />)
 
-    expect(within(card()).getByTestId('ticket-elite-dragon')).toHaveAttribute('data-active')
-    expect(card().className).toContain('ticket-elite-active')
+    const dragon = (): HTMLElement => within(card()).getByTestId('ticket-elite-dragon')
+    expect(dragon()).toHaveAttribute('data-look', 'gold')
+    expect(dragon()).toHaveAttribute('data-active')
+    expect(card().className).toContain('ticket-elite ')
+    expect(card().className).toContain('ticket-elite-gold')
+    expect(card().className).not.toContain('ticket-elite-silver')
 
     rerender(<KanbanTicketCard ticket={makeTicket({ column: 'review' })} />)
 
-    // Elsewhere it is a card like any other, with the dragon in the border's gray.
-    expect(within(card()).getByTestId('ticket-elite-dragon')).not.toHaveAttribute('data-active')
-    expect(card().className).not.toContain('ticket-elite-active')
+    // Elsewhere the frame and the dragon turn silver.
+    expect(dragon()).toHaveAttribute('data-look', 'silver')
+    expect(dragon()).not.toHaveAttribute('data-active')
+    expect(card().className).toContain('ticket-elite-silver')
+    expect(card().className).not.toContain('ticket-elite-gold')
+  })
+
+  it('turns silver while the run is paused, even In Progress', () => {
+    seedRuns(makeDetail({ id: 'run-live', status: 'paused' }, [{ key: 'A1', status: 'merged' }]))
+    render(<KanbanTicketCard ticket={makeTicket()} />)
+
+    expect(within(card()).getByTestId('ticket-elite-dragon')).toHaveAttribute('data-look', 'silver')
+    expect(card().className).toContain('ticket-elite-silver')
+  })
+
+  it('names the document in its footer, and says Error over the red perimeter of a run with issues', () => {
+    seedRuns(
+      makeDetail({ id: 'run-live', status: 'completed' }, [{ key: 'A1', status: 'merged' }])
+    )
+    const { rerender } = render(
+      <KanbanTicketCard
+        ticket={makeTicket({ column: 'review', external_url: '/docs/billing-v2.md' })}
+      />
+    )
+
+    expect(screen.getByTestId('kanban-docflow-run-footer-run-live')).toHaveTextContent(
+      'billing-v2.md'
+    )
+    expect(within(card()).getByTestId('ticket-elite-dragon')).toHaveAttribute(
+      'data-look',
+      'silver-complete'
+    )
+
+    seedRuns(
+      makeDetail({ id: 'run-live', status: 'completed_with_issues' }, [
+        { key: 'A1', status: 'merged' },
+        { key: 'A2', status: 'needs_attention' }
+      ])
+    )
+    rerender(
+      <KanbanTicketCard
+        ticket={makeTicket({ column: 'review', external_url: '/docs/billing-v2.md' })}
+      />
+    )
+
+    expect(screen.getByTestId('kanban-docflow-run-footer-run-live')).toHaveTextContent(/^Error$/)
+    expect(within(card()).getByTestId('ticket-elite-dragon')).toHaveAttribute('data-look', 'error')
+    expect(card().className).toContain('!border-red-500/70')
+    expect(card().className).not.toContain('ticket-elite-silver')
+    expect(card().className).not.toContain('ticket-elite-gold')
   })
 
   it('says a paused run is paused', () => {
@@ -254,7 +305,7 @@ describe('the card of a document run ticket', () => {
     render(<KanbanTicketCard ticket={makeTicket()} />)
 
     expect(screen.getByTestId('kanban-docflow-run-run-live')).toHaveAttribute('data-paused')
-    expect(card().className).not.toContain('!border-l-blue-500/60')
+    expect(card().className).not.toContain('[--ticket-state-tone:#3b82f6]')
     expect(screen.getByTestId('kanban-docflow-run-running-run-live')).toHaveTextContent(/^Paused$/)
     expect(screen.getByTestId('kanban-docflow-run-progress-run-live')).toHaveTextContent(
       '1/2 merged'
@@ -294,14 +345,14 @@ describe('the card of a document run ticket', () => {
     expect(body).toHaveAttribute('data-phase', 'completed')
     expect(body).toHaveTextContent('Ready to merge into main')
     expect(body).toHaveTextContent('2/2 merged')
-    expect(card().className).toContain('!border-l-emerald-500/60')
+    expect(card().className).toContain('[--ticket-state-tone:#10b981]')
     expect(screen.getByTestId('ticket-unread-dot')).toBeInTheDocument()
   })
 
   it.each([
-    ['completed_with_issues', 'issues', 'Finished · 1 not merged', '!border-l-amber-500/70'],
-    ['cancelled', 'cancelled', 'Cancelled', '!border-l-muted-foreground/40']
-  ] as const)('shows how a %s run ended', (status, phase, label, rail) => {
+    ['completed_with_issues', 'issues', 'Finished · 1 not merged', '[--ticket-state-tone:#ef4444]'],
+    ['cancelled', 'cancelled', 'Cancelled', '[--ticket-state-tone:var(--muted-foreground)]']
+  ] as const)('shows how a %s run ended', (status, phase, label, tone) => {
     seedRuns(
       makeDetail({ id: 'run-live', status }, [
         { key: 'A1', status: 'merged' },
@@ -316,7 +367,7 @@ describe('the card of a document run ticket', () => {
     expect(body).toHaveTextContent('1/2 merged')
     // What a run left flagged is part of its result, not a question any more.
     expect(body).not.toHaveAttribute('data-waiting-on-user')
-    expect(card().className).toContain(rail)
+    expect(card().className).toContain(tone)
   })
 
   it.each(['completed', 'completed_with_issues'] as const)(
@@ -347,9 +398,9 @@ describe('the card of a document run ticket', () => {
       expect(screen.getByTestId('kanban-docflow-run-progress-run-live')).toHaveTextContent(
         '1/2 merged'
       )
-      expect(card().className).toContain('!border-l-fuchsia-500/60')
-      expect(card().className).not.toContain('!border-l-blue-500/60')
-      expect(card().className).not.toContain('!border-l-emerald-500/60')
+      expect(card().className).toContain('[--ticket-state-tone:#d946ef]')
+      expect(card().className).not.toContain('[--ticket-state-tone:#3b82f6]')
+      expect(card().className).not.toContain('[--ticket-state-tone:#10b981]')
     }
   )
 
@@ -432,8 +483,8 @@ describe('the card of a document run ticket', () => {
     expect(body).toHaveAttribute('data-phase', 'completed')
     expect(body).toHaveTextContent('Ready to merge into main')
     expect(screen.getByTestId('kanban-docflow-run-bar-run-live')).not.toHaveAttribute('data-moving')
-    expect(card().className).toContain('!border-l-emerald-500/60')
-    expect(card().className).not.toContain('!border-l-fuchsia-500/60')
+    expect(card().className).toContain('[--ticket-state-tone:#10b981]')
+    expect(card().className).not.toContain('[--ticket-state-tone:#d946ef]')
   })
 
   it('stops announcing the merge once the ticket is in Merged or Done', () => {

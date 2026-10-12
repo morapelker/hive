@@ -1153,9 +1153,11 @@ export function KanbanColumn({
         <motion.div
           layoutScroll
           data-testid={`kanban-drop-area-${column}`}
-          // -mt/pt: room above the first card for the dragon of an orchestrator ticket,
-          // which a scroll container would otherwise clip
-          className="-mt-2.5 flex flex-1 flex-col gap-2 overflow-y-auto px-1 pt-2.5 pb-2 rounded-md min-h-[60px]"
+          // -mt/pt and -ml/pl: room above and at the left of the cards for the dragon of an
+          // orchestrator ticket (it rises 30px over its card, 20px of which the card's own top
+          // margin provides, and reaches 13px past the card's left edge), which a scroll
+          // container would otherwise clip. The cards sit exactly where they would without it.
+          className="-mt-2.5 -ml-2.5 flex flex-1 flex-col gap-2 overflow-y-auto pl-3.5 pr-1 pt-2.5 pb-2 rounded-md min-h-[60px]"
         >
           {tickets.length === 0 &&
           invalidPlaceholders.length === 0 &&
