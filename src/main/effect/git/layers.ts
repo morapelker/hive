@@ -316,7 +316,15 @@ const cleanupFailedWorktreeCreate = async (
  *    home directory or an ancestor of it;
  *  - the path is registered as a *linked* worktree of the repo (a non-first
  *    `worktree <path>` entry in `git worktree list --porcelain`), mirroring
- *    the conservative pattern in cleanupFailedWorktreeCreate.
+ *    the conservative pattern in cleanupFailedWorktreeCreate — OR it is no
+ *    longer registered and has no `.git` entry at all. That is what a
+ *    partially failed `git worktree remove --force` leaves behind ("Directory
+ *    not empty" because a session was still writing into the checkout): git
+ *    has already deleted the `.git` link and the registration, so the
+ *    directory is not a working tree of anything and deleting it inside the
+ *    managed root cannot lose a checkout. A `.git` entry of any kind means a
+ *    real working tree (a main checkout, or a linked worktree of another
+ *    repository) and stays refused.
  *
  * Anything else must surface the original git error to the user instead.
  */
@@ -353,10 +361,15 @@ const assessWorktreeDeleteSafety = async (
   } catch {
     return { allowed: false, reason: 'could not verify worktree registration (git worktree list failed)' }
   }
-  if (!linkedWorktreePaths.some((linked) => normalizeWorktreePath(linked) === path)) {
-    return { allowed: false, reason: 'path is not registered as a linked worktree of this repository' }
+  if (linkedWorktreePaths.some((linked) => normalizeWorktreePath(linked) === path)) {
+    return { allowed: true }
   }
-  return { allowed: true }
+  if (!existsSync(join(worktreePath, '.git'))) {
+    // Leftover of a partial `git worktree remove`: deregistered and unlinked,
+    // but still on disk (see the doc comment above).
+    return { allowed: true }
+  }
+  return { allowed: false, reason: 'path is not registered as a linked worktree of this repository' }
 }
 
 /**

@@ -3,7 +3,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { getWorktreeImportRefusalReason } from '../worktree-ops'
+import { getOrphanedWorktreeDirReason, getWorktreeImportRefusalReason } from '../worktree-ops'
 
 describe('getWorktreeImportRefusalReason', () => {
   let homePath: string
@@ -74,5 +74,37 @@ describe('getWorktreeImportRefusalReason', () => {
     const worktreePath = join(homePath, 'custom-worktrees', 'feature-y')
     makeLinkedWorktree(worktreePath)
     expect(getWorktreeImportRefusalReason(worktreePath, projectPath)).toBeNull()
+  })
+})
+
+describe('getOrphanedWorktreeDirReason', () => {
+  let root: string
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'hive-orphan-'))
+  })
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  it('keeps a linked worktree checkout (.git file)', () => {
+    const path = join(root, 'linked')
+    mkdirSync(path, { recursive: true })
+    writeFileSync(join(path, '.git'), 'gitdir: /somewhere/.git/worktrees/linked\n')
+    expect(getOrphanedWorktreeDirReason(path)).toBeNull()
+  })
+
+  it('flags a directory left behind without any .git entry (partial git worktree remove)', () => {
+    const path = join(root, 'leftover')
+    mkdirSync(path, { recursive: true })
+    writeFileSync(join(path, 'DECISIONS.md'), 'written after removal\n')
+    expect(getOrphanedWorktreeDirReason(path)).toContain('no .git entry')
+  })
+
+  it('flags a main working tree of another repository (.git directory)', () => {
+    const path = join(root, 'other-repo')
+    mkdirSync(join(path, '.git'), { recursive: true })
+    expect(getOrphanedWorktreeDirReason(path)).toContain('main working tree')
   })
 })

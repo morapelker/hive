@@ -202,5 +202,35 @@ describe('GitLive', () => {
       if (Either.isRight(result)) expect(result.right.success).toBe(true)
       expect(existsSync(worktreePath)).toBe(false)
     })
+
+    it('deletes a leftover directory that git already deregistered (partial remove)', async () => {
+      const worktreePath = await addManagedWorktree('wt-leftover')
+      // Incident shape: `git worktree remove --force` deleted the .git link and
+      // the registration but failed with "Directory not empty" because a
+      // session was still writing into the checkout.
+      unlinkSync(join(worktreePath, '.git'))
+      await simpleGit(repoPath).raw(['worktree', 'prune'])
+      writeFileSync(join(worktreePath, 'late-output.txt'), 'written after removal\n')
+
+      const result = await removeViaService(worktreePath)
+
+      expect(Either.isRight(result)).toBe(true)
+      if (Either.isRight(result)) expect(result.right.success).toBe(true)
+      expect(existsSync(worktreePath)).toBe(false)
+    })
+
+    it('still refuses a deregistered directory that became a working tree of its own', async () => {
+      const worktreePath = await addManagedWorktree('wt-foreign')
+      unlinkSync(join(worktreePath, '.git'))
+      await simpleGit(repoPath).raw(['worktree', 'prune'])
+      await simpleGit(worktreePath).init()
+      const sentinel = join(worktreePath, 'a.txt')
+      expect(existsSync(sentinel)).toBe(true)
+
+      const result = await removeViaService(worktreePath)
+
+      expect(Either.isLeft(result)).toBe(true)
+      expect(existsSync(sentinel)).toBe(true)
+    })
   })
 })

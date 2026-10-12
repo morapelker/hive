@@ -329,6 +329,31 @@ export const deleteWorktreeOpEffect = (
     'deleteWorktreeOp'
   )
 
+/**
+ * Why a directory still recorded as an active worktree can no longer serve as
+ * one, or null when it still looks like a linked worktree checkout. Sync uses
+ * it to retire rows whose directory outlived its git registration.
+ *
+ * The incident shape: `git worktree remove --force` deleted the `.git` link
+ * and the `.git/worktrees/<id>` registration but failed with "Directory not
+ * empty" (a session was still writing into the checkout), so the delete op
+ * errored and the row stayed active. Git run inside such a directory walks up
+ * to whatever repository contains it — a stray ~/.git in production — and the
+ * sidebar then shows that repository's branch and status under this project.
+ */
+export function getOrphanedWorktreeDirReason(worktreePath: string): string | null {
+  let gitEntry
+  try {
+    gitEntry = statSync(join(worktreePath, '.git'))
+  } catch {
+    return 'directory has no .git entry (left behind by a partial git worktree remove)'
+  }
+  if (gitEntry.isDirectory()) {
+    return 'directory is a main working tree of another repository (.git is a directory)'
+  }
+  return null
+}
+
 export const syncWorktreesOpEffect = (
   params: SyncWorktreesParams
 ): Effect.Effect<SimpleResult, never, Db> =>
@@ -416,10 +441,27 @@ export const syncWorktreesOpEffect = (
           continue
         }
 
-        if (!gitWorktreePaths.has(normalizedDbWorktreePath) && !existsSync(dbWorktree.path)) {
-          if (dbWorktree.is_default) continue
-          yield* worktreeRepo.archive(dbWorktree.id)
-          continue
+        if (!gitWorktreePaths.has(normalizedDbWorktreePath)) {
+          if (!existsSync(dbWorktree.path)) {
+            if (dbWorktree.is_default) continue
+            yield* worktreeRepo.archive(dbWorktree.id)
+            continue
+          }
+          const orphanReason = dbWorktree.is_default
+            ? null
+            : getOrphanedWorktreeDirReason(dbWorktree.path)
+          if (orphanReason) {
+            log.warn('Archiving worktree whose directory is no longer a linked worktree', {
+              projectId: params.projectId,
+              worktreeId: dbWorktree.id,
+              path: dbWorktree.path,
+              branch: dbWorktree.branch_name,
+              reason: orphanReason
+            })
+            releasePort(dbWorktree.path)
+            yield* worktreeRepo.archive(dbWorktree.id)
+            continue
+          }
         }
 
         const gitBranch = gitBranchByPath.get(normalizedDbWorktreePath)
