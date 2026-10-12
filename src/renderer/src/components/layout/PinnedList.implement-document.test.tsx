@@ -67,6 +67,32 @@ const baseConnection = {
   members: []
 } as unknown as Connection
 
+const member = (projectId: string, worktreeId: string) => ({
+  connection_id: 'conn-adhoc',
+  worktree_id: worktreeId,
+  project_id: projectId,
+  symlink_name: projectId,
+  worktree_name: 'main',
+  worktree_branch: 'main',
+  worktree_path: `/tmp/${projectId}`,
+  project_name: projectId
+})
+
+// An ad-hoc connection (no project) spanning two member projects
+const adHocConnection = {
+  id: 'conn-adhoc',
+  name: 'web + api',
+  custom_name: null,
+  status: 'active',
+  path: '/tmp/conn-adhoc',
+  color: null,
+  saved_project_id: null,
+  is_base: 0,
+  created_at: '2026-01-01',
+  updated_at: '2026-01-01',
+  members: [member('web', 'wt-web'), member('api', 'wt-api')]
+} as unknown as Connection
+
 // Role queries cost seconds per call on this tree under jsdom: read the menu with selectors
 const menuItems = (): HTMLElement[] =>
   Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]'))
@@ -81,6 +107,7 @@ const TOP_LAYER_PROBES = new Set([':popover-open', ':modal'])
 const originalMatches = Element.prototype.matches
 
 const initialFlowState = useDocumentFlowStore.getState()
+const initialConnectionState = useConnectionStore.getState()
 
 beforeAll(() => {
   Element.prototype.matches = function (this: Element, selectors: string): boolean {
@@ -97,7 +124,7 @@ describe('PinnedList implement document', () => {
     setRendererRpcClient({
       request: async <T,>(method: string): Promise<T> => {
         if (method === 'db.worktree.getPinned') return [featureWorktree] as T
-        if (method === 'connectionOps.getPinned') return [baseConnection] as T
+        if (method === 'connectionOps.getPinned') return [baseConnection, adHocConnection] as T
         return null as T
       },
       subscribe: () => () => {}
@@ -105,11 +132,14 @@ describe('PinnedList implement document', () => {
 
     usePinnedStore.setState({
       pinnedWorktreeIds: new Set(['wt-feature']),
-      pinnedConnectionIds: new Set(['conn-base']),
+      pinnedConnectionIds: new Set(['conn-base', 'conn-adhoc']),
       pinnedProjectIds: new Set(['proj-conn']),
       loaded: true
     })
-    useConnectionStore.setState({ connections: [baseConnection], connectionModeActive: false })
+    useConnectionStore.setState({
+      connections: [baseConnection, adHocConnection],
+      connectionModeActive: false
+    })
     useProjectStore.setState({ projects: [gitProject, connectionProject] })
     useWorktreeStore.setState({
       worktreesByProject: new Map([['proj-git', [featureWorktree]]])
@@ -120,6 +150,7 @@ describe('PinnedList implement document', () => {
     cleanup()
     resetRendererRpcClientForTests()
     useDocumentFlowStore.setState(initialFlowState, true)
+    useConnectionStore.setState(initialConnectionState, true)
   })
 
   async function renderList(): Promise<void> {
@@ -149,10 +180,48 @@ describe('PinnedList implement document', () => {
     })
   })
 
-  it('has no such item on a pinned connection row', async () => {
+  it("opens the wizard for a pinned instance's connection project", async () => {
     await renderList()
 
     fireEvent.contextMenu(screen.getByTestId('pinned-connection-conn-base'))
+
+    expect(menuItemNames()).toContain('Implement Document…')
+    fireEvent.click(screen.getByTestId('docflow-pinned-connection-menu-item'))
+
+    expect(useDocumentFlowStore.getState().wizard).toEqual({
+      open: true,
+      projectId: 'proj-conn',
+      runId: null
+    })
+  })
+
+  it('saves a pinned ad-hoc connection as a project, then opens the wizard on it', async () => {
+    const saveConnectionAsProject = vi.fn(async () => 'proj-new')
+    useConnectionStore.setState({ saveConnectionAsProject })
+    await renderList()
+
+    fireEvent.contextMenu(screen.getByTestId('pinned-connection-conn-adhoc'))
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('docflow-pinned-connection-menu-item'))
+    })
+
+    expect(saveConnectionAsProject).toHaveBeenCalledWith('conn-adhoc')
+    expect(useDocumentFlowStore.getState().wizard).toEqual({
+      open: true,
+      projectId: 'proj-new',
+      runId: null
+    })
+  })
+
+  it('has no such item on a pinned ad-hoc connection within a single project', async () => {
+    const single = {
+      ...adHocConnection,
+      members: [member('web', 'wt-web'), member('web', 'wt-web-2')]
+    } as unknown as Connection
+    useConnectionStore.setState({ connections: [baseConnection, single] })
+    await renderList()
+
+    fireEvent.contextMenu(screen.getByTestId('pinned-connection-conn-adhoc'))
 
     const names = menuItemNames()
     expect(names.length).toBeGreaterThan(0)

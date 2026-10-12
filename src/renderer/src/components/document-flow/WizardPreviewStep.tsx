@@ -18,6 +18,7 @@ import {
   loadHandoffModelCatalog,
   subscribeModelCatalogCache
 } from '@/lib/handoffSelection'
+import { getMemberProjects, isConnectionProject } from '@/lib/connection-project'
 import { toast } from '@/lib/toast'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import type { HandoffAgentSdk } from '@shared/types/agent-sdk'
@@ -28,24 +29,39 @@ import type {
   DocumentRunLaunchConfig
 } from '@shared/types/document-flow'
 import { DocumentRunItemEditor } from './DocumentRunItemEditor'
-import { DocumentRunSettingsPanel } from './DocumentRunSettingsPanel'
+import { DocumentRunSettingsPanel, type SettingsMember } from './DocumentRunSettingsPanel'
 import {
   describeLaunchConfig,
   mergeLaunchConfigs,
   quickLaunchChoices,
   validateLaunch
 } from './document-flow-launch'
-import { describeBaseBranch, describeVerificationChoice, pluralize } from './document-flow-ui'
-import { useBaseBranchOptions } from './useBaseBranchOptions'
+import {
+  describeBaseBranch,
+  describeMemberBaseBranches,
+  describeMemberVerifyCommands,
+  describeVerificationChoice,
+  pluralize,
+  type RunMemberProject
+} from './document-flow-ui'
+import { NO_BASE_BRANCH_OPTIONS, useBaseBranchOptionsByPath } from './useBaseBranchOptions'
 import { PendingWritesProvider, usePendingWrites } from './useDebouncedText'
 import { useRunConfigDraft } from './useRunConfigDraft'
 
 const errorMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause)
 
+/** The project the run belongs to: a git project, or a connection project with its members. */
+export interface WizardProject {
+  id: string
+  path: string
+  kind?: 'git' | 'connection'
+  member_project_ids?: string | null
+}
+
 interface WizardPreviewStepProps {
   detail: DocumentRunDetail
-  projectPath: string
+  project: WizardProject
   /** Reports whether a launch is in flight, so the dialog can refuse to close meanwhile. */
   onLaunchingChange: (launching: boolean) => void
 }
@@ -53,7 +69,7 @@ interface WizardPreviewStepProps {
 /** The extracted tickets and the run settings, editable until the run is launched. */
 export function WizardPreviewStep({
   detail,
-  projectPath,
+  project,
   onLaunchingChange
 }: WizardPreviewStepProps): React.JSX.Element {
   const { run, items } = detail
@@ -64,9 +80,20 @@ export function WizardPreviewStep({
   const closeWizard = useDocumentFlowStore((s) => s.closeWizard)
   const openDashboard = useDocumentFlowStore((s) => s.openDashboard)
 
+  // A connection project is run member by member: one base branch and one verify command each.
+  const memberProjects = isConnectionProject(project) ? getMemberProjects(project) : null
   const pendingWrites = usePendingWrites()
-  const draft = useRunConfigDraft(run)
-  const branches = useBaseBranchOptions(projectPath)
+  const draft = useRunConfigDraft(run, memberProjects?.map((member) => member.id) ?? null)
+  const branchesByPath = useBaseBranchOptionsByPath(
+    memberProjects ? memberProjects.map((member) => member.path) : [project.path]
+  )
+  const branches = branchesByPath[project.path] ?? NO_BASE_BRANCH_OPTIONS
+  const settingsMembers: SettingsMember[] | null =
+    memberProjects?.map((member) => ({
+      id: member.id,
+      name: member.name,
+      branches: branchesByPath[member.path] ?? NO_BASE_BRANCH_OPTIONS
+    })) ?? null
   const [expandedItemId, setExpandedItemId] = useState<string | null>(null)
   const [questionsOpen, setQuestionsOpen] = useState(false)
   const [confirm, setConfirm] = useState<'launch' | 'reextract' | null>(null)
@@ -317,6 +344,7 @@ export function WizardPreviewStep({
           <p className="mb-3 text-[13px] font-semibold text-foreground">Run settings</p>
           <DocumentRunSettingsPanel
             branches={branches}
+            members={settingsMembers}
             config={draft.config}
             onChange={draft.change}
           />
@@ -397,6 +425,7 @@ export function WizardPreviewStep({
         items={items}
         config={draft.config}
         currentBranch={branches.current}
+        members={settingsMembers}
       />
     </PendingWritesProvider>
   )
@@ -414,6 +443,44 @@ interface LaunchConfirmDialogProps {
   config: DocumentRunConfig
   /** The root checkout's branch: where a run without a base branch of its own starts. */
   currentBranch: string | null
+  /** Connection project: the members, each with its own base branch and verify command. */
+  members: readonly SettingsMember[] | null
+}
+
+/** What the confirmation says about where the run branches from, for either kind of project. */
+function describeLaunchBase(
+  config: DocumentRunConfig,
+  currentBranch: string | null,
+  members: readonly SettingsMember[] | null
+): { label: string; branches: string; lead: string; verify: React.ReactNode } {
+  if (!members) {
+    const baseBranch = describeBaseBranch(config, currentBranch)
+    const verifyCommand = config.verifyCommand?.trim()
+    return {
+      label: 'Base branch',
+      branches: baseBranch,
+      lead: `An integration branch is created from ${baseBranch} and every ticket is merged into it. The base branch itself is not modified.`,
+      verify: verifyCommand ? (
+        <code className="font-mono text-[12px]">{verifyCommand}</code>
+      ) : (
+        'no verify command'
+      )
+    }
+  }
+  const memberProjects: RunMemberProject[] = members.map(({ id, name }) => ({ id, name }))
+  const currentBranches = Object.fromEntries(
+    members.map((member) => [member.id, member.branches.current])
+  )
+  return {
+    label: 'Base branches',
+    branches: describeMemberBaseBranches(memberProjects, config, currentBranches),
+    lead: 'An integration branch is created in every member repository from its base branch; every ticket gets a worktree in each of them and is merged into all of them. The base branches themselves are not modified.',
+    verify: (
+      <code className="font-mono text-[12px]">
+        {describeMemberVerifyCommands(memberProjects, config)}
+      </code>
+    )
+  }
 }
 
 function LaunchConfirmDialog({
@@ -424,23 +491,16 @@ function LaunchConfirmDialog({
   ownModelCount,
   items,
   config,
-  currentBranch
+  currentBranch,
+  members
 }: LaunchConfirmDialogProps): React.JSX.Element {
-  const baseBranch = describeBaseBranch(config, currentBranch)
-  const verifyCommand = config.verifyCommand?.trim()
+  const base = describeLaunchBase(config, currentBranch, members)
   const rows: [string, React.ReactNode][] = [
     ['Tickets', ticketCount],
-    ['Base branch', baseBranch],
+    [base.label, base.branches],
     ['Parallel tickets', config.maxParallel],
     ['Verify by', describeVerificationChoice(items, config.verificationDisabled)],
-    [
-      'Verify command',
-      verifyCommand ? (
-        <code className="font-mono text-[12px]">{verifyCommand}</code>
-      ) : (
-        'no verify command'
-      )
-    ],
+    [members ? 'Verify commands' : 'Verify command', base.verify],
     [
       'Model',
       ownModelCount > 0
@@ -464,10 +524,7 @@ function LaunchConfirmDialog({
       <AlertDialogContent data-docflow-dialog="" data-testid="docflow-launch-confirm">
         <AlertDialogHeader>
           <AlertDialogTitle>Launch {pluralize(ticketCount, 'ticket')}?</AlertDialogTitle>
-          <AlertDialogDescription>
-            An integration branch is created from {baseBranch} and every ticket is merged into it.
-            The base branch itself is not modified.
-          </AlertDialogDescription>
+          <AlertDialogDescription>{base.lead}</AlertDialogDescription>
         </AlertDialogHeader>
         <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-[13px]">
           {rows.map(([label, value]) => (

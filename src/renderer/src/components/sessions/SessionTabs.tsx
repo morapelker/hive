@@ -1813,7 +1813,7 @@ export function SessionTabs(): React.JSX.Element | null {
             </DropdownMenuItem>
             <DropdownMenuItem
               data-testid="docflow-import-menu-item"
-              disabled={!project || project.kind === 'connection'}
+              disabled={!project}
               onClick={() => {
                 if (project) useDocumentFlowStore.getState().openWizard(project.id)
               }}

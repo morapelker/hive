@@ -9,7 +9,9 @@ import {
   type DocumentRunConfig,
   type DocumentRunExtractionMeta,
   type DocumentRunItemDraft,
+  type DocumentRunItemMember,
   type DocumentRunLaunchConfig,
+  type DocumentRunMember,
   type DocumentRunReport,
   type DocumentRunVerdict
 } from '@shared/types/document-flow'
@@ -209,6 +211,26 @@ describe('document flow schema', () => {
     )
   })
 
+  it('ships the connection-project columns of a run and its items as the v60 migration, columns added by the repair step', () => {
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(60)
+    const migration = MIGRATIONS.find((m) => m.version === 60)
+    expect(migration?.name).toBe('add_document_run_connection_project')
+    expect(migration?.up.replace(/--.*$/gm, '').trim()).toBe('')
+    expect(migration?.down.replace(/--.*$/gm, '').trim()).toBe('')
+    for (const column of ['integration_connection_id', 'integration_connection_path', 'members']) {
+      expect(migration?.up).toContain(`document_runs.${column}`)
+    }
+    for (const column of ['connection_id', 'members']) {
+      expect(migration?.up).toContain(`document_run_items.${column}`)
+    }
+    expect(DOCUMENT_FLOW_TABLES_SQL).toMatch(
+      /integration_worktree_path\s+TEXT DEFAULT NULL,\s+integration_connection_id\s+TEXT DEFAULT NULL,\s+integration_connection_path TEXT DEFAULT NULL,\s+members\s+TEXT DEFAULT NULL/
+    )
+    expect(DOCUMENT_FLOW_TABLES_SQL).toMatch(
+      /worktree_id\s+TEXT DEFAULT NULL,\s+connection_id\s+TEXT DEFAULT NULL,\s+members\s+TEXT DEFAULT NULL/
+    )
+  })
+
   it('keeps the migration versions strictly increasing', () => {
     for (let i = 1; i < MIGRATIONS.length; i++) {
       expect(MIGRATIONS[i].version).toBeGreaterThan(MIGRATIONS[i - 1].version)
@@ -397,7 +419,9 @@ describeIf('document runs', () => {
       generation: { provider: 'claude-code', model: 'sonnet', effort: 'high' },
       baseBranch: 'develop',
       notes: null,
-      verificationDisabled: true
+      verificationDisabled: true,
+      memberBaseBranches: {},
+      memberVerifyCommands: {}
     }
     const createdAt = at('2026-03-01T10:00:00.000Z')
     const run = makeRun(db, projectId, { id: 'run-1', config })
@@ -417,6 +441,9 @@ describeIf('document runs', () => {
       integration_branch: null,
       integration_worktree_id: null,
       integration_worktree_path: null,
+      integration_connection_id: null,
+      integration_connection_path: null,
+      members: null,
       ticket_id: null,
       report: null,
       migration_session_id: null,
@@ -491,6 +518,87 @@ describeIf('document runs', () => {
       finished_at: '2026-03-01T12:00:00.000Z'
     })
     expect(db.getDocumentRun('run-1')).toEqual(updated)
+  })
+
+  it('round-trips the integration instance and members of a run on a connection project', () => {
+    const db = openDb()
+    const run = makeRun(db, makeProject(db))
+    const members: DocumentRunMember[] = [
+      {
+        project_id: 'member-web',
+        project_name: 'web',
+        project_path: '/repos/web',
+        symlink_name: 'web',
+        base_branch: 'main',
+        base_sha: 'aaa111',
+        integration_branch: 'doc-checkout',
+        integration_worktree_id: 'wt-web',
+        integration_worktree_path: '/worktrees/web/doc-checkout'
+      },
+      {
+        project_id: 'member-api',
+        project_name: 'api',
+        project_path: '/repos/api',
+        symlink_name: 'api',
+        base_branch: 'develop',
+        base_sha: 'bbb222',
+        integration_branch: 'doc-checkout',
+        integration_worktree_id: 'wt-api',
+        integration_worktree_path: '/worktrees/api/doc-checkout'
+      }
+    ]
+    const config: DocumentRunConfig = {
+      ...DEFAULT_DOCUMENT_RUN_CONFIG,
+      memberBaseBranches: { 'member-api': 'develop', 'member-web': null },
+      memberVerifyCommands: { 'member-web': 'pnpm check', 'member-api': '' }
+    }
+
+    const updatedAt = at('2026-03-01T11:00:00.000Z')
+    const launched = db.updateDocumentRun(run.id, {
+      config,
+      base_branch: 'main + develop',
+      integration_branch: 'doc-checkout',
+      integration_connection_id: 'connection-1',
+      integration_connection_path: '/connections/abc',
+      members
+    })
+    expect(launched).toEqual({
+      ...run,
+      config,
+      base_branch: 'main + develop',
+      base_sha: null,
+      integration_branch: 'doc-checkout',
+      integration_worktree_id: null,
+      integration_worktree_path: null,
+      integration_connection_id: 'connection-1',
+      integration_connection_path: '/connections/abc',
+      members,
+      updated_at: updatedAt
+    })
+    expect(db.getDocumentRun(run.id)).toEqual(launched)
+    // A run on a git project never has these; the readers tell the two apart by them.
+    expect(db.updateDocumentRun(run.id, { title: 'Still there' })).toMatchObject({
+      integration_connection_id: 'connection-1',
+      members
+    })
+    expect(
+      db.updateDocumentRun(run.id, {
+        integration_connection_id: null,
+        integration_connection_path: null,
+        members: null
+      })
+    ).toMatchObject({
+      integration_connection_id: null,
+      integration_connection_path: null,
+      members: null
+    })
+
+    // A corrupt members column reads as no members rather than a broken run.
+    db.updateDocumentRun(run.id, { members })
+    db.getRawDb()
+      .prepare('UPDATE document_runs SET members = ? WHERE id = ?')
+      .run('{broken', run.id)
+    expect(db.getDocumentRun(run.id)?.members).toEqual([])
   })
 
   it('patches only the keys that are present; null clears and config is replaced whole', () => {
@@ -809,6 +917,8 @@ describeIf('document run items', () => {
       status_detail: null,
       ticket_id: null,
       worktree_id: null,
+      connection_id: null,
+      members: null,
       session_id: null,
       fix_ticket_id: null,
       fix_session_id: null,
@@ -847,6 +957,72 @@ describeIf('document run items', () => {
     expect(db.getDocumentRunItem(items[1].id)).toEqual(items[1])
     expect(db.getDocumentRunItem('ghost')).toBeNull()
     expect(db.getDocumentRunItems('ghost')).toEqual([])
+  })
+
+  it('round-trips the connection instance and member worktrees of a ticket', () => {
+    const db = openDb()
+    const run = makeRun(db, makeProject(db))
+    const [item] = db.replaceDocumentRunItems(run.id, [draft('A1')])
+    const members: DocumentRunItemMember[] = [
+      {
+        project_id: 'member-web',
+        worktree_id: 'wt-web-a1',
+        branch_name: 'a1-coupons',
+        pre_merge_sha: null,
+        merge_sha: null
+      },
+      {
+        project_id: 'member-api',
+        worktree_id: 'wt-api-a1',
+        branch_name: 'a1-coupons',
+        pre_merge_sha: null,
+        merge_sha: null
+      }
+    ]
+
+    const launchedAt = at('2026-03-01T10:20:00.000Z')
+    const launched = db.updateDocumentRunItem(item.id, {
+      status: 'running',
+      connection_id: 'connection-a1',
+      members,
+      branch_name: 'a1-coupons'
+    })
+    expect(launched).toEqual({
+      ...item,
+      status: 'running',
+      worktree_id: null,
+      connection_id: 'connection-a1',
+      members,
+      branch_name: 'a1-coupons',
+      updated_at: launchedAt
+    })
+    expect(db.getDocumentRunItem(item.id)).toEqual(launched)
+
+    // The merge writes the per-member shas and their composites together.
+    const merged = members.map((member, index) => ({
+      ...member,
+      pre_merge_sha: `pre${index}`,
+      merge_sha: index === 0 ? 'merge0' : null
+    }))
+    expect(
+      db.updateDocumentRunItem(item.id, {
+        members: merged,
+        pre_merge_sha: 'web=pre0,api=pre1',
+        merge_sha: 'web=merge0'
+      })
+    ).toMatchObject({
+      connection_id: 'connection-a1',
+      members: merged,
+      pre_merge_sha: 'web=pre0,api=pre1',
+      merge_sha: 'web=merge0'
+    })
+    expect(db.updateDocumentRunItem(item.id, { connection_id: null, members: null })).toMatchObject(
+      {
+        connection_id: null,
+        members: null,
+        pre_merge_sha: 'web=pre0,api=pre1'
+      }
+    )
   })
 
   it('round-trips the verification of a ticket and drops the methods it does not know', () => {

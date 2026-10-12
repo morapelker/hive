@@ -684,13 +684,19 @@ export const ProjectItem = memo(function ProjectItem({
                     <GitBranch className="h-4 w-4 mr-2" />
                     New Workspace From...
                   </ContextMenuItem>
-                  <ContextMenuItem
-                    data-testid="docflow-project-menu-item"
-                    onClick={() => useDocumentFlowStore.getState().openWizard(project.id)}
-                  >
-                    <FileText className="h-4 w-4 mr-2" />
-                    Implement Document…
-                  </ContextMenuItem>
+                </>
+              )}
+              {/* Document runs work for connection projects too: the run cuts one
+                  integration worktree per member and wires them into an instance. */}
+              <ContextMenuItem
+                data-testid="docflow-project-menu-item"
+                onClick={() => useDocumentFlowStore.getState().openWizard(project.id)}
+              >
+                <FileText className="h-4 w-4 mr-2" />
+                Implement Document…
+              </ContextMenuItem>
+              {!isConnectionProject && (
+                <>
                   <ContextMenuItem
                     onClick={() => useProjectStore.getState().openProjectSettings(project.id)}
                   >

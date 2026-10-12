@@ -870,7 +870,7 @@ describe('ImplementDocumentWizard — launch', () => {
     expect(api.updateRun).toHaveBeenCalledWith('run-1', {
       config: { ...DEFAULT_DOCUMENT_RUN_CONFIG, verifyCommand: 'pnpm check', maxParallel: 3 }
     })
-    expect(api.start).toHaveBeenCalledWith('run-1')
+    expect(api.start).toHaveBeenCalledWith('run-1', expect.any(String))
     expect(api.updateRun.mock.invocationCallOrder[0]).toBeLessThan(
       api.start.mock.invocationCallOrder[0]
     )
@@ -1014,7 +1014,7 @@ describe('ImplementDocumentWizard — launch', () => {
     expect(api.updateItem).toHaveBeenLastCalledWith('run-1', 'item-A1', {
       title: 'An edit the server refuses'
     })
-    expect(api.start).toHaveBeenCalledWith('run-1')
+    expect(api.start).toHaveBeenCalledWith('run-1', expect.any(String))
     expect(useDocumentFlowStore.getState().runsById['run-1'].items[0].title).toBe(
       'An edit the server refuses'
     )

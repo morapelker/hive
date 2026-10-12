@@ -3,7 +3,9 @@
  * tickets by the default (PR content) model, previewed, then launched as a run.
  * The run launches every ticket in its own worktree, watches the sessions, and
  * merges finished tickets one by one into an integration branch cut from the
- * project's base branch — the base branch itself is never modified.
+ * project's base branch — the base branch itself is never modified. On a
+ * connection project the same happens in every member repository at once (see
+ * "Connection projects" below).
  *
  * Process split:
  * - server child: persistence, document pre-processing, extraction, final-message
@@ -149,6 +151,18 @@ export interface DocumentRunConfig {
    * applies to tickets launched from then on.
    */
   verificationDisabled: boolean
+  /**
+   * Connection projects only: the branch each member project's integration branch is cut
+   * from, by member project id; a missing or null entry = that member's default branch.
+   * `baseBranch` is not read for a connection project.
+   */
+  memberBaseBranches: Record<string, string | null>
+  /**
+   * Connection projects only: the shell command run in each member's integration worktree
+   * after every merge, by member project id; null/empty = skip that member. All must pass.
+   * `verifyCommand` is not read for a connection project.
+   */
+  memberVerifyCommands: Record<string, string | null>
 }
 
 export const DOCUMENT_RUN_MAX_PARALLEL_LIMIT = 50
@@ -163,7 +177,28 @@ export const DEFAULT_DOCUMENT_RUN_CONFIG: DocumentRunConfig = {
   generation: null,
   baseBranch: null,
   notes: null,
-  verificationDisabled: false
+  verificationDisabled: false,
+  memberBaseBranches: {},
+  memberVerifyCommands: {}
+}
+
+/** The verify commands a run has: one for a git project, one per member for a connection project. */
+export function runVerifyCommands(
+  run: Pick<DocumentRun, 'config' | 'members'>
+): { project_id: string | null; command: string }[] {
+  if (run.members && run.members.length > 0) {
+    return run.members.flatMap((member) => {
+      const command = run.config.memberVerifyCommands[member.project_id]?.trim()
+      return command ? [{ project_id: member.project_id, command }] : []
+    })
+  }
+  const command = run.config.verifyCommand?.trim()
+  return command ? [{ project_id: null, command }] : []
+}
+
+/** Whether the run verifies merges at all (the orchestrator skips the verify step otherwise). */
+export function hasVerifyCommand(run: Pick<DocumentRun, 'config' | 'members'>): boolean {
+  return runVerifyCommands(run).length > 0
 }
 
 // ── Extraction ─────────────────────────────────────────────────────────────
@@ -273,6 +308,57 @@ export interface DocumentRunVerdict {
   classifiedAt: string
 }
 
+// ── Connection projects ────────────────────────────────────────────────────
+//
+// A run on a connection project (projects.kind = 'connection') is the same flow over N member
+// repositories: the integration "worktree" is an integration INSTANCE (a connection over one
+// integration worktree per member project, each cut from that member's base branch), every
+// ticket launches as a new instance (a worktree per member cut from the members' integration
+// branches), and a ticket is merged member by member — all or nothing: a conflict in one
+// member rolls back what the others merged. Items that touch only some members merge nothing
+// in the rest. The run's base/integration columns hold labels; the per-member facts are here.
+
+/** One member repository of a run on a connection project, with its integration worktree. */
+export interface DocumentRunMember {
+  project_id: string
+  project_name: string
+  /** Root checkout of the member project. */
+  project_path: string
+  /** Directory name of the member inside the run's integration connection directory. */
+  symlink_name: string
+  base_branch: string
+  /** Commit the member's integration branch was cut from. */
+  base_sha: string
+  integration_branch: string
+  integration_worktree_id: string
+  integration_worktree_path: string
+}
+
+/** A member worktree of a ticket's connection instance, with the item's merge in that member. */
+export interface DocumentRunItemMember {
+  project_id: string
+  worktree_id: string
+  branch_name: string
+  /** Member integration HEAD before this item's merge (rollback target); null until merged. */
+  pre_merge_sha: string | null
+  /** Merge commit on the member's integration branch; null when the member had nothing new. */
+  merge_sha: string | null
+}
+
+/** A run launched on a connection project (its members are known from the launch on). */
+export function isConnectionRun(
+  run: Pick<DocumentRun, 'members'>
+): run is Pick<DocumentRun, 'members'> & { members: DocumentRunMember[] } {
+  return Array.isArray(run.members) && run.members.length > 0
+}
+
+/** Whether the run has its integration checkout(s): a worktree, or a connection instance. */
+export function hasIntegration(
+  run: Pick<DocumentRun, 'integration_worktree_id' | 'integration_connection_id'>
+): boolean {
+  return run.integration_worktree_id !== null || run.integration_connection_id !== null
+}
+
 // ── Rows ───────────────────────────────────────────────────────────────────
 
 export interface DocumentRun {
@@ -289,12 +375,30 @@ export interface DocumentRun {
   error: string | null
   config: DocumentRunConfig
   extraction: DocumentRunExtractionMeta | null
+  /**
+   * Git project: the branch the integration branch was cut from. Connection project: a label
+   * of the members' base branches ("main", "main + master"); the branches are in `members`.
+   */
   base_branch: string | null
-  /** Commit the integration branch was cut from. */
+  /** Commit the integration branch was cut from (git projects; null for a connection project). */
   base_sha: string | null
+  /**
+   * Git project: the integration branch. Connection project: the name shared by the members'
+   * integration branches (the first member's when they differ); see `members`.
+   */
   integration_branch: string | null
+  /** Git projects only: null for a connection project, whose checkouts are in `members`. */
   integration_worktree_id: string | null
   integration_worktree_path: string | null
+  /**
+   * Connection projects only: the run's integration INSTANCE — a connection over one
+   * integration worktree per member project — and its directory (member symlinks inside).
+   * The twin of `integration_worktree_id` / `integration_worktree_path`.
+   */
+  integration_connection_id: string | null
+  integration_connection_path: string | null
+  /** Connection projects only: one entry per member project, set when the run is launched. */
+  members: DocumentRunMember[] | null
   /** The run's own ticket on the board, created at launch; moving it to Done merges the run. */
   ticket_id: string | null
   report: DocumentRunReport | null
@@ -357,13 +461,25 @@ export interface DocumentRunItem {
   /** Human-readable reason for the current status (question, error, what it waits for). */
   status_detail: string | null
   ticket_id: string | null
+  /** Git projects only: the ticket's worktree. Null for a connection project (see `members`). */
   worktree_id: string | null
+  /**
+   * Connection projects only: the ticket's connection instance (one worktree per member
+   * project, see `members`); the twin of `worktree_id`.
+   */
+  connection_id: string | null
+  /** Connection projects only: the member worktrees of the ticket's instance, with their merges. */
+  members: DocumentRunItemMember[] | null
   /** The ticket's agent session. */
   session_id: string | null
   /** Ticket of the fix session started in the integration worktree after a failed verify. */
   fix_ticket_id: string | null
   /** The fix session itself. */
   fix_session_id: string | null
+  /**
+   * Git project: the ticket's branch. Connection project: the name shared by the member
+   * worktrees' branches (the first member's when they differ); see `members`.
+   */
   branch_name: string | null
   verdict: DocumentRunVerdict | null
   /** "Finish it" nudges sent after a final message that did not read as done. */
@@ -376,8 +492,9 @@ export interface DocumentRunItem {
   fix_attempts: number
   /** "continue" prompts sent after an API error or an interrupted turn. */
   continue_attempts: number
-  /** Integration HEAD before this item's merge (rollback target). */
+  /** Integration HEAD before this item's merge (rollback target). Per member in `members`. */
   pre_merge_sha: string | null
+  /** Git project: the merge commit. Connection project: set once every member is merged. */
   merge_sha: string | null
   /** When a prompt was last sent to the session this item is waiting on. */
   last_prompt_at: string | null
@@ -412,11 +529,28 @@ export interface DocumentRunDetail {
 
 // ── Report ─────────────────────────────────────────────────────────────────
 
+/** The git summary of one member of a connection run. */
+export interface DocumentRunReportMember {
+  project_id: string
+  project_name: string
+  symlink_name: string
+  integrationBranch: string
+  integrationWorktreePath: string
+  baseBranch: string
+  baseSha: string
+  headSha: string
+  baseMoved: boolean
+  stats: { filesChanged: number; insertions: number; deletions: number; commits: number }
+}
+
 export interface DocumentRunReport {
   generatedAt: string
+  /** Connection project: the shared name of the members' integration branches (see `members`). */
   integrationBranch: string
+  /** Connection project: the integration connection directory. */
   integrationWorktreePath: string | null
   baseBranch: string
+  /** '' for a connection project (per member in `members`). */
   baseSha: string
   /** Integration branch HEAD. */
   headSha: string
@@ -428,9 +562,15 @@ export interface DocumentRunReport {
   migrations: string[]
   /** Manual / post-production steps collected from the agents' final messages. */
   manualSteps: string[]
+  /** Summed over the members for a connection project. */
   stats: { filesChanged: number; insertions: number; deletions: number; commits: number }
-  /** Last verify result on the integration branch; null when no verify command is set. */
+  /**
+   * Last verify result on the integration branch; null when no verify command is set. For a
+   * connection project `command` lists the members' commands ("web: pnpm check; api: make").
+   */
   verify: { command: string; ok: boolean; output: string } | null
+  /** Connection projects only: the git summary of every member. */
+  members?: DocumentRunReportMember[]
 }
 
 // ── RPC payloads ───────────────────────────────────────────────────────────
@@ -462,6 +602,8 @@ export interface DocumentRunItemPatch {
   status_detail?: string | null
   ticket_id?: string | null
   worktree_id?: string | null
+  connection_id?: string | null
+  members?: DocumentRunItemMember[] | null
   session_id?: string | null
   fix_ticket_id?: string | null
   fix_session_id?: string | null
@@ -526,11 +668,32 @@ export interface SessionFinalMessage {
 
 export type DocumentMergeCheckState = 'clean' | 'conflict' | 'no_changes' | 'error'
 
+/** The dry run of one member of a connection run. */
+export interface DocumentMergeCheckMember {
+  project_id: string
+  project_name: string
+  symlink_name: string
+  integrationBranch: string
+  /** The member integration branch's commit the dry run was made against. */
+  integrationHead: string | null
+  state: DocumentMergeCheckState
+  /** Paths relative to the member repository (the top-level list prefixes the symlink name). */
+  conflictedFiles: string[]
+  commitsAhead: number
+  error?: string
+}
+
 export interface DocumentMergeCheckResult {
   state: DocumentMergeCheckState
+  /** Connection project: prefixed with the member's directory name (`web/src/app.ts`). */
   conflictedFiles: string[]
-  /** The integration branch's commit the dry run was made against (a verified tip). */
+  /**
+   * The integration branch's commit the dry run was made against (a verified tip). For a
+   * connection project a composite of the members' commits, stable for equality checks only.
+   */
   integrationHead?: string
+  /** Connection projects only: the dry run per member. */
+  members?: DocumentMergeCheckMember[]
   /** Uncommitted work in the ticket worktree was committed by the orchestrator. */
   committed: boolean
   /** Commits on the ticket branch that the integration branch does not have. */
@@ -555,9 +718,17 @@ export interface DocumentVerifyResult {
   ok: boolean
   exitCode: number | null
   timedOut: boolean
-  /** Tail of the combined stdout/stderr. */
+  /** Tail of the combined stdout/stderr (connection project: of the failed member, or the last). */
   output: string
+  /** Summed over the members for a connection project. */
   durationMs: number
+  /** Connection projects only: the member whose command failed (null when all passed). */
+  failedMember?: {
+    project_id: string
+    project_name: string
+    symlink_name: string
+    command: string
+  } | null
 }
 
 export interface DocumentSimpleResult {

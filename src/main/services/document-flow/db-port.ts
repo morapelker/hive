@@ -6,6 +6,7 @@ import type {
   DocumentRunItem,
   DocumentRunItemDraft,
   DocumentRunItemPatch,
+  DocumentRunMember,
   DocumentRunReport,
   DocumentRunStatus,
   SessionFinalMessage,
@@ -15,7 +16,9 @@ import type {
 // The persistence the document flow needs, as an interface: `DatabaseService` implements it
 // (document_runs, document_run_items, document_run_events, session_final_messages — schema v52,
 // document_runs.ticket_id v53,
-// document_runs.migration_session_id / migration_started_at / migration_owner_pid v54), and the service's tests substitute an in-memory fake.
+// document_runs.migration_session_id / migration_started_at / migration_owner_pid v54,
+// document_runs.integration_connection_id / integration_connection_path / members and
+// document_run_items.connection_id / members v56), and the service's tests substitute an in-memory fake.
 
 export interface DocumentRunCreate {
   /** Caller-supplied so the run directory can be named after it before the row exists. */
@@ -42,6 +45,9 @@ export interface DocumentRunRowPatch {
   integration_branch?: string | null
   integration_worktree_id?: string | null
   integration_worktree_path?: string | null
+  integration_connection_id?: string | null
+  integration_connection_path?: string | null
+  members?: DocumentRunMember[] | null
   ticket_id?: string | null
   report?: DocumentRunReport | null
   migration_session_id?: string | null

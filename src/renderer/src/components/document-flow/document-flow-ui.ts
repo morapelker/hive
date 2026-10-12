@@ -242,21 +242,34 @@ export function isSkippableItem(item: DocumentRunItem): boolean {
 
 export interface ItemSessionTarget {
   sessionId: string
+  /** Git project: the worktree the session runs in. Null for a connection project. */
   worktreeId: string | null
+  /** Connection project: the instance the session runs on. Null for a git project. */
+  connectionId: string | null
 }
 
 /**
  * The session to open for an item: while a failed verify is being fixed that is the fix
- * session in the integration worktree, otherwise the ticket's own session.
+ * session in the integration worktree (or instance), otherwise the ticket's own session.
  */
 export function itemSessionTarget(
-  run: Pick<DocumentRun, 'integration_worktree_id'>,
+  run: Pick<DocumentRun, 'integration_worktree_id' | 'integration_connection_id'>,
   item: DocumentRunItem
 ): ItemSessionTarget | null {
   if (item.status === 'fixing' && item.fix_session_id) {
-    return { sessionId: item.fix_session_id, worktreeId: run.integration_worktree_id }
+    return {
+      sessionId: item.fix_session_id,
+      worktreeId: run.integration_worktree_id,
+      connectionId: run.integration_connection_id
+    }
   }
-  if (item.session_id) return { sessionId: item.session_id, worktreeId: item.worktree_id }
+  if (item.session_id) {
+    return {
+      sessionId: item.session_id,
+      worktreeId: item.worktree_id,
+      connectionId: item.connection_id
+    }
+  }
   return null
 }
 
@@ -421,15 +434,13 @@ export function documentRunTicketDropRefusal(
 // ── Wizard steps ───────────────────────────────────────────────────────────
 
 export type DocumentWizardStep =
-  'unsupported' | 'pick' | 'loading' | 'extracting' | 'failed' | 'preview' | 'launched'
+  'pick' | 'loading' | 'extracting' | 'failed' | 'preview' | 'launched'
 
 /** The wizard's step is a function of the run it points at, never separate state. */
 export function wizardStep(
-  isConnectionProject: boolean,
   runId: string | null,
   status: DocumentRunStatus | undefined
 ): DocumentWizardStep {
-  if (isConnectionProject) return 'unsupported'
   if (!runId) return 'pick'
   if (!status) return 'loading'
   if (status === 'extracting') return 'extracting'
@@ -472,6 +483,98 @@ export function describeBaseBranch(
   currentBranch: string | null
 ): string {
   return config.baseBranch ?? currentBranch ?? 'the current branch'
+}
+
+// ── Connection projects ────────────────────────────────────────────────────
+//
+// A run on a connection project has one base branch and one verify command per member
+// project (`config.memberBaseBranches` / `config.memberVerifyCommands`, by member project id);
+// the labels below name them member by member, in member order.
+
+/** A member project of a connection project, as the settings and the launch summary name it. */
+export interface RunMemberProject {
+  id: string
+  name: string
+}
+
+/** The base branch chosen for a member; null = that member's current (root checkout) branch. */
+export function memberBaseBranch(
+  config: Pick<DocumentRunConfig, 'memberBaseBranches'>,
+  memberId: string
+): string | null {
+  return config.memberBaseBranches[memberId] ?? null
+}
+
+/**
+ * "main (web) · master (api)": the branch each member's integration branch is cut from, with
+ * `currentBranches` (by member id) standing in for members without a branch of their own.
+ */
+export function describeMemberBaseBranches(
+  members: readonly RunMemberProject[],
+  config: Pick<DocumentRunConfig, 'memberBaseBranches'>,
+  currentBranches: Readonly<Record<string, string | null>>
+): string {
+  return members
+    .map((member) => {
+      const branch = memberBaseBranch(config, member.id) ?? currentBranches[member.id] ?? null
+      return `${branch ?? 'the current branch'} (${member.name})`
+    })
+    .join(' · ')
+}
+
+/** The verify command chosen for a member, trimmed; '' when none. */
+export function memberVerifyCommand(
+  config: Pick<DocumentRunConfig, 'memberVerifyCommands'>,
+  memberId: string
+): string {
+  return config.memberVerifyCommands[memberId]?.trim() ?? ''
+}
+
+/**
+ * "web: pnpm check · api: none": the launch summary's verify line for a connection project;
+ * "no verify command" when no member has one.
+ */
+export function describeMemberVerifyCommands(
+  members: readonly RunMemberProject[],
+  config: Pick<DocumentRunConfig, 'memberVerifyCommands'>
+): string {
+  if (members.every((member) => memberVerifyCommand(config, member.id) === '')) {
+    return 'no verify command'
+  }
+  return members
+    .map((member) => `${member.name}: ${memberVerifyCommand(config, member.id) || 'none'}`)
+    .join(' · ')
+}
+
+/**
+ * One line per member of a launched connection run — "web · doc-checkout (from main)" — for the
+ * dashboard header. Empty for a git run.
+ */
+export function describeRunMembers(
+  run: Pick<DocumentRun, 'members'>
+): { projectId: string; label: string }[] {
+  return (run.members ?? []).map((member) => ({
+    projectId: member.project_id,
+    label: `${member.project_name} · ${member.integration_branch} (from ${member.base_branch})`
+  }))
+}
+
+/**
+ * The branch of an item in each member — "web: a1-checkout" per line — as the branch column's
+ * tooltip of a connection run. Members are named through the run's members; null when the item
+ * has no member worktrees (a git run, or a ticket not launched yet).
+ */
+export function describeItemBranches(
+  run: Pick<DocumentRun, 'members'>,
+  item: Pick<DocumentRunItem, 'members'>
+): string | null {
+  if (!item.members || item.members.length === 0) return null
+  const names = new Map(
+    (run.members ?? []).map((member) => [member.project_id, member.project_name])
+  )
+  return item.members
+    .map((member) => `${names.get(member.project_id) ?? member.project_id}: ${member.branch_name}`)
+    .join('\n')
 }
 
 // ── Document path ──────────────────────────────────────────────────────────

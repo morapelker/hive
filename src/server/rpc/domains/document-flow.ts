@@ -18,6 +18,7 @@ import {
   type DocumentRunDetail,
   type DocumentRunGeneration,
   type DocumentRunItem,
+  type DocumentRunItemMember,
   type DocumentRunItemPatch,
   type DocumentRunLaunchConfig,
   type DocumentRunPatch,
@@ -137,22 +138,33 @@ const verdictSchema = z
   })
   .strict() satisfies z.ZodType<DocumentRunVerdict>
 
+// It ends up as a git argument: no whitespace, and nothing git could read as an option.
+const branchNameSchema = z.string().regex(/^(?!-)\S*$/)
+
+const itemMemberSchema = z
+  .object({
+    project_id: idSchema,
+    worktree_id: idSchema,
+    branch_name: z.string(),
+    pre_merge_sha: z.string().nullable(),
+    merge_sha: z.string().nullable()
+  })
+  .strict() satisfies z.ZodType<DocumentRunItemMember>
+
 const configPatchSchema = z
   .object({
     // Out-of-range values are clamped by the service rather than refused.
     maxParallel: z.number().optional(),
     verifyCommand: z.string().nullable().optional(),
+    // Connection projects: by member project id.
+    memberVerifyCommands: z.record(z.string(), z.string().nullable()).optional(),
+    memberBaseBranches: z.record(z.string(), branchNameSchema.nullable()).optional(),
     interactive: z.boolean().optional(),
     verificationDisabled: z.boolean().optional(),
     promptStyle: z.enum(['full', 'small']).optional(),
     defaultLaunch: launchConfigSchema.nullable().optional(),
     generation: generationSchema.nullable().optional(),
-    // It ends up as a git argument: no whitespace, and nothing git could read as an option.
-    baseBranch: z
-      .string()
-      .regex(/^(?!-)\S*$/)
-      .nullable()
-      .optional(),
+    baseBranch: branchNameSchema.nullable().optional(),
     // The preview writes the whole config back; the notes in it are ignored (set at creation).
     notes: z.string().nullable().optional()
   })
@@ -180,6 +192,8 @@ const itemPatchSchema = z
     status_detail: nullableStringSchema,
     ticket_id: nullableStringSchema,
     worktree_id: nullableStringSchema,
+    connection_id: nullableStringSchema,
+    members: z.array(itemMemberSchema).nullable().optional(),
     session_id: nullableStringSchema,
     fix_ticket_id: nullableStringSchema,
     fix_session_id: nullableStringSchema,

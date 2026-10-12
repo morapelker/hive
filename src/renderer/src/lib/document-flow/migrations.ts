@@ -1,15 +1,25 @@
-import { buildMigrationPrompt } from '@shared/document-flow/prompts'
+import { buildMigrationPrompt, workspaceOfMembers } from '@shared/document-flow/prompts'
 import { isEndedRunStatus } from '@shared/document-flow/run-ticket'
 import { isAgentCli } from '@shared/types/agent-sdk'
-import type { DocumentMigrationOutcome, DocumentRun } from '@shared/types/document-flow'
+import {
+  isConnectionRun,
+  type DocumentMigrationOutcome,
+  type DocumentRun
+} from '@shared/types/document-flow'
 import { dbApi } from '@/api/db-api'
 import { documentFlowApi } from '@/api/document-flow-api'
 import { opencodeApi } from '@/api/opencode-api'
 import { terminalApi } from '@/api/terminal-api'
 import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { findSessionById } from '@/lib/session-followup'
-import { launchSessionWithModel } from '@/lib/ticket-launch'
+import {
+  launchSessionOnConnection,
+  launchSessionWithModel,
+  type SessionLaunchCreated,
+  type SessionLaunchResult
+} from '@/lib/ticket-launch'
 import { toast } from '@/lib/toast'
+import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
@@ -66,23 +76,37 @@ type MigrationRun = Pick<
   | 'project_id'
   | 'integration_branch'
   | 'integration_worktree_id'
+  | 'integration_connection_id'
+  | 'members'
   | 'migration_session_id'
 >
 
 /**
  * Why the migrations of `run` cannot be executed right now, or null when they can.
  * `worktreeIds` are the project's worktrees as loaded (archived ones are not listed);
- * undefined while they are not loaded, which refuses nothing.
+ * undefined while they are not loaded, which refuses nothing. A connection run's checkout is
+ * its integration instance: `connectionIds` are the active connections as loaded, checked the
+ * same way (and `worktreeIds` is not read).
  */
 export function migrationsRefusal(
   run: MigrationRun,
-  worktreeIds: ReadonlySet<string> | undefined
+  worktreeIds: ReadonlySet<string> | undefined,
+  connectionIds?: ReadonlySet<string> | undefined
 ): string | null {
   if (run.migration_session_id) return 'The migrations of this run are already being executed.'
   if (!isEndedRunStatus(run.status) || !run.report) {
     return 'Only a run that has finished has migrations to execute.'
   }
   if (run.report.migrations.length === 0) return 'This run has no migrations to execute.'
+  if (isConnectionRun(run)) {
+    if (!run.integration_connection_id || !run.integration_branch) {
+      return 'The run has no integration instance to execute the migrations in.'
+    }
+    if (connectionIds && !connectionIds.has(run.integration_connection_id)) {
+      return `The instance of ${run.integration_branch} was archived or deleted, so there is no checkout of the branches to execute the migrations in.`
+    }
+    return null
+  }
   if (!run.integration_worktree_id || !run.integration_branch) {
     return 'The run has no integration worktree to execute the migrations in.'
   }
@@ -95,6 +119,22 @@ export function migrationsRefusal(
 function loadedWorktreeIds(projectId: string): ReadonlySet<string> | undefined {
   const worktrees = useWorktreeStore.getState().worktreesByProject.get(projectId)
   return worktrees ? new Set(worktrees.map((worktree) => worktree.id)) : undefined
+}
+
+/** The active connections as loaded; undefined before the store has loaded them. */
+/**
+ * The ids of the active connections, as loaded; undefined while the store has not loaded them,
+ * which refuses nothing. The dashboard's gate and `startRunMigrations` read the same set.
+ */
+export function activeConnectionIds(
+  state: Pick<ReturnType<typeof useConnectionStore.getState>, 'loaded' | 'connections'>
+): ReadonlySet<string> | undefined {
+  if (!state.loaded) return undefined
+  return new Set(state.connections.filter((c) => c.status === 'active').map((c) => c.id))
+}
+
+function loadedConnectionIds(): ReadonlySet<string> | undefined {
+  return activeConnectionIds(useConnectionStore.getState())
 }
 
 /**
@@ -136,42 +176,68 @@ export async function startRunMigrations(runId: string): Promise<void> {
   if (starting.has(runId)) throw new Error('The migration session is already being started.')
   starting.add(runId)
   try {
-    // An archived worktree is told apart from one that is merely not loaded yet.
-    await useWorktreeStore.getState().loadWorktrees(run.project_id)
-    const refusal = migrationsRefusal(run, loadedWorktreeIds(run.project_id))
+    const connectionRun = isConnectionRun(run)
+    // An archived worktree (or instance) is told apart from one that is merely not loaded yet.
+    if (connectionRun) await useConnectionStore.getState().loadConnections()
+    else await useWorktreeStore.getState().loadWorktrees(run.project_id)
+    const refusal = migrationsRefusal(
+      run,
+      connectionRun ? undefined : loadedWorktreeIds(run.project_id),
+      connectionRun ? loadedConnectionIds() : undefined
+    )
     if (refusal) throw new Error(refusal)
-    const worktreeId = run.integration_worktree_id as string
     const branch = run.integration_branch as string
 
     const modelConfig = run.config.defaultLaunch ?? resolveDefaultLaunchConfig()
     let recorded = false
-    const result = await launchSessionWithModel({
-      projectId: run.project_id,
-      worktreeId,
-      prompt: buildMigrationPrompt({
-        documentTitle: run.title,
-        integrationBranch: branch,
-        migrations: run.report?.migrations ?? [],
-        sdk: modelConfig.sdk
-      }),
-      mode: 'build',
-      modelConfig,
-      goalMode: false,
-      goalSuccessCriteria: null,
-      // The run's own ticket shows this session; a ticket that merely waits on the
-      // integration worktree must not be handed it.
-      skipKanbanAttach: true,
-      onSessionCreated: async ({ session }) => {
-        // Known as a migration session before its first prompt is seen by anyone.
-        launched.add(session.id)
-        await useSessionStore.getState().updateSessionName(session.id, `Migrations — ${branch}`)
-        // Recorded before the agent is started: from here on the run shows the session and
-        // can stop it, also from a window reloaded while the prompt is still on its way. A
-        // refusal (another session is at it) fails the launch before anything runs.
-        store.applyDetail(await documentFlowApi.startMigrations(runId, session.id))
-        recorded = true
-      }
+    const onSessionCreated = async ({ session }: SessionLaunchCreated): Promise<void> => {
+      // Known as a migration session before its first prompt is seen by anyone.
+      launched.add(session.id)
+      await useSessionStore.getState().updateSessionName(session.id, `Migrations — ${branch}`)
+      // Recorded before the agent is started: from here on the run shows the session and
+      // can stop it, also from a window reloaded while the prompt is still on its way. A
+      // refusal (another session is at it) fails the launch before anything runs.
+      store.applyDetail(await documentFlowApi.startMigrations(runId, session.id))
+      recorded = true
+    }
+    const prompt = buildMigrationPrompt({
+      documentTitle: run.title,
+      integrationBranch: branch,
+      migrations: run.report?.migrations ?? [],
+      sdk: modelConfig.sdk,
+      // A connection run's session runs in the integration connection directory, where the
+      // migration paths start with the member's directory.
+      ...(connectionRun ? { workspace: workspaceOfMembers(run.members) } : {})
     })
+    const result: SessionLaunchResult = connectionRun
+      ? await launchSessionOnConnection({
+          connectionId: run.integration_connection_id as string,
+          connectionPath:
+            run.integration_connection_path ??
+            useConnectionStore
+              .getState()
+              .connections.find((c) => c.id === run.integration_connection_id)?.path ??
+            null,
+          prompt,
+          mode: 'build',
+          modelConfig,
+          goalMode: false,
+          goalSuccessCriteria: null,
+          onSessionCreated
+        })
+      : await launchSessionWithModel({
+          projectId: run.project_id,
+          worktreeId: run.integration_worktree_id as string,
+          prompt,
+          mode: 'build',
+          modelConfig,
+          goalMode: false,
+          goalSuccessCriteria: null,
+          // The run's own ticket shows this session; a ticket that merely waits on the
+          // integration worktree must not be handed it.
+          skipKanbanAttach: true,
+          onSessionCreated
+        })
     if (result.success && result.sessionId) {
       // Stopped (here, or in another window) while the prompt was on its way: the stop found
       // no turn to abort, and the agent that has started since is the run's no longer. The

@@ -45,7 +45,11 @@ import { useProjectStore } from '@/stores/useProjectStore'
 import { useUsageStore, resolveDefaultUsageProvider } from '@/stores/useUsageStore'
 import { useSettingsStore, resolvePreferredAgentSdk } from '@/stores/useSettingsStore'
 import { isBlockerSatisfied } from '@/lib/blocker-utils'
-import { buildConnectionMergeQueue, resolveTicketConnectionId } from '@/lib/connection-merge'
+import {
+  buildConnectionMergeQueue,
+  queueConnectionRunMerge,
+  resolveTicketConnectionId
+} from '@/lib/connection-merge'
 import type {
   KanbanTicket,
   KanbanTicketColumn as ColumnType,
@@ -564,10 +568,12 @@ export function KanbanColumn({
         // A document run's ticket follows its run: In Progress while the run is on, then
         // Review, Merged or Done. It has no session, so it never takes the launch or the
         // stop-session paths below.
-        const documentRunId = documentRunIdOf(findTicket(ticketId, ticketProjectId))
+        const documentRunTicket = findTicket(ticketId, ticketProjectId)
+        const documentRunId = documentRunIdOf(documentRunTicket)
         if (documentRunId) {
-          let run: Pick<DocumentRun, 'status' | 'migration_session_id'> | undefined =
-            useDocumentFlowStore.getState().runsById[documentRunId]?.run
+          let run:
+            | Pick<DocumentRun, 'status' | 'migration_session_id' | 'integration_connection_id'>
+            | undefined = useDocumentFlowStore.getState().runsById[documentRunId]?.run
           if (!run) {
             try {
               // No run when its record is gone; then only its ticket is left to move
@@ -595,6 +601,39 @@ export function KanbanColumn({
             )
             store.moveTicket(ticketId, ticketProjectId, column, sortOrder)
             return
+          }
+          // A connection run's ticket has no worktree: its integration branch lives in an
+          // instance, one worktree per member. Done/Merged take the per-member merge-on-done
+          // queue of a connection-project ticket (each member gets the archive/keep step).
+          if (
+            (column === 'done' || column === 'merged') &&
+            !documentRunTicket?.worktree_id &&
+            run?.integration_connection_id
+          ) {
+            // Review/Merged → Done drops queue already-merged members too, so the
+            // archive/keep prompt still shows (the single-worktree archivePromptOnly analog)
+            const archivePromptOnly =
+              column === 'done' && (sourceColumn === 'review' || sourceColumn === 'merged')
+            try {
+              const queued = await queueConnectionRunMerge({
+                connectionId: run.integration_connection_id,
+                ticketId,
+                projectId: ticketProjectId,
+                targetColumn: column,
+                sortOrder: store.computeSortOrder(
+                  projectTicketsForColumn(ticketProjectId),
+                  projectLocalDropIndex(ticketProjectId, targetIndex)
+                ),
+                archivePromptOnly
+              })
+              if (queued) return
+            } catch (err) {
+              toast.warning(
+                `Could not verify merge status: ${err instanceof Error ? err.message : String(err)}`
+              )
+              return
+            }
+            // Instance gone, or nothing left to merge in any member — plain move below
           }
         }
 

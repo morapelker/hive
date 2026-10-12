@@ -6,6 +6,7 @@ import {
   Copy,
   CopyPlus,
   ExternalLink,
+  FileText,
   FolderPlus,
   Link,
   MoreHorizontal,
@@ -43,6 +44,7 @@ import {
   useWorktreeStore
 } from '@/stores'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
+import { useImplementDocumentEntry } from './useImplementDocumentEntry'
 import { useSidebarHoverHighlight } from '@/hooks'
 import { HintBadge } from '@/components/ui/HintBadge'
 import {
@@ -176,6 +178,10 @@ export function ConnectionItem({
       setIsSavingAsProject(false)
     }
   }, [isSavingAsProject, saveConnectionAsProject, connection.id])
+
+  // "Implement Document…": a document run on this connection's project (an ad-hoc
+  // connection is promoted with "Save as Project" first, so it needs >=2 members too)
+  const implementDocument = useImplementDocumentEntry(connection)
 
   // "Duplicate": a new connection from the same projects, on new worktrees
   const duplicateConnection = useConnectionStore((s) => s.duplicateConnection)
@@ -511,6 +517,16 @@ export function ConnectionItem({
           Save as Project
         </ContextMenuItem>
       )}
+      {implementDocument.available && (
+        <ContextMenuItem
+          data-testid="docflow-connection-menu-item"
+          onClick={() => void implementDocument.open()}
+          disabled={implementDocument.busy}
+        >
+          <FileText className="h-4 w-4 mr-2" />
+          Implement Document…
+        </ContextMenuItem>
+      )}
       <ContextMenuSeparator />
       <ContextMenuItem onClick={handleOpenInTerminal}>
         <Terminal className="h-4 w-4 mr-2" />
@@ -725,6 +741,16 @@ export function ConnectionItem({
                       <DropdownMenuItem onClick={handleSaveAsProject} disabled={isSavingAsProject}>
                         <FolderPlus className="h-4 w-4 mr-2" />
                         Save as Project
+                      </DropdownMenuItem>
+                    )}
+                    {implementDocument.available && (
+                      <DropdownMenuItem
+                        data-testid="docflow-connection-menu-item"
+                        onClick={() => void implementDocument.open()}
+                        disabled={implementDocument.busy}
+                      >
+                        <FileText className="h-4 w-4 mr-2" />
+                        Implement Document…
                       </DropdownMenuItem>
                     )}
                     <DropdownMenuSeparator />

@@ -415,7 +415,9 @@ describe('useDocumentFlowStore', () => {
           generation: null,
           baseBranch: null,
           notes: null,
-          verificationDisabled: false
+          verificationDisabled: false,
+          memberBaseBranches: {},
+          memberVerifyCommands: {}
         }
       })
       api.start.mockResolvedValue(started)

@@ -1,6 +1,7 @@
 import { connectionApi } from '@/api/connection-api'
 import { dbApi } from '@/api/db-api'
 import { gitApi } from '@/api/git-api'
+import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import type { Session, Worktree } from '../../../main/db/types'
 
@@ -19,7 +20,9 @@ export async function resolveTicketConnectionId(
   sessionId: string | null | undefined
 ): Promise<string | null> {
   if (!sessionId) return null
-  for (const [connectionId, sessions] of useSessionStore.getState().sessionsByConnection.entries()) {
+  for (const [connectionId, sessions] of useSessionStore
+    .getState()
+    .sessionsByConnection.entries()) {
     if (sessions.some((s) => s.id === sessionId)) return connectionId
   }
   const session = await dbApi.session.get<Session>(sessionId)
@@ -91,4 +94,39 @@ export async function buildConnectionMergeQueue(
   )
 
   return assessed.filter((t): t is ConnectionMergeTarget => t !== null)
+}
+
+/**
+ * Done/Merged for the ticket of a document run on a connection project: the ticket has neither
+ * worktree nor session, and its integration branches live in the run's instance, one worktree
+ * per member. Queue the per-member merge-on-done flow a connection-project ticket gets (archive /
+ * keep step for each member; `archivePromptOnly` queues already-merged members too, so the
+ * prompt still shows on a Review/Merged → Done move). Returns true when a queue was set and the
+ * move is the dialog's to finish; false when nothing is left to merge (the caller moves the
+ * ticket). Rejects when a member cannot be assessed: Done means merged for this ticket.
+ */
+export async function queueConnectionRunMerge(args: {
+  connectionId: string
+  ticketId: string
+  projectId: string
+  targetColumn: 'done' | 'merged'
+  sortOrder: number
+  archivePromptOnly: boolean
+}): Promise<boolean> {
+  const queue = await buildConnectionMergeQueue(args.connectionId, {
+    includeAlreadyMerged: args.archivePromptOnly
+  })
+  if (queue.length === 0) return false
+  const [first, ...rest] = queue
+  useKanbanStore.getState().setPendingDoneMove({
+    ticketId: args.ticketId,
+    projectId: args.projectId,
+    sortOrder: args.sortOrder,
+    targetColumn: args.targetColumn,
+    worktreeId: first.worktreeId,
+    worktreeProjectId: first.projectId,
+    remainingWorktrees: rest,
+    offerArchive: true
+  })
+  return true
 }

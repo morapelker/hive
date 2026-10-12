@@ -300,21 +300,73 @@ describe('createRun', () => {
     expect(harness.generateCalls).toEqual([])
   })
 
-  it('refuses a connection project and an unknown project', async () => {
+  it('refuses a connection project without two members and an unknown project', async () => {
+    harness.projects.set('member-1', {
+      id: 'member-1',
+      name: 'web',
+      path: '/repos/web',
+      kind: 'git'
+    })
     harness.projects.set('connection-1', {
       id: 'connection-1',
       name: 'Both apps',
       path: join(harness.scratch, 'connection'),
-      kind: 'connection'
+      kind: 'connection',
+      // Two listed, one of them removed from the app since.
+      member_project_ids: JSON.stringify(['member-1', 'member-gone'])
     })
 
     await expect(
       harness.service.createRun({ projectId: 'connection-1', documentPath: specPath })
-    ).rejects.toThrow('Documents cannot be implemented in a connection project yet.')
+    ).rejects.toMatchObject({
+      code: 'INVALID_STATE',
+      message: 'Both apps needs at least two member projects to implement a document in; it has 1.'
+    })
     await expect(
       harness.service.createRun({ projectId: 'unknown', documentPath: specPath })
     ).rejects.toMatchObject({ code: 'NOT_FOUND', message: 'The project was not found.' })
     expect(harness.db.runs.size).toBe(0)
+  })
+
+  it('accepts a connection project with members and extracts inside its directory', async () => {
+    const connectionPath = join(harness.scratch, 'connection')
+    mkdirSync(connectionPath)
+    harness.projects.set('member-1', {
+      id: 'member-1',
+      name: 'web',
+      path: '/repos/web',
+      kind: 'git'
+    })
+    harness.projects.set('member-2', {
+      id: 'member-2',
+      name: 'api',
+      path: '/repos/api',
+      kind: 'git'
+    })
+    harness.projects.set('connection-1', {
+      id: 'connection-1',
+      name: 'Both apps',
+      path: connectionPath,
+      kind: 'connection',
+      member_project_ids: JSON.stringify(['member-1', 'member-2'])
+    })
+    harness.replies.push(replyFor())
+
+    const detail = await harness.service.createRun({
+      projectId: 'connection-1',
+      documentPath: specPath
+    })
+    await harness.service.whenExtractionSettled(detail.run.id)
+
+    expect(harness.service.get(detail.run.id)?.run).toMatchObject({
+      project_id: 'connection-1',
+      status: 'preview'
+    })
+    // The connection directory links every member: the model reads them all through it.
+    expect(harness.generateCalls[0]?.options).toMatchObject({
+      cwd: connectionPath,
+      readRepository: true
+    })
   })
 })
 

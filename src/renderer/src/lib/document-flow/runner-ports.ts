@@ -31,6 +31,8 @@ import { useSessionStore } from '@/stores/useSessionStore'
 import { resolvePreferredAgentSdk, useSettingsStore } from '@/stores/useSettingsStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { fireSetupScript, useWorktreeStore } from '@/stores/useWorktreeStore'
+import { useConnectionStore } from '@/stores/useConnectionStore'
+import { connectionApi } from '@/api/connection-api'
 import type { KanbanTicket, KanbanTicketColumn, Session } from '../../../../main/db/types'
 import { tellQuestionMode } from './question-mode'
 import { getSessionSignal, startSessionSignalLatch, type SessionSignal } from './session-signal'
@@ -71,6 +73,14 @@ export interface RunnerWorktree {
   path: string
 }
 
+/** A connection instance as the runner needs it: where it is, and which worktree is whose. */
+export interface RunnerConnection {
+  id: string
+  path: string
+  status: 'active' | 'archived'
+  members: { project_id: string; worktree_id: string; branch_name: string; path: string }[]
+}
+
 export interface RunnerNotice {
   level: 'info' | 'success' | 'warning' | 'error'
   message: string
@@ -93,8 +103,11 @@ export interface RunnerPorts {
   subscribe(listener: () => void): () => void
 
   // ── Board and worktrees ──
-  /** Make sure the project's worktrees and board tickets are in the stores. */
-  loadProject(projectId: string): Promise<void>
+  /**
+   * Make sure the project's worktrees and board tickets are in the stores. A connection
+   * project names its members: their worktrees and the connections are loaded too.
+   */
+  loadProject(projectId: string, memberProjectIds?: readonly string[]): Promise<void>
   getTicket(projectId: string, ticketId: string): RunnerTicket | null
   reloadTickets(projectId: string): Promise<void>
   createTicket(
@@ -112,8 +125,12 @@ export interface RunnerPorts {
   buildTicketPrompt(ticket: RunnerTicket): string
   getWorktree(worktreeId: string): RunnerWorktree | null
   reloadWorktrees(projectId: string): Promise<void>
+  /** A connection instance, from the store or the server; null when it no longer exists. */
+  getConnection(connectionId: string): Promise<RunnerConnection | null>
 
   // ── Sessions ──
+  /** The instance a connection session runs on; null for a worktree session or an unknown one. */
+  getSessionConnectionId(sessionId: string): Promise<string | null>
   /** The app's default launch: what "Create & Send" would run with. */
   resolveDefaultLaunch(): DocumentRunLaunchConfig
   /** Never rejects; a failure comes back as `{ success: false }`. */
@@ -204,6 +221,46 @@ async function isSessionStarted(sessionId: string): Promise<boolean> {
   return live.terminalIds.includes(sessionId)
 }
 
+/** What the store's connection and the server's `ConnectionWithMembers` both carry. */
+interface ConnectionLike {
+  id: string
+  path: string
+  status: 'active' | 'archived'
+  members: {
+    project_id: string
+    worktree_id: string
+    worktree_branch: string
+    worktree_path: string
+  }[]
+}
+
+const toRunnerConnection = (connection: ConnectionLike): RunnerConnection => ({
+  id: connection.id,
+  path: connection.path,
+  status: connection.status,
+  members: connection.members.map((member) => ({
+    project_id: member.project_id,
+    worktree_id: member.worktree_id,
+    branch_name: member.worktree_branch,
+    path: member.worktree_path
+  }))
+})
+
+/** The store first (it holds what this page created), then the server (another window may have). */
+async function getConnection(connectionId: string): Promise<RunnerConnection | null> {
+  const loaded = useConnectionStore.getState().connections.find((c) => c.id === connectionId)
+  if (loaded) return toRunnerConnection(loaded)
+  const result = await connectionApi.get(connectionId)
+  return result.success && result.connection ? toRunnerConnection(result.connection) : null
+}
+
+async function getSessionConnectionId(sessionId: string): Promise<string | null> {
+  const row =
+    useSessionStore.getState().getSessionById(sessionId) ??
+    (await dbApi.session.get<Session>(sessionId))
+  return row?.connection_id ?? null
+}
+
 /** The app's default launch: what "Create & Send" would run with. */
 export function resolveDefaultLaunchConfig(): DocumentRunLaunchConfig {
   const sdk = resolvePreferredAgentSdk()
@@ -254,10 +311,19 @@ export function createLiveRunnerPorts(): RunnerPorts {
       }
     },
 
-    loadProject: async (projectId) => {
+    loadProject: async (projectId, memberProjectIds) => {
       await useWorktreeStore.getState().loadWorktrees(projectId)
       if (!useKanbanStore.getState().tickets.has(projectId)) {
         await useKanbanStore.getState().loadTickets(projectId)
+      }
+      if (memberProjectIds && memberProjectIds.length > 0) {
+        // The run's instances are connections over the members' worktrees: both must be in
+        // the stores for the launch pipeline to find them, and the server made the
+        // integration instance behind this page's back.
+        await Promise.all(
+          memberProjectIds.map((memberId) => useWorktreeStore.getState().loadWorktrees(memberId))
+        )
+        await useConnectionStore.getState().loadConnections()
       }
     },
     getTicket: (projectId, ticketId) =>
@@ -296,7 +362,9 @@ export function createLiveRunnerPorts(): RunnerPorts {
     },
     reloadWorktrees: (projectId) =>
       useWorktreeStore.getState().loadWorktrees(projectId, { force: true }),
+    getConnection,
 
+    getSessionConnectionId,
     resolveDefaultLaunch: resolveDefaultLaunchConfig,
     launchTicket: (spec) => launchTicketWithModel(spec),
     completeOrphanSession: async (sessionId) => {

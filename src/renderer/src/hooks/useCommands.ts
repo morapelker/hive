@@ -7,7 +7,8 @@ import {
   useSessionHistoryStore,
   useLayoutStore,
   useSettingsStore,
-  useKanbanStore
+  useKanbanStore,
+  useConnectionStore
 } from '@/stores'
 
 import { useFileViewerStore } from '@/stores/useFileViewerStore'
@@ -52,6 +53,8 @@ export function useCommands() {
   const { toggleLeftSidebar, toggleRightSidebar } = useLayoutStore()
   const { toggleBoardView } = useKanbanStore()
   const { getDisplayString } = useShortcutStore()
+  const selectedConnectionId = useConnectionStore((s) => s.selectedConnectionId)
+  const connections = useConnectionStore((s) => s.connections)
   const {
     searchQuery,
     recentCommandIds,
@@ -78,10 +81,15 @@ export function useCommands() {
 
   // Register all commands on mount
   useEffect(() => {
-    // A document run cuts one integration branch, so it needs a single git repository.
+    // A document run belongs to a project of any kind (a connection project cuts one
+    // integration branch per member). From a connection instance it is the instance's
+    // connection project; an ad-hoc connection has none.
     const selectedProject = projects.find((p) => p.id === selectedProjectId)
+    const selectedConnection = selectedConnectionId
+      ? connections.find((c) => c.id === selectedConnectionId)
+      : undefined
     const documentFlowProjectId =
-      selectedProject && selectedProject.kind !== 'connection' ? selectedProject.id : null
+      selectedProject?.id ?? selectedConnection?.saved_project_id ?? null
 
     const commands: Command[] = [
       // =====================
@@ -742,6 +750,8 @@ export function useCommands() {
   }, [
     projects,
     selectedProjectId,
+    selectedConnectionId,
+    connections,
     selectProject,
     toggleProjectExpanded,
     selectWorktree,

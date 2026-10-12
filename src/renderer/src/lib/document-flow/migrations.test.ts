@@ -8,7 +8,12 @@ import type {
 } from '@shared/types/document-flow'
 import { markSessionAborted } from '@/api/opencode-api'
 import { makeDetail, makeReport, makeRun } from '@/components/document-flow/test-fixtures'
-import type { SessionLaunchResult, SessionLaunchSpec } from '@/lib/ticket-launch'
+import type {
+  ConnectionSessionLaunchSpec,
+  SessionLaunchResult,
+  SessionLaunchSpec
+} from '@/lib/ticket-launch'
+import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import { useQuestionStore } from '@/stores/useQuestionStore'
 import { useSessionStore } from '@/stores/useSessionStore'
@@ -39,6 +44,7 @@ const mocks = vi.hoisted(() => ({
   sessionGet: vi.fn(),
   worktreeGet: vi.fn(),
   launchSessionWithModel: vi.fn(),
+  launchSessionOnConnection: vi.fn(),
   resolveDefaultLaunchConfig: vi.fn(),
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() }
 }))
@@ -72,7 +78,10 @@ vi.mock('@/api/db-api', () => ({
     setting: { get: vi.fn(async () => null), set: vi.fn(async () => undefined) }
   }
 }))
-vi.mock('@/lib/ticket-launch', () => ({ launchSessionWithModel: mocks.launchSessionWithModel }))
+vi.mock('@/lib/ticket-launch', () => ({
+  launchSessionWithModel: mocks.launchSessionWithModel,
+  launchSessionOnConnection: mocks.launchSessionOnConnection
+}))
 vi.mock('@/lib/toast', () => ({ toast: mocks.toast }))
 vi.mock('./runner-ports', () => ({
   resolveDefaultLaunchConfig: mocks.resolveDefaultLaunchConfig
@@ -125,6 +134,44 @@ const migratingRun = (overrides: Partial<DocumentRun> = {}): DocumentRun =>
   finishedRun({
     migration_session_id: SESSION,
     migration_started_at: new Date(STARTED_AT).toISOString(),
+    ...overrides
+  })
+
+const CONNECTION = 'conn-integration'
+const CONNECTION_PATH = '/connections/conn-integration'
+const MEMBERS = [
+  {
+    project_id: 'p-web',
+    project_name: 'Web',
+    project_path: '/repo/web',
+    symlink_name: 'web',
+    base_branch: 'main',
+    base_sha: 'bw',
+    integration_branch: BRANCH,
+    integration_worktree_id: 'wt-int-web',
+    integration_worktree_path: '/w/int-web'
+  },
+  {
+    project_id: 'p-api',
+    project_name: 'Api',
+    project_path: '/repo/api',
+    symlink_name: 'api',
+    base_branch: 'main',
+    base_sha: 'ba',
+    integration_branch: BRANCH,
+    integration_worktree_id: 'wt-int-api',
+    integration_worktree_path: '/w/int-api'
+  }
+]
+
+/** The same finished run on a connection project: an integration instance, no worktree. */
+const finishedConnectionRun = (overrides: Partial<DocumentRun> = {}): DocumentRun =>
+  finishedRun({
+    integration_worktree_id: null,
+    integration_worktree_path: null,
+    integration_connection_id: CONNECTION,
+    integration_connection_path: CONNECTION_PATH,
+    members: MEMBERS,
     ...overrides
   })
 
@@ -341,6 +388,35 @@ describe('migrationsRefusal', () => {
   it('refuses nothing over worktrees that are not loaded yet', () => {
     expect(migrationsRefusal(finishedRun(), undefined)).toBeNull()
   })
+
+  describe('of a connection run', () => {
+    const connections = new Set([CONNECTION])
+
+    it('allows a finished run whose integration instance is loaded and active', () => {
+      expect(migrationsRefusal(finishedConnectionRun(), undefined, connections)).toBeNull()
+      // The worktrees say nothing about an instance.
+      expect(migrationsRefusal(finishedConnectionRun(), new Set(), connections)).toBeNull()
+    })
+
+    it.each([
+      ['instance', { integration_connection_id: null }],
+      ['branch', { integration_branch: null }]
+    ] as const)('refuses a run without an integration %s', (_name, overrides) => {
+      expect(migrationsRefusal(finishedConnectionRun(overrides), undefined, connections)).toBe(
+        'The run has no integration instance to execute the migrations in.'
+      )
+    })
+
+    it('refuses when the instance is gone, naming the branch', () => {
+      const refusal = migrationsRefusal(finishedConnectionRun(), undefined, new Set(['other']))
+      expect(refusal).toContain(`The instance of ${BRANCH} was archived or deleted`)
+      expect(migrationsRefusal(finishedConnectionRun(), undefined, new Set())).toBe(refusal)
+    })
+
+    it('refuses nothing over connections that are not loaded yet', () => {
+      expect(migrationsRefusal(finishedConnectionRun(), undefined, undefined)).toBeNull()
+    })
+  })
 })
 
 describe('startRunMigrations', () => {
@@ -466,6 +542,122 @@ describe('startRunMigrations', () => {
     expect(loadWorktrees.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.launchSessionWithModel.mock.invocationCallOrder[0]
     )
+  })
+
+  describe('of a connection run', () => {
+    const initialConnectionState = useConnectionStore.getState()
+    let loadConnections: ReturnType<typeof vi.fn>
+
+    const connectionLaunchEnds = (
+      end: (spec: ConnectionSessionLaunchSpec) => SessionLaunchResult,
+      session: Session = makeSession({ worktree_id: null, connection_id: CONNECTION })
+    ): void => {
+      mocks.launchSessionOnConnection.mockImplementation(
+        async (spec: ConnectionSessionLaunchSpec) => {
+          try {
+            await spec.onSessionCreated?.({
+              session,
+              customProviderId: null,
+              model: spec.modelConfig.model
+            })
+          } catch (error) {
+            return { success: false, error: (error as Error).message, sessionId: session.id }
+          }
+          return end(spec)
+        }
+      )
+    }
+
+    const connectionSpec = (): ConnectionSessionLaunchSpec =>
+      mocks.launchSessionOnConnection.mock.calls[0][0]
+
+    beforeEach(() => {
+      loadConnections = vi.fn(async () => undefined)
+      useConnectionStore.setState({
+        loaded: true,
+        loadConnections,
+        connections: [
+          { id: CONNECTION, status: 'active', path: CONNECTION_PATH, members: [] }
+        ] as never
+      })
+      connectionLaunchEnds(() => ({ success: true, sessionId: SESSION }))
+    })
+
+    afterEach(() => {
+      useConnectionStore.setState(initialConnectionState, true)
+    })
+
+    it('launches the session on the integration instance with the members in the prompt', async () => {
+      seedRun(finishedConnectionRun({ config: { ...makeRun().config, defaultLaunch: RUN_LAUNCH } }))
+
+      await startRunMigrations(RUN)
+
+      expect(mocks.launchSessionWithModel).not.toHaveBeenCalled()
+      expect(mocks.launchSessionOnConnection).toHaveBeenCalledExactlyOnceWith({
+        connectionId: CONNECTION,
+        connectionPath: CONNECTION_PATH,
+        prompt: buildMigrationPrompt({
+          documentTitle: 'Checkout redesign',
+          integrationBranch: BRANCH,
+          migrations: MIGRATIONS,
+          sdk: 'codex',
+          workspace: [
+            { symlinkName: 'web', projectName: 'Web' },
+            { symlinkName: 'api', projectName: 'Api' }
+          ]
+        }),
+        mode: 'build',
+        modelConfig: RUN_LAUNCH,
+        goalMode: false,
+        goalSuccessCriteria: null,
+        onSessionCreated: expect.any(Function)
+      })
+      expect(connectionSpec().prompt).toContain('this is a connection directory')
+      expect(connectionSpec().prompt).toContain('`web/` is Web, `api/` is Api')
+      // Named and recorded like a worktree session.
+      expect(updateSessionName).toHaveBeenCalledWith(SESSION, `Migrations — ${BRANCH}`)
+      expect(mocks.startMigrations).toHaveBeenCalledWith(RUN, SESSION)
+      expect(runInStore().migration_session_id).toBe(SESSION)
+    })
+
+    it('reloads the connections, not the worktrees, before it decides', async () => {
+      seedRun(finishedConnectionRun())
+
+      await startRunMigrations(RUN)
+
+      expect(loadConnections).toHaveBeenCalledTimes(1)
+      expect(loadWorktrees).not.toHaveBeenCalled()
+      expect(loadConnections.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.launchSessionOnConnection.mock.invocationCallOrder[0]
+      )
+    })
+
+    it('rejects without launching when the reload shows the instance is gone', async () => {
+      seedRun(finishedConnectionRun())
+      loadConnections.mockImplementation(async () => {
+        useConnectionStore.setState({ connections: [], loaded: true })
+      })
+
+      await expect(startRunMigrations(RUN)).rejects.toThrow(
+        `The instance of ${BRANCH} was archived or deleted`
+      )
+      expect(mocks.launchSessionOnConnection).not.toHaveBeenCalled()
+    })
+
+    it('discards the session and releases the run when the agent could not be started', async () => {
+      seedRun(finishedConnectionRun())
+      connectionLaunchEnds(() => ({
+        success: false,
+        error: 'Failed to start Claude CLI',
+        sessionId: SESSION
+      }))
+
+      await expect(startRunMigrations(RUN)).rejects.toThrow('Failed to start Claude CLI')
+
+      expect(closeSession).toHaveBeenCalledWith(SESSION)
+      expect(mocks.endMigrations).toHaveBeenCalledWith(RUN, SESSION, 'stopped')
+      expect(runInStore().migration_session_id).toBeNull()
+    })
   })
 
   it('launches when the worktrees could not be loaded: an unknown worktree is not an archived one', async () => {

@@ -3,7 +3,8 @@ import { AlertTriangle, Check, ChevronDown, ChevronRight, X } from 'lucide-react
 import type {
   DocumentRunEvent,
   DocumentRunItem,
-  DocumentRunReport
+  DocumentRunReport,
+  DocumentRunReportMember
 } from '@shared/types/document-flow'
 import {
   DOCUMENT_RUN_ITEM_STATUS_LABELS,
@@ -27,6 +28,11 @@ export function RunReportSection({
   migrationsAction?: React.ReactNode
 }): React.JSX.Element {
   const { stats, verify } = report
+  // A connection run reports per member; the totals below are summed over them.
+  const members = report.members && report.members.length > 0 ? report.members : null
+  const movedBases = members
+    ? members.filter((member) => member.baseMoved).map((member) => member.baseBranch)
+    : [report.baseBranch]
   return (
     <section className="space-y-3" data-testid="docflow-report">
       <p className={SECTION_LABEL_CLASS}>Report</p>
@@ -37,8 +43,9 @@ export function RunReportSection({
           data-testid="docflow-report-base-moved"
         >
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          {report.baseBranch} has new commits since this run started — merge or rebase before
-          landing
+          {members
+            ? `${describeMovedBases(members)} since this run started — merge or rebase before landing`
+            : `${movedBases[0]} has new commits since this run started — merge or rebase before landing`}
         </p>
       )}
 
@@ -58,17 +65,27 @@ export function RunReportSection({
           What is left for you: {report.migrations.length > 0 ? 'run the migrations, ' : ''}review,
           then move the run&rsquo;s ticket to Done on the board to merge{' '}
           <span className="font-mono text-[12px]">{report.integrationBranch}</span> into{' '}
-          <span className="font-mono text-[12px]">{report.baseBranch}</span>.
+          <span className="font-mono text-[12px]">{report.baseBranch}</span>
+          {members ? ' in every member repository' : ''}.
         </p>
       )}
+
+      {members && <ReportMembersTable members={members} />}
 
       <p className="text-[12px] text-muted-foreground" data-testid="docflow-report-stats">
         {pluralize(stats.commits, 'commit')} · {pluralize(stats.filesChanged, 'file')} changed ·{' '}
         <span className="text-emerald-500">+{stats.insertions}</span>{' '}
-        <span className="text-red-500">−{stats.deletions}</span> ·{' '}
-        <span className="font-mono">
-          {shortSha(report.baseSha)}..{shortSha(report.headSha)}
-        </span>
+        <span className="text-red-500">−{stats.deletions}</span>
+        {/* The members table carries the range per member; a connection report has no single one */}
+        {!members && (
+          <>
+            {' '}
+            ·{' '}
+            <span className="font-mono">
+              {shortSha(report.baseSha)}..{shortSha(report.headSha)}
+            </span>
+          </>
+        )}
       </p>
 
       {verify && (
@@ -148,6 +165,77 @@ export function RunReportSection({
         </div>
       )}
     </section>
+  )
+}
+
+/** "main (web) and master (api) have new commits" — the members whose base moved. */
+function describeMovedBases(members: readonly DocumentRunReportMember[]): string {
+  const moved = members.filter((member) => member.baseMoved)
+  const names = moved.map((member) => `${member.baseBranch} (${member.project_name})`)
+  const list =
+    names.length <= 1
+      ? names.join('')
+      : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
+  return `${list} ${moved.length === 1 ? 'has' : 'have'} new commits`
+}
+
+const MEMBER_ROW_CLASS =
+  'grid grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_minmax(0,1fr)_96px_64px_72px] items-center gap-2 px-3'
+
+/** The git summary of every member of a connection run, above the summed totals. */
+function ReportMembersTable({
+  members
+}: {
+  members: readonly DocumentRunReportMember[]
+}): React.JSX.Element {
+  return (
+    <div className="rounded-[8px] border border-border" data-testid="docflow-report-members">
+      <div
+        className={`${MEMBER_ROW_CLASS} border-b border-border py-1.5 text-[11px] text-muted-foreground`}
+      >
+        <span>Project</span>
+        <span>Branch</span>
+        <span>Base</span>
+        <span>Changes</span>
+        <span>Commits</span>
+        <span>Base moved</span>
+      </div>
+      <div className="divide-y divide-border/60">
+        {members.map((member) => (
+          <div
+            key={member.project_id}
+            className={`${MEMBER_ROW_CLASS} py-1.5 text-[12px]`}
+            data-testid={`docflow-report-member-${member.project_id}`}
+          >
+            <span className="truncate text-foreground" title={member.project_name}>
+              {member.project_name}
+            </span>
+            <span
+              className="truncate font-mono text-[11px] text-foreground"
+              title={`${member.integrationBranch} · ${shortSha(member.baseSha)}..${shortSha(member.headSha)}`}
+            >
+              {member.integrationBranch}
+            </span>
+            <span className="truncate font-mono text-[11px] text-muted-foreground">
+              {member.baseBranch}
+            </span>
+            <span className="tabular-nums text-muted-foreground">
+              {pluralize(member.stats.filesChanged, 'file')}{' '}
+              <span className="text-emerald-500">+{member.stats.insertions}</span>{' '}
+              <span className="text-red-500">−{member.stats.deletions}</span>
+            </span>
+            <span className="tabular-nums text-muted-foreground">{member.stats.commits}</span>
+            <span
+              className={
+                member.baseMoved ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'
+              }
+            >
+              {member.baseMoved ? 'yes' : 'no'}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
   )
 }
 

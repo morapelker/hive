@@ -97,6 +97,7 @@ import { baseInstanceLabel, isBaseInstance } from '@/lib/connection-project'
 import { ArchiveConfirmDialog } from '@/components/worktrees/ArchiveConfirmDialog'
 import { AddAttachmentDialog } from '@/components/worktrees/AddAttachmentDialog'
 import { ManageConnectionWorktreesDialog } from '@/components/connections/ManageConnectionWorktreesDialog'
+import { useImplementDocumentEntry } from '@/components/connections/useImplementDocumentEntry'
 import {
   useSiblingAggregate,
   useConnectionInstanceAggregate,
@@ -1122,6 +1123,10 @@ function PinnedConnectionItem({
     setManageConnectionId(connectionId)
   }, [connectionId])
 
+  // "Implement Document…" on the connection's project; an ad-hoc connection is saved as
+  // a project first (same >=2-member bar as "Save as Project")
+  const implementDocument = useImplementDocumentEntry(connection)
+
   if (!connection) return null
 
   // Build the project names string from unique project names
@@ -1171,6 +1176,16 @@ function PinnedConnectionItem({
         <PinOff className="h-4 w-4 mr-2" />
         Unpin
       </MenuItem>
+      {implementDocument.available && (
+        <MenuItem
+          data-testid="docflow-pinned-connection-menu-item"
+          onClick={() => void implementDocument.open()}
+          disabled={implementDocument.busy}
+        >
+          <FileText className="h-4 w-4 mr-2" />
+          Implement Document…
+        </MenuItem>
+      )}
       <MenuSeparator />
       <MenuItem onClick={handleOpenInTerminal}>
         <Terminal className="h-4 w-4 mr-2" />

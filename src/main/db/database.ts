@@ -289,6 +289,9 @@ const DOCUMENT_RUN_PATCH_COLUMNS: Record<keyof DocumentRunRowPatch, DocumentFlow
   integration_branch: 'plain',
   integration_worktree_id: 'plain',
   integration_worktree_path: 'plain',
+  integration_connection_id: 'plain',
+  integration_connection_path: 'plain',
+  members: 'json',
   ticket_id: 'plain',
   report: 'json',
   migration_session_id: 'plain',
@@ -313,6 +316,8 @@ const DOCUMENT_RUN_ITEM_PATCH_COLUMNS: Record<
   status_detail: 'plain',
   ticket_id: 'plain',
   worktree_id: 'plain',
+  connection_id: 'plain',
+  members: 'json',
   session_id: 'plain',
   fix_ticket_id: 'plain',
   fix_session_id: 'plain',
@@ -710,6 +715,11 @@ export class DatabaseService implements DocumentFlowDb {
     this.safeAddColumn('document_runs', 'migration_session_id', 'TEXT DEFAULT NULL')
     this.safeAddColumn('document_runs', 'migration_started_at', 'TEXT DEFAULT NULL')
     this.safeAddColumn('document_runs', 'migration_owner_pid', 'INTEGER DEFAULT NULL')
+    this.safeAddColumn('document_runs', 'integration_connection_id', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('document_runs', 'integration_connection_path', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('document_runs', 'members', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('document_run_items', 'connection_id', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('document_run_items', 'members', 'TEXT DEFAULT NULL')
   }
 
   /**
@@ -1205,6 +1215,12 @@ export class DatabaseService implements DocumentFlowDb {
       integration_branch: (row.integration_branch as string | null) ?? null,
       integration_worktree_id: (row.integration_worktree_id as string | null) ?? null,
       integration_worktree_path: (row.integration_worktree_path as string | null) ?? null,
+      integration_connection_id: (row.integration_connection_id as string | null) ?? null,
+      integration_connection_path: (row.integration_connection_path as string | null) ?? null,
+      members:
+        row.members === null || row.members === undefined
+          ? null
+          : this.parseDocumentFlowArray<NonNullable<DocumentRun['members']>[number]>(row.members),
       ticket_id: (row.ticket_id as string | null) ?? null,
       report: this.parseDocumentFlowObject<NonNullable<DocumentRun['report']>>(row.report),
       migration_session_id: (row.migration_session_id as string | null) ?? null,
@@ -1251,6 +1267,13 @@ export class DatabaseService implements DocumentFlowDb {
       status_detail: (row.status_detail as string | null) ?? null,
       ticket_id: (row.ticket_id as string | null) ?? null,
       worktree_id: (row.worktree_id as string | null) ?? null,
+      connection_id: (row.connection_id as string | null) ?? null,
+      members:
+        row.members === null || row.members === undefined
+          ? null
+          : this.parseDocumentFlowArray<NonNullable<DocumentRunItem['members']>[number]>(
+              row.members
+            ),
       session_id: (row.session_id as string | null) ?? null,
       fix_ticket_id: (row.fix_ticket_id as string | null) ?? null,
       fix_session_id: (row.fix_session_id as string | null) ?? null,

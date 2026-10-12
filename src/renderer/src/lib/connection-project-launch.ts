@@ -14,7 +14,7 @@ import { isAgentCli } from '@shared/types/agent-sdk'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { shellCommandIdOfTicket } from '@shared/lib/shell-commands'
-import { useSessionStore } from '@/stores/useSessionStore'
+import { useSessionStore, type Session as StoreSession } from '@/stores/useSessionStore'
 import {
   useSettingsStore,
   resolveModelForSdk,
@@ -34,7 +34,7 @@ import { snapshotTokenBaseline } from '@/lib/token-baselines'
 import { bumpWorktreeLastMessage } from '@/lib/last-message-utils'
 import { startHivePromptTelemetry } from '@/lib/hive-enterprise-telemetry'
 import { createPlanFile, exceedsGoalPromptLimit, planFilePrompt } from '@/lib/goal-plan-file'
-import { resolveBadgeModel } from '@/lib/ticket-launch'
+import { resolveBadgeModel, resolveCustomProviderBadge } from '@/lib/ticket-launch'
 import { insertConnectionLocally } from '@/lib/connection-create'
 import { autoPinForBoardPrompt } from '@/lib/auto-pin'
 import {
@@ -52,7 +52,7 @@ import {
   type MemberProject,
   type WorktreeNameSet
 } from '@/lib/connection-project'
-import type { KanbanTicket, Session } from '../../../main/db/types'
+import type { KanbanTicket, KanbanTicketUpdate, Session } from '../../../main/db/types'
 
 /** Minimal ticket shape the connection-project pipeline needs. */
 export type ConnectionProjectTicket = Pick<KanbanTicket, 'id' | 'project_id' | 'title'> & {
@@ -75,16 +75,53 @@ export interface ConnectionProjectLaunchOptions {
   sdk: LaunchSdk
   model: { providerID: string; modelID: string; variant?: string } | null
   codexFastMode: boolean
+  /** claude-code-cli only: launch through this custom provider's command. */
+  customProviderId?: string | null
   /** RAW prompt (ticket prompt or user-edited text) — composed per SDK here. */
   promptText: string
   goalMode: boolean
   goalSuccessCriteria: string | null
+  /**
+   * A launch nobody is watching (the document-run orchestrator): the board tab is not brought
+   * to the front in sticky-tab mode, as the git-project headless launch never does.
+   */
+  headless?: boolean
 }
 
 export interface ConnectionProjectLaunchResult {
   success: boolean
   sessionId?: string
   connectionId?: string
+  error?: string
+}
+
+/**
+ * How one member's worktree of a new instance is cut. Without `sourceBranch` the member's
+ * default branch; without `baseRef` the tip of that branch (the document flow cuts every
+ * member from its integration branch's verified commit instead).
+ */
+export interface InstanceMemberSpec {
+  projectId: string
+  sourceBranch?: string
+  /** Cut the branch from this ref even when `sourceBranch` is checked out in a worktree. */
+  baseRef?: string
+  /** Overrides the "auto-pull before worktree" setting for this member's worktree. */
+  autoPull?: boolean
+}
+
+/** A member worktree of a freshly created instance, as the worktree row records it. */
+export interface InstanceWorktree {
+  projectId: string
+  worktreeId: string
+  branchName: string
+  path: string
+}
+
+export interface ResolvedConnectionInstance {
+  connectionId?: string
+  connectionPath?: string
+  /** Only for an instance created here: the worktrees it was connected over, in member order. */
+  worktrees?: InstanceWorktree[]
   error?: string
 }
 
@@ -162,7 +199,11 @@ function resolveQuickModel(): {
   if (modeModel && modeModel.agentSdk === sdk) {
     return {
       sdk,
-      model: { providerID: modeModel.providerID, modelID: modeModel.modelID, variant: modeModel.variant }
+      model: {
+        providerID: modeModel.providerID,
+        modelID: modeModel.modelID,
+        variant: modeModel.variant
+      }
     }
   }
   const resolved = resolveModelForSdk(sdk) ?? FALLBACK_MODELS[sdk]
@@ -174,20 +215,32 @@ function resolveQuickModel(): {
 
 /**
  * Create one new worktree per member project (nameHint = ticket slug, base =
- * each project's default branch) and connect them, linked to the saved project.
- * Best-effort rollback of created worktrees on failure — mirrors
- * useConnectionStore.quickCreateConnection but never changes selection.
+ * each project's default branch unless `members` says otherwise) and connect
+ * them, linked to the saved project. Best-effort rollback of created worktrees
+ * on failure — mirrors useConnectionStore.quickCreateConnection but never
+ * changes selection. `members`, when given, also fixes the member order; a
+ * member it names that is not one of `memberProjects` fails the launch.
  */
-async function createInstanceWithNewWorktrees(
-  savedProjectId: string,
-  memberProjects: MemberProject[],
+export async function createInstanceWithNewWorktrees(args: {
+  savedProjectId: string
+  memberProjects: MemberProject[]
   nameHint: string | undefined
-): Promise<{ connectionId?: string; connectionPath?: string; error?: string }> {
+  members?: readonly InstanceMemberSpec[]
+}): Promise<ResolvedConnectionInstance> {
+  const { savedProjectId, memberProjects, nameHint } = args
   const { useWorktreeStore, fireSetupScript } = await import('@/stores/useWorktreeStore')
   const worktreeStore = useWorktreeStore.getState()
 
+  const byId = new Map(memberProjects.map((project) => [project.id, project]))
+  const plan: { project: MemberProject; spec: InstanceMemberSpec }[] = []
+  for (const spec of args.members ?? memberProjects.map((project) => ({ projectId: project.id }))) {
+    const project = byId.get(spec.projectId)
+    if (!project) return { error: `Member project ${spec.projectId} is no longer in the app` }
+    plan.push({ project, spec })
+  }
+
   // Ensure member worktrees are loaded so default branches resolve
-  await Promise.all(memberProjects.map((m) => worktreeStore.loadWorktrees(m.id)))
+  await Promise.all(plan.map(({ project }) => worktreeStore.loadWorktrees(project.id)))
 
   const created: {
     project: MemberProject
@@ -213,15 +266,20 @@ async function createInstanceWithNewWorktrees(
     }
   }
 
-  for (const project of memberProjects) {
-    const defaultBranch =
-      useWorktreeStore.getState().getDefaultWorktree(project.id)?.branch_name || 'main'
+  for (const { project, spec } of plan) {
+    const branchName =
+      spec.sourceBranch ||
+      useWorktreeStore.getState().getDefaultWorktree(project.id)?.branch_name ||
+      'main'
+    // Keys are added only when set, so plain launches make the exact call they always did.
     const result = await worktreeApi.createFromBranch({
       projectId: project.id,
       projectPath: project.path,
       projectName: project.name,
-      branchName: defaultBranch,
-      ...(nameHint ? { nameHint } : {})
+      branchName,
+      ...(nameHint ? { nameHint } : {}),
+      ...(spec.autoPull === undefined ? {} : { autoPull: spec.autoPull }),
+      ...(spec.baseRef === undefined ? {} : { baseRef: spec.baseRef })
     })
     if (!result.success || !result.worktree) {
       await rollback()
@@ -248,7 +306,16 @@ async function createInstanceWithNewWorktrees(
     return { error: createResult.error || 'Failed to create connection' }
   }
   insertConnectionLocally(createResult.connection)
-  return { connectionId: createResult.connection.id, connectionPath: createResult.connection.path }
+  return {
+    connectionId: createResult.connection.id,
+    connectionPath: createResult.connection.path,
+    worktrees: created.map(({ project, worktree }) => ({
+      projectId: project.id,
+      worktreeId: worktree.id,
+      branchName: worktree.branch_name,
+      path: worktree.path
+    }))
+  }
 }
 
 /**
@@ -261,14 +328,23 @@ export async function resolveConnectionForLaunch(args: {
   memberProjects: MemberProject[]
   target: ConnectionProjectLaunchTarget
   nameHint?: string
-}): Promise<{ connectionId?: string; connectionPath?: string; error?: string }> {
+  /** A `new` target only: how each member's worktree is cut (default: the member's default branch tip). */
+  members?: readonly InstanceMemberSpec[]
+}): Promise<ResolvedConnectionInstance> {
   const { savedProjectId, memberProjects, target } = args
 
   if (target.type === 'existing-connection') {
-    const connection = useConnectionStore
+    const known = useConnectionStore
       .getState()
       .connections.find((c) => c.id === target.connectionId)
-    if (!connection) return { error: 'Connection no longer exists' }
+    if (known) return { connectionId: known.id, connectionPath: known.path }
+    // Not in this window's store yet (an instance the server created, such as a document run's
+    // integration instance): ask the server before calling it gone.
+    const fetched = await connectionApi.get(target.connectionId)
+    const connection = fetched.success ? fetched.connection : undefined
+    if (!connection || connection.status !== 'active')
+      return { error: 'Connection no longer exists' }
+    insertConnectionLocally(connection)
     return { connectionId: connection.id, connectionPath: connection.path }
   }
 
@@ -300,34 +376,60 @@ export async function resolveConnectionForLaunch(args: {
   if (memberProjects.length < 2) {
     return { error: 'Connection project needs at least 2 existing member projects' }
   }
-  return createInstanceWithNewWorktrees(savedProjectId, memberProjects, args.nameHint)
+  return createInstanceWithNewWorktrees({
+    savedProjectId,
+    memberProjects,
+    nameHint: args.nameHint,
+    ...(args.members ? { members: args.members } : {})
+  })
+}
+
+export interface ConnectionSessionLaunchArgs {
+  connectionId: string
+  connectionPath: string | undefined
+  sdk: LaunchSdk
+  model: { providerID: string; modelID: string; variant?: string } | null
+  codexFastMode: boolean
+  /** claude-code-cli only: launch through this custom provider's command (already resolved). */
+  customProviderId?: string | null
+  mode: LaunchMode
+  /** RAW prompt — composed per SDK here. */
+  promptText: string
+  goalMode: boolean
+  goalSuccessCriteria: string | null
+  /** Renames the session once it exists; the default is the store's "Session n". */
+  sessionName?: string
+  /**
+   * Runs once the session row exists and is stamped as working, before the agent is started
+   * with the prompt: where the caller links the session to whatever launched it. A throw
+   * fails the launch (reported with the session id, like every later failure).
+   */
+  onSessionCreated?: (session: StoreSession) => void | Promise<void>
+}
+
+export interface ConnectionSessionLaunchResult {
+  success: boolean
+  sessionId?: string
+  error?: string
 }
 
 /**
- * Create the connection session, link the ticket, and deliver the prompt —
- * the connection-project twin of the picker's connection-mode send path.
- * Sort order comes from the SAVED project's own board column.
+ * Create a session on a connection instance and deliver the prompt — the ticketless half of
+ * a connection launch, the twin of ticket-launch's `launchSessionWithModel`: the session is
+ * created with the launch's model, stamped as working, handed to the caller, then started
+ * per SDK (a CLI gets the prompt as its pending message, an SDK session is connected and
+ * prompted). Never throws: every failure is returned as { success: false, error }.
  */
-export async function startTicketSessionOnConnectionInstance(args: {
-  ticket: ConnectionProjectTicket
-  savedProjectId: string
-  connectionId: string
-  connectionPath: string | undefined
-  options: ConnectionProjectLaunchOptions
-}): Promise<ConnectionProjectLaunchResult> {
-  const { ticket, savedProjectId, connectionId, connectionPath, options } = args
-  const { mode, sdk, model, codexFastMode, goalMode } = options
-  const goalCriteria = options.goalSuccessCriteria?.trim() || null
-  let promptText = options.promptText
-
-  // A shell command's ticket is never an agent prompt (same refusal as ticket-launch)
-  const boardTicket = useKanbanStore
-    .getState()
-    .tickets.get(ticket.project_id)
-    ?.find((t) => t.id === ticket.id)
-  if (shellCommandIdOfTicket(boardTicket)) {
-    return { success: false, error: 'A shell command ticket cannot be launched with an agent.' }
-  }
+export async function startSessionOnConnection(
+  args: ConnectionSessionLaunchArgs
+): Promise<ConnectionSessionLaunchResult> {
+  const { connectionId, connectionPath, mode, sdk, model, codexFastMode, goalMode } = args
+  const customProviderId = args.customProviderId ?? null
+  const goalCriteria = args.goalSuccessCriteria?.trim() || null
+  let promptText = args.promptText
+  // Snapshot of the session id as soon as it is created, hoisted above the try so the catch
+  // fallback can still report it.
+  let createdSessionId: string | undefined
 
   try {
     // Oversized goal prompts become a PLAN_{uuid}.md in the connection dir
@@ -349,18 +451,17 @@ export async function startTicketSessionOnConnectionInstance(args: {
       .createConnectionSession(connectionId, sdk, mode, {
         autoFocus: false,
         ...(model ? { modelOverride: { ...model, agentSdk: sdk } } : {}),
-        ...(cliPendingPrompt ? { pendingMessage: cliPendingPrompt } : {})
+        ...(cliPendingPrompt ? { pendingMessage: cliPendingPrompt } : {}),
+        ...(customProviderId ? { customProviderId } : {})
       })
     if (!sessionResult.success || !sessionResult.session) {
-      return {
-        success: false,
-        error: sessionResult.error || 'Failed to create session',
-        connectionId
-      }
+      return { success: false, error: sessionResult.error || 'Failed to create session' }
     }
 
-    const sessionId = sessionResult.session.id
-    const sessionAgentSdk = sessionResult.session.agent_sdk
+    const session = sessionResult.session
+    const sessionId = session.id
+    const sessionAgentSdk = session.agent_sdk
+    createdSessionId = sessionId
 
     // Status tracking BEFORE any async connect so loadSessions can't race it
     messageSendTimes.set(sessionId, Date.now())
@@ -374,53 +475,15 @@ export async function startTicketSessionOnConnectionInstance(args: {
     if (model) {
       await useSessionStore.getState().setSessionModel(sessionId, model)
     }
-
-    const kanban = useKanbanStore.getState()
-    const sortOrder = kanban.computeSortOrder(
-      kanban.getTicketsByColumn(savedProjectId, 'in_progress'),
-      0
-    )
-    const badgeModel = resolveBadgeModel(
-      { sdk, model, codexFastMode, customProviderId: null },
-      sessionResult.session
-    )
-    await kanban.updateTicket(ticket.id, ticket.project_id, {
-      current_session_id: sessionId,
-      worktree_id: null,
-      mode,
-      column: 'in_progress',
-      sort_order: sortOrder,
-      plan_ready: false,
-      goal_mode: goalMode,
-      goal_success_criteria: goalMode ? goalCriteria : null,
-      model_provider_id: badgeModel.providerID,
-      model_id: badgeModel.modelID,
-      model_variant: badgeModel.variant,
-      variant_group_id: null,
-      pending_launch_config: null
-    })
-
-    // Name the instance after the ticket unless the user already renamed it —
-    // never the base instance (it is the project's "main", like a default worktree).
-    const connection = useConnectionStore.getState().connections.find((c) => c.id === connectionId)
-    const ticketTitle = ticket.title.trim()
-    if (connection && !isBaseInstance(connection) && !connection.custom_name && ticketTitle) {
-      void useConnectionStore.getState().renameConnection(connectionId, ticketTitle)
+    if (args.sessionName) {
+      await useSessionStore.getState().updateSessionName(sessionId, args.sessionName)
     }
 
-    // Setting-gated auto-pin so this board shows on the pinned board: the
-    // project's base instance, or in 'current-branch' mode the instance the
-    // session was sent on (the git-project paths pin worktrees the same way).
-    void autoPinForBoardPrompt({ projectId: savedProjectId, connectionId })
+    await args.onSessionCreated?.(session)
 
-    const usageProvider = resolveDefaultUsageProvider(sdk)
+    const usageProvider = resolveDefaultUsageProvider(sdk, customProviderId)
     if (usageProvider) {
       useUsageStore.getState().fetchUsageForProvider(usageProvider)
-    }
-
-    if (useSettingsStore.getState().boardMode === 'sticky-tab') {
-      const { BOARD_TAB_ID } = await import('@/stores/useSessionStore')
-      useSessionStore.getState().setActiveSession(BOARD_TAB_ID)
     }
 
     if (isAgentCli(sessionAgentSdk)) {
@@ -441,39 +504,36 @@ export async function startTicketSessionOnConnectionInstance(args: {
         await terminalApi.createClaudeCli(sessionId, { pendingPrompt: outboundPrompt })
       )
       if (!result.success) {
-        return {
-          success: false,
-          error: result.error ?? 'Failed to start Claude CLI',
-          sessionId,
-          connectionId
-        }
+        return { success: false, error: result.error ?? 'Failed to start Claude CLI', sessionId }
       }
       if (outboundPrompt) {
         useSessionStore.getState().dequeuePendingMessage(sessionId)
       }
-      return { success: true, sessionId, connectionId }
+      return { success: true, sessionId }
     }
 
-    if (!connectionPath) return { success: true, sessionId, connectionId }
+    if (!connectionPath) return { success: true, sessionId }
 
     const connectResult = unwrapEnvelope(await opencodeApi.connect(connectionPath, sessionId))
     if (!connectResult.success || !connectResult.sessionId) {
-      return {
-        success: false,
-        error: connectResult.error || 'Failed to start session',
-        sessionId,
-        connectionId
-      }
+      return { success: false, error: connectResult.error || 'Failed to start session', sessionId }
     }
     useSessionStore.getState().setOpenCodeSessionId(sessionId, connectResult.sessionId)
     await dbApi.session.update<Session>(sessionId, {
       opencode_session_id: connectResult.sessionId
     })
 
-    const outboundPrompt = composePromptForSdk(mode, sessionAgentSdk, promptText, goalMode, goalCriteria, {
-      claudeCli: false
-    })
-    if (!outboundPrompt) return { success: true, sessionId, connectionId }
+    const outboundPrompt = composePromptForSdk(
+      mode,
+      sessionAgentSdk,
+      promptText,
+      goalMode,
+      goalCriteria,
+      {
+        claudeCli: false
+      }
+    )
+    if (!outboundPrompt) return { success: true, sessionId }
 
     if (isSuperMode(mode)) {
       useSessionStore.getState().setSessionMode(sessionId, baseMode(mode))
@@ -502,22 +562,107 @@ export async function startTicketSessionOnConnectionInstance(args: {
       )
     )
     if (!promptResult.success) {
-      return {
-        success: false,
-        error: promptResult.error || 'Could not send prompt',
-        sessionId,
-        connectionId
-      }
+      return { success: false, error: promptResult.error || 'Could not send prompt', sessionId }
     }
 
-    return { success: true, sessionId, connectionId }
+    return { success: true, sessionId }
   } catch (error) {
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Failed to start session',
-      connectionId
+      ...(createdSessionId ? { sessionId: createdSessionId } : {})
     }
   }
+}
+
+/**
+ * Create the connection session, link the ticket, and deliver the prompt —
+ * the connection-project twin of the picker's connection-mode send path.
+ * Sort order comes from the SAVED project's own board column.
+ * `ticketUpdateExtras` are merged last into the ticket update (a caller that
+ * places the ticket itself overrides the column and sort order).
+ */
+export async function startTicketSessionOnConnectionInstance(args: {
+  ticket: ConnectionProjectTicket
+  savedProjectId: string
+  connectionId: string
+  connectionPath: string | undefined
+  options: ConnectionProjectLaunchOptions
+  ticketUpdateExtras?: Partial<KanbanTicketUpdate>
+}): Promise<ConnectionProjectLaunchResult> {
+  const { ticket, savedProjectId, connectionId, connectionPath, options } = args
+  const { mode, sdk, model, codexFastMode, goalMode } = options
+  const customProviderId = options.customProviderId ?? null
+  const goalCriteria = options.goalSuccessCriteria?.trim() || null
+
+  // A shell command's ticket is never an agent prompt (same refusal as ticket-launch)
+  const boardTicket = useKanbanStore
+    .getState()
+    .tickets.get(ticket.project_id)
+    ?.find((t) => t.id === ticket.id)
+  if (shellCommandIdOfTicket(boardTicket)) {
+    return { success: false, error: 'A shell command ticket cannot be launched with an agent.' }
+  }
+
+  const result = await startSessionOnConnection({
+    connectionId,
+    connectionPath,
+    sdk,
+    model,
+    codexFastMode,
+    customProviderId,
+    mode,
+    promptText: options.promptText,
+    goalMode,
+    goalSuccessCriteria: goalCriteria,
+    onSessionCreated: async (session) => {
+      const kanban = useKanbanStore.getState()
+      const sortOrder = kanban.computeSortOrder(
+        kanban.getTicketsByColumn(savedProjectId, 'in_progress'),
+        0
+      )
+      const badgeModel =
+        resolveCustomProviderBadge(customProviderId, model) ??
+        resolveBadgeModel({ sdk, model, codexFastMode, customProviderId }, session)
+      await kanban.updateTicket(ticket.id, ticket.project_id, {
+        current_session_id: session.id,
+        worktree_id: null,
+        mode,
+        column: 'in_progress',
+        sort_order: sortOrder,
+        plan_ready: false,
+        goal_mode: goalMode,
+        goal_success_criteria: goalMode ? goalCriteria : null,
+        model_provider_id: badgeModel.providerID,
+        model_id: badgeModel.modelID,
+        model_variant: badgeModel.variant,
+        variant_group_id: null,
+        pending_launch_config: null,
+        ...args.ticketUpdateExtras
+      })
+
+      // Name the instance after the ticket unless the user already renamed it —
+      // never the base instance (it is the project's "main", like a default worktree).
+      const connection = useConnectionStore
+        .getState()
+        .connections.find((c) => c.id === connectionId)
+      const ticketTitle = ticket.title.trim()
+      if (connection && !isBaseInstance(connection) && !connection.custom_name && ticketTitle) {
+        void useConnectionStore.getState().renameConnection(connectionId, ticketTitle)
+      }
+
+      // Setting-gated auto-pin so this board shows on the pinned board: the
+      // project's base instance, or in 'current-branch' mode the instance the
+      // session was sent on (the git-project paths pin worktrees the same way).
+      void autoPinForBoardPrompt({ projectId: savedProjectId, connectionId })
+
+      if (!options.headless && useSettingsStore.getState().boardMode === 'sticky-tab') {
+        const { BOARD_TAB_ID } = await import('@/stores/useSessionStore')
+        useSessionStore.getState().setActiveSession(BOARD_TAB_ID)
+      }
+    }
+  })
+  return { ...result, connectionId }
 }
 
 /**

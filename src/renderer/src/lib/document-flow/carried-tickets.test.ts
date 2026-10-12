@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { makeDetail } from '@/components/document-flow/test-fixtures'
-import type { DocumentRunDetail } from '@shared/types/document-flow'
+import type { DocumentRunDetail, DocumentRunItemMember } from '@shared/types/document-flow'
 import { findCarriedRunTickets, type CarriedTicketsQuery } from './carried-tickets'
 
 vi.mock('@/api/git-api', () => ({ gitApi: { isBranchMerged: vi.fn() } }))
@@ -95,5 +95,121 @@ describe('findCarriedRunTickets', () => {
     }
 
     expect(await findCarriedRunTickets(query, [run()], isMerged)).toEqual(['A2', 'A4'])
+  })
+
+  describe('on a connection run', () => {
+    const members = (
+      key: string,
+      web: Partial<DocumentRunItemMember> = {},
+      api: Partial<DocumentRunItemMember> = {}
+    ): DocumentRunItemMember[] => [
+      {
+        project_id: 'p-web',
+        worktree_id: `wt-${key}-web`,
+        branch_name: key,
+        pre_merge_sha: null,
+        merge_sha: null,
+        ...web
+      },
+      {
+        project_id: 'p-api',
+        worktree_id: `wt-${key}-api`,
+        branch_name: key,
+        pre_merge_sha: null,
+        merge_sha: null,
+        ...api
+      }
+    ]
+
+    /** A1 merged in both members, A2 only in web; A3 is the queried ticket. */
+    const connectionRun = (): DocumentRunDetail =>
+      makeDetail(
+        {
+          id: 'run-c',
+          status: 'completed',
+          integration_connection_id: 'conn-int',
+          members: [
+            {
+              project_id: 'p-web',
+              project_name: 'Web',
+              project_path: '/repo/web',
+              symlink_name: 'web',
+              base_branch: 'main',
+              base_sha: 'b',
+              integration_branch: 'doc',
+              integration_worktree_id: 'wt-int-web',
+              integration_worktree_path: '/w/int-web'
+            },
+            {
+              project_id: 'p-api',
+              project_name: 'Api',
+              project_path: '/repo/api',
+              symlink_name: 'api',
+              base_branch: 'main',
+              base_sha: 'b',
+              integration_branch: 'doc',
+              integration_worktree_id: 'wt-int-api',
+              integration_worktree_path: '/w/int-api'
+            }
+          ]
+        },
+        [
+          {
+            key: 'A1',
+            status: 'merged',
+            merge_sha: 'web=m1w,api=m1a',
+            ticket_id: 'ticket-A1',
+            members: members('A1', { merge_sha: 'm1w' }, { merge_sha: 'm1a' })
+          },
+          {
+            key: 'A2',
+            status: 'merged',
+            merge_sha: 'web=m2w',
+            ticket_id: 'ticket-A2',
+            members: members('A2', { merge_sha: 'm2w' }, { merge_sha: null })
+          },
+          {
+            key: 'A3',
+            status: 'merged',
+            merge_sha: 'web=m3w,api=m3a',
+            ticket_id: 'ticket-A3',
+            members: members('A3', { merge_sha: 'm3w' }, { merge_sha: 'm3a' })
+          }
+        ]
+      )
+
+    it('finds the ticket by a member worktree and names the merges in that member only', async () => {
+      const carried = await findCarriedRunTickets(
+        { ...query, ticketId: 'ticket-other', worktreeId: 'wt-A3-api' },
+        [connectionRun()],
+        git({ [FEATURE]: ['m1a', 'm1w', 'm2w'], [BASE]: [] })
+      )
+
+      // A2 merged nothing in api: nothing of it can be on the api branch.
+      expect(carried).toEqual(['A1'])
+    })
+
+    it('uses the web merges for the web worktree', async () => {
+      expect(
+        await findCarriedRunTickets(
+          { ...query, ticketId: 'ticket-A3', worktreeId: 'wt-A3-web' },
+          [connectionRun()],
+          git({ [FEATURE]: ['m1w', 'm2w'], [BASE]: ['m1w'] })
+        )
+      ).toEqual(['A2'])
+    })
+
+    it('has nothing to say about a worktree of no member, even for the run’s own ticket', async () => {
+      const isMerged = vi.fn(async () => true)
+
+      expect(
+        await findCarriedRunTickets(
+          { ...query, ticketId: 'ticket-A3', worktreeId: 'wt-int-web' },
+          [connectionRun()],
+          isMerged
+        )
+      ).toEqual([])
+      expect(isMerged).not.toHaveBeenCalled()
+    })
   })
 })

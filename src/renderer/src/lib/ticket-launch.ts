@@ -70,6 +70,19 @@ export interface TicketLaunchSpec {
         select?: boolean
       }
     | { type: 'existing'; worktreeId: string }
+    /**
+     * A connection project: a NEW instance with one worktree per member project, each cut
+     * from `baseRef` and recorded against `sourceBranch` (never auto-pulled), all named after
+     * `nameHint`. The session runs on the instance (lib/connection-project-launch).
+     */
+    | {
+        type: 'connection-new'
+        savedProjectId: string
+        members: { projectId: string; sourceBranch: string; baseRef: string }[]
+        nameHint: string
+      }
+    /** A connection project: a session on an instance that already exists. */
+    | { type: 'existing-connection'; connectionId: string }
   prompt: string
   mode: LaunchMode
   modelConfig: LaunchModelConfig
@@ -84,6 +97,10 @@ export interface TicketLaunchResult {
   sessionId?: string
   worktreeId?: string
   error?: string
+  /** A connection launch: the instance the session runs on. */
+  connectionId?: string
+  /** A `connection-new` launch: the member worktrees the instance was created over, in member order. */
+  worktrees?: { projectId: string; worktreeId: string; branchName: string }[]
 }
 
 function wrapGoalPrompt(prompt: string, criteria: string): string {
@@ -242,6 +259,12 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
     }
   }
 
+  // A connection project's ticket runs on an instance, not in a worktree: the connection
+  // pipeline owns the instance and the session, and reports its failures the same way.
+  if (spec.worktree.type === 'connection-new' || spec.worktree.type === 'existing-connection') {
+    return launchTicketOnConnection(spec, spec.worktree)
+  }
+
   try {
     // 1. Resolve worktree
     let worktreeId: string
@@ -340,6 +363,170 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
   }
 }
 
+type ConnectionWorktreeSpec = Extract<
+  TicketLaunchSpec['worktree'],
+  { type: 'connection-new' | 'existing-connection' }
+>
+
+/**
+ * The connection half of `launchTicketWithModel`: resolve or create the instance, then start
+ * the ticket's session on it through lib/connection-project-launch (which also stamps the
+ * ticket, names and pins the instance). Imported lazily: that module builds on this one.
+ */
+async function launchTicketOnConnection(
+  spec: TicketLaunchSpec,
+  target: ConnectionWorktreeSpec
+): Promise<TicketLaunchResult> {
+  const goalMode = spec.goalMode === true
+  const goalSuccessCriteria = spec.goalSuccessCriteria?.trim() || null
+  try {
+    const launch = await import('@/lib/connection-project-launch')
+    const { getMemberProjects } = await import('@/lib/connection-project')
+    const savedProjectId = target.type === 'connection-new' ? target.savedProjectId : spec.projectId
+    const project = useProjectStore.getState().projects.find((p) => p.id === savedProjectId)
+    if (!project) return { success: false, error: 'Project not found' }
+
+    let resolved: Awaited<ReturnType<typeof launch.resolveConnectionForLaunch>>
+    if (target.type === 'connection-new') {
+      resolved = await launch.createInstanceWithNewWorktrees({
+        savedProjectId,
+        memberProjects: getMemberProjects(project),
+        nameHint: target.nameHint || canonicalizeTicketTitle(spec.ticketTitle) || undefined,
+        // `baseRef` cuts each member's branch from the commit the caller verified, without
+        // auto-pull, which could move the user's checkout of the source branch.
+        members: target.members.map((member) => ({
+          projectId: member.projectId,
+          sourceBranch: member.sourceBranch,
+          baseRef: member.baseRef,
+          autoPull: false
+        }))
+      })
+    } else {
+      resolved = await launch.resolveConnectionForLaunch({
+        savedProjectId,
+        memberProjects: getMemberProjects(project),
+        target: { type: 'existing-connection', connectionId: target.connectionId }
+      })
+    }
+    if (!resolved.connectionId) {
+      return { success: false, error: resolved.error || 'Failed to resolve connection' }
+    }
+    const { connectionId, connectionPath } = resolved
+    const worktrees = resolved.worktrees?.map(({ projectId, worktreeId, branchName }) => ({
+      projectId,
+      worktreeId,
+      branchName
+    }))
+    const created = {
+      connectionId,
+      ...(worktrees ? { worktrees } : {})
+    }
+
+    const { sdk, model, codexFastMode } = spec.modelConfig
+    const customProviderId = resolveLaunchCustomProviderId(sdk, spec.modelConfig.customProviderId)
+    const result = await launch.startTicketSessionOnConnectionInstance({
+      ticket: { id: spec.ticketId, project_id: spec.projectId, title: spec.ticketTitle },
+      savedProjectId,
+      connectionId,
+      connectionPath,
+      options: {
+        mode: spec.mode,
+        sdk,
+        model: resolveLaunchModel(sdk, model, customProviderId),
+        codexFastMode,
+        customProviderId,
+        promptText: spec.prompt,
+        goalMode,
+        goalSuccessCriteria,
+        headless: true
+      },
+      ...(spec.ticketUpdateExtras ? { ticketUpdateExtras: spec.ticketUpdateExtras } : {})
+    })
+    // The instance is included on every outcome so a just-created one stays visible to the
+    // caller, as `worktreeId` does for a worktree launch.
+    return {
+      success: result.success,
+      ...(result.sessionId ? { sessionId: result.sessionId } : {}),
+      ...(result.error ? { error: result.error } : {}),
+      ...created
+    }
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : null
+    return { success: false, error: detail || 'Could not launch session' }
+  }
+}
+
+/**
+ * The model a claude-code-cli launch really runs with. Custom-provider models can go stale
+ * between queueing and launch: a deleted provider degrades to plain claude and must drop the
+ * model too (a proxy slug could fuzzy-match a wrong --model on stock claude), and a renamed
+ * slug re-resolves to the provider's current default. Scoped to claude-code-cli — 'custom'
+ * is also a legal opencode catalog provider id.
+ */
+function resolveLaunchModel(
+  sdk: HandoffAgentSdk,
+  model: LaunchModelConfig['model'],
+  customProviderId: string | null
+): LaunchModelConfig['model'] {
+  if (sdk !== 'claude-code-cli' || model?.providerID !== CUSTOM_MODEL_PROVIDER_ID) return model
+  const provider = findCustomProvider(useSettingsStore.getState().customProviders, customProviderId)
+  return provider ? resolveCustomProviderSelectedModel(provider, model) : null
+}
+
+/** A session to launch on a connection instance that already exists; `launchSessionOnConnection`'s input. */
+export interface ConnectionSessionLaunchSpec {
+  connectionId: string
+  /** The instance directory; without it an SDK session is created but not started. */
+  connectionPath: string | null
+  prompt: string
+  mode: LaunchMode
+  modelConfig: LaunchModelConfig
+  goalMode: boolean
+  goalSuccessCriteria: string | null
+  /** Renames the session once it exists. */
+  sessionName?: string
+  /** As in `SessionLaunchSpec`: runs once the session exists, before the agent is started. */
+  onSessionCreated?: (created: SessionLaunchCreated) => void | Promise<void>
+}
+
+/**
+ * Headless session launch on a connection instance, with no ticket in sight: the twin of
+ * `launchSessionWithModel` for a connection project (a document run's migration session on
+ * its integration instance). Never throws: every failure is returned as { success: false }.
+ */
+export async function launchSessionOnConnection(
+  spec: ConnectionSessionLaunchSpec
+): Promise<SessionLaunchResult> {
+  const { sdk, model, codexFastMode } = spec.modelConfig
+  try {
+    const { startSessionOnConnection } = await import('@/lib/connection-project-launch')
+    const customProviderId = resolveLaunchCustomProviderId(sdk, spec.modelConfig.customProviderId)
+    const effectiveModel = resolveLaunchModel(sdk, model, customProviderId)
+    return await startSessionOnConnection({
+      connectionId: spec.connectionId,
+      connectionPath: spec.connectionPath ?? undefined,
+      sdk,
+      model: effectiveModel,
+      codexFastMode,
+      customProviderId,
+      mode: spec.mode,
+      promptText: spec.prompt,
+      goalMode: spec.goalMode === true,
+      goalSuccessCriteria: spec.goalSuccessCriteria?.trim() || null,
+      ...(spec.sessionName ? { sessionName: spec.sessionName } : {}),
+      ...(spec.onSessionCreated
+        ? {
+            onSessionCreated: (session: Session) =>
+              spec.onSessionCreated?.({ session, customProviderId, model: effectiveModel })
+          }
+        : {})
+    })
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : null
+    return { success: false, error: detail || 'Could not launch session' }
+  }
+}
+
 /** A session to launch in a worktree that already exists; `launchSessionWithModel`'s input. */
 export interface SessionLaunchSpec {
   projectId: string
@@ -425,20 +612,7 @@ export async function launchSessionWithModel(
 
     // 2. Create session
     const customProviderId = resolveLaunchCustomProviderId(sdk, spec.modelConfig.customProviderId)
-    // Custom-provider models can go stale between queueing and launch: a
-    // deleted provider degrades to plain claude and must drop the model too (a
-    // proxy slug could fuzzy-match a wrong --model on stock claude), and a
-    // renamed slug re-resolves to the provider's current default. Scoped to
-    // claude-code-cli — 'custom' is also a legal opencode catalog provider id.
-    let effectiveConfigModel: { providerID: string; modelID: string; variant?: string } | null =
-      model
-    if (sdk === 'claude-code-cli' && model?.providerID === CUSTOM_MODEL_PROVIDER_ID) {
-      const provider = findCustomProvider(
-        useSettingsStore.getState().customProviders,
-        customProviderId
-      )
-      effectiveConfigModel = provider ? resolveCustomProviderSelectedModel(provider, model) : null
-    }
+    const effectiveConfigModel = resolveLaunchModel(sdk, model, customProviderId)
     const modelOverride = effectiveConfigModel
       ? { ...effectiveConfigModel, agentSdk: sdk }
       : undefined

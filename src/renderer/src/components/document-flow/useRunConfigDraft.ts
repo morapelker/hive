@@ -18,7 +18,30 @@ export function markRunAwaitingPrefs(runId: string): void {
   runsAwaitingPrefs.add(runId)
 }
 
-function initialConfig(run: DocumentRun, prefs: DocumentFlowPrefs): DocumentRunConfig {
+/**
+ * Where the verify commands of a run live: one for the project (git), or one per member project
+ * (connection project — `memberIds` in member order). The remembered commands and the
+ * suggestions are keyed by the same ids.
+ */
+type VerifyTargets =
+  { kind: 'project'; projectId: string } | { kind: 'members'; memberIds: string[] }
+
+function verifyTargets(run: DocumentRun, memberIds: readonly string[] | null): VerifyTargets {
+  return memberIds
+    ? { kind: 'members', memberIds: [...memberIds] }
+    : { kind: 'project', projectId: run.project_id }
+}
+
+/** The members whose verify command was never chosen (null means that; '' is an explicit none). */
+function unchosenMembers(config: DocumentRunConfig, memberIds: readonly string[]): string[] {
+  return memberIds.filter((id) => (config.memberVerifyCommands[id] ?? null) === null)
+}
+
+function initialConfig(
+  run: DocumentRun,
+  prefs: DocumentFlowPrefs,
+  targets: VerifyTargets
+): DocumentRunConfig {
   let config = run.config
   if (runsAwaitingPrefs.has(run.id)) {
     config = {
@@ -30,10 +53,19 @@ function initialConfig(run: DocumentRun, prefs: DocumentFlowPrefs): DocumentRunC
     }
   }
   // null means "never chosen"; an empty string is the user's explicit "no verification".
-  if (config.verifyCommand === null && run.project_id in prefs.verifyCommandByProject) {
-    config = { ...config, verifyCommand: prefs.verifyCommandByProject[run.project_id] }
+  if (targets.kind === 'project') {
+    if (config.verifyCommand === null && targets.projectId in prefs.verifyCommandByProject) {
+      config = { ...config, verifyCommand: prefs.verifyCommandByProject[targets.projectId] }
+    }
+    return config
   }
-  return config
+  const remembered = unchosenMembers(config, targets.memberIds).filter(
+    (id) => id in prefs.verifyCommandByProject
+  )
+  if (remembered.length === 0) return config
+  const memberVerifyCommands = { ...config.memberVerifyCommands }
+  for (const id of remembered) memberVerifyCommands[id] = prefs.verifyCommandByProject[id]
+  return { ...config, memberVerifyCommands }
 }
 
 export interface RunConfigDraft {
@@ -46,12 +78,17 @@ export interface RunConfigDraft {
 
 /**
  * The run settings being edited in the preview. Every write sends the whole config, so it
- * lands the same whether the server merges or replaces the stored object.
+ * lands the same whether the server merges or replaces the stored object. `memberIds` are the
+ * member projects of a connection project (null for a git project): their verify commands are
+ * remembered and suggested per member.
  */
-export function useRunConfigDraft(run: DocumentRun): RunConfigDraft {
+export function useRunConfigDraft(
+  run: DocumentRun,
+  memberIds: readonly string[] | null = null
+): RunConfigDraft {
   const updateRun = useDocumentFlowStore((s) => s.updateRun)
   const [config, setConfig] = useState<DocumentRunConfig>(() =>
-    initialConfig(run, useDocumentFlowStore.getState().prefs)
+    initialConfig(run, useDocumentFlowStore.getState().prefs, verifyTargets(run, memberIds))
   )
   const latest = useRef(config)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -59,6 +96,8 @@ export function useRunConfigDraft(run: DocumentRun): RunConfigDraft {
   const runId = run.id
   const projectId = run.project_id
   const storedConfig = run.config
+  // Compared by content: the caller builds the list on every render.
+  const memberIdsKey = memberIds ? memberIds.join(',') : null
 
   const write = useCallback((): void => {
     if (timer.current) {
@@ -103,23 +142,40 @@ export function useRunConfigDraft(run: DocumentRun): RunConfigDraft {
     if (latest.current !== storedConfig) write()
   }, [runId, storedConfig, write])
 
-  // No verify command chosen yet and none remembered for the project: offer a guess.
+  // No verify command chosen yet and none remembered for the project: offer a guess. On a
+  // connection project the same per member, each guessed from that member's repository.
   useEffect(() => {
-    if (latest.current.verifyCommand !== null) return
     let cancelled = false
-    documentFlowApi
-      .suggestVerifyCommand(projectId)
-      .then((suggestion) => {
-        if (cancelled || !suggestion || latest.current.verifyCommand !== null) return
-        change({ verifyCommand: suggestion })
+    const suggest = (targetId: string, apply: (suggestion: string) => void): void => {
+      documentFlowApi
+        .suggestVerifyCommand(targetId)
+        .then((suggestion) => {
+          if (!cancelled && suggestion) apply(suggestion)
+        })
+        .catch(() => {
+          // A missing suggestion only leaves the field empty.
+        })
+    }
+    if (memberIdsKey === null) {
+      if (latest.current.verifyCommand !== null) return
+      suggest(projectId, (suggestion) => {
+        if (latest.current.verifyCommand === null) change({ verifyCommand: suggestion })
       })
-      .catch(() => {
-        // A missing suggestion only leaves the field empty.
-      })
+    } else {
+      const memberIds = memberIdsKey ? memberIdsKey.split(',') : []
+      for (const memberId of unchosenMembers(latest.current, memberIds)) {
+        suggest(memberId, (suggestion) => {
+          // Still unchosen: the user may have typed one while the guess was on its way.
+          const current = latest.current.memberVerifyCommands
+          if ((current[memberId] ?? null) !== null) return
+          change({ memberVerifyCommands: { ...current, [memberId]: suggestion } })
+        })
+      }
+    }
     return () => {
       cancelled = true
     }
-  }, [projectId, change])
+  }, [projectId, memberIdsKey, change])
 
   // Closing the dialog mid-typing still writes the last edit.
   useEffect(

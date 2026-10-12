@@ -75,7 +75,11 @@ import { useCommandApprovalStore } from '@/stores/useCommandApprovalStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { isBlockerSatisfied } from '@/lib/blocker-utils'
-import { buildConnectionMergeQueue, resolveTicketConnectionId } from '@/lib/connection-merge'
+import {
+  buildConnectionMergeQueue,
+  queueConnectionRunMerge,
+  resolveTicketConnectionId
+} from '@/lib/connection-merge'
 import { useGitStore } from '@/stores/useGitStore'
 import { notifyKanbanSessionSync } from '@/stores/store-coordination'
 import { messageSendTimes, lastSendMode, userExplicitSendTimes } from '@/lib/message-send-times'
@@ -138,7 +142,10 @@ import { opencodeApi } from '@/api/opencode-api'
 import { remoteLaunchApi } from '@/api/remote-launch-api'
 import { useRemoteLaunchStore } from '@/stores/useRemoteLaunchStore'
 import { systemApi } from '@/api/system-api'
-import { isDocumentRunTicket } from '@shared/document-flow/run-ticket'
+import { documentRunIdOf, isDocumentRunTicket } from '@shared/document-flow/run-ticket'
+import type { DocumentRun } from '@shared/types/document-flow'
+import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
+import { documentFlowApi } from '@/api/document-flow-api'
 import { terminalApi } from '@/api/terminal-api'
 import {
   TICKET_SESSION_DIALOG_CLASS,
@@ -3329,6 +3336,37 @@ function ReviewModeContent({
         }
       } catch {
         // Fall through to normal move on error
+      }
+    } else if (documentRunIdOf(ticket)) {
+      // The ticket of a connection document run has neither worktree nor session: its
+      // integration branches live in the run's instance, one worktree per member. Queue
+      // the per-member merge flow like the board drop does (archive/keep step for each,
+      // already-merged members included so the prompt still shows when coming from
+      // Review/Merged). Done means merged for it, so an unverifiable queue stops the move.
+      const runId = documentRunIdOf(ticket) as string
+      try {
+        let run: Pick<DocumentRun, 'integration_connection_id'> | undefined =
+          useDocumentFlowStore.getState().runsById[runId]?.run
+        if (!run) run = (await documentFlowApi.get(runId))?.run
+        if (run?.integration_connection_id) {
+          const kanbanStore = useKanbanStore.getState()
+          const doneTickets = kanbanStore.getTicketsByColumn(ticket.project_id, 'done')
+          const queued = await queueConnectionRunMerge({
+            connectionId: run.integration_connection_id,
+            ticketId: ticket.id,
+            projectId: ticket.project_id,
+            targetColumn: 'done',
+            sortOrder: kanbanStore.computeSortOrder(doneTickets, doneTickets.length),
+            archivePromptOnly: ticket.column === 'review' || ticket.column === 'merged'
+          })
+          if (queued) return
+        }
+        // No instance (a git run, or a deleted one) or nothing left to merge — plain move
+      } catch (err) {
+        toast.warning(
+          `Could not verify merge status: ${err instanceof Error ? err.message : String(err)}`
+        )
+        return
       }
     }
 

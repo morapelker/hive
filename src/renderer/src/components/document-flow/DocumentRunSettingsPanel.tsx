@@ -10,61 +10,131 @@ import {
   type DocumentRunPromptStyle
 } from '@shared/types/document-flow'
 import { LaunchConfigPicker } from './LaunchConfigPicker'
-import { defaultBaseBranchLabel } from './document-flow-ui'
+import { defaultBaseBranchLabel, memberBaseBranch } from './document-flow-ui'
 import type { BaseBranchOptions } from './useBaseBranchOptions'
 
 const LABEL_CLASS = 'text-xs font-medium uppercase tracking-wider text-muted-foreground'
 const HELP_CLASS = 'text-[11px] leading-snug text-muted-foreground'
+const SELECT_CLASS =
+  'h-8 w-full rounded-md border border-input bg-background px-2.5 text-[12px] outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50'
 
 const PROMPT_STYLE_OPTIONS: { value: DocumentRunPromptStyle; label: string }[] = [
   { value: 'full', label: 'Full' },
   { value: 'small', label: 'Small' }
 ]
 
-interface DocumentRunSettingsPanelProps {
+/** A member project of a connection project, with the branches it offers as base. */
+export interface SettingsMember {
+  id: string
+  name: string
   branches: BaseBranchOptions
+}
+
+interface DocumentRunSettingsPanelProps {
+  /** Git project: the branches of the project. Not read when `members` is given. */
+  branches: BaseBranchOptions
+  /** Connection project: one base branch and one verify command per member, in member order. */
+  members?: readonly SettingsMember[] | null
   config: DocumentRunConfig
   onChange: (patch: Partial<DocumentRunConfig>, options?: { debounce?: boolean }) => void
+}
+
+/** A stored branch stays selectable while the list loads (or if it has since been deleted). */
+function branchOptions(stored: string | null, branches: BaseBranchOptions): string[] {
+  return stored && !branches.names.includes(stored) ? [stored, ...branches.names] : branches.names
+}
+
+function BaseBranchSelect({
+  id,
+  value,
+  branches,
+  onChange
+}: {
+  id: string
+  value: string | null
+  branches: BaseBranchOptions
+  onChange: (branch: string | null) => void
+}): React.JSX.Element {
+  return (
+    <select
+      id={id}
+      data-testid={id}
+      value={value ?? ''}
+      onChange={(event) => onChange(event.target.value || null)}
+      className={SELECT_CLASS}
+    >
+      <option value="">{defaultBaseBranchLabel(branches.current)}</option>
+      {branchOptions(value, branches).map((branch) => (
+        <option key={branch} value={branch}>
+          {branch}
+        </option>
+      ))}
+    </select>
+  )
 }
 
 /** Run-wide settings of a previewed run: where it branches from and how its tickets run. */
 export function DocumentRunSettingsPanel({
   branches,
+  members = null,
   config,
   onChange
 }: DocumentRunSettingsPanelProps): React.JSX.Element {
-  // A stored branch stays selectable while the list loads (or if it has since been deleted).
-  const branchOptions =
-    config.baseBranch && !branches.names.includes(config.baseBranch)
-      ? [config.baseBranch, ...branches.names]
-      : branches.names
+  const memberBranchErrors = (members ?? []).flatMap((member) =>
+    member.branches.error ? [`${member.name}: ${member.branches.error}`] : []
+  )
 
   return (
     <div className="space-y-5" data-testid="docflow-settings">
-      <div className="space-y-1.5">
-        <label htmlFor="docflow-base-branch" className={LABEL_CLASS}>
-          Base branch
-        </label>
-        <select
-          id="docflow-base-branch"
-          data-testid="docflow-base-branch"
-          value={config.baseBranch ?? ''}
-          onChange={(event) => onChange({ baseBranch: event.target.value || null })}
-          className="h-8 w-full rounded-md border border-input bg-background px-2.5 text-[12px] outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
-        >
-          <option value="">{defaultBaseBranchLabel(branches.current)}</option>
-          {branchOptions.map((branch) => (
-            <option key={branch} value={branch}>
-              {branch}
-            </option>
-          ))}
-        </select>
-        <p className={HELP_CLASS}>
-          {branches.error
-            ? `Branches could not be listed: ${branches.error}`
-            : 'The integration branch is cut from it. The base branch itself is never modified.'}
-        </p>
-      </div>
+      {members ? (
+        <div className="space-y-1.5" data-testid="docflow-member-base-branches">
+          <p className={LABEL_CLASS}>Base branches</p>
+          <div className="space-y-1.5">
+            {members.map((member) => (
+              <div key={member.id} className="space-y-0.5">
+                <label
+                  htmlFor={`docflow-base-branch-${member.id}`}
+                  className="text-[12px] text-foreground"
+                >
+                  {member.name}
+                </label>
+                <BaseBranchSelect
+                  id={`docflow-base-branch-${member.id}`}
+                  value={memberBaseBranch(config, member.id)}
+                  branches={member.branches}
+                  onChange={(branch) =>
+                    onChange({
+                      memberBaseBranches: { ...config.memberBaseBranches, [member.id]: branch }
+                    })
+                  }
+                />
+              </div>
+            ))}
+          </div>
+          <p className={HELP_CLASS}>
+            {memberBranchErrors.length > 0
+              ? `Branches could not be listed: ${memberBranchErrors.join(' · ')}`
+              : "An integration branch is cut from each member's base branch, and every ticket gets a worktree in every member project. The base branches themselves are never modified."}
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-1.5">
+          <label htmlFor="docflow-base-branch" className={LABEL_CLASS}>
+            Base branch
+          </label>
+          <BaseBranchSelect
+            id="docflow-base-branch"
+            value={config.baseBranch}
+            branches={branches}
+            onChange={(baseBranch) => onChange({ baseBranch })}
+          />
+          <p className={HELP_CLASS}>
+            {branches.error
+              ? `Branches could not be listed: ${branches.error}`
+              : 'The integration branch is cut from it. The base branch itself is never modified.'}
+          </p>
+        </div>
+      )}
 
       <div className="space-y-1.5">
         <p className={LABEL_CLASS}>Default model for tickets</p>
@@ -116,25 +186,70 @@ export function DocumentRunSettingsPanel({
         </p>
       </div>
 
-      <div className="space-y-1.5">
-        <label htmlFor="docflow-verify-command" className={LABEL_CLASS}>
-          Verify command
-        </label>
-        <Input
-          id="docflow-verify-command"
-          data-testid="docflow-verify-command"
-          placeholder="No verification"
-          spellCheck={false}
-          className="font-mono text-[12px]"
-          value={config.verifyCommand ?? ''}
-          onChange={(event) => onChange({ verifyCommand: event.target.value }, { debounce: true })}
-        />
-        <p className={HELP_CLASS}>
-          Runs in the integration worktree after each merge. On failure a fix session gets 2
-          attempts, then the merge is rolled back. Separate from how each agent verifies its own
-          ticket (the tcu / playwright / tests chips in the list).
-        </p>
-      </div>
+      {members ? (
+        <div className="space-y-1.5" data-testid="docflow-member-verify-commands">
+          <p className={LABEL_CLASS}>Verify commands</p>
+          <div className="space-y-1.5">
+            {members.map((member) => (
+              <div key={member.id} className="space-y-0.5">
+                <label
+                  htmlFor={`docflow-verify-command-${member.id}`}
+                  className="text-[12px] text-foreground"
+                >
+                  {member.name}
+                </label>
+                <Input
+                  id={`docflow-verify-command-${member.id}`}
+                  data-testid={`docflow-verify-command-${member.id}`}
+                  placeholder="No verification"
+                  spellCheck={false}
+                  className="font-mono text-[12px]"
+                  value={config.memberVerifyCommands[member.id] ?? ''}
+                  onChange={(event) =>
+                    onChange(
+                      {
+                        memberVerifyCommands: {
+                          ...config.memberVerifyCommands,
+                          [member.id]: event.target.value
+                        }
+                      },
+                      { debounce: true }
+                    )
+                  }
+                />
+              </div>
+            ))}
+          </div>
+          <p className={HELP_CLASS}>
+            Each runs in its member's integration worktree after every merge, and all must pass;
+            leave one empty to skip that member. On failure a fix session gets 2 attempts, then the
+            merge is rolled back in every member. Separate from how each agent verifies its own
+            ticket (the tcu / playwright / tests chips in the list).
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-1.5">
+          <label htmlFor="docflow-verify-command" className={LABEL_CLASS}>
+            Verify command
+          </label>
+          <Input
+            id="docflow-verify-command"
+            data-testid="docflow-verify-command"
+            placeholder="No verification"
+            spellCheck={false}
+            className="font-mono text-[12px]"
+            value={config.verifyCommand ?? ''}
+            onChange={(event) =>
+              onChange({ verifyCommand: event.target.value }, { debounce: true })
+            }
+          />
+          <p className={HELP_CLASS}>
+            Runs in the integration worktree after each merge. On failure a fix session gets 2
+            attempts, then the merge is rolled back. Separate from how each agent verifies its own
+            ticket (the tcu / playwright / tests chips in the list).
+          </p>
+        </div>
+      )}
 
       <div className="space-y-1.5">
         <p className={LABEL_CLASS}>Prompt</p>

@@ -45,27 +45,31 @@ import {
 import {
   migrationsRefusal,
   startRunMigrations,
-  stopRunMigrations
+  stopRunMigrations,
+  activeConnectionIds
 } from '@/lib/document-flow/migrations'
 import { toast } from '@/lib/toast'
+import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import { summarizeItems } from '@shared/document-flow/planning'
-import type {
-  DocumentRun,
-  DocumentRunDetail,
-  DocumentSourceFile
+import {
+  isConnectionRun,
+  type DocumentRun,
+  type DocumentRunDetail,
+  type DocumentSourceFile
 } from '@shared/types/document-flow'
 import { TonePill } from './DocumentFlowBadges'
 import { NeedsYouSection, RunItemsTable } from './DocumentRunItems'
 import { RunActivityLog, RunReportSection } from './DocumentRunReport'
 import { RunParallelControl } from './RunParallelControl'
 import { RunProgressBar } from './RunProgressBar'
-import { openSession, openWorktree } from './document-flow-navigation'
+import { openConnection, openSession, openWorktree } from './document-flow-navigation'
 import { useMigrationSessionWaiting } from './useDocumentRunTicket'
 import {
   describeRunDeletion,
+  describeRunMembers,
   documentNameFromPath,
   isActiveRunStatus,
   isLaunchedRunStatus,
@@ -134,7 +138,26 @@ const CONFIRM_COPY: Record<
 
 /** The part of the migrations confirmation that depends on the run. */
 function describeMigrationsLaunch(run: DocumentRun): string {
-  return `It runs in the worktree of ${run.integration_branch ?? 'the integration branch'}, the branch the run's tickets were merged into. While it is at it the run's ticket is back In Progress, and Stop aborts the session.`
+  const where = isConnectionRun(run)
+    ? `in the integration instance of ${run.integration_branch ?? 'the integration branches'}, the branches the run's tickets were merged into in every member repository`
+    : `in the worktree of ${run.integration_branch ?? 'the integration branch'}, the branch the run's tickets were merged into`
+  return `It runs ${where}. While it is at it the run's ticket is back In Progress, and Stop aborts the session.`
+}
+
+/** Said when "Open instance" finds the run's integration instance gone or archived. */
+function instanceArchivedMessage(run: Pick<DocumentRun, 'integration_branch'>): string {
+  return `The instance of ${run.integration_branch ?? 'the integration branches'} was archived.`
+}
+
+/**
+ * The ids of the loaded, active connections, as the migrations gate wants them: undefined
+ * while the list has not arrived, which refuses nothing. Only asked for a connection run.
+ */
+function useActiveConnectionIds(enabled: boolean): ReadonlySet<string> | undefined {
+  const loaded = useConnectionStore((s) => s.loaded)
+  const connections = useConnectionStore((s) => s.connections)
+  if (!enabled) return undefined
+  return activeConnectionIds({ loaded, connections })
 }
 
 /** The part of the question-mode confirmation that depends on what is running right now. */
@@ -271,11 +294,18 @@ function DashboardBody({ detail }: { detail: DocumentRunDetail }): React.JSX.Ele
   const documentMissing = source !== null && !source.exists
   // Archived with the merge of the run's ticket: no checkout is left to run a session in
   const worktreeIds = useWorktreeStore((s) => s.worktreesByProject.get(run.project_id))
+  const connectionRun = isConnectionRun(run)
+  const connectionIds = useActiveConnectionIds(connectionRun)
   const migrating = isRunMigrating(run)
   const migrationWaiting = useMigrationSessionWaiting(run.migration_session_id)
   const migrationsBlocked = migrating
     ? null
-    : migrationsRefusal(run, worktreeIds && new Set(worktreeIds.map((worktree) => worktree.id)))
+    : migrationsRefusal(
+        run,
+        worktreeIds && new Set(worktreeIds.map((worktree) => worktree.id)),
+        connectionIds
+      )
+  const memberLines = describeRunMembers(run)
 
   const status: StatusDisplay =
     migrating && migrationWaiting
@@ -429,6 +459,30 @@ function DashboardBody({ detail }: { detail: DocumentRunDetail }): React.JSX.Ele
                 Open worktree
               </Button>
             )}
+            {run.integration_connection_id && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-6 text-xs"
+                data-testid="docflow-open-instance"
+                onClick={() => {
+                  const connectionId = run.integration_connection_id
+                  if (!connectionId) return
+                  // Archived with the merge of the run's ticket: there is nothing to select
+                  const { loaded, connections } = useConnectionStore.getState()
+                  const instance = connections.find((c) => c.id === connectionId)
+                  if (loaded && (!instance || instance.status !== 'active')) {
+                    toast.info(instanceArchivedMessage(run))
+                    return
+                  }
+                  openConnection(run.project_id, connectionId)
+                  closeDashboard()
+                }}
+              >
+                Open instance
+              </Button>
+            )}
             {run.base_branch && (
               <span data-testid="docflow-base-branch-line">
                 from <span className="font-mono text-foreground">{run.base_branch}</span>
@@ -436,6 +490,25 @@ function DashboardBody({ detail }: { detail: DocumentRunDetail }): React.JSX.Ele
               </span>
             )}
           </div>
+        )}
+
+        {/* A connection run: the integration branch and its base in every member repository */}
+        {memberLines.length > 0 && (
+          <ul
+            className="space-y-0.5 pl-[18px] text-[11px] text-muted-foreground"
+            data-testid="docflow-member-lines"
+          >
+            {memberLines.map((line) => (
+              <li
+                key={line.projectId}
+                className="truncate font-mono"
+                title={line.label}
+                data-testid={`docflow-member-line-${line.projectId}`}
+              >
+                {line.label}
+              </li>
+            ))}
+          </ul>
         )}
 
         <div className="flex items-center gap-3">
@@ -623,7 +696,12 @@ function DashboardBody({ detail }: { detail: DocumentRunDetail }): React.JSX.Ele
                     onClick={() => {
                       const sessionId = run.migration_session_id
                       if (!sessionId) return
-                      openSession(run.project_id, run.integration_worktree_id, sessionId)
+                      openSession(
+                        run.project_id,
+                        run.integration_worktree_id,
+                        sessionId,
+                        run.integration_connection_id
+                      )
                       closeDashboard()
                     }}
                   >

@@ -1,6 +1,7 @@
 import type { HandoffAgentSdk } from '../types/agent-sdk'
 import {
   DOCUMENT_VERIFICATION_METHODS,
+  type DocumentRunMember,
   type DocumentRunPromptStyle,
   type DocumentRunVerdict,
   type DocumentVerificationMethod
@@ -18,6 +19,43 @@ interface TicketRef {
 
 const listTickets = (tickets: readonly TicketRef[]): string =>
   tickets.map((ticket) => `${ticket.key} (${ticket.title})`).join(', ')
+
+// ── Connection projects ────────────────────────────────────────────────────
+
+/** A member repository of a connection directory, as the prompts name it. */
+export interface ConnectionWorkspaceMember {
+  /** Directory name of the member inside the connection directory (`web`). */
+  symlinkName: string
+  projectName: string
+}
+
+/** The members of a run as the prompts name them. */
+export function workspaceOfMembers(
+  members: readonly Pick<DocumentRunMember, 'symlink_name' | 'project_name'>[]
+): ConnectionWorkspaceMember[] {
+  return members.map((member) => ({
+    symlinkName: member.symlink_name,
+    projectName: member.project_name
+  }))
+}
+
+const listMembers = (members: readonly ConnectionWorkspaceMember[]): string =>
+  members.map((member) => `\`${member.symlinkName}/\` is ${member.projectName}`).join(', ')
+
+const CONNECTION_WORKSPACE_LEAD = 'this task runs in a connection directory: '
+
+/**
+ * Told to every session of a run on a connection project. The connection directory's own
+ * AGENTS.md asks agents not to commit or run git unless told to; the run tells them to.
+ */
+export function connectionWorkspaceParagraph(
+  members: readonly ConnectionWorkspaceMember[]
+): string {
+  return `${CONNECTION_WORKSPACE_LEAD}each member repository is a subdirectory of it (${listMembers(members)}). work inside those repositories, never at the top level of the connection directory, and commit in every repository you changed - that overrides the note in this directory's AGENTS.md about not committing or running git on your own. a repository you did not change stays untouched.`
+}
+
+const isConnectionWorkspaceParagraph = (paragraph: string): boolean =>
+  paragraph.startsWith(CONNECTION_WORKSPACE_LEAD)
 
 /**
  * The block the follow-up prompts ask a session to end its final message with. Questions are
@@ -138,6 +176,8 @@ export interface LaunchPromptInput {
   sdk: HandoffAgentSdk
   /** How the agent is asked to verify its work; empty or missing = the brief says nothing. */
   verification?: readonly DocumentVerificationMethod[] | null
+  /** Connection projects: the members of the connection directory the session runs in. */
+  workspace?: readonly ConnectionWorkspaceMember[] | null
 }
 
 /**
@@ -155,6 +195,9 @@ export function buildLaunchPrompt(input: LaunchPromptInput): string {
     paragraphs.push(
       'use subagents to research and read the spec attached there, read the description of it, understand the requirements, research best practices regarding it'
     )
+  }
+  if (input.workspace && input.workspace.length > 0) {
+    paragraphs.push(connectionWorkspaceParagraph(input.workspace))
   }
   paragraphs.push(
     launchAskParagraph(input.interactive, input.sdk),
@@ -176,10 +219,19 @@ export function buildLaunchPrompt(input: LaunchPromptInput): string {
  */
 export function withRunRules(
   brief: string,
-  input: Pick<LaunchPromptInput, 'interactive' | 'sdk' | 'verification'>
+  input: Pick<LaunchPromptInput, 'interactive' | 'sdk' | 'verification' | 'workspace'>
 ): string {
   const ask = launchAskParagraph(input.interactive, input.sdk)
   let text = brief.trim()
+  // The connection paragraph names the members as they are now; an older wording goes.
+  const workspace =
+    input.workspace && input.workspace.length > 0
+      ? connectionWorkspaceParagraph(input.workspace)
+      : null
+  const stripped = text
+    .split('\n\n')
+    .filter((paragraph) => !isConnectionWorkspaceParagraph(paragraph.trim()))
+  if (stripped.length > 0) text = stripped.join('\n\n')
   for (const stale of LAUNCH_ASK_PARAGRAPHS) {
     if (stale === ask || !text.includes(stale)) continue
     text = text.replace(stale, text.includes(ask) ? '' : ask)
@@ -196,6 +248,12 @@ export function withRunRules(
       ? text.replace(LAUNCH_RULES_PARAGRAPH, `${block}\n\n${LAUNCH_RULES_PARAGRAPH}`)
       : [text, block].filter(Boolean).join('\n\n')
   }
+  // The connection paragraph goes where buildLaunchPrompt puts it: before the asking paragraph.
+  if (workspace && !text.includes(workspace)) {
+    text = text.includes(ask)
+      ? text.replace(ask, `${workspace}\n\n${ask}`)
+      : [text, workspace].filter(Boolean).join('\n\n')
+  }
   const missing = [ask, LAUNCH_RULES_PARAGRAPH, LAUNCH_FOLLOW_UPS_PARAGRAPH].filter(
     (paragraph) => !text.includes(paragraph)
   )
@@ -209,6 +267,8 @@ export interface MigrationPromptInput {
   migrations: readonly string[]
   /** The session's own SDK, which names its question tool. */
   sdk: string
+  /** Connection projects: the session runs in the integration connection directory. */
+  workspace?: readonly ConnectionWorkspaceMember[] | null
 }
 
 /**
@@ -219,8 +279,11 @@ export interface MigrationPromptInput {
 export function buildMigrationPrompt(input: MigrationPromptInput): string {
   const title = input.documentTitle.replace(/\s+/g, ' ').trim()
   const migrations = input.migrations.map((entry) => entry.replace(/\s+/g, ' ').trim())
+  const workspace = input.workspace && input.workspace.length > 0 ? input.workspace : null
   return [
-    `execute the migrations of this branch (${input.integrationBranch}) against production. the branch holds the merged work of the document run${title ? ` "${title}"` : ''}; these are the migrations it added or changed:`,
+    workspace
+      ? `execute the migrations of the integration branches (${input.integrationBranch}) against production. this is a connection directory: each member repository is a subdirectory of it (${listMembers(workspace)}), and each one has the branch checked out; a migration path starts with the member's directory. the branches hold the merged work of the document run${title ? ` "${title}"` : ''}; these are the migrations they added or changed:`
+      : `execute the migrations of this branch (${input.integrationBranch}) against production. the branch holds the merged work of the document run${title ? ` "${title}"` : ''}; these are the migrations it added or changed:`,
     migrations
       .filter(Boolean)
       .map((entry) => `- ${entry}`)
@@ -288,6 +351,19 @@ export interface ConflictPromptInput {
   attempt: number
   /** The run's "agents may ask" setting; asking is allowed when omitted. */
   interactive?: boolean
+  /**
+   * Connection projects: the members whose merge conflicted, each with the member's own
+   * integration branch and the commit to merge. `conflictedFiles` are then prefixed with the
+   * member directory, and the merge instruction is given per member.
+   */
+  members?: readonly ConflictPromptMember[] | null
+}
+
+export interface ConflictPromptMember {
+  symlinkName: string
+  projectName: string
+  integrationBranch: string
+  integrationCommit: string | null
 }
 
 /** Sent to the ticket's own session when its branch no longer merges cleanly. */
@@ -300,6 +376,22 @@ export function buildConflictPrompt(input: ConflictPromptInput): string {
     input.mergedTickets.length > 0
       ? `Merged into it so far: ${listTickets(input.mergedTickets)}.`
       : 'Other tasks were merged into it.'
+  const members = input.members && input.members.length > 0 ? input.members : null
+  const mergeStep = members
+    ? [
+        'This is a connection directory: each member repository is a subdirectory of it, and the conflict is in the repositories listed below. In each of them, run the merge inside that directory:',
+        ...members.map(
+          (member) =>
+            `   - \`${member.symlinkName}/\` (${member.projectName}): ${
+              member.integrationCommit
+                ? `\`git merge ${member.integrationCommit}\` (the current verified commit of \`${member.integrationBranch}\`; merge that commit, not the branch name, which may already carry an unverified change)`
+                : `\`git merge ${member.integrationBranch}\``
+            }`
+        )
+      ].join('\n')
+    : input.integrationCommit
+      ? `Run \`git merge ${input.integrationCommit}\` in this worktree (that is the current verified commit of \`${input.integrationBranch}\`; merge that commit, not the branch name, which may already carry an unverified change).`
+      : `Run \`git merge ${input.integrationBranch}\` in this worktree.`
   return [
     `Your work is ready to merge, but your branch conflicts with \`${input.integrationBranch}\`. ${merged}`,
     '',
@@ -307,17 +399,17 @@ export function buildConflictPrompt(input: ConflictPromptInput): string {
     files,
     '',
     'Resolve it on your branch:',
-    input.integrationCommit
-      ? `1. Run \`git merge ${input.integrationCommit}\` in this worktree (that is the current verified commit of \`${input.integrationBranch}\`; merge that commit, not the branch name, which may already carry an unverified change).`
-      : `1. Run \`git merge ${input.integrationBranch}\` in this worktree.`,
+    `1. ${mergeStep}`,
     "2. Resolve every conflict so that BOTH sides keep working: your task and the tasks already merged. Do not drop either side's behaviour, and do not touch files that are not part of the conflict.",
     "3. Never hand-merge generated files (lockfiles, generated code, migration journals or snapshots): take the integration branch's version and regenerate yours on top with the repository's own command. A migration of yours whose number now collides must be regenerated or renumbered after the ones already merged.",
     "4. Run the repository's checks (typecheck, lint, the tests you touched) and fix what the merge broke.",
-    '5. Commit the merge. Do not push, and do not change any other branch.',
+    members
+      ? '5. Commit the merge in every repository you merged. Do not push, and do not change any other branch.'
+      : '5. Commit the merge. Do not push, and do not change any other branch.',
     '',
     input.attempt > 1
-      ? `This is attempt ${input.attempt}: the previous resolution still conflicted. Make sure the merge commit exists and that \`git status\` is clean.`
-      : 'When `git status` is clean and the merge is committed, you are done.',
+      ? `This is attempt ${input.attempt}: the previous resolution still conflicted. Make sure the merge commit exists and that \`git status\` is clean${members ? ' in every member repository' : ''}.`
+      : `When \`git status\` is clean${members ? ' in every member repository' : ''} and the merge is committed, you are done.`,
     '',
     'In the block below, describe your whole task as it now stands on this branch, not only the merge: its summary, its migrations, and the manual steps that still apply after the merge.',
     '',
@@ -336,6 +428,12 @@ export interface FixTicketInput {
   attempt: number
   /** The run's "agents may ask" setting; asking is allowed when omitted. */
   interactive?: boolean
+  /**
+   * Connection projects: the session runs in the integration connection directory, and the
+   * failing command ran in `failedMember`'s repository.
+   */
+  workspace?: readonly ConnectionWorkspaceMember[] | null
+  failedMember?: ConnectionWorkspaceMember | null
 }
 
 /**
@@ -350,10 +448,15 @@ export function buildFixTicket(input: FixTicketInput): { title: string; descript
     .trim()
   // Command output may itself contain a code fence; a longer one keeps ours closed.
   const fence = /```/.test(`${input.verifyCommand}\n${input.verifyOutput}`) ? '`````' : '```'
+  const workspace = input.workspace && input.workspace.length > 0 ? input.workspace : null
   const description = [
-    `Task ${input.key} (${input.title}) was just merged into \`${input.integrationBranch}\`, the branch checked out in this worktree. The merge was clean, but the verification command now fails.`,
+    workspace
+      ? `Task ${input.key} (${input.title}) was just merged into \`${input.integrationBranch}\`, the branch checked out in every member repository of this connection directory (${listMembers(workspace)}). The merge was clean, but the verification command${input.failedMember ? ` of \`${input.failedMember.symlinkName}/\` (${input.failedMember.projectName}), run inside that directory,` : ''} now fails.`
+      : `Task ${input.key} (${input.title}) was just merged into \`${input.integrationBranch}\`, the branch checked out in this worktree. The merge was clean, but the verification command now fails.`,
     '',
-    'Command:',
+    workspace && input.failedMember
+      ? `Command (run in \`${input.failedMember.symlinkName}/\`):`
+      : 'Command:',
     fence,
     input.verifyCommand,
     fence,
@@ -366,8 +469,12 @@ export function buildFixTicket(input: FixTicketInput): { title: string; descript
     '## What to do',
     '- Find what the merge broke. It is usually an interaction between this task and one merged earlier (a renamed symbol, a changed signature, duplicate or misnumbered migrations, a stale generated file), not a flaw in either alone.',
     "- Fix it here with the smallest change that keeps every merged task working. Regenerate generated files with the repository's own commands instead of editing them by hand.",
-    '- Re-run the command above until it passes.',
-    '- Commit the fix on this branch. Do not push, do not switch branches, and do not change any other branch.',
+    workspace && input.failedMember
+      ? `- Re-run the command above inside \`${input.failedMember.symlinkName}/\` until it passes.`
+      : '- Re-run the command above until it passes.',
+    workspace
+      ? '- Commit the fix on this branch in every member repository you changed. Do not push, do not switch branches, and do not change any other branch.'
+      : '- Commit the fix on this branch. Do not push, do not switch branches, and do not change any other branch.',
     '',
     ...(input.attempt > 1
       ? [`This is attempt ${input.attempt}; the previous fix did not make the command pass.`, '']

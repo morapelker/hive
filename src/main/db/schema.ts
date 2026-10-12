@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 55
+export const CURRENT_SCHEMA_VERSION = 56
 
 /**
  * "Implement document" flow (v55). `document_runs` is one spec document turned into tickets
@@ -16,7 +16,11 @@ export const CURRENT_SCHEMA_VERSION = 55
  * `document_runs.ticket_id` (v57) is the run's own board ticket, the one that is moved to Done
  * to merge the integration branch. `migration_session_id` / `migration_started_at` /
  * `migration_owner_pid` (v58) are the session executing a finished run's migrations, while one
- * is, and the app instance it runs in.
+ * is, and the app instance it runs in. A run on a connection project (v60) has an integration
+ * INSTANCE instead of an integration worktree: `integration_connection_id` /
+ * `integration_connection_path` and `members` (JSON, one integration worktree per member
+ * project); its items have `connection_id` and `members` (JSON, one worktree per member with
+ * that member's merge bookkeeping) instead of `worktree_id`.
  * CREATE TABLE IF NOT EXISTS, replayed by ensureDocumentFlowTables() in database.ts.
  */
 export const DOCUMENT_FLOW_TABLES_SQL = `
@@ -36,6 +40,9 @@ export const DOCUMENT_FLOW_TABLES_SQL = `
     integration_branch        TEXT DEFAULT NULL,
     integration_worktree_id   TEXT DEFAULT NULL,
     integration_worktree_path TEXT DEFAULT NULL,
+    integration_connection_id   TEXT DEFAULT NULL,
+    integration_connection_path TEXT DEFAULT NULL,
+    members                   TEXT DEFAULT NULL,
     ticket_id                 TEXT DEFAULT NULL,
     report                    TEXT DEFAULT NULL,
     migration_session_id      TEXT DEFAULT NULL,
@@ -74,6 +81,8 @@ export const DOCUMENT_FLOW_TABLES_SQL = `
     status_detail     TEXT DEFAULT NULL,
     ticket_id         TEXT DEFAULT NULL,
     worktree_id       TEXT DEFAULT NULL,
+    connection_id     TEXT DEFAULT NULL,
+    members           TEXT DEFAULT NULL,
     session_id        TEXT DEFAULT NULL,
     fix_ticket_id     TEXT DEFAULT NULL,
     fix_session_id    TEXT DEFAULT NULL,
@@ -976,6 +985,17 @@ DROP TABLE IF EXISTS diff_comments;`
          -- document_run_items.verification and document_run_items.verification_reason is
          -- handled idempotently by safeAddColumn() in database.ts to avoid
          -- "duplicate column" errors.`,
+    down: `-- SQLite cannot drop columns; this is a no-op for safety`
+  },
+  {
+    version: 56,
+    name: 'add_document_run_connection_project',
+    // Document runs on connection projects: an integration instance (connection) with one
+    // integration worktree per member, and per-item member worktrees.
+    up: `-- NOTE: ALTER TABLE for document_runs.integration_connection_id,
+         -- document_runs.integration_connection_path, document_runs.members,
+         -- document_run_items.connection_id and document_run_items.members is handled
+         -- idempotently by safeAddColumn() in database.ts to avoid "duplicate column" errors.`,
     down: `-- SQLite cannot drop columns; this is a no-op for safety`
   }
 ]

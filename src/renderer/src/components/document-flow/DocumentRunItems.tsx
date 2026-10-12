@@ -23,6 +23,7 @@ import { openSession } from './document-flow-navigation'
 import { effectiveLaunchConfig } from './document-flow-launch'
 import {
   canEditVerification,
+  describeItemBranches,
   isActiveRunStatus,
   isRequeueableItem,
   isSkippableItem,
@@ -81,7 +82,7 @@ function useRunItemActions(run: DocumentRun): RunItemActions {
       open: (item) => {
         const target = itemSessionTarget(run, item)
         if (!target) return
-        openSession(run.project_id, target.worktreeId, target.sessionId)
+        openSession(run.project_id, target.worktreeId, target.sessionId, target.connectionId)
         closeDashboard()
       },
       retry: (item) => {
@@ -292,9 +293,11 @@ export function RunItemsTable({ run, items }: RunItemsProps): React.JSX.Element 
                     testIdPrefix="docflow-row-verify"
                   />
                 </span>
+                {/* A connection run names the branch in every member in the tooltip */}
                 <span
                   className="flex min-w-0 items-center gap-1 text-muted-foreground"
-                  title={item.branch_name ?? undefined}
+                  title={describeItemBranches(run, item) ?? item.branch_name ?? undefined}
+                  data-testid={`docflow-row-branch-${item.key}`}
                 >
                   {item.branch_name && (
                     <>

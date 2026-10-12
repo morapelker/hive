@@ -86,7 +86,9 @@ function seedPreview(): ReturnType<typeof seedRun> {
         verificationDisabled: false,
         defaultLaunch: sonnet,
         generation: null,
-        baseBranch: null
+        baseBranch: null,
+        memberBaseBranches: {},
+        memberVerifyCommands: {}
       }
     },
     items: [
@@ -709,14 +711,15 @@ describe('start', () => {
     })
   })
 
-  it('refuses a project that is gone or is a connection', async () => {
+  it('refuses a project that is gone or a connection without two members', async () => {
     const { run } = seedRun(harness, { items: [{}] })
     harness.projects.set(TEST_PROJECT_ID, {
       ...harness.projects.get(TEST_PROJECT_ID)!,
-      kind: 'connection'
+      kind: 'connection',
+      member_project_ids: null
     })
     await expect(harness.service.start(run.id)).rejects.toThrow(
-      'Documents cannot be implemented in a connection project yet.'
+      'project needs at least two member projects to implement a document in; it has 0.'
     )
 
     harness.projects.delete(TEST_PROJECT_ID)

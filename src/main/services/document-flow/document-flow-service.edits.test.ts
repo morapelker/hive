@@ -112,7 +112,9 @@ describe('updateRun', () => {
       generation: null,
       baseBranch: null,
       notes: null,
-      verificationDisabled: false
+      verificationDisabled: false,
+      memberBaseBranches: {},
+      memberVerifyCommands: {}
     })
     // A second patch keeps what the first one set.
     expect(

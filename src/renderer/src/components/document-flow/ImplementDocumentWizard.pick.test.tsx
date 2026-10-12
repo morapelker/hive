@@ -248,15 +248,20 @@ describe('ImplementDocumentWizard — pick step', () => {
     expect(screen.getByTestId('docflow-path-input')).toHaveValue('')
   })
 
-  it('explains that connection projects are not supported', async () => {
+  it('offers the pick step to a connection project, saying the run spans its members', async () => {
     useProjectStore.setState({
-      projects: [{ ...TEST_PROJECT, id: 'project-conn', kind: 'connection' }]
+      projects: [
+        { ...TEST_PROJECT, id: 'project-conn', kind: 'connection', member_project_ids: '["a","b"]' }
+      ]
     } as never)
     openWizard(null, 'project-conn')
     await renderWizard()
 
-    expect(screen.getByTestId('docflow-wizard-unsupported')).toHaveTextContent(/git projects only/)
-    expect(screen.queryByTestId('docflow-path-input')).toBeNull()
+    expect(screen.queryByTestId('docflow-wizard-unsupported')).toBeNull()
+    expect(screen.getByTestId('docflow-path-input')).toBeInTheDocument()
+    expect(screen.getByTestId('docflow-wizard')).toHaveTextContent(
+      'one integration branch per member repository'
+    )
   })
 })
 

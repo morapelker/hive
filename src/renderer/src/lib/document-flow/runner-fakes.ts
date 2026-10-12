@@ -6,13 +6,16 @@ import {
   type DocumentRunConfig,
   type DocumentRunDetail,
   type DocumentRunItem,
+  type DocumentRunItemMember,
   type DocumentRunItemPatch,
+  type DocumentRunMember,
   type DocumentRunVerdict,
   type DocumentVerifyResult,
   type SessionFinalMessage
 } from '@shared/types/document-flow'
 import type { TicketLaunchResult, TicketLaunchSpec } from '@/lib/ticket-launch'
 import type {
+  RunnerConnection,
   RunnerNotice,
   RunnerPorts,
   RunnerTicket,
@@ -34,6 +37,52 @@ export const INTEGRATION_WORKTREE = 'wt-integration'
 export const SERVER_STARTED_AT = '2026-05-04T09:00:00.000Z'
 export const TEST_NOW = '2026-05-04T10:00:00.000Z'
 
+// A run on a connection project (`createWorld({ connection: true })`): two member projects,
+// each with its integration worktree, connected as the integration instance.
+export const INTEGRATION_CONNECTION = 'conn-integration'
+export const INTEGRATION_CONNECTION_PATH = '/connections/conn-integration'
+export const WEB_PROJECT = 'project-web'
+export const API_PROJECT = 'project-api'
+export const MEMBERS: DocumentRunMember[] = [
+  {
+    project_id: WEB_PROJECT,
+    project_name: 'Web',
+    project_path: '/repo/web',
+    symlink_name: 'web',
+    base_branch: 'main',
+    base_sha: 'base-web',
+    integration_branch: INTEGRATION_BRANCH,
+    integration_worktree_id: 'wt-int-web',
+    integration_worktree_path: '/worktrees/web--doc-checkout'
+  },
+  {
+    project_id: API_PROJECT,
+    project_name: 'Api',
+    project_path: '/repo/api',
+    symlink_name: 'api',
+    base_branch: 'develop',
+    base_sha: 'base-api',
+    integration_branch: INTEGRATION_BRANCH,
+    integration_worktree_id: 'wt-int-api',
+    integration_worktree_path: '/worktrees/api--doc-checkout'
+  }
+]
+
+/** An item's member worktrees on a connection run, one per MEMBERS entry, cut for `key`. */
+export function makeItemMembers(
+  key: string,
+  overrides: Partial<DocumentRunItemMember>[] = []
+): DocumentRunItemMember[] {
+  return MEMBERS.map((member, index) => ({
+    project_id: member.project_id,
+    worktree_id: `wt-${key}-${member.symlink_name}`,
+    branch_name: `${key.toLowerCase()}-task`,
+    pre_merge_sha: null,
+    merge_sha: null,
+    ...overrides[index]
+  }))
+}
+
 export function makeRun(overrides: Partial<DocumentRun> = {}): DocumentRun {
   return {
     id: RUN_ID,
@@ -51,6 +100,9 @@ export function makeRun(overrides: Partial<DocumentRun> = {}): DocumentRun {
     integration_branch: INTEGRATION_BRANCH,
     integration_worktree_id: INTEGRATION_WORKTREE,
     integration_worktree_path: '/worktrees/shop--doc-checkout',
+    integration_connection_id: null,
+    integration_connection_path: null,
+    members: null,
     ticket_id: null,
     report: null,
     migration_session_id: null,
@@ -93,6 +145,8 @@ export function makeItem(overrides: Partial<DocumentRunItem> = {}): DocumentRunI
     status_detail: null,
     ticket_id: `ticket-${key}`,
     worktree_id: null,
+    connection_id: null,
+    members: null,
     session_id: null,
     fix_ticket_id: null,
     fix_session_id: null,
@@ -138,9 +192,24 @@ export interface WorldOptions {
   run?: Partial<DocumentRun>
   config?: Partial<DocumentRunConfig>
   items?: Partial<DocumentRunItem>[]
+  /** A run on a connection project over MEMBERS, with its integration instance in place. */
+  connection?: boolean
 }
 
 export type RunnerWorld = ReturnType<typeof createWorld>
+
+/** The run columns of a launched connection run: no integration worktree, an instance and members. */
+const CONNECTION_RUN: Partial<DocumentRun> = {
+  project_id: PROJECT_ID,
+  base_branch: 'main + develop',
+  base_sha: null,
+  integration_branch: INTEGRATION_BRANCH,
+  integration_worktree_id: null,
+  integration_worktree_path: null,
+  integration_connection_id: INTEGRATION_CONNECTION,
+  integration_connection_path: INTEGRATION_CONNECTION_PATH,
+  members: MEMBERS
+}
 
 export function createWorld(options: WorldOptions = {}) {
   const items = (options.items ?? [{ key: 'A' }]).map((item, position) =>
@@ -151,6 +220,7 @@ export function createWorld(options: WorldOptions = {}) {
       RUN_ID,
       {
         run: makeRun({
+          ...(options.connection ? CONNECTION_RUN : {}),
           ...options.run,
           config: { ...DEFAULT_DOCUMENT_RUN_CONFIG, ...options.run?.config, ...options.config }
         }),
@@ -171,8 +241,35 @@ export function createWorld(options: WorldOptions = {}) {
         branch_name: INTEGRATION_BRANCH,
         path: '/worktrees/shop--doc-checkout'
       }
+    ],
+    ...MEMBERS.map((member): [string, RunnerWorktree] => [
+      member.integration_worktree_id,
+      {
+        id: member.integration_worktree_id,
+        branch_name: member.integration_branch,
+        path: member.integration_worktree_path
+      }
+    ])
+  ])
+  /** Connection instances, by id: the integration instance, and the ones launches create. */
+  const connections = new Map<string, RunnerConnection>([
+    [
+      INTEGRATION_CONNECTION,
+      {
+        id: INTEGRATION_CONNECTION,
+        path: INTEGRATION_CONNECTION_PATH,
+        status: 'active',
+        members: MEMBERS.map((member) => ({
+          project_id: member.project_id,
+          worktree_id: member.integration_worktree_id,
+          branch_name: member.integration_branch,
+          path: member.integration_worktree_path
+        }))
+      }
     ]
   ])
+  /** The instance each connection session was created on. */
+  const sessionConnections = new Map<string, string>()
   const setupRunning = new Set<string>()
   /** Sessions whose row was closed (tab closed, ticket moved back). */
   const closedSessions = new Set<string>()
@@ -261,9 +358,68 @@ export function createWorld(options: WorldOptions = {}) {
       ...overrides
     })
 
+  /** A connection launch as the pipeline answers it: a new instance over one worktree per member, or an existing one. */
+  const launchOnConnection = (
+    target: Extract<
+      TicketLaunchSpec['worktree'],
+      { type: 'connection-new' | 'existing-connection' }
+    >,
+    sessionId: string
+  ): Pick<TicketLaunchResult, 'connectionId' | 'worktrees'> => {
+    if (target.type === 'existing-connection') {
+      sessionConnections.set(sessionId, target.connectionId)
+      return { connectionId: target.connectionId }
+    }
+    const connectionId = `conn-${counter}`
+    const members = target.members.map((member) => {
+      const worktreeId = `wt-${counter}-${member.projectId}`
+      const worktree = {
+        id: worktreeId,
+        branch_name: target.nameHint,
+        path: `/worktrees/${worktreeId}`
+      }
+      worktrees.set(worktreeId, worktree)
+      return {
+        project_id: member.projectId,
+        worktree_id: worktreeId,
+        branch_name: worktree.branch_name,
+        path: worktree.path
+      }
+    })
+    connections.set(connectionId, {
+      id: connectionId,
+      path: `/connections/${connectionId}`,
+      status: 'active',
+      members
+    })
+    sessionConnections.set(sessionId, connectionId)
+    return {
+      connectionId,
+      worktrees: members.map((member) => ({
+        projectId: member.project_id,
+        worktreeId: member.worktree_id,
+        branchName: member.branch_name
+      }))
+    }
+  }
+
   const launchOk = (spec: TicketLaunchSpec): TicketLaunchResult => {
     counter += 1
     const sessionId = `session-${counter}`
+    const ticket = tickets.get(spec.ticketId)
+    if (spec.worktree.type === 'connection-new' || spec.worktree.type === 'existing-connection') {
+      const launched = launchOnConnection(spec.worktree, sessionId)
+      if (ticket) {
+        tickets.set(ticket.id, {
+          ...ticket,
+          column: 'in_progress',
+          current_session_id: sessionId,
+          worktree_id: null
+        })
+      }
+      signals.set(sessionId, { kind: 'working', since: Date.now() })
+      return { success: true, sessionId, ...launched }
+    }
     const worktreeId =
       spec.worktree.type === 'existing' ? spec.worktree.worktreeId : `wt-${counter}`
     if (spec.worktree.type === 'new') {
@@ -273,7 +429,6 @@ export function createWorld(options: WorldOptions = {}) {
         path: `/worktrees/${worktreeId}`
       })
     }
-    const ticket = tickets.get(spec.ticketId)
     if (ticket) {
       tickets.set(ticket.id, {
         ...ticket,
@@ -386,7 +541,7 @@ export function createWorld(options: WorldOptions = {}) {
       return () => listeners.delete(listener)
     },
 
-    loadProject: vi.fn(async (_projectId: string) => {}),
+    loadProject: vi.fn(async (_projectId: string, _memberProjectIds?: readonly string[]) => {}),
     getTicket: (_projectId: string, ticketId: string) => tickets.get(ticketId) ?? null,
     reloadTickets: vi.fn(async (_projectId: string) => {}),
     createTicket: vi.fn(
@@ -422,7 +577,11 @@ export function createWorld(options: WorldOptions = {}) {
       `<ticket title="${ticket.title}">${ticket.description ?? ''}</ticket>`,
     getWorktree: (worktreeId: string) => worktrees.get(worktreeId) ?? null,
     reloadWorktrees: vi.fn(async (_projectId: string) => {}),
+    getConnection: vi.fn(async (connectionId: string) => connections.get(connectionId) ?? null),
 
+    getSessionConnectionId: vi.fn(
+      async (sessionId: string) => sessionConnections.get(sessionId) ?? null
+    ),
     resolveDefaultLaunch: vi.fn(() => ({
       sdk: 'claude-code-cli' as const,
       model: { providerID: 'anthropic', modelID: 'app-default' },
@@ -478,6 +637,8 @@ export function createWorld(options: WorldOptions = {}) {
     runs,
     tickets,
     worktrees,
+    connections,
+    sessionConnections,
     turns,
     setupRunning,
     closedSessions,

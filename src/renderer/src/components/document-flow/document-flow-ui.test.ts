@@ -8,7 +8,8 @@ import {
   DEFAULT_DOCUMENT_RUN_CONFIG,
   DOCUMENT_RUN_ITEM_STATUSES,
   DOCUMENT_RUN_STATUSES,
-  DOCUMENT_VERIFICATION_METHODS
+  DOCUMENT_VERIFICATION_METHODS,
+  type DocumentRunMember
 } from '@shared/types/document-flow'
 import {
   DOCUMENT_RUN_ITEM_STATUS_DOTS,
@@ -22,7 +23,11 @@ import {
   currentRootBranch,
   defaultBaseBranchLabel,
   describeBaseBranch,
+  describeItemBranches,
+  describeMemberBaseBranches,
+  describeMemberVerifyCommands,
   describeRunDeletion,
+  describeRunMembers,
   describeVerificationChip,
   describeVerificationChoice,
   documentNameFromPath,
@@ -36,6 +41,8 @@ import {
   isSkippableItem,
   itemSessionTarget,
   itemStatusDisplay,
+  memberBaseBranch,
+  memberVerifyCommand,
   needsUser,
   needsUserMessage,
   parseDocumentPath,
@@ -50,6 +57,31 @@ import {
 import { makeDetail, makeItem, makeRun } from './test-fixtures'
 
 const RUNNING = { status: 'running', config: DEFAULT_DOCUMENT_RUN_CONFIG } as const
+
+const CONNECTION_MEMBERS: DocumentRunMember[] = [
+  {
+    project_id: 'web',
+    project_name: 'Web',
+    project_path: '/repo/web',
+    symlink_name: 'web',
+    base_branch: 'main',
+    base_sha: 'aaaaaaa1111111',
+    integration_branch: 'doc-checkout',
+    integration_worktree_id: 'wt-web-int',
+    integration_worktree_path: '/worktrees/web--doc-checkout'
+  },
+  {
+    project_id: 'api',
+    project_name: 'API',
+    project_path: '/repo/api',
+    symlink_name: 'api',
+    base_branch: 'master',
+    base_sha: 'bbbbbbb2222222',
+    integration_branch: 'doc-checkout',
+    integration_worktree_id: 'wt-api-int',
+    integration_worktree_path: '/worktrees/api--doc-checkout'
+  }
+]
 
 const TONES = ['neutral', 'info', 'success', 'warning', 'danger']
 const DOTS = ['working', 'done', 'blocked', 'idle', 'question']
@@ -259,7 +291,7 @@ describe('needs-you rules', () => {
   })
 
   it('opens the fix session while fixing, otherwise the ticket session', () => {
-    const run = { integration_worktree_id: 'wt-integration' }
+    const run = { integration_worktree_id: 'wt-integration', integration_connection_id: null }
     expect(
       itemSessionTarget(
         run,
@@ -270,14 +302,35 @@ describe('needs-you rules', () => {
           fix_session_id: 's-fix'
         })
       )
-    ).toEqual({ sessionId: 's-fix', worktreeId: 'wt-integration' })
+    ).toEqual({ sessionId: 's-fix', worktreeId: 'wt-integration', connectionId: null })
     expect(
       itemSessionTarget(
         run,
         makeItem({ status: 'needs_input', session_id: 's-ticket', worktree_id: 'wt-ticket' })
       )
-    ).toEqual({ sessionId: 's-ticket', worktreeId: 'wt-ticket' })
+    ).toEqual({ sessionId: 's-ticket', worktreeId: 'wt-ticket', connectionId: null })
     expect(itemSessionTarget(run, makeItem({ status: 'pending' }))).toBeNull()
+  })
+
+  it('targets the instance of a connection run: the integration instance for a fix session', () => {
+    const run = { integration_worktree_id: null, integration_connection_id: 'conn-integration' }
+    expect(
+      itemSessionTarget(
+        run,
+        makeItem({
+          status: 'fixing',
+          session_id: 's-ticket',
+          connection_id: 'conn-ticket',
+          fix_session_id: 's-fix'
+        })
+      )
+    ).toEqual({ sessionId: 's-fix', worktreeId: null, connectionId: 'conn-integration' })
+    expect(
+      itemSessionTarget(
+        run,
+        makeItem({ status: 'running', session_id: 's-ticket', connection_id: 'conn-ticket' })
+      )
+    ).toEqual({ sessionId: 's-ticket', worktreeId: null, connectionId: 'conn-ticket' })
   })
 })
 
@@ -709,18 +762,13 @@ describe('describeRunDeletion', () => {
 
 describe('wizardStep', () => {
   it('derives the step from the run the wizard points at', () => {
-    expect(wizardStep(false, null, undefined)).toBe('pick')
-    expect(wizardStep(false, 'run-1', undefined)).toBe('loading')
-    expect(wizardStep(false, 'run-1', 'extracting')).toBe('extracting')
-    expect(wizardStep(false, 'run-1', 'extract_failed')).toBe('failed')
-    expect(wizardStep(false, 'run-1', 'preview')).toBe('preview')
-    expect(wizardStep(false, 'run-1', 'running')).toBe('launched')
-    expect(wizardStep(false, 'run-1', 'completed')).toBe('launched')
-  })
-
-  it('refuses connection projects whatever the run', () => {
-    expect(wizardStep(true, null, undefined)).toBe('unsupported')
-    expect(wizardStep(true, 'run-1', 'preview')).toBe('unsupported')
+    expect(wizardStep(null, undefined)).toBe('pick')
+    expect(wizardStep('run-1', undefined)).toBe('loading')
+    expect(wizardStep('run-1', 'extracting')).toBe('extracting')
+    expect(wizardStep('run-1', 'extract_failed')).toBe('failed')
+    expect(wizardStep('run-1', 'preview')).toBe('preview')
+    expect(wizardStep('run-1', 'running')).toBe('launched')
+    expect(wizardStep('run-1', 'completed')).toBe('launched')
   })
 })
 
@@ -802,6 +850,85 @@ describe('base branch', () => {
     expect(describeBaseBranch({ baseBranch: 'release' }, 'develop')).toBe('release')
     expect(describeBaseBranch({ baseBranch: null }, 'develop')).toBe('develop')
     expect(describeBaseBranch({ baseBranch: null }, null)).toBe('the current branch')
+  })
+})
+
+describe('connection project members', () => {
+  const members = [
+    { id: 'web', name: 'Web' },
+    { id: 'api', name: 'API' }
+  ]
+
+  it('reads a member base branch, null when none is chosen', () => {
+    const config = { memberBaseBranches: { web: 'release', api: null } }
+    expect(memberBaseBranch(config, 'web')).toBe('release')
+    expect(memberBaseBranch(config, 'api')).toBeNull()
+    expect(memberBaseBranch(config, 'unknown')).toBeNull()
+  })
+
+  it('names every member base branch, the current one standing in for an unchosen member', () => {
+    expect(
+      describeMemberBaseBranches(
+        members,
+        { memberBaseBranches: { web: 'release' } },
+        { web: 'main', api: 'master' }
+      )
+    ).toBe('release (Web) · master (API)')
+    expect(describeMemberBaseBranches(members, { memberBaseBranches: {} }, {})).toBe(
+      'the current branch (Web) · the current branch (API)'
+    )
+  })
+
+  it('summarises the member verify commands, or says there is none', () => {
+    expect(
+      describeMemberVerifyCommands(members, {
+        memberVerifyCommands: { web: ' pnpm check ', api: '' }
+      })
+    ).toBe('Web: pnpm check · API: none')
+    expect(describeMemberVerifyCommands(members, { memberVerifyCommands: {} })).toBe(
+      'no verify command'
+    )
+    expect(memberVerifyCommand({ memberVerifyCommands: { web: ' pnpm check ' } }, 'web')).toBe(
+      'pnpm check'
+    )
+    expect(memberVerifyCommand({ memberVerifyCommands: {} }, 'api')).toBe('')
+  })
+
+  it('lists the members of a launched connection run with their branches', () => {
+    expect(describeRunMembers(makeRun({ members: null }))).toEqual([])
+    expect(describeRunMembers(makeRun({ members: CONNECTION_MEMBERS }))).toEqual([
+      { projectId: 'web', label: 'Web · doc-checkout (from main)' },
+      { projectId: 'api', label: 'API · doc-checkout (from master)' }
+    ])
+  })
+
+  it('names the branch of an item in every member, by member project name', () => {
+    const run = makeRun({ members: CONNECTION_MEMBERS })
+    expect(describeItemBranches(run, makeItem({ members: null }))).toBeNull()
+    expect(describeItemBranches(run, makeItem({ members: [] }))).toBeNull()
+    expect(
+      describeItemBranches(
+        run,
+        makeItem({
+          members: [
+            {
+              project_id: 'web',
+              worktree_id: 'wt-w',
+              branch_name: 'a1-web',
+              pre_merge_sha: null,
+              merge_sha: null
+            },
+            {
+              project_id: 'other',
+              worktree_id: 'wt-o',
+              branch_name: 'a1-other',
+              pre_merge_sha: null,
+              merge_sha: null
+            }
+          ]
+        })
+      )
+    ).toBe('Web: a1-web\nother: a1-other')
   })
 })
 

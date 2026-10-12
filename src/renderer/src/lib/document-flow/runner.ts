@@ -15,16 +15,24 @@ import {
   buildLaunchPrompt,
   buildNudgePrompt,
   withRunRules,
+  workspaceOfMembers,
+  type ConnectionWorkspaceMember,
   type NudgeVerdict
 } from '@shared/document-flow/prompts'
 import {
   DOCUMENT_RUN_ITEM_MERGE_STATUSES,
+  hasVerifyCommand,
+  isConnectionRun,
+  runVerifyCommands,
+  type DocumentMergeCheckMember,
   type DocumentRun,
   type DocumentRunDetail,
   type DocumentRunItem,
+  type DocumentRunItemMember,
   type DocumentRunItemPatch,
   type DocumentRunItemStatus,
   type DocumentRunLaunchConfig,
+  type DocumentRunMember,
   type DocumentVerificationMethod,
   type DocumentVerifyResult,
   type SessionFinalMessage
@@ -210,6 +218,29 @@ const ticketRef = (item: DocumentRunItem): { key: string; title: string } => ({
   title: item.title
 })
 
+// ── Connection runs ──────────────────────────────────────────────────────────
+// A run on a connection project has no integration worktree but an integration INSTANCE: one
+// integration worktree per member project (`run.members`), and every ticket gets an instance
+// of its own with a worktree per member (`item.members`). The merge, the verify and the fix
+// are the server's per member; here only where a branch is cut from, where a session runs
+// and what the agents are told change.
+
+/** The members of the connection directory, as the prompts name them. */
+/** The integration checkouts whose setup script may be running: one, or one per member. */
+const integrationWorktreeIds = (run: DocumentRun): string[] =>
+  isConnectionRun(run)
+    ? run.members.map((member) => member.integration_worktree_id)
+    : run.integration_worktree_id
+      ? [run.integration_worktree_id]
+      : []
+
+/**
+ * The branch name an item of a connection run is recorded under: the one the member
+ * worktrees share (the first member's when a taken name got a suffix in one of them).
+ */
+const commonBranchName = (members: readonly { branch_name: string }[]): string | null =>
+  members[0]?.branch_name ?? null
+
 type EndedSignal = Extract<SessionSignal, { kind: 'ended' }>
 
 /** The server's record of a session, read like the renderer's status store. */
@@ -369,9 +400,17 @@ export class DocumentFlowRunner {
     if (!(await this.claim(runId, state))) return
 
     if (!state.loaded) {
-      const project = this.ports.getRun(runId)?.run.project_id
-      if (!project) return
-      await this.ports.loadProject(project)
+      const run = this.ports.getRun(runId)?.run
+      if (!run) return
+      // A connection run's instances live in the members' worktrees and the connection store.
+      if (isConnectionRun(run)) {
+        await this.ports.loadProject(
+          run.project_id,
+          run.members.map((member) => member.project_id)
+        )
+      } else {
+        await this.ports.loadProject(run.project_id)
+      }
       state.loaded = true
       const loaded = this.ports.getRun(runId)
       if (loaded?.run.status === 'running') this.startIntegrationSetup(loaded)
@@ -444,10 +483,22 @@ export class DocumentFlowRunner {
    */
   private startIntegrationSetup(detail: DocumentRunDetail): void {
     const { run, items } = detail
+    if (items.some((item) => item.started_at || item.session_id || item.merge_sha)) return
+    if (isConnectionRun(run)) {
+      // One install per member integration worktree, each the member project's own script.
+      for (const member of run.members) {
+        if (this.ports.isSetupScriptRunning(member.integration_worktree_id)) continue
+        this.ports.fireSetupScript(
+          member.project_id,
+          member.integration_worktree_id,
+          member.integration_worktree_path
+        )
+      }
+      return
+    }
     const worktreeId = run.integration_worktree_id
     const cwd = run.integration_worktree_path
     if (!worktreeId || !cwd) return
-    if (items.some((item) => item.started_at || item.session_id || item.merge_sha)) return
     if (this.ports.isSetupScriptRunning(worktreeId)) return
     this.ports.fireSetupScript(run.project_id, worktreeId, cwd)
   }
@@ -1085,13 +1136,38 @@ export class DocumentFlowRunner {
   private launchBase(
     items: readonly DocumentRunItem[],
     state: RunState,
-    branch: string
+    branch: string,
+    // The commit the landing item's merge sits on: the item's own for a git run, the member's
+    // for one member of a connection run.
+    preMergeSha: (landing: DocumentRunItem) => string | null | undefined = (landing) =>
+      landing.pre_merge_sha
   ): string | undefined {
     const landing = items.find(
       (item) => item.selected && DOCUMENT_RUN_ITEM_MERGE_STATUSES.includes(item.status)
     )
-    if (landing) return landing.pre_merge_sha ?? undefined
+    if (landing) return preMergeSha(landing) ?? undefined
     return state.merging ? undefined : branch
+  }
+
+  /** Where each member's branch is cut from; undefined while any member's commit is unknown. */
+  private memberLaunchBases(
+    items: readonly DocumentRunItem[],
+    state: RunState,
+    members: readonly DocumentRunMember[]
+  ): Map<string, string> | undefined {
+    const bases = new Map<string, string>()
+    for (const member of members) {
+      const base = this.launchBase(
+        items,
+        state,
+        member.integration_branch,
+        (landing) =>
+          landing.members?.find((own) => own.project_id === member.project_id)?.pre_merge_sha
+      )
+      if (base === undefined) return undefined
+      bases.set(member.project_id, base)
+    }
+    return bases
   }
 
   private launchConfig(run: DocumentRun, item: DocumentRunItem): DocumentRunLaunchConfig {
@@ -1137,6 +1213,7 @@ export class DocumentFlowRunner {
     if (!launchableItems(detail.items, detail.run.config.maxParallel).includes(item)) return
     op.item = item
     const run = this.requireActive(op)
+    if (isConnectionRun(run)) return this.launchConnectionItem(op, run, detail.items)
     const branch = run.integration_branch
     if (!branch) return this.flag(op, 'The run has no integration branch to start from.')
     const baseRef = this.launchBase(detail.items, this.stateFor(op.runId), branch)
@@ -1152,25 +1229,7 @@ export class DocumentFlowRunner {
     // Read now, not from the run captured before the awaits above: the setting can be flipped
     // mid-run from the dashboard.
     const briefed = this.interactive(op)
-    const verification = this.verification(op)
-    // The ticket's description is the brief, sent as it reads on the board (the user may
-    // have edited it), with no ticket wrapper and no attachments: the agent reads the task in
-    // the document itself. A ticket left without a description gets the standard brief.
-    // The rules of the run are settled now, whatever the description says: it was written
-    // when the run started, under the settings and verification choice of that moment.
-    const prompt = withRunRules(
-      ticket.description?.trim() ||
-        buildLaunchPrompt({
-          key: item.key,
-          title: item.title,
-          sourcePath: run.source_path,
-          promptStyle: run.config.promptStyle,
-          interactive: briefed,
-          sdk: modelConfig.sdk,
-          verification
-        }),
-      { interactive: briefed, sdk: modelConfig.sdk, verification }
-    )
+    const { prompt } = this.launchBrief(op, run, item, ticket, modelConfig, briefed, null)
 
     const result = await this.ports.launchTicket({
       ticketId: ticket.id,
@@ -1221,6 +1280,137 @@ export class DocumentFlowRunner {
   }
 
   /**
+   * The brief a ticket session is launched with. The ticket's description is the brief, sent
+   * as it reads on the board (the user may have edited it), with no ticket wrapper and no
+   * attachments: the agent reads the task in the document itself. A ticket left without a
+   * description gets the standard brief. The rules of the run are settled now, whatever the
+   * description says: it was written when the run started, under the settings and
+   * verification choice of that moment. `workspace` names the members of a connection run.
+   */
+  private launchBrief(
+    op: ItemOp,
+    run: DocumentRun,
+    item: DocumentRunItem,
+    ticket: RunnerTicket,
+    modelConfig: DocumentRunLaunchConfig,
+    briefed: boolean,
+    workspace: readonly ConnectionWorkspaceMember[] | null
+  ): { prompt: string } {
+    const verification = this.verification(op)
+    const rules = {
+      interactive: briefed,
+      sdk: modelConfig.sdk,
+      verification,
+      ...(workspace ? { workspace } : {})
+    }
+    const prompt = withRunRules(
+      ticket.description?.trim() ||
+        buildLaunchPrompt({
+          key: item.key,
+          title: item.title,
+          sourcePath: run.source_path,
+          promptStyle: run.config.promptStyle,
+          ...rules
+        }),
+      rules
+    )
+    return { prompt }
+  }
+
+  /**
+   * A ticket of a connection run launches into a NEW instance: a worktree in every member,
+   * each cut from that member's launch base (its integration tip, or the commit before a
+   * merge that is landing there) and named after the ticket; the session runs on the
+   * instance. The item records the instance and its member worktrees.
+   */
+  private async launchConnectionItem(
+    op: ItemOp,
+    run: DocumentRun & { members: DocumentRunMember[] },
+    items: readonly DocumentRunItem[]
+  ): Promise<void> {
+    const item = op.item
+    const bases = this.memberLaunchBases(items, this.stateFor(op.runId), run.members)
+    if (bases === undefined) return
+
+    const startedAt = toIso(this.ports.now())
+    await this.patch(op, { status: 'launching', status_detail: null, started_at: startedAt })
+
+    const ticket = await this.findTicket(run.project_id, item.ticket_id)
+    if (!ticket) return this.flag(op, 'Its ticket no longer exists.')
+
+    const modelConfig = this.launchConfig(run, item)
+    const briefed = this.interactive(op)
+    const { prompt } = this.launchBrief(
+      op,
+      run,
+      item,
+      ticket,
+      modelConfig,
+      briefed,
+      workspaceOfMembers(run.members)
+    )
+
+    const result = await this.ports.launchTicket({
+      ticketId: ticket.id,
+      projectId: run.project_id,
+      ticketTitle: ticket.title,
+      // Each member's branch is cut from that member's verified integration commit, recorded
+      // against the member's base branch (so the board merges the ticket straight into it),
+      // without auto-pull; the pipeline names every worktree after the ticket.
+      worktree: {
+        type: 'connection-new',
+        savedProjectId: run.project_id,
+        members: run.members.map((member) => ({
+          projectId: member.project_id,
+          sourceBranch: member.base_branch,
+          baseRef: bases.get(member.project_id) as string
+        })),
+        nameHint: ticketBranchHint(item.key, item.title)
+      },
+      prompt,
+      mode: 'build',
+      modelConfig,
+      goalMode: false,
+      goalSuccessCriteria: null,
+      ticketUpdateExtras: this.ticketExtras(run.project_id)
+    })
+
+    if (!result.success || !result.sessionId) {
+      const error = result.error ?? 'unknown error'
+      await this.cleanUpFailedLaunch(run.project_id, ticket.id, result.sessionId)
+      this.event(op, 'launch_failed', error, { connectionId: result.connectionId ?? null })
+      // No session is recorded, so Retry launches the ticket again.
+      return this.flag(op, `Could not launch: ${error}`, { session_id: null })
+    }
+
+    // The created rows carry the real branch names: a taken name gets a numeric suffix.
+    const members: DocumentRunItemMember[] = (result.worktrees ?? []).map((worktree) => ({
+      project_id: worktree.projectId,
+      worktree_id: worktree.worktreeId,
+      branch_name: worktree.branchName,
+      pre_merge_sha: null,
+      merge_sha: null
+    }))
+    const branch = commonBranchName(members)
+    await this.patch(op, {
+      status: 'running',
+      status_detail: null,
+      session_id: result.sessionId,
+      connection_id: result.connectionId ?? null,
+      members,
+      branch_name: branch,
+      // Launch start, not now: whatever the new session reports is newer than this.
+      last_prompt_at: startedAt
+    })
+    this.event(
+      op,
+      'launched',
+      `Launched ${item.key} on ${branch ?? 'a new branch'} in a new instance of ${run.members.length} member repositories`
+    )
+    await this.tellIfFlipped(op, result.sessionId, briefed)
+  }
+
+  /**
    * The setting was flipped while a session was being launched: the flip could not message a
    * session that did not exist yet, and its prompt was built under the old setting.
    */
@@ -1267,6 +1457,35 @@ export class DocumentFlowRunner {
       await this.patch(op, { status: 'pending', status_detail: null, started_at: null })
       return
     }
+    const lastPromptAt = op.item.started_at ?? toIso(this.ports.now())
+    if (isConnectionRun(run)) {
+      // The board ticket of a connection session has no worktree: the session knows its
+      // instance, and the instance knows the member worktrees the item merges from.
+      const connectionId = await this.ports.getSessionConnectionId(ticket.current_session_id)
+      if (!connectionId) {
+        return this.flag(op, 'The session it was launched with runs on no connection instance.')
+      }
+      const connection = await this.ports.getConnection(connectionId)
+      if (!connection) return this.flag(op, 'The instance it was launched into no longer exists.')
+      const members: DocumentRunItemMember[] = connection.members.map((member) => ({
+        project_id: member.project_id,
+        worktree_id: member.worktree_id,
+        branch_name: member.branch_name,
+        pre_merge_sha: null,
+        merge_sha: null
+      }))
+      await this.patch(op, {
+        status: 'running',
+        status_detail: null,
+        session_id: ticket.current_session_id,
+        connection_id: connectionId,
+        members,
+        branch_name: commonBranchName(members),
+        last_prompt_at: lastPromptAt
+      })
+      this.event(op, 'launched', `Picked up the session ${op.item.key} was launched with`)
+      return
+    }
     const worktree = await this.findWorktree(run.project_id, ticket.worktree_id)
     await this.patch(op, {
       status: 'running',
@@ -1274,7 +1493,7 @@ export class DocumentFlowRunner {
       session_id: ticket.current_session_id,
       worktree_id: ticket.worktree_id,
       branch_name: worktree?.branch_name ?? null,
-      last_prompt_at: op.item.started_at ?? toIso(this.ports.now())
+      last_prompt_at: lastPromptAt
     })
     this.event(op, 'launched', `Picked up the session ${op.item.key} was launched with`)
   }
@@ -1304,7 +1523,7 @@ export class DocumentFlowRunner {
     }
     const integrationCommit = check.integrationHead ?? null
     if (check.state === 'conflict') {
-      return this.resolveConflict(op, run, check.conflictedFiles, integrationCommit)
+      return this.resolveConflict(op, run, check.conflictedFiles, integrationCommit, check.members)
     }
     if (check.state === 'no_changes' && !check.alreadyMerged) return this.nothingToMerge(op)
 
@@ -1312,9 +1531,34 @@ export class DocumentFlowRunner {
     const result = await this.ports.api.merge(op.runId, op.item.id)
     if (result.success) return this.verify(op)
     if (result.conflictedFiles?.length) {
-      return this.resolveConflict(op, run, result.conflictedFiles, integrationCommit)
+      // The merge itself has no per-member report: the dry run's members say which branch
+      // and commit each repository merges.
+      return this.resolveConflict(op, run, result.conflictedFiles, integrationCommit, check.members)
     }
     return this.flag(op, result.error ?? 'The merge failed.')
+  }
+
+  /**
+   * The members a conflict prompt sends the session into: those whose dry run conflicted, or
+   * every member when the merge itself conflicted after a clean dry run (merging an already
+   * merged commit again is a no-op). Null for a git run.
+   */
+  private conflictMembers(members: readonly DocumentMergeCheckMember[] | undefined):
+    | {
+        symlinkName: string
+        projectName: string
+        integrationBranch: string
+        integrationCommit: string | null
+      }[]
+    | null {
+    if (!members || members.length === 0) return null
+    const conflicted = members.filter((member) => member.state === 'conflict')
+    return (conflicted.length > 0 ? conflicted : members).map((member) => ({
+      symlinkName: member.symlink_name,
+      projectName: member.project_name,
+      integrationBranch: member.integrationBranch,
+      integrationCommit: member.integrationHead
+    }))
   }
 
   /**
@@ -1341,11 +1585,20 @@ export class DocumentFlowRunner {
     op: ItemOp,
     run: DocumentRun,
     files: string[],
-    integrationCommit: string | null
+    integrationCommit: string | null,
+    checkMembers?: readonly DocumentMergeCheckMember[]
   ): Promise<void> {
     const item = op.item
     const branch = run.integration_branch ?? 'the integration branch'
-    this.event(op, 'conflict', `Conflicts with ${branch} in ${files.length} file(s)`, { files })
+    const members = this.conflictMembers(checkMembers)
+    this.event(
+      op,
+      'conflict',
+      members
+        ? `Conflicts with ${branch} in ${files.length} file(s) across ${members.map((member) => member.symlinkName).join(', ')}`
+        : `Conflicts with ${branch} in ${files.length} file(s)`,
+      { files }
+    )
     // A session that resolved against one tip and was overtaken by another ticket's merge has
     // not failed: only attempts against the same integration commit count towards the limit.
     // Each such lap needs another merge to land, so the tickets of the run bound them.
@@ -1388,7 +1641,8 @@ export class DocumentFlowRunner {
           )
           .map(ticketRef),
         attempt,
-        interactive: this.interactive(op)
+        interactive: this.interactive(op),
+        ...(members ? { members } : {})
       }),
       {
         status: 'resolving_conflicts',
@@ -1404,15 +1658,15 @@ export class DocumentFlowRunner {
 
   private async verify(op: ItemOp): Promise<void> {
     const run = this.requireActive(op)
-    if (!run.config.verifyCommand?.trim()) return this.markMerged(op)
+    if (!hasVerifyCommand(run)) return this.markMerged(op)
     if (op.item.status !== 'verifying') {
       await this.patch(op, { status: 'verifying', status_detail: null })
     }
 
     // The checks need the dependencies the setup script is still installing; the next tick
-    // finds the item verifying with nothing in flight and comes back here.
-    const worktreeId = run.integration_worktree_id
-    if (worktreeId && this.ports.isSetupScriptRunning(worktreeId)) {
+    // finds the item verifying with nothing in flight and comes back here. A connection run
+    // waits for every member's install.
+    if (integrationWorktreeIds(run).some((id) => this.ports.isSetupScriptRunning(id))) {
       if (op.item.status_detail !== SETUP_WAIT_DETAIL) {
         await this.patch(op, { status_detail: SETUP_WAIT_DETAIL })
       }
@@ -1462,10 +1716,23 @@ export class DocumentFlowRunner {
     const item = op.item
     const attempt = item.fix_attempts + 1
     const briefed = this.interactive(op)
-    const worktreeId = run.integration_worktree_id
-    if (!worktreeId || !run.integration_branch) {
-      return this.giveUp(op, 'The run has no integration worktree to fix the checks in.')
+    // Where the fix session runs: the integration worktree, or a connection run's integration
+    // instance (the session sees every member's integration checkout through it).
+    const target = this.fixTarget(run)
+    if (!target || !run.integration_branch) {
+      return this.giveUp(
+        op,
+        isConnectionRun(run)
+          ? 'The run has no integration instance to fix the checks in.'
+          : 'The run has no integration worktree to fix the checks in.'
+      )
     }
+    // A connection run's failure names the member whose command failed; its command is the
+    // one to make pass. Without one (an older server), the first configured command.
+    const failedMember = failure.failedMember ?? null
+    const verifyCommand = isConnectionRun(run)
+      ? (failedMember?.command ?? runVerifyCommands(run)[0]?.command ?? '')
+      : (run.config.verifyCommand ?? '')
 
     let ticket: RunnerTicket
     try {
@@ -1476,10 +1743,21 @@ export class DocumentFlowRunner {
           key: item.key,
           title: item.title,
           integrationBranch: run.integration_branch,
-          verifyCommand: run.config.verifyCommand ?? '',
+          verifyCommand,
           verifyOutput: failure.output,
           attempt,
-          interactive: briefed
+          interactive: briefed,
+          ...(isConnectionRun(run)
+            ? {
+                workspace: workspaceOfMembers(run.members),
+                failedMember: failedMember
+                  ? {
+                      symlinkName: failedMember.symlink_name,
+                      projectName: failedMember.project_name
+                    }
+                  : null
+              }
+            : {})
         })
       )
     } catch (error) {
@@ -1502,7 +1780,7 @@ export class DocumentFlowRunner {
       ticketId: ticket.id,
       projectId: run.project_id,
       ticketTitle: ticket.title,
-      worktree: { type: 'existing', worktreeId },
+      worktree: target,
       prompt: this.ports.buildTicketPrompt(ticket),
       mode: 'build',
       modelConfig: this.launchConfig(run, item),
@@ -1517,6 +1795,18 @@ export class DocumentFlowRunner {
     await this.patch(op, { fix_session_id: result.sessionId })
     this.event(op, 'fix_started', `Started fix attempt ${attempt} for ${item.key}`)
     await this.tellIfFlipped(op, result.sessionId, briefed)
+  }
+
+  /** The launch target of a fix session: the run's integration checkout(s); null when it has none. */
+  private fixTarget(run: DocumentRun): TicketLaunchSpec['worktree'] | null {
+    if (isConnectionRun(run)) {
+      return run.integration_connection_id
+        ? { type: 'existing-connection', connectionId: run.integration_connection_id }
+        : null
+    }
+    return run.integration_worktree_id
+      ? { type: 'existing', worktreeId: run.integration_worktree_id }
+      : null
   }
 
   /** `fixing` without a session: this renderer was reloaded while the fix session started. */

@@ -136,6 +136,26 @@ export function resolveDocumentFlowGeneration(): DocumentRunGeneration | null {
   )
 }
 
+/**
+ * The verify commands a launched run leaves behind as the next run's defaults, by project id:
+ * the project's own for a git project; for a connection project one per member project, so a
+ * member's command is found again whichever connection project it is run under next. A member
+ * without a command is remembered as "none" ('') like a git project without one.
+ */
+export function rememberedVerifyCommands(
+  run: Pick<DocumentRun, 'project_id' | 'config' | 'members'>
+): Record<string, string> {
+  if (run.members && run.members.length > 0) {
+    return Object.fromEntries(
+      run.members.map((member) => [
+        member.project_id,
+        run.config.memberVerifyCommands[member.project_id] ?? ''
+      ])
+    )
+  }
+  return { [run.project_id]: run.config.verifyCommand ?? '' }
+}
+
 export function clampMaxParallel(value: number): number {
   if (!Number.isFinite(value)) return DEFAULT_DOCUMENT_RUN_CONFIG.maxParallel
   return Math.min(DOCUMENT_RUN_MAX_PARALLEL_LIMIT, Math.max(1, Math.round(value)))
@@ -292,7 +312,7 @@ export const useDocumentFlowStore = create<DocumentFlowState>()(
       startRun: async (runId) => {
         const detail = await documentFlowApi.start(runId, resolvePreferredAgentSdk())
         get().applyDetail(detail)
-        const { config, project_id: projectId } = detail.run
+        const { config } = detail.run
         get().setPrefs({
           maxParallel: clampMaxParallel(config.maxParallel),
           interactive: config.interactive,
@@ -300,7 +320,7 @@ export const useDocumentFlowStore = create<DocumentFlowState>()(
           defaultLaunch: config.defaultLaunch,
           verifyCommandByProject: {
             ...get().prefs.verifyCommandByProject,
-            [projectId]: config.verifyCommand ?? ''
+            ...rememberedVerifyCommands(detail.run)
           }
         })
         return detail

@@ -266,7 +266,8 @@ describe('documentFlow RPC handlers', () => {
       get: ['run-1'],
       sourceFile: ['run-1'],
       updateRun: ['run-1', { status: 'paused' }],
-      start: ['run-1'],
+      // `start` takes the optional default SDK positionally; the handler passes it as given.
+      start: ['run-1', undefined],
       claimRunner: ['run-1', 'client-1'],
       sessionTurn: ['session-1'],
       prepareMerge: ['run-1', 'item-1'],
@@ -522,6 +523,112 @@ describe('documentFlow RPC handlers', () => {
       ['run-1', { config: { verificationDisabled: true } }],
       ['run-1', { config: { verificationDisabled: false } }]
     ])
+  })
+
+  it('passes the connection-project fields of a run and its tickets through', async () => {
+    const updateItem = vi.fn(() => Effect.succeed(detail.items[0]))
+    const updateRun = vi.fn(() => Effect.succeed(run))
+    const service = makeService({ updateItem, updateRun })
+    const members = [
+      {
+        project_id: 'member-web',
+        worktree_id: 'wt-web-a1',
+        branch_name: 'a1-coupons',
+        pre_merge_sha: null,
+        merge_sha: null
+      },
+      {
+        project_id: 'member-api',
+        worktree_id: 'wt-api-a1',
+        branch_name: 'a1-coupons',
+        pre_merge_sha: 'pre1',
+        merge_sha: 'merge1'
+      }
+    ]
+
+    await call(service, 'updateItem', {
+      runId: 'run-1',
+      itemId: 'item-1',
+      patch: { connection_id: 'connection-a1', members, branch_name: 'a1-coupons' }
+    })
+    await call(service, 'updateItem', {
+      runId: 'run-1',
+      itemId: 'item-1',
+      patch: { connection_id: null, members: null }
+    })
+    expect(updateItem.mock.calls).toEqual([
+      ['run-1', 'item-1', { connection_id: 'connection-a1', members, branch_name: 'a1-coupons' }],
+      ['run-1', 'item-1', { connection_id: null, members: null }]
+    ])
+
+    const config = {
+      memberBaseBranches: { 'member-web': 'main', 'member-api': null },
+      memberVerifyCommands: { 'member-web': 'pnpm check', 'member-api': null }
+    }
+    await call(service, 'updateRun', { runId: 'run-1', patch: { config } })
+    await call(service, 'updateRun', {
+      runId: 'run-1',
+      patch: { config: { memberBaseBranches: {}, memberVerifyCommands: {} } }
+    })
+    expect(updateRun.mock.calls).toEqual([
+      ['run-1', { config }],
+      ['run-1', { config: { memberBaseBranches: {}, memberVerifyCommands: {} } }]
+    ])
+  })
+
+  it('rejects connection-project fields that are mis-shaped', async () => {
+    const updateItem = vi.fn(() => Effect.succeed(detail.items[0]))
+    const updateRun = vi.fn(() => Effect.succeed(run))
+    const service = makeService({ updateItem, updateRun })
+    const member = {
+      project_id: 'member-web',
+      worktree_id: 'wt-web-a1',
+      branch_name: 'a1-coupons',
+      pre_merge_sha: null,
+      merge_sha: null
+    }
+
+    for (const members of [
+      [{ ...member, project_id: '' }],
+      [{ ...member, worktree_id: 1 }],
+      [{ ...member, extra: true }],
+      [{ project_id: 'member-web', worktree_id: 'wt', branch_name: 'b' }],
+      'none',
+      [null]
+    ]) {
+      await rejectsValidation(service, 'updateItem', {
+        runId: 'r',
+        itemId: 'i',
+        patch: { members }
+      })
+    }
+    await rejectsValidation(service, 'updateItem', {
+      runId: 'r',
+      itemId: 'i',
+      patch: { connection_id: 7 }
+    })
+    // A member base branch ends up as a git argument, like the run-wide one.
+    for (const memberBaseBranches of [
+      { 'member-web': '--force' },
+      { 'member-web': 'a b' },
+      { 'member-web': 3 },
+      ['main'],
+      'main'
+    ]) {
+      await rejectsValidation(service, 'updateRun', {
+        runId: 'run-1',
+        patch: { config: { memberBaseBranches } }
+      })
+    }
+    for (const memberVerifyCommands of [{ 'member-web': 1 }, ['pnpm check'], 'pnpm check']) {
+      await rejectsValidation(service, 'updateRun', {
+        runId: 'run-1',
+        patch: { config: { memberVerifyCommands } }
+      })
+    }
+
+    expect(updateItem).not.toHaveBeenCalled()
+    expect(updateRun).not.toHaveBeenCalled()
   })
 
   it('rejects a verification that is not a list of the known methods and a skip that is not a boolean', async () => {

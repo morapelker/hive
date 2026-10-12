@@ -37,7 +37,7 @@ export function ImplementDocumentWizard(): React.JSX.Element {
   )
 
   const { open, projectId, runId } = wizard
-  const step = wizardStep(project?.kind === 'connection', runId, detail?.run.status)
+  const step = wizardStep(runId, detail?.run.status)
   // Esc, the X and the overlay are ignored while a launch is in flight: on success the dialog
   // closes itself, on failure it is the only place the reason is shown in full.
   const [launching, setLaunching] = useState(false)
@@ -74,21 +74,12 @@ export function ImplementDocumentWizard(): React.JSX.Element {
       >
         <DialogHeader className="shrink-0 border-b border-border px-5 pb-3 pt-4">
           <DialogTitle className="text-[15px]">Implement document</DialogTitle>
-          <DialogDescription className="text-[12px]">
-            {project
-              ? `Turn a spec document into tickets for ${project.name} and run them into one integration branch.`
-              : 'Turn a spec document into tickets and run them into one integration branch.'}
-          </DialogDescription>
+          <DialogDescription className="text-[12px]">{describeWizard(project)}</DialogDescription>
         </DialogHeader>
 
         {!project || !projectId ? (
           <StepMessage testId="docflow-wizard-no-project">
             This project is no longer open. Select a project and try again.
-          </StepMessage>
-        ) : step === 'unsupported' ? (
-          <StepMessage testId="docflow-wizard-unsupported">
-            Implement document works on git projects only. A connection project spans several
-            repositories, so there is no single base branch to cut an integration branch from.
           </StepMessage>
         ) : step === 'pick' ? (
           <WizardPickStep projectId={projectId} />
@@ -105,7 +96,7 @@ export function ImplementDocumentWizard(): React.JSX.Element {
           <WizardPreviewStep
             key={detail.run.id}
             detail={detail}
-            projectPath={project.path}
+            project={project}
             onLaunchingChange={setLaunching}
           />
         ) : (
@@ -114,6 +105,19 @@ export function ImplementDocumentWizard(): React.JSX.Element {
       </DialogContent>
     </Dialog>
   )
+}
+
+/**
+ * The dialog's one-line description: a connection project runs the tickets into an
+ * integration branch in every member repository at once, a git project into one branch.
+ */
+function describeWizard(
+  project: { name: string; kind?: 'git' | 'connection' } | undefined
+): string {
+  if (!project) return 'Turn a spec document into tickets and run them into one integration branch.'
+  return project.kind === 'connection'
+    ? `Turn a spec document into tickets for ${project.name} and run them into one integration branch per member repository.`
+    : `Turn a spec document into tickets for ${project.name} and run them into one integration branch.`
 }
 
 function StepMessage({

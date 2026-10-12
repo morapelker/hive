@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { devNull, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { DocumentFlowUpdatedEvent } from '@shared/document-flow-events'
@@ -17,6 +17,7 @@ import type { CreateFromBranchParams, WorktreeResult } from '../worktree-ops'
 import type { DocumentFlowDb, DocumentRunItemRowPatch, DocumentRunRowPatch } from './db-port'
 import {
   DocumentFlowService,
+  type DocumentFlowConnection,
   type DocumentFlowGenerate,
   type DocumentFlowProject,
   type DocumentFlowServiceDeps,
@@ -77,6 +78,9 @@ export function createFakeDocumentFlowDb(): FakeDocumentFlowDb {
         integration_branch: null,
         integration_worktree_id: null,
         integration_worktree_path: null,
+        integration_connection_id: null,
+        integration_connection_path: null,
+        members: null,
         ticket_id: null,
         report: null,
         migration_session_id: null,
@@ -154,6 +158,8 @@ export function createFakeDocumentFlowDb(): FakeDocumentFlowDb {
           status_detail: null,
           ticket_id: null,
           worktree_id: null,
+          connection_id: null,
+          members: null,
           session_id: null,
           fix_ticket_id: null,
           fix_session_id: null,
@@ -350,6 +356,26 @@ export function createTestRepo(): TestRepo {
 
 export const TEST_PROJECT_ID = 'project-1'
 
+/** The connection project of a harness created with `members`. */
+export const TEST_CONNECTION_PROJECT_ID = 'connection-1'
+/** Its member projects, in the order of the `members` repositories; `web` and `api` by name. */
+export const TEST_MEMBER_PROJECTS: readonly { id: string; name: string }[] = [
+  { id: 'member-web', name: 'web' },
+  { id: 'member-api', name: 'api' }
+]
+
+/** A worktree row as the harness keeps it: with the project it belongs to, like the real one. */
+export interface TestWorktree extends DocumentFlowWorktree {
+  project_id?: string
+}
+
+/** A connection instance the fake `createConnection` made. */
+export interface FakeConnection extends DocumentFlowConnection {
+  name: string
+  saved_project_id: string
+  status: 'active' | 'archived'
+}
+
 export interface ServiceHarness {
   service: DocumentFlowService
   db: FakeDocumentFlowDb
@@ -364,8 +390,12 @@ export interface ServiceHarness {
     options: Parameters<DocumentFlowGenerate>[3]
   }[]
   projects: Map<string, DocumentFlowProject>
-  worktrees: Map<string, DocumentFlowWorktree>
+  worktrees: Map<string, TestWorktree>
   worktreeRequests: CreateFromBranchParams[]
+  /** Every instance the fake `createConnection` made (a directory of symlinks under `scratch`). */
+  connections: Map<string, FakeConnection>
+  connectionRequests: { worktreeIds: string[]; savedProjectId: string }[]
+  connectionRenames: { connectionId: string; name: string }[]
   ticketBatches: { projectId: string; drafts: KanbanTicketBatchCreateItem[] }[]
   ticketLinks: { projectId: string; dependent: string; blocker: string }[]
   /** The board: every created ticket that was not deleted, with the column it sits in. */
@@ -392,6 +422,9 @@ type OverridableDeps = Required<
     | 'getDefaultBranch'
     | 'getAppStartedAt'
     | 'createWorktreeFromBranch'
+    | 'createConnection'
+    | 'getConnection'
+    | 'renameConnection'
     | 'createTickets'
     | 'addTicketDependency'
     | 'getTicket'
@@ -410,19 +443,26 @@ type UnsetDeps = Pick<DocumentFlowServiceDeps, 'getAppPid' | 'isProcessAlive'>
 
 /**
  * A service wired to fakes. With `repo`, the project is that repository and integration
- * worktrees are really created in it (`git worktree add -b <hint> … <baseRef>`). A test swaps a
- * collaborator through `overrides`.
+ * worktrees are really created in it (`git worktree add -b <hint> … <baseRef>`). With
+ * `members`, those repositories are the member projects (TEST_MEMBER_PROJECTS, in order) of the
+ * connection project TEST_CONNECTION_PROJECT_ID, and `createConnection` really links member
+ * worktrees into a directory under `scratch`. A test swaps a collaborator through `overrides`.
  */
-export function createServiceHarness(options: { repo?: TestRepo } = {}): ServiceHarness {
-  const { repo } = options
+export function createServiceHarness(
+  options: { repo?: TestRepo; members?: readonly TestRepo[] } = {}
+): ServiceHarness {
+  const { repo, members = [] } = options
   const db = createFakeDocumentFlowDb()
   const overrides: ServiceHarness['overrides'] = {}
   const published: DocumentFlowUpdatedEvent[] = []
   const replies: ServiceHarness['replies'] = []
   const generateCalls: ServiceHarness['generateCalls'] = []
   const projects = new Map<string, DocumentFlowProject>()
-  const worktrees = new Map<string, DocumentFlowWorktree>()
+  const worktrees = new Map<string, TestWorktree>()
   const worktreeRequests: CreateFromBranchParams[] = []
+  const connections = new Map<string, FakeConnection>()
+  const connectionRequests: ServiceHarness['connectionRequests'] = []
+  const connectionRenames: ServiceHarness['connectionRenames'] = []
   const ticketBatches: ServiceHarness['ticketBatches'] = []
   const ticketLinks: ServiceHarness['ticketLinks'] = []
   const boardTickets: ServiceHarness['boardTickets'] = new Map()
@@ -433,6 +473,7 @@ export function createServiceHarness(options: { repo?: TestRepo } = {}): Service
   const runsRoot = join(scratch, 'document-runs')
   let detached = 0
   let ticketCount = 0
+  let connectionCount = 0
 
   projects.set(TEST_PROJECT_ID, {
     id: TEST_PROJECT_ID,
@@ -440,6 +481,32 @@ export function createServiceHarness(options: { repo?: TestRepo } = {}): Service
     path: repo?.projectPath ?? join(scratch, 'project'),
     kind: 'git'
   })
+  /** Repositories by project root, so a worktree request finds the one it is for. */
+  const repos = new Map<string, TestRepo>()
+  if (repo) repos.set(repo.projectPath, repo)
+  if (members.length > 0) {
+    if (members.length > TEST_MEMBER_PROJECTS.length) {
+      throw new Error(`createServiceHarness: at most ${TEST_MEMBER_PROJECTS.length} members`)
+    }
+    const memberIds: string[] = []
+    const connectionPath = join(scratch, 'connection-project')
+    mkdirSync(connectionPath)
+    members.forEach((memberRepo, index) => {
+      const { id, name } = TEST_MEMBER_PROJECTS[index]
+      projects.set(id, { id, name, path: memberRepo.projectPath, kind: 'git' })
+      repos.set(memberRepo.projectPath, memberRepo)
+      // The project directory links every member root, as the real one does.
+      symlinkSync(memberRepo.projectPath, join(connectionPath, name))
+      memberIds.push(id)
+    })
+    projects.set(TEST_CONNECTION_PROJECT_ID, {
+      id: TEST_CONNECTION_PROJECT_ID,
+      name: 'Both apps',
+      path: connectionPath,
+      kind: 'connection',
+      member_project_ids: JSON.stringify(memberIds)
+    })
+  }
 
   const fakes: OverridableDeps = {
     generate: async (prompt, systemPrompt, provider, generateOptions) => {
@@ -453,15 +520,64 @@ export function createServiceHarness(options: { repo?: TestRepo } = {}): Service
     getAppStartedAt: () => null,
     createWorktreeFromBranch: async (params): Promise<WorktreeResult> => {
       worktreeRequests.push(params)
-      if (!repo) return { success: false, error: 'This test has no repository.' }
+      const target = repos.get(params.projectPath)
+      if (!target) return { success: false, error: 'This test has no repository.' }
+      // A member's worktree ids carry the member's name: `wt-web-doc-factory`.
+      const prefix =
+        target === repo ? 'wt' : `wt-${projects.get(params.projectId)?.name ?? 'member'}`
       let branch = params.nameHint ?? 'worktree'
-      for (let suffix = 2; worktrees.has(`wt-${branch}`); suffix++) {
+      for (let suffix = 2; worktrees.has(`${prefix}-${branch}`); suffix++) {
         branch = `${params.nameHint}-${suffix}`
       }
-      const path = repo.addWorktree(branch, params.baseRef ?? params.branchName)
-      const worktree = { id: `wt-${branch}`, path, branch_name: branch }
+      const path = target.addWorktree(branch, params.baseRef ?? params.branchName)
+      const worktree: TestWorktree = {
+        id: `${prefix}-${branch}`,
+        path,
+        branch_name: branch,
+        project_id: params.projectId
+      }
       worktrees.set(worktree.id, worktree)
-      return { success: true, worktree: worktree as WorktreeResult['worktree'] }
+      return { success: true, worktree: worktree as unknown as WorktreeResult['worktree'] }
+    },
+    createConnection: async (worktreeIds, savedProjectId) => {
+      connectionRequests.push({ worktreeIds, savedProjectId })
+      const id = `connection-${++connectionCount}`
+      const path = join(scratch, 'connections', id)
+      mkdirSync(path, { recursive: true })
+      const linked: FakeConnection['members'] = []
+      for (const worktreeId of worktreeIds) {
+        const worktree = worktrees.get(worktreeId)
+        if (!worktree) return { success: false, error: `Worktree ${worktreeId} was not found.` }
+        const project = worktree.project_id ? projects.get(worktree.project_id) : null
+        if (!project) return { success: false, error: `Worktree ${worktreeId} has no project.` }
+        // Same rule as the live `deriveSymlinkName`: the project name, suffixed when taken.
+        const base = project.name.toLowerCase().replace(/[^a-z0-9-]/g, '-')
+        let symlinkName = base
+        for (let n = 2; linked.some((member) => member.symlink_name === symlinkName); n++) {
+          symlinkName = `${base}-${n}`
+        }
+        symlinkSync(worktree.path, join(path, symlinkName))
+        linked.push({ project_id: project.id, worktree_id: worktreeId, symlink_name: symlinkName })
+      }
+      const connection: FakeConnection = {
+        id,
+        name: id,
+        path,
+        status: 'active',
+        saved_project_id: savedProjectId,
+        members: linked
+      }
+      connections.set(id, connection)
+      return { success: true, connection: structuredClone(connection) }
+    },
+    getConnection: (connectionId) => {
+      const connection = connections.get(connectionId)
+      return connection ? structuredClone(connection) : null
+    },
+    renameConnection: async (connectionId, name) => {
+      connectionRenames.push({ connectionId, name })
+      const connection = connections.get(connectionId)
+      if (connection) connection.name = name
     },
     createTickets: async (projectId, drafts) => {
       ticketBatches.push({ projectId, drafts })
@@ -521,6 +637,9 @@ export function createServiceHarness(options: { repo?: TestRepo } = {}): Service
     },
     createWorktreeFromBranch: (...args) =>
       (overrides.createWorktreeFromBranch ?? fakes.createWorktreeFromBranch)(...args),
+    createConnection: (...args) => (overrides.createConnection ?? fakes.createConnection)(...args),
+    getConnection: (...args) => (overrides.getConnection ?? fakes.getConnection)(...args),
+    renameConnection: (...args) => (overrides.renameConnection ?? fakes.renameConnection)(...args),
     createTickets: (...args) => (overrides.createTickets ?? fakes.createTickets)(...args),
     addTicketDependency: (...args) =>
       (overrides.addTicketDependency ?? fakes.addTicketDependency)(...args),
@@ -550,6 +669,9 @@ export function createServiceHarness(options: { repo?: TestRepo } = {}): Service
     projects,
     worktrees,
     worktreeRequests,
+    connections,
+    connectionRequests,
+    connectionRenames,
     ticketBatches,
     ticketLinks,
     boardTickets,

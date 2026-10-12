@@ -56,6 +56,8 @@ function item(
     status_detail: null,
     ticket_id: null,
     worktree_id: null,
+    connection_id: null,
+    members: null,
     session_id: null,
     fix_ticket_id: null,
     fix_session_id: null,
