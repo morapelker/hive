@@ -116,9 +116,13 @@ async function ensureFoldersTrusted(configPath: string, folderPaths: string[]): 
  * entry is a single config read with no rewrite. The repo root is checked once
  * per project and then stamped `trust_check_done`.
  *
- * Connection projects are skipped — their sessions run against remote hosts,
- * where the local config has no bearing. Never throws: a failed pre-flight
- * must not block the session launch.
+ * Connection projects (and ad-hoc connections launched from a git project)
+ * run their sessions in a local symlink directory under `~/.hive/connections`,
+ * which is likewise outside every repo root, so that directory arrives here as
+ * `worktreePath` and is trusted the same way. A connection project's own
+ * `path` (`~/.hive/connection-projects/<id>`) is never a session cwd, so the
+ * root check is skipped for it. Never throws: a failed pre-flight must not
+ * block the session launch.
  */
 export async function ensureProjectTrustCheck(
   db: TrustCheckDb,
@@ -128,9 +132,9 @@ export async function ensureProjectTrustCheck(
   try {
     const project = db.getProject(projectId)
     if (!project) return
-    if ((project.kind ?? 'git') !== 'git') return
 
-    const needsRootCheck = !project.trust_check_done
+    const isConnectionProject = (project.kind ?? 'git') === 'connection'
+    const needsRootCheck = !isConnectionProject && !project.trust_check_done
     const folders: string[] = []
     if (needsRootCheck) folders.push(project.path)
     if (opts?.worktreePath && opts.worktreePath !== project.path) {

@@ -213,7 +213,24 @@ describe('ensureProjectTrustCheck', () => {
     expect(db.updateProjectTrustCheck).toHaveBeenCalledWith('project-1', true)
   })
 
-  it('skips connection projects entirely', async () => {
+  it('trusts the connection directory for a connection project, not its project path', async () => {
+    const db = makeDb(
+      makeProject({ kind: 'connection', path: '/home/dev/.hive/connection-projects/abcd1234' })
+    )
+
+    await ensureProjectTrustCheck(db, 'project-1', {
+      configPath,
+      worktreePath: '/home/dev/.hive/connections/37feb7fd'
+    })
+
+    expect(await readConfig()).toEqual({
+      projects: { '/home/dev/.hive/connections/37feb7fd': { hasTrustDialogAccepted: true } }
+    })
+    // The project path is never a session cwd, so there is no root check to stamp.
+    expect(db.updateProjectTrustCheck).not.toHaveBeenCalled()
+  })
+
+  it('does nothing for a connection project launched without a session directory', async () => {
     const db = makeDb(makeProject({ kind: 'connection' }))
 
     await ensureProjectTrustCheck(db, 'project-1', { configPath })
