@@ -283,7 +283,12 @@ export interface DocumentRunExtractionMeta {
 
 // ── Classification ─────────────────────────────────────────────────────────
 
-export type DocumentRunVerdictStatus = 'done' | 'needs_input' | 'blocked' | 'failed' | 'partial'
+/**
+ * `waiting`: the agent stopped to wait for background work it started itself (checks, a build,
+ * a Monitor) and says it will pick the task up when the results come back.
+ */
+export type DocumentRunVerdictStatus =
+  'done' | 'needs_input' | 'blocked' | 'failed' | 'partial' | 'waiting'
 
 /** The default model's judgement of a session's final message. */
 export interface DocumentRunVerdict {
@@ -502,6 +507,13 @@ export interface DocumentRunItem {
   last_checked_at: string | null
   /** Earliest time for the next automatic "continue" after an API error. */
   retry_at: string | null
+  /**
+   * Deadline of a wait for background work the agent said it was waiting on (a `waiting`
+   * verdict): past it, with no new turn, the agent is told to check on that work and finish.
+   */
+  wait_until: string | null
+  /** Waits for background work that ran out without the agent being woken. */
+  wait_timeouts: number
   created_at: string
   updated_at: string
   started_at: string | null
@@ -617,6 +629,8 @@ export interface DocumentRunItemPatch {
   last_prompt_at?: string | null
   last_checked_at?: string | null
   retry_at?: string | null
+  wait_until?: string | null
+  wait_timeouts?: number
   started_at?: string | null
   finished_at?: string | null
 }
@@ -663,6 +677,11 @@ export interface SessionFinalMessage {
   hook_event: string
   /** For `blocked`: the question text or tool name when known. */
   detail: string | null
+  /**
+   * Background shells, monitors and subagents the agent had running at the Stop that recorded
+   * the row (a Claude CLI session); null when the turn end could not report them.
+   */
+  background_work: number | null
   updated_at: string
 }
 

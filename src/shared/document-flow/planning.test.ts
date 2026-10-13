@@ -7,12 +7,14 @@ import {
 } from '../types/document-flow'
 import {
   USER_INTERRUPT_DETAIL,
+  WAITING_FOR_WORK_PREFIX,
   WAITING_PREFIX,
   awaitsLaunch,
   countOccupiedSlots,
   countRunningAgents,
   integrationBranchHint,
   isDependencySatisfied,
+  isItemWaitingOnUser,
   isMergeInFlight,
   isRunSettled,
   isRunWaitingOnUser,
@@ -75,6 +77,8 @@ function item(
     last_prompt_at: null,
     last_checked_at: null,
     retry_at: null,
+    wait_until: null,
+    wait_timeouts: 0,
     created_at: '2026-10-05T10:00:00.000Z',
     updated_at: '2026-10-05T10:00:00.000Z',
     started_at: null,
@@ -667,5 +671,18 @@ describe('branch hints', () => {
     const long = integrationBranchHint('A very long document title that goes on and on and on')
     expect(long).toBe('doc-a-very-long-document-title-that-goes')
     expect(long.length).toBeLessThanOrEqual(40)
+  })
+})
+
+describe('WAITING_FOR_WORK_PREFIX', () => {
+  it('marks a running item that waits for its own checks as at work, not as waiting on the user', () => {
+    const waiting = item('A', 'running', {
+      status_detail: `${WAITING_FOR_WORK_PREFIX}the typecheck and the tests`
+    })
+    expect(isItemWaitingOnUser(waiting)).toBe(false)
+    expect(countRunningAgents([waiting])).toBe(1)
+    expect(isRunWaitingOnUser([waiting, item('B', 'needs_attention')])).toBe(false)
+    // The two prefixes must never be mistaken for one another.
+    expect(WAITING_FOR_WORK_PREFIX.startsWith(WAITING_PREFIX)).toBe(false)
   })
 })

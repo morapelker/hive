@@ -1,8 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { USER_INTERRUPT_DETAIL } from '@shared/document-flow/planning'
-import { buildContinuePrompt } from '@shared/document-flow/prompts'
+import { USER_INTERRUPT_DETAIL, WAITING_FOR_WORK_PREFIX } from '@shared/document-flow/planning'
+import { buildContinuePrompt, buildNudgePrompt } from '@shared/document-flow/prompts'
 import type { DocumentRunItem, SessionFinalMessage } from '@shared/types/document-flow'
-import { BACKOFF_MINUTES, DocumentFlowRunner, MAX_CONTINUE, SETTLE_MS } from './runner'
+import {
+  BACKOFF_MINUTES,
+  DocumentFlowRunner,
+  MAX_CONTINUE,
+  MAX_NUDGES,
+  SETTLE_MS,
+  WAIT_FOR_WORK_MS
+} from './runner'
 import { TEST_NOW, advance, createWorld, makeVerdict, type RunnerWorld } from './runner-fakes'
 
 const SESSION = 's-A'
@@ -31,6 +38,7 @@ const recordedTurn = (overrides: Partial<SessionFinalMessage> = {}): SessionFina
   api_error: null,
   hook_event: 'Stop',
   detail: null,
+  background_work: null,
   updated_at: RECORDED_AT,
   ...overrides
 })
@@ -432,6 +440,124 @@ describe('DocumentFlowRunner: watching sessions', () => {
       await advance(2000)
 
       expect(world.api.classify).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('waiting for background work', () => {
+    const REASON = 'It waits for the typecheck, the unit tests and the lint it started.'
+    /** An item parked by a `waiting` verdict: its last turn end was judged, the wait is on. */
+    const waitingItem = (overrides: Partial<DocumentRunItem> = {}): Partial<DocumentRunItem> =>
+      runningItem({
+        status_detail: `${WAITING_FOR_WORK_PREFIX}${REASON}`,
+        last_checked_at: RECORDED_AT,
+        wait_until: new Date(Date.now() + WAIT_FOR_WORK_MS).toISOString(),
+        ...overrides
+      })
+    const waitingWorld = (overrides: Partial<DocumentRunItem> = {}): RunnerWorld => {
+      const world = createWorld({ items: [waitingItem(overrides)] })
+      world.endTurn(SESSION, { at: Date.parse(RECORDED_AT), hasBackgroundWork: true })
+      return world
+    }
+
+    it('keeps waiting until the deadline, then reminds the agent once without counting it', async () => {
+      const world = waitingWorld()
+      start(world)
+
+      await advance(WAIT_FOR_WORK_MS - 60_000)
+      expect(world.followups).toEqual([])
+      expect(world.item('A').status).toBe('running')
+      expect(world.api.classify).not.toHaveBeenCalled()
+
+      await advance(70_000)
+      expect(world.followups).toEqual([
+        {
+          sessionId: SESSION,
+          ticketId: 'ticket-A',
+          prompt: buildNudgePrompt({ status: 'waiting', reason: REASON })
+        }
+      ])
+      expect(world.item('A')).toMatchObject({
+        status: 'running',
+        status_detail: `Told its wait ran out: ${REASON}`,
+        wait_until: null,
+        wait_timeouts: 1,
+        nudge_count: 0
+      })
+      expect(world.events.map((event) => event.type)).toEqual(['wait_timed_out', 'nudged'])
+    })
+
+    it('ends the wait when the session wakes, and judges the turn that follows', async () => {
+      const world = waitingWorld()
+      start(world)
+      await advance(1000)
+
+      // A task notification resumed the agent.
+      world.setSignal(SESSION, { kind: 'working' })
+      await advance(1000)
+      expect(world.item('A')).toMatchObject({
+        status: 'running',
+        status_detail: null,
+        wait_until: null
+      })
+
+      world.endTurn(SESSION)
+      world.api.classify.mockResolvedValue(makeVerdict({ status: 'done' }))
+      world.api.prepareMerge.mockReturnValue(new Promise(() => {}))
+      await advance(SETTLE_MS + 1000)
+      expect(world.api.classify).toHaveBeenCalledTimes(1)
+      expect(world.followups).toEqual([])
+    })
+
+    it('counts the next timeout as a nudge, and flags the ticket after the last one', async () => {
+      const world = waitingWorld({ wait_timeouts: 1 })
+      start(world)
+
+      await advance(WAIT_FOR_WORK_MS + 10_000)
+      expect(world.followups).toHaveLength(1)
+      expect(world.item('A')).toMatchObject({
+        status: 'running',
+        status_detail: `Asked to finish: ${REASON}`,
+        wait_until: null,
+        wait_timeouts: 1,
+        nudge_count: 1
+      })
+
+      const flagged = waitingWorld({ wait_timeouts: 1, nudge_count: MAX_NUDGES })
+      runner?.stop()
+      start(flagged)
+      await advance(WAIT_FOR_WORK_MS + 10_000)
+      expect(flagged.followups).toEqual([])
+      expect(flagged.item('A')).toMatchObject({
+        status: 'needs_attention',
+        status_detail: REASON,
+        wait_until: null
+      })
+    })
+
+    it('merges a ticket of a run that may not ask as it is, once its waits are used up', async () => {
+      const world = createWorld({
+        config: { interactive: false },
+        items: [waitingItem({ wait_timeouts: 1, nudge_count: MAX_NUDGES })]
+      })
+      world.endTurn(SESSION, { at: Date.parse(RECORDED_AT), hasBackgroundWork: true })
+      world.api.prepareMerge.mockReturnValue(new Promise(() => {}))
+      start(world)
+
+      await advance(WAIT_FOR_WORK_MS + 10_000)
+      expect(world.followups).toEqual([])
+      expect(world.events).toContainEqual(expect.objectContaining({ type: 'accepted_as_is' }))
+    })
+
+    it('still handles an API error during a wait', async () => {
+      const world = waitingWorld()
+      start(world)
+      await advance(1000)
+
+      world.endTurn(SESSION, { completion: 'none', apiError: 'overloaded_error' })
+      await advance(SETTLE_MS + 1000)
+
+      expect(world.item('A').retry_at).not.toBeNull()
+      expect(world.item('A').status_detail).toContain('API error (overloaded_error)')
     })
   })
 

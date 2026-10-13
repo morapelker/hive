@@ -1,5 +1,6 @@
 import {
   USER_INTERRUPT_DETAIL,
+  WAITING_FOR_WORK_PREFIX,
   WAITING_PREFIX,
   isItemWaitingOnUser,
   isRunSettled,
@@ -59,6 +60,13 @@ export const MAX_CONTINUE = 5
 /** Wait before the n-th automatic "continue" after an API error. */
 export const BACKOFF_MINUTES = [2, 10, 30, 60, 60]
 export const MAX_NUDGES = 2
+/**
+ * How long a ticket waits for background work its agent said it was waiting on (a `waiting`
+ * verdict) before the agent is told to check on that work and finish.
+ */
+export const WAIT_FOR_WORK_MS = 30 * 60_000
+/** Wait timeouts that only remind the agent; the next one counts as a nudge (MAX_NUDGES). */
+export const MAX_WAIT_TIMEOUTS = 1
 export const MAX_CONFLICT_ATTEMPTS = 2
 export const MAX_FIX_ATTEMPTS = 2
 
@@ -215,6 +223,7 @@ const waitingDetail = (block: { reason: SessionBlockReason; detail: string | nul
 const isTransientDetail = (detail: string | null): boolean =>
   detail !== null &&
   (detail.startsWith(WAITING_PREFIX) ||
+    detail.startsWith(WAITING_FOR_WORK_PREFIX) ||
     detail.startsWith(API_ERROR_PREFIX) ||
     detail === USER_INTERRUPT_DETAIL)
 
@@ -923,10 +932,12 @@ export class DocumentFlowRunner {
     switch (seen.kind) {
       case 'working': {
         const stale = isTransientDetail(item.status_detail)
-        if (!item.retry_at && !stale) return
+        if (!item.retry_at && !item.wait_until && !stale) return
+        // Woken (or prompted) while it waited for background work: the wait is over.
         await this.patch(op, {
           status_detail: stale ? this.workingDetail(item) : item.status_detail,
-          retry_at: null
+          retry_at: null,
+          wait_until: null
         })
         return
       }
@@ -947,7 +958,7 @@ export class DocumentFlowRunner {
 
   private async turnEnded(op: ItemOp): Promise<void> {
     // A turn that ended cleanly: the session is healthy again, so later failures start over.
-    const healthy: DocumentRunItemPatch = { status_detail: null, retry_at: null }
+    const healthy: DocumentRunItemPatch = { status_detail: null, retry_at: null, wait_until: null }
     if (op.item.continue_attempts > 0) healthy.continue_attempts = 0
 
     switch (op.item.status) {
@@ -988,6 +999,17 @@ export class DocumentFlowRunner {
         return
       }
       return this.sendContinue(op, target, 'api_error')
+    }
+
+    // Waiting for background work its agent said would wake it: the standing turn end was
+    // judged already, so nothing happens until the wake arrives or the wait runs out.
+    if (item.wait_until && seen.kind === 'idle') {
+      const waitUntil = toMs(item.wait_until)
+      if (now < waitUntil) {
+        this.wakeAt(waitUntil)
+        return
+      }
+      return this.waitTimedOut(op, target)
     }
 
     switch (seen.kind) {
@@ -1041,6 +1063,7 @@ export class DocumentFlowRunner {
       {
         continue_attempts: op.item.continue_attempts + 1,
         retry_at: null,
+        wait_until: null,
         status_detail: transient ? this.workingDetail(op.item) : op.item.status_detail
       }
     )
@@ -1118,10 +1141,81 @@ export class DocumentFlowRunner {
       }
       case 'partial':
         return this.nudge(op, sessionId, { ...verdict, reason }, checked)
+      case 'waiting':
+        return this.waitForWork(op, reason, checked)
       default:
         if (unattended) return this.nudge(op, sessionId, { ...verdict, reason }, checked)
         return this.flag(op, reason, checked)
     }
+  }
+
+  /**
+   * The agent stopped to wait for background work it started (checks, a build) and will be
+   * woken when it ends: nothing is asked of the user. The item stays running, says what it
+   * waits for, and keeps a deadline: a wait that nothing wakes is not left standing forever.
+   * The board's ticket, which the turn end moved to review, goes back to in progress as
+   * "awaiting completion", the way a Monitor pause keeps it.
+   */
+  private async waitForWork(
+    op: ItemOp,
+    reason: string,
+    checked: DocumentRunItemPatch
+  ): Promise<void> {
+    const until = this.ports.now() + WAIT_FOR_WORK_MS
+    await this.patch(op, {
+      ...checked,
+      status: 'running',
+      status_detail: `${WAITING_FOR_WORK_PREFIX}${reason}`,
+      retry_at: null,
+      wait_until: toIso(until)
+    })
+    this.event(op, 'waiting', reason)
+    await this.holdTicket(op)
+    this.wakeAt(until)
+  }
+
+  /** Keep the item's board ticket in progress while its session waits for background work. */
+  private async holdTicket(op: ItemOp): Promise<void> {
+    const current = this.currentItem(op)
+    const ticketId = op.item.ticket_id
+    if (!current || !ticketId) return
+    const projectId = current.run.project_id
+    const ticket = this.ports.getTicket(projectId, ticketId)
+    if (!ticket || (ticket.column !== 'review' && ticket.column !== 'in_progress')) return
+    try {
+      await this.ports.holdTicketForWork(projectId, ticketId)
+    } catch (error) {
+      this.ports.warn(`Could not hold ${op.item.key}'s ticket in progress`, error)
+    }
+  }
+
+  /**
+   * The wait ran out with no wake: the work may have finished quietly, or died. The agent is
+   * told to check on it and finish. The first time is a reminder; after that the reminders
+   * count as nudges, so a session that only ever waits still reaches the end of the run.
+   */
+  private async waitTimedOut(op: ItemOp, target: SessionTarget): Promise<void> {
+    const item = op.item
+    const detail = item.status_detail ?? ''
+    const reason = detail.startsWith(WAITING_FOR_WORK_PREFIX)
+      ? detail.slice(WAITING_FOR_WORK_PREFIX.length)
+      : item.verdict?.reason || 'background work it started'
+    const verdict: NudgeVerdict = {
+      status: 'waiting',
+      reason,
+      ...(item.verdict?.source ? { source: item.verdict.source } : {})
+    }
+    this.event(op, 'wait_timed_out', reason)
+    if (item.wait_timeouts >= MAX_WAIT_TIMEOUTS) {
+      return this.nudge(op, target.sessionId, verdict, { wait_until: null })
+    }
+    this.requireActive(op)
+    const sent = await this.followUp(op, target, buildNudgePrompt(verdict, this.interactive(op)), {
+      wait_until: null,
+      wait_timeouts: item.wait_timeouts + 1,
+      status_detail: `Told its wait ran out: ${reason}`
+    })
+    if (sent) this.event(op, 'nudged', reason)
   }
 
   /**

@@ -84,6 +84,8 @@ export interface SessionFinalMessageUpsert {
   api_error: string | null
   hook_event: string
   detail?: string | null
+  /** Background tasks still running at a Claude CLI Stop; omitted when unknown. */
+  background_work?: number | null
 }
 
 export interface DocumentRunnerClaimResult {

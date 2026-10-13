@@ -804,12 +804,20 @@ function processCliHook(
     // turn the user cut short (codex's Interrupt hook) is kept apart: it has nothing to judge.
     if (body.hook_event_name === 'Stop' && !body.agent_id) {
       const finalMessage = body.last_assistant_message ?? body.assistant_message
+      // What the agent still had running, for the run's judge of the message: a message that
+      // says it waits for its checks is only a wait while something runs that can wake it.
+      const { pendingTasks, ignoredShells } = mapped?.metadata ?? {}
       recordSessionFinalMessage({
         session_id: route.sessionId,
         text: typeof finalMessage === 'string' ? finalMessage : '',
         completion: mapped?.metadata?.completion ?? null,
         api_error: null,
-        hook_event: options.reason === 'user_interrupt' ? 'Interrupt' : 'Stop'
+        hook_event: options.reason === 'user_interrupt' ? 'Interrupt' : 'Stop',
+        background_work:
+          mapped?.metadata?.completion === 'unknown' ||
+          (pendingTasks === undefined && ignoredShells === undefined)
+            ? null
+            : (pendingTasks ?? 0) + (ignoredShells ?? 0)
       })
     }
     void handleClaudeCliHiveTelemetryHook(route.sessionId, body)

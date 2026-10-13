@@ -124,6 +124,11 @@ export function isRunSettled(items: readonly DocumentRunItem[]): boolean {
 
 /** `status_detail` prefix of an item whose session stopped for the user mid-step. */
 export const WAITING_PREFIX = 'Waiting for you: '
+/**
+ * `status_detail` prefix of a running item whose session stopped to wait for background work
+ * it started (checks, a build): nothing is asked of the user, the agent will be woken.
+ */
+export const WAITING_FOR_WORK_PREFIX = 'Waiting for background work: '
 /** `status_detail` of an item whose session the user interrupted. */
 export const USER_INTERRUPT_DETAIL =
   'You interrupted this session. Send it a message to continue, or use Retry.'

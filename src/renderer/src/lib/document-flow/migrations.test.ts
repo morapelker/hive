@@ -1445,6 +1445,7 @@ describe('startMigrationWatcher', () => {
     api_error: null,
     hook_event: 'Stop',
     detail: null,
+    background_work: null,
     updated_at: new Date(NOW - 10_000).toISOString(),
     ...overrides
   })

@@ -97,6 +97,8 @@ export function makeItem(overrides: Partial<DocumentRunItem> = {}): DocumentRunI
     last_prompt_at: null,
     last_checked_at: null,
     retry_at: null,
+    wait_until: null,
+    wait_timeouts: 0,
     created_at: NOW,
     updated_at: NOW,
     started_at: null,

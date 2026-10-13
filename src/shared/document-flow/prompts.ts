@@ -72,13 +72,13 @@ const STATUS_FOOTER_DO_NOT_ASK =
 
 const STATUS_FOOTER_BLOCK = `End your final message with exactly this block:
 
-STATUS: DONE | BLOCKED
+STATUS: DONE | WAITING | BLOCKED
 SUMMARY: what you implemented, in one or two sentences
 MIGRATIONS: migration files you added, or "none"
 MANUAL STEPS: anything a human must do after this is merged (run migrations, set env vars, data fixes), or "none"
 ASSUMPTIONS: decisions you made where the spec was silent, or "none"
 
-Use DONE only when the task is fully implemented and committed, and BLOCKED when something outside your control stops you. Commit on this branch without waiting for my go-ahead. What you may not do here (push, deploy, run migrations, check against a live system) goes under MANUAL STEPS and does not make the task BLOCKED.`
+Use DONE only when the task is fully implemented and committed, WAITING only when you have stopped to wait for checks or builds you started in the background and will be woken when they finish (say what you wait for in SUMMARY), and BLOCKED when something outside your control stops you. Commit on this branch without waiting for my go-ahead. What you may not do here (push, deploy, run migrations, check against a live system) goes under MANUAL STEPS and does not make the task BLOCKED.`
 
 /** The footer for the run's current "agents may ask" setting, which can change mid-run. */
 export function statusFooterInstructions(interactive: boolean): string {
@@ -120,6 +120,13 @@ function launchAskParagraph(interactive: boolean, sdk: string): string {
 
 const LAUNCH_RULES_PARAGRAPH =
   'implement only this task, commit your work on this branch, do not push or switch branches, and do not run migrations against any database.'
+
+/**
+ * A plain background shell cannot tell the app whether the agent is waiting on it or left it
+ * running; a Monitor can. Agents are asked to wait with the one the app can see.
+ */
+export const LAUNCH_WAIT_PARAGRAPH =
+  'when you have to wait for checks, tests or builds you started in the background, wait with the Monitor tool rather than a background shell loop or a sleep: a monitor tells the app you are still working, a shell does not. if your tools have no monitor, run the checks in the foreground instead of stopping to wait.'
 
 /**
  * A Claude CLI session gets the orchestrator's follow-ups pasted into its terminal, and the CLI
@@ -203,6 +210,7 @@ export function buildLaunchPrompt(input: LaunchPromptInput): string {
     launchAskParagraph(input.interactive, input.sdk),
     'then - implement this',
     ...verificationParagraphs(input.verification),
+    LAUNCH_WAIT_PARAGRAPH,
     LAUNCH_RULES_PARAGRAPH,
     LAUNCH_FOLLOW_UPS_PARAGRAPH
   )
@@ -243,9 +251,12 @@ export function withRunRules(
   const verification = verificationParagraphs(input.verification)
   if (verification.length > 0) {
     const block = verification.join('\n\n')
-    // Before the commit rules, where buildLaunchPrompt puts it; after the brief otherwise.
-    text = text.includes(LAUNCH_RULES_PARAGRAPH)
-      ? text.replace(LAUNCH_RULES_PARAGRAPH, `${block}\n\n${LAUNCH_RULES_PARAGRAPH}`)
+    // Before the wait and commit rules, where buildLaunchPrompt puts it; after the brief otherwise.
+    const anchor = [LAUNCH_WAIT_PARAGRAPH, LAUNCH_RULES_PARAGRAPH].find((paragraph) =>
+      text.includes(paragraph)
+    )
+    text = anchor
+      ? text.replace(anchor, `${block}\n\n${anchor}`)
       : [text, block].filter(Boolean).join('\n\n')
   }
   // The connection paragraph goes where buildLaunchPrompt puts it: before the asking paragraph.
@@ -254,9 +265,12 @@ export function withRunRules(
       ? text.replace(ask, `${workspace}\n\n${ask}`)
       : [text, workspace].filter(Boolean).join('\n\n')
   }
-  const missing = [ask, LAUNCH_RULES_PARAGRAPH, LAUNCH_FOLLOW_UPS_PARAGRAPH].filter(
-    (paragraph) => !text.includes(paragraph)
-  )
+  const missing = [
+    ask,
+    LAUNCH_WAIT_PARAGRAPH,
+    LAUNCH_RULES_PARAGRAPH,
+    LAUNCH_FOLLOW_UPS_PARAGRAPH
+  ].filter((paragraph) => !text.includes(paragraph))
   return [text, ...missing].filter(Boolean).join('\n\n')
 }
 
@@ -489,8 +503,13 @@ export type NudgeVerdict = Pick<DocumentRunVerdict, 'reason'> &
 
 /** What the nudge says of the last message, and what to do about it. */
 function nudgeBrief(verdict: NudgeVerdict): [lead: string, quote: string, ask: string] {
-  // Judged without the classifier: only a closing question says anything about the message.
-  if (verdict.source === 'fallback' && verdict.status !== 'needs_input') {
+  // Judged without the classifier: only a closing question or a wait for the agent's own
+  // background work says anything about the message.
+  if (
+    verdict.source === 'fallback' &&
+    verdict.status !== 'needs_input' &&
+    verdict.status !== 'waiting'
+  ) {
     return [
       'I could not tell from your last message whether the task is finished.',
       '',
@@ -503,6 +522,12 @@ function nudgeBrief(verdict: NudgeVerdict): [lead: string, quote: string, ask: s
         'Your last message waits for an answer or a go-ahead from me:',
         verdict.question?.trim() || verdict.reason,
         'Nobody will answer: I am not at the computer. Decide it yourself - take the approach you would recommend and note it under ASSUMPTIONS - then finish the task and commit. You do not need my go-ahead to commit on this branch.'
+      ]
+    case 'waiting':
+      return [
+        'Your last message said you were waiting for background work you started:',
+        verdict.reason,
+        'Nothing has come back since, so it may have finished quietly or died. Check on it now - read its output, or run the checks again in the foreground - then finish the task and commit. Do not stop to wait again unless you have started a Monitor that will wake you.'
       ]
     case 'blocked':
     case 'failed':
@@ -521,8 +546,9 @@ function nudgeBrief(verdict: NudgeVerdict): [lead: string, quote: string, ask: s
 }
 
 /**
- * Sent when the final message does not read as done: only partly done, or, in a run whose
- * agents may not ask, a question or a stop that nobody is there to answer.
+ * Sent when the final message does not read as done: only partly done, a wait for background
+ * work that ran out, or, in a run whose agents may not ask, a question or a stop that nobody is
+ * there to answer.
  */
 export function buildNudgePrompt(verdict: NudgeVerdict, interactive = true): string {
   const [lead, quote, ask] = nudgeBrief(verdict)

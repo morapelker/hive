@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { WAITING_FOR_WORK_PREFIX } from '@shared/document-flow/planning'
 import { buildNudgePrompt } from '@shared/document-flow/prompts'
 import type { DocumentRunItem, DocumentRunVerdict } from '@shared/types/document-flow'
-import { DocumentFlowRunner, MAX_NUDGES, SETTLE_MS } from './runner'
+import { DocumentFlowRunner, MAX_NUDGES, SETTLE_MS, WAIT_FOR_WORK_MS } from './runner'
 import {
   FakeTransportError,
+  PROJECT_ID,
   TEST_NOW,
   advance,
   createWorld,
@@ -141,6 +143,51 @@ describe('DocumentFlowRunner: checking a finished turn', () => {
     expect(world.api.classify).toHaveBeenCalledTimes(MAX_NUDGES + 1)
   })
 
+  it('holds a ticket whose agent waits for its own checks, asking nothing of anyone', async () => {
+    const reason = 'It waits for the typecheck, the unit tests and the lint it started.'
+    const { world, endedAt } = checkingWorld({ status: 'waiting', reason })
+    // The turn end had moved the board ticket to review, as every completed turn does.
+    world.tickets.set('ticket-A', { ...world.tickets.get('ticket-A')!, column: 'review' })
+    start(world)
+
+    await advance(1000)
+
+    const item = world.item('A')
+    expect(item).toMatchObject({
+      status: 'running',
+      status_detail: `${WAITING_FOR_WORK_PREFIX}${reason}`,
+      last_checked_at: new Date(endedAt).toISOString(),
+      nudge_count: 0,
+      wait_timeouts: 0,
+      retry_at: null
+    })
+    const waitUntil = Date.parse(item.wait_until ?? '') - Date.now()
+    expect(waitUntil).toBeGreaterThan(WAIT_FOR_WORK_MS - 2000)
+    expect(waitUntil).toBeLessThanOrEqual(WAIT_FOR_WORK_MS)
+    expect(world.followups).toEqual([])
+    expect(world.notices).toEqual([])
+    expect(world.events).toContainEqual({ itemId: item.id, type: 'waiting', message: reason })
+    // The ticket goes back to in progress, awaiting the completion that is still to come.
+    expect(world.ports.holdTicketForWork).toHaveBeenCalledWith(PROJECT_ID, 'ticket-A')
+    expect(world.tickets.get('ticket-A')?.column).toBe('in_progress')
+    // The item stays put until the session moves on, or the wait runs out.
+    await advance(60_000)
+    expect(world.item('A').status).toBe('running')
+    expect(world.api.classify).toHaveBeenCalledTimes(1)
+  })
+
+  it('leaves a ticket the board already moved on alone when its agent waits', async () => {
+    const { world } = checkingWorld({ status: 'waiting', reason: 'It waits for the tests.' })
+    world.tickets.set('ticket-A', { ...world.tickets.get('ticket-A')!, column: 'done' })
+    start(world)
+
+    await advance(1000)
+
+    expect(world.item('A').status).toBe('running')
+    expect(world.ports.holdTicketForWork).not.toHaveBeenCalled()
+    expect(world.tickets.get('ticket-A')?.column).toBe('done')
+  })
+
   it.each(['blocked', 'failed'] as const)('flags a ticket judged %s', async (status) => {
     const { world } = checkingWorld({ status, reason: 'The staging database is unreachable.' })
     start(world)
@@ -240,6 +287,22 @@ describe('DocumentFlowRunner: checking a finished turn', () => {
       }
     )
 
+    it('lets an agent wait for its own checks just the same', async () => {
+      const reason = 'It waits for the typecheck.'
+      const world = unattendedWorld({ status: 'waiting', reason })
+      start(world)
+
+      await advance(1000)
+
+      expect(world.item('A')).toMatchObject({
+        status: 'running',
+        status_detail: `${WAITING_FOR_WORK_PREFIX}${reason}`,
+        nudge_count: 0
+      })
+      expect(world.item('A').wait_until).not.toBeNull()
+      expect(world.followups).toEqual([])
+    })
+
     it('runs a ticket whose agent keeps asking through to the merge without the user', async () => {
       const world = unattendedWorld({ status: 'needs_input', question: 'Commit?', reason: 'r' })
       start(world)
@@ -336,6 +399,7 @@ describe('DocumentFlowRunner: checking a finished turn', () => {
       api_error: null,
       hook_event: 'SdkIdle',
       detail: null,
+      background_work: null,
       updated_at: '2026-05-04T09:59:30.000Z'
     })
     world.api.classify.mockResolvedValue(makeVerdict({ status: 'needs_input' }))

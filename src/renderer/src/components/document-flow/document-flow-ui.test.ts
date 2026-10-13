@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   USER_INTERRUPT_DETAIL,
+  WAITING_FOR_WORK_PREFIX,
   WAITING_PREFIX,
   summarizeItems
 } from '@shared/document-flow/planning'
@@ -153,6 +154,19 @@ describe('itemStatusDisplay', () => {
   it('marks a deselected item as not included', () => {
     const item = makeItem({ selected: false, status: 'pending' })
     expect(itemStatusDisplay(item, [item])).toMatchObject({ label: 'Not included', dot: 'idle' })
+  })
+
+  it('reads as waiting for checks while a running item waits for its own background work', () => {
+    const waiting = makeItem({
+      status: 'running',
+      status_detail: `${WAITING_FOR_WORK_PREFIX}the typecheck and the tests`
+    })
+    expect(itemStatusDisplay(waiting, [waiting])).toEqual({
+      label: 'Waiting for checks',
+      tone: 'info',
+      dot: 'working'
+    })
+    expect(needsUser(waiting)).toBe(false)
   })
 
   it('shows a question dot when a fix session stopped to ask', () => {

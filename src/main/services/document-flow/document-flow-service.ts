@@ -451,6 +451,8 @@ const ORCHESTRATION_ITEM_FIELDS = [
   'last_prompt_at',
   'last_checked_at',
   'retry_at',
+  'wait_until',
+  'wait_timeouts',
   'started_at',
   'finished_at'
 ] as const satisfies readonly (keyof DocumentRunItemPatch)[]
@@ -1649,7 +1651,19 @@ export class DocumentFlowService {
         this.now().toISOString()
       )
     } else {
-      verdict = await this.judge(run, item, message)
+      // What the session still had running at the turn end, as the hook that recorded it saw
+      // (null for sessions that cannot say: SDK, Codex, an older claude).
+      const background = this.deps.db.getSessionFinalMessage(sessionId)?.background_work ?? null
+      verdict = await this.judge(run, item, message, background)
+      // A wait holds only while something runs that can wake the agent: with nothing in the
+      // background, "waiting" is work the agent stopped short of, and is treated as such.
+      if (verdict.status === 'waiting' && background === 0) {
+        verdict = {
+          ...verdict,
+          status: 'partial',
+          reason: `${verdict.reason.replace(/[.!?]\s*$/, '')}, but no background work of its session is running, so nothing will wake it.`
+        }
+      }
     }
 
     this.saveItem(run, item.id, { verdict })
@@ -1669,7 +1683,8 @@ export class DocumentFlowService {
   private async judge(
     run: DocumentRun,
     item: DocumentRunItem,
-    message: string
+    message: string,
+    runningBackgroundWork: number | null
   ): Promise<DocumentRunVerdict> {
     const facts = await this.gitFacts(run, item)
     const generation = run.config.generation
@@ -1681,7 +1696,8 @@ export class DocumentFlowService {
             ticketTitle: item.title,
             finalMessage: message,
             commitsAhead: facts.commitsAhead,
-            hasUncommittedChanges: facts.dirty
+            hasUncommittedChanges: facts.dirty,
+            runningBackgroundWork
           }),
           CLASSIFICATION_SYSTEM_PROMPT,
           generation?.provider ?? 'claude-code',

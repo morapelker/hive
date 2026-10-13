@@ -804,6 +804,7 @@ describe('DocumentFlowRunner: merging', () => {
         api_error: null,
         hook_event: 'Working',
         detail: null,
+        background_work: null,
         updated_at: '2026-05-04T09:59:30.000Z'
       }
       world.turns.set('s-A', recorded)

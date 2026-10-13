@@ -33,7 +33,12 @@
  * it saw start as Monitors (from their PostToolUse). A body that carries
  * neither array predates the feature and cannot be told apart from a pause.
  *
- * The wording of `last_assistant_message` is never used as a signal.
+ * The wording of `last_assistant_message` is never used as a signal here. The
+ * document run's final-message classifier (shared/document-flow/classification.ts)
+ * does read it: a message that says it waits for the agent's own background
+ * shells can hold a run item as waiting on that evidence, gated by the
+ * tracker's live counts and bounded by a timeout (see the runner's
+ * WAIT_FOR_WORK_MS).
  */
 
 export type ClaudeCliStopCompletionKind = 'completed' | 'waiting' | 'unknown'

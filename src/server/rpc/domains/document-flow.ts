@@ -126,7 +126,7 @@ const launchConfigSchema = z
 
 const verdictSchema = z
   .object({
-    status: z.enum(['done', 'needs_input', 'blocked', 'failed', 'partial']),
+    status: z.enum(['done', 'needs_input', 'blocked', 'failed', 'partial', 'waiting']),
     reason: z.string(),
     question: z.string().nullable(),
     summary: z.string().nullable(),
@@ -207,6 +207,8 @@ const itemPatchSchema = z
     last_prompt_at: nullableStringSchema,
     last_checked_at: nullableStringSchema,
     retry_at: nullableStringSchema,
+    wait_until: nullableStringSchema,
+    wait_timeouts: counterSchema,
     started_at: nullableStringSchema,
     finished_at: nullableStringSchema
   })

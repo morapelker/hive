@@ -111,7 +111,9 @@ const RESET_ATTEMPTS: DocumentRunItemPatch = {
   fix_attempts: 0,
   continue_attempts: 0,
   last_checked_at: null,
-  retry_at: null
+  retry_at: null,
+  wait_until: null,
+  wait_timeouts: 0
 }
 
 /**

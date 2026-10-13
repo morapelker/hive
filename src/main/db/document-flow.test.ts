@@ -1535,6 +1535,7 @@ describeIf('session final messages', () => {
       api_error: null,
       hook_event: 'Stop',
       detail: null,
+      background_work: null,
       updated_at: firstAt
     })
 
@@ -1561,6 +1562,7 @@ describeIf('session final messages', () => {
       api_error: 'overloaded_error',
       hook_event: 'StopFailure',
       detail: null,
+      background_work: null,
       updated_at: secondAt
     })
     expect(db.getSessionFinalMessage('session-2')).toMatchObject({

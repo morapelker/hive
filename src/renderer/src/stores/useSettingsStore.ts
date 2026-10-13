@@ -12,7 +12,6 @@ import {
   sanitizeAutoSignInSettings
 } from '@shared/types/settings'
 import type { AutoSignInSettings, TeleportSettings } from '@shared/types/settings'
->>>>>>> auto signin claude
 import type { TelegramConfig } from '@shared/types/telegram'
 import type { UsageProvider } from '@shared/types/usage'
 import type { PetSettings } from '@shared/types/pet'

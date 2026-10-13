@@ -505,6 +505,8 @@ describe('useDocumentFlowStore', () => {
         continue_attempts: 0,
         last_checked_at: null,
         retry_at: null,
+        wait_until: null,
+        wait_timeouts: 0,
         finished_at: null
       })
       expect(statuses(useDocumentFlowStore.getState().runsById['run-1'])).toEqual({
@@ -549,6 +551,8 @@ describe('useDocumentFlowStore', () => {
         continue_attempts: 0,
         last_checked_at: null,
         retry_at: null,
+        wait_until: null,
+        wait_timeouts: 0,
         finished_at: null
       })
     })

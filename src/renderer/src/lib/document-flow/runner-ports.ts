@@ -122,6 +122,11 @@ export interface RunnerPorts {
   ): Promise<void>
   /** The sort order that puts a ticket at the top of `column`. */
   topSortOrder(projectId: string, column: KanbanTicketColumn): number
+  /**
+   * Put a ticket back in progress, marked as awaiting its session's completion, while the
+   * session waits for background work it started (the turn end had moved it to review).
+   */
+  holdTicketForWork(projectId: string, ticketId: string): Promise<void>
   buildTicketPrompt(ticket: RunnerTicket): string
   getWorktree(worktreeId: string): RunnerWorktree | null
   reloadWorktrees(projectId: string): Promise<void>
@@ -351,6 +356,22 @@ export function createLiveRunnerPorts(): RunnerPorts {
     topSortOrder: (projectId, column) => {
       const store = useKanbanStore.getState()
       return store.computeSortOrder(store.getTicketsByColumn(projectId, column), 0)
+    },
+    holdTicketForWork: (projectId, ticketId) => {
+      const store = useKanbanStore.getState()
+      const ticket = store.tickets.get(projectId)?.find((candidate) => candidate.id === ticketId)
+      return store.updateTicket(ticketId, projectId, {
+        ...(ticket?.column === 'in_progress'
+          ? {}
+          : {
+              column: 'in_progress',
+              sort_order: store.computeSortOrder(
+                store.getTicketsByColumn(projectId, 'in_progress'),
+                0
+              )
+            }),
+        awaiting_completion: true
+      })
     },
     buildTicketPrompt: (ticket) => buildTicketPrompt('build', ticket),
     getWorktree: (worktreeId) => {

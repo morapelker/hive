@@ -333,6 +333,8 @@ const DOCUMENT_RUN_ITEM_PATCH_COLUMNS: Record<
   last_prompt_at: 'plain',
   last_checked_at: 'plain',
   retry_at: 'plain',
+  wait_until: 'plain',
+  wait_timeouts: 'plain',
   started_at: 'plain',
   finished_at: 'plain'
 }
@@ -707,6 +709,7 @@ export class DatabaseService implements DocumentFlowDb {
     this.getDb().exec(DOCUMENT_FLOW_TABLES_SQL)
     this.safeAddColumn('session_final_messages', 'state', "TEXT NOT NULL DEFAULT 'ended'")
     this.safeAddColumn('session_final_messages', 'detail', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('session_final_messages', 'background_work', 'INTEGER DEFAULT NULL')
     this.safeAddColumn('document_run_items', 'conflict_head', 'TEXT DEFAULT NULL')
     this.safeAddColumn('document_run_items', 'verification_suggested', "TEXT NOT NULL DEFAULT '[]'")
     this.safeAddColumn('document_run_items', 'verification', "TEXT NOT NULL DEFAULT '[]'")
@@ -720,6 +723,8 @@ export class DatabaseService implements DocumentFlowDb {
     this.safeAddColumn('document_runs', 'members', 'TEXT DEFAULT NULL')
     this.safeAddColumn('document_run_items', 'connection_id', 'TEXT DEFAULT NULL')
     this.safeAddColumn('document_run_items', 'members', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('document_run_items', 'wait_until', 'TEXT DEFAULT NULL')
+    this.safeAddColumn('document_run_items', 'wait_timeouts', 'INTEGER NOT NULL DEFAULT 0')
   }
 
   /**
@@ -1289,6 +1294,8 @@ export class DatabaseService implements DocumentFlowDb {
       last_prompt_at: (row.last_prompt_at as string | null) ?? null,
       last_checked_at: (row.last_checked_at as string | null) ?? null,
       retry_at: (row.retry_at as string | null) ?? null,
+      wait_until: (row.wait_until as string | null) ?? null,
+      wait_timeouts: (row.wait_timeouts as number) ?? 0,
       created_at: row.created_at as string,
       updated_at: row.updated_at as string,
       started_at: (row.started_at as string | null) ?? null,
@@ -1558,10 +1565,11 @@ export class DatabaseService implements DocumentFlowDb {
     this.getDb()
       .prepare(
         `INSERT INTO session_final_messages (
-           session_id, state, text, completion, api_error, hook_event, detail, updated_at
+           session_id, state, text, completion, api_error, hook_event, detail, background_work,
+           updated_at
          ) VALUES (
            @session_id, @state, COALESCE(@text, ''), @completion, @api_error, @hook_event,
-           @detail, @updated_at
+           @detail, @background_work, @updated_at
          )
          ON CONFLICT(session_id) DO UPDATE SET
            state = excluded.state,
@@ -1570,6 +1578,7 @@ export class DatabaseService implements DocumentFlowDb {
            api_error = excluded.api_error,
            hook_event = excluded.hook_event,
            detail = excluded.detail,
+           background_work = excluded.background_work,
            updated_at = excluded.updated_at`
       )
       .run({
@@ -1580,6 +1589,7 @@ export class DatabaseService implements DocumentFlowDb {
         api_error: data.api_error ?? null,
         hook_event: data.hook_event,
         detail: data.detail ?? null,
+        background_work: data.background_work ?? null,
         updated_at: new Date().toISOString()
       })
   }
@@ -1604,6 +1614,7 @@ export class DatabaseService implements DocumentFlowDb {
       api_error: (row.api_error as string | null) ?? null,
       hook_event: row.hook_event as string,
       detail: (row.detail as string | null) ?? null,
+      background_work: (row.background_work as number | null) ?? null,
       updated_at: row.updated_at as string
     }
   }

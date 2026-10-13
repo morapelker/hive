@@ -98,6 +98,8 @@ export const DOCUMENT_FLOW_TABLES_SQL = `
     last_prompt_at    TEXT DEFAULT NULL,
     last_checked_at   TEXT DEFAULT NULL,
     retry_at          TEXT DEFAULT NULL,
+    wait_until        TEXT DEFAULT NULL,
+    wait_timeouts     INTEGER NOT NULL DEFAULT 0,
     created_at        TEXT NOT NULL,
     updated_at        TEXT NOT NULL,
     started_at        TEXT DEFAULT NULL,
@@ -122,6 +124,7 @@ export const DOCUMENT_FLOW_TABLES_SQL = `
     api_error  TEXT DEFAULT NULL,
     hook_event TEXT NOT NULL,
     detail     TEXT DEFAULT NULL,
+    background_work INTEGER DEFAULT NULL,
     updated_at TEXT NOT NULL
   );
 `

@@ -33,6 +33,8 @@ const launch = (overrides: Partial<LaunchPromptInput> = {}): LaunchPromptInput =
   ...overrides
 })
 
+const WAIT_LINE =
+  'when you have to wait for checks, tests or builds you started in the background, wait with the Monitor tool rather than a background shell loop or a sleep: a monitor tells the app you are still working, a shell does not. if your tools have no monitor, run the checks in the foreground instead of stopping to wait.'
 const GUARD_LINE =
   'implement only this task, commit your work on this branch, do not push or switch branches, and do not run migrations against any database.'
 const FOLLOW_UPS_LINE =
@@ -73,7 +75,10 @@ const fix = (overrides: Partial<FixTicketInput> = {}): FixTicketInput => ({
 describe('STATUS_FOOTER_INSTRUCTIONS', () => {
   it('asks for the block the classifier and the footer parser read', () => {
     const lines = STATUS_FOOTER_INSTRUCTIONS.split('\n')
-    expect(lines).toContain('STATUS: DONE | BLOCKED')
+    expect(lines).toContain('STATUS: DONE | WAITING | BLOCKED')
+    expect(STATUS_FOOTER_INSTRUCTIONS).toContain(
+      'WAITING only when you have stopped to wait for checks or builds you started in the background'
+    )
     for (const label of ['SUMMARY', 'MIGRATIONS', 'MANUAL STEPS', 'ASSUMPTIONS']) {
       expect(lines.some((line) => line.startsWith(`${label}: `))).toBe(true)
     }
@@ -112,6 +117,7 @@ describe('buildLaunchPrompt', () => {
         'use subagents to research and read the spec attached there, read the description of it, understand the requirements, research best practices regarding it',
         ASK_LINE,
         'then - implement this',
+        WAIT_LINE,
         GUARD_LINE,
         FOLLOW_UPS_LINE
       ].join('\n\n')
@@ -167,7 +173,9 @@ describe('buildLaunchPrompt', () => {
         expect(prompt).not.toContain('STATUS')
         expect(prompt).not.toContain('QUESTIONS')
         expect(prompt).not.toContain('<ticket')
-        expect(prompt.endsWith(`\n\n${GUARD_LINE}\n\n${FOLLOW_UPS_LINE}`)).toBe(true)
+        expect(prompt.endsWith(`\n\n${WAIT_LINE}\n\n${GUARD_LINE}\n\n${FOLLOW_UPS_LINE}`)).toBe(
+          true
+        )
       }
     }
   })
@@ -198,22 +206,23 @@ describe('withRunRules', () => {
   it('adds the rules to a brief that has none: an edited one, or one of an older run', () => {
     const brief = 'Implement task 14 — Test orders — from the spec document "Factory area".'
     expect(withRunRules(`\n${brief}\n`, { interactive: false, sdk: 'claude-code-cli' })).toBe(
-      [brief, DO_NOT_ASK_LINE, GUARD_LINE, FOLLOW_UPS_LINE].join('\n\n')
+      [brief, DO_NOT_ASK_LINE, WAIT_LINE, GUARD_LINE, FOLLOW_UPS_LINE].join('\n\n')
     )
     expect(withRunRules(`${brief}\n\n${GUARD_LINE}`, { interactive: true, sdk: 'opencode' })).toBe(
       [
         brief,
         GUARD_LINE,
         'if you have any clarifications you might need - use the question tool to ask me.',
+        WAIT_LINE,
         FOLLOW_UPS_LINE
       ].join('\n\n')
     )
   })
 
   it('keeps one asking paragraph when the brief holds both', () => {
-    const brief = ['do the task', ASK_LINE, DO_NOT_ASK_LINE, GUARD_LINE, FOLLOW_UPS_LINE]
+    const brief = ['do the task', ASK_LINE, DO_NOT_ASK_LINE, WAIT_LINE, GUARD_LINE, FOLLOW_UPS_LINE]
     expect(withRunRules(brief.join('\n\n'), { interactive: false, sdk: 'claude-code' })).toBe(
-      ['do the task', DO_NOT_ASK_LINE, GUARD_LINE, FOLLOW_UPS_LINE].join('\n\n')
+      ['do the task', DO_NOT_ASK_LINE, WAIT_LINE, GUARD_LINE, FOLLOW_UPS_LINE].join('\n\n')
     )
   })
 })
@@ -412,6 +421,20 @@ describe('buildFixTicket', () => {
 })
 
 describe('buildNudgePrompt', () => {
+  it('tells an agent whose wait for background work ran out to check on it and finish', () => {
+    const reason = 'It waits for the typecheck, the tests and the lint it started.'
+    const prompt = buildNudgePrompt({ status: 'waiting', reason })
+    expect(
+      prompt.startsWith(
+        `Your last message said you were waiting for background work you started:\n${reason}\n\nNothing has come back since`
+      )
+    ).toBe(true)
+    expect(prompt).toContain('Do not stop to wait again unless you have started a Monitor')
+    expect(prompt.endsWith(`\n\n${STATUS_FOOTER_INSTRUCTIONS}`)).toBe(true)
+    // The same when the wait was read without the classifier: it does say something.
+    expect(buildNudgePrompt({ status: 'waiting', reason, source: 'fallback' })).toBe(prompt)
+  })
+
   it('quotes the reason and ends with the status footer', () => {
     const prompt = buildNudgePrompt({ reason: 'The export dialog is listed as still to do.' })
     expect(
@@ -604,6 +627,7 @@ describe('verification paragraphs', () => {
       LEAD,
       PLAYWRIGHT,
       TESTS,
+      WAIT_LINE,
       GUARD_LINE,
       FOLLOW_UPS_LINE
     ])
@@ -658,11 +682,12 @@ describe('verification paragraphs', () => {
       TESTS,
       GUARD_LINE,
       FOLLOW_UPS_LINE,
-      DO_NOT_ASK_LINE
+      DO_NOT_ASK_LINE,
+      WAIT_LINE
     ])
     // A brief without the rules gets the choice, then the rules.
     expect(
       withRunRules('do task 11', { interactive: true, sdk: 'claude-code', verification: ['tcu'] })
-    ).toBe(['do task 11', LEAD, TCU, ASK_LINE, GUARD_LINE, FOLLOW_UPS_LINE].join('\n\n'))
+    ).toBe(['do task 11', LEAD, TCU, ASK_LINE, WAIT_LINE, GUARD_LINE, FOLLOW_UPS_LINE].join('\n\n'))
   })
 })

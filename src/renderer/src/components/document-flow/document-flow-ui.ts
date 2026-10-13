@@ -2,6 +2,7 @@ import { ticketPillBaseClass } from '@/components/kanban/pill'
 import type { AgentDotState } from '@/components/sidebar/agent-state'
 import {
   awaitsLaunch,
+  WAITING_FOR_WORK_PREFIX,
   countRunningAgents,
   isItemWaitingOnUser,
   isRunWaitingOnUser,
@@ -203,6 +204,9 @@ export function itemStatusDisplay(
     label: DOCUMENT_RUN_ITEM_STATUS_LABELS[item.status],
     tone: DOCUMENT_RUN_ITEM_STATUS_TONES[item.status],
     dot: asking ? 'question' : DOCUMENT_RUN_ITEM_STATUS_DOTS[item.status]
+  }
+  if (item.status === 'running' && item.status_detail?.startsWith(WAITING_FOR_WORK_PREFIX)) {
+    return { ...base, label: 'Waiting for checks' }
   }
   if (item.status !== 'pending') return base
   const unmet = unmetDependencies(item, items)

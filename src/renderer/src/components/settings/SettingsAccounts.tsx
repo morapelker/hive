@@ -340,7 +340,6 @@ function ProviderAccountsCard({ provider }: { provider: UsageProvider }): React.
       const created = await createHiveAccountShare(exported.provider, exported.encryptedPayload)
       const serverUrl = useSettingsStore.getState().hiveEnterpriseServerUrl
       const link = buildShareAccountLink({ serverUrl, token: created.token, key: exported.key })
->>>>>>> auto signin claude
       setShareResult({ email: account.email, link })
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to create share link')

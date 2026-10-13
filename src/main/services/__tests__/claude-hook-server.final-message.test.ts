@@ -96,7 +96,33 @@ describe('final-message capture on turn end', () => {
       text: 'All done.\n\nSTATUS: DONE',
       completion: 'completed',
       api_error: null,
-      hook_event: 'Stop'
+      hook_event: 'Stop',
+      background_work: 0
+    })
+  })
+
+  it('records how much background work a completed Stop left running', async () => {
+    const { port } = await getClaudeHookServer()
+
+    await postHook(port, 'stop', {
+      hook_event_name: 'Stop',
+      last_assistant_message: 'Waiting for the typecheck, the tests and the lint.',
+      background_tasks: [
+        { id: 'b1', type: 'shell', status: 'running' },
+        { id: 'b2', type: 'shell', status: 'running' },
+        { id: 'b3', type: 'shell', status: 'running' },
+        { id: 'b4', type: 'shell', status: 'running' }
+      ],
+      session_crons: []
+    })
+
+    expect(recorderMocks.recordSessionFinalMessage).toHaveBeenCalledWith({
+      session_id: SESSION,
+      text: 'Waiting for the typecheck, the tests and the lint.',
+      completion: 'completed',
+      api_error: null,
+      hook_event: 'Stop',
+      background_work: 4
     })
   })
 
@@ -118,7 +144,8 @@ describe('final-message capture on turn end', () => {
           text: 'Will check back later.',
           completion: 'waiting',
           api_error: null,
-          hook_event: 'Stop'
+          hook_event: 'Stop',
+          background_work: 0
         }
       ],
       [
@@ -127,7 +154,8 @@ describe('final-message capture on turn end', () => {
           text: '',
           completion: 'unknown',
           api_error: null,
-          hook_event: 'Stop'
+          hook_event: 'Stop',
+          background_work: null
         }
       ]
     ])
@@ -239,7 +267,8 @@ describe('final-message capture on turn end', () => {
           text: '',
           completion: null,
           api_error: null,
-          hook_event: 'Interrupt'
+          hook_event: 'Interrupt',
+          background_work: null
         }
       ]
     ])

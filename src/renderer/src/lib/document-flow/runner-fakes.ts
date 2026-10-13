@@ -162,6 +162,8 @@ export function makeItem(overrides: Partial<DocumentRunItem> = {}): DocumentRunI
     last_prompt_at: null,
     last_checked_at: null,
     retry_at: null,
+    wait_until: null,
+    wait_timeouts: 0,
     created_at: TEST_NOW,
     updated_at: TEST_NOW,
     started_at: null,
@@ -573,6 +575,10 @@ export function createWorld(options: WorldOptions = {}) {
       }
     ),
     topSortOrder: () => -1,
+    holdTicketForWork: vi.fn(async (_projectId: string, ticketId: string) => {
+      const ticket = tickets.get(ticketId)
+      if (ticket) tickets.set(ticketId, { ...ticket, column: 'in_progress' })
+    }),
     buildTicketPrompt: (ticket: RunnerTicket) =>
       `<ticket title="${ticket.title}">${ticket.description ?? ''}</ticket>`,
     getWorktree: (worktreeId: string) => worktrees.get(worktreeId) ?? null,

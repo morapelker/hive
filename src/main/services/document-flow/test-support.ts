@@ -176,6 +176,8 @@ export function createFakeDocumentFlowDb(): FakeDocumentFlowDb {
           last_prompt_at: null,
           last_checked_at: null,
           retry_at: null,
+          wait_until: null,
+          wait_timeouts: 0,
           created_at: now,
           updated_at: now,
           started_at: null,
@@ -253,6 +255,7 @@ export function createFakeDocumentFlowDb(): FakeDocumentFlowDb {
         api_error: data.api_error ?? null,
         hook_event: data.hook_event,
         detail: data.detail ?? null,
+        background_work: data.background_work ?? null,
         updated_at: nowIso()
       })
     },

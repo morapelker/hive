@@ -58,6 +58,7 @@ const recordedTurn: SessionFinalMessage = {
   api_error: null,
   hook_event: 'SdkBusy',
   detail: null,
+  background_work: null,
   updated_at: NOW
 }
 

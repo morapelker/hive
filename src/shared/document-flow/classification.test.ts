@@ -10,6 +10,7 @@ import {
   closingQuestion,
   verdictForUnjudgedMessage,
   verdictFromStatusFooter,
+  waitsForOwnWork,
   type ClassificationInput,
   type UnjudgedMessageInput
 } from './classification'
@@ -34,7 +35,9 @@ describe('classification prompt', () => {
       '"blocked"',
       '"failed"',
       '"partial"',
-      'STATUS: DONE | NEEDS_INPUT | BLOCKED',
+      '"waiting"',
+      'STATUS: DONE | WAITING | NEEDS_INPUT | BLOCKED',
+      'is "waiting", not "partial"',
       'the agent was not asked for any format',
       'A message that reports the ticket as implemented and asks nothing is "done"',
       'some agents still end with a question in the text: that is "needs_input"',
@@ -49,7 +52,7 @@ describe('classification prompt', () => {
       expect(CLASSIFICATION_SYSTEM_PROMPT).toContain(phrase)
     }
     // The follow-up prompts ask for the same footer, minus the ways to end on a question.
-    expect(STATUS_FOOTER_INSTRUCTIONS).toContain('STATUS: DONE | BLOCKED')
+    expect(STATUS_FOOTER_INSTRUCTIONS).toContain('STATUS: DONE | WAITING | BLOCKED')
   })
 
   it('tells the classifier the rules the agent works under', () => {
@@ -82,7 +85,8 @@ describe('classification prompt', () => {
       'needs_input',
       'blocked',
       'failed',
-      'partial'
+      'partial',
+      'waiting'
     ])
     expect(schema.properties.question.type).toEqual(['string', 'null'])
     expect(schema.properties.confidence.enum).toEqual(['low', 'medium', 'high'])
@@ -636,5 +640,113 @@ describe('verdictForUnjudgedMessage', () => {
     )
     expect(verdict).toMatchObject({ status: 'blocked', source: 'fallback' })
     expect(verdict.reason).toContain('the branch carries no work')
+  })
+})
+
+describe('waiting for background work', () => {
+  /** The final messages of the session that was wrongly flagged as needing the user. */
+  const ARMED =
+    "I'll wait for the typecheck, unit tests, and lint to all finish before proceeding with the merge commit.\n\nThe wait is armed; the merge commit is the only step left and it depends on those results. Nothing else is independent to request now."
+  const FOUR_CHECKS =
+    'All four checks are still running in the background (prettier, typecheck, unit tests, lint). You will be notified when each completes; I will make the merge commit once they report.'
+
+  const unjudged = (
+    finalMessage: string,
+    commitsAhead: number | null = 2
+  ): UnjudgedMessageInput => ({
+    finalMessage,
+    commitsAhead,
+    hasUncommittedChanges: false,
+    failure: 'codex timed out after 90000ms'
+  })
+
+  it('states the background work the session still has, when it is known', () => {
+    expect(buildClassificationPrompt(input({ runningBackgroundWork: 4 }))).toContain(
+      'Background work: 4 background shell(s), monitor(s) or subagent(s) the agent started are still running.'
+    )
+    expect(buildClassificationPrompt(input({ runningBackgroundWork: 0 }))).toContain(
+      'Background work: 0 background shell(s)'
+    )
+    expect(buildClassificationPrompt(input({ runningBackgroundWork: null }))).not.toContain(
+      'Background work:'
+    )
+    expect(buildClassificationPrompt(input())).not.toContain('Background work:')
+  })
+
+  it('reads a WAITING footer', () => {
+    const verdict = verdictFromStatusFooter(
+      'Waiting for the checks.\n\nSTATUS: WAITING\nSUMMARY: typecheck, tests and lint are running\nMIGRATIONS: none',
+      NOW
+    )
+    expect(verdict).toMatchObject({
+      status: 'waiting',
+      question: null,
+      summary: 'typecheck, tests and lint are running',
+      migrations: [],
+      source: 'footer',
+      confidence: 'low'
+    })
+  })
+
+  it('reads a waiting verdict, which carries no question', () => {
+    const verdict = parseClassificationResponse(
+      JSON.stringify({
+        status: 'waiting',
+        reason: 'It waits for the typecheck, the tests and the lint it started.',
+        question: 'Should it wait?',
+        summary: null,
+        migrations: [],
+        manualSteps: [],
+        confidence: 'high'
+      }),
+      NOW
+    )
+    expect(verdict).toMatchObject({ status: 'waiting', question: null, source: 'model' })
+  })
+
+  it.each([
+    ['the wait is armed', ARMED],
+    ['the checks are still running', FOUR_CHECKS]
+  ])(
+    'takes a message that waits for its own checks as waiting, whatever the branch holds (%s)',
+    (_name, finalMessage) => {
+      expect(waitsForOwnWork(finalMessage)).toBe(true)
+      for (const commitsAhead of [0, 2, null]) {
+        const verdict = verdictForUnjudgedMessage(unjudged(finalMessage, commitsAhead), NOW)
+        expect(verdict).toMatchObject({
+          status: 'waiting',
+          question: null,
+          confidence: 'low',
+          source: 'fallback'
+        })
+        expect(verdict.reason).toContain('waiting for background work it started')
+      }
+    }
+  )
+
+  it.each([
+    [
+      'a question for the user',
+      'The tests are still running. Should I wait for them, or commit now?',
+      'needs_input'
+    ],
+    [
+      'a wait on the user',
+      "I'm waiting for your answer on the currency before I continue.",
+      'blocked'
+    ],
+    [
+      'a wait on something outside the session',
+      "I'm waiting for the staging credentials.",
+      'blocked'
+    ],
+    [
+      'a dev server left running',
+      'Implemented and committed. The dev server is still running in the background in case you want to check the page.',
+      'done'
+    ]
+  ])('does not take %s as waiting', (_name, finalMessage, status) => {
+    expect(waitsForOwnWork(finalMessage)).toBe(false)
+    expect(verdictForUnjudgedMessage(unjudged(finalMessage), NOW).status).toBe(status)
   })
 })

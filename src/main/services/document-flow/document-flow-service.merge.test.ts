@@ -129,6 +129,73 @@ const eventTypes = (): string[] =>
   harness.db.listDocumentRunEvents(runId).map((event) => event.type)
 
 describe('classify', () => {
+  const WAITING_MESSAGE =
+    'The wait is armed; the merge commit is the only step left and it depends on those results.'
+  const waitingVerdict = (): string =>
+    modelVerdict({
+      status: 'waiting',
+      reason: 'It waits for the typecheck, the tests and the lint.'
+    })
+  const recordTurn = (background_work: number | null): void => {
+    harness.db.upsertSessionFinalMessage({
+      session_id: 'session-A2',
+      text: WAITING_MESSAGE,
+      completion: 'completed',
+      api_error: null,
+      hook_event: 'Stop',
+      background_work
+    })
+  }
+
+  it('keeps a wait for background work while the session reports some running', async () => {
+    launchTicket('A2')
+    recordTurn(4)
+    harness.replies.push(waitingVerdict())
+
+    const verdict = await harness.service.classify({
+      runId,
+      itemId: itemByKey('A2').id,
+      finalMessage: WAITING_MESSAGE
+    })
+
+    expect(verdict).toMatchObject({ status: 'waiting', question: null, source: 'model' })
+    expect(harness.generateCalls[0].prompt).toContain('Background work: 4 background shell(s)')
+    expect(itemByKey('A2').verdict?.status).toBe('waiting')
+  })
+
+  it('reads a wait as partial when nothing runs in the session that could wake it', async () => {
+    launchTicket('A2')
+    recordTurn(0)
+    harness.replies.push(waitingVerdict())
+
+    const verdict = await harness.service.classify({
+      runId,
+      itemId: itemByKey('A2').id,
+      finalMessage: WAITING_MESSAGE
+    })
+
+    expect(verdict).toMatchObject({ status: 'partial', source: 'model' })
+    expect(verdict.reason).toBe(
+      'It waits for the typecheck, the tests and the lint, but no background work of its session is running, so nothing will wake it.'
+    )
+    expect(harness.generateCalls[0].prompt).toContain('Background work: 0 background shell(s)')
+  })
+
+  it('takes the wait at its word when the session cannot report its background work', async () => {
+    launchTicket('A2')
+    recordTurn(null)
+    harness.replies.push(waitingVerdict())
+
+    const verdict = await harness.service.classify({
+      runId,
+      itemId: itemByKey('A2').id,
+      finalMessage: WAITING_MESSAGE
+    })
+
+    expect(verdict.status).toBe('waiting')
+    expect(harness.generateCalls[0].prompt).not.toContain('Background work:')
+  })
+
   it('judges the given final message with the generation model and stores the verdict', async () => {
     const path = launchTicket('A2')
     repo.commit(path, 'rule', { 'src/rule.ts': 'export const rule = 1\n' })
