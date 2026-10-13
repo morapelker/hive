@@ -231,6 +231,28 @@ export function needsUserMessage(item: DocumentRunItem): string {
 const holdsIntegrationWorktree = (item: DocumentRunItem): boolean =>
   DOCUMENT_RUN_ITEM_MERGE_STATUSES.includes(item.status)
 
+/**
+ * Whether a run item's session was sent a conflict prompt and is resolving it: found by the
+ * ticket the item was launched as, or by its session. The ticket's card and the session's view
+ * wear the conflict colour meanwhile, whatever run the item belongs to.
+ */
+export function isResolvingRunConflicts(
+  runsById: Record<string, DocumentRunDetail>,
+  ref: { ticketId?: string | null; sessionId?: string | null }
+): boolean {
+  if (!ref.ticketId && !ref.sessionId) return false
+  return Object.values(runsById).some((detail) =>
+    detail.items.some(
+      (item) =>
+        item.status === 'resolving_conflicts' &&
+        ((ref.ticketId !== null && ref.ticketId !== undefined && item.ticket_id === ref.ticketId) ||
+          (ref.sessionId !== null &&
+            ref.sessionId !== undefined &&
+            item.session_id === ref.sessionId))
+    )
+  )
+}
+
 /** Retry / "mark done" apply to items that are waiting on the user and are not mid-merge. */
 export function isRequeueableItem(item: DocumentRunItem): boolean {
   return needsUser(item) && !holdsIntegrationWorktree(item)

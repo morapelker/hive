@@ -83,6 +83,8 @@ import {
   extractModelUsage
 } from '@/lib/token-utils'
 import { useSettingsStore, resolveModelForSdk } from '@/stores/useSettingsStore'
+import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
+import { isResolvingRunConflicts } from '@/components/document-flow/document-flow-ui'
 import type { SelectedModel } from '@/stores/useSettingsStore'
 import { useQuestionStore } from '@/stores/useQuestionStore'
 import { usePermissionStore } from '@/stores/usePermissionStore'
@@ -834,6 +836,10 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
 
   // Active question prompt from AI
   const activeQuestion = useQuestionStore((s) => s.getActiveQuestion(sessionId))
+  // A document run's ticket session that was told to resolve merge conflicts: its bar is red.
+  const isResolvingConflicts = useDocumentFlowStore((s) =>
+    isResolvingRunConflicts(s.runsById, { sessionId })
+  )
   const activePermission = usePermissionStore((s) => s.getActivePermission(sessionId))
   const activeCommandApproval = useCommandApprovalStore((s) => s.getActiveApproval(sessionId))
 
@@ -6598,6 +6604,7 @@ function LegacySessionView({ sessionId }: SessionViewProps): React.JSX.Element {
                     mode={mode}
                     isAsking={!!activeQuestion}
                     isCompacting={isCompacting}
+                    isFixingConflicts={isResolvingConflicts && !activeQuestion}
                   />
                 )}
                 {/* isStopping keeps the button in place while the abort runs: stopping

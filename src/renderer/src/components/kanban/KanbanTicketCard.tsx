@@ -139,6 +139,7 @@ import {
 } from '@/components/document-flow/useDocumentRunTicket'
 import { isActiveRunStatus } from '@/components/document-flow/document-flow-ui'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
+import { isResolvingRunConflicts } from '@/components/document-flow/document-flow-ui'
 import { projectApi } from '@/api/project-api'
 import { terminalApi } from '@/api/terminal-api'
 import {
@@ -693,6 +694,14 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     )
   )
   const isAsking = isAskingFromQuestionStore || isAskingFromStatus
+  // A document run's ticket whose session was told to resolve merge conflicts: its progress
+  // bar wears the conflict red while it does, as a manual conflict fix does.
+  const isResolvingConflicts = useDocumentFlowStore((s) =>
+    isResolvingRunConflicts(s.runsById, {
+      ticketId: ticket.id,
+      sessionId: ticket.current_session_id
+    })
+  )
 
   // The Claude CLI session stopped without a completion message (background
   // work or a scheduled wake-up still pending): the ticket stays in progress
@@ -2067,14 +2076,21 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                               'text-[10px] tabular-nums font-normal',
                               isAsking
                                 ? 'text-orange-500'
-                                : ticket.mode === 'build'
-                                  ? 'text-blue-500'
-                                  : 'text-violet-500'
+                                : isResolvingConflicts
+                                  ? 'text-red-500'
+                                  : ticket.mode === 'build'
+                                    ? 'text-blue-500'
+                                    : 'text-violet-500'
                             )}>
                               {timerText}
                             </span>
                           )}
-                          <IndeterminateProgressBar mode={ticket.mode!} isAsking={isAsking} className="w-20" />
+                          <IndeterminateProgressBar
+                            mode={ticket.mode!}
+                            isAsking={isAsking}
+                            isFixingConflicts={isResolvingConflicts && !isAsking}
+                            className="w-20"
+                          />
                           {isAsking && (
                             <span className="inline-flex items-center gap-1 text-[11px] font-medium text-orange-500">
                               <MessageCircleQuestion className="h-3 w-3" />

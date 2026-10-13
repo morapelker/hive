@@ -36,6 +36,7 @@ import {
   formatRunProgress,
   isLaunchedRunStatus,
   isRequeueableItem,
+  isResolvingRunConflicts,
   isRunDeletable,
   isRunMigrating,
   isSkippableItem,
@@ -331,6 +332,32 @@ describe('needs-you rules', () => {
         makeItem({ status: 'running', session_id: 's-ticket', connection_id: 'conn-ticket' })
       )
     ).toEqual({ sessionId: 's-ticket', worktreeId: null, connectionId: 'conn-ticket' })
+  })
+})
+
+describe('isResolvingRunConflicts', () => {
+  const runs = {
+    'run-1': makeDetail({ id: 'run-1' }, [
+      { key: 'A1', status: 'resolving_conflicts', ticket_id: 'ticket-a1', session_id: 's-a1' },
+      { key: 'A2', status: 'running', ticket_id: 'ticket-a2', session_id: 's-a2' }
+    ]),
+    'run-2': makeDetail({ id: 'run-2' }, [
+      { key: 'B1', status: 'resolving_conflicts', ticket_id: 'ticket-b1', session_id: 's-b1' }
+    ])
+  }
+
+  it('finds the item resolving conflicts by its ticket or its session, in any run', () => {
+    expect(isResolvingRunConflicts(runs, { ticketId: 'ticket-a1' })).toBe(true)
+    expect(isResolvingRunConflicts(runs, { sessionId: 's-a1' })).toBe(true)
+    expect(isResolvingRunConflicts(runs, { ticketId: 'ticket-b1', sessionId: null })).toBe(true)
+    expect(isResolvingRunConflicts(runs, { ticketId: 'ticket-x', sessionId: 's-b1' })).toBe(true)
+  })
+
+  it('is false for an item at work on its task, an unknown ticket, or no reference', () => {
+    expect(isResolvingRunConflicts(runs, { ticketId: 'ticket-a2', sessionId: 's-a2' })).toBe(false)
+    expect(isResolvingRunConflicts(runs, { ticketId: 'ticket-x' })).toBe(false)
+    expect(isResolvingRunConflicts(runs, { ticketId: null, sessionId: null })).toBe(false)
+    expect(isResolvingRunConflicts({}, { ticketId: 'ticket-a1' })).toBe(false)
   })
 })
 

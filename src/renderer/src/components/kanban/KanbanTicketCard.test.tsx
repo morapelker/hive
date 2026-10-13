@@ -12,6 +12,8 @@ vi.mock('@/lib/session-followup', () => ({
 import { KanbanTicketCard } from './KanbanTicketCard'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
+import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
+import { makeDetail } from '@/components/document-flow/test-fixtures'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import type { KanbanTicket } from '../../../../main/db/types'
 
@@ -214,6 +216,56 @@ describe('KanbanTicketCard unread indicator', () => {
 
     expect(screen.queryByTestId('ticket-awaiting-completion')).toBeNull()
     expect(screen.getByTestId('ticket-unread-dot')).toBeInTheDocument()
+  })
+})
+
+describe('KanbanTicketCard progress bar of a document run ticket', () => {
+  afterEach(() => {
+    cleanup()
+    useWorktreeStatusStore.setState({ sessionStatuses: {} })
+    useDocumentFlowStore.setState({ runsById: {} })
+  })
+
+  const workingTicket: KanbanTicket = {
+    ...baseTicket,
+    column: 'in_progress',
+    mode: 'build',
+    current_session_id: 'session-1'
+  }
+
+  const seedItem = (status: 'running' | 'resolving_conflicts'): void => {
+    useDocumentFlowStore.setState({
+      runsById: {
+        'run-1': makeDetail({ id: 'run-1' }, [
+          { key: 'A1', status, ticket_id: baseTicket.id, session_id: 'session-1' }
+        ])
+      }
+    })
+    useWorktreeStatusStore.setState({
+      sessionStatuses: { 'session-1': { status: 'working', timestamp: 0 } }
+    })
+  }
+
+  it('wears the conflict red while the run told its session to resolve merge conflicts', () => {
+    seedItem('resolving_conflicts')
+
+    render(<KanbanTicketCard ticket={workingTicket} />)
+
+    const slot = screen.getByTestId('kanban-ticket-progress')
+    expect(slot.querySelector('[aria-label="Fixing merge conflicts"]')).not.toBeNull()
+    expect(slot.querySelector('.bg-red-500')).not.toBeNull()
+    expect(slot.querySelector('.bg-blue-500')).toBeNull()
+  })
+
+  it('keeps the build blue while the session works on its task', () => {
+    seedItem('running')
+
+    render(<KanbanTicketCard ticket={workingTicket} />)
+
+    const slot = screen.getByTestId('kanban-ticket-progress')
+    expect(slot.querySelector('[aria-label="Agent is working"]')).not.toBeNull()
+    expect(slot.querySelector('.bg-blue-500')).not.toBeNull()
+    expect(slot.querySelector('.bg-red-500')).toBeNull()
   })
 })
 
