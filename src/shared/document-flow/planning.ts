@@ -8,8 +8,8 @@ import {
 } from '../types/document-flow'
 
 // Pure scheduling rules of a document run: which items may launch (dependency waves), which
-// item merges next (one at a time), and when the run is over. No I/O — the renderer's
-// orchestrator and the server's `start` / `finalize` both read these.
+// items may merge next (one at a time, and in what order), and when the run is over. No I/O —
+// the renderer's orchestrator and the server's `start` / `finalize` both read these.
 
 type DependencyNode = Pick<DocumentRunItem, 'key' | 'depends_on' | 'selected' | 'status'>
 
@@ -71,22 +71,40 @@ export function isMergeInFlight(items: readonly DocumentRunItem[]): boolean {
 }
 
 /**
- * The next `ready` item to merge, or null while another merge is in flight. An item that just
- * resolved its conflicts goes first: every merge that lands ahead of it can make it conflict
- * again. Then items that add migrations go after those that do not (their numbering is
- * regenerated against a later tip), otherwise document order.
+ * The item that holds the merge lane while it resolves conflicts: from the conflict prompt until
+ * its branch is merged, it is flagged, or it leaves the run. The lane is held through every
+ * status the resolution passes (resolving, judged, waiting on the user, ready again): a merge
+ * landing meanwhile would make the branch conflict anew, and its resolution would be redone.
+ * Nothing else merges until then. A flagged item releases the lane: the queue goes on, and a
+ * retry resolves against whatever landed meanwhile.
  */
-export function nextMergeCandidate<T extends DocumentRunItem>(items: readonly T[]): T | null {
-  if (isMergeInFlight(items)) return null
-  const ready = items
+export function mergeLaneOwner<T extends DocumentRunItem>(items: readonly T[]): T | null {
+  return (
+    items.find(
+      (item) =>
+        item.selected &&
+        item.conflict_attempts > 0 &&
+        item.status !== 'needs_attention' &&
+        !isTerminalItemStatus(item.status)
+    ) ?? null
+  )
+}
+
+/**
+ * The `ready` items that may merge now, best first, or none while a merge is in flight or the
+ * lane is held by an item resolving its conflicts (it is the only candidate once it is ready
+ * again). The orchestrator dry-runs them in this order and takes the first that merges clean;
+ * only when every one conflicts is the first sent to resolve. Items that add migrations go
+ * after those that do not (their numbering is regenerated against a later tip), otherwise
+ * document order.
+ */
+export function mergeCandidates<T extends DocumentRunItem>(items: readonly T[]): T[] {
+  if (isMergeInFlight(items)) return []
+  const owner = mergeLaneOwner(items)
+  if (owner) return owner.status === 'ready' ? [owner] : []
+  return items
     .filter((item) => item.selected && item.status === 'ready')
-    .sort(
-      (a, b) =>
-        Number(b.conflict_attempts > 0) - Number(a.conflict_attempts > 0) ||
-        Number(a.has_migration) - Number(b.has_migration) ||
-        a.position - b.position
-    )
-  return ready[0] ?? null
+    .sort((a, b) => Number(a.has_migration) - Number(b.has_migration) || a.position - b.position)
 }
 
 /** Every selected item reached a terminal status: the run can be finalized. */
@@ -130,8 +148,9 @@ export function countRunningAgents(items: readonly DocumentRunItem[]): number {
 
 /**
  * The run cannot advance without the user: nothing is launching, working or merging, and
- * whatever is left is waiting on them — directly, behind an item that is, or (given the
- * slot count) because every slot is held by an item waiting on them.
+ * whatever is left is waiting on them — directly, behind an item that is (a dependency, or
+ * the one holding the merge lane), or (given the slot count) because every slot is held by an
+ * item waiting on them.
  */
 export function isRunWaitingOnUser(
   items: readonly DocumentRunItem[],
@@ -145,8 +164,11 @@ export function isRunWaitingOnUser(
     open
       .filter((item) => DOCUMENT_RUN_ITEM_ACTIVE_STATUSES.includes(item.status))
       .every(isItemWaitingOnUser)
+  const laneOwner = mergeLaneOwner(items)
+  const laneBlocked = laneOwner !== null && isItemWaitingOnUser(laneOwner)
   return open.every((item) => {
     if (isItemWaitingOnUser(item)) return true
+    if (item.status === 'ready') return laneBlocked
     if (item.status !== 'pending') return false
     return slotsBlocked || unmetDependencies(item, items).length > 0
   })

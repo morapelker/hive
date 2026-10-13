@@ -1,11 +1,13 @@
 import {
   USER_INTERRUPT_DETAIL,
   WAITING_PREFIX,
+  isItemWaitingOnUser,
   isRunSettled,
   isRunWaitingOnUser,
   isTerminalItemStatus,
   launchableItems,
-  nextMergeCandidate,
+  mergeCandidates,
+  mergeLaneOwner,
   ticketBranchHint
 } from '@shared/document-flow/planning'
 import {
@@ -25,6 +27,7 @@ import {
   isConnectionRun,
   runVerifyCommands,
   type DocumentMergeCheckMember,
+  type DocumentMergeCheckResult,
   type DocumentRun,
   type DocumentRunDetail,
   type DocumentRunItem,
@@ -76,6 +79,8 @@ const UNCHANGED_DETAIL =
   'Nothing to merge: the agent reported the task done without changing anything.'
 /** `status_detail` prefix of a ticket merged although its agent's last message was not `done`. */
 const MERGED_AS_IS_PREFIX = 'Merged as it stood. The agent ended on: '
+/** `status_detail` prefix of a ready ticket whose merge waits for the one in the lane. */
+export const WAITING_TO_MERGE_PREFIX = 'Waiting to merge: '
 
 const BLOCK_LABELS: Record<SessionBlockReason, string> = {
   question: 'a question',
@@ -212,6 +217,33 @@ const isTransientDetail = (detail: string | null): boolean =>
   (detail.startsWith(WAITING_PREFIX) ||
     detail.startsWith(API_ERROR_PREFIX) ||
     detail === USER_INTERRUPT_DETAIL)
+
+/**
+ * The item the other ready ones wait behind: the one in the integration worktree, else the one
+ * holding the lane while it resolves conflicts (in whatever status the resolution has it).
+ */
+function mergeBlocker(items: readonly DocumentRunItem[]): { key: string; doing: string } | null {
+  const landing = items.find(
+    (item) => item.selected && DOCUMENT_RUN_ITEM_MERGE_STATUSES.includes(item.status)
+  )
+  if (landing) {
+    const doing =
+      landing.status === 'merging'
+        ? 'merging'
+        : landing.status === 'verifying'
+          ? 'being verified'
+          : 'having its checks fixed'
+    return { key: landing.key, doing }
+  }
+  const owner = mergeLaneOwner(items)
+  if (!owner) return null
+  return {
+    key: owner.key,
+    doing: isItemWaitingOnUser(owner)
+      ? 'resolving conflicts and waiting for you'
+      : 'resolving conflicts'
+  }
+}
 
 const ticketRef = (item: DocumentRunItem): { key: string; title: string } => ({
   key: item.key,
@@ -438,7 +470,7 @@ export class DocumentFlowRunner {
           break
         case 'merging':
         case 'verifying':
-          this.spawnMerge(state, runId, item)
+          this.spawnMerge(state, runId, [item])
           break
         default:
           break
@@ -449,8 +481,14 @@ export class DocumentFlowRunner {
       if (this.canStep(item, now)) this.enqueueLaunch(runId, item)
     }
 
-    const candidate = state.merging ? null : nextMergeCandidate(items)
-    if (candidate && this.canStep(candidate, now)) this.spawnMerge(state, runId, candidate)
+    // The merge lane: one item at a time, from the dry run to the verified merge, including
+    // the resolution of its conflicts by its session. Of the ready items, the first that merges
+    // clean goes; the rest wait, and say what for.
+    const candidates = state.merging
+      ? []
+      : mergeCandidates(items).filter((item) => this.canStep(item, now))
+    if (candidates.length > 0) this.spawnMerge(state, runId, candidates)
+    this.describeWaiting(state, runId, items, candidates, now)
 
     if (isRunSettled(items) && !this.hasStepInFlight(runId)) this.finalize(state, runId)
   }
@@ -547,19 +585,61 @@ export class DocumentFlowRunner {
     })
   }
 
-  private spawnMerge(state: RunState, runId: string, item: DocumentRunItem): void {
+  /**
+   * Take the merge lane for one turn over the candidates (see `mergeNext`). All of them are
+   * held in flight while the turn picks among them, so no other step touches them meanwhile;
+   * the ones not taken are let go as soon as the pick is made.
+   */
+  private spawnMerge(state: RunState, runId: string, candidates: readonly DocumentRunItem[]): void {
     // A launch under way cuts its branch from the integration tip, which must not move under
     // it; the merge waits for the launch, as a launch waits for a merge (see `launchBase`).
-    if (state.merging || state.launching > 0) return
+    if (state.merging || state.launching > 0 || candidates.length === 0) return
     state.merging = true
-    this.spawn(
-      runId,
-      item,
-      (op) => this.merge(op),
-      () => {
-        state.merging = false
+    const op: ItemOp = { runId, item: candidates[0], changed: false }
+    const held = new Set(candidates.map((item) => item.id))
+    for (const id of held) this.inFlight.set(id, runId)
+    const take = (taken: DocumentRunItem): void => {
+      for (const id of held) {
+        if (id === taken.id) continue
+        this.inFlight.delete(id)
+        held.delete(id)
       }
-    )
+    }
+    void this.runStep(op, (step) => this.mergeNext(step, candidates, take)).finally(() => {
+      for (const id of held) this.inFlight.delete(id)
+      state.merging = false
+      if (op.changed) this.requestTick()
+    })
+  }
+
+  /**
+   * Tell the ready items that are not merging what they wait for, so the dashboard shows it.
+   * Only a null or an earlier waiting detail is replaced: what a merge or a flag writes
+   * stands.
+   */
+  private describeWaiting(
+    state: RunState,
+    runId: string,
+    items: readonly DocumentRunItem[],
+    candidates: readonly DocumentRunItem[],
+    now: number
+  ): void {
+    const blocker = mergeBlocker(items)
+    // No item holds the lane, but a merge turn is under way in memory: it ends in a moment.
+    if (!blocker && state.merging) return
+    for (const item of items) {
+      if (!item.selected || item.status !== 'ready' || candidates.includes(item)) continue
+      const detail = item.status_detail
+      if (detail !== null && !detail.startsWith(WAITING_TO_MERGE_PREFIX)) continue
+      const wanted =
+        blocker && blocker.key !== item.key
+          ? `${WAITING_TO_MERGE_PREFIX}${blocker.key} is ${blocker.doing}`
+          : null
+      if (wanted === detail || !this.canStep(item, now)) continue
+      this.spawn(runId, item, async (op) => {
+        await this.patch(op, { status_detail: wanted })
+      })
+    }
   }
 
   /** Never rejects: a failing step flags its own item and nothing else. */
@@ -1500,24 +1580,72 @@ export class DocumentFlowRunner {
 
   // ── Merging ──────────────────────────────────────────────────────────────
 
-  private async merge(op: ItemOp): Promise<void> {
-    const run = this.requireActive(op)
-    // Picked up in the middle (a reload, a crash): a recorded merge commit means the merge
-    // itself is behind us. A ticket coming from `ready` always goes through the dry run.
-    const resumed = op.item.status !== 'ready'
-    if (!resumed) {
+  /**
+   * One turn of the merge lane. The candidates are dry-run in order, and the first whose
+   * branch does not conflict is taken: merged, or dealt with for what the dry run found. Only
+   * when every one conflicts is the first sent to resolve its conflicts; it then holds the
+   * lane (`mergeLaneOwner`) until it is merged or flagged, so what it resolves against is
+   * what it lands on. A conflicting branch is never resolved while a clean one could land.
+   */
+  private async mergeNext(
+    op: ItemOp,
+    candidates: readonly DocumentRunItem[],
+    take: (item: DocumentRunItem) => void
+  ): Promise<void> {
+    let conflicted: { item: DocumentRunItem; check: DocumentMergeCheckResult } | null = null
+    const passedOver: string[] = []
+    for (const item of candidates) {
+      op.item = item
+      const run = this.requireActive(op)
+      // Picked up in the middle (a reload, a crash): a recorded merge commit means the merge
+      // itself is behind us; otherwise the dry run is made again. Such an item comes alone.
+      if (item.status !== 'ready') {
+        take(item)
+        if (item.status === 'verifying' || item.merge_sha) return this.verify(op)
+        const check = await this.ports.api.prepareMerge(op.runId, item.id)
+        return this.mergeChecked(op, run, check)
+      }
       // Judged done, but busy again since (told to go on by the user, or marked done by hand
       // while its agent still works): what is on the branch now is not the end of its work.
-      if (op.item.session_id) {
-        const signal = this.ports.getSessionSignal(op.item.session_id)
-        const current = await this.reconcile(op, op.item.session_id, signal)
-        if (await this.followMovingSession(op, current)) return
+      if (item.session_id) {
+        const signal = this.ports.getSessionSignal(item.session_id)
+        const current = await this.reconcile(op, item.session_id, signal)
+        if (await this.followMovingSession(op, current)) continue
       }
+      const check = await this.ports.api.prepareMerge(op.runId, item.id)
+      if (check.state === 'conflict') {
+        if (conflicted) passedOver.push(item.key)
+        else conflicted = { item: op.item, check }
+        continue
+      }
+      if (conflicted) {
+        const waiting = [conflicted.item.key, ...passedOver]
+        this.event(
+          op,
+          'merged_first',
+          `Merging ${item.key} before ${waiting.join(', ')}, which conflict${waiting.length === 1 ? 's' : ''} with ${run.integration_branch ?? 'the integration branch'}`
+        )
+      }
+      take(item)
+      return this.mergeChecked(op, run, check)
+    }
+    if (!conflicted) return
+    op.item = conflicted.item
+    take(op.item)
+    return this.mergeChecked(op, this.requireActive(op), conflicted.check)
+  }
+
+  /** Act on the dry run of the item that holds the lane: merge, resolve, or flag. */
+  private async mergeChecked(
+    op: ItemOp,
+    run: DocumentRun,
+    check: DocumentMergeCheckResult
+  ): Promise<void> {
+    if (op.item.status !== 'merging') {
+      // A run paused under the dry run leaves the item ready: the dry run is made again later.
+      this.requireActive(op)
       await this.patch(op, { status: 'merging', status_detail: null })
     }
-    if (op.item.status === 'verifying' || (resumed && op.item.merge_sha)) return this.verify(op)
-
-    const check = await this.ports.api.prepareMerge(op.runId, op.item.id)
     if (check.state === 'error') {
       return this.flag(op, check.error ?? 'The merge could not be prepared.')
     }
@@ -1601,7 +1729,8 @@ export class DocumentFlowRunner {
     )
     // A session that resolved against one tip and was overtaken by another ticket's merge has
     // not failed: only attempts against the same integration commit count towards the limit.
-    // Each such lap needs another merge to land, so the tickets of the run bound them.
+    // The lane it holds while resolving keeps that from happening within a run; a row written
+    // before the lane existed, or a tip moved by hand, can still get there.
     const overtaken =
       integrationCommit !== null &&
       item.conflict_head !== null &&

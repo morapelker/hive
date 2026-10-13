@@ -43,6 +43,13 @@ const conflict = (...files: string[]): DocumentMergeCheckResult => ({
   commitsAhead: 2
 })
 
+const cleanCheck: DocumentMergeCheckResult = {
+  state: 'clean',
+  conflictedFiles: [],
+  committed: false,
+  commitsAhead: 1
+}
+
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolve!: (value: T) => void
   const promise = new Promise<T>((done) => {
@@ -515,14 +522,178 @@ describe('DocumentFlowRunner: merging', () => {
       expect(world.api.merge.mock.calls.map(([, itemId]) => itemId)).toEqual(['item-B', 'item-A'])
     })
 
-    it('merges another ticket while one is resolving its conflicts', async () => {
+    it('merges the tickets that merge clean before resolving one that conflicts', async () => {
+      const world = createWorld({ items: [readyItem('A'), readyItem('B'), readyItem('C')] })
+      // A conflicts until the others have landed; B and C merge clean.
+      let landed = 0
+      world.api.prepareMerge.mockImplementation(async (_runId, itemId) =>
+        itemId === 'item-A' && landed < 2
+          ? { ...conflict('src/cart.ts'), integrationHead: `tip-${landed}` }
+          : cleanCheck
+      )
+      world.api.merge.mockImplementation(async (_runId, itemId) => {
+        landed += 1
+        return { success: true, mergeSha: `merge-${itemId}` }
+      })
+      start(world)
+
+      await advance(5000)
+
+      // No resolution was asked for while a clean branch could land: A's session was prompted
+      // once, against the tip both merges left, and merges clean on its own after that.
+      expect(world.api.merge.mock.calls.map(([, itemId]) => itemId)).toEqual([
+        'item-B',
+        'item-C',
+        'item-A'
+      ])
+      expect(world.followups).toHaveLength(0)
+      expect(world.statuses()).toEqual({ A: 'merged', B: 'merged', C: 'merged' })
+      expect(world.events.filter((event) => event.type === 'merged_first')).toEqual([
+        {
+          itemId: 'item-B',
+          type: 'merged_first',
+          message: `Merging B before A, which conflicts with ${INTEGRATION_BRANCH}`
+        },
+        {
+          itemId: 'item-C',
+          type: 'merged_first',
+          message: `Merging C before A, which conflicts with ${INTEGRATION_BRANCH}`
+        }
+      ])
+    })
+
+    it('asks for a resolution only once every ready ticket conflicts, against the final tip', async () => {
       const world = createWorld({ items: [readyItem('A'), readyItem('B')] })
-      world.api.prepareMerge.mockResolvedValueOnce(conflict('src/cart.ts'))
+      world.api.prepareMerge.mockImplementation(async (_runId, itemId) =>
+        itemId === 'item-A'
+          ? { ...conflict('src/cart.ts'), integrationHead: world.item('B').merge_sha ?? 'tip-0' }
+          : cleanCheck
+      )
+      start(world)
+
+      await advance(2000)
+
+      expect(world.statuses()).toEqual({ A: 'resolving_conflicts', B: 'merged' })
+      expect(world.followups).toHaveLength(1)
+      expect(world.followups[0].prompt).toContain('git merge merge-B')
+      expect(world.followups[0].prompt).toContain('Merged into it so far: B (Task B)')
+    })
+
+    it('holds the lane while a ticket resolves its conflicts, until it is merged', async () => {
+      const world = createWorld({ items: [readyItem('A'), readyItem('B')] })
+      // Both conflict at first; a resolved branch merges clean.
+      const resolved = new Set<string>()
+      world.api.prepareMerge.mockImplementation(async (_runId, itemId) =>
+        resolved.has(itemId) ? cleanCheck : conflict('src/cart.ts')
+      )
+      const judged = deferred<ReturnType<typeof makeVerdict>>()
+      world.api.classify.mockReturnValueOnce(judged.promise)
       start(world)
 
       await advance(1000)
 
-      expect(world.statuses()).toEqual({ A: 'resolving_conflicts', B: 'merged' })
+      // A, first in document order, resolves; B is not dry-run again, let alone prompted.
+      expect(world.statuses()).toEqual({ A: 'resolving_conflicts', B: 'ready' })
+      expect(world.followups.map((followup) => followup.sessionId)).toEqual(['s-A'])
+      expect(world.api.prepareMerge).toHaveBeenCalledTimes(2)
+      expect(world.item('B').status_detail).toBe(`Waiting to merge: A is resolving conflicts`)
+
+      resolved.add('item-A')
+      world.endTurn('s-A')
+      await advance(SETTLE_MS + 1000)
+
+      // The lane stays held while the resolution is judged.
+      expect(world.statuses()).toEqual({ A: 'checking', B: 'ready' })
+      expect(world.api.prepareMerge).toHaveBeenCalledTimes(2)
+
+      judged.resolve(makeVerdict())
+      await advance(1000)
+
+      // A lands first; only then is B looked at again, and it conflicts in its turn.
+      expect(world.api.merge.mock.calls.map(([, itemId]) => itemId)).toEqual(['item-A'])
+      expect(world.statuses()).toEqual({ A: 'merged', B: 'resolving_conflicts' })
+      expect(world.followups.map((followup) => followup.sessionId)).toEqual(['s-A', 's-B'])
+      expect(world.followups[1].prompt).toContain('Merged into it so far: A (Task A)')
+
+      resolved.add('item-B')
+      world.endTurn('s-B')
+      await advance(SETTLE_MS + 1000)
+
+      expect(world.statuses()).toEqual({ A: 'merged', B: 'merged' })
+      expect(world.followups).toHaveLength(2)
+    })
+
+    it('keeps the lane while the resolving session waits on the user', async () => {
+      const world = createWorld({
+        items: [
+          readyItem('A', {
+            status: 'resolving_conflicts',
+            status_detail: 'Resolving conflicts in 2 file(s)',
+            conflict_attempts: 1,
+            conflict_head: 'verified-tip'
+          }),
+          readyItem('B')
+        ]
+      })
+      world.setSignal('s-A', { kind: 'blocked', reason: 'question', detail: 'Keep both prices?' })
+      start(world)
+
+      await advance(30_000)
+
+      expect(world.statuses()).toEqual({ A: 'resolving_conflicts', B: 'ready' })
+      expect(world.api.prepareMerge).not.toHaveBeenCalled()
+      expect(world.item('B').status_detail).toBe(
+        'Waiting to merge: A is resolving conflicts and waiting for you'
+      )
+
+      world.setSignal('s-A', { kind: 'working' })
+      await advance(1000)
+
+      expect(world.item('B').status_detail).toBe('Waiting to merge: A is resolving conflicts')
+    })
+
+    it('lets the others merge once the resolving ticket is flagged', async () => {
+      const world = createWorld({
+        items: [
+          readyItem('A', {
+            status: 'needs_attention',
+            status_detail: 'Still conflicts after 2 attempts',
+            conflict_attempts: 2
+          }),
+          readyItem('B', { status_detail: 'Waiting to merge: A is resolving conflicts' })
+        ]
+      })
+      start(world)
+
+      await advance(1000)
+
+      expect(world.statuses()).toEqual({ A: 'needs_attention', B: 'merged' })
+      expect(world.item('B').status_detail).toBeNull()
+    })
+
+    it('says what a ready ticket waits for while another lands, and leaves other details be', async () => {
+      const world = createWorld({
+        items: [
+          readyItem('A'),
+          readyItem('B'),
+          readyItem('C', { status_detail: 'Marked done by you.' })
+        ]
+      })
+      const first = deferred<DocumentMergeResult>()
+      world.api.merge.mockReturnValueOnce(first.promise)
+      start(world)
+
+      await advance(1000)
+
+      expect(world.statuses()).toEqual({ A: 'merging', B: 'ready', C: 'ready' })
+      expect(world.item('B').status_detail).toBe('Waiting to merge: A is merging')
+      expect(world.item('C').status_detail).toBe('Marked done by you.')
+
+      first.resolve({ success: true, mergeSha: 'merge-A' })
+      await advance(2000)
+
+      expect(world.statuses()).toEqual({ A: 'merged', B: 'merged', C: 'merged' })
+      expect(world.item('B').status_detail).toBeNull()
     })
 
     it('does not start a merge while a ticket is being launched from the integration tip', async () => {
@@ -649,28 +820,31 @@ describe('DocumentFlowRunner: merging', () => {
     world.api.prepareMerge.mockReturnValueOnce(check.promise)
     start(world)
     await advance(500)
-    expect(world.item('A').status).toBe('merging')
+    expect(world.item('A').status).toBe('ready')
+    expect(world.api.prepareMerge).toHaveBeenCalledTimes(1)
 
     world.setRun({ status: 'paused' })
-    check.resolve({ state: 'clean', conflictedFiles: [], committed: false, commitsAhead: 1 })
+    check.resolve(cleanCheck)
     await advance(30_000)
 
+    // The dry run's result is not acted on; the item is still ready for a fresh one on resume.
     expect(world.api.merge).not.toHaveBeenCalled()
-    expect(world.item('A').status).toBe('merging')
+    expect(world.item('A').status).toBe('ready')
 
     world.setRun({ status: 'running' })
     await advance(1000)
 
+    expect(world.api.prepareMerge).toHaveBeenCalledTimes(2)
     expect(world.item('A').status).toBe('merged')
   })
 
-  it('leaves a merging item alone while the server is unreachable', async () => {
+  it('leaves a ready item alone while the server is unreachable for its dry run', async () => {
     const world = createWorld({ items: [readyItem('A')] })
     world.api.prepareMerge.mockRejectedValueOnce(new FakeTransportError('socket closed'))
     start(world)
 
     await advance(5000)
-    expect(world.item('A').status).toBe('merging')
+    expect(world.item('A').status).toBe('ready')
     expect(world.notices).toEqual([])
 
     await advance(10_000)

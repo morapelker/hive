@@ -17,7 +17,8 @@ import {
   isRunWaitingOnUser,
   isTerminalItemStatus,
   launchableItems,
-  nextMergeCandidate,
+  mergeCandidates,
+  mergeLaneOwner,
   sanitizeDependencies,
   summarizeItems,
   ticketBranchHint,
@@ -234,62 +235,85 @@ describe('countOccupiedSlots', () => {
   })
 })
 
-describe('nextMergeCandidate', () => {
-  it('takes ready items in document order', () => {
+describe('mergeCandidates', () => {
+  it('lists ready items in document order', () => {
     const items = [item('A', 'running'), item('B', 'ready'), item('C', 'ready')]
-    expect(nextMergeCandidate([items[2], items[1], items[0]])?.key).toBe('B')
+    expect(mergeCandidates([items[2], items[1], items[0]]).map((it) => it.key)).toEqual(['B', 'C'])
   })
 
-  it('merges a ticket that just resolved its conflicts before any other', () => {
-    const items = [
-      item('A', 'ready'),
-      item('B', 'ready', { has_migration: true, conflict_attempts: 1 }),
-      item('C', 'ready', { conflict_attempts: 2 })
-    ]
-    // Another merge landing first could make it conflict again.
-    expect(nextMergeCandidate(items)?.key).toBe('C')
-    expect(nextMergeCandidate([items[0], items[1]])?.key).toBe('B')
-  })
-
-  it('merges tickets with migrations after those without', () => {
+  it('puts tickets with migrations after those without', () => {
     const items = [
       item('A', 'ready', { has_migration: true }),
       item('B', 'ready', { has_migration: true }),
       item('C', 'ready'),
       item('D', 'ready')
     ]
-    const order: string[] = []
-    for (let next = nextMergeCandidate(items); next; next = nextMergeCandidate(items)) {
-      order.push(next.key)
-      next.status = 'merged'
-    }
-    expect(order).toEqual(['C', 'D', 'A', 'B'])
+    expect(mergeCandidates(items).map((it) => it.key)).toEqual(['C', 'D', 'A', 'B'])
   })
 
   it.each(['merging', 'verifying', 'fixing'] as const)(
-    'waits while another item is %s',
+    'offers nothing while another item is %s',
     (status) => {
       const items = [item('A', status), item('B', 'ready')]
       expect(isMergeInFlight(items)).toBe(true)
-      expect(nextMergeCandidate(items)).toBeNull()
+      expect(mergeCandidates(items)).toEqual([])
     }
   )
 
-  it('is not held up by a ticket resolving its own conflicts', () => {
-    const items = [item('A', 'resolving_conflicts'), item('B', 'ready')]
+  it('offers nothing while a ticket resolves its conflicts', () => {
+    const items = [
+      item('A', 'resolving_conflicts', { conflict_attempts: 1 }),
+      item('B', 'ready'),
+      item('C', 'ready')
+    ]
     expect(isMergeInFlight(items)).toBe(false)
-    expect(nextMergeCandidate(items)?.key).toBe('B')
+    expect(mergeLaneOwner(items)?.key).toBe('A')
+    expect(mergeCandidates(items)).toEqual([])
   })
+
+  it.each(['checking', 'running', 'needs_input'] as const)(
+    'keeps the lane for a resolving ticket that is %s',
+    (status) => {
+      // After its resolution turn the ticket is judged, nudged, or stops for the user; a merge
+      // landing meanwhile would make it conflict again.
+      const items = [item('A', status, { conflict_attempts: 1 }), item('B', 'ready')]
+      expect(mergeLaneOwner(items)?.key).toBe('A')
+      expect(mergeCandidates(items)).toEqual([])
+    }
+  )
+
+  it('offers only the ticket that resolved its conflicts once it is ready again', () => {
+    const items = [
+      item('A', 'ready'),
+      item('B', 'ready', { has_migration: true, conflict_attempts: 1 }),
+      item('C', 'ready')
+    ]
+    expect(mergeCandidates(items).map((it) => it.key)).toEqual(['B'])
+  })
+
+  it.each(['needs_attention', 'merged', 'skipped', 'cancelled'] as const)(
+    'releases the lane when the resolving ticket is %s',
+    (status) => {
+      const items = [item('A', status, { conflict_attempts: 2 }), item('B', 'ready')]
+      expect(mergeLaneOwner(items)).toBeNull()
+      expect(mergeCandidates(items).map((it) => it.key)).toEqual(['B'])
+    }
+  )
 
   it('ignores deselected items', () => {
-    expect(nextMergeCandidate([item('A', 'ready', { selected: false })])).toBeNull()
-    const items = [item('A', 'merging', { selected: false }), item('B', 'ready')]
-    expect(nextMergeCandidate(items)?.key).toBe('B')
+    expect(mergeCandidates([item('A', 'ready', { selected: false })])).toEqual([])
+    const items = [
+      item('A', 'merging', { selected: false }),
+      item('B', 'resolving_conflicts', { selected: false, conflict_attempts: 1 }),
+      item('C', 'ready')
+    ]
+    expect(mergeLaneOwner(items)).toBeNull()
+    expect(mergeCandidates(items).map((it) => it.key)).toEqual(['C'])
   })
 
-  it('returns null when nothing is ready', () => {
-    expect(nextMergeCandidate([])).toBeNull()
-    expect(nextMergeCandidate([item('A', 'running'), item('B', 'merged')])).toBeNull()
+  it('offers nothing when nothing is ready', () => {
+    expect(mergeCandidates([])).toEqual([])
+    expect(mergeCandidates([item('A', 'running'), item('B', 'merged')])).toEqual([])
   })
 })
 
@@ -353,6 +377,20 @@ describe('isRunWaitingOnUser', () => {
   it('does not wait while a pending item is behind a working one', () => {
     const items = [item('A', 'running'), item('B', 'pending', { depends_on: ['A'] })]
     expect(isRunWaitingOnUser(items)).toBe(false)
+  })
+
+  it('waits when the ready items are behind a conflict resolution that stopped for the user', () => {
+    const stopped = item('A', 'resolving_conflicts', {
+      conflict_attempts: 1,
+      status_detail: `${WAITING_PREFIX}Keep both prices?`
+    })
+    expect(isRunWaitingOnUser([stopped, item('B', 'ready')])).toBe(true)
+    expect(isRunWaitingOnUser([stopped, item('B', 'ready'), item('C', 'running')])).toBe(false)
+    // Nothing merges behind a resolution that is still at work either, but that is not on the user.
+    const working = item('A', 'resolving_conflicts', { conflict_attempts: 1 })
+    expect(isRunWaitingOnUser([working, item('B', 'ready')])).toBe(false)
+    const judged = item('A', 'needs_input', { conflict_attempts: 1 })
+    expect(isRunWaitingOnUser([judged, item('B', 'ready')])).toBe(true)
   })
 
   it('does not wait when nothing is open', () => {
