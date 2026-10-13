@@ -19,6 +19,7 @@ import {
   DOCUMENT_RUN_STATUS_TONES,
   DOCUMENT_VERIFICATION_DESCRIPTIONS,
   DOCUMENT_VERIFICATION_LABELS,
+  canEditLaunchConfig,
   canEditVerification,
   currentRootBranch,
   defaultBaseBranchLabel,
@@ -1089,6 +1090,48 @@ describe('canEditVerification', () => {
       for (const status of DOCUMENT_RUN_ITEM_STATUSES) {
         expect(
           canEditVerification({ status: runStatus }, { status }),
+          `${runStatus}/${status}`
+        ).toBe(false)
+      }
+    }
+  })
+})
+
+describe('canEditLaunchConfig', () => {
+  it('lets every ticket be changed while the run is in preview', () => {
+    for (const status of DOCUMENT_RUN_ITEM_STATUSES) {
+      expect(canEditLaunchConfig({ status: 'preview' }, { status, session_id: null }), status).toBe(
+        true
+      )
+    }
+  })
+
+  it('lets a ticket that has not launched be changed while the run is running or paused', () => {
+    for (const runStatus of ['running', 'paused'] as const) {
+      for (const status of DOCUMENT_RUN_ITEM_STATUSES) {
+        expect(
+          canEditLaunchConfig({ status: runStatus }, { status, session_id: 'session-1' }),
+          `${runStatus}/${status}`
+        ).toBe(status === 'pending')
+      }
+      // Flagged after a failed launch, with no session: Retry launches it afresh.
+      expect(
+        canEditLaunchConfig({ status: runStatus }, { status: 'needs_attention', session_id: null })
+      ).toBe(true)
+    }
+  })
+
+  it('lets nothing be changed once the run is over or before it was extracted', () => {
+    for (const runStatus of [
+      'completed',
+      'completed_with_issues',
+      'cancelled',
+      'extracting',
+      'extract_failed'
+    ] as const) {
+      for (const status of DOCUMENT_RUN_ITEM_STATUSES) {
+        expect(
+          canEditLaunchConfig({ status: runStatus }, { status, session_id: null }),
           `${runStatus}/${status}`
         ).toBe(false)
       }

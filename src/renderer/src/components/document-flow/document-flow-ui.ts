@@ -1,6 +1,7 @@
 import { ticketPillBaseClass } from '@/components/kanban/pill'
 import type { AgentDotState } from '@/components/sidebar/agent-state'
 import {
+  awaitsLaunch,
   countRunningAgents,
   isItemWaitingOnUser,
   isRunWaitingOnUser,
@@ -769,6 +770,18 @@ export function canEditVerification(
   item: Pick<DocumentRunItem, 'status'>
 ): boolean {
   return run.status === 'preview' || (isActiveRunStatus(run.status) && item.status === 'pending')
+}
+
+/**
+ * Whether a ticket's model and effort can still be changed: in the preview, and from the
+ * dashboard while the run is going and the ticket has not launched (it waits its turn, or its
+ * launch failed and Retry would launch it afresh). The server applies the same rule.
+ */
+export function canEditLaunchConfig(
+  run: Pick<DocumentRun, 'status'>,
+  item: Pick<DocumentRunItem, 'status' | 'session_id'>
+): boolean {
+  return run.status === 'preview' || (isActiveRunStatus(run.status) && awaitsLaunch(item))
 }
 
 /**

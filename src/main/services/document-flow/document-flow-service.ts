@@ -36,6 +36,7 @@ import {
   parseExtractionResponse
 } from '@shared/document-flow/extraction'
 import {
+  awaitsLaunch,
   integrationBranchHint,
   isTerminalItemStatus,
   sanitizeDependencies
@@ -83,7 +84,11 @@ import {
   type DocumentVerifyResult,
   type SessionFinalMessage
 } from '@shared/types/document-flow'
-import type { KanbanTicketBatchCreateItem, KanbanTicketColumn } from '../../db/types'
+import type {
+  KanbanTicketBatchCreateItem,
+  KanbanTicketColumn,
+  KanbanTicketUpdate
+} from '../../db/types'
 import { createLogger } from '../logger'
 import type { CreateFromBranchParams, WorktreeResult } from '../worktree-ops'
 import type { DocumentFlowDb, DocumentRunItemRowPatch, DocumentRunRowPatch } from './db-port'
@@ -217,6 +222,12 @@ export interface DocumentFlowTicket {
   column: KanbanTicketColumn
 }
 
+/** What a run writes on a board ticket after creating it: the model badge. */
+export type DocumentFlowTicketPatch = Pick<
+  KanbanTicketUpdate,
+  'model_provider_id' | 'model_id' | 'model_variant'
+>
+
 export interface DocumentFlowServiceDeps {
   db: DocumentFlowDb
   /** Called after every write to a run, one of its items or its event log. */
@@ -253,6 +264,12 @@ export interface DocumentFlowServiceDeps {
   getTicket: (projectId: string, ticketId: string) => Promise<DocumentFlowTicket | null>
   /** Moves the ticket to the top of `column`. */
   moveTicket: (projectId: string, ticketId: string, column: KanbanTicketColumn) => Promise<unknown>
+  /** Re-stamps the model the board shows on a ticket; cosmetic, so never fatal. */
+  updateTicket: (
+    projectId: string,
+    ticketId: string,
+    patch: DocumentFlowTicketPatch
+  ) => Promise<unknown>
   deleteTicket: (projectId: string, ticketId: string) => Promise<unknown>
   /** Records the branch a worktree's work is merged into. Not reachable over RPC. */
   setWorktreeBaseBranch: (worktreeId: string, baseBranch: string) => void
@@ -411,8 +428,7 @@ const PREVIEW_ITEM_FIELDS = [
   'summary',
   'description',
   'depends_on',
-  'selected',
-  'launch_config'
+  'selected'
 ] as const satisfies readonly (keyof DocumentRunItemPatch)[]
 
 const ORCHESTRATION_ITEM_FIELDS = [
@@ -899,6 +915,19 @@ export class DocumentFlowService {
           : 'Tickets can only be edited while the run is in preview.'
       )
     }
+    // The model too, and also on a ticket whose launch failed: nothing runs for it, and Retry
+    // launches it afresh with whatever is chosen by then.
+    if (
+      patch.launch_config !== undefined &&
+      run.status !== 'preview' &&
+      !(launched && awaitsLaunch(item))
+    ) {
+      throw invalidState(
+        launched
+          ? `${item.key} has launched; its model can no longer be changed.`
+          : 'Tickets can only be edited while the run is in preview.'
+      )
+    }
 
     const rowPatch: DocumentRunItemPatch = {}
     if (patch.verification !== undefined) {
@@ -928,6 +957,9 @@ export class DocumentFlowService {
 
     if (Object.keys(rowPatch).length === 0) return item
     const updated = this.saveItem(run, item.id, rowPatch)
+    if (rowPatch.launch_config !== undefined && launched && item.ticket_id) {
+      this.stampTicketModel(run, updated, item.ticket_id)
+    }
     if (rowPatch.status !== undefined && rowPatch.status !== item.status) {
       const detail = rowPatch.status_detail ? `: ${rowPatch.status_detail}` : ''
       this.log(
@@ -3183,6 +3215,31 @@ export class DocumentFlowService {
     this.deps.publish({ runId: run.id, projectId: run.project_id, reason: 'run' })
   }
 
+  /**
+   * The board ticket shows the model its item launches with, copied when the ticket was made.
+   * A model changed before the launch is copied again, so the board does not show a stale
+   * one. The item is the source of truth (the runner reads only it); the ticket is a badge,
+   * so a board that cannot be written is logged, not fatal. Detached, or the board of the
+   * window that made the change would ignore its own event and keep the old badge.
+   */
+  private stampTicketModel(run: DocumentRun, item: DocumentRunItem, ticketId: string): void {
+    const model = (item.launch_config ?? run.config.defaultLaunch)?.model
+    void this.detach(() =>
+      this.deps.updateTicket(run.project_id, ticketId, {
+        model_provider_id: model?.providerID ?? null,
+        model_id: model?.modelID ?? null,
+        model_variant: model?.variant ?? null
+      })
+    ).catch((error: unknown) => {
+      log.warn('Could not update the model on a ticket', {
+        runId: run.id,
+        item: item.key,
+        ticketId,
+        error: describeError(error)
+      })
+    })
+  }
+
   private saveRun(run: DocumentRun, patch: DocumentRunRowPatch): DocumentRun {
     const updated = this.db.updateDocumentRun(run.id, patch)
     if (!updated) throw notFound('The run')
@@ -3325,6 +3382,10 @@ export async function getDocumentFlowService(
       )
       const top = Math.min(...inColumn.map((ticket) => ticket.sort_order))
       return backend.move(projectId, ticketId, column, Number.isFinite(top) ? top - 1 : 0)
+    },
+    updateTicket: async (projectId, ticketId, patch) => {
+      const { getKanbanBackendForProject } = await import('../kanban-backend')
+      return getKanbanBackendForProject(projectId).update(projectId, ticketId, patch)
     },
     deleteTicket: async (projectId, ticketId) => {
       const { getKanbanBackendForProject } = await import('../kanban-backend')

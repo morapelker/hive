@@ -1305,7 +1305,9 @@ export class DocumentFlowRunner {
     const ticket = await this.findTicket(run.project_id, item.ticket_id)
     if (!ticket) return this.flag(op, 'Its ticket no longer exists.')
 
-    const modelConfig = this.launchConfig(run, item)
+    // From the row the `launching` write returned, not the one read before it: the model can
+    // be changed from the dashboard until that write lands, and nothing is accepted after it.
+    const modelConfig = this.launchConfig(run, op.item)
     // Read now, not from the run captured before the awaits above: the setting can be flipped
     // mid-run from the dashboard.
     const briefed = this.interactive(op)
@@ -1418,7 +1420,8 @@ export class DocumentFlowRunner {
     const ticket = await this.findTicket(run.project_id, item.ticket_id)
     if (!ticket) return this.flag(op, 'Its ticket no longer exists.')
 
-    const modelConfig = this.launchConfig(run, item)
+    // As in launchItem: the row the `launching` write returned carries the last model chosen.
+    const modelConfig = this.launchConfig(run, op.item)
     const briefed = this.interactive(op)
     const { prompt } = this.launchBrief(
       op,

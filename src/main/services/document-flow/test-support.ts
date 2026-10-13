@@ -21,6 +21,7 @@ import {
   type DocumentFlowGenerate,
   type DocumentFlowProject,
   type DocumentFlowServiceDeps,
+  type DocumentFlowTicketPatch,
   type DocumentFlowWorktree
 } from './document-flow-service'
 
@@ -401,6 +402,8 @@ export interface ServiceHarness {
   /** The board: every created ticket that was not deleted, with the column it sits in. */
   boardTickets: Map<string, { id: string; projectId: string; column: KanbanTicketColumn }>
   ticketMoves: { projectId: string; ticketId: string; column: KanbanTicketColumn }[]
+  /** Every model badge the service re-stamped on a board ticket, in order. */
+  ticketUpdates: { projectId: string; ticketId: string; patch: DocumentFlowTicketPatch }[]
   deletedTickets: string[]
   /** Worktree id → base branch, as the service re-pointed them. */
   baseBranchWrites: { worktreeId: string; baseBranch: string }[]
@@ -429,6 +432,7 @@ type OverridableDeps = Required<
     | 'addTicketDependency'
     | 'getTicket'
     | 'moveTicket'
+    | 'updateTicket'
     | 'deleteTicket'
     | 'setWorktreeBaseBranch'
     | 'resolveFinalMessage'
@@ -467,6 +471,7 @@ export function createServiceHarness(
   const ticketLinks: ServiceHarness['ticketLinks'] = []
   const boardTickets: ServiceHarness['boardTickets'] = new Map()
   const ticketMoves: ServiceHarness['ticketMoves'] = []
+  const ticketUpdates: ServiceHarness['ticketUpdates'] = []
   const deletedTickets: string[] = []
   const baseBranchWrites: ServiceHarness['baseBranchWrites'] = []
   const scratch = realpathSync(mkdtempSync(join(tmpdir(), 'docflow-service-')))
@@ -607,6 +612,9 @@ export function createServiceHarness(
       const ticket = boardTickets.get(ticketId)
       if (ticket) ticket.column = column
     },
+    updateTicket: async (projectId, ticketId, patch) => {
+      ticketUpdates.push({ projectId, ticketId, patch })
+    },
     deleteTicket: async (_projectId, ticketId) => {
       deletedTickets.push(ticketId)
       return boardTickets.delete(ticketId)
@@ -645,6 +653,7 @@ export function createServiceHarness(
       (overrides.addTicketDependency ?? fakes.addTicketDependency)(...args),
     getTicket: (...args) => (overrides.getTicket ?? fakes.getTicket)(...args),
     moveTicket: (...args) => (overrides.moveTicket ?? fakes.moveTicket)(...args),
+    updateTicket: (...args) => (overrides.updateTicket ?? fakes.updateTicket)(...args),
     deleteTicket: (...args) => (overrides.deleteTicket ?? fakes.deleteTicket)(...args),
     setWorktreeBaseBranch: (...args) =>
       (overrides.setWorktreeBaseBranch ?? fakes.setWorktreeBaseBranch)(...args),
@@ -676,6 +685,7 @@ export function createServiceHarness(
     ticketLinks,
     boardTickets,
     ticketMoves,
+    ticketUpdates,
     deletedTickets,
     baseBranchWrites,
     scratch,

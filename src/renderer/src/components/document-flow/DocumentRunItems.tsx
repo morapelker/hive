@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import {
   Check,
   GitBranch,
@@ -16,12 +16,25 @@ import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import type {
   DocumentRun,
   DocumentRunItem,
+  DocumentRunLaunchConfig,
   DocumentVerificationMethod
 } from '@shared/types/document-flow'
-import { LaunchConfigBadge, TonePill, VerificationChips } from './DocumentFlowBadges'
-import { openSession } from './document-flow-navigation'
-import { effectiveLaunchConfig } from './document-flow-launch'
 import {
+  LaunchConfigBadge,
+  LaunchConfigChip,
+  TonePill,
+  VerificationChips
+} from './DocumentFlowBadges'
+import { LaunchConfigPopover } from './LaunchConfigPopover'
+import { openSession } from './document-flow-navigation'
+import {
+  effectiveLaunchConfig,
+  mergeLaunchConfigs,
+  quickLaunchChoices,
+  sameLaunchConfig
+} from './document-flow-launch'
+import {
+  canEditLaunchConfig,
   canEditVerification,
   describeItemBranches,
   isActiveRunStatus,
@@ -31,6 +44,7 @@ import {
   itemStatusDisplay,
   needsUser,
   needsUserMessage,
+  pluralize,
   toggleVerificationMethod
 } from './document-flow-ui'
 
@@ -54,6 +68,16 @@ interface RunItemActions {
   skip: (item: DocumentRunItem) => void
   /** Flip one verification method of a ticket that has not launched yet. */
   toggleVerification: (item: DocumentRunItem, method: DocumentVerificationMethod) => void
+  /** Change the model and effort of a ticket that has not launched yet; null = the run default. */
+  setLaunchConfig: (
+    item: DocumentRunItem,
+    launchConfig: DocumentRunLaunchConfig | null
+  ) => Promise<void>
+  /** Give every ticket in `targets` the same model; each failure is reported on its own. */
+  applyLaunchConfig: (
+    targets: readonly DocumentRunItem[],
+    launchConfig: DocumentRunLaunchConfig | null
+  ) => Promise<void>
 }
 
 function useRunItemActions(run: DocumentRun): RunItemActions {
@@ -98,6 +122,21 @@ function useRunItemActions(run: DocumentRun): RunItemActions {
         updateItem(run.id, item.id, {
           verification: toggleVerificationMethod(item.verification, method)
         }).catch(report(item, 'change the verification of'))
+      },
+      setLaunchConfig: (item, launch_config) =>
+        updateItem(run.id, item.id, { launch_config }).then(
+          () => undefined,
+          report(item, 'change the model of')
+        ),
+      applyLaunchConfig: async (targets, launch_config) => {
+        await Promise.all(
+          targets.map((item) =>
+            updateItem(run.id, item.id, { launch_config }).then(
+              () => undefined,
+              report(item, 'change the model of')
+            )
+          )
+        )
       }
     }
   }, [run, retryItem, markItemDone, skipItem, updateItem, closeDashboard, sessionStatuses])
@@ -209,9 +248,12 @@ export function NeedsYouSection({ run, items }: RunItemsProps): React.JSX.Elemen
 }
 
 // Every row is its own grid, so each track has a fixed or fractional size: an `auto` track would
-// size per row and the columns would stop lining up.
+// size per row and the columns would stop lining up. The model track holds a badge, and on a
+// ticket that has not launched the one-tap models too, which wrap under it.
 const ROW_GRID_CLASS =
-  'grid grid-cols-[14px_48px_minmax(0,1.5fr)_150px_minmax(0,1.2fr)_130px_186px_minmax(0,0.8fr)_104px] items-center gap-2 px-3'
+  'grid grid-cols-[14px_48px_minmax(0,1.5fr)_140px_minmax(0,1fr)_210px_186px_minmax(0,0.7fr)_104px] items-center gap-2 px-3'
+
+const MODEL_TITLE = 'Change model and effort (until the ticket launches)'
 
 /** Every ticket of the run in document order; the ones left out of the run come last. */
 export function RunItemsTable({ run, items }: RunItemsProps): React.JSX.Element {
@@ -220,6 +262,34 @@ export function RunItemsTable({ run, items }: RunItemsProps): React.JSX.Element 
     ...items.filter((item) => item.selected),
     ...items.filter((item) => !item.selected)
   ]
+
+  // The model of a ticket that has not launched is still open, like its verification. A model
+  // any ticket settled on becomes a one-tap choice on every such row, and stays one for this
+  // dashboard even when no ticket uses it any more. A model still being picked is held back:
+  // the picker saves every step on the way to it. Same bookkeeping as the wizard preview.
+  const [pickingItemIds, setPickingItemIds] = useState<readonly string[]>([])
+  const [knownLaunchConfigs, setKnownLaunchConfigs] = useState<readonly DocumentRunLaunchConfig[]>(
+    []
+  )
+  const setItemPicking = useCallback((itemId: string, picking: boolean): void => {
+    setPickingItemIds((current) => {
+      if (current.includes(itemId) === picking) return current
+      return picking ? [...current, itemId] : current.filter((id) => id !== itemId)
+    })
+  }, [])
+  const settledLaunchConfigs = mergeLaunchConfigs(
+    knownLaunchConfigs,
+    items.filter((item) => !pickingItemIds.includes(item.id)).map((item) => item.launch_config)
+  )
+  if (settledLaunchConfigs !== knownLaunchConfigs) setKnownLaunchConfigs(settledLaunchConfigs)
+  // A ticket left out of the run has no board ticket and never launches: nothing to choose.
+  const modelEditable = actions.enabled
+    ? items.filter((item) => item.selected && canEditLaunchConfig(run, item))
+    : []
+  const quickChoices =
+    modelEditable.length > 0
+      ? quickLaunchChoices(settledLaunchConfigs, run.config.defaultLaunch)
+      : []
 
   return (
     <section className="space-y-1.5" data-testid="docflow-items">
@@ -276,12 +346,19 @@ export function RunItemsTable({ run, items }: RunItemsProps): React.JSX.Element 
                 >
                   {item.status_detail}
                 </span>
-                <span className="flex min-w-0 overflow-hidden">
-                  <LaunchConfigBadge
-                    config={effectiveLaunchConfig(item, run.config.defaultLaunch)}
-                    inheritLabel="app default"
-                  />
-                </span>
+                <ModelCell
+                  run={run}
+                  item={item}
+                  editable={modelEditable.includes(item)}
+                  others={modelEditable.filter(
+                    (other) =>
+                      other.id !== item.id &&
+                      !sameLaunchConfig(other.launch_config, item.launch_config)
+                  )}
+                  quickChoices={quickChoices}
+                  actions={actions}
+                  onPickingChange={setItemPicking}
+                />
                 <span className="flex min-w-0 overflow-hidden">
                   {/* Still open while the ticket waits its turn; fixed once its brief was sent. */}
                   <VerificationChips
@@ -352,6 +429,106 @@ export function RunItemsTable({ run, items }: RunItemsProps): React.JSX.Element 
         </div>
       </div>
     </section>
+  )
+}
+
+interface ModelCellProps {
+  run: DocumentRun
+  item: DocumentRunItem
+  /** The ticket has not launched: its model can be changed, and copied to the others. */
+  editable: boolean
+  /** The other tickets that have not launched and are on a different model. */
+  others: readonly DocumentRunItem[]
+  quickChoices: ReturnType<typeof quickLaunchChoices>
+  actions: RunItemActions
+  onPickingChange: (itemId: string, picking: boolean) => void
+}
+
+/**
+ * The model a ticket launches with. Read-only once launched; before that, the badge opens the
+ * picker (which starts from the model the ticket would get, so one change of effort is one
+ * step), the one-tap models sit under it, and the picker offers the same model to every other
+ * ticket that has not launched.
+ */
+function ModelCell({
+  run,
+  item,
+  editable,
+  others,
+  quickChoices,
+  actions,
+  onPickingChange
+}: ModelCellProps): React.JSX.Element {
+  const effective = effectiveLaunchConfig(item, run.config.defaultLaunch)
+  const onItemPickingChange = useCallback(
+    (picking: boolean) => onPickingChange(item.id, picking),
+    [onPickingChange, item.id]
+  )
+  const badge = (
+    <LaunchConfigBadge
+      config={effective}
+      inheritLabel="app default"
+      testId={`docflow-row-model-${item.key}`}
+    />
+  )
+  if (!editable) return <span className="flex min-w-0 overflow-hidden">{badge}</span>
+
+  // The pressed chip already names the model; the trigger then only keeps its arrows.
+  const usesQuickChoice = quickChoices.some((choice) =>
+    sameLaunchConfig(choice.config, item.launch_config)
+  )
+  return (
+    <span className="flex min-w-0 flex-wrap items-center gap-1">
+      <LaunchConfigPopover
+        itemKey={item.key}
+        value={effective}
+        badge={!usesQuickChoice && badge}
+        inheritLabel="Run default"
+        clearLabel="Use run default"
+        title={MODEL_TITLE}
+        testIdPrefix="docflow-row-model"
+        onChange={(launch_config) => actions.setLaunchConfig(item, launch_config)}
+        onPickingChange={onItemPickingChange}
+        footer={
+          others.length > 0 && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="w-full"
+              title="Every ticket that has not launched yet gets this model too"
+              data-testid={`docflow-row-model-apply-${item.key}`}
+              onClick={() => void actions.applyLaunchConfig(others, item.launch_config)}
+            >
+              {item.launch_config
+                ? `Also use for ${pluralize(others.length, 'other pending ticket')}`
+                : `Use the run default for ${pluralize(others.length, 'other pending ticket')}`}
+            </Button>
+          )
+        }
+      />
+      {quickChoices.length > 0 && (
+        <span
+          role="group"
+          aria-label={`Quick models for ${item.key}`}
+          data-testid={`docflow-row-quick-models-${item.key}`}
+          className="flex min-w-0 flex-wrap items-center gap-1"
+        >
+          {quickChoices.map((choice, index) => {
+            const pressed = sameLaunchConfig(choice.config, item.launch_config)
+            return (
+              <LaunchConfigChip
+                key={choice.key}
+                choice={choice}
+                pressed={pressed}
+                testId={`docflow-row-quick-model-${item.key}-${index}`}
+                onClick={() => void actions.setLaunchConfig(item, pressed ? null : choice.config)}
+              />
+            )
+          })}
+        </span>
+      )}
+    </span>
   )
 }
 

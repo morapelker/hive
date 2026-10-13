@@ -8,6 +8,7 @@ import {
 import {
   USER_INTERRUPT_DETAIL,
   WAITING_PREFIX,
+  awaitsLaunch,
   countOccupiedSlots,
   countRunningAgents,
   integrationBranchHint,
@@ -199,6 +200,24 @@ describe('launchableItems', () => {
     expect(launchableItems(items, 1)).toEqual([])
     expect(launchableItems(items, 3)).toEqual([])
     expect(keys(launchableItems(items, 4))).toEqual(['D'])
+  })
+})
+
+describe('awaitsLaunch', () => {
+  it('is true for a pending ticket, and for one flagged after a failed launch', () => {
+    // With a session, only a pending ticket has not launched: a flagged one has an agent whose
+    // work has to be looked at.
+    for (const status of DOCUMENT_RUN_ITEM_STATUSES) {
+      expect(awaitsLaunch(item('A', status, { session_id: 'session-1' })), status).toBe(
+        status === 'pending'
+      )
+    }
+    // Without one, a flagged ticket is one whose launch failed: Retry launches it afresh.
+    for (const status of DOCUMENT_RUN_ITEM_STATUSES) {
+      expect(awaitsLaunch(item('A', status, { session_id: null })), status).toBe(
+        status === 'pending' || status === 'needs_attention'
+      )
+    }
   })
 })
 

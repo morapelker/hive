@@ -1,18 +1,21 @@
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getRendererRpcClient, setRendererRpcClient } from '@/api/rpc-client'
+import { clearHandoffModelCatalogCache } from '@/lib/handoffSelection'
 import { toast } from '@/lib/toast'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useQuestionStore, type QuestionRequest } from '@/stores/useQuestionStore'
 import { useSessionStore } from '@/stores/useSessionStore'
+import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
 import { USER_INTERRUPT_DETAIL, WAITING_PREFIX } from '@shared/document-flow/planning'
 import type {
   DocumentRunDetail,
   DocumentRunItemPatch,
+  DocumentRunLaunchConfig,
   DocumentRunPatch,
   DocumentRunVerdict
 } from '@shared/types/document-flow'
@@ -31,11 +34,16 @@ const api = vi.hoisted(() => ({
 }))
 
 const projectApi = vi.hoisted(() => ({ openPath: vi.fn() }))
+const listModels = vi.hoisted(() => vi.fn())
 const questionMode = vi.hoisted(() => ({ applyQuestionMode: vi.fn() }))
 const migrations = vi.hoisted(() => ({ startRunMigrations: vi.fn(), stopRunMigrations: vi.fn() }))
 
 vi.mock('@/api/document-flow-api', () => ({ documentFlowApi: api }))
 vi.mock('@/api/project-api', () => ({ projectApi }))
+vi.mock('@/api/opencode-api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/api/opencode-api')>()
+  return { ...actual, opencodeApi: { ...actual.opencodeApi, listModels } }
+})
 // The broadcast to the run's sessions has its own tests; here only the gate in front of it.
 vi.mock('@/lib/document-flow/question-mode', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/document-flow/question-mode')>()),
@@ -59,6 +67,23 @@ const initialWorktreeStatusState = useWorktreeStatusStore.getState()
 const initialSessionState = useSessionStore.getState()
 const initialQuestionState = useQuestionStore.getState()
 const initialKanbanState = useKanbanStore.getState()
+const initialSettingsState = useSettingsStore.getState()
+
+const SONNET_HIGH: DocumentRunLaunchConfig = {
+  sdk: 'claude-code-cli',
+  model: { providerID: 'anthropic', modelID: 'sonnet', variant: 'high' },
+  codexFastMode: false
+}
+const OPUS_ULTRACODE: DocumentRunLaunchConfig = {
+  sdk: 'claude-code-cli',
+  model: { providerID: 'anthropic', modelID: 'opus', variant: 'ultracode' },
+  codexFastMode: false
+}
+const CODEX_DEFAULT: DocumentRunLaunchConfig = {
+  sdk: 'codex',
+  model: { providerID: 'codex', modelID: 'gpt-5.5' },
+  codexFastMode: false
+}
 
 const QUESTION_VERDICT: DocumentRunVerdict = {
   status: 'needs_input',
@@ -101,7 +126,23 @@ const click = async (testId: string): Promise<void> => {
   })
 }
 
+beforeAll(() => {
+  // Radix menus rely on these in a real browser; jsdom lacks them.
+  Element.prototype.hasPointerCapture = vi.fn()
+  Element.prototype.releasePointerCapture = vi.fn()
+  Element.prototype.scrollIntoView = vi.fn()
+})
+
 beforeEach(() => {
+  listModels.mockResolvedValue({ success: true, providers: [] })
+  useSettingsStore.setState({
+    defaultAgentSdk: 'claude-code-cli',
+    availableAgentSdks: { opencode: true, claude: true, codex: true },
+    selectedModel: null,
+    selectedModelByProvider: {},
+    defaultModels: null,
+    customProviders: []
+  })
   // The server's side of the store actions: apply the patch to the stored row.
   api.updateItem.mockImplementation(
     async (runId: string, itemId: string, patch: DocumentRunItemPatch) => ({
@@ -136,6 +177,8 @@ afterEach(async () => {
   useSessionStore.setState(initialSessionState, true)
   useQuestionStore.setState(initialQuestionState, true)
   useKanbanStore.setState(initialKanbanState, true)
+  useSettingsStore.setState(initialSettingsState, true)
+  clearHandoffModelCatalogCache()
 })
 
 describe('DocumentRunDashboard — header', () => {
@@ -1109,6 +1152,192 @@ describe('DocumentRunDashboard — tickets', () => {
     expect(screen.getByTestId('docflow-row-A1')).toHaveTextContent('opus')
     expect(screen.getByTestId('docflow-row-A1')).toHaveTextContent('ultracode')
     expect(screen.getByTestId('docflow-row-A2')).toHaveTextContent('gpt-5.5')
+  })
+})
+
+describe('DocumentRunDashboard — model', () => {
+  const chip = (key: string, index = 0): HTMLElement =>
+    screen.getByTestId(`docflow-row-quick-model-${key}-${index}`)
+
+  it('opens the picker from the badge of a ticket that has not launched, starting from its model', async () => {
+    const detail = makeDetail(LAUNCHED, [
+      { key: 'A1', status: 'pending' },
+      { key: 'A2', status: 'running' }
+    ])
+    detail.run.config = { ...detail.run.config, defaultLaunch: CODEX_DEFAULT }
+    await renderDashboard(detail)
+
+    // Launched: a badge and nothing to click.
+    expect(screen.getByTestId('docflow-row-model-A2')).toHaveTextContent('gpt-5.5')
+    expect(screen.queryByTestId('docflow-row-model-trigger-A2')).toBeNull()
+    // Waiting: the badge is the trigger; no picker (and no catalog request) until it is clicked.
+    expect(screen.getByTestId('docflow-row-model-A1')).toHaveTextContent('gpt-5.5')
+    expect(screen.queryByTestId('docflow-row-model-picker-A1')).toBeNull()
+    expect(listModels).not.toHaveBeenCalled()
+
+    await click('docflow-row-model-trigger-A1')
+    // The picker starts from the model the ticket would launch with, the run default here.
+    expect(screen.getByTestId('docflow-row-model-picker-A1-sdk-codex')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    await click('docflow-row-model-picker-A1-sdk-claude-code-cli')
+    expect(api.updateItem).toHaveBeenLastCalledWith('run-1', 'item-A1', {
+      launch_config: {
+        sdk: 'claude-code-cli',
+        model: { providerID: 'anthropic', modelID: 'sonnet', variant: 'high' },
+        codexFastMode: false,
+        customProviderId: null
+      }
+    })
+    expect(screen.getByTestId('docflow-row-model-A1')).toHaveTextContent(/sonnet/i)
+
+    await click('docflow-row-model-picker-A1-clear')
+    expect(api.updateItem).toHaveBeenLastCalledWith('run-1', 'item-A1', { launch_config: null })
+  })
+
+  it('offers to choose a model when the run has no default of its own', async () => {
+    await renderDashboard(makeDetail(LAUNCHED, [{ key: 'A1', status: 'pending' }]))
+
+    expect(screen.getByTestId('docflow-row-model-A1')).toHaveTextContent('app default')
+    await click('docflow-row-model-trigger-A1')
+    await click('docflow-row-model-picker-A1-choose')
+    expect(api.updateItem).toHaveBeenLastCalledWith('run-1', 'item-A1', {
+      launch_config: expect.objectContaining({ sdk: 'claude-code-cli' })
+    })
+  })
+
+  it('lets a ticket whose launch failed be changed, not one its agent flagged', async () => {
+    await renderDashboard(
+      makeDetail(LAUNCHED, [
+        { key: 'A1', status: 'needs_attention', session_id: null },
+        { key: 'A2', status: 'needs_attention', session_id: 'session-2' },
+        // Left out of the run: never launches, so nothing to choose.
+        { key: 'A3', status: 'pending', selected: false }
+      ])
+    )
+
+    expect(screen.getByTestId('docflow-row-model-trigger-A1')).toBeInTheDocument()
+    expect(screen.queryByTestId('docflow-row-model-trigger-A2')).toBeNull()
+    expect(screen.queryByTestId('docflow-row-model-trigger-A3')).toBeNull()
+    expect(screen.getByTestId('docflow-row-model-A3')).toBeInTheDocument()
+  })
+
+  it('offers a model one ticket uses as one tap on every ticket that has not launched', async () => {
+    await renderDashboard(
+      makeDetail(LAUNCHED, [
+        { key: 'A1', status: 'running', launch_config: SONNET_HIGH },
+        { key: 'A2', status: 'pending' },
+        { key: 'A3', status: 'pending', selected: false },
+        { key: 'A4', status: 'merged' }
+      ])
+    )
+
+    expect(chip('A2')).toHaveAttribute('aria-pressed', 'false')
+    expect(chip('A2')).toHaveTextContent(/sonnet/i)
+    expect(chip('A2')).toHaveTextContent('high')
+    for (const key of ['A1', 'A3', 'A4']) {
+      expect(screen.queryByTestId(`docflow-row-quick-models-${key}`)).toBeNull()
+    }
+    // Chips need no picker.
+    expect(screen.queryByTestId('model-selector')).toBeNull()
+
+    await click('docflow-row-quick-model-A2-0')
+    expect(api.updateItem).toHaveBeenLastCalledWith('run-1', 'item-A2', {
+      launch_config: SONNET_HIGH
+    })
+    expect(chip('A2')).toHaveAttribute('aria-pressed', 'true')
+    // The pressed chip names the model, so the trigger only keeps its arrows.
+    expect(screen.queryByTestId('docflow-row-model-A2')).toBeNull()
+    expect(screen.getByTestId('docflow-row-model-trigger-A2')).toBeInTheDocument()
+
+    await click('docflow-row-quick-model-A2-0')
+    expect(api.updateItem).toHaveBeenLastCalledWith('run-1', 'item-A2', { launch_config: null })
+    expect(chip('A2')).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByTestId('docflow-row-model-A2')).toHaveTextContent('app default')
+  })
+
+  it('copies a model to every other ticket that has not launched, from the picker', async () => {
+    await renderDashboard(
+      makeDetail(LAUNCHED, [
+        { key: 'A1', status: 'pending', launch_config: OPUS_ULTRACODE },
+        { key: 'A2', status: 'pending' },
+        { key: 'A3', status: 'pending', launch_config: OPUS_ULTRACODE },
+        { key: 'A4', status: 'running' },
+        { key: 'A5', status: 'needs_attention', session_id: null, launch_config: SONNET_HIGH },
+        { key: 'A6', status: 'pending', selected: false }
+      ])
+    )
+
+    await click('docflow-row-model-trigger-A1')
+    expect(screen.getByTestId('docflow-row-model-apply-A1')).toHaveTextContent(
+      'Also use for 2 other pending tickets'
+    )
+    await click('docflow-row-model-apply-A1')
+
+    expect(api.updateItem).toHaveBeenCalledTimes(2)
+    expect(api.updateItem).toHaveBeenCalledWith('run-1', 'item-A2', {
+      launch_config: OPUS_ULTRACODE
+    })
+    expect(api.updateItem).toHaveBeenCalledWith('run-1', 'item-A5', {
+      launch_config: OPUS_ULTRACODE
+    })
+    // Everyone is on it now: nothing left to copy to, and the chip for it is pressed on A2.
+    expect(screen.queryByTestId('docflow-row-model-apply-A1')).toBeNull()
+    expect(chip('A2')).toHaveAttribute('aria-pressed', 'true')
+    expect(chip('A2')).toHaveTextContent('ultracode')
+    expect(chip('A5')).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('copies the run default back to the others once a ticket goes back to it', async () => {
+    await renderDashboard(
+      makeDetail(LAUNCHED, [
+        { key: 'A1', status: 'pending' },
+        { key: 'A2', status: 'pending', launch_config: SONNET_HIGH },
+        { key: 'A3', status: 'pending' }
+      ])
+    )
+
+    await click('docflow-row-model-trigger-A1')
+    expect(screen.getByTestId('docflow-row-model-apply-A1')).toHaveTextContent(
+      'Use the run default for 1 other pending ticket'
+    )
+    await click('docflow-row-model-apply-A1')
+    expect(api.updateItem).toHaveBeenCalledTimes(1)
+    expect(api.updateItem).toHaveBeenCalledWith('run-1', 'item-A2', { launch_config: null })
+  })
+
+  it('reports a model change that could not be saved', async () => {
+    api.updateItem.mockRejectedValue(
+      new Error('A2 has launched; its model can no longer be changed.')
+    )
+    await renderDashboard(
+      makeDetail(LAUNCHED, [
+        { key: 'A1', status: 'running', launch_config: SONNET_HIGH },
+        { key: 'A2', status: 'pending' }
+      ])
+    )
+
+    await click('docflow-row-quick-model-A2-0')
+
+    expect(toast.error).toHaveBeenCalledWith(
+      'Could not change the model of A2: A2 has launched; its model can no longer be changed.'
+    )
+    expect(chip('A2')).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  it('shows the model read-only once the run is over', async () => {
+    await renderDashboard(
+      makeDetail({ ...LAUNCHED, status: 'completed' }, [
+        { key: 'A1', status: 'merged', launch_config: SONNET_HIGH },
+        { key: 'A2', status: 'skipped' }
+      ])
+    )
+
+    expect(screen.getByTestId('docflow-row-model-A1')).toHaveTextContent(/sonnet/i)
+    expect(screen.queryByTestId('docflow-row-model-trigger-A1')).toBeNull()
+    expect(screen.queryByTestId('docflow-row-model-trigger-A2')).toBeNull()
+    expect(screen.queryByTestId('docflow-row-quick-models-A2')).toBeNull()
   })
 })
 

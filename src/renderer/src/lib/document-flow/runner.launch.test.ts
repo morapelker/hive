@@ -469,6 +469,48 @@ describe('DocumentFlowRunner: launching', () => {
     expect(bare.launches[0].modelConfig.model?.modelID).toBe('app-default')
   })
 
+  it('launches a waiting ticket with the model chosen for it meanwhile', async () => {
+    const edited = {
+      sdk: 'codex' as const,
+      model: { providerID: 'openai', modelID: 'edited-model', variant: 'high' },
+      codexFastMode: false
+    }
+    const world = createWorld({ config: { maxParallel: 1 }, items: [{ key: 'A' }, { key: 'B' }] })
+    start(world)
+    await advance(1000)
+    expect(world.statuses()).toEqual({ A: 'running', B: 'pending' })
+
+    // Changed from the dashboard while B waits for a slot.
+    world.setItem('B', { launch_config: edited })
+    world.setRun({ config: { ...world.detail().run.config, maxParallel: 2 } })
+    await advance(1000)
+
+    expect(world.statuses()).toEqual({ A: 'running', B: 'running' })
+    expect(world.launches[1].modelConfig).toEqual(edited)
+  })
+
+  it('launches with a model that reached the server just before its launching write', async () => {
+    const edited = {
+      sdk: 'claude-code-cli' as const,
+      model: { providerID: 'anthropic', modelID: 'late-model', variant: 'xhigh' },
+      codexFastMode: false
+    }
+    const world = createWorld()
+    const updateItem = world.ports.updateItem.getMockImplementation()
+    if (!updateItem) throw new Error('the fake updateItem has no implementation')
+    world.ports.updateItem.mockImplementationOnce(async (runId, itemId, patch) => {
+      // The user's pick is written by the server right before the runner's `launching` write;
+      // the runner read the item before either of them.
+      world.setItem('A', { launch_config: edited })
+      return updateItem(runId, itemId, patch)
+    })
+    start(world)
+    await advance(1000)
+
+    expect(world.statuses()).toEqual({ A: 'running' })
+    expect(world.launches[0].modelConfig).toEqual(edited)
+  })
+
   it('flags a failed launch, cleans up after it, and relaunches on Retry', async () => {
     const world = createWorld()
     world.ports.launchTicket.mockResolvedValueOnce({

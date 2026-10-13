@@ -1,19 +1,11 @@
-import { useCallback, useEffect, useState } from 'react'
-import {
-  ChevronDown,
-  ChevronRight,
-  ChevronsUpDown,
-  Eye,
-  EyeOff,
-  Image as ImageIcon
-} from 'lucide-react'
+import { useCallback, useState } from 'react'
+import { ChevronDown, ChevronRight, Eye, EyeOff, Image as ImageIcon } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { ticketPillClass } from '@/components/kanban/pill'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Textarea } from '@/components/ui/textarea'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
@@ -29,7 +21,7 @@ import {
   TonePill,
   VerificationChips
 } from './DocumentFlowBadges'
-import { LaunchConfigPicker } from './LaunchConfigPicker'
+import { LaunchConfigPopover } from './LaunchConfigPopover'
 import {
   dependencyReaches,
   dependencyState,
@@ -89,12 +81,10 @@ export function DocumentRunItemEditor({
     (patch: DocumentRunItemPatch) => updateItem(runId, item.id, patch),
     [updateItem, runId, item.id]
   )
-  const [pickerOpen, setPickerOpen] = useState(false)
-  const [pendingPicks, setPendingPicks] = useState(0)
-  const picking = pickerOpen || pendingPicks > 0
-  useEffect(() => {
-    onModelPickingChange(item.id, picking)
-  }, [onModelPickingChange, item.id, picking])
+  const onPickingChange = useCallback(
+    (picking: boolean) => onModelPickingChange(item.id, picking),
+    [onModelPickingChange, item.id]
+  )
   // The pressed chip already names the model; the trigger then only keeps its arrows.
   const usesQuickChoice = quickChoices.some((choice) =>
     sameLaunchConfig(choice.config, item.launch_config)
@@ -143,42 +133,24 @@ export function DocumentRunItemEditor({
               )
             }}
           />
-          <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
-            <PopoverTrigger asChild>
-              <button
-                type="button"
-                aria-label={`Model and effort for ${item.key}`}
-                title="Change model and effort"
-                data-testid={`docflow-item-model-trigger-${item.key}`}
-                className="flex h-7 shrink-0 items-center gap-1 rounded-md border border-transparent px-1.5 transition-colors hover:border-border hover:bg-accent/50 data-[state=open]:border-border data-[state=open]:bg-accent/50"
-              >
-                {!usesQuickChoice && (
-                  <LaunchConfigBadge
-                    config={item.launch_config}
-                    inheritLabel="default"
-                    testId={`docflow-item-model-${item.key}`}
-                  />
-                )}
-                <ChevronsUpDown className="h-3 w-3 text-muted-foreground" />
-              </button>
-            </PopoverTrigger>
-            {/* The picker (and its model catalog request) only mounts while the popover is open. */}
-            <PopoverContent align="end" className="w-[380px] space-y-1.5" data-docflow-dialog="">
-              <p className={LABEL_CLASS}>Model for {item.key}</p>
-              <LaunchConfigPicker
-                value={item.launch_config}
-                onChange={(launch_config) => {
-                  setPendingPicks((count) => count + 1)
-                  save({ launch_config })
-                    .catch(reportSaveFailure)
-                    .finally(() => setPendingPicks((count) => count - 1))
-                }}
-                inheritLabel="Run default"
-                clearLabel="Use run default"
-                testIdPrefix={`docflow-item-model-picker-${item.key}`}
-              />
-            </PopoverContent>
-          </Popover>
+          <LaunchConfigPopover
+            itemKey={item.key}
+            value={item.launch_config}
+            badge={
+              !usesQuickChoice && (
+                <LaunchConfigBadge
+                  config={item.launch_config}
+                  inheritLabel="default"
+                  testId={`docflow-item-model-${item.key}`}
+                />
+              )
+            }
+            inheritLabel="Run default"
+            clearLabel="Use run default"
+            testIdPrefix="docflow-item-model"
+            onChange={(launch_config) => save({ launch_config }).catch(reportSaveFailure)}
+            onPickingChange={onPickingChange}
+          />
           {quickChoices.length > 0 && (
             <div
               role="group"

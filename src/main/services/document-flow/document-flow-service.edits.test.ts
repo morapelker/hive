@@ -2,10 +2,11 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type {
-  DocumentRunLaunchConfig,
-  DocumentRunStatus,
-  DocumentRunVerdict
+import {
+  DEFAULT_DOCUMENT_RUN_CONFIG,
+  type DocumentRunLaunchConfig,
+  type DocumentRunStatus,
+  type DocumentRunVerdict
 } from '@shared/types/document-flow'
 
 vi.mock('../logger', () => ({
@@ -355,6 +356,115 @@ describe('updateItem', () => {
     expect(harness.db.getDocumentRunItem(items[0].id)?.verification).toEqual([])
   })
 
+  it.each<DocumentRunStatus>(['running', 'paused'])(
+    'changes the model of a %s run only for tickets that have not launched',
+    (status) => {
+      const { run, items } = seedRun(harness, {
+        run: { status },
+        items: [
+          { ticket_id: 'ticket-1' },
+          // Its launch failed: nothing runs for it, and Retry launches it afresh.
+          { status: 'needs_attention', session_id: null, ticket_id: 'ticket-2' },
+          { status: 'needs_attention', session_id: 'session-3', ticket_id: 'ticket-3' },
+          { status: 'running', session_id: 'session-4', ticket_id: 'ticket-4' },
+          { status: 'merged', session_id: 'session-5', ticket_id: 'ticket-5' }
+        ]
+      })
+
+      expect(
+        harness.service.updateItem(run.id, items[0].id, { launch_config: launchConfig })
+          .launch_config
+      ).toEqual(launchConfig)
+      expect(
+        harness.service.updateItem(run.id, items[1].id, { launch_config: launchConfig })
+          .launch_config
+      ).toEqual(launchConfig)
+      for (const item of items.slice(2)) {
+        expect(() =>
+          harness.service.updateItem(run.id, item.id, { launch_config: launchConfig })
+        ).toThrow(`${item.key} has launched; its model can no longer be changed.`)
+        expect(harness.db.getDocumentRunItem(item.id)?.launch_config).toBeNull()
+      }
+      expect(harness.published.map((event) => event.itemId)).toEqual([items[0].id, items[1].id])
+    }
+  )
+
+  it('re-stamps the model on the board ticket of a launched run, detached from the request', async () => {
+    const { run, items } = seedRun(harness, {
+      run: { status: 'running', config: { ...DEFAULT_DOCUMENT_RUN_CONFIG, defaultLaunch: null } },
+      items: [{ ticket_id: 'ticket-1' }]
+    })
+    const before = harness.detachCount()
+
+    harness.service.updateItem(run.id, items[0].id, { launch_config: launchConfig })
+    // Back to the run default, which names no model: the ticket carries none.
+    harness.service.updateItem(run.id, items[0].id, { launch_config: null })
+    // Back to the run default once it names a model: that one.
+    harness.service.updateRun(run.id, {
+      config: {
+        defaultLaunch: {
+          sdk: 'codex',
+          model: { providerID: 'openai', modelID: 'gpt-5.5' },
+          codexFastMode: false
+        }
+      }
+    })
+    harness.service.updateItem(run.id, items[0].id, { launch_config: null })
+    await Promise.resolve()
+
+    expect(harness.ticketUpdates).toEqual([
+      {
+        projectId: TEST_PROJECT_ID,
+        ticketId: 'ticket-1',
+        patch: { model_provider_id: 'anthropic', model_id: 'opus', model_variant: 'ultracode' }
+      },
+      {
+        projectId: TEST_PROJECT_ID,
+        ticketId: 'ticket-1',
+        patch: { model_provider_id: null, model_id: null, model_variant: null }
+      },
+      {
+        projectId: TEST_PROJECT_ID,
+        ticketId: 'ticket-1',
+        patch: { model_provider_id: 'openai', model_id: 'gpt-5.5', model_variant: null }
+      }
+    ])
+    expect(harness.detachCount()).toBe(before + 3)
+  })
+
+  it('keeps a model change when the board ticket could not be updated', async () => {
+    const { run, items } = seedRun(harness, {
+      run: { status: 'running' },
+      items: [{ ticket_id: 'ticket-1' }]
+    })
+    harness.overrides.updateTicket = async () => {
+      throw new Error('The board is read-only.')
+    }
+
+    expect(
+      harness.service.updateItem(run.id, items[0].id, { launch_config: launchConfig }).launch_config
+    ).toEqual(launchConfig)
+    await Promise.resolve()
+    expect(harness.db.getDocumentRunItem(items[0].id)?.launch_config).toEqual(launchConfig)
+  })
+
+  it('leaves the board alone for a model change in the preview, where there is no ticket yet', () => {
+    const { run, items } = seedRun(harness, { items: [{}] })
+
+    harness.service.updateItem(run.id, items[0].id, { launch_config: launchConfig })
+
+    expect(harness.ticketUpdates).toEqual([])
+  })
+
+  it('refuses a model change while the tickets are still being extracted', () => {
+    const { run, items } = seedRun(harness, { run: { status: 'extracting' }, items: [{}] })
+
+    expect(() =>
+      harness.service.updateItem(run.id, items[0].id, { launch_config: launchConfig })
+    ).toThrow('Tickets can only be edited while the run is in preview.')
+    expect(harness.db.getDocumentRunItem(items[0].id)?.launch_config).toBeNull()
+  })
+
   it.each<DocumentRunStatus>(['extracting', 'running', 'paused', 'completed', 'cancelled'])(
     'refuses content edits once the run is %s',
     (status) => {
@@ -365,8 +475,7 @@ describe('updateItem', () => {
         { summary: 'x' },
         { description: 'x' },
         { depends_on: [] },
-        { selected: false },
-        { launch_config: null }
+        { selected: false }
       ]) {
         expect(() => harness.service.updateItem(run.id, items[0].id, patch)).toThrow(
           'Tickets can only be edited while the run is in preview.'

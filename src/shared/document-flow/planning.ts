@@ -63,6 +63,15 @@ export function launchableItems<T extends DocumentRunItem>(
     .slice(0, freeSlots)
 }
 
+/**
+ * The ticket has not launched: it waits its turn, or its launch failed and left it flagged with
+ * no session (what Retry sends back to `pending`). What reaches the agent with its launch (the
+ * model, the verification) is still open on such a ticket.
+ */
+export function awaitsLaunch(item: Pick<DocumentRunItem, 'status' | 'session_id'>): boolean {
+  return item.status === 'pending' || (item.status === 'needs_attention' && !item.session_id)
+}
+
 /** True while an item occupies the integration worktree (merging, verifying or being fixed). */
 export function isMergeInFlight(items: readonly DocumentRunItem[]): boolean {
   return items.some(
