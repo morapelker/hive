@@ -696,6 +696,47 @@ describe('DocumentFlowRunner: merging', () => {
       expect(world.item('B').status_detail).toBeNull()
     })
 
+    it('takes over a run the earlier orchestrator left with several tickets resolving at once', async () => {
+      // Before the lane existed, every conflicting ticket was prompted at the same time. After
+      // a restart the first of them holds the lane; the others finish their turn and wait.
+      const legacy = (key: string): Partial<DocumentRunItem> =>
+        readyItem(key, {
+          status: 'resolving_conflicts',
+          status_detail: 'Resolving conflicts in 1 file(s)',
+          conflict_attempts: 1,
+          conflict_head: 'old-tip'
+        })
+      const world = createWorld({ items: [legacy('A'), legacy('B'), readyItem('C')] })
+      start(world)
+
+      await advance(1000)
+
+      expect(world.statuses()).toEqual({
+        A: 'resolving_conflicts',
+        B: 'resolving_conflicts',
+        C: 'ready'
+      })
+      expect(world.api.prepareMerge).not.toHaveBeenCalled()
+      expect(world.item('C').status_detail).toBe('Waiting to merge: A is resolving conflicts')
+
+      world.endTurn('s-B')
+      await advance(SETTLE_MS + 1000)
+
+      expect(world.statuses()).toEqual({ A: 'resolving_conflicts', B: 'ready', C: 'ready' })
+      expect(world.api.prepareMerge).not.toHaveBeenCalled()
+
+      world.endTurn('s-A')
+      await advance(SETTLE_MS + 2000)
+
+      expect(world.statuses()).toEqual({ A: 'merged', B: 'merged', C: 'merged' })
+      expect(world.api.merge.mock.calls.map(([, itemId]) => itemId)).toEqual([
+        'item-A',
+        'item-B',
+        'item-C'
+      ])
+      expect(world.followups).toHaveLength(0)
+    })
+
     it('does not start a merge while a ticket is being launched from the integration tip', async () => {
       const world = createWorld({
         config: { maxParallel: 2 },
