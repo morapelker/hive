@@ -385,6 +385,8 @@ interface KanbanState {
   ) => Promise<void>
   reorderTicket: (ticketId: string, projectId: string, newSortOrder: number) => Promise<void>
   toggleBoardView: () => void
+  /** Close the board view unconditionally (navigation intent) — idempotent, unlike toggleBoardView. */
+  closeBoardView: () => void
   setSimpleMode: (projectId: string, enabled: boolean) => Promise<void>
   setPinnedBoardLastCreateProjectId: (projectId: string | null) => void
   setTransitionSort: (projectId: string, column: KanbanTicketColumn, enabled: boolean) => void
@@ -1454,6 +1456,14 @@ export const useKanbanStore = create<KanbanState>()(
           if (wasTiled) useSessionStore.getState().deactivateTiledSessions()
           set((state) => ({ isBoardViewActive: wasTiled ? true : !state.isBoardViewActive }))
         })
+      },
+
+      // ── closeBoardView ───────────────────────────────────────────
+      // Navigation to a session closes the board by setting the flag directly:
+      // toggleBoardView is async (dynamic import) and tiled-aware, so it would
+      // force the board ON when the tiled tab holds the pane.
+      closeBoardView: () => {
+        set((state) => (state.isBoardViewActive ? { isBoardViewActive: false } : state))
       },
 
       // ── setTransitionSort ────────────────────────────────────────

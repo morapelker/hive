@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo } from 'react'
+import { leaveBoardViews } from '@/lib/board-navigation'
 import { useGitStore } from '@/stores/useGitStore'
-import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useSessionStore } from '@/stores/useSessionStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
@@ -185,9 +185,7 @@ export function useConflictFixFlow(worktreeId: string | null): {
   const openAttachedSession = useCallback(() => {
     if (!worktreeId || !attachedSessionId) return
     const currentWorktree = resolveWorktree(worktreeId)
-    const kanbanStore = useKanbanStore.getState()
-    if (kanbanStore.isBoardViewActive) kanbanStore.toggleBoardView()
-    if (kanbanStore.isPinnedBoardActive) kanbanStore.togglePinnedBoard()
+    leaveBoardViews()
     if (currentWorktree.projectId) {
       useProjectStore.getState().selectProject(currentWorktree.projectId)
     }

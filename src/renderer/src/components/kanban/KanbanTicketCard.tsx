@@ -112,6 +112,7 @@ import { useSettingsStore } from '@/stores/useSettingsStore'
 import { isBlockerSatisfied } from '@/lib/blocker-utils'
 import { findBaseInstanceConnection, isBaseInstance } from '@/lib/connection-project'
 import { setProjectBasePinned } from '@/lib/auto-pin'
+import { leaveBoardViews } from '@/lib/board-navigation'
 import { useConnectionStore } from '@/stores/useConnectionStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useProjectIconUrl } from '@/components/projects/LanguageIcon'
@@ -1274,8 +1275,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     if (!ticket.current_session_id) return
     const kanbanStore = useKanbanStore.getState()
     kanbanStore.markTicketRead(ticket.id, ticket.project_id)
-    if (kanbanStore.isBoardViewActive) kanbanStore.toggleBoardView()
-    if (kanbanStore.isPinnedBoardActive) kanbanStore.togglePinnedBoard()
+    leaveBoardViews()
     if (connectionId) {
       // Connection mode: navigate to the connection and set session
       useConnectionStore.getState().selectConnection(connectionId)
@@ -1307,8 +1307,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     if (!completedReviewSessionId) return
     const kanbanStore = useKanbanStore.getState()
     kanbanStore.markTicketRead(ticket.id, ticket.project_id)
-    if (kanbanStore.isBoardViewActive) kanbanStore.toggleBoardView()
-    if (kanbanStore.isPinnedBoardActive) kanbanStore.togglePinnedBoard()
+    leaveBoardViews()
     if (ticket.worktree_id) {
       useWorktreeStore.getState().selectWorktree(ticket.worktree_id)
       useSessionStore.getState().setActiveWorktree(ticket.worktree_id)

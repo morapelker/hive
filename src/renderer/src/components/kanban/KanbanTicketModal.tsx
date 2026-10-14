@@ -75,6 +75,7 @@ import { useCommandApprovalStore } from '@/stores/useCommandApprovalStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { isBlockerSatisfied } from '@/lib/blocker-utils'
+import { leaveBoardViews } from '@/lib/board-navigation'
 import {
   buildConnectionMergeQueue,
   queueConnectionRunMerge,
@@ -2334,6 +2335,7 @@ function PlanReviewModeContent({
           if (boardMode === 'sticky-tab') {
             sessionStore.setActiveSession(BOARD_TAB_ID)
           } else if (!isAgentCli(newSession.agent_sdk)) {
+            leaveBoardViews()
             sessionStore.setActiveConnection(sessionRecord.connection_id)
             sessionStore.setActiveConnectionSession(newSessionId)
           }
@@ -2424,6 +2426,7 @@ function PlanReviewModeContent({
         if (boardMode === 'sticky-tab') {
           sessionStore.setActiveSession(BOARD_TAB_ID)
         } else if (!isAgentCli(newSession.agent_sdk)) {
+          leaveBoardViews()
           sessionStore.setActiveWorktree(worktreeId)
           sessionStore.setActiveSession(newSessionId)
         }
@@ -3937,11 +3940,9 @@ function JumpToSessionButton({
     const sessionId = ticket.current_session_id
     if (!sessionId) return
 
-    // Switch off board view
-    const kanbanStore = useKanbanStore.getState()
-    if (kanbanStore.isBoardViewActive) {
-      kanbanStore.toggleBoardView()
-    }
+    // Leave the board and the pinned board — going to a session always means
+    // the session takes the main pane, regardless of which board was showing.
+    leaveBoardViews()
 
     // Select the ticket's worktree and sync session store
     if (ticket.worktree_id) {
@@ -3959,19 +3960,26 @@ function JumpToSessionButton({
     // it back to active so the modal-release cleanup doesn't kill the very
     // terminal being navigated to. closeSession drops the session from the
     // store maps, so the in-memory lookup can miss — fall back to the DB row.
-    // Connection-backed sessions (ticket.worktree_id null) reopen via their
-    // connection, or the jump would target an id MainPane cannot resolve.
+    // Connection-backed sessions (ticket.worktree_id null) live under their
+    // connection: MainPane only scopes connection sessions under the selected
+    // connection, so select it (as the card's "go to session" does) or the jump
+    // would target an id MainPane cannot resolve.
     try {
       const record =
         sessionStore.getSessionById(sessionId) ?? (await dbApi.session.get<Session>(sessionId))
+      const connectionId = ticket.worktree_id ? null : (record?.connection_id ?? null)
+      if (connectionId) {
+        useConnectionStore.getState().selectConnection(connectionId)
+        sessionStore.setActiveConnection(connectionId)
+        // setActiveConnection restores that connection's last active tab —
+        // re-claim the session we are jumping to.
+        sessionStore.setActiveSession(sessionId)
+      }
       if (record?.status === 'completed') {
         if (ticket.worktree_id) {
           await sessionStore.reopenSession(sessionId, ticket.worktree_id)
-        } else if (record.connection_id) {
-          // MainPane only scopes connection sessions under the selected
-          // connection — select it or the reopened tab has nowhere to mount
-          useConnectionStore.getState().selectConnection(record.connection_id)
-          await sessionStore.reopenConnectionSession(sessionId, record.connection_id)
+        } else if (connectionId) {
+          await sessionStore.reopenConnectionSession(sessionId, connectionId)
         }
       }
     } catch {

@@ -30,6 +30,7 @@ import { dbApi } from '@/api/db-api'
 import { kanbanApi } from '@/api/kanban-api'
 import { isForceBoardMode } from '@/api/hive-enterprise/client'
 import { autoPinForBoardPrompt } from '@/lib/auto-pin'
+import { leaveBoardViews } from '@/lib/board-navigation'
 import { isWindows } from '@/lib/platform'
 import { lastSendMode, messageSendTimes, userExplicitSendTimes } from '@/lib/message-send-times'
 import { markShellCommandStartFailed } from '@/lib/shell-command-status'
@@ -229,15 +230,14 @@ async function startRun(
 }
 
 /**
- * Show the new terminal tab. All synchronous and in this order: the board view flag
- * hides terminals; selectWorktree closes the pinned board idempotently (never call
- * togglePinnedBoard); setActiveWorktree MUST precede setActiveSession, which keys on
- * the active worktree (and the SessionTabs sync effect would otherwise reset the
- * active session to the board tab in sticky-tab mode).
+ * Show the new terminal tab. All synchronous and in this order: leaveBoardViews
+ * closes the board and pinned board idempotently (never call togglePinnedBoard);
+ * setActiveWorktree MUST precede setActiveSession, which keys on the active
+ * worktree (and the SessionTabs sync effect would otherwise reset the active
+ * session to the board tab in sticky-tab mode).
  */
 function navigateToSession(projectId: string, worktreeId: string, sessionId: string): void {
-  const kanban = useKanbanStore.getState()
-  if (kanban.isBoardViewActive) kanban.toggleBoardView()
+  leaveBoardViews()
   useWorktreeStore.getState().selectWorktree(worktreeId)
   const projects = useProjectStore.getState()
   projects.selectProject(projectId)
