@@ -227,6 +227,18 @@ async function loadProjectTicketsSnapshot(
   return { tickets, diagnostics }
 }
 
+/** One queued connection-member worktree of a pending done/merged move */
+export interface PendingDoneMoveWorktree {
+  worktreeId: string
+  projectId: string
+  /**
+   * Nothing to commit or merge when the queue was built: only the archive/keep
+   * step is left for it. The dialog's "Archive all" handles every such member
+   * at once (see `completeDoneMove`'s `handledWorktreeIds`).
+   */
+  alreadyMerged?: boolean
+}
+
 /** Pending "move to done/merged" data — drives the MergeOnDoneDialog */
 export interface PendingDoneMove {
   ticketId: string
@@ -238,7 +250,7 @@ export interface PendingDoneMove {
   /** Project owning `worktreeId` — may differ from the ticket's project */
   worktreeProjectId?: string
   /** Connection flow: member worktrees still to merge after the current one */
-  remainingWorktrees?: { worktreeId: string; projectId: string }[]
+  remainingWorktrees?: PendingDoneMoveWorktree[]
   /**
    * Connection flow: member worktrees whose merge hit conflicts earlier in
    * this queue. The queue keeps going past them, but the ticket stays put
@@ -272,13 +284,17 @@ function pendingDoneMoveMatches(
 
 /**
  * Connection flow: the pending move for the next member worktree, or null
- * when the current member was the last one.
+ * when the current member was the last one. `handledWorktreeIds` are skipped:
+ * the dialog already dealt with them alongside the current member.
  */
 function nextPendingDoneMove(
   pending: PendingDoneMove,
-  conflictedWorktrees: NonNullable<PendingDoneMove['conflictedWorktrees']>
+  conflictedWorktrees: NonNullable<PendingDoneMove['conflictedWorktrees']>,
+  handledWorktreeIds?: ReadonlySet<string>
 ): PendingDoneMove | null {
-  const [nextWorktree, ...restWorktrees] = pending.remainingWorktrees ?? []
+  const [nextWorktree, ...restWorktrees] = (pending.remainingWorktrees ?? []).filter(
+    (w) => !handledWorktreeIds?.has(w.worktreeId)
+  )
   if (!nextWorktree) return null
   return {
     ticketId: pending.ticketId,
@@ -383,11 +399,21 @@ interface KanbanState {
   setBoardSearchDescriptions: (on: boolean) => void
   setPendingDoneMove: (data: PendingDoneMove) => void
   clearPendingDoneMove: () => void
-  completeDoneMove: (expected?: {
-    ticketId: string
-    projectId: string
-    worktreeId?: string
-  }) => Promise<void>
+  completeDoneMove: (
+    expected?: {
+      ticketId: string
+      projectId: string
+      worktreeId?: string
+    },
+    opts?: {
+      /**
+       * Connection flow: queued members the dialog handled together with the
+       * current one ("Archive all") — they are dropped from the queue instead
+       * of getting their own turn.
+       */
+      handledWorktreeIds?: ReadonlySet<string>
+    }
+  ) => Promise<void>
   /**
    * Connection flow: the current member's merge hit conflicts. Record it and
    * advance to the next member instead of aborting the whole queue.
@@ -1820,13 +1846,13 @@ export const useKanbanStore = create<KanbanState>()(
         set({ pendingDoneMove: null })
       },
 
-      completeDoneMove: async (expected) => {
+      completeDoneMove: async (expected, opts) => {
         const pending = get().pendingDoneMove
         if (!pending || !pendingDoneMoveMatches(pending, expected)) return
         // Connection flow: advance to the next member worktree before moving
         // the ticket — the move only happens after the last worktree finishes
         const conflictedWorktrees = pending.conflictedWorktrees ?? []
-        const next = nextPendingDoneMove(pending, conflictedWorktrees)
+        const next = nextPendingDoneMove(pending, conflictedWorktrees, opts?.handledWorktreeIds)
         if (next) {
           set({ pendingDoneMove: next })
           return

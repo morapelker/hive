@@ -9,6 +9,13 @@ import type { Session, Worktree } from '../../../main/db/types'
 export interface ConnectionMergeTarget {
   worktreeId: string
   projectId: string
+  /**
+   * The branch had nothing to commit or merge when the queue was built, so the
+   * dialog only has the archive/keep step left for it (see `includeAlreadyMerged`).
+   * These members are queued last, so once the merges are done the dialog can
+   * offer to archive all of them at once.
+   */
+  alreadyMerged?: boolean
 }
 
 /**
@@ -40,7 +47,10 @@ export async function resolveTicketConnectionId(
  *
  * `includeAlreadyMerged` also queues clean members so each still gets the
  * archive/keep step — the connection-project analog of the single-project
- * archive-prompt-only path on Review/Merged → Done drops.
+ * archive-prompt-only path on Review/Merged → Done drops. They are flagged
+ * `alreadyMerged` and ordered after the members with work to merge, so the
+ * merge/commit dialogs come first and the archive-only prompts are left for
+ * the end, where the dialog offers to archive all of them in one go.
  */
 export async function buildConnectionMergeQueue(
   connectionId: string,
@@ -86,14 +96,19 @@ export async function buildConnectionMergeQueue(
         )
       }
 
-      if (hasUncommitted || branchStatResult.commitsAhead > 0 || opts?.includeAlreadyMerged) {
+      if (hasUncommitted || branchStatResult.commitsAhead > 0) {
         return { worktreeId: worktree.id, projectId: member.project_id }
+      }
+      if (opts?.includeAlreadyMerged) {
+        return { worktreeId: worktree.id, projectId: member.project_id, alreadyMerged: true }
       }
       return null
     })
   )
 
-  return assessed.filter((t): t is ConnectionMergeTarget => t !== null)
+  const queue = assessed.filter((t): t is ConnectionMergeTarget => t !== null)
+  // Stable: members keep their connection order within each group
+  return [...queue.filter((t) => !t.alreadyMerged), ...queue.filter((t) => t.alreadyMerged)]
 }
 
 /**

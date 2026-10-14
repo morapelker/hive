@@ -183,7 +183,44 @@ describe('buildConnectionMergeQueue', () => {
     })
 
     const queue = await buildConnectionMergeQueue('conn-1', { includeAlreadyMerged: true })
-    expect(queue).toEqual([{ worktreeId: 'wt-clean', projectId: 'proj-1' }])
+    expect(queue).toEqual([{ worktreeId: 'wt-clean', projectId: 'proj-1', alreadyMerged: true }])
+  })
+
+  it('queues members with work to merge first and already-merged ones last', async () => {
+    connectionApiMocks.get.mockResolvedValue({
+      success: true,
+      connection: {
+        id: 'conn-1',
+        members: [
+          { worktree_id: 'wt-merged-1', project_id: 'proj-1' },
+          { worktree_id: 'wt-dirty', project_id: 'proj-2' },
+          { worktree_id: 'wt-merged-2', project_id: 'proj-3' },
+          { worktree_id: 'wt-ahead', project_id: 'proj-4' }
+        ]
+      }
+    })
+    dbApiMocks.worktree.get.mockImplementation(async (id: string) =>
+      worktree({ id, project_id: `proj-${id}`, path: `/repo/${id}` })
+    )
+    dbApiMocks.worktree.getActiveByProject.mockResolvedValue([mainWorktree])
+    gitApiMocks.hasUncommittedChanges.mockImplementation(
+      async (path: string) => path === '/repo/wt-dirty'
+    )
+    gitApiMocks.branchDiffShortStat.mockImplementation(async (path: string) => ({
+      success: true,
+      filesChanged: 0,
+      insertions: 0,
+      deletions: 0,
+      commitsAhead: path === '/repo/wt-ahead' ? 2 : 0
+    }))
+
+    const queue = await buildConnectionMergeQueue('conn-1', { includeAlreadyMerged: true })
+    expect(queue).toEqual([
+      { worktreeId: 'wt-dirty', projectId: 'proj-2' },
+      { worktreeId: 'wt-ahead', projectId: 'proj-4' },
+      { worktreeId: 'wt-merged-1', projectId: 'proj-1', alreadyMerged: true },
+      { worktreeId: 'wt-merged-2', projectId: 'proj-3', alreadyMerged: true }
+    ])
   })
 
   it('skips members whose base worktree is missing', async () => {

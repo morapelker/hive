@@ -95,6 +95,7 @@ export function MergeOnDoneDialog() {
   const [committing, setCommitting] = useState(false)
   const [merging, setMerging] = useState(false)
   const [archiving, setArchiving] = useState(false)
+  const [archivingAll, setArchivingAll] = useState(false)
 
   // The file list / diff drill-down owns its navigation state; the dialog
   // only needs to ask it whether Escape was consumed (back / clear filter)
@@ -157,6 +158,7 @@ export function MergeOnDoneDialog() {
       setCommitting(false)
       setMerging(false)
       setArchiving(false)
+      setArchivingAll(false)
 
       try {
         // Look up ticket from store
@@ -553,6 +555,113 @@ export function MergeOnDoneDialog() {
       })
   }, [resolved, pendingIdentity, completeDoneMove])
 
+  // Connection-project flow: once the members with work to merge are done,
+  // the rest of the queue is archive/keep prompts only (the queue builder
+  // puts already-merged members last). Offer to archive them all at once
+  // instead of one Archive click per project.
+  const archiveAllCandidates = useMemo(() => {
+    const remaining = pendingDoneMove?.remainingWorktrees ?? []
+    if (!pendingDoneMove?.offerArchive || remaining.length === 0) return []
+    return remaining.every((w) => w.alreadyMerged) ? remaining : []
+  }, [pendingDoneMove])
+
+  const handleArchiveAll = useCallback(async () => {
+    if (!resolved || archiveAllCandidates.length === 0) return
+    setArchivingAll(true)
+
+    type ArchiveTarget = {
+      worktreeId: string
+      worktreePath: string
+      branch: string
+      projectPath: string
+    }
+    const targets: ArchiveTarget[] = [
+      {
+        worktreeId: resolved.featureWorktreeId,
+        worktreePath: resolved.featureWorktreePath,
+        branch: resolved.featureBranch,
+        projectPath: resolved.projectPath
+      }
+    ]
+    // Members that were skipped: gone already, or they picked up work since
+    // the queue was built — those keep their own turn in the dialog instead
+    // of being archived (archive deletes the branch)
+    const handled = new Set<string>()
+    const keptForMerge: string[] = []
+
+    try {
+      await Promise.all(
+        archiveAllCandidates.map(async (member) => {
+          const worktree = await dbApi.worktree.get<MergeWorktree>(member.worktreeId)
+          if (!worktree || worktree.status !== 'active') {
+            handled.add(member.worktreeId)
+            return
+          }
+          const activeWorktrees = await dbApi.worktree.getActiveByProject<MergeWorktree>(
+            member.projectId
+          )
+          const baseBranch =
+            worktree.base_branch ?? activeWorktrees.find((w) => w.is_default)?.branch_name
+          if (!baseBranch) return
+          const [dirty, stat] = await Promise.all([
+            gitApi.hasUncommittedChanges(worktree.path),
+            gitApi.branchDiffShortStat(worktree.path, baseBranch)
+          ])
+          if (dirty || !stat.success || stat.commitsAhead > 0) {
+            keptForMerge.push(worktree.branch_name)
+            return
+          }
+          const project = await dbApi.project.get<MergeProject>(worktree.project_id)
+          handled.add(member.worktreeId)
+          targets.push({
+            worktreeId: worktree.id,
+            worktreePath: worktree.path,
+            branch: worktree.branch_name,
+            projectPath: project?.path ?? worktree.path
+          })
+        })
+      )
+    } catch (err) {
+      setArchivingAll(false)
+      toast.error(`Failed to check branches: ${err instanceof Error ? err.message : String(err)}`)
+      return
+    }
+
+    try {
+      await completeDoneMove(pendingIdentity, { handledWorktreeIds: handled })
+    } catch (err) {
+      setArchivingAll(false)
+      toast.error(`Failed to move ticket: ${err instanceof Error ? err.message : String(err)}`)
+      return
+    }
+
+    if (keptForMerge.length > 0) {
+      toast.warning(
+        `${keptForMerge.join(', ')} ${keptForMerge.length === 1 ? 'has' : 'have'} new changes — not archived`
+      )
+    }
+
+    const store = useWorktreeStore.getState()
+    void Promise.all(
+      targets.map((t) =>
+        store
+          .archiveWorktree(t.worktreeId, t.worktreePath, t.branch, t.projectPath)
+          .then((result) => ({ branch: t.branch, error: result.success ? null : result.error }))
+          .catch((err) => ({
+            branch: t.branch,
+            error: err instanceof Error ? err.message : String(err)
+          }))
+      )
+    ).then((results) => {
+      const failed = results.filter((r) => r.error)
+      const archived = results.length - failed.length
+      if (archived > 0) {
+        toast.success(`${archived} worktree${archived !== 1 ? 's' : ''} archived`)
+      }
+      for (const f of failed) toast.error(`Failed to archive ${f.branch}: ${f.error}`)
+    })
+  }, [resolved, archiveAllCandidates, pendingIdentity, completeDoneMove])
+
   // The dialog serves both the Done and the optional Merged column
   const targetLabel = pendingDoneMove?.targetColumn === 'merged' ? 'Merged' : 'Done'
 
@@ -800,18 +909,51 @@ export function MergeOnDoneDialog() {
               {resolved.alreadyMerged ? 'Branch already merged.' : 'Merge successful!'} Archive the{' '}
               <code className="bg-muted px-1 rounded">{resolved.featureBranch}</code> worktree?
             </p>
+            {archiveAllCandidates.length > 0 && (
+              <p className="text-xs text-muted-foreground" data-testid="archive-all-hint">
+                The{' '}
+                {archiveAllCandidates.length === 1
+                  ? 'other'
+                  : `other ${archiveAllCandidates.length}`}{' '}
+                project{archiveAllCandidates.length !== 1 ? 's' : ''} in this connection{' '}
+                {archiveAllCandidates.length === 1 ? 'is' : 'are'} already merged too. Archive all
+                archives {archiveAllCandidates.length === 1 ? 'both' : 'all of them'} at once.
+              </p>
+            )}
             <div className="flex items-center justify-between">
-              <Button variant="outline" size="sm" onClick={() => completeDoneMove(pendingIdentity)}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => completeDoneMove(pendingIdentity)}
+                disabled={archiving || archivingAll}
+              >
                 Keep
               </Button>
-              <Button size="sm" onClick={handleArchive} disabled={archiving}>
-                {archiving ? (
-                  <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                ) : (
-                  <Archive className="h-3 w-3 mr-1" />
+              <div className="flex items-center gap-2">
+                {archiveAllCandidates.length > 0 && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleArchiveAll}
+                    disabled={archiving || archivingAll}
+                  >
+                    {archivingAll ? (
+                      <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                    ) : (
+                      <Archive className="h-3 w-3 mr-1" />
+                    )}
+                    Archive all
+                  </Button>
                 )}
-                Archive
-              </Button>
+                <Button size="sm" onClick={handleArchive} disabled={archiving || archivingAll}>
+                  {archiving ? (
+                    <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                  ) : (
+                    <Archive className="h-3 w-3 mr-1" />
+                  )}
+                  Archive
+                </Button>
+              </div>
             </div>
           </div>
         )}

@@ -58,6 +58,25 @@ describe('completeDoneMove — connection merge queue', () => {
     expect(useKanbanStore.getState().pendingDoneMove).toBeNull()
   })
 
+  it('drops members handled together with the current one and keeps the rest queued', async () => {
+    await useKanbanStore
+      .getState()
+      .completeDoneMove(undefined, { handledWorktreeIds: new Set(['wt-b']) })
+
+    expect(moveTicketMock).not.toHaveBeenCalled()
+    expect(useKanbanStore.getState().pendingDoneMove?.worktreeId).toBe('wt-c')
+    expect(useKanbanStore.getState().pendingDoneMove?.remainingWorktrees).toEqual([])
+  })
+
+  it('moves the ticket at once when every remaining member was handled together', async () => {
+    await useKanbanStore
+      .getState()
+      .completeDoneMove(undefined, { handledWorktreeIds: new Set(['wt-b', 'wt-c']) })
+
+    expect(moveTicketMock).toHaveBeenCalledExactlyOnceWith('ticket-1', 'proj-a', 'merged', 5)
+    expect(useKanbanStore.getState().pendingDoneMove).toBeNull()
+  })
+
   it('clearPendingDoneMove cancels the whole queue', () => {
     useKanbanStore.getState().clearPendingDoneMove()
     expect(useKanbanStore.getState().pendingDoneMove).toBeNull()
