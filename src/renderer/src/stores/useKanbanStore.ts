@@ -399,6 +399,11 @@ interface KanbanState {
   setBoardSearchDescriptions: (on: boolean) => void
   setPendingDoneMove: (data: PendingDoneMove) => void
   clearPendingDoneMove: () => void
+  /**
+   * Resolves to false when nothing was done: no move is pending any more (the
+   * dialog was dismissed) or `expected` no longer matches it. Callers that act
+   * destructively afterwards (archive) must stop on false.
+   */
   completeDoneMove: (
     expected?: {
       ticketId: string
@@ -413,7 +418,7 @@ interface KanbanState {
        */
       handledWorktreeIds?: ReadonlySet<string>
     }
-  ) => Promise<void>
+  ) => Promise<boolean>
   /**
    * Connection flow: the current member's merge hit conflicts. Record it and
    * advance to the next member instead of aborting the whole queue.
@@ -1848,21 +1853,21 @@ export const useKanbanStore = create<KanbanState>()(
 
       completeDoneMove: async (expected, opts) => {
         const pending = get().pendingDoneMove
-        if (!pending || !pendingDoneMoveMatches(pending, expected)) return
+        if (!pending || !pendingDoneMoveMatches(pending, expected)) return false
         // Connection flow: advance to the next member worktree before moving
         // the ticket — the move only happens after the last worktree finishes
         const conflictedWorktrees = pending.conflictedWorktrees ?? []
         const next = nextPendingDoneMove(pending, conflictedWorktrees, opts?.handledWorktreeIds)
         if (next) {
           set({ pendingDoneMove: next })
-          return
+          return true
         }
         set({ pendingDoneMove: null })
         // Earlier members hit conflicts — the queue ran to the end so every
         // member got checked, but the ticket stays until they're resolved
         if (conflictedWorktrees.length > 0) {
           toastConflictedDoneMove(conflictedWorktrees.length)
-          return
+          return true
         }
         await get().moveTicket(
           pending.ticketId,
@@ -1870,6 +1875,7 @@ export const useKanbanStore = create<KanbanState>()(
           pending.targetColumn,
           pending.sortOrder
         )
+        return true
       },
 
       continueDoneMoveAfterConflict: (expected) => {

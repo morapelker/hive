@@ -573,6 +573,7 @@ export function MergeOnDoneDialog() {
       worktreeId: string
       worktreePath: string
       branch: string
+      baseBranch: string
       projectPath: string
     }
     const targets: ArchiveTarget[] = [
@@ -580,9 +581,19 @@ export function MergeOnDoneDialog() {
         worktreeId: resolved.featureWorktreeId,
         worktreePath: resolved.featureWorktreePath,
         branch: resolved.featureBranch,
+        baseBranch: resolved.baseBranch,
         projectPath: resolved.projectPath
       }
     ]
+    // Archive removes the worktree and deletes the branch, so a target is only
+    // archived while it has nothing to commit or merge
+    const isClean = async (worktreePath: string, baseBranch: string): Promise<boolean> => {
+      const [dirty, stat] = await Promise.all([
+        gitApi.hasUncommittedChanges(worktreePath),
+        gitApi.branchDiffShortStat(worktreePath, baseBranch)
+      ])
+      return !dirty && stat.success && stat.commitsAhead === 0
+    }
     // Members that were skipped: gone already, or they picked up work since
     // the queue was built — those keep their own turn in the dialog instead
     // of being archived (archive deletes the branch)
@@ -603,11 +614,7 @@ export function MergeOnDoneDialog() {
           const baseBranch =
             worktree.base_branch ?? activeWorktrees.find((w) => w.is_default)?.branch_name
           if (!baseBranch) return
-          const [dirty, stat] = await Promise.all([
-            gitApi.hasUncommittedChanges(worktree.path),
-            gitApi.branchDiffShortStat(worktree.path, baseBranch)
-          ])
-          if (dirty || !stat.success || stat.commitsAhead > 0) {
+          if (!(await isClean(worktree.path, baseBranch))) {
             keptForMerge.push(worktree.branch_name)
             return
           }
@@ -617,6 +624,7 @@ export function MergeOnDoneDialog() {
             worktreeId: worktree.id,
             worktreePath: worktree.path,
             branch: worktree.branch_name,
+            baseBranch,
             projectPath: project?.path ?? worktree.path
           })
         })
@@ -627,34 +635,52 @@ export function MergeOnDoneDialog() {
       return
     }
 
+    // The checks above took a while: the dialog may have been dismissed (Keep
+    // in Review) or replaced meanwhile. Then the move is refused and nothing
+    // may be archived — closing must never delete branches.
+    let accepted: boolean
     try {
-      await completeDoneMove(pendingIdentity, { handledWorktreeIds: handled })
+      accepted = await completeDoneMove(pendingIdentity, { handledWorktreeIds: handled })
     } catch (err) {
       setArchivingAll(false)
       toast.error(`Failed to move ticket: ${err instanceof Error ? err.message : String(err)}`)
       return
     }
-
-    if (keptForMerge.length > 0) {
-      toast.warning(
-        `${keptForMerge.join(', ')} ${keptForMerge.length === 1 ? 'has' : 'have'} new changes — not archived`
-      )
+    if (!accepted) {
+      setArchivingAll(false)
+      return
     }
 
     const store = useWorktreeStore.getState()
     void Promise.all(
-      targets.map((t) =>
-        store
-          .archiveWorktree(t.worktreeId, t.worktreePath, t.branch, t.projectPath)
-          .then((result) => ({ branch: t.branch, error: result.success ? null : result.error }))
-          .catch((err) => ({
-            branch: t.branch,
-            error: err instanceof Error ? err.message : String(err)
-          }))
-      )
+      targets.map(async (t) => {
+        // Last look right before the destructive step: work that landed in
+        // the worktree since its check above (an agent still writing) is kept
+        try {
+          if (!(await isClean(t.worktreePath, t.baseBranch))) {
+            keptForMerge.push(t.branch)
+            return null
+          }
+          const result = await store.archiveWorktree(
+            t.worktreeId,
+            t.worktreePath,
+            t.branch,
+            t.projectPath
+          )
+          return { branch: t.branch, error: result.success ? null : result.error }
+        } catch (err) {
+          return { branch: t.branch, error: err instanceof Error ? err.message : String(err) }
+        }
+      })
     ).then((results) => {
-      const failed = results.filter((r) => r.error)
-      const archived = results.length - failed.length
+      if (keptForMerge.length > 0) {
+        toast.warning(
+          `${keptForMerge.join(', ')} ${keptForMerge.length === 1 ? 'has' : 'have'} new changes — not archived`
+        )
+      }
+      const outcomes = results.filter((r) => r !== null)
+      const failed = outcomes.filter((r) => r.error)
+      const archived = outcomes.length - failed.length
       if (archived > 0) {
         toast.success(`${archived} worktree${archived !== 1 ? 's' : ''} archived`)
       }

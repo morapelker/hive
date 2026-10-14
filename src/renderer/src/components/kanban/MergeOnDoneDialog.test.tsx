@@ -680,6 +680,57 @@ describe('MergeOnDoneDialog — Archive all (connection-project queue)', () => {
     )
   })
 
+  it('archives nothing when the dialog is dismissed while the members are being checked', async () => {
+    let releaseCheck: () => void = () => {}
+    const gate = new Promise<void>((resolve) => {
+      releaseCheck = resolve
+    })
+    dbApiMocks.worktree.get.mockImplementation(async (id: string) => {
+      if (id === 'worktree-1') return featureWorktree
+      await gate
+      if (id === 'worktree-next') return nextWorktree
+      if (id === 'worktree-last') return lastWorktree
+      return null
+    })
+
+    render(<MergeOnDoneDialog />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Archive all' }))
+    // Escape / close → Keep in Review while the checks are still running
+    act(() => useKanbanStore.getState().clearPendingDoneMove())
+    releaseCheck()
+
+    await waitFor(() => expect(screen.queryByTestId('merge-on-done-dialog')).toBeNull())
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(archiveWorktreeMock).not.toHaveBeenCalled()
+    expect(moveTicketMock).not.toHaveBeenCalled()
+  })
+
+  it('keeps a member that picked up work between its check and the archive', async () => {
+    // worktree-next is clean at the first check, dirty right before archiving
+    let nextChecks = 0
+    gitApiMocks.hasUncommittedChanges.mockImplementation(async (path: string) => {
+      if (path !== '/repo2/feature') return false
+      nextChecks += 1
+      return nextChecks > 1
+    })
+
+    render(<MergeOnDoneDialog />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Archive all' }))
+
+    await waitFor(() =>
+      expect(moveTicketMock).toHaveBeenCalledWith('ticket-1', 'project-1', 'done', 5)
+    )
+    await waitFor(() => expect(archiveWorktreeMock).toHaveBeenCalledTimes(2))
+    expect(archiveWorktreeMock).not.toHaveBeenCalledWith(
+      'worktree-next',
+      expect.anything(),
+      expect.anything(),
+      expect.anything()
+    )
+  })
+
   it('Archive (single) still archives only the current member and advances the queue', async () => {
     render(<MergeOnDoneDialog />)
 
