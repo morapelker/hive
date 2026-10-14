@@ -4,9 +4,11 @@ import { resetRendererRpcClientForTests, setRendererRpcClient } from '@/api/rpc-
 import { useKanbanStore } from '@/stores/useKanbanStore'
 import { useProjectStore } from '@/stores/useProjectStore'
 import { useSessionStore } from '@/stores/useSessionStore'
+import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useUsageStore } from '@/stores/useUsageStore'
 import { useWorktreeStatusStore } from '@/stores/useWorktreeStatusStore'
 import { useWorktreeStore } from '@/stores/useWorktreeStore'
+import { toast } from '@/lib/toast'
 import type { Session, Worktree } from '../../../main/db/types'
 
 vi.mock('@/api/settings-api', () => ({
@@ -19,7 +21,7 @@ vi.mock('@/api/settings-api', () => ({
 }))
 
 vi.mock('@/lib/toast', () => ({
-  toast: { success: vi.fn(), error: vi.fn() }
+  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() }
 }))
 
 vi.mock('@/lib/hive-enterprise-telemetry', () => ({
@@ -32,6 +34,7 @@ const initialKanbanState = useKanbanStore.getState()
 const initialProjectState = useProjectStore.getState()
 const initialUsageState = useUsageStore.getState()
 const initialWorktreeStatusState = useWorktreeStatusStore.getState()
+const initialSettingsState = useSettingsStore.getState()
 
 const session = {
   id: 'session-1',
@@ -76,8 +79,12 @@ const worktree = {
   github_pr_url: null
 } as Worktree
 
-function setupStores(): ReturnType<typeof vi.fn> {
-  const createWorktreeFromBranch = vi.fn(async () => ({ success: true, worktree }))
+type CreateResult = Awaited<ReturnType<typeof initialWorktreeState.createWorktreeFromBranch>>
+
+function setupStores(
+  createResult: CreateResult = { success: true, worktree }
+): ReturnType<typeof vi.fn> {
+  const createWorktreeFromBranch = vi.fn(async () => createResult)
   useProjectStore.setState({
     projects: [
       {
@@ -156,6 +163,7 @@ describe('launchTicketWithModel worktree options', () => {
     useProjectStore.setState(initialProjectState, true)
     useUsageStore.setState(initialUsageState, true)
     useWorktreeStatusStore.setState(initialWorktreeStatusState, true)
+    useSettingsStore.setState(initialSettingsState, true)
   })
 
   it('forwards baseRef, autoPull and select to the store', async () => {
@@ -196,6 +204,36 @@ describe('launchTicketWithModel worktree options', () => {
       'my-ticket-title',
       { select: false }
     )
+  })
+
+  it('warns when the base branch could not be pulled before the worktree was cut', async () => {
+    useSettingsStore.setState({ autoPullBeforeWorktree: true })
+    setupStores({ success: true, worktree, pullInfo: { pulled: false, updated: false } })
+
+    const result = await launchTicketWithModel(spec({ type: 'new', sourceBranch: 'main' }))
+
+    expect(result.success).toBe(true)
+    expect(toast.warning).toHaveBeenCalledWith(
+      'Could not pull latest main from origin - worktree created from the local branch'
+    )
+  })
+
+  it('does not warn about the pull when the launch opted out of auto-pull', async () => {
+    useSettingsStore.setState({ autoPullBeforeWorktree: true })
+    setupStores({ success: true, worktree, pullInfo: { pulled: false, updated: false } })
+
+    await launchTicketWithModel(spec({ type: 'new', sourceBranch: 'main', autoPull: false }))
+
+    expect(toast.warning).not.toHaveBeenCalled()
+  })
+
+  it('does not warn when the base branch was pulled', async () => {
+    useSettingsStore.setState({ autoPullBeforeWorktree: true })
+    setupStores({ success: true, worktree, pullInfo: { pulled: true, updated: true } })
+
+    await launchTicketWithModel(spec({ type: 'new', sourceBranch: 'main' }))
+
+    expect(toast.warning).not.toHaveBeenCalled()
   })
 
   it('makes the same five-argument call as before when no option is given', async () => {

@@ -114,6 +114,153 @@ describe('GitLive', () => {
     }
   })
 
+  describe('createFromBranch auto-pull', () => {
+    const createFromBranch = (branch: string, autoPull?: boolean) =>
+      runGit(
+        Effect.flatMap(Git, (git) =>
+          git.worktree.createFromBranch(repoPath, 'project', branch, 'dogs', undefined, {
+            nameHint: 'ticket',
+            ...(autoPull === undefined ? {} : { autoPull })
+          })
+        )
+      )
+
+    const headOf = async (path: string) => (await simpleGit(path).revparse(['HEAD'])).trim()
+
+    /**
+     * A bare origin the project pushes its current branch to, plus a way to
+     * land commits on origin from a second clone so origin/<branch> moves
+     * ahead of the project's local branch (another machine or teammate).
+     */
+    const setUpOrigin = async () => {
+      const originPath = join(homePath, 'origin.git')
+      mkdirSync(originPath)
+      await simpleGit(originPath).init(true)
+      const git = simpleGit(repoPath)
+      const branch = (await git.branch()).current
+      await simpleGit(originPath).raw(['symbolic-ref', 'HEAD', `refs/heads/${branch}`])
+      await git.addRemote('origin', originPath)
+      await git.push(['-u', 'origin', branch])
+
+      const pushFromClone = async (file: string): Promise<string> => {
+        const clonePath = join(homePath, `clone-${file}`)
+        await simpleGit().clone(originPath, clonePath)
+        const clone = simpleGit(clonePath)
+        await clone.addConfig('user.email', 'other@test.com')
+        await clone.addConfig('user.name', 'Other')
+        writeFileSync(join(clonePath, file), `${file}\n`)
+        await clone.add('.')
+        await clone.commit(`add ${file}`)
+        await clone.push('origin', branch)
+        return headOf(clonePath)
+      }
+      return { originPath, branch, pushFromClone }
+    }
+
+    it('fast-forwards the base branch checked out in the project folder before duplicating it', async () => {
+      const { branch, pushFromClone } = await setUpOrigin()
+      const upstreamSha = await pushFromClone('b.txt')
+
+      const result = await createFromBranch(branch)
+
+      expect(Either.isRight(result)).toBe(true)
+      if (Either.isRight(result)) {
+        expect(result.right.success).toBe(true)
+        expect(result.right.pullInfo).toEqual({ pulled: true, updated: true })
+        expect(await headOf(result.right.path!)).toBe(upstreamSha)
+        expect(existsSync(join(result.right.path!, 'b.txt'))).toBe(true)
+      }
+      expect(await headOf(repoPath)).toBe(upstreamSha)
+    })
+
+    it('pulls inside the linked worktree that holds the base branch, leaving the project checkout alone', async () => {
+      const { branch, pushFromClone } = await setUpOrigin()
+      const git = simpleGit(repoPath)
+      const initialSha = await headOf(repoPath)
+      await git.checkoutLocalBranch('dev')
+      const baseCheckout = join(homePath, 'base-checkout')
+      await git.raw(['worktree', 'add', baseCheckout, branch])
+      const upstreamSha = await pushFromClone('b.txt')
+
+      const result = await createFromBranch(branch)
+
+      expect(Either.isRight(result)).toBe(true)
+      if (Either.isRight(result)) {
+        expect(result.right.success).toBe(true)
+        expect(result.right.pullInfo).toEqual({ pulled: true, updated: true })
+        expect(await headOf(result.right.path!)).toBe(upstreamSha)
+      }
+      expect(await headOf(baseCheckout)).toBe(upstreamSha)
+      expect((await git.branch()).current).toBe('dev')
+      expect(await headOf(repoPath)).toBe(initialSha)
+    })
+
+    it('fast-forwards a base branch that is checked out nowhere', async () => {
+      const { branch, pushFromClone } = await setUpOrigin()
+      const git = simpleGit(repoPath)
+      const initialSha = await headOf(repoPath)
+      await git.checkoutLocalBranch('dev')
+      const upstreamSha = await pushFromClone('b.txt')
+
+      const result = await createFromBranch(branch)
+
+      expect(Either.isRight(result)).toBe(true)
+      if (Either.isRight(result)) {
+        expect(result.right.success).toBe(true)
+        expect(result.right.pullInfo).toEqual({ pulled: true, updated: true })
+        expect(await headOf(result.right.path!)).toBe(upstreamSha)
+      }
+      expect((await git.revparse([branch])).trim()).toBe(upstreamSha)
+      expect((await git.branch()).current).toBe('dev')
+      expect(await headOf(repoPath)).toBe(initialSha)
+    })
+
+    it('still creates the worktree from the local branch and reports the failed pull when origin is unreachable', async () => {
+      const { branch, pushFromClone } = await setUpOrigin()
+      await pushFromClone('b.txt')
+      const localSha = await headOf(repoPath)
+      await simpleGit(repoPath).remote(['set-url', 'origin', join(homePath, 'missing.git')])
+
+      const result = await createFromBranch(branch)
+
+      expect(Either.isRight(result)).toBe(true)
+      if (Either.isRight(result)) {
+        expect(result.right.success).toBe(true)
+        expect(result.right.pullInfo).toEqual({ pulled: false, updated: false })
+        expect(await headOf(result.right.path!)).toBe(localSha)
+      }
+    })
+
+    it('leaves a branch with no remote-tracking ref alone and reports it as in sync', async () => {
+      const { branch } = await setUpOrigin()
+      await simpleGit(repoPath).branch(['local-only', branch])
+
+      const result = await createFromBranch('local-only')
+
+      expect(Either.isRight(result)).toBe(true)
+      if (Either.isRight(result)) {
+        expect(result.right.success).toBe(true)
+        expect(result.right.pullInfo).toEqual({ pulled: true, updated: false })
+      }
+    })
+
+    it('does not touch origin when auto-pull is off', async () => {
+      const { branch, pushFromClone } = await setUpOrigin()
+      await pushFromClone('b.txt')
+      const localSha = await headOf(repoPath)
+
+      const result = await createFromBranch(branch, false)
+
+      expect(Either.isRight(result)).toBe(true)
+      if (Either.isRight(result)) {
+        expect(result.right.success).toBe(true)
+        expect(result.right.pullInfo).toEqual({ pulled: false, updated: false })
+        expect(await headOf(result.right.path!)).toBe(localSha)
+      }
+      expect(await headOf(repoPath)).toBe(localSha)
+    })
+  })
+
   describe('worktree removal safety', () => {
     const removeViaService = (targetPath: string) =>
       runGit(Effect.flatMap(Git, (git) => git.worktree.remove(repoPath, targetPath)))

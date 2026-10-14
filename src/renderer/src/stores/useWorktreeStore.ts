@@ -172,7 +172,12 @@ interface WorktreeState {
     branchName: string,
     nameHint?: string,
     options?: CreateWorktreeFromBranchOptions
-  ) => Promise<{ success: boolean; worktree?: Worktree; error?: string }>
+  ) => Promise<{
+    success: boolean
+    worktree?: Worktree
+    error?: string
+    pullInfo?: { pulled: boolean; updated: boolean }
+  }>
   duplicateWorktree: (
     projectId: string,
     projectPath: string,

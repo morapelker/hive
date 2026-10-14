@@ -22,6 +22,9 @@ import { normalizeBranchDisplayName } from '@shared/git-output'
 const execFileAsync = promisify(execFile)
 type GitOperation = 'merge' | 'rebase' | 'cherry-pick' | 'apply'
 
+/** Outcome of aligning a local base branch with origin before cutting a worktree from it. */
+type BaseBranchSyncResult = { success: boolean; updated: boolean }
+
 const log = createLogger({ component: 'GitWorktreeOps' })
 
 export const resolveGitWorktreesDir = (
@@ -657,6 +660,66 @@ const make = Effect.gen(function* () {
     )
   }
 
+  /**
+   * Fast-forward local `branchName` to `origin/<branchName>` before a worktree
+   * is cut from it. Tickets are often written long before they start, so by
+   * then the local base branch (usually main) can trail origin by many commits
+   * and the new worktree would open with a large diff from origin/main.
+   *
+   * Git refuses `fetch origin <b>:<b>` while `<b>` is checked out in ANY
+   * worktree, so the pull runs inside the worktree that holds the branch (the
+   * project checkout or a linked one). Running `git pull origin <b>` in the
+   * project checkout while it has a different branch checked out would merge
+   * origin/<b> into THAT branch instead, so the location matters. A branch
+   * checked out nowhere is fast-forwarded through its ref directly.
+   *
+   * A branch with no remote-tracking ref (never pushed or fetched) is left
+   * alone and reported as in sync. Anything else that blocks the fast-forward
+   * (offline, a diverged local branch, a dirty checkout conflicting with the
+   * incoming commits) reports `success: false`; the caller still creates the
+   * worktree from the local branch and the UI warns.
+   */
+  const syncBranchWithOrigin = (
+    repoPath: string,
+    branchName: string
+  ): Effect.Effect<BaseBranchSyncResult, never> =>
+    Effect.gen(function* () {
+      const checkout = (yield* listWorktrees(repoPath)).find((w) => w.branch === branchName)
+      return yield* writeOp(repoPath, `git pull --ff-only origin ${branchName}`, async (git) => {
+        const remotes = await git.getRemotes()
+        if (!remotes.find((r) => r.name === 'origin')) return { success: true, updated: false }
+
+        // simple-git only rejects a non-zero exit that also wrote to stderr, so
+        // an empty answer must count as "no such ref" too.
+        const resolveRef = (ref: string): Promise<string | null> =>
+          git.revparse(['--verify', ref]).then(
+            (sha) => sha.trim() || null,
+            () => null
+          )
+        if ((await resolveRef(`refs/remotes/origin/${branchName}`)) === null) {
+          return { success: true, updated: false }
+        }
+
+        const before = await resolveRef(`refs/heads/${branchName}`)
+        if (checkout) {
+          await simpleGit(checkout.path).pull('origin', branchName, { '--ff-only': null })
+        } else {
+          await git.fetch('origin', `${branchName}:${branchName}`)
+        }
+        const after = await resolveRef(`refs/heads/${branchName}`)
+        return { success: true, updated: before !== after }
+      })
+    }).pipe(
+      Effect.catchAll((error) => {
+        log.warn('Could not fast-forward base branch from origin; using the local branch', {
+          repoPath,
+          branchName,
+          error: error.stderrExcerpt ?? error._tag
+        })
+        return Effect.succeed({ success: false, updated: false })
+      })
+    )
+
   const deleteRemoteTrackingBranch = (repoPath: string, branchName: string, remote = 'origin') => {
     if (!branchName) return Effect.void
     return tryGit(repoPath, `git branch -dr ${remote}/${branchName}`, undefined, (git) =>
@@ -943,11 +1006,27 @@ const make = Effect.gen(function* () {
       duplicate: duplicateWorktree,
       createFromBranch: (repoPath, projectName, branchName, breedType: BreedType = 'dogs', prNumber, options) =>
         Effect.gen(function* () {
+          const autoPull = options?.autoPull !== false
+          const fromLocalBranch = prNumber == null && !options?.baseRef
+          // Align the base branch with origin BEFORE choosing how to cut the
+          // worktree: the duplicate fast path below and `worktree add` both
+          // read the local branch ref, so a stale ref yields a stale worktree
+          // either way. Before this ran first, a ticket started from a `main`
+          // checked out in the project folder was duplicated without any pull.
+          const pullResult: BaseBranchSyncResult =
+            fromLocalBranch && autoPull
+              ? yield* syncBranchWithOrigin(repoPath, branchName)
+              : { success: true, updated: false }
+          const pullInfo = {
+            pulled: fromLocalBranch && autoPull && pullResult.success,
+            updated: pullResult.updated
+          }
+
           // An explicit baseRef (remote launch passes `origin/<branch>`)
           // must bypass the duplicate-checked-out-worktree fast path: the
           // local checkout can be stale (remote prepare fetches but never
           // pulls) and duplicating it would also copy uncommitted files.
-          if (prNumber == null && !options?.baseRef) {
+          if (fromLocalBranch) {
             const worktrees = yield* listWorktrees(repoPath)
             const checkedOutWorktree = worktrees.find((worktree) => worktree.branch === branchName)
             if (checkedOutWorktree) {
@@ -959,16 +1038,14 @@ const make = Effect.gen(function* () {
                 options?.nameHint,
                 { worktreeCreateScript: options?.worktreeCreateScript ?? null }
               )
-              return { ...dup, baseBranch: branchName }
+              return { ...dup, baseBranch: branchName, pullInfo }
             }
           }
 
           return yield* writeOp(repoPath, 'git worktree add from branch', async (git) => {
             const projectWorktreesDir = ensureWorktreesDir(projectName)
             const MAX_ATTEMPTS = 3
-            const autoPull = options?.autoPull !== false
             const createScript = options?.worktreeCreateScript ?? null
-            let pullResult = { success: true, updated: false }
             if (prNumber != null) {
               let headRef = pullRequestHeadRef('github', prNumber)
               try {
@@ -981,20 +1058,6 @@ const make = Effect.gen(function* () {
                 // Fall back to the GitHub ref shape when remotes can't be read.
               }
               await git.raw(['fetch', 'origin', headRef])
-            }
-            else if (autoPull) {
-              try {
-                const remotes = await git.getRemotes()
-                if (remotes.find((r) => r.name === 'origin')) {
-                  const result = await git.pull('origin', branchName, { '--ff-only': null })
-                  pullResult = {
-                    success: true,
-                    updated: (result.files?.length || 0) > 0 || result.summary.changes > 0
-                  }
-                }
-              } catch {
-                pullResult = { success: false, updated: false }
-              }
             }
 
             for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -1055,7 +1118,7 @@ const make = Effect.gen(function* () {
                   branchName: worktreeName,
                   name: worktreeName,
                   baseBranch: branchName,
-                  pullInfo: { pulled: prNumber == null && pullResult.success && autoPull, updated: pullResult.updated || false }
+                  pullInfo
                 }
               } catch (error) {
                 const message = error instanceof Error ? error.message : 'Unknown error'

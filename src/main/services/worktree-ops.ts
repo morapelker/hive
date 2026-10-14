@@ -64,11 +64,11 @@ export interface CreateFromBranchParams {
   prNumber?: number
   nameHint?: string
   /**
-   * Overrides the user's auto-pull setting when set. Remote launch passes
-   * false: auto-pull runs `git pull origin <branch> --ff-only` in the BASE
-   * clone's checkout, which would fast-forward the shared remote clone's
-   * checked-out branch (e.g. main) to the feature branch when it's a
-   * descendant.
+   * Overrides the user's auto-pull setting when set. Auto-pull fast-forwards
+   * `branchName` from origin inside whichever checkout holds it before the
+   * worktree is cut (git layer `syncBranchWithOrigin`). Remote launch passes
+   * false together with `baseRef`: prepare has already fetched, and the
+   * shared remote clone's checkouts must not move under other sessions.
    */
   autoPull?: boolean
   /**

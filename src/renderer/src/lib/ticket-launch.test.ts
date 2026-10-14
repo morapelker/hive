@@ -30,7 +30,8 @@ vi.mock('@/api/settings-api', () => ({
 vi.mock('@/lib/toast', () => ({
   toast: {
     success: vi.fn(),
-    error: vi.fn()
+    error: vi.fn(),
+    warning: vi.fn()
   }
 }))
 

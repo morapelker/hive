@@ -32,6 +32,7 @@ import { unwrapEnvelope } from '@/lib/ipc-envelope'
 import { opencodeApi } from '@/api/opencode-api'
 import { dbApi } from '@/api/db-api'
 import { terminalApi } from '@/api/terminal-api'
+import { toast } from '@/lib/toast'
 import { startHivePromptTelemetry } from '@/lib/hive-enterprise-telemetry'
 import { createPlanFile, exceedsGoalPromptLimit, planFilePrompt } from '@/lib/goal-plan-file'
 import { FALLBACK_MODELS } from '@shared/model-resolution'
@@ -304,6 +305,18 @@ export async function launchTicketWithModel(spec: TicketLaunchSpec): Promise<Tic
         return { success: false, error: result.error || 'Could not create worktree' }
       }
       worktreeId = result.worktree.id
+      // The pull is best-effort (offline, diverged local branch, dirty checkout). Warn
+      // like the manual new-worktree flow does: a ticket started on a stale base looks
+      // fine until its PR shows a large diff from origin.
+      if (
+        autoPull !== false &&
+        useSettingsStore.getState().autoPullBeforeWorktree &&
+        result.pullInfo?.pulled === false
+      ) {
+        toast.warning(
+          `Could not pull latest ${spec.worktree.sourceBranch} from origin - worktree created from the local branch`
+        )
+      }
     } else {
       worktreeId = spec.worktree.worktreeId
     }
