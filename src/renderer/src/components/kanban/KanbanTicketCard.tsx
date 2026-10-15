@@ -140,6 +140,10 @@ import {
   documentRunTicketToneClass,
   useDocumentRunTicket
 } from '@/components/document-flow/useDocumentRunTicket'
+import {
+  isUnlaunchedCardPhase,
+  runBoardCardState
+} from '@/components/document-flow/document-flow-ui'
 import { isActiveRunStatus } from '@/components/document-flow/document-flow-ui'
 import { useDocumentFlowStore } from '@/stores/useDocumentFlowStore'
 import { isResolvingRunConflicts } from '@/components/document-flow/document-flow-ui'
@@ -246,8 +250,17 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     isDocumentRunTicket &&
     ticket.column === 'in_progress' &&
     (documentRunPhase === 'running' || documentRunPhase === 'migrating')
-  // A run that finished with issues wears the red perimeter of an errored session
-  const isEliteError = isDocumentRunTicket && documentRunPhase === 'issues'
+  // A run that finished with issues, or whose tickets could not be extracted, wears the red
+  // perimeter of an errored session
+  const isEliteError =
+    isDocumentRunTicket && (documentRunPhase === 'issues' || documentRunPhase === 'extract_failed')
+  // Before launch the run's ticket waits in To Do. It is not draggable while its tickets are
+  // being extracted (or failed to be), nor before its run is known: only a run in preview may
+  // be dropped on In Progress, which opens the preview to launch it.
+  const isUnlaunchedRunTicket =
+    isDocumentRunTicket &&
+    (isUnlaunchedCardPhase(documentRunPhase) || (ticket.column === 'todo' && !documentRunPhase))
+  const isRunTicketHeld = isUnlaunchedRunTicket && documentRunPhase !== 'ready'
   // Marked as a shell command's ticket: it stays one without a session (duplicated, or
   // dragged back to To Do), and entering In Progress runs the command.
   const isMarkedShellCommandTicket = shellCommandIdOfTicket(ticket) !== null
@@ -1074,13 +1087,14 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
         // Unknown project — nothing to select; fall through to the modal
       }
 
-      // A run's ticket opens the run, never the ticket modal and its session launcher
+      // A run's ticket opens the run, never the ticket modal and its session launcher: the
+      // preview to launch it before launch, the dashboard after
       if (documentRunId) {
         if (documentRunView?.missing) {
           toast.info('The record of this document run was deleted. Only its ticket is left.')
           return
         }
-        useDocumentFlowStore.getState().openDashboard(documentRunId)
+        useDocumentFlowStore.getState().openRun(ticket.project_id, documentRunId)
         return
       }
 
@@ -1567,14 +1581,19 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
     }
   }, [ticket.id, ticket.project_id])
 
+  // Before launch the dragon is blue while the tickets are extracted and green once ready
   const eliteLook: EliteDragonLook =
     isError || isEliteError
       ? 'error'
-      : isEliteActive
-        ? 'gold'
-        : documentRunPhase === 'completed'
-          ? 'silver-complete'
-          : 'silver'
+      : documentRunPhase === 'extracting'
+        ? 'blue'
+        : documentRunPhase === 'ready'
+          ? 'green'
+          : isEliteActive
+            ? 'gold'
+            : documentRunPhase === 'completed'
+              ? 'silver-complete'
+              : 'silver'
 
   return (
     <>
@@ -1588,7 +1607,7 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                 data-project-id={ticket.project_id}
                 data-ticket-key={domTicketKey}
                 data-sidebar-hover-highlight={isSidebarHoverHighlighted ? '' : undefined}
-                draggable={!isArchived && !blockingDiagnostic}
+                draggable={!isArchived && !blockingDiagnostic && !isRunTicketHeld}
                 onDragStart={handleDragStart}
                 onDragEnd={handleDragEnd}
                 onClick={handleClick}
@@ -2290,7 +2309,9 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
           {documentRunId && (
             <ContextMenuItem
               data-testid="ctx-open-document-run"
-              onClick={() => useDocumentFlowStore.getState().openDashboard(documentRunId)}
+              onClick={() =>
+                useDocumentFlowStore.getState().openRun(ticket.project_id, documentRunId)
+              }
               className="gap-2"
             >
               <FileText className="h-3.5 w-3.5" />

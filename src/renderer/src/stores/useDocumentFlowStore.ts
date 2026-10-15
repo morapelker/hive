@@ -5,6 +5,7 @@ import { resolvePRContentGeneration } from '@/lib/pr-content-provider'
 import { resolveDefaultLaunchModel } from '@/lib/tedooo-agent/models'
 import { resolvePreferredAgentSdk, useSettingsStore } from '@/stores/useSettingsStore'
 import { isTerminalItemStatus } from '@shared/document-flow/planning'
+import { isUnlaunchedRunStatus } from '@shared/document-flow/run-ticket'
 import type { DocumentFlowUpdatedEvent } from '@shared/document-flow-events'
 import {
   DEFAULT_DOCUMENT_RUN_CONFIG,
@@ -63,6 +64,12 @@ interface DocumentFlowState {
   closeWizard: () => void
   openDashboard: (runId: string) => void
   closeDashboard: () => void
+  /**
+   * Open a run from its ticket on the board: the wizard (extracting, failed or the preview to
+   * launch it) while the run is not launched, the dashboard once it is or when its status is
+   * not known yet (the dashboard offers the preview itself then).
+   */
+  openRun: (projectId: string, runId: string) => void
 
   // ── Actions (RPC wrappers that apply the result; they reject on failure) ──
   createRun: (projectId: string, documentPath: string, notes?: string) => Promise<DocumentRunDetail>
@@ -285,6 +292,14 @@ export const useDocumentFlowStore = create<DocumentFlowState>()(
         void get().refreshRun(runId)
       },
       closeDashboard: () => set({ dashboardRunId: null }),
+      openRun: (projectId, runId) => {
+        const status = get().runsById[runId]?.run.status
+        if (status && isUnlaunchedRunStatus(status)) {
+          get().openWizard(projectId, runId)
+          return
+        }
+        get().openDashboard(runId)
+      },
 
       createRun: async (projectId, documentPath, notes) => {
         const trimmedNotes = notes?.trim()

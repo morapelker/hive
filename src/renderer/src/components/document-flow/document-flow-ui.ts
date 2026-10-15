@@ -352,11 +352,26 @@ export function runCountsLabel(detail: Pick<DocumentRunDetail, 'run' | 'items'>)
 }
 
 /**
- * Where a launched run stands, as its ticket on the board tells it apart. `migrating`: the run
- * is over and a session is executing its migrations, which puts the ticket back In Progress.
+ * Where a run stands, as its ticket on the board tells it apart. Before launch, in To Do:
+ * `extracting` while the document is turned into tickets, `ready` once they wait in the
+ * preview, `extract_failed` when the extraction failed. `migrating`: the run is over and a
+ * session is executing its migrations, which puts the ticket back In Progress.
  */
 export type RunBoardCardPhase =
-  'running' | 'paused' | 'completed' | 'issues' | 'cancelled' | 'migrating'
+  | 'extracting'
+  | 'ready'
+  | 'extract_failed'
+  | 'running'
+  | 'paused'
+  | 'completed'
+  | 'issues'
+  | 'cancelled'
+  | 'migrating'
+
+/** Phases of a run that has not been launched: its ticket waits in To Do. */
+export function isUnlaunchedCardPhase(phase: RunBoardCardPhase | null | undefined): boolean {
+  return phase === 'extracting' || phase === 'ready' || phase === 'extract_failed'
+}
 
 export interface RunBoardCardState {
   title: string
@@ -379,6 +394,9 @@ export interface RunBoardCardState {
 }
 
 const RUN_BOARD_CARD_PHASES: Partial<Record<DocumentRunStatus, RunBoardCardPhase>> = {
+  extracting: 'extracting',
+  extract_failed: 'extract_failed',
+  preview: 'ready',
   paused: 'paused',
   completed: 'completed',
   completed_with_issues: 'issues',
@@ -411,6 +429,9 @@ export function runBoardCardState(
   const moved = column === 'merged' || column === 'done'
   const notMerged = summary.total - summary.merged
   const labels: Record<RunBoardCardPhase, string> = {
+    extracting: 'Extracting tickets…',
+    ready: 'Ready to launch',
+    extract_failed: 'Extraction failed',
     // One ticket waiting for an answer outweighs the count of those at work
     running: waiting > 0 ? `${waiting} waiting for answer` : workingLabel,
     paused: running > 0 ? `Paused · ${workingLabel}` : 'Paused',
@@ -433,10 +454,13 @@ export function runBoardCardState(
 }
 
 /**
- * Why a run's ticket cannot be dropped on `column`, or null when it can. The ticket stays In
- * Progress while the run is on (the app moves it to Review when the run ends); from then on
- * it is the user's to move forward. `status` is null when the run's record is gone. While a
- * session executes the run's migrations (`migrating`) the ticket is held In Progress again.
+ * Why a run's ticket cannot be dropped on `column`, or null when it can. Before launch the
+ * ticket waits in To Do: nowhere while the tickets are extracted (or failed to be), and only In
+ * Progress once they are ready — a drop there opens the preview to launch the run rather than
+ * moving the ticket, which launching does. The ticket stays In Progress while the run is on
+ * (the app moves it to Review when the run ends); from then on it is the user's to move
+ * forward. `status` is null when the run's record is gone. While a session executes the run's
+ * migrations (`migrating`) the ticket is held In Progress again.
  */
 export function documentRunTicketDropRefusal(
   status: DocumentRunStatus | null,
@@ -444,6 +468,17 @@ export function documentRunTicketDropRefusal(
   migrating = false
 ): string | null {
   if (column === 'todo') return 'The ticket of a document run cannot go back to To Do.'
+  if (status === 'extracting') {
+    return 'The tickets of this document run are still being extracted. Wait for them before moving it.'
+  }
+  if (status === 'extract_failed') {
+    return 'The tickets of this document run could not be extracted. Open its ticket to try again.'
+  }
+  if (status === 'preview') {
+    return column === 'in_progress'
+      ? null
+      : 'This document run has not been launched yet. Drop its ticket on In Progress, or open it, to launch it.'
+  }
   const active = status !== null && isActiveRunStatus(status)
   if (migrating && !active) {
     return column === 'in_progress'

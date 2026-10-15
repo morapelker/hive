@@ -243,6 +243,62 @@ describe('dropping the ticket of a run that is still going', () => {
   })
 })
 
+describe('dropping the ticket of a run that is not launched', () => {
+  it('opens the run’s preview to launch it when dropped on In Progress, without moving it', async () => {
+    seedRun('preview')
+
+    await drop(makeTicket({ column: 'todo', worktree_id: null }), 'in_progress')
+
+    expect(useDocumentFlowStore.getState().wizard).toEqual({
+      open: true,
+      projectId: 'proj-1',
+      runId: 'run-1'
+    })
+    expect(moveTicket).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('worktree-picker')).toBeNull()
+    expect(toast.warning).not.toHaveBeenCalled()
+  })
+
+  it.each(['review', 'done', 'merged'] as const)(
+    'refuses a previewed run on %s: In Progress is the way to launch it',
+    async (column) => {
+      seedRun('preview')
+
+      await drop(makeTicket({ column: 'todo', worktree_id: null }), column)
+
+      expect(toast.warning).toHaveBeenCalledWith(
+        'This document run has not been launched yet. Drop its ticket on In Progress, or open it, to launch it.'
+      )
+      expect(moveTicket).not.toHaveBeenCalled()
+      expect(setPendingDoneMove).not.toHaveBeenCalled()
+      expect(useDocumentFlowStore.getState().wizard.open).toBe(false)
+    }
+  )
+
+  it('refuses a run whose tickets are still being extracted anywhere', async () => {
+    seedRun('extracting')
+
+    await drop(makeTicket({ column: 'todo', worktree_id: null }), 'in_progress')
+
+    expect(toast.warning).toHaveBeenCalledWith(
+      'The tickets of this document run are still being extracted. Wait for them before moving it.'
+    )
+    expect(moveTicket).not.toHaveBeenCalled()
+    expect(useDocumentFlowStore.getState().wizard.open).toBe(false)
+  })
+
+  it('refuses a run whose extraction failed, pointing at the retry', async () => {
+    seedRun('extract_failed')
+
+    await drop(makeTicket({ column: 'todo', worktree_id: null }), 'in_progress')
+
+    expect(toast.warning).toHaveBeenCalledWith(
+      'The tickets of this document run could not be extracted. Open its ticket to try again.'
+    )
+    expect(moveTicket).not.toHaveBeenCalled()
+  })
+})
+
 describe('dropping the ticket of a run that has ended', () => {
   it.each(['completed', 'completed_with_issues', 'cancelled'] as const)(
     'opens the merge dialog for a %s run dropped on Done',

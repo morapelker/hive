@@ -365,6 +365,61 @@ describe('start', () => {
     expect(detail.items[0].verification).toEqual(['playwright', 'tests'])
   })
 
+  it("moves the ticket made with the run In Progress, on the integration worktree, instead of creating one", async () => {
+    const { run } = seedPreview()
+    harness.boardTickets.set('run-ticket', {
+      id: 'run-ticket',
+      projectId: TEST_PROJECT_ID,
+      column: 'todo'
+    })
+    harness.db.updateDocumentRun(run.id, { ticket_id: 'run-ticket' })
+
+    const detail = await harness.service.start(run.id)
+
+    // Only the task tickets were created.
+    expect(harness.ticketBatches).toHaveLength(1)
+    expect(harness.ticketBatches[0].drafts.map((draft) => draft.draft_key)).toEqual([
+      'A1',
+      'A2',
+      'A4'
+    ])
+    expect(detail.run.ticket_id).toBe('run-ticket')
+    expect(harness.ticketUpdates).toContainEqual({
+      projectId: TEST_PROJECT_ID,
+      ticketId: 'run-ticket',
+      patch: {
+        worktree_id: detail.run.integration_worktree_id,
+        description: `Document run of /specs/factory.html. Its branch ${detail.run.integration_branch} collects the merged work of the run's tickets; move this ticket to Done to merge it into main.`
+      }
+    })
+    expect(harness.ticketMoves).toEqual([
+      { projectId: TEST_PROJECT_ID, ticketId: 'run-ticket', column: 'in_progress' }
+    ])
+    expect(harness.boardTickets.get('run-ticket')).toMatchObject({ column: 'in_progress' })
+    const types = detail.events.map((event) => event.type)
+    expect(types).toContain('run_ticket_moved')
+    expect(types).not.toContain('run_ticket_created')
+  })
+
+  it('creates a new ticket In Progress when the one made with the run was deleted from the board', async () => {
+    const { run } = seedPreview()
+    harness.db.updateDocumentRun(run.id, { ticket_id: 'gone-ticket' })
+
+    const detail = await harness.service.start(run.id)
+
+    expect(harness.ticketBatches).toHaveLength(2)
+    expect(harness.ticketBatches[1].drafts[0]).toMatchObject({
+      draft_key: `run-${run.id}`,
+      column: 'in_progress',
+      worktree_id: detail.run.integration_worktree_id
+    })
+    expect(detail.run.ticket_id).not.toBe('gone-ticket')
+    expect(harness.boardTickets.get(detail.run.ticket_id!)).toMatchObject({
+      column: 'in_progress'
+    })
+    expect(harness.ticketMoves).toEqual([])
+  })
+
   it('creates one ticket per selected item, with attachments, model and selected dependencies', async () => {
     const { run } = seedPreview()
 

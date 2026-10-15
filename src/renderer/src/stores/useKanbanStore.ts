@@ -544,7 +544,8 @@ export const useKanbanStore = create<KanbanState>()(
 
       setSelectedTicketRef: (ref: TicketRef | null) => {
         // The ticket of a document run opens its run from every route, never the ticket
-        // detail with its session launcher
+        // detail with its session launcher: the preview to launch it before launch, the
+        // dashboard after
         const documentRunId = ref
           ? documentRunIdOf(
               get()
@@ -554,8 +555,9 @@ export const useKanbanStore = create<KanbanState>()(
           : null
         if (ref && documentRunId) {
           get().markTicketRead(ref.ticketId, ref.projectId)
+          const { projectId } = ref
           void import('./useDocumentFlowStore').then(({ useDocumentFlowStore }) => {
-            useDocumentFlowStore.getState().openDashboard(documentRunId)
+            useDocumentFlowStore.getState().openRun(projectId, documentRunId)
           })
           return
         }

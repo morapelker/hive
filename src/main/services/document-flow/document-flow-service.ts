@@ -152,6 +152,15 @@ const RUNNER_LEASE_STALE_MS = 45_000
 /** A run still `extracting` this long after its last write, with no job here, lost its job. */
 const STALE_EXTRACTION_MS = 15_000
 const EXTRACTION_HEARTBEAT_MS = 5_000
+
+/** How the run's event log names the column its ticket moved to. */
+const RUN_TICKET_COLUMN_NAMES: Record<KanbanTicketColumn, string> = {
+  todo: 'To Do',
+  in_progress: 'In Progress',
+  review: 'Review',
+  merged: 'Merged',
+  done: 'Done'
+}
 /** The model reads the repository while it extracts, so this is an agent's budget, not a reply's. */
 const EXTRACTION_TIMEOUT_MS = 900_000
 const CLASSIFICATION_TIMEOUT_MS = 90_000
@@ -223,10 +232,13 @@ export interface DocumentFlowTicket {
   column: KanbanTicketColumn
 }
 
-/** What a run writes on a board ticket after creating it: the model badge, or its own description. */
+/**
+ * What a run writes on a board ticket after creating it: the model badge on a task ticket; on
+ * the run's own ticket, the title once extracted and the integration worktree at launch.
+ */
 export type DocumentFlowTicketPatch = Pick<
   KanbanTicketUpdate,
-  'model_provider_id' | 'model_id' | 'model_variant' | 'description'
+  'model_provider_id' | 'model_id' | 'model_variant' | 'title' | 'description' | 'worktree_id'
 >
 
 export interface DocumentFlowServiceDeps {
@@ -622,7 +634,7 @@ export class DocumentFlowService {
     }
 
     const id = randomUUID()
-    const run = this.db.createDocumentRun({
+    let run = this.db.createDocumentRun({
       id,
       project_id: project.id,
       title: sanitizeLine(basename(sourcePath)) || 'Document',
@@ -642,8 +654,28 @@ export class DocumentFlowService {
       'created',
       link ? `Document downloaded from ${link} to ${sourcePath}` : `Document picked: ${sourcePath}`
     )
+    // The run's ticket waits in To Do from the start: the board shows the extraction on it, and
+    // opening it is how the run gets launched. A board that cannot be written does not stop the
+    // run (the launch creates the ticket then, as it did before runs had one this early).
+    run = await this.createRunTicketQuietly(run)
     this.startExtraction(run.id)
     return this.detail(run, true)
+  }
+
+  /**
+   * The run's ticket in To Do, created outside the calling request so the board of whoever
+   * picked the document reloads too. Never throws: the run goes on without its ticket.
+   */
+  private async createRunTicketQuietly(run: DocumentRun): Promise<DocumentRun> {
+    try {
+      return await this.detach(() => this.ensureRunTicket(run, 'todo'))
+    } catch (error) {
+      log.warn('Could not create the ticket of a document run', {
+        runId: run.id,
+        error: describeError(error)
+      })
+      return this.db.getDocumentRun(run.id) ?? run
+    }
   }
 
   retryExtraction(params: {
@@ -784,6 +816,8 @@ export class DocumentFlowService {
       this.log(updated, 'extracted', `${items.length} tickets extracted`, {
         data: { tickets: items.length, figures: meta.figureCount, generatedBy: meta.generatedBy }
       })
+      // The ticket was named after the file; the document's own title is known only now.
+      if (updated.title !== current.title) await this.stampRunTicketTitle(updated)
     } catch (error) {
       this.failExtraction(runId, describeError(error))
     } finally {
@@ -843,6 +877,8 @@ export class DocumentFlowService {
 
     if (Object.keys(rowPatch).length === 0) return run
     const updated = this.saveRun(run, rowPatch)
+    // The run's ticket carries the run's title; a rename follows it to the board.
+    if (rowPatch.title !== undefined) void this.stampRunTicketTitle(updated)
     if (rowPatch.status === 'paused') this.log(updated, 'paused', 'Run paused')
     if (rowPatch.status === 'running') this.log(updated, 'resumed', 'Run resumed')
     // The preview saves its settings as they are edited; only a launched run's change is history.
@@ -1578,19 +1614,25 @@ export class DocumentFlowService {
   // ── The run's own ticket ──────────────────────────────────────────────────
 
   /**
-   * The run's ticket on the board: an ordinary ticket on the integration worktree, so moving
-   * it to Done merges the integration branch into the base branch like any ticket's work. It
-   * has no session; the external-source fields mark it (both board backends store those), and
-   * `external_url` carries the path of the document the run was made from, so the ticket row
-   * itself says which file to open even once the run record is gone.
+   * The run's ticket on the board, in `column`. Created with the run, in To Do, where it shows
+   * the extraction and opens the preview; at launch it is placed In Progress on the integration
+   * worktree, so moving it to Done merges the integration branch into the base branch like any
+   * ticket's work. It has no session; the external-source fields mark it (both board backends
+   * store those), and `external_url` carries the path of the document the run was made from, so
+   * the ticket row itself says which file to open even once the run record is gone.
    * On a connection project the ticket has no worktree: the board merges the run's integration
    * instance member by member from `integration_connection_id` instead.
-   * Idempotent: a run that has its ticket is returned as it is.
+   * Idempotent: a run that has its ticket gets it placed, not a second one; a ticket deleted
+   * from the board (its run spared) is replaced.
    */
   private ensureRunTicket(run: DocumentRun, column: KanbanTicketColumn): Promise<DocumentRun> {
     return this.runTicketLocks.run(run.id, async () => {
-      const current = this.db.getDocumentRun(run.id) ?? run
-      if (current.ticket_id || !hasIntegration(current)) return current
+      let current = this.db.getDocumentRun(run.id) ?? run
+      if (current.ticket_id) {
+        const placed = await this.placeRunTicket(current, current.ticket_id, column)
+        if (placed) return current
+        current = this.saveRun(current, { ticket_id: null })
+      }
       const { tickets } = await this.deps.createTickets(current.project_id, [
         {
           draft_key: `run-${current.id}`,
@@ -1617,11 +1659,67 @@ export class DocumentFlowService {
       }
       const updated = this.saveRun(raced, { ticket_id: ticket.id })
       this.log(updated, 'run_ticket_created', 'The run got its ticket on the board')
+      // A new run's ticket goes to the top of To Do, where the user looks for what they just made.
+      if (column === 'todo') {
+        await this.deps.moveTicket(updated.project_id, ticket.id, column).catch((error: unknown) => {
+          log.warn('Could not move the ticket of a document run to the top of To Do', {
+            runId: updated.id,
+            error: describeError(error)
+          })
+        })
+      }
       return updated
     })
   }
 
+  /**
+   * The run's existing ticket, placed in `column`: at launch the ticket made with the run takes
+   * the integration worktree and the launched description, then leaves To Do for In Progress.
+   * False when the ticket is gone from the board.
+   */
+  private async placeRunTicket(
+    run: DocumentRun,
+    ticketId: string,
+    column: KanbanTicketColumn
+  ): Promise<boolean> {
+    const ticket = await this.deps.getTicket(run.project_id, ticketId)
+    if (!ticket) return false
+    if (hasIntegration(run)) {
+      await this.deps.updateTicket(run.project_id, ticketId, {
+        worktree_id: run.integration_worktree_id,
+        description: this.runTicketDescription(run)
+      })
+    }
+    if (ticket.column !== column) {
+      await this.deps.moveTicket(run.project_id, ticketId, column)
+      this.log(run, 'run_ticket_moved', `The run's ticket moved to ${RUN_TICKET_COLUMN_NAMES[column]}`)
+    }
+    return true
+  }
+
+  /** The run's title on its ticket; cosmetic, so never fatal. */
+  private async stampRunTicketTitle(run: DocumentRun): Promise<void> {
+    if (!run.ticket_id) return
+    const ticketId = run.ticket_id
+    try {
+      await this.detach(() =>
+        this.deps.updateTicket(run.project_id, ticketId, {
+          title: sanitizeLine(run.title) || 'Document run'
+        })
+      )
+    } catch (error) {
+      log.warn('Could not rename the ticket of a document run', {
+        runId: run.id,
+        ticketId,
+        error: describeError(error)
+      })
+    }
+  }
+
   private runTicketDescription(run: DocumentRun): string {
+    if (!hasIntegration(run)) {
+      return `Document run of ${run.source_path}. Its tickets are extracted from the document; open this ticket to review them and launch the run.`
+    }
     if (!isConnectionRun(run)) {
       return `Document run of ${run.source_path}. Its branch ${run.integration_branch} collects the merged work of the run's tickets; move this ticket to Done to merge it into ${run.base_branch}.`
     }

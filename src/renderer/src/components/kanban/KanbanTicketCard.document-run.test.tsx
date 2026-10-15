@@ -608,6 +608,123 @@ describe('the card of a document run ticket', () => {
     expect(useKanbanStore.getState().selectedTicketId).toBeNull()
   })
 
+  describe('before the run is launched, in To Do', () => {
+    const todoTicket = (): KanbanTicket => makeTicket({ column: 'todo', worktree_id: null })
+
+    it('wears a blue dragon, a moving bar and "Extracting", and cannot be dragged, while extracting', () => {
+      seedRuns(makeDetail({ id: 'run-live', status: 'extracting' }, []))
+      render(<KanbanTicketCard ticket={todoTicket()} />)
+
+      expect(within(card()).getByTestId('ticket-elite-dragon')).toHaveAttribute(
+        'data-look',
+        'blue'
+      )
+      expect(card()).toHaveAttribute('draggable', 'false')
+      expect(card().className).toContain('ticket-elite-silver')
+      expect(card().className).toContain('[--ticket-state-tone:#3b82f6]')
+      const body = screen.getByTestId('kanban-docflow-run-run-live')
+      expect(body).toHaveAttribute('data-phase', 'extracting')
+      expect(screen.getByTestId('kanban-docflow-run-bar-run-live')).toHaveAttribute('data-moving')
+      const label = screen.getByTestId('kanban-docflow-run-running-run-live')
+      expect(label).toHaveTextContent(/^Extracting tickets…$/)
+      expect(label.className).toContain('text-blue-500')
+      // Nothing merged to count yet.
+      expect(screen.queryByTestId('kanban-docflow-run-progress-run-live')).toBeNull()
+    })
+
+    it('turns the dragon green, says it is ready and counts the tickets, draggable again, once extracted', () => {
+      seedRuns(
+        makeDetail({ id: 'run-live', status: 'preview' }, [
+          { key: 'A1' },
+          { key: 'A2' },
+          { key: 'A3', selected: false }
+        ])
+      )
+      render(<KanbanTicketCard ticket={todoTicket()} />)
+
+      expect(within(card()).getByTestId('ticket-elite-dragon')).toHaveAttribute(
+        'data-look',
+        'green'
+      )
+      expect(card()).toHaveAttribute('draggable', 'true')
+      expect(card().className).toContain('[--ticket-state-tone:#10b981]')
+      expect(screen.getByTestId('kanban-docflow-run-run-live')).toHaveAttribute(
+        'data-phase',
+        'ready'
+      )
+      const bar = screen.getByTestId('kanban-docflow-run-bar-run-live')
+      expect(bar).not.toHaveAttribute('data-moving')
+      expect(bar.firstElementChild?.className).toContain('bg-emerald-500')
+      expect((bar.firstElementChild as HTMLElement).style.width).toBe('100%')
+      const label = screen.getByTestId('kanban-docflow-run-running-run-live')
+      expect(label).toHaveTextContent(/^Ready to launch$/)
+      expect(label.className).toContain('text-emerald-500')
+      expect(screen.getByTestId('kanban-docflow-run-progress-run-live')).toHaveTextContent(
+        '2 tickets'
+      )
+    })
+
+    it('wears the red perimeter, held in place, when the extraction failed', () => {
+      seedRuns(makeDetail({ id: 'run-live', status: 'extract_failed', error: 'No JSON' }, []))
+      render(<KanbanTicketCard ticket={todoTicket()} />)
+
+      expect(within(card()).getByTestId('ticket-elite-dragon')).toHaveAttribute(
+        'data-look',
+        'error'
+      )
+      expect(card()).toHaveAttribute('draggable', 'false')
+      expect(card().className).toContain('ring-red-500/25')
+      expect(card().className).toContain('[--ticket-state-tone:#ef4444]')
+      expect(screen.getByTestId('kanban-docflow-run-running-run-live')).toHaveTextContent(
+        /^Extraction failed$/
+      )
+      expect(screen.getByTestId('kanban-docflow-run-footer-run-live')).toHaveTextContent('Error')
+    })
+
+    it('is held in place until its run is known', () => {
+      render(<KanbanTicketCard ticket={todoTicket()} />)
+
+      expect(card()).toHaveAttribute('draggable', 'false')
+    })
+
+    it.each(['extracting', 'preview', 'extract_failed'] as const)(
+      'opens the Implement document dialog on its run, not the dashboard, on click (%s)',
+      async (status) => {
+        seedRuns(makeDetail({ id: 'run-live', status }))
+        render(<KanbanTicketCard ticket={todoTicket()} />)
+
+        await act(async () => {
+          fireEvent.click(card())
+        })
+
+        expect(useDocumentFlowStore.getState().wizard).toEqual({
+          open: true,
+          projectId: 'proj-1',
+          runId: 'run-live'
+        })
+        expect(useDocumentFlowStore.getState().dashboardRunId).toBeNull()
+        expect(useKanbanStore.getState().selectedTicketRef).toBeNull()
+      }
+    )
+
+    it('opens the dialog from its menu too', async () => {
+      seedRuns(makeDetail({ id: 'run-live', status: 'preview' }))
+      render(<KanbanTicketCard ticket={todoTicket()} />)
+
+      fireEvent.contextMenu(card())
+      const item = await screen.findByTestId('ctx-open-document-run')
+      await act(async () => {
+        fireEvent.click(item)
+      })
+
+      expect(useDocumentFlowStore.getState().wizard).toMatchObject({
+        open: true,
+        runId: 'run-live'
+      })
+      expect(useDocumentFlowStore.getState().dashboardRunId).toBeNull()
+    })
+  })
+
   it('leaves clicks to the board while it is in dependency mode', () => {
     seedRuns(makeDetail({ id: 'run-live', status: 'running' }))
     useKanbanStore.setState({

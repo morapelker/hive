@@ -126,6 +126,48 @@ describe('opening a ticket', () => {
     expect(markTicketRead).toHaveBeenCalledWith('ticket-run', PROJECT_ID)
   })
 
+  it.each(['extracting', 'preview', 'extract_failed'] as const)(
+    'opens the Implement document dialog instead for the ticket of a run that is %s',
+    async (status) => {
+      useKanbanStore.setState({
+        tickets: new Map([[PROJECT_ID, [runTicket({ column: 'todo', worktree_id: null })]]])
+      })
+      useDocumentFlowStore.setState({
+        runsById: {
+          'run-1': {
+            run: { id: 'run-1', project_id: PROJECT_ID, status } as never,
+            items: [],
+            events: []
+          }
+        }
+      })
+
+      useKanbanStore.getState().setSelectedTicketRef({ projectId: PROJECT_ID, ticketId: 'ticket-run' })
+      await flush()
+
+      expect(useDocumentFlowStore.getState().wizard).toEqual({
+        open: true,
+        projectId: PROJECT_ID,
+        runId: 'run-1'
+      })
+      expect(useDocumentFlowStore.getState().dashboardRunId).toBeNull()
+      expect(useKanbanStore.getState().selectedTicketRef).toBeNull()
+      expect(markTicketRead).toHaveBeenCalledWith('ticket-run', PROJECT_ID)
+    }
+  )
+
+  it('opens the dashboard for a run ticket whose run is not loaded: the dashboard offers the preview', async () => {
+    useKanbanStore.setState({
+      tickets: new Map([[PROJECT_ID, [runTicket({ column: 'todo', worktree_id: null })]]])
+    })
+
+    useKanbanStore.getState().setSelectedTicketRef({ projectId: PROJECT_ID, ticketId: 'ticket-run' })
+    await flush()
+
+    expect(useDocumentFlowStore.getState().dashboardRunId).toBe('run-1')
+    expect(useDocumentFlowStore.getState().wizard.open).toBe(false)
+  })
+
   it('opens the ticket modal for every other ticket, and still closes it', async () => {
     useKanbanStore.setState({
       tickets: new Map([[PROJECT_ID, [runTicket(), makeTicket({ external_provider: 'github' })]]])

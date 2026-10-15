@@ -1,8 +1,11 @@
 import dragonCorner from '@/assets/dragon-corner.png'
 import { cn } from '@/lib/utils'
 
-/** How the dragon is lit: gold while the run is at work, silver otherwise, tarnished on error. */
-export type EliteDragonLook = 'gold' | 'silver' | 'silver-complete' | 'error'
+/**
+ * How the dragon is lit: before launch, blue while the tickets are extracted and green once
+ * they are ready; gold while the run is at work, silver otherwise, tarnished on error.
+ */
+export type EliteDragonLook = 'blue' | 'green' | 'gold' | 'silver' | 'silver-complete' | 'error'
 
 interface EliteDragonIconProps {
   look: EliteDragonLook

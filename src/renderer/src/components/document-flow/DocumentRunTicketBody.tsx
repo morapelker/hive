@@ -1,11 +1,27 @@
-import { AlertTriangle, CircleSlash, FileText, MessageCircleQuestion, Pause } from 'lucide-react'
+import {
+  AlertTriangle,
+  CircleCheck,
+  CircleSlash,
+  FileText,
+  Loader2,
+  MessageCircleQuestion,
+  Pause
+} from 'lucide-react'
 import { ticketPillBaseClass, ticketPillClass } from '@/components/kanban/pill'
 import { cn } from '@/lib/utils'
 import { IndeterminateProgressBar } from '@/components/sessions/IndeterminateProgressBar'
-import { documentNameFromPath, type RunBoardCardState } from './document-flow-ui'
+import {
+  documentNameFromPath,
+  isUnlaunchedCardPhase,
+  pluralize,
+  type RunBoardCardState
+} from './document-flow-ui'
 import type { DocumentRunTicketView } from './useDocumentRunTicket'
 
 const LABEL_CLASSES: Record<RunBoardCardState['phase'], string> = {
+  extracting: 'text-blue-500',
+  ready: 'text-emerald-500',
+  extract_failed: 'text-red-500',
   running: 'text-blue-500',
   paused: 'text-muted-foreground',
   completed: 'text-emerald-500',
@@ -14,14 +30,33 @@ const LABEL_CLASSES: Record<RunBoardCardState['phase'], string> = {
   migrating: 'text-fuchsia-500'
 }
 
-type MovingPhase = 'running' | 'migrating'
+type MovingPhase = 'extracting' | 'running' | 'migrating'
 
-// A run that is no longer moving shows how far it got: merged of total, in its phase's color
+// A run that is no longer moving shows how far it got: merged of total, in its phase's color.
+// Before launch the bar is full in the state's color: green once ready, red when it failed.
 const STILL_BAR_CLASSES: Record<Exclude<RunBoardCardState['phase'], MovingPhase>, string> = {
+  ready: 'bg-emerald-500',
+  extract_failed: 'bg-red-500',
   paused: 'bg-muted-foreground/40',
   completed: 'bg-emerald-500',
   issues: 'bg-red-500',
   cancelled: 'bg-muted-foreground/40'
+}
+
+const isMovingPhase = (phase: RunBoardCardState['phase']): phase is MovingPhase =>
+  phase === 'extracting' || phase === 'running' || phase === 'migrating'
+
+/** How full the still bar is: merged of total once launched; full before launch (its color says the state). */
+function stillBarWidth(state: RunBoardCardState): string {
+  if (isUnlaunchedCardPhase(state.phase)) return '100%'
+  return `${state.total > 0 ? (state.merged / state.total) * 100 : 0}%`
+}
+
+/** The count at the right of the label: merged of total once launched, the tickets to launch before. */
+function countLabel(state: RunBoardCardState): string | null {
+  if (state.phase === 'ready') return pluralize(state.total, 'ticket')
+  if (isUnlaunchedCardPhase(state.phase)) return null
+  return `${state.merged}/${state.total} merged`
 }
 
 interface DocumentRunTicketBodyProps {
@@ -82,7 +117,7 @@ export function DocumentRunTicketBody({
       )}
       {state && (
         <>
-          {state.phase === 'running' || state.phase === 'migrating' ? (
+          {isMovingPhase(state.phase) ? (
             <div data-testid={`kanban-docflow-run-bar-${runId}`} data-moving="">
               <IndeterminateProgressBar
                 mode="build"
@@ -102,7 +137,7 @@ export function DocumentRunTicketBody({
             >
               <div
                 className={cn('h-full rounded-[2px]', STILL_BAR_CLASSES[state.phase])}
-                style={{ width: `${state.total > 0 ? (state.merged / state.total) * 100 : 0}%` }}
+                style={{ width: stillBarWidth(state) }}
               />
             </div>
           )}
@@ -117,14 +152,23 @@ export function DocumentRunTicketBody({
               data-testid={`kanban-docflow-run-running-${runId}`}
             >
               {state.paused && <Pause className="h-2.5 w-2.5 shrink-0" />}
+              {state.phase === 'extracting' && (
+                <Loader2 className="h-2.5 w-2.5 shrink-0 animate-spin" />
+              )}
+              {state.phase === 'ready' && <CircleCheck className="h-2.5 w-2.5 shrink-0" />}
+              {state.phase === 'extract_failed' && (
+                <AlertTriangle className="h-2.5 w-2.5 shrink-0" />
+              )}
               <span className="truncate">{state.label}</span>
             </span>
-            <span
-              className="ml-auto shrink-0 text-muted-foreground"
-              data-testid={`kanban-docflow-run-progress-${runId}`}
-            >
-              {state.merged}/{state.total} merged
-            </span>
+            {countLabel(state) !== null && (
+              <span
+                className="ml-auto shrink-0 text-muted-foreground"
+                data-testid={`kanban-docflow-run-progress-${runId}`}
+              >
+                {countLabel(state)}
+              </span>
+            )}
           </div>
         </>
       )}

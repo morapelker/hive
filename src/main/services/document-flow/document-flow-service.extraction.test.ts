@@ -194,8 +194,10 @@ describe('createRun', () => {
       config: { ...DEFAULT_DOCUMENT_RUN_CONFIG, generation }
     })
     expect(detail.items).toEqual([])
-    expect(detail.events.map((event) => event.type)).toEqual(['created'])
+    expect(detail.events.map((event) => event.type)).toEqual(['created', 'run_ticket_created'])
     expect(published).toEqual([
+      { runId: detail.run.id, projectId: TEST_PROJECT_ID, reason: 'run' },
+      { runId: detail.run.id, projectId: TEST_PROJECT_ID, reason: 'event' },
       { runId: detail.run.id, projectId: TEST_PROJECT_ID, reason: 'run' },
       { runId: detail.run.id, projectId: TEST_PROJECT_ID, reason: 'event' }
     ])
@@ -249,7 +251,8 @@ describe('createRun', () => {
       })
       expect(readFileSync(saved, 'utf8')).toBe(SPEC)
       expect(detail.events.map((event) => event.message)).toEqual([
-        `Document downloaded from ${link} to ${saved}`
+        `Document downloaded from ${link} to ${saved}`,
+        'The run got its ticket on the board'
       ])
 
       await harness.service.whenExtractionSettled(detail.run.id)
@@ -370,6 +373,124 @@ describe('createRun', () => {
   })
 })
 
+describe("the run's ticket", () => {
+  it('is created in To Do with the run, marked as the run, without a worktree', async () => {
+    const model = deferredModel()
+    harness.overrides.generate = model.generate
+
+    const detail = await harness.service.createRun({
+      projectId: TEST_PROJECT_ID,
+      documentPath: specPath
+    })
+
+    expect(harness.ticketBatches).toEqual([
+      {
+        projectId: TEST_PROJECT_ID,
+        drafts: [
+          {
+            draft_key: `run-${detail.run.id}`,
+            project_id: TEST_PROJECT_ID,
+            title: 'Factory spec.md',
+            description: `Document run of ${specPath}. Its tickets are extracted from the document; open this ticket to review them and launch the run.`,
+            column: 'todo',
+            mode: null,
+            worktree_id: null,
+            external_provider: 'document-run',
+            external_id: detail.run.id,
+            external_url: specPath
+          }
+        ]
+      }
+    ])
+    const ticketId = detail.run.ticket_id
+    expect(ticketId).toBe('ticket-1')
+    expect(harness.boardTickets.get('ticket-1')).toMatchObject({ column: 'todo' })
+    // To the top of To Do, where the user looks for what they just made.
+    expect(harness.ticketMoves).toEqual([
+      { projectId: TEST_PROJECT_ID, ticketId: 'ticket-1', column: 'todo' }
+    ])
+    expect(harness.db.getDocumentRun(detail.run.id)?.ticket_id).toBe('ticket-1')
+
+    await model.asked
+    model.answer(replyFor())
+    await harness.service.whenExtractionSettled(detail.run.id)
+  })
+
+  it('is created outside the calling request, so the caller’s board reloads too', async () => {
+    harness.replies.push(replyFor())
+    const contexts: unknown[] = []
+    harness.overrides.detach = (task) => rpcRequestContext.exit(task)
+    harness.overrides.createTickets = async () => {
+      contexts.push(getRpcRequestContext())
+      return { tickets: [{ id: 'run-ticket' }] }
+    }
+
+    const detail = await rpcRequestContext.run({ clientId: 'client-1', principal: null }, () =>
+      harness.service.createRun({ projectId: TEST_PROJECT_ID, documentPath: specPath })
+    )
+    await harness.service.whenExtractionSettled(detail.run.id)
+
+    expect(contexts).toEqual([undefined])
+    expect(detail.run.ticket_id).toBe('run-ticket')
+  })
+
+  it('is named after the document once its title is extracted', async () => {
+    harness.replies.push(replyFor())
+
+    const runId = await extract()
+
+    expect(harness.db.getDocumentRun(runId)?.title).toBe('Factory changes round 2')
+    expect(harness.ticketUpdates).toEqual([
+      { projectId: TEST_PROJECT_ID, ticketId: 'ticket-1', patch: { title: 'Factory changes round 2' } }
+    ])
+  })
+
+  it('follows a rename of the run', async () => {
+    harness.replies.push(replyFor())
+    const runId = await extract()
+    harness.ticketUpdates.length = 0
+
+    harness.service.updateRun(runId, { title: 'Round 2' })
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(harness.ticketUpdates).toEqual([
+      { projectId: TEST_PROJECT_ID, ticketId: 'ticket-1', patch: { title: 'Round 2' } }
+    ])
+  })
+
+  it('stays on the board, in To Do, when the extraction fails', async () => {
+    harness.replies.push('no json here', 'still no json')
+
+    const runId = await extract()
+
+    expect(harness.db.getDocumentRun(runId)).toMatchObject({
+      status: 'extract_failed',
+      ticket_id: 'ticket-1'
+    })
+    expect(harness.boardTickets.get('ticket-1')).toMatchObject({ column: 'todo' })
+    expect(harness.deletedTickets).toEqual([])
+  })
+
+  it('does not hold up the run when the board cannot create it', async () => {
+    harness.replies.push(replyFor())
+    harness.overrides.createTickets = async () => {
+      throw new Error('The board is read-only')
+    }
+
+    const detail = await harness.service.createRun({
+      projectId: TEST_PROJECT_ID,
+      documentPath: specPath
+    })
+    await harness.service.whenExtractionSettled(detail.run.id)
+
+    expect(detail.run.ticket_id).toBeNull()
+    expect(detail.events.map((event) => event.type)).toEqual(['created'])
+    expect(harness.db.getDocumentRun(detail.run.id)?.status).toBe('preview')
+    // Nothing to rename either.
+    expect(harness.ticketUpdates).toEqual([])
+  })
+})
+
 describe('the extraction job', () => {
   it('stores the tickets, writes the run files and moves the run to preview', async () => {
     harness.replies.push(replyFor())
@@ -420,7 +541,11 @@ describe('the extraction job', () => {
     expect(readFileSync(a1.figures[0].path).toString('base64')).toBe(PNG_BASE64)
     expect(existsSync(join(runDir, 'blocks.json'))).toBe(true)
 
-    expect(detail?.events.map((event) => event.type)).toEqual(['created', 'extracted'])
+    expect(detail?.events.map((event) => event.type)).toEqual([
+      'created',
+      'run_ticket_created',
+      'extracted'
+    ])
     expect(detail?.events.at(-1)?.message).toBe('2 tickets extracted')
   })
 
@@ -514,6 +639,7 @@ describe('the extraction job', () => {
     expect(detail?.items).toHaveLength(2)
     expect(detail?.events.map((event) => event.type)).toEqual([
       'created',
+      'run_ticket_created',
       'extraction_retry',
       'extracted'
     ])

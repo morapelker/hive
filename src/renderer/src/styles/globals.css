@@ -596,6 +596,14 @@
 .ticket-elite-ornament[data-look='error'] {
   filter: grayscale(0.65) sepia(0.35) drop-shadow(0 1px 1px #0008);
 }
+/* Before launch the gold is turned: blue while the tickets are being extracted, green once
+   they are ready to launch (the source image is gold, hue ≈ 45°) */
+.ticket-elite-ornament[data-look='blue'] {
+  filter: hue-rotate(170deg) saturate(1.25) brightness(1.05) drop-shadow(0 1px 1px #0009);
+}
+.ticket-elite-ornament[data-look='green'] {
+  filter: hue-rotate(85deg) saturate(1.1) brightness(0.98) drop-shadow(0 1px 1px #0009);
+}
 
 /* Pulse wave (worktree "working" indicator) — scrolls the repeating wave left.
    Uses a CSS transform animation instead of SVG SMIL so it can be GPU-composited

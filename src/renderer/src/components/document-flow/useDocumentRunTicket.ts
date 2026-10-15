@@ -74,8 +74,14 @@ export function documentRunTicketToneClass(view: DocumentRunTicketView): string 
   if (!state) return null
   if (state.waitingOnUser) return '[--ticket-state-tone:#f97316]'
   switch (state.phase) {
+    // Before launch: blue while the tickets are extracted, green once they are ready
+    case 'extracting':
     case 'running':
       return '[--ticket-state-tone:#3b82f6]'
+    case 'ready':
+      return '[--ticket-state-tone:#10b981]'
+    case 'extract_failed':
+      return '[--ticket-state-tone:#ef4444]'
     case 'paused':
     case 'cancelled':
       return '[--ticket-state-tone:var(--muted-foreground)]'

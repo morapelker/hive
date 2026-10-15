@@ -39,6 +39,7 @@ import {
   isLaunchedRunStatus,
   isRequeueableItem,
   isResolvingRunConflicts,
+  isUnlaunchedCardPhase,
   isRunDeletable,
   isRunMigrating,
   isSkippableItem,
@@ -575,6 +576,62 @@ describe('runBoardCardState', () => {
     })
   })
 
+  it('says the tickets of a run are being extracted, before any exist', () => {
+    expect(runBoardCardState(makeDetail({ status: 'extracting' }, []), 'todo')).toMatchObject({
+      phase: 'extracting',
+      merged: 0,
+      total: 0,
+      running: 0,
+      waitingOnUser: false,
+      paused: false,
+      label: 'Extracting tickets…'
+    })
+  })
+
+  it('says a previewed run is ready to launch, counting the tickets that are in', () => {
+    expect(
+      runBoardCardState(
+        makeDetail({ status: 'preview' }, [
+          { key: 'A1' },
+          { key: 'A2' },
+          { key: 'A3', selected: false }
+        ]),
+        'todo'
+      )
+    ).toMatchObject({
+      phase: 'ready',
+      merged: 0,
+      total: 2,
+      running: 0,
+      waitingOnUser: false,
+      label: 'Ready to launch'
+    })
+  })
+
+  it('says the extraction of a run failed', () => {
+    expect(
+      runBoardCardState(makeDetail({ status: 'extract_failed', error: 'no json' }, []), 'todo')
+    ).toMatchObject({ phase: 'extract_failed', total: 0, label: 'Extraction failed' })
+  })
+
+  it('tells the phases of a run that is not launched apart from the rest', () => {
+    for (const phase of ['extracting', 'ready', 'extract_failed'] as const) {
+      expect(isUnlaunchedCardPhase(phase), phase).toBe(true)
+    }
+    for (const phase of [
+      'running',
+      'paused',
+      'completed',
+      'issues',
+      'cancelled',
+      'migrating',
+      null,
+      undefined
+    ] as const) {
+      expect(isUnlaunchedCardPhase(phase), String(phase)).toBe(false)
+    }
+  })
+
   it.each(['completed', 'completed_with_issues'] as const)(
     'says the migrations of a %s run are running, wherever its ticket sits',
     (status) => {
@@ -706,6 +763,35 @@ describe('documentRunTicketDropRefusal', () => {
         'The ticket of a document run cannot go back to To Do.'
       )
     }
+  })
+
+  it('holds the ticket of a run in To Do while its tickets are being extracted', () => {
+    for (const column of ['in_progress', 'review', 'merged', 'done']) {
+      expect(documentRunTicketDropRefusal('extracting', column), column).toBe(
+        'The tickets of this document run are still being extracted. Wait for them before moving it.'
+      )
+    }
+  })
+
+  it('holds the ticket of a run whose extraction failed, pointing at the retry', () => {
+    for (const column of ['in_progress', 'review', 'merged', 'done']) {
+      expect(documentRunTicketDropRefusal('extract_failed', column), column).toBe(
+        'The tickets of this document run could not be extracted. Open its ticket to try again.'
+      )
+    }
+  })
+
+  it('lets the ticket of a previewed run go to In Progress only: that is how it is launched', () => {
+    expect(documentRunTicketDropRefusal('preview', 'in_progress')).toBeNull()
+    for (const column of ['review', 'merged', 'done']) {
+      expect(documentRunTicketDropRefusal('preview', column), column).toBe(
+        'This document run has not been launched yet. Drop its ticket on In Progress, or open it, to launch it.'
+      )
+    }
+    // Migrations belong to a launched run; they change nothing here.
+    expect(documentRunTicketDropRefusal('preview', 'review', true)).toBe(
+      documentRunTicketDropRefusal('preview', 'review')
+    )
   })
 
   it.each(['running', 'paused'] as const)('keeps the ticket of a %s run In Progress', (status) => {

@@ -594,6 +594,12 @@ export function KanbanColumn({
             toast.warning(refusal)
             return
           }
+          // Not launched yet: the drop opens the run's preview, where the launch button is.
+          // Launching is what moves the ticket In Progress; until then it stays in To Do.
+          if (column === 'in_progress' && run?.status === 'preview') {
+            useDocumentFlowStore.getState().openWizard(ticketProjectId, documentRunId)
+            return
+          }
           if (column === 'in_progress') {
             const sortOrder = store.computeSortOrder(
               projectTicketsForColumn(ticketProjectId),
