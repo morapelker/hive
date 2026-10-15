@@ -3,7 +3,7 @@ import { getRendererRpcClient, type RendererRpcClient } from '@/api/rpc-client'
 
 /**
  * Renderer half of performance logging (Settings → Advanced). While enabled it samples this
- * window every 10 s and ships the records to the server, which persists them as
+ * window every 30 s and ships the records to the server, which persists them as
  * `~/.hive/logs/perf/perf-renderer.jsonl` next to the server and Electron main logs:
  *
  *   sample  long tasks (count/total/max), slow input events, JS heap, DOM node and xterm
@@ -15,7 +15,7 @@ import { getRendererRpcClient, type RendererRpcClient } from '@/api/rpc-client'
  * Off by default: `instrumentRendererRpcClient` costs one flag check per RPC when disabled.
  */
 
-const SAMPLE_INTERVAL_MS = 10_000
+const SAMPLE_INTERVAL_MS = 30_000
 const SLOW_RPC_MS = 500
 const SLOW_LONGTASK_MS = 250
 const BLOCK_PROBE_MS = 250
@@ -23,7 +23,7 @@ const BLOCK_MS = 200
 const MAX_QUEUED_RECORDS = 300
 const MAX_SLOW_PER_WINDOW = 40
 const MAX_RPC_SAMPLES = 256
-const TOP_N = 25
+const TOP_N = 15
 
 type PerfRecord = Record<string, unknown>
 

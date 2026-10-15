@@ -23,13 +23,7 @@ export const makeEventBus = (): EventBus => {
     publish: (event) =>
       Effect.sync(() => {
         const channelListeners = listeners.get(event.channel)
-        if (perfLog.isEnabled()) {
-          perfLog.recordEvent(
-            event.channel,
-            payloadBytes(event.payload),
-            (channelListeners?.size ?? 0) + allListeners.size
-          )
-        }
+        perfLog.recordEvent(event.channel, (channelListeners?.size ?? 0) + allListeners.size)
         for (const listener of channelListeners ?? []) {
           listener(event)
         }
@@ -64,14 +58,5 @@ export const makeEventBus = (): EventBus => {
       for (const set of listeners.values()) total += set.size
       return { channels: listeners.size, listeners: total, all: allListeners.size }
     }
-  }
-}
-
-/** Serialized size of a payload, only computed while performance logging is on. */
-const payloadBytes = (payload: unknown): number => {
-  try {
-    return JSON.stringify(payload)?.length ?? 0
-  } catch {
-    return -1
   }
 }

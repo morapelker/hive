@@ -63,7 +63,7 @@ describe('instrumentRendererRpcClient', () => {
     startRendererPerfCollector()
     expect(isRendererPerfLoggingEnabled()).toBe(true)
     await client.request('db.listSessions', {})
-    await vi.advanceTimersByTimeAsync(10_100)
+    await vi.advanceTimersByTimeAsync(30_100)
 
     const appendCalls = request.mock.calls.filter(
       ([method]) => method === 'perfDiagnosticsOps.appendRecords'

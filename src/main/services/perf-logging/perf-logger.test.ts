@@ -49,8 +49,10 @@ describe('PerfLogger', () => {
     logger.rpcEnd('db.listSessions', 700, false)
     logger.recordDb('SELECT * FROM sessions', 2)
     logger.recordDb('SELECT * FROM sessions', 40)
-    logger.recordEvent('session:abc-123-def-456-ghi:stream', 1_000, 2)
-    logger.recordEvent('session:zzz-123-def-456-yyy:stream', 500, 1)
+    logger.recordEvent('session:abc-123-def-456-ghi:stream', 2)
+    logger.recordEventBytes('session:abc-123-def-456-ghi:stream', 1_000)
+    logger.recordEvent('session:zzz-123-def-456-yyy:stream', 1)
+    logger.recordEventBytes('session:zzz-123-def-456-yyy:stream', 500)
     logger.mark('session-start', { sessionId: 's1' })
 
     const sample = logger.sample()

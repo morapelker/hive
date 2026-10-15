@@ -161,7 +161,7 @@ export function SettingsAdvanced(): React.JSX.Element {
         <div>
           <label className="text-sm font-medium">Performance logging</label>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Every 10s, record event-loop stalls, slow RPCs and SQLite statements, memory, handles,
+            Every 30s, record event-loop stalls, slow RPCs and SQLite statements, memory, handles,
             timers, renderer long tasks and store sizes for the app, backend and window to
             ~/.hive/logs/perf/. Cheap enough to leave on. When the app starts lagging, press
             Capture diagnostics before relaunching.

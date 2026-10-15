@@ -20,7 +20,7 @@ import {
  * run their own; the renderer ships its records to the server through `perfLoggingOps`).
  * Every record is one JSON line in `~/.hive/logs/perf/perf-<role>.jsonl`:
  *
- *   kind: 'sample'  every 10 s: memory, CPU, event-loop delay histogram, GC, active handles by
+ *   kind: 'sample'  every 30 s: memory, CPU, event-loop delay histogram, GC, active handles by
  *                   type, live timers by origin, registered gauges, and the RPC / event-bus /
  *                   SQLite aggregates of the window that just ended
  *   kind: 'slow'    one RPC, SQLite statement, or event-loop block that crossed its threshold
@@ -85,7 +85,7 @@ export interface PerfLoggerStatus {
   captures: string[]
 }
 
-const DEFAULT_SAMPLE_INTERVAL_MS = 10_000
+const DEFAULT_SAMPLE_INTERVAL_MS = 30_000
 const DEFAULT_LOOP_P99_ALERT_MS = 500
 const DEFAULT_ALERT_WINDOWS = 3
 const DEFAULT_RSS_ALERT_BYTES = 3 * 1024 * 1024 * 1024
@@ -95,7 +95,7 @@ const DEFAULT_BLOCK_MS = 200
 const BLOCK_PROBE_MS = 250
 const MAX_SLOW_RECORDS_PER_WINDOW = 60
 const MAX_RPC_SAMPLES = 256
-const TOP_N = 30
+const TOP_N = 15
 const DEFAULT_MAX_AUTO_HEAP_SNAPSHOTS = 2
 const CPU_PROFILE_MS = 15_000
 const DEFAULT_MIN_HEAP_SNAPSHOT_GAP_MS = 30 * 60_000
@@ -369,17 +369,28 @@ export class PerfLogger {
     if (ms >= this.options.slowDbMs) this.slow('db', ms, { sql })
   }
 
-  recordEvent(channel: string, bytes: number, listeners: number): void {
+  /** One publish on the event bus; bytes arrive separately from the connection that sends it. */
+  recordEvent(channel: string, listeners: number): void {
     if (!this.enabled) return
+    const entry = this.eventEntry(channel)
+    entry.count += 1
+    if (listeners > entry.maxListeners) entry.maxListeners = listeners
+  }
+
+  /** Serialized size of an event as written to one socket (no extra serialization). */
+  recordEventBytes(channel: string, bytes: number): void {
+    if (!this.enabled) return
+    this.eventEntry(channel).bytes += bytes
+  }
+
+  private eventEntry(channel: string): EventWindowEntry {
     const key = collapseChannel(channel)
     let entry = this.eventWindow.get(key)
     if (!entry) {
       entry = { count: 0, bytes: 0, maxListeners: 0 }
       this.eventWindow.set(key, entry)
     }
-    entry.count += 1
-    entry.bytes += bytes
-    if (listeners > entry.maxListeners) entry.maxListeners = listeners
+    return entry
   }
 
   mark(name: string, data?: Record<string, unknown>): void {
@@ -862,8 +873,10 @@ export const perfLog = {
   rpcEnd: (method: string, ms: number, ok: boolean, detail?: Record<string, unknown>): void =>
     instance?.rpcEnd(method, ms, ok, detail),
   recordDb: (sql: string, ms: number): void => instance?.recordDb(sql, ms),
-  recordEvent: (channel: string, bytes: number, listeners: number): void =>
-    instance?.recordEvent(channel, bytes, listeners),
+  recordEvent: (channel: string, listeners: number): void =>
+    instance?.recordEvent(channel, listeners),
+  recordEventBytes: (channel: string, bytes: number): void =>
+    instance?.recordEventBytes(channel, bytes),
   mark: (name: string, data?: Record<string, unknown>): void => instance?.mark(name, data),
   slow: (what: string, ms: number, detail?: Record<string, unknown>): void =>
     instance?.slow(what, ms, detail),

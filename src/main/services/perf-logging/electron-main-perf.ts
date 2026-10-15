@@ -21,7 +21,7 @@ let wired = false
  * layout work) through the DevTools protocol, polled while logging is on. Attaching fails
  * harmlessly when DevTools already holds the debugger; the gauge then reports nothing.
  */
-const RENDERER_METRICS_POLL_MS = 10_000
+const RENDERER_METRICS_POLL_MS = 30_000
 const RENDERER_METRIC_NAMES = new Set([
   'JSEventListeners',
   'Nodes',
