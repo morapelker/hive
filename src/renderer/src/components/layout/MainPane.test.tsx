@@ -262,6 +262,55 @@ describe('MainPane terminal visibility', () => {
 
 // Mounting a stateful terminal view spawns its agent process, so sessions that
 // merely have a tab must NOT mount until an activation signal selects them.
+describe('MainPane late session record', () => {
+  // "Go to session" from a board can activate a session of a worktree whose
+  // sessions have not been loaded yet: the active id is set first, the record
+  // arrives when SessionTabs finishes loadSessions. The terminal must become
+  // visible then — not stay hidden until the user switches tabs.
+  it('shows the active terminal session once its record loads', () => {
+    setupMainPaneState()
+    useSessionStore.setState({ sessionsByWorktree: new Map([['worktree-1', []]]) })
+
+    renderMainPane()
+
+    act(() => {
+      useSessionStore.setState({ sessionsByWorktree: new Map([['worktree-1', [makeSession()]]]) })
+    })
+
+    const terminal = screen.getByTestId('session-view-session-1')
+    expect(terminal.getAttribute('data-visible')).toBe('true')
+    expect(terminal.parentElement?.classList.contains('flex-1')).toBe(true)
+    expect(terminal.closest('.hidden')).toBeNull()
+  })
+
+  it('shows the active terminal session when it is navigated to in one batch with the pinned board closing', () => {
+    setupMainPaneState()
+    useKanbanStore.setState({ isPinnedBoardActive: true })
+    useSessionStore.setState({
+      activeSessionId: null,
+      sessionsByWorktree: new Map([['worktree-1', []]])
+    })
+
+    renderMainPane()
+    expect(screen.getByTestId('kanban-board')).not.toBeNull()
+
+    // leaveBoardViews + setActiveWorktree/setActiveSession, as every go-to-session does
+    act(() => {
+      useKanbanStore.getState().closePinnedBoard()
+      useSessionStore.setState({ activeSessionId: 'session-1' })
+    })
+    // The worktree's sessions arrive afterwards
+    act(() => {
+      useSessionStore.setState({ sessionsByWorktree: new Map([['worktree-1', [makeSession()]]]) })
+    })
+
+    expect(screen.queryByTestId('kanban-board')).toBeNull()
+    const terminal = screen.getByTestId('session-view-session-1')
+    expect(terminal.getAttribute('data-visible')).toBe('true')
+    expect(terminal.closest('.hidden')).toBeNull()
+  })
+})
+
 describe('MainPane terminal activation gating', () => {
   const second = makeSession({ id: 'session-2', name: 'Claude CLI 2' })
 
