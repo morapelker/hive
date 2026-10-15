@@ -1,25 +1,29 @@
 import { GitPullRequest, Loader2 } from 'lucide-react'
 import { systemApi } from '@/api/system-api'
 import { ticketPillClass } from '@/components/kanban/pill'
+import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import type { DocumentRunPRs } from './useDocumentRunPRs'
+import type { DocumentRunPRLink, DocumentRunPRs } from './useDocumentRunPRs'
 
-interface DocumentRunPRActionsProps {
+interface DocumentRunPRProps {
   runId: string
   prs: DocumentRunPRs
 }
 
+const linkTitle = (link: DocumentRunPRLink): string =>
+  `Open PR #${link.number}${link.projectName ? ` of ${link.projectName}` : ''} in browser`
+
+const linkLabel = (link: DocumentRunPRLink): string =>
+  link.projectName ? `${link.projectName} #${link.number}` : `#${link.number}`
+
 /**
  * The PR row of a run's ticket card: a pill per pull request the integration branches already
- * have (opening it in the browser), and the button that creates the missing ones or pushes
- * updates to those that exist. Nothing until the run is launched.
+ * have, opening it in the browser. The button that makes them is in the run's dashboard.
+ * Nothing until a PR exists.
  */
-export function DocumentRunPRActions({
-  runId,
-  prs
-}: DocumentRunPRActionsProps): React.JSX.Element | null {
-  const { targets, links, creating, label, create } = prs
-  if (targets.length === 0) return null
+export function DocumentRunPRLinks({ runId, prs }: DocumentRunPRProps): React.JSX.Element | null {
+  const { targets, links } = prs
+  if (targets.length === 0 || links.length === 0) return null
   return (
     <div
       className="mt-[7px] flex flex-wrap items-center gap-1"
@@ -30,7 +34,7 @@ export function DocumentRunPRActions({
           key={link.worktreeId}
           type="button"
           data-testid={`kanban-docflow-run-pr-link-${runId}-${link.worktreeId}`}
-          title={`Open PR #${link.number}${link.projectName ? ` of ${link.projectName}` : ''} in browser`}
+          title={linkTitle(link)}
           onClick={(e) => {
             e.stopPropagation()
             void systemApi.openInChrome(link.url)
@@ -41,30 +45,56 @@ export function DocumentRunPRActions({
           )}
         >
           <GitPullRequest className="h-2.5 w-2.5 shrink-0" />
-          {link.projectName ? `${link.projectName} #${link.number}` : `#${link.number}`}
+          {linkLabel(link)}
         </button>
       ))}
-      <button
+    </div>
+  )
+}
+
+/**
+ * The PR line of a run's dashboard: the pull requests the integration branches already have,
+ * and the button that creates the missing ones or pushes updates to those that exist. Nothing
+ * until the run is launched.
+ */
+export function DocumentRunPRRow({ runId, prs }: DocumentRunPRProps): React.JSX.Element | null {
+  const { targets, links, creating, label, create } = prs
+  if (targets.length === 0) return null
+  return (
+    <div
+      className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[12px] text-muted-foreground"
+      data-testid={`docflow-run-prs-${runId}`}
+    >
+      <GitPullRequest className="h-3 w-3 shrink-0" />
+      {links.length === 0 && <span>No pull request yet</span>}
+      {links.map((link) => (
+        <button
+          key={link.worktreeId}
+          type="button"
+          data-testid={`docflow-run-pr-link-${runId}-${link.worktreeId}`}
+          title={linkTitle(link)}
+          onClick={() => void systemApi.openInChrome(link.url)}
+          className="font-mono text-foreground underline-offset-2 hover:underline"
+        >
+          {linkLabel(link)}
+        </button>
+      ))}
+      <Button
         type="button"
-        data-testid={`kanban-docflow-run-pr-button-${runId}`}
+        variant="outline"
+        size="sm"
+        className="h-6 text-xs"
+        data-testid={`docflow-run-pr-button-${runId}`}
         disabled={creating}
-        onClick={(e) => {
-          e.stopPropagation()
-          void create()
-        }}
-        className={cn(
-          ticketPillClass,
-          'ml-auto transition-colors hover:border-muted-foreground/35 hover:text-foreground',
-          'disabled:cursor-default disabled:hover:border-border disabled:hover:text-muted-foreground'
-        )}
+        onClick={() => void create()}
       >
         {creating ? (
-          <Loader2 className="h-2.5 w-2.5 shrink-0 animate-spin" />
+          <Loader2 className="h-3 w-3 animate-spin" />
         ) : (
-          <GitPullRequest className="h-2.5 w-2.5 shrink-0" />
+          <GitPullRequest className="h-3 w-3" />
         )}
         {creating ? (targets.length > 1 ? 'Creating PRs…' : 'Creating PR…') : label}
-      </button>
+      </Button>
     </div>
   )
 }

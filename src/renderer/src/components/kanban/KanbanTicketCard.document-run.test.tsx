@@ -1009,9 +1009,9 @@ const launchedConnectionRun = (): DocumentRunDetail =>
     [{ key: 'A1', status: 'merged' }]
   )
 
-describe('the PR button of a document run ticket', () => {
-  const prRow = (): HTMLElement => screen.getByTestId('kanban-docflow-run-prs-run-live')
-  const prButton = (): HTMLElement => screen.getByTestId('kanban-docflow-run-pr-button-run-live')
+describe('the PRs of a document run ticket', () => {
+  const prButton = (): HTMLElement | null =>
+    screen.queryByTestId('kanban-docflow-run-pr-button-run-live')
 
   it('offers nothing before the run is launched: there is no integration branch yet', () => {
     seedRuns(makeDetail({ id: 'run-live', status: 'preview' }))
@@ -1020,33 +1020,14 @@ describe('the PR button of a document run ticket', () => {
     expect(screen.queryByTestId('kanban-docflow-run-prs-run-live')).toBeNull()
   })
 
-  it('creates a PR from the integration branch of a git run, without opening the run', async () => {
-    seedRuns(launchedGitRun())
-    render(<KanbanTicketCard ticket={makeTicket({ column: 'review' })} />)
-
-    expect(prButton()).toHaveTextContent(/^Create PR$/)
-    expect(prButton()).toBeEnabled()
-    fireEvent.click(prButton())
-
-    await waitFor(() => expect(runPRs.createDocumentRunPRs).toHaveBeenCalledTimes(1))
-    expect(runPRs.createDocumentRunPRs).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'run-live', integration_worktree_id: 'wt-integration' })
-    )
-    // The click stays on the button: the card did not open the dashboard.
-    expect(useDocumentFlowStore.getState().dashboardRunId).toBeNull()
-  })
-
-  it('creates one PR per member of a connection run', async () => {
+  it('has no PR button on the card: it is in the run dashboard the card opens', () => {
     seedRuns(launchedConnectionRun())
     render(<KanbanTicketCard ticket={makeTicket({ worktree_id: null, column: 'review' })} />)
 
-    expect(prButton()).toHaveTextContent(/^Create PRs$/)
-    fireEvent.click(prButton())
-
-    await waitFor(() => expect(runPRs.createDocumentRunPRs).toHaveBeenCalledTimes(1))
-    expect(runPRs.createDocumentRunPRs).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'run-live', members: MEMBERS })
-    )
+    expect(prButton()).toBeNull()
+    expect(within(card()).queryByText(/^Create PRs?$/)).toBeNull()
+    // Without a PR yet there is no PR row at all.
+    expect(screen.queryByTestId('kanban-docflow-run-prs-run-live')).toBeNull()
   })
 
   it('lists the PRs the integration branches have, named after their repositories, and opens them', () => {
@@ -1060,8 +1041,7 @@ describe('the PR button of a document run ticket', () => {
     const webLink = screen.getByTestId('kanban-docflow-run-pr-link-run-live-wt-web-int')
     expect(webLink).toHaveTextContent(/^Web #12$/)
     expect(screen.queryByTestId('kanban-docflow-run-pr-link-run-live-wt-api-int')).toBeNull()
-    // One member still has no PR: the button still creates.
-    expect(prButton()).toHaveTextContent(/^Create PRs$/)
+    expect(prButton()).toBeNull()
 
     fireEvent.click(webLink)
     expect(systemApi.openInChrome).toHaveBeenCalledWith('https://github.com/acme/web/pull/12')
@@ -1076,8 +1056,6 @@ describe('the PR button of a document run ticket', () => {
     expect(screen.getByTestId('kanban-docflow-run-pr-link-run-live-wt-api-int')).toHaveTextContent(
       /^API #3$/
     )
-    // Every branch has its PR: the button pushes updates to them instead.
-    expect(prButton()).toHaveTextContent(/^Update PRs$/)
   })
 
   it("shows a git run's PR from its ticket, once, in the PR row rather than the pill row", () => {
@@ -1095,22 +1073,9 @@ describe('the PR button of a document run ticket', () => {
     const link = screen.getByTestId('kanban-docflow-run-pr-link-run-live-wt-integration')
     expect(link).toHaveTextContent(/^#7$/)
     expect(within(card()).getAllByTitle('Open PR #7 in browser')).toHaveLength(1)
-    expect(prButton()).toHaveTextContent(/^Update PR$/)
   })
 
-  it('waits while a PR is on its way', () => {
-    seedRuns(launchedGitRun())
-    useGitStore.getState().setCreatingPR('wt-integration', true)
-    render(<KanbanTicketCard ticket={makeTicket({ column: 'review' })} />)
-
-    expect(prButton()).toBeDisabled()
-    expect(prButton()).toHaveTextContent(/^Creating PR…$/)
-    // The row owns the progress: no second "Creating PR" pill in the pill row.
-    expect(within(prRow()).getByText('Creating PR…')).toBeInTheDocument()
-    expect(within(card()).queryByText('Creating PR...')).toBeNull()
-  })
-
-  it('is also in the context menu', async () => {
+  it('is still in the context menu', async () => {
     seedRuns(launchedConnectionRun())
     render(<KanbanTicketCard ticket={makeTicket({ worktree_id: null, column: 'review' })} />)
 
@@ -1120,5 +1085,8 @@ describe('the PR button of a document run ticket', () => {
     fireEvent.click(item)
 
     await waitFor(() => expect(runPRs.createDocumentRunPRs).toHaveBeenCalledTimes(1))
+    expect(runPRs.createDocumentRunPRs).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'run-live', members: MEMBERS })
+    )
   })
 })

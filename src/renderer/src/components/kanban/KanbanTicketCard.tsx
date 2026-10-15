@@ -136,7 +136,7 @@ import { canToggleAutoApprovePlan } from '@/lib/plan-auto-approve'
 import { isAgentCli } from '@shared/types/agent-sdk'
 import { documentRunIdOf } from '@shared/document-flow/run-ticket'
 import { DocumentRunTicketBody } from '@/components/document-flow/DocumentRunTicketBody'
-import { DocumentRunPRActions } from '@/components/document-flow/DocumentRunPRActions'
+import { DocumentRunPRLinks } from '@/components/document-flow/DocumentRunPRActions'
 import { useDocumentRunPRs } from '@/components/document-flow/useDocumentRunPRs'
 import {
   documentRunTicketToneClass,
@@ -1762,9 +1762,9 @@ export const KanbanTicketCard = memo(function KanbanTicketCard({
                 error={isError || isEliteError}
               />
             )}
-            {/* Document run: its PRs (one per repository) and the button that makes them */}
+            {/* Document run: its PRs (one per repository); the dashboard has the button that makes them */}
             {documentRunId && documentRunView && !remoteOrigin && (
-              <DocumentRunPRActions runId={documentRunId} prs={documentRunPRs} />
+              <DocumentRunPRLinks runId={documentRunId} prs={documentRunPRs} />
             )}
 
             {/* Description match snippet (board search) */}

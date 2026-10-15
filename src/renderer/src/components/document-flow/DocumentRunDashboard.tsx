@@ -62,6 +62,7 @@ import {
   type DocumentSourceFile
 } from '@shared/types/document-flow'
 import { AddRunMemberDialog } from './AddRunMemberDialog'
+import { DocumentRunPRRow } from './DocumentRunPRActions'
 import { TonePill } from './DocumentFlowBadges'
 import { NeedsYouSection, RunItemsTable } from './DocumentRunItems'
 import { RunActivityLog, RunReportSection } from './DocumentRunReport'
@@ -69,6 +70,7 @@ import { RunParallelControl } from './RunParallelControl'
 import { RunProgressBar } from './RunProgressBar'
 import { openConnection, openSession, openWorktree } from './document-flow-navigation'
 import { useMigrationSessionWaiting } from './useDocumentRunTicket'
+import { useDocumentRunPRs } from './useDocumentRunPRs'
 import {
   describeRunDeletion,
   describeRunMembers,
@@ -278,9 +280,13 @@ export function DocumentRunDashboard(): React.JSX.Element {
 
 function DashboardBody({ detail }: { detail: DocumentRunDetail }): React.JSX.Element {
   const { run, items, events } = detail
-  const landed = useKanbanStore((s) => {
-    const column = s.tickets.get(run.project_id)?.find((t) => t.id === run.ticket_id)?.column
-    return column === 'done' || column === 'merged'
+  const ticket = useKanbanStore(
+    (s) => s.tickets.get(run.project_id)?.find((t) => t.id === run.ticket_id) ?? null
+  )
+  const landed = ticket?.column === 'done' || ticket?.column === 'merged'
+  const prs = useDocumentRunPRs(run.id, {
+    github_pr_number: ticket?.github_pr_number ?? null,
+    github_pr_url: ticket?.github_pr_url ?? null
   })
   const pauseRun = useDocumentFlowStore((s) => s.pauseRun)
   const resumeRun = useDocumentFlowStore((s) => s.resumeRun)
@@ -531,6 +537,8 @@ function DashboardBody({ detail }: { detail: DocumentRunDetail }): React.JSX.Ele
             )}
           </div>
         )}
+
+        <DocumentRunPRRow runId={run.id} prs={prs} />
 
         <div className="flex items-center gap-3">
           <span

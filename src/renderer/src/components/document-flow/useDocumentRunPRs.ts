@@ -34,9 +34,10 @@ export interface DocumentRunPRs {
 }
 
 /**
- * What the PR button of a run's ticket knows: the repositories to PR in, the PRs they already
- * have (from the integration worktrees' attached PRs, or the ticket's own PR fields for a git
- * run whose worktree is gone), and whether a PR is on its way.
+ * What the PR row of a run knows (the ticket card's links, the dashboard's button): the
+ * repositories to PR in, the PRs they already have (from the integration worktrees' attached
+ * PRs, or the ticket's own PR fields for a git run whose worktree is gone), and whether a PR is
+ * on its way.
  */
 export function useDocumentRunPRs(runId: string, ticket: TicketPRFields): DocumentRunPRs {
   const run = useDocumentFlowStore((s) => s.runsById[runId]?.run ?? null)
